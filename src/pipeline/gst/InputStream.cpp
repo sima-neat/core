@@ -337,8 +337,8 @@ std::string format_push_failure_error(const InputStream::State& st, const char* 
   const char* flow_name = gst_flow_get_name(ret);
   const char* tag = where ? where : "InputStream::push";
   std::ostringstream oss;
-  oss << tag << ": appsrc push failed"
-      << " (flow=" << static_cast<int>(ret) << ":" << (flow_name ? flow_name : "<unknown>") << ")";
+  oss << tag << ": appsrc push failed" << " (flow=" << static_cast<int>(ret) << ":"
+      << (flow_name ? flow_name : "<unknown>") << ")";
   if (st.stop_requested.load(std::memory_order_relaxed) || ret == GST_FLOW_FLUSHING ||
       ret == GST_FLOW_EOS) {
     oss << ". Hint: stream is stopping or EOS has been reached.";
@@ -801,8 +801,8 @@ BuiltBuffer build_buffer_with_fill(
         release_input_buffer(buf, (std::string(tag) + ":oversize").c_str());
       }
       std::ostringstream msg;
-      msg << where << ": input exceeds allocated buffer size"
-          << " (required=" << required_bytes << ", allocated=" << st.alloc_bytes << "). "
+      msg << where << ": input exceeds allocated buffer size" << " (required=" << required_bytes
+          << ", allocated=" << st.alloc_bytes << "). "
           << "Fix: increase RunAdvancedOptions::max_input_bytes or "
           << "Model::Options::input_max_* limits.";
       throw std::runtime_error(msg.str());
@@ -914,8 +914,8 @@ void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* wh
   if (st.max_input_bytes_guard > 0 && bytes > st.max_input_bytes_guard) {
     st.growth_blocked.fetch_add(1, std::memory_order_relaxed);
     std::ostringstream msg;
-    msg << tag << ": input exceeds max_input_bytes"
-        << " (required=" << bytes << ", max_input_bytes=" << st.max_input_bytes_guard
+    msg << tag << ": input exceeds max_input_bytes" << " (required=" << bytes
+        << ", max_input_bytes=" << st.max_input_bytes_guard
         << "). Fix: increase RunAdvancedOptions::max_input_bytes or raise "
         << "Model::Options::input_max_width/input_max_height/input_max_depth.";
     throw std::runtime_error(msg.str());
@@ -926,8 +926,8 @@ void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* wh
   } else if (!st.allow_dynamic_growth) {
     st.growth_blocked.fetch_add(1, std::memory_order_relaxed);
     std::ostringstream msg;
-    msg << tag << ": input exceeds allocated buffer size"
-        << " (required=" << bytes << ", allocated=" << st.alloc_bytes << "). "
+    msg << tag << ": input exceeds allocated buffer size" << " (required=" << bytes
+        << ", allocated=" << st.alloc_bytes << "). "
         << "Fix: increase max bounds or rebuild with dynamic-capable ingress.";
     throw std::runtime_error(msg.str());
   } else {

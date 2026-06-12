@@ -30,8 +30,7 @@ std::string PCIeSrc::backend_fragment(int node_index) const {
   require_element("neatpciesrc", "PCIeSrc::backend_fragment");
 
   std::ostringstream ss;
-  ss << "neatpciesrc name=n" << node_index << "_pciesrc"
-     << " buffer-size=" << opt_.buffer_size;
+  ss << "neatpciesrc name=n" << node_index << "_pciesrc" << " buffer-size=" << opt_.buffer_size;
 
   if (has_fixed_caps(opt_)) {
     ss << " ! capsfilter name=n" << node_index << "_pciesrc_caps"

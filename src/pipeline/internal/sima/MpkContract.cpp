@@ -1133,19 +1133,16 @@ std::string tensor_dbg_local(const MpkTensorContract& tensor) {
   std::ostringstream out;
   out << "{tensor_index=" << tensor.tensor_index << ",physical_index=" << tensor.physical_index
       << ",source_physical_index=" << tensor.source_physical_index << ",name=\"" << tensor.name
-      << "\""
-      << ",segment_name=\"" << tensor.segment_name << "\""
-      << ",kind=\"" << tensor.kind << "\""
-      << ",dtype=\"" << tensor.dtype << "\""
+      << "\"" << ",segment_name=\"" << tensor.segment_name << "\"" << ",kind=\"" << tensor.kind
+      << "\"" << ",dtype=\"" << tensor.dtype << "\""
       << ",mpk_shape=" << ints_dbg_local(tensor.mpk_shape)
       << ",shape_semantics=" << mpk_shape_semantics_dbg_local(tensor.shape_semantics)
       << ",size_bytes=" << tensor.size_bytes << ",byte_offset=" << tensor.byte_offset
       << ",source_byte_offset=" << tensor.source_byte_offset
       << ",stride_bytes=" << ints_dbg_local(tensor.stride_bytes)
       << ",logical_shape=" << ints_dbg_local(tensor.logical_shape) << ",logical_dtype=\""
-      << tensor.logical_dtype << "\""
-      << ",logical_source_plugin=\"" << tensor.logical_source_plugin << "\""
-      << ",logical_source_kernel=\"" << tensor.logical_source_kernel << "\""
+      << tensor.logical_dtype << "\"" << ",logical_source_plugin=\"" << tensor.logical_source_plugin
+      << "\"" << ",logical_source_kernel=\"" << tensor.logical_source_kernel << "\""
       << ",logical_source_sequence=" << tensor.logical_source_sequence << "}";
   return out.str();
 }
@@ -1162,23 +1159,19 @@ std::string quant_dbg_local(const std::optional<MpkQuantContract>& quant) {
 
 std::string plugin_dbg_local(const MpkPluginIoContract& stage) {
   std::ostringstream out;
-  out << "{name=\"" << stage.name << "\""
-      << ",plugin_id=\"" << stage.plugin_id << "\""
-      << ",processor=\"" << stage.processor << "\""
-      << ",kernel=\"" << stage.kernel << "\""
-      << ",executable=\"" << stage.executable << "\""
-      << ",batch_size=" << stage.batch_size << ",batch_sz_model=" << stage.batch_sz_model
-      << ",sequence=" << stage.sequence << ",slice_shape=" << ints_dbg_local(stage.slice_shape)
+  out << "{name=\"" << stage.name << "\"" << ",plugin_id=\"" << stage.plugin_id << "\""
+      << ",processor=\"" << stage.processor << "\"" << ",kernel=\"" << stage.kernel << "\""
+      << ",executable=\"" << stage.executable << "\"" << ",batch_size=" << stage.batch_size
+      << ",batch_sz_model=" << stage.batch_sz_model << ",sequence=" << stage.sequence
+      << ",slice_shape=" << ints_dbg_local(stage.slice_shape)
       << ",slice_begin=" << ints_dbg_local(stage.slice_begin)
       << ",slice_end=" << ints_dbg_local(stage.slice_end)
       << ",frame_shape=" << ints_dbg_local(stage.frame_shape) << ",frame_type=\""
-      << stage.frame_type << "\""
-      << ",round_off=\"" << stage.round_off << "\""
+      << stage.frame_type << "\"" << ",round_off=\"" << stage.round_off << "\""
       << ",canonical_contract=" << (stage.has_canonical_processcvu_contract ? 1 : 0)
       << ",out_shape_raw=" << ints_dbg_local(stage.out_shape_raw) << ",canonical_input_dtype=\""
-      << stage.canonical_input_dtype << "\""
-      << ",canonical_output_dtype=\"" << stage.canonical_output_dtype << "\""
-      << ",has_align_c16=" << (stage.has_align_c16 ? 1 : 0)
+      << stage.canonical_input_dtype << "\"" << ",canonical_output_dtype=\""
+      << stage.canonical_output_dtype << "\"" << ",has_align_c16=" << (stage.has_align_c16 ? 1 : 0)
       << ",align_c16=" << (stage.align_c16 ? 1 : 0) << ",has_cblock=" << (stage.has_cblock ? 1 : 0)
       << ",cblock=" << (stage.cblock ? 1 : 0) << ",quant=" << quant_dbg_local(stage.quant) << "}";
   return out.str();

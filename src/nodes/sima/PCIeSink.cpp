@@ -28,18 +28,17 @@ std::string PCIeSink::backend_fragment(int node_index) const {
   require_no_quotes(opt_.param_buf_name, "param_buf_name");
 
   std::ostringstream ss;
-  ss << "neatpciesink name=n" << node_index << "_pciesink"
-     << " data-buf-name=\"" << opt_.data_buf_name << "\""
-     << " data-buffer-size=" << opt_.data_buffer_size << " num-buffers=" << opt_.num_buffers
-     << " queue=" << opt_.queue << " sync=" << (opt_.sync ? "true" : "false")
+  ss << "neatpciesink name=n" << node_index << "_pciesink" << " data-buf-name=\""
+     << opt_.data_buf_name << "\"" << " data-buffer-size=" << opt_.data_buffer_size
+     << " num-buffers=" << opt_.num_buffers << " queue=" << opt_.queue
+     << " sync=" << (opt_.sync ? "true" : "false")
      << " async=" << (opt_.async_state ? "true" : "false");
 
   if (!opt_.config_file.empty()) {
     ss << " config=\"" << opt_.config_file << "\"";
   }
   if (opt_.use_multi_buffers) {
-    ss << " use-multi-buffers=true"
-       << " param-buf-name=\"" << opt_.param_buf_name << "\""
+    ss << " use-multi-buffers=true" << " param-buf-name=\"" << opt_.param_buf_name << "\""
        << " param-buffer-size=" << opt_.param_buffer_size;
   }
   if (opt_.max_lateness_ns >= 0) {

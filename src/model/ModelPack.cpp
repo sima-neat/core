@@ -3298,10 +3298,10 @@ static bool validate_terminal_mla_metadata(
             : (!tensor.dtype.empty() ? tensor.dtype : mla_stage->canonical_output_dtype);
     if (dims.width <= 0 || dims.height <= 0 || dims.depth <= 0 || dtype.empty()) {
       std::ostringstream msg;
-      msg << "Terminal MLA contract incomplete after infer trimming"
-          << " stage='" << terminal.stage_name << "'"
-          << " output_index=" << i << " resolved={w=" << dims.width << ",h=" << dims.height
-          << ",d=" << dims.depth << ",dtype=" << (dtype.empty() ? "<empty>" : dtype) << "}"
+      msg << "Terminal MLA contract incomplete after infer trimming" << " stage='"
+          << terminal.stage_name << "'" << " output_index=" << i << " resolved={w=" << dims.width
+          << ",h=" << dims.height << ",d=" << dims.depth
+          << ",dtype=" << (dtype.empty() ? "<empty>" : dtype) << "}"
           << " logical_shape=" << shape_dbg(tensor.logical_shape)
           << " mpk_shape=" << shape_dbg(tensor.mpk_shape)
           << " shape_semantics=" << static_cast<int>(tensor.shape_semantics);
@@ -3514,8 +3514,8 @@ static std::size_t resolve_terminal_index_or_throw(const std::vector<ExecutionSt
         return i;
     }
     std::ostringstream msg;
-    msg << "Inference terminal policy could not resolve last MLA stage"
-        << " infer_stages=[" << infer_stage_summary(infer_seq) << "]";
+    msg << "Inference terminal policy could not resolve last MLA stage" << " infer_stages=["
+        << infer_stage_summary(infer_seq) << "]";
     throw std::runtime_error(msg.str());
   }
 

@@ -603,12 +603,10 @@ std::string power_summary_to_json(const PowerSummary& summary, int indent) {
     oss << "\n";
   for (std::size_t i = 0; i < summary.rails.size(); ++i) {
     const auto& rail = summary.rails[i];
-    oss << rail_indent << "{"
-        << "\"name\": \"" << escape_json(rail.config.name) << "\", "
-        << "\"i2c_addr\": \"" << hex_byte(rail.config.i2c_addr) << "\", "
-        << "\"page\": \"" << hex_byte(rail.config.page) << "\", "
-        << "\"voltage_avg_v\": " << rail.voltage_v.avg << ", "
-        << "\"current_avg_a\": " << rail.current_a.avg << ", "
+    oss << rail_indent << "{" << "\"name\": \"" << escape_json(rail.config.name) << "\", "
+        << "\"i2c_addr\": \"" << hex_byte(rail.config.i2c_addr) << "\", " << "\"page\": \""
+        << hex_byte(rail.config.page) << "\", " << "\"voltage_avg_v\": " << rail.voltage_v.avg
+        << ", " << "\"current_avg_a\": " << rail.current_a.avg << ", "
         << "\"power_avg_watts\": " << rail.power_w.avg << ", "
         << "\"power_min_watts\": " << rail.power_w.min << ", "
         << "\"power_max_watts\": " << rail.power_w.max << ", "

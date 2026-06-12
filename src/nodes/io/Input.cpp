@@ -39,14 +39,11 @@ std::string build_caps_string(const InputOptions& opt) {
   }
   if (media == "application/vnd.simaai.tensor") {
     if (opt.width > 0 && opt.height > 0 && opt.depth > 0) {
-      caps << ",rank=3"
-           << ",dim0=" << opt.height << ",dim1=" << opt.width << ",dim2=" << opt.depth;
+      caps << ",rank=3" << ",dim0=" << opt.height << ",dim1=" << opt.width << ",dim2=" << opt.depth;
     } else if (opt.width > 0 && opt.height > 0) {
-      caps << ",rank=2"
-           << ",dim0=" << opt.height << ",dim1=" << opt.width;
+      caps << ",rank=2" << ",dim0=" << opt.height << ",dim1=" << opt.width;
     } else if (opt.width > 0) {
-      caps << ",rank=1"
-           << ",dim0=" << opt.width;
+      caps << ",rank=1" << ",dim0=" << opt.width;
     }
   } else {
     if (opt.width > 0) {
