@@ -290,6 +290,10 @@ p.doxyGeneratedBy {
   margin-right: 8px;
 }
 
+html:not(.neat-docs-language-aware) .language-pref {
+  display: none;
+}
+
 .language-pref label {
   font-size: 0.85rem;
   color: var(--ifm-color-emphasis-700);

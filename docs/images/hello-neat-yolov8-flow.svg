@@ -50,7 +50,7 @@
 
   <!-- Input image card -->
   <g filter="url(#shadow)" opacity="0">
-    <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.05;0.07;0.96;1"/>
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.05;0.07;0.96;1"/>
     <rect x="90" y="158" width="180" height="122" rx="24" fill="#FFFFFF" stroke="#D6E2EF"/>
     <rect x="141" y="180" width="78" height="34" rx="17" fill="url(#blue)"/>
     <text x="180" y="202" class="sans tag" text-anchor="middle">INPUT</text>
@@ -59,13 +59,13 @@
   </g>
 
   <line x1="280" y1="219" x2="366" y2="219" stroke="#2A9C4F" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)" opacity="0">
-    <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.13;0.15;0.96;1"/>
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.13;0.15;0.96;1"/>
   </line>
 
   <g filter="url(#shadow)">
     <!-- Model panel base -->
     <g opacity="0">
-      <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.20;0.22;0.96;1"/>
+      <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.20;0.22;0.96;1"/>
       <rect x="380" y="128" width="650" height="182" rx="30" fill="#FFFFFF" stroke="#A8D7C6" stroke-width="2"/>
       <rect x="408" y="150" width="116" height="36" rx="18" fill="url(#green)"/>
       <text x="466" y="174" class="sans tag" text-anchor="middle">Model</text>
@@ -76,31 +76,31 @@
 
     <!-- Preprocess -->
     <g opacity="0">
-      <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.30;0.32;0.96;1"/>
+      <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.30;0.32;0.96;1"/>
       <rect x="440" y="212" width="150" height="62" rx="18" fill="#F5FAFF" stroke="#A9CDED"/>
       <text x="515" y="240" class="sans label" font-size="18" text-anchor="middle">Preprocess</text>
       <text x="515" y="260" class="sans small" text-anchor="middle">resize + norm</text>
     </g>
 
     <line x1="600" y1="243" x2="648" y2="243" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#arrowSmall)" opacity="0">
-      <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.37;0.39;0.96;1"/>
+      <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.37;0.39;0.96;1"/>
     </line>
 
     <!-- YOLOv8 inference -->
     <g opacity="0">
-      <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.43;0.45;0.96;1"/>
+      <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.43;0.45;0.96;1"/>
       <rect x="662" y="212" width="150" height="62" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
       <text x="737" y="240" class="sans label" font-size="18" text-anchor="middle">YOLOv8</text>
       <text x="737" y="260" class="sans small" text-anchor="middle">inference</text>
     </g>
 
     <line x1="822" y1="243" x2="870" y2="243" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#arrowSmall)" opacity="0">
-      <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.50;0.52;0.96;1"/>
+      <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.50;0.52;0.96;1"/>
     </line>
 
     <!-- Box decode -->
     <g opacity="0">
-      <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.56;0.58;0.96;1"/>
+      <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.56;0.58;0.96;1"/>
       <rect x="884" y="212" width="108" height="62" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
       <text x="938" y="240" class="sans label" font-size="18" text-anchor="middle">Box</text>
       <text x="938" y="260" class="sans small" text-anchor="middle">decode</text>
@@ -109,7 +109,7 @@
 
   <!-- ModelOptions feeding the model -->
   <g opacity="0">
-    <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.66;0.68;0.96;1"/>
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.66;0.68;0.96;1"/>
     <path d="M660 360H705V314" fill="none" stroke="#7A6BB5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="7 7" marker-end="url(#arrowPurple)"/>
     <g filter="url(#shadow)">
       <rect x="380" y="336" width="280" height="48" rx="20" fill="#FFFFFF" stroke="#B8B0DC"/>
@@ -119,12 +119,12 @@
   </g>
 
   <line x1="1040" y1="219" x2="1106" y2="219" stroke="#2A9C4F" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)" opacity="0">
-    <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.76;0.78;0.96;1"/>
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.76;0.78;0.96;1"/>
   </line>
 
   <!-- Output count card -->
   <g filter="url(#shadow)" opacity="0">
-    <animate attributeName="opacity" dur="11s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.82;0.84;0.96;1"/>
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;0.82;0.84;0.96;1"/>
     <rect x="1120" y="158" width="140" height="122" rx="24" fill="#FFFFFF" stroke="#A8D7C6"/>
     <rect x="1166" y="180" width="48" height="34" rx="17" fill="url(#green)"/>
     <text x="1190" y="202" class="sans tag" text-anchor="middle">OUT</text>
