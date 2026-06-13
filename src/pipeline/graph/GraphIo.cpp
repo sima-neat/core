@@ -1316,6 +1316,15 @@ void Graph::save(const std::string& path) const {
       }
       return "implicit";
     };
+    auto link_policy_name = [](GraphLinkPolicy policy) -> const char* {
+      switch (policy) {
+      case GraphLinkPolicy::Default:
+        return "default";
+      case GraphLinkPolicy::RealtimeLatestByStream:
+        return "realtime_latest_by_stream";
+      }
+      return "default";
+    };
 
     oss << "\n  ],\n  \"edges\": [\n";
     for (std::size_t i = 0; i < composition_->edges.size(); ++i) {
@@ -1329,6 +1338,13 @@ void Graph::save(const std::string& path) const {
       if (edge.endpoint.has_value()) {
         oss << ",\"from_endpoint\":\"" << json_escape(edge.endpoint->from_endpoint) << "\","
             << "\"to_endpoint\":\"" << json_escape(edge.endpoint->to_endpoint) << "\"";
+      }
+      if (edge.link_options.policy != GraphLinkPolicy::Default) {
+        oss << ",\"link_policy\":\"" << link_policy_name(edge.link_options.policy) << "\","
+            << "\"link_queue_depth\":" << edge.link_options.queue_depth;
+        if (!edge.link_options.stream_id.empty()) {
+          oss << ",\"link_stream_id\":\"" << json_escape(edge.link_options.stream_id) << "\"";
+        }
       }
       oss << "}";
     }
@@ -1541,6 +1557,15 @@ Graph Graph::load(const std::string& path) {
       edge.kind = parse_kind(string_field(eobj, "kind", "implicit"));
       edge.from_port = string_field(eobj, "from_port");
       edge.to_port = string_field(eobj, "to_port");
+      const std::string link_policy = string_field(eobj, "link_policy", "default");
+      if (link_policy == "realtime_latest_by_stream") {
+        edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+        edge.link_options.queue_depth = int_field(eobj, "link_queue_depth", 16);
+        edge.link_options.stream_id = string_field(eobj, "link_stream_id", "");
+      } else if (!link_policy.empty() && link_policy != "default") {
+        throw_io_error(error_codes::kIoParse, "Graph::load", path,
+                       "unsupported edge link_policy '" + link_policy + "'");
+      }
       if (edge.kind == CompositionEdgeKind::PublicEndpoint) {
         edge.endpoint = EndpointEdgeMeta{
             .from_endpoint = string_field(eobj, "from_endpoint"),

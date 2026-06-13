@@ -20,6 +20,7 @@ struct EdgeRouterOptions {
 
 struct EdgeRouterDispatchOptions {
   bool sanitize_pipeline_input_before_enqueue = false;
+  bool drop_pipeline_input_when_full = false;
   std::optional<std::size_t> sink_backpressure_context;
 };
 

@@ -2,6 +2,10 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 
+#include "graph/Graph.h"
+#include "graph/GraphBuild.h"
+#include "graph/StageExecutor.h"
+#include "graph/nodes/StageNode.h"
 #include "model/internal/ModelInternal.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -14,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -24,6 +29,32 @@ namespace {
 
 constexpr int kSamples = 4;
 constexpr int kTimeoutMs = 5000;
+
+class PassThroughStage final : public simaai::neat::graph::StageExecutor {
+public:
+  void set_ports(const simaai::neat::graph::StagePorts& ports) override {
+    out_port_ = ports.only_output();
+  }
+
+  void on_input(simaai::neat::graph::StageMsg&& msg,
+                std::vector<simaai::neat::graph::StageOutMsg>& out) override {
+    out.push_back(simaai::neat::graph::StageOutMsg{.out_port = out_port_,
+                                                   .sample = std::move(msg.sample)});
+  }
+
+private:
+  simaai::neat::graph::PortId out_port_ = simaai::neat::graph::kInvalidPort;
+};
+
+std::shared_ptr<simaai::neat::graph::Node> make_graph_pass_node(const std::string& label) {
+  using simaai::neat::graph::PortDesc;
+  using simaai::neat::graph::nodes::StageNode;
+  StageNode::StageExecutorFactory factory = [] { return std::make_unique<PassThroughStage>(); };
+  std::vector<PortDesc> inputs = {PortDesc{.name = "in", .spec = simaai::neat::OutputSpec{}}};
+  std::vector<PortDesc> outputs = {PortDesc{.name = "out", .spec = simaai::neat::OutputSpec{}}};
+  return std::make_shared<StageNode>("PassThrough", std::move(factory), std::move(inputs),
+                                     std::move(outputs), label);
+}
 
 std::string join_failures(const std::vector<std::string>& failures) {
   std::ostringstream out;
@@ -244,6 +275,45 @@ void graph_sample_timing_counters_are_measurement_window_deltas() {
               std::to_string(report.graph_sample_timing_misses));
 }
 
+void internal_graph_run_measurement_collects_e2e_latency_and_throughput() {
+  using namespace simaai::neat;
+
+  graph::Graph g;
+  const graph::NodeId pass = g.add(make_graph_pass_node("measured-pass"));
+
+  graph::GraphRunOptions run_opt;
+  run_opt.edge_queue = 8;
+  graph::GraphRun run = graph::build(std::move(g), run_opt);
+  graph::GraphRun::Output out = run.output(pass);
+
+  MeasureScope scope = run.start_measurement(make_fast_measure_options());
+  for (int i = 0; i < kSamples; ++i) {
+    require(run.push(pass, Sample{make_keyed_sample(300 + i)}),
+            "GraphRun measured push should succeed");
+    require_measured_output(out.pull(kTimeoutMs), "GraphRun measured pull");
+  }
+  const MeasureReport report = scope.stop();
+  run.stop();
+
+  require(report.counters.inputs_pushed == static_cast<std::uint64_t>(kSamples),
+          "GraphRun measured window should count pushed inputs; got " +
+              std::to_string(report.counters.inputs_pushed));
+  require(report.counters.outputs_pulled == static_cast<std::uint64_t>(kSamples),
+          "GraphRun measured window should count pulled outputs; got " +
+              std::to_string(report.counters.outputs_pulled));
+  require(report.end_to_end.count == static_cast<std::size_t>(kSamples),
+          "GraphRun start_measurement should collect one e2e sample per output; got " +
+              std::to_string(report.end_to_end.count));
+  require(report.graph_sample_timing_unkeyed == 0,
+          "GraphRun measured keyed samples should not be unkeyed");
+  require(report.graph_sample_timing_misses == 0,
+          "GraphRun measured keyed samples should not miss correlation");
+  require(report.throughput_batches_per_s > 0.0,
+          "GraphRun measured throughput should be positive");
+  require(report.plugin_latency_status == "off" && report.plugin_latency_source == "none",
+          "GraphRun default measurement must keep plugin latency off");
+}
+
 void model_benchmark_projection_uses_same_window_reports() {
   using namespace simaai::neat;
 
@@ -351,6 +421,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("logical_batch_throughput", logical_batch_size_controls_inference_throughput);
            run_case("graph_sample_timing_counter_deltas",
                     graph_sample_timing_counters_are_measurement_window_deltas);
+           run_case("internal_graph_run_measurement",
+                    internal_graph_run_measurement_collects_e2e_latency_and_throughput);
            run_case("model_benchmark_projection",
                     model_benchmark_projection_uses_same_window_reports);
            run_case("model_benchmark_projection_rejects_unreliable_correlation",

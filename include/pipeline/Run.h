@@ -43,6 +43,8 @@ class Mat;
 namespace simaai::neat {
 
 class InputStream;
+class MeasureScope;
+struct MeasureOptions;
 class Run;
 struct InputStreamOptions;
 namespace pipeline_internal {
@@ -57,6 +59,8 @@ class RunCore;
 namespace run_internal {
 std::shared_ptr<runtime::RunCore> release_core(Run& run);
 std::shared_ptr<const runtime::RunCore> core(const Run& run);
+MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
+                                       const MeasureOptions& opt);
 } // namespace run_internal
 #endif
 
@@ -561,6 +565,10 @@ public:
 
 private:
   friend class Run;
+#ifdef SIMA_NEAT_INTERNAL
+  friend MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::RunCore>,
+                                                             const MeasureOptions&);
+#endif
   struct Impl;
   explicit MeasureScope(std::unique_ptr<Impl> impl);
   static void disable_lttng_trace_identity_noexcept(Impl* impl);

@@ -217,6 +217,7 @@ public:
    */
   Graph& connect(std::string_view from_endpoint, std::string_view to_endpoint);
   Graph& connect(const Graph& from, const Graph& to);
+  Graph& connect(const Graph& from, const Graph& to, const GraphLinkOptions& options);
   Graph& connect(std::shared_ptr<Node> from, std::shared_ptr<Node> to);
   Graph& connect(const Graph& from, std::shared_ptr<Node> to);
   Graph& connect(std::shared_ptr<Node> from, const Graph& to);
@@ -398,6 +399,7 @@ private:
     std::string from_port;
     std::string to_port;
     std::optional<EndpointEdgeMeta> endpoint;
+    GraphLinkOptions link_options;
   };
   struct GroupMeta;
   struct NamedFragment;

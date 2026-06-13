@@ -419,8 +419,20 @@ bool GraphRun::push_state(const std::shared_ptr<State>& state, NodeId node_id, P
                          "already stopped)\n");
     return false;
   }
-  return state->core->graph_push(node_id, port, has_port, sample,
-                                 state->core->graph_options.router_options());
+  state->core->inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
+  const auto entry_at = std::chrono::steady_clock::now();
+  const bool ok = state->core->graph_push(node_id, port, has_port, sample,
+                                          state->core->graph_options.router_options());
+  if (ok) {
+    const std::string endpoint = has_port ? ("graph_input.n" + std::to_string(node_id) + ".p" +
+                                             std::to_string(port))
+                                          : ("graph_input.n" + std::to_string(node_id));
+    state->core->record_graph_sample_entry(endpoint, sample, entry_at);
+    state->core->inputs_pushed.fetch_add(1, std::memory_order_relaxed);
+  } else {
+    state->core->inputs_dropped.fetch_add(1, std::memory_order_relaxed);
+  }
+  return ok;
 }
 
 bool GraphRun::push(NodeId node_id, const Sample& samples) {
@@ -458,7 +470,7 @@ std::optional<Sample> GraphRun::pull_state(const std::shared_ptr<State>& state, 
 }
 
 std::optional<Sample> GraphRun::pull(NodeId node_id, int timeout_ms) {
-  return pull_state(state_, node_id, timeout_ms);
+  return output(node_id).pull(timeout_ms);
 }
 
 GraphRun::Input GraphRun::input(NodeId node_id) {
@@ -488,6 +500,19 @@ const GraphRunStats* GraphRun::stats() const {
   if (!state_ || !state_->core)
     return nullptr;
   return state_->core->graph_stats.get();
+}
+
+simaai::neat::MeasureScope GraphRun::start_measurement(const simaai::neat::MeasureOptions& opt) {
+  if (!state_ || !state_->core) {
+    throw std::runtime_error("GraphRun::start_measurement: no live run");
+  }
+  return simaai::neat::run_internal::start_measurement_on_core(state_->core, opt);
+}
+
+simaai::neat::MeasureScope GraphRun::start_measurement(bool include_plugin_latency) {
+  simaai::neat::MeasureOptions opt;
+  opt.include_plugin_latency = include_plugin_latency;
+  return start_measurement(opt);
 }
 
 bool GraphRun::Input::push(const Sample& samples) const {
@@ -521,6 +546,29 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
     graph_debug_sample("output_pull", *result);
   }
   if (result.has_value()) {
+    const auto now = std::chrono::steady_clock::now();
+    if (state->core) {
+      state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), *result,
+                                              now);
+      state->core->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+      std::lock_guard<std::mutex> timing_lock(state->core->latency_mu);
+      if (!state->core->pull_timing_init) {
+        state->core->first_pull_at = now;
+        state->core->pull_timing_init = true;
+      }
+      state->core->last_pull_at = now;
+      if (state->core->measurement_active) {
+        if (state->core->measurement_output_timing_init) {
+          const double gap_ms =
+              std::chrono::duration<double, std::milli>(
+                  now - state->core->measurement_last_output_at)
+                  .count();
+          state->core->measurement_frame_gaps_ms.push_back(gap_ms);
+        }
+        state->core->measurement_last_output_at = now;
+        state->core->measurement_output_timing_init = true;
+      }
+    }
     const char* label = nullptr;
     if (node_ < state->execution().node_labels.size()) {
       label = state->execution().node_labels[node_].c_str();

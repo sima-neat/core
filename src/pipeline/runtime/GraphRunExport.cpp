@@ -754,6 +754,13 @@ json public_view_to_json(const runtime::ExecutionGraphPlan& plan) {
     e["to_endpoint"] = edge.to_endpoint.empty() ? json(nullptr) : json(edge.to_endpoint);
     e["runtime_from"] = node_ref(edge.runtime_from);
     e["runtime_to"] = node_ref(edge.runtime_to);
+    if (edge.link_options.policy != GraphLinkPolicy::Default) {
+      e["link_policy"] = "realtime_latest_by_stream";
+      e["link_queue_depth"] = edge.link_options.queue_depth;
+      if (!edge.link_options.stream_id.empty()) {
+        e["link_stream_id"] = edge.link_options.stream_id;
+      }
+    }
     json runtime_edges = json::array();
     for (const std::size_t runtime_edge : edge.runtime_edge_indices) {
       runtime_edges.push_back("e" + std::to_string(runtime_edge));
@@ -844,6 +851,13 @@ json graph_topology_to_json(const runtime::RunCore& core) {
     e["to_port"] = to_port.empty() ? json(nullptr) : json(to_port);
     e["spec_complete"] = edge.spec_complete;
     e["spec"] = output_spec_to_json(edge.spec);
+    if (edge.link_options.policy != GraphLinkPolicy::Default) {
+      e["link_policy"] = "realtime_latest_by_stream";
+      e["link_queue_depth"] = edge.link_options.queue_depth;
+      if (!edge.link_options.stream_id.empty()) {
+        e["link_stream_id"] = edge.link_options.stream_id;
+      }
+    }
     edges.push_back(std::move(e));
   }
   if (edges.empty() && plan.linear_compat && plan.pipeline_segments.size() == 1U) {
@@ -906,6 +920,30 @@ json graph_topology_to_json(const runtime::RunCore& core) {
     }
   }
   graph["pipeline_segments"] = std::move(segments);
+
+  if (execution_ptr && !execution_ptr->realtime_links.empty()) {
+    json links = json::array();
+    for (std::size_t i = 0; i < execution_ptr->realtime_links.size(); ++i) {
+      const auto& link = execution_ptr->realtime_links[i];
+      if (!link) {
+        continue;
+      }
+      const auto stats = link->stats();
+      const auto& target = link->downstream();
+      links.push_back({{"index", i},
+                       {"policy", "realtime_latest_by_stream"},
+                       {"queue_depth", link->options().queue_depth},
+                       {"target_kind", static_cast<int>(target.kind)},
+                       {"target_index", target.index},
+                       {"target_port", port_name(plan, target.port)},
+                       {"offered", stats.offered},
+                       {"scheduled", stats.scheduled},
+                       {"overwritten", stats.overwritten},
+                       {"dispatch_failed", stats.dispatch_failed},
+                       {"ready", stats.ready}});
+    }
+    graph["realtime_links"] = std::move(links);
+  }
 
   graph["lowered_view"] = {
       {"topology_source", "execution_plan_lowered_view"},

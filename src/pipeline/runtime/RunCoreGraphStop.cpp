@@ -86,8 +86,14 @@ void RunCore::stop_graph() {
   if (pipeline_internal::env_bool("SIMA_GRAPH_TEARDOWN_DEBUG", false) ||
       simaai::neat::graph::graph_debug_enabled()) {
     std::size_t stage_workers = 0;
+    std::size_t realtime_links = 0;
     std::size_t pull_threads = 0;
     std::size_t push_threads = 0;
+    for (const auto& link : execution.realtime_links) {
+      if (link) {
+        realtime_links++;
+      }
+    }
     for (const auto& st : execution.stages) {
       if (st && st->worker.joinable()) {
         stage_workers++;
@@ -104,8 +110,9 @@ void RunCore::stop_graph() {
         push_threads++;
       }
     }
-    std::fprintf(stderr, "[GRAPH] GraphRun::stop threads stage=%zu pull=%zu push=%zu\n",
-                 stage_workers, pull_threads, push_threads);
+    std::fprintf(stderr, "[GRAPH] GraphRun::stop threads stage=%zu realtime_links=%zu pull=%zu "
+                         "push=%zu\n",
+                 stage_workers, realtime_links, pull_threads, push_threads);
   }
 
   const int stop_timeout_ms =
@@ -165,6 +172,12 @@ void RunCore::stop_graph() {
         }
         st->worker.detach();
       }
+    }
+  }
+
+  for (auto& link : execution.realtime_links) {
+    if (link) {
+      link->join();
     }
   }
 

@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -320,9 +321,23 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
           build_ctx.resolve_expected_buffer_names(src_node->options().buffer_name);
     }
     if (runtime->transport.has_input) {
+      std::size_t input_capacity = core->graph_options.edge_queue;
+      bool realtime_input = false;
+      for (const std::size_t edge_index : seg.input_edges) {
+        if (edge_index >= execution.plan.edges.size()) {
+          continue;
+        }
+        const auto& link = execution.plan.edges[edge_index].link_options;
+        if (link.policy == GraphLinkPolicy::RealtimeLatestByStream) {
+          realtime_input = true;
+        }
+      }
+      if (realtime_input) {
+        input_capacity = 1;
+      }
       runtime->transport.input_queue =
           std::make_shared<simaai::neat::graph::runtime::BlockingQueue<RuntimePipelineQueueMsg>>(
-              core->graph_options.edge_queue);
+              input_capacity);
     }
 
     const std::size_t index = execution.pipelines.size();
@@ -399,6 +414,31 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
 void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   std::vector<bool> has_out(runtime_node_count(execution.plan), false);
+  std::unordered_map<std::string, std::size_t> realtime_link_by_target;
+
+  const auto downstream_target_for = [&](const EdgePlan& e,
+                                         std::size_t eidx) -> std::optional<DownstreamTarget> {
+    auto it_stage = execution.node_to_stage_group.find(e.to);
+    if (it_stage != execution.node_to_stage_group.end()) {
+      return DownstreamTarget{DownstreamTarget::Kind::StageGroup, it_stage->second, e.to_port,
+                              eidx};
+    }
+    auto it_pipe = execution.node_to_pipeline.find(e.to);
+    if (it_pipe == execution.node_to_pipeline.end()) {
+      return std::nullopt;
+    }
+    if (execution.direct_sink_nodes.find(e.to) != execution.direct_sink_nodes.end()) {
+      return DownstreamTarget{DownstreamTarget::Kind::GraphSink, static_cast<std::size_t>(e.to),
+                              e.to_port, eidx};
+    }
+    return DownstreamTarget{DownstreamTarget::Kind::PipelineInput, it_pipe->second, e.to_port,
+                            eidx};
+  };
+
+  const auto target_key = [](const DownstreamTarget& target) {
+    return std::to_string(static_cast<int>(target.kind)) + ":" + std::to_string(target.index) +
+           ":" + std::to_string(static_cast<std::size_t>(target.port));
+  };
 
   for (std::size_t eidx = 0; eidx < execution.plan.edges.size(); ++eidx) {
     const auto& e = execution.plan.edges[eidx];
@@ -407,22 +447,30 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
     }
     std::vector<DownstreamTarget>& outs = execution.adjacency[edge_port_key(e.from, e.from_port)];
 
-    auto it_stage = execution.node_to_stage_group.find(e.to);
-    if (it_stage != execution.node_to_stage_group.end()) {
-      outs.push_back(
-          DownstreamTarget{DownstreamTarget::Kind::StageGroup, it_stage->second, e.to_port, eidx});
+    auto downstream = downstream_target_for(e, eidx);
+    if (!downstream.has_value()) {
       continue;
     }
-    auto it_pipe = execution.node_to_pipeline.find(e.to);
-    if (it_pipe != execution.node_to_pipeline.end()) {
-      if (execution.direct_sink_nodes.find(e.to) != execution.direct_sink_nodes.end()) {
-        outs.push_back(DownstreamTarget{DownstreamTarget::Kind::GraphSink,
-                                        static_cast<std::size_t>(e.to), e.to_port, eidx});
-      } else {
-        outs.push_back(DownstreamTarget{DownstreamTarget::Kind::PipelineInput, it_pipe->second,
-                                        e.to_port, eidx});
+
+    if (e.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream) {
+      const std::string key = target_key(*downstream);
+      auto it = realtime_link_by_target.find(key);
+      if (it == realtime_link_by_target.end()) {
+        const std::size_t link_index = execution.realtime_links.size();
+        realtime_link_by_target.emplace(key, link_index);
+        execution.realtime_links.push_back(
+            std::make_unique<RealtimeLatestLink>(*downstream, e.link_options));
+        it = realtime_link_by_target.find(key);
+      } else if (it->second < execution.realtime_links.size() &&
+                 execution.realtime_links[it->second]) {
+        execution.realtime_links[it->second]->add_edge_options(eidx, e.link_options);
       }
+      outs.push_back(DownstreamTarget{DownstreamTarget::Kind::RealtimeLatestLink, it->second,
+                                      e.to_port, eidx});
+      continue;
     }
+
+    outs.push_back(*downstream);
   }
 
   for (NodeId id = 0; id < has_out.size(); ++id) {
@@ -557,6 +605,31 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
         }
       }
     });
+  }
+}
+
+void start_realtime_links(const std::shared_ptr<RunCore>& core) {
+  ExecutionGraphRuntime& execution = core->graph_execution();
+  for (auto& link : execution.realtime_links) {
+    if (!link) {
+      continue;
+    }
+    link->start(
+        [core](const DownstreamTarget& target, Sample&& sample, std::size_t edge_index) {
+          EdgeRouter router(core->graph_execution());
+          const auto router_options = core->graph_options.router_options();
+          const auto router_callbacks = make_edge_router_callbacks(core);
+          EdgeRouterDispatchOptions dispatch_options;
+          dispatch_options.sanitize_pipeline_input_before_enqueue = true;
+          dispatch_options.drop_pipeline_input_when_full = true;
+          dispatch_options.sink_backpressure_context = target.index;
+          DownstreamTarget routed = target;
+          routed.edge_index = edge_index;
+          return router.dispatch_to_target(routed, std::move(sample), router_options,
+                                           router_callbacks, dispatch_options);
+        },
+        [core] { return core->graph_stop_requested(); },
+        [core](const std::string& err) { core->graph_request_stop(err); });
   }
 }
 
@@ -826,13 +899,23 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
       }
 
       const auto push_start = std::chrono::steady_clock::now();
-      const bool pushed = pipe.run_core && pipe.run_core->push_samples(Sample{sample});
+      const bool realtime_edge =
+          queued.edge_index != invalid_edge_index() &&
+          queued.edge_index < core->graph_execution().plan.edges.size() &&
+          core->graph_execution().plan.edges[queued.edge_index].link_options.policy ==
+              GraphLinkPolicy::RealtimeLatestByStream;
+      const bool pushed =
+          pipe.run_core && pipe.run_core->push_samples(Sample{sample}, !realtime_edge);
       pipe.transport.telemetry.push_thread_push_samples_calls.fetch_add(1,
                                                                         std::memory_order_relaxed);
       atomic_add_max(pipe.transport.telemetry.push_thread_push_samples_ns,
                      pipe.transport.telemetry.push_thread_push_samples_max_ns,
                      elapsed_ns_since(push_start));
       if (!pushed) {
+        const std::string err = pipe.run_core ? pipe.run_core->last_error() : std::string{};
+        if (realtime_edge && !core->graph_stop_requested() && err.empty()) {
+          continue;
+        }
         if (simaai::neat::graph::graph_debug_enabled() ||
             simaai::neat::graph::graph_push_fail_debug_enabled()) {
           std::fprintf(stderr, "[GRAPH] pipeline_push_failed seg=%zu stop=%d\n",
@@ -843,7 +926,6 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
               static_cast<int>(::getpid()),
               static_cast<std::size_t>(std::hash<std::thread::id>{}(std::this_thread::get_id())));
           simaai::neat::graph::graph_debug_sample("pipeline_push_failed", sample);
-          const std::string err = pipe.run_core ? pipe.run_core->last_error() : std::string{};
           if (!err.empty()) {
             std::fprintf(stderr, "[GRAPH] pipeline_push_failed err=%s\n", err.c_str());
           }
@@ -932,6 +1014,9 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
     start_stage_workers(core);
     const auto start_stages_us = pipeline_internal::build_timing_us(step_start);
     step_start = pipeline_internal::build_timing_now();
+    start_realtime_links(core);
+    const auto start_links_us = pipeline_internal::build_timing_us(step_start);
+    step_start = pipeline_internal::build_timing_now();
     start_pipeline_threads(core);
     const auto start_pipelines_us = pipeline_internal::build_timing_us(step_start);
 
@@ -951,6 +1036,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
          {"prebuild_complete", prebuild_complete_us},
          {"prebuild_seed", prebuild_seed_us},
          {"start_stage_workers", start_stages_us},
+         {"start_realtime_links", start_links_us},
          {"start_pipeline_threads", start_pipelines_us},
          {"total", pipeline_internal::build_timing_us(total_start)}},
         "segments=" + std::to_string(execution.pipelines.size()) +

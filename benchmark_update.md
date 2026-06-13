@@ -1268,3 +1268,23 @@ Validation performed after the final changes:
   - `macro_mixed_multistream_multimodel_tput_test --branch-mode encoded-only --streams 1 --rtsp-servers 1 --iters 2 --latency-profile true ...` — PASS; stdout reports `target_normalized_fps` and latency `quality=insufficient_correlated_samples`, as expected for a tiny encoded-only smoke run.
 
 DevKit logs are under `/workspace/core_graph_changes/tmp/final_benchmark_changes_20260613T004509Z`.
+
+## Surgical GraphRun measurement update — 2026-06-13
+
+Implemented the minimal release-quality path instead of the larger tap/path profiling API:
+
+- `MeasureScope` now starts from a shared `RunCore`, so both public `Run` and internal `GraphRun` use the same measured-window machinery.
+- Added internal `GraphRun::start_measurement(const MeasureOptions&)` and `GraphRun::start_measurement(bool include_plugin_latency)`.
+- `GraphRun` direct push/pull now updates measured-window input/output counters and records graph-entry to graph-output timing through the existing `RunCore::record_graph_sample_entry/output` correlation path.
+- Graph metrics, graph queue timing, and LTTng trace identity helpers gained internal `RunCore` overloads so no temporary `Run` wrapper or ownership hack is needed.
+- No public boundary-path structs, no `MeasureTap`, and no new profiling collector were added in this slice.
+
+Validation for this slice:
+
+- Built ARM64 targets: `unit_benchmark_measurement_contract_test`, `graph_migration_phaseA4_run_export_test`, `macro_mixed_multistream_multimodel_tput_test`, and `yolov8_model_benchmark_metrics_test`.
+- Confirmed the relevant binaries are ARM aarch64 with `file` before DevKit execution.
+- DevKit PASS:
+  - `unit_benchmark_measurement_contract_test` including the new internal GraphRun measurement contract.
+  - `graph_migration_phaseA4_run_export_test`.
+- DevKit note: the `devkit-run` helper still attempts `chmod +x` on NFS-mounted build artifacts and can fail with `Operation not permitted`; validation used the existing `/workspace/tmp/devkit_env_exec.sh` over SSH to avoid chmod.
+- DevKit caveat: current `yolov8_model_benchmark_metrics_test /workspace/core_graph_changes` fails during model graph build with `std::bad_array_new_length` before the new measurement path is exercised. Treat this as a separate model/runtime regression from the dirty release worktree, not as evidence against the GraphRun measurement change.
