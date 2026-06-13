@@ -34,6 +34,11 @@ set -euo pipefail
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
+# - ELXR_SDK_RELEASE_FILE: SDK release metadata path (default: /etc/sdk-release)
+# - NEAT_BUILDINFO_FILE: DevKit build metadata path (default: /etc/buildinfo)
+# - NEAT_PACKAGE_MANIFEST: package manifest filename/path (default: manifest.json)
+# - NEAT_INSTALLER_SKIP_PLATFORM_CHECK: ON/OFF (default: OFF) explicit escape hatch
+#   for development installs on nonstandard images.
 # - DEVKIT_SYNC_DEVKIT_IP: paired DevKit IP for SDK->DevKit artifact sync
 # - DEVKIT_DEPLOY_USER: DevKit SSH user (default: sima)
 # - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
@@ -62,6 +67,10 @@ NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
+ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
+NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
+NEAT_PACKAGE_MANIFEST="${NEAT_PACKAGE_MANIFEST:-manifest.json}"
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
@@ -241,7 +250,7 @@ run_ssh() {
 }
 
 detect_env_mode() {
-  if [[ -f /etc/sdk-release ]]; then
+  if [[ -f "${ELXR_SDK_RELEASE_FILE}" ]]; then
     echo "elxr-sdk"
     return 0
   fi
@@ -249,11 +258,143 @@ detect_env_mode() {
     echo "elxr-sdk"
     return 0
   fi
-  if [[ -f /etc/buildinfo ]] && grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' /etc/buildinfo; then
+  if [[ -f "${NEAT_BUILDINFO_FILE}" ]] && grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' "${NEAT_BUILDINFO_FILE}"; then
     echo "modalix-board"
     return 0
   fi
   echo "modalix-board"
+}
+
+resolve_package_manifest_path() {
+  if [[ "${NEAT_PACKAGE_MANIFEST}" == /* ]]; then
+    printf '%s\n' "${NEAT_PACKAGE_MANIFEST}"
+    return 0
+  fi
+  if [[ -f "./${NEAT_PACKAGE_MANIFEST}" ]]; then
+    printf '%s\n' "./${NEAT_PACKAGE_MANIFEST}"
+    return 0
+  fi
+  if [[ -f "./deps/${NEAT_PACKAGE_MANIFEST}" ]]; then
+    printf '%s\n' "./deps/${NEAT_PACKAGE_MANIFEST}"
+    return 0
+  fi
+  if [[ -f "$(dirname "${INSTALLER_SCRIPT_PATH}")/../deps/${NEAT_PACKAGE_MANIFEST}" ]]; then
+    printf '%s\n' "$(dirname "${INSTALLER_SCRIPT_PATH}")/../deps/${NEAT_PACKAGE_MANIFEST}"
+    return 0
+  fi
+  printf '%s\n' "./${NEAT_PACKAGE_MANIFEST}"
+}
+
+read_manifest_platform_version() {
+  local manifest_path="$1"
+  python3 - "${manifest_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+try:
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    raise SystemExit(f"missing package manifest: {manifest_path}")
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"invalid package manifest JSON: {manifest_path}: {exc}")
+
+version = str(data.get("platform-version", "")).strip()
+if not version:
+    raise SystemExit(f"missing or empty platform-version in package manifest: {manifest_path}")
+print(version.split("+", 1)[0])
+PY
+}
+
+read_sdk_platform_version() {
+  local release_file="$1"
+  awk -F'=' '
+    $1 ~ /^[[:space:]]*SDK Version[[:space:]]*$/ {
+      value=$2
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      sub(/_.*/, "", value)
+      print value
+      exit
+    }
+  ' "${release_file}" 2>/dev/null || true
+}
+
+read_devkit_platform_version() {
+  local buildinfo_file="$1"
+  awk -F'=' '
+    $1 ~ /^[[:space:]]*DISTRO_VERSION[[:space:]]*$/ {
+      value=$2
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "${buildinfo_file}" 2>/dev/null || true
+}
+
+ensure_platform_compatible() {
+  if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" == "ON" ]]; then
+    log "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON; skipping platform compatibility check."
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to read the Neat package manifest before install." >&2
+    exit 1
+  fi
+
+  local manifest_path expected actual source_label source_file
+  manifest_path="$(resolve_package_manifest_path)"
+  if ! expected="$(read_manifest_platform_version "${manifest_path}")"; then
+    echo "Unable to verify Neat package platform compatibility." >&2
+    exit 1
+  fi
+
+  case "${ENV_MODE}" in
+    elxr-sdk)
+      source_label="SDK Version"
+      source_file="${ELXR_SDK_RELEASE_FILE}"
+      if [[ ! -f "${source_file}" ]]; then
+        echo "Cannot verify eLxr SDK compatibility: missing ${source_file}." >&2
+        echo "Set ELXR_SDK_RELEASE_FILE or NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON for an explicit development override." >&2
+        exit 1
+      fi
+      actual="$(read_sdk_platform_version "${source_file}")"
+      ;;
+    modalix-board)
+      source_label="DISTRO_VERSION"
+      source_file="${NEAT_BUILDINFO_FILE}"
+      if [[ ! -f "${source_file}" ]]; then
+        echo "Cannot verify Modalix DevKit compatibility: missing ${source_file}." >&2
+        echo "This installer only supports Modalix DevKit targets or eLxr SDK environments." >&2
+        exit 1
+      fi
+      if ! grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' "${source_file}"; then
+        echo "Cannot verify Modalix DevKit compatibility: ${source_file} does not report MACHINE=modalix." >&2
+        exit 1
+      fi
+      actual="$(read_devkit_platform_version "${source_file}")"
+      ;;
+    *)
+      echo "Unknown environment mode for platform compatibility check: ${ENV_MODE}" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ -z "${actual}" ]]; then
+    echo "Cannot verify platform compatibility: ${source_label} is missing in ${source_file}." >&2
+    exit 1
+  fi
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "Incompatible platform version for this Neat package." >&2
+    echo "  Package platform-version: ${expected} (${manifest_path})" >&2
+    echo "  Detected ${source_label}: ${actual} (${source_file})" >&2
+    echo "Refusing to install before modifying Python, apt, or sysroot packages." >&2
+    exit 1
+  fi
+
+  log "Platform compatibility verified: ${actual}"
 }
 
 install_skill_for_agent() {
@@ -508,6 +649,7 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/sima-lmm-*.deb \
     "${cache_dir}"/*.whl \
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
+    "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
     "${cache_dir}"/install_neat_framework.sh
 
   local file
@@ -523,6 +665,11 @@ cache_install_artifacts_in_sysroot() {
 
   if [[ -f "./${NEAT_INSTALL_MANIFEST}" ]]; then
     run_sudo cp -f "./${NEAT_INSTALL_MANIFEST}" "${cache_dir}/"
+  fi
+  local package_manifest
+  package_manifest="$(resolve_package_manifest_path)"
+  if [[ -f "${package_manifest}" ]]; then
+    run_sudo cp -f "${package_manifest}" "${cache_dir}/${NEAT_PACKAGE_MANIFEST}"
   fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
@@ -547,6 +694,7 @@ collect_cached_devkit_deploy_files() {
   collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
   local cached_manifest="${cache_dir}/${NEAT_INSTALL_MANIFEST}"
+  local cached_package_manifest="${cache_dir}/${NEAT_PACKAGE_MANIFEST}"
 
   if [[ "${#cached_core_debs[@]}" -lt 1 ]]; then
     echo "No cached sima-neat core DEB found for paired DevKit sync in: ${cache_dir}" >&2
@@ -568,6 +716,9 @@ collect_cached_devkit_deploy_files() {
   CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
   if [[ -f "${cached_manifest}" ]]; then
     CACHED_DEPLOY_FILES+=("${cached_manifest}")
+  fi
+  if [[ -f "${cached_package_manifest}" ]]; then
+    CACHED_DEPLOY_FILES+=("${cached_package_manifest}")
   fi
   CACHED_DEPLOY_FILES+=("${cached_installer}")
 }
@@ -978,6 +1129,7 @@ fi
 
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
+ensure_platform_compatible
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
   ensure_sdk_neat_cli_symlink

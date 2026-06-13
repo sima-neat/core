@@ -40,6 +40,13 @@ Before you begin:
 - Make sure the environment running the installer can download SiMa.ai artifacts.
 - We recommend creating an account at [community.sima.ai](https://community.sima.ai) to access assets such as precompiled models for testing.
 
+The package installer verifies the package `manifest.json` `platform-version`
+before it changes Python, apt, or SDK sysroot packages. In the Neat Development
+Environment it compares that value with `/etc/sdk-release` `SDK Version`; on a
+DevKit it compares with `/etc/buildinfo` `DISTRO_VERSION`. Development-only
+installs on nonstandard images can set `NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON`
+to bypass the guard explicitly.
+
 ## Prepare an Install Directory
 
 Choose a working directory before running the installer. On the DevKit, install

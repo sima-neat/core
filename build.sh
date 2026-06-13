@@ -1683,6 +1683,14 @@ collect_install_artifact_files() {
     seen_basenames["${basename_file}"]=1
     out_files_ref+=("${file}")
   done
+
+  for file in dist/manifest.json "${NEAT_DEPS_MANIFEST}"; do
+    [[ -e "${file}" ]] || continue
+    basename_file="manifest.json"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
 }
 
 ensure_node20_for_docs() {
@@ -2380,8 +2388,43 @@ stage_package_artifacts_to_dist() {
   if [[ "${staged_any}" == "ON" ]]; then
     echo
     echo "Moved package artifacts into dist/:"
-    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh 2>/dev/null || true
+    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/manifest.json 2>/dev/null || true
   fi
+}
+
+write_dist_platform_version_manifest_field() {
+  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
+    return 0
+  fi
+  if [[ ! -d dist ]]; then
+    return 0
+  fi
+
+  python3 - "${NEAT_DEPS_MANIFEST}" "dist/manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_path = Path(sys.argv[1])
+target_path = Path(sys.argv[2])
+
+source = json.loads(source_path.read_text(encoding="utf-8"))
+platform_version = str(source.get("platform-version", "")).strip()
+if not platform_version:
+    raise SystemExit(f"Missing or empty platform-version in {source_path}")
+
+if target_path.exists():
+    target = json.loads(target_path.read_text(encoding="utf-8"))
+else:
+    target = {}
+if not isinstance(target, dict):
+    raise SystemExit(f"{target_path} must contain a JSON object")
+
+target["platform-version"] = platform_version
+target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+PY
+
+  echo "Updated dist/manifest.json platform-version from ${NEAT_DEPS_MANIFEST}"
 }
 
 append_dist_manifest_matches() {
@@ -2813,6 +2856,7 @@ main() {
   stage_package_artifacts_to_dist
   write_install_manifest
   generate_package_metadata_if_requested
+  write_dist_platform_version_manifest_field
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested
