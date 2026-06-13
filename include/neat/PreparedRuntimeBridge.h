@@ -4,6 +4,7 @@
 
 #include <gst/SimaPreparedRuntimeAbi.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,6 +16,21 @@ struct PreparedRuntimeDescriptor {
   std::string model_id;
   std::vector<simaai::gst::PreparedStageSpec> stages;
 };
+
+// Small C-compatible ABI probe exported by libneatpreparedruntimebridge.so.
+// The prepared-runtime context still carries rich C++ objects, so the caller
+// must verify that both DSOs were built against the same layout before passing
+// PreparedRuntimeDescriptor across the shared-library boundary.
+struct PreparedRuntimeBridgeAbiSizes {
+  std::uint32_t abi_version = SIMA_PREPARED_RUNTIME_ABI_VERSION;
+  std::uint64_t prepared_stage_spec_size = 0U;
+  std::uint64_t processmla_prepared_stage_size = 0U;
+  std::uint64_t processcvu_prepared_stage_size = 0U;
+  std::uint64_t prepared_processcvu_typed_config_size = 0U;
+};
+
+extern "C" const PreparedRuntimeBridgeAbiSizes*
+sima_neat_prepared_runtime_bridge_abi_sizes();
 
 enum class GraphTensorMaterializationKind : std::uint8_t {
   Unknown = 0,
