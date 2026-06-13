@@ -610,7 +610,7 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && github.ref_type == 'branch' && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' }}
+    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
