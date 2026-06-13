@@ -168,6 +168,8 @@ add_tutorial(tutorial_018_consume_rtsp_stream
   NO_TEST
   LABELS asset
 )
+# Keep the CTest recipe for future re-enablement; disabled because it depends on an external lab RTSP stream.
+if (FALSE)
 add_test(
   NAME tutorial_018_consume_rtsp_stream
   COMMAND /bin/sh -c [=[
@@ -188,6 +190,7 @@ set_tests_properties(tutorial_018_consume_rtsp_stream PROPERTIES
   RESOURCE_LOCK "dispatcher"
   SKIP_RETURN_CODE 77
 )
+endif()
 
 add_tutorial(tutorial_019_run_an_llm
   019_run_an_llm/run_an_llm.cpp
