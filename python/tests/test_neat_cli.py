@@ -597,7 +597,50 @@ def test_status_infers_non_main_channel_from_core_version(tmp_path: Path) -> Non
     assert "(assumed)" not in proc.stdout.split("Neat core", 1)[1].splitlines()[0]
 
 
-def test_model_sdk_installed_from_sima_cli_registry(tmp_path: Path) -> None:
+def test_model_compiler_installed_from_extension_dir(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    model_compiler = tmp_path / "sdk-extensions" / "model-compiler"
+    site_packages = model_compiler / "lib" / "python3.10" / "site-packages"
+    dist_info = site_packages / "sima_frontend-2.0.0.dev0+master.371.dist-info"
+    dist_info.mkdir(parents=True)
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\n"
+        "Name: sima-frontend\n"
+        "Version: 2.0.0.dev0+master.371\n",
+        encoding="utf-8",
+    )
+    (model_compiler / "bin").mkdir(parents=True)
+    write_exe(
+        model_compiler / "bin" / "python",
+        f"""\
+        #!/usr/bin/env bash
+        PYTHONPATH="{site_packages}" python3 "$@"
+        """,
+    )
+    env["NEAT_MODEL_COMPILER_DIR"] = str(model_compiler)
+
+    proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "Model Compiler" in proc.stdout
+    assert "2.0.0.dev0+master.371" in proc.stdout
+    assert f"source {model_compiler}/bin/activate to activate" in proc.stdout
+
+    proc = run_neat(tmp_path, ["--json", "--offline"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["components"]["modelCompiler"] == {
+        "name": "Model Compiler",
+        "installed": True,
+        "version": "2.0.0.dev0+master.371",
+        "detail": f"source {model_compiler}/bin/activate to activate",
+    }
+
+
+def test_model_compiler_installed_from_legacy_sima_cli_registry(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     env = base_env(tmp_path, bin_dir)
@@ -622,14 +665,14 @@ def test_model_sdk_installed_from_sima_cli_registry(tmp_path: Path) -> None:
     proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
 
     assert proc.returncode == 0, proc.stderr
-    assert "Model SDK Extension" in proc.stdout
+    assert "Model Compiler" in proc.stdout
     assert "2.0.0.neat+main-1ebbc39" in proc.stdout
-    assert "run activate-model-sdk to activate" in proc.stdout
+    assert "run activate-model-compiler to activate" in proc.stdout
     assert "sima-cli registry" not in proc.stdout
     assert "install_path=/home/jim" not in proc.stdout
 
 
-def test_model_sdk_ignores_non_installed_registry_state(tmp_path: Path) -> None:
+def test_model_compiler_ignores_non_installed_registry_state(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     env = base_env(tmp_path, bin_dir)
@@ -651,22 +694,22 @@ def test_model_sdk_ignores_non_installed_registry_state(tmp_path: Path) -> None:
     proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
 
     assert proc.returncode == 0, proc.stderr
-    model_sdk_line = next(line for line in proc.stdout.splitlines() if "Model SDK Extension" in line)
-    assert "not installed" in model_sdk_line
+    model_compiler_line = next(line for line in proc.stdout.splitlines() if "Model Compiler" in line)
+    assert "not installed" in model_compiler_line
 
 
-def test_model_sdk_ignores_activate_function_without_registry_install(tmp_path: Path) -> None:
+def test_model_compiler_ignores_activate_function_without_install(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     env = base_env(tmp_path, bin_dir)
     bashrc = Path(env["HOME"]) / ".bashrc"
-    bashrc.write_text("activate-model-sdk() { :; }\n", encoding="utf-8")
+    bashrc.write_text("activate-model-compiler() { :; }\n", encoding="utf-8")
 
     proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
 
     assert proc.returncode == 0, proc.stderr
-    model_sdk_line = next(line for line in proc.stdout.splitlines() if "Model SDK Extension" in line)
-    assert "not installed" in model_sdk_line
+    model_compiler_line = next(line for line in proc.stdout.splitlines() if "Model Compiler" in line)
+    assert "not installed" in model_compiler_line
 
 
 def test_devkit_status_uses_dpkg_and_pyneat_venv(tmp_path: Path) -> None:
