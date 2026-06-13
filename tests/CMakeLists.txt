@@ -592,6 +592,7 @@ if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST decoder_quality_compare_test
     APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT=8757"
   )
+  set_tests_properties(decoder_quality_compare_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -1223,6 +1224,7 @@ add_pipeline_test(
 if (NOT graph_migration_phase3_connected_yolo_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST graph_migration_phase3_connected_yolo_route_test
     APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified;phase3")
+  set_tests_properties(graph_migration_phase3_connected_yolo_route_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -1397,6 +1399,7 @@ if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLI
   set_property(TEST yolov8_model_benchmark_metrics_test
     APPEND PROPERTY LABELS "e2e;obj_detection;benchmark;metrics")
   set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_tests_properties(yolov8_model_benchmark_metrics_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(

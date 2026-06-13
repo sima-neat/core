@@ -104,6 +104,7 @@ docs/reference/pythonapi/*
 /docs/compile-a-model/
 /docs/reference/model-sdk-api/
 /docs/tools/sima-cli/
+/docs/tools/insight/
 
 # Docusaurus
 website/node_modules/

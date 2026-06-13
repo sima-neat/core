@@ -1,7 +1,7 @@
 ---
 title: Neat Development Environment
 description: Set up the Neat Development Environment for fast, agent-ready Neat application development
-sidebar_position: 2
+sidebar_position: 3
 ---
 
 The Neat Development Environment (also known as the SDK) is the recommended host-side setup for compiling models, building Neat applications, and running them on a paired DevKit - all using one containerized workflow.

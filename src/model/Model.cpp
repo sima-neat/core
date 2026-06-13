@@ -2018,14 +2018,6 @@ MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_
   return opt;
 }
 
-simaai::neat::Sample make_benchmark_sample(const TensorList& inputs, int64_t frame_id,
-                                           std::string stream_id) {
-  Sample sample = sample_from_tensors(inputs);
-  sample.frame_id = frame_id;
-  sample.stream_id = std::move(stream_id);
-  return sample;
-}
-
 void require_benchmark_output(const simaai::neat::Sample& out, const char* where) {
   if (out.empty()) {
     throw std::runtime_error(std::string("Model::benchmark: ") + where + " pull timed out");
@@ -2419,6 +2411,25 @@ bool sample_represents_multi_ingress_item(const Sample& sample) {
     return true;
   }
   return sample_has_tensor_list(sample) && sample.tensors.size() > 1U;
+}
+
+bool sample_represents_atomic_tensor_set_ingress_item(
+    const Sample& sample, const std::vector<internal::IngressTensorContract>& ingress_contracts) {
+  return ingress_contracts.size() > 1U && sample_has_tensor_list(sample) &&
+         sample.tensors.size() == ingress_contracts.size();
+}
+
+void propagate_atomic_sample_identity(const Sample& source, Sample* out) {
+  if (!out) {
+    return;
+  }
+  out->frame_id = source.frame_id;
+  out->stream_id = source.stream_id;
+  out->input_seq = source.input_seq;
+  out->orig_input_seq = source.orig_input_seq;
+  out->pts_ns = source.pts_ns;
+  out->dts_ns = source.dts_ns;
+  out->duration_ns = source.duration_ns;
 }
 
 InputOptions input_options_from_ingress_contract(const internal::IngressTensorContract& ingress) {
@@ -3336,6 +3347,12 @@ public:
   }
 
   Sample seed_samples(const Sample& inputs, const char* where) const override {
+    if (inputs.size() == 1U &&
+        sample_represents_atomic_tensor_set_ingress_item(inputs.front(), ingress_contracts_)) {
+      Sample seed = seed_tensors(inputs.front().tensors, where);
+      propagate_atomic_sample_identity(inputs.front(), &seed);
+      return seed;
+    }
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "ingress inputs");
     if (is_fan_in_route_) {
       return build_fan_in_sample_from_samples(inputs, where);
@@ -3368,6 +3385,12 @@ public:
   }
 
   Sample process_samples(const Sample& inputs, const char* where) const override {
+    if (inputs.size() == 1U &&
+        sample_represents_atomic_tensor_set_ingress_item(inputs.front(), ingress_contracts_)) {
+      Sample processed = process_tensors(inputs.front().tensors, where);
+      propagate_atomic_sample_identity(inputs.front(), &processed);
+      return processed;
+    }
     if (is_fan_in_route_) {
       if (inputs.size() == 1U && sample_represents_multi_ingress_item(inputs.front()) &&
           ingress_contracts_.size() > 1U) {
@@ -7120,8 +7143,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
   {
     Runner latency_runner = build(inputs, Model::RouteOptions{}, latency_run_options);
     for (int i = 0; i < kWarmupSamples; ++i) {
-      if (!latency_runner.push(
-              make_benchmark_sample(inputs, 10'000 + i, "benchmark-latency-warmup"))) {
+      if (!latency_runner.push(inputs)) {
         latency_runner.close();
         throw std::runtime_error("Model::benchmark: latency warmup push failed");
       }
@@ -7132,7 +7154,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
     MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
         kTimeoutMs, logical_batch_size, false, "NEAT Benchmark latency"));
     for (int i = 0; i < num_samples; ++i) {
-      if (!latency_runner.push(make_benchmark_sample(inputs, i, "benchmark-latency"))) {
+      if (!latency_runner.push(inputs)) {
         latency_runner.close();
         throw std::runtime_error("Model::benchmark: latency measured push failed");
       }
@@ -7166,7 +7188,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
   {
     Runner runner = build(inputs, Model::RouteOptions{}, throughput_run_options);
     for (int i = 0; i < kWarmupSamples; ++i) {
-      if (!runner.push(make_benchmark_sample(inputs, 20'000 + i, "benchmark-throughput-warmup"))) {
+      if (!runner.push(inputs)) {
         runner.close();
         throw std::runtime_error("Model::benchmark: throughput warmup push failed");
       }
@@ -7192,7 +7214,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
 
     try {
       for (int i = 0; i < num_samples; ++i) {
-        if (!runner.push(make_benchmark_sample(inputs, i, "benchmark-throughput"))) {
+        if (!runner.push(inputs)) {
           throw std::runtime_error("Model::benchmark: throughput measured push failed");
         }
       }

@@ -19,7 +19,7 @@
 <circle cx="88" cy="155" r="6" fill="#FF6B6B"/><circle cx="110" cy="155" r="6" fill="#F4C542"/><circle cx="132" cy="155" r="6" fill="#2A9C4F"/>
 <text x="166" y="160" class="fmono fdim">your_app.py</text>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.060;0.075;0.340;0.360;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.060;0.075;0.340;0.360;1.000"/>
 <text x="76" y="212" class="fsans fcap">STEP 1 · Run a model</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">model = pyneat.Model(&#x27;model.tar.gz&#x27;)</text>
@@ -27,7 +27,7 @@
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">sample = model.run([image])</text>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.360;0.375;0.640;0.660;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.360;0.375;0.640;0.660;1.000"/>
 <text x="76" y="212" class="fsans fcap">STEP 2 · Build a pipeline</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">graph = pyneat.Graph()</text>
@@ -37,7 +37,7 @@
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">run = graph.build([frame])</text>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.660;0.675;0.965;0.985;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.660;0.675;0.965;0.985;1.000"/>
 <text x="76" y="212" class="fsans fcap">STEP 3 · Tune &amp; deploy</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">opt.queue_depth = 8</text>
@@ -49,40 +49,40 @@
 </g>
 <g filter="url(#fsh)">
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.040;0.060;0.980;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.040;0.060;0.980;1.000"/>
 <rect x="560" y="132" width="704" height="316" rx="30" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2"/>
 <rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.060;0.080;0.980;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.060;0.080;0.980;1.000"/>
 <rect x="600" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
 <text x="692" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
 <text x="692" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Run a model</text>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.065;0.085;0.340;0.360;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.065;0.085;0.340;0.360;1.000"/>
 <rect x="596" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.360;0.380;0.980;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.360;0.380;0.980;1.000"/>
 <line x1="788" y1="293" x2="814" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
 <rect x="820" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
 <text x="912" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
 <text x="912" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Build a pipeline</text>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.365;0.385;0.640;0.660;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.365;0.385;0.640;0.660;1.000"/>
 <rect x="816" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.660;0.680;0.980;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.660;0.680;0.980;1.000"/>
 <line x1="1008" y1="293" x2="1034" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
 <rect x="1040" y="250" width="184" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
 <text x="1132" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
 <text x="1132" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Tune &amp; deploy</text>
 </g>
 <g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.665;0.685;0.965;0.985;1.000"/>
+<animate attributeName="opacity" dur="16s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.665;0.685;0.965;0.985;1.000"/>
 <rect x="1036" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 </g>
