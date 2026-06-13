@@ -1,0 +1,260 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 1100" role="img" aria-labelledby="title desc">
+  <title id="title">An animated SiMa.ai Neat application mapped onto an MLSoC Modalix floorplan</title>
+  <desc id="desc">A portrait diagram for mobile screens. A SiMa.ai Neat application flows from camera or RTSP input through decode, preprocess, model, postprocess, and results. Each stage highlights with its corresponding MLSoC Modalix block.</desc>
+  <defs>
+    <linearGradient id="bg" x1="40" y1="30" x2="600" y2="1060" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F8F6"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5998DD"/>
+      <stop offset="1" stop-color="#7EB4EC"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2A9C4F"/>
+      <stop offset="1" stop-color="#C0E8DB"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7A6BB5"/>
+      <stop offset="1" stop-color="#D1CEE6"/>
+    </linearGradient>
+    <linearGradient id="postprocessActive" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#DCE3EA"/>
+      <stop offset="0.42" stop-color="#DCE8E3"/>
+      <stop offset="0.7" stop-color="#D8EDDF"/>
+      <stop offset="1" stop-color="#D3F0DB"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-12%" width="124%" height="136%" filterUnits="objectBoundingBox">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#010F0E" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#AAB6C4"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#8FD0A7"/>
+    </marker>
+    <pattern id="mlaTiles" x="0" y="0" width="36" height="27" patternUnits="userSpaceOnUse">
+      <rect x="3" y="3" width="29" height="21" rx="5" fill="#FFFFFF" fill-opacity="0.58" stroke="#B8B0DC" stroke-opacity="0.55"/>
+    </pattern>
+    <style>
+      .sans { font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; }
+      .title { fill: #010F0E; font-size: 28px; font-weight: 700; }
+      .subtitle { fill: #35536F; font-size: 17px; font-weight: 500; }
+      .tag { fill: #F8FBFF; font-size: 15px; font-weight: 700; }
+      .node { fill: #6C7D8F; font-size: 18px; font-weight: 650; }
+      .endpoint { fill: #F8FBFF; font-size: 17px; font-weight: 700; }
+      .mapping { fill: #35536F; font-size: 17px; font-weight: 700; }
+      .floorTitle { fill: #35536F; font-size: 20px; font-weight: 700; }
+      .floorLabel { fill: #35536F; font-size: 18px; font-weight: 700; }
+      .floorSmall { fill: #6C7D8F; font-size: 15px; font-weight: 650; }
+      .arrow { fill: none; stroke: #AAB6C4; stroke-width: 2.5; marker-end: url(#arrow); }
+
+      .pulse-box,
+      .pulse-text {
+        animation-duration: 12s;
+        animation-timing-function: ease-in-out;
+        animation-iteration-count: infinite;
+        animation-delay: var(--stage-delay);
+      }
+
+      .pulse-box { animation-name: boxPulse; }
+      .pulse-text { animation-name: textPulse; }
+
+      .stage-1,
+      .stage-6 {
+        --active-fill: #D8EAFB;
+        --active-stroke: #5998DD;
+        --active-text: #1D4F86;
+        --active-glow: rgba(89, 152, 221, 0.68);
+      }
+
+      .stage-2,
+      .stage-3 {
+        --active-fill: #D5EFDD;
+        --active-stroke: #2A9C4F;
+        --active-text: #1B6A36;
+        --active-glow: rgba(42, 156, 79, 0.64);
+      }
+
+      .stage-4 {
+        --active-fill: #E2DCF3;
+        --active-stroke: #7A6BB5;
+        --active-text: #5B4C94;
+        --active-glow: rgba(122, 107, 181, 0.68);
+      }
+
+      .stage-5 {
+        --active-fill: url(#postprocessActive);
+        --active-stroke: #7A9D88;
+        --active-text: #35536F;
+        --active-glow: rgba(82, 132, 103, 0.62);
+      }
+
+      .stage-1 { --stage-delay: 0s; }
+      .stage-2 { --stage-delay: 2s; }
+      .stage-3 { --stage-delay: 4s; }
+      .stage-4 { --stage-delay: 6s; }
+      .stage-5 { --stage-delay: 8s; }
+      .stage-6 { --stage-delay: 10s; }
+
+      .cvu-box { animation: cvuPulse 12s ease-in-out infinite; }
+      .cvu-text { animation: cvuTextPulse 12s ease-in-out infinite; }
+      .ethernet-box { animation: ethernetPulse 12s ease-in-out infinite; }
+      .ethernet-text { animation: ethernetTextPulse 12s ease-in-out infinite; }
+
+      @keyframes boxPulse {
+        0%, 14%, 100% {
+          fill: var(--base-fill);
+          stroke: var(--base-stroke);
+          stroke-width: 2px;
+          filter: drop-shadow(0 0 0 transparent);
+        }
+        4%, 10% {
+          fill: var(--active-fill);
+          stroke: var(--active-stroke);
+          stroke-width: 4px;
+          filter: drop-shadow(0 0 14px var(--active-glow));
+        }
+      }
+
+      @keyframes textPulse {
+        0%, 14%, 100% { fill: var(--base-text, #6C7D8F); }
+        4%, 10% { fill: var(--active-text); }
+      }
+
+      @keyframes cvuPulse {
+        0%, 33.333%, 47.333%, 66.667%, 80.667%, 100% {
+          fill: #F3FBF7;
+          stroke: #9CD5B2;
+          stroke-width: 2px;
+          filter: drop-shadow(0 0 0 transparent);
+        }
+        37.333%, 43.333%, 70.667%, 76.667% {
+          fill: #D5EFDD;
+          stroke: #2A9C4F;
+          stroke-width: 4px;
+          filter: drop-shadow(0 0 14px rgba(42, 156, 79, 0.64));
+        }
+      }
+
+      @keyframes cvuTextPulse {
+        0%, 33.333%, 47.333%, 66.667%, 80.667%, 100% { fill: #35536F; }
+        37.333%, 43.333%, 70.667%, 76.667% { fill: #1B6A36; }
+      }
+
+      @keyframes ethernetPulse {
+        0%, 14%, 81%, 100% {
+          fill: #F2F7FD;
+          stroke: #9BC2ED;
+          stroke-width: 2px;
+          filter: drop-shadow(0 0 0 transparent);
+        }
+        4%, 10%, 87%, 94% {
+          fill: #D8EAFB;
+          stroke: #5998DD;
+          stroke-width: 4px;
+          filter: drop-shadow(0 0 14px rgba(89, 152, 221, 0.68));
+        }
+      }
+
+      @keyframes ethernetTextPulse {
+        0%, 14%, 81%, 100% { fill: #35536F; }
+        4%, 10%, 87%, 94% { fill: #1D4F86; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .pulse-box,
+        .pulse-text,
+        .cvu-box,
+        .cvu-text,
+        .ethernet-box,
+        .ethernet-text {
+          animation: none;
+        }
+      }
+    </style>
+  </defs>
+
+  <rect x="16" y="16" width="608" height="1068" rx="30" fill="url(#bg)" stroke="#D8E7F1"/>
+  <circle cx="564" cy="78" r="42" fill="#C0E8DB" opacity="0.5"/>
+  <circle cx="78" cy="1035" r="38" fill="#D1CEE6" opacity="0.44"/>
+
+  <text x="40" y="56" class="sans title">One application, mapped across Modalix</text>
+  <text x="40" y="86" class="sans subtitle">Describe the application flow.</text>
+  <text x="40" y="108" class="sans subtitle">SiMa.ai Neat coordinates the processing resources.</text>
+
+  <rect x="32" y="142" width="576" height="238" rx="28" fill="#FFFFFF" stroke="#B8B0DC" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="54" y="126" width="132" height="34" rx="17" fill="url(#purple)"/>
+  <text x="120" y="149" class="sans tag" text-anchor="middle">SiMa.ai Neat</text>
+
+  <rect class="pulse-box stage-1" style="--base-fill:#FFFFFF;--base-stroke:#9BC2ED" x="50" y="184" width="150" height="58" rx="18" fill="#FFFFFF" stroke="#9BC2ED" stroke-width="2"/>
+  <rect x="58" y="199" width="134" height="28" rx="14" fill="url(#blue)"/>
+  <text x="125" y="219" class="sans endpoint" text-anchor="middle">Camera / RTSP</text>
+
+  <path class="arrow" d="M200 213H245"/>
+  <rect class="pulse-box stage-2" style="--base-fill:#F6F8FB;--base-stroke:#D6E2EF" x="245" y="184" width="150" height="58" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
+  <text x="320" y="219" class="sans node pulse-text stage-2" text-anchor="middle" style="--base-text:#6C7D8F">Decode</text>
+
+  <path class="arrow" d="M395 213H440"/>
+  <rect class="pulse-box stage-3" style="--base-fill:#F6F8FB;--base-stroke:#D6E2EF" x="440" y="184" width="150" height="58" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
+  <text x="515" y="219" class="sans node pulse-text stage-3" text-anchor="middle" style="--base-text:#6C7D8F">Preprocess</text>
+
+  <path class="arrow" d="M515 242V294"/>
+  <rect class="pulse-box stage-4" style="--base-fill:#F6F8FB;--base-stroke:#D6E2EF" x="440" y="294" width="150" height="58" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
+  <text x="515" y="329" class="sans node pulse-text stage-4" text-anchor="middle" style="--base-text:#6C7D8F">Model</text>
+
+  <path class="arrow" d="M440 323H395"/>
+  <rect class="pulse-box stage-5" style="--base-fill:#F6F8FB;--base-stroke:#D6E2EF" x="245" y="294" width="150" height="58" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
+  <text x="320" y="329" class="sans node pulse-text stage-5" text-anchor="middle" style="--base-text:#6C7D8F">Postprocess</text>
+
+  <path class="arrow" d="M245 323H200"/>
+  <rect class="pulse-box stage-6" style="--base-fill:#FFFFFF;--base-stroke:#9BC2ED" x="50" y="294" width="150" height="58" rx="18" fill="#FFFFFF" stroke="#9BC2ED" stroke-width="2"/>
+  <rect x="64" y="309" width="122" height="28" rx="14" fill="url(#blue)"/>
+  <text x="125" y="329" class="sans endpoint" text-anchor="middle">Results</text>
+
+  <path d="M320 380V430" fill="none" stroke="#8FD0A7" stroke-width="3" marker-end="url(#arrowGreen)"/>
+  <text x="340" y="413" class="sans mapping">SiMa.ai Neat maps the application</text>
+
+  <rect x="32" y="448" width="576" height="610" rx="28" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="54" y="432" width="154" height="34" rx="17" fill="url(#green)"/>
+  <text x="131" y="455" class="sans tag" text-anchor="middle">MLSoC Modalix</text>
+
+  <rect class="pulse-box stage-4" style="--base-fill:#F5F2FA;--base-stroke:#B8B0DC" x="50" y="482" width="540" height="150" rx="22" fill="#F5F2FA" stroke="#B8B0DC" stroke-width="2"/>
+  <rect x="64" y="496" width="512" height="122" rx="16" fill="url(#mlaTiles)" opacity="0.62"/>
+  <text x="320" y="552" class="sans floorTitle pulse-text stage-4" text-anchor="middle" style="--base-text:#35536F">Machine Learning Accelerator</text>
+  <text x="320" y="579" class="sans floorSmall" text-anchor="middle">(MLA)</text>
+
+  <rect class="pulse-box stage-5" style="--base-fill:#F6F8FB;--base-stroke:#D6E2EF;--active-fill:#DCE3EA;--active-stroke:#8295AA;--active-text:#4B6278;--active-glow:rgba(108,125,143,0.62)" x="50" y="650" width="260" height="68" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
+  <text x="180" y="680" class="sans floorLabel pulse-text stage-5" text-anchor="middle" style="--base-text:#35536F;--active-text:#4B6278">Application Processing Unit</text>
+  <text x="180" y="704" class="sans floorSmall" text-anchor="middle">(APU)</text>
+
+  <rect class="pulse-box stage-2" style="--base-fill:#F3FBF7;--base-stroke:#9CD5B2" x="330" y="650" width="260" height="68" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+  <text x="460" y="691" class="sans floorLabel pulse-text stage-2" text-anchor="middle" style="--base-text:#35536F">Video decoder</text>
+
+  <rect x="50" y="734" width="260" height="68" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
+  <text x="180" y="764" class="sans floorLabel" text-anchor="middle">Image Signal Processor</text>
+  <text x="180" y="788" class="sans floorSmall" text-anchor="middle">(ISP)</text>
+
+  <rect x="330" y="734" width="260" height="68" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+  <text x="460" y="775" class="sans floorLabel" text-anchor="middle">Video encoder</text>
+
+  <rect class="cvu-box" x="50" y="818" width="260" height="68" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+  <text x="180" y="848" class="sans floorLabel cvu-text" text-anchor="middle">Computer Vision Unit</text>
+  <text x="180" y="872" class="sans floorSmall" text-anchor="middle">(CVU)</text>
+
+  <rect x="330" y="818" width="260" height="68" rx="18" fill="#F8F9EF" stroke="#C8D98B" stroke-width="2"/>
+  <text x="460" y="848" class="sans floorLabel" text-anchor="middle">DRAM interface system</text>
+  <text x="460" y="872" class="sans floorSmall" text-anchor="middle">(DIS)</text>
+
+  <rect x="50" y="910" width="260" height="54" rx="16" fill="#F2F7FD" stroke="#9BC2ED" stroke-width="2"/>
+  <text x="180" y="944" class="sans floorLabel" text-anchor="middle">MIPI CSI-2</text>
+
+  <rect x="330" y="910" width="260" height="54" rx="16" fill="#F2F7FD" stroke="#9BC2ED" stroke-width="2"/>
+  <text x="460" y="944" class="sans floorLabel" text-anchor="middle">GPIO · I2C · SPI · UART</text>
+
+  <rect class="ethernet-box" x="50" y="980" width="260" height="54" rx="16" fill="#F2F7FD" stroke="#9BC2ED" stroke-width="2"/>
+  <text x="180" y="1014" class="sans floorLabel ethernet-text" text-anchor="middle">10G Ethernet</text>
+
+  <rect x="330" y="980" width="260" height="54" rx="16" fill="#F2F7FD" stroke="#9BC2ED" stroke-width="2"/>
+  <text x="460" y="1014" class="sans floorLabel" text-anchor="middle">PCIe Gen5</text>
+</svg>

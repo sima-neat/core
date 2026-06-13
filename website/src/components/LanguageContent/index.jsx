@@ -34,5 +34,10 @@ export default function LanguageContent({lang, children}) {
     return null;
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <span hidden data-neat-language-aware="true" />
+      {children}
+    </>
+  );
 }

@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 1328" role="img" aria-labelledby="title desc">
+  <title id="title">Describe a SiMa.ai Neat application and watch the coding agent develop it</title>
+  <desc id="desc">A prompt is typed at the top. Below it, a coding agent reads the Neat skill, creates the application, runs it on a paired Modalix DevKit, inspects diagnostics, refines the code, and validates the result.</desc>
+  <defs>
+    <linearGradient id="bg" x1="30" y1="20" x2="610" y2="1298" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7A6BB5"/><stop offset="1" stop-color="#D1CEE6"/></linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="128%"><feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#010F0E" flood-opacity=".12"/></filter>
+    <filter id="purpleGlow" x="-15%" y="-70%" width="130%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="11" flood-color="#7A6BB5" flood-opacity=".72"/></filter>
+    <filter id="blueGlow" x="-15%" y="-70%" width="130%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="11" flood-color="#5998DD" flood-opacity=".72"/></filter>
+    <filter id="greenGlow" x="-15%" y="-70%" width="130%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="11" flood-color="#2A9C4F" flood-opacity=".72"/></filter>
+    <clipPath id="mLine1"><rect x="92" y="220" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.02;.10;.92;1"/></rect></clipPath>
+    <clipPath id="mLine2"><rect x="92" y="252" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.09;.17;.92;1"/></rect></clipPath>
+    <clipPath id="mLine3"><rect x="92" y="284" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.16;.24;.92;1"/></rect></clipPath>
+    <clipPath id="mLine4"><rect x="92" y="316" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.23;.31;.92;1"/></rect></clipPath>
+    <clipPath id="mLine5"><rect x="92" y="348" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.30;.38;.92;1"/></rect></clipPath>
+    <style>
+      .sans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif}.mono{font-family:"SFMono-Regular","Cascadia Code",Consolas,"Liberation Mono",monospace}.title{fill:#010F0E;font-size:27px;font-weight:700}.sub{fill:#35536F;font-size:16px;font-weight:500}.label{fill:#35536F;font-size:18px;font-weight:700}.small{fill:#6C7D8F;font-size:14px;font-weight:650}.prompt{fill:#EAF2FA;font-size:14px;font-weight:500}.terminalLabel{fill:#B9C7D8;font-size:13px;font-weight:600}.tag{fill:#fff;font-size:14px;font-weight:700}.track{stroke-dasharray:8 8}.glow{pointer-events:none}
+      @media(prefers-reduced-motion:reduce){animate.motion{display:none}}
+    </style>
+  </defs>
+  <rect x="16" y="16" width="608" height="1296" rx="30" fill="url(#bg)" stroke="#D8E7F1"/>
+  <circle cx="566" cy="72" r="42" fill="#C0E8DB" opacity=".46"/><circle cx="72" cy="1264" r="36" fill="#D1CEE6" opacity=".42"/>
+  <text x="40" y="56" class="sans title">Describe it. The agent develops it.</text>
+  <text x="40" y="84" class="sans sub">From prompt to a validated application on Modalix.</text>
+
+  <rect x="32" y="124" width="576" height="360" rx="28" fill="#FFFFFF" stroke="#B8B0DC" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="54" y="108" width="174" height="34" rx="17" fill="url(#purple)"/><text x="141" y="131" class="sans tag" text-anchor="middle">Your application idea</text>
+  <rect x="54" y="166" width="532" height="252" rx="18" fill="#10243A" stroke="#35536F" stroke-width="1.2"/>
+  <path d="M54 206H586" stroke="#35536F"/>
+  <circle cx="74" cy="186" r="5" fill="#F0998D"/>
+  <circle cx="92" cy="186" r="5" fill="#E8CF78"/>
+  <circle cx="110" cy="186" r="5" fill="#7FCB9A"/>
+  <text x="132" y="191" class="mono terminalLabel">agent prompt</text>
+  <text x="72" y="237" class="mono" fill="#8FD0A7" font-size="16" font-weight="700">&gt;</text>
+  <text x="92" y="237" class="mono prompt" clip-path="url(#mLine1)">Build a Python image-classification application</text>
+  <text x="92" y="269" class="mono prompt" clip-path="url(#mLine2)">with SiMa.ai Neat and ResNet-50.</text>
+  <text x="92" y="301" class="mono prompt" clip-path="url(#mLine3)">Download the model with sima-cli, find</text>
+  <text x="92" y="333" class="mono prompt" clip-path="url(#mLine4)">a test image, and run it on the paired</text>
+  <text x="92" y="365" class="mono prompt" clip-path="url(#mLine5)">Modalix DevKit. Inspect and refine.</text>
+  <rect x="92" y="372" width="2.5" height="18" rx="1" fill="#8FD0A7" opacity="0">
+    <animate class="motion" attributeName="opacity" dur=".8s" repeatCount="indefinite" calcMode="discrete" values="1;1;0;0" keyTimes="0;.48;.49;1"/>
+  </rect>
+  <text x="320" y="456" class="sans small" text-anchor="middle" style="fill:#35536F;font-size:15px;font-weight:700">Review, edit, and redirect as needed</text>
+
+  <path d="M320 484V520" fill="none" stroke="#9A8FCA" stroke-width="3"/><path d="M312 510L320 520L328 510Z" fill="#9A8FCA"/>
+
+  <g transform="translate(0 88)">
+  <rect x="32" y="432" width="576" height="710" rx="28" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="54" y="416" width="146" height="34" rx="17" fill="url(#green)"/><text x="127" y="439" class="sans tag" text-anchor="middle">Coding agent</text>
+  <path class="track" d="M78 506V952" fill="none" stroke="#B8B0DC" stroke-width="3" stroke-linecap="round">
+    <animate class="motion" attributeName="stroke-dashoffset" from="0" to="-16" dur="1.2s" repeatCount="indefinite"/>
+  </path>
+
+  <circle cx="78" cy="510" r="10" fill="#E2DCF3" stroke="#7A6BB5" stroke-width="2"/>
+  <rect class="glow" x="106" y="474" width="464" height="76" rx="18" fill="none" stroke="#7A6BB5" stroke-width="7" opacity="0" filter="url(#purpleGlow)">
+    <animate class="motion" attributeName="opacity" begin="4.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="474" width="464" height="76" rx="18" fill="#F7F5FB" stroke="#B8B0DC" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="4.8s" dur="14s" repeatCount="indefinite" values="#F7F5FB;#E2DCF3;#E2DCF3;#F7F5FB;#F7F5FB" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="4.8s" dur="14s" repeatCount="indefinite" values="#B8B0DC;#7A6BB5;#7A6BB5;#B8B0DC;#B8B0DC" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="4.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="506" class="sans label">Read the Neat skill and workspace<animate class="motion" attributeName="fill" begin="4.8s" dur="14s" repeatCount="indefinite" values="#35536F;#5B4C94;#5B4C94;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="529" class="sans small">Find APIs, the model, and a test image.</text>
+
+  <circle cx="78" cy="610" r="10" fill="#E7F1FC" stroke="#5998DD" stroke-width="2"/>
+  <rect class="glow" x="106" y="574" width="464" height="76" rx="18" fill="none" stroke="#5998DD" stroke-width="7" opacity="0" filter="url(#blueGlow)">
+    <animate class="motion" attributeName="opacity" begin="6.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="574" width="464" height="76" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="6.8s" dur="14s" repeatCount="indefinite" values="#F6F8FB;#D8EAFB;#D8EAFB;#F6F8FB;#F6F8FB" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="6.8s" dur="14s" repeatCount="indefinite" values="#D6E2EF;#5998DD;#5998DD;#D6E2EF;#D6E2EF" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="6.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="606" class="sans label">Create the application<animate class="motion" attributeName="fill" begin="6.8s" dur="14s" repeatCount="indefinite" values="#35536F;#1D4F86;#1D4F86;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="629" class="sans small">Write standard, inspectable SiMa.ai Neat code.</text>
+
+  <circle cx="78" cy="710" r="10" fill="#E5F5EA" stroke="#2A9C4F" stroke-width="2"/>
+  <rect class="glow" x="106" y="674" width="464" height="76" rx="18" fill="none" stroke="#2A9C4F" stroke-width="7" opacity="0" filter="url(#greenGlow)">
+    <animate class="motion" attributeName="opacity" begin="8.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="674" width="464" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="8.8s" dur="14s" repeatCount="indefinite" values="#F3FBF7;#D5EFDD;#D5EFDD;#F3FBF7;#F3FBF7" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="8.8s" dur="14s" repeatCount="indefinite" values="#9CD5B2;#2A9C4F;#2A9C4F;#9CD5B2;#9CD5B2" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="8.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="706" class="sans label">Run on the paired Modalix DevKit<animate class="motion" attributeName="fill" begin="8.8s" dur="14s" repeatCount="indefinite" values="#35536F;#1B6A36;#1B6A36;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="729" class="sans small">Execute from the shared workspace.</text>
+
+  <circle cx="78" cy="810" r="10" fill="#E5F5EA" stroke="#2A9C4F" stroke-width="2"/>
+  <rect class="glow" x="106" y="774" width="464" height="76" rx="18" fill="none" stroke="#2A9C4F" stroke-width="7" opacity="0" filter="url(#greenGlow)">
+    <animate class="motion" attributeName="opacity" begin="10.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="774" width="464" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="10.8s" dur="14s" repeatCount="indefinite" values="#F3FBF7;#D5EFDD;#D5EFDD;#F3FBF7;#F3FBF7" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="10.8s" dur="14s" repeatCount="indefinite" values="#9CD5B2;#2A9C4F;#2A9C4F;#9CD5B2;#9CD5B2" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="10.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="806" class="sans label">Inspect output and diagnostics<animate class="motion" attributeName="fill" begin="10.8s" dur="14s" repeatCount="indefinite" values="#35536F;#1B6A36;#1B6A36;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="829" class="sans small">Check the result and identify failures.</text>
+
+  <circle cx="78" cy="910" r="10" fill="#E2DCF3" stroke="#7A6BB5" stroke-width="2"/>
+  <rect class="glow" x="106" y="874" width="464" height="76" rx="18" fill="none" stroke="#7A6BB5" stroke-width="7" opacity="0" filter="url(#purpleGlow)">
+    <animate class="motion" attributeName="opacity" begin="12.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="874" width="464" height="76" rx="18" fill="#F7F5FB" stroke="#B8B0DC" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="12.8s" dur="14s" repeatCount="indefinite" values="#F7F5FB;#E2DCF3;#E2DCF3;#F7F5FB;#F7F5FB" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="12.8s" dur="14s" repeatCount="indefinite" values="#B8B0DC;#7A6BB5;#7A6BB5;#B8B0DC;#B8B0DC" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="12.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="906" class="sans label">Refine and rerun<animate class="motion" attributeName="fill" begin="12.8s" dur="14s" repeatCount="indefinite" values="#35536F;#5B4C94;#5B4C94;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="929" class="sans small">Iterate until on-device validation succeeds.</text>
+
+  <rect class="glow" x="126" y="990" width="388" height="48" rx="18" fill="none" stroke="#2A9C4F" stroke-width="7" opacity="0" filter="url(#greenGlow)">
+    <animate class="motion" attributeName="opacity" dur="14s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;.75;.80;.94;1"/>
+  </rect>
+  <rect x="126" y="990" width="388" height="48" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2">
+    <animate class="motion" attributeName="fill" dur="14s" repeatCount="indefinite" values="#F3FBF7;#F3FBF7;#D5EFDD;#D5EFDD;#F3FBF7" keyTimes="0;.75;.80;.94;1"/>
+    <animate class="motion" attributeName="stroke" dur="14s" repeatCount="indefinite" values="#9CD5B2;#9CD5B2;#2A9C4F;#2A9C4F;#9CD5B2" keyTimes="0;.75;.80;.94;1"/>
+    <animate class="motion" attributeName="stroke-width" dur="14s" repeatCount="indefinite" values="2;2;5;5;2" keyTimes="0;.75;.80;.94;1"/>
+  </rect>
+  <circle cx="156" cy="1014" r="10" fill="#2A9C4F"/><path d="M151 1014L155 1018L162 1009" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="177" y="1020" class="sans label">Application validated on Modalix</text>
+  </g>
+
+</svg>

@@ -16,7 +16,7 @@ In SiMa.ai Neat, the `Graph` [API](/reference/{lsa}/classes/simaai-neat-graph) i
 
 ![A reusable Graph fragment inserted into a larger application Graph](../../images/graph-reusable-fragment.svg)
 
-Neat is designed so you spend your time describing the application, not building the runtime plumbing by hand. The SDK provides pre-built [nodes](/develop-apps/development-workflow/node) and [node groups](/develop-apps/development-workflow/node#pre-built-node-groups) for common work such as input, decode, resize, preprocess, inference, postprocess, and output. These nodes automatically map to efficient, hardware-accelerated parts of the SoC where applicable. In a `Graph`, you declare which nodes to use, set their parameters, and connect them in the order your application needs.
+Neat is designed so you spend your time describing the application, not building the runtime wiring by hand. The SDK provides pre-built [nodes](/develop-apps/development-workflow/node) and [node groups](/develop-apps/development-workflow/node#pre-built-node-groups) for common work such as input, decode, resize, preprocess, inference, postprocess, and output. These nodes automatically map to efficient, hardware-accelerated parts of the SoC where applicable. In a `Graph`, you declare which nodes to use, set their parameters, and connect them in the order your application needs.
 
 Underneath, Neat builds the executable runtime graph on GStreamer. Neat abstracts that implementation away, so you use the public `Graph` API instead of managing GStreamer elements, `appsrc`, `appsink`, queues, or internal runtime ports.
 
@@ -404,7 +404,7 @@ Avoid names based on internal runtime details:
 
 ```cpp
 nodes::Input("appsrc0");  // exposes an internal GStreamer implementation detail
-nodes::Output("sink1");   // describes runtime plumbing instead of application meaning
+nodes::Output("sink1");   // describes runtime wiring instead of application meaning
 nodes::Output("out");     // acceptable for small tests, but unclear in applications
 ```
 

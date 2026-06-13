@@ -65,6 +65,11 @@ function isApiReferenceHref(href) {
   );
 }
 
+function isLanguageSelectableApiHref(href) {
+  if (typeof href !== 'string') return false;
+  return href.includes('/reference/{lsa}/') || href.includes('/reference/%7Blsa%7D/');
+}
+
 function isInternalRootHref(href) {
   return typeof href === 'string' && href.startsWith('/') && !href.startsWith('//');
 }
@@ -176,7 +181,11 @@ export default function ApiReferenceLink(props) {
 
   return (
     <>
-      <a href={resolvedLinkHref} onClick={handleClick} {...rest}>
+      <a
+        href={resolvedLinkHref}
+        onClick={handleClick}
+        data-neat-language-aware={isLanguageSelectableApiHref(href) ? 'true' : undefined}
+        {...rest}>
         {children}
       </a>
       {open ? (

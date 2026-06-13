@@ -2,6 +2,8 @@ import ExecutionEnvironment from "@docusaurus/ExecutionEnvironment";
 import {trackDocsEvent} from "@site/src/lib/analytics";
 
 const PREF_KEY = "neat-docs-language";
+const LANGUAGE_AWARE_SELECTOR = "[data-neat-language-aware='true']";
+let visibilityObserver;
 
 const normalizeLang = (lang) => {
   if (!lang) return "cpp";
@@ -25,6 +27,24 @@ const setPreferredLang = (lang) => {
 const syncLanguageSelect = (lang) => {
   document.querySelectorAll("[data-language-pref-select]").forEach((select) => {
     select.value = normalizeLang(lang);
+  });
+};
+
+const syncLanguageSelectorVisibility = () => {
+  const languageAwarePage = Boolean(document.querySelector(LANGUAGE_AWARE_SELECTOR));
+  document.documentElement.classList.toggle("neat-docs-language-aware", languageAwarePage);
+};
+
+const scheduleLanguageSelectorVisibilitySync = () => {
+  window.requestAnimationFrame(syncLanguageSelectorVisibility);
+};
+
+const observeLanguageAwareContent = () => {
+  if (visibilityObserver || !document.body) return;
+  visibilityObserver = new MutationObserver(scheduleLanguageSelectorVisibilitySync);
+  visibilityObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
   });
 };
 
@@ -56,6 +76,8 @@ const initLanguageSelect = () => {
 
 const scheduleInit = () => {
   window.requestAnimationFrame(() => {
+    observeLanguageAwareContent();
+    syncLanguageSelectorVisibility();
     initLanguageSelect();
     syncLanguageSelect(getPreferredLang());
   });
