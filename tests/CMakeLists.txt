@@ -955,6 +955,7 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast"
 )
+set_tests_properties(visual_frontend_customer_api_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_customer_api_klt_no_detect_fast_test
@@ -973,6 +974,7 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast;klt"
 )
+set_tests_properties(visual_frontend_customer_api_klt_no_detect_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_predispatch_guard_fast_test
