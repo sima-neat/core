@@ -1988,6 +1988,134 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
   return tensor.cvu();
 }
 
+struct BenchmarkInputGeometry {
+  int width = 0;
+  int height = 0;
+  explicit operator bool() const {
+    return width > 0 && height > 0;
+  }
+};
+
+int benchmark_dim(int64_t value) {
+  return (value > 0 && value <= static_cast<int64_t>(std::numeric_limits<int>::max()))
+             ? static_cast<int>(value)
+             : 0;
+}
+
+BenchmarkInputGeometry benchmark_input_geometry(const Tensor& tensor,
+                                                const ResolvedPreprocessPlan& plan,
+                                                const PreprocessRuntimeMeta& meta) {
+  auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
+  for (const auto g : {wh(meta.original_width, meta.original_height),
+                       wh(meta.resized_width, meta.resized_height),
+                       wh(meta.scaled_width, meta.scaled_height),
+                       wh(plan.effective.resize.width, plan.effective.resize.height),
+                       wh(plan.mla_contract.width, plan.mla_contract.height)}) {
+    if (g)
+      return g;
+  }
+  for (const auto& c : plan.ingress_contracts) {
+    if (auto g = wh(c.width, c.height))
+      return g;
+  }
+
+  if (tensor.axis_semantics.size() == tensor.shape.size()) {
+    BenchmarkInputGeometry g;
+    for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
+      if (tensor.axis_semantics[i] == TensorAxisSemantic::W)
+        g.width = benchmark_dim(tensor.shape[i]);
+      else if (tensor.axis_semantics[i] == TensorAxisSemantic::H)
+        g.height = benchmark_dim(tensor.shape[i]);
+    }
+    if (g)
+      return g;
+  }
+
+  const auto& s = tensor.shape;
+  if (s.size() == 2U)
+    return wh(benchmark_dim(s[1]), benchmark_dim(s[0]));
+  if (s.size() == 3U) {
+    const bool chw = s[0] > 0 && s[0] <= 4 && s[1] > 4 && s[2] > 4;
+    return chw ? wh(benchmark_dim(s[2]), benchmark_dim(s[1]))
+               : wh(benchmark_dim(s[1]), benchmark_dim(s[0]));
+  }
+  if (s.size() == 4U) {
+    return (s[3] > 0 && s[3] <= 4) ? wh(benchmark_dim(s[2]), benchmark_dim(s[1]))
+                                   : wh(benchmark_dim(s[3]), benchmark_dim(s[2]));
+  }
+  return {};
+}
+
+std::string benchmark_resize_mode(ResizeMode mode) {
+  switch (mode) {
+  case ResizeMode::Stretch:
+    return "stretch";
+  case ResizeMode::Letterbox:
+    return "letterbox";
+  case ResizeMode::Crop:
+    return "crop";
+  }
+  return "stretch";
+}
+
+std::string benchmark_input_color(const Tensor& tensor, const ResolvedPreprocessPlan& plan) {
+  if (tensor.semantic.image.has_value()) {
+    if (const std::string token = image_format_name(tensor.semantic.image->format); !token.empty())
+      return token;
+  }
+  const std::string planned = preprocess_color_format_name(plan.effective.color_convert.input_format);
+  return planned.empty() ? "synthetic" : planned;
+}
+
+void set_if_missing(int& field, int value) {
+  if (field <= 0 && value > 0)
+    field = value;
+}
+
+void set_if_missing(std::string& field, std::string value) {
+  if (field.empty() && !value.empty())
+    field = std::move(value);
+}
+
+void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorList& inputs) {
+  if (internal::ModelAccess::resolved_post_kind(model) != internal::PostRouteStageKind::BoxDecode)
+    return;
+
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  const internal::PreprocessContractFlags flags = internal::ModelAccess::preprocess_contract_flags(model);
+  for (Tensor& tensor : inputs) {
+    const bool had_meta = tensor.semantic.preprocess.has_value();
+    PreprocessRuntimeMeta meta = had_meta ? *tensor.semantic.preprocess : PreprocessRuntimeMeta{};
+    const BenchmarkInputGeometry g = benchmark_input_geometry(tensor, plan, meta);
+    if (!g) {
+      throw std::runtime_error(
+          "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
+    }
+
+    set_if_missing(meta.original_width, g.width);
+    set_if_missing(meta.original_height, g.height);
+    set_if_missing(meta.resized_width, g.width);
+    set_if_missing(meta.resized_height, g.height);
+    set_if_missing(meta.scaled_width, meta.resized_width);
+    set_if_missing(meta.scaled_height, meta.resized_height);
+    set_if_missing(meta.resize_mode, plan.effective.resize.enable == AutoFlag::On
+                                         ? benchmark_resize_mode(plan.effective.resize.mode)
+                                         : std::string("stretch"));
+    set_if_missing(meta.color_in, benchmark_input_color(tensor, plan));
+    set_if_missing(meta.color_out, preprocess_color_format_name(plan.effective.color_convert.output_format));
+    if (meta.color_out.empty())
+      meta.color_out = meta.color_in;
+    if (meta.axis_perm.empty())
+      meta.axis_perm = plan.effective.layout_convert.perm;
+    if (!had_meta) {
+      meta.normalize = plan.effective.normalize.enable == AutoFlag::On;
+      meta.quantize = flags.quant_needed;
+      meta.tessellate = flags.tess_needed;
+    }
+    tensor.semantic.preprocess = std::move(meta);
+  }
+}
+
 TensorList make_synthetic_benchmark_inputs(const Model& model) {
   const std::vector<TensorSpec> specs = model.input_specs();
   if (specs.empty()) {
@@ -1998,17 +2126,18 @@ TensorList make_synthetic_benchmark_inputs(const Model& model) {
   for (std::size_t i = 0; i < specs.size(); ++i) {
     inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
   }
+  attach_benchmark_preprocess_meta_for_boxdecode(model, inputs);
   return inputs;
 }
 
 MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_size,
-                                              bool include_power,
+                                              bool include_power, bool include_plugin_latency,
                                               std::string title = "NEAT Benchmark") {
   MeasureOptions opt;
   opt.duration_ms = timeout_ms;
   opt.warmup_ms = 0;
   opt.timeout_ms = timeout_ms;
-  opt.include_plugin_latency = false;
+  opt.include_plugin_latency = include_plugin_latency;
   opt.include_edge_latency = false;
   opt.include_message_latency = false;
   opt.include_power = include_power;
@@ -6859,6 +6988,10 @@ Model::Runner::start_measurement(const simaai::neat::MeasureOptions& opt) {
   return run_.start_measurement(opt);
 }
 
+simaai::neat::MeasureScope Model::Runner::start_measurement(bool include_plugin_latency) {
+  return run_.start_measurement(include_plugin_latency);
+}
+
 void Model::Runner::close() {
   run_.close();
 }
@@ -7103,7 +7236,7 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
 }
 #endif
 
-BenchmarkReport Model::benchmark(int num_samples) {
+BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
   if (num_samples <= 0) {
     throw std::runtime_error("Model::benchmark: num_samples must be > 0");
   }
@@ -7116,7 +7249,8 @@ BenchmarkReport Model::benchmark(int num_samples) {
   RunOptions latency_run_options;
   latency_run_options.startup_preflight = false;
 
-  BenchmarkReport report;
+  MeasureReport latency_measured;
+  MeasureReport throughput_measured;
   {
     Runner latency_runner = build(inputs, Model::RouteOptions{}, latency_run_options);
     for (int i = 0; i < kWarmupSamples; ++i) {
@@ -7130,7 +7264,8 @@ BenchmarkReport Model::benchmark(int num_samples) {
     }
 
     MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, false, "NEAT Benchmark latency"));
+        kTimeoutMs, logical_batch_size, /*include_power=*/false, include_plugin_latency,
+        "NEAT Benchmark latency"));
     for (int i = 0; i < num_samples; ++i) {
       if (!latency_runner.push(make_benchmark_sample(inputs, i, "benchmark-latency"))) {
         latency_runner.close();
@@ -7140,20 +7275,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
       require_benchmark_output(out, "latency measured");
     }
 
-    const MeasureReport measured = measure.stop();
-    if (measured.counters.outputs_pulled != static_cast<std::uint64_t>(num_samples)) {
-      latency_runner.close();
-      throw std::runtime_error("Model::benchmark: latency measured output count mismatch");
-    }
-    if (measured.end_to_end.count != static_cast<std::size_t>(num_samples)) {
-      latency_runner.close();
-      std::ostringstream oss;
-      oss << "Model::benchmark: latency measurement collected " << measured.end_to_end.count
-          << " end-to-end samples for " << num_samples
-          << " outputs; cannot publish benchmark latency";
-      throw std::runtime_error(oss.str());
-    }
-    report.latency_ms = measured.end_to_end.avg_ms;
+    latency_measured = measure.stop();
     latency_runner.close();
   }
 
@@ -7161,8 +7283,6 @@ BenchmarkReport Model::benchmark(int num_samples) {
   throughput_run_options.startup_preflight = false;
   throughput_run_options.enable_board_power();
 
-  bool power_available = false;
-  double batch_throughput = 0.0;
   {
     Runner runner = build(inputs, Model::RouteOptions{}, throughput_run_options);
     for (int i = 0; i < kWarmupSamples; ++i) {
@@ -7175,7 +7295,8 @@ BenchmarkReport Model::benchmark(int num_samples) {
     }
 
     MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, true, "NEAT Benchmark throughput"));
+        kTimeoutMs, logical_batch_size, /*include_power=*/true, include_plugin_latency,
+        "NEAT Benchmark throughput"));
     int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
@@ -7215,27 +7336,15 @@ BenchmarkReport Model::benchmark(int num_samples) {
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
-    const MeasureReport measured = measure.stop();
-    if (measured.counters.outputs_pulled != static_cast<std::uint64_t>(num_samples)) {
-      runner.close();
-      throw std::runtime_error("Model::benchmark: throughput measured output count mismatch");
-    }
-    if (measured.end_to_end.count != static_cast<std::size_t>(num_samples)) {
-      runner.close();
-      std::ostringstream oss;
-      oss << "Model::benchmark: throughput measurement collected " << measured.end_to_end.count
-          << " end-to-end samples for " << num_samples << " outputs; sample correlation is broken";
-      throw std::runtime_error(oss.str());
-    }
-    batch_throughput = measured.throughput_batches_per_s;
-    report.fps = measured.throughput_inferences_per_s;
-    if (measured.power.enabled && measured.power.samples > 0) {
-      power_available = true;
-      report.avg_power_watts = measured.power.total_avg_watts;
-      report.energy_joules = measured.power.energy_joules;
-    }
+    throughput_measured = measure.stop();
     runner.close();
   }
+
+  const BenchmarkReport report = internal::build_benchmark_report_from_measurements(
+      latency_measured, throughput_measured, num_samples);
+  const double batch_throughput = throughput_measured.throughput_batches_per_s;
+  const bool power_available =
+      throughput_measured.power.enabled && throughput_measured.power.samples > 0;
 
   const auto old_flags = std::cout.flags();
   const auto old_precision = std::cout.precision();
@@ -7244,9 +7353,25 @@ BenchmarkReport Model::benchmark(int num_samples) {
   std::cout << "Input: synthetic\n";
   std::cout << "Samples: " << num_samples << "\n";
   std::cout << "Compiled batch: " << logical_batch_size << "\n";
+  std::cout << "Measurement detail: "
+            << (include_plugin_latency ? "e2e+throughput+plugin-latency"
+                                       : "e2e+throughput-only")
+            << "\n";
   std::cout << "Latency: " << report.latency_ms << " ms\n";
   std::cout << "FPS:     " << report.fps << " inferences/s\n";
   std::cout << "Batch throughput: " << batch_throughput << " batches/s\n";
+  if (include_plugin_latency) {
+    std::cout << "Plugin latency latency-run: " << latency_measured.plugin_latency_source << "/"
+              << latency_measured.plugin_latency_status
+              << " rows=" << (latency_measured.plugin_latency.size() +
+                               latency_measured.plugin_latency_unattributed.size())
+              << "\n";
+    std::cout << "Plugin latency throughput-run: " << throughput_measured.plugin_latency_source
+              << "/" << throughput_measured.plugin_latency_status
+              << " rows=" << (throughput_measured.plugin_latency.size() +
+                               throughput_measured.plugin_latency_unattributed.size())
+              << "\n";
+  }
   if (power_available) {
     std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
     std::cout << "Energy:       " << report.energy_joules << " J\n";
@@ -7259,7 +7384,112 @@ BenchmarkReport Model::benchmark(int num_samples) {
   return report;
 }
 
+BenchmarkReport Model::benchmark(bool include_plugin_latency) {
+  return benchmark(/*num_samples=*/100, include_plugin_latency);
+}
+
 namespace internal {
+
+namespace {
+
+void require_benchmark_measure_report_window(const MeasureReport& report, const char* label,
+                                             int expected_samples) {
+  if (expected_samples <= 0) {
+    throw std::runtime_error("Model::benchmark: expected_samples must be > 0");
+  }
+  const auto expected_u64 = static_cast<std::uint64_t>(expected_samples);
+  const auto expected_size = static_cast<std::size_t>(expected_samples);
+  if (report.counters.outputs_pulled != expected_u64) {
+    std::ostringstream oss;
+    oss << "Model::benchmark: " << label << " measured output count mismatch"
+        << " (expected=" << expected_samples
+        << ", outputs_pulled=" << report.counters.outputs_pulled << ")";
+    throw std::runtime_error(oss.str());
+  }
+  if (report.end_to_end.count != expected_size) {
+    std::ostringstream oss;
+    oss << "Model::benchmark: " << label << " measurement collected "
+        << report.end_to_end.count << " end-to-end samples for " << expected_samples
+        << " pulled outputs; cannot publish benchmark result";
+    throw std::runtime_error(oss.str());
+  }
+  if (report.graph_sample_timing_unkeyed != 0U || report.graph_sample_timing_misses != 0U) {
+    std::ostringstream oss;
+    oss << "Model::benchmark: " << label
+        << " measurement has unreliable graph sample correlation"
+        << " (unkeyed=" << report.graph_sample_timing_unkeyed
+        << ", misses=" << report.graph_sample_timing_misses << ")";
+    throw std::runtime_error(oss.str());
+  }
+  if (report.counters.inputs_dropped != 0U || report.counters.outputs_dropped != 0U) {
+    std::ostringstream oss;
+    oss << "Model::benchmark: " << label
+        << " measurement dropped inputs or outputs"
+        << " (inputs_dropped=" << report.counters.inputs_dropped
+        << ", outputs_dropped=" << report.counters.outputs_dropped << ")";
+    throw std::runtime_error(oss.str());
+  }
+}
+
+void require_finite_positive(double value, const char* field) {
+  if (!std::isfinite(value) || value <= 0.0) {
+    std::ostringstream oss;
+    oss << "Model::benchmark: " << field << " must be finite and positive; got " << value;
+    throw std::runtime_error(oss.str());
+  }
+}
+
+} // namespace
+
+BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
+                                                         const MeasureReport& throughput_report,
+                                                         int expected_samples) {
+  require_benchmark_measure_report_window(latency_report, "latency", expected_samples);
+  require_benchmark_measure_report_window(throughput_report, "throughput", expected_samples);
+
+  const int latency_batch =
+      latency_report.options.logical_batch_size > 0 ? latency_report.options.logical_batch_size : 1;
+  const int throughput_batch = throughput_report.options.logical_batch_size > 0
+                                   ? throughput_report.options.logical_batch_size
+                                   : 1;
+  if (latency_batch != throughput_batch) {
+    std::ostringstream oss;
+    oss << "Model::benchmark: latency and throughput measurement windows disagree on logical "
+           "batch size"
+        << " (latency=" << latency_batch << ", throughput=" << throughput_batch << ")";
+    throw std::runtime_error(oss.str());
+  }
+
+  require_finite_positive(latency_report.end_to_end.avg_ms, "latency_ms");
+  require_finite_positive(throughput_report.throughput_batches_per_s,
+                          "throughput_batches_per_s");
+  require_finite_positive(throughput_report.throughput_inferences_per_s,
+                          "throughput_inferences_per_s");
+
+  const double expected_inference_tput =
+      throughput_report.throughput_batches_per_s * static_cast<double>(throughput_batch);
+  const double tolerance = std::max(1e-9, std::abs(expected_inference_tput) * 1e-9);
+  if (std::abs(throughput_report.throughput_inferences_per_s - expected_inference_tput) >
+      tolerance) {
+    std::ostringstream oss;
+    oss << "Model::benchmark: throughput_inferences_per_s must equal batches/s multiplied by "
+           "logical batch size"
+        << " (batches_per_s=" << throughput_report.throughput_batches_per_s
+        << ", logical_batch_size=" << throughput_batch
+        << ", inferences_per_s=" << throughput_report.throughput_inferences_per_s << ")";
+    throw std::runtime_error(oss.str());
+  }
+
+  BenchmarkReport out;
+  out.latency_ms = latency_report.end_to_end.avg_ms;
+  out.fps = throughput_report.throughput_inferences_per_s;
+  if (throughput_report.power.enabled && throughput_report.power.samples > 0) {
+    out.avg_power_watts = throughput_report.power.total_avg_watts;
+    out.energy_joules = throughput_report.power.energy_joules;
+  }
+  return out;
+}
+
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,
                                          const IngressConsumerTensorIdentity& identity) {
   if (identity.logical_index >= 0) {

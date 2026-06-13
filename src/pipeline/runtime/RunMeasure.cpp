@@ -129,6 +129,11 @@ void validate_options(const MeasureOptions& opt) {
 }
 
 MetricsTraceSource apply_metrics_trace_env(MetricsTraceSource source) {
+  // Explicit API options must win.  The env knob is retained only as a legacy default override for
+  // callers that intentionally leave the source at Auto.
+  if (source != MetricsTraceSource::Auto) {
+    return source;
+  }
   const char* env = std::getenv("SIMA_NEAT_METRICS_TRACE_SOURCE");
   if (!env || !*env) {
     return source;
@@ -711,6 +716,12 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
     core_->measurement_active = true;
   }
   return MeasureScope(std::move(impl));
+}
+
+MeasureScope Run::start_measurement(bool include_plugin_latency) {
+  MeasureOptions opt;
+  opt.include_plugin_latency = include_plugin_latency;
+  return start_measurement(opt);
 }
 
 std::string MeasureReport::to_text() const {

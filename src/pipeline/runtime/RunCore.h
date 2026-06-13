@@ -233,6 +233,7 @@ struct RunCore {
   std::atomic<std::uint64_t> outputs_ready{0};
   std::atomic<std::uint64_t> outputs_pulled{0};
   std::atomic<std::uint64_t> outputs_dropped{0};
+  std::atomic<std::int64_t> next_public_graph_input_seq{0};
 
   std::string error;
   std::string diag_sysinfo;

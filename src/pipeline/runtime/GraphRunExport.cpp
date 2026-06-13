@@ -976,10 +976,17 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
   graph_metrics["aggregation"] = graph_report.aggregation;
   graph_metrics["latency_semantics"] = graph_report.latency_semantics;
   graph_metrics["throughput_counting"] = graph_report.throughput_counting;
+  const json throughput =
+      runtime::throughput_json(graph_report.graph_metrics.counters.outputs_pulled,
+                               graph_report.graph_metrics.elapsed_seconds,
+                               /*logical_batch_size=*/1, graph_report.aggregation);
+  graph_metrics["throughput"] = throughput;
   graph_metrics["elapsed_seconds"] = graph_report.graph_metrics.elapsed_seconds;
   graph_metrics["outputs_pulled"] = graph_report.graph_metrics.counters.outputs_pulled;
-  graph_metrics["throughput_fps"] = graph_report.graph_metrics.throughput_fps;
-  graph_metrics["outputs_per_s"] = graph_report.graph_metrics.throughput_fps;
+  graph_metrics["throughput_fps"] = throughput.value("outputs_per_s", 0.0);
+  graph_metrics["outputs_per_s"] = throughput.value("outputs_per_s", 0.0);
+  graph_metrics["throughput_batches_per_s"] = throughput.value("batches_per_s", 0.0);
+  graph_metrics["throughput_inferences_per_s"] = throughput.value("logical_inferences_per_s", 0.0);
   graph_metrics["counters"] = {
       {"inputs_enqueued", graph_report.graph_metrics.counters.inputs_enqueued},
       {"inputs_dropped", graph_report.graph_metrics.counters.inputs_dropped},
@@ -999,6 +1006,7 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
         "disabled_by_options", "Board rail power telemetry was disabled for this run.");
   }
   j["graph_metrics"] = std::move(graph_metrics);
+  j["output_materialization"] = runtime::output_materialization_json(core.opt);
 
   if (opt.include_node_metrics) {
     j["node_metrics"] = node_metrics_to_json(
@@ -1278,13 +1286,14 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
       runtime::window_json("measured_window", report.elapsed_s, report.options.duration_ms,
                            report.options.warmup_ms, report.warmup_iterations);
   const json throughput = runtime::throughput_json(report.counters.outputs_pulled, report.elapsed_s,
-                                                   report.options.logical_batch_size);
+                                                   report.options.logical_batch_size,
+                                                   "measured_window");
   graph_metrics["throughput"] = throughput;
   graph_metrics["elapsed_seconds"] = report.elapsed_s;
   graph_metrics["outputs_pulled"] = report.counters.outputs_pulled;
   graph_metrics["throughput_fps"] = throughput.value("outputs_per_s", 0.0);
   graph_metrics["outputs_per_s"] = throughput.value("outputs_per_s", 0.0);
-  graph_metrics["throughput_batches_per_s"] = throughput.value("outputs_per_s", 0.0);
+  graph_metrics["throughput_batches_per_s"] = throughput.value("batches_per_s", 0.0);
   graph_metrics["throughput_inferences_per_s"] = throughput.value("logical_inferences_per_s", 0.0);
   graph_metrics["end_to_end_timing_semantics"] = report.end_to_end_semantics;
   graph_metrics["counters"] = measure_counters_to_json(report.counters);
@@ -1293,6 +1302,7 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
                                  report.power.enabled, "board_rail_power_during_measured_window");
   out["graph_metrics"] = std::move(graph_metrics);
 
+  const runtime::MeasureQualityView quality = runtime::compute_measure_quality(report);
   out["measurement"] = {
       {"warmup_iterations", report.warmup_iterations},
       {"warmup_method",
@@ -1304,6 +1314,10 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
       {"latency_samples_collected", report.latency_samples_collected},
       {"end_to_end_semantics", report.end_to_end_semantics},
       {"end_to_end_interpretation", report.end_to_end_interpretation},
+      {"end_to_end_status", quality.end_to_end_status},
+      {"end_to_end_correlation_reliable", quality.end_to_end_correlation_reliable},
+      {"survivor_biased", quality.survivor_biased},
+      {"warnings", quality.warnings},
       {"end_to_end", measure_latency_stats_to_json(report.end_to_end)},
       {"frame_gap", measure_latency_stats_to_json(report.frame_gap)},
       {"counters", measure_counters_to_json(report.counters)},
@@ -1443,8 +1457,11 @@ std::string run_to_json(const Run& run, const MeasureReport& report, const RunEx
     const std::shared_ptr<const runtime::RunCore> core_ptr = run_internal::core(run);
     const bool graph_backed = core_ptr && core_ptr->graph_execution_;
     run_json["graph_e2e_latency_ms"] = runtime::graph_e2e_json(
-        report.end_to_end, graph_backed,
+        report, graph_backed,
         graph_backed ? "unavailable_graph_e2e_not_instrumented" : "no_samples");
+    if (core_ptr) {
+      run_json["output_materialization"] = runtime::output_materialization_json(core_ptr->opt);
+    }
     run_json["path_timing"] = measured.at("path_timing");
     if (opt.include_node_metrics && measured.contains("node_metrics")) {
       const json& measured_node_metrics = measured.at("node_metrics");

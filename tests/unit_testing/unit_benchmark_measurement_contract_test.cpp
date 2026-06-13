@@ -1,4 +1,8 @@
-#include "asset_utils.h"
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
+
+#include "model/internal/ModelInternal.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
@@ -9,8 +13,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <functional>
 #include <optional>
 #include <sstream>
@@ -22,14 +24,6 @@ namespace {
 
 constexpr int kSamples = 4;
 constexpr int kTimeoutMs = 5000;
-
-std::string read_text(const std::filesystem::path& path) {
-  std::ifstream in(path);
-  require(in.is_open(), "failed to open " + path.string());
-  std::ostringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
-}
 
 std::string join_failures(const std::vector<std::string>& failures) {
   std::ostringstream out;
@@ -86,6 +80,40 @@ simaai::neat::Sample make_keyed_sample(int frame) {
   sample.frame_id = frame;
   sample.stream_id = "benchmark-contract";
   return sample;
+}
+
+simaai::neat::MeasureReport make_complete_measure_report(int samples, int logical_batch_size) {
+  simaai::neat::MeasureReport report;
+  report.elapsed_s = 2.0;
+  report.outputs = samples;
+  report.options.logical_batch_size = logical_batch_size;
+  report.counters.inputs_pushed = static_cast<std::uint64_t>(samples);
+  report.counters.outputs_ready = static_cast<std::uint64_t>(samples);
+  report.counters.outputs_pulled = static_cast<std::uint64_t>(samples);
+  report.latency_samples_collected = true;
+  report.end_to_end.count = static_cast<std::size_t>(samples);
+  report.end_to_end.avg_ms = 3.25;
+  report.end_to_end.p50_ms = 3.0;
+  report.end_to_end.p90_ms = 3.5;
+  report.end_to_end.p95_ms = 3.75;
+  report.end_to_end.p99_ms = 4.0;
+  report.end_to_end.max_ms = 4.25;
+  report.throughput_batches_per_s = 10.0;
+  report.throughput_inferences_per_s =
+      report.throughput_batches_per_s * static_cast<double>(logical_batch_size);
+  return report;
+}
+
+bool throws_benchmark_projection_error(const simaai::neat::MeasureReport& latency,
+                                       const simaai::neat::MeasureReport& throughput,
+                                       int expected_samples, const std::string& needle) {
+  try {
+    (void)simaai::neat::internal::build_benchmark_report_from_measurements(
+        latency, throughput, expected_samples);
+  } catch (const std::exception& e) {
+    return std::string(e.what()).find(needle) != std::string::npos;
+  }
+  return false;
 }
 
 void require_measured_output(const std::optional<simaai::neat::Sample>& out,
@@ -186,9 +214,8 @@ void graph_sample_timing_counters_are_measurement_window_deltas() {
   const Tensor seed = make_rgb_input(0);
   Run run = make_benchmark_style_rgb_run(seed);
 
-  // Deliberately create run-lifetime graph timing pollution before the measured window.  This
-  // TensorList push has no public frame_id yet when graph entry is recorded, so it increments the
-  // lifetime unkeyed/miss counters.  A later clean measured window must not inherit those counts.
+  // Deliberately create run-lifetime activity before the measured window.  A later measured window
+  // must report measured-window deltas, not inherit run-lifetime counters.
   require(run.push(TensorList{make_rgb_input(100)}),
           "pre-measure unkeyed TensorList push should succeed");
   require_measured_output(run.pull(kTimeoutMs), "pre-measure unkeyed TensorList");
@@ -217,49 +244,92 @@ void graph_sample_timing_counters_are_measurement_window_deltas() {
               std::to_string(report.graph_sample_timing_misses));
 }
 
-void model_benchmark_wrapper_must_publish_measured_logical_fps_and_real_latency() {
-  const std::filesystem::path root = sima_test::test_source_root();
-  const std::filesystem::path model_cpp_path = root / "src/model/Model.cpp";
-  if (!std::filesystem::exists(root / "CMakeLists.txt") ||
-      !std::filesystem::exists(model_cpp_path)) {
-    std::cout << "[INFO] complete source tree unavailable at " << root
-              << "; skipping Model::benchmark source contract guard\n";
-    return;
-  }
+void model_benchmark_projection_uses_same_window_reports() {
+  using namespace simaai::neat;
 
-  const std::string model_cpp = read_text(model_cpp_path);
-  const std::size_t options_pos = model_cpp.find("MeasureOptions make_benchmark_measure_options");
-  const std::size_t benchmark_pos = model_cpp.find("BenchmarkReport Model::benchmark");
-  require(benchmark_pos != std::string::npos,
-          "source guard could not locate Model::benchmark in Model.cpp");
-  const std::size_t region_begin =
-      options_pos == std::string::npos ? benchmark_pos : std::min(options_pos, benchmark_pos);
-  const std::string benchmark_region = model_cpp.substr(region_begin);
+  MeasureReport latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/4);
+  latency.end_to_end.avg_ms = 7.5;
+  latency.throughput_batches_per_s = 1.0;
+  latency.throughput_inferences_per_s = 4.0;
 
-  std::vector<std::string> failures;
-  if (benchmark_region.find("report.fps = measured.throughput_batches_per_s") !=
-      std::string::npos) {
-    failures.push_back(
-        "Model::benchmark must not publish batches/s as BenchmarkReport::fps; publish logical "
-        "inferences/s instead");
-  }
-  if (benchmark_region.find("report.fps = measured.throughput_inferences_per_s") ==
-      std::string::npos) {
-    failures.push_back("Model::benchmark should assign BenchmarkReport::fps from "
-                       "MeasureReport::throughput_inferences_per_s");
-  }
-  if (benchmark_region.find("logical_batch_size") == std::string::npos) {
-    failures.push_back(
-        "Model::benchmark should populate MeasureOptions::logical_batch_size from the compiled "
-        "model/input contract before measuring throughput");
-  }
-  if (benchmark_region.find("measured.end_to_end.count") == std::string::npos &&
-      benchmark_region.find("measured.latency_samples_collected") == std::string::npos) {
-    failures.push_back(
-        "Model::benchmark should validate that MeasureReport contains end-to-end latency "
-        "samples before publishing BenchmarkReport::latency_ms");
-  }
-  require(failures.empty(), join_failures(failures));
+  MeasureReport throughput = make_complete_measure_report(kSamples, /*logical_batch_size=*/4);
+  throughput.throughput_batches_per_s = 12.5;
+  throughput.throughput_inferences_per_s = 50.0;
+  throughput.end_to_end.avg_ms = 99.0;
+  throughput.power.enabled = true;
+  throughput.power.samples = 3;
+  throughput.power.total_avg_watts = 8.25;
+  throughput.power.energy_joules = 1.5;
+
+  const BenchmarkReport report =
+      internal::build_benchmark_report_from_measurements(latency, throughput, kSamples);
+
+  require(report.latency_ms == 7.5,
+          "Model::benchmark projection must publish latency from latency measurement window");
+  require(report.fps == 50.0,
+          "Model::benchmark projection must publish logical inferences/s from throughput window");
+  require(report.avg_power_watts == 8.25,
+          "Model::benchmark projection should preserve measured throughput-window power");
+  require(report.energy_joules == 1.5,
+          "Model::benchmark projection should preserve measured throughput-window energy");
+}
+
+void model_benchmark_projection_rejects_unreliable_correlation() {
+  using namespace simaai::neat;
+
+  MeasureReport latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/2);
+  MeasureReport throughput = make_complete_measure_report(kSamples, /*logical_batch_size=*/2);
+  latency.graph_sample_timing_misses = 1;
+  require(throws_benchmark_projection_error(latency, throughput, kSamples, "unreliable"),
+          "Model::benchmark projection must reject latency windows with correlation misses");
+
+  latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/2);
+  throughput.graph_sample_timing_unkeyed = 1;
+  require(throws_benchmark_projection_error(latency, throughput, kSamples, "unreliable"),
+          "Model::benchmark projection must reject throughput windows with unkeyed samples");
+}
+
+void model_benchmark_projection_rejects_bad_batch_arithmetic() {
+  using namespace simaai::neat;
+
+  MeasureReport latency = make_complete_measure_report(kSamples, /*logical_batch_size=*/4);
+  MeasureReport throughput = make_complete_measure_report(kSamples, /*logical_batch_size=*/4);
+  throughput.throughput_inferences_per_s = throughput.throughput_batches_per_s;
+  require(throws_benchmark_projection_error(latency, throughput, kSamples, "logical batch size"),
+          "Model::benchmark projection must reject batches/s reported as logical inferences/s");
+}
+
+void measurement_boolean_flags_make_profiling_explicit() {
+  using namespace simaai::neat;
+
+  const MeasureOptions default_opt;
+  require(!default_opt.include_plugin_latency,
+          "default MeasureOptions must not enable plugin profiling");
+  require(!default_opt.include_edge_latency,
+          "default MeasureOptions must not enable graph queue/edge diagnostics");
+  require(!default_opt.include_message_latency,
+          "default MeasureOptions must not enable message tracing");
+  require(!default_opt.include_power,
+          "default MeasureOptions must not start measurement-local power monitoring");
+
+  const Tensor seed = make_rgb_input(0);
+  Run run = make_benchmark_style_rgb_run(seed);
+  MeasureScope scope = run.start_measurement(/*include_plugin_latency=*/false);
+  require(run.push(TensorList{make_rgb_input(1)}), "e2e-only measured push should succeed");
+  require_measured_output(run.pull(kTimeoutMs), "e2e-only measured pull");
+  const MeasureReport report = scope.stop();
+  run.close();
+  require(report.plugin_latency_status == "off" && report.plugin_latency_source == "none",
+          "e2e-only measurement must report plugin latency off/none");
+  require(report.plugin_latency.empty() && report.plugin_latency_unattributed.empty(),
+          "e2e-only measurement must not collect plugin latency rows");
+  require(report.message_latency_status == "off" && report.message_latency_source == "none",
+          "e2e-only measurement must report message tracing off/none");
+
+  MeasureOptions plugin_opt;
+  plugin_opt.include_plugin_latency = true;
+  require(plugin_opt.include_plugin_latency,
+          "plugin latency must be a simple explicit boolean in MeasureOptions");
 }
 
 } // namespace
@@ -281,8 +351,14 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("logical_batch_throughput", logical_batch_size_controls_inference_throughput);
            run_case("graph_sample_timing_counter_deltas",
                     graph_sample_timing_counters_are_measurement_window_deltas);
-           run_case("model_benchmark_wrapper_contract",
-                    model_benchmark_wrapper_must_publish_measured_logical_fps_and_real_latency);
+           run_case("model_benchmark_projection",
+                    model_benchmark_projection_uses_same_window_reports);
+           run_case("model_benchmark_projection_rejects_unreliable_correlation",
+                    model_benchmark_projection_rejects_unreliable_correlation);
+           run_case("model_benchmark_projection_rejects_bad_batch_arithmetic",
+                    model_benchmark_projection_rejects_bad_batch_arithmetic);
+           run_case("measurement_boolean_flags_make_profiling_explicit",
+                    measurement_boolean_flags_make_profiling_explicit);
 
            require(failures.empty(), join_failures(failures));
          }));

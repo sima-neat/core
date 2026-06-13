@@ -515,9 +515,11 @@ def _render_svg(
 def _render_metric_cards(payload: Mapping[str, Any]) -> str:
     run = _as_map(payload.get("run"))
     graph_metrics = _as_map(run.get("graph_metrics"))
+    throughput_summary = _as_map(graph_metrics.get("throughput"))
     measurement = _as_map(run.get("measurement"))
     power = _as_map(graph_metrics.get("power")) or _as_map(run.get("power"))
-    end_to_end = _as_map(measurement.get("end_to_end"))
+    graph_e2e = _as_map(run.get("graph_e2e_latency_ms"))
+    end_to_end = graph_e2e or _as_map(measurement.get("end_to_end"))
 
     def latency_card(summary: Mapping[str, Any], key: str) -> str:
         if summary.get("count") == 0:
@@ -525,20 +527,45 @@ def _render_metric_cards(payload: Mapping[str, Any]) -> str:
         return _fmt(summary.get(key), " ms")
 
     warmup = measurement.get("warmup_iterations")
-    throughput = (
-        measurement.get("throughput_batches_per_s")
+    output_pull_tput = (
+        throughput_summary.get("outputs_per_s")
         or graph_metrics.get("outputs_per_s")
         or graph_metrics.get("throughput_fps")
         or run.get("throughput_fps")
     )
+    logical_tput = (
+        throughput_summary.get("logical_inferences_per_s")
+        or measurement.get("throughput_inferences_per_s")
+    )
     cards = [
-        ("Throughput outputs/s", _fmt(throughput, "")),
+        ("Output pulls/s", _fmt(output_pull_tput, "")),
+        ("Logical inf/s", _fmt(logical_tput, "")),
         ("Elapsed", _fmt(graph_metrics.get("elapsed_seconds", run.get("elapsed_seconds")), " s")),
-        ("E2E p50", latency_card(end_to_end, "p50_ms")),
-        ("E2E p95", latency_card(end_to_end, "p95_ms")),
+        ("Queue-inclusive E2E p50", latency_card(end_to_end, "p50_ms")),
+        ("Queue-inclusive E2E p95", latency_card(end_to_end, "p95_ms")),
         ("Warmup", str(warmup if isinstance(warmup, int) else "—")),
         ("Scope", str(graph_metrics.get("measurement_scope") or graph_metrics.get("aggregation") or "—")),
     ]
+    if graph_e2e:
+        reliability = "reliable" if graph_e2e.get("correlation_reliable") else str(graph_e2e.get("status") or "unreliable")
+        if graph_e2e.get("survivor_biased"):
+            reliability += " / survivor-biased"
+        cards.append(("E2E correlation", reliability))
+    materialization = _as_map(run.get("output_materialization"))
+    if materialization:
+        timing = (
+            "timing unavailable"
+            if materialization.get("copy_map_timing_available") is False
+            else "timing available"
+        )
+        cards.append((
+            "Output memory",
+            f"{materialization.get('output_memory_mode') or '—'} / {materialization.get('semantics') or '—'}",
+        ))
+        cards.append((
+            "Materialization",
+            f"{materialization.get('claim_status') or materialization.get('status') or '—'}; {timing}",
+        ))
     if power:
         if power.get("enabled") and power.get("samples", 0):
             cards.extend(
