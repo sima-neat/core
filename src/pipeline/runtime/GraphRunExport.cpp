@@ -1323,9 +1323,9 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
   graph_metrics["window"] =
       runtime::window_json("measured_window", report.elapsed_s, report.options.duration_ms,
                            report.options.warmup_ms, report.warmup_iterations);
-  const json throughput = runtime::throughput_json(report.counters.outputs_pulled, report.elapsed_s,
-                                                   report.options.logical_batch_size,
-                                                   "measured_window");
+  const json throughput =
+      runtime::throughput_json(report.counters.outputs_pulled, report.elapsed_s,
+                               report.options.logical_batch_size, "measured_window");
   graph_metrics["throughput"] = throughput;
   graph_metrics["elapsed_seconds"] = report.elapsed_s;
   graph_metrics["outputs_pulled"] = report.counters.outputs_pulled;

@@ -29,8 +29,7 @@ struct PreparedRuntimeBridgeAbiSizes {
   std::uint64_t prepared_processcvu_typed_config_size = 0U;
 };
 
-extern "C" const PreparedRuntimeBridgeAbiSizes*
-sima_neat_prepared_runtime_bridge_abi_sizes();
+extern "C" const PreparedRuntimeBridgeAbiSizes* sima_neat_prepared_runtime_bridge_abi_sizes();
 
 enum class GraphTensorMaterializationKind : std::uint8_t {
   Unknown = 0,

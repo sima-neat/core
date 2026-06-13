@@ -424,9 +424,9 @@ bool GraphRun::push_state(const std::shared_ptr<State>& state, NodeId node_id, P
   const bool ok = state->core->graph_push(node_id, port, has_port, sample,
                                           state->core->graph_options.router_options());
   if (ok) {
-    const std::string endpoint = has_port ? ("graph_input.n" + std::to_string(node_id) + ".p" +
-                                             std::to_string(port))
-                                          : ("graph_input.n" + std::to_string(node_id));
+    const std::string endpoint =
+        has_port ? ("graph_input.n" + std::to_string(node_id) + ".p" + std::to_string(port))
+                 : ("graph_input.n" + std::to_string(node_id));
     state->core->record_graph_sample_entry(endpoint, sample, entry_at);
     state->core->inputs_pushed.fetch_add(1, std::memory_order_relaxed);
   } else {
@@ -559,10 +559,9 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
       state->core->last_pull_at = now;
       if (state->core->measurement_active) {
         if (state->core->measurement_output_timing_init) {
-          const double gap_ms =
-              std::chrono::duration<double, std::milli>(
-                  now - state->core->measurement_last_output_at)
-                  .count();
+          const double gap_ms = std::chrono::duration<double, std::milli>(
+                                    now - state->core->measurement_last_output_at)
+                                    .count();
           state->core->measurement_frame_gaps_ms.push_back(gap_ms);
         }
         state->core->measurement_last_output_at = now;

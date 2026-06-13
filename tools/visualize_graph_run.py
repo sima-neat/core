@@ -595,7 +595,7 @@ def _render_metric_cards(payload: Mapping[str, Any]) -> str:
         f'<div class="metric-value">{html.escape(value)}</div></div>'
         for title, value in cards
     )
-    return f'<section class="metric-cards">{body}</section>'
+    return f'<section><h2>Throughput</h2><div class="metric-cards">{body}</div></section>'
 
 
 def _latency_table_cell(latency: Mapping[str, Any], key: str, suffix: str = " ms", availability_key: str | None = None) -> str:

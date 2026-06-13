@@ -21,7 +21,7 @@ void apply_lttng_trace_identity(const Run& run, const std::vector<GraphNodeMetri
                                 bool enable_message_events = false);
 void apply_lttng_trace_identity(const std::shared_ptr<const runtime::RunCore>& core,
                                 const std::vector<GraphNodeMetrics>& nodes,
-                                std::uint64_t run_id_hash, std::uint64_t graph_id_hash,
-                                bool enable, bool enable_message_events = false);
+                                std::uint64_t run_id_hash, std::uint64_t graph_id_hash, bool enable,
+                                bool enable_message_events = false);
 
 } // namespace simaai::neat::pipeline_internal

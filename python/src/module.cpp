@@ -104,6 +104,8 @@ using simaai::neat::Device;
 using simaai::neat::DeviceType;
 using simaai::neat::Graph;
 using simaai::neat::GraphElementMetrics;
+using simaai::neat::GraphLinkOptions;
+using simaai::neat::GraphLinkPolicy;
 using simaai::neat::GraphNodeMetrics;
 using simaai::neat::GraphOptions;
 using simaai::neat::GraphReport;
@@ -115,6 +117,12 @@ using simaai::neat::MeasureCounters;
 using simaai::neat::MeasureInputStats;
 using simaai::neat::MeasureLatencyStats;
 using simaai::neat::MeasureOptions;
+using simaai::neat::MeasurePathIdentity;
+using simaai::neat::MeasurePathInterPluginGap;
+using simaai::neat::MeasurePathNodeArrival;
+using simaai::neat::MeasurePathOutputTail;
+using simaai::neat::MeasurePathStat;
+using simaai::neat::MeasurePathTiming;
 using simaai::neat::MeasurePluginLatency;
 using simaai::neat::MeasureReport;
 using simaai::neat::MeasureScope;
@@ -2280,6 +2288,16 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("internal_queue_depth",
               &simaai::neat::AdvancedExecutionOptions::internal_queue_depth);
 
+  nb::enum_<GraphLinkPolicy>(m, "GraphLinkPolicy")
+      .value("Default", GraphLinkPolicy::Default)
+      .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream);
+
+  nb::class_<GraphLinkOptions>(m, "GraphLinkOptions")
+      .def(nb::init<>())
+      .def_rw("policy", &GraphLinkOptions::policy)
+      .def_rw("queue_depth", &GraphLinkOptions::queue_depth)
+      .def_rw("stream_id", &GraphLinkOptions::stream_id);
+
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())
       .def_rw("callback_timeout_ms", &GraphOptions::callback_timeout_ms)
@@ -2546,6 +2564,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("plugin_latency_unattributed", &MeasureReport::plugin_latency_unattributed)
       .def_rw("edge_latency", &MeasureReport::edge_latency)
       .def_rw("edge_latency_unattributed", &MeasureReport::edge_latency_unattributed)
+      .def_rw("path_timing", &MeasureReport::path_timing)
       .def_rw("plugin_latency_status", &MeasureReport::plugin_latency_status)
       .def_rw("plugin_latency_source", &MeasureReport::plugin_latency_source)
       .def_rw("message_latency_status", &MeasureReport::message_latency_status)
@@ -2679,7 +2698,11 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement", &Run::start_measurement, "options"_a = MeasureOptions{})
+      .def("start_measurement", static_cast<MeasureScope (Run::*)(bool)>(&Run::start_measurement),
+           "include_plugin_latency"_a)
+      .def("start_measurement",
+           static_cast<MeasureScope (Run::*)(const MeasureOptions&)>(&Run::start_measurement),
+           "options"_a = MeasureOptions{})
       .def("last_error", &Run::last_error)
       .def(
           "json",
@@ -2909,6 +2932,11 @@ NB_MODULE(_pyneat_core, m) {
             return self.connect(from, to);
           },
           "from_graph"_a, "to_graph"_a, nb::rv_policy::reference_internal)
+      .def(
+          "connect",
+          [](Graph& self, const Graph& from, const Graph& to,
+             const GraphLinkOptions& options) -> Graph& { return self.connect(from, to, options); },
+          "from_graph"_a, "to_graph"_a, "options"_a, nb::rv_policy::reference_internal)
       .def(
           "connect",
           [](Graph& self, std::string from_endpoint, std::string to_endpoint) -> Graph& {
@@ -4076,7 +4104,13 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("start_measurement", &simaai::neat::Model::Runner::start_measurement,
+      .def("start_measurement",
+           static_cast<MeasureScope (simaai::neat::Model::Runner::*)(bool)>(
+               &simaai::neat::Model::Runner::start_measurement),
+           "include_plugin_latency"_a)
+      .def("start_measurement",
+           static_cast<MeasureScope (simaai::neat::Model::Runner::*)(const MeasureOptions&)>(
+               &simaai::neat::Model::Runner::start_measurement),
            "options"_a = MeasureOptions{})
       .def("close_input", &simaai::neat::Model::Runner::close_input)
       .def("close", &simaai::neat::Model::Runner::close);
@@ -4125,8 +4159,8 @@ NB_MODULE(_pyneat_core, m) {
   advanced_mod.def("is_tensor_payload_format", &simaai::neat::is_tensor_payload_format, "tag"_a);
 
   // ── Phase 2 (plan slice): metrics/diagnostics types in the advanced tier ─────────────────────
-  // MetricsTraceSource (used by MeasureOptions fields) + MeasureEdgeLatency (used by
-  // MeasureReport.edge_latency). MeasurePath* per-node structs remain deferred (S1).
+  // MetricsTraceSource is used by MeasureOptions. Edge/path timing rows are detailed
+  // diagnostics, so keep their class names under advanced while MeasureReport exposes the data.
   nb::enum_<simaai::neat::MetricsTraceSource>(advanced_mod, "MetricsTraceSource")
       .value("Auto", simaai::neat::MetricsTraceSource::Auto)
       .value("Off", simaai::neat::MetricsTraceSource::Off)
@@ -4156,6 +4190,68 @@ NB_MODULE(_pyneat_core, m) {
       .def_ro("mapping_error", &simaai::neat::MeasureEdgeLatency::mapping_error)
       .def_ro("non_additive", &simaai::neat::MeasureEdgeLatency::non_additive)
       .def_ro("reliable", &simaai::neat::MeasureEdgeLatency::reliable);
+
+  nb::class_<MeasurePathStat>(advanced_mod, "MeasurePathStat")
+      .def(nb::init<>())
+      .def_rw("samples", &MeasurePathStat::samples)
+      .def_rw("avg_ms", &MeasurePathStat::avg_ms)
+      .def_rw("p50_ms", &MeasurePathStat::p50_ms)
+      .def_rw("p95_ms", &MeasurePathStat::p95_ms)
+      .def_rw("max_ms", &MeasurePathStat::max_ms)
+      .def_rw("reliable", &MeasurePathStat::reliable);
+
+  nb::class_<MeasurePathIdentity>(advanced_mod, "MeasurePathIdentity")
+      .def(nb::init<>())
+      .def_rw("primary_key", &MeasurePathIdentity::primary_key)
+      .def_rw("fallback_key", &MeasurePathIdentity::fallback_key)
+      .def_rw("used_public_fields", &MeasurePathIdentity::used_public_fields)
+      .def_rw("sample_identity_source", &MeasurePathIdentity::sample_identity_source);
+
+  nb::class_<MeasurePathNodeArrival>(advanced_mod, "MeasurePathNodeArrival")
+      .def(nb::init<>())
+      .def_rw("customer_node_id", &MeasurePathNodeArrival::customer_node_id)
+      .def_rw("lowered_node_id", &MeasurePathNodeArrival::lowered_node_id)
+      .def_rw("runtime_node_id", &MeasurePathNodeArrival::runtime_node_id)
+      .def_rw("plugin_instance_id", &MeasurePathNodeArrival::plugin_instance_id)
+      .def_rw("stream_id", &MeasurePathNodeArrival::stream_id)
+      .def_rw("semantics", &MeasurePathNodeArrival::semantics)
+      .def_rw("latency", &MeasurePathNodeArrival::latency);
+
+  nb::class_<MeasurePathInterPluginGap>(advanced_mod, "MeasurePathInterPluginGap")
+      .def(nb::init<>())
+      .def_rw("customer_edge_id", &MeasurePathInterPluginGap::customer_edge_id)
+      .def_rw("lowered_edge_id", &MeasurePathInterPluginGap::lowered_edge_id)
+      .def_rw("from_customer_node_id", &MeasurePathInterPluginGap::from_customer_node_id)
+      .def_rw("to_customer_node_id", &MeasurePathInterPluginGap::to_customer_node_id)
+      .def_rw("from_runtime_node_id", &MeasurePathInterPluginGap::from_runtime_node_id)
+      .def_rw("to_runtime_node_id", &MeasurePathInterPluginGap::to_runtime_node_id)
+      .def_rw("from_plugin_instance_id", &MeasurePathInterPluginGap::from_plugin_instance_id)
+      .def_rw("to_plugin_instance_id", &MeasurePathInterPluginGap::to_plugin_instance_id)
+      .def_rw("stream_id", &MeasurePathInterPluginGap::stream_id)
+      .def_rw("semantics", &MeasurePathInterPluginGap::semantics)
+      .def_rw("latency", &MeasurePathInterPluginGap::latency);
+
+  nb::class_<MeasurePathOutputTail>(advanced_mod, "MeasurePathOutputTail")
+      .def(nb::init<>())
+      .def_rw("output_endpoint", &MeasurePathOutputTail::output_endpoint)
+      .def_rw("customer_output_node_id", &MeasurePathOutputTail::customer_output_node_id)
+      .def_rw("lowered_edge_id", &MeasurePathOutputTail::lowered_edge_id)
+      .def_rw("stream_id", &MeasurePathOutputTail::stream_id)
+      .def_rw("semantics", &MeasurePathOutputTail::semantics)
+      .def_rw("latency", &MeasurePathOutputTail::latency);
+
+  nb::class_<MeasurePathTiming>(advanced_mod, "MeasurePathTiming")
+      .def(nb::init<>())
+      .def_rw("available", &MeasurePathTiming::available)
+      .def_rw("status", &MeasurePathTiming::status)
+      .def_rw("source", &MeasurePathTiming::source)
+      .def_rw("reason", &MeasurePathTiming::reason)
+      .def_rw("aggregation", &MeasurePathTiming::aggregation)
+      .def_rw("warnings", &MeasurePathTiming::warnings)
+      .def_rw("identity", &MeasurePathTiming::identity)
+      .def_rw("node_arrival", &MeasurePathTiming::node_arrival)
+      .def_rw("inter_plugin_gap", &MeasurePathTiming::inter_plugin_gap)
+      .def_rw("output_tail", &MeasurePathTiming::output_tail);
 
   // ── Phase 6 (plan slice): runtime warm-up + build/version info ───────────────────────────────
   // prewarm_runtime kept (S-naming: no warm_up_runtime alias); prewarm_runtime_async dropped.

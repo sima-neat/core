@@ -114,7 +114,8 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
       if (edge.to == to && edge.endpoint->to_endpoint == to_endpoint) {
         const bool existing_realtime =
             edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-        const bool incoming_realtime = link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+        const bool incoming_realtime =
+            link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
         if (existing_realtime && incoming_realtime) {
           continue;
         }

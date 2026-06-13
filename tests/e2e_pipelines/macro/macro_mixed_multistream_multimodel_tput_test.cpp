@@ -130,11 +130,12 @@ struct Args {
   float yolo_nms_iou = 0.50f;
   simaai::neat::BoxDecodeType yolo_decode_type = simaai::neat::BoxDecodeType::YoloV8;
 
-  std::string branch_mode = "fanout-both"; // fanout-both|split|resnet-only|yolo-only|encoded-only|decode-only
-  std::string scheduler_drop = "oldest";   // oldest|newest
-  std::string output_memory = "owned";     // owned|zero-copy
-  std::string source = "rtsp";             // v1 only supports RTSP
-  std::string processcvu_target = "AUTO";  // AUTO|EV74|A65
+  std::string branch_mode =
+      "fanout-both"; // fanout-both|split|resnet-only|yolo-only|encoded-only|decode-only
+  std::string scheduler_drop = "oldest";  // oldest|newest
+  std::string output_memory = "owned";    // owned|zero-copy
+  std::string source = "rtsp";            // v1 only supports RTSP
+  std::string processcvu_target = "AUTO"; // AUTO|EV74|A65
   std::string processcvu_profile_jsonl;
   std::string video_host = "127.0.0.1";
 
@@ -598,25 +599,23 @@ public:
               << " evicted_entries=" << counts.value("evicted_entries", 0)
               << " quality=" << quality.value("status", std::string("unknown"))
               << " correlated_samples=" << quality.value("best_correlated_stage_count", 0)
-              << " min_correlated_samples="
-              << quality.value("minimum_correlated_samples", 0) << "\n";
+              << " min_correlated_samples=" << quality.value("minimum_correlated_samples", 0)
+              << "\n";
     for (const auto& warning : quality.value("warnings", json::array())) {
       if (warning.is_string())
         std::cout << "[latency_profile_warning] " << warning.get<std::string>() << "\n";
     }
     const json& stages = j.at("stages_ms");
-    for (const char* name : {"encoded_to_decoded", "decoded_to_boxes", "encoded_to_boxes",
-                             "boxes_to_metadata_send", "encoded_to_metadata_send",
-                             "encoded_to_video_send"}) {
+    for (const char* name :
+         {"encoded_to_decoded", "decoded_to_boxes", "encoded_to_boxes", "boxes_to_metadata_send",
+          "encoded_to_metadata_send", "encoded_to_video_send"}) {
       const json& s = stages.at(name);
       const int64_t count = s.value("count", 0);
       if (count <= 0)
         continue;
       std::cout << "[latency_stage] stage=" << name << " count=" << count
-                << " avg_ms=" << s.value("avg_ms", 0.0)
-                << " p50_ms=" << s.value("p50_ms", 0.0)
-                << " p95_ms=" << s.value("p95_ms", 0.0)
-                << " p99_ms=" << s.value("p99_ms", 0.0)
+                << " avg_ms=" << s.value("avg_ms", 0.0) << " p50_ms=" << s.value("p50_ms", 0.0)
+                << " p95_ms=" << s.value("p95_ms", 0.0) << " p99_ms=" << s.value("p99_ms", 0.0)
                 << " max_ms=" << s.value("max_ms", 0.0) << "\n";
     }
   }
@@ -671,13 +670,8 @@ private:
 
   static json stage_json(const std::vector<double>& values) {
     if (values.empty()) {
-      return {{"count", 0},
-              {"avg_ms", 0.0},
-              {"min_ms", 0.0},
-              {"p50_ms", 0.0},
-              {"p95_ms", 0.0},
-              {"p99_ms", 0.0},
-              {"max_ms", 0.0}};
+      return {{"count", 0},    {"avg_ms", 0.0}, {"min_ms", 0.0}, {"p50_ms", 0.0},
+              {"p95_ms", 0.0}, {"p99_ms", 0.0}, {"max_ms", 0.0}};
     }
     return {{"count", static_cast<int64_t>(values.size())},
             {"avg_ms", mean(values)},
@@ -694,21 +688,17 @@ private:
   }
 
   json quality_json_locked() const {
-    const int64_t encoded_to_decoded =
-        static_cast<int64_t>(encoded_to_decoded_ms_.size());
+    const int64_t encoded_to_decoded = static_cast<int64_t>(encoded_to_decoded_ms_.size());
     const int64_t decoded_to_boxes = static_cast<int64_t>(decoded_to_boxes_ms_.size());
     const int64_t encoded_to_boxes = static_cast<int64_t>(encoded_to_boxes_ms_.size());
-    const int64_t boxes_to_metadata =
-        static_cast<int64_t>(boxes_to_metadata_send_ms_.size());
-    const int64_t encoded_to_metadata =
-        static_cast<int64_t>(encoded_to_metadata_send_ms_.size());
-    const int64_t encoded_to_video =
-        static_cast<int64_t>(encoded_to_video_send_ms_.size());
+    const int64_t boxes_to_metadata = static_cast<int64_t>(boxes_to_metadata_send_ms_.size());
+    const int64_t encoded_to_metadata = static_cast<int64_t>(encoded_to_metadata_send_ms_.size());
+    const int64_t encoded_to_video = static_cast<int64_t>(encoded_to_video_send_ms_.size());
     const int64_t best_correlated =
         std::max({encoded_to_decoded, decoded_to_boxes, encoded_to_boxes, boxes_to_metadata,
                   encoded_to_metadata, encoded_to_video});
-    const int64_t total_marks = encoded_marks_ + decoded_marks_ + boxes_marks_ +
-                                metadata_sent_marks_ + video_sent_marks_;
+    const int64_t total_marks =
+        encoded_marks_ + decoded_marks_ + boxes_marks_ + metadata_sent_marks_ + video_sent_marks_;
 
     std::string status;
     if (!enabled_) {
@@ -725,8 +715,7 @@ private:
     if (enabled_ && total_marks > 0 && best_correlated == 0) {
       warnings.push_back("Latency marks were observed, but no complete stage correlation was "
                          "formed; check stream_id and orig_input_seq/input_seq preservation.");
-    } else if (enabled_ && best_correlated > 0 &&
-               best_correlated < kMinCorrelatedLatencySamples) {
+    } else if (enabled_ && best_correlated > 0 && best_correlated < kMinCorrelatedLatencySamples) {
       warnings.push_back("Correlated latency sample count is below the minimum for a trustworthy "
                          "profile; use a longer measured window.");
     }
@@ -766,12 +755,10 @@ private:
           {"encoded_to_metadata_send", encoded_to_metadata},
           {"encoded_to_video_send", encoded_to_video}}},
         {"coverage",
-         {{"encoded_to_decoded",
-           coverage_ratio(encoded_to_decoded, encoded_decoded_possible)},
+         {{"encoded_to_decoded", coverage_ratio(encoded_to_decoded, encoded_decoded_possible)},
           {"decoded_to_boxes", coverage_ratio(decoded_to_boxes, decoded_boxes_possible)},
           {"encoded_to_boxes", coverage_ratio(encoded_to_boxes, encoded_boxes_possible)},
-          {"boxes_to_metadata_send",
-           coverage_ratio(boxes_to_metadata, boxes_metadata_possible)},
+          {"boxes_to_metadata_send", coverage_ratio(boxes_to_metadata, boxes_metadata_possible)},
           {"encoded_to_metadata_send",
            coverage_ratio(encoded_to_metadata, encoded_metadata_possible)},
           {"encoded_to_video_send", coverage_ratio(encoded_to_video, encoded_video_possible)}}},
@@ -936,10 +923,8 @@ static void write_json_atomic(const std::string& path, const json& j) {
 }
 
 static json load_processcvu_profile_jsonl(const std::string& path) {
-  json out = {{"enabled", !path.empty()},
-              {"path", path},
-              {"found", false},
-              {"entries", json::array()}};
+  json out = {
+      {"enabled", !path.empty()}, {"path", path}, {"found", false}, {"entries", json::array()}};
   if (path.empty())
     return out;
   std::ifstream is(path);
@@ -957,8 +942,8 @@ static json load_processcvu_profile_jsonl(const std::string& path) {
       continue;
     try {
       json entry = json::parse(line);
-      const std::string key = entry.value("stage", std::string{}) + "|" +
-                              entry.value("node", std::string{});
+      const std::string key =
+          entry.value("stage", std::string{}) + "|" + entry.value("node", std::string{});
       latest_by_node[key.empty() ? "<unknown>" : key] = entry;
       out["entries"].push_back(std::move(entry));
     } catch (const std::exception&) {
@@ -984,8 +969,7 @@ static void print_processcvu_profile_summary(const json& profile) {
   const json latest = profile.value("latest_by_node", json::object());
   for (const auto& [_, entry] : latest.items()) {
     std::cout << "[processcvu_profile] stage=" << entry.value("stage", "")
-              << " node=" << entry.value("node", "")
-              << " graph=" << entry.value("graph_id", -1)
+              << " node=" << entry.value("node", "") << " graph=" << entry.value("graph_id", -1)
               << " samples=" << entry.value("samples", 0)
               << " avg_ms{total=" << json_number_at(entry, "avg_ms", "total")
               << ",dispatcher_call=" << json_number_at(entry, "avg_ms", "dispatcher_call")
@@ -1002,8 +986,7 @@ static void print_processcvu_profile_summary(const json& profile) {
               << "} max_ms{total=" << json_number_at(entry, "max_ms", "total")
               << ",dispatcher_call=" << json_number_at(entry, "max_ms", "dispatcher_call")
               << ",peek_inputs=" << json_number_at(entry, "max_ms", "peek_inputs")
-              << ",acquire_outbuf=" << json_number_at(entry, "max_ms", "acquire_outbuf")
-              << "}\n";
+              << ",acquire_outbuf=" << json_number_at(entry, "max_ms", "acquire_outbuf") << "}\n";
   }
 }
 
@@ -1465,12 +1448,10 @@ static Args parse_args(int argc, char** argv) {
   sima_test::parse_int_arg(argc, argv, "--video-port-base", args.video_port_base);
   args.h264_bitrate_cli =
       sima_test::parse_int_arg(argc, argv, "--h264-bitrate-kbps", args.h264_bitrate_kbps);
-  sima_test::parse_int_arg(argc, argv, "--processcvu-profile-every",
-                           args.processcvu_profile_every);
+  sima_test::parse_int_arg(argc, argv, "--processcvu-profile-every", args.processcvu_profile_every);
   sima_test::parse_int_arg(argc, argv, "--processcvu-async-in-flight",
                            args.processcvu_async_in_flight);
-  sima_test::parse_int_arg(argc, argv, "--processcvu-pool-buffers",
-                           args.processcvu_pool_buffers);
+  sima_test::parse_int_arg(argc, argv, "--processcvu-pool-buffers", args.processcvu_pool_buffers);
 
   sima_test::parse_float_arg(argc, argv, "--yolo-score-threshold", args.yolo_score_threshold);
   sima_test::parse_float_arg(argc, argv, "--yolo-nms-iou", args.yolo_nms_iou);
@@ -1496,8 +1477,7 @@ static Args parse_args(int argc, char** argv) {
     args.source = to_lower(args.source);
   if (sima_test::get_arg(argc, argv, "--processcvu-target", args.processcvu_target))
     args.processcvu_target = to_upper(args.processcvu_target);
-  sima_test::get_arg(argc, argv, "--processcvu-profile-jsonl",
-                     args.processcvu_profile_jsonl);
+  sima_test::get_arg(argc, argv, "--processcvu-profile-jsonl", args.processcvu_profile_jsonl);
   sima_test::get_arg(argc, argv, "--video-host", args.video_host);
 
   parse_bool_arg(argc, argv, "--metadata-udp", args.metadata_udp);
@@ -2039,11 +2019,10 @@ static void record_sample_metrics(Metrics& metrics, Timings& timings, const Outp
   }
 }
 
-static void
-send_yolo_metadata_if_enabled(const Args& args, Metrics& metrics, const OutputDef& def,
-                              const simaai::neat::Sample& sample,
-                              const std::vector<simaai::neat::MetadataSender>& senders,
-                              const std::shared_ptr<LatencyTracker>& latency_tracker) {
+static void send_yolo_metadata_if_enabled(const Args& args, Metrics& metrics, const OutputDef& def,
+                                          const simaai::neat::Sample& sample,
+                                          const std::vector<simaai::neat::MetadataSender>& senders,
+                                          const std::shared_ptr<LatencyTracker>& latency_tracker) {
   if (!args.metadata_udp || def.branch != Branch::Yolo)
     return;
   if (def.lane < 0 || static_cast<std::size_t>(def.lane) >= senders.size()) {
@@ -2228,10 +2207,9 @@ int main(int argc, char** argv) {
       args.processcvu_profile_repro = true;
       if (args.processcvu_profile_jsonl.empty()) {
         args.processcvu_profile_jsonl =
-            args.json_out.empty()
-                ? (std::string("/tmp/macro_mixed_processcvu_profile_") +
-                   std::to_string(static_cast<long long>(::getpid())) + ".jsonl")
-                : (args.json_out + ".processcvu.jsonl");
+            args.json_out.empty() ? (std::string("/tmp/macro_mixed_processcvu_profile_") +
+                                     std::to_string(static_cast<long long>(::getpid())) + ".jsonl")
+                                  : (args.json_out + ".processcvu.jsonl");
       }
       const fs::path profile_path(args.processcvu_profile_jsonl);
       if (profile_path.has_parent_path()) {
@@ -2246,8 +2224,8 @@ int main(int argc, char** argv) {
       fs::remove(profile_path, rm_ec);
       setenv("SIMA_PROCESSCVU_PROFILE", "1", 1);
       setenv("SIMA_RUNTIME_PROFILE", "1", 1);
-      setenv("SIMA_PROCESSCVU_PROFILE_EVERY",
-             std::to_string(args.processcvu_profile_every).c_str(), 1);
+      setenv("SIMA_PROCESSCVU_PROFILE_EVERY", std::to_string(args.processcvu_profile_every).c_str(),
+             1);
       setenv("SIMA_PROCESSCVU_PROFILE_JSONL", args.processcvu_profile_jsonl.c_str(), 1);
     } else if (args.processcvu_profile_jsonl.empty()) {
       args.processcvu_profile_jsonl = env_string("SIMA_PROCESSCVU_PROFILE_JSONL");
@@ -2336,8 +2314,7 @@ int main(int argc, char** argv) {
                              "ResNet50 model pack not found; set --resnet-model, SIMA_MODEL_TAR, "
                              "SIMA_RESNET50_TAR, or run modelzoo get resnet_50");
     }
-    if (args.yolo_lanes > 0 && args.yolo_model.empty() &&
-        is_yolo26_family(args.yolo_decode_type)) {
+    if (args.yolo_lanes > 0 && args.yolo_model.empty() && is_yolo26_family(args.yolo_decode_type)) {
       args.yolo_model = sima_test::env_existing_model_tar_path("SIMA_YOLO26_TAR");
       if (args.yolo_model.empty())
         args.yolo_model = sima_test::env_existing_model_tar_path("SIMA_YOLO26N_TAR");
@@ -2394,8 +2371,8 @@ int main(int argc, char** argv) {
     auto rtsp_servers = start_rtsp_servers_with_retry(
         image_path, /*content_w=*/args.stream_width, /*content_h=*/args.stream_height,
         /*enc_w=*/args.stream_width, /*enc_h=*/args.stream_height, args.fps, args.port,
-        args.rtsp_servers, rtsp_port_stride,
-        rtp_port_offset, rtp_ports_per_server, rtp_port_stride, /*max_tries=*/5, args.rtsp_debug);
+        args.rtsp_servers, rtsp_port_stride, rtp_port_offset, rtp_ports_per_server, rtp_port_stride,
+        /*max_tries=*/5, args.rtsp_debug);
     RtspHandleGroup rtsp_guard;
     for (auto& rtsp : rtsp_servers)
       rtsp_guard.add(&rtsp.handle);
@@ -2684,9 +2661,8 @@ int main(int argc, char** argv) {
     timings.build_ms = elapsed_ms(build_t0, build_t1);
 
     std::vector<OutputDef> output_defs;
-    output_defs.reserve(static_cast<std::size_t>(args.resnet_lanes + args.yolo_lanes +
-                                                raw_output_nodes.size() +
-                                                video_output_nodes.size()));
+    output_defs.reserve(static_cast<std::size_t>(
+        args.resnet_lanes + args.yolo_lanes + raw_output_nodes.size() + video_output_nodes.size()));
     for (int lane = 0; lane < args.resnet_lanes; ++lane) {
       output_defs.push_back({run.output(resnet_argmax_nodes[static_cast<std::size_t>(lane)]),
                              resnet_argmax_nodes[static_cast<std::size_t>(lane)], Branch::ResNet,
@@ -2704,8 +2680,7 @@ int main(int argc, char** argv) {
     for (std::size_t i = 0; i < video_output_nodes.size(); ++i) {
       const int stream_index = video_output_stream_indexes.at(i);
       output_defs.push_back({run.output(video_output_nodes[i]), video_output_nodes[i],
-                             Branch::Video, stream_index,
-                             "video_" + std::to_string(stream_index)});
+                             Branch::Video, stream_index, "video_" + std::to_string(stream_index)});
     }
     std::vector<GraphRun::Output> outputs;
     std::unordered_map<NodeId, std::size_t> output_index_by_node;
@@ -2917,7 +2892,8 @@ int main(int argc, char** argv) {
     if (args.metadata_udp && args.yolo_lanes > 0 && metrics.metadata_sent == 0)
       throw std::runtime_error("MetadataSender was enabled but no YOLO metadata packets were sent");
     if (args.insight_video && metrics.video_packets == 0)
-      throw std::runtime_error("Insight video sender was enabled but no RTP/H264 packets were sent");
+      throw std::runtime_error(
+          "Insight video sender was enabled but no RTP/H264 packets were sent");
 
     for (const auto& label : expected_lane_labels(stream_defs)) {
       if (counter_count(metrics.by_lane, label) == 0) {

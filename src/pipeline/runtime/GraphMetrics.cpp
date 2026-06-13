@@ -235,8 +235,8 @@ build_graph_metrics_report_run_lifetime(const std::shared_ptr<const runtime::Run
   out.graph_metrics.counters.outputs_pulled = stats.outputs_pulled;
   out.graph_metrics.counters.outputs_dropped = stats.outputs_dropped;
   if (opt.include_power) {
-    out.graph_metrics.power = (core && core->power_monitor) ? core->power_monitor->summary()
-                                                            : PowerSummary{};
+    out.graph_metrics.power =
+        (core && core->power_monitor) ? core->power_monitor->summary() : PowerSummary{};
   }
   if (core) {
     std::chrono::steady_clock::time_point start;

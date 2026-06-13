@@ -567,7 +567,7 @@ private:
   friend class Run;
 #ifdef SIMA_NEAT_INTERNAL
   friend MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::RunCore>,
-                                                             const MeasureOptions&);
+                                                              const MeasureOptions&);
 #endif
   struct Impl;
   explicit MeasureScope(std::unique_ptr<Impl> impl);

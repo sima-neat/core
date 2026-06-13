@@ -117,11 +117,8 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
           "graph metrics should include output counter headline");
   require(json.at("run").at("graph_metrics").contains("throughput"),
           "graph metrics should include explicit throughput semantics block");
-  require(json.at("run")
-                  .at("graph_metrics")
-                  .at("throughput")
-                  .at("scope")
-                  .get<std::string>() == "run_lifetime",
+  require(json.at("run").at("graph_metrics").at("throughput").at("scope").get<std::string>() ==
+              "run_lifetime",
           "run-lifetime throughput block should declare run_lifetime scope");
   require(json.at("run")
                   .at("graph_metrics")
@@ -131,10 +128,7 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
           "throughput block should declare output-pull numerator");
   require(json.at("run").contains("output_materialization"),
           "export should include output materialization semantics");
-  require(json.at("run")
-                  .at("output_materialization")
-                  .at("timing_available")
-                  .get<bool>() == false,
+  require(json.at("run").at("output_materialization").at("timing_available").get<bool>() == false,
           "output materialization should explicitly mark timing unavailable");
   require(json.at("run").contains("node_metrics"), "export should include node metrics array");
   require(json.at("run").at("node_metrics").is_array(), "node metrics should be an array");
@@ -175,12 +169,10 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
   require(measured_json.at("run").at("graph_metrics").at("measurement_scope").get<std::string>() ==
               "measured_window",
           "measured export should mark graph metrics as measured-window");
-  require(measured_json.at("run")
-                  .at("graph_metrics")
-                  .at("throughput")
-                  .at("scope")
-                  .get<std::string>() == "measured_window",
-          "measured throughput block should declare measured-window scope");
+  require(
+      measured_json.at("run").at("graph_metrics").at("throughput").at("scope").get<std::string>() ==
+          "measured_window",
+      "measured throughput block should declare measured-window scope");
   require(measured_json.at("run")
                   .at("graph_metrics")
                   .at("throughput")
@@ -189,10 +181,8 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
           "measured throughput block should expose default logical batch size");
   require(measured_json.at("run").contains("graph_e2e_latency_ms"),
           "measured export should include explicit graph E2E latency metric block");
-  require(measured_json.at("run")
-                  .at("graph_e2e_latency_ms")
-                  .at("unit")
-                  .get<std::string>() == "milliseconds",
+  require(measured_json.at("run").at("graph_e2e_latency_ms").at("unit").get<std::string>() ==
+              "milliseconds",
           "graph E2E metric should declare units");
   require(measured_json.at("run")
                   .at("graph_e2e_latency_ms")
@@ -200,38 +190,29 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
                   .get<std::string>()
                   .find("queue_inclusive") != std::string::npos,
           "graph E2E metric should declare queue-inclusive semantics");
-  require(measured_json.at("run")
-                  .at("graph_e2e_latency_ms")
-                  .contains("correlation_reliable"),
+  require(measured_json.at("run").at("graph_e2e_latency_ms").contains("correlation_reliable"),
           "graph E2E metric should report correlation reliability");
-  require(measured_json.at("run")
-                  .at("graph_e2e_latency_ms")
-                  .contains("survivor_biased"),
+  require(measured_json.at("run").at("graph_e2e_latency_ms").contains("survivor_biased"),
           "graph E2E metric should report survivor-bias status");
   require(measured_json.at("run").contains("output_materialization"),
           "measured export should include output materialization semantics");
-  require(measured_json.at("run")
-              .at("output_materialization")
-              .contains("copy_map_timing_available"),
-          "measured export should state whether copy/map timing is available");
+  require(
+      measured_json.at("run").at("output_materialization").contains("copy_map_timing_available"),
+      "measured export should state whether copy/map timing is available");
   require(!measured_json.at("run")
                .at("output_materialization")
                .at("copy_map_timing_available")
                .get<bool>(),
           "measured export should not imply output materialization timing is available");
-  require(measured_json.at("run")
-              .at("output_materialization")
-              .contains("claim_status"),
+  require(measured_json.at("run").at("output_materialization").contains("claim_status"),
           "measured export should include output materialization claim status");
-  const std::filesystem::path measured_path =
-      tmp_path("run_export_measured.neat.graph_run.json");
+  const std::filesystem::path measured_path = tmp_path("run_export_measured.neat.graph_run.json");
   std::filesystem::remove(measured_path);
   {
     std::ofstream measured_out(measured_path);
     measured_out << measured_body << "\n";
   }
-  require(std::filesystem::exists(measured_path),
-          "measured run_to_json artifact was not written");
+  require(std::filesystem::exists(measured_path), "measured run_to_json artifact was not written");
   std::ifstream measured_in(measured_path);
   const nlohmann::json measured_saved = nlohmann::json::parse(measured_in);
   require(measured_saved.at("run").contains("graph_e2e_latency_ms"),

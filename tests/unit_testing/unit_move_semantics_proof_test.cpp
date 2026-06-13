@@ -96,8 +96,8 @@ int main() {
       b1_threw = true;
       b1_msg = e.what();
     }
-    std::cout << "[B1] moved-from g2.build() threw=" << (b1_threw ? "true" : "false")
-              << " msg=\"" << b1_msg << "\"\n";
+    std::cout << "[B1] moved-from g2.build() threw=" << (b1_threw ? "true" : "false") << " msg=\""
+              << b1_msg << "\"\n";
     if (!b1_threw) {
       std::cout << "[B1] FAIL: expected a clean throw from moved-from build()\n";
       ++failures;
@@ -112,8 +112,8 @@ int main() {
       b2_threw = true;
       b2_msg = e.what();
     }
-    std::cout << "[B2] moved-from g2.run() threw=" << (b2_threw ? "true" : "false")
-              << " msg=\"" << b2_msg << "\"\n";
+    std::cout << "[B2] moved-from g2.run() threw=" << (b2_threw ? "true" : "false") << " msg=\""
+              << b2_msg << "\"\n";
     if (!b2_threw) {
       std::cout << "[B2] FAIL: expected a clean throw from moved-from run()\n";
       ++failures;
@@ -130,7 +130,7 @@ int main() {
   }
 
   // Reaching here at all proves there was no SIGSEGV anywhere above.
-  std::cout << "[DONE] reached end of program WITHOUT a segfault (exit "
-            << (failures == 0 ? 0 : 1) << ")\n";
+  std::cout << "[DONE] reached end of program WITHOUT a segfault (exit " << (failures == 0 ? 0 : 1)
+            << ")\n";
   return failures == 0 ? 0 : 1;
 }

@@ -142,14 +142,12 @@ std::string validate_prepared_runtime_bridge_abi() {
       << ", PreparedStageSpec=" << caller.prepared_stage_spec_size
       << ", ProcessMlaPreparedStage=" << caller.processmla_prepared_stage_size
       << ", ProcessCvuPreparedStage=" << caller.processcvu_prepared_stage_size
-      << ", PreparedProcessCvuTypedConfig="
-      << caller.prepared_processcvu_typed_config_size << "}, bridge"
-      << " {abi_version=" << bridge->abi_version
+      << ", PreparedProcessCvuTypedConfig=" << caller.prepared_processcvu_typed_config_size
+      << "}, bridge" << " {abi_version=" << bridge->abi_version
       << ", PreparedStageSpec=" << bridge->prepared_stage_spec_size
       << ", ProcessMlaPreparedStage=" << bridge->processmla_prepared_stage_size
       << ", ProcessCvuPreparedStage=" << bridge->processcvu_prepared_stage_size
-      << ", PreparedProcessCvuTypedConfig="
-      << bridge->prepared_processcvu_typed_config_size
+      << ", PreparedProcessCvuTypedConfig=" << bridge->prepared_processcvu_typed_config_size
       << "}; rebuild and stage matching clean-internals/runtime artifacts";
   return oss.str();
 }

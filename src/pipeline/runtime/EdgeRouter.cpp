@@ -104,8 +104,7 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
   return true;
 }
 
-void RealtimeLatestLink::add_edge_options(std::size_t edge_index,
-                                          const GraphLinkOptions& options) {
+void RealtimeLatestLink::add_edge_options(std::size_t edge_index, const GraphLinkOptions& options) {
   if (edge_index == invalid_edge_index() || options.stream_id.empty()) {
     return;
   }
@@ -149,9 +148,7 @@ void RealtimeLatestLink::run_() {
     std::size_t edge_index = invalid_edge_index();
     {
       std::unique_lock<std::mutex> lock(mu_);
-      cv_.wait(lock, [&] {
-        return closed_ || (stop_ && stop_()) || !ready_.empty();
-      });
+      cv_.wait(lock, [&] { return closed_ || (stop_ && stop_()) || !ready_.empty(); });
       if ((closed_ || (stop_ && stop_())) && ready_.empty()) {
         return;
       }
@@ -260,7 +257,8 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
   }
 
   if (target.kind == DownstreamTarget::Kind::RealtimeLatestLink) {
-    if (target.index >= runtime_->realtime_links.size() || !runtime_->realtime_links[target.index]) {
+    if (target.index >= runtime_->realtime_links.size() ||
+        !runtime_->realtime_links[target.index]) {
       request_stop(callbacks, "EdgeRouter: realtime link target out of range");
       return false;
     }

@@ -38,9 +38,8 @@ MeasureQualityView compute_measure_quality(const MeasureReport& report) {
     bool correlation_reliable = true;
     if (samples != static_cast<std::size_t>(pulled)) {
       correlation_reliable = false;
-      out.warnings.push_back("End-to-end timing partial: collected " +
-                             std::to_string(samples) + " latency samples for " +
-                             std::to_string(pulled) + " pulled outputs");
+      out.warnings.push_back("End-to-end timing partial: collected " + std::to_string(samples) +
+                             " latency samples for " + std::to_string(pulled) + " pulled outputs");
     }
     if (report.graph_sample_timing_unkeyed > 0U) {
       correlation_reliable = false;
@@ -58,8 +57,7 @@ MeasureQualityView compute_measure_quality(const MeasureReport& report) {
     out.end_to_end_correlation_reliable = correlation_reliable;
   }
 
-  out.survivor_biased =
-      report.counters.inputs_dropped > 0U || report.counters.outputs_dropped > 0U;
+  out.survivor_biased = report.counters.inputs_dropped > 0U || report.counters.outputs_dropped > 0U;
   if (out.survivor_biased) {
     out.warnings.push_back(
         "Measured window included dropped inputs/outputs; latency describes surviving "

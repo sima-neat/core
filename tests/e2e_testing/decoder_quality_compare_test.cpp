@@ -395,9 +395,8 @@ static std::filesystem::path capture_rtsp_h264_file(const std::string& url, int 
   if (frames < max_frames) {
     std::error_code rm_ec;
     std::filesystem::remove(out_path, rm_ec);
-    throw std::runtime_error("capture: insufficient encoded frames (got " +
-                             std::to_string(frames) + " expected " +
-                             std::to_string(max_frames) + ")");
+    throw std::runtime_error("capture: insufficient encoded frames (got " + std::to_string(frames) +
+                             " expected " + std::to_string(max_frames) + ")");
   }
 
   std::cout << "[capture] wrote " << frames << " H264 access units (" << total_bytes

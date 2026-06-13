@@ -38,8 +38,8 @@ public:
 
   void on_input(simaai::neat::graph::StageMsg&& msg,
                 std::vector<simaai::neat::graph::StageOutMsg>& out) override {
-    out.push_back(simaai::neat::graph::StageOutMsg{.out_port = out_port_,
-                                                   .sample = std::move(msg.sample)});
+    out.push_back(
+        simaai::neat::graph::StageOutMsg{.out_port = out_port_, .sample = std::move(msg.sample)});
   }
 
 private:
@@ -139,8 +139,8 @@ bool throws_benchmark_projection_error(const simaai::neat::MeasureReport& latenc
                                        const simaai::neat::MeasureReport& throughput,
                                        int expected_samples, const std::string& needle) {
   try {
-    (void)simaai::neat::internal::build_benchmark_report_from_measurements(
-        latency, throughput, expected_samples);
+    (void)simaai::neat::internal::build_benchmark_report_from_measurements(latency, throughput,
+                                                                           expected_samples);
   } catch (const std::exception& e) {
     return std::string(e.what()).find(needle) != std::string::npos;
   }
@@ -308,8 +308,7 @@ void internal_graph_run_measurement_collects_e2e_latency_and_throughput() {
           "GraphRun measured keyed samples should not be unkeyed");
   require(report.graph_sample_timing_misses == 0,
           "GraphRun measured keyed samples should not miss correlation");
-  require(report.throughput_batches_per_s > 0.0,
-          "GraphRun measured throughput should be positive");
+  require(report.throughput_batches_per_s > 0.0, "GraphRun measured throughput should be positive");
   require(report.plugin_latency_status == "off" && report.plugin_latency_source == "none",
           "GraphRun default measurement must keep plugin latency off");
 }

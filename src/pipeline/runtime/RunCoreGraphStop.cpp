@@ -110,8 +110,9 @@ void RunCore::stop_graph() {
         push_threads++;
       }
     }
-    std::fprintf(stderr, "[GRAPH] GraphRun::stop threads stage=%zu realtime_links=%zu pull=%zu "
-                         "push=%zu\n",
+    std::fprintf(stderr,
+                 "[GRAPH] GraphRun::stop threads stage=%zu realtime_links=%zu pull=%zu "
+                 "push=%zu\n",
                  stage_workers, realtime_links, pull_threads, push_threads);
   }
 

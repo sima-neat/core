@@ -689,8 +689,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
     }
 
     auto pipeline_node = std::make_shared<graph::nodes::PipelineNode>(
-        std::move(nodes), "fragment" + std::to_string(start),
-        allow_realtime_fan_in ? 0 : 1);
+        std::move(nodes), "fragment" + std::to_string(start), allow_realtime_fan_in ? 0 : 1);
     const graph::NodeId runtime_id = out.graph.add(std::move(pipeline_node));
     out.graph_range_by_node[runtime_id] = {start, cur + 1U};
     cur = start;
@@ -1284,9 +1283,8 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
     if (edge.from >= runtime_node_for_vertex.size() || edge.to >= runtime_node_for_vertex.size()) {
       continue;
     }
-    const auto path =
-        runtime_edge_path(plan->edges, runtime_node_for_vertex[edge.from],
-                          runtime_node_for_vertex[edge.to]);
+    const auto path = runtime_edge_path(plan->edges, runtime_node_for_vertex[edge.from],
+                                        runtime_node_for_vertex[edge.to]);
     for (const std::size_t edge_index : path) {
       if (edge_index >= plan->edges.size()) {
         continue;
@@ -1433,13 +1431,13 @@ void add_fragment_named_candidates(std::unordered_map<std::string, Endpoint>* na
   std::vector<NamedEndpointCandidate> unique_candidates;
   unique_candidates.reserve(candidates.size());
   for (const auto& candidate : candidates) {
-    const bool duplicate = std::any_of(
-        unique_candidates.begin(), unique_candidates.end(), [&](const auto& existing) {
+    const bool duplicate =
+        std::any_of(unique_candidates.begin(), unique_candidates.end(), [&](const auto& existing) {
           return same_endpoint(existing.endpoint, candidate.endpoint) &&
                  existing.explicit_name == candidate.explicit_name;
         });
-    const bool duplicate_vertex_endpoint = std::any_of(
-        unique_candidates.begin(), unique_candidates.end(), [&](const auto& existing) {
+    const bool duplicate_vertex_endpoint =
+        std::any_of(unique_candidates.begin(), unique_candidates.end(), [&](const auto& existing) {
           return !candidate.explicit_name.empty() && existing.vertex == candidate.vertex &&
                  existing.explicit_name == candidate.explicit_name;
         });

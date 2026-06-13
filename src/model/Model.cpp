@@ -2006,11 +2006,11 @@ BenchmarkInputGeometry benchmark_input_geometry(const Tensor& tensor,
                                                 const ResolvedPreprocessPlan& plan,
                                                 const PreprocessRuntimeMeta& meta) {
   auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
-  for (const auto g : {wh(meta.original_width, meta.original_height),
-                       wh(meta.resized_width, meta.resized_height),
-                       wh(meta.scaled_width, meta.scaled_height),
-                       wh(plan.effective.resize.width, plan.effective.resize.height),
-                       wh(plan.mla_contract.width, plan.mla_contract.height)}) {
+  for (const auto g :
+       {wh(meta.original_width, meta.original_height), wh(meta.resized_width, meta.resized_height),
+        wh(meta.scaled_width, meta.scaled_height),
+        wh(plan.effective.resize.width, plan.effective.resize.height),
+        wh(plan.mla_contract.width, plan.mla_contract.height)}) {
     if (g)
       return g;
   }
@@ -2063,7 +2063,8 @@ std::string benchmark_input_color(const Tensor& tensor, const ResolvedPreprocess
     if (const std::string token = image_format_name(tensor.semantic.image->format); !token.empty())
       return token;
   }
-  const std::string planned = preprocess_color_format_name(plan.effective.color_convert.input_format);
+  const std::string planned =
+      preprocess_color_format_name(plan.effective.color_convert.input_format);
   return planned.empty() ? "synthetic" : planned;
 }
 
@@ -2082,7 +2083,8 @@ void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorLi
     return;
 
   const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
-  const internal::PreprocessContractFlags flags = internal::ModelAccess::preprocess_contract_flags(model);
+  const internal::PreprocessContractFlags flags =
+      internal::ModelAccess::preprocess_contract_flags(model);
   for (Tensor& tensor : inputs) {
     const bool had_meta = tensor.semantic.preprocess.has_value();
     PreprocessRuntimeMeta meta = had_meta ? *tensor.semantic.preprocess : PreprocessRuntimeMeta{};
@@ -2102,7 +2104,8 @@ void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorLi
                                          ? benchmark_resize_mode(plan.effective.resize.mode)
                                          : std::string("stretch"));
     set_if_missing(meta.color_in, benchmark_input_color(tensor, plan));
-    set_if_missing(meta.color_out, preprocess_color_format_name(plan.effective.color_convert.output_format));
+    set_if_missing(meta.color_out,
+                   preprocess_color_format_name(plan.effective.color_convert.output_format));
     if (meta.color_out.empty())
       meta.color_out = meta.color_in;
     if (meta.axis_perm.empty())
@@ -7285,9 +7288,9 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
       require_benchmark_output(out, "latency warmup");
     }
 
-    MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, /*include_power=*/false, include_plugin_latency,
-        "NEAT Benchmark latency"));
+    MeasureScope measure = latency_runner.start_measurement(
+        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/false,
+                                       include_plugin_latency, "NEAT Benchmark latency"));
     for (int i = 0; i < num_samples; ++i) {
       if (!latency_runner.push(inputs)) {
         latency_runner.close();
@@ -7316,9 +7319,9 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
       require_benchmark_output(out, "throughput warmup");
     }
 
-    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
-        kTimeoutMs, logical_batch_size, /*include_power=*/true, include_plugin_latency,
-        "NEAT Benchmark throughput"));
+    MeasureScope measure = runner.start_measurement(
+        make_benchmark_measure_options(kTimeoutMs, logical_batch_size, /*include_power=*/true,
+                                       include_plugin_latency, "NEAT Benchmark throughput"));
     int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
@@ -7376,22 +7379,21 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
   std::cout << "Samples: " << num_samples << "\n";
   std::cout << "Compiled batch: " << logical_batch_size << "\n";
   std::cout << "Measurement detail: "
-            << (include_plugin_latency ? "e2e+throughput+plugin-latency"
-                                       : "e2e+throughput-only")
+            << (include_plugin_latency ? "e2e+throughput+plugin-latency" : "e2e+throughput-only")
             << "\n";
   std::cout << "Latency: " << report.latency_ms << " ms\n";
   std::cout << "FPS:     " << report.fps << " inferences/s\n";
   std::cout << "Batch throughput: " << batch_throughput << " batches/s\n";
   if (include_plugin_latency) {
     std::cout << "Plugin latency latency-run: " << latency_measured.plugin_latency_source << "/"
-              << latency_measured.plugin_latency_status
-              << " rows=" << (latency_measured.plugin_latency.size() +
-                               latency_measured.plugin_latency_unattributed.size())
+              << latency_measured.plugin_latency_status << " rows="
+              << (latency_measured.plugin_latency.size() +
+                  latency_measured.plugin_latency_unattributed.size())
               << "\n";
     std::cout << "Plugin latency throughput-run: " << throughput_measured.plugin_latency_source
-              << "/" << throughput_measured.plugin_latency_status
-              << " rows=" << (throughput_measured.plugin_latency.size() +
-                               throughput_measured.plugin_latency_unattributed.size())
+              << "/" << throughput_measured.plugin_latency_status << " rows="
+              << (throughput_measured.plugin_latency.size() +
+                  throughput_measured.plugin_latency_unattributed.size())
               << "\n";
   }
   if (power_available) {
@@ -7430,23 +7432,21 @@ void require_benchmark_measure_report_window(const MeasureReport& report, const 
   }
   if (report.end_to_end.count != expected_size) {
     std::ostringstream oss;
-    oss << "Model::benchmark: " << label << " measurement collected "
-        << report.end_to_end.count << " end-to-end samples for " << expected_samples
+    oss << "Model::benchmark: " << label << " measurement collected " << report.end_to_end.count
+        << " end-to-end samples for " << expected_samples
         << " pulled outputs; cannot publish benchmark result";
     throw std::runtime_error(oss.str());
   }
   if (report.graph_sample_timing_unkeyed != 0U || report.graph_sample_timing_misses != 0U) {
     std::ostringstream oss;
-    oss << "Model::benchmark: " << label
-        << " measurement has unreliable graph sample correlation"
+    oss << "Model::benchmark: " << label << " measurement has unreliable graph sample correlation"
         << " (unkeyed=" << report.graph_sample_timing_unkeyed
         << ", misses=" << report.graph_sample_timing_misses << ")";
     throw std::runtime_error(oss.str());
   }
   if (report.counters.inputs_dropped != 0U || report.counters.outputs_dropped != 0U) {
     std::ostringstream oss;
-    oss << "Model::benchmark: " << label
-        << " measurement dropped inputs or outputs"
+    oss << "Model::benchmark: " << label << " measurement dropped inputs or outputs"
         << " (inputs_dropped=" << report.counters.inputs_dropped
         << ", outputs_dropped=" << report.counters.outputs_dropped << ")";
     throw std::runtime_error(oss.str());
@@ -7483,8 +7483,7 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
   }
 
   require_finite_positive(latency_report.end_to_end.avg_ms, "latency_ms");
-  require_finite_positive(throughput_report.throughput_batches_per_s,
-                          "throughput_batches_per_s");
+  require_finite_positive(throughput_report.throughput_batches_per_s, "throughput_batches_per_s");
   require_finite_positive(throughput_report.throughput_inferences_per_s,
                           "throughput_inferences_per_s");
 
