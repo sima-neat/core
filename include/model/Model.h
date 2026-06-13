@@ -520,6 +520,8 @@ public:
 
     /// Start observing caller-owned push/pull code without consuming outputs.
     simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
+    /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+    simaai::neat::MeasureScope start_measurement(bool include_plugin_latency);
     /// Close input (sends EOS) and release the underlying Run.
     void close();
     /// Send EOS into the input queue without releasing the Run (lets pull drain in flight).
@@ -608,7 +610,8 @@ public:
    * measures single-flight latency and async logical-inference throughput separately, prints a
    * compact summary, and returns headline metrics.
    */
-  BenchmarkReport benchmark(int num_samples = 100);
+  BenchmarkReport benchmark(int num_samples = 100, bool include_plugin_latency = false);
+  BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:
   friend struct internal::ModelAccess;

@@ -4369,7 +4369,10 @@ NB_MODULE(_pyneat_core, m) {
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
-      .def("benchmark", &simaai::neat::Model::benchmark, "num_samples"_a = 100,
+      .def("benchmark",
+           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
+               &simaai::neat::Model::benchmark),
+           "num_samples"_a = 100, "include_plugin_latency"_a = false,
            nb::call_guard<nb::gil_scoped_release>());
 
   // from-Model constructors for the CVU-atom options (registered here, after Model — pulls tile
