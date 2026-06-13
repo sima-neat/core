@@ -162,7 +162,7 @@ const config = {
     navbar: {
       title: "SiMa.ai Neat",
       items: [
-        { label: "Installation", to: "/getting-started/installation/", position: "left" },
+        { label: "Getting Started", to: "/getting-started/", position: "left" },
         { label: "C++ API", to: "/reference/cppapi/", position: "left" },
         { label: "Python API", to: "/reference/pythonapi/", position: "left" },
         {

@@ -23,7 +23,7 @@
       "link_rewrites": [
         {
           "from": "/getting-started/installation/neat-framework/",
-          "to": "/getting-started/installation/neat-library/"
+          "to": "/getting-started/neat-library/"
         }
       ]
     },
@@ -61,7 +61,7 @@
         },
         {
           "from": "/getting-started/installation/neat-framework/",
-          "to": "/getting-started/installation/neat-library/"
+          "to": "/getting-started/neat-library/"
         }
       ]
     },

@@ -1,0 +1,9 @@
+{
+  "label": "Neat Library",
+  "position": 4,
+  "collapsed": true,
+  "link": {
+    "type": "doc",
+    "id": "getting-started/neat-library/index"
+  }
+}

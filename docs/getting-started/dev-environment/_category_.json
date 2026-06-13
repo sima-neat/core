@@ -1,0 +1,9 @@
+{
+  "label": "Neat Development Environment",
+  "position": 3,
+  "collapsed": true,
+  "link": {
+    "type": "doc",
+    "id": "getting-started/dev-environment/index"
+  }
+}
