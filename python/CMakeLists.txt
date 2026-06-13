@@ -4,7 +4,17 @@ include(FetchContent)
 
 # nanobind expects CMake's unified FindPython package/variables
 # (Python::Module + Python_INCLUDE_DIRS).
-find_package(Python 3.8 REQUIRED COMPONENTS Interpreter Development.Module)
+if (DEFINED Python_INCLUDE_DIR AND NOT Python_INCLUDE_DIR STREQUAL "")
+  find_package(Python 3.8 REQUIRED COMPONENTS Interpreter)
+  set(Python_INCLUDE_DIRS "${Python_INCLUDE_DIR}")
+  if (NOT TARGET Python::Module)
+    add_library(Python::Module INTERFACE IMPORTED)
+    set_target_properties(Python::Module PROPERTIES
+      INTERFACE_INCLUDE_DIRECTORIES "${Python_INCLUDE_DIR}")
+  endif()
+else()
+  find_package(Python 3.8 REQUIRED COMPONENTS Interpreter Development.Module)
+endif()
 find_package(nanobind CONFIG QUIET)
 
 if (NOT nanobind_FOUND)
