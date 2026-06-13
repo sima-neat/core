@@ -1499,6 +1499,10 @@ Graph& Graph::connect(std::string_view from_endpoint, std::string_view to_endpoi
 }
 
 Graph& Graph::connect(const Graph& from, const Graph& to) {
+  return connect(from, to, GraphLinkOptions{});
+}
+
+Graph& Graph::connect(const Graph& from, const Graph& to, const GraphLinkOptions& options) {
   const auto [from_start, from_end] =
       import_or_reuse_composition_fragment_(from, "Graph::connect(from)");
   if (from_end <= from_start) {
@@ -1530,7 +1534,7 @@ Graph& Graph::connect(const Graph& from, const Graph& to) {
                       : to.endpoint_name_ + "_" + std::to_string(output - to_start);
       }
       composition_->connect_endpoint(from_vertex, output, source_candidates.front().name,
-                                     std::move(to_name));
+                                     std::move(to_name), options);
     }
   } else {
     const auto [to_start, to_end] = import_or_reuse_composition_fragment_(to, "Graph::connect(to)");
@@ -1542,7 +1546,7 @@ Graph& Graph::connect(const Graph& from, const Graph& to) {
     const FragmentEndpointMatch match = resolve_fragment_endpoint_match_or_throw(
         source_candidates, destination_candidates, from.endpoint_name_, to.endpoint_name_,
         "Graph::connect");
-    composition_->connect_endpoint(match.from, match.to, match.from_name, match.to_name);
+    composition_->connect_endpoint(match.from, match.to, match.from_name, match.to_name, options);
   }
   mark_composition_changed();
   return *this;

@@ -5,6 +5,7 @@
 
 #include <gst/gst.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <dlfcn.h>
 
@@ -24,6 +25,7 @@ struct SimaMemApi {
   using FlushFn = void (*)(simaai_memory_t*);
   using MapFn = void* (*)(simaai_memory_t*);
   using UnmapFn = void (*)(simaai_memory_t*);
+  using GetSizeFn = std::size_t (*)(simaai_memory_t*);
   using GetPhysFn = guintptr (*)(GstMemory*);
   // Allocator's ownership-skip-gated CPU-read authority; resolved at runtime from
   // the global scope (RTLD_DEFAULT) and OPTIONAL — null against an allocator that
@@ -36,6 +38,7 @@ struct SimaMemApi {
   FlushFn flush = nullptr;
   MapFn map = nullptr;
   UnmapFn unmap = nullptr;
+  GetSizeFn get_size = nullptr;
   GetPhysFn get_phys = nullptr;
   CpuReadBeginFn cpu_read_begin = nullptr;
   bool tried = false;
@@ -68,6 +71,8 @@ inline SimaMemApi& sima_mem_api() {
   api.flush = reinterpret_cast<SimaMemApi::FlushFn>(dlsym(handle, "simaai_memory_flush_cache"));
   api.map = reinterpret_cast<SimaMemApi::MapFn>(dlsym(handle, "simaai_memory_map"));
   api.unmap = reinterpret_cast<SimaMemApi::UnmapFn>(dlsym(handle, "simaai_memory_unmap"));
+  api.get_size =
+      reinterpret_cast<SimaMemApi::GetSizeFn>(dlsym(handle, "simaai_memory_get_size"));
   api.get_phys =
       reinterpret_cast<SimaMemApi::GetPhysFn>(dlsym(handle, "gst_simaai_memory_get_phys_addr"));
   return api;

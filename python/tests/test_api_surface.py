@@ -1161,7 +1161,7 @@ def test_graph_video_push_uses_input_format_without_image_semantic():
   graph = pyneat.Graph()
   opt = pyneat.InputOptions()
   opt.payload_type = pyneat.PayloadType.Image
-  opt.format = "RGB"
+  opt.format = pyneat.Format.RGB
   opt.use_simaai_pool = False
   graph.add(pyneat.nodes.input(opt))
   graph.add(pyneat.nodes.output())

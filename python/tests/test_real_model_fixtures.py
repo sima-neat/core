@@ -212,7 +212,7 @@ def _mla_byte_stream_input_options(model_tar: Path) -> pyneat.InputOptions:
   name, num_bytes = _mla_input_byte_stream_contract(model_tar)
   opt = pyneat.InputOptions()
   opt.payload_type = pyneat.PayloadType.Tensor
-  opt.format = "BYTESTREAM"
+  opt.format = pyneat.Format.ByteStream
   opt.width = num_bytes
   opt.height = 1
   opt.depth = 1
@@ -575,7 +575,7 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
     assert input_spec.dtypes == [pyneat.TensorDType.Float32]
     assert list(input_spec.shape) == [640, 640, 3]
     assert appsrc.payload_type == pyneat.PayloadType.Tensor
-    assert appsrc.format == "FP32"
+    assert appsrc.format == pyneat.Format.FP32
     assert "quanttess" in backend
     assert "preproc" not in backend
 

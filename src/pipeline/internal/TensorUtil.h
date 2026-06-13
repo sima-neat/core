@@ -63,6 +63,10 @@ simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& 
                                                     int memory_index, bool keep_holder = true);
 simaai::neat::Tensor tensor_view_from_sample_memory(const simaai::neat::Tensor& ref,
                                                     int memory_index, bool keep_holder = true);
+simaai::neat::Tensor tensor_view_from_sample_segment(const simaai::neat::Tensor& ref,
+                                                     const std::string& segment_name,
+                                                     int fallback_memory_index,
+                                                     bool keep_holder = true);
 std::shared_ptr<void> holder_from_tensor(const simaai::neat::Tensor& tensor);
 
 // Copy `bytes` from `src` into the simaai segment memory pointed to by `segment`
