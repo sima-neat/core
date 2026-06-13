@@ -110,7 +110,7 @@ Traditional development remains a parallel path for direct control through the
 same APIs. Both produce standard, inspectable SiMa.ai Neat applications, so you
 can review or modify agent-developed code and move between the two workflows as
 the application evolves. See [Set up the Neat Development
-Environment](/getting-started/installation/dev-environment/) to enable agentic
+Environment](/getting-started/dev-environment/) to enable agentic
 development.
 
 <div className="overview-workflow-image agentic-visual-desktop">

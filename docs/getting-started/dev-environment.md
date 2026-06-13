@@ -46,7 +46,7 @@ To use DevKit Sync, you also need:
 - Your host machine and DevKit on the same network with NFS traffic allowed.
 - Your DevKit IP address.
 
-## Install the SDK
+## Install the environment
 
 Install the SDK version that matches your DevKit software and Neat Library version:
 
@@ -64,7 +64,7 @@ sima-cli install ghcr:sima-neat/sdk-v2.0.0
 
 You can also install `ghcr:sima-neat/sdk` to use the latest SDK image from the main branch of the open source repository.
 
-## Set Up the SDK
+## Set up the environment
 
 After installation, run one of the setup flows below.
 
@@ -102,6 +102,34 @@ __SIMA_DEVKIT_BOOTSTRAP_STATUS=sourced_no_dk
 ✅ All selected containers started successfully!
 ```
 
+#### Update an existing pairing
+
+Use this flow when the Neat Development Environment is already installed and
+you need to:
+
+- Pair a different DevKit.
+- Update the pairing after your DevKit IP address changed.
+
+1. From inside the SDK container, run:
+
+   ```bash
+   source devkit.sh <devkit-ip>
+   ```
+
+   Replace `<devkit-ip>` with the IP address of the DevKit you want to use.
+
+   Example:
+
+   ```bash
+   source devkit.sh 192.168.91.221
+   ```
+
+2. Run commands on the paired DevKit with `dk`:
+
+   ```bash
+   dk /workspace/<path-to-arm64-binary> [args...]
+   ```
+
 ### Set up without DevKit pairing
 
 Use this flow when the DevKit is not reachable from the SDK host:
@@ -137,7 +165,7 @@ The `neat` command also reports the actual Insight Web UI URL when the SDK expos
 neat
 </ShellCommand>
 
-For more detail on the status output and JSON format, see [Neat CLI](/getting-started/installation/neat-library/#neat-cli).
+For more detail on the status output and JSON format, see [Neat CLI](/getting-started/neat-library/#neat-cli).
 
 ## Model Compiler
 
@@ -210,7 +238,7 @@ The DevKit Sync setup connects three environments:
 - The same content appears on the DevKit as `/workspace` through NFS.
 - The mounted folder name defaults to `/workspace` and can be changed during SDK setup.
 
-![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.svg)
+![Host-Container-DevKit workspace mapping](../images/elxr-sdk-workspaces.svg)
 
 The diagram above shows how NFS-backed volume mapping exposes the same workspace across the host, SDK container, and DevKit.
 
@@ -290,8 +318,8 @@ This updates the installed Neat Library components in the current SDK. It does n
 
 If you delete or recreate the SDK container later, run `neat update` again inside the new container. The image may not include the latest Neat Library or `neat-insight` artifacts at the time you recreate it.
 
-For more detail on status checks, JSON output, and component updates, see [Neat CLI](/getting-started/installation/neat-library/#neat-cli).
+For more detail on status checks, JSON output, and component updates, see [Neat CLI](/getting-started/neat-library/#neat-cli).
 
 ## Next step
 
-To install or update the library/runtime itself (the same flow for DevKit and the SDK), continue to [Neat Library](/getting-started/installation/neat-library/).
+To install or update the library/runtime itself (the same flow for DevKit and the SDK), continue to [Neat Library](/getting-started/neat-library/).
