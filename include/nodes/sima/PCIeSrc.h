@@ -3,7 +3,7 @@
  * @ingroup nodes_sima
  * @brief `PCIeSrc` Node — receives samples from a PCIe-connected host (Modalix as PCIe target).
  *
- * Wraps the legacy `simaaipciesrc` GStreamer element which uses standard GStreamer
+ * Wraps the `neatpciesrc` GStreamer element, which uses standard GStreamer
  * buffer allocation (no SiMa DMA allocator), keeping memory usage low and compatible
  * with all board configurations. Use as the source in pipelines where the host pushes
  * frames into the Modalix board over PCIe.
@@ -25,8 +25,11 @@ namespace simaai::neat {
  * @ingroup nodes_sima
  */
 struct PCIeSrcOptions {
+  /// PCIe data queue to listen on.
+  int queue = 0;
+
   /// Size in bytes of each incoming frame buffer.
-  /// Default 4 MB matches the simaaipciesrc default.
+  /// Default 4 MB matches the neatpciesrc default.
   int buffer_size = 4194304;
 
   /// Optional caps enforcement — when format, width, and height are all

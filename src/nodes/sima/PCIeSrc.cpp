@@ -30,7 +30,8 @@ std::string PCIeSrc::backend_fragment(int node_index) const {
   require_element("neatpciesrc", "PCIeSrc::backend_fragment");
 
   std::ostringstream ss;
-  ss << "neatpciesrc name=n" << node_index << "_pciesrc" << " buffer-size=" << opt_.buffer_size;
+  ss << "neatpciesrc name=n" << node_index << "_pciesrc" << " queue=" << opt_.queue
+     << " buffer-size=" << opt_.buffer_size;
 
   if (has_fixed_caps(opt_)) {
     ss << " ! capsfilter name=n" << node_index << "_pciesrc_caps"
@@ -62,7 +63,7 @@ OutputSpec PCIeSrc::output_spec(const OutputSpec& /*input*/) const {
   out.height = opt_.height;
   out.fps_num = (opt_.fps_n > 0) ? opt_.fps_n : 0;
   out.fps_den = (opt_.fps_d > 0) ? opt_.fps_d : 1;
-  out.memory = "System";
+  out.memory = "SystemMemory";
   out.certainty = SpecCertainty::Hint;
   out.note = "neatpciesrc output";
 
