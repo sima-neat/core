@@ -278,6 +278,7 @@ jobs:
       artifact_pattern: neat-core-dist
       artifact_glob: "*"
       min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 9 || 10 }}
+      publish_manifest: false
 
   test-devkit:
     name: Test Core on DevKit
