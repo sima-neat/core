@@ -215,10 +215,32 @@ std::string default_input_name(const runtime::RunCore& core) {
   return "default";
 }
 
+Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& in) {
+  Sample out = in;
+  if (out.stream_id.empty()) {
+    out.stream_id = "default";
+  }
+
+  // Prefer a run-local public-ingress sequence over frame_id fallback whenever sequence fields are
+  // absent. frame_id can repeat across looping sources, reconnects, generated tests, and fanout
+  // reuse; orig_input_seq/input_seq are the stable correlation key for this Run's measurements.
+  if (out.orig_input_seq < 0 && out.input_seq < 0) {
+    const auto seq = core.next_public_graph_input_seq.fetch_add(1, std::memory_order_relaxed);
+    out.orig_input_seq = seq;
+    out.input_seq = seq;
+  } else if (out.orig_input_seq < 0 && out.input_seq >= 0) {
+    out.orig_input_seq = out.input_seq;
+  } else if (out.input_seq < 0 && out.orig_input_seq >= 0) {
+    out.input_seq = out.orig_input_seq;
+  }
+  return out;
+}
+
 bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpoint& endpoint,
                                     std::string_view endpoint_name, const Sample& msgs,
                                     bool block) {
   for (const auto& msg : msgs) {
+    Sample stamped = stamp_public_graph_ingress_sample(core, msg);
     if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
       std::fprintf(stderr,
                    "[SAMPLE_TIMING] graph_push_endpoint node=%zu port=%u has_port=%d "
@@ -226,21 +248,22 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                    "stream_id=%s block=%d\n",
                    static_cast<std::size_t>(endpoint.node), static_cast<unsigned>(endpoint.port),
                    endpoint.port != simaai::neat::graph::kInvalidPort ? 1 : 0,
-                   static_cast<int>(msg.kind), static_cast<long long>(msg.frame_id),
-                   static_cast<long long>(msg.pts_ns), static_cast<long long>(msg.dts_ns),
-                   static_cast<long long>(msg.duration_ns), msg.stream_id.c_str(), block ? 1 : 0);
+                   static_cast<int>(stamped.kind), static_cast<long long>(stamped.frame_id),
+                   static_cast<long long>(stamped.pts_ns), static_cast<long long>(stamped.dts_ns),
+                   static_cast<long long>(stamped.duration_ns), stamped.stream_id.c_str(),
+                   block ? 1 : 0);
     }
     core.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
     const auto entry_at = std::chrono::steady_clock::now();
     runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphEntry,
                                        core.graph_execution_.get(), runtime::invalid_edge_index(),
-                                       msg, endpoint_name);
+                                       stamped, endpoint_name);
     if (!core.graph_push(endpoint.node, endpoint.port,
-                         endpoint.port != simaai::neat::graph::kInvalidPort, msg,
+                         endpoint.port != simaai::neat::graph::kInvalidPort, stamped,
                          graph_router_options_for_push(core, block))) {
       return false;
     }
-    core.record_graph_sample_entry(endpoint_name, msg, entry_at);
+    core.record_graph_sample_entry(endpoint_name, stamped, entry_at);
     core.inputs_pushed.fetch_add(1, std::memory_order_relaxed);
   }
   return true;

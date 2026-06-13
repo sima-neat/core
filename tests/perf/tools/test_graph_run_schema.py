@@ -129,6 +129,26 @@ def valid_payload() -> dict[str, object]:
                 "aggregation": "run_lifetime",
                 "latency_semantics": "sum_element_residency",
                 "throughput_counting": "all_pulled_outputs",
+                "throughput": {
+                    "unit": "output_pulls_per_second",
+                    "scope": "run_lifetime",
+                    "semantics": "public_output_pulls_per_second",
+                    "numerator_counter": "outputs_pulled",
+                    "numerator_value": 1,
+                    "denominator": "elapsed_seconds",
+                    "denominator_seconds": 0.1,
+                    "outputs_pulled": 1,
+                    "elapsed_seconds": 0.1,
+                    "outputs_per_s": 10.0,
+                    "batches_per_s": 10.0,
+                    "throughput_batches_per_s": 10.0,
+                    "logical_batch_size": 1,
+                    "logical_inferences_per_s": 10.0,
+                    "multi_output_semantics": "each successful public pull increments outputs_pulled once",
+                    "available": True,
+                    "status": "collected",
+                    "warnings": [],
+                },
                 "elapsed_seconds": 0.1,
                 "outputs_pulled": 1,
                 "throughput_fps": 10.0,
@@ -150,6 +170,41 @@ def valid_payload() -> dict[str, object]:
                     "energy_joules": 0.0,
                     "rails": [],
                 },
+            },
+            "graph_e2e_latency_ms": {
+                "available": True,
+                "status": "collected",
+                "correlation_reliable": True,
+                "survivor_biased": False,
+                "unit": "milliseconds",
+                "scope": "graph_application",
+                "source": "runtime_graph_sample_timing",
+                "semantics": "queue_inclusive_public_graph_push_to_public_output_pull",
+                "interpretation": "single-flight approximates app-visible latency",
+                "count": 1,
+                "avg_ms": 0.4,
+                "p50_ms": 0.4,
+                "p90_ms": 0.4,
+                "p95_ms": 0.4,
+                "p99_ms": 0.4,
+                "max_ms": 0.4,
+                "warnings": [],
+            },
+            "output_materialization": {
+                "available": True,
+                "status": "metadata_only",
+                "claim_status": "requested_mode_only_materialization_timing_unavailable",
+                "claim_scope": "requested_output_memory_mode_only",
+                "output_memory_mode": "owned",
+                "semantics": "owned_output_copy",
+                "timing_available": False,
+                "runtime_resolved_mode_available": False,
+                "copy_map_timing_available": False,
+                "prepare_output_cpu_visible": False,
+                "note": "Output memory/materialization mode is reported.",
+                "warnings": [
+                    "Output materialization reports requested mode only; copy timing unavailable."
+                ],
             },
             "node_metrics": [
                 {
@@ -274,6 +329,36 @@ class GraphRunSchemaTest(unittest.TestCase):
     def test_bad_graph_metric_counter_fails(self) -> None:
         bad = valid_payload()
         bad["run"]["graph_metrics"]["outputs_pulled"] = "one"  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_graph_e2e_latency_requires_units_and_semantics(self) -> None:
+        bad = valid_payload()
+        del bad["run"]["graph_e2e_latency_ms"]["unit"]  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_graph_e2e_latency_requires_quality_flags(self) -> None:
+        bad = valid_payload()
+        del bad["run"]["graph_e2e_latency_ms"]["correlation_reliable"]  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_throughput_summary_requires_numerator(self) -> None:
+        bad = valid_payload()
+        del bad["run"]["graph_metrics"]["throughput"]["numerator_value"]  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_output_materialization_requires_semantics(self) -> None:
+        bad = valid_payload()
+        del bad["run"]["output_materialization"]["semantics"]  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_output_materialization_requires_zero_copy_caveat(self) -> None:
+        bad = valid_payload()
+        del bad["run"]["output_materialization"]["copy_map_timing_available"]  # type: ignore[index]
         with self.assertRaises(schema.SchemaError):
             schema.validate_graph_run(bad)
 

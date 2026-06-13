@@ -110,6 +110,10 @@ struct ModelAccess {
                                             const Model::RouteOptions& opt);
 };
 
+BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& latency_report,
+                                                         const MeasureReport& throughput_report,
+                                                         int expected_samples);
+
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,
                                          const IngressConsumerTensorIdentity& identity);
 Sample remap_sample_to_consumer_identity(Sample sample,

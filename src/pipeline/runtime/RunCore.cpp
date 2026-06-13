@@ -231,6 +231,11 @@ void RunCore::graph_signal_stop() {
   if (!graph_execution_)
     return;
 
+  for (auto& link : graph_execution_->realtime_links) {
+    if (link) {
+      link->close();
+    }
+  }
   for (auto& stage : graph_execution_->stages) {
     if (stage) {
       if (!already_stopping && stage->exec) {

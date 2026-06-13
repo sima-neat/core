@@ -198,6 +198,7 @@ struct EdgePlan {
   graph::PortId to_port = graph::kInvalidPort;
   OutputSpec spec;
   bool spec_complete = false;
+  GraphLinkOptions link_options;
 };
 
 struct PublicGraphNodePlan {
@@ -221,6 +222,7 @@ struct PublicGraphEdgePlan {
   graph::NodeId runtime_from = graph::kInvalidNode;
   graph::NodeId runtime_to = graph::kInvalidNode;
   std::vector<std::size_t> runtime_edge_indices;
+  GraphLinkOptions link_options;
 };
 
 struct ExecutionGraphPlan {

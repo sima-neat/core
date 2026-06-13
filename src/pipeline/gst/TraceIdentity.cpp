@@ -225,7 +225,14 @@ void apply_to_trace_capable_fallback(GstElement* pipeline, std::size_t pipeline_
 void apply_lttng_trace_identity(const Run& run, const std::vector<GraphNodeMetrics>& nodes,
                                 std::uint64_t run_id_hash, std::uint64_t graph_id_hash, bool enable,
                                 bool enable_message_events) {
-  const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
+  apply_lttng_trace_identity(run_internal::core(run), nodes, run_id_hash, graph_id_hash, enable,
+                             enable_message_events);
+}
+
+void apply_lttng_trace_identity(const std::shared_ptr<const runtime::RunCore>& core,
+                                const std::vector<GraphNodeMetrics>& nodes,
+                                std::uint64_t run_id_hash, std::uint64_t graph_id_hash, bool enable,
+                                bool enable_message_events) {
   if (!core) {
     return;
   }

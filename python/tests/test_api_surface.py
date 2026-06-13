@@ -145,6 +145,8 @@ def _assert_not_type_error(call):
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
   assert hasattr(pyneat, "GraphOptions")
+  assert hasattr(pyneat, "GraphLinkOptions")
+  assert hasattr(pyneat, "GraphLinkPolicy")
   assert hasattr(pyneat, "GraphReport")
   assert hasattr(pyneat, "NeatError")
   assert hasattr(pyneat, "ModelRouteOptions")
@@ -197,6 +199,29 @@ def test_graph_pythonic_add_graph_and_connect_alias():
 
   connected = pyneat.Graph()
   assert connected.connect(source, sink) is connected
+
+
+def test_graph_link_options_surface():
+  opt = pyneat.GraphLinkOptions()
+  assert opt.policy == pyneat.GraphLinkPolicy.Default
+  opt.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+  opt.queue_depth = 7
+  opt.stream_id = "camera0"
+  assert opt.policy == pyneat.GraphLinkPolicy.RealtimeLatestByStream
+  assert opt.queue_depth == 7
+  assert opt.stream_id == "camera0"
+
+  source = pyneat.Graph()
+  source.custom_with_role(
+      "videotestsrc num-buffers=1 is-live=false ! "
+      "video/x-raw,format=RGB,width=16,height=16,framerate=1/1",
+      pyneat.InputRole.Source,
+  )
+  sink = pyneat.Graph()
+  sink.add(pyneat.nodes.output())
+
+  connected = pyneat.Graph()
+  assert connected.connect(source, sink, opt) is connected
 
 
 def test_named_graph_endpoint_api_surface():
@@ -1257,3 +1282,10 @@ def test_model_runner_measurement_surface_matches_run():
   assert not hasattr(pyneat.ModelRunner, "metrics_report")
   assert not hasattr(pyneat.ModelRunner, "diag_snapshot")
   assert not hasattr(pyneat.ModelRunner, "report")
+
+
+def test_measurement_bool_overload_surface():
+  _assert_not_type_error(lambda: pyneat.Run().start_measurement(False))
+  _assert_not_type_error(lambda: pyneat.Run().start_measurement(True))
+  _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(False))
+  _assert_not_type_error(lambda: pyneat.ModelRunner().start_measurement(True))

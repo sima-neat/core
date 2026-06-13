@@ -42,6 +42,31 @@ class Mat;
 namespace simaai::neat {
 
 /**
+ * @brief Runtime policy for a connection between two public Graph fragments.
+ *
+ * `Default` preserves the existing lossless/backpressure semantics. `RealtimeLatestByStream`
+ * is for live multi-stream fan-in: producers never block on the consumer; the runtime keeps only
+ * the latest frame per `Sample::stream_id` (or per source edge if stream_id is empty) and schedules
+ * ready streams fairly into the downstream graph.
+ */
+enum class GraphLinkPolicy {
+  Default = 0,
+  RealtimeLatestByStream,
+};
+
+/**
+ * @brief Options for `Graph::connect(from, to, options)`.
+ */
+struct GraphLinkOptions {
+  GraphLinkPolicy policy = GraphLinkPolicy::Default;
+  int queue_depth = 16;
+  /// Optional stream id to stamp on samples crossing this link before realtime scheduling.
+  /// Useful when source plugins emit a generic/default stream id but the composed Graph fan-in
+  /// needs stable per-source identity. Empty preserves the incoming sample stream id.
+  std::string stream_id;
+};
+
+/**
  * @brief Coarse-grained framework verbosity selector.
  *
  * Combined with the per-topic flags in `VerboseOptions` to decide what diagnostic output the

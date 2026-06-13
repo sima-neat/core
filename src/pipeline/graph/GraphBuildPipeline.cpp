@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <dlfcn.h>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -95,6 +96,60 @@ const StageStaticSpec* find_boxdecode_manifest_stage(const SimaPluginStaticManif
   }
 
   return nullptr;
+}
+
+std::string validate_prepared_runtime_bridge_abi() {
+  using AbiSizesFn = const PreparedRuntimeBridgeAbiSizes* (*)();
+  constexpr const char* kSymbol = "sima_neat_prepared_runtime_bridge_abi_sizes";
+
+  dlerror(); // Clear any prior dynamic-loader error.
+  void* symbol = dlsym(RTLD_DEFAULT, kSymbol);
+  if (!symbol) {
+    std::ostringstream oss;
+    oss << "prepared runtime ABI mismatch: loaded libneatpreparedruntimebridge.so does not expose "
+        << kSymbol
+        << "; rebuild and stage libneatpreparedruntimebridge.so together with libsima_neat.so";
+    return oss.str();
+  }
+
+  const auto* bridge = reinterpret_cast<AbiSizesFn>(symbol)();
+  if (!bridge) {
+    return "prepared runtime ABI mismatch: libneatpreparedruntimebridge.so returned null ABI "
+           "size probe; rebuild and stage matching runtime artifacts";
+  }
+
+  const PreparedRuntimeBridgeAbiSizes caller{
+      SIMA_PREPARED_RUNTIME_ABI_VERSION,
+      sizeof(simaai::gst::PreparedStageSpec),
+      sizeof(simaai::gst::ProcessMlaPreparedStage),
+      sizeof(simaai::gst::ProcessCvuPreparedStage),
+      sizeof(simaai::gst::PreparedProcessCvuTypedConfig),
+  };
+
+  if (bridge->abi_version == caller.abi_version &&
+      bridge->prepared_stage_spec_size == caller.prepared_stage_spec_size &&
+      bridge->processmla_prepared_stage_size == caller.processmla_prepared_stage_size &&
+      bridge->processcvu_prepared_stage_size == caller.processcvu_prepared_stage_size &&
+      bridge->prepared_processcvu_typed_config_size ==
+          caller.prepared_processcvu_typed_config_size) {
+    return {};
+  }
+
+  std::ostringstream oss;
+  oss << "prepared runtime ABI mismatch between libsima_neat.so and "
+         "libneatpreparedruntimebridge.so: caller"
+      << " {abi_version=" << caller.abi_version
+      << ", PreparedStageSpec=" << caller.prepared_stage_spec_size
+      << ", ProcessMlaPreparedStage=" << caller.processmla_prepared_stage_size
+      << ", ProcessCvuPreparedStage=" << caller.processcvu_prepared_stage_size
+      << ", PreparedProcessCvuTypedConfig=" << caller.prepared_processcvu_typed_config_size
+      << "}, bridge" << " {abi_version=" << bridge->abi_version
+      << ", PreparedStageSpec=" << bridge->prepared_stage_spec_size
+      << ", ProcessMlaPreparedStage=" << bridge->processmla_prepared_stage_size
+      << ", ProcessCvuPreparedStage=" << bridge->processcvu_prepared_stage_size
+      << ", PreparedProcessCvuTypedConfig=" << bridge->prepared_processcvu_typed_config_size
+      << "}; rebuild and stage matching clean-internals/runtime artifacts";
+  return oss.str();
 }
 
 void collect_renderable_boxdecode_stages(const CompiledNodeContract& stage,
@@ -672,6 +727,16 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
           std::string(where ? where : "Graph::build") +
               ": failed to build sima prepared runtime context: " + prepared_error,
           prepared_runtime_failure_hint(prepared_error), build.pipeline_string);
+    }
+    if (std::string abi_error = validate_prepared_runtime_bridge_abi(); !abi_error.empty()) {
+      gst_object_unref(pipeline);
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build") +
+              ": failed to attach sima prepared runtime context: " + abi_error,
+          "Use a libneatpreparedruntimebridge.so built from the same source/runtime package as "
+          "libsima_neat.so.",
+          build.pipeline_string);
     }
     std::string attach_prepared_error;
     if (!simaai::neat::attach_prepared_runtime_context(pipeline, std::move(*prepared_runtime),

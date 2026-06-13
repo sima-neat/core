@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -299,7 +300,16 @@ json build_preproc_json(const PreprocOptions& opt) {
   });
 
   j["primary_output_name"] = resolved_preproc_primary_output_name(opt);
-  j["debug"] = opt.debug;
+  std::string debug = opt.debug;
+  if (const char* env = std::getenv("SIMA_PREPROC_EVXX_DEBUG"); env && *env) {
+    debug = upper_copy(std::string(env));
+    if (debug == "0") {
+      debug = "EVXX_DBG_DISABLED";
+    } else if (debug == "1" || debug == "2" || debug == "3" || debug == "4") {
+      debug = "EVXX_DBG_LEVEL_" + debug;
+    }
+  }
+  j["debug"] = debug;
 
   j["input_shape"] = input_shape;
   j["input_offset"] = opt.input_offset;

@@ -4,6 +4,7 @@
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/Caps.h"
+#include "nodes/common/FileInput.h"
 #include "nodes/common/Queue.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/io/StillImageInput.h"
@@ -212,6 +213,19 @@ static Nv12Frame tensor_to_nv12(const simaai::neat::Tensor& t) {
   return out;
 }
 
+static std::vector<uint8_t> sample_payload_bytes(const simaai::neat::Sample& sample,
+                                                 const std::string& label) {
+  const auto tensors = simaai::neat::tensors_from_sample(sample, true);
+  if (tensors.size() != 1U) {
+    throw std::runtime_error(label + ": expected one encoded tensor output");
+  }
+  std::vector<uint8_t> bytes = tensors.front().copy_payload_bytes();
+  if (bytes.empty()) {
+    throw std::runtime_error(label + ": encoded payload is empty");
+  }
+  return bytes;
+}
+
 static std::vector<Nv12Frame> pull_frames(simaai::neat::Run& runner, int max_frames, int timeout_ms,
                                           const std::string& label) {
   if (!runner.can_pull()) {
@@ -306,13 +320,102 @@ static std::string find_image_path(int argc, char** argv) {
   return "";
 }
 
-static std::vector<Nv12Frame> decode_rtsp_frames(const std::string& url, const std::string& decoder,
-                                                 bool use_neatdecoder, int max_frames,
-                                                 int timeout_ms) {
+static std::filesystem::path capture_rtsp_h264_file(const std::string& url, int fps, int w, int h,
+                                                    int max_frames, int timeout_ms) {
+  const auto nonce = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         std::chrono::steady_clock::now().time_since_epoch())
+                         .count();
+  const std::filesystem::path out_path =
+      std::filesystem::temp_directory_path() /
+      ("sima_decoder_quality_compare_" + std::to_string(nonce) + ".h264");
+
   simaai::neat::Graph p;
   p.add(simaai::neat::nodes::RTSPInput(url, /*latency_ms=*/200, /*tcp=*/true));
   p.add(simaai::neat::nodes::H264Depacketize(/*payload_type=*/kPayloadType,
-                                             /*h264_parse_config_interval=*/1));
+                                             /*h264_parse_config_interval=*/1, fps, w, h,
+                                             /*enforce_h264_caps=*/true));
+  p.add(simaai::neat::nodes::Queue());
+  p.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::EveryFrame(max_frames)));
+
+  simaai::neat::RunOptions run_opt;
+  run_opt.output_memory = simaai::neat::OutputMemory::Owned;
+  simaai::neat::Run runner = p.build(run_opt);
+
+  std::ofstream os(out_path, std::ios::binary);
+  if (!os) {
+    runner.stop();
+    throw std::runtime_error("capture: failed to open " + out_path.string());
+  }
+
+  int frames = 0;
+  std::size_t total_bytes = 0;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (frames < max_frames) {
+    const int remaining_ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                  deadline - std::chrono::steady_clock::now())
+                                                  .count());
+    if (remaining_ms <= 0)
+      break;
+
+    simaai::neat::Sample out;
+    simaai::neat::PullError err;
+    const int per_try = std::min(200, remaining_ms);
+    const simaai::neat::PullStatus status = runner.pull(per_try, out, &err);
+    if (status == simaai::neat::PullStatus::Timeout) {
+      continue;
+    }
+    if (status == simaai::neat::PullStatus::Closed) {
+      break;
+    }
+    if (status == simaai::neat::PullStatus::Error) {
+      runner.stop();
+      std::error_code rm_ec;
+      std::filesystem::remove(out_path, rm_ec);
+      std::string msg = err.message.empty() ? "capture: pull failed" : err.message;
+      if (!err.code.empty())
+        msg += " (code=" + err.code + ")";
+      throw std::runtime_error(msg);
+    }
+
+    const std::vector<uint8_t> bytes = sample_payload_bytes(out, "capture");
+    os.write(reinterpret_cast<const char*>(bytes.data()),
+             static_cast<std::streamsize>(bytes.size()));
+    if (!os) {
+      runner.stop();
+      std::error_code rm_ec;
+      std::filesystem::remove(out_path, rm_ec);
+      throw std::runtime_error("capture: failed writing " + out_path.string());
+    }
+    total_bytes += bytes.size();
+    ++frames;
+  }
+  os.close();
+  runner.stop();
+
+  if (frames < max_frames) {
+    std::error_code rm_ec;
+    std::filesystem::remove(out_path, rm_ec);
+    throw std::runtime_error("capture: insufficient encoded frames (got " + std::to_string(frames) +
+                             " expected " + std::to_string(max_frames) + ")");
+  }
+
+  std::cout << "[capture] wrote " << frames << " H264 access units (" << total_bytes
+            << " bytes) to " << out_path << "\n";
+  return out_path;
+}
+
+static std::vector<Nv12Frame> decode_h264_file_frames(const std::filesystem::path& h264_path,
+                                                      const std::string& decoder,
+                                                      bool use_neatdecoder, int max_frames,
+                                                      int timeout_ms) {
+  simaai::neat::Graph p;
+  p.add(simaai::neat::nodes::FileInput(h264_path.string()));
+  simaai::neat::H264ParseOptions parse_opt;
+  parse_opt.config_interval = 1;
+  parse_opt.enforce_caps = true;
+  parse_opt.alignment = simaai::neat::H264ParseOptions::Alignment::AU;
+  parse_opt.stream_format = simaai::neat::H264ParseOptions::StreamFormat::ByteStream;
+  p.add(simaai::neat::nodes::H264Parse(parse_opt));
   p.add(simaai::neat::nodes::Queue());
   if (use_neatdecoder) {
     p.add(simaai::neat::nodes::H264Decode(/*sima_allocator_type=*/2, /*out_format=*/"NV12"));
@@ -420,10 +523,22 @@ int main(int argc, char** argv) {
     RtspHandleGuard guard(&server.handle);
 
     const std::string url = server.handle.url();
-    auto frames_neat =
-        decode_rtsp_frames(url, os_decoder, /*use_neatdecoder=*/true, max_frames, timeout_ms);
-    auto frames_os =
-        decode_rtsp_frames(url, os_decoder, /*use_neatdecoder=*/false, max_frames, timeout_ms);
+    const std::filesystem::path h264_path =
+        capture_rtsp_h264_file(url, fps, enc_w, enc_h, max_frames, timeout_ms);
+    struct CaptureFileGuard {
+      std::filesystem::path path;
+      ~CaptureFileGuard() {
+        if (!path.empty()) {
+          std::error_code ec;
+          std::filesystem::remove(path, ec);
+        }
+      }
+    } capture_guard{h264_path};
+
+    auto frames_neat = decode_h264_file_frames(h264_path, os_decoder,
+                                               /*use_neatdecoder=*/true, max_frames, timeout_ms);
+    auto frames_os = decode_h264_file_frames(h264_path, os_decoder,
+                                             /*use_neatdecoder=*/false, max_frames, timeout_ms);
 
     double worst_mae = 0.0;
     double worst_psnr = 1e9;
