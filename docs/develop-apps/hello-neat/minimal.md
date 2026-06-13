@@ -17,7 +17,7 @@ This page keeps the first run intentionally small: create a tiny app, confirm th
 :::note Neat Development Environment Prerequisite
 To run commands on the DevKit directly from inside the SDK (for example, `dk build/sima_neat_hello` or `dk hello_neat.py`), set up DevKit pairing first.
 
-**Required setup:** [Pair the Neat Development Environment with a DevKit](/getting-started/dev-environment#pair-with-a-devkit)
+**Required setup:** [Pair the Neat Development Environment with a DevKit](/getting-started/dev-environment/pair-with-a-devkit/)
 :::
 
 ## Minimal application
