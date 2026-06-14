@@ -1377,7 +1377,8 @@ ensure_neat_internals() {
 }
 
 ensure_neat_llima() {
-  # Sync LLiMa C++ runtime/dev packages from Vulcan package artifacts and install them.
+  # Sync LLiMa packages from Vulcan artifacts. Only core/dev are installed into
+  # the SDK sysroot; cli is cached for the final DevKit install artifact.
   local llima_ref
   if ! resolve_neat_llima_ref; then
     exit 1
@@ -1395,7 +1396,9 @@ ensure_neat_llima() {
   local using_cached_debs=0
   if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
-     compgen -G "${deb_cache_dir}/sima-lmm-*.deb" >/dev/null 2>&1; then
+     compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-core.deb" >/dev/null 2>&1 &&
+     compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-dev.deb" >/dev/null 2>&1 &&
+     compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-cli.deb" >/dev/null 2>&1; then
     echo "Using cached LLiMa debs (${llima_ref})."
     artifact_dir="${deb_cache_dir}"
     using_cached_debs=1
@@ -1404,11 +1407,12 @@ ensure_neat_llima() {
     llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
   fi
 
-  local core_deb dev_deb
+  local core_deb dev_deb cli_deb
   core_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
   dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
-  if [[ -z "${core_deb}" || -z "${dev_deb}" ]]; then
-    echo "ERROR: Expected sima-lmm core/dev debs were not found in Vulcan LLiMa artifact." >&2
+  cli_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
+  if [[ -z "${core_deb}" || -z "${dev_deb}" || -z "${cli_deb}" ]]; then
+    echo "ERROR: Expected sima-lmm core/dev/cli debs were not found in Vulcan LLiMa artifact." >&2
     find "${artifact_dir}" -maxdepth 3 -type f -name '*.deb' -printf '  %f\n' | sort >&2
     rm -rf "${tmp_dir}"
     exit 1
@@ -1419,6 +1423,7 @@ ensure_neat_llima() {
     rm -f "${deb_cache_dir}"/sima-lmm-*.deb
     cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
     cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
+    cp -f "${cli_deb}" "${deb_cache_dir}/$(basename "${cli_deb}")"
   fi
 
   local -a llima_debs=("${core_deb}" "${dev_deb}")
