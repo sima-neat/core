@@ -60,12 +60,14 @@ VideoSenderOptions VideoSenderOptions::H264RtpUdpFromEncoded() {
 
 simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
-  nodes.reserve(opt.is_raw_input() ? 6 : 3);
+  nodes.reserve(opt.is_raw_input() ? 7 : 3);
 
   if (opt.is_raw_input()) {
-    nodes.push_back(nodes::VideoConvert());
     nodes.push_back(
-        nodes::CapsRaw("NV12", opt.width(), opt.height(), -1, simaai::neat::CapsMemory::Any));
+        nodes::CapsRaw("", opt.width(), opt.height(), opt.fps(), simaai::neat::CapsMemory::Any));
+    nodes.push_back(nodes::VideoConvert());
+    nodes.push_back(nodes::CapsRaw("NV12", opt.width(), opt.height(), opt.fps(),
+                                   simaai::neat::CapsMemory::Any));
     nodes.push_back(nodes::H264EncodeSima(opt.width(), opt.height(), opt.fps(),
                                           opt.encoder.bitrate_kbps, opt.encoder.profile,
                                           opt.encoder.level));

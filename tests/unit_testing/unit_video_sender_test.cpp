@@ -52,13 +52,16 @@ RUN_TEST(
         const auto graph = VideoSender(opt);
         require_in_order(
             graph.describe(),
-            {"VideoConvert", "CapsRaw", "H264EncodeSima", "H264Parse", "H264Packetize",
+            {"CapsRaw", "VideoConvert", "CapsRaw", "H264EncodeSima", "H264Parse", "H264Packetize",
              "UdpOutput"},
-            "VideoSender raw path should include convert, caps, encode, parse, pay, udp");
+            "VideoSender raw path should include caps, convert, caps, encode, parse, pay, udp");
 
         const std::string backend = graph.describe_backend();
-        require_contains(backend, "caps=\"video/x-raw,format=NV12,width=1280,height=720\"",
-                         "VideoSender raw caps mismatch");
+        require_contains(backend, "caps=\"video/x-raw,width=1280,height=720,framerate=30/1\"",
+                         "VideoSender input raw caps mismatch");
+        require_contains(backend,
+                         "caps=\"video/x-raw,format=NV12,width=1280,height=720,framerate=30/1\"",
+                         "VideoSender encoder raw caps mismatch");
         require_contains(backend, "enc-width=1280", "VideoSender encoder width mismatch");
         require_contains(backend, "enc-height=720", "VideoSender encoder height mismatch");
         require_contains(backend, "enc-frame-rate=30", "VideoSender encoder fps mismatch");
