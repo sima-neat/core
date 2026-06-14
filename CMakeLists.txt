@@ -31,6 +31,7 @@ option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
 option(SIMANEAT_BUILD_SAMPLES "Build example applications" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
+option(SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER "Build the PCIe pipeline builder helper" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
 option(SIMANEAT_BUILD_DOCS "Configure documentation targets" OFF)
 option(SIMANEAT_DOCS_ONLY_CONFIGURE "Relax runtime dependency checks for docs-only builds" OFF)
@@ -1259,6 +1260,29 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   endforeach()
 endif()
 target_compile_definitions(sima_neat_internal INTERFACE SIMA_NEAT_INTERNAL=1)
+
+# ------------------------------------------------------------------------------
+# Internal tools
+# ------------------------------------------------------------------------------
+if (SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER)
+  add_executable(pcie-pipeline-builder
+    tools/pcie_pipeline_builder.cpp
+  )
+  target_link_libraries(pcie-pipeline-builder PRIVATE
+    sima_neat_internal
+    ${GST_LIBRARIES}
+  )
+  target_include_directories(pcie-pipeline-builder PRIVATE
+    ${GST_INCLUDE_DIRS}
+  )
+  target_compile_options(pcie-pipeline-builder PRIVATE
+    ${GST_CFLAGS_OTHER}
+  )
+  install(TARGETS pcie-pipeline-builder
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT core
+  )
+endif()
 
 # ------------------------------------------------------------------------------
 # Examples (optional, installable)
