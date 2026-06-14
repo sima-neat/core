@@ -2854,9 +2854,9 @@ main() {
   build_deb_if_requested
   build_extras_archive_if_requested
   stage_package_artifacts_to_dist
+  write_dist_platform_version_manifest_field
   write_install_manifest
   generate_package_metadata_if_requested
-  write_dist_platform_version_manifest_field
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested
