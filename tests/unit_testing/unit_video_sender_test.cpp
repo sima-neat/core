@@ -57,9 +57,7 @@ RUN_TEST(
             "VideoSender raw path should include convert, caps, encode, parse, pay, udp");
 
         const std::string backend = graph.describe_backend();
-        require_contains(backend,
-                         "caps=\"video/x-raw,format=NV12,width=1280,height=720,"
-                         "framerate=30/1\"",
+        require_contains(backend, "caps=\"video/x-raw,format=NV12,width=1280,height=720\"",
                          "VideoSender raw caps mismatch");
         require_contains(backend, "enc-width=1280", "VideoSender encoder width mismatch");
         require_contains(backend, "enc-height=720", "VideoSender encoder height mismatch");

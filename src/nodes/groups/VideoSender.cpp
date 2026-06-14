@@ -64,8 +64,8 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
 
   if (opt.is_raw_input()) {
     nodes.push_back(nodes::VideoConvert());
-    nodes.push_back(nodes::CapsRaw("NV12", opt.width(), opt.height(), opt.fps(),
-                                   simaai::neat::CapsMemory::Any));
+    nodes.push_back(
+        nodes::CapsRaw("NV12", opt.width(), opt.height(), -1, simaai::neat::CapsMemory::Any));
     nodes.push_back(nodes::H264EncodeSima(opt.width(), opt.height(), opt.fps(),
                                           opt.encoder.bitrate_kbps, opt.encoder.profile,
                                           opt.encoder.level));
