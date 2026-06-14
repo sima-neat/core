@@ -69,6 +69,8 @@ ELXR_SDK_VERSION=""
 ELXR_VERSION=""
 ELXR_WHEEL_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM:-}"
 ELXR_HOST_PYTHON_EXECUTABLE=""
+ELXR_TARGET_PYTHON_VERSION=""
+ELXR_TARGET_PYTHON_INCLUDE_DIR=""
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
 NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
@@ -535,7 +537,7 @@ detect_elxr_host_python() {
 
   local candidate="${SIMANEAT_HOST_PYTHON:-${Python3_EXECUTABLE:-${PYTHON3_EXECUTABLE:-}}}"
   if [[ -z "${candidate}" ]]; then
-    candidate="$(command -v python3 || true)"
+    candidate="$(command -v python3 || command -v python || true)"
   fi
 
   if [[ -z "${candidate}" || ! -x "${candidate}" ]]; then
@@ -544,13 +546,32 @@ detect_elxr_host_python() {
     exit 1
   fi
 
-  if [[ -n "${SYSROOT:-}" && "${candidate}" == "${SYSROOT}/"* ]]; then
-    echo "ERROR: host Python resolved inside SYSROOT and cannot drive cross-build configuration: ${candidate}" >&2
-    echo "Set SIMANEAT_HOST_PYTHON to an executable host Python, for example /usr/bin/python3." >&2
+  if ! "${candidate}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' >/dev/null 2>&1; then
+    echo "ERROR: selected Python cannot run in this SDK container: ${candidate}" >&2
+    echo "Set SIMANEAT_HOST_PYTHON to a host-runnable Python interpreter." >&2
     exit 1
   fi
 
   ELXR_HOST_PYTHON_EXECUTABLE="${candidate}"
+}
+
+detect_elxr_target_python() {
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    return 0
+  fi
+
+  local include_dir
+  for include_dir in "${SYSROOT:-}/usr/include"/python3.*; do
+    if [[ -f "${include_dir}/Python.h" ]]; then
+      ELXR_TARGET_PYTHON_INCLUDE_DIR="${include_dir}"
+      ELXR_TARGET_PYTHON_VERSION="${include_dir##*/python}"
+      return 0
+    fi
+  done
+
+  echo "ERROR: eLxr SDK cross-build requires target Python headers in the SDK sysroot." >&2
+  echo "Expected ${SYSROOT:-<unset>}/usr/include/python3.x/Python.h." >&2
+  exit 1
 }
 
 select_system_deps() {
@@ -1662,6 +1683,14 @@ collect_install_artifact_files() {
     seen_basenames["${basename_file}"]=1
     out_files_ref+=("${file}")
   done
+
+  for file in dist/manifest.json "${NEAT_DEPS_MANIFEST}"; do
+    [[ -e "${file}" ]] || continue
+    basename_file="manifest.json"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
 }
 
 ensure_node20_for_docs() {
@@ -1850,6 +1879,12 @@ configure_cmake() {
     export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-${SYSROOT}}"
     export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$(IFS=:; echo "${pkgconfig_dirs[*]}")}"
     export PKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
+    if [[ -d "${SYSROOT}/usr/include/c++/12" ]]; then
+      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/c++/12"
+    fi
+    if [[ -d "${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12" ]]; then
+      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12"
+    fi
 
     cmake_args+=(
       -DCMAKE_SYSROOT="${SYSROOT}"
@@ -1862,6 +1897,8 @@ configure_cmake() {
       -DPKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
       -DPython3_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
       -DPython_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
+      -DPython_INCLUDE_DIR="${ELXR_TARGET_PYTHON_INCLUDE_DIR}"
+      -DPYNEAT_EXT_SUFFIX=".cpython-${ELXR_TARGET_PYTHON_VERSION/./}-$(elxr_ext_platform_triplet).so"
       -DSIMANEAT_CTEST_FOR_DEVKIT=ON
     )
   fi
@@ -2125,20 +2162,17 @@ PY
     if [[ "${ELXR_SDK}" == "ON" ]]; then
       echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
       echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja
+      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja wheel
       local py_abi
       local py_triplet
       local pyneat_ext_suffix
-      py_abi="$("${wheel_python}" - <<'PY'
-import sys
-print(f"{sys.version_info.major}{sys.version_info.minor}")
-PY
-)"
+      py_abi="${ELXR_TARGET_PYTHON_VERSION/./}"
       py_triplet="$(elxr_ext_platform_triplet)"
       pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
       echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
       local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
       if [[ -n "${SYSROOT:-}" ]]; then
+        wheel_cmake_args+=" -DPython_INCLUDE_DIR=${ELXR_TARGET_PYTHON_INCLUDE_DIR}"
         wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
@@ -2147,15 +2181,36 @@ PY
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
         wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
         wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF"
+        wheel_cmake_args+=" -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE"
       fi
       # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
       # (notably ninja), which are not executable on the host container.
       # Build without isolation and force Makefiles to keep host tools executable.
+      local backend_pythonpath
+      backend_pythonpath="$("${wheel_python}" - <<'PY'
+import sysconfig
+print(sysconfig.get_paths()["purelib"])
+PY
+)"
       _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
+        PYTHONPATH="${backend_pythonpath}${PYTHONPATH:+:${PYTHONPATH}}" \
         CMAKE_ARGS="${wheel_cmake_args}" \
         CMAKE_GENERATOR="Unix Makefiles" \
         CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${wheel_python}" -m build --wheel --outdir dist --no-isolation
+        "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build --wheel --outdir dist --no-isolation
+      mapfile -t built_wheels < <(find dist -maxdepth 1 -type f -name 'pyneat-*.whl' | sort)
+      if [[ "${#built_wheels[@]}" -ne 1 ]]; then
+        echo "ERROR: expected exactly one pyneat wheel, found ${#built_wheels[@]}." >&2
+        printf '  %s\n' "${built_wheels[@]}" >&2
+        exit 1
+      fi
+      "${wheel_python}" -m wheel tags \
+        --remove \
+        --python-tag "cp${py_abi}" \
+        --abi-tag "cp${py_abi}" \
+        --platform-tag "${ELXR_WHEEL_HOST_PLATFORM//-/_}" \
+        "${built_wheels[0]}"
     else
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
         "${wheel_python}" -m build --wheel --outdir dist
@@ -2333,8 +2388,43 @@ stage_package_artifacts_to_dist() {
   if [[ "${staged_any}" == "ON" ]]; then
     echo
     echo "Moved package artifacts into dist/:"
-    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh 2>/dev/null || true
+    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh dist/manifest.json 2>/dev/null || true
   fi
+}
+
+write_dist_platform_version_manifest_field() {
+  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
+    return 0
+  fi
+  if [[ ! -d dist ]]; then
+    return 0
+  fi
+
+  python3 - "${NEAT_DEPS_MANIFEST}" "dist/manifest.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_path = Path(sys.argv[1])
+target_path = Path(sys.argv[2])
+
+source = json.loads(source_path.read_text(encoding="utf-8"))
+platform_version = str(source.get("platform-version", "")).strip()
+if not platform_version:
+    raise SystemExit(f"Missing or empty platform-version in {source_path}")
+
+if target_path.exists():
+    target = json.loads(target_path.read_text(encoding="utf-8"))
+else:
+    target = {}
+if not isinstance(target, dict):
+    raise SystemExit(f"{target_path} must contain a JSON object")
+
+target["platform-version"] = platform_version
+target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+PY
+
+  echo "Updated dist/manifest.json platform-version from ${NEAT_DEPS_MANIFEST}"
 }
 
 append_dist_manifest_matches() {
@@ -2728,6 +2818,7 @@ main() {
   ensure_node20_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
+  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     ensure_dependency_headers
@@ -2763,6 +2854,7 @@ main() {
   build_deb_if_requested
   build_extras_archive_if_requested
   stage_package_artifacts_to_dist
+  write_dist_platform_version_manifest_field
   write_install_manifest
   generate_package_metadata_if_requested
   print_artifact_summary

@@ -5,6 +5,9 @@
   "llima": {
     "policy": "snap"
   },
-  "package-version": "0.1.0",
-  "platform-version": "2.0.0"
+  "sdk": {
+    "channel": "develop"
+  },
+  "package-version": "0.2.0",
+  "platform-version": "2.1.2"
 }

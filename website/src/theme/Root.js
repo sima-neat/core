@@ -101,9 +101,9 @@ function SoftwareSubnav() {
   const githubOrgUrl = siteConfig.customFields?.githubOrgUrl || "https://github.com/sima-neat";
   const links = [
     {
-      label: "Installation",
-      href: useBaseUrl("/getting-started/installation/"),
-      active: location.pathname.includes("/getting-started/installation"),
+      label: "Getting Started",
+      href: useBaseUrl("/getting-started/"),
+      active: location.pathname.includes("/getting-started"),
     },
     {
       label: "C++ API",

@@ -278,6 +278,7 @@ jobs:
       artifact_pattern: neat-core-dist
       artifact_glob: "*"
       min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 9 || 10 }}
+      publish_manifest: false
 
   test-devkit:
     name: Test Core on DevKit
@@ -496,6 +497,7 @@ jobs:
               --label-regex "e2e" \
               --label-exclude "perf" \
               -E "${SKIP_REGEX}" \
+              --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
               --output-on-failure \
               --no-tests=error

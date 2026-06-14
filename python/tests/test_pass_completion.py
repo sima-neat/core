@@ -55,18 +55,25 @@ def test_measure_report_diagnostic_fields():
   report = pyneat.MeasureReport()
   for field in ("plugin_latency_unattributed", "edge_latency", "edge_latency_unattributed",
                 "plugin_latency_status", "message_latency_status", "metrics_trace_dir", "warnings",
-                "trace_loss_detected", "graph_sample_timing_unkeyed", "graph_sample_timing_misses"):
+                "trace_loss_detected", "graph_sample_timing_unkeyed", "graph_sample_timing_misses",
+                "path_timing"):
     assert hasattr(report, field), field
   assert list(report.edge_latency) == []
-  # MeasurePath* per-node structs are deferred — path_timing is not exposed.
-  assert not hasattr(report, "path_timing")
+  assert report.path_timing.available is False
+  assert report.path_timing.aggregation == "measured_window"
 
 
 def test_metrics_advanced_types():
   assert hasattr(pyneat.advanced, "MetricsTraceSource")
-  assert hasattr(pyneat.advanced, "MeasureEdgeLatency")
+  for name in ("MeasureEdgeLatency", "MeasurePathStat", "MeasurePathIdentity",
+               "MeasurePathNodeArrival", "MeasurePathInterPluginGap", "MeasurePathOutputTail",
+               "MeasurePathTiming"):
+    assert hasattr(pyneat.advanced, name), name
   for member in ("Auto", "Off", "Lttng"):
     assert hasattr(pyneat.advanced.MetricsTraceSource, member), member
+  path = pyneat.advanced.MeasurePathTiming()
+  assert path.available is False
+  assert path.identity.primary_key == ""
 
 
 # ── Phase 1 class patches ────────────────────────────────────────────────────────────────────

@@ -378,6 +378,10 @@ public:
   void emit_summary() const;
   /// Human-readable description of the runtime graph (for diagnostics).
   std::string describe() const;
+  /// Start observing this internal graph run's caller-owned push/pull interval.
+  simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
+  /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+  simaai::neat::MeasureScope start_measurement(bool include_plugin_latency);
 
   /// Stop the underlying runtime. Idempotent.
   void stop();

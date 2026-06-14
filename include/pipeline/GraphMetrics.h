@@ -9,12 +9,16 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
 namespace simaai::neat {
 
 class Run;
+namespace runtime {
+class RunCore;
+} // namespace runtime
 
 using RuntimeNodeId = std::size_t;
 static constexpr RuntimeNodeId kInvalidRuntimeNodeId = static_cast<RuntimeNodeId>(-1);
@@ -83,6 +87,9 @@ struct GraphMetricsReport {
 
 GraphMetricsReport build_graph_metrics_report_run_lifetime(const Run& run,
                                                            const GraphMetricsOptions& opt = {});
+GraphMetricsReport
+build_graph_metrics_report_run_lifetime(const std::shared_ptr<const runtime::RunCore>& core,
+                                        const GraphMetricsOptions& opt = {});
 #endif
 
 } // namespace simaai::neat

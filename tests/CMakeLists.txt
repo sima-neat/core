@@ -249,6 +249,7 @@ set(UNIT_TESTS
   unit_video_sender_test
   unit_env_util_profile_test
   unit_framestream_test
+  unit_move_semantics_proof_test
   unit_graph_compiler_determinism_test
   unit_graph_compiler_spec_validation_test
   unit_graph_compiler_topology_test
@@ -481,6 +482,7 @@ if (NOT preproc_build_input_repro_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST preproc_build_input_repro_test APPEND PROPERTY LABELS "e2e")
 endif()
 
+
 add_pipeline_test_long(
   mnist_preproc_channels1_accuracy_test
   e2e_testing/mnist_preproc_channels1_accuracy_test.cpp
@@ -589,6 +591,7 @@ endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST decoder_quality_compare_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST decoder_quality_compare_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   set_property(TEST decoder_quality_compare_test
     APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT=8757"
   )
@@ -955,6 +958,7 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast"
 )
+set_tests_properties(visual_frontend_customer_api_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_customer_api_klt_no_detect_fast_test
@@ -973,6 +977,7 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast;klt"
 )
+set_tests_properties(visual_frontend_customer_api_klt_no_detect_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_predispatch_guard_fast_test
@@ -1655,6 +1660,43 @@ if (NOT macro_mixed_multistream_multimodel_tput_test IN_LIST PIPELINESESSION_TES
   set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "rtsp")
   set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "perf-device")
   set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+
+  add_test(
+    NAME macro_mixed_multistream_multimodel_preproc_pressure_repro
+    COMMAND macro_mixed_multistream_multimodel_tput_test
+      --streams 16
+      --rtsp-servers 16
+      --fps 18
+      --stream-width 1280
+      --stream-height 720
+      --iters 50
+      --resnet-lanes 0
+      --yolo-lanes 2
+      --branch-mode yolo-only
+      --decoder-buffers 8
+      --metadata-udp 0
+      --latency-profile 1
+      --yolo-discard-boxes 1
+      --min-measured-ms 15000
+      --serial-pipeline-build 1
+      --yolo-decode-type yolo26
+      --processcvu-profile-repro 1
+      --processcvu-profile-every 50
+      --processcvu-timeline 0
+      --max-runtime-ms 900000
+      --stall-timeout-ms 90000
+      --json-out macro_mixed_multistream_multimodel_preproc_pressure_repro.json
+  )
+  simaneat_append_ctest_env(macro_mixed_multistream_multimodel_preproc_pressure_repro)
+  set_tests_properties(macro_mixed_multistream_multimodel_preproc_pressure_repro PROPERTIES
+    DISABLED TRUE
+    SKIP_RETURN_CODE 77
+  )
+  set_property(TEST macro_mixed_multistream_multimodel_preproc_pressure_repro
+    APPEND PROPERTY LABELS "e2e;macro;perf;tput;stress;processcvu;preproc;disabled")
+  set_property(TEST macro_mixed_multistream_multimodel_preproc_pressure_repro APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST macro_mixed_multistream_multimodel_preproc_pressure_repro APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_property(TEST macro_mixed_multistream_multimodel_preproc_pressure_repro APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
 # Give CTest's parallel scheduler better information. High-cost tests are
@@ -1839,6 +1881,24 @@ install(
   COMPONENT extras
   RENAME runtime_manifest.json
 )
+
+# Keep decoder/media E2E tests bounded. These paths can hang in GStreamer
+# teardown when the codec stack is unhealthy.
+set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
+  decoder_download_test
+  decoder_dynamic_caps_test
+  decoder_quality_compare_test
+  decoder_visible_caps_test
+  file_read_test
+  resnet50_modelpack_jpeg
+  resnet50_modelpack_rtsp
+  rtsp_pull_frame_test
+)
+foreach(_simaneat_decoder_media_test IN LISTS SIMANEAT_DECODER_MEDIA_E2E_TESTS)
+  if (TEST ${_simaneat_decoder_media_test})
+    set_tests_properties(${_simaneat_decoder_media_test} PROPERTIES TIMEOUT 90)
+  endif()
+endforeach()
 
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/

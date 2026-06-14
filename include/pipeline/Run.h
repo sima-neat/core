@@ -43,6 +43,8 @@ class Mat;
 namespace simaai::neat {
 
 class InputStream;
+class MeasureScope;
+struct MeasureOptions;
 class Run;
 struct InputStreamOptions;
 namespace pipeline_internal {
@@ -57,6 +59,8 @@ class RunCore;
 namespace run_internal {
 std::shared_ptr<runtime::RunCore> release_core(Run& run);
 std::shared_ptr<const runtime::RunCore> core(const Run& run);
+MeasureScope start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
+                                       const MeasureOptions& opt);
 } // namespace run_internal
 #endif
 
@@ -282,28 +286,30 @@ enum class MetricsTraceSource {
 /**
  * @brief Options for framework-owned runtime measurement.
  *
- * The defaults collect the measurements most applications need without asking examples to
- * reimplement timers, percentile math, plugin/edge aggregation, or terminal formatting.
+ * Default construction is the production-safe/customer path: public E2E latency and throughput
+ * only.  It does not start plugin tracing, message tracing, graph queue probes, or measurement-
+ * local power monitoring.  Set `include_plugin_latency=true` only when you intentionally want
+ * deeper per-plugin/kernel profiling.
  */
 struct MeasureOptions {
   int duration_ms = 10000; ///< Timed measurement window.
   int warmup_ms = 1000;    ///< Warmup window excluded from latency/metrics results.
   int timeout_ms = 5000;   ///< Per-output pull timeout.
   /// Capture per-plugin/kernel execution latency through the LTTng metrics collector.
-  bool include_plugin_latency = true;
+  bool include_plugin_latency = false;
   /// Backend used for plugin execution latency.
-  MetricsTraceSource plugin_latency_source = MetricsTraceSource::Auto;
+  MetricsTraceSource plugin_latency_source = MetricsTraceSource::Lttng;
   /// Include low-overhead inter-plugin/edge/queue diagnostics in the report.
-  bool include_edge_latency = true;
+  bool include_edge_latency = false;
   /// Enable exact per-message LTTng edge tracing.  Higher volume; off by default.
   bool include_message_latency = false;
   /// Backend used for exact per-message edge tracing.
-  MetricsTraceSource message_latency_source = MetricsTraceSource::Auto;
+  MetricsTraceSource message_latency_source = MetricsTraceSource::Lttng;
   /// Keep the private LTTng CTF trace directory after parsing for support/debug.
   bool retain_metrics_trace = false;
   /// Optional parent/output directory for retained or temporary metrics traces.
   std::string metrics_trace_dir;
-  bool include_power = true; ///< Include power telemetry when enabled on the Run.
+  bool include_power = false; ///< Include power telemetry when enabled on the Run.
 
   /// Optional report metadata.  Model-owned wrappers/examples can fill these in so the
   /// standardized report is informative without custom formatting code.
@@ -559,6 +565,10 @@ public:
 
 private:
   friend class Run;
+#ifdef SIMA_NEAT_INTERNAL
+  friend MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::RunCore>,
+                                                              const MeasureOptions&);
+#endif
   struct Impl;
   explicit MeasureScope(std::unique_ptr<Impl> impl);
   static void disable_lttng_trace_identity_noexcept(Impl* impl);
@@ -686,6 +696,8 @@ public:
 
   /// Start observing a caller-owned push/pull interval without consuming outputs.
   MeasureScope start_measurement(const MeasureOptions& opt = {});
+  /// Convenience overload: false = E2E latency/throughput only, true = include plugin latency.
+  MeasureScope start_measurement(bool include_plugin_latency);
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;
 

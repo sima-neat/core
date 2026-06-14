@@ -176,6 +176,7 @@ struct NormalizedCompositionEdge {
   std::string to_port;
   std::string from_endpoint;
   std::string to_endpoint;
+  GraphLinkOptions link_options;
 };
 
 struct NormalizedPublicView {
@@ -194,7 +195,35 @@ struct LoweredExplicitEdge {
   graph::NodeId to = graph::kInvalidNode;
   std::string from_port;
   std::string to_port;
+  GraphLinkOptions link_options;
 };
+
+bool realtime_latest_link(const GraphLinkOptions& opt) {
+  return opt.policy == GraphLinkPolicy::RealtimeLatestByStream;
+}
+
+bool default_link(const GraphLinkOptions& opt) {
+  return opt.policy == GraphLinkPolicy::Default;
+}
+
+GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
+  if (default_link(a)) {
+    return b;
+  }
+  if (default_link(b)) {
+    return a;
+  }
+  if (a.policy != b.policy) {
+    throw std::runtime_error("compile_public_graph: conflicting Graph link policies");
+  }
+  if (b.queue_depth > 0) {
+    a.queue_depth = b.queue_depth;
+  }
+  if (!b.stream_id.empty()) {
+    a.stream_id = b.stream_id;
+  }
+  return a;
+}
 
 CombinePolicy output_combine_policy(const std::shared_ptr<simaai::neat::Node>& node) {
   if (const auto* output = dynamic_cast<const simaai::neat::Output*>(node.get())) {
@@ -354,7 +383,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   std::unordered_set<std::string> emitted_edges;
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
-                            std::string to_endpoint) {
+                            std::string to_endpoint, GraphLinkOptions link_options) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
     }
@@ -363,7 +392,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::string key = std::to_string(from) + ":" + std::to_string(to) + ":" +
                             std::to_string(static_cast<int>(kind)) + ":" + from_port + ":" +
-                            to_port;
+                            to_port + ":" + std::to_string(static_cast<int>(link_options.policy));
     if (!emitted_edges.insert(key).second) {
       return;
     }
@@ -373,16 +402,18 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
                                                   .from_port = std::move(from_port),
                                                   .to_port = std::move(to_port),
                                                   .from_endpoint = std::move(from_endpoint),
-                                                  .to_endpoint = std::move(to_endpoint)});
+                                                  .to_endpoint = std::move(to_endpoint),
+                                                  .link_options = link_options});
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     std::vector<bool>&)>
+                     GraphLinkOptions, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
-                    std::vector<bool>& visiting) {
+                    GraphLinkOptions link_options, std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
+    link_options = merge_link_options(link_options, edge.link_options);
     if (!from_port.empty() && !edge.from_port.empty() && from_port != edge.from_port) {
       throw std::runtime_error(
           "compile_public_graph: boundary normalization encountered conflicting source ports");
@@ -410,7 +441,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
         to_port.clear();
       }
       add_edge(start_norm, to_norm, kind, std::move(from_port), std::move(to_port),
-               std::move(from_endpoint), std::move(to_endpoint));
+               std::move(from_endpoint), std::move(to_endpoint), link_options);
       return;
     }
 
@@ -425,7 +456,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
           "compile_public_graph: internal boundary declaration has no downstream executable path");
     }
     for (const std::size_t next_edge : outgoing[to_original]) {
-      follow_edge(start_norm, next_edge, from_port, from_endpoint, to_endpoint, true, visiting);
+      follow_edge(start_norm, next_edge, from_port, from_endpoint, to_endpoint, true, link_options,
+                  visiting);
     }
     visiting[to_original] = false;
   };
@@ -437,7 +469,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::size_t from_norm = out.vertex_for_original[edge.from];
     std::vector<bool> visiting(n, false);
-    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, visiting);
+    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, {}, visiting);
   }
 
   // Pipeline-quality pass: if public composition produced a simple one-to-one connection,
@@ -456,6 +488,9 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   }
   for (auto& edge : out.edges) {
     if (edge.kind == NormalizedCompositionEdgeKind::ImplicitLinear) {
+      continue;
+    }
+    if (!default_link(edge.link_options)) {
       continue;
     }
     if (vertex_is_runtime_node(out.runtime_vertices, edge.from) ||
@@ -567,11 +602,17 @@ build_runtime_graph_from_connected_public_view(const View& view,
   std::vector<std::size_t> implicit_next(view.vertices.size(), static_cast<std::size_t>(-1));
   std::vector<std::size_t> implicit_prev(view.vertices.size(), static_cast<std::size_t>(-1));
   std::vector<std::size_t> public_endpoint_in_degree(view.vertices.size(), 0U);
+  std::vector<std::size_t> realtime_in_degree(view.vertices.size(), 0U);
+  std::vector<std::size_t> total_in_degree(view.vertices.size(), 0U);
   for (const auto& edge : view.edges) {
     if (edge.from >= view.vertices.size() || edge.to >= view.vertices.size()) {
       throw std::runtime_error("compile_public_graph: composition edge references invalid vertex");
     }
     if (is_explicit_composition_edge(edge)) {
+      ++total_in_degree[edge.to];
+      if (realtime_latest_link(edge.link_options)) {
+        ++realtime_in_degree[edge.to];
+      }
       if (is_public_endpoint_edge(edge)) {
         ++public_endpoint_in_degree[edge.to];
       }
@@ -592,6 +633,11 @@ build_runtime_graph_from_connected_public_view(const View& view,
     }
     implicit_next[edge.from] = edge.to;
     implicit_prev[edge.to] = edge.from;
+  }
+  std::vector<bool> realtime_fan_in_target(view.vertices.size(), false);
+  for (std::size_t i = 0; i < view.vertices.size(); ++i) {
+    realtime_fan_in_target[i] =
+        total_in_degree[i] > 1U && realtime_in_degree[i] == total_in_degree[i];
   }
 
   std::vector<graph::NodeId> runtime_node_for_vertex(view.vertices.size(), graph::kInvalidNode);
@@ -619,6 +665,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
     }
 
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
+    bool allow_realtime_fan_in = false;
     std::size_t cur = start;
     while (cur != static_cast<std::size_t>(-1)) {
       if (cur >= view.vertices.size()) {
@@ -632,6 +679,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
             "compile_public_graph: runtime node unexpectedly appeared inside a pipeline chain");
       }
       visited[cur] = true;
+      allow_realtime_fan_in = allow_realtime_fan_in || realtime_fan_in_target[cur];
       nodes.push_back(view.vertices[cur]);
       const std::size_t next = implicit_next[cur];
       if (next == static_cast<std::size_t>(-1)) {
@@ -641,7 +689,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
     }
 
     auto pipeline_node = std::make_shared<graph::nodes::PipelineNode>(
-        std::move(nodes), "fragment" + std::to_string(start));
+        std::move(nodes), "fragment" + std::to_string(start), allow_realtime_fan_in ? 0 : 1);
     const graph::NodeId runtime_id = out.graph.add(std::move(pipeline_node));
     out.graph_range_by_node[runtime_id] = {start, cur + 1U};
     cur = start;
@@ -677,6 +725,13 @@ build_runtime_graph_from_connected_public_view(const View& view,
     }
     if (target_vertex >= view.vertices.size()) {
       throw std::runtime_error("compile_public_graph: public endpoint target out of range");
+    }
+    const bool realtime_fan_in =
+        std::all_of(incoming_edges.begin(), incoming_edges.end(), [&](std::size_t edge_index) {
+          return realtime_latest_link(view.edges[edge_index].link_options);
+        });
+    if (realtime_fan_in) {
+      continue;
     }
     const CombinePolicy policy = output_combine_policy(view.vertices[target_vertex]);
     const FragmentBoundaryHints* target_hints =
@@ -780,7 +835,8 @@ build_runtime_graph_from_connected_public_view(const View& view,
     if (combine_handled_edges.find(edge_index) != combine_handled_edges.end()) {
       continue;
     }
-    if (is_public_endpoint_edge(edge) && public_endpoint_in_degree[edge.to] > 1U) {
+    if (is_public_endpoint_edge(edge) && public_endpoint_in_degree[edge.to] > 1U &&
+        !realtime_latest_link(edge.link_options)) {
       throw std::runtime_error(
           "compile_public_graph: public endpoint has multiple producers; set an explicit "
           "CombinePolicy::ByFrame or CombinePolicy::ByPts");
@@ -800,6 +856,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
         .to = to,
         .from_port = from_port,
         .to_port = to_port,
+        .link_options = edge.link_options,
     });
   }
 
@@ -1063,6 +1120,10 @@ std::string make_unique_auto_name(std::string base, const std::unordered_set<std
   }
 }
 
+bool same_endpoint(const Endpoint& a, const Endpoint& b) {
+  return a.kind == b.kind && a.node == b.node && a.port == b.port && a.segment == b.segment;
+}
+
 template <typename Map>
 void add_named_endpoint(Map* map, std::unordered_set<std::string>* used, std::string name,
                         bool user_named, const Endpoint& endpoint, const char* kind) {
@@ -1071,6 +1132,10 @@ void add_named_endpoint(Map* map, std::unordered_set<std::string>* used, std::st
   }
   if (user_named) {
     if (used->find(name) != used->end()) {
+      auto existing = map->find(name);
+      if (existing != map->end() && same_endpoint(existing->second, endpoint)) {
+        return;
+      }
       throw std::runtime_error(std::string("Graph endpoint name '") + name +
                                "' is used by more than one " + kind +
                                "; choose unique names for multi-input/multi-output graphs");
@@ -1205,6 +1270,31 @@ std::vector<std::size_t> runtime_edge_path(std::span<const EdgePlan> edges, grap
   return {};
 }
 
+void apply_normalized_link_policies(const NormalizedPublicView& view,
+                                    const std::vector<graph::NodeId>& runtime_node_for_vertex,
+                                    ExecutionGraphPlan* plan) {
+  if (!plan) {
+    return;
+  }
+  for (const auto& edge : view.edges) {
+    if (default_link(edge.link_options)) {
+      continue;
+    }
+    if (edge.from >= runtime_node_for_vertex.size() || edge.to >= runtime_node_for_vertex.size()) {
+      continue;
+    }
+    const auto path = runtime_edge_path(plan->edges, runtime_node_for_vertex[edge.from],
+                                        runtime_node_for_vertex[edge.to]);
+    for (const std::size_t edge_index : path) {
+      if (edge_index >= plan->edges.size()) {
+        continue;
+      }
+      GraphLinkOptions& dst = plan->edges[edge_index].link_options;
+      dst = merge_link_options(dst, edge.link_options);
+    }
+  }
+}
+
 template <typename View>
 void attach_public_graph_view(const View& view,
                               const std::vector<graph::NodeId>& runtime_node_for_vertex,
@@ -1254,6 +1344,7 @@ void attach_public_graph_view(const View& view,
     if (edge.to < runtime_node_for_vertex.size()) {
       e.runtime_to = runtime_node_for_vertex[edge.to];
     }
+    e.link_options = edge.link_options;
     e.runtime_edge_indices = runtime_edge_path(plan->edges, e.runtime_from, e.runtime_to);
     plan->public_edges.push_back(std::move(e));
   }
@@ -1337,13 +1428,30 @@ void add_fragment_named_candidates(std::unordered_map<std::string, Endpoint>* na
   if (!named || !used || candidates.empty()) {
     return;
   }
-  for (std::size_t i = 0; i < candidates.size(); ++i) {
-    const auto& candidate = candidates[i];
+  std::vector<NamedEndpointCandidate> unique_candidates;
+  unique_candidates.reserve(candidates.size());
+  for (const auto& candidate : candidates) {
+    const bool duplicate =
+        std::any_of(unique_candidates.begin(), unique_candidates.end(), [&](const auto& existing) {
+          return same_endpoint(existing.endpoint, candidate.endpoint) &&
+                 existing.explicit_name == candidate.explicit_name;
+        });
+    const bool duplicate_vertex_endpoint =
+        std::any_of(unique_candidates.begin(), unique_candidates.end(), [&](const auto& existing) {
+          return !candidate.explicit_name.empty() && existing.vertex == candidate.vertex &&
+                 existing.explicit_name == candidate.explicit_name;
+        });
+    if (!duplicate && !duplicate_vertex_endpoint) {
+      unique_candidates.push_back(candidate);
+    }
+  }
+  for (std::size_t i = 0; i < unique_candidates.size(); ++i) {
+    const auto& candidate = unique_candidates[i];
     std::string name = candidate.explicit_name;
     bool strict = !name.empty();
     if (name.empty() && !base_name.empty()) {
-      name = candidates.size() > 1U ? base_name + "_" + std::to_string(i) : base_name;
-      strict = strict_single_fragment_name && candidates.size() == 1U;
+      name = unique_candidates.size() > 1U ? base_name + "_" + std::to_string(i) : base_name;
+      strict = strict_single_fragment_name && unique_candidates.size() == 1U;
     }
     if (name.empty() && candidate.vertex < vertices.size() && vertices[candidate.vertex]) {
       const std::string kind_name = vertices[candidate.vertex]->kind();
@@ -1645,6 +1753,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     for (auto& segment : plan.pipeline_segments) {
       segment.route_options = view.options;
     }
+    apply_normalized_link_policies(normalized, lowering.runtime_node_for_vertex, &plan);
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,

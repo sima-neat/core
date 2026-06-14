@@ -33,14 +33,18 @@ public:
   using NodePtr = std::shared_ptr<simaai::neat::Node>;
 
   /// Construct from a node vector by move.
-  explicit PipelineNode(std::vector<NodePtr> nodes, std::string label = {})
-      : nodes_(std::move(nodes)), label_(std::move(label)) {
+  explicit PipelineNode(std::vector<NodePtr> nodes, std::string label = {},
+                        int input_max_in_edges = 1)
+      : nodes_(std::move(nodes)), label_(std::move(label)),
+        input_max_in_edges_(input_max_in_edges) {
     init_();
   }
 
   /// Construct from a single builder `Node`.
-  explicit PipelineNode(std::shared_ptr<simaai::neat::Node> node, std::string label = {})
-      : nodes_(std::vector<NodePtr>{std::move(node)}), label_(std::move(label)) {
+  explicit PipelineNode(std::shared_ptr<simaai::neat::Node> node, std::string label = {},
+                        int input_max_in_edges = 1)
+      : nodes_(std::vector<NodePtr>{std::move(node)}), label_(std::move(label)),
+        input_max_in_edges_(input_max_in_edges) {
     init_();
   }
 
@@ -68,7 +72,7 @@ public:
   std::vector<PortDesc> input_ports() const override {
     if (!requires_input_)
       return {};
-    return {PortDesc{.name = "in", .spec = OutputSpec{}}};
+    return {PortDesc{.name = "in", .spec = OutputSpec{}, .max_in_edges = input_max_in_edges_}};
   }
 
   /// Always exposes a single `"out"` port.
@@ -117,6 +121,7 @@ private:
   std::vector<NodePtr> nodes_;
   std::string label_;
   std::string kind_;
+  int input_max_in_edges_ = 1;
   bool is_source_like_ = false;
   bool requires_input_ = true;
 };

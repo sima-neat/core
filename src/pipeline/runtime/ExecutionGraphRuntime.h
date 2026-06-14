@@ -13,10 +13,14 @@
 #include "pipeline/runtime/TraceMessageEvents.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -48,12 +52,75 @@ struct DownstreamTarget {
     StageGroup,
     PipelineInput,
     GraphSink,
+    RealtimeLatestLink,
   };
 
   Kind kind = Kind::StageGroup;
   std::size_t index = 0; // stage group index, pipeline index, or sink node id
   simaai::neat::graph::PortId port = simaai::neat::graph::kInvalidPort;
   std::size_t edge_index = invalid_edge_index();
+};
+
+class RealtimeLatestLink {
+public:
+  using DispatchFn =
+      std::function<bool(const DownstreamTarget&, simaai::neat::Sample&&, std::size_t)>;
+  using StopFn = std::function<bool()>;
+  using ErrorFn = std::function<void(const std::string&)>;
+
+  struct Stats {
+    std::uint64_t offered = 0;
+    std::uint64_t scheduled = 0;
+    std::uint64_t overwritten = 0;
+    std::uint64_t dispatch_failed = 0;
+    std::size_t ready = 0;
+  };
+
+  RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options);
+  RealtimeLatestLink(const RealtimeLatestLink&) = delete;
+  RealtimeLatestLink& operator=(const RealtimeLatestLink&) = delete;
+  ~RealtimeLatestLink();
+
+  bool offer(simaai::neat::Sample&& sample, std::size_t edge_index);
+  void add_edge_options(std::size_t edge_index, const GraphLinkOptions& options);
+  void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
+  void close();
+  void join();
+  Stats stats() const;
+  const DownstreamTarget& downstream() const noexcept {
+    return downstream_;
+  }
+  const GraphLinkOptions& options() const noexcept {
+    return options_;
+  }
+
+private:
+  struct Pending {
+    simaai::neat::Sample sample;
+    std::size_t edge_index = invalid_edge_index();
+    bool has_sample = false;
+    bool queued = false;
+  };
+
+  std::string key_for_(const simaai::neat::Sample& sample, std::size_t edge_index) const;
+  void run_();
+
+  DownstreamTarget downstream_;
+  GraphLinkOptions options_;
+  DispatchFn dispatch_;
+  StopFn stop_;
+  ErrorFn error_;
+  mutable std::mutex mu_;
+  std::condition_variable cv_;
+  std::unordered_map<std::string, Pending> pending_;
+  std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
+  std::deque<std::string> ready_;
+  bool closed_ = false;
+  std::thread worker_;
+  std::atomic<std::uint64_t> offered_{0};
+  std::atomic<std::uint64_t> scheduled_{0};
+  std::atomic<std::uint64_t> overwritten_{0};
+  std::atomic<std::uint64_t> dispatch_failed_{0};
 };
 
 struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
@@ -128,6 +195,7 @@ struct ExecutionGraphRuntime {
   std::vector<std::unique_ptr<PipelineSegmentRuntime>> pipelines;
   std::vector<std::unique_ptr<StageRuntime>> stages;
   std::vector<StageGroup> stage_groups;
+  std::vector<std::unique_ptr<RealtimeLatestLink>> realtime_links;
 
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_pipeline;
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_stage_group;

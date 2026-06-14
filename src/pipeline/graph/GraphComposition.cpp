@@ -74,7 +74,8 @@ void Graph::CompositionGraph::recompute_unique_tail() noexcept {
 }
 
 void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
-                                                   std::string from_port, std::string to_port) {
+                                                   std::string from_port, std::string to_port,
+                                                   GraphLinkOptions link_options) {
   if (from >= vertices.size() || to >= vertices.size()) {
     throw std::runtime_error("Graph::connect: internal vertex id out of range");
   }
@@ -88,12 +89,14 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
                                   .to = to,
                                   .kind = CompositionEdgeKind::RuntimePort,
                                   .from_port = std::move(from_port),
-                                  .to_port = std::move(to_port)});
+                                  .to_port = std::move(to_port),
+                                  .link_options = link_options});
   recompute_unique_tail();
 }
 
 void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
-                                               std::string from_endpoint, std::string to_endpoint) {
+                                               std::string from_endpoint, std::string to_endpoint,
+                                               GraphLinkOptions link_options) {
   if (from >= vertices.size() || to >= vertices.size()) {
     throw std::runtime_error("Graph::connect: internal vertex id out of range");
   }
@@ -109,6 +112,13 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
         continue;
       }
       if (edge.to == to && edge.endpoint->to_endpoint == to_endpoint) {
+        const bool existing_realtime =
+            edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+        const bool incoming_realtime =
+            link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+        if (existing_realtime && incoming_realtime) {
+          continue;
+        }
         throw std::runtime_error("Graph::connect: destination endpoint '" + to_endpoint +
                                  "' is already connected; insert an explicit Combine graph "
                                  "when multiple sources should feed one input");
@@ -123,6 +133,7 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
       .kind = CompositionEdgeKind::PublicEndpoint,
       .endpoint = EndpointEdgeMeta{.from_endpoint = std::move(from_endpoint),
                                    .to_endpoint = std::move(to_endpoint)},
+      .link_options = link_options,
   });
   recompute_unique_tail();
 }

@@ -71,4 +71,4 @@ nameserver 127.0.0.1
 
 ## Next step
 
-Return to [Neat Development Environment](/getting-started/installation/dev-environment/) and continue with install/setup.
+Return to [Neat Development Environment](/getting-started/dev-environment/) and continue with install/setup.

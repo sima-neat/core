@@ -59,6 +59,11 @@ def _require(data: Mapping[str, Any], keys: tuple[str, ...], context: str) -> No
         _raise(context, "missing required fields: " + ", ".join(missing))
 
 
+def _string_array(value: Any, context: str) -> None:
+    for i, item in enumerate(_array(value, context)):
+        _string(item, f"{context}[{i}]")
+
+
 def _match(value: str, pattern: str, context: str) -> None:
     if re.match(pattern, value) is None:
         _raise(context, f"value {value!r} does not match {pattern}")
@@ -199,6 +204,50 @@ def validate_power_summary(value: Any, context: str) -> None:
         _array(data["rails"], f"{context}.rails")
 
 
+def validate_throughput_summary(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    _require(
+        data,
+        (
+            "unit",
+            "scope",
+            "semantics",
+            "numerator_counter",
+            "numerator_value",
+            "denominator",
+            "denominator_seconds",
+            "outputs_per_s",
+            "batches_per_s",
+            "logical_batch_size",
+            "logical_inferences_per_s",
+            "available",
+            "status",
+            "warnings",
+        ),
+        context,
+    )
+    for key in ("unit", "scope", "semantics", "numerator_counter", "denominator", "status"):
+        _string(data[key], f"{context}.{key}")
+    _integer(data["numerator_value"], f"{context}.numerator_value")
+    _number(data["denominator_seconds"], f"{context}.denominator_seconds")
+    for key in (
+        "outputs_per_s",
+        "batches_per_s",
+        "throughput_batches_per_s",
+        "logical_inferences_per_s",
+        "elapsed_seconds",
+    ):
+        if key in data:
+            _number(data[key], f"{context}.{key}")
+    if "outputs_pulled" in data:
+        _integer(data["outputs_pulled"], f"{context}.outputs_pulled")
+    _integer(data["logical_batch_size"], f"{context}.logical_batch_size")
+    _bool(data["available"], f"{context}.available")
+    if "multi_output_semantics" in data:
+        _string(data["multi_output_semantics"], f"{context}.multi_output_semantics")
+    _string_array(data["warnings"], f"{context}.warnings")
+
+
 def validate_graph_metrics(value: Any, context: str) -> None:
     data = _mapping(value, context)
     _require(data, ("measurement_scope", "throughput_counting", "elapsed_seconds", "throughput_fps"), context)
@@ -212,6 +261,8 @@ def validate_graph_metrics(value: Any, context: str) -> None:
     if "outputs_pulled" in data:
         _integer(data["outputs_pulled"], f"{context}.outputs_pulled")
     _number(data["throughput_fps"], f"{context}.throughput_fps")
+    if "throughput" in data:
+        validate_throughput_summary(data["throughput"], f"{context}.throughput")
     if "counters" in data:
         counters = _mapping(data["counters"], f"{context}.counters")
         for key in (
@@ -226,6 +277,72 @@ def validate_graph_metrics(value: Any, context: str) -> None:
                 _integer(counters[key], f"{context}.counters.{key}")
     if "power" in data:
         validate_power_summary(data["power"], f"{context}.power")
+
+
+def validate_graph_e2e_latency(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    _require(
+        data,
+        (
+            "available",
+            "status",
+            "correlation_reliable",
+            "survivor_biased",
+            "unit",
+            "semantics",
+            "count",
+            "warnings",
+        ),
+        context,
+    )
+    _bool(data["available"], f"{context}.available")
+    _string(data["status"], f"{context}.status")
+    _bool(data["correlation_reliable"], f"{context}.correlation_reliable")
+    _bool(data["survivor_biased"], f"{context}.survivor_biased")
+    _string(data["unit"], f"{context}.unit")
+    _string(data["semantics"], f"{context}.semantics")
+    _integer(data["count"], f"{context}.count")
+    _string_array(data["warnings"], f"{context}.warnings")
+    for key in ("scope", "source", "interpretation"):
+        if key in data and data[key] is not None:
+            _string(data[key], f"{context}.{key}")
+    for key in ("avg_ms", "p50_ms", "p90_ms", "p95_ms", "p99_ms", "max_ms"):
+        if key in data:
+            _number(data[key], f"{context}.{key}")
+
+
+def validate_output_materialization(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    _require(
+        data,
+        (
+            "available",
+            "status",
+            "claim_status",
+            "claim_scope",
+            "output_memory_mode",
+            "semantics",
+            "timing_available",
+            "runtime_resolved_mode_available",
+            "copy_map_timing_available",
+            "prepare_output_cpu_visible",
+            "note",
+            "warnings",
+        ),
+        context,
+    )
+    _bool(data["available"], f"{context}.available")
+    _string(data["status"], f"{context}.status")
+    _string(data["claim_status"], f"{context}.claim_status")
+    _string(data["claim_scope"], f"{context}.claim_scope")
+    _string(data["output_memory_mode"], f"{context}.output_memory_mode")
+    _string(data["semantics"], f"{context}.semantics")
+    _bool(data["timing_available"], f"{context}.timing_available")
+    _bool(data["runtime_resolved_mode_available"], f"{context}.runtime_resolved_mode_available")
+    _bool(data["copy_map_timing_available"], f"{context}.copy_map_timing_available")
+    _bool(data["prepare_output_cpu_visible"], f"{context}.prepare_output_cpu_visible")
+    _string(data["note"], f"{context}.note")
+    _string_array(data["warnings"], f"{context}.warnings")
 
 
 def validate_element_metric(value: Any, context: str) -> None:
@@ -468,6 +585,10 @@ def validate_graph_run(data: Mapping[str, Any], *, strict: bool = False, custome
             _string(name, f"$.run.output_names[{i}]")
     if "graph_metrics" in run:
         validate_graph_metrics(run["graph_metrics"], "$.run.graph_metrics")
+    if "graph_e2e_latency_ms" in run:
+        validate_graph_e2e_latency(run["graph_e2e_latency_ms"], "$.run.graph_e2e_latency_ms")
+    if "output_materialization" in run:
+        validate_output_materialization(run["output_materialization"], "$.run.output_materialization")
     if "node_metrics" in run:
         for i, metric in enumerate(_array(run["node_metrics"], "$.run.node_metrics")):
             validate_node_metric(metric, f"$.run.node_metrics[{i}]")

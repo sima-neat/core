@@ -129,6 +129,11 @@ void validate_options(const MeasureOptions& opt) {
 }
 
 MetricsTraceSource apply_metrics_trace_env(MetricsTraceSource source) {
+  // Explicit API options must win.  The env knob is retained only as a legacy default override for
+  // callers that intentionally leave the source at Auto.
+  if (source != MetricsTraceSource::Auto) {
+    return source;
+  }
   const char* env = std::getenv("SIMA_NEAT_METRICS_TRACE_SOURCE");
   if (!env || !*env) {
     return source;
@@ -170,9 +175,9 @@ pipeline_internal::InternalMetricsTraceOptions make_lttng_options(const MeasureO
   return out;
 }
 
-pipeline_internal::TraceIdentityContext trace_identity_for_run(const Run& run) {
+pipeline_internal::TraceIdentityContext
+trace_identity_for_core(const std::shared_ptr<const runtime::RunCore>& core) {
   pipeline_internal::TraceIdentityContext ctx;
-  const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
   if (core) {
     ctx.run_id_hash = pipeline_internal::stable_trace_hash(core->run_id);
     if (core->graph_execution_) {
@@ -249,8 +254,8 @@ std::string plugin_node_display_name(const MeasurePluginLatency& plugin) {
   return "-";
 }
 
-PowerMonitorOptions measurement_power_options_for_run(const Run& run) {
-  const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
+PowerMonitorOptions
+measurement_power_options_for_core(const std::shared_ptr<const runtime::RunCore>& core) {
   if (!core) {
     return {};
   }
@@ -326,7 +331,7 @@ std::vector<GraphNodeMetrics> delta_node_metrics(const GraphMetricsReport& befor
 } // namespace
 
 struct MeasureScope::Impl {
-  Run* run = nullptr;
+  std::shared_ptr<runtime::RunCore> core;
   MeasureOptions options;
   RunStats before{};
   InputStreamStats before_input{};
@@ -350,13 +355,13 @@ struct MeasureScope::Impl {
 };
 
 void MeasureScope::disable_lttng_trace_identity_noexcept(Impl* impl) {
-  if (!impl || !impl->lttng_trace_identity_applied || !impl->run) {
+  if (!impl || !impl->lttng_trace_identity_applied || !impl->core) {
     return;
   }
   try {
     const GraphMetricsReport graph_metrics = build_graph_metrics_report_run_lifetime(
-        *impl->run, GraphMetricsOptions{.include_power = false});
-    pipeline_internal::apply_lttng_trace_identity(*impl->run, graph_metrics.node_metrics,
+        impl->core, GraphMetricsOptions{.include_power = false});
+    pipeline_internal::apply_lttng_trace_identity(impl->core, graph_metrics.node_metrics,
                                                   impl->trace_context.run_id_hash,
                                                   impl->trace_context.graph_id_hash, false);
   } catch (...) {
@@ -371,8 +376,8 @@ MeasureScope& MeasureScope::operator=(MeasureScope&& other) noexcept {
     if (impl_ && !impl_->stopped) {
       MeasureScope::disable_lttng_trace_identity_noexcept(impl_.get());
     }
-    if (impl_ && !impl_->stopped && impl_->run && impl_->run->core_) {
-      auto st = impl_->run->core_;
+    if (impl_ && !impl_->stopped && impl_->core) {
+      auto st = impl_->core;
       std::lock_guard<std::mutex> lock(st->latency_mu);
       st->measurement_active = false;
       st->measurement_output_timing_init = false;
@@ -381,8 +386,8 @@ MeasureScope& MeasureScope::operator=(MeasureScope&& other) noexcept {
       st->measurement_graph_entries.clear();
       st->measurement_graph_pulls.clear();
     }
-    if (impl_ && impl_->run) {
-      pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
+    if (impl_ && impl_->core) {
+      pipeline_internal::set_graph_queue_timing_enabled(impl_->core, false);
     }
     if (impl_ && impl_->power_monitor) {
       impl_->power_monitor->stop();
@@ -395,8 +400,8 @@ MeasureScope::~MeasureScope() {
   if (impl_ && !impl_->stopped) {
     MeasureScope::disable_lttng_trace_identity_noexcept(impl_.get());
   }
-  if (impl_ && !impl_->stopped && impl_->run && impl_->run->core_) {
-    auto st = impl_->run->core_;
+  if (impl_ && !impl_->stopped && impl_->core) {
+    auto st = impl_->core;
     std::lock_guard<std::mutex> lock(st->latency_mu);
     st->measurement_active = false;
     st->measurement_output_timing_init = false;
@@ -405,8 +410,8 @@ MeasureScope::~MeasureScope() {
     st->measurement_graph_entries.clear();
     st->measurement_graph_pulls.clear();
   }
-  if (impl_ && !impl_->stopped && impl_->run) {
-    pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
+  if (impl_ && !impl_->stopped && impl_->core) {
+    pipeline_internal::set_graph_queue_timing_enabled(impl_->core, false);
   }
   if (impl_ && impl_->power_monitor) {
     impl_->power_monitor->stop();
@@ -424,9 +429,10 @@ MeasureReport MeasureScope::stop() {
     return impl_->cached;
 
   const auto end = Clock::now();
-  const RunStats after = run_internal::stats(*impl_->run);
+  const RunStats after = impl_->core ? impl_->core->stats() : RunStats{};
   const RunStats measured = delta_counters(impl_->before, after);
-  const InputStreamStats after_input = run_internal::input_stats(*impl_->run);
+  const InputStreamStats after_input =
+      impl_->core ? impl_->core->input_stats() : InputStreamStats{};
 
   MeasureReport report;
   report.options = impl_->options;
@@ -454,8 +460,8 @@ MeasureReport MeasureScope::stop() {
   std::vector<double> frame_gap_samples;
   std::vector<runtime::GraphSampleTimingEvent> graph_entry_events;
   std::vector<runtime::GraphSampleTimingEvent> graph_pull_events;
-  if (impl_->run->core_) {
-    auto st = impl_->run->core_;
+  if (impl_->core) {
+    auto st = impl_->core;
     std::lock_guard<std::mutex> lock(st->latency_mu);
     st->measurement_active = false;
     latency_samples = st->measurement_latencies_ms;
@@ -480,16 +486,18 @@ MeasureReport MeasureScope::stop() {
   report.frame_gap = summarize_samples(std::move(frame_gap_samples));
   report.latency_samples_collected = report.end_to_end.count > 0 || report.frame_gap.count > 0;
   const GraphMetricsReport after_graph_metrics = build_graph_metrics_report_run_lifetime(
-      *impl_->run, GraphMetricsOptions{.include_power = false});
+      impl_->core, GraphMetricsOptions{.include_power = false});
   report.node_metrics = delta_node_metrics(impl_->before_graph_metrics, after_graph_metrics);
-  const RunDiagSnapshot after_diag = run_internal::diag_snapshot(*impl_->run);
+  const RunDiagSnapshot after_diag = impl_->core ? impl_->core->diag_snapshot() : RunDiagSnapshot{};
   if (impl_->options.include_power) {
     if (impl_->power_monitor) {
       impl_->power_monitor->stop();
       report.power = impl_->power_monitor->summary();
       impl_->power_monitor.reset();
     } else {
-      report.power = run_internal::power_summary(*impl_->run);
+      report.power = (impl_->core && impl_->core->power_monitor)
+                         ? impl_->core->power_monitor->summary()
+                         : PowerSummary{};
     }
   }
   if (impl_->lttng_metrics) {
@@ -527,11 +535,10 @@ MeasureReport MeasureScope::stop() {
         for (auto& warning : parsed.warnings) {
           report.warnings.push_back(std::move(warning));
         }
-        if (impl_->options.include_message_latency && impl_->run->core_ &&
-            impl_->run->core_->graph_execution_) {
-          report.path_timing =
-              runtime::build_path_timing(impl_->run->core_->graph_execution_->plan, parsed,
-                                         graph_entry_events, graph_pull_events);
+        if (impl_->options.include_message_latency && impl_->core &&
+            impl_->core->graph_execution_) {
+          report.path_timing = runtime::build_path_timing(
+              impl_->core->graph_execution_->plan, parsed, graph_entry_events, graph_pull_events);
         }
         if (parsed.trace_loss_detected) {
           report.trace_loss_detected = true;
@@ -563,7 +570,7 @@ MeasureReport MeasureScope::stop() {
     impl_->lttng_metrics.reset();
   }
   if (impl_->lttng_trace_identity_applied) {
-    pipeline_internal::apply_lttng_trace_identity(*impl_->run, after_graph_metrics.node_metrics,
+    pipeline_internal::apply_lttng_trace_identity(impl_->core, after_graph_metrics.node_metrics,
                                                   impl_->trace_context.run_id_hash,
                                                   impl_->trace_context.graph_id_hash, false);
     impl_->lttng_trace_identity_applied = false;
@@ -575,8 +582,8 @@ MeasureReport MeasureScope::stop() {
     report.edge_latency.insert(report.edge_latency.end(),
                                std::make_move_iterator(diag_edges.begin()),
                                std::make_move_iterator(diag_edges.end()));
-    auto after_queue = pipeline_internal::snapshot_graph_queue_latencies(*impl_->run);
-    pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
+    auto after_queue = pipeline_internal::snapshot_graph_queue_latencies(impl_->core);
+    pipeline_internal::set_graph_queue_timing_enabled(impl_->core, false);
     auto queue_edges = pipeline_internal::build_graph_queue_latency_delta(
         impl_->before_graph_queue_metrics, after_queue);
     report.edge_latency.insert(report.edge_latency.end(),
@@ -587,7 +594,7 @@ MeasureReport MeasureScope::stop() {
       report.message_latency_source = "diagnostics";
     }
   } else {
-    pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
+    pipeline_internal::set_graph_queue_timing_enabled(impl_->core, false);
   }
   if (!impl_->options.include_message_latency) {
     report.path_timing.available = false;
@@ -612,25 +619,29 @@ MeasureReport MeasureScope::stop() {
   return impl_->cached;
 }
 
-MeasureScope Run::start_measurement(const MeasureOptions& opt) {
+MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,
+                                                     const MeasureOptions& opt) {
   validate_options(opt);
-  auto impl = std::unique_ptr<MeasureScope::Impl>(new MeasureScope::Impl());
-  impl->run = this;
-  impl->options = opt;
-  impl->before = run_internal::stats(*this);
-  impl->before_input = run_internal::input_stats(*this);
-  impl->before_diag = run_internal::diag_snapshot(*this);
-  impl->before_graph_metrics =
-      build_graph_metrics_report_run_lifetime(*this, GraphMetricsOptions{.include_power = false});
-  if (core_) {
-    impl->before_graph_sample_timing_unkeyed =
-        core_->graph_sample_timing_unkeyed.load(std::memory_order_relaxed);
-    impl->before_graph_sample_timing_misses =
-        core_->graph_sample_timing_misses.load(std::memory_order_relaxed);
+  if (!core) {
+    throw std::runtime_error("start_measurement: no live run");
   }
-  pipeline_internal::set_graph_queue_timing_enabled(*this, opt.include_edge_latency ||
-                                                               opt.include_message_latency);
-  impl->before_graph_queue_metrics = pipeline_internal::snapshot_graph_queue_latencies(*this);
+  auto impl = std::unique_ptr<MeasureScope::Impl>(new MeasureScope::Impl());
+  impl->core = std::move(core);
+  impl->options = opt;
+  impl->before = impl->core->stats();
+  impl->before_input = impl->core->input_stats();
+  impl->before_diag = impl->core->diag_snapshot();
+  impl->before_graph_metrics = build_graph_metrics_report_run_lifetime(
+      impl->core, GraphMetricsOptions{.include_power = false});
+  if (impl->core) {
+    impl->before_graph_sample_timing_unkeyed =
+        impl->core->graph_sample_timing_unkeyed.load(std::memory_order_relaxed);
+    impl->before_graph_sample_timing_misses =
+        impl->core->graph_sample_timing_misses.load(std::memory_order_relaxed);
+  }
+  pipeline_internal::set_graph_queue_timing_enabled(impl->core, opt.include_edge_latency ||
+                                                                    opt.include_message_latency);
+  impl->before_graph_queue_metrics = pipeline_internal::snapshot_graph_queue_latencies(impl->core);
 
   MetricsTraceSource plugin_source = apply_metrics_trace_env(opt.plugin_latency_source);
   MetricsTraceSource message_source = apply_metrics_trace_env(opt.message_latency_source);
@@ -652,24 +663,24 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
   const bool need_lttng = effective_plugin_lttng || effective_message_lttng;
   if (need_lttng) {
     auto lttng_opt = make_lttng_options(opt, effective_message_lttng);
-    impl->trace_context = trace_identity_for_run(*this);
+    impl->trace_context = trace_identity_for_core(impl->core);
     pipeline_internal::apply_lttng_trace_identity(
-        *this, impl->before_graph_metrics.node_metrics, impl->trace_context.run_id_hash,
+        impl->core, impl->before_graph_metrics.node_metrics, impl->trace_context.run_id_hash,
         impl->trace_context.graph_id_hash, true, effective_message_lttng);
     impl->lttng_trace_identity_applied = true;
     impl->lttng_metrics = std::make_unique<pipeline_internal::LttngMetricsCollector>(
         std::move(lttng_opt), impl->trace_context);
     std::string err;
     if (!impl->lttng_metrics->start(&err)) {
-      pipeline_internal::apply_lttng_trace_identity(*this, impl->before_graph_metrics.node_metrics,
-                                                    impl->trace_context.run_id_hash,
-                                                    impl->trace_context.graph_id_hash, false);
+      pipeline_internal::apply_lttng_trace_identity(
+          impl->core, impl->before_graph_metrics.node_metrics, impl->trace_context.run_id_hash,
+          impl->trace_context.graph_id_hash, false);
       impl->lttng_trace_identity_applied = false;
       const bool required =
           plugin_source == MetricsTraceSource::Lttng || message_source == MetricsTraceSource::Lttng;
       impl->lttng_metrics.reset();
       if (required) {
-        pipeline_internal::set_graph_queue_timing_enabled(*this, false);
+        pipeline_internal::set_graph_queue_timing_enabled(impl->core, false);
         throw std::runtime_error("LTTng metrics start failed: " + err);
       }
       impl->warnings.push_back("LTTng metrics unavailable: " + err);
@@ -693,24 +704,34 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
     }
   }
   if (opt.include_power) {
-    const PowerMonitorOptions power_opt = measurement_power_options_for_run(*this);
+    const PowerMonitorOptions power_opt = measurement_power_options_for_core(impl->core);
     if (power_opt.enabled) {
       impl->power_monitor = std::make_unique<PowerMonitor>(power_opt);
       impl->power_monitor->start();
     }
   }
   impl->start = Clock::now();
-  if (core_) {
-    std::lock_guard<std::mutex> lock(core_->latency_mu);
-    core_->measurement_latencies_ms.clear();
-    core_->measurement_frame_gaps_ms.clear();
-    core_->measurement_graph_entries.clear();
-    core_->measurement_graph_pulls.clear();
-    core_->measurement_started_at = impl->start;
-    core_->measurement_output_timing_init = false;
-    core_->measurement_active = true;
+  if (impl->core) {
+    std::lock_guard<std::mutex> lock(impl->core->latency_mu);
+    impl->core->measurement_latencies_ms.clear();
+    impl->core->measurement_frame_gaps_ms.clear();
+    impl->core->measurement_graph_entries.clear();
+    impl->core->measurement_graph_pulls.clear();
+    impl->core->measurement_started_at = impl->start;
+    impl->core->measurement_output_timing_init = false;
+    impl->core->measurement_active = true;
   }
   return MeasureScope(std::move(impl));
+}
+
+MeasureScope Run::start_measurement(const MeasureOptions& opt) {
+  return run_internal::start_measurement_on_core(core_, opt);
+}
+
+MeasureScope Run::start_measurement(bool include_plugin_latency) {
+  MeasureOptions opt;
+  opt.include_plugin_latency = include_plugin_latency;
+  return start_measurement(opt);
 }
 
 std::string MeasureReport::to_text() const {

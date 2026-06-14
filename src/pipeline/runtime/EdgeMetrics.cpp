@@ -192,8 +192,12 @@ std::vector<MeasureEdgeLatency> build_edge_latency_from_diag_delta(const RunDiag
 }
 
 std::vector<GraphQueueLatencySnapshot> snapshot_graph_queue_latencies(const Run& run) {
+  return snapshot_graph_queue_latencies(run_internal::core(run));
+}
+
+std::vector<GraphQueueLatencySnapshot>
+snapshot_graph_queue_latencies(const std::shared_ptr<const runtime::RunCore>& core) {
   std::vector<GraphQueueLatencySnapshot> out;
-  const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
   if (!core || !core->graph_execution_) {
     return out;
   }
@@ -325,7 +329,11 @@ build_graph_queue_latency_delta(const std::vector<GraphQueueLatencySnapshot>& be
 }
 
 void set_graph_queue_timing_enabled(const Run& run, bool enabled) {
-  const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
+  set_graph_queue_timing_enabled(run_internal::core(run), enabled);
+}
+
+void set_graph_queue_timing_enabled(const std::shared_ptr<const runtime::RunCore>& core,
+                                    bool enabled) {
   if (!core || !core->graph_execution_) {
     return;
   }

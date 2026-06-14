@@ -23,7 +23,7 @@
       "link_rewrites": [
         {
           "from": "/getting-started/installation/neat-framework/",
-          "to": "/getting-started/installation/neat-library/"
+          "to": "/getting-started/neat-library/"
         }
       ]
     },
@@ -61,7 +61,7 @@
         },
         {
           "from": "/getting-started/installation/neat-framework/",
-          "to": "/getting-started/installation/neat-library/"
+          "to": "/getting-started/neat-library/"
         }
       ]
     },
@@ -156,6 +156,25 @@
         "root_stem": "sima-cli",
         "root_page_stem": "cli"
       }
+    },
+    {
+      "key": "insight",
+      "title": "Insight",
+      "repo": "https://github.com/sima-neat/insight.git",
+      "branch": "main",
+      "githash": "",
+      "docs_subpath": "docs",
+      "mount": "tools/insight",
+      "sidebar_position": 4,
+      "category_link": "index",
+      "files_order": [
+        "index",
+        "concepts",
+        "install-upgrade",
+        "user-interface",
+        "workflows",
+        "ports-network"
+      ]
     }
   ]
 }

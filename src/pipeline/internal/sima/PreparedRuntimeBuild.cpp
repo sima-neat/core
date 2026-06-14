@@ -242,6 +242,47 @@ std::string upper_copy_local(std::string value) {
   return value;
 }
 
+int processcvu_evxx_debug_override_local(int fallback, const std::string& graph_family,
+                                         const std::string& graph_name, int graph_id) {
+  const char* raw = std::getenv("SIMA_PROCESSCVU_EVXX_DEBUG");
+  bool preproc_only = false;
+  if (!raw || !*raw) {
+    raw = std::getenv("SIMA_PREPROC_EVXX_DEBUG");
+    preproc_only = true;
+  }
+  if (!raw || !*raw) {
+    return fallback;
+  }
+
+  if (preproc_only) {
+    const std::string family = upper_copy_local(graph_family);
+    const std::string name = upper_copy_local(graph_name);
+    const bool is_preproc = graph_id == 200 || family.find("PREPROC") != std::string::npos ||
+                            name.find("PREPROC") != std::string::npos;
+    if (!is_preproc) {
+      return fallback;
+    }
+  }
+
+  const std::string token = upper_copy_local(std::string(raw));
+  if (token == "0" || token == "EVXX_DBG_DISABLED" || token == "DISABLED") {
+    return 0;
+  }
+  if (token == "1" || token == "EVXX_DBG_LEVEL_1" || token == "LEVEL_1") {
+    return 1;
+  }
+  if (token == "2" || token == "EVXX_DBG_LEVEL_2" || token == "LEVEL_2") {
+    return 2;
+  }
+  if (token == "3" || token == "EVXX_DBG_LEVEL_3" || token == "LEVEL_3") {
+    return 3;
+  }
+  if (token == "4" || token == "EVXX_DBG_LEVEL_4" || token == "LEVEL_4") {
+    return 4;
+  }
+  return fallback;
+}
+
 std::string stage_key_from_stage_spec_local(const StageStaticSpec& stage) {
   if (!stage.logical_stage_id.empty()) {
     return stage.logical_stage_id;
@@ -1576,7 +1617,8 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
   cfg.max_level = payload.max_level;
   cfg.detect_new_features = payload.detect_new_features;
   cfg.fast_threshold = payload.fast_threshold;
-  cfg.debug = payload.debug;
+  cfg.debug = processcvu_evxx_debug_override_local(payload.debug, payload.graph_family,
+                                                   payload.graph_name, payload.graph_id);
   cfg.default_input_name = payload.default_input_name;
   cfg.primary_output_name = payload.primary_output_name;
   cfg.single_output_handoff = payload.preproc_single_output_handoff;
@@ -3309,7 +3351,8 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
   request.max_level = payload.max_level;
   request.detect_new_features = payload.detect_new_features;
   request.fast_threshold = payload.fast_threshold;
-  request.debug = payload.debug;
+  request.debug = processcvu_evxx_debug_override_local(payload.debug, payload.graph_family,
+                                                       payload.graph_name, payload.graph_id);
   request.batch_size = payload.batch_size;
   request.round_off = payload.round_off;
   request.byte_align = payload.byte_align;

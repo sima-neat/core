@@ -163,9 +163,16 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
       continue;
 
     if (g.in_degree(id) > 1) {
-      throw std::runtime_error("Compiler: pipeline node " + std::to_string(id) +
-                               " has multiple inputs (in_degree=" +
-                               std::to_string(g.in_degree(id)) + "; add stage join)");
+      const auto in_ports = node->input_ports();
+      const bool accepts_fan_in =
+          in_ports.size() == 1U &&
+          (in_ports[0].max_in_edges == 0 ||
+           g.in_degree(id) <= static_cast<std::size_t>(in_ports[0].max_in_edges));
+      if (!accepts_fan_in) {
+        throw std::runtime_error("Compiler: pipeline node " + std::to_string(id) +
+                                 " has multiple inputs (in_degree=" +
+                                 std::to_string(g.in_degree(id)) + "; add stage join)");
+      }
     }
     if (g.out_degree(id) > 1) {
       throw std::runtime_error("Compiler: pipeline node " + std::to_string(id) +
@@ -287,16 +294,24 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
     seg.input_edges.assign(in_edges.begin(), in_edges.end());
     seg.output_edges.assign(out_edges.begin(), out_edges.end());
 
-    if (seg.input_edges.size() > 1) {
-      throw std::runtime_error("Compiler: pipeline segment has multiple inputs");
-    }
     if (seg.output_edges.size() > 1) {
       throw std::runtime_error("Compiler: pipeline segment has multiple outputs");
     }
     if (!seg.input_edges.empty()) {
+      const auto& first_node = g.node(seg.node_ids.front());
+      const auto in_ports = first_node ? first_node->input_ports() : std::vector<PortDesc>{};
+      const int max_edges = in_ports.size() == 1U ? in_ports[0].max_in_edges : 1;
+      if (max_edges > 0 && seg.input_edges.size() > static_cast<std::size_t>(max_edges)) {
+        throw std::runtime_error("Compiler: pipeline segment has multiple inputs");
+      }
       const Edge& e = g.edge(seg.input_edges[0]);
       if (e.to != seg.node_ids.front()) {
         throw std::runtime_error("Compiler: pipeline segment input edge must target first node");
+      }
+      for (const std::size_t eidx : seg.input_edges) {
+        if (g.edge(eidx).to != seg.node_ids.front()) {
+          throw std::runtime_error("Compiler: pipeline segment input edge must target first node");
+        }
       }
     }
     if (!seg.output_edges.empty()) {

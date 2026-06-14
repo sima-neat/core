@@ -48,6 +48,148 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
 
 } // namespace
 
+RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options)
+    : downstream_(downstream), options_(options) {
+  add_edge_options(downstream_.edge_index, options_);
+}
+
+RealtimeLatestLink::~RealtimeLatestLink() {
+  close();
+  join();
+}
+
+std::string RealtimeLatestLink::key_for_(const simaai::neat::Sample& sample,
+                                         std::size_t edge_index) const {
+  if (!sample.stream_id.empty()) {
+    return sample.stream_id;
+  }
+  return "edge:" + std::to_string(edge_index);
+}
+
+bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_index) {
+  offered_.fetch_add(1, std::memory_order_relaxed);
+  std::string stream_id;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    const auto it = stream_id_by_edge_.find(edge_index);
+    if (it != stream_id_by_edge_.end()) {
+      stream_id = it->second;
+    }
+  }
+  if (!stream_id.empty()) {
+    sample.stream_id = stream_id;
+    if (sample.stream_label.empty()) {
+      sample.stream_label = stream_id;
+    }
+  }
+  const std::string key = key_for_(sample, edge_index);
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (closed_) {
+      return false;
+    }
+    Pending& pending = pending_[key];
+    if (pending.has_sample) {
+      overwritten_.fetch_add(1, std::memory_order_relaxed);
+    }
+    pending.sample = std::move(sample);
+    pending.edge_index = edge_index;
+    pending.has_sample = true;
+    if (!pending.queued) {
+      pending.queued = true;
+      ready_.push_back(key);
+    }
+  }
+  cv_.notify_one();
+  return true;
+}
+
+void RealtimeLatestLink::add_edge_options(std::size_t edge_index, const GraphLinkOptions& options) {
+  if (edge_index == invalid_edge_index() || options.stream_id.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(mu_);
+  stream_id_by_edge_[edge_index] = options.stream_id;
+}
+
+void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error) {
+  dispatch_ = std::move(dispatch);
+  stop_ = std::move(stop);
+  error_ = std::move(error);
+  worker_ = std::thread([this] { run_(); });
+}
+
+void RealtimeLatestLink::close() {
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    closed_ = true;
+  }
+  cv_.notify_all();
+}
+
+void RealtimeLatestLink::join() {
+  if (worker_.joinable()) {
+    worker_.join();
+  }
+}
+
+RealtimeLatestLink::Stats RealtimeLatestLink::stats() const {
+  std::lock_guard<std::mutex> lock(mu_);
+  return Stats{.offered = offered_.load(std::memory_order_relaxed),
+               .scheduled = scheduled_.load(std::memory_order_relaxed),
+               .overwritten = overwritten_.load(std::memory_order_relaxed),
+               .dispatch_failed = dispatch_failed_.load(std::memory_order_relaxed),
+               .ready = ready_.size()};
+}
+
+void RealtimeLatestLink::run_() {
+  while (true) {
+    Sample sample;
+    std::size_t edge_index = invalid_edge_index();
+    {
+      std::unique_lock<std::mutex> lock(mu_);
+      cv_.wait(lock, [&] { return closed_ || (stop_ && stop_()) || !ready_.empty(); });
+      if ((closed_ || (stop_ && stop_())) && ready_.empty()) {
+        return;
+      }
+
+      const std::string key = std::move(ready_.front());
+      ready_.pop_front();
+      auto it = pending_.find(key);
+      if (it == pending_.end() || !it->second.has_sample) {
+        if (it != pending_.end()) {
+          it->second.queued = false;
+        }
+        continue;
+      }
+      Pending& pending = it->second;
+      sample = std::move(pending.sample);
+      edge_index = pending.edge_index;
+      pending.has_sample = false;
+      pending.queued = false;
+    }
+
+    if (!dispatch_) {
+      dispatch_failed_.fetch_add(1, std::memory_order_relaxed);
+      if (error_) {
+        error_("RealtimeLatestLink: missing dispatch callback");
+      }
+      return;
+    }
+    if (!dispatch_(downstream_, std::move(sample), edge_index)) {
+      dispatch_failed_.fetch_add(1, std::memory_order_relaxed);
+      if (stop_ && stop_()) {
+        return;
+      }
+      if (error_) {
+        error_("RealtimeLatestLink: downstream dispatch failed");
+      }
+      return;
+    }
+    scheduled_.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
 const std::vector<DownstreamTarget>* EdgeRouter::targets(simaai::neat::graph::NodeId node,
                                                          simaai::neat::graph::PortId port) const {
   if (!runtime_)
@@ -112,6 +254,15 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
   if (!runtime_) {
     request_stop(callbacks, "EdgeRouter: missing runtime state");
     return false;
+  }
+
+  if (target.kind == DownstreamTarget::Kind::RealtimeLatestLink) {
+    if (target.index >= runtime_->realtime_links.size() ||
+        !runtime_->realtime_links[target.index]) {
+      request_stop(callbacks, "EdgeRouter: realtime link target out of range");
+      return false;
+    }
+    return runtime_->realtime_links[target.index]->offer(std::move(sample), target.edge_index);
   }
 
   if (target.kind == DownstreamTarget::Kind::StageGroup) {
@@ -185,13 +336,20 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       trace_args = make_trace_graph_message_args(runtime_, target.edge_index, sample);
       trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
     }
-    if (!input_queue->push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index},
-                           options.push_timeout_ms)) {
+    const bool pushed =
+        dispatch_options.drop_pipeline_input_when_full
+            ? input_queue->try_push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index})
+            : input_queue->push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index},
+                                options.push_timeout_ms);
+    if (!pushed) {
       if (trace) {
         trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
       }
       atomic_add_max(telemetry.router_input_push_ns, telemetry.router_input_push_max_ns,
                      elapsed_ns_since(push_start));
+      if (dispatch_options.drop_pipeline_input_when_full) {
+        return true;
+      }
       if (!stop_requested(callbacks)) {
         std::ostringstream msg;
         msg << "GraphRun: pipeline input backpressure timeout (seg="

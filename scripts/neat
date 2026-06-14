@@ -50,9 +50,10 @@ INSIGHT_TAG=""
 INSIGHT_CHANNEL_ASSUMED=0
 INSIGHT_VENV_DIR=""
 INSIGHT_SERVICE_STATE="Stopped"
-MODEL_SDK_AVAILABLE=0
-MODEL_SDK_VERSION=""
-MODEL_SDK_DETAIL=""
+MODEL_COMPILER_DIR="${NEAT_MODEL_COMPILER_DIR:-/sdk-extensions/model-compiler}"
+MODEL_COMPILER_AVAILABLE=0
+MODEL_COMPILER_VERSION=""
+MODEL_COMPILER_DETAIL=""
 SIMA_CLI_PATH=""
 CORE_LATEST_TAG=""
 CORE_LATEST_VERSION=""
@@ -84,6 +85,7 @@ Environment:
   NEAT_UPDATE_CONNECT_TIMEOUT_SECONDS
                            Per-request update check connect timeout in seconds (default: 3)
   NEAT_PORT_MAP_FILE       SDK exposed-port map (default: $HOME/.insight-config/neat-port-map.json)
+  NEAT_MODEL_COMPILER_DIR  Model Compiler extension directory (default: /sdk-extensions/model-compiler)
   SIMA_CLI_BIN             sima-cli executable path/name override
   SYSROOT                  SDK sysroot path (default: /opt/toolchain/aarch64/modalix)
   NO_COLOR                 Disable color when set
@@ -612,11 +614,49 @@ discover_insight() {
   fi
 }
 
-discover_model_sdk() {
+model_compiler_version_from_venv() {
+  local python_bin="$1"
+  if [[ ! -x "${python_bin}" ]]; then
+    return 1
+  fi
+  "${python_bin}" - <<'PY' 2>/dev/null || true
+import importlib.metadata as metadata
+
+for package in ("sima-frontend", "sima-mlc", "sima-lmm"):
+    try:
+        print(metadata.version(package))
+        raise SystemExit(0)
+    except metadata.PackageNotFoundError:
+        pass
+PY
+}
+
+discover_model_compiler_from_extension_dir() {
+  local extension_dir="${MODEL_COMPILER_DIR}"
+  local python_bin="${extension_dir}/bin/python"
+  local version=""
+
+  if [[ ! -x "${python_bin}" ]]; then
+    return 1
+  fi
+  version="$(model_compiler_version_from_venv "${python_bin}")"
+  [[ -z "${version}" ]] && version="installed"
+
+  MODEL_COMPILER_VERSION="${version}"
+  MODEL_COMPILER_AVAILABLE=1
+  if have_cmd activate-model-compiler; then
+    MODEL_COMPILER_DETAIL="run activate-model-compiler to activate"
+  else
+    MODEL_COMPILER_DETAIL="source ${extension_dir}/bin/activate to activate"
+  fi
+  return 0
+}
+
+discover_model_compiler_from_registry() {
   local registry="${SIMA_CLI_REGISTRY_FILE:-${HOME}/.sima-cli/registry.json}"
   local entry=""
   if [[ ! -f "${registry}" ]]; then
-    return 0
+    return 1
   fi
 
   if ! entry="$(python3 - "${registry}" 2>/dev/null <<'PY'
@@ -631,7 +671,8 @@ if not isinstance(data, list):
 for item in data:
     if not isinstance(item, dict):
         continue
-    if item.get("package_name") != "sima-neat-model-sdk":
+    package_name = str(item.get("package_name") or item.get("name") or "")
+    if package_name != "sima-neat-model-sdk" and "model-compiler" not in package_name:
         continue
     if item.get("state") != "installed":
         continue
@@ -645,11 +686,18 @@ PY
   fi
 
   if [[ -n "${entry}" ]]; then
-    MODEL_SDK_VERSION="${entry}"
-    MODEL_SDK_AVAILABLE=1
-    MODEL_SDK_DETAIL="run activate-model-sdk to activate"
+    MODEL_COMPILER_VERSION="${entry}"
+    MODEL_COMPILER_AVAILABLE=1
+    MODEL_COMPILER_DETAIL="run activate-model-compiler to activate"
     return 0
   fi
+  return 1
+}
+
+discover_model_compiler() {
+  discover_model_compiler_from_extension_dir && return 0
+  discover_model_compiler_from_registry && return 0
+  return 0
 }
 
 discover_all() {
@@ -662,7 +710,7 @@ discover_all() {
     discover_devkit_components
   fi
   discover_insight
-  discover_model_sdk
+  discover_model_compiler
   discover_core_package_buildinfo
   if [[ -z "${CORE_CHANNEL}" || -z "${CORE_TAG}" ]]; then
     infer_channel_and_tag "${CORE_VERSION}" "main" CORE_CHANNEL CORE_TAG CORE_CHANNEL_ASSUMED
@@ -911,9 +959,9 @@ print_status_json() {
     NEAT_JSON_INSIGHT_METADATA_URL="${INSIGHT_METADATA_URL}" \
     NEAT_JSON_INSIGHT_VENV_DIR="${INSIGHT_VENV_DIR}" \
     NEAT_JSON_INSIGHT_SERVICE_STATE="${INSIGHT_SERVICE_STATE}" \
-    NEAT_JSON_MODEL_SDK_AVAILABLE="${MODEL_SDK_AVAILABLE}" \
-    NEAT_JSON_MODEL_SDK_VERSION="${MODEL_SDK_VERSION}" \
-    NEAT_JSON_MODEL_SDK_DETAIL="${MODEL_SDK_DETAIL}" \
+    NEAT_JSON_MODEL_COMPILER_AVAILABLE="${MODEL_COMPILER_AVAILABLE}" \
+    NEAT_JSON_MODEL_COMPILER_VERSION="${MODEL_COMPILER_VERSION}" \
+    NEAT_JSON_MODEL_COMPILER_DETAIL="${MODEL_COMPILER_DETAIL}" \
     NEAT_JSON_PORT_MAP_FILE="${PORT_MAP_FILE}" \
     NEAT_JSON_CONTAINER_HOST_IP="${CONTAINER_HOST_IP:-}" \
     python3 - <<'PY'
@@ -1076,11 +1124,11 @@ payload = {
             "venv": optional(env("NEAT_JSON_INSIGHT_VENV_DIR")),
             "serviceState": env("NEAT_JSON_INSIGHT_SERVICE_STATE"),
         },
-        "modelSdkExtension": {
-            "name": "Model SDK Extension",
-            "installed": bool_env("NEAT_JSON_MODEL_SDK_AVAILABLE"),
-            "version": optional(env("NEAT_JSON_MODEL_SDK_VERSION")),
-            "detail": optional(env("NEAT_JSON_MODEL_SDK_DETAIL")),
+        "modelCompiler": {
+            "name": "Model Compiler",
+            "installed": bool_env("NEAT_JSON_MODEL_COMPILER_AVAILABLE"),
+            "version": optional(env("NEAT_JSON_MODEL_COMPILER_VERSION")),
+            "detail": optional(env("NEAT_JSON_MODEL_COMPILER_DETAIL")),
         },
     },
     "insight": {
@@ -1158,10 +1206,10 @@ print_status() {
   print_component "neat-llima" "${LLIMA_VERSION}" "" "$([[ -n "${LLIMA_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-insight" "${INSIGHT_VERSION}" "${insight_detail}" "$([[ -n "${INSIGHT_VERSION}" ]] && echo "${insight_state}" || echo missing)"
 
-  if [[ "${MODEL_SDK_AVAILABLE}" -eq 1 ]]; then
-    model_detail="${MODEL_SDK_DETAIL}"
+  if [[ "${MODEL_COMPILER_AVAILABLE}" -eq 1 ]]; then
+    model_detail="${MODEL_COMPILER_DETAIL}"
   fi
-  print_component "Model SDK Extension" "${MODEL_SDK_VERSION}" "${model_detail}" "$([[ "${MODEL_SDK_AVAILABLE}" -eq 1 ]] && echo installed || echo missing)"
+  print_component "Model Compiler" "${MODEL_COMPILER_VERSION}" "${model_detail}" "$([[ "${MODEL_COMPILER_AVAILABLE}" -eq 1 ]] && echo installed || echo missing)"
   print_components_update_note "${core_state}" "${insight_state}"
 
   print_exposed_ports

@@ -5,8 +5,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
+
+namespace simaai::neat::runtime {
+class RunCore;
+}
 
 namespace simaai::neat::pipeline_internal {
 
@@ -27,10 +32,14 @@ std::vector<MeasureEdgeLatency> build_edge_latency_from_diag_delta(const RunDiag
                                                                    const RunDiagSnapshot& after);
 
 std::vector<GraphQueueLatencySnapshot> snapshot_graph_queue_latencies(const Run& run);
+std::vector<GraphQueueLatencySnapshot>
+snapshot_graph_queue_latencies(const std::shared_ptr<const runtime::RunCore>& core);
 std::vector<MeasureEdgeLatency>
 build_graph_queue_latency_delta(const std::vector<GraphQueueLatencySnapshot>& before,
                                 const std::vector<GraphQueueLatencySnapshot>& after);
 void set_graph_queue_timing_enabled(const Run& run, bool enabled);
+void set_graph_queue_timing_enabled(const std::shared_ptr<const runtime::RunCore>& core,
+                                    bool enabled);
 
 void attribute_edge_latency_to_nodes(const std::vector<GraphNodeMetrics>& nodes,
                                      std::vector<MeasureEdgeLatency>* edge_metrics,

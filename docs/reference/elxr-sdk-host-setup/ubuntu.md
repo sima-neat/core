@@ -88,4 +88,4 @@ host NFS export created by `sima-cli sdk setup --devkit`.
 
 ## Next step
 
-Return to [Neat Development Environment](/getting-started/installation/dev-environment/) and continue with install/setup.
+Return to [Neat Development Environment](/getting-started/dev-environment/) and continue with install/setup.
