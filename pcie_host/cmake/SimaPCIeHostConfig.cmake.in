@@ -1,0 +1,19 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(PkgConfig REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/SimaPCIeHostTargets.cmake")
+
+get_property(_sima_pcie_host_deps_done GLOBAL PROPERTY _SimaPCIeHost_deps_done)
+if (NOT _sima_pcie_host_deps_done AND TARGET SimaPCIeHost::sima_neat_pcie_host)
+  pkg_check_modules(SimaPCIeHost_GST REQUIRED IMPORTED_TARGET GLOBAL
+    gstreamer-1.0
+    gstreamer-app-1.0
+    glib-2.0)
+
+  set_property(TARGET SimaPCIeHost::sima_neat_pcie_host APPEND
+    PROPERTY INTERFACE_LINK_LIBRARIES PkgConfig::SimaPCIeHost_GST)
+
+  set_property(GLOBAL PROPERTY _SimaPCIeHost_deps_done TRUE)
+endif()
