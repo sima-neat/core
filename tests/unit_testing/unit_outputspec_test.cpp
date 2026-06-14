@@ -11,6 +11,11 @@
 #include <memory>
 #include <vector>
 
+namespace simaai::neat::graph {
+simaai::neat::InputOptions input_opts_from_spec(const simaai::neat::OutputSpec& spec,
+                                                bool complete);
+}
+
 int main() {
   try {
     simaai::neat::OutputSpec nv12;
@@ -26,9 +31,18 @@ int main() {
     appsrc_opt.format = simaai::neat::FormatTag::RGB;
     appsrc_opt.width = 10;
     appsrc_opt.height = 8;
+    appsrc_opt.fps_n = 24;
+    appsrc_opt.fps_d = 1;
     appsrc_opt.use_simaai_pool = false;
 
     auto appsrc = simaai::neat::nodes::Input(appsrc_opt);
+    const auto* appsrc_provider =
+        dynamic_cast<const simaai::neat::OutputSpecProvider*>(appsrc.get());
+    require(appsrc_provider != nullptr, "Input should provide output spec");
+    const simaai::neat::OutputSpec input_spec = appsrc_provider->output_spec({});
+    require(input_spec.fps_num == 24 && input_spec.fps_den == 1,
+            "Input output_spec should preserve fps options");
+
     auto caps =
         simaai::neat::nodes::CapsRaw("GRAY8", 10, 8, 30, simaai::neat::CapsMemory::SystemMemory);
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes{appsrc, caps};
@@ -43,6 +57,12 @@ int main() {
     require(derived.width == 10 && derived.height == 8, "derived shape mismatch");
     require(derived.layout == "HW", "derived layout mismatch");
     require(derived.byte_size == 80, "derived byte_size mismatch");
+    require(derived.fps_num == 30 && derived.fps_den == 1, "derived fps mismatch");
+
+    simaai::neat::InputOptions boundary_opt =
+        simaai::neat::graph::input_opts_from_spec(derived, true);
+    require(boundary_opt.fps_n == 30 && boundary_opt.fps_d == 1,
+            "boundary input options should preserve derived fps");
 
     simaai::neat::nodes::groups::ImageInputGroupOptions img_opt;
     img_opt.output_caps.enable = true;
