@@ -120,6 +120,13 @@ OutputSpec Input::output_spec(const OutputSpec& input) const {
   out.width = opt_.width > 0 ? opt_.width : input.width;
   out.height = opt_.height > 0 ? opt_.height : input.height;
   out.depth = opt_.depth > 0 ? opt_.depth : input.depth;
+  if (opt_.fps_n > 0 && opt_.fps_d > 0) {
+    out.fps_num = opt_.fps_n;
+    out.fps_den = opt_.fps_d;
+  } else {
+    out.fps_num = input.fps_num;
+    out.fps_den = input.fps_den;
+  }
   out.certainty = SpecCertainty::Derived;
   out.note = "Input options";
 

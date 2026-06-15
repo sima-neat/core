@@ -153,6 +153,10 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete) {
       opt.height = spec.height;
     if (spec.depth > 0)
       opt.depth = spec.depth;
+    if (spec.fps_num > 0 && spec.fps_den > 0) {
+      opt.fps_n = spec.fps_num;
+      opt.fps_d = spec.fps_den;
+    }
   }
   return opt;
 }

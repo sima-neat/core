@@ -880,6 +880,8 @@ stop_board_runtime_before_install() {
       simaai-pipeline-manager.service \
       simaai-appcomplex.service \
       rctd.service \
+      encoder.service \
+      decoder.service \
       simaai-log.service; do
     if systemctl cat "${svc}" >/dev/null 2>&1; then
       run_sudo systemctl stop "${svc}" >/dev/null 2>&1 || true
@@ -958,6 +960,63 @@ verify_board_runtime_services() {
   log "Verified ${service} is active."
 }
 
+
+restart_board_codec_services() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local -a services=()
+  local service
+  for service in encoder.service decoder.service; do
+    if systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
+      services+=("${service}")
+    fi
+  done
+
+  if [[ "${#services[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  log "Restarting codec services after package replacement."
+  run_sudo systemctl daemon-reload || true
+  run_sudo systemctl enable "${services[@]}" || true
+  if ! run_sudo systemctl restart "${services[@]}"; then
+    echo "Failed to restart codec services after NEAT package installation." >&2
+    run_sudo systemctl --no-pager --full status "${services[@]}" >&2 || true
+    run_sudo journalctl -u encoder.service -u decoder.service --no-pager -n 80 >&2 || true
+    exit 1
+  fi
+}
+
+verify_board_codec_services() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local service
+  for service in encoder.service decoder.service; do
+    if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
+      continue
+    fi
+
+    if ! systemctl is-active --quiet "${service}"; then
+      log "${service} is not active after package install; attempting to start it once."
+      run_sudo systemctl start "${service}" || true
+      sleep 1
+    fi
+
+    if ! systemctl is-active --quiet "${service}"; then
+      echo "${service} is not active after NEAT package installation." >&2
+      run_sudo systemctl --no-pager --full status "${service}" >&2 || true
+      run_sudo journalctl -u "${service}" --no-pager -n 80 >&2 || true
+      exit 1
+    fi
+
+    log "Verified ${service} is active."
+  done
+}
+
 repair_stale_global_dispatcher_lib() {
   local global_lib="/usr/lib/aarch64-linux-gnu/libneatdispatchercore.so"
   local runtime_lib="/usr/lib/aarch64-linux-gnu/neat/runtime/libneatdispatchercore.so"
@@ -1011,6 +1070,8 @@ install_debs_on_board() {
   if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
     activate_board_runtime_after_install
+    restart_board_codec_services
+    verify_board_codec_services
     verify_board_runtime_services
     return 0
   fi
@@ -1020,6 +1081,8 @@ install_debs_on_board() {
   if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
     activate_board_runtime_after_install
+    restart_board_codec_services
+    verify_board_codec_services
     verify_board_runtime_services
     return 0
   fi
@@ -1034,6 +1097,8 @@ install_debs_on_board() {
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
   repair_stale_global_dispatcher_lib
   activate_board_runtime_after_install
+  restart_board_codec_services
+  verify_board_codec_services
   verify_board_runtime_services
 }
 
