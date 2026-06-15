@@ -27,13 +27,20 @@ To use DevKit Sync later, you also need:
 For Neat Development Environment 2.1.2:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk-v2.1.2
+sima-cli install ghcr:sima-neat/sdk:v2.1.2
 </ShellCommand>
 
 For Neat Development Environment 2.0.0:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk-v2.0.0
+sima-cli install ghcr:sima-neat/sdk:v2.0.0
+</ShellCommand>
+
+To install the latest patch release for a supported release branch, use the
+branch's `latest` tag. For example, to install the latest 2.0 release:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli install ghcr:sima-neat/sdk:v2.0-latest
 </ShellCommand>
 
 You can also install `ghcr:sima-neat/sdk` to use the latest SDK image from the
