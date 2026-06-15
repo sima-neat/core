@@ -14,12 +14,12 @@ mdx:
 
 *Detections written by the program below, drawn on the source image.*
 
-This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly (as in [Run a Model](/develop-apps/hello-neat/run_first_model)), you compose the model into a [`Graph`](/develop-apps/development-workflow/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
+This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly (as in [Run a Model](/develop-apps/hello-neat/run_first_model)), you compose the model into a [`Graph`](/develop-apps/development-workflow/graph) — a named graph flow with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
 
 For this first app the shape is intentionally simple:
 
 - A named _input_ (`nodes.input("image")`) marks where data enters the app.
-- A _model_ (`graph.add(model)`) runs the model as one step in the pipeline.
+- A _model_ (`graph.add(model)`) runs the model as one step in the graph.
 - A named _output_ (`nodes.output("detections")`) marks where your application reads the result.
 
 The same API scales to much more complex applications later; here the goal is the core composition pattern.
@@ -81,7 +81,7 @@ cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
 
 OpenCV reads BGR; YOLOv8 expects RGB. This step is not Neat — your application gets pixels from a file, camera, or decoder; Neat enters at the next step.
 
-### 2. Describe the pipeline
+### 2. Describe model options
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
@@ -117,7 +117,7 @@ opt.top_k             = 100;
 </CodeTab>
 </CodeTabs>
 
-`ModelOptions` declares the whole shape of the model pipeline in one object — how the input is preprocessed and how the detector output is decoded.
+`ModelOptions` declares the model route in one object: how Neat preprocesses input pixels and how it decodes detector output.
 
 | Field | What it sets |
 |---|---|
@@ -160,7 +160,10 @@ tensor = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RG
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-neat::Tensor input = neat::from_cv_mat(rgb, neat::ImageSpec::PixelFormat::RGB);
+neat::Tensor input = neat::Tensor::from_cv_mat(
+    rgb,
+    neat::ImageSpec::PixelFormat::RGB,
+    neat::TensorMemory::CPU);
 ```
 
 </CodeTab>
@@ -193,7 +196,7 @@ graph.add(neat::nodes::Output("detections"));
 </CodeTab>
 </CodeTabs>
 
-A `Graph` is the application pipeline. Each `add(...)` appends the next step, so this builds the linear flow `image → model → detections`. The model fragment from step 3 becomes one step inside it.
+A `Graph` is the application flow. Each `add(...)` appends the next step, so this builds the linear flow `image → model → detections`. The model fragment from step 3 becomes one step inside it.
 
 ### 6. Build and run the Graph
 
@@ -202,8 +205,12 @@ A `Graph` is the application pipeline. Each `add(...)` appends the next step, so
 
 ```python
 run = graph.build()
-run.push("image", [tensor])
-outputs = run.pull_tensors("detections")
+try:
+    run.push("image", [tensor])
+    run.close_input()
+    outputs = run.pull_tensors("detections", timeout_ms=2000)
+finally:
+    run.close()
 ```
 
 </CodeTab>
@@ -212,13 +219,15 @@ outputs = run.pull_tensors("detections")
 ```cpp
 neat::Run run = graph.build();
 run.push("image", neat::TensorList{input});
-neat::TensorList outputs = run.pull_tensors("detections");
+run.close_input();
+neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+run.close();
 ```
 
 </CodeTab>
 </CodeTabs>
 
-`build()` lowers the public graph into one executable runtime graph, preserving your node names. You then `push` inputs into named inputs and `pull` results from named outputs. `pull_tensors` returns a `TensorList` — the same shape `Model.run` would have produced — here the packed YOLOv8 `BBOX` output.
+`build()` lowers the public graph into one executable runtime graph, preserving your node names. You then `push` inputs into named inputs, call `close_input()` when no more input is coming, and `pull` results from named outputs with a timeout. `pull_tensors` returns a `TensorList` — the same shape `Model.run` would have produced — here the packed YOLOv8 `BBOX` output.
 
 ### 7. Decode the boxes
 
@@ -258,7 +267,7 @@ for x1, y1, x2, y2, score, cls in decoded[0].to_numpy():
 
 ```cpp
 const neat::Tensor& boxes = decoded.front();      // [num_detections, 6] float32
-auto m = boxes.storage->map(neat::MapMode::Read);
+auto m = boxes.map_read();
 const float* d = static_cast<const float*>(m.data);
 for (int64_t i = 0; i < boxes.shape[0]; ++i) {
   const float* r = d + i * 6;                     // x1 y1 x2 y2 score class_id
@@ -327,8 +336,12 @@ def main() -> int:
 
     # Build the app, push the image into the named input, pull the named output.
     run = graph.build()
-    run.push("image", [tensor])
-    outputs = run.pull_tensors("detections")
+    try:
+        run.push("image", [tensor])
+        run.close_input()
+        outputs = run.pull_tensors("detections", timeout_ms=2000)
+    finally:
+        run.close()
 
     decoded = neat.decode_bbox(outputs)
     for x1, y1, x2, y2, score, cls in decoded[0].to_numpy():
@@ -349,7 +362,7 @@ if __name__ == "__main__":
   source ~/pyneat/bin/activate
   python3 app.py
   ```
-* **On the Neat SDK from host**
+* **On the Palette SDK host**
   ```bash
   dk app.py
   ```
@@ -422,7 +435,10 @@ int main() {
   cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
 
   neat::Model model("assets/yolo_v8s_mpk.tar.gz", yolo_model_options());
-  neat::Tensor input = neat::from_cv_mat(rgb, neat::ImageSpec::PixelFormat::RGB);
+  neat::Tensor input = neat::Tensor::from_cv_mat(
+      rgb,
+      neat::ImageSpec::PixelFormat::RGB,
+      neat::TensorMemory::CPU);
 
   // Compose the model into a Graph application: image -> model -> detections.
   neat::Graph graph("hello_neat_app");
@@ -433,11 +449,13 @@ int main() {
   // Build the app, push the image into the named input, pull the named output.
   neat::Run run = graph.build();
   run.push("image", neat::TensorList{input});
-  neat::TensorList outputs = run.pull_tensors("detections");
+  run.close_input();
+  neat::TensorList outputs = run.pull_tensors("detections", /*timeout_ms=*/2000);
+  run.close();
 
   neat::TensorList decoded = neat::decode_bbox(outputs);
   const neat::Tensor& boxes = decoded.front();      // [num_detections, 6] float32
-  auto m = boxes.storage->map(neat::MapMode::Read);
+  auto m = boxes.map_read();
   const float* d = static_cast<const float*>(m.data);
   for (int64_t i = 0; i < boxes.shape[0]; ++i) {
     const float* r = d + i * 6;                     // x1 y1 x2 y2 score class_id
@@ -463,7 +481,7 @@ cmake --build build -j
   ```bash
   ./build/sima_neat_app
   ```
-* **On the Neat SDK from host**
+* **On the Palette SDK host**
   ```bash
   dk build/sima_neat_app
   ```
@@ -483,7 +501,7 @@ You should see one line per detection, then:
 
 The APIs map directly to that shape:
 
-- `Graph` holds the application pipeline; `graph.add(...)` appends each step in order.
+- `Graph` holds the application flow; `graph.add(...)` appends each step in order.
 - The named input and output become the runtime endpoints: `run.push("image", ...)` and `run.pull_tensors("detections")`.
 - `Model` is the same fragment you would call directly with `Model.run`; here it runs as one node inside the app.
 
@@ -491,8 +509,8 @@ The APIs map directly to that shape:
 
 For deeper graph composition, continue with the [Graph programming model](/develop-apps/development-workflow/graph).
 
-From there, continue with broader SiMa Neat learning resources:
+From there, continue with broader SiMa.ai Neat learning resources:
 
-- Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as graphs, models, pipeline stages, and graph execution.
+- Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as models, graphs, and run execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.neat.sima.ai/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

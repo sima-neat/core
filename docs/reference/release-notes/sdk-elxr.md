@@ -1,10 +1,10 @@
 ---
-title: SDK / elxr Release Notes
+title: Palette SDK / eLxr Release Notes
 sidebar_position: 1
 ---
 
-# SDK / elxr Release Notes
+# Palette SDK / eLxr Release Notes
 
-Release notes for the SiMa.ai SDK / elxr.
+Release notes for the Palette SDK and eLxr environment.
 
-> **TODO(jimfan):** Populate or auto-pull SDK/elxr release notes.
+No component-specific notes have been added for this documentation build. Before you upgrade, review the release bundle for image tags, compatibility notes, upgrade steps, and known issues.

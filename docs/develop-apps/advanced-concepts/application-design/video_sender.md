@@ -14,7 +14,7 @@ If the receiver runs behind container port remapping, pass the mapped host and a
 
 ## Raw Frames
 
-Use the raw path when the pipeline input to `VideoSender` is raw video frames. NEAT will convert, encode, packetize, and send:
+Use the raw path when the pipeline input to `VideoSender` is raw video frames. Neat converts, encodes, packetizes, and sends:
 
 ```text
 VideoConvert -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
@@ -55,7 +55,7 @@ graph.add(pyneat.groups.video_sender(opt))
 
 ## Encoded H.264
 
-Use the encoded path when the upstream pipeline already produces H.264. NEAT will parse, packetize, and send without re-encoding:
+Use the encoded path when the upstream pipeline already produces H.264. Neat parses, packetizes, and sends without re-encoding:
 
 ```text
 H264Parse -> H264Packetize -> UdpOutput

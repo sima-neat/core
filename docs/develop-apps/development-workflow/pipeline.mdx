@@ -1,10 +1,1312 @@
 ---
-title: Pipeline
+title: Run a Graph
+description: Build a Graph into a live Run, choose runtime options, and tune throughput
 sidebar_position: 6
+sidebar_label: Run a Graph
 ---
 
-# Pipeline
+# Run a Graph
 
-How a built `Graph` becomes a running pipeline, and how stages, queues, and boundaries fit together at runtime.
+A `Graph` is the plan. A [`Run`](/reference/{lsa}/classes/simaai-neat-run) is the live execution handle.
 
-> **TODO(jimfan):** Document the Pipeline concept (runtime view of a built graph).
+Use this page after you have authored a graph. If you still need to decide which nodes or fragments belong in the graph, start with [Graph](/develop-apps/development-workflow/graph). If the graph already looks right, this page is where you make it run, drain, measure, and survive real input.
+
+## Choose one-shot or reusable execution
+
+Use the smallest runtime path that fits the job:
+
+| Need | Use | Why |
+| --- | --- | --- |
+| Run one input and get one output | `Graph.run(...)` | Shortest one-shot path. |
+| Push many inputs over time | `Graph.build(...)` and `Run` | Reuses the runtime and exposes push/pull control. |
+| Use named inputs or outputs | `Graph.build(...)` and named `run.push(...)` / `run.pull(...)` | Keeps multi-input and multi-output apps explicit. |
+| Let source nodes drive the graph | `Graph.build()` or `Graph.run()` with no app input | Use when the graph owns a camera, file, RTSP, or other source node. |
+| Measure, export, drain, or stop deliberately | `Run` | Gives you lifecycle and diagnostics control. |
+
+No magic. Build the graph, run it, inspect the result.
+
+## Choose how input enters the graph
+
+Before you tune queues, decide who owns input.
+
+| Graph style | How input enters | How you run it |
+| --- | --- | --- |
+| App-pushed graph | Your application calls `Graph.run(input, ...)`, `run.run(input, ...)`, `run.push(...)`, or `run.try_push(...)` | Build or run with input. Inspect endpoint names before pushing into multi-input graphs. |
+| Source-owned graph | The graph contains a source node or fragment, such as file, camera, RTSP, or stream input | Build or run without app input: `graph.build()` or `graph.run()`. Pull outputs, use output nodes, or use callbacks depending on the graph. |
+
+If the graph owns the source, do not push into it. Inspect what it emits instead.
+
+
+## Run a source-owned graph
+
+If the graph contains its own source node, build or run it without app input. Do not push into a graph that already owns the source. Pull named outputs when the graph exposes them; let sink nodes handle output when the graph ends in a sink.
+
+Use `graph.run()` for a source-to-sink job where the graph owns both input and output. Use `graph.build()` when your app needs to pull results, measure the run, or stop it deliberately.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+while (running && run.can_pull()) {
+  auto sample = run.pull("detections", /*timeout_ms=*/1000);
+  if (!sample) {
+    continue;
+  }
+  handle(*sample);
+}
+
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+try:
+    while running and run.can_pull():
+        sample = run.pull("detections", timeout_ms=1000)
+        if sample is None:
+            continue
+        handle(sample)
+finally:
+    run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+For long-running sources, make your application decide when to exit the loop and call `close()`. A timeout means no output arrived in that window; it does not always mean the source is done.
+
+## Run once
+
+Use `Graph.run(...)` when you want one synchronous push/pull operation.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+simaai::neat::TensorList outputs = graph.run(std::vector<cv::Mat>{frame});
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+outputs = graph.run([tensor])
+```
+
+</CodeTab>
+</CodeTabs>
+
+In Python, pass a list or tuple. `graph.run([tensor])` means “one graph input,” not “add a batch dimension.”
+
+## Build a reusable Run
+
+Use `Graph.build(...)` when your application owns the loop.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+run.push("image", std::vector<cv::Mat>{frame});
+simaai::neat::TensorList outputs = run.pull_tensors("classes", /*timeout_ms=*/2000);
+
+run.close_input();
+while (auto sample = run.pull(/*timeout_ms=*/100)) {
+  // Drain remaining output after end-of-input.
+}
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+run.push("image", [tensor])
+outputs = run.pull_tensors("classes", timeout_ms=2000)
+
+run.close_input()
+while True:
+    sample = run.pull(timeout_ms=100)
+    if sample is None:
+        break
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use `close_input()` when you are done pushing and want in-flight work to finish. Use `close()` when you want to tear the run down; C++ also exposes `stop()` as the immediate-stop spelling.
+
+## Use a reusable Run for request/response
+
+`Graph.run(...)` is the shortest one-shot path. If you want the same request/response shape without rebuilding the graph each time, build a reusable `Run` once and call `run.run(...)`.
+
+Use this when:
+
+- the graph stays alive for many requests;
+- each request should still wait for its own output;
+- you do not need a separate producer thread and consumer thread yet.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+for (const auto& frame : frames) {
+  simaai::neat::TensorList outputs = run.run(
+      std::vector<cv::Mat>{frame},
+      /*timeout_ms=*/2000);
+  handle(outputs);
+}
+
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+for tensor in tensors:
+    outputs = run.run([tensor], timeout_ms=2000)
+    handle(outputs)
+
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Move from `run.run(...)` to explicit `push(...)` / `pull(...)` when you need in-flight work, producer/consumer threads, non-blocking push, named output polling, or drain control.
+
+## Inspect runtime endpoints
+
+Before you push into a multi-input graph, ask the `Run` what names it accepts.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+for (const auto& name : run.input_names()) {
+  std::cout << "input: " << name << "\n";
+}
+for (const auto& name : run.output_names()) {
+  std::cout << "output: " << name << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+print("inputs:", run.input_names())
+print("outputs:", run.output_names())
+```
+
+</CodeTab>
+</CodeTabs>
+
+If a graph has more than one public input or output, use named `push(...)` and `pull(...)`. Neat should not have to guess which wire you meant.
+
+## Run multi-input and multi-output graphs
+
+For multi-input graphs, push one named endpoint at a time, or push an unnamed list only when the graph has one unambiguous input route.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+run.push("left", simaai::neat::TensorList{left_tensor});
+run.push("right", simaai::neat::TensorList{right_tensor});
+
+auto boxes = run.pull_tensors("detections", /*timeout_ms=*/2000);
+auto preview = run.pull("preview", /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run.push("left", [left_tensor])
+run.push("right", [right_tensor])
+
+boxes = run.pull_tensors("detections", timeout_ms=2000)
+preview = run.pull("preview", timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+When you combine streams, preserve the matching key that the graph expects. `CombinePolicy::ByFrame` needs `frame_id`; `CombinePolicy::ByPts` needs `pts_ns`. Missing keys should fail loudly. Silent joins are how bugs get promoted to architecture.
+
+## Choose run options
+
+[`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions) controls runtime behavior. Start with defaults. Change options when the source, output lifetime, or throughput target needs a different policy.
+
+| Workload | Start with | Why |
+| --- | --- | --- |
+| First working app | default `RunOptions` | Prove correctness before tuning. |
+| Live camera or RTSP input | `RunPreset::Realtime`; `OutputOptions::Latest()` where output freshness matters | Fresh frames beat complete history. The realtime preset resolves to latest-frame overflow unless you override it. |
+| File or batch processing | `RunPreset::Reliable`; `OutputOptions::EveryFrame(...)` | Preserve every input and expose backpressure. The reliable preset resolves to blocking overflow unless you override it. |
+| Normal app serving | `RunPreset::Balanced` | Good default once the graph works. |
+| Jittery source needs bounded buffering | `queue_depth` | Increase only enough to absorb jitter. A deep queue can hide stale frames and delayed backpressure. |
+| App stores outputs after pull | `OutputMemory::Owned` | Keeps output lifetime independent of runtime buffers. |
+| App consumes outputs immediately | `OutputMemory::Auto` | Let Neat choose the right ownership path first. |
+| Default wait time should be explicit | `input_timeout_ms` | Sets the default timeout for build/run input-mode paths. Per-call timeouts still win. |
+| Seeded build should catch first-sample errors early | `startup_preflight = true` | Keeps seeded build honest. Disable only when first-sample failures can surface later through `pull(...)` or `last_error()`. |
+| Source buffer lifetime is short | `advanced.copy_input = true` | Protects input memory that may disappear after `push(...)`. |
+| Input size needs a guardrail | `advanced.max_input_bytes` | Rejects oversized input before it enters the graph. |
+| You need drop telemetry | `on_input_drop` | Counts overload and size-guard drops by stream and reason. |
+| You need build-time evidence | `run_export` | Writes a run snapshot when the run is built. |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Realtime;
+options.on_input_drop = [](const simaai::neat::InputDropInfo& drop) {
+  std::cerr << "dropped input from stream " << drop.stream_id
+            << ": " << drop.reason << "\n";
+};
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Realtime
+
+def on_drop(drop: pyneat.InputDropInfo) -> None:
+    print(f"dropped input from stream {drop.stream_id}: {drop.reason}")
+
+
+options.on_input_drop = on_drop
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Do not set every knob because it exists. The fastest way to get lost is to tune before you have a baseline.
+
+### Runtime option recipes
+
+Copy the shape of these recipes, not the numbers. Queue sizes and output limits depend on the model, the source rate, and how fast your app pulls results.
+
+#### Low-latency live output
+
+Use this when the next frame matters more than the complete frame history. Set the output queue policy when you add the output node; set the input/drop policy when you build the `Run`.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Realtime;
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Realtime
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+This recipe keeps the newest useful result instead of building a museum of stale frames. Pull continuously and count drops by stream.
+
+#### Lossless batch output
+
+Use this when every input should produce its corresponding output and backpressure is better than loss.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.add(simaai::neat::nodes::Output(
+    "result",
+    simaai::neat::OutputOptions::EveryFrame(/*max_buffers=*/64)));
+
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Reliable;
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.add(pyneat.nodes.output(
+    "result",
+    pyneat.OutputOptions.every_frame(max_buffers=64),
+))
+
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Reliable
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Close input when the producer is done, then drain the output. If input count and output count diverge, inspect the model contract before blaming the runtime.
+
+#### Owned output lifetime
+
+Use owned output when your app stores tensors after `pull(...)` returns or hands them to another thread. Keep `Auto` for first-run code and change this only when lifetime requires it.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.output_memory = simaai::neat::OutputMemory::Owned;
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.output_memory = pyneat.OutputMemory.Owned
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Seed build when shape or format must be proven early
+
+Most reusable runs can build without input:
+
+```python
+run = graph.build()
+```
+
+Use seeded `build(input, ...)` when the first real input should prove shape, format, caps, or byte-guard behavior before the app enters the streaming loop.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build(std::vector<cv::Mat>{frame});
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build([tensor])
+```
+
+</CodeTab>
+</CodeTabs>
+
+`startup_preflight` is on by default for seeded builds, so the seed catches payload-level failures while building. If build fails, the structured report can include `build_adaptation`: the seed shape, dynamic limits, byte guard, and adaptation actions Neat tried. Use it to debug evidence, not vibes.
+
+## Handle backpressure
+
+Backpressure means the graph cannot accept or emit data as fast as the app wants.
+
+Use these controls deliberately:
+
+- `queue_depth` controls how much work can wait in runtime queues.
+- `overflow_policy = Block` applies backpressure to the producer.
+- `overflow_policy = KeepLatest` drops older queued input so live streams stay fresh.
+- `overflow_policy = DropIncoming` rejects new input when the queue is full.
+- `try_push(...)` returns `false` instead of blocking.
+- `on_input_drop` reports dropped input with `InputDropInfo` fields such as `stream_id`, `frame_id`, `port_name`, and `reason`.
+
+For threading, use one push thread and one pull thread for a `Run`. Do not push to the same `Run` concurrently from multiple threads unless your app serializes those calls.
+
+## Use a simple threading pattern
+
+For live or high-throughput app-pushed graphs, start with two application threads:
+
+1. A producer thread stamps metadata and calls `push(...)` or `try_push(...)`.
+2. A consumer thread pulls continuously and releases or copies outputs quickly.
+
+Add more threads around your own queues, not around the same `Run`. The hot loop should be boring. Boring is fast.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build(options);
+
+std::thread producer([&] {
+  while (auto sample = next_sample()) {
+    sample->stream_id = current_stream_id();
+    sample->frame_id = next_frame_id();
+
+    if (!run.try_push("image", *sample)) {
+      count_local_drop(sample->stream_id);
+    }
+  }
+
+  run.close_input();
+});
+
+std::thread consumer([&] {
+  simaai::neat::Sample output;
+  simaai::neat::PullError error;
+
+  while (true) {
+    switch (run.pull("detections", /*timeout_ms=*/100, output, &error)) {
+    case simaai::neat::PullStatus::Ok:
+      handle_output(output);
+      break;
+    case simaai::neat::PullStatus::Timeout:
+      continue;
+    case simaai::neat::PullStatus::Closed:
+      return;
+    case simaai::neat::PullStatus::Error:
+      record_runtime_error(error);
+      return;
+    }
+  }
+});
+
+producer.join();
+consumer.join();
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import threading
+
+run = graph.build(options)
+producer_done = threading.Event()
+
+def producer() -> None:
+    try:
+        for sample in sample_stream():
+            sample.stream_id = current_stream_id()
+            sample.frame_id = next_frame_id()
+
+            if not run.try_push("image", [sample]):
+                count_local_drop(sample.stream_id)
+    finally:
+        producer_done.set()
+        run.close_input()
+
+def consumer() -> None:
+    while True:
+        timeout_ms = -1 if producer_done.is_set() else 100
+        output = run.pull("detections", timeout_ms=timeout_ms)
+        if output is None:
+            if producer_done.is_set():
+                break
+            continue
+        handle_output(output)
+
+producer_thread = threading.Thread(target=producer)
+consumer_thread = threading.Thread(target=consumer)
+producer_thread.start()
+consumer_thread.start()
+producer_thread.join()
+consumer_thread.join()
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+In C++, use the status-aware `pull(...)` overload when timeout, end-of-stream, and errors must be handled differently. In Python, `pull(...)` returns `None` when no sample is returned for that call, so pair it with your own producer/shutdown state.
+
+## Close, drain, or stop deliberately
+
+Pick the shutdown path that matches your intent. Do not keep pushing into a run that is closing.
+
+| Intent | Use | What to do next |
+| --- | --- | --- |
+| Finish queued work after the last input | `close_input()` | Keep pulling until the output is drained. In C++, status-aware pull returns `PullStatus::Closed` at end-of-stream. |
+| Cancel now | `stop()` | Stop producers and let waiting pulls unblock. Use this for shutdown or failure paths, not normal batch drain. |
+| Release runtime resources | `close()` | Call after drain or cancellation, or let the `Run` object leave scope. |
+
+For batch work, close input, drain output, then close the run. For live work, stop producers first, then stop or close the run. No zombie producers, no haunted queues.
+
+## Choose output ownership
+
+`OutputMemory` controls how pulled tensors relate to runtime buffers:
+
+- `Auto`: let Neat choose. Use this first.
+- `Owned`: copy output into framework-owned memory. Use this when another thread or object stores tensors after pull.
+- `ZeroCopy`: share runtime storage. Use this only when the page or example explains the lifetime rules.
+
+If throughput falls off a cliff, check whether the app is holding output samples too long. Zero-copy can be fast, but pinned buffers are still pinned buffers.
+
+## Preserve stream identity
+
+Multistream graphs need identity before they need tuning. Preserve `stream_id` and `frame_id` so you can prove fairness, detect starvation, and count drops.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto sample = simaai::neat::Sample::from_image(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+sample.stream_id = camera_id;
+sample.frame_id = frame_number++;
+
+if (!run.try_push("image", sample)) {
+  // Count local backpressure here. Runtime drops also flow through on_input_drop.
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+sample = pyneat.make_tensor_sample("image", tensor)
+sample.stream_id = camera_id
+sample.frame_id = frame_number
+
+ok = run.try_push("image", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+For source-owned graphs, pick source nodes that preserve or stamp stream metadata. For app-pushed graphs, your app owns that metadata.
+
+## Scale from one stream to many
+
+Start with one stream. Then scale the topology and runtime policy on purpose.
+
+| Pattern | Use it when | Watch |
+| --- | --- | --- |
+| One stream -> one model -> one output | Building the first correct path | Output shape, dtype, and latency. |
+| Many streams -> one model lane | Aggregate input rate fits one model path | Per-stream fairness and stale streams. |
+| Many streams -> multiple model lanes | One lane cannot keep up | Stream partitioning, route naming, and output accounting. |
+| One stream -> several models | Different decisions need the same input | Branch-level latency and target-normalized FPS. |
+| Many streams -> model + metadata/video outputs | Production app emits several artifacts | Count target outputs separately from preview or telemetry outputs. |
+
+When connecting live graph fragments, `GraphLinkOptions` can select realtime latest-by-stream behavior. Use it when freshness matters more than preserving every frame across a live fan-in.
+
+
+## Run source-owned multistream graphs
+
+For camera-heavy apps, the graph often owns the streams. In that shape, source groups feed the model path and your app pulls results. You still need the same throughput discipline:
+
+- give each source a stable `stream_id`;
+- use realtime latest-by-stream behavior on live fan-in links when freshness matters;
+- pull outputs continuously;
+- count outputs per stream, not only in aggregate;
+- export the run after the measured window if one stream starves or drops frames.
+
+| Source-owned choice | Start with | Why |
+| --- | --- | --- |
+| One camera per graph | One source group, one model path, one output | Easiest way to prove the camera, model, and output contract. |
+| Many cameras into one model lane | Source fragments connected to one model fragment with `GraphLinkOptions` for live fan-in | Keeps one model lane busy while preserving per-stream identity. |
+| Many cameras across lanes | Partition source fragments across several graph lanes | Use when one model lane saturates. Measure each lane and each stream. |
+| Video output handled by the graph | Sink groups such as `VideoSender(...)` or H.264/UDP output groups | Use when the app should not pull and transmit every frame itself. |
+
+If the graph owns the sources, build with `graph.build()` and stop it deliberately. Do not push app input into a graph that already has its own source nodes.
+
+## Drive many streams through one model lane
+
+Use one public input endpoint when several live streams share the same model lane. Stamp each sample with `stream_id` and `frame_id`, use the realtime preset, and pull continuously. The rebel move is boring but effective: never let the output queue become your hidden bottleneck.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Realtime;
+
+auto run = graph.build(options);
+
+while (running) {
+  for (const auto& camera : cameras) {
+    auto sample = simaai::neat::Sample::from_image(
+        camera.frame(),
+        simaai::neat::ImageSpec::PixelFormat::BGR,
+        simaai::neat::TensorMemory::CPU);
+    sample.stream_id = camera.id();
+    sample.frame_id = camera.next_frame_id();
+
+    if (!run.try_push("image", sample)) {
+      ++local_drop_count[camera.id()];
+    }
+  }
+
+  while (auto output = run.pull("detections", /*timeout_ms=*/0)) {
+    count_output_by_stream(output->stream_id);
+  }
+}
+
+run.close_input();
+while (auto output = run.pull("detections", /*timeout_ms=*/1000)) {
+  count_output_by_stream(output->stream_id);
+}
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Realtime
+
+run = graph.build(options)
+
+while running:
+    for camera in cameras:
+        tensor = pyneat.Tensor.from_numpy(
+            camera.frame(),
+            copy=True,
+            image_format=pyneat.PixelFormat.BGR,
+        )
+        sample = pyneat.make_tensor_sample("image", tensor)
+        sample.stream_id = camera.id
+        sample.frame_id = camera.next_frame_id()
+
+        if not run.try_push("image", [sample]):
+            local_drop_count[camera.id] += 1
+
+    while True:
+        output = run.pull("detections", timeout_ms=0)
+        if output is None:
+            break
+        count_output_by_stream(output.stream_id)
+
+run.close_input()
+while True:
+    output = run.pull("detections", timeout_ms=1000)
+    if output is None:
+        break
+    count_output_by_stream(output.stream_id)
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+This pattern maximizes useful throughput only when the model lane can keep up with the accepted input rate. If one lane saturates, split streams across more lanes or lower the offered rate. Do not bury stale frames under a mountain of queue depth.
+
+
+## Split streams across model lanes
+
+When one model lane is saturated, add lanes instead of hiding overload behind deeper queues. A lane is usually one `Graph` plus one `Run` with its own model route names and graph element prefix. Partition streams by a stable key, then measure each lane and each stream.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto build_lane = [&](int lane_index) {
+  const std::string lane_name = "lane" + std::to_string(lane_index);
+
+  simaai::neat::Model::Options model_options;
+  model_options.name_suffix = "_" + lane_name;
+  simaai::neat::Model lane_model(model_path, model_options);
+
+  simaai::neat::GraphOptions graph_options;
+  graph_options.element_name_prefix = lane_name + "_";
+
+  simaai::neat::Graph graph("detector_" + lane_name, graph_options);
+  graph.add(simaai::neat::nodes::Input("image"));
+  graph.add(lane_model);
+  graph.add(simaai::neat::nodes::Output(
+      "detections",
+      simaai::neat::OutputOptions::Latest()));
+
+  simaai::neat::RunOptions run_options;
+  run_options.preset = simaai::neat::RunPreset::Realtime;
+  return graph.build(run_options);
+};
+
+std::vector<simaai::neat::Run> lanes;
+lanes.emplace_back(build_lane(0));
+lanes.emplace_back(build_lane(1));
+
+while (running) {
+  for (const auto& camera : cameras) {
+    auto sample = make_sample_for_camera(camera);
+    const std::size_t lane_index = camera.id() % lanes.size();
+
+    if (!lanes[lane_index].try_push("image", sample)) {
+      ++drop_count_by_lane[lane_index];
+    }
+  }
+
+  for (std::size_t lane_index = 0; lane_index < lanes.size(); ++lane_index) {
+    while (auto output = lanes[lane_index].pull("detections", /*timeout_ms=*/0)) {
+      count_output(lane_index, output->stream_id);
+    }
+  }
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+def build_lane(lane_index: int) -> pyneat.Run:
+    lane_name = f"lane{lane_index}"
+
+    model_options = pyneat.ModelOptions()
+    model_options.name_suffix = f"_{lane_name}"
+    lane_model = pyneat.Model(model_path, model_options)
+
+    graph_options = pyneat.GraphOptions()
+    graph_options.element_name_prefix = f"{lane_name}_"
+
+    graph = pyneat.Graph(f"detector_{lane_name}", graph_options)
+    graph.add(pyneat.nodes.input("image"))
+    graph.add(lane_model)
+    graph.add(pyneat.nodes.output(
+        "detections",
+        pyneat.OutputOptions.latest(),
+    ))
+
+    run_options = pyneat.RunOptions()
+    run_options.preset = pyneat.RunPreset.Realtime
+    return graph.build(run_options)
+
+
+lanes = [build_lane(0), build_lane(1)]
+
+while running:
+    for camera in cameras:
+        sample = make_sample_for_camera(camera)
+        lane_index = camera.id % len(lanes)
+
+        if not lanes[lane_index].try_push("image", [sample]):
+            drop_count_by_lane[lane_index] += 1
+
+    for lane_index, lane in enumerate(lanes):
+        while True:
+            output = lane.pull("detections", timeout_ms=0)
+            if output is None:
+                break
+            count_output(lane_index, output.stream_id)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Keep the partition stable so stream identity and cache behavior stay predictable. If lane 0 starves while lane 1 is idle, the partitioning policy is the bug.
+
+## Tune the model lane deliberately
+
+If a graph is correct but cannot meet the offered stream rate, first prove where the bottleneck lives. Do not start by making every queue bigger. That hides overload and gives stale frames a place to retire.
+
+Use this triage:
+
+| Symptom | First check | Then try |
+| --- | --- | --- |
+| Accepted input FPS is high, but output FPS is low | The model lane or postprocess lane is saturated | Split streams across lanes, reduce offered rate, or test `advanced_execution.inference_async` on the model route or graph options. |
+| `try_push(...)` returns `false` often | The ingress queue is full | Pull continuously, reduce the offered rate, or choose an explicit `OverflowPolicy`. |
+| One stream disappears in aggregate metrics | Missing or uneven `stream_id` accounting | Count outputs and drops per stream; use live latest-by-stream behavior for live fan-in. |
+| Output stalls while input keeps moving | The app is not pulling fast enough, or it holds runtime-backed outputs | Pull in a dedicated loop and release/copy outputs before pushing more. |
+| Latency grows over time | Queues are absorbing old work | Use a smaller queue, `RunPreset::Realtime`, or `OutputOptions::Latest()` where freshness wins. |
+
+When you need to test model-route execution behavior, set one advanced execution field at a time and measure the same workload before and after:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions graph_options;
+graph_options.advanced_execution.inference_async = true;
+
+simaai::neat::Graph graph("detector", graph_options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph_options = pyneat.GraphOptions()
+graph_options.advanced_execution.inference_async = True
+
+graph = pyneat.Graph("detector", graph_options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+If the change does not improve the measured path, revert it. A knob that cannot prove its value does not belong in the app.
+
+## Pick a throughput recipe
+
+Start from the workload, not from a random queue number.
+
+| Workload | Runtime shape | Start with | Prove it with |
+| --- | --- | --- | --- |
+| Single live stream | One reusable `Run`, one producer, one puller | `RunPreset::Realtime`; `OutputOptions::Latest()` for preview-style outputs | Accepted FPS, output FPS, drop count, and latency. |
+| File or batch processing | One reusable `Run`; close input and drain | `RunPreset::Reliable`; `OutputOptions::EveryFrame(...)` | Input count equals output count, unless the model contract says otherwise. |
+| Many live streams into one model lane | App-pushed `Sample` inputs with `stream_id` / `frame_id`, or source-owned fragments that stamp identity | `RunPreset::Realtime`; `GraphLinkPolicy::RealtimeLatestByStream` through `GraphLinkOptions` for live fan-in | Per-stream FPS and per-stream drops, not only aggregate FPS. |
+| Many live streams across model lanes | Partition streams across multiple model instances or graph lanes | Same as the live-stream recipe per lane | Per-lane utilization, per-stream starvation, and target-normalized FPS. |
+| One input fans out to several models | Branch once, then run separate model paths | Branch/fan-out in the `Graph`; choose output behavior per branch | Branch latency and target-normalized FPS. |
+
+If one model lane is saturated, do not hide the problem behind a deeper queue. Split the work across lanes, lower the offered input rate, or choose an explicit drop policy. Queue depth buys tolerance for jitter; it does not create accelerator capacity.
+
+## Tune throughput without lying to yourself
+
+Throughput is a loop shape, not one magic option.
+
+1. Build the graph once.
+2. Warm up outside the measurement window.
+3. Keep a bounded number of inputs in flight.
+4. Pull continuously so output queues do not become the bottleneck.
+5. Release or copy outputs before pushing more when output buffers may be shared with the runtime.
+6. Pick one overload policy: block, keep latest, or drop incoming.
+7. Preserve `stream_id` and `frame_id`.
+8. Close input and drain before stopping the run.
+9. Measure the right numbers.
+10. Export run evidence after the measured workload.
+
+Measure these separately:
+
+| Metric | Meaning |
+| --- | --- |
+| Offered input FPS | Inputs attempted per second, often `streams * source_fps`. |
+| Accepted input FPS | Inputs accepted by `push(...)` or `try_push(...)` per second. |
+| Aggregate output FPS | All pulled outputs per second across all outputs. |
+| Per-stream FPS | Output rate for each `stream_id`. |
+| Target-normalized FPS | Outputs that count toward the app's target result per second. Useful when one input fans out to several outputs. |
+| Drop rate | Dropped or rejected inputs by `stream_id`, source, and reason. |
+
+Aggregate FPS can look great while one stream starves. Per-stream metrics catch the crime.
+
+### Throughput loop shape
+
+Use this shape for an app-pushed graph. Replace `next_inputs()` with your input source. Keep the loop boring: bounded in-flight work, continuous pulls, and no report export inside the hot path.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build(options);
+
+for (int i = 0; i < warmup_frames; ++i) {
+  run.push(next_inputs());
+  (void)run.pull(/*timeout_ms=*/5000);
+}
+
+auto measurement = run.start_measurement();
+
+int in_flight = 0;
+while (in_flight < max_in_flight && has_input()) {
+  if (run.push(next_inputs())) {
+    ++inputs_sent;
+    ++in_flight;
+  }
+}
+
+while (has_input() || in_flight > 0) {
+  auto output = run.pull(/*timeout_ms=*/1000);
+  if (output) {
+    ++outputs_seen;
+    --in_flight;
+    output.reset();  // Do not pin runtime-backed buffers longer than needed.
+  }
+
+  while (has_input() && in_flight < max_in_flight) {
+    if (!run.try_push(next_inputs())) {
+      break;
+    }
+    ++inputs_sent;
+    ++in_flight;
+  }
+}
+
+run.close_input();
+while (auto output = run.pull(/*timeout_ms=*/1000)) {
+  ++outputs_seen;
+}
+
+simaai::neat::MeasureReport report = measurement.stop();
+simaai::neat::save_run_json(run, report, "run_after_measurement.json");
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build(options)
+
+for _ in range(warmup_frames):
+    run.push(next_inputs())
+    run.pull(timeout_ms=5000)
+
+measurement = run.start_measurement()
+
+in_flight = 0
+while in_flight < max_in_flight and has_input():
+    if run.push(next_inputs()):
+        inputs_sent += 1
+        in_flight += 1
+
+while has_input() or in_flight > 0:
+    output = run.pull(timeout_ms=1000)
+    if output is not None:
+        outputs_seen += 1
+        in_flight -= 1
+        del output  # Do not pin runtime-backed buffers longer than needed.
+
+    while has_input() and in_flight < max_in_flight:
+        if not run.try_push(next_inputs()):
+            break
+        inputs_sent += 1
+        in_flight += 1
+
+run.close_input()
+while True:
+    output = run.pull(timeout_ms=1000)
+    if output is None:
+        break
+    outputs_seen += 1
+
+report = measurement.stop()
+run.save_json(report, "run_after_measurement.json")
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Keep per-frame logging, output validation, file download, source setup, and report export out of the measured hot loop unless you are explicitly measuring end-to-end behavior.
+
+## Measure and export evidence
+
+Use `start_measurement(...)` to observe an application-owned push/pull window.
+
+Use run export for evidence:
+
+- `RunOptions.run_export` writes a build-time snapshot.
+- C++ `run_to_json(...)` and `save_run_json(...)` export a run after it has executed.
+- Python `run.json(...)` and `run.save_json(...)` export the same kind of evidence.
+
+Enable power telemetry on the `RunOptions` that builds the run:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.enable_board_power(/*sample_interval_ms=*/100);
+
+auto run = graph.build(options);
+
+simaai::neat::MeasureOptions measure_options;
+measure_options.include_power = true;
+auto scope = run.start_measurement(measure_options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.enable_board_power(sample_interval_ms=100)
+
+run = graph.build(options)
+
+measure_options = pyneat.MeasureOptions()
+measure_options.include_power = True
+scope = run.start_measurement(measure_options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Power data depends on board rail support and monitor configuration. Document the measurement setup with the numbers; do not make power numbers look portable when the rails are not.
+
+Build-time export answers “what did Neat build?” After-run export answers “what happened while it ran?”
+
+### Export at build time and after execution
+
+Use build-time export for CI artifacts and startup debugging:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.run_export.path = "run-build.json";
+options.run_export.label = "classifier-startup";
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.run_export.path = "run-build.json"
+options.run_export.label = "classifier-startup"
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use after-run export after samples have moved through the graph:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto scope = run.start_measurement();
+// Push and pull the workload.
+simaai::neat::MeasureReport report = scope.stop();
+
+simaai::neat::save_run_json(run, report, "run-after.json");
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+scope = run.start_measurement()
+# Push and pull the workload.
+report = scope.stop()
+
+run.save_json(report, "run-after.json")
+```
+
+</CodeTab>
+</CodeTabs>
+
+Do not export inside the measured hot loop unless the benchmark is explicitly end-to-end.
+
+### Read a run export
+
+A run export is useful because it ties topology, runtime options, and measurements together in one artifact. When you open the JSON, start with the customer-facing evidence:
+
+| Section or field | What it answers |
+| --- | --- |
+| `graph.named_inputs` / `graph.named_outputs` | Which public endpoints did this run expose? |
+| `graph.public_view` | What did the app graph look like before runtime lowering? |
+| `run.output_materialization` | Were outputs owned, zero-copy, or selected automatically? |
+| `run.stats` | Lifetime inputs, outputs, drops, and latency high-level counters. |
+| `run.graph_metrics.counters` | Inputs, outputs, and drops for the exported run or measured window. |
+| `run.graph_metrics.window` | The measured time window when the export includes a `MeasureReport`. |
+| `run.node_metrics` / `run.plugin_metrics_unattributed` | Which stages dominated runtime when detailed timing was enabled. |
+| `run.path_timing` | Edge/path timing when path timing data was collected. |
+| `run.graph_metrics.power` | Whether power was collected, skipped, disabled, or unavailable. |
+
+Attach the run export with the model contract and the smallest reproducer when you ask for help. It is the black box recorder, minus the mystery.
+
+## Debug a graph run
+
+When a graph fails, inspect what you built before changing options.
+
+1. Validate the graph.
+2. Inspect public graph endpoints before build.
+3. Inspect runtime endpoints after build.
+4. Pull with a status-aware path when timeout, closed, and error must mean different things.
+5. Export the run after the workload has executed.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphReport report = graph.validate();
+std::cout << report.to_json() << "\n";
+
+auto run = graph.build();
+
+simaai::neat::Sample sample;
+simaai::neat::PullError error;
+
+switch (run.pull("classes", /*timeout_ms=*/1000, sample, &error)) {
+case simaai::neat::PullStatus::Ok:
+  // Use sample.
+  break;
+case simaai::neat::PullStatus::Timeout:
+  // No output arrived before the timeout.
+  break;
+case simaai::neat::PullStatus::Closed:
+  // End of stream. Stop draining.
+  break;
+case simaai::neat::PullStatus::Error:
+  std::cerr << error.code << ": " << error.message << "\n";
+  if (error.report) {
+    std::cerr << error.report->repro_note << "\n";
+  }
+  break;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = graph.validate()
+print(report.to_json())
+
+run = graph.build()
+print("inputs:", run.input_names())
+print("outputs:", run.output_names())
+
+sample = run.pull("classes", timeout_ms=1000)
+if sample is None:
+    print("no output before timeout or end of stream")
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Collect evidence for support
+
+When a graph fails in an application, capture the smallest evidence packet that explains the public behavior. Do this before changing options. Evidence beats folklore.
+
+Include:
+
+- the model artifact name and how it was produced;
+- Neat version/build information;
+- input shape, dtype, layout, pixel format, and payload family;
+- `graph.validate().to_json()` when build or validation fails;
+- `run.input_names()` and `run.output_names()` for endpoint failures;
+- a run export JSON after at least one sample has moved when runtime behavior is the issue;
+- the `MeasureReport` JSON or text when the issue is throughput, latency, or power;
+- the smallest runnable snippet that reproduces the behavior.
+
+Python can capture version and run evidence directly:
+
+```python
+print(pyneat.build_info())
+
+report = graph.validate()
+with open("graph-report.json", "w", encoding="utf-8") as f:
+    f.write(report.to_json())
+
+# After samples have moved through the run:
+run.save_json("run-after.json")
+```
+
+C++ can export the same evidence with `GraphReport::to_json()` and `save_run_json(...)`:
+
+```cpp
+std::cout << "neat_version=" << sima_neat_version() << "\n";
+std::cout << graph.validate().to_json() << "\n";
+
+// After samples have moved through the run:
+simaai::neat::save_run_json(run, "run-after.json");
+```
+
+If the failure only appears under load, attach the measured run export instead of a build-time snapshot. Build-time export says what Neat built; after-run export says what happened when the graph fought real input.
+
+For thrown failures, catch `NeatError` and read the structured report:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+try {
+  auto run = graph.build();
+} catch (const simaai::neat::NeatError& error) {
+  const auto& report = error.report();
+  std::cerr << report.error_code << "\n";
+  std::cerr << report.repro_note << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+try:
+    run = graph.build()
+except pyneat.NeatError as error:
+    print(error.error_code)
+    print(error.repro_note)
+    print(error.report_json)
+```
+
+</CodeTab>
+</CodeTabs>
+
+
+## Troubleshoot slow or missing output
+
+If throughput is low or outputs disappear, check these first:
+
+1. Are you building the graph inside the measured loop?
+2. Are you pushing one input, waiting for the whole graph to go idle, then pushing the next?
+3. Is the app pulling continuously?
+4. Is one output branch blocking the whole graph?
+5. Are you holding zero-copy or runtime-backed outputs too long?
+6. Are queues too shallow for jitter, or too deep to expose backpressure?
+7. Is the overload policy explicit?
+8. Are drops counted through `on_input_drop` or local `try_push(...)` failures?
+9. Does every expected `stream_id` produce output in the measured window?
+10. Are logs, decoding checks, file I/O, or report export inside the hot loop?
+
+Fix correctness first. Then make it fast. Then prove which one you measured.
+
+## See also
+
+- [Graph](/develop-apps/development-workflow/graph)
+- [Model](/develop-apps/development-workflow/model)
+- [Tensor and Sample](/develop-apps/development-workflow/core_types)
+- [Troubleshooting](/reference/troubleshooting)

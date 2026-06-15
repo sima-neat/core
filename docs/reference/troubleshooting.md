@@ -130,8 +130,8 @@ For raw-image input, the preprocess stage wasn't enabled / the input kind wasn't
 :::tip Fix
 Declare image input and a preprocess preset on `ModelOptions`:
 ```python
-opt.preprocess.kind   = neat.InputKind.Image
-opt.preprocess.preset = neat.NormalizePreset.COCO_YOLO
+opt.preprocess.kind = pyneat.InputKind.Image
+opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
 ```
 :::
 
@@ -156,9 +156,101 @@ An RTSP pull timed out — the URL is wrong or the stream isn't delivering frame
 Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/consume-rtsp-stream).
 :::
 
+### 12. Graph throughput is low, or live frames get dropped
+
+:::info Cause
+The graph is backpressured. Common causes are a pull loop that cannot keep up, output samples held too long, per-frame logging in the hot path, a queue policy that does not match the source, or a live stream with no explicit drop/freshness policy.
+:::
+
+:::tip Fix
+Use a reusable `Run`, then make the runtime policy explicit:
+
+- Use `RunPreset::Realtime` / `pyneat.RunPreset.Realtime` for live inputs where freshness matters.
+- Use `RunPreset::Reliable` / `pyneat.RunPreset.Reliable` for batch or file processing where every input matters.
+- Use `try_push(...)` when the app should not block on a full queue.
+- Set `on_input_drop` to count drops by `stream_id`, `frame_id`, `port_name`, and reason.
+- Pull continuously. A full output queue can throttle the whole graph.
+- Release or copy outputs before pushing more if the app may hold runtime-backed buffers.
+
+For multistream graphs, preserve `stream_id` and `frame_id` and check per-stream output counts. Aggregate FPS can hide one starving stream. See [Run a Graph → Tune throughput without lying to yourself](/develop-apps/development-workflow/pipeline#tune-throughput-without-lying-to-yourself).
+:::
+
+### 13. `unknown input/output name`, `no unambiguous default input`, or `no unambiguous default output`
+
+:::info Cause
+The graph has named endpoints and the app pushed or pulled the wrong name, or used unnamed `push(...)` / `pull(...)` on a graph with more than one possible endpoint.
+:::
+
+:::tip Fix
+Inspect names before pushing or pulling:
+
+```python
+run = graph.build()
+print("inputs:", run.input_names())
+print("outputs:", run.output_names())
+```
+
+Then use the exact endpoint name:
+
+```python
+run.push("image", [tensor])
+sample = run.pull("detections", timeout_ms=2000)
+```
+
+`Graph("name")` is a diagnostic label. It does not create an endpoint. Endpoints come from `nodes.input("name")` and `nodes.output("name")`.
+:::
+
+### 14. `pull(...)` returns no output before the timeout
+
+:::info Cause
+No sample reached the requested output before the timeout. The graph might still be running, the output name might be wrong, the input may be backpressured, the graph may be closed, or a runtime error may have occurred.
+:::
+
+:::tip Fix
+Separate timeout, closed, and error. In C++, use the structured pull overload:
+
+```cpp
+simaai::neat::Sample sample;
+simaai::neat::PullError error;
+
+switch (run.pull("detections", /*timeout_ms=*/1000, sample, &error)) {
+case simaai::neat::PullStatus::Ok:
+  break;
+case simaai::neat::PullStatus::Timeout:
+  // Keep waiting, push more input, or report timeout.
+  break;
+case simaai::neat::PullStatus::Closed:
+  // End of stream.
+  break;
+case simaai::neat::PullStatus::Error:
+  std::cerr << error.code << ": " << error.message << "\n";
+  break;
+}
+```
+
+Also check `run.last_error()`, endpoint names, input dtype/layout/format, and whether your app is continuously pulling from every output branch.
+:::
+
+### 15. Old snippets fail with `push_timeout_ms`, `pull_or_throw`, root-level `input_max_*`, or `boxdecode_original_*`
+
+:::info Cause
+The snippet was written against an older option surface or a private/internal path. Current app code should use the public `ModelOptions`, `RunOptions`, and `Run` APIs.
+:::
+
+:::tip Fix
+Use the current public names:
+
+- Use `RunOptions.queue_depth`, `overflow_policy`, and `try_push(...)` for input pressure.
+- Use `pull(...)` or the structured `PullStatus` overload instead of `pull_or_throw`.
+- If an old snippet sets root-level `input_max_*` fields, move dynamic input limits under `ModelOptions.preprocess.input_max_width`, `input_max_height`, and `input_max_depth`, and set them only when you intentionally need bounds.
+- For BoxDecode coordinate mapping, prefer preprocess metadata. Do not set deprecated original-size fields in new examples.
+
+If the page you copied from still shows the old spelling, treat it as stale docs and file a docs bug so the next reader does not hit the same trap.
+:::
+
 ## Tensors & Python interop
 
-### 12. `… expects a TensorList; pass [tensor] instead of a single Tensor`
+### 16. `… expects a TensorList; pass [tensor] instead of a single Tensor`
 
 :::info Cause
 A bare `Tensor` (or `Sample`) was passed to `run` / `push` / `build`; the API requires an explicit list — this is deliberate, not a bug.
@@ -168,17 +260,17 @@ A bare `Tensor` (or `Sample`) was passed to `run` / `push` / `build`; the API re
 Wrap it: `model.run([tensor])`, `run.push([tensor])`, `graph.build([tensor])`.
 :::
 
-### 13. `image-mode Tensor input requires explicit image format metadata`
+### 17. `image-mode Tensor input requires explicit image format metadata`
 
 :::info Cause
 An image-input model received a tensor with no pixel format, so Neat can't interpret the byte layout.
 :::
 
 :::tip Fix
-Build the tensor with an explicit format: `neat.Tensor.from_numpy(arr, image_format=neat.PixelFormat.RGB)`.
+Build the tensor with an explicit format: `pyneat.Tensor.from_numpy(arr, image_format=pyneat.PixelFormat.RGB)`.
 :::
 
-### 14. `byte_format tensors cannot also specify image_format`
+### 18. `byte_format tensors cannot also specify image_format`
 
 :::info Cause
 A tensor was constructed with both `byte_format=` (opaque bytes) and `image_format=` (pixels) — they're mutually exclusive.
@@ -192,7 +284,7 @@ Pass one or the other, not both.
 
 - **"Where's my `.engine` / `.blob` / `.dlc` / `.hef`?"** — Neat loads a `.tar.gz` model archive; that's the equivalent compiled artifact.
 - **"How do I pin work to a CUDA stream / OpenCL queue?"** — you don't; decouple producer/consumer with async `push`/`pull` and tune `RunOptions` instead.
-- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, or drop policy rather than the accelerator. See [Tune Throughput and Queue Depth](/tutorials/tune-throughput-and-queues).
+- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, output backpressure, or drop policy rather than the accelerator. See [Run a Graph](/develop-apps/development-workflow/pipeline).
 
 ## When you're stuck: diagnostics
 
@@ -201,8 +293,37 @@ Reach for these before guessing.
 **Inspect the pipeline / run (Python and C++):**
 - `graph.validate()` → a `GraphReport` — validates wiring against built-in contracts before you build. Check its `error_code`.
 - `graph.describe()` → the resolved pipeline as text (node names + caps chain).
+- `run.input_names()` / `run.output_names()` → the names accepted by runtime push/pull calls.
 - `run.start_measurement()` / `MeasureReport` → counters, latency, input-stream telemetry, plugin/edge timing, and optional power.
+- `run.json(...)` / `run.save_json(...)` or C++ `save_run_json(...)` → run evidence after samples have moved.
 - `NeatError::report()` → structured failure details when a run throws.
+
+
+### Collect a support packet
+
+If you need help from another developer or SiMa.ai support, send evidence another developer can replay. Include:
+
+- Neat version/build information: Python `pyneat.build_info()` or C++ `sima_neat_version()`, `sima_neat_platform_version()`, and `sima_neat_abi_version()`;
+- the model artifact name, model path, and how it was produced;
+- the smallest runnable snippet that reproduces the failure;
+- input shape, dtype, layout, pixel format, payload family, and whether the graph is app-pushed or source-owned;
+- endpoint names from `run.input_names()` and `run.output_names()`;
+- `GraphReport` JSON from `graph.validate()` or `NeatError::report()`;
+- run export JSON from `run.save_json(...)` or C++ `save_run_json(...)` after samples have moved through the run;
+- measurement output when the issue is latency, throughput, drops, or power.
+
+For multistream issues, also include per-stream input counts, accepted counts, output counts, and drop counts. Aggregate FPS can hide one starving stream.
+
+When you collect a `GraphReport`, keep the fields that explain what happened:
+
+- `error_code` and `repro_note`;
+- `pipeline_string`;
+- `bus`;
+- `repro_gst_launch` and `repro_env`;
+- `dot_paths` and `caps_dump`;
+- `boundaries` / `BoundaryFlowStats` when boundary probes are present;
+- `build_adaptation` for seeded `build(input, ...)` failures;
+- run export JSON for after-execution counters and metrics.
 
 **Turn on framework debug output** with `SIMA_DEBUG_PROFILE` — a comma-separated list of components to trace. Use `all` for everything, or narrow it:
 ```bash

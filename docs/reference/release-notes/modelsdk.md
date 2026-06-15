@@ -5,6 +5,6 @@ sidebar_position: 2
 
 # Model Compiler Release Notes
 
-Release notes for the Model Compiler.
+No Model Compiler release notes are bundled in this documentation snapshot.
 
-> **TODO(timothydo):** Populate or auto-pull Model Compiler release notes.
+For compatibility and installation guidance, see [Compatibility](/getting-started/compatibility/#model-compiler) and [Compile a Model](/compile-a-model/).

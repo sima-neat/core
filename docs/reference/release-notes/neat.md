@@ -7,4 +7,4 @@ sidebar_position: 3
 
 Release notes for SiMa.ai Neat.
 
-> **TODO(jimfan):** Populate or auto-pull Neat release notes.
+No component-specific notes have been added for this documentation build. Before you upgrade, review the release bundle for API changes, runtime changes, compatibility notes, and known issues.

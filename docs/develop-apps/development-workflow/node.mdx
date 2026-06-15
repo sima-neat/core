@@ -6,7 +6,7 @@ sidebar_position: 7
 
 # Node
 
-A `Node` is the smallest composable unit in SiMa Neat.
+A `Node` is the smallest composable unit in SiMa.ai Neat.
 Nodes are the things a [`Graph`](/develop-apps/development-workflow/graph) wires together: decode stages, preprocess stages, model stages, postprocess stages, sources, sinks, and application boundaries.
 
 Reference:
@@ -60,19 +60,103 @@ graph.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
 <CodeTab label="Python" lang="python">
 
 ```python
-import pyneat as neat
+import pyneat
 
-graph = neat.Graph()
+graph = pyneat.Graph()
 
-vopt = neat.VideoInputGroupOptions()
+vopt = pyneat.VideoInputGroupOptions()
 vopt.path = "/data/sample.mp4"
-graph.add(neat.groups.video_input(vopt))
+graph.add(pyneat.groups.video_input(vopt))
 ```
 
 </CodeTab>
 </CodeTabs>
 
 Use pre-built groups when the shape is standard and the interesting part of your app is not the internal media plumbing. If you need custom topology, build the equivalent `Graph` yourself from lower-level nodes.
+
+## Pick a node or group
+
+Use this map before you open the full API reference.
+
+| Task | C++ starting point | Python starting point |
+| --- | --- | --- |
+| App pushes tensors, images, or samples | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
+| App pulls a full sample | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
+| Read frames from a file | `nodes::FileInput(...)` plus decode nodes, or `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` plus decode nodes, or `pyneat.groups.video_input(...)` |
+| Read one image as a source | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| Read an RTSP stream | `nodes::RTSPInput(...)` or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)` or `pyneat.groups.rtsp_decoded_input(...)` |
+| Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
+| Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
+| Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
+| Build a reusable video input path | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
+| Send video out | `nodes::groups::VideoSender(...)` or H.264/UDP output helpers | `pyneat.groups.video_sender(...)` or H.264/UDP output helpers |
+| Send metadata out | `MetadataSender` | `pyneat.MetadataSender` |
+| Render detections | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
+| Convert logits to class index | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+
+Use groups when you want a tested fragment. Use individual nodes when you need explicit topology. Use `Graph` helpers such as `graphs::Branch(...)` and `graphs::Combine(...)` for fan-out and fan-in instead of hiding topology behind duplicated outputs.
+
+
+## Source-owned and sink groups
+
+Use source-owned groups when the graph should read media by itself. Build those graphs without app input, then pull outputs or let sink nodes handle delivery. Use sink groups when the graph should send video out without your app pulling every frame; a sink graph can still be app-pushed if it also has an `Input` boundary.
+
+| Need | Group | Key fields to set first | Common follow-up fields |
+| --- | --- | --- | --- |
+| Still image fixture | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
+| Video file | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
+| Live RTSP H.264 stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url` | `latency_ms`, `tcp`, fallback H.264 width/height/FPS, `out_format`, `output_caps` |
+| Raw or encoded video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)` or `H264RtpUdpFromEncoded()` | `host`, `channel`, `video_port_base`, encoder/RTP options |
+| RTP/H.264 over UDP output | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | destination host/port when the defaults are not right | `h264_caps`, `payload_type`, `config_interval` |
+
+A source-owned graph is a different runtime shape than an app-pushed graph:
+
+```text
+source group -> model -> output
+```
+
+Run it with `graph.build()` or `graph.run()` without an input argument. Do not add an `Input("image")` in front of a source group unless your app really has a second public input to push.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspDecodedInputOptions source_options;
+source_options.url = "rtsp://camera.example/live";
+
+simaai::neat::Graph graph("rtsp_detector");
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source_options));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+
+auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+source_options = pyneat.RtspDecodedInputOptions()
+source_options.url = "rtsp://camera.example/live"
+
+graph = pyneat.Graph("rtsp_detector")
+graph.add(pyneat.groups.rtsp_decoded_input(source_options))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Start with a group when the media plumbing is standard. Drop to individual nodes only when you need a custom topology or a source format the group does not describe.
+
 
 <a id="common-sima-nodes"></a>
 ## Common SiMa nodes
@@ -129,9 +213,37 @@ camera -> model -> telemetry
 
 The names are still preserved for diagnostics, endpoint inspection, metrics, and visualization. They just do not create extra queues, copies, or fake runtime sinks in the middle of the app.
 
+### Labels are not endpoints
+
+Keep these names separate:
+
+| Name | What it is | Does it create `push(...)` / `pull(...)`? |
+| --- | --- | --- |
+| `Graph("detector")` | Graph label for diagnostics, exports, and logs. | No. |
+| `nodes::Input("image")` / `pyneat.nodes.input("image")` | Public input boundary when it remains on the outside of the final graph. | Yes: `run.push("image", ...)`. |
+| `nodes::Output("detections")` / `pyneat.nodes.output("detections")` | Public output boundary when it remains on the outside of the final graph. | Yes: `run.pull("detections", ...)`. |
+| Node or element names | Backend names used in diagnostics and pipeline lowering. | No, unless exposed through an `Input` or `Output` boundary. |
+
+If a runtime call says the endpoint name is unknown, inspect `run.input_names()` and `run.output_names()` instead of guessing. Names are cheap; wrong names are expensive.
+
 ### App-pushed input
 
 Use `nodes::Input` when your application already has the frame or tensor and wants to push it into Neat.
+
+Use `InputOptions` when the boundary needs an explicit payload, format, size, timing, or allocation contract.
+
+| Need | Field |
+| --- | --- |
+| Payload family | `payload_type` / `PayloadType` |
+| Format | `format` / `FormatTag` |
+| Fixed dimensions | `width`, `height`, `depth` |
+| Dynamic input limits | `max_width`, `max_height`, `max_depth`, `max_bytes` |
+| Timing and caps | `fps_n`, `fps_d`, `caps_override` |
+| Live-source behavior | `is_live`, `do_timestamp`, `block`, `stream_type` |
+| Allocation | `use_simaai_pool`, `pool_min_buffers`, `pool_max_buffers`, `memory_policy` |
+| Advanced metadata | `buffer_name`, `preprocess_meta` |
+
+Leave fields unset unless the graph boundary needs the contract. Guessing caps is how you summon the swamp.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -140,7 +252,8 @@ Use `nodes::Input` when your application already has the frame or tensor and wan
 simaai::neat::Graph graph;
 
 simaai::neat::InputOptions iopt;
-iopt.format = "RGB";
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::RGB;
 iopt.width = 224;
 iopt.height = 224;
 graph.add(simaai::neat::nodes::Input("image", iopt));
@@ -150,23 +263,122 @@ graph.add(simaai::neat::nodes::Input("image", iopt));
 <CodeTab label="Python" lang="python">
 
 ```python
-import pyneat as neat
+import pyneat
 
-graph = neat.Graph()
+graph = pyneat.Graph()
 
-iopt = neat.InputOptions()
-iopt.format = "RGB"
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.RGB
 iopt.width = 224
 iopt.height = 224
-graph.add(neat.nodes.input("image", iopt))
+graph.add(pyneat.nodes.input("image", iopt))
 ```
 
 </CodeTab>
 </CodeTabs>
 
+#### Input boundary recipes
+
+Use these patterns when the boundary contract matters before the first push.
+
+| Boundary | Set | Leave unset when |
+| --- | --- | --- |
+| Fixed-size decoded image | `payload_type`, `format`, `width`, `height` | The pushed tensor or sample already carries complete image metadata. |
+| Dynamic decoded image | `payload_type`, `format`, `max_width`, `max_height`, and optional `max_bytes` | The graph only accepts one fixed size. |
+| Encoded H.264 input | `payload_type = Encoded`, `format = H264`, and caps metadata on the pushed `Sample` | The graph source owns the stream through an RTSP or file group. |
+| Detection coordinate mapping | `preprocess_meta` | The model route owns preprocessing and emits the metadata itself. |
+
+For dynamic image input, bound the stream without pretending every frame has the same size:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::BGR;
+iopt.max_width = 1920;
+iopt.max_height = 1080;
+iopt.max_bytes = 1920 * 1080 * 3;
+
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.BGR
+iopt.max_width = 1920
+iopt.max_height = 1080
+iopt.max_bytes = 1920 * 1080 * 3
+
+graph.add(pyneat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+For encoded H.264 that your app pushes, make the boundary encoded and put the caps on the sample:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Encoded;
+iopt.format = simaai::neat::FormatTag::H264;
+
+graph.add(simaai::neat::nodes::Input("video", iopt));
+auto run = graph.build();
+
+std::vector<std::uint8_t> bytes = /* your H.264 access unit */;
+auto sample = simaai::neat::make_encoded_sample(
+    std::move(bytes),
+    "video/x-h264,stream-format=byte-stream,alignment=au");
+sample.port_name = "video";
+run.push("video", sample);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Encoded
+iopt.format = pyneat.Format.H264
+
+graph.add(pyneat.nodes.input("video", iopt))
+run = graph.build()
+
+sample = pyneat.Sample.from_encoded(
+    data,
+    caps_string="video/x-h264,stream-format=byte-stream,alignment=au",
+    port_name="video",
+)
+run.push("video", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+If you already use `RtspDecodedInput(...)` or `VideoInputGroup(...)`, do not add this app-pushed boundary in front of it. Source-owned groups own their input path.
+
 ### Sample output
 
 Use `nodes::Output` when the consumer needs a full [`Sample`](/develop-apps/development-workflow/core_types#sample): payload plus stream/frame/timestamp metadata.
+
+Use `OutputOptions` when pull behavior matters.
+
+| Goal | Use |
+| --- | --- |
+| Keep the freshest output | `OutputOptions::Latest()` / `pyneat.OutputOptions.latest()` |
+| Pull every frame | `OutputOptions::EveryFrame(...)` / `pyneat.OutputOptions.every_frame(...)` |
+| Pace output to the graph clock | `OutputOptions::Clocked(...)` / `pyneat.OutputOptions.clocked(...)` |
+| Combine multiple producers | `combine_policy = CombinePolicy::ByFrame` or `ByPts` |
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -175,7 +387,9 @@ Use `nodes::Output` when the consumer needs a full [`Sample`](/develop-apps/deve
 simaai::neat::Graph graph;
 graph.add(simaai::neat::nodes::Input("image"));
 graph.add(model);
-graph.add(simaai::neat::nodes::Output("classes"));
+graph.add(simaai::neat::nodes::Output(
+    "classes",
+    simaai::neat::OutputOptions::EveryFrame()));
 
 const auto run = graph.build();
 ```
@@ -184,12 +398,15 @@ const auto run = graph.build();
 <CodeTab label="Python" lang="python">
 
 ```python
-import pyneat as neat
+import pyneat
 
-graph = neat.Graph()
-graph.add(neat.nodes.input("image"))
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.input("image"))
 graph.add(model)
-graph.add(neat.nodes.output("classes"))
+graph.add(pyneat.nodes.output(
+    "classes",
+    pyneat.OutputOptions.every_frame(),
+))
 
 run = graph.build()
 ```
@@ -197,14 +414,32 @@ run = graph.build()
 </CodeTab>
 </CodeTabs>
 
-Use `Graph::add_output_tensor(...)` when you want the simpler tensor-first output path with predictable tensor shape/format and do not need the richer sample envelope.
+`OutputOptions` has four knobs, but the presets cover most apps:
+
+| Field | What it controls | Prefer |
+| --- | --- | --- |
+| `max_buffers` | How many output samples may queue before backpressure or dropping. | `Latest()`, `EveryFrame(...)`, or `Clocked(...)` presets. |
+| `drop` | Whether overflow drops the oldest queued sample instead of blocking. | `Latest()` for live preview-style output. |
+| `sync` | Whether output syncs to the graph clock. | `Clocked(...)` for clock-paced output. |
+| `combine_policy` | How one public `Output` combines several upstream producers. | `CombinePolicy::ByFrame` only with valid `frame_id`; `ByPts` only with valid `pts_ns`. |
+
+Use `EveryFrame(...)` for records you must not lose. Use `Latest()` when freshness beats history. Do not make a live preview behave like a courtroom transcript.
+
+#### Advanced: adapt image or video output to a tensor
+
+For normal model or graph outputs, stop here: use `nodes::Output`. If the payload is tensor-only and you do not need the full `Sample` envelope, pull it with `pull_tensors(...)`.
+
+Use `Graph::add_output_tensor(...)` only when image or video output must be converted, scaled, or rate-adjusted into a CPU-friendly `UInt8` tensor before the app pulls it. The helper inserts the adapter path and creates an unnamed output. With one output, pull it with `run.pull_tensors(...)`.
+
+`OutputTensorOptions` controls `format`, `target_width`, `target_height`, and `target_fps`. Keep `dtype` as `UInt8`; the current public path rejects other dtypes. Most model outputs do not need this helper.
 
 ## Quick decision guide
 
 - Source is file, camera, or RTSP: use a pre-built input group from `nodes::groups`.
 - Source is app-produced tensor/frame: use `nodes::Input`.
 - Output consumer needs stream/frame/timestamp metadata: use `nodes::Output` and pull `Sample` objects.
-- Output consumer only needs numeric data: use tensor-first output helpers and pull `Tensor` objects.
+- Output is a model or tensor payload: use `nodes::Output` and pull tensors with `pull_tensors(...)` when you do not need the full `Sample`.
+- Output is image or video that must be resized, reformatted, or rate-adjusted before pull: use the advanced `add_output_tensor(...)` adapter.
 - Need a reusable bundle: make a `Graph` fragment from nodes and add/connect it like any other building block.
 
 ## Why this matters

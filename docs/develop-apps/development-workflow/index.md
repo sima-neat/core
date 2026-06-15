@@ -14,11 +14,27 @@ A typical Neat development cycle looks like this:
 
 1. **Install** — get the `sima-neat` package (and optionally the `pyneat` Python bindings) on your host or device.
 2. **Try Hello Neat** — confirm the library is wired up by compiling a minimal example.
-3. **Pick a compiled model** — Neat consumes a model package (`.tar.gz`, often called an MPK). You can grab one from the Model Zoo or compile your own with the SiMa.ai toolchain.
-4. **Author a `Model` / `Graph` / `Run`** — load the model, compose the graph, and execute it synchronously or asynchronously.
+3. **Pick a compiled model** — Neat consumes a compiled model archive (`.tar.gz`, often called an MPK). Use one from the Model Zoo or compile your own with the Model Compiler.
+4. **Author a `Model` / `Graph` / `Run`** — load the model, compose the graph, and execute it with the smallest runtime path that fits the job.
 5. **Run and inspect** — feed inputs, pull outputs, and use `GraphReport` / `MeasureReport` to verify behavior.
 6. **Iterate with tutorials** — graduate from a single inference to pipelines, multi-input models, multi-stream graphs, and production-grade error handling.
 7. **Deploy** — link your application against the installed Neat library on the target device.
+
+## Choose Model, Graph, or Run
+
+Start with the smallest surface that solves the job. You can always level up
+when the app earns more moving parts.
+
+| If you need to... | Start with | Why | Next stop |
+| --- | --- | --- | --- |
+| Run one compiled model once | `Model.run(...)` | Smallest path from artifact to output tensors. | [Run Your First Model](/tutorials/run-your-first-model) |
+| Inspect a model contract or route | `Model` | Specs, metadata, and route info tell you what the model accepts and emits. | [Model](/develop-apps/development-workflow/model) |
+| Add a model to application flow | `Graph` | Names inputs and outputs, composes nodes, and keeps topology explicit. | [Graph](/develop-apps/development-workflow/graph) |
+| Reuse a graph over time | `graph.build(...)` → `Run` | Gives you push/pull, close/drain control, measurement, and queue policy. | [Run a Graph](/develop-apps/development-workflow/pipeline) |
+| Push several streams or chase max throughput | `RunOptions` + measurement | Throughput tuning needs queue policy, drop counters, and per-stream evidence. | [Tune Throughput and Queue Depth](/tutorials/tune-throughput-and-queues) |
+
+If this is your first hands-on path, start with the [Tutorials](/tutorials)
+preflight checklist, then run one model before adding graph machinery.
 
 ## Core Concepts at a Glance
 
@@ -28,8 +44,8 @@ The Development Workflow pages break each of these down in depth. At a glance:
 - [GenAIModel](/develop-apps/development-workflow/genai-model) — the generative-model counterpart to `Model`.
 - [Tensor and Sample](/develop-apps/development-workflow/core_types) — the payload and metadata envelope passed between stages.
 - [Run / Inference](/develop-apps/development-workflow/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
-- [Graph](/develop-apps/development-workflow/graph) — hybrid DAG runtime for combining model stages and custom logic.
-- [Pipeline](/develop-apps/development-workflow/pipeline) — the runtime view of a built graph.
+- [Graph](/develop-apps/development-workflow/graph) — compose model stages, nodes, inputs, and outputs into an application graph.
+- [Run a Graph](/develop-apps/development-workflow/pipeline) — build a graph into a live `Run`, then push, pull, drain, measure, and tune throughput.
 - [Node](/develop-apps/development-workflow/node) — the atomic building block of a graph.
 
 If you only learn one page first, start with the [Run / Inference overview](/develop-apps/development-workflow/overview) — it ties `Model`, `Graph`, and `Run` together end to end.
@@ -38,14 +54,14 @@ If you only learn one page first, start with the [Run / Inference overview](/dev
 
 Step-by-step entry points for new users:
 
-- [Neat Development Environment](/getting-started/dev-environment/) — install the SDK, pair a DevKit, and run on hardware with `dk`.
+- [Neat Development Environment](/getting-started/dev-environment/) — install the Palette SDK, pair a DevKit, and run on hardware with `dk`.
 - [Build](/develop-apps/contribute/build) — build Neat from source with `build.sh` (contributor workflow).
 - [Hello Neat!](/develop-apps/hello-neat/minimal) — minimal CMake application that links against the installed library.
 - [Tutorials](/tutorials) — guided chapters that scale from "first model" to "production pipeline".
 
 Reference material for when you need depth:
 
-- [Run / Inference](/develop-apps/development-workflow/overview) — concept-by-concept breakdown of `Model`, `Run`, `Node`, `Pipeline`, `Graph`, and I/O.
+- [Run / Inference](/develop-apps/development-workflow/overview) — concept-by-concept breakdown of `Model`, `Graph`, `Run`, nodes, and I/O.
 - [C++ Reference](/reference/cppapi) — full API surface for the installed headers.
 - [Python Reference](/reference/pythonapi) — `pyneat` bindings reference.
 
@@ -61,4 +77,4 @@ simaai::neat::TensorList outputs = model.run(input_tensors, /*timeout_ms=*/2000)
 simaai::neat::Mapping    view = outputs[0].map_read();  // inspect the output bytes
 ```
 
-Everything else in this documentation — pipelines, graphs, async queues, multi-stream — is a controlled expansion of that core three-line story.
+Everything else in this documentation — graphs, run handles, async queues, and multistream apps — is a controlled expansion of that core three-line story.
