@@ -60,10 +60,46 @@ std::string best_dtype(
   return tensor.dtype;
 }
 
+bool is_dequantize_route_wrapper(const std::string& component) {
+  constexpr const char* kPrefix = "dequantize";
+  constexpr std::size_t kPrefixLen = 10;
+  if (component.compare(0, kPrefixLen, kPrefix) != 0) {
+    return false;
+  }
+  if (component.size() == kPrefixLen) {
+    return true;
+  }
+  if (component[kPrefixLen] != '_') {
+    return false;
+  }
+  for (std::size_t i = kPrefixLen + 1; i < component.size(); ++i) {
+    if (!std::isdigit(static_cast<unsigned char>(component[i]))) {
+      return false;
+    }
+  }
+  return component.size() > kPrefixLen + 1;
+}
+
+std::string strip_public_route_wrapper_prefix(std::string name) {
+  const std::size_t slash = name.find('/');
+  if (slash == std::string::npos || slash + 1 >= name.size()) {
+    return name;
+  }
+  const std::string component = name.substr(0, slash);
+  if (is_dequantize_route_wrapper(component)) {
+    return name.substr(slash + 1);
+  }
+  return name;
+}
+
 PcieTensorFact convert_tensor(
-    const simaai::neat::pipeline_internal::sima::MpkTensorContract& tensor) {
+    const simaai::neat::pipeline_internal::sima::MpkTensorContract& tensor,
+    const bool normalize_public_name = false) {
   PcieTensorFact out;
   out.name = !tensor.name.empty() ? tensor.name : tensor.segment_name;
+  if (normalize_public_name) {
+    out.name = strip_public_route_wrapper_prefix(std::move(out.name));
+  }
   out.dtype = best_dtype(tensor);
   out.shape = best_shape(tensor);
   out.size_bytes = tensor.size_bytes;
@@ -228,7 +264,7 @@ PcieModelFacts read_model_facts(const std::string& model_path, const bool accele
     facts.inputs.push_back(std::move(converted));
   }
   for (const auto& output : outputs) {
-    auto converted = convert_tensor(output);
+    auto converted = convert_tensor(output, !accelerator);
     facts.packed_output_bytes += converted.size_bytes;
     facts.outputs.push_back(std::move(converted));
   }

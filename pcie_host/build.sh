@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CORE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${SCRIPT_DIR}"
 
 BUILD_DIR="build"
@@ -13,6 +14,15 @@ MAKE_DEB="ON"
 PACKAGE_DIR="${SCRIPT_DIR}/packaging"
 PLUGIN_NAME="libgstneatpciehost.so"
 TENSOR_META_HEADER="gst/SimaTensorSetMetaAbi.h"
+DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
+ARTIFACT_REPOSITORY="${SIMAPCIE_PCIE_HOST_ARTIFACT_REPOSITORY:-internals}"
+ARTIFACT_MANIFEST_KEY="internals"
+VULCAN_ENV="${SIMAPCIE_VULCAN_ENV:-${NEAT_VULCAN_ENV:-production}}"
+VULCAN_BASE_URL="${SIMAPCIE_VULCAN_BASE_URL:-${NEAT_VULCAN_BASE_URL:-}}"
+ARTIFACT_REQUESTED_REF=""
+ARTIFACT_RESOLVED_REF=""
+ARTIFACT_SNAP_POLICY="OFF"
+ARTIFACT_SNAP_TAG_POLICY="OFF"
 
 usage() {
   cat <<'EOF'
@@ -71,6 +81,115 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+manifest_dependency_spec() {
+  local key="$1"
+  local file="$2"
+  python3 - "${key}" "${file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+key = sys.argv[1]
+manifest_path = Path(sys.argv[2])
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+if key not in data:
+    raise SystemExit(f"ERROR: {manifest_path} must define '{key}'.")
+
+value = data[key]
+if isinstance(value, str):
+    print("__SNAP__" if not value.strip() else value.strip())
+    raise SystemExit(0)
+
+if isinstance(value, dict):
+    policy = str(value.get("policy", "")).strip().lower()
+    if policy == "snap":
+        print("__SNAP__")
+        raise SystemExit(0)
+    if policy:
+        raise SystemExit(f"ERROR: unsupported {key}.policy in {manifest_path}: {policy!r}")
+
+    spec = str(value.get("spec", "")).strip()
+    branch = str(value.get("branch", value.get("ref", ""))).strip()
+    if branch:
+        print(f"{branch}:{spec or 'latest'}")
+        raise SystemExit(0)
+
+raise SystemExit(
+    f"ERROR: {manifest_path} field '{key}' must be a string, "
+    "or an object with {'policy':'snap'} or {'branch':'...', 'spec':'...'}."
+)
+PY
+}
+
+current_core_branch() {
+  if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
+    printf '%s\n' "${GITHUB_HEAD_REF}"
+    return 0
+  fi
+  if [[ -n "${GITHUB_REF_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_REF_NAME}"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1 &&
+     git -C "${CORE_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${CORE_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null
+    return 0
+  fi
+  printf '\n'
+}
+
+current_core_tag() {
+  if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_REF_NAME}"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1 &&
+     git -C "${CORE_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${CORE_ROOT}" describe --tags --exact-match HEAD 2>/dev/null || true
+    return 0
+  fi
+  printf '\n'
+}
+
+resolve_artifact_ref() {
+  ARTIFACT_SNAP_POLICY="OFF"
+  ARTIFACT_SNAP_TAG_POLICY="OFF"
+
+  if [[ ! -f "${DEPS_MANIFEST}" ]]; then
+    echo "ERROR: missing dependency manifest: ${DEPS_MANIFEST}" >&2
+    return 1
+  fi
+
+  local manifest_spec
+  if ! manifest_spec="$(manifest_dependency_spec "${ARTIFACT_MANIFEST_KEY}" "${DEPS_MANIFEST}")"; then
+    return 1
+  fi
+
+  local branch spec tag
+  if [[ "${manifest_spec}" == "__SNAP__" ]]; then
+    ARTIFACT_SNAP_POLICY="ON"
+    tag="$(current_core_tag)"
+    if [[ -n "${tag}" ]]; then
+      ARTIFACT_SNAP_TAG_POLICY="ON"
+      branch="${tag}"
+    else
+      branch="$(current_core_branch)"
+      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+        echo "Could not determine current branch for PCIe host artifact snap; using develop." >&2
+        branch="develop"
+      fi
+    fi
+  elif [[ "${manifest_spec}" == *":"* ]]; then
+    branch="${manifest_spec%%:*}"
+    spec="${manifest_spec#*:}"
+  else
+    branch="${manifest_spec}"
+  fi
+  spec="${spec:-latest}"
+
+  ARTIFACT_REQUESTED_REF="${branch}:${spec}"
+}
+
 detect_multiarch() {
   if command -v dpkg-architecture >/dev/null 2>&1; then
     dpkg-architecture -qDEB_HOST_MULTIARCH
@@ -91,6 +210,156 @@ detect_multiarch() {
   esac
 }
 
+artifact_available() {
+  [[ -f "${PLUGIN_SOURCE}" && -f "${HEADER_SOURCE}" ]]
+}
+
+url_encode_path_component() {
+  python3 - "$1" <<'PY'
+import sys
+from urllib.parse import quote
+
+print(quote(sys.argv[1], safe=""))
+PY
+}
+
+vulcan_artifact_base_url() {
+  local env_name
+  env_name="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  if [[ -n "${VULCAN_BASE_URL}" ]]; then
+    printf '%s\n' "${VULCAN_BASE_URL%/}"
+    return 0
+  fi
+  case "${env_name}" in
+    dev) printf '%s\n' "https://artifacts.neat.paconsultings.com" ;;
+    stg|staging) printf '%s\n' "https://artifacts.stg.neat.sima.ai" ;;
+    prod|production) printf '%s\n' "https://artifacts.neat.sima.ai" ;;
+    *)
+      echo "ERROR: unsupported SIMAPCIE_VULCAN_ENV: ${env_name}" >&2
+      echo "       Set SIMAPCIE_VULCAN_BASE_URL to override the artifact base URL." >&2
+      return 1
+      ;;
+  esac
+}
+
+download_text() {
+  local url="$1"
+  curl -fsSL "${url}"
+}
+
+download_artifact_from_vulcan_ref() {
+  local ref_spec="$1"
+  local ref="${ref_spec%%:*}"
+  local spec="${ref_spec#*:}"
+  local artifact_name="pcie-host-artifact-${HOST_MULTIARCH}"
+  local tarball_name="${artifact_name}.tar.gz"
+  local tmp_dir download_dir tarball checksum_file expected actual
+  local base_url ref_key resolved_spec artifact_base
+
+  if ! base_url="$(vulcan_artifact_base_url "${VULCAN_ENV}")"; then
+    return 1
+  fi
+  ref_key="$(url_encode_path_component "${ref}")"
+
+  if [[ "${spec}" == "latest" ]]; then
+    if ! resolved_spec="$(download_text "${base_url}/${ARTIFACT_REPOSITORY}/${ref_key}/latest.tag" | tr -d '[:space:]')"; then
+      return 1
+    fi
+    if [[ -z "${resolved_spec}" ]]; then
+      return 1
+    fi
+  else
+    resolved_spec="${spec}"
+  fi
+
+  tmp_dir="$(mktemp -d /tmp/sima-pcie-host-artifact-XXXXXX)"
+  download_dir="${tmp_dir}/download"
+  mkdir -p "${download_dir}"
+  artifact_base="${base_url}/${ARTIFACT_REPOSITORY}/${ref_key}/${resolved_spec}/pcie-host/${HOST_MULTIARCH}"
+
+  echo "Downloading PCIe host artifact ${artifact_name} from Vulcan ${ARTIFACT_REPOSITORY}@${ref}:${resolved_spec}..."
+  if ! curl -fsSL "${artifact_base}/${tarball_name}" -o "${download_dir}/${tarball_name}"; then
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
+  if ! curl -fsSL "${artifact_base}/${tarball_name}.sha256" -o "${download_dir}/${tarball_name}.sha256"; then
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
+
+  tarball="${download_dir}/${tarball_name}"
+  checksum_file="${tarball}.sha256"
+  if [[ ! -f "${tarball}" || ! -f "${checksum_file}" ]]; then
+    echo "ERROR: downloaded artifact is missing ${tarball_name} or checksum" >&2
+    find "${download_dir}" -maxdepth 2 -type f -print >&2 || true
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
+
+  expected="$(awk '{print $1; exit}' "${checksum_file}")"
+  actual="$(sha256sum "${tarball}" | awk '{print $1}')"
+  if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
+    echo "ERROR: checksum mismatch for ${tarball_name}" >&2
+    echo "       expected: ${expected:-<empty>}" >&2
+    echo "       actual  : ${actual}" >&2
+    rm -rf "${tmp_dir}"
+    return 1
+  fi
+
+  rm -rf "${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}"
+  mkdir -p "${SCRIPT_DIR}/artifacts"
+  tar -xzf "${tarball}" -C "${SCRIPT_DIR}/artifacts"
+  rm -rf "${tmp_dir}"
+
+  if ! artifact_available; then
+    echo "ERROR: extracted PCIe host artifact is incomplete under artifacts/${HOST_MULTIARCH}" >&2
+    echo "       expected ${PLUGIN_SOURCE}" >&2
+    echo "       expected ${HEADER_SOURCE}" >&2
+    return 1
+  fi
+
+  ARTIFACT_RESOLVED_REF="${ref}:${resolved_spec}"
+}
+
+ensure_artifact_downloaded() {
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl is required to download PCIe host artifacts." >&2
+    echo "       Install curl before running this build." >&2
+    exit 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "ERROR: sha256sum is required to verify PCIe host artifacts." >&2
+    exit 1
+  fi
+  if ! command -v tar >/dev/null 2>&1; then
+    echo "ERROR: tar is required to extract PCIe host artifacts." >&2
+    exit 1
+  fi
+
+  if ! resolve_artifact_ref; then
+    exit 1
+  fi
+
+  local requested_ref="${ARTIFACT_REQUESTED_REF}"
+  if download_artifact_from_vulcan_ref "${requested_ref}"; then
+    echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
+    return 0
+  fi
+
+  if [[ "${ARTIFACT_SNAP_POLICY}" == "ON" &&
+        "${ARTIFACT_SNAP_TAG_POLICY}" != "ON" &&
+        "${requested_ref}" != "develop:latest" ]]; then
+    echo "No PCIe host artifact found for '${requested_ref}'; retrying develop:latest." >&2
+    if download_artifact_from_vulcan_ref "develop:latest"; then
+      echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
+      return 0
+    fi
+  fi
+
+  echo "ERROR: failed to download PCIe host artifact for ${requested_ref}" >&2
+  exit 1
+}
+
 HOST_MULTIARCH="$(detect_multiarch)"
 case "${BUILD_DIR}" in
   /*)
@@ -101,7 +370,7 @@ case "${BUILD_DIR}" in
     ;;
 esac
 PLUGIN_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/${PLUGIN_NAME}"
-HEADER_SOURCE="${SCRIPT_DIR}/artifacts/include/${TENSOR_META_HEADER}"
+HEADER_SOURCE="${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}/include/${TENSOR_META_HEADER}"
 PLUGIN_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}"
 PLUGIN_STAGE="${PLUGIN_STAGE_DIR}/${PLUGIN_NAME}"
 INCLUDE_STAGE_DIR="${BUILD_DIR_ABS}/artifacts/neatpciehost/${HOST_MULTIARCH}/include"
@@ -118,6 +387,8 @@ echo "Clean build     : ${CLEAN_BUILD}"
 echo "Build dir       : ${BUILD_DIR}"
 echo "Build dir abs   : ${BUILD_DIR_ABS}"
 echo "Host multiarch  : ${HOST_MULTIARCH}"
+echo "Artifact repo   : ${ARTIFACT_REPOSITORY}"
+echo "Vulcan env      : ${VULCAN_ENV}"
 echo "Plugin source   : ${PLUGIN_SOURCE}"
 echo "Plugin stage    : ${PLUGIN_STAGE}"
 echo "Header source   : ${HEADER_SOURCE}"
@@ -129,6 +400,8 @@ if [[ "${CLEAN_BUILD}" == "ON" ]]; then
   echo "Cleaning build directory: ${BUILD_DIR}"
   rm -rf "${BUILD_DIR}"
 fi
+
+ensure_artifact_downloaded
 
 if [[ -f "${PLUGIN_SOURCE}" ]]; then
   mkdir -p "${PLUGIN_STAGE_DIR}"
@@ -147,7 +420,7 @@ if [[ -f "${HEADER_SOURCE}" ]]; then
   cp -f "${HEADER_SOURCE}" "${HEADER_STAGE}"
 else
   echo "ERROR: missing neatpciehost tensor metadata ABI header: ${HEADER_SOURCE}" >&2
-  echo "       expected layout: artifacts/include/${TENSOR_META_HEADER}" >&2
+  echo "       expected layout: artifacts/${HOST_MULTIARCH}/include/${TENSOR_META_HEADER}" >&2
   exit 1
 fi
 

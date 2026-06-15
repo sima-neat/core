@@ -236,14 +236,22 @@ host.stop();
 
 ## Build
 
-For now the host PCIe plugin is consumed as a local prebuilt artifact. Place the
-plugin under the Debian multiarch directory and the matching tensor metadata ABI
-header under the shared artifact include directory before building:
+The host PCIe plugin is consumed as a prebuilt artifact from the internals repo.
+By default `build.sh` uses `../deps/manifest.json`, resolves the `internals`
+dependency with snap semantics, and downloads the matching Vulcan-hosted PCIe
+host tarball from the `internals` artifact tree when the local artifact is
+missing. For snap branch builds it tries the current core branch first, then
+falls back to `develop`; tag builds require the matching tag artifact. Automatic
+download reads `latest.tag`, verifies `pcie-host-artifact-<multiarch>.tar.gz`
+with its `.sha256`, and extracts it locally.
+
+The extracted/local layout is:
 
 ```text
 artifacts/x86_64-linux-gnu/libgstneatpciehost.so
+artifacts/x86_64-linux-gnu/include/gst/SimaTensorSetMetaAbi.h
 artifacts/aarch64-linux-gnu/libgstneatpciehost.so
-artifacts/include/gst/SimaTensorSetMetaAbi.h
+artifacts/aarch64-linux-gnu/include/gst/SimaTensorSetMetaAbi.h
 ```
 
 `build.sh` detects the host multiarch with `dpkg-architecture`, copies the
