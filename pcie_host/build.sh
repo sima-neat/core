@@ -11,6 +11,7 @@ BUILD_TESTS="OFF"
 BUILD_EXAMPLES="OFF"
 CLEAN_BUILD="OFF"
 MAKE_DEB="ON"
+INSTALL_DEPS_ONLY="OFF"
 PACKAGE_DIR="${SCRIPT_DIR}/packaging"
 PLUGIN_NAME="libgstneatpciehost.so"
 TENSOR_META_HEADER="gst/SimaTensorSetMetaAbi.h"
@@ -33,10 +34,48 @@ Options:
   --with-tests        Build unit tests
   --with-examples     Build OpenCV examples (does not install into DEB)
   --no-deb            Skip DEB package generation
+  --install-deps-only Install PCIe host build dependencies, then exit
   --build-dir <dir>   Build directory (default: build)
   --debug             Build type Debug (default: Release)
   -h, --help          Show this help
 EOF
+}
+
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+    return
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return
+  fi
+
+  echo "ERROR: root privileges or sudo are required to run: $*" >&2
+  return 1
+}
+
+install_build_deps() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "ERROR: --install-deps-only currently supports apt-based hosts only." >&2
+    return 1
+  fi
+
+  run_privileged apt-get update
+  run_privileged apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    cmake \
+    curl \
+    dpkg-dev \
+    file \
+    pkg-config \
+    tar \
+    libglib2.0-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    nlohmann-json3-dev
 }
 
 while [[ $# -gt 0 ]]; do
@@ -55,6 +94,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-deb)
       MAKE_DEB="OFF"
+      shift
+      ;;
+    --install-deps-only)
+      INSTALL_DEPS_ONLY="ON"
       shift
       ;;
     --build-dir)
@@ -80,6 +123,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
+  install_build_deps
+  exit 0
+fi
 
 manifest_dependency_spec() {
   local key="$1"

@@ -309,19 +309,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            cmake \
-            curl \
-            dpkg-dev \
-            file \
-            pkg-config \
-            tar \
-            libglib2.0-dev \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev
+          ./pcie_host/build.sh --install-deps-only
 
       - name: Build PCIe host Debian packages
         shell: bash

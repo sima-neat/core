@@ -24,7 +24,7 @@ Examples:
   pcie-setup.sh
   pcie-setup.sh --hosts "10.0.0.2 10.0.1.2"
   pcie-setup.sh --range 0-3
-  pcie-setup.sh --password edgeai --non-interactive
+  pcie-setup.sh --password '<bootstrap-password>'
 EOF
 }
 

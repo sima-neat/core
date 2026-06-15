@@ -66,7 +66,7 @@ Useful variants:
 pcie-setup.sh --hosts "10.0.0.2 10.0.1.2"
 pcie-setup.sh --range 0-3
 pcie-setup.sh --key ~/.ssh/sima_neat_pcie_ed25519
-pcie-setup.sh --password edgeai --non-interactive
+pcie-setup.sh --password '<bootstrap-password>'
 ```
 
 Password/`sshpass` is only a bootstrap path for installing the key. Runtime
@@ -267,14 +267,22 @@ those staged paths to CMake. CMake does not include headers from a sibling
 Install the locally built packages on the host with:
 
 ```bash
-scripts/install-local.sh
+scripts/install_pciehost.sh
 ```
 
-For `load_metadata()` investigation, no PCIe card or SSH setup is required. To
-also provision passwordless SSH for `init_pipeline()`, run:
+The installer runs `pcie-setup.sh` at the end. Setup is interactive by default
+and can prompt while provisioning passwordless SSH for `init_pipeline()`. Pass
+extra setup arguments when discovery is not available:
 
 ```bash
-scripts/install-local.sh --run-setup --setup-args "--hosts 10.0.0.2"
+scripts/install_pciehost.sh --setup-args "--hosts 10.0.0.2"
+```
+
+For `load_metadata()` investigation, no PCIe card or SSH setup is required, so
+the setup step can be skipped:
+
+```bash
+scripts/install_pciehost.sh --skip-setup
 ```
 
 To print metadata on a laptop without a PCIe card, build examples and run:
