@@ -5,7 +5,7 @@ sidebar_position: 1
 
 # Neat Development Environment Release Notes
 
-Release notes for the Neat Development Environment and eLxr platform.
+Release notes for the Neat Development Environment.
 
 | Release | Notes |
 | --- | --- |
