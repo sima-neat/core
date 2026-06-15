@@ -16,6 +16,8 @@ each environment.
 
 ## Pair the Environment
 
+Run this setup command from the host before opening the SDK shell:
+
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>

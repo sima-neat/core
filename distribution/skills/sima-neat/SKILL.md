@@ -1,6 +1,6 @@
 ---
 name: sima-neat
-description: Use this skill for SiMa Neat application work in C++ or Python on Modalix DevKit and eLxr SDK, including build, runtime, and DevKit validation workflows.
+description: Use this skill for SiMa Neat application work in C++ or Python on Modalix DevKit and Neat Development Environment/SDK, including build, runtime, and DevKit validation workflows.
 metadata:
   short-description: SiMa Neat DevKit and SDK guidance
 ---
@@ -12,7 +12,7 @@ Use this skill for SiMa Neat application work in C++ or Python (`pyneat`).
 ## Environment
 
 - DevKit: use installed Neat directly.
-- eLxr SDK: expect `SYSROOT=/opt/toolchain/aarch64/modalix`.
+- SDK: expect `SYSROOT=/opt/toolchain/aarch64/modalix`.
 - In SDK, prefer source context from `/neat-resources/core-src` and `/neat-resources/apps-src`.
 - In SDK, prefer `dk`/`devkit-run` for runtime checks on a connected DevKit.
 - On DevKit, Python usually runs from `$HOME/pyneat/bin/activate`.

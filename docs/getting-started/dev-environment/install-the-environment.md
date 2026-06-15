@@ -46,9 +46,32 @@ sima-cli install ghcr:sima-neat/sdk:v2.0-latest
 You can also install `ghcr:sima-neat/sdk` to use the latest SDK image from the
 main branch of the open source repository.
 
+## Set Up the SDK Workspace
+
+After the image is installed, run SDK setup before opening the SDK shell. Setup
+creates the workspace mapping used by the container and can also pair the SDK
+with your DevKit.
+
+If your DevKit is reachable from the host, pair it during setup:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli sdk setup --devkit {devkit-ip}
+</ShellCommand>
+
+Replace `{devkit-ip}` with your DevKit's IP address.
+
+If your DevKit is not reachable yet, set up the SDK workspace without pairing:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli sdk setup
+</ShellCommand>
+
+You can add or update DevKit pairing later from
+[Pair with a DevKit](/getting-started/dev-environment/pair-with-a-devkit/).
+
 ## Open the SDK Shell
 
-Open the SDK shell with:
+After SDK setup succeeds, open the SDK shell with:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk neat
