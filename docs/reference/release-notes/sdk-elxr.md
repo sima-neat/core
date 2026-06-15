@@ -1,10 +1,10 @@
 ---
-title: SDK / eLxr Release Notes
+title: Neat Development Environment Release Notes
 sidebar_position: 1
 ---
 
-# SDK / eLxr Release Notes
+# Neat Development Environment Release Notes
 
-Release notes for the SDK and eLxr environment.
+Release notes for the Neat Development Environment and eLxr platform.
 
 No component-specific notes have been added for this documentation build. Before you upgrade, review the release bundle for image tags, compatibility notes, upgrade steps, and known issues.
