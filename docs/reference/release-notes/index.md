@@ -8,6 +8,9 @@ sidebar_position: 1
 
 Track changes across the SiMa.ai software stack.
 
+Release notes are published with each component release. Open the component page
+below, then choose the release version you are using.
+
 <div class="overview-link-columns overview-link-columns-single">
   <section class="overview-link-panel overview-link-panel-reference">
     <h2>Release Notes</h2>
