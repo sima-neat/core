@@ -201,8 +201,12 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   st->pipeline.supports_push = st->pipeline.stream.can_push();
   st->pipeline.supports_pull = st->pipeline.stream.can_pull();
   st->pipeline.copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
-  st->pipeline.zero_copy_fallback_enabled =
-      (opt.preset == RunPreset::Balanced) && !stream_opt.copy_output;
+  // The Balanced fallback is a public-output reliability valve. Graph-internal
+  // appsinks are transport edges to downstream EV74/MLA routes, where cloning a
+  // zero-copy tensor back to CPU violates the next segment's input contract.
+  st->pipeline.zero_copy_fallback_enabled = stream_opt.public_output_contract &&
+                                            (opt.preset == RunPreset::Balanced) &&
+                                            !stream_opt.copy_output;
   st->diag_enabled = env_bool("SIMA_ASYNC_TPUT_DIAG", false);
   if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
       pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {

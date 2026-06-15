@@ -329,6 +329,7 @@ set(UNIT_TESTS
   unit_sample_bundle_holder_test
   unit_graph_api_surface_test
   unit_graph_build_input_strategy_test
+  unit_graph_internal_zero_copy_fallback_test
   unit_graph_io_contract_test
   unit_graph_naming_transform_test
   unit_stage_contract_equivalence_test
