@@ -27,7 +27,7 @@ To download the wheel for a specific Neat Library release, include the version.
 For Neat Library 0.1.0:
 
 <ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@0.1.0 -t pyneat
+sima-cli neat install core@v0.1.0 -t pyneat
 </ShellCommand>
 
 For Neat Library 0.2.0:
