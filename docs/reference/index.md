@@ -7,7 +7,7 @@ sidebar_position: 1
 # Reference
 
 Use this section when you already know what you are building and need exact API
-details, diagnostics, environment knobs, or release information.
+details, diagnostics, or environment knobs.
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
@@ -34,12 +34,11 @@ details, diagnostics, environment knobs, or release information.
   </section>
 
   <section class="overview-link-panel overview-link-panel-model">
-    <h2>Release &amp; Terms</h2>
-    <p>Shared vocabulary, host setup notes, and version history.</p>
+    <h2>Terms &amp; Setup</h2>
+    <p>Shared vocabulary and host setup notes.</p>
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>Glossary</strong><span>Look up terms and acronyms used across the docs.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK Host Setup</strong><span>Host setup notes for Ubuntu, macOS, and Windows.</span></a></li>
-      <li><a class="overview-link-card" href="/reference/release-notes/"><strong>Release Notes</strong><span>Review SDK, Model Compiler, and Neat changes by release.</span></a></li>
     </ul>
   </section>
 </div>

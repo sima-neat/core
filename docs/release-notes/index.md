@@ -16,9 +16,9 @@ below, then choose the release version you are using.
     <h2>Release Notes</h2>
     <p>Neat Development Environment, Model Compiler, and Neat Library changes by release.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/reference/release-notes/neat-development-environment/"><strong>Neat Development Environment</strong><span>Development environment and platform changes.</span></a></li>
-      <li><a class="overview-link-card" href="/reference/release-notes/modelsdk/"><strong>Model Compiler</strong><span>Compiler and model-tooling changes.</span></a></li>
-      <li><a class="overview-link-card" href="/reference/release-notes/neat/"><strong>Neat Library</strong><span>Library API and runtime changes.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/neat-development-environment/"><strong>Neat Development Environment</strong><span>Development environment and platform changes.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/modelsdk/"><strong>Model Compiler</strong><span>Compiler and model-tooling changes.</span></a></li>
+      <li><a class="overview-link-card" href="/release-notes/neat/"><strong>Neat Library</strong><span>Library API and runtime changes.</span></a></li>
     </ul>
   </section>
 </div>
