@@ -1,9 +1,9 @@
 ---
-title: Neat Development Environment (SDK) Release Notes
+title: Neat Development Environment Release Notes
 sidebar_position: 1
 ---
 
-# Neat Development Environment (SDK) Release Notes
+# Neat Development Environment Release Notes
 
 Release notes for the Neat Development Environment and eLxr platform.
 
