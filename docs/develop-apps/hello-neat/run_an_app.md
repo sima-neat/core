@@ -162,8 +162,7 @@ tensor = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RG
 ```cpp
 neat::Tensor input = neat::Tensor::from_cv_mat(
     rgb,
-    neat::ImageSpec::PixelFormat::RGB,
-    neat::TensorMemory::CPU);
+    neat::ImageSpec::PixelFormat::RGB);
 ```
 
 </CodeTab>
@@ -437,8 +436,7 @@ int main() {
   neat::Model model("assets/yolo_v8s_mpk.tar.gz", yolo_model_options());
   neat::Tensor input = neat::Tensor::from_cv_mat(
       rgb,
-      neat::ImageSpec::PixelFormat::RGB,
-      neat::TensorMemory::CPU);
+      neat::ImageSpec::PixelFormat::RGB);
 
   // Compose the model into a Graph application: image -> model -> detections.
   neat::Graph graph("hello_neat_app");
