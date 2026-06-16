@@ -80,13 +80,17 @@ sima-cli sdk neat
 ## Install the Model Compiler
 
 During SDK setup, `sima-cli` can prompt you to install the matching Model
-Compiler.
+Compiler inside the Neat Development Environment.
 
 The Model Compiler quantizes and compiles ONNX models so they can run on
 SiMa.ai's MLA. To install it, opt in when prompted during SDK setup.
 
 Install the Model Compiler later with the command that matches your host
-architecture.
+architecture. When you install it for use inside the Neat Development
+Environment, use any host OS supported by the Neat Development Environment.
+The Ubuntu host version restriction in the compatibility table applies only to
+standalone Model Compiler installations outside the Neat Development
+Environment.
 
 For `amd64` hosts:
 
