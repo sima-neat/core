@@ -61,6 +61,87 @@ opt.top_k = 100;
 
 Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
 
+## BBOX wire payload
+
+Detection decode emits one tensor tagged `BBOX` per input frame. That tensor is
+a rank-1 `UInt8` byte buffer:
+
+| Field | Value |
+| --- | --- |
+| `semantic.detection.format` | `"BBOX"` |
+| `dtype` | `UInt8` |
+| `shape` | `[N_bytes]`, where `N_bytes` is the packed buffer capacity from the model archive |
+
+The tensor shape is a byte count, not a detection count. The payload uses
+little-endian layout:
+
+```text
+offset  size  content
+------  ----  -------
+  0      4    uint32  N = valid detections in this frame
+  4     24    RawBox[0]
+ 28     24    RawBox[1]
+  .      .      ...
+  .      .    RawBox[N-1]
+                   trailing bytes are padding and must be ignored
+```
+
+Each `RawBox` record is 24 bytes:
+
+| Offset | Size | Type | Field | Meaning |
+| --- | --- | --- | --- | --- |
+| 0 | 4 | `int32` | `x` | Top-left x in source pixels. |
+| 4 | 4 | `int32` | `y` | Top-left y in source pixels. |
+| 8 | 4 | `int32` | `w` | Width in source pixels. |
+| 12 | 4 | `int32` | `h` | Height in source pixels. |
+| 16 | 4 | `float32` | `score` | Post-NMS confidence in `[0.0, 1.0]`. |
+| 20 | 4 | `int32` | `class_id` | Model-defined class id. |
+
+The matching Python `struct` format for one record is `"<iiiifi"`.
+
+Coordinates are in original-image pixels when upstream preprocessing metadata is
+present. They are not normalized to `[0, 1]` and are not expressed in the
+model's internal letterboxed input space.
+
+## When `model.run` returns raw heads
+
+Some model routes return raw feature-map heads from `model.run(...)` instead of
+a decoded `BBOX` tensor. That is not a failed run. It means the model executed,
+but the route did not include BoxDecode at the point where you read output.
+
+Use this rule:
+
+- `detections=...` or a `BBOX` tensor: parse the packed BBOX payload or use the
+  decode helpers.
+- `raw_output_heads=...`: add a BoxDecode stage, inspect the model route, or
+  consume the raw tensors with model-specific postprocessing.
+
+Do not parse raw heads as boxes. The raw tensor layout depends on the exported
+model family and model archive contract.
+
+## Override contract
+
+The model archive can provide defaults for decode type, thresholds, `top_k`, and
+source geometry. Runtime arguments override those defaults only when you pass a
+non-empty or positive value.
+
+| Runtime argument | Value passed | Behavior |
+| --- | --- | --- |
+| `decode_type` | empty / `Unspecified` | Preserve model archive or route-planner inference where supported. |
+| `decode_type` | concrete type | Override the decode family for this run. |
+| `original_width` / `original_height` | `0` | Preserve packaged geometry or upstream preprocess metadata. |
+| `original_width` / `original_height` | positive integer | Override source dimensions for coordinate mapping. |
+| `detection_threshold` / `score_threshold` | `0.0` | Preserve packaged threshold. |
+| `detection_threshold` / `score_threshold` | `> 0.0` | Override the score gate. |
+| `nms_iou_threshold` | `0.0` | Preserve packaged NMS IoU. |
+| `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
+| `top_k` | `0` | Preserve packaged top-K. |
+| `top_k` | `> 0` | Override the maximum kept detections. |
+
+`detection_threshold` is the name used by the BoxDecode node/stage
+constructors. `ModelOptions.score_threshold` is the model-route option that
+feeds the same control.
+
 ## Decode type mapping
 
 | API enum | Backend token | Typical model family |
@@ -101,6 +182,24 @@ Detection-display graphs can feed the result to `SimaRender`. Application code t
 Different detection models expose different head layouts. Some use one tensor per feature-map level; others split boxes, objectness, classes, keypoints, or masks into separate tensors. Some model outputs are dense HWC tensors; others are packed or sliced by the compiler/runtime.
 
 For model-pack flows this is handled by the packaged contract. For manually wired tensors, the key rule is: match the exported head format exactly. Do not choose a decode type based only on rank or channel count.
+
+Advanced tensor-contract rules:
+
+- YOLO-family decode types (`Yolo`, `YoloV5`, `YoloV7`, `YoloV8`, `YoloV9`,
+  `YoloV10`, and segmentation/pose variants) expect either decoupled heads or
+  packed heads that match the model family.
+- Packed YOLO heads must keep class count and head depth consistent across
+  feature levels.
+- `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
+- `Detr` infers class channels from the maximum head depth and requires a valid
+  class dimension.
+- `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do
+  not route them through a YOLO decode type.
+- `*-seg` decode types produce box-leading output plus task-specific mask data.
+
+If a custom model pack cannot infer class count or head order, fix the model
+archive contract or set the explicit decode options documented above. Guessing
+from tensor shape is brittle and hard to debug.
 
 ## Python note
 

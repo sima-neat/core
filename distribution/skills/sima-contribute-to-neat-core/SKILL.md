@@ -13,9 +13,9 @@ For deeper architecture notes distilled from the architect-level PDF, read `refe
 
 1. Read the local guardrails first:
    - `AGENTS.md`
-   - `docs/contribute/coding_standard.md`
-   - `docs/contribute/test_requirements.md`
-   - `docs/contribute/architecture.md`
+   - `docs/develop-apps/contribute/start-here/coding_standard.md`
+   - `docs/develop-apps/contribute/build-test/test_requirements.md`
+   - `docs/develop-apps/contribute/start-here/architecture.md`
 2. Classify the change:
    - Public API: anything under `include/*`.
    - Runtime/pipeline: `src/pipeline`, `src/gst`, `src/nodes`, `src/model`.

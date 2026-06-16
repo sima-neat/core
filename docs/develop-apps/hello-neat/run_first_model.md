@@ -77,26 +77,19 @@ def load_image(path: Path):
 
 ### 2. Describe the input and decoding with `ModelOptions` {#step-model-options}
 
-`ModelOptions` is the runtime contract between your image and the model. It declares three things: the input **format and size**, the **normalization** to apply before inference (`preproc`), and how to **decode** the detector's raw output into boxes — `decode_type` selects the YOLOv8 decoder, the thresholds prune weak/overlapping boxes, `top_k` caps the count, and `original_width/height` map coordinates back to the source image.
+`ModelOptions` is the runtime contract between your image and the model. It declares two things here: how Neat should preprocess decoded pixels before inference, and how to decode the detector's raw output into boxes. `decode_type` selects the YOLOv8 decoder, the thresholds prune weak or overlapping boxes, and `top_k` caps the count.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
 simaai::neat::Model::Options opt;
-opt.format = "BGR";
-opt.input_max_width = 640;
-opt.input_max_height = 640;
-opt.input_max_depth = 3;
-opt.preproc.normalize = true;
-opt.preproc.channel_mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
-opt.preproc.channel_stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
-opt.decode_type = "yolov8";
+opt.preprocess.kind = simaai::neat::InputKind::Image;
+opt.preprocess.preset = simaai::neat::NormalizePreset::COCO_YOLO;
+opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
 opt.score_threshold = 0.55f;
 opt.nms_iou_threshold = 0.5f;
 opt.top_k = 100;
-opt.original_width = 640;
-opt.original_height = 640;
 ```
 
 </CodeTab>
@@ -104,19 +97,12 @@ opt.original_height = 640;
 
 ```python
 opt = pyneat.ModelOptions()
-opt.format = "BGR"
-opt.input_max_width = 640
-opt.input_max_height = 640
-opt.input_max_depth = 3
-opt.decode_type = "yolov8"
+opt.preprocess.kind = pyneat.InputKind.Image
+opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
+opt.decode_type = pyneat.BoxDecodeType.YoloV8
 opt.score_threshold = 0.55
 opt.nms_iou_threshold = 0.5
 opt.top_k = 100
-opt.original_width = 640
-opt.original_height = 640
-opt.preproc.normalize = True
-opt.preproc.channel_mean = [0.485, 0.456, 0.406]
-opt.preproc.channel_stddev = [0.229, 0.224, 0.225]
 ```
 
 </CodeTab>
@@ -124,16 +110,16 @@ opt.preproc.channel_stddev = [0.229, 0.224, 0.225]
 
 ### 3. Load the model and run inference {#step-run}
 
-Construct a `Model` from the compiled `.tar.gz` package and the options, then call `run(...)` with a timeout. It runs synchronously and returns a `Sample` holding the decoded output. The `timeout_ms` makes a stalled run fail loudly instead of hanging.
+Construct a `Model` from the compiled `.tar.gz` package and the options, then call `run(...)` with a timeout. It runs synchronously and returns output tensors. The `timeout_ms` makes a stalled run fail loudly instead of hanging.
 
-**C++** passes the `cv::Mat` straight to `run(...)`. **Python** first wraps the NumPy image as a `Tensor` (tagged `BGR` so Neat knows the byte layout), then runs it.
+**C++** passes one `cv::Mat` per model input. **Python** first wraps the NumPy image as a `Tensor` tagged `BGR` so Neat knows the byte layout, then passes `[tensor]` because Python model input is a sequence.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
 simaai::neat::Model yolo("assets/yolo_v8s_mpk.tar.gz", opt);
-simaai::neat::Sample output = yolo.run(bgr, /*timeout_ms=*/2000);
+simaai::neat::TensorList outputs = yolo.run(std::vector<cv::Mat>{bgr}, /*timeout_ms=*/2000);
 ```
 
 </CodeTab>
@@ -142,7 +128,7 @@ simaai::neat::Sample output = yolo.run(bgr, /*timeout_ms=*/2000);
 ```python
 model = pyneat.Model(str(mpk), opt)
 tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
-sample = model.run(tensor, timeout_ms=2000)
+outputs = model.run([tensor], timeout_ms=2000)
 ```
 
 </CodeTab>
@@ -150,15 +136,15 @@ sample = model.run(tensor, timeout_ms=2000)
 
 ### 4. Read the detection count {#step-read}
 
-Because `decode_type` was set, the output is already decoded boxes. The BBOX tensor begins with a `uint32` detection count, so we read its first four bytes. (The full wire format — per-box coordinates, scores, and classes — is covered in [Read Detection Boxes from Model Output](/tutorials/read-detection-boxes).)
+Because `decode_type` was set, the first output tensor contains decoded boxes. The BBOX tensor begins with a `uint32` detection count, so we read its first four bytes. The full wire format — per-box coordinates, scores, and classes — is covered in [Read Detection Boxes from Model Output](/tutorials/read-detection-boxes).
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
 std::uint32_t detections = 0;
-if (output.tensor.has_value()) {
-  simaai::neat::Mapping view = output.tensor->map_read();
+if (!outputs.empty()) {
+  simaai::neat::Mapping view = outputs.front().map_read();
   if (view.size_bytes >= sizeof(detections))
     std::memcpy(&detections, view.data, sizeof(detections));
 }
@@ -169,10 +155,11 @@ std::cout << "detections=" << detections << "\n";
 <CodeTab label="Python" lang="python">
 
 ```python
-if sample.tensor is not None:
-    payload = bytes(sample.tensor.to_numpy(copy=False))
+detections = 0
+if len(outputs) > 0:
+    payload = outputs[0].to_numpy(copy=False).tobytes()
     detections = struct.unpack_from("<I", payload, 0)[0] if len(payload) >= 4 else 0
-    print(f"detections={detections}")
+print(f"detections={detections}")
 ```
 
 </CodeTab>
@@ -194,12 +181,12 @@ Keep the `CMakeLists.txt` from [Hello Neat!](/develop-apps/hello-neat/minimal) (
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include <array>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 cv::Mat load_sample_image() {
   cv::Mat bgr = cv::imread("assets/tutorial_sample_image.png", cv::IMREAD_COLOR);
@@ -215,30 +202,23 @@ int main() {
   // 1. Load the sample image and resize it for the model.
   cv::Mat bgr = load_sample_image();
 
-  // 2. Tell Neat what input shape and YOLO post-processing to use.
+  // 2. Tell Neat how to preprocess pixels and decode YOLO boxes.
   simaai::neat::Model::Options opt;
-  opt.format = "BGR";
-  opt.input_max_width = 640;
-  opt.input_max_height = 640;
-  opt.input_max_depth = 3;
-  opt.preproc.normalize = true;
-  opt.preproc.channel_mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
-  opt.preproc.channel_stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
-  opt.decode_type = "yolov8";
+  opt.preprocess.kind = simaai::neat::InputKind::Image;
+  opt.preprocess.preset = simaai::neat::NormalizePreset::COCO_YOLO;
+  opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
   opt.score_threshold = 0.55f;
   opt.nms_iou_threshold = 0.5f;
   opt.top_k = 100;
-  opt.original_width = 640;
-  opt.original_height = 640;
 
   // 3. Load the compiled model package and run inference.
   simaai::neat::Model yolo("assets/yolo_v8s_mpk.tar.gz", opt);
-  simaai::neat::Sample output = yolo.run(bgr, /*timeout_ms=*/2000);
+  simaai::neat::TensorList outputs = yolo.run(std::vector<cv::Mat>{bgr}, /*timeout_ms=*/2000);
 
   // 4. The BBOX output starts with a uint32 detection count.
   std::uint32_t detections = 0;
-  if (output.tensor.has_value()) {
-    simaai::neat::Mapping view = output.tensor->map_read();
+  if (!outputs.empty()) {
+    simaai::neat::Mapping view = outputs.front().map_read();
     if (view.size_bytes >= sizeof(detections))
       std::memcpy(&detections, view.data, sizeof(detections));
   }
@@ -285,34 +265,26 @@ def main() -> int:
     # 1. Load the sample image and resize it for the model.
     bgr = load_image(image)
 
-    # 2. Tell Neat what input shape and YOLO post-processing to use.
+    # 2. Tell Neat how to preprocess pixels and decode YOLO boxes.
     opt = pyneat.ModelOptions()
-    opt.format = "BGR"
-    opt.input_max_width = 640
-    opt.input_max_height = 640
-    opt.input_max_depth = 3
-    opt.decode_type = "yolov8"
+    opt.preprocess.kind = pyneat.InputKind.Image
+    opt.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
+    opt.decode_type = pyneat.BoxDecodeType.YoloV8
     opt.score_threshold = 0.55
     opt.nms_iou_threshold = 0.5
     opt.top_k = 100
-    opt.original_width = 640
-    opt.original_height = 640
-    opt.preproc.normalize = True
-    opt.preproc.channel_mean = [0.485, 0.456, 0.406]
-    opt.preproc.channel_stddev = [0.229, 0.224, 0.225]
 
     # 3. Load the compiled model package and run inference.
     model = pyneat.Model(str(mpk), opt)
     tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
-    sample = model.run(tensor, timeout_ms=2000)
+    outputs = model.run([tensor], timeout_ms=2000)
 
     # 4. The BBOX output starts with a uint32 detection count.
-    if sample.tensor is not None:
-        payload = bytes(sample.tensor.to_numpy(copy=False))
+    detections = 0
+    if len(outputs) > 0:
+        payload = outputs[0].to_numpy(copy=False).tobytes()
         detections = struct.unpack_from("<I", payload, 0)[0] if len(payload) >= 4 else 0
-        print(f"detections={detections}")
-    else:
-        print(f"raw_output_heads={len(sample.fields or [])}")
+    print(f"detections={detections}")
 
     print("[OK] YOLOv8 completed")
     return 0
@@ -340,7 +312,7 @@ Rebuild with the same commands as Hello Neat!, then run the binary:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ./build/sima_neat_hello      # on the DevKit
-dk build/sima_neat_hello     # from the Neat SDK host
+dk build/sima_neat_hello     # from the Palette SDK host
 ```
 
 </CodeTab>
@@ -351,7 +323,7 @@ Run the script:
 ```bash
 source ~/pyneat/bin/activate
 python3 hello_neat.py        # on the DevKit
-dk hello_neat.py             # from the Neat SDK host
+dk hello_neat.py             # from the Palette SDK host
 ```
 
 </CodeTab>
@@ -379,9 +351,9 @@ For a deeper explanation of box decoding, thresholds, NMS, and detector output s
 
 ## Next Steps
 
-Once YOLOv8 runs, continue with broader SiMa Neat learning resources:
+Once YOLOv8 runs, continue with broader SiMa.ai Neat learning resources:
 
 - Continue to **[Run an App](/develop-apps/hello-neat/run_an_app)** to compose this same model into a `Graph` application — a named input → model → output pipeline you build once and drive with push/pull — instead of calling `Model.run(...)` directly.
-- Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
+- Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as models, graphs, and run execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.neat.sima.ai/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

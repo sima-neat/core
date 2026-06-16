@@ -65,7 +65,7 @@
     <text x="150" y="512" class="mono code">
       <tspan x="150" y="512">simaai::neat::Model model(</tspan>
       <tspan x="150" y="540">  "resnet_50.tar.gz");</tspan>
-      <tspan x="150" y="574">auto result = model.run(rgb);</tspan>
+      <tspan x="150" y="574">auto result = model.run(std::vector&lt;cv::Mat&gt;{rgb});</tspan>
     </text>
 
     <rect x="106" y="646" width="344" height="16" rx="8" fill="#223547"/>
@@ -93,9 +93,9 @@
     <text x="565" y="608" class="mono codeLineNo">4</text>
     <text x="592" y="504" class="mono code">
       <tspan x="592" y="504">simaai::neat::Graph graph;</tspan>
-      <tspan x="592" y="538">graph.add(Input());</tspan>
-      <tspan x="592" y="572">graph.add(model.graph());</tspan>
-      <tspan x="592" y="606">graph.add(Output());</tspan>
+      <tspan x="592" y="538">graph.add(nodes::Input("image"));</tspan>
+      <tspan x="592" y="572">graph.add(model);</tspan>
+      <tspan x="592" y="606">graph.add(nodes::Output("result"));</tspan>
     </text>
 
     <rect x="548" y="646" width="344" height="16" rx="8" fill="#223547"/>

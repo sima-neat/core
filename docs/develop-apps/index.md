@@ -135,6 +135,8 @@ Before building applications, complete the Getting Started setup:
 
 The Hello Neat! pages help you run your first inference, the Development Workflow pages explain the main concepts in more detail, and the tutorials show how to apply them to real application patterns.
 
+For complete applications you can study, adapt, and run, browse through the [application examples](https://developer.sima.ai/examples).
+
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Start Here</h2>
