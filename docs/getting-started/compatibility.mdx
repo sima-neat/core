@@ -93,8 +93,10 @@ use precompiled model packages, you usually do not need the Model Compiler.
 
 The Model Compiler can be installed in two ways:
 
-- inside a compatible Neat Development Environment
-- directly on a supported Ubuntu host machine or VM
+- inside a compatible Neat Development Environment. In this mode, use any host
+  OS supported by that Neat Development Environment version.
+- directly on a supported Ubuntu host machine or VM. In this mode, the host OS
+  must match the Model Compiler host requirement below.
 
 During `sima-cli sdk setup`, the setup flow prompts you to install the matching
 Model Compiler version when one is available for your environment.
@@ -103,6 +105,12 @@ Model Compiler version when one is available for your environment.
 | :--- | :--- | :--- | :--- |
 | **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | No Apple Silicon or aarch64/Linux support. |
 | **2.1.2** | **2.1.2** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon is supported by installing inside Neat Development Environment. |
+
+The host environment column applies to standalone Model Compiler installs. For
+example, a customer on an Ubuntu 22.04 host can still use Model Compiler 2.1.2
+by installing it inside Neat Development Environment 2.1.2, because the Neat
+Development Environment provides the compatible Ubuntu 24.04-based container
+environment.
 
 For a standalone Model Compiler installation, run the command that matches your
 host architecture:
