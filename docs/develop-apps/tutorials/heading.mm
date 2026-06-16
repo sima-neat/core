@@ -24,6 +24,18 @@ sima-neat-<version>-Linux-extras/
 If the tutorial folder is missing, re-run the Neat installer and select
 **SiMa.ai Neat extras** when prompted.
 
+## Quick Preflight
+
+Before you run a chapter, check three things:
+
+- Run the command from the directory shown in the tutorial.
+- For model-backed tutorials, pass the real `.tar.gz` model archive path with
+  `--model <path>` when the default path does not exist.
+- For Python tutorials on a DevKit, activate PyNeat first with
+  `source ~/pyneat/bin/activate`.
+
+If paths still do not line up, see [Tutorial Assets and Model Archives](/reference/tutorial-assets).
+
 ## Run a Tutorial
 
 First enter the extracted extras folder:
@@ -119,5 +131,5 @@ cmake -S . -B build && cmake --build build -j
 ./build/my_chapter --args
 ```
 
-For a fuller template with Palette SDK cross-build handling, see
+For a fuller template with SDK cross-build handling, see
 [Hello Neat](/develop-apps/hello-neat/minimal).

@@ -19,11 +19,15 @@ dk <file> [args...]
 
 Run an ARM64 executable built in the SDK workspace:
 
+After compiling a C++ application in the SDK workspace, run the generated ARM64
+executable on the DevKit:
+
 <ShellCommand prompt="sdk-container">
 dk build/sima_neat_hello
 </ShellCommand>
 
-Run a Python entry point on the paired DevKit:
+After creating or copying a Python script into the SDK workspace, run it on the
+paired DevKit:
 
 <ShellCommand prompt="sdk-container">
 dk hello_neat.py

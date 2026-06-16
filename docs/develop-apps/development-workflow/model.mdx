@@ -1,117 +1,830 @@
 ---
 title: Model
-description: Load compiled model archives and produce runnable model stages
+description: Load compiled model archives, inspect their contracts, and choose model options
 sidebar_position: 1
 ---
 
 # Model
 
-[`Model`](/reference/{lsa}/classes/simaai-neat-model) is the top-level API for loading a compiled model (`.tar.gz`) and exposing reusable stage fragments.
+[`Model`](/reference/{lsa}/classes/simaai-neat-model) loads a compiled model archive and exposes the route Neat can run.
 
-Use `Model` when you want model-aware graph assembly without manually wiring every model plugin.
+Use `Model` when you want model-aware execution without hand-wiring every preprocess, inference, and postprocess stage. Inspect the contract first. Then run it. No mystery tensors.
 
 ## What `Model` gives you
 
-- `graph()`: full model path as a reusable Graph fragment.
-- `preprocess()`, `inference()`, `postprocess()`: reusable node-stage fragments.
-- `input_specs()` and `output_specs()`: full tensor-contract lists for multi-input / multi-output models.
-- `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.
+- `input_specs()` and `output_specs()` show the tensor contracts the model expects and produces.
+- `metadata()`, `info()`, and Python `summary()` help you inspect the loaded model.
+- `run(...)` runs one direct inference.
+- `build(...)` creates a reusable model runner for push/pull execution.
+- `graph()` returns the model route as a reusable `Graph` fragment.
+- `preprocess()`, `inference()`, and `postprocess()` expose route stages for advanced composition.
 
 Reference:
+
 - [`Model` API](/reference/{lsa}/classes/simaai-neat-model)
 - [`Model::Options`](/reference/{lsa}/structs/simaai-neat-model-options)
 - [`Model::RouteOptions`](/reference/{lsa}/structs/simaai-neat-model-routeoptions)
 
-## Typical usage inside a Graph
+## Load a model archive
+
+The examples on this page assume `model_path` points to a compiled model archive from the Model Compiler, usually a `.tar.gz` copied to the machine that runs Neat. Use default options first; add `ModelOptions` only when the contract or input source requires them.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model model("yolov8s_model.tar.gz");
+const std::string model_path = "resnet_50_model.tar.gz";
+simaai::neat::Model model(model_path);
 
-simaai::neat::Graph graph;
-graph.add(model.graph());
+const auto info = model.info();
+const auto inputs = model.input_specs();
+const auto outputs = model.output_specs();
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-# Pseudo Python model example.
-model = Model("yolov8s_model.tar.gz")
+model_path = "resnet_50_model.tar.gz"
+model = pyneat.Model(model_path)
 
-graph = Graph()
-graph.add(model.graph())
+print(model.summary())
+inputs = model.input_specs()
+outputs = model.output_specs()
 ```
 
 </CodeTab>
 </CodeTabs>
+
+If this inspection step surprises you, stop there. Fix the model path, artifact, or contract before writing a bigger app around it.
+
+## Choose a model execution path
+
+Pick the path that matches the job. Keep smoke tests small; save graph-level machinery for graph-level problems.
+
+| Need | Use | Returns |
+| --- | --- | --- |
+| Run one model input once | `model.run(...)` | `TensorList` for tensor input, or `Sample` for sample input |
+| Reuse the model route across many inputs | `model.build(...)` and a model runner | Push/pull control around the model route |
+| Measure only model execution | `model.benchmark(...)` or a measured model runner | `BenchmarkReport` or `MeasureReport` |
+| Put the model in an app flow | `graph.add(model)` | A `Graph` stage |
+| Expose route boundaries for composition | `model.graph(route_options)` | A reusable `Graph` fragment |
+| Debug one model stage | `model.fragment(ModelStage::...)` | A stage-specific `Graph` fragment |
+
+Use direct model calls for confidence. Use `Graph` when the model becomes part of an application: named inputs, source nodes, branches, joins, render, video output, metadata output, or multiple models.
+
+## Choose model options
+
+Start with default `ModelOptions`. Add options only when the model contract or input source requires them.
+
+| Goal | Options to use | Notes |
+| --- | --- | --- |
+| Send decoded image input | `preprocess.kind`, `preprocess.preset`, and specific preprocess fields such as resize, color, layout, normalize, quantize, or tessellate | Use this when your app sends pixels and Neat should adapt them to the model contract. |
+| Send model-shaped tensor input | `preprocess.kind = Tensor`; set `preprocess.enable = Off` only when the tensor already satisfies the model contract | Use this when your app already owns preprocessing. |
+| Decode detection output | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | Detection models need explicit decode intent. |
+| Keep extracted model files for inspection | `cleanup_extracted_model_data = false` | Useful while debugging. Leave the default for normal runs. |
+| Run several model routes in one process | `name_suffix` and graph element-name prefix/suffix | Keeps generated names and diagnostics readable. |
+| Stop the model route early | `inference_terminal` | Advanced route-debugging path. Do not use it for first-run code. |
+| Tune execution placement or internal queues | `processcvu`, `processmla`, `advanced_execution` | Advanced. Measure the default path before tuning. |
+
+### Image input with detection decode
+
+Use this pattern when the model expects image preprocessing and emits YOLO-style detections.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.preprocess.kind = simaai::neat::InputKind::Image;
+options.preprocess.preset = simaai::neat::NormalizePreset::COCO_YOLO;
+options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.preprocess.kind = pyneat.InputKind.Image
+options.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
+options.decode_type = pyneat.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Keep the setup honest: do not set default or deprecated fields unless they change the contract you need. If tensor or image metadata already carries the source format, avoid repeating it unless the page explains why.
+
+### Detection decode field guide
+
+Set detection decode options when the route should return decoded boxes, pose results, or segmentation results instead of raw inference tensors. Leave fields unset when you want the raw model outputs.
+
+| Field | Use it when | Default meaning |
+| --- | --- | --- |
+| `decode_type` | You need Neat to attach a BoxDecode stage for a detection model. | `Unspecified`; no detection decode intent. |
+| `decode_type_option` | The detection head tensor ordering needs a specific variant. | `Auto`; let the model contract and route planner decide. |
+| `score_threshold` | You want to drop low-confidence candidates during decode. | `0`; keep candidates before later filtering. |
+| `nms_iou_threshold` | The decode path should apply non-max suppression. | `0`; NMS is disabled. |
+| `top_k` | You want a hard cap on detections per output. | `0`; no top-K cap. |
+| `num_classes` | The class-head depth cannot be inferred reliably, such as a single-class YOLO split head. | `0`; use MPK metadata or legacy inference. |
+
+For most YOLO-style models, start with `decode_type`, `score_threshold`, `nms_iou_threshold`, and `top_k`. Add `num_classes` only when the model contract needs help. Keep `decode_type_option` on `Auto` unless the tensor ordering is known to require a specific selector.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+options.num_classes = 1;  // Set only when the model contract needs the class count.
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+options.num_classes = 1  # Set only when the model contract needs the class count.
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Do not use `boxdecode_original_width` or `boxdecode_original_height` in new examples. Coordinate inversion uses preprocess metadata; preserve that metadata instead of hard-coding image size.
+
+### Raw tensor input
+
+Use this pattern when your app already creates tensors in the shape, dtype, and layout the compiled model expects.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.preprocess.kind = simaai::neat::InputKind::Tensor;
+options.preprocess.enable = simaai::neat::AutoFlag::Off;
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.preprocess.kind = pyneat.InputKind.Tensor
+options.preprocess.enable = pyneat.AutoFlag.Off
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+If your tensor is not already model-shaped, do not force this path. Let preprocessing do the adaptation, or fix the tensor creation code.
+
+### Preprocess field guide
+
+`ModelOptions.preprocess` states what kind of input you will provide and what Neat may adapt before inference.
+
+| Need | Field |
+| --- | --- |
+| Choose image or tensor input | `preprocess.kind` |
+| Disable preprocess for already-shaped tensors | `preprocess.enable = Off` |
+| Bound dynamic image input | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
+| Resize, crop, or letterbox | `preprocess.resize` |
+| Convert RGB, BGR, NV12, I420, or grayscale | `preprocess.color_convert` |
+| Convert HWC, CHW, or another axis order | `preprocess.layout_convert` |
+| Apply mean/std normalization | `preprocess.normalize` or `preprocess.preset` |
+| Quantize before inference | `preprocess.quantize` |
+| Tessellate before inference | `preprocess.tessellate` |
+| Override with an ordered transform list | `preprocess.transforms` |
+
+Set the smallest option set that describes the input you actually send. The specs are the contract; the resolved preprocess plan is the receipt.
 
 ## Inspect specs and run directly
 
-Before composing a Graph you can introspect the model's tensor contracts with `input_specs()` / `output_specs()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required.
+Before composing a `Graph`, inspect the model contract. The specs tell you what to allocate, send, and decode.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model model("yolov8s_model.tar.gz");
+simaai::neat::Model model(model_path, options);
 
-// Tensor contracts the model expects (input) and produces (output).
 const auto inputs = model.input_specs();
 const auto outputs = model.output_specs();
-
-for (std::size_t i = 0; i < inputs.size(); ++i) {
-  const auto& input_shape = inputs[i].shape;
-}
-for (std::size_t i = 0; i < outputs.size(); ++i) {
-  const auto& output_shape = outputs[i].shape;
-}
 const auto metadata = model.metadata();
+const auto info = model.info();
 
-// Run one frame directly via Model::Runner (no Graph required).
-simaai::neat::TensorList result = model.run(std::vector<cv::Mat>{frame}, /*timeout_ms=*/2000);
+for (const auto& input : inputs) {
+  const auto& shape = input.shape;
+}
+
+for (const auto& output : outputs) {
+  const auto& shape = output.shape;
+}
+
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList result = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-model = pyneat.Model("yolov8s_model.tar.gz")
+model = pyneat.Model(model_path, options)
 
-# Tensor contracts the model expects (input) and produces (output).
+print(model.summary())
 inputs = model.input_specs()
 outputs = model.output_specs()
-
-for input_spec in inputs:
-  input_shape = list(input_spec.shape)
-for output_spec in outputs:
-  output_shape = list(output_spec.shape)
 metadata = model.metadata()
 
-# Run one frame directly (no Graph required).
-result = model.run([frame], timeout_ms=2000)
+for input_spec in inputs:
+    input_shape = list(input_spec.shape)
+
+for output_spec in outputs:
+    output_shape = list(output_spec.shape)
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+result = model.run([tensor], timeout_ms=2000)
 ```
 
 </CodeTab>
 </CodeTabs>
 
+In Python, pass a list or tuple of inputs. `model.run([tensor])` means “one model input.” It does not add a batch dimension.
+
+`model.run(...)` is one-shot-style, not rebuild-every-call. The first call lazily builds and caches an internal runner; later calls reuse that runner and push/pull through it. Use explicit `model.build(...)` when you need route options, runtime options, measurement, close/drain control, or a producer/consumer loop.
+
+C++ builds with OpenCV support also expose `model.run(std::vector<cv::Mat>{frame}, timeout_ms)`. Use the explicit `Tensor::from_cv_mat(...)` path when the example must state pixel format or memory ownership.
+
+## Work with multiple inputs and batches
+
+A model can have multiple input ports, a compiled batch size, or both. Do not mix those concepts:
+
+- **Multiple inputs** means one tensor per model ingress. Inspect `model.input_specs()` for the expected order and contracts.
+- **Batch** means the model was compiled to process several logical samples per inference. Inspect `model.compiled_batch_size()`.
+- **Python input lists** choose the ingress list, not the batch dimension. `model.run([tensor])` is one ingress. It does not turn `tensor` into batch size 1.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const int batch = model.compiled_batch_size();
+const auto specs = model.input_specs();
+
+// Two-input model: pass one tensor per ingress.
+simaai::neat::TensorList inputs{left_tensor, right_tensor};
+simaai::neat::TensorList outputs = model.run(inputs, /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+batch = model.compiled_batch_size()
+specs = model.input_specs()
+
+# Two-input model: pass one tensor per ingress.
+outputs = model.run([left_tensor, right_tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+If a batched model expects shape `[N, ...]`, put `N` in the tensor shape according to the input spec. Do not pass `N` separate Python list items unless the model has `N` input ports.
+
+## Inspect the route plan
+
+When preprocessing, output topology, or route selection surprises you, inspect the route instead of guessing.
+
+| Question | Inspect |
+| --- | --- |
+| What tensor shapes and dtypes does the model expose? | `input_specs()` and `output_specs()` |
+| What did the compiled artifact declare? | `info()` and `metadata()` |
+| What input does preprocessing expect? | `preprocess_requirements()` |
+| What preprocess path did Neat compile? | `resolved_preprocess_plan()` / Python `preprocess_plan()` |
+| Which batch size was compiled? | `compiled_batch_size()` |
+| Which output form should I decode? | output specs plus `info().output_topology` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto requirements = model.preprocess_requirements();
+const auto plan = model.resolved_preprocess_plan();
+
+std::cout << "preprocess: " << plan.to_debug_string() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+requirements = model.preprocess_requirements()
+plan = model.preprocess_plan()
+
+print(plan.to_debug_string())
+```
+
+</CodeTab>
+</CodeTabs>
+
+The resolved plan is the audit trail: requested options, effective options, graph family, ingress contracts, MLA contract, and warnings.
+
+### Read the model route snapshot
+
+Use `info()` when you need a compact route snapshot without reading the model archive by hand. Python also provides `summary()` for a quick text view; C++ uses the structured `info()` result.
+
+| Question | `info()` field to inspect |
+| --- | --- |
+| Which artifact did I load? | `model_name`, `mpk_json_path` |
+| Which adapter stages are needed? | `needs` |
+| Which adapter stages are available? | `capabilities` |
+| Did the route include preprocess or postprocess? | `selection.include_preprocess_stage`, `selection.include_postprocess_stage` |
+| Is this an inference-only route? | `selection.infer_only` |
+| Which preprocess graph or postprocess kind was selected? | `selection.preprocess_graph`, `selection.selected_post_kind` |
+| How many outputs are physical versus logical? | `output_topology.physical_outputs`, `logical_outputs`, `packed_outputs` |
+| What warnings did the route planner produce? | `warnings` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = model.info();
+
+std::cout << "model=" << info.model_name << "\n";
+std::cout << "physical_outputs=" << info.output_topology.physical_outputs
+          << " logical_outputs=" << info.output_topology.logical_outputs << "\n";
+
+for (const auto& warning : info.warnings) {
+  std::cerr << warning << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+print(model.summary())
+
+info = model.info()
+print("model=", info.model_name)
+print("physical_outputs=", info.output_topology.physical_outputs)
+print("logical_outputs=", info.output_topology.logical_outputs)
+
+for warning in info.warnings:
+    print(warning)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Treat route warnings as first-class evidence. If the route planner is telling you something odd, do not tune around it. Fix the contract or the options first.
+
+## Use a model in a Graph
+
+For the common path, add the model directly between a public input and output.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use `model.graph(...)` when you need a reusable fragment or explicit route boundaries.
+
+Route options control how that fragment exposes its contract:
+
+| Need | Route option |
+| --- | --- |
+| Add a public input node to the returned graph | `include_input` |
+| Add a public output node to the returned graph | `include_output` |
+| Expose separate physical outputs | `expose_all_outputs` |
+| Disambiguate generated element names | `name_suffix` |
+| Connect from a specific upstream element name | `upstream_name` |
+| Override advanced execution for this route | `advanced_execution` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.include_input = true;
+route.include_output = true;
+route.name_suffix = "_detector";
+
+simaai::neat::Graph model_fragment = model.graph(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.include_input = True
+route.include_output = True
+route.name_suffix = "_detector"
+
+model_fragment = model.graph(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Route boundaries are a contract. Add them when you want the fragment to expose public inputs or outputs. Leave them out when the model is just one stage inside a larger graph.
+
+### Use stage fragments for advanced composition
+
+Most apps should add the whole model route. Use stage fragments only when you are composing or debugging a route deliberately.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph preprocess =
+    model.fragment(simaai::neat::Model::Stage::Preprocess);
+simaai::neat::Graph inference =
+    model.fragment(simaai::neat::Model::Stage::Inference);
+simaai::neat::Graph postprocess =
+    model.fragment(simaai::neat::Model::Stage::Postprocess);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+preprocess = model.fragment(pyneat.ModelStage.Preprocess)
+inference = model.fragment(pyneat.ModelStage.Inference)
+postprocess = model.fragment(pyneat.ModelStage.Postprocess)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Advanced helpers are for diagnostics and deliberate composition. Keep them out of first-run code.
+
+| Helper | Language | Use it when |
+| --- | --- | --- |
+| `backend_fragment(stage)` | C++ and Python | You need to inspect the backend fragment for one model stage while debugging a route. |
+| `input_appsrc_options(tensor_mode)` | C++ and Python | A single-ingress model needs the exact `InputOptions` Neat derived for an input boundary. |
+| `input_appsrc_options_list(tensor_mode)` | C++ | A multi-input model needs per-ingress `InputOptions`. |
+| `find_config_path_by_plugin(plugin_id)` | C++ and Python | You need the extracted config file for a specific plugin while collecting evidence. |
+| `find_config_path_by_processor(processor)` | C++ and Python | You need a config file for a processor such as MLA, CVU, or APU. |
+| `infer_output_name()` | C++ and Python | You need the canonical inference-stage output element name for diagnostics. |
+
+If a helper exposes backend names or extracted files, treat the result as evidence, not as application control flow. Public `Model`, `Graph`, `Run`, `Input`, and `Output` APIs should carry the normal app path.
+
+## Tune model execution only after a baseline
+
+Most models should run with default execution settings first. Once you have a correct baseline, use the advanced execution fields to test one change at a time. Change one setting, measure, and keep the default route as your control.
+
+`advanced_execution` is the preferred option surface for new docs and examples because each field states the intent directly. Unset fields are no-ops. Route-level options override model-level options for that route.
+
+| Need | Field | Notes |
+| --- | --- | --- |
+| Choose where model-managed preprocessing runs | `advanced_execution.preprocess_target` | Use target tokens such as `"AUTO"`, `"A65"`, or `"EV74"` only when you are proving placement. |
+| Choose where model-managed postprocessing runs | `advanced_execution.postprocess_target` | Use this for postprocess stages that can run on more than one target. |
+| Allow preprocessing to run asynchronously | `advanced_execution.preprocess_async` | Measure latency and throughput before and after enabling it. |
+| Allow MLA inference to run asynchronously | `advanced_execution.inference_async` | Useful for streaming workloads that keep work in flight. |
+| Adjust inference output buffering | `advanced_execution.inference_output_buffers` | Increase only when measurement shows output buffering is the bottleneck. |
+| Defer output cache synchronization | `advanced_execution.defer_output_cache_sync` | Advanced. Use only when the consumer and memory lifetime are understood. |
+| Use a prepared runner | `advanced_execution.prepared_runner` | Advanced route-runner experiment. Keep it out of first-run code. |
+| Adjust internally inserted queue depth | `advanced_execution.internal_queue_depth` | Advanced. Queue depth absorbs jitter; it does not create accelerator capacity. |
+
+Set advanced execution fields at the narrowest scope that matches the experiment:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.name_suffix = "_lane0";
+route.advanced_execution.inference_async = true;
+
+auto runner = model.build(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.name_suffix = "_lane0"
+route.advanced_execution.inference_async = True
+
+runner = model.build_with_route_options(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Keep the default route as your control. Change one field, measure, export evidence, then decide whether the change earns a place in the app.
+
+C++ also exposes lower-level `processcvu`, `processmla`, `prepared_runner`, and `async_queue_depth` fields on `Model::Options`, `Model::RouteOptions`, and `GraphOptions`. Prefer `advanced_execution` in customer examples unless you are preserving existing C++ code or debugging a specific lower-level field.
+
+## Reuse a model runner
+
+Use `build(...)` when you want to avoid rebuilding the route for each input.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build();
+
+// Convenience path: push one input and wait for its output.
+simaai::neat::TensorList result = runner.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+
+// Async path: push now, pull later.
+runner.push(simaai::neat::TensorList{input});
+simaai::neat::Sample sample = runner.pull(/*timeout_ms=*/2000);
+
+runner.close_input();
+runner.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build()
+
+# Convenience path: push one input and wait for its output.
+result = runner.run([tensor], timeout_ms=2000)
+
+# Async path: push now, pull later.
+runner.push([tensor])
+sample = runner.pull(timeout_ms=2000)
+
+runner.close_input()
+runner.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use `runner.run(...)` when each call should push one input and wait for its output. Use `push(...)` / `pull(...)` when your app wants to keep work in flight. Use `close_input()` when no more inputs are coming and you want remaining work to drain. Use `close()` when the runner is done.
+
+
+### Build a route-specific runner
+
+Use a route-specific runner when the reusable runner should use route-level execution settings or route naming that differ from the default route. `Model::build(...)` adds the runner input and output boundaries for you.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.name_suffix = "_detector";
+
+auto runner = model.build(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.name_suffix = "_detector"
+
+runner = model.build_with_route_options(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Seed the build when the actual input should prove shape, format, or payload compatibility before the first production push:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build(simaai::neat::TensorList{input}, route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build([tensor], route_options=route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use seeded build for evidence and early failure, not as a habit. If the default build already proves the contract, keep the example smaller.
+
+## Measure model execution
+
+Use `model.benchmark(...)` for a quick synthetic model benchmark. It generates inputs from `input_specs()` and returns headline latency, throughput, and optional power fields. Use it to compare model/runtime changes, not to claim production application throughput.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkReport report = model.benchmark();
+
+std::cout << "latency_ms=" << report.latency_ms
+          << " fps=" << report.fps << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = model.benchmark()
+print("latency_ms=", report.latency_ms, "fps=", report.fps)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Read `avg_power_watts` and `energy_joules` only when the board power monitor produced samples. If power telemetry is unavailable for the board or rail configuration, those fields stay zero.
+
+Use runner measurement when you own the input loop and want to measure that loop:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build();
+auto scope = runner.start_measurement();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::MeasureReport report = scope.stop();
+runner.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build()
+scope = runner.start_measurement()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+report = scope.stop()
+runner.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Do not compare a one-shot smoke test against a warmed reusable runner. Those answer different questions.
+
+## Decode output
+
+Start by reading the output specs. Decode only when the model output contract says the payload is a detection, pose, or segmentation format.
+
+| Output contract | Use |
+| --- | --- |
+| Raw tensor | Use the returned tensor directly, or convert it with `to_numpy(...)` / `to_torch(...)` in Python. |
+| Packed boxes as tensors | C++ `simaai::neat::decode_bbox(...)` / Python `pyneat.decode_bbox(...)` |
+| Packed boxes as typed records | C++ `simaai::neat::decode_bbox_tensor(...)` / Python `pyneat.detections.decode_bbox_tensor(...)` |
+| Packed pose | C++ `simaai::neat::decode_pose(...)` / Python `pyneat.decode_pose(...)` |
+| Packed segmentation | C++ `simaai::neat::decode_segmentation(...)` / Python `pyneat.decode_segmentation(...)` |
+
+Use tensor decode when the next stage wants tensors. Use typed decode when application code wants records with `x1`, `y1`, `x2`, `y2`, `score`, and `class_id`.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto decoded = simaai::neat::decode_bbox_tensor(
+    outputs[0],
+    image_width,
+    image_height,
+    /*expected_topk=*/100,
+    /*strict=*/true);
+
+for (const auto& box : decoded.boxes) {
+  handle_box(box.x1, box.y1, box.x2, box.y2, box.score, box.class_id);
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+decoded = pyneat.detections.decode_bbox_tensor(
+    outputs[0],
+    image_width,
+    image_height,
+    expected_topk=100,
+    strict=True,
+)
+
+for box in decoded.boxes:
+    handle_box(box.x1, box.y1, box.x2, box.y2, box.score, box.class_id)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use decode helpers only on the output formats they expect.
+
 ## Failure handling
 
-Model-driven Graphs use the same diagnostics contract as raw `Graph`:
+Model-driven graphs use the same diagnostics contract as raw `Graph`:
 
-- `NeatError.report().error_code` for terminal failures
-- `NeatError.report().repro_note` for actionable context + hints
-- `NeatError.report().bus` for plugin/runtime detail
+- `NeatError.report().error_code` for terminal failures.
+- `NeatError.report().repro_note` for actionable context and hints.
+- `NeatError.report().bus` for plugin or runtime detail.
 
-Start triage from `error_code` (`misconfig.*`, `build.*`, `runtime.*`, `io.*`)
-before inspecting detailed bus logs.
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+try {
+  auto result = model.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+} catch (const simaai::neat::NeatError& error) {
+  const auto& report = error.report();
+  std::cerr << report.error_code << "\n";
+  std::cerr << report.repro_note << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+try:
+    result = model.run([tensor], timeout_ms=2000)
+except pyneat.NeatError as error:
+    print(error.error_code)
+    print(error.repro_note)
+    print(error.report_json)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Start with `error_code` values such as `misconfig.*`, `build.*`, `runtime.*`, or `io.*`. Read bus logs only after the structured error points you there.
 
 ## See also
 
 - [Run / Inference](/develop-apps/development-workflow/overview)
 - [Graph](/develop-apps/development-workflow/graph)
+- [Run a Graph](/develop-apps/development-workflow/pipeline)
 
 ## Tutorials
 
