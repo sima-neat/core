@@ -1,5 +1,6 @@
 #include "graph_migration/common/phase3_graph_test_utils.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/VideoConvert.h"
 #include "nodes/io/Input.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -77,5 +78,15 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
     auto tail = output_fragment();
     require_throws_contains([&] { app.add(tail); }, "Graph::add after branching is ambiguous",
                             "Graph::add connected fragment should fail closed");
+  }
+
+  {
+    // Layer 1: a Node instance may appear in a Graph only once. Re-adding the same instance would
+    // create two vertices that resolve to the same GStreamer element name (ambiguous links).
+    simaai::neat::Graph app;
+    auto convert = simaai::neat::nodes::VideoConvert();
+    app.add(convert);
+    require_throws_contains([&] { app.add(convert); }, "may appear in a Graph only once",
+                            "re-adding the same Node instance should fail closed");
   }
 });

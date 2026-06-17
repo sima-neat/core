@@ -1443,6 +1443,23 @@ Graph& Graph::add(std::shared_ptr<Node> node) {
   if (!composition_) {
     composition_ = std::make_unique<CompositionGraph>();
   }
+  if (node) {
+    // Check for duplicated nodes, i.e., A graph would contain unique node objects only.
+    const Node* incoming = node.get();
+    for (std::size_t i = 0; i < composition_->vertices.size(); ++i) {
+      if (composition_->vertices[i].get() != incoming) {
+        continue;
+      }
+      const std::string label = trim_endpoint_name(node->user_label());
+      throw std::runtime_error(
+          "Graph::add: Node instance (kind=" + node->kind() +
+          (label.empty() ? std::string() : ", label='" + label + "'") +
+          ") was already added at position " + std::to_string(i) +
+          "; a Node instance may appear in a Graph only once. Construct a second Node (e.g. "
+          "another nodes::" +
+          node->kind() + "(...)) if you intended two independent elements.");
+    }
+  }
   const NodeCapsBehavior behavior = node ? node->caps_behavior() : NodeCapsBehavior::Dynamic;
   const auto [start, end] = composition_->append_node(std::move(node));
   if (end > start) {
