@@ -27,18 +27,20 @@ Palette Neat includes four software components and the Modalix DevKit:
 
 <div class="overview-section-label">Developer journey</div>
 
-If you are new to Palette Neat, work through these sections in order: confirm
-compatibility, set up the Neat Development Environment, install or update the
-Neat Library, prepare a model, and then build the application that uses it.
+If you are new to Palette Neat, work through these sections in order: set up
+the Neat Development Environment, install or update the Neat Library, prepare a
+model, and then build the application that uses it. Use the Compatibility
+reference when you need to choose exact versions, upgrade components
+independently, or troubleshoot a version mismatch.
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Start Here</h2>
     <p>Prepare your host machine, Neat Development Environment, and DevKit for local development and hardware validation.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Check Compatibility</strong><span>Confirm supported host, Neat Development Environment, DevKit software, Neat Library, and Model Compiler versions.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat Development Environment</strong><span>Install the SDK, pair a DevKit, and run on hardware with dk.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>Install or update the runtime and PyNeat on a DevKit or paired environment.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Check Compatibility</strong><span>Review supported version combinations when planning upgrades, mixing components, or investigating a mismatch.</span></a></li>
     </ul>
   </section>
 

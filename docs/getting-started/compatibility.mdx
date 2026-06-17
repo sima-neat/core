@@ -1,15 +1,21 @@
 ---
 title: Compatibility
-description: Supported version combinations for the Neat Library, Neat Development Environment, DevKit software, and Model Compiler
-sidebar_position: 2
+description: Reference for supported Neat Development Environment, Neat Library, DevKit software, and Model Compiler version combinations
+sidebar_position: 4
 mdx:
   format: mdx
 ---
 
 # Compatibility
 
-Palette Neat has several versioned components. In most cases, compatibility comes down
-to two rules:
+Use this page as a reference when you need to choose exact versions, upgrade one
+component independently, troubleshoot a version mismatch, or prepare a release.
+If you are setting up Palette Neat for the first time, start with the Neat
+Development Environment and Neat Library pages. Those flows install supported
+default combinations.
+
+Palette Neat has several versioned components. In most cases, compatibility
+comes down to two rules:
 
 1. The **Neat Library** and **Neat Development Environment** must both be compatible
    with the DevKit software version they run or build against.
@@ -24,36 +30,6 @@ Environment.
 :::note
 The versions listed on this page are the supported version combinations.
 :::
-
-## Neat Library
-
-Use this table to choose the Neat Library version to install or update in your
-Neat Development Environment and on your DevKit.
-
-| Neat Library | Compatible Neat Development Environment | Compatible DevKit software | Notes |
-| :--- | :--- | :--- | :--- |
-| **0.1.0** | **2.0.0** | **2.0.0** | Maintained for the 2.0 release family. |
-| **0.2.0** | **2.1.2** | **2.1.2** | Current development target. |
-
-The DevKit software version matters because the on-device runtime, firmware, and
-system packages are installed as a matched set. If you mix components across
-release families, unexpected behavior can occur even when your application
-builds.
-
-Install the Neat Library from within a compatible Neat Development Environment
-or directly on the DevKit:
-
-For Neat Library 0.1.0:
-
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@v0.1.0
-</ShellCommand>
-
-For Neat Library 0.2.0:
-
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@0.2.0
-</ShellCommand>
 
 ## Neat Development Environment
 
@@ -84,6 +60,36 @@ branch's `latest` tag. For example, to install the latest 2.0 release:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk:v2.0-latest
+</ShellCommand>
+
+## Neat Library
+
+Use this table to choose the Neat Library version to install or update in your
+Neat Development Environment and on your DevKit.
+
+| Neat Library | Compatible Neat Development Environment | Compatible DevKit software | Notes |
+| :--- | :--- | :--- | :--- |
+| **0.1.0** | **2.0.0** | **2.0.0** | Maintained for the 2.0 release family. |
+| **0.2.0** | **2.1.2** | **2.1.2** | Current development target. |
+
+The DevKit software version matters because the on-device runtime, firmware, and
+system packages are installed as a matched set. If you mix components across
+release families, unexpected behavior can occur even when your application
+builds.
+
+Install the Neat Library from within a compatible Neat Development Environment
+or directly on the DevKit:
+
+For Neat Library 0.1.0:
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install core@v0.1.0
+</ShellCommand>
+
+For Neat Library 0.2.0:
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install core@v0.2.0
 </ShellCommand>
 
 ## Model Compiler
