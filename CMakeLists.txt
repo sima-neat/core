@@ -878,9 +878,17 @@ set_target_properties(sima_neat PROPERTIES
   SOVERSION "${SIMANEAT_ABI_VERSION}"
 )
 
+add_library(sima_neat_static STATIC
+  $<TARGET_OBJECTS:sima_neat_objects>
+)
+set_target_properties(sima_neat_static PROPERTIES
+  OUTPUT_NAME sima_neat
+)
+
 target_link_libraries(sima_neat PUBLIC sima_neat_common)
+target_link_libraries(sima_neat_static PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_objects PRIVATE sima_neat_common)
-add_custom_target(sima_neat_libraries DEPENDS sima_neat)
+add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_static)
 target_compile_definitions(sima_neat_objects PRIVATE
   SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"
   SIMA_NEAT_PLATFORM_VERSION_STRING="${SIMANEAT_PLATFORM_VERSION}"
@@ -974,9 +982,11 @@ endif()
 
 if (OPENCV_FOUND)
   target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
+  target_link_directories(sima_neat_static PRIVATE ${OPENCV_LIBRARY_DIRS})
 endif()
 if (GST_FOUND)
   target_link_directories(sima_neat PRIVATE ${GST_LIBRARY_DIRS})
+  target_link_directories(sima_neat_static PRIVATE ${GST_LIBRARY_DIRS})
 endif()
 
 if (SimaLMM_FOUND)
@@ -989,6 +999,7 @@ endif()
 if (SimaLMM_FOUND)
   target_include_directories(sima_neat_objects SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
   target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+  target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
 if (GST_FOUND)
@@ -1205,11 +1216,10 @@ function(simaneat_append_ctest_env test_name)
 endfunction()
 
 # ------------------------------------------------------------------------------
-# Internal-only helper target (tests/bench/tools)
+# Internal-only helper targets (tests/bench/tools/bindings)
 # ------------------------------------------------------------------------------
-add_library(sima_neat_internal INTERFACE)
-target_link_libraries(sima_neat_internal INTERFACE sima_neat)
-target_include_directories(sima_neat_internal INTERFACE
+add_library(sima_neat_internal_headers INTERFACE)
+target_include_directories(sima_neat_internal_headers INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1225,12 +1235,18 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
     if (_simaneat_neat_internal_include_dir AND
         NOT _simaneat_neat_internal_include_dir MATCHES "-NOTFOUND$")
-      target_include_directories(sima_neat_internal INTERFACE
+      target_include_directories(sima_neat_internal_headers INTERFACE
         "${_simaneat_neat_internal_include_dir}")
     endif()
   endforeach()
 endif()
-target_compile_definitions(sima_neat_internal INTERFACE SIMA_NEAT_INTERNAL=1)
+target_compile_definitions(sima_neat_internal_headers INTERFACE SIMA_NEAT_INTERNAL=1)
+
+add_library(sima_neat_internal INTERFACE)
+target_link_libraries(sima_neat_internal INTERFACE
+  sima_neat
+  sima_neat_internal_headers
+)
 
 # ------------------------------------------------------------------------------
 # Tutorials
@@ -1258,8 +1274,10 @@ endif()
 # Install / Package
 # ------------------------------------------------------------------------------
 install(
-  TARGETS sima_neat sima_neat_common
+  TARGETS sima_neat sima_neat_static sima_neat_common
   EXPORT SimaNeatTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT dev
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     COMPONENT core
     NAMELINK_COMPONENT dev

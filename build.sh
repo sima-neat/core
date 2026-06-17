@@ -2264,17 +2264,12 @@ run_install_sanity_check() {
     exit 1
   fi
   if [[ ! -L "${dev_install_dir}/lib/libsima_neat.so" ||
+        ! -f "${dev_install_dir}/lib/libsima_neat.a" ||
         ! -f "${dev_install_dir}/include/neat.h" ||
         ! -f "${dev_install_dir}/lib/cmake/SimaNeat/SimaNeatConfig.cmake" ]]; then
     echo
-    echo "ERROR: dev install tree is missing headers, CMake config, or libsima_neat.so linker symlink."
+    echo "ERROR: dev install tree is missing headers, CMake config, libsima_neat.so linker symlink, or libsima_neat.a."
     echo "Refusing to package an incomplete dev .deb."
-    exit 1
-  fi
-  if [[ -e "${dev_install_dir}/lib/libsima_neat.a" ]]; then
-    echo
-    echo "ERROR: dev install tree contains unsupported static archive libsima_neat.a."
-    echo "Refusing to package an incorrectly split dev .deb."
     exit 1
   fi
 }
