@@ -44,7 +44,7 @@ stress_regex="$(join_regex stress_tests)"
 repeat_regex="$(join_regex repeat_tests)"
 
 echo "[stress-gate] configuring build in ${BUILD_DIR}..."
-cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF
+cmake -S . -B "${BUILD_DIR}"
 
 echo "[stress-gate] building stress targets..."
 build_targets=(unit_modalix_contract_preflight_test "${stress_tests[@]}")

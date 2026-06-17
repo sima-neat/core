@@ -11,8 +11,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
-set(CMAKE_BUILD_RPATH "$ORIGIN/../neat-internals/gst-plugins")
-set(CMAKE_INSTALL_RPATH "$ORIGIN/../neat-internals/gst-plugins")
 
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -28,7 +26,6 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME core)
 # Build options
 # ------------------------------------------------------------------------------
 option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
-option(SIMANEAT_BUILD_SAMPLES "Build example applications" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
@@ -965,9 +962,6 @@ if (OPENCV_FOUND)
   target_include_directories(sima_neat_common SYSTEM INTERFACE "$<BUILD_INTERFACE:${OPENCV_INCLUDE_DIRS}>")
 endif()
 
-target_compile_options(sima_neat_objects PRIVATE
-)
-
 if (GST_FOUND)
   target_compile_options(sima_neat_objects PRIVATE ${GST_CFLAGS_OTHER})
 endif()
@@ -1025,7 +1019,9 @@ else()
   endif()
 endif()
 if (SIMANEAT_SIMAAIMEM_LIB)
-  target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_SIMAAIMEM_LIB})
+  target_link_libraries(sima_neat_common INTERFACE
+    "$<BUILD_INTERFACE:${SIMANEAT_SIMAAIMEM_LIB}>"
+    "$<INSTALL_INTERFACE:simaaimem>")
 endif()
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
@@ -1208,19 +1204,6 @@ function(simaneat_append_ctest_env test_name)
   set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "SIMA_CLI_CHECK_FOR_UPDATE=0")
 endfunction()
 
-if (SIMANEAT_NEAT_ALLOCATOR_DIR)
-  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_ALLOCATOR_DIR}")
-endif()
-if (SIMANEAT_NEAT_BUFFERPOOL_DIR AND
-    NOT SIMANEAT_NEAT_BUFFERPOOL_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR)
-  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_BUFFERPOOL_DIR}")
-endif()
-if (SIMANEAT_NEAT_TENSORBUFFER_DIR AND
-    NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR AND
-    NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_BUFFERPOOL_DIR)
-  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_TENSORBUFFER_DIR}")
-endif()
-
 # ------------------------------------------------------------------------------
 # Internal-only helper target (tests/bench/tools)
 # ------------------------------------------------------------------------------
@@ -1248,14 +1231,6 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   endforeach()
 endif()
 target_compile_definitions(sima_neat_internal INTERFACE SIMA_NEAT_INTERNAL=1)
-
-# ------------------------------------------------------------------------------
-# Examples (optional, installable)
-# ------------------------------------------------------------------------------
-if (SIMANEAT_BUILD_SAMPLES AND
-    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
-  add_subdirectory(examples)
-endif()
 
 # ------------------------------------------------------------------------------
 # Tutorials
@@ -1415,8 +1390,6 @@ set(CPACK_COMPONENT_CORE_DESCRIPTION
     "SiMa NEAT runtime library and command-line helpers")
 set(CPACK_COMPONENT_DEV_DESCRIPTION
     "SiMa NEAT C++ development headers and CMake package")
-set(CPACK_COMPONENT_EXTRAS_DESCRIPTION
-    "SiMa NEAT samples, tutorials, and tests")
 
 set(CPACK_PACKAGE_VERSION "${SIMANEAT_VERSION}")
 
@@ -1426,9 +1399,8 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "SiMa.ai")
 set(CPACK_DEBIAN_PACKAGE_SECTION "libs")
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 
-set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat-core")
+set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_DEV_PACKAGE_NAME "sima-neat-dev")
-set(CPACK_DEBIAN_EXTRAS_PACKAGE_NAME "sima-neat-extras")
 
 set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libgstreamer1.0-0"
@@ -1451,7 +1423,7 @@ if (SimaLMM_FOUND)
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(SIMANEAT_DEV_DEBIAN_DEPENDS
-  "sima-neat-core (= ${CPACK_PACKAGE_VERSION})"
+  "sima-neat (= ${CPACK_PACKAGE_VERSION})"
   "pkg-config"
   "libgstreamer1.0-dev"
   "libgstreamer-plugins-base1.0-dev"
@@ -1468,10 +1440,6 @@ if (SimaLMM_FOUND)
     "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})")
 endif()
 string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
-set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
-  "sima-neat-dev (= ${CPACK_PACKAGE_VERSION})"
-)
-
 set(CPACK_INSTALL_CMAKE_PROJECTS
   "${CMAKE_BINARY_DIR};SimaNeat;ALL;/"
 )

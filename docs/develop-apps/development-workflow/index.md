@@ -12,7 +12,7 @@ This page is a high-level map of how you actually use SiMa.ai Neat day to day. E
 
 A typical Neat development cycle looks like this:
 
-1. **Install** — get the `sima-neat-core` runtime package, the `sima-neat-dev` development package, and optionally the `pyneat` Python bindings on your host or device.
+1. **Install** — get the `sima-neat` package and optionally the `pyneat` Python bindings on your host or device.
 2. **Try Hello Neat** — confirm the library is wired up by compiling a minimal example.
 3. **Pick a compiled model** — Neat consumes a compiled model archive (`.tar.gz`, often called an MPK). Use one from the Model Zoo or compile your own with the Model Compiler.
 4. **Author a `Model` / `Graph` / `Run`** — load the model, compose the graph, and execute it with the smallest runtime path that fits the job.

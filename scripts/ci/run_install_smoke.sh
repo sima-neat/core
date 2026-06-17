@@ -9,7 +9,7 @@ INSTALL_PREFIX="${INSTALL_PREFIX:-$(mktemp -d /tmp/sima-neat-install-XXXXXX)}"
 CONSUMER_BUILD_DIR="${CONSUMER_BUILD_DIR:-build-install-smoke-consumer}"
 
 echo "[install-smoke] configuring project..."
-cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF
+cmake -S . -B "${BUILD_DIR}"
 
 echo "[install-smoke] building core target..."
 cmake --build "${BUILD_DIR}" --target sima_neat -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"

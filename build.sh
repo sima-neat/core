@@ -18,7 +18,6 @@ SOURCE_FS_TYPE=""
 cd "${REPO_ROOT}"
 
 # Defaults
-BUILD_SAMPLES=OFF
 BUILD_TESTS=OFF
 BUILD_TUTORIALS=OFF
 BUILD_DOCS=OFF
@@ -76,7 +75,7 @@ NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
 NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
 NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
-NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (samples/tutorials/tests)}"
+NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (tutorials/tests)}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 SIMANEAT_BOOTSTRAP_SIMA_CLI="${SIMANEAT_BOOTSTRAP_SIMA_CLI:-auto}"
 
@@ -310,7 +309,6 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dev-only)
-        BUILD_SAMPLES=OFF
         BUILD_TESTS=OFF
         shift
         ;;
@@ -325,7 +323,6 @@ parse_args() {
         shift
         ;;
       --doc)
-        BUILD_SAMPLES=OFF
         BUILD_TESTS=OFF
         BUILD_DOCS=ON
         DOCS_ONLY=ON
@@ -347,7 +344,6 @@ parse_args() {
         shift
         ;;
       --fuzz)
-        BUILD_SAMPLES=OFF
         BUILD_TESTS=ON
         BUILD_TUTORIALS=ON
         BUILD_DOCS=OFF
@@ -367,7 +363,6 @@ parse_args() {
         SIMA_ENABLE_ASAN=ON
         SIMA_ENABLE_UBSAN=ON
         SIMA_ENABLE_TSAN=OFF
-        BUILD_SAMPLES=OFF
         BUILD_TUTORIALS=OFF
         shift
         ;;
@@ -380,7 +375,6 @@ parse_args() {
         SIMA_ENABLE_ASAN=OFF
         SIMA_ENABLE_UBSAN=OFF
         SIMA_ENABLE_TSAN=ON
-        BUILD_SAMPLES=OFF
         BUILD_TUTORIALS=OFF
         shift
         ;;
@@ -448,9 +442,7 @@ apply_sanitizer_build_profile() {
     return 0
   fi
 
-  # Sanitizer lanes are test-focused; skip samples/examples to avoid
-  # optional UI/OpenGL dependencies in cross-build environments.
-  BUILD_SAMPLES=OFF
+  # Sanitizer lanes are test-focused; skip tutorials to keep payloads small.
   BUILD_TUTORIALS=OFF
   # Keep sanitizer extras payloads small by shipping only gate test binaries.
   SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=ON
@@ -1800,7 +1792,6 @@ print_build_config() {
   echo " SiMa Neat build configuration"
   echo "========================================"
   echo "Build type     : ${BUILD_TYPE}"
-  echo "Build samples  : ${BUILD_SAMPLES}"
   echo "Build tests    : ${BUILD_TESTS}"
   echo "Build tutorials: ${BUILD_TUTORIALS}"
   echo "Build docs     : ${BUILD_DOCS}"
@@ -1840,7 +1831,6 @@ configure_cmake() {
   local -a cmake_args=(
     -S . -B "${BUILD_DIR}"
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
-    -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}"
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
@@ -1977,8 +1967,8 @@ build_docs_only_if_requested() {
 }
 
 build_targets() {
-  # For dev-only builds, avoid building tests/tutorials/samples by targeting core lib.
-  if [[ "${BUILD_SAMPLES}" == "OFF" && "${BUILD_TESTS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
+  # For dev-only builds, avoid building tests/tutorials by targeting core lib.
+  if [[ "${BUILD_TESTS}" == "OFF" && "${BUILD_TUTORIALS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
     cmake --build "${BUILD_DIR}" --target sima_neat_libraries -j"${BUILD_JOBS}"
   else
     cmake --build "${BUILD_DIR}" -j"${BUILD_JOBS}"
@@ -2302,7 +2292,7 @@ build_deb_if_requested() {
     echo "Skipping DEB packaging (requires --all)."
   else
     echo
-    echo "Building DEB packages (core + dev + extras)..."
+    echo "Building DEB packages (core + dev)..."
     # Remove stale debs so it's obvious what was generated
     rm -f ./*.deb
     cpack --config "${BUILD_DIR}/CPackConfig.cmake"

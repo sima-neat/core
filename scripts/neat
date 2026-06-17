@@ -499,12 +499,15 @@ infer_channel_and_tag() {
 
 discover_sdk_components() {
   local cache_dir="${SYSROOT_PATH}/neat-install-packages"
+  local core_file=""
+  local dev_file=""
   local file
 
   if [[ -d "${cache_dir}" ]]; then
-    file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort | tail -n1 || true)"
-    if [[ -n "${file}" ]]; then
-      CORE_VERSION="$(basename "${file}")"
+    core_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort | tail -n1 || true)"
+    dev_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort | tail -n1 || true)"
+    if [[ -n "${core_file}" && -n "${dev_file}" ]]; then
+      CORE_VERSION="$(basename "${core_file}")"
       CORE_VERSION="${CORE_VERSION#sima-neat-}"
       CORE_VERSION="${CORE_VERSION%-Linux-core.deb}"
     fi
@@ -546,7 +549,13 @@ dpkg_version() {
 }
 
 discover_devkit_components() {
-  CORE_VERSION="$(dpkg_version sima-neat)"
+  local core_version
+  local dev_version
+  core_version="$(dpkg_version sima-neat)"
+  dev_version="$(dpkg_version sima-neat-dev)"
+  if [[ -n "${core_version}" && -n "${dev_version}" ]]; then
+    CORE_VERSION="${core_version}"
+  fi
   RUNTIME_VERSION="$(dpkg_version neat-runtime)"
   GST_PLUGINS_VERSION="$(dpkg_version neat-gst-plugins)"
   LLIMA_VERSION="$(dpkg_version sima-lmm-core)"
@@ -1178,7 +1187,7 @@ print_status() {
     fi
   fi
 
-  if [[ -n "${CORE_CHANNEL}" ]]; then
+  if [[ -n "${CORE_VERSION}" && -n "${CORE_CHANNEL}" ]]; then
     core_detail="channel=${CORE_CHANNEL}"
     [[ -n "${CORE_VULCAN_ENV}" ]] && core_detail="${core_detail} env=${CORE_VULCAN_ENV}"
     [[ "${CORE_CHANNEL_ASSUMED}" -eq 1 ]] && core_detail="${core_detail} (assumed)"
@@ -1199,7 +1208,7 @@ print_status() {
   [[ -n "${INSIGHT_VENV_DIR}" ]] && insight_detail="${insight_detail} venv=${INSIGHT_VENV_DIR}"
 
   printf '%sComponents%s\n' "${BOLD}" "${RESET}"
-  print_component "Neat core" "${CORE_VERSION}" "${core_detail}" "${core_state}"
+  print_component "Neat core" "${CORE_VERSION}" "${core_detail}" "$([[ -n "${CORE_VERSION}" ]] && echo "${core_state}" || echo missing)"
   print_component "PyNeat" "${PYNEAT_VERSION}" "" "$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"

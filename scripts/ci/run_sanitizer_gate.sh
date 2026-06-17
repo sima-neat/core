@@ -156,13 +156,11 @@ if [[ "${SKIP_BUILD}" == "1" ]]; then
 else
   if [[ "${MODE}" == "asan-ubsan" ]]; then
     cmake -S . -B "${BUILD_DIR}" \
-      -DSIMANEAT_BUILD_SAMPLES=OFF \
       -DSIMA_ENABLE_ASAN=ON \
       -DSIMA_ENABLE_UBSAN=ON \
       -DSIMA_ENABLE_TSAN=OFF
   else
     cmake -S . -B "${BUILD_DIR}" \
-      -DSIMANEAT_BUILD_SAMPLES=OFF \
       -DSIMA_ENABLE_ASAN=OFF \
       -DSIMA_ENABLE_UBSAN=OFF \
       -DSIMA_ENABLE_TSAN=ON
