@@ -267,7 +267,7 @@ Options:
   --dev-only     Build only the core library + headers (DEFAULT)
   --all          Build library + tests + tutorials + Python wheel
   --python       Build Python bindings (pyneat) in addition to selected targets
-  --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
+  --fuzz         Build fuzz-enabled package artifacts (core + dev + extras + wheel)
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
   --tsan         Enable TSan instrumentation for this build
   --install-neat-internals, --install-deps
@@ -2237,23 +2237,54 @@ run_install_sanity_check() {
   echo "Running install sanity check..."
   local install_test_dir="/tmp/sima-neat-install-test"
   rm -rf "${install_test_dir}"
+  local core_install_dir="${install_test_dir}/core"
+  local dev_install_dir="${install_test_dir}/dev"
 
-  cmake --install "${BUILD_DIR}" --component core --prefix "${install_test_dir}"
+  cmake --install "${BUILD_DIR}" --component core --prefix "${core_install_dir}"
+  cmake --install "${BUILD_DIR}" --component dev --prefix "${dev_install_dir}"
 
-  echo "Installed files:"
-  find "${install_test_dir}" | sed 's|^|  |'
+  echo "Installed core files:"
+  find "${core_install_dir}" | sed 's|^|  |'
+  echo "Installed dev files:"
+  find "${dev_install_dir}" | sed 's|^|  |'
 
-  # Ensure core libraries are present in the install tree
-  if [[ ! -f "${install_test_dir}/lib/libsima_neat.a" ]]; then
+  local -a core_real_libs=()
+  local -a core_soname_links=()
+  mapfile -t core_real_libs < <(find "${core_install_dir}/lib" -maxdepth 1 -type f -name 'libsima_neat.so.*' | sort)
+  mapfile -t core_soname_links < <(find "${core_install_dir}/lib" -maxdepth 1 -type l -name 'libsima_neat.so.*' | sort)
+  if [[ "${#core_real_libs[@]}" -lt 1 ]]; then
     echo
-    echo "ERROR: libsima_neat.a missing from install tree."
+    echo "ERROR: versioned libsima_neat shared object missing from core install tree."
     echo "Refusing to package an incomplete core .deb."
     exit 1
   fi
-  if [[ ! -e "${install_test_dir}/lib/libsima_neat.so" ]]; then
+  if [[ "${#core_soname_links[@]}" -lt 1 ]]; then
     echo
-    echo "ERROR: libsima_neat.so missing from install tree."
+    echo "ERROR: SONAME libsima_neat.so.* symlink missing from core install tree."
     echo "Refusing to package an incomplete core .deb."
+    exit 1
+  fi
+  if [[ -e "${core_install_dir}/lib/libsima_neat.so" ||
+        -e "${core_install_dir}/lib/libsima_neat.a" ||
+        -d "${core_install_dir}/include" ||
+        -d "${core_install_dir}/lib/cmake/SimaNeat" ]]; then
+    echo
+    echo "ERROR: core install tree contains development files."
+    echo "Refusing to package an incorrectly split core .deb."
+    exit 1
+  fi
+  if [[ ! -L "${dev_install_dir}/lib/libsima_neat.so" ||
+        ! -f "${dev_install_dir}/include/neat.h" ||
+        ! -f "${dev_install_dir}/lib/cmake/SimaNeat/SimaNeatConfig.cmake" ]]; then
+    echo
+    echo "ERROR: dev install tree is missing headers, CMake config, or libsima_neat.so linker symlink."
+    echo "Refusing to package an incomplete dev .deb."
+    exit 1
+  fi
+  if [[ -e "${dev_install_dir}/lib/libsima_neat.a" ]]; then
+    echo
+    echo "ERROR: dev install tree contains unsupported static archive libsima_neat.a."
+    echo "Refusing to package an incorrectly split dev .deb."
     exit 1
   fi
 }
@@ -2271,7 +2302,7 @@ build_deb_if_requested() {
     echo "Skipping DEB packaging (requires --all)."
   else
     echo
-    echo "Building DEB packages (core + extras)..."
+    echo "Building DEB packages (core + dev + extras)..."
     # Remove stale debs so it's obvious what was generated
     rm -f ./*.deb
     cpack --config "${BUILD_DIR}/CPackConfig.cmake"
@@ -2361,6 +2392,7 @@ stage_package_artifacts_to_dist() {
   mkdir -p dist
   rm -f \
     dist/*-Linux-core.deb \
+    dist/*-Linux-dev.deb \
     dist/*-Linux-extras.tar.gz \
     dist/neat-*.deb \
     dist/simaai-common*.deb \
@@ -2472,6 +2504,7 @@ write_install_manifest() {
   append_dist_manifest_matches "${manifest_path}" 'neat-internals-dev_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'sima-lmm-*.deb'
   append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
+  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-dev.deb'
   append_dist_manifest_matches "${manifest_path}" '*.whl'
 
   echo "Built install manifest: ${manifest_path}"
@@ -2559,9 +2592,11 @@ generate_package_metadata_if_requested() {
   require_sima_cli_packages_build
 
   local core_deb=""
+  local dev_deb=""
   local extras_tar=""
   local wheel_path=""
   collect_single_dist_artifact 'sima-neat-*-Linux-core.deb' 'NEAT core .deb' core_deb
+  collect_single_dist_artifact 'sima-neat-*-Linux-dev.deb' 'NEAT dev .deb' dev_deb
   collect_single_dist_artifact '*-Linux-extras.tar.gz' 'extras tarball' extras_tar
   collect_single_dist_artifact '*.whl' 'Python wheel' wheel_path
 

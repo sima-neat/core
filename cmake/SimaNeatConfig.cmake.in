@@ -9,6 +9,9 @@ find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
 
 # Exported targets
 include("${CMAKE_CURRENT_LIST_DIR}/SimaNeatTargets.cmake")
+if (TARGET SimaNeat::sima_neat AND NOT TARGET SimaNeat::sima_neat_shared)
+  add_library(SimaNeat::sima_neat_shared ALIAS SimaNeat::sima_neat)
+endif()
 
 # ---------------------------------------------------------------------------
 # Resolve GStreamer / OpenCV on the *consuming* machine.

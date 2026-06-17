@@ -53,7 +53,7 @@ The framework's public surface is a small set of primary concepts. They form a c
 
 ## Building and linking against Neat (CMake)
 
-Application code consumes Neat as the installed `sima-neat` package — it provides `libsima_neat.{a,so}`, the public headers, and a CMake package config, `SimaNeatConfig.cmake`. A complete `CMakeLists.txt` for an app is just:
+Application code consumes Neat through the installed `sima-neat-dev` package — it provides the `libsima_neat.so` linker target, public headers, and a CMake package config, `SimaNeatConfig.cmake`. The matching `sima-neat-core` package provides the runtime shared library. A complete `CMakeLists.txt` for an app is just:
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)

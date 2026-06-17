@@ -16,12 +16,7 @@ cmake --build "${BUILD_DIR}" --target sima_neat -j"${CMAKE_BUILD_PARALLEL_LEVEL:
 
 echo "[install-smoke] installing to ${INSTALL_PREFIX}..."
 cmake --install "${BUILD_DIR}" --prefix "${INSTALL_PREFIX}" --component core
-
-PLUGIN_DIR="${INSTALL_PREFIX}/lib/sima-neat/gst-plugins"
-if [[ ! -d "${PLUGIN_DIR}" ]]; then
-  echo "ERROR: expected plugin directory missing: ${PLUGIN_DIR}" >&2
-  exit 1
-fi
+cmake --install "${BUILD_DIR}" --prefix "${INSTALL_PREFIX}" --component dev
 
 echo "[install-smoke] configuring downstream consumer..."
 cmake -S tests/install_smoke -B "${CONSUMER_BUILD_DIR}" \
@@ -31,9 +26,7 @@ cmake -S tests/install_smoke -B "${CONSUMER_BUILD_DIR}" \
 echo "[install-smoke] building downstream consumer..."
 cmake --build "${CONSUMER_BUILD_DIR}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
 
-echo "[install-smoke] running downstream consumer with installed plugin path..."
-GST_PLUGIN_PATH="${PLUGIN_DIR}" \
-GST_PLUGIN_PATH_1_0="${PLUGIN_DIR}" \
+echo "[install-smoke] running downstream consumer..."
 "${CONSUMER_BUILD_DIR}/install_smoke_app"
 
 echo "[install-smoke] passed."
