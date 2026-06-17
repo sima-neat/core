@@ -12,9 +12,9 @@ The Neat Library install artifacts include a PyNeat wheel. If you need a custom
 venv, conda environment, or other Python 3.11 setup, download the wheel and
 install it into that environment.
 
-Use this flow when the matching Neat Library runtime packages are already
+Use this flow when the matching Neat Library release artifacts are already
 installed. The PyNeat-only target downloads the wheel, but it does not install
-or update the runtime `.deb` packages.
+or update the Neat `.deb` packages.
 
 ## Download the Wheel
 

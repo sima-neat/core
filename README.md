@@ -103,7 +103,7 @@ pytest -q
 
 ## Install
 
-If you are installing from release artifacts for C++ development, install the runtime and development `.deb` packages and extract prebuilt examples, tutorials from `.tar.gz`:
+If you are installing from release artifacts for C++ development, install the Neat `.deb` packages and extract prebuilt examples, tutorials from `.tar.gz`:
 
 ```bash
 sudo apt install ./sima-neat-*.deb
