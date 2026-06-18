@@ -27,10 +27,13 @@ Palette Neat includes four software components and the Modalix DevKit:
 
 <div class="overview-section-label">Developer journey</div>
 
-If you are new to Palette Neat, work through these sections in order: set up
-the Neat Development Environment, install or update the Neat Library, prepare a
-model, and then build the application that uses it. Use the Compatibility
-reference when you need to choose exact versions, upgrade components
+If you are new to Palette Neat, start with the **Neat Development Environment**:
+confirm your host meets the
+[host requirements](/getting-started/dev-environment/#host-requirements), then
+install the SDK. From there, work through these sections in order: install or
+update the Neat Library, prepare a model, and then build the application that
+uses it. SDK installation applies compatible defaults, so you only need the
+Compatibility reference when you want to pin exact versions, upgrade components
 independently, or troubleshoot a version mismatch.
 
 <div class="overview-link-columns">
@@ -38,9 +41,9 @@ independently, or troubleshoot a version mismatch.
     <h2>Start Here</h2>
     <p>Prepare your host machine, Neat Development Environment, and DevKit for local development and hardware validation.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat Development Environment</strong><span>Install the SDK, pair a DevKit, and run on hardware with dk.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat Development Environment</strong><span>Start here: check host requirements, install the SDK, pair a DevKit, and run on hardware with dk.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>Install or update the runtime and PyNeat on a DevKit or paired environment.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Check Compatibility</strong><span>Review supported version combinations when planning upgrades, mixing components, or investigating a mismatch.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Check Compatibility</strong><span>Reference for supported version combinations. Not a setup step — start with the Neat Development Environment.</span></a></li>
     </ul>
   </section>
 

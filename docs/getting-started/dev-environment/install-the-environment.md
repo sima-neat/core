@@ -9,6 +9,9 @@ software and Neat Library version.
 
 ## Prerequisites
 
+- Confirm your host meets the
+  [host requirements](/getting-started/dev-environment/#host-requirements),
+  including administrator/`sudo` access for installation.
 - Install `sima-cli` on your host machine using the
   [sima-cli installation guide](/tools/sima-cli/).
 - Complete any host-specific setup for your platform:

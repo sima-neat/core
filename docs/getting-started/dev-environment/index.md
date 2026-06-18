@@ -51,6 +51,26 @@ Follow these sections in order when setting up the Neat Development Environment.
 - **Agent-ready context:** use bundled Codex and Claude skills with current
   Neat source references and examples.
 
+## Host requirements
+
+Confirm your host machine meets these minimums before you install the SDK.
+Administrator (`sudo`) privileges are required to install the SDK on every
+supported host — not only for optional DevKit networking — because installing
+`sima-cli`, Docker Engine, the SDK image, and NFS packages all need elevated
+permissions.
+
+| Host OS | CPU | RAM | Free disk | Admin / sudo |
+| --- | --- | --- | --- | --- |
+| Ubuntu 22.04 / 24.04 (`x86_64` or `aarch64`) | 4 cores min | 16 GB min | 100 GB | `sudo` for SDK install (`sima-cli`, Docker, SDK image), NFS install/config, and shared-network/firewall setup |
+| Windows 11 via WSL (`x86_64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install in WSL (Docker, `sima-cli`), WSL networking, and NFS firewall rules |
+| macOS 15.5+ Apple Silicon (`aarch64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install (Homebrew, Colima, `sima-cli`), Full Disk Access (`nfsd`), and Internet Sharing |
+
+:::note GenAI model compilation needs more
+Compiling GenAI models with LLiMa is far heavier than the base SDK: 128 GB RAM
+is recommended and 512 GB of disk is preferred, and a higher core count helps.
+See [GenAI setup](/genai-llima/setup/) for the full requirements.
+:::
+
 ## Supported Platforms
 
 | Platform | Arch | SDK | Model Compiler |
