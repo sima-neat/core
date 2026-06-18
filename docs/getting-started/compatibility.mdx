@@ -33,33 +33,25 @@ The versions listed on this page are the supported version combinations.
 
 ## Neat Development Environment
 
-Use this table to choose the Neat Development Environment version to run on your
-host machine.
+Use this table to verify that the Neat Development Environment matches your
+DevKit software version.
 
 | Neat Development Environment | Compatible host environment | Compatible DevKit software |
 | :--- | :--- | :--- |
 | **2.0.0** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.0.0** |
 | **2.1.2** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.1.2** |
 
-Install a specific Neat Development Environment version with:
-
-For Neat Development Environment 2.0.0:
-
-<ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.0.0
-</ShellCommand>
-
-For Neat Development Environment 2.1.2:
+Install the current released Neat Development Environment from the host:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk:v2.1.2
 </ShellCommand>
 
-To install the latest patch release for a supported release branch, use the
-branch's `latest` tag. For example, to install the latest 2.0 release:
+Use an older Neat Development Environment only when your DevKit software is from
+that release family. For Neat Development Environment 2.0.0:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.0-latest
+sima-cli install ghcr:sima-neat/sdk:v2.0.0
 </ShellCommand>
 
 ## Neat Library
@@ -147,8 +139,9 @@ From inside the Neat Development Environment or on the DevKit, run:
 neat
 </ShellCommand>
 
-The output example below shows the active environment, SDK version, installed component
-versions, and whether updates are available:
+The output example below shows the active environment, Neat Development
+Environment version, installed component versions, and whether updates are
+available:
 
 ```text
 Neat Environment
