@@ -1302,6 +1302,7 @@ install(
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
   PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
+  PATTERN "ev_tensor_abi.h" EXCLUDE
   PATTERN "PreparedRuntimeBridge.h" EXCLUDE
 )
 
