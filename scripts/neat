@@ -37,6 +37,7 @@ SYSROOT_PATH=""
 SDK_VERSION=""
 DEVKIT_BUILD_VERSION=""
 CORE_VERSION=""
+CORE_DETAIL=""
 CORE_CHANNEL=""
 CORE_TAG=""
 CORE_CHANNEL_ASSUMED=0
@@ -500,16 +501,32 @@ infer_channel_and_tag() {
 discover_sdk_components() {
   local cache_dir="${SYSROOT_PATH}/neat-install-packages"
   local core_file=""
+  local core_version=""
   local dev_file=""
+  local dev_version=""
   local file
 
   if [[ -d "${cache_dir}" ]]; then
     core_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort | tail -n1 || true)"
     dev_file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort | tail -n1 || true)"
-    if [[ -n "${core_file}" && -n "${dev_file}" ]]; then
-      CORE_VERSION="$(basename "${core_file}")"
-      CORE_VERSION="${CORE_VERSION#sima-neat-}"
-      CORE_VERSION="${CORE_VERSION%-Linux-core.deb}"
+    if [[ -n "${core_file}" ]]; then
+      core_version="$(basename "${core_file}")"
+      core_version="${core_version#sima-neat-}"
+      core_version="${core_version%-Linux-core.deb}"
+    fi
+    if [[ -n "${dev_file}" ]]; then
+      dev_version="$(basename "${dev_file}")"
+      dev_version="${dev_version#sima-neat-}"
+      dev_version="${dev_version%-Linux-dev.deb}"
+    fi
+    if [[ -z "${core_file}" && -n "${dev_file}" ]]; then
+      CORE_DETAIL="missing core artifact"
+    elif [[ -n "${core_file}" && -z "${dev_file}" ]]; then
+      CORE_DETAIL="missing dev artifact"
+    elif [[ -n "${core_file}" && -n "${dev_file}" && "${core_version}" != "${dev_version}" ]]; then
+      CORE_DETAIL="core/dev version mismatch core=${core_version} dev=${dev_version}"
+    elif [[ -n "${core_version}" && -n "${dev_version}" ]]; then
+      CORE_VERSION="${core_version}"
     fi
 
     file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'pyneat-*.whl' | sort | tail -n1 || true)"
@@ -944,6 +961,7 @@ print_status_json() {
     NEAT_JSON_UPDATE_STATUS="${update_check_status}" \
     NEAT_JSON_UPDATE_FAILURES="${UPDATE_FAILURES}" \
     NEAT_JSON_CORE_VERSION="${CORE_VERSION}" \
+    NEAT_JSON_CORE_DETAIL="${CORE_DETAIL}" \
     NEAT_JSON_CORE_CHANNEL="${CORE_CHANNEL}" \
     NEAT_JSON_CORE_TAG="${CORE_TAG}" \
     NEAT_JSON_CORE_CHANNEL_ASSUMED="${CORE_CHANNEL_ASSUMED}" \
@@ -1092,6 +1110,7 @@ payload = {
         "core": {
             "name": "Neat core",
             "version": optional(env("NEAT_JSON_CORE_VERSION")),
+            "detail": optional(env("NEAT_JSON_CORE_DETAIL")),
             "channel": optional(env("NEAT_JSON_CORE_CHANNEL")),
             "tag": optional(core_tag),
             "channelAssumed": bool_env("NEAT_JSON_CORE_CHANNEL_ASSUMED"),
@@ -1208,7 +1227,7 @@ print_status() {
   [[ -n "${INSIGHT_VENV_DIR}" ]] && insight_detail="${insight_detail} venv=${INSIGHT_VENV_DIR}"
 
   printf '%sComponents%s\n' "${BOLD}" "${RESET}"
-  print_component "Neat core" "${CORE_VERSION}" "${core_detail}" "$([[ -n "${CORE_VERSION}" ]] && echo "${core_state}" || echo missing)"
+  print_component "Neat core" "${CORE_VERSION}" "${core_detail:-${CORE_DETAIL}}" "$([[ -n "${CORE_VERSION}" ]] && echo "${core_state}" || echo missing)"
   print_component "PyNeat" "${PYNEAT_VERSION}" "" "$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"

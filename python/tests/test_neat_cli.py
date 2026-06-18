@@ -251,11 +251,22 @@ def test_sdk_status_requires_neat_core_and_dev_debs(tmp_path: Path) -> None:
     sdk_release.write_text("SDK Version = 10.0.0.244\neLXr Version = 2.0.0\n", encoding="utf-8")
     env["ELXR_SDK_RELEASE_FILE"] = str(sdk_release)
 
-    for name, deb_kwargs in (("missing-dev", {"dev": False}), ("missing-core", {"core": False})):
+    cases = (
+        ("missing-dev", {"dev": False}, "missing dev artifact"),
+        ("missing-core", {"core": False}, "missing core artifact"),
+        (
+            "mismatch",
+            {"core": True, "dev": False},
+            "core/dev version mismatch core=0.0.0+main-1111111 dev=0.0.0+main-2222222",
+        ),
+    )
+    for name, deb_kwargs, detail in cases:
         sysroot = tmp_path / name / "sysroot"
         cache = sysroot / "neat-install-packages"
         cache.mkdir(parents=True)
         write_neat_debs(cache, "0.0.0+main-1111111", **deb_kwargs)
+        if name == "mismatch":
+            write_neat_debs(cache, "0.0.0+main-2222222", core=False)
         env["SYSROOT"] = str(sysroot)
 
         proc = run_neat(tmp_path, ["--offline", "--color=always"], env)
@@ -263,6 +274,7 @@ def test_sdk_status_requires_neat_core_and_dev_debs(tmp_path: Path) -> None:
         assert proc.returncode == 0, proc.stderr
         neat_core_line = component_line(proc.stdout, "Neat core")
         assert "\x1b[0;33mnot installed" in neat_core_line
+        assert detail in neat_core_line
 
 
 def test_sdk_status_prints_exposed_ports_from_port_map(tmp_path: Path) -> None:
