@@ -54,6 +54,9 @@ set -euo pipefail
 #   when the board carries the SDK's git-suffixed compatible memory package.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
+# - NEAT_INSTALLER_APT_UPDATE: AUTO/ON/OFF (default: AUTO) controls whether the
+#   board installer refreshes APT metadata before installing local DEBs. AUTO
+#   refreshes only when /var/lib/apt/lists has no package index files.
 # - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
 #   staged EV74 firmware and reset runtime state after board package replacement.
 
@@ -67,6 +70,7 @@ NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
+NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
@@ -745,6 +749,48 @@ apt_package_database_is_healthy() {
   return 1
 }
 
+apt_package_lists_are_populated() {
+  [[ -d /var/lib/apt/lists ]] || return 1
+  find /var/lib/apt/lists -maxdepth 1 -type f -name '*_Packages' -print -quit 2>/dev/null | grep -q .
+}
+
+refresh_apt_metadata_for_board_install() {
+  case "${NEAT_INSTALLER_APT_UPDATE}" in
+    OFF|off|0|false|FALSE)
+      log "NEAT_INSTALLER_APT_UPDATE=${NEAT_INSTALLER_APT_UPDATE}; skipping apt metadata refresh."
+      return 0
+      ;;
+    ON|on|1|true|TRUE|AUTO|auto|"") ;;
+    *)
+      echo "Invalid NEAT_INSTALLER_APT_UPDATE=${NEAT_INSTALLER_APT_UPDATE}; expected AUTO, ON, or OFF." >&2
+      exit 1
+      ;;
+  esac
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local should_update=0
+  if [[ "${NEAT_INSTALLER_APT_UPDATE}" =~ ^(ON|on|1|true|TRUE)$ ]]; then
+    should_update=1
+  elif ! apt_package_lists_are_populated; then
+    log "APT package lists have no Packages indexes; refreshing metadata before local DEB install."
+    should_update=1
+  else
+    log "APT package lists already contain Packages indexes; skipping apt-get update."
+  fi
+
+  [[ "${should_update}" -eq 1 ]] || return 0
+
+  if run_sudo apt-get update; then
+    return 0
+  fi
+
+  log "apt-get update failed; continuing so apt-get install reports the authoritative dependency error."
+  return 0
+}
+
 remove_installed_local_deb_packages() {
   if ! command -v dpkg-deb >/dev/null 2>&1; then
     return 0
@@ -1062,6 +1108,7 @@ install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
+  refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
   # Prefer apt-get for normal installs so system dependencies can be resolved.
