@@ -11,8 +11,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
-set(CMAKE_BUILD_RPATH "$ORIGIN/../neat-internals/gst-plugins")
-set(CMAKE_INSTALL_RPATH "$ORIGIN/../neat-internals/gst-plugins")
 
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -28,7 +26,6 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME core)
 # Build options
 # ------------------------------------------------------------------------------
 option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
-option(SIMANEAT_BUILD_SAMPLES "Build example applications" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
@@ -872,23 +869,26 @@ endif()
 
 add_library(sima_neat_common INTERFACE)
 
-add_library(sima_neat STATIC
+add_library(sima_neat SHARED
   $<TARGET_OBJECTS:sima_neat_objects>
 )
-
-add_library(sima_neat_shared SHARED
-  $<TARGET_OBJECTS:sima_neat_objects>
-)
-set_target_properties(sima_neat_shared PROPERTIES
+set_target_properties(sima_neat PROPERTIES
   OUTPUT_NAME sima_neat
   VERSION "${SIMANEAT_PLATFORM_VERSION}"
   SOVERSION "${SIMANEAT_ABI_VERSION}"
 )
 
+add_library(sima_neat_static STATIC
+  $<TARGET_OBJECTS:sima_neat_objects>
+)
+set_target_properties(sima_neat_static PROPERTIES
+  OUTPUT_NAME sima_neat
+)
+
 target_link_libraries(sima_neat PUBLIC sima_neat_common)
-target_link_libraries(sima_neat_shared PUBLIC sima_neat_common)
+target_link_libraries(sima_neat_static PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_objects PRIVATE sima_neat_common)
-add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_shared)
+add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_static)
 target_compile_definitions(sima_neat_objects PRIVATE
   SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"
   SIMA_NEAT_PLATFORM_VERSION_STRING="${SIMANEAT_PLATFORM_VERSION}"
@@ -970,9 +970,6 @@ if (OPENCV_FOUND)
   target_include_directories(sima_neat_common SYSTEM INTERFACE "$<BUILD_INTERFACE:${OPENCV_INCLUDE_DIRS}>")
 endif()
 
-target_compile_options(sima_neat_objects PRIVATE
-)
-
 if (GST_FOUND)
   target_compile_options(sima_neat_objects PRIVATE ${GST_CFLAGS_OTHER})
 endif()
@@ -985,11 +982,11 @@ endif()
 
 if (OPENCV_FOUND)
   target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
-  target_link_directories(sima_neat_shared PRIVATE ${OPENCV_LIBRARY_DIRS})
+  target_link_directories(sima_neat_static PRIVATE ${OPENCV_LIBRARY_DIRS})
 endif()
 if (GST_FOUND)
   target_link_directories(sima_neat PRIVATE ${GST_LIBRARY_DIRS})
-  target_link_directories(sima_neat_shared PRIVATE ${GST_LIBRARY_DIRS})
+  target_link_directories(sima_neat_static PRIVATE ${GST_LIBRARY_DIRS})
 endif()
 
 if (SimaLMM_FOUND)
@@ -1002,7 +999,7 @@ endif()
 if (SimaLMM_FOUND)
   target_include_directories(sima_neat_objects SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
   target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
-  target_link_libraries(sima_neat_shared PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+  target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
 if (GST_FOUND)
@@ -1033,7 +1030,9 @@ else()
   endif()
 endif()
 if (SIMANEAT_SIMAAIMEM_LIB)
-  target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_SIMAAIMEM_LIB})
+  target_link_libraries(sima_neat_common INTERFACE
+    "$<BUILD_INTERFACE:${SIMANEAT_SIMAAIMEM_LIB}>"
+    "$<INSTALL_INTERFACE:simaaimem>")
 endif()
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
@@ -1216,28 +1215,11 @@ function(simaneat_append_ctest_env test_name)
   set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "SIMA_CLI_CHECK_FOR_UPDATE=0")
 endfunction()
 
-if (SIMANEAT_NEAT_ALLOCATOR_DIR)
-  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_ALLOCATOR_DIR}")
-  target_link_options(sima_neat_shared PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_ALLOCATOR_DIR}")
-endif()
-if (SIMANEAT_NEAT_BUFFERPOOL_DIR AND
-    NOT SIMANEAT_NEAT_BUFFERPOOL_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR)
-  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_BUFFERPOOL_DIR}")
-  target_link_options(sima_neat_shared PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_BUFFERPOOL_DIR}")
-endif()
-if (SIMANEAT_NEAT_TENSORBUFFER_DIR AND
-    NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR AND
-    NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_BUFFERPOOL_DIR)
-  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_TENSORBUFFER_DIR}")
-  target_link_options(sima_neat_shared PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_TENSORBUFFER_DIR}")
-endif()
-
 # ------------------------------------------------------------------------------
-# Internal-only helper target (tests/bench/tools)
+# Internal-only helper targets (tests/bench/tools/bindings)
 # ------------------------------------------------------------------------------
-add_library(sima_neat_internal INTERFACE)
-target_link_libraries(sima_neat_internal INTERFACE sima_neat_shared)
-target_include_directories(sima_neat_internal INTERFACE
+add_library(sima_neat_internal_headers INTERFACE)
+target_include_directories(sima_neat_internal_headers INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
   ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -1253,20 +1235,18 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
     if (_simaneat_neat_internal_include_dir AND
         NOT _simaneat_neat_internal_include_dir MATCHES "-NOTFOUND$")
-      target_include_directories(sima_neat_internal INTERFACE
+      target_include_directories(sima_neat_internal_headers INTERFACE
         "${_simaneat_neat_internal_include_dir}")
     endif()
   endforeach()
 endif()
-target_compile_definitions(sima_neat_internal INTERFACE SIMA_NEAT_INTERNAL=1)
+target_compile_definitions(sima_neat_internal_headers INTERFACE SIMA_NEAT_INTERNAL=1)
 
-# ------------------------------------------------------------------------------
-# Examples (optional, installable)
-# ------------------------------------------------------------------------------
-if (SIMANEAT_BUILD_SAMPLES AND
-    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
-  add_subdirectory(examples)
-endif()
+add_library(sima_neat_internal INTERFACE)
+target_link_libraries(sima_neat_internal INTERFACE
+  sima_neat
+  sima_neat_internal_headers
+)
 
 # ------------------------------------------------------------------------------
 # Tutorials
@@ -1294,18 +1274,21 @@ endif()
 # Install / Package
 # ------------------------------------------------------------------------------
 install(
-  TARGETS sima_neat sima_neat_shared sima_neat_common
+  TARGETS sima_neat sima_neat_static sima_neat_common
   EXPORT SimaNeatTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT dev
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT core
+    NAMELINK_COMPONENT dev
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  COMPONENT core
+    COMPONENT core
 )
 
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  COMPONENT core
+  COMPONENT dev
   # Low-level actor-runtime graph headers are compiler/runtime internals.  The
   # public application surface is simaai::neat::Graph / Run via neat.h; do not
   # install a second public Graph concept.
@@ -1319,13 +1302,14 @@ install(
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
   PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
+  PATTERN "ev_tensor_abi.h" EXCLUDE
   PATTERN "PreparedRuntimeBridge.h" EXCLUDE
 )
 
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/distribution/skills/sima-neat/
   DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/skills/sima-neat
-  COMPONENT core
+  COMPONENT dev
 )
 
 if (SIMANEAT_BUILDINFO_JSON)
@@ -1360,7 +1344,7 @@ install(
     OWNER_READ OWNER_WRITE OWNER_EXECUTE
     GROUP_READ GROUP_EXECUTE
     WORLD_READ WORLD_EXECUTE
-  COMPONENT core
+  COMPONENT dev
 )
 
 set(SimaNeat_INSTALL_CMAKEDIR
@@ -1398,7 +1382,7 @@ install(
   FILE SimaNeatTargets.cmake
   NAMESPACE SimaNeat::
   DESTINATION ${SimaNeat_INSTALL_CMAKEDIR}
-  COMPONENT core
+  COMPONENT dev
 )
 
 install(
@@ -1406,7 +1390,7 @@ install(
     ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatConfigVersion.cmake
   DESTINATION ${SimaNeat_INSTALL_CMAKEDIR}
-  COMPONENT core
+  COMPONENT dev
 )
 
 # ------------------------------------------------------------------------------
@@ -1416,15 +1400,15 @@ install(
 set(CPACK_PACKAGE_NAME "sima-neat")
 set(CPACK_PACKAGE_VENDOR "SiMa.ai")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
-    "SiMa NEAT core libraries and headers")
+    "SiMa NEAT core runtime and development packages")
 
-set(CPACK_COMPONENTS_ALL core)
+set(CPACK_COMPONENTS_ALL core dev)
 set(CPACK_DEB_COMPONENT_INSTALL ON)
 
 set(CPACK_COMPONENT_CORE_DESCRIPTION
-    "SiMa NEAT core library and headers")
-set(CPACK_COMPONENT_EXTRAS_DESCRIPTION
-    "SiMa NEAT samples, tutorials, and tests")
+    "SiMa NEAT runtime library and command-line helpers")
+set(CPACK_COMPONENT_DEV_DESCRIPTION
+    "SiMa NEAT C++ development headers and CMake package")
 
 set(CPACK_PACKAGE_VERSION "${SIMANEAT_VERSION}")
 
@@ -1435,15 +1419,18 @@ set(CPACK_DEBIAN_PACKAGE_SECTION "libs")
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
-set(CPACK_DEBIAN_EXTRAS_PACKAGE_NAME "sima-neat-extras")
+set(CPACK_DEBIAN_DEV_PACKAGE_NAME "sima-neat-dev")
 
 set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libgstreamer1.0-0"
+  "libgstreamer-plugins-base1.0-0"
   "libgstrtspserver-1.0-0"
   "libglib2.0-0"
   "libopencv-core406"
-  "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  "libopencv-imgproc406"
+  "libopencv-imgcodecs406"
+  "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
+  "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
   "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-gst-plugins (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
 )
@@ -1451,15 +1438,27 @@ if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
     "sima-lmm-core (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
     "sima-lmm-core (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
-    "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-    "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
     "libcpp-httplib0.11")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
-set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
+set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
+  "pkg-config"
+  "libgstreamer1.0-dev"
+  "libgstreamer-plugins-base1.0-dev"
+  "libgstrtspserver-1.0-dev"
+  "libglib2.0-dev"
+  "libopencv-dev"
+  "nlohmann-json3-dev"
+  "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
+  "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
 )
-
+if (SimaLMM_FOUND)
+  list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
+    "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
+    "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})")
+endif()
+string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
 set(CPACK_INSTALL_CMAKE_PROJECTS
   "${CMAKE_BINARY_DIR};SimaNeat;ALL;/"
 )
