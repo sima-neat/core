@@ -18,16 +18,16 @@ right setup, model preparation, or application development path.
 
 Palette Neat includes four software components and the Modalix DevKit:
 
-- **Neat Development Environment** — the containerized environment for cross-compilation, DevKit pairing, agent-assisted workflows, and local validation.
+- **Neat Development Environment (referred to as Neat SDK)** — the containerized environment for cross-compilation, DevKit pairing, agent-assisted workflows, and local validation.
 - **Neat Library** — the C++ and Python library and runtime for loading models, executing pipelines, and coordinating work across Modalix compute resources.
-- **Model Compiler** — the optional component for model quantization, compilation, and validation.
+- **Model Compiler** — the component for model quantization, compilation, and validation. Required when you compile or quantize models yourself; optional if you only use precompiled models.
 - **LLiMa** — the GenAI toolkit, included with the development and model tooling, for compiling, testing, and benchmarking GenAI models.
 - **Modalix DevKit** — the target hardware where compiled model artifacts and Neat Library applications run and are validated.
 
 
 <div class="overview-section-label">Developer journey</div>
 
-If you are new to Palette Neat, start with the **Neat Development Environment**:
+If you are new to Palette Neat, start with the **Neat SDK**:
 confirm your host meets the
 [host requirements](/getting-started/dev-environment/#host-requirements), then
 install the SDK. From there, work through these sections in order: install or
@@ -39,11 +39,11 @@ independently, or troubleshoot a version mismatch.
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Start Here</h2>
-    <p>Prepare your host machine, Neat Development Environment, and DevKit for local development and hardware validation.</p>
+    <p>Prepare your host machine, Neat SDK, and DevKit for local development and hardware validation.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat Development Environment</strong><span>Start here: check host requirements, install the SDK, pair a DevKit, and run on hardware with dk.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat SDK</strong><span>Start here: check host requirements, install the SDK, pair a DevKit, and run on hardware with dk.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>Install or update the runtime and PyNeat on a DevKit or paired environment.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Check Compatibility</strong><span>Reference for supported version combinations. Not a setup step — start with the Neat Development Environment.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Check Compatibility</strong><span>Reference for supported version combinations. Not a setup step — start with the Neat SDK.</span></a></li>
     </ul>
   </section>
 

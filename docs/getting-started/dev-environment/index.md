@@ -1,10 +1,10 @@
 ---
-title: Neat Development Environment
-description: Set up the Neat Development Environment for fast, agent-ready Neat application development
+title: Neat SDK
+description: Set up the Neat SDK for fast, agent-ready Neat application development
 sidebar_position: 1
 ---
 
-The Neat Development Environment, also known as the SDK, is the recommended
+The Neat Development Environment (referred to as Neat SDK) is the recommended
 host-side workspace for building Neat applications and validating them on a
 Modalix DevKit. It brings the build tools, model tools, hardware connection, and
 agent-ready source context into one containerized workflow.
@@ -24,7 +24,7 @@ center of the SDK workflow.
 
 <div class="overview-section-label">Start here</div>
 
-Follow these sections in order when setting up the Neat Development Environment.
+Follow these sections in order when setting up the Neat SDK.
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
@@ -44,8 +44,9 @@ Follow these sections in order when setting up the Neat Development Environment.
   from a Linux container on your host.
 - **DevKit Sync:** pair the SDK with a Modalix DevKit and expose the same
   workspace in both places.
-- **Model tooling:** install the matching Model Compiler in the SDK when you
-  need to quantize and compile ONNX or GenAI models.
+- **Model tooling:** install the matching Model Compiler in the SDK. It is
+  required to compile or quantize ONNX or GenAI models yourself, and optional
+  only if you exclusively use precompiled model packages.
 - **Insight:** inspect workspace files, media sources, stream delivery, and
   runtime behavior from a browser.
 - **Agent-ready context:** use bundled Codex and Claude skills with current
@@ -91,9 +92,10 @@ Neat Insight is served over HTTPS on port `9900` inside the SDK. Open
 another machine on the network. For more information, see
 [Insight](/tools/insight/).
 
-During SDK setup, `sima-cli` can prompt you to install the matching Model
-Compiler. For compiler setup and usage, see
-[Compile a Model](/compile-a-model/).
+During SDK setup, `sima-cli` prompts you to install the matching Model Compiler
+automatically. Install it if you compile or quantize models yourself; you can
+skip it if you only use precompiled model packages. For compiler setup and
+usage, see [Compile a Model](/compile-a-model/).
 
 ## VS Code Workflow
 

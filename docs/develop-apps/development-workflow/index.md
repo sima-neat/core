@@ -54,7 +54,7 @@ If you only learn one page first, start with the [Run / Inference overview](/dev
 
 Step-by-step entry points for new users:
 
-- [Neat Development Environment](/getting-started/dev-environment/) — install the Palette SDK, pair a DevKit, and run on hardware with `dk`.
+- [Neat SDK](/getting-started/dev-environment/) — install the Palette SDK, pair a DevKit, and run on hardware with `dk`.
 - [Build](/develop-apps/contribute/build) — build Neat from source with `build.sh` (contributor workflow).
 - [Hello Neat!](/develop-apps/hello-neat/minimal) — minimal CMake application that links against the installed library.
 - [Tutorials](/tutorials) — guided chapters that scale from "first model" to "production pipeline".

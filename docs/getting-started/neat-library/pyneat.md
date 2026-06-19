@@ -4,6 +4,12 @@ description: Install the PyNeat wheel in a custom Python virtual environment
 sidebar_position: 3
 ---
 
+:::note PyNeat is already installed
+PyNeat is installed with the Neat Library in a default virtual environment at
+`~/pyneat`. You do not need the steps on this page unless you want PyNeat in a
+custom virtual environment (for example a separate venv or conda environment).
+:::
+
 The standard Neat Library installer provisions a default PyNeat virtual
 environment at `~/pyneat` on the DevKit. Use this page only when you need a
 custom Python environment.
