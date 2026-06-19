@@ -17,7 +17,7 @@ jobs:
         run: ./build.sh --install-deps-only
 
       - name: Configure
-        run: cmake -S . -B build-long-tests -DSIMANEAT_BUILD_SAMPLES=OFF
+        run: cmake -S . -B build-long-tests
 
       - name: Build
         run: cmake --build build-long-tests -j8

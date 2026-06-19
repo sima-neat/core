@@ -50,7 +50,16 @@ compares with `/etc/buildinfo` `DISTRO_VERSION`. Development-only
 installs on nonstandard images can set `NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON`
 to bypass the guard explicitly.
 
+On DevKit installs, the installer refreshes APT metadata only when needed by
+default: if `/var/lib/apt/lists` has no package index files. Set
+`NEAT_INSTALLER_APT_UPDATE=ON` to force `apt-get update`, or
+`NEAT_INSTALLER_APT_UPDATE=OFF` to skip the metadata refresh.
+
 ## Install the Neat Library
+
+Choose a working directory before running the installer. On the DevKit, install
+under `/media/nvme` to avoid filling the root file system. In the SDK container,
+use a container-local path such as `$HOME/neat`.
 
 Select your environment, then run the steps in order. Install in the **Neat SDK**
 container to cross-compile C++ applications; install on the **DevKit** to set up

@@ -55,6 +55,11 @@ while IFS= read -r file; do
   CORE_DEBS+=("${file}")
 done < <(find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
 
+DEV_DEBS=()
+while IFS= read -r file; do
+  DEV_DEBS+=("${file}")
+done < <(find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort)
+
 EXTRAS_TARS=()
 while IFS= read -r file; do
   EXTRAS_TARS+=("${file}")
@@ -65,10 +70,12 @@ while IFS= read -r file; do
   WHEELS+=("${file}")
 done < <(find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name '*.whl' | sort)
 
-if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
-  echo "Expected exactly one NEAT core .deb, one extras tar.gz, and one wheel in ${ARTIFACTS_DIR}." >&2
+if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#DEV_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+  echo "Expected exactly one NEAT core .deb, one NEAT dev .deb, one extras tar.gz, and one wheel in ${ARTIFACTS_DIR}." >&2
   echo "core debs: ${#CORE_DEBS[@]}" >&2
   printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+  echo "dev debs: ${#DEV_DEBS[@]}" >&2
+  printf '  %s\n' "${DEV_DEBS[@]}" >&2 || true
   echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
   printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
   echo "wheels: ${#WHEELS[@]}" >&2
@@ -99,11 +106,20 @@ cleanup() {
 trap cleanup EXIT
 
 core_extract_dir="${tmp_dir}/core-deb-extract"
+dev_extract_dir="${tmp_dir}/dev-deb-extract"
 mkdir -p "${core_extract_dir}"
+mkdir -p "${dev_extract_dir}"
 dpkg-deb -x "${CORE_DEBS[0]}" "${core_extract_dir}"
+dpkg-deb -x "${DEV_DEBS[0]}" "${dev_extract_dir}"
 for required_cli in usr/bin/fix_devkit_runtime.sh usr/bin/neat; do
   if [[ ! -x "${core_extract_dir}/${required_cli}" ]]; then
     echo "Core DEB missing executable ${required_cli}." >&2
+    exit 1
+  fi
+done
+for required_dev_file in usr/include/neat.h usr/lib/cmake/SimaNeat/SimaNeatConfig.cmake usr/lib/libsima_neat.so; do
+  if [[ ! -e "${dev_extract_dir}/${required_dev_file}" ]]; then
+    echo "Dev DEB missing ${required_dev_file}." >&2
     exit 1
   fi
 done

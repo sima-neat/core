@@ -75,7 +75,7 @@ To rebuild a C++ tutorial from source:
 ./build/tutorials-standalone/tutorial_<chapter_name> --args
 ```
 
-`build.sh` auto-detects `SimaNeatConfig.cmake` from the installed Neat package
+`build.sh` auto-detects `SimaNeatConfig.cmake` from the installed Neat Library
 and writes rebuilt binaries under `build/tutorials-standalone/`.
 
 Some tutorials need Model Zoo artifacts. `build.sh` downloads required models
@@ -103,8 +103,8 @@ ls share/sima-neat/tutorials/ | grep -E '^0[0-9]{2}_'
 ## Use a Tutorial in Your Own C++ Project
 
 If you copy a tutorial `.cpp` file into your own codebase, you do not need the
-extras folder anymore. You only need the installed `sima-neat` package, which
-provides `SimaNeatConfig.cmake` and the Neat libraries.
+extras folder anymore. You only need the installed `sima-neat` release artifacts,
+which provide `SimaNeatConfig.cmake` and the Neat libraries.
 
 Create a minimal `CMakeLists.txt` next to your source file:
 
@@ -121,7 +121,7 @@ add_executable(my_chapter <chapter_name>.cpp)
 target_link_libraries(my_chapter PRIVATE SimaNeat::sima_neat)
 ```
 
-`find_package(SimaNeat REQUIRED CONFIG)` locates the installed Neat package, and
+`find_package(SimaNeat REQUIRED CONFIG)` locates the installed Neat Library, and
 `target_link_libraries(... SimaNeat::sima_neat)` brings in Neat's libraries,
 headers, and transitive dependencies.
 

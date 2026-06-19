@@ -29,7 +29,7 @@ join_regex() {
 regex="$(join_regex archive_security_tests)"
 
 echo "[model-archive-security-gate] configuring baseline build in ${BUILD_DIR}..."
-cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF
+cmake -S . -B "${BUILD_DIR}"
 
 echo "[model-archive-security-gate] building model archive/security tests..."
 baseline_targets=(unit_modalix_contract_preflight_test "${archive_security_tests[@]}")
@@ -55,7 +55,6 @@ fi
 
 echo "[model-archive-security-gate] configuring ASan/UBSan subset in ${SAN_BUILD_DIR}..."
 cmake -S . -B "${SAN_BUILD_DIR}" \
-  -DSIMANEAT_BUILD_SAMPLES=OFF \
   -DSIMA_ENABLE_ASAN=ON \
   -DSIMA_ENABLE_UBSAN=ON \
   -DSIMA_ENABLE_TSAN=OFF

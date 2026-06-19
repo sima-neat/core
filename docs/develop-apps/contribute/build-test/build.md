@@ -112,7 +112,7 @@ Install dependencies without building core:
 - Build tree: `build/`
 - Docusaurus site output (when docs build runs): `website/build/`
 - Install sanity-check prefix: `/tmp/sima-neat-install-test`
-- Core package (`*.deb`) is generated on Linux full builds unless `--no-dist` is used.
+- Neat package artifacts (`*.deb`) are generated on Linux full builds unless `--no-dist` is used.
 - Extras package (`*extras.tar.gz`) is generated on Linux full builds unless `--no-dist` is used.
 - Python wheel (`dist/*.whl`) is generated when Python build is enabled.
 
