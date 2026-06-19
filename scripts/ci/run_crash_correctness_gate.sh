@@ -92,7 +92,7 @@ critical_regex="$(join_regex critical_tests)"
 repeat_regex="$(join_regex repeat_tests)"
 
 echo "[crash-correctness-gate] configuring build in ${BUILD_DIR}..."
-cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF
+cmake -S . -B "${BUILD_DIR}"
 
 echo "[crash-correctness-gate] building critical test targets..."
 build_targets=(unit_modalix_contract_preflight_test "${critical_tests[@]}")

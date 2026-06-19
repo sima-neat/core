@@ -85,7 +85,7 @@ if [[ -n "${SOAK_TEST_DIR}" ]]; then
   echo "[soak-lane] using preinstalled tests from ${TEST_DIR}"
 else
   echo "[soak-lane] configuring build in ${BUILD_DIR}..."
-  cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF
+  cmake -S . -B "${BUILD_DIR}"
 
   echo "[soak-lane] building soak stress targets..."
   build_targets=(unit_modalix_contract_preflight_test "${SOAK_TESTS[@]}")

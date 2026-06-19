@@ -284,7 +284,7 @@ Support triage order is:
 4. replay with `repro_gst_launch`
 
 #### Internal pipeline diagnostics
-Under `src/pipeline/internal/` (internal-only, test targets via `sima_neat_internal`):
+Under `src/pipeline/internal/` (internal-only):
 - `Diagnostics.h` -- shared diagnostics types used by runtime:
   - `DiagCtx` (bus log + node reports + boundary/element counters)
   - `BoundaryFlowCounters` (atomic counters updated from streaming threads)
