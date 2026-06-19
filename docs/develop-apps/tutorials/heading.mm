@@ -1,8 +1,11 @@
 ## Before You Start
 
-Running `sima-cli install neat` installs the Neat library. When prompted, select
-the optional **SiMa.ai Neat extras** package to receive the tutorials as well.
-Press `Space` to toggle the extras checkbox in the installer.
+:::note Packaged tutorial bundle
+Before running the packaged tutorials, install the
+[Neat Library](/getting-started/neat-library/install-or-update/) and select the
+optional **SiMa.ai Neat extras** package when prompted. The extras package
+contains the tutorial source and prebuilt tutorial binaries.
+:::
 
 The extras package gives you a self-contained tutorial folder with:
 
@@ -20,9 +23,6 @@ sima-neat-<version>-Linux-extras/
 ├── lib/sima-neat/tutorials/      # prebuilt C++ binaries
 └── share/sima-neat/tutorials/    # C++ and Python source folders
 ```
-
-If the tutorial folder is missing, re-run the Neat installer and select
-**SiMa.ai Neat extras** when prompted.
 
 ## Quick Preflight
 
@@ -91,8 +91,9 @@ root, add `--model-target-folder <path>`.
 ## Verify the Extras Folder
 
 Both lists should print the same tutorial chapter names. If either list is
-empty, re-run `sima-cli install neat` and make sure **SiMa.ai Neat extras** is
-selected.
+empty, follow the
+[Neat Library install/update flow](/getting-started/neat-library/install-or-update/)
+and make sure **SiMa.ai Neat extras** is selected.
 
 ```bash
 ls lib/sima-neat/tutorials/ | grep '^tutorial_'

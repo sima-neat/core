@@ -20,7 +20,7 @@ The word "Neat" is used for two related but separate concerns:
 - **Neat Library:** the C++/Python library and runtime in this repository. It loads model
   packs, composes pipelines, validates contracts, runs on Modalix hardware, and exposes the
   public API.
-- **Palette SDK / environment:** the containerized development workflow around the framework,
+- **Neat SDK / environment:** the containerized development workflow around the framework,
   including DevKit Sync, shared workspaces, and agent tooling.
 
 When changing this repository, optimize for framework properties that support both humans and

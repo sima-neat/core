@@ -79,7 +79,7 @@ In your sources, pull in the umbrella header:
 #include "neat.h"   // simaai::neat::Model, Graph, Run, Tensor, nodes, …
 ```
 
-### Cross-compiling from Palette SDK
+### Cross-compiling from Neat SDK
 
 On a native DevKit install, `SimaNeatConfig.cmake` is on the default system prefix and `find_package` resolves with no extra setup. In an SDK cross-build, point CMake at the exported sysroot before `find_package` so it can locate the aarch64 package:
 

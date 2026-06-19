@@ -56,13 +56,13 @@ Create a working directory for the example, then use the **Python / C++** tabs t
   source ~/pyneat/bin/activate
   python3 hello_neat.py
   ```
-* **On the Palette SDK host**
+* **On the Neat SDK host**
   ```bash
   dk hello_neat.py
   ```
 
 :::note Python Runtime Location
-`pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Palette SDK container.
+`pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Neat SDK container.
 
 When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit using the DevKit `pyneat` environment.
 :::
@@ -145,7 +145,7 @@ cmake --build build -j
   ```bash
   ./build/sima_neat_hello
   ```
-* **On the Palette SDK host**
+* **On the Neat SDK host**
   ```bash
   dk build/sima_neat_hello
   ```
