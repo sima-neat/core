@@ -1,10 +1,14 @@
 ## Before You Start
 
 :::note Packaged tutorial bundle
-Before running the packaged tutorials, install the
-[Neat Library](/getting-started/neat-library/install-or-update/) and select the
-optional **SiMa.ai Neat extras** package when prompted. The extras package
-contains the tutorial source and prebuilt tutorial binaries.
+Before running the packaged tutorials, make sure the Neat Library is installed,
+then download the tutorial bundle:
+
+```bash
+sima-cli neat install core -t extras
+```
+
+The extras package contains the tutorial source and prebuilt tutorial binaries.
 :::
 
 The extras package gives you a self-contained tutorial folder with:
@@ -91,9 +95,11 @@ root, add `--model-target-folder <path>`.
 ## Verify the Extras Folder
 
 Both lists should print the same tutorial chapter names. If either list is
-empty, follow the
-[Neat Library install/update flow](/getting-started/neat-library/install-or-update/)
-and make sure **SiMa.ai Neat extras** is selected.
+empty, download the extras package:
+
+```bash
+sima-cli neat install core -t extras
+```
 
 ```bash
 ls lib/sima-neat/tutorials/ | grep '^tutorial_'

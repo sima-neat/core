@@ -86,7 +86,7 @@ fi
 INSTALL_SCRIPT_PATH="${ARTIFACTS_DIR}/${INSTALL_SCRIPT_NAME}"
 [[ -f "${INSTALL_SCRIPT_PATH}" ]] || { echo "Missing install script: ${INSTALL_SCRIPT_PATH}" >&2; exit 1; }
 
-for metadata_file in metadata.json metadata-minimal.json metadata-all.json; do
+for metadata_file in metadata.json metadata-minimal.json metadata-all.json metadata-extras.json; do
   if [[ ! -f "${ARTIFACTS_DIR}/${metadata_file}" ]]; then
     echo "Missing package metadata from build output: ${ARTIFACTS_DIR}/${metadata_file}" >&2
     echo "Run ./build.sh --all or ./build.sh --fuzz with a sima-cli that supports packages build." >&2
