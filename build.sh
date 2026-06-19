@@ -2611,7 +2611,7 @@ generate_package_metadata_if_requested() {
     echo "sima-cli packages build does not support platform compatibility flags; metadata platforms will remain empty."
   fi
 
-  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
+  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json dist/metadata-extras.json
 
   "${SIMA_CLI_BIN}" packages build dist \
     --name "${NEAT_PACKAGE_NAME}" \
@@ -2652,6 +2652,19 @@ generate_package_metadata_if_requested() {
     --variant pyneat \
     "${package_compatibility_args[@]}"
 
+  "${SIMA_CLI_BIN}" packages build dist \
+    --name "${NEAT_PACKAGE_NAME}" \
+    --version "${package_version}" \
+    --description "SiMa.ai Neat extras for ${NEAT_PACKAGE_DESCRIPTION}" \
+    --install-script ":" \
+    --exclude ".deb" \
+    --exclude ".whl" \
+    --exclude ".sh" \
+    --exclude ".txt" \
+    --exclude ".json" \
+    --variant extras \
+    "${package_compatibility_args[@]}"
+
   WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
 import json
 import os
@@ -2672,8 +2685,30 @@ metadata.setdefault("installation", {})["post-message"] = (
 metadata_path.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
 PY
 
+  EXTRAS_BASENAME="${extras_basename}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+metadata_path = Path("dist/metadata-extras.json")
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+extras_name = os.environ["EXTRAS_BASENAME"]
+resources = metadata.get("resources", [])
+if resources != [extras_name]:
+    raise SystemExit(
+        f"metadata-extras.json must contain only {extras_name!r}; got {resources!r}"
+    )
+metadata.setdefault("installation", {})["post-message"] = (
+    "[bold]SiMa.ai Neat extras downloaded.[/bold]\n"
+    f"The extras archive has been downloaded and extracted from: {extras_name}\n"
+    "It contains tutorial source, prebuilt tutorial binaries, and supporting "
+    "test/sample files.\n"
+)
+metadata_path.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
+PY
+
   echo "Built package metadata:"
-  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
+  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json dist/metadata-extras.json
 }
 
 print_artifact_summary() {
