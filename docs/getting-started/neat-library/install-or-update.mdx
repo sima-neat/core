@@ -42,6 +42,11 @@ DevKit, it compares with `/etc/buildinfo` `DISTRO_VERSION`. Development-only
 installs on nonstandard images can set `NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON`
 to bypass the guard explicitly.
 
+On DevKit installs, the installer refreshes APT metadata only when needed by
+default: if `/var/lib/apt/lists` has no package index files. Set
+`NEAT_INSTALLER_APT_UPDATE=ON` to force `apt-get update`, or
+`NEAT_INSTALLER_APT_UPDATE=OFF` to skip the metadata refresh.
+
 ## Prepare an Install Directory
 
 Choose a working directory before running the installer. On the DevKit, install

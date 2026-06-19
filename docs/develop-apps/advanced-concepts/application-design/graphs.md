@@ -28,9 +28,14 @@ Graph = what to run
 Run   = the running instance
 ```
 
-Most application code should use the public `simaai::neat::Graph`. Do not build applications with
-lower-level `simaai::neat::graph::*` runtime/compiler helpers; those are internal implementation
-substrate and focused-test utilities.
+Start with the task pages when you need the shorter path:
+
+- [Graph](/develop-apps/development-workflow/graph) teaches authoring.
+- [Run a Graph](/develop-apps/development-workflow/pipeline) teaches runtime lifecycle, queues, measurement, and throughput.
+- [Node](/develop-apps/development-workflow/node) maps common nodes and groups.
+- [Tensor and Sample](/develop-apps/development-workflow/core_types) explains payloads and metadata.
+
+Most application code should use the public `simaai::neat::Graph` and `simaai::neat::Run`. Do not build applications with lower-level implementation namespaces; those are not customer APIs.
 
 ## When do I need a Graph?
 
@@ -39,7 +44,7 @@ substrate and focused-test utilities.
 | Run one model on one input | `Model::run(...)` or `Model::build(...)` |
 | Add application input/output boundaries around a model | `Graph` |
 | Compose a model with custom processing nodes | `Graph::add(...)` |
-| Reuse a sub-pipeline in multiple apps | Return/pass a `Graph` fragment |
+| Reuse a Graph fragment in multiple apps | Return/pass a `Graph` fragment |
 | Route multiple inputs or outputs | Named `nodes::Input(...)` / `nodes::Output(...)` plus `connect(...)` |
 | Branch one stream to several consumers | `graphs::Branch(...)` |
 | Combine several streams into one logical output | `graphs::Combine(...)` with a `CombinePolicy` |
@@ -113,7 +118,7 @@ single tensor/sample object.
 
 ## Running a Graph
 
-A built `Run` accepts the same public payload types used elsewhere in NEAT:
+A built `Run` accepts the same public payload types used elsewhere in Neat:
 
 | Payload | Use when |
 |---|---|
@@ -150,6 +155,8 @@ while (auto out = run.pull("classes", 1000)) {
 run.stop();
 ```
 
+For the task-focused runtime playbook, including queue policy, output ownership, drop telemetry, and multistream measurement, see [Run a Graph](/develop-apps/development-workflow/pipeline).
+
 ## `build()` versus `build(first_input)`
 
 Most graphs can be built without an input sample:
@@ -161,18 +168,13 @@ neat::Run run = app.build();
 Use this when the graph already declares enough shape/caps information, or when the graph owns its
 source nodes, such as RTSP/file/still-image inputs.
 
-Seeded build gives NEAT the first input during build:
+Seeded build gives Neat the first input during build:
 
 ```cpp
-neat::RunOptions opt;
-opt.startup_preflight = true;
-
-neat::Run run = app.build(neat::TensorList{first_image}, opt);
+neat::Run run = app.build(neat::TensorList{first_image});
 ```
 
-Use this when the first input should seed shape/format adaptation before streaming starts. With
-`startup_preflight = true` (the default for seeded build paths), NEAT may push/pull the seed once to
-catch first-sample failures during build instead of returning a `Run` that immediately fails later.
+Use this when the first input should seed shape/format adaptation before streaming starts. Seeded build preflight is on by default, so Neat may push/pull the seed once to catch first-sample failures during build instead of returning a `Run` that immediately fails later.
 
 For throughput, latency, and power numbers, save metrics after the actual workload has run, not
 immediately after build.
@@ -253,7 +255,7 @@ auto result = run.pull(1000);
 This is convenient for quick scripts and tests. For nontrivial applications, prefer names.
 
 If a graph has multiple possible inputs or outputs, unnamed `push(...)` or `pull()` fails closed and
-reports the available names. That failure is intentional: NEAT should not guess which camera, tensor,
+reports the available names. That failure is intentional: Neat should not guess which camera, tensor,
 or output head you meant.
 
 ## Models are Graph fragments
@@ -404,7 +406,7 @@ app.connect(camera, classifier);
 app.connect(classifier, class_sink);
 ```
 
-If `add()` after a branch would be ambiguous, NEAT fails and tells you to use `connect(...)` instead.
+If `add()` after a branch would be ambiguous, Neat fails and tells you to use `connect(...)` instead.
 That is better than silently appending to the wrong branch.
 
 ## Branching one stream
@@ -634,8 +636,8 @@ Run JSON export.
 
 Model-route provenance matters. A model fragment is more than a list of backend snippets: it carries
 input/output names derived from the model archive, route options, and input-route processor metadata
-for multi-input models. If a saved graph contains a model fragment, NEAT stores the model archive
-path and route options needed to rehydrate it. If the archive is missing on load, NEAT fails with an
+for multi-input models. If a saved graph contains a model fragment, Neat stores the model archive
+path and route options needed to rehydrate it. If the archive is missing on load, Neat fails with an
 actionable error instead of silently building an incomplete route.
 
 ## Export and visualize what ran
@@ -696,7 +698,7 @@ out = run.pull("classes", timeout_ms=1000)
 
 export_opt = pyneat.RunExportOptions()
 export_opt.label = "after_smoke_test"
-export_opt.metadata = [("test_name", "smoke")]
+export_opt.metadata = {"test_name": "smoke"}
 
 run.save_json("/tmp/final.graph_run.json", export_opt)
 ```
@@ -732,7 +734,7 @@ python3 tools/visualize_graph_run.py /tmp/final.graph_run.json --view lowered
 
 - `public` shows the graph the user authored: named inputs, outputs, fragments, and `connect(...)`
   edges.
-- `lowered` shows what NEAT executed internally: pipeline segments, generated branch/combine stages,
+- `lowered` shows what Neat executed internally: pipeline segments, generated branch/combine stages,
   queues, and runtime edges.
 
 ## Common patterns
@@ -894,15 +896,9 @@ sink and backpressure unless that boundary is consumed by another `connect(...)`
 
 ### Do not use lower-level runtime graph APIs in application code
 
-Avoid teaching or writing application code with:
+Avoid teaching or writing application code with lower-level runtime graph APIs.
 
-```cpp
-graph::Graph
-graph::GraphRun
-graph::build(...)
-```
-
-Use:
+Use the public application surface instead:
 
 ```cpp
 neat::Graph
@@ -923,7 +919,7 @@ Before executable pipeline construction, `Graph::build()` normalizes boundaries:
 | `nodes::Output("name")` | no downstream graph consumes it, so it must be a public `Run::pull("name")` endpoint | a downstream graph consumes it, so it is only an internal fragment return value |
 
 Elided does not mean forgotten. The compiler keeps provenance so `describe()`, validation errors,
-metrics, and graph-run JSON can still refer back to the user-facing endpoint name.
+metrics, and run export JSON can still refer back to the user-facing endpoint name.
 
 This prevents reusable fragments from creating hidden appsrc/appsink-style runtime I/O in the middle
 of an application. For example:

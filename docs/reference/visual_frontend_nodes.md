@@ -155,7 +155,7 @@ print(opt.summary())
 graph = pyneat.Graph()
 input_opt = pyneat.InputOptions()
 input_opt.payload_type = pyneat.PayloadType.Tensor
-input_opt.format = "UINT8"
+input_opt.format = pyneat.Format.UINT8
 input_opt.width = width
 input_opt.height = height
 input_opt.max_width = width
