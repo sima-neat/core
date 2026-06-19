@@ -1,6 +1,6 @@
 import ExecutionEnvironment from "@docusaurus/ExecutionEnvironment";
 
-const CONSENT_KEY = "neat-docs-cookie-consent";
+const CONSENT_KEY = "sima-developer-center-cookie-consent";
 const CONSENT_VERSION = 1;
 const ANALYTICS_EVENT = "neat:analytics-consent";
 const TRACK_EVENT = "neat:analytics-track";
@@ -183,7 +183,11 @@ const setStoredConsent = (consent) => {
     marketing: false,
     updatedAt: new Date().toISOString(),
   };
-  window.localStorage.setItem(CONSENT_KEY, JSON.stringify(next));
+  try {
+    window.localStorage.setItem(CONSENT_KEY, JSON.stringify(next));
+  } catch {
+    // Storage can be unavailable in strict privacy modes.
+  }
   window.dispatchEvent(new CustomEvent(ANALYTICS_EVENT, {detail: next}));
   return next;
 };

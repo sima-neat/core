@@ -87,6 +87,7 @@ jobs:
       DOCS_BASE_URL: /software/
       DOCS_DEVELOPER_CENTER_SHELL_BASE: /
       AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
+      DOCS_GA_MEASUREMENT_ID: ${{ needs.resolve-target.outputs.deploy_environment == 'prod' && vars.DOCS_GA_MEASUREMENT_ID || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
