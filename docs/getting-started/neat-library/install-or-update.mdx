@@ -8,6 +8,14 @@ Use this page to install or update the Palette Neat Library. You can install it
 directly on a DevKit, or inside the Neat Development Environment (referred to as
 Neat SDK) when you build from a host machine.
 
+:::note What pairing a DevKit already installs
+Pairing a DevKit during `sima-cli sdk setup` installs the Neat Library — and its
+bundled PyNeat environment at `~/pyneat` — on the DevKit. The SDK container does
+not include the Neat Library; install it in the container only when you
+cross-compile C++ apps. Use the steps below to install the Neat Library in the
+SDK container, install it on a standalone DevKit, or update an existing install.
+:::
+
 ## Choose Where to Install
 
 Run the installer from the environment where you build or run Neat applications:
@@ -44,9 +52,11 @@ to bypass the guard explicitly.
 
 ## Install the Neat Library
 
-Select your environment, then run the steps in order. The installer commands are
-the same in both places; only the working directory and where you run them
-differ.
+Select your environment, then run the steps in order. Install in the **Neat SDK**
+container to cross-compile C++ applications; install on the **DevKit** to set up
+the runtime there, which also provisions PyNeat at `~/pyneat`. The installer
+commands are the same in both places — only the working directory and where you
+run them differ.
 
 <CodeTabs>
 <CodeTab label="Neat SDK" lang="bash">
@@ -115,8 +125,9 @@ sima-cli neat install core@v0.2.0
 
 ## Default PyNeat Environment
 
-On the DevKit, installation also provisions a PyNeat virtual environment at
-`~/pyneat`:
+Installing the Neat Library on the DevKit also provisions a default PyNeat
+virtual environment at `~/pyneat` on the DevKit. This is the supported PyNeat
+environment — activate it directly:
 
 <ShellCommand prompt="modalix">
 source ~/pyneat/bin/activate
