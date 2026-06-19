@@ -361,7 +361,7 @@ if __name__ == "__main__":
   source ~/pyneat/bin/activate
   python3 app.py
   ```
-* **On the Palette SDK host**
+* **On the Neat SDK host**
   ```bash
   dk app.py
   ```
@@ -479,7 +479,7 @@ cmake --build build -j
   ```bash
   ./build/sima_neat_app
   ```
-* **On the Palette SDK host**
+* **On the Neat SDK host**
   ```bash
   dk build/sima_neat_app
   ```

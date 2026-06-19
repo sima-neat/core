@@ -1,14 +1,17 @@
 ---
 title: Install the Environment
-description: Install the Neat Development Environment container
+description: Install the Neat SDK container
 sidebar_position: 2
 ---
 
-Install the Neat Development Environment version that matches your DevKit
-software and Neat Library version.
+Install the latest Neat Development Environment (referred to as Neat SDK). It
+runs as a container on your host machine.
 
 ## Prerequisites
 
+- Confirm your host meets the
+  [host requirements](/getting-started/dev-environment/#host-requirements),
+  including administrator/`sudo` access for installation.
 - Install `sima-cli` on your host machine using the
   [sima-cli installation guide](/tools/sima-cli/).
 - Complete any host-specific setup for your platform:
@@ -18,44 +21,42 @@ software and Neat Library version.
 
 To use DevKit Sync later, you also need:
 
-- A Modalix DevKit running a compatible DevKit software version.
+- Update your DevKit firmware to the latest with
+  [`sima-cli update`](/tools/sima-cli/update/). To stay on an older release, see
+  [Compatibility](/getting-started/compatibility/).
 - Your host machine and DevKit on the same network with NFS traffic allowed.
 - Your DevKit IP address.
 
 ## Install
 
-Install the current released Neat Development Environment:
+Install the current released Neat SDK:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk:v2.1.2
 </ShellCommand>
 
-The first install can take several minutes because it downloads the Neat
-Development Environment container image. The command may not show a progress bar
-while the download is in progress.
+The first install can take several minutes because it downloads the Neat SDK
+container image. The command may not show a progress bar while the download is
+in progress.
 
-Use an older Neat Development Environment only when your DevKit software is from
-that release family. For Neat Development Environment 2.0.0:
+To install an older release for a DevKit on the 2.0.0 firmware, see
+[Compatibility](/getting-started/compatibility/).
 
-<ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.0.0
-</ShellCommand>
-
-## Set Up the Neat Development Environment Workspace
+## Set Up the Neat SDK Workspace
 
 After the image is installed, run `sima-cli sdk setup` before opening the Neat
-Development Environment shell. Choose the command for your situation and follow
-the prompts in your terminal.
+SDK shell. Choose the command for your situation and follow the prompts in your
+terminal.
 
 If your DevKit is reachable from the host, pair it during setup before opening
-the Neat Development Environment shell:
+the Neat SDK shell:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
-If your DevKit is not reachable yet, set up the Neat Development Environment
-workspace without pairing:
+If your DevKit is not reachable yet, set up the Neat SDK workspace without
+pairing:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk setup
@@ -67,8 +68,10 @@ During setup, `sima-cli` may ask you to:
 - choose a host workspace directory. Accept the default unless you need a
   different workspace;
 - choose an SDK extensions directory and whether to install Model Compiler.
-  Install it if you plan to quantize or compile models, and complete
-  `sima-cli login` if prompted.
+  The Model Compiler is required to compile or quantize models yourself and is
+  optional only if you exclusively use precompiled model packages. Install it
+  here if you plan to compile or quantize models, and complete `sima-cli login`
+  if prompted.
 
 With `--devkit`, setup enables DevKit Sync. It exports your host workspace over
 NFS and mounts it as `/workspace` on the DevKit by default. Have these ready:
@@ -81,73 +84,76 @@ NFS and mounts it as `/workspace` on the DevKit by default. Have these ready:
 You can add or update DevKit pairing later from
 [Pair with a DevKit](/getting-started/dev-environment/pair-with-a-devkit/).
 
-## Open the Neat Development Environment Shell
+## Open the Neat SDK Shell
 
-After setup succeeds, open the Neat Development Environment shell with:
+After setup succeeds, open the Neat SDK shell with:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk neat
 </ShellCommand>
 
 DevKit pairing is configured during setup. This command opens the configured
-Neat Development Environment container.
+Neat SDK container.
 
 ## Install the Model Compiler
 
-During `sima-cli sdk setup`, `sima-cli` can prompt you to install the matching
-Model Compiler as an extension inside the Neat Development Environment.
-
 The Model Compiler quantizes and compiles ONNX models so they can run on
-SiMa.ai's MLA. Install it during setup if you plan to quantize or compile
-models.
+SiMa.ai's MLA. It is **required** when you compile or quantize models yourself,
+including GenAI models, and is **optional** only if you exclusively use
+precompiled model packages.
 
-If you skip it during setup, install it later from inside the Neat Development
-Environment. Run the command that matches your Neat Development Environment
-container architecture.
+The automatic path is during `sima-cli sdk setup`: `sima-cli` prompts you to
+install the matching Model Compiler as an extension inside the Neat SDK. You can
+also install it later, either inside the Neat SDK container (below) or standalone
+on a supported Ubuntu host (see
+[Compatibility](/getting-started/compatibility/#model-compiler)).
 
-For `amd64` Neat Development Environment containers:
+If you skip it during setup, install it later from inside the Neat SDK. Run the
+command that matches your Neat SDK container architecture.
 
-<ShellCommand prompt="sdk-container">
+For `amd64` Neat SDK containers:
+
+<ShellCommand prompt="username@neat-sdk-latest">
 sima-cli install -v 2.1.2 tools/model-compiler/amd64
 </ShellCommand>
 
-For `arm64` Neat Development Environment containers:
+For `arm64` Neat SDK containers:
 
-<ShellCommand prompt="sdk-container">
+<ShellCommand prompt="username@neat-sdk-latest">
 sima-cli install -v 2.1.2 tools/model-compiler/arm64
 </ShellCommand>
 
-After installation, activate the compiler environment from inside the Neat
-Development Environment shell:
+After installation, activate the compiler environment from inside the Neat SDK
+shell:
 
-<ShellCommand prompt="sdk-container">
+<ShellCommand prompt="username@neat-sdk-latest">
 activate-model-compiler
 </ShellCommand>
 
-To return to the default Neat Development Environment shell, run:
+To return to the default Neat SDK shell, run:
 
-<ShellCommand prompt="sdk-container">
+<ShellCommand prompt="username@neat-sdk-latest">
 deactivate-model-compiler
 </ShellCommand>
 
 ## Upgrade
 
-To reinstall the current released Neat Development Environment image, rerun the
-install command above from the host.
+To reinstall the current released Neat SDK image, rerun the install command
+above from the host.
 
-To update the Neat Library inside an existing Neat Development Environment
-container, run the Neat CLI from the container shell:
+To update the Neat Library inside an existing Neat SDK container, run the Neat
+CLI from the container shell:
 
-<ShellCommand prompt="sdk-container">
+<ShellCommand prompt="username@neat-sdk-latest">
 neat update
 </ShellCommand>
 
-This updates the installed Neat Library components in the current Neat
-Development Environment. It does not replace a full container image upgrade when
-you need container-level changes.
+This updates the installed Neat Library components in the current Neat SDK. It
+does not replace a full container image upgrade when you need container-level
+changes.
 
-If you delete or recreate the Neat Development Environment container later, run
-`neat update` again inside the new container.
+If you delete or recreate the Neat SDK container later, run `neat update` again
+inside the new container.
 
 ## Next Step
 

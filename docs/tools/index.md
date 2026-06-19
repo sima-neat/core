@@ -7,7 +7,7 @@ sidebar_position: 0
 
 The SiMa.ai tools you use alongside Neat: the `sima-cli` command line, Insight,
 and the Model Zoo. For SDK setup, see the
-[Neat Development Environment](/getting-started/dev-environment/).
+[Neat SDK](/getting-started/dev-environment/).
 
 Use these tools to install software, retrieve model artifacts, inspect
 application behavior, and manage common DevKit workflows.

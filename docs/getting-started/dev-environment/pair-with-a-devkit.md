@@ -1,30 +1,29 @@
 ---
 title: Pair with a DevKit
-description: Pair the Neat Development Environment with a Modalix DevKit
+description: Pair the Neat SDK with a Modalix DevKit
 sidebar_position: 3
 ---
 
-Pair the Neat Development Environment with a DevKit when the DevKit is on the
-same network as the Neat Development Environment host. Pairing enables DevKit
-Sync, which exposes one shared workspace across the host, Neat Development
-Environment container, and DevKit.
+Pair the Neat Development Environment (referred to as Neat SDK) with a DevKit
+when the DevKit is on the same network as the Neat SDK host. Pairing enables
+DevKit Sync, which exposes one shared workspace across the host, Neat SDK
+container, and DevKit.
 
 ![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.svg)
 
-The same workspace is mounted into the Neat Development Environment container
+The same workspace is mounted into the Neat SDK container
 and the DevKit as `/workspace`, so build artifacts, logs, traces, and model
 files are visible from each environment.
 
 ## Pair the Environment
 
-Run this setup command from the host before opening the Neat Development
-Environment shell:
+Run this setup command from the host before opening the Neat SDK shell:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk setup --devkit {devkit-ip}
 </ShellCommand>
 
-After setup succeeds, open the paired Neat Development Environment container
+After setup succeeds, open the paired Neat SDK container
 with `sima-cli sdk neat`.
 
 During setup:
@@ -53,34 +52,33 @@ When setup succeeds, you should see output similar to:
 
 ## Update an Existing Pairing
 
-Use this flow when the Neat Development Environment is already installed and you
+Use this flow when the Neat SDK is already installed and you
 need to pair a different DevKit or update the pairing after your DevKit IP
 address changed.
 
-From inside the Neat Development Environment container, run:
+From inside the Neat SDK container, run:
 
-```bash
+<ShellCommand prompt="username@neat-sdk-latest">
 source devkit.sh <devkit-ip>
-```
+</ShellCommand>
 
 Replace `<devkit-ip>` with the IP address of the DevKit you want to use.
 
 Example:
 
-```bash
+<ShellCommand prompt="username@neat-sdk-latest">
 source devkit.sh 192.168.91.221
-```
+</ShellCommand>
 
 ## Set Up Without DevKit Pairing
 
-Use this flow when the DevKit is not reachable from the Neat Development
-Environment host:
+Use this flow when the DevKit is not reachable from the Neat SDK host:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk setup
 </ShellCommand>
 
-You can still build binaries in the Neat Development Environment container, but
+You can still build binaries in the Neat SDK container, but
 you must transfer them to the DevKit manually for testing. Make sure the DevKit
 is running a compatible Neat Library version.
 
@@ -89,14 +87,14 @@ is running a compatible Neat Library version.
 DevKit Sync connects three environments:
 
 1. Host
-2. Neat Development Environment container
+2. Neat SDK container
 3. DevKit
 
 `sima-cli sdk setup --devkit {devkit-ip}` configures NFS so the same workspace is
 available in all three environments:
 
 - The host workspace folder is exported through host NFS.
-- The folder is mounted into the Neat Development Environment container as
+- The folder is mounted into the Neat SDK container as
   `/workspace`.
 - The same content appears on the DevKit as `/workspace` through NFS.
 - The mounted folder name defaults to `/workspace` and can be changed during
@@ -104,7 +102,7 @@ available in all three environments:
 
 This setup provides a direct workflow for build artifacts:
 
-- Artifacts produced in the Neat Development Environment are immediately visible
+- Artifacts produced in the Neat SDK are immediately visible
   on the DevKit without a separate deploy step.
 - Agents can access logs, outputs, traces, and other interim files generated
   while the app runs on the DevKit.
