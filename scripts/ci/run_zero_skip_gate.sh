@@ -12,7 +12,7 @@ BUILD_TARGETS="${BUILD_TARGETS:-}"
 mkdir -p "${BUILD_DIR}"
 
 echo "[zero-skip] configure ${BUILD_DIR}"
-cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF
+cmake -S . -B "${BUILD_DIR}"
 
 echo "[zero-skip] build tests"
 if [[ -n "${BUILD_TARGETS}" ]]; then

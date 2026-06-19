@@ -24,6 +24,7 @@ set -euo pipefail
 # - Directory containing:
 #   - one .whl file
 #   - sima-neat-*-Linux-core.deb
+#   - sima-neat-*-Linux-dev.deb
 #   - neat-*.deb / simaai-common*.deb runtime dependencies
 #   - appcomplex_*.deb legacy runtime dependency packages when present
 #   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-cli.deb / sima-lmm-*-Linux-dev.deb
@@ -493,7 +494,7 @@ collect_debs_in_install_order() {
   local -n out_array="${out_array_name}"
   out_array=()
 
-  # Install low-level runtime packages first, then LLiMa, then NEAT core.
+  # Install low-level runtime packages first, then LLiMa, then NEAT core/dev.
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-common_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
@@ -504,6 +505,7 @@ collect_debs_in_install_order() {
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-internals-dev_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-lmm-*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-dev.deb'
 }
 
 sysroot_path() {
@@ -641,6 +643,7 @@ cache_install_artifacts_in_sysroot() {
   run_sudo mkdir -p "${cache_dir}"
   run_sudo rm -f \
     "${cache_dir}"/sima-neat-*-Linux-core.deb \
+    "${cache_dir}"/sima-neat-*-Linux-dev.deb \
     "${cache_dir}"/neat-*.deb \
     "${cache_dir}"/simaai-common*.deb \
     "${cache_dir}"/neat-common_*.deb \
@@ -689,7 +692,9 @@ collect_cached_devkit_deploy_files() {
   fi
 
   local -a cached_core_debs=()
+  local -a cached_dev_debs=()
   mapfile -t cached_core_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+  mapfile -t cached_dev_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort)
   collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
   collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
@@ -698,6 +703,10 @@ collect_cached_devkit_deploy_files() {
 
   if [[ "${#cached_core_debs[@]}" -lt 1 ]]; then
     echo "No cached sima-neat core DEB found for paired DevKit sync in: ${cache_dir}" >&2
+    exit 1
+  fi
+  if [[ "${#cached_dev_debs[@]}" -lt 1 ]]; then
+    echo "No cached sima-neat dev DEB found for paired DevKit sync in: ${cache_dir}" >&2
     exit 1
   fi
   if [[ "${#CACHED_DEBS[@]}" -lt 1 ]]; then
