@@ -29,7 +29,7 @@ Bootstrap dependencies:
 
 ## Coding Standards
 
-- Public API must use canonical naming from `docs/contribute/naming.md`.
+- Public API must use canonical naming from `docs/develop-apps/contribute/start-here/naming.md`.
 - C++ namespace is `simaai::neat`.
 - Core runtime types are `Model`, `Graph`, and `Run`.
 - Keep source headers/implementation paths coherent (no internal headers in `include/`).
@@ -101,10 +101,10 @@ When changing public API in `include/*`:
 
 1. Keep old symbol available for at least one release cycle when feasible.
 2. Mark deprecations with explicit migration guidance.
-3. Update `docs/how-to/migration_legacy_names.md` or a dedicated migration page.
+3. Update a dedicated migration page under `docs/develop-apps/` when the change needs one.
 4. Update examples/tutorials to canonical replacements.
 5. Include downstream migration impact in the PR template.
 
 ## Release Hygiene
 
-Releases must follow `docs/contribute/release-checklist.md` and pass all required checks in `.github/workflows/release-gate.yml`, including model-archive security, install smoke, perf regression, soak, and fuzz gates.
+Releases must follow `docs/develop-apps/contribute/release-maintenance/release-checklist.md` and pass all required checks in `.github/workflows/release-gate.yml`, including model-archive security, install smoke, perf regression, soak, and fuzz gates.

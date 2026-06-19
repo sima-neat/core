@@ -43,7 +43,7 @@ Developers who want to:
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer
 - **Validate:** build + parse + preroll (PAUSED) to catch negotiation issues early
 - **Serve RTSP:** push synthetic frames into an RTSP server pipeline using `appsrc`
-- **ML output:** image/video/RTSP -> decode -> convert/scale -> `add_output_tensor(...)` -> `Run::pull_tensor()`
+- **Image/video tensor adapter:** image/video/RTSP -> decode -> convert/scale -> `add_output_tensor(...)` -> `Run::pull_tensors()`
 - **Tutorials:** start at [Tutorials](/tutorials) for a runnable, ordered learning path
 
 ### Canonical production pipeline (source of truth)
@@ -284,7 +284,7 @@ Support triage order is:
 4. replay with `repro_gst_launch`
 
 #### Internal pipeline diagnostics
-Under `src/pipeline/internal/` (internal-only, test targets via `sima_neat_internal`):
+Under `src/pipeline/internal/` (internal-only):
 - `Diagnostics.h` -- shared diagnostics types used by runtime:
   - `DiagCtx` (bus log + node reports + boundary/element counters)
   - `BoundaryFlowCounters` (atomic counters updated from streaming threads)
@@ -605,8 +605,7 @@ If enabled, the runtime can emit DOT graphs via `gst_debug_bin_to_dot_file_with_
 * a `Tensor` payload (`SampleKind::Tensor`)
 * a bundle of multiple outputs (`SampleKind::Bundle`)
 
-Convenience helpers like `Run::pull_tensor()` and
-`Run::pull_tensor_or_throw()` are provided for ML-centric flows.
+Use `Run::pull_tensors(...)` for ML-centric flows when you want tensor payloads instead of the full `Sample` envelope.
 
 ---
 

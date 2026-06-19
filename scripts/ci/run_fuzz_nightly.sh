@@ -25,7 +25,7 @@ mkdir -p "${ARTIFACT_DIR}"
 
 if [[ "${FUZZ_PREBUILT_ONLY}" != "1" ]]; then
   echo "[fuzz-nightly] configuring fuzz build in ${BUILD_DIR}..."
-  cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF -DFUZZING=ON
+  cmake -S . -B "${BUILD_DIR}" -DFUZZING=ON
 
   echo "[fuzz-nightly] building fuzz targets..."
   cmake --build "${BUILD_DIR}" --target "${FUZZ_TARGETS[@]}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"

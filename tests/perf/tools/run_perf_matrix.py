@@ -139,7 +139,7 @@ def run_cmd(cmd: list[str], cwd: Path, timeout_sec: int | None = None, env: dict
 
 
 def configure_and_build(repo_root: Path, build_dir: Path, targets: list[str]) -> tuple[bool, str]:
-    configure_cmd = ["cmake", "-S", str(repo_root), "-B", str(build_dir), "-DSIMANEAT_BUILD_SAMPLES=OFF"]
+    configure_cmd = ["cmake", "-S", str(repo_root), "-B", str(build_dir)]
     configure_proc = run_cmd(configure_cmd, cwd=repo_root)
     if configure_proc.returncode != 0:
         detail = (

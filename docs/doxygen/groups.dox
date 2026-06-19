@@ -1,10 +1,10 @@
 /**
  * @defgroup pipeline Pipeline runtime
- * @brief Graph, PipelineRun, options, reports, errors.
+ * @brief Graph, Run, options, reports, errors.
  */
 
 /**
- * @defgroup builder Builder internals
+ * @defgroup builder Graph builder support
  * @brief Node interfaces and builder utilities used by the public Graph compiler.
  */
 
@@ -44,8 +44,8 @@
  */
 
 /**
- * @defgroup model_archive Model archive internals
- * @brief Internal `.tar.gz` model archive loading and validation.
+ * @defgroup model_archive Model archive
+ * @brief Compiled model archive loading and validation.
  */
 
 /**
@@ -74,8 +74,8 @@
  */
 
 /**
- * @defgroup graph Runtime graph internals
- * @brief Actor-style runtime DAG, named-port stages, and compiler/runtime substrate used by public Graph.
+ * @defgroup graph Graph runtime
+ * @brief Runtime DAG, named-port stages, and execution support behind Graph.
  */
 
 /**
@@ -85,9 +85,9 @@
  */
 
 /**
- * @defgroup graph_runtime Runtime graph internals
+ * @defgroup graph_runtime Graph runtime queues
  * @ingroup graph
- * @brief Queue and mailbox primitives used by runtime graph execution.
+ * @brief Queue and mailbox primitives used by graph execution.
  */
 
 /**

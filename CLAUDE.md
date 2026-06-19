@@ -3,7 +3,7 @@
 Guidance for Claude (and other agents) working in this repository.
 
 This file complements `AGENTS.md`, `CONTRIBUTING.md`, and the authoritative
-contributor docs under `docs/contribute/` — read those for full rationale.
+contributor docs under `docs/develop-apps/contribute/` — read those for full rationale.
 This file extracts the operational essentials.
 
 ## What this repo is
@@ -104,11 +104,12 @@ Run optional analysis with `bash scripts/run_cpp_tidy.sh`.
 
 ## SiMa-specific coding guidelines
 
-These come from `docs/contribute/coding_standard.md`,
-`docs/contribute/architecture.md`, and `docs/contribute/naming.md`. Treat
+These come from `docs/develop-apps/contribute/start-here/coding_standard.md`,
+`docs/develop-apps/contribute/start-here/architecture.md`, and
+`docs/develop-apps/contribute/start-here/naming.md`. Treat
 them as load-bearing.
 
-### Naming contract (`docs/contribute/naming.md`)
+### Naming contract (`docs/develop-apps/contribute/start-here/naming.md`)
 
 - Use canonical names in new code and docs: `Model`, `Session`, `Run`,
   `Input`, `Output`.
@@ -195,7 +196,7 @@ them as load-bearing.
 
 ### Test obligations on change
 
-From `docs/contribute/test_requirements.md`:
+From `docs/develop-apps/contribute/build-test/test_requirements.md`:
 
 - **New node / node-group:** deterministic fragment unit test, caps/parse
   coverage, at least one integration chain.
@@ -213,13 +214,14 @@ From `docs/contribute/test_requirements.md`:
 
 When behavior or public API changes:
 
-- Update `docs/contribute/architecture.md` if architecture/contracts changed.
+- Update `docs/develop-apps/contribute/start-here/architecture.md` if architecture/contracts changed.
 - Update user-facing docs for workflow/configuration changes.
 - Update examples if API usage changed.
 - If you add a new environment knob (`SIMA_GST_*` etc.), add it to the
-  "Environment / configuration knobs" section of `architecture.md`.
+  "Environment / configuration knobs" section of
+  `docs/develop-apps/contribute/start-here/architecture.md`.
 - If you change `tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`,
-  update `README.md` and `docs/contribute/architecture.md`.
+  update `README.md` and `docs/develop-apps/contribute/start-here/architecture.md`.
 
 ## Commit / PR conventions
 
@@ -295,8 +297,8 @@ If applicable, provide:
 ## API / Deprecation Checklist
 
 - [ ] Public API unchanged
-- [ ] Public API changed with deprecation path documented in docs/how-to
-- [ ] Naming contract respected (`docs/architecture/naming.md`)
+- [ ] Public API changed with deprecation path documented under `docs/develop-apps/`
+- [ ] Naming contract respected (`docs/develop-apps/contribute/start-here/naming.md`)
 
 ## Release Hygiene Checklist
 
@@ -325,10 +327,10 @@ string) → enable the targeted probes above → inspect DOT graphs.
 
 - High-level overview: `README.md`
 - Agent / contributor expectations: `AGENTS.md`, `CONTRIBUTING.md`
-- Architecture deep-dive: `docs/contribute/architecture.md`
-- Coding rules: `docs/contribute/coding_standard.md`
-- Test rules: `docs/contribute/test_requirements.md`
-- Naming contract: `docs/contribute/naming.md`
-- MPK contract: `docs/contribute/mpk_contract.md`
+- Architecture deep-dive: `docs/develop-apps/contribute/start-here/architecture.md`
+- Coding rules: `docs/develop-apps/contribute/start-here/coding_standard.md`
+- Test rules: `docs/develop-apps/contribute/build-test/test_requirements.md`
+- Naming contract: `docs/develop-apps/contribute/start-here/naming.md`
+- MPK contract: `docs/develop-apps/contribute/contracts-internals/mpk_contract.md`
 - Public headers: `include/`
 - Canonical production e2e: `tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`

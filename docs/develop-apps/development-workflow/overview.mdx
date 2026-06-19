@@ -6,16 +6,43 @@ sidebar_position: 4
 
 # Run / Inference
 
-If you are new to SiMa Neat, the shortest path to a prediction is two lines — load a model, then run it:
+If you are new to SiMa.ai Neat, the shortest path to a prediction is two lines: load a model, then run it.
 
 1. Load a compiled model archive (`.tar.gz`) with [`Model`](/reference/{lsa}/classes/simaai-neat-model).
-2. Call `model.run(input, timeout_ms)` to run inference synchronously and get a `TensorList` back for tensor/image inputs.
+2. Call `model.run(inputs, timeout_ms)` to run inference synchronously and get output tensors back.
 
-That is the entire workflow for a single model — **no graph required**. Reach for a [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) only when one model on its own is not enough: chaining multiple stages into a pipeline, decoupling producers and consumers with async `push` / `pull`, or controlling queueing. That is covered at the [end of this page](#compose-a-graph-when-you-need-more).
+That is the whole workflow for a single model. Reach for a [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) when one model on its own is not enough: chaining stages, decoupling producers and consumers with async `push` / `pull`, or controlling queueing.
+
+## What the examples assume
+
+Use the snippets on this page as shapes, not as a whole app. A runnable app also needs:
+
+- a compiled model artifact from the Model Compiler, copied to the machine that runs Neat;
+- Python: `import pyneat`;
+- C++: `#include "neat.h"`;
+- C++ builds: `find_package(SimaNeat REQUIRED CONFIG)` and `SimaNeat::sima_neat`;
+- an image or tensor fixture that matches the model contract.
+
+Replace example paths such as `resnet_50_model.tar.gz` with your model artifact. The specs are the contract; inspect them before you allocate real input.
+
+## Choose the runtime path
+
+Use the smallest surface that matches the work. No ceremony tollbooths.
+
+| If you need to... | Use | Why |
+| --- | --- | --- |
+| Run one compiled model once | `Model.run(...)` | Fastest smoke test for artifact, input, and output contract. |
+| Compose a model with app nodes | `Graph` | Names the boundary and makes topology visible. |
+| Run one graph request/response | `Graph.run(...)` | One-shot graph execution without managing a long-lived run. |
+| Keep a graph alive for many inputs | `graph.build(...)` → `Run` | Reuses the runtime and exposes push/pull, close, drain, and measurement. |
+| Tune multiple streams or max throughput | `RunOptions`, `try_push(...)`, `MeasureReport` | Queue policy and counters tell you what actually happened under load. |
+
+For setup, model archives, and command context, see the [Tutorials](/tutorials)
+preflight checklist.
 
 ## Run a model directly
 
-Load the model and call `run(...)`. It executes synchronously and returns a `TensorList` for tensor/image inputs. No `Graph`, no `Run`, no `push` / `pull`.
+Load the model and call `run(...)`. It executes synchronously. No `Graph`, no `Run`, no runtime loop.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -23,8 +50,15 @@ Load the model and call `run(...)`. It executes synchronously and returns a `Ten
 ```cpp
 simaai::neat::Model model("resnet_50_model.tar.gz");
 
-cv::Mat img = /* your frame (RGB/BGR as configured) */;
-simaai::neat::TensorList outputs = model.run(std::vector<cv::Mat>{img}, /*timeout_ms=*/1000);
+cv::Mat frame = /* your OpenCV BGR frame */;
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/1000);
 
 // outputs[0] holds the first result; read its bytes with outputs[0].map_read().
 ```
@@ -33,10 +67,14 @@ simaai::neat::TensorList outputs = model.run(std::vector<cv::Mat>{img}, /*timeou
 <CodeTab label="Python" lang="python">
 
 ```python
-model = neat.Model("resnet_50_model.tar.gz")
+model = pyneat.Model("resnet_50_model.tar.gz")
 
-img = ...  # your frame as a Tensor or NumPy array
-outputs = model.run([img], timeout_ms=1000)
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+outputs = model.run([tensor], timeout_ms=1000)
 
 # outputs[0] holds the first result.
 ```
@@ -44,101 +82,131 @@ outputs = model.run([img], timeout_ms=1000)
 </CodeTab>
 </CodeTabs>
 
-That is the whole path for single-model inference. For a complete, runnable version see [Run Your First Model](/tutorials/run-your-first-model).
+In Python, pass a list or tuple of inputs. `model.run([tensor])` means “one model input,” not “add a batch dimension.”
+
+For a complete, runnable version, see [Run Your First Model](/tutorials/run-your-first-model).
 
 ## Compose a Graph when you need more
 
-A [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) wraps one or more model stages (plus your own nodes) into a pipeline you build into a [`Run`](/reference/{lsa}/classes/simaai-neat-run). Reach for it when a single `model.run(...)` is not enough — when you need to:
+A [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) wraps one or more model stages plus your own nodes into a runtime flow you build into a [`Run`](/reference/{lsa}/classes/simaai-neat-run). Reach for it when you need to:
 
-- chain multiple models or pre/post-processing stages into one pipeline,
-- decouple producers and consumers with asynchronous `push` / `pull`, or
+- chain multiple models or pre/post-processing stages;
+- decouple producers and consumers with asynchronous `push` / `pull`; or
 - control queueing, overflow, and metrics with [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions).
 
-### Synchronous Graph
+### Run a graph once
 
-For request/response execution, build the graph in `Sync` mode and use `run(...)` / `push_and_pull(...)`.
-
-<CodeTabs>
-<CodeTab label="C++" lang="cpp">
-
-```cpp
-simaai::neat::Model model("resnet_50_model.tar.gz");
-simaai::neat::Graph graph;
-graph.add(model.graph());
-
-cv::Mat img = /* your frame (RGB/BGR as configured) */;
-auto out = graph.run(std::vector<cv::Mat>{img});
-```
-
-</CodeTab>
-<CodeTab label="Python" lang="python">
-
-```python
-# Pseudo Python sync example.
-model = neat.Model("resnet_50_model.tar.gz")
-
-graph = neat.Graph()
-graph.add(model.graph())
-
-img = ...  # your frame tensor
-
-out = graph.run([img])
-```
-
-</CodeTab>
-</CodeTabs>
-
-### Asynchronous Graph
-
-Use async mode when you want to decouple producers and consumers, control queueing, or overlap IO and compute. Use `push(...)` / `pull(...)` with `RunOptions` to tune queueing and drop behavior.
+For request/response execution, use `Graph.run(...)`.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
 simaai::neat::Model model("resnet_50_model.tar.gz");
-simaai::neat::Graph graph;
-graph.add(model.graph());
 
-cv::Mat img = /* your frame */;
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
 
-simaai::neat::RunOptions opt;
-opt.queue_depth = 8;
-opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
-
-auto run = graph.build(img, opt);
-run.push(img);
-auto out = run.pull(/*timeout_ms=*/1000);
+cv::Mat frame = /* your frame (RGB/BGR as configured) */;
+auto out = graph.run(std::vector<cv::Mat>{frame});
 ```
 
 </CodeTab>
 <CodeTab label="Python" lang="python">
 
 ```python
-# Pseudo Python async example.
-model = neat.Model("resnet_50_model.tar.gz")
+model = pyneat.Model("resnet_50_model.tar.gz")
 
-graph = neat.Graph()
-graph.add(model.graph())
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
 
-img = ...  # your frame
-
-opt = neat.RunOptions()
-opt.queue_depth = 8
-opt.overflow_policy = neat.OverflowPolicy.Block
-
-run = graph.build(img, opt)
-run.push(img)
-out = run.pull(timeout_ms=1000)
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+out = graph.run([tensor])
 ```
 
 </CodeTab>
 </CodeTabs>
+
+### Build a reusable Run
+
+Use a reusable `Run` when you want to decouple producers and consumers, control queueing, or overlap I/O and compute. Use `push(...)` / `pull(...)` with `RunOptions` to tune queueing and drop behavior.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+cv::Mat frame = /* your frame */;
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{frame});
+auto out = run.pull("classes", /*timeout_ms=*/1000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+run = graph.build()
+run.push("image", [tensor])
+out = run.pull("classes", timeout_ms=1000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+For lifecycle, backpressure, multistream throughput, measurement, and run export, continue to [Run a Graph](/develop-apps/development-workflow/pipeline).
+
+## C++ and Python return shapes
+
+The APIs line up, but Python uses explicit lists or tuples to disambiguate
+single input vs. multiple input ports. A bare `Tensor` or `Sample` is rejected
+on purpose.
+
+| Operation | C++ return | Python return | Notes |
+| --- | --- | --- | --- |
+| `Model::run(TensorList)` or `Model::run(std::vector<cv::Mat>)` | `TensorList` | `model.run([tensor])` returns a tensor list | Use for normal tensor/image input. |
+| `Model::run(Sample)` | `Sample` | `model.run([sample])` returns a `Sample` | Use when you need sample metadata or bundles. |
+| `Graph::run(TensorList)` or `Graph::run(std::vector<cv::Mat>)` | `TensorList` | `graph.run([tensor])` returns a tensor list | One-shot graph request/response. |
+| `Graph::run(Sample)` | `Sample` | `graph.run([sample])` returns a `Sample` | Use for sample-backed graph input. |
+| `Run::run(TensorList)` or `Run::run(std::vector<cv::Mat>)` | `TensorList` | `run.run([tensor])` returns a tensor list | Reusable request/response on a live `Run`. |
+| `Run::run(Sample)` | `Sample` | `run.run([sample])` returns a `Sample` | Use for bundles, stream IDs, frame IDs, or metadata. |
+| `Run::pull(...)` | `std::optional<Sample>` | `Sample` or `None` | `None` means no sample arrived before timeout or the output is closed. |
+| `Run::pull_tensors(...)` | `TensorList` | Tensor list | Use when you only want tensor payloads. |
+| `Run::pull_samples(...)` | `Sample` | `Sample` | Use when absence is exceptional and you want strict sample output. |
 
 ## Learn the concepts
 
 - [Model](/develop-apps/development-workflow/model): model archive loading and model-driven graph fragments.
 - [Graph](/develop-apps/development-workflow/graph): assembly, validation, and run/build entry point.
+- [Run a Graph](/develop-apps/development-workflow/pipeline): runtime options, push/pull loops, multistream throughput, and measurement.
 - [Node](/develop-apps/development-workflow/node): atomic stages, pre-built groups, and graph boundary nodes.
 - [Tensor and Sample](/develop-apps/development-workflow/core_types): payload vs metadata envelope.
 
