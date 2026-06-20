@@ -28,7 +28,7 @@ with `sima-cli sdk neat`.
 
 During setup:
 
-- Select the installed `sdk:v2.1.2` image if more than one SDK image is present.
+- Select the installed `sdk:v2.1-latest` image if more than one SDK image is present.
 - Accept the default `/workspace` DevKit mount path unless you need a different
   path.
 - Enter the host admin password when prompted for NFS server setup on the host.
