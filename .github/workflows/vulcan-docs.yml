@@ -81,6 +81,7 @@ jobs:
       - resolve-target
       - resolve-docs-vars
     runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-target.outputs.deploy_environment }}
     env:
       DOCS_URL: ${{ needs.resolve-docs-vars.outputs.sysdoc_base_url }}
       DOCS_STRICT_LINKS: "1"
