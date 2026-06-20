@@ -15,7 +15,7 @@ contracts must stay stable for application developers.
 
 The **Neat Library** is the C++/Python library and runtime in this repository.
 It loads model archives, composes and validates pipelines, runs on Modalix
-hardware, and exposes the public application API. Palette SDK and DevKit Sync
+hardware, and exposes the public application API. Neat SDK and DevKit Sync
 are the surrounding development workflow.
 
 When changing this repository, optimize for framework properties that help both

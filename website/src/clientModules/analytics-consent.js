@@ -1,6 +1,6 @@
 import ExecutionEnvironment from "@docusaurus/ExecutionEnvironment";
 
-const CONSENT_KEY = "neat-docs-cookie-consent";
+const CONSENT_KEY = "sima-developer-center-cookie-consent";
 const CONSENT_VERSION = 1;
 const ANALYTICS_EVENT = "neat:analytics-consent";
 const TRACK_EVENT = "neat:analytics-track";
@@ -23,6 +23,7 @@ let gtagLoaded = false;
 let initialPageViewSent = false;
 let lastTrackedLocation = "";
 let lastDerivedLocation = "";
+let initialized = false;
 
 const deniedConsent = {
   analytics_storage: "denied",
@@ -183,7 +184,11 @@ const setStoredConsent = (consent) => {
     marketing: false,
     updatedAt: new Date().toISOString(),
   };
-  window.localStorage.setItem(CONSENT_KEY, JSON.stringify(next));
+  try {
+    window.localStorage.setItem(CONSENT_KEY, JSON.stringify(next));
+  } catch {
+    // Storage can be unavailable in strict privacy modes.
+  }
   window.dispatchEvent(new CustomEvent(ANALYTICS_EVENT, {detail: next}));
   return next;
 };
@@ -475,6 +480,9 @@ const bindPreferenceLinks = () => {
 };
 
 const initConsent = () => {
+  if (initialized) return;
+  initialized = true;
+
   ensureGtag();
   window.neatDocsTrack = trackEvent;
   window.addEventListener(TRACK_EVENT, (event) => {
@@ -504,6 +512,14 @@ export function onClientEntry() {
 
 export function onRouteDidUpdate() {
   if (!ExecutionEnvironment.canUseDOM) return;
+
+  // onClientEntry does not fire reliably in the deployed build, so run the
+  // one-time init here too (it is idempotent). Without this, gtag is never
+  // bootstrapped on a page load and trackPageView() silently no-ops, so the
+  // only page_view ever recorded is the one emitted by the consent banner's
+  // accept handler — which is why analytics only captured the landing page.
+  initConsent();
+
   bindPreferenceLinks();
   const stored = getStoredConsent();
   if (!stored) {
@@ -511,6 +527,10 @@ export function onRouteDidUpdate() {
     return;
   }
   if (stored.analytics) {
+    // applyConsent is idempotent (loadGtag guards on gtagLoaded); it guarantees
+    // gtag is loaded for returning visitors whose consent was stored on a
+    // previous visit, so the view below is actually sent.
+    applyConsent(stored);
     window.setTimeout(trackPageView, 80);
   }
 }

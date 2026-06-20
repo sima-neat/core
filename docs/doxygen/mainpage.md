@@ -79,7 +79,7 @@ In your sources, pull in the umbrella header:
 #include "neat.h"   // simaai::neat::Model, Graph, Run, Tensor, nodes, …
 ```
 
-### Cross-compiling from Palette SDK
+### Cross-compiling from Neat SDK
 
 On a native DevKit install, `SimaNeatConfig.cmake` is on the default system prefix and `find_package` resolves with no extra setup. In an SDK cross-build, point CMake at the exported sysroot before `find_package` so it can locate the aarch64 package:
 
@@ -110,7 +110,7 @@ If `find_package(SimaNeat ...)` fails, see [Troubleshooting](/reference/troubles
 | Python public API — pyneat module surface | [Python API Reference](/reference/pythonapi/) — generated from nanobind bindings |
 | Advanced concepts and contracts | [graphs](/develop-apps/advanced-concepts/graphs), [timing model](/develop-apps/advanced-concepts/timing_model), [threading](/develop-apps/advanced-concepts/threading), [data formats](/develop-apps/advanced-concepts/data_formats), [dtype contract](/develop-apps/advanced-concepts/dtype_contract), [memory model](/develop-apps/advanced-concepts/memory_model), [MPK contract](/develop-apps/advanced-concepts/mpk_contract), [processor backends](/develop-apps/advanced-concepts/processor_backends), [GStreamer underneath](/develop-apps/advanced-concepts/gstreamer_layer), [CVU kernels](/develop-apps/advanced-concepts/cvu_kernels), [video sender](/develop-apps/advanced-concepts/video_sender), [metadata sender](/develop-apps/advanced-concepts/metadata_sender) |
 | Glossary, environment variables, scripts, error format | [Glossary](/reference/glossary), [env vars](/reference/environment-variables), [scripts inventory](/reference/scripts), [plugin error format](/reference/error_format) |
-| Onboarding, build, first inference | [Neat Development Environment](/getting-started/dev-environment/), [Neat Library](/getting-started/neat-library/), [Build](/develop-apps/contribute/build), [Hello Neat](/develop-apps/hello-neat/minimal) |
+| Onboarding, build, first inference | [Neat SDK](/getting-started/dev-environment/), [Neat Library](/getting-started/neat-library/), [Build](/develop-apps/contribute/build), [Hello Neat](/develop-apps/hello-neat/minimal) |
 | How to do specific things (debugging, runtime tuning, plugin failures) | [Tutorial 016: tune throughput & queues](/tutorials/tune-throughput-and-queues), [Tutorial 012: diagnose a pipeline](/tutorials/diagnose-a-pipeline) |
 | Coding standards, MPK contract, contribution policy | [Coding standard](/develop-apps/contribute/coding_standard), [MPK contract](/develop-apps/contribute/mpk_contract), [Architecture](/develop-apps/contribute/architecture) |
 

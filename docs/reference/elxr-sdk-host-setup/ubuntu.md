@@ -4,7 +4,8 @@ description: Prepare an Ubuntu host for Neat SDK and DevKit-Sync
 sidebar_position: 1
 ---
 
-Use this guide when your host machine is Ubuntu and you want to run Neat SDK with DevKit-Sync.
+Use this guide when your host machine is Ubuntu and you want to run Neat
+Development Environment (referred to as Neat SDK) with DevKit-Sync.
 
 ## Prerequisites
 
@@ -88,4 +89,4 @@ host NFS export created by `sima-cli sdk setup --devkit`.
 
 ## Next step
 
-Return to [Neat Development Environment](/getting-started/dev-environment/) and continue with install/setup.
+Return to [Neat SDK](/getting-started/dev-environment/) and continue with install/setup.

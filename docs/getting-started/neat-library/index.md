@@ -1,13 +1,13 @@
 ---
 title: Neat Library
-description: Install or update the SiMa.ai Neat Library on a DevKit or inside the Neat Development Environment
+description: Install or update the SiMa.ai Neat Library on a DevKit or inside the Neat SDK
 sidebar_position: 1
 ---
 
 The Neat Library is the C++ and Python API for running models and building
 applications on Modalix.
 
-The [Neat Development Environment](/getting-started/dev-environment/) includes a
+The [Neat SDK](/getting-started/dev-environment/) includes a
 Neat Library version, but the Neat Library can also be updated independently.
 That means you can install a newer compatible library without reinstalling the
 SDK container. For supported combinations, see the
