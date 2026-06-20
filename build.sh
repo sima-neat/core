@@ -2662,7 +2662,7 @@ generate_package_metadata_if_requested() {
     --exclude ".sh" \
     --exclude ".txt" \
     --exclude ".json" \
-    --variant extras 
+    --variant extras
 
   WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
 import json
