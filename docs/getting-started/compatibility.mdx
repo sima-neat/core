@@ -9,9 +9,10 @@ mdx:
 # Compatibility
 
 :::tip First time setting up?
-This page is a version-compatibility **reference**, not a setup step. Standard
-SDK installation already installs compatible defaults. To set up for the first
-time, start with the
+This page is a version-compatibility **reference**, not a setup step.
+
+Standard SDK installation already installs compatible defaults. To set up for the first
+time, first find out the DevKit software version, then check the
 [Neat SDK](/getting-started/dev-environment/) — including its
 [host requirements](/getting-started/dev-environment/#host-requirements). Use
 the tables below only to pin versions, mix components across firmware versions,
@@ -32,13 +33,44 @@ comes down to two rules:
 2. The **Model Compiler** must be compatible with the **Neat SDK**
    or host environment where it is installed.
 
-Each Neat SDK release targets a specific Neat Library version. You can install a
-newer compatible Neat Library without reinstalling the SDK. For example, use Neat
-Library 0.2.x with the 2.1.2 Neat SDK.
+Each Neat SDK release series targets a specific DevKit software version. Patch
+revisions on the SDK may add tooling fixes without requiring a new DevKit image.
+For example, Neat SDK 2.1.2.x releases, including 2.1.2.1, are compatible with
+DevKit software 2.1.2.
+
+You can also install a newer compatible Neat Library without reinstalling the
+SDK. For example, use Neat Library 0.2.x with the 2.1.2.x Neat SDK series.
 
 :::note
 The versions listed on this page are the supported version combinations.
 :::
+
+## DevKit
+
+Every Modalix DevKit ships with a specific DevKit software version. Check that version
+before choosing a Neat SDK or Neat Library version.
+
+The compatibility tables below are keyed from the DevKit software version
+because the on-device runtime, firmware, and system packages are installed as a
+matched set.
+
+After gaining shell access to the DevKit, check the installed software version.
+You can open a shell through SSH when the DevKit is reachable on the network, or
+through the serial console. For serial access instructions, see
+[Set Up Serial Access](https://developer.sima.ai/hardware/getting-started/setup-serial).
+
+<ShellCommand prompt="modalix">
+cat /etc/buildinfo
+</ShellCommand>
+
+If the DevKit software version is not compatible with the Neat Library version
+you are trying to install, `sima-cli neat install` blocks the install instead
+of mixing incompatible runtime components on the device. In that case, either
+install a Neat Library version that supports your current DevKit software, or
+update the DevKit firmware first.
+
+For instructions on checking and updating DevKit firmware, see
+[Firmware Update](https://developer.sima.ai/hardware/getting-started/firmware-update).
 
 ## Neat SDK
 
@@ -48,13 +80,16 @@ DevKit software version.
 | Neat SDK | Compatible host environment | Compatible DevKit software |
 | :--- | :--- | :--- |
 | **2.0.0** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.0.0** |
-| **2.1.2** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.1.2** |
+| **2.1.2.1** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.1.2** |
 
 Install the current released Neat SDK from the host:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.1.2
+sima-cli install ghcr:sima-neat/sdk:v2.1-latest
 </ShellCommand>
+
+The `v2.1-latest` image currently resolves to Neat SDK 2.1.2.1. It remains on
+the DevKit software 2.1.2 compatibility baseline.
 
 Use an older Neat SDK only when your DevKit software is from
 that firmware. For Neat SDK 2.0.0:
@@ -71,7 +106,7 @@ Neat SDK and on your DevKit.
 | Neat Library | Compatible Neat SDK | Compatible DevKit software | Notes |
 | :--- | :--- | :--- | :--- |
 | **0.1.0** | **2.0.0** | **2.0.0** | Maintained for the 2.0 firmware. |
-| **0.2.0** | **2.1.2** | **2.1.2** | Current development target. |
+| **0.2.1** | **2.1.2.1** | **2.1.2** | Current latest 0.2 release. |
 
 The DevKit software version matters because the on-device runtime, firmware, and
 system packages are installed as a matched set. If you mix components across
@@ -83,16 +118,16 @@ installs a compatible Neat Library for you. Use them only to pin a specific Neat
 Library version from within a compatible Neat SDK or directly
 on the DevKit.
 
+For Neat Library 0.2.1:
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install core@v0.2.1
+</ShellCommand>
+
 For Neat Library 0.1.0:
 
 <ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core@v0.1.0
-</ShellCommand>
-
-For Neat Library 0.2.0:
-
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@v0.2.0
 </ShellCommand>
 
 ## Model Compiler
@@ -118,11 +153,11 @@ Model Compiler version automatically when one is available for your environment.
 | Model Compiler | Compatible Neat SDK | Compatible host environment | Notes |
 | :--- | :--- | :--- | :--- |
 | **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | No Apple Silicon or aarch64/Linux support. |
-| **2.1.2** | **2.1.2** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon is supported by installing inside Neat SDK. |
+| **2.1.2** | **2.1.2.1** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon is supported by installing inside Neat SDK. |
 
 The host environment column applies to standalone Model Compiler installs. For
 example, a customer on an Ubuntu 22.04 host can still use Model Compiler 2.1.2
-by installing it inside Neat SDK 2.1.2, because the Neat SDK provides the
+by installing it inside Neat SDK 2.1.2.1, because the Neat SDK provides the
 compatible Ubuntu 24.04-based container environment.
 
 For a standalone Model Compiler installation, run the command that matches your
@@ -160,17 +195,18 @@ installed component versions, and whether updates are available:
 ```text
 Neat Environment
   Mode               Neat SDK
-  SDK Version        2.1.2_Palette_SDK_neat_develop_27498f5
+  SDK Version        2.1.2_Palette_SDK_neat_v2.1.2.1
+  Platform Version   2.1.2
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
 
 Components
-  Neat core              0.2.0 channel=develop env=prod latest=24d60ac594bb
-  PyNeat                 0.2.0
-  neat-runtime           0.2.0
-  neat-gst-plugins       0.2.0
-  neat-llima             0.2.0
-  neat-insight           0.0.0+main.e10ab17 channel=main latest=dd9e3e0 status=Running venv=/opt/neat-insight/venv
+  Neat core              0.2.1 channel=release env=prod latest=0.2.1
+  PyNeat                 0.2.1
+  neat-runtime           0.2.1
+  neat-gst-plugins       0.2.1
+  neat-llima             0.2.1
+  neat-insight           0.0.3 channel=release status=Running venv=/opt/neat-insight/venv
   Model Compiler         not installed
 
   Update available: yellow component versions indicate available updates.
