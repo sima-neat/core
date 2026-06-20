@@ -32,12 +32,16 @@ To use DevKit Sync later, you also need:
 Install the current released Neat SDK:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.1.2
+sima-cli install ghcr:sima-neat/sdk:v2.1-latest
 </ShellCommand>
 
 The first install can take several minutes because it downloads the Neat SDK
 container image. The command may not show a progress bar while the download is
 in progress.
+
+The `v2.1-latest` tag tracks the latest Neat SDK patch release in the 2.1
+series. The current release is Neat SDK 2.1.2.1, which is compatible with
+DevKit software 2.1.2.
 
 To install an older release for a DevKit on the 2.0.0 firmware, see
 [Compatibility](/getting-started/compatibility/).
@@ -64,7 +68,7 @@ sima-cli sdk setup
 
 During setup, `sima-cli` may ask you to:
 
-- select the installed `sdk:v2.1.2` image if more than one SDK image is present;
+- select the installed `sdk:v2.1-latest` image if more than one SDK image is present;
 - choose a host workspace directory. Accept the default unless you need a
   different workspace;
 - choose an SDK extensions directory and whether to install Model Compiler.

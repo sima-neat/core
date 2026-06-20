@@ -5,7 +5,7 @@ sidebar_position: 1
 ---
 
 The Neat Development Environment (referred to as Neat SDK) is the recommended
-host-side workspace for building Neat applications and validating them on a
+host-side workspace for building large scale Neat applications and validating them on a
 Modalix DevKit. It brings the build tools, model tools, hardware connection, and
 agent-ready source context into one containerized workflow.
 
@@ -79,7 +79,7 @@ See [GenAI setup](/genai-llima/setup/) for the full requirements.
 | Ubuntu 22.04 and 24.04 through Docker Engine | x86_64 | Yes | Yes |
 | Windows 11 through WSL and Docker Engine | x86_64 | Yes | Yes |
 | Ubuntu 22.04 and 24.04 through Docker Engine | aarch64 | Yes | Yes with 2.1.2 or above |
-| macOS 15.5 or above through Colima | aarch64 | Yes | Yes with 2.1.2 or above |
+| macOS 15.5 or above through Colima | aarch64 | Yes | Yes with 2.1.2 or above, must install within the Neat SDK |
 
 ## Tools in the SDK
 

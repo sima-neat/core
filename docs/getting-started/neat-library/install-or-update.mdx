@@ -4,16 +4,11 @@ description: Install or update the Neat Library runtime, C++ files, GStreamer co
 sidebar_position: 2
 ---
 
-Use this page to install or update the Palette Neat Library. You can install it
-directly on a DevKit, or inside the Neat Development Environment (referred to as
-Neat SDK) when you build from a host machine.
+Use this page to install or update the Palette Neat Library.
 
-:::note What pairing a DevKit already installs
-Pairing a DevKit during `sima-cli sdk setup` installs the Neat Library — and its
-bundled PyNeat environment at `~/pyneat` — on the DevKit. The SDK container does
-not include the Neat Library; install it in the container only when you
-cross-compile C++ apps. Use the steps below to install the Neat Library in the
-SDK container, install it on a standalone DevKit, or update an existing install.
+:::tip Neat Library within the Neat SDK
+When you pair a DevKit during `sima-cli sdk setup`, the SDK installs its included
+Neat Library and bundled PyNeat environment at `~/pyneat` on the DevKit automatically.
 :::
 
 ## Choose Where to Install
@@ -22,16 +17,8 @@ Run the installer from the environment where you build or run Neat applications:
 
 | Environment | Use this when |
 | --- | --- |
-| Neat SDK with DevKit Sync | You want the host build environment and paired DevKit runtime kept in sync automatically. |
-| Neat SDK without DevKit Sync | You only need to build in the container and will transfer binaries to a DevKit manually. |
+| Neat SDK | You want to upgrade the Neat Library in the Neat SDK without installing a new SDK version. |
 | DevKit | You want to install or update the runtime directly on the device. |
-
-:::note DevKit Sync keeps the runtime aligned
-When you install from inside an SDK container paired with a DevKit through DevKit
-Sync, the installer also installs the Neat Library on the paired DevKit. This
-keeps the host build environment and the DevKit runtime on the same Neat Library
-version.
-:::
 
 ## Prerequisites
 
@@ -42,18 +29,6 @@ Before you begin:
 
 - Make sure the environment running the installer can download SiMa.ai artifacts.
 - We recommend creating an account at [community.sima.ai](https://community.sima.ai) to access assets such as precompiled models for testing.
-
-The package installer verifies the package `manifest.json` `platform-version`
-before it changes Python, apt, or SDK sysroot packages. In the Neat SDK, it
-compares that value with `/etc/sdk-release` `SDK Version`; on a DevKit, it
-compares with `/etc/buildinfo` `DISTRO_VERSION`. Development-only
-installs on nonstandard images can set `NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON`
-to bypass the guard explicitly.
-
-On DevKit installs, the installer refreshes APT metadata only when needed by
-default: if `/var/lib/apt/lists` has no package index files. Set
-`NEAT_INSTALLER_APT_UPDATE=ON` to force `apt-get update`, or
-`NEAT_INSTALLER_APT_UPDATE=OFF` to skip the metadata refresh.
 
 ## Install the Neat Library
 
@@ -81,17 +56,7 @@ optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli neat install core
-</ShellCommand>
-
-To install a specific release instead, append the version to the package name:
-
-<ShellCommand prompt="username@neat-sdk-latest">
-sima-cli neat install core@v0.1.0
-</ShellCommand>
-
-<ShellCommand prompt="username@neat-sdk-latest">
-sima-cli neat install core@v0.2.0
+sima-cli neat install core@v0.2.1
 </ShellCommand>
 
 </CodeTab>
@@ -99,9 +64,8 @@ sima-cli neat install core@v0.2.0
 <CodeTab label="DevKit" lang="bash">
 
 :::note Update DevKit firmware first
-Before installing the Neat Library on a DevKit, update its firmware to a
-compatible version with `sima-cli update`. See the
-[firmware update guide](https://developer.sima.ai/hardware/getting-started/firmware-update).
+Before installing the Neat Library on a DevKit, ensure the DevKit software version is compatible with the Neat Library. See the
+[Compatibility Guide](/getting-started/compatibility/) for more information.
 :::
 
 Prepare an install directory under `/media/nvme` to avoid filling the root file
@@ -116,17 +80,7 @@ optionally install extras, including prebuilt tutorials, source-code tutorials,
 and tests:
 
 <ShellCommand prompt="modalix">
-sima-cli neat install core
-</ShellCommand>
-
-To install a specific release instead, append the version to the package name:
-
-<ShellCommand prompt="modalix">
-sima-cli neat install core@v0.1.0
-</ShellCommand>
-
-<ShellCommand prompt="modalix">
-sima-cli neat install core@v0.2.0
+sima-cli neat install core@v0.2.1
 </ShellCommand>
 
 </CodeTab>

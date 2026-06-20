@@ -18,7 +18,7 @@ Neat Development Environment (referred to as Neat SDK) with DevKit-Sync.
 
 Run Neat SDK commands from inside your WSL Linux
 distribution, not from PowerShell or Command Prompt. This includes
-`sima-cli install ghcr:sima-neat/sdk:v2.1.2` and
+`sima-cli install ghcr:sima-neat/sdk:v2.1-latest` and
 `sima-cli sdk setup --devkit <devkit-ip>`.
 
 ## WSL network mode
