@@ -362,6 +362,8 @@ set(UNIT_TESTS
   unit_sample_tensor_set_materialized_parent_offsets_test
   unit_yolov8_mla_handoff_segment_test
   unit_yolov8_contract_subset_test
+  unit_tess_output_size_bytes_accumulation_test
+  unit_pre_mla_input_bytes_guard_test
   unit_agg_model_managed_no_standalone_json_test
   unit_tensor_list_api_test
   unit_tensor_conversion_policy_test

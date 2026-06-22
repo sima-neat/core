@@ -1480,8 +1480,8 @@ extract_tessellate_contract_subset_from_stage(const MpkPluginIoContract& stage) 
   subset.align_c16 = stage.has_align_c16 && stage.align_c16;
   subset.cblock = stage.has_cblock && stage.cblock;
   subset.batch_size = explicit_stage_batch_size_or_one(stage);
-  if (!stage.output_tensors.empty() && stage.output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes = static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
+  for (const auto& tensor : stage.output_tensors) {
+    subset.output_size_bytes += static_cast<std::uint64_t>(tensor.size_bytes);
   }
 
   const std::array present = {
@@ -1519,9 +1519,8 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkCont
   subset.output_shape = preferred_geometry_shape_from_stage_tensor(
       *tess_stage,
       tess_stage->output_tensors.empty() ? nullptr : &tess_stage->output_tensors.front(), true);
-  if (!tess_stage->output_tensors.empty() && tess_stage->output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes =
-        static_cast<std::uint64_t>(tess_stage->output_tensors.front().size_bytes);
+  for (const auto& tensor : tess_stage->output_tensors) {
+    subset.output_size_bytes += static_cast<std::uint64_t>(tensor.size_bytes);
   }
   subset.input_dtype = normalize_dtype_token(!quant_stage->canonical_input_dtype.empty()
                                                  ? quant_stage->canonical_input_dtype
@@ -1574,8 +1573,8 @@ extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage) {
   subset.input_shape = preferred_stage_input_tensor_shape(stage, stage.input_tensors.front());
   subset.output_shape = preferred_geometry_shape_from_stage_tensor(
       stage, stage.output_tensors.empty() ? nullptr : &stage.output_tensors.front(), true);
-  if (!stage.output_tensors.empty() && stage.output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes = static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
+  for (const auto& tensor : stage.output_tensors) {
+    subset.output_size_bytes += static_cast<std::uint64_t>(tensor.size_bytes);
   }
   subset.input_dtype = normalize_dtype_token(!stage.canonical_input_dtype.empty()
                                                  ? stage.canonical_input_dtype

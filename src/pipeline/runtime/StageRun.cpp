@@ -314,26 +314,6 @@ bool stage_debug_enabled() {
   return pipeline_internal::env_bool("SIMA_STAGE_DEBUG", false);
 }
 
-bool shadow_change_env_enabled() {
-  static int enabled = -1;
-  if (enabled >= 0) {
-    return enabled != 0;
-  }
-  const char* v = std::getenv("SHADOW_CHANGE");
-  if (!v || !*v) {
-    enabled = 0;
-    return false;
-  }
-  if (!std::strcmp(v, "1") || !std::strcmp(v, "true") || !std::strcmp(v, "TRUE") ||
-      !std::strcmp(v, "yes") || !std::strcmp(v, "YES") || !std::strcmp(v, "on") ||
-      !std::strcmp(v, "ON")) {
-    enabled = 1;
-    return true;
-  }
-  enabled = 0;
-  return false;
-}
-
 GstBuffer* tensor_holder_buffer(const simaai::neat::Tensor& tensor) {
   const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(tensor);
   if (!holder) {
@@ -1177,14 +1157,11 @@ bool mla_info_indicates_packed_envelope(const MlaOutputInfo& info) {
 void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_input,
                                        const std::vector<std::shared_ptr<Node>>& infer_group,
                                        const simaai::neat::Model& model, const char* stage_name) {
-  if (!shadow_change_env_enabled()) {
-    return;
-  }
   const MlaInputTensorInfo mla_input = stage_mla_input_tensor_info(infer_group);
   const int64_t contract_logical_bytes = mla_input.span_size_bytes;
   const std::string contract_input_dtype = mla_input.logical_dtype;
   if (contract_logical_bytes <= 0 || contract_input_dtype.empty()) {
-    throw std::runtime_error("StageRun: missing strict MLA input contract from rendered manifest");
+    return;
   }
 
   // Byte-contract semantics:
