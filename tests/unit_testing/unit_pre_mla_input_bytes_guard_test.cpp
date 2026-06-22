@@ -23,7 +23,9 @@ namespace {
 namespace rendered_stage_query = simaai::neat::pipeline_internal::rendered_stage_query;
 namespace sima = simaai::neat::pipeline_internal::sima;
 
-sima::SimaPluginStaticManifest make_empty_manifest() { return {}; }
+sima::SimaPluginStaticManifest make_empty_manifest() {
+  return {};
+}
 
 sima::SimaPluginStaticManifest make_manifest_no_mla_stage() {
   sima::SimaPluginStaticManifest manifest;
@@ -45,7 +47,7 @@ sima::SimaPluginStaticManifest make_manifest_mla_no_logical_inputs() {
 // MLA stage with one logical input but no backing physical buffer entry.
 // Falls back to logical.size_bytes for span_size_bytes.
 sima::SimaPluginStaticManifest make_manifest_mla_logical_size_only(std::uint64_t size_bytes,
-                                                                    const std::string& dtype) {
+                                                                   const std::string& dtype) {
   sima::SimaPluginStaticManifest manifest;
   sima::StageStaticSpec stage;
   stage.payload_kind = sima::StagePayloadKind::ProcessMla;
@@ -62,7 +64,7 @@ sima::SimaPluginStaticManifest make_manifest_mla_logical_size_only(std::uint64_t
 
 // MLA stage with a physical buffer entry; span_size_bytes comes from physical.size_bytes.
 sima::SimaPluginStaticManifest make_manifest_mla_physical_size(std::uint64_t physical_size_bytes,
-                                                                const std::string& dtype) {
+                                                               const std::string& dtype) {
   sima::SimaPluginStaticManifest manifest;
   sima::StageStaticSpec stage;
   stage.payload_kind = sima::StagePayloadKind::ProcessMla;
