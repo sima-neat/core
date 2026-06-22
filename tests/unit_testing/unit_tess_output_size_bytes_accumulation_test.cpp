@@ -84,8 +84,7 @@ MpkContract make_quant_plus_tess_contract(std::vector<MpkTensorContract> tess_ou
 }
 
 void verify_tess_stage_single_output_tensor() {
-  const auto stage =
-      make_tess_stage({make_tensor_with_size("ofm0", "BF16", {640, 32, 3}, 1000U)});
+  const auto stage = make_tess_stage({make_tensor_with_size("ofm0", "BF16", {640, 32, 3}, 1000U)});
   const auto subset = pcs::extract_tessellate_contract_subset_from_stage(stage);
   require(subset.output_size_bytes == 1000U,
           "tessellate single-output: output_size_bytes must equal the sole tensor's size_bytes");
@@ -123,8 +122,8 @@ void verify_tess_stage_first_tensor_zero_but_others_nonzero() {
 }
 
 void verify_quanttess_stage_single_output_tensor() {
-  const auto stage = make_quanttess_stage(
-      {make_tensor_with_size("ofm0", "INT8", {640, 640, 3}, 2000U)});
+  const auto stage =
+      make_quanttess_stage({make_tensor_with_size("ofm0", "INT8", {640, 640, 3}, 2000U)});
   const auto subset = pcs::extract_quanttess_contract_subset_from_stage(stage);
   require(subset.output_size_bytes == 2000U,
           "quanttess single-output: output_size_bytes must equal the sole tensor's size_bytes");
