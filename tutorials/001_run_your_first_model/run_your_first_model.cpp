@@ -45,12 +45,12 @@ cv::Mat load_rgb(const fs::path& image_path, int size) {
 
 simaai::neat::Model::Options build_options(int size) {
   simaai::neat::Model::Options opt;
+  opt.preprocess.kind = simaai::neat::InputKind::Image;
   opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
   opt.preprocess.input_max_width = size;
   opt.preprocess.input_max_height = size;
   opt.preprocess.input_max_depth = 3;
-  opt.preprocess.normalize.mean = {0.485f, 0.456f, 0.406f};
-  opt.preprocess.normalize.stddev = {0.229f, 0.224f, 0.225f};
+  opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
   return opt;
 }
 
