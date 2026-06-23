@@ -4211,6 +4211,10 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   plan.resolved_plan.ingress_contracts.clear();
   const auto route_ingress_contracts = normalized_ingress_contracts(plan.session_route_plan);
   if (!route_ingress_contracts.empty()) {
+    const bool image_preproc_route = plan.resolved_plan.enabled &&
+                                     plan.resolved_plan.resolved_kind == InputKind::Image &&
+                                     plan.resolved_plan.graph_family ==
+                                         PreprocessGraphFamily::Preproc;
     plan.resolved_plan.ingress_contracts.reserve(route_ingress_contracts.size());
     for (const auto& ingress : route_ingress_contracts) {
       PreprocessContract contract;
@@ -4223,6 +4227,28 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
       contract.max_width = ingress.width > 0 ? ingress.width : plan.modelpack_max_width;
       contract.max_height = ingress.height > 0 ? ingress.height : plan.modelpack_max_height;
       contract.max_depth = ingress.depth > 0 ? ingress.depth : plan.modelpack_max_depth;
+      if (image_preproc_route) {
+        // For image preproc routes, fixed ingress dimensions describe the
+        // resize target while max_* describes the accepted source envelope.
+        const int source_max_width = plan.resolved_plan.effective.input_max_width > 0
+                                         ? plan.resolved_plan.effective.input_max_width
+                                         : plan.modelpack_max_width;
+        const int source_max_height = plan.resolved_plan.effective.input_max_height > 0
+                                          ? plan.resolved_plan.effective.input_max_height
+                                          : plan.modelpack_max_height;
+        const int source_max_depth = plan.resolved_plan.effective.input_max_depth > 0
+                                         ? plan.resolved_plan.effective.input_max_depth
+                                         : plan.modelpack_max_depth;
+        if (source_max_width > 0) {
+          contract.max_width = std::max(contract.max_width, source_max_width);
+        }
+        if (source_max_height > 0) {
+          contract.max_height = std::max(contract.max_height, source_max_height);
+        }
+        if (source_max_depth > 0) {
+          contract.max_depth = std::max(contract.max_depth, source_max_depth);
+        }
+      }
       plan.resolved_plan.ingress_contracts.push_back(std::move(contract));
     }
   }
