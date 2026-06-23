@@ -14,7 +14,7 @@ Options:
   --password PASSWORD     Bootstrap password for sshpass/ssh-copy-id
   --hosts LIST            Space/comma-separated host list
   --range FIRST-LAST      Use static card index range 10.0.<index>.2
-  --no-discover           Disable veth-simaai discovery; requires --hosts or --range
+  --no-discover           Disable 10.0.N.1 -> 10.0.N.2 discovery; requires --hosts or --range
   --non-interactive       Do not prompt; requires working key or --password when needed
   --strict                Return non-zero if any target fails
   --dry-run               Print targets and commands without changing remote hosts
@@ -75,18 +75,15 @@ add_range_hosts() {
 discover_pcie_hosts() {
   command -v ip >/dev/null 2>&1 || return 0
 
-  local line iface ip_cidr local_ip o1 o2 o3 o4
+  local line ip_cidr local_ip o1 o2 o3 o4
   while IFS= read -r line; do
     # Example:
-    # 7: veth-simaai0    inet 10.0.0.1/24 brd ...
-    # 7: veth-simaai0@if8 inet 10.0.0.1/24 brd ...
-    read -r _ iface _ ip_cidr _ <<< "${line}"
-    iface="${iface%%@*}"
-    [[ "${iface}" == veth-simaai* ]] || continue
+    # 4: enp3s0          inet 10.0.0.1/24 brd ...
+    read -r _ _ _ ip_cidr _ <<< "${line}"
 
     local_ip="${ip_cidr%%/*}"
     IFS=. read -r o1 o2 o3 o4 <<< "${local_ip}"
-    [[ "${o1}" == "10" && -n "${o2}" && -n "${o3}" && -n "${o4}" ]] || continue
+    [[ "${o1}" == "10" && "${o2}" == "0" && -n "${o3}" && "${o4}" == "1" ]] || continue
 
     echo "${o1}.${o2}.${o3}.2"
   done < <(ip -o -4 addr show 2>/dev/null) | sort -u
@@ -185,7 +182,7 @@ echo "User: ${user}"
 echo "Port: ${port}"
 echo "Key:  ${key_path}"
 if (( discover )) && (( ! range_explicit )) && (( ! hosts_explicit )); then
-  echo "Discovery: veth-simaai* management links"
+  echo "Discovery: local 10.0.N.1 -> card 10.0.N.2"
 else
   echo "Discovery: disabled"
 fi

@@ -2,7 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 usage() {
   cat <<'EOF'
@@ -13,7 +12,7 @@ Install sima-pcie-host Debian packages on this host, then provision PCIe SSH.
 Options:
   --deb <path>             Install this runtime DEB instead of auto-detecting it
   --dev-deb <path>         Install this development DEB instead of auto-detecting it
-  --search-dir <dir>       Directory to search for DEBs (default: current dir, then pcie_host/packaging)
+  --search-dir <dir>       Directory to search for DEBs (default: this script's directory)
   --runtime-only           Do not install sima-pcie-host-dev
   --skip-setup             Do not run pcie-setup.sh after package install
   --setup-args <s>         Extra arguments passed to pcie-setup.sh
@@ -22,7 +21,7 @@ Options:
 
 Examples:
   ./install_pciehost.sh
-  ./install_pciehost.sh --deb sima-pcie-host_0.4.0_amd64.deb
+  ./install_pciehost.sh --deb sima-pcie-host_<version>_amd64.deb
   ./install_pciehost.sh --runtime-only
   ./install_pciehost.sh --setup-args "--hosts 10.0.0.2"
   ./install_pciehost.sh --skip-setup
@@ -170,7 +169,7 @@ esac
 if [[ -n "${SEARCH_DIR}" ]]; then
   search_dirs=("${SEARCH_DIR}")
 else
-  search_dirs=("${PWD}" "${ROOT_DIR}/packaging")
+  search_dirs=("${SCRIPT_DIR}")
 fi
 
 if [[ -z "${DEB_PATH}" ]]; then
@@ -212,16 +211,17 @@ else
   echo "ERROR: root privileges or sudo are required to install sima-pcie-host packages." >&2
   exit 1
 fi
+apt_install_opts=(install -y --reinstall --allow-downgrades)
 
 echo "Installing ${DEB_PATH}"
 if [[ "${RUNTIME_ONLY}" != "ON" && -n "${DEV_DEB_PATH}" ]]; then
   echo "Installing ${DEV_DEB_PATH}"
-  "${apt_cmd[@]}" install -y "${DEB_PATH}" "${DEV_DEB_PATH}"
+  "${apt_cmd[@]}" "${apt_install_opts[@]}" "${DEB_PATH}" "${DEV_DEB_PATH}"
 else
   if [[ "${RUNTIME_ONLY}" != "ON" ]]; then
     echo "WARN: no sima-pcie-host-dev DEB found; installing runtime package only" >&2
   fi
-  "${apt_cmd[@]}" install -y "${DEB_PATH}"
+  "${apt_cmd[@]}" "${apt_install_opts[@]}" "${DEB_PATH}"
 fi
 
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then

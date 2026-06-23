@@ -6,8 +6,14 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
+
+#if __has_include(<opencv2/core/mat.hpp>)
+#include <opencv2/core/mat.hpp>
+#define SIMA_PCIE_HAS_OPENCV_OVERLOAD 1
+#endif
 
 namespace simaai::neat::pcie {
 
@@ -25,6 +31,9 @@ struct ConnectionOptions {
   int card_id = 0;
   std::string user = "sima";
   int queue = 0;
+  std::string card_gst_debug;
+  std::string card_gst_debug_file;
+  bool card_gst_debug_no_color = true;
 };
 
 enum class InputKind {
@@ -136,14 +145,21 @@ enum class TensorLayout {
   NHWC,
 };
 
-enum class PixelFormat {
-  Unknown,
-  RGB,
-  BGR,
-  GRAY8,
-  NV12,
-  I420,
+struct ImageSpec {
+  enum class PixelFormat {
+    Unknown,
+    RGB,
+    BGR,
+    GRAY8,
+    NV12,
+    I420,
+  };
+
+  PixelFormat format = PixelFormat::Unknown;
+  std::string color_space;
 };
+
+using PixelFormat = ImageSpec::PixelFormat;
 
 enum class PlaneRole {
   Unknown,
@@ -179,6 +195,7 @@ struct Tensor {
   void* data = nullptr;
   std::size_t size_bytes = 0;
   std::int64_t byte_offset = 0;
+  std::optional<ImageSpec> image;
   PixelFormat image_format = PixelFormat::Unknown;
   std::vector<Plane> planes;
   TensorRoute route;
@@ -229,13 +246,66 @@ public:
 
   bool push(const Tensor& tensor);
   bool push(const TensorList& tensors);
+#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
+  bool push(const cv::Mat& image);
+#endif
   std::optional<TensorList> pull(int timeout_ms = -1);
   TensorList run(const Tensor& tensor, int timeout_ms = -1);
   TensorList run(const TensorList& tensors, int timeout_ms = -1);
+#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
+  TensorList run(const cv::Mat& image, int timeout_ms = -1);
+#endif
 
 private:
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
+
+#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
+inline Tensor tensor_from_bgr_mat(const cv::Mat& image) {
+  if (image.empty()) {
+    throw std::runtime_error("PCIe cv::Mat image is empty");
+  }
+  if (image.depth() != CV_8U) {
+    throw std::runtime_error("PCIe cv::Mat image must use uint8 storage");
+  }
+  const int channels = image.channels();
+  if (channels != 1 && channels != 3) {
+    throw std::runtime_error("PCIe cv::Mat image must be GRAY8 or BGR");
+  }
+
+  auto owner = std::make_shared<cv::Mat>(image.isContinuous() ? image : image.clone());
+  Tensor tensor;
+  tensor.dtype = TensorDType::UInt8;
+  tensor.layout = channels == 1 ? TensorLayout::HW : TensorLayout::HWC;
+  tensor.shape = channels == 1
+                     ? std::vector<std::int64_t>{owner->rows, owner->cols}
+                     : std::vector<std::int64_t>{owner->rows, owner->cols, channels};
+  tensor.strides_bytes = channels == 1
+                             ? std::vector<std::int64_t>{
+                                   static_cast<std::int64_t>(owner->step[0]), 1}
+                             : std::vector<std::int64_t>{
+                                   static_cast<std::int64_t>(owner->step[0]), channels, 1};
+  tensor.owner = owner;
+  tensor.data = owner->data;
+  tensor.size_bytes = static_cast<std::size_t>(owner->rows) * owner->step[0];
+  tensor.byte_offset = 0;
+  tensor.image = ImageSpec{channels == 1 ? PixelFormat::GRAY8 : PixelFormat::BGR, ""};
+  tensor.image_format = tensor.image->format;
+  tensor.route.name = "input_image";
+  tensor.route.logical_index = 0;
+  tensor.route.physical_index = 0;
+  tensor.route.route_slot = 0;
+  return tensor;
+}
+
+inline bool SimaPCIeHost::push(const cv::Mat& image) {
+  return push(tensor_from_bgr_mat(image));
+}
+
+inline TensorList SimaPCIeHost::run(const cv::Mat& image, const int timeout_ms) {
+  return run(tensor_from_bgr_mat(image), timeout_ms);
+}
+#endif
 
 } // namespace simaai::neat::pcie

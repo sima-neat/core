@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
-project(SimaPCIeHost VERSION 0.4.0 LANGUAGES CXX)
+
+set(SIMAPCIE_PACKAGE_VERSION "")
+execute_process(
+  COMMAND python3 -c "import json; print(json.load(open('../deps/manifest.json', encoding='utf-8'))['package-version'])"
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  RESULT_VARIABLE SIMAPCIE_PACKAGE_VERSION_RESULT
+  OUTPUT_VARIABLE SIMAPCIE_PACKAGE_VERSION
+  ERROR_QUIET
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if (NOT SIMAPCIE_PACKAGE_VERSION_RESULT EQUAL 0 OR SIMAPCIE_PACKAGE_VERSION STREQUAL "")
+  message(FATAL_ERROR "Failed to read package-version from ../deps/manifest.json")
+endif()
+
+project(SimaPCIeHost VERSION ${SIMAPCIE_PACKAGE_VERSION} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

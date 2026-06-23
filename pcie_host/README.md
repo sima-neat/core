@@ -42,9 +42,8 @@ The package installs `pcie-setup.sh`, which follows the SDK DevKit pattern:
 create or reuse an ed25519 key, add PCIe card host keys to `known_hosts`, and
 install the public key with `ssh-copy-id`.
 
-By default it discovers PCIe virtual Ethernet management links using the same
-convention as `sima-cli`: local `veth-simaai*` IPv4 addresses map to the card
-address by replacing the final octet with `2`.
+By default it discovers PCIe management links from local IPv4 addresses: each
+host-side `10.0.N.1` address maps to card address `10.0.N.2`.
 
 ```bash
 pcie-setup.sh
@@ -84,6 +83,9 @@ struct ConnectionOptions {
   int card_id = 0;            // PCIe card/plugin index; default host is 10.0.<card_id>.2.
   std::string user = "sima";
   int queue = 0;              // PCIe queue, 0..5.
+  std::string card_gst_debug; // Optional card-side GST_DEBUG spec for pcie-pipeline-builder.
+  std::string card_gst_debug_file;
+  bool card_gst_debug_no_color = true;
 };
 ```
 
@@ -91,6 +93,18 @@ struct ConnectionOptions {
 `card-number`. It is also used as the default SSH management endpoint when
 `card_host` is empty: `card_id = N` maps to `10.0.N.2`. Set `card_host`
 explicitly when the management address is known or non-standard.
+
+Set `card_gst_debug` during PCIe bring-up to start the card-side
+`pcie-pipeline-builder` under GStreamer debug logging. When enabled and
+`card_gst_debug_file` is empty, logs are written to
+`/var/log/sima-neat/pcie/qN.gst.log` on the card.
+
+```cpp
+pcie::ConnectionOptions conn;
+conn.card_gst_debug = "neatpciesrc:7,neatpciesink:7,neatprocesscvu:5";
+```
+
+The normal production launch path is unchanged when `card_gst_debug` is empty.
 
 ### ModelInfo
 
@@ -264,25 +278,35 @@ those staged paths to CMake. CMake does not include headers from a sibling
 ./build.sh --with-tests
 ```
 
+`build.sh` writes the locally built packages and a copy of the installer into
+`dist/`:
+
+```text
+dist/sima-pcie-host_<version>_<arch>.deb
+dist/sima-pcie-host-dev_<version>_<arch>.deb
+dist/install_pciehost.sh
+```
+
 Install the locally built packages on the host with:
 
 ```bash
-scripts/install_pciehost.sh
+dist/install_pciehost.sh
 ```
 
-The installer runs `pcie-setup.sh` at the end. Setup is interactive by default
+The installer looks for the PCIe host debs in the same directory as the script.
+It runs `pcie-setup.sh` at the end. Setup is interactive by default
 and can prompt while provisioning passwordless SSH for `init_pipeline()`. Pass
 extra setup arguments when discovery is not available:
 
 ```bash
-scripts/install_pciehost.sh --setup-args "--hosts 10.0.0.2"
+dist/install_pciehost.sh --setup-args "--hosts 10.0.0.2"
 ```
 
 For `load_metadata()` investigation, no PCIe card or SSH setup is required, so
 the setup step can be skipped:
 
 ```bash
-scripts/install_pciehost.sh --skip-setup
+dist/install_pciehost.sh --skip-setup
 ```
 
 To print metadata on a laptop without a PCIe card, build examples and run:

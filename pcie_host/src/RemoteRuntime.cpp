@@ -69,6 +69,10 @@ std::string json_string_or(const nlohmann::json& object, const char* key,
   return fallback;
 }
 
+std::string default_card_gst_debug_file(const int queue) {
+  return "/var/log/sima-neat/pcie/q" + std::to_string(queue) + ".gst.log";
+}
+
 } // namespace
 
 RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {}
@@ -164,7 +168,20 @@ void RemoteRuntime::start(const int queue, const bool accelerator,
      << "else "
      << "rm -f \"$statusfile\"; "
      << "fi; ";
-  ss << "nohup " << SshRunner::shell_escape(kRemoteHelper)
+  ss << "nohup ";
+  if (!connection_.card_gst_debug.empty()) {
+    ss << "env GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
+    if (connection_.card_gst_debug_no_color) {
+      ss << "GST_DEBUG_NO_COLOR=1 ";
+    }
+    const std::string debug_file = connection_.card_gst_debug_file.empty()
+                                       ? default_card_gst_debug_file(queue)
+                                       : connection_.card_gst_debug_file;
+    if (!debug_file.empty()) {
+      ss << "GST_DEBUG_FILE=" << SshRunner::shell_escape(debug_file) << " ";
+    }
+  }
+  ss << SshRunner::shell_escape(kRemoteHelper)
      << " --model " << SshRunner::shell_escape(remote_model_path)
      << " --queue " << queue;
   if (accelerator) {

@@ -1,8 +1,10 @@
 #include <neat.h>
 
+#include "gst/GstInit.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
+#include "pipeline/runtime/RunCore.h"
 
 #include <gst/gst.h>
 #include <nlohmann/json.hpp>
@@ -18,6 +20,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -48,9 +51,10 @@ using simaai::neat::PCIeSinkOptions;
 using simaai::neat::PCIeSrcOptions;
 using simaai::neat::PreprocessColorFormat;
 using simaai::neat::PreprocessGraphFamily;
+using simaai::neat::ResolvedPreprocessPlan;
 using simaai::neat::ResizeMode;
 
-constexpr int kReadinessTimeoutSeconds = 15;
+constexpr int kInitialReadinessGraceSeconds = 15;
 constexpr const char* kProgramName = "pcie-pipeline-builder";
 constexpr const char* kSrcReadyMessage = "neat-pcie-src-pads-active";
 constexpr const char* kSinkReadyMessage = "neat-pcie-sink-started";
@@ -83,6 +87,22 @@ struct Status {
   std::string updated_at;
   std::string message;
   std::optional<std::string> error_code;
+};
+
+struct ReadinessState {
+  bool src_ready = false;
+  bool sink_ready = false;
+  bool pipeline_ready = false;
+
+  bool ready() const {
+    return pipeline_ready;
+  }
+
+  std::string message() const {
+    if (ready())
+      return "pipeline armed and ready for PCIe host";
+    return "pipeline starting; waiting for GStreamer PLAYING";
+  }
 };
 
 class PciePipelineError : public std::runtime_error {
@@ -775,8 +795,111 @@ BoxDecodeType infer_boxdecode_type_from_mpk(const std::filesystem::path& model_p
   return contract->decode_type;
 }
 
-std::string compose_backend_pipeline(const CliOptions& opt, const ResolvedOptions& resolved,
-                                     const std::filesystem::path& model_path) {
+void validate_image_preprocess_plan(const Mode mode, const Model& model,
+                                    const Model::Options& requested_options) {
+  if (mode != Mode::Image && mode != Mode::BoxDecode) {
+    return;
+  }
+
+  const ResolvedPreprocessPlan plan = model.resolved_preprocess_plan();
+  std::vector<std::string> issues;
+
+  if (!plan.enabled) {
+    issues.push_back("preprocess plan is disabled");
+  }
+  if (plan.resolved_kind != InputKind::Image) {
+    issues.push_back("resolved preprocess input kind is not Image");
+  }
+  if (plan.effective.resize.enable != AutoFlag::On) {
+    issues.push_back("preprocess.resize did not resolve to On");
+  }
+  if (plan.effective.resize.width <= 0 || plan.effective.resize.height <= 0) {
+    issues.push_back("preprocess.resize target width/height are unresolved");
+  }
+  if (plan.mla_contract.width > 0 && plan.effective.resize.width > 0 &&
+      plan.effective.resize.width != plan.mla_contract.width) {
+    std::ostringstream ss;
+    ss << "preprocess.resize.width=" << plan.effective.resize.width
+       << " does not match MLA contract width=" << plan.mla_contract.width;
+    issues.push_back(ss.str());
+  }
+  if (plan.mla_contract.height > 0 && plan.effective.resize.height > 0 &&
+      plan.effective.resize.height != plan.mla_contract.height) {
+    std::ostringstream ss;
+    ss << "preprocess.resize.height=" << plan.effective.resize.height
+       << " does not match MLA contract height=" << plan.mla_contract.height;
+    issues.push_back(ss.str());
+  }
+
+  const auto& requested = requested_options.preprocess;
+  if (requested.input_max_width > 0 &&
+      plan.effective.input_max_width != requested.input_max_width) {
+    std::ostringstream ss;
+    ss << "effective input_max_width=" << plan.effective.input_max_width
+       << " does not match requested input_max_width=" << requested.input_max_width;
+    issues.push_back(ss.str());
+  }
+  if (requested.input_max_height > 0 &&
+      plan.effective.input_max_height != requested.input_max_height) {
+    std::ostringstream ss;
+    ss << "effective input_max_height=" << plan.effective.input_max_height
+       << " does not match requested input_max_height=" << requested.input_max_height;
+    issues.push_back(ss.str());
+  }
+  if (requested.input_max_depth > 0 &&
+      plan.effective.input_max_depth != requested.input_max_depth) {
+    std::ostringstream ss;
+    ss << "effective input_max_depth=" << plan.effective.input_max_depth
+       << " does not match requested input_max_depth=" << requested.input_max_depth;
+    issues.push_back(ss.str());
+  }
+
+  if (requested.input_max_width > 0 || requested.input_max_height > 0 ||
+      requested.input_max_depth > 0) {
+    if (plan.ingress_contracts.empty()) {
+      issues.push_back("resolved plan has no ingress contracts to carry input_max envelope");
+    } else {
+      const auto& ingress = plan.ingress_contracts.front();
+      if (requested.input_max_width > 0 && ingress.max_width > 0 &&
+          ingress.max_width < requested.input_max_width) {
+        std::ostringstream ss;
+        ss << "ingress max_width=" << ingress.max_width
+           << " is smaller than requested input_max_width=" << requested.input_max_width;
+        issues.push_back(ss.str());
+      }
+      if (requested.input_max_height > 0 && ingress.max_height > 0 &&
+          ingress.max_height < requested.input_max_height) {
+        std::ostringstream ss;
+        ss << "ingress max_height=" << ingress.max_height
+           << " is smaller than requested input_max_height=" << requested.input_max_height;
+        issues.push_back(ss.str());
+      }
+      if (requested.input_max_depth > 0 && ingress.max_depth > 0 &&
+          ingress.max_depth < requested.input_max_depth) {
+        std::ostringstream ss;
+        ss << "ingress max_depth=" << ingress.max_depth
+           << " is smaller than requested input_max_depth=" << requested.input_max_depth;
+        issues.push_back(ss.str());
+      }
+    }
+  }
+
+  if (!issues.empty()) {
+    std::ostringstream ss;
+    ss << "image preprocess plan validation failed for mode=" << mode_name(mode) << ": ";
+    for (std::size_t i = 0; i < issues.size(); ++i) {
+      if (i != 0) {
+        ss << "; ";
+      }
+      ss << issues[i];
+    }
+    ss << "\n" << plan.to_debug_string();
+    throw PciePipelineError("model_contract", ss.str());
+  }
+}
+
+Graph compose_graph(const CliOptions& opt, const ResolvedOptions& resolved,
+                    const std::filesystem::path& model_path, std::unique_ptr<Model>* model_owner) {
   Model::Options model_options = resolved.model_options;
   if (resolved.mode == Mode::BoxDecode &&
       !simaai::neat::pipeline_internal::sima::is_box_decode_type_specified(
@@ -784,7 +907,8 @@ std::string compose_backend_pipeline(const CliOptions& opt, const ResolvedOption
     model_options.decode_type = infer_boxdecode_type_from_mpk(model_path);
   }
 
-  Model model(model_path.string(), model_options);
+  auto model = std::make_unique<Model>(model_path.string(), model_options);
+  validate_image_preprocess_plan(resolved.mode, *model, model_options);
 
   Graph graph("pcie-pipeline");
   PCIeSrcOptions src_options;
@@ -792,18 +916,25 @@ std::string compose_backend_pipeline(const CliOptions& opt, const ResolvedOption
   graph.add(simaai::neat::nodes::PCIeSrc(src_options));
 
   if (resolved.mode == Mode::Accelerator) {
-    graph.add(model.inference());
+    graph.add(model->inference());
   } else {
-    graph.add(model.graph());
+    graph.add(model->graph());
   }
 
   PCIeSinkOptions sink_options;
   sink_options.queue = opt.queue;
   graph.add(simaai::neat::nodes::PCIeSink(sink_options));
+  *model_owner = std::move(model);
+  return graph;
+}
 
+std::string compose_backend_pipeline(const CliOptions& opt, const ResolvedOptions& resolved,
+                                     const std::filesystem::path& model_path) {
+  std::unique_ptr<Model> model_owner;
+  Graph graph = compose_graph(opt, resolved, model_path, &model_owner);
   const std::string backend = graph.describe_backend(false);
-  if (resolved.mode == Mode::BoxDecode)
-    validate_boxdecode_contract(model, backend);
+  if (resolved.mode == Mode::BoxDecode && model_owner)
+    validate_boxdecode_contract(*model_owner, backend);
   return backend;
 }
 
@@ -835,45 +966,76 @@ bool pipeline_playing_or_pending(GstElement* pipeline) {
          state == GST_STATE_PLAYING || pending == GST_STATE_PLAYING;
 }
 
+std::string pipeline_state_summary(GstElement* pipeline) {
+  GstState state = GST_STATE_NULL;
+  GstState pending = GST_STATE_VOID_PENDING;
+  const GstStateChangeReturn rc = gst_element_get_state(pipeline, &state, &pending, 0);
+  std::ostringstream out;
+  out << "state=" << gst_element_state_get_name(state)
+      << " pending=" << gst_element_state_get_name(pending)
+      << " rc=" << static_cast<int>(rc);
+  return out.str();
+}
+
+std::string immediate_bus_error_or_empty(GstBus* bus) {
+  if (!bus)
+    return {};
+  GstMessage* msg = gst_bus_pop_filtered(
+      bus, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+  if (!msg)
+    return {};
+
+  std::string message;
+  const GstMessageType type = GST_MESSAGE_TYPE(msg);
+  if (type == GST_MESSAGE_ERROR) {
+    message = gst_error_message(msg);
+  } else if (type == GST_MESSAGE_EOS) {
+    message = "GStreamer pipeline reached EOS during state change";
+  }
+  gst_message_unref(msg);
+  return message;
+}
+
 class ManagedPipeline {
 public:
-  explicit ManagedPipeline(std::string launch) : launch_(std::move(launch)) {}
+  ManagedPipeline(Graph graph, std::unique_ptr<Model> model_owner)
+      : graph_(std::move(graph)), model_owner_(std::move(model_owner)) {}
 
   ~ManagedPipeline() {
     stop();
   }
 
-  void start_and_wait_ready() {
-    GError* error = nullptr;
-    pipeline_ = gst_parse_launch(launch_.c_str(), &error);
+  ReadinessState start_and_probe_ready() {
+    run_ = graph_.build();
+    const auto core = simaai::neat::run_internal::core(run_);
+    pipeline_ = core ? core->pipeline.stream.pipeline_handle() : nullptr;
     if (!pipeline_) {
-      std::string message = "failed to build GStreamer pipeline";
-      if (error && error->message)
-        message += ": " + std::string(error->message);
-      if (error)
-        g_error_free(error);
-      throw PciePipelineError("pipeline_build", message);
+      throw PciePipelineError("pipeline_build",
+                              "Graph::build did not expose a GStreamer pipeline handle");
     }
-    if (error)
-      g_error_free(error);
 
     bus_ = gst_element_get_bus(pipeline_);
     if (!bus_)
       throw PciePipelineError("pipeline_build", "failed to get GStreamer bus");
 
     const GstStateChangeReturn set_state_rc = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
-    if (set_state_rc == GST_STATE_CHANGE_FAILURE)
-      throw PciePipelineError("gst_state", "failed to set pipeline to PLAYING");
+    if (set_state_rc == GST_STATE_CHANGE_FAILURE) {
+      std::string message = "failed to set pipeline to PLAYING";
+      const std::string bus_error = immediate_bus_error_or_empty(bus_);
+      if (!bus_error.empty())
+        message += ": " + bus_error;
+      message += " (" + pipeline_state_summary(pipeline_) + ")";
+      throw PciePipelineError("gst_state", message);
+    }
 
-    bool src_ready = false;
-    bool sink_ready = false;
-    bool state_ready = pipeline_playing_or_pending(pipeline_);
+    ReadinessState readiness;
+    readiness.pipeline_ready = pipeline_playing_or_pending(pipeline_);
     const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(kReadinessTimeoutSeconds);
+        std::chrono::steady_clock::now() + std::chrono::seconds(kInitialReadinessGraceSeconds);
 
     while (!g_stop_requested) {
-      if (src_ready && sink_ready && state_ready)
-        return;
+      if (readiness.ready())
+        return readiness;
 
       const auto now = std::chrono::steady_clock::now();
       if (now >= deadline)
@@ -889,26 +1051,35 @@ public:
           static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_ELEMENT |
                                       GST_MESSAGE_STATE_CHANGED | GST_MESSAGE_EOS));
       if (!msg) {
-        state_ready = state_ready || pipeline_playing_or_pending(pipeline_);
+        readiness.pipeline_ready = readiness.pipeline_ready || pipeline_playing_or_pending(pipeline_);
         continue;
       }
-      handle_startup_message(msg, &src_ready, &sink_ready, &state_ready);
+      handle_startup_message(msg, &readiness);
       gst_message_unref(msg);
     }
 
     if (g_stop_requested)
       throw PciePipelineError("signal", "startup interrupted");
-    throw PciePipelineError("gst_state",
-                            "readiness timed out before PCIe source and sink became ready");
+    return readiness;
   }
 
-  void run_until_error_or_stop() {
+  void run_until_error_or_stop(ReadinessState readiness,
+                               const std::function<void(const ReadinessState&)>& on_ready) {
+    bool ready_reported = readiness.ready();
     while (!g_stop_requested) {
       GstMessage* msg = gst_bus_timed_pop_filtered(
           bus_, 250 * GST_MSECOND,
-          static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
-      if (!msg)
+          static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_ELEMENT |
+                                      GST_MESSAGE_STATE_CHANGED | GST_MESSAGE_EOS));
+      if (!msg) {
+        readiness.pipeline_ready =
+            readiness.pipeline_ready || pipeline_playing_or_pending(pipeline_);
+        if (!ready_reported && readiness.ready() && on_ready) {
+          ready_reported = true;
+          on_ready(readiness);
+        }
         continue;
+      }
       const GstMessageType type = GST_MESSAGE_TYPE(msg);
       if (type == GST_MESSAGE_ERROR) {
         const std::string message = gst_error_message(msg);
@@ -919,28 +1090,27 @@ public:
         gst_message_unref(msg);
         throw PciePipelineError("gst_state", "GStreamer pipeline reached EOS");
       }
+      const bool was_ready = readiness.ready();
+      handle_startup_message(msg, &readiness);
+      if (!was_ready && !ready_reported && readiness.ready() && on_ready) {
+        ready_reported = true;
+        on_ready(readiness);
+      }
       gst_message_unref(msg);
     }
   }
 
   void stop() noexcept {
-    if (pipeline_) {
-      gst_element_set_state(pipeline_, GST_STATE_NULL);
-      gst_element_get_state(pipeline_, nullptr, nullptr, 5 * GST_SECOND);
-    }
     if (bus_) {
       gst_object_unref(bus_);
       bus_ = nullptr;
     }
-    if (pipeline_) {
-      gst_object_unref(pipeline_);
-      pipeline_ = nullptr;
-    }
+    run_.stop();
+    pipeline_ = nullptr;
   }
 
 private:
-  static void handle_startup_message(GstMessage* msg, bool* src_ready, bool* sink_ready,
-                                     bool* state_ready) {
+  static void handle_startup_message(GstMessage* msg, ReadinessState* readiness) {
     const GstMessageType type = GST_MESSAGE_TYPE(msg);
     if (type == GST_MESSAGE_ERROR)
       throw PciePipelineError("gst_state", gst_error_message(msg));
@@ -953,10 +1123,16 @@ private:
       const char* name = gst_structure_get_name(structure);
       if (!name)
         return;
-      if (std::strcmp(name, kSrcReadyMessage) == 0)
-        *src_ready = true;
-      if (std::strcmp(name, kSinkReadyMessage) == 0)
-        *sink_ready = true;
+      if (std::strcmp(name, kSrcReadyMessage) == 0) {
+        if (!readiness->src_ready)
+          std::cout << "PCIe source peer active" << std::endl;
+        readiness->src_ready = true;
+      }
+      if (std::strcmp(name, kSinkReadyMessage) == 0) {
+        if (!readiness->sink_ready)
+          std::cout << "PCIe sink peer started" << std::endl;
+        readiness->sink_ready = true;
+      }
       return;
     }
     if (type == GST_MESSAGE_STATE_CHANGED && GST_MESSAGE_SRC(msg) &&
@@ -967,11 +1143,13 @@ private:
       gst_message_parse_state_changed(msg, &old_state, &new_state, &pending);
       (void)old_state;
       if (new_state == GST_STATE_PLAYING || pending == GST_STATE_PLAYING)
-        *state_ready = true;
+        readiness->pipeline_ready = true;
     }
   }
 
-  std::string launch_;
+  Graph graph_;
+  std::unique_ptr<Model> model_owner_;
+  simaai::neat::Run run_;
   GstElement* pipeline_ = nullptr;
   GstBus* bus_ = nullptr;
 };
@@ -1030,20 +1208,29 @@ int run_builder(const CliOptions& opt) {
 
   std::unique_ptr<ManagedPipeline> pipeline;
   try {
-    std::string launch;
+    Graph graph;
+    std::unique_ptr<Model> model_owner;
     try {
-      launch = compose_backend_pipeline(opt, resolved, model_path);
+      graph = compose_graph(opt, resolved, model_path, &model_owner);
+      if (resolved.mode == Mode::BoxDecode && model_owner)
+        validate_boxdecode_contract(*model_owner, graph.describe_backend(false));
     } catch (const PciePipelineError&) {
       throw;
     } catch (const std::exception& e) {
       throw PciePipelineError("model_contract", e.what());
     }
-    pipeline = std::make_unique<ManagedPipeline>(std::move(launch));
+    pipeline = std::make_unique<ManagedPipeline>(std::move(graph), std::move(model_owner));
     set_status(status_writer, status, "starting", "starting GStreamer pipeline");
-    pipeline->start_and_wait_ready();
-    set_status(status_writer, status, "ready", "pipeline ready");
+    ReadinessState readiness = pipeline->start_and_probe_ready();
+    if (readiness.ready()) {
+      set_status(status_writer, status, "ready", readiness.message());
+    } else {
+      set_status(status_writer, status, "waiting", readiness.message());
+    }
 
-    pipeline->run_until_error_or_stop();
+    pipeline->run_until_error_or_stop(readiness, [&](const ReadinessState& updated) {
+      set_status(status_writer, status, "ready", updated.message());
+    });
     set_status(status_writer, status, "stopping", "signal received");
     pipeline->stop();
     ownership.release();
@@ -1077,7 +1264,7 @@ int run_builder(const CliOptions& opt) {
 int main(int argc, char** argv) {
   try {
     CliOptions opt = parse_cli(argc, argv);
-    gst_init(nullptr, nullptr);
+    simaai::neat::gst_init_once();
     return run_builder(opt);
   } catch (const PciePipelineError& e) {
     if (e.code() == "usage") {

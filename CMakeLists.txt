@@ -1278,6 +1278,7 @@ if (SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER)
   target_compile_options(pcie-pipeline-builder PRIVATE
     ${GST_CFLAGS_OTHER}
   )
+  add_dependencies(sima_neat_libraries pcie-pipeline-builder)
   install(TARGETS pcie-pipeline-builder
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     COMPONENT core

@@ -12,7 +12,9 @@ BUILD_EXAMPLES="OFF"
 CLEAN_BUILD="OFF"
 MAKE_DEB="ON"
 INSTALL_DEPS_ONLY="OFF"
-PACKAGE_DIR="${SCRIPT_DIR}/packaging"
+PACKAGE_DIR="${SCRIPT_DIR}/dist"
+INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
+INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
 PLUGIN_NAME="libgstneatpciehost.so"
 TENSOR_META_HEADER="gst/SimaTensorSetMetaAbi.h"
 DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
@@ -489,8 +491,14 @@ if [[ "${MAKE_DEB}" == "ON" ]]; then
   cpack --config "${BUILD_DIR}/CPackConfig.cmake" -G DEB -B "${PACKAGE_DIR}"
 fi
 
+if [[ -f "${INSTALLER_SOURCE}" ]]; then
+  cp -f "${INSTALLER_SOURCE}" "${INSTALLER_STAGE}"
+  chmod 0755 "${INSTALLER_STAGE}"
+fi
+
 echo
 echo "========================================"
 echo " Build completed successfully"
 echo "========================================"
 ls -lh "${PACKAGE_DIR}"/*.deb 2>/dev/null || true
+ls -lh "${INSTALLER_STAGE}" 2>/dev/null || true

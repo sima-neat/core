@@ -12,6 +12,8 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::pcie::internal {
@@ -21,6 +23,64 @@ std::string upper_copy(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
                  [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
   return value;
+}
+
+std::optional<ImageSpec> tensor_image_spec(const Tensor& tensor) {
+  if (tensor.image.has_value() && tensor.image->format != PixelFormat::Unknown) {
+    return tensor.image;
+  }
+  if (tensor.image_format != PixelFormat::Unknown) {
+    return ImageSpec{.format = tensor.image_format};
+  }
+  return std::nullopt;
+}
+
+const char* pixel_format_caps_name(const PixelFormat format) {
+  switch (format) {
+  case PixelFormat::RGB:
+    return "RGB";
+  case PixelFormat::BGR:
+    return "BGR";
+  case PixelFormat::GRAY8:
+    return "GRAY8";
+  case PixelFormat::NV12:
+    return "NV12";
+  case PixelFormat::I420:
+    return "I420";
+  case PixelFormat::Unknown:
+    break;
+  }
+  return nullptr;
+}
+
+std::pair<std::int64_t, std::int64_t> image_height_width(const Tensor& tensor) {
+  if (!tensor.planes.empty() && tensor.planes.front().shape.size() >= 2U) {
+    return {tensor.planes.front().shape[0], tensor.planes.front().shape[1]};
+  }
+  if (tensor.layout == TensorLayout::NHWC && tensor.shape.size() >= 4U) {
+    return {tensor.shape[1], tensor.shape[2]};
+  }
+  if (tensor.shape.size() >= 2U) {
+    return {tensor.shape[0], tensor.shape[1]};
+  }
+  return {0, 0};
+}
+
+std::string image_caps_for_tensor(const Tensor& tensor, const ImageSpec& image) {
+  const char* format = pixel_format_caps_name(image.format);
+  if (!format) {
+    throw std::runtime_error("image tensor has unknown pixel format");
+  }
+
+  const auto [height, width] = image_height_width(tensor);
+  if (width <= 0 || height <= 0 || width > std::numeric_limits<int>::max() ||
+      height > std::numeric_limits<int>::max()) {
+    throw std::runtime_error("image tensor requires positive width/height in shape or planes");
+  }
+
+  return std::string("video/x-raw,format=(string)") + format +
+         ",width=(int)" + std::to_string(width) +
+         ",height=(int)" + std::to_string(height);
 }
 
 int tensor_set_dtype(const TensorDType dtype) {
@@ -421,6 +481,28 @@ std::string HostPcieChannel::tensor_set_caps() {
          "storage=(string)tensorbuffer";
 }
 
+std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
+  std::optional<ImageSpec> image;
+  for (const auto& tensor : tensors) {
+    const std::optional<ImageSpec> current = tensor_image_spec(tensor);
+    if (!current.has_value()) {
+      continue;
+    }
+    if (image.has_value()) {
+      throw std::runtime_error("PCIe raw image transport supports one image tensor per push");
+    }
+    image = current;
+  }
+
+  if (!image.has_value()) {
+    return tensor_set_caps();
+  }
+  if (tensors.size() != 1U) {
+    throw std::runtime_error("PCIe raw image transport cannot mix image and tensor payloads");
+  }
+  return image_caps_for_tensor(tensors.front(), *image);
+}
+
 void HostPcieChannel::start_with_caps(const std::string& caps_string) {
   if (running_.load()) {
     if (caps_string != caps_) {
@@ -515,13 +597,13 @@ std::uint64_t HostPcieChannel::next_sequence() {
 
 bool HostPcieChannel::push(const TensorList& tensors) {
   if (tensors.empty()) {
-    throw std::runtime_error("tensor-set payload requires at least one tensor");
+    throw std::runtime_error("PCIe payload requires at least one tensor");
   }
   std::vector<std::uint8_t> payload = pack_tensor_payloads(tensors);
   if (payload.empty()) {
-    throw std::runtime_error("tensor-set payload is empty");
+    throw std::runtime_error("PCIe payload is empty");
   }
-  start_with_caps(tensor_set_caps());
+  start_with_caps(caps_for_tensors(tensors));
   return push_bytes(payload, tensors);
 }
 
@@ -553,12 +635,14 @@ bool HostPcieChannel::push_bytes(const std::vector<std::uint8_t>& payload,
     remove_pending_sequence();
     throw std::runtime_error("failed to allocate GstBuffer");
   }
-  try {
-    attach_tensor_set_meta(buffer, tensors);
-  } catch (...) {
-    gst_buffer_unref(buffer);
-    remove_pending_sequence();
-    throw;
+  if (caps_ == tensor_set_caps()) {
+    try {
+      attach_tensor_set_meta(buffer, tensors);
+    } catch (...) {
+      gst_buffer_unref(buffer);
+      remove_pending_sequence();
+      throw;
+    }
   }
   GstFlowReturn ret = GST_FLOW_OK;
   g_signal_emit_by_name(appsrc_, "push-buffer", buffer, &ret);

@@ -33,6 +33,7 @@ public:
   std::optional<TensorList> pull(int timeout_ms);
 
   static std::string tensor_set_caps();
+  static std::string caps_for_tensors(const TensorList& tensors);
 
 private:
   static GstFlowReturn on_new_sample_static(GstElement* sink, gpointer user_data);
