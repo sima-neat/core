@@ -38,7 +38,7 @@ def main(argv: list[str]) -> int:
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
   inp = pyneat.InputOptions()
-  inp.format = "RGB"
+  inp.format = pyneat.Format.RGB
   inp.width = 160
   inp.height = 120
   inp.depth = 3
@@ -62,7 +62,7 @@ def main(argv: list[str]) -> int:
   measure.title = "tutorial 016 throughput"
   scope = run.start_measurement(measure)
   for _ in range(args.iters):
-    run.try_push(tensor)
+    run.try_push([tensor])
   run.close_input()
 
   pulled = 0

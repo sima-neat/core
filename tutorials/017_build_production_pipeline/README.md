@@ -24,11 +24,11 @@ These are the production runtime defaults. `queue_depth = 8` gives a small bound
 
 ### Configure and load the model {#step-configure-model}
 
-Here we make the input contract explicit on the model. Setting `input_max_width/height/depth` to the frame's dimensions means a mismatched input fails at build time with a clear contract error, rather than producing a confusing runtime failure later. `name_suffix = "_prod"` tags this model's stages so they're identifiable in diagnostics across a multi-model app. We then construct the `Model` from the archive path and these options.
+Here we make the input contract explicit on the model. Setting `preprocess.input_max_width/height/depth` to the frame's dimensions means a mismatched input fails at build time with a clear contract error, rather than producing a confusing runtime failure later. `name_suffix = "_prod"` tags this model's stages so they're identifiable in diagnostics across a multi-model app. We then construct the `Model` from the archive path and these options.
 
 **C++:** `Model::Options` also spells out the preprocessing the model expects — `InputKind::Image`, RGB color convert, and ImageNet normalization with `has_explicit_stats = true` — because the C++ path declares preprocessing up front rather than relying on archive defaults.
 
-**Python:** `ModelOptions` sets the input bounds and suffix; the binding applies sensible preprocessing defaults, so no normalization block is needed here.
+**Python:** `ModelOptions` sets image preprocessing, input bounds, ImageNet normalization, and suffix under `mopt.preprocess.*`.
 
 ### Build the runner {#step-build-runner}
 

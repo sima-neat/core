@@ -24,7 +24,7 @@ This graph consumes raw tensors, not decoded images, so the input contract is de
 
 **C++:** Set `in.payload_type = PayloadType::Tensor`.
 
-**Python:** Set `inp.media_type = "application/vnd.simaai.tensor"` — the MIME string is how Python selects the tensor payload contract.
+**Python:** Set `inp.payload_type = pyneat.PayloadType.Tensor` and `inp.format = pyneat.Format.FP32`.
 
 ### Build the graph and a seed run {#step-build-seed-run}
 

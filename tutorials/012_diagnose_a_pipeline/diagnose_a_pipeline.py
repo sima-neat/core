@@ -27,7 +27,7 @@ def main(argv: list[str]) -> int:
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
   inp = pyneat.InputOptions()
-  inp.format = "RGB"
+  inp.format = pyneat.Format.RGB
   inp.width = 128
   inp.height = 96
   inp.depth = 3

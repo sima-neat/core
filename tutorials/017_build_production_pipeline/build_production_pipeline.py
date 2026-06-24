@@ -40,9 +40,12 @@ def main(argv: list[str]) -> int:
 
   # STEP configure-model
   mopt = pyneat.ModelOptions()
-  mopt.input_max_width = int(tensor.shape[1])
-  mopt.input_max_height = int(tensor.shape[0])
-  mopt.input_max_depth = int(tensor.shape[2])
+  mopt.preprocess.kind = pyneat.InputKind.Image
+  mopt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
+  mopt.preprocess.input_max_width = int(tensor.shape[1])
+  mopt.preprocess.input_max_height = int(tensor.shape[0])
+  mopt.preprocess.input_max_depth = int(tensor.shape[2])
+  mopt.preprocess.preset = pyneat.NormalizePreset.ImageNet
   mopt.name_suffix = "_prod"
   model = pyneat.Model(str(args.model), mopt)
   # END STEP
