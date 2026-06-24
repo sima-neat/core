@@ -33,8 +33,8 @@ def main(argv: list[str]) -> int:
 
   # STEP configure-tensor-input
   inp = pyneat.InputOptions()
-  inp.media_type = "application/vnd.simaai.tensor"
-  inp.format = "FP32"
+  inp.payload_type = pyneat.PayloadType.Tensor
+  inp.format = pyneat.Format.FP32
   inp.width = args.width
   inp.height = args.height
   inp.depth = 3
