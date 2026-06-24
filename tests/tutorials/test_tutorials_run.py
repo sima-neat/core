@@ -215,12 +215,16 @@ def test_tutorial_runs(folder: str, py_path: Path) -> None:
     cmd += ["--model", model_path]
   cmd += SMOKE_ARGS_BY_CHAPTER.get(tid, [])
 
+  env = os.environ.copy()
+  env.pop("GST_PLUGIN_SYSTEM_PATH_1_0", None)
+
   r = subprocess.run(
       cmd,
       cwd=str(REPO_ROOT),
       capture_output=True,
       text=True,
       timeout=TIMEOUT_SEC,
+      env=env,
   )
   assert r.returncode == 0, (
       f"{folder} exited {r.returncode}\n"
