@@ -42,11 +42,15 @@ def _chapter_id(folder: str) -> str:
   return folder[:3]
 
 
+def _tutorial_script_path(folder: Path) -> Path:
+  return folder / f"{folder.name[4:]}.py"
+
+
 def _tutorial_py_files() -> list[tuple[str, Path]]:
   out: list[tuple[str, Path]] = []
   for d in sorted(TUTORIALS_ROOT.glob("[0-9][0-9][0-9]_*/")):
-    py = next(d.glob("*.py"), None)
-    if py:
+    py = _tutorial_script_path(d)
+    if py.exists():
       out.append((d.name, py))
   return out
 
@@ -159,8 +163,9 @@ def test_walkthrough_segments_pair_across_languages() -> None:
     anchors = _walkthrough_step_names(readme_text)
     assert anchors, f"{readme} has a Walkthrough but no {{#step:<name>}} anchors"
 
-    for src in (next(d.glob("*.cpp"), None), next(d.glob("*.py"), None)):
+    for src in (next(d.glob("*.cpp"), None), _tutorial_script_path(d)):
       assert src is not None, f"{d.name}: missing a .cpp/.py source"
+      assert src.exists(), f"{d.name}: missing source {src}"
       text = src.read_text()
       starts = _STEP_MARKER_RE.findall(text)
       assert len(starts) == len(set(starts)), (

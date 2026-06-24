@@ -597,7 +597,8 @@ jobs:
           "${PYTHON_BIN}" -m pip install pytest
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
-          "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}" "${TUTORIALS_PYTEST_DIR}"
+          env -u GST_PLUGIN_SYSTEM_PATH_1_0 \
+            "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}" "${TUTORIALS_PYTEST_DIR}"
 
       - name: Cleanup test workspace tmp artifacts
         if: ${{ always() }}
