@@ -96,7 +96,12 @@ std::string trim_endpoint_name(std::string_view name) {
 // vertex-insertion path (Graph::add(node), add(Graph) linear append, connect()/fragment import,
 // output-collection import) shares one enforcement point instead of relying on per-call-site
 // checks. Runtime-stage vertices carry no pipeline Node identity and are skipped.
-void throw_if_duplicate_node_instances(const CompositionGraph& composition, const char* where) {
+//
+// Templated on the composition type because `Graph::CompositionGraph` is a private nested type
+// that cannot be named at file scope; deduction sidesteps the access check while the public
+// `vertices` member keeps the body well-formed.
+template <typename Composition>
+void throw_if_duplicate_node_instances(const Composition& composition, const char* where) {
   std::unordered_map<const Node*, std::size_t> first_seen;
   first_seen.reserve(composition.vertices.size());
   for (std::size_t i = 0; i < composition.vertices.size(); ++i) {
