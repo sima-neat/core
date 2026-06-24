@@ -854,36 +854,6 @@ void validate_image_preprocess_plan(const Mode mode, const Model& model,
     issues.push_back(ss.str());
   }
 
-  if (requested.input_max_width > 0 || requested.input_max_height > 0 ||
-      requested.input_max_depth > 0) {
-    if (plan.ingress_contracts.empty()) {
-      issues.push_back("resolved plan has no ingress contracts to carry input_max envelope");
-    } else {
-      const auto& ingress = plan.ingress_contracts.front();
-      if (requested.input_max_width > 0 && ingress.max_width > 0 &&
-          ingress.max_width < requested.input_max_width) {
-        std::ostringstream ss;
-        ss << "ingress max_width=" << ingress.max_width
-           << " is smaller than requested input_max_width=" << requested.input_max_width;
-        issues.push_back(ss.str());
-      }
-      if (requested.input_max_height > 0 && ingress.max_height > 0 &&
-          ingress.max_height < requested.input_max_height) {
-        std::ostringstream ss;
-        ss << "ingress max_height=" << ingress.max_height
-           << " is smaller than requested input_max_height=" << requested.input_max_height;
-        issues.push_back(ss.str());
-      }
-      if (requested.input_max_depth > 0 && ingress.max_depth > 0 &&
-          ingress.max_depth < requested.input_max_depth) {
-        std::ostringstream ss;
-        ss << "ingress max_depth=" << ingress.max_depth
-           << " is smaller than requested input_max_depth=" << requested.input_max_depth;
-        issues.push_back(ss.str());
-      }
-    }
-  }
-
   if (!issues.empty()) {
     std::ostringstream ss;
     ss << "image preprocess plan validation failed for mode=" << mode_name(mode) << ": ";

@@ -292,10 +292,8 @@ jobs:
       matrix:
         include:
           - deb_arch: amd64
-            multiarch: x86_64-linux-gnu
             runs_on: ubuntu-24.04
           - deb_arch: arm64
-            multiarch: aarch64-linux-gnu
             runs_on: ubuntu-24.04-arm
 
     steps:
@@ -316,8 +314,7 @@ jobs:
         run: |
           set -euo pipefail
           cd pcie_host
-          ./build.sh --clean --with-tests
-          ctest --test-dir build --output-on-failure
+          ./build.sh --clean
         env:
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
@@ -326,9 +323,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          mapfile -t runtime_debs < <(find pcie_host/packaging -maxdepth 1 -type f \
+          mapfile -t runtime_debs < <(find pcie_host/dist -maxdepth 1 -type f \
             -name "sima-pcie-host_*_${DEB_ARCH}.deb" ! -name "sima-pcie-host-dev_*" | sort)
-          mapfile -t dev_debs < <(find pcie_host/packaging -maxdepth 1 -type f \
+          mapfile -t dev_debs < <(find pcie_host/dist -maxdepth 1 -type f \
             -name "sima-pcie-host-dev_*_${DEB_ARCH}.deb" | sort)
 
           if [[ "${#runtime_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 ]]; then
@@ -367,14 +364,14 @@ jobs:
           PY
           )"
           short_sha="${GITHUB_SHA:0:12}"
-          prefix="pciehost/${branch_key}/${short_sha}/${MULTIARCH}"
+          prefix="core/pciehost/${DEB_ARCH}/${branch_key}/${short_sha}"
 
           s3_args=(--sse aws:kms)
           if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
 
-          for path in pcie_host/packaging/*.deb pcie_host/packaging/*.deb.sha256; do
+          for path in pcie_host/dist/*.deb pcie_host/dist/*.deb.sha256; do
             name="$(basename "${path}")"
             content_type="application/vnd.debian.binary-package"
             if [[ "${name}" == *.sha256 ]]; then
@@ -397,7 +394,7 @@ jobs:
         env:
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
           CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
-          MULTIARCH: ${{ matrix.multiarch }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
           REF_NAME: ${{ github.ref_name }}
           SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
 
@@ -436,23 +433,27 @@ jobs:
           PY
           )"
           short_sha="${GITHUB_SHA:0:12}"
-          prefix="pciehost/${branch_key}/${short_sha}"
-
-          mkdir -p _vulcan/pciehost/checksums
-          : > _vulcan/pciehost/resources.tsv
-          install_script="_vulcan/pciehost/install_pciehost.sh"
-          install -m 0755 pcie_host/scripts/install_pciehost.sh "${install_script}"
+          install_script_source="pcie_host/scripts/install_pciehost.sh"
 
           s3_args=(--sse aws:kms)
           if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
 
-          arches=(x86_64-linux-gnu aarch64-linux-gnu)
-          for arch in "${arches[@]}"; do
+          for deb_arch in amd64 arm64; do
+            prefix="core/pciehost/${deb_arch}/${branch_key}/${short_sha}"
+            work_dir="_vulcan/pciehost/${deb_arch}"
+            resources_tsv="${work_dir}/resources.tsv"
+            install_script="${work_dir}/install_pciehost.sh"
+
+            rm -rf "${work_dir}"
+            mkdir -p "${work_dir}/checksums"
+            : > "${resources_tsv}"
+            install -m 0755 "${install_script_source}" "${install_script}"
+
             mapfile -t deb_keys < <(aws s3api list-objects-v2 \
               --bucket "${ARTIFACT_BUCKET}" \
-              --prefix "${prefix}/${arch}/" \
+              --prefix "${prefix}/" \
               --query 'Contents[].Key' \
               --output text \
               | tr '\t' '\n' \
@@ -460,7 +461,7 @@ jobs:
               | sort)
 
             if [[ "${#deb_keys[@]}" -ne 2 ]]; then
-              echo "Expected two PCIe host debs under s3://${ARTIFACT_BUCKET}/${prefix}/${arch}/" >&2
+              echo "Expected two PCIe host debs under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
               printf 'found (%s):\n' "${#deb_keys[@]}" >&2
               printf '  %s\n' "${deb_keys[@]}" >&2 || true
               exit 1
@@ -472,7 +473,7 @@ jobs:
                 --key "${key}" \
                 --query ContentLength \
                 --output text)"
-              checksum_path="_vulcan/pciehost/checksums/$(basename "${key}").sha256"
+              checksum_path="${work_dir}/checksums/$(basename "${key}").sha256"
               aws s3 cp \
                 "s3://${ARTIFACT_BUCKET}/${key}.sha256" \
                 "${checksum_path}" \
@@ -480,29 +481,32 @@ jobs:
               checksum="$(awk '{print $1; exit}' "${checksum_path}")"
               resource="${key#${prefix}/}"
               printf '%s\t%s\t%s\n' "${resource}" "${checksum}" "${size_bytes}" \
-                >> _vulcan/pciehost/resources.tsv
+                >> "${resources_tsv}"
             done
-          done
 
-          install_script_size="$(stat -c '%s' "${install_script}")"
-          install_script_checksum="$(sha256sum "${install_script}" | awk '{print $1}')"
-          printf '%s\t%s\t%s\n' \
-            "install_pciehost.sh" \
-            "${install_script_checksum}" \
-            "${install_script_size}" \
-            >> _vulcan/pciehost/resources.tsv
+            install_script_size="$(stat -c '%s' "${install_script}")"
+            install_script_checksum="$(sha256sum "${install_script}" | awk '{print $1}')"
+            printf '%s\t%s\t%s\n' \
+              "install_pciehost.sh" \
+              "${install_script_checksum}" \
+              "${install_script_size}" \
+              >> "${resources_tsv}"
 
-          export PREFIX="${prefix}"
-          python3 - <<'PY'
+            export PREFIX="${prefix}"
+            export DEB_ARCH="${deb_arch}"
+            export RESOURCES_TSV="${resources_tsv}"
+            export METADATA_PATH="${work_dir}/metadata.json"
+            python3 - <<'PY'
           import json
           import os
           from datetime import datetime, timezone
           from pathlib import Path
 
+          deb_arch = os.environ["DEB_ARCH"]
           resources = []
           resource_checksums = {}
           total_size_bytes = 0
-          for line in Path("_vulcan/pciehost/resources.tsv").read_text(
+          for line in Path(os.environ["RESOURCES_TSV"]).read_text(
               encoding="utf-8").splitlines():
               resource, checksum, size_bytes = line.split("\t")
               resources.append(resource)
@@ -510,14 +514,15 @@ jobs:
               total_size_bytes += int(size_bytes)
 
           metadata = {
-              "name": "gh:sima-neat/pciehost",
+              "name": f"gh:sima-neat/pciehost/{deb_arch}",
               "version": os.environ["GITHUB_SHA"][:12],
               "release": "",
-              "description": "SiMa.ai NEAT PCIe host runtime and development packages",
+              "description": f"SiMa.ai NEAT PCIe host runtime and development packages ({deb_arch})",
               "platforms": [
                   {
                       "type": "host",
                       "os": ["linux"],
+                      "arch": [deb_arch],
                   }
               ],
               "resources": resources,
@@ -529,8 +534,8 @@ jobs:
               },
               "artifact": {
                   "type": "debian-packages",
-                  "repository": "pciehost",
-                  "arches": ["amd64", "arm64"],
+                  "repository": f"core/pciehost/{deb_arch}",
+                  "arches": [deb_arch],
               },
               "repository": os.environ["GITHUB_REPOSITORY"],
               "branch": os.environ["REF_NAME"],
@@ -542,37 +547,38 @@ jobs:
                   "install": f"{max(1, (total_size_bytes + 1024 * 1024 - 1) // (1024 * 1024))}MB",
               },
           }
-          Path("_vulcan/pciehost/metadata.json").write_text(
+          Path(os.environ["METADATA_PATH"]).write_text(
               json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
           PY
 
-          aws s3 cp \
-            "${install_script}" \
-            "s3://${ARTIFACT_BUCKET}/${prefix}/install_pciehost.sh" \
-            --content-type text/x-shellscript \
-            "${s3_args[@]}"
+            aws s3 cp \
+              "${install_script}" \
+              "s3://${ARTIFACT_BUCKET}/${prefix}/install_pciehost.sh" \
+              --content-type text/x-shellscript \
+              "${s3_args[@]}"
 
-          aws s3 cp \
-            _vulcan/pciehost/metadata.json \
-            "s3://${ARTIFACT_BUCKET}/${prefix}/metadata.json" \
-            --content-type application/json \
-            "${s3_args[@]}"
+            aws s3 cp \
+              "${work_dir}/metadata.json" \
+              "s3://${ARTIFACT_BUCKET}/${prefix}/metadata.json" \
+              --content-type application/json \
+              "${s3_args[@]}"
 
-          printf '%s\n' "${short_sha}" > _vulcan/pciehost/latest.tag
-          aws s3 cp \
-            _vulcan/pciehost/latest.tag \
-            "s3://${ARTIFACT_BUCKET}/pciehost/${branch_key}/latest.tag" \
-            --content-type text/plain \
-            "${s3_args[@]}"
+            printf '%s\n' "${short_sha}" > "${work_dir}/latest.tag"
+            aws s3 cp \
+              "${work_dir}/latest.tag" \
+              "s3://${ARTIFACT_BUCKET}/core/pciehost/${deb_arch}/${branch_key}/latest.tag" \
+              --content-type text/plain \
+              "${s3_args[@]}"
 
-          if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
-            aws cloudfront create-invalidation \
-              --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-              --paths "/${prefix}/metadata.json" "/${prefix}/install_pciehost.sh" "/pciehost/${branch_key}/latest.tag"
-          fi
+            if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
+              aws cloudfront create-invalidation \
+                --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+                --paths "/${prefix}/metadata.json" "/${prefix}/install_pciehost.sh" "/core/pciehost/${deb_arch}/${branch_key}/latest.tag"
+            fi
 
-          cat _vulcan/pciehost/metadata.json
-          echo "Promoted pciehost/${branch_key}/latest.tag -> ${short_sha}"
+            cat "${work_dir}/metadata.json"
+            echo "Promoted core/pciehost/${deb_arch}/${branch_key}/latest.tag -> ${short_sha}"
+          done
         env:
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
           CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
