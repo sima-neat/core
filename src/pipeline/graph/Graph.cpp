@@ -90,6 +90,37 @@ std::string trim_endpoint_name(std::string_view name) {
   return std::string(name.substr(first, last - first));
 }
 
+// Enforces the invariant that a pipeline Node instance appears at most once across a composition.
+// Reusing one instance would create two vertices that compile to the same GStreamer element name,
+// producing ambiguous `.<name>` pad references and undefined links. Centralized here so every
+// vertex-insertion path (Graph::add(node), add(Graph) linear append, connect()/fragment import,
+// output-collection import) shares one enforcement point instead of relying on per-call-site
+// checks. Runtime-stage vertices carry no pipeline Node identity and are skipped.
+void throw_if_duplicate_node_instances(const CompositionGraph& composition, const char* where) {
+  std::unordered_map<const Node*, std::size_t> first_seen;
+  first_seen.reserve(composition.vertices.size());
+  for (std::size_t i = 0; i < composition.vertices.size(); ++i) {
+    const Node* node = composition.vertices[i].get();
+    if (!node) {
+      continue;
+    }
+    const auto [it, inserted] = first_seen.emplace(node, i);
+    if (inserted) {
+      continue;
+    }
+    const std::string kind = composition.vertices[i]->kind();
+    const std::string label = trim_endpoint_name(composition.vertices[i]->user_label());
+    throw std::runtime_error(
+        std::string(where ? where : "Graph") + ": Node instance (kind=" + kind +
+        (label.empty() ? std::string() : ", label='" + label + "'") + ") appears at positions " +
+        std::to_string(it->second) + " and " + std::to_string(i) +
+        "; a Node instance may appear in a Graph only once. Construct a separate Node (e.g. "
+        "another "
+        "nodes::" +
+        kind + "(...)) if you intended two independent elements.");
+  }
+}
+
 std::string endpoint_token(std::string_view text, std::string_view fallback) {
   std::string out;
   out.reserve(text.size());
@@ -1050,6 +1081,7 @@ std::pair<std::size_t, std::size_t> Graph::append_linear_fragment_(const Graph& 
     }
     input_route_processor_ = fragment.input_route_processor_;
   }
+  throw_if_duplicate_node_instances(*composition_, where ? where : "Graph::add(Graph)");
   return {start, end};
 }
 
@@ -1139,6 +1171,7 @@ std::pair<std::size_t, std::size_t> Graph::import_composition_fragment_(const Gr
   }
 
   composition_->recompute_unique_tail();
+  throw_if_duplicate_node_instances(*composition_, where ? where : "Graph::connect");
   return {start, end};
 }
 
@@ -1194,6 +1227,7 @@ std::pair<std::size_t, std::size_t> Graph::import_output_collection_fragment_(co
       .name = name,
       .user_named = user_named,
   });
+  throw_if_duplicate_node_instances(*composition_, where ? where : "Graph::connect");
   return {start, end};
 }
 
@@ -1308,6 +1342,10 @@ Graph::import_or_reuse_node_fragment_(std::shared_ptr<Node> node, const char* wh
   composition_->imported_nodes.emplace(
       key, CompositionGraph::ImportedFragment{.source_version = 0, .start = start, .end = end});
   composition_->recompute_unique_tail();
+  // Reuse (same instance connected again) returns early above without inserting, so legitimate
+  // DAG fan-out is unaffected; this only fires when a connect() inserts an instance that already
+  // lives elsewhere in the composition (e.g. connect-after-add of the same Node).
+  throw_if_duplicate_node_instances(*composition_, where ? where : "Graph::connect");
   return {start, end};
 }
 
@@ -1443,28 +1481,12 @@ Graph& Graph::add(std::shared_ptr<Node> node) {
   if (!composition_) {
     composition_ = std::make_unique<CompositionGraph>();
   }
-  if (node) {
-    // Check for duplicated nodes, i.e., A graph would contain unique node objects only.
-    const Node* incoming = node.get();
-    for (std::size_t i = 0; i < composition_->vertices.size(); ++i) {
-      if (composition_->vertices[i].get() != incoming) {
-        continue;
-      }
-      const std::string label = trim_endpoint_name(node->user_label());
-      throw std::runtime_error(
-          "Graph::add: Node instance (kind=" + node->kind() +
-          (label.empty() ? std::string() : ", label='" + label + "'") +
-          ") was already added at position " + std::to_string(i) +
-          "; a Node instance may appear in a Graph only once. Construct a second Node (e.g. "
-          "another nodes::" +
-          node->kind() + "(...)) if you intended two independent elements.");
-    }
-  }
   const NodeCapsBehavior behavior = node ? node->caps_behavior() : NodeCapsBehavior::Dynamic;
   const auto [start, end] = composition_->append_node(std::move(node));
   if (end > start) {
     groups_.push_back({start, end, behavior, ""});
   }
+  throw_if_duplicate_node_instances(*composition_, "Graph::add");
   mark_composition_changed();
   return *this;
 }

@@ -89,4 +89,18 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
     require_throws_contains([&] { app.add(convert); }, "may appear in a Graph only once",
                             "re-adding the same Node instance should fail closed");
   }
+
+  {
+    // Layer 1 (centralized): the invariant is enforced on every vertex-insertion path, not only
+    // direct add(node). Importing a fragment that shares a Node instance already present in the
+    // target Graph must also fail closed.
+    auto convert = simaai::neat::nodes::VideoConvert();
+    simaai::neat::Graph fragment;
+    fragment.add(convert);
+    simaai::neat::Graph app;
+    app.add(convert);
+    require_throws_contains(
+        [&] { app.add(fragment); }, "may appear in a Graph only once",
+        "re-importing a shared Node instance via add(Graph) should fail closed");
+  }
 });
