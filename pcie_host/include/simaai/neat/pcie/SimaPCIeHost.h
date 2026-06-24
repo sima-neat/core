@@ -234,13 +234,10 @@ public:
   SimaPCIeHost(const SimaPCIeHost&) = delete;
   SimaPCIeHost& operator=(const SimaPCIeHost&) = delete;
 
-  ModelInfo load_metadata(const std::string& model_path,
-                          const ModelOptions& options = {},
+  ModelInfo load_metadata(const std::string& model_path, const ModelOptions& options = {},
                           bool accelerator = false);
-  ModelInfo init_pipeline(const std::string& model_path,
-                          const ModelOptions& options = {},
-                          bool accelerator = false,
-                          int readiness_timeout_ms = 20000);
+  ModelInfo init_pipeline(const std::string& model_path, const ModelOptions& options = {},
+                          bool accelerator = false, int readiness_timeout_ms = 20000);
   void stop();
 
   Status status() const;
@@ -279,14 +276,12 @@ inline Tensor tensor_from_bgr_mat(const cv::Mat& image) {
   Tensor tensor;
   tensor.dtype = TensorDType::UInt8;
   tensor.layout = channels == 1 ? TensorLayout::HW : TensorLayout::HWC;
-  tensor.shape = channels == 1
-                     ? std::vector<std::int64_t>{owner->rows, owner->cols}
-                     : std::vector<std::int64_t>{owner->rows, owner->cols, channels};
-  tensor.strides_bytes = channels == 1
-                             ? std::vector<std::int64_t>{
-                                   static_cast<std::int64_t>(owner->step[0]), 1}
-                             : std::vector<std::int64_t>{
-                                   static_cast<std::int64_t>(owner->step[0]), channels, 1};
+  tensor.shape = channels == 1 ? std::vector<std::int64_t>{owner->rows, owner->cols}
+                               : std::vector<std::int64_t>{owner->rows, owner->cols, channels};
+  tensor.strides_bytes =
+      channels == 1
+          ? std::vector<std::int64_t>{static_cast<std::int64_t>(owner->step[0]), 1}
+          : std::vector<std::int64_t>{static_cast<std::int64_t>(owner->step[0]), channels, 1};
   tensor.owner = owner;
   tensor.data = owner->data;
   tensor.size_bytes = static_cast<std::size_t>(owner->rows) * owner->step[0];

@@ -797,16 +797,15 @@ std::string pipeline_state_summary(GstElement* pipeline) {
   const GstStateChangeReturn rc = gst_element_get_state(pipeline, &state, &pending, 0);
   std::ostringstream out;
   out << "state=" << gst_element_state_get_name(state)
-      << " pending=" << gst_element_state_get_name(pending)
-      << " rc=" << static_cast<int>(rc);
+      << " pending=" << gst_element_state_get_name(pending) << " rc=" << static_cast<int>(rc);
   return out.str();
 }
 
 std::string immediate_bus_error_or_empty(GstBus* bus) {
   if (!bus)
     return {};
-  GstMessage* msg = gst_bus_pop_filtered(
-      bus, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+  GstMessage* msg =
+      gst_bus_pop_filtered(bus, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
   if (!msg)
     return {};
 
@@ -853,9 +852,8 @@ public:
       throw PciePipelineError("gst_state", message);
     }
     if (!pipeline_is_armed(pipeline_)) {
-      throw PciePipelineError("gst_state",
-                              "pipeline did not arm for PLAYING (" +
-                                  pipeline_state_summary(pipeline_) + ")");
+      throw PciePipelineError("gst_state", "pipeline did not arm for PLAYING (" +
+                                               pipeline_state_summary(pipeline_) + ")");
     }
 
     ReadinessState readiness;

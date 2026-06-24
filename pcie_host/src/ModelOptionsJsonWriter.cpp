@@ -102,9 +102,8 @@ std::string box_decode_type_option_token(const BoxDecodeTypeOption option) {
 
 bool has_boxdecode_request(const ModelOptions& opt) {
   return opt.decode_type != BoxDecodeType::Unspecified ||
-         opt.decode_type_option != BoxDecodeTypeOption::Auto ||
-         float_set(opt.score_threshold) || float_set(opt.nms_iou_threshold) ||
-         opt.top_k != 0 || opt.num_classes != 0;
+         opt.decode_type_option != BoxDecodeTypeOption::Auto || float_set(opt.score_threshold) ||
+         float_set(opt.nms_iou_threshold) || opt.top_k != 0 || opt.num_classes != 0;
 }
 
 void reject(const std::string& message) {
@@ -147,8 +146,7 @@ ordered_json preprocess_json(const ModelOptions& opt) {
     pre["resize"] = std::move(resize);
   }
 
-  if (p.color_convert.enable == AutoFlag::On ||
-      p.color_convert.input_format != ColorFormat::Auto ||
+  if (p.color_convert.enable == AutoFlag::On || p.color_convert.input_format != ColorFormat::Auto ||
       p.color_convert.output_format != ColorFormat::Auto) {
     ordered_json color = ordered_json::object();
     color["input_format"] = color_format_token(p.color_convert.input_format);

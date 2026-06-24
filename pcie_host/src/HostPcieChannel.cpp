@@ -78,9 +78,8 @@ std::string image_caps_for_tensor(const Tensor& tensor, const ImageSpec& image) 
     throw std::runtime_error("image tensor requires positive width/height in shape or planes");
   }
 
-  return std::string("video/x-raw,format=(string)") + format +
-         ",width=(int)" + std::to_string(width) +
-         ",height=(int)" + std::to_string(height);
+  return std::string("video/x-raw,format=(string)") + format + ",width=(int)" +
+         std::to_string(width) + ",height=(int)" + std::to_string(height);
 }
 
 int tensor_set_dtype(const TensorDType dtype) {
@@ -195,8 +194,7 @@ const std::uint8_t* tensor_data(const Tensor& tensor, std::size_t* size_out) {
   if (!tensor.data) {
     throw std::runtime_error("tensor has no data pointer");
   }
-  if (tensor.byte_offset < 0 ||
-      static_cast<std::size_t>(tensor.byte_offset) > tensor.size_bytes) {
+  if (tensor.byte_offset < 0 || static_cast<std::size_t>(tensor.byte_offset) > tensor.size_bytes) {
     throw std::runtime_error("tensor byte offset is outside tensor payload");
   }
   const auto offset = static_cast<std::size_t>(tensor.byte_offset);
@@ -287,8 +285,7 @@ std::size_t tensor_payload_size(const Tensor& tensor) {
   if (!tensor.shape.empty()) {
     return dense_size_bytes(tensor);
   }
-  if (tensor.byte_offset < 0 ||
-      static_cast<std::size_t>(tensor.byte_offset) > tensor.size_bytes) {
+  if (tensor.byte_offset < 0 || static_cast<std::size_t>(tensor.byte_offset) > tensor.size_bytes) {
     return 0;
   }
   return tensor.size_bytes - static_cast<std::size_t>(tensor.byte_offset);
@@ -355,7 +352,8 @@ void attach_tensor_set_meta(GstBuffer* buffer, const TensorList& tensors) {
     desc.size_bytes = size_bytes;
     desc.dtype = tensor_set_dtype(tensor.dtype);
     desc.layout = tensor_set_layout(tensor);
-    desc.rank = static_cast<guint>(std::min<std::size_t>(tensor.shape.size(), SIMA_TENSOR_SET_MAX_RANK));
+    desc.rank =
+        static_cast<guint>(std::min<std::size_t>(tensor.shape.size(), SIMA_TENSOR_SET_MAX_RANK));
     for (guint d = 0; d < desc.rank; ++d) {
       desc.shape[d] = tensor.shape[d];
     }
@@ -384,15 +382,13 @@ void attach_tensor_set_meta(GstBuffer* buffer, const TensorList& tensors) {
   GBytes* descriptor_bytes =
       g_bytes_new(descriptors.data(), descriptors.size() * sizeof(SimaTensorDescriptorV2));
   GstStructure* structure = gst_custom_meta_get_structure(meta);
-  gst_structure_set(structure, SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT,
-                    SIMA_TENSOR_SET_META_VERSION, SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT,
-                    G_TYPE_UINT, static_cast<guint>(descriptors.size()),
-                    SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
-                    static_cast<guint>(sizeof(SimaTensorDescriptorV2)),
-                    SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS, G_TYPE_BYTES, descriptor_bytes,
-                    SIMA_TENSOR_SET_META_FIELD_STAGE_KEY, G_TYPE_STRING, "pcie-input",
-                    SIMA_TENSOR_SET_META_FIELD_NAME_TABLE, G_TYPE_STRV, name_table.data(),
-                    nullptr);
+  gst_structure_set(
+      structure, SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT, SIMA_TENSOR_SET_META_VERSION,
+      SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT, G_TYPE_UINT, static_cast<guint>(descriptors.size()),
+      SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
+      static_cast<guint>(sizeof(SimaTensorDescriptorV2)), SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS,
+      G_TYPE_BYTES, descriptor_bytes, SIMA_TENSOR_SET_META_FIELD_STAGE_KEY, G_TYPE_STRING,
+      "pcie-input", SIMA_TENSOR_SET_META_FIELD_NAME_TABLE, G_TYPE_STRV, name_table.data(), nullptr);
   g_bytes_unref(descriptor_bytes);
 }
 
@@ -464,8 +460,8 @@ bool sample_has_bbox_caps(GstSample* sample) {
 
   const char* media_type = gst_structure_get_name(structure);
   const char* format = gst_structure_get_string(structure, "format");
-  return media_type && std::strcmp(media_type, "application/vnd.simaai.tensor") == 0 &&
-         format && std::strcmp(format, "BBOX") == 0;
+  return media_type && std::strcmp(media_type, "application/vnd.simaai.tensor") == 0 && format &&
+         std::strcmp(format, "BBOX") == 0;
 }
 
 TensorList bbox_tensor_from_output_payload(const std::shared_ptr<MappedSample>& owner) {
@@ -515,8 +511,7 @@ HostPcieChannel::~HostPcieChannel() {
   stop();
 }
 
-void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue,
-                                const int card_id) {
+void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, const int card_id) {
   if (running_.load()) {
     throw std::runtime_error("cannot configure HostPcieChannel while running");
   }
@@ -578,18 +573,18 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
     throw std::runtime_error("failed to parse caps: " + caps_);
   }
 
-  g_object_set(G_OBJECT(appsrc_), "caps", caps, "is-live", TRUE, "do-timestamp", TRUE,
-               "block", TRUE, "format", GST_FORMAT_TIME, nullptr);
+  g_object_set(G_OBJECT(appsrc_), "caps", caps, "is-live", TRUE, "do-timestamp", TRUE, "block",
+               TRUE, "format", GST_FORMAT_TIME, nullptr);
   gst_caps_unref(caps);
 
   const std::size_t auto_buffer = std::max(facts_.packed_input_bytes, facts_.packed_output_bytes);
   const guint64 buffer_size =
       static_cast<guint64>(std::max<std::size_t>(auto_buffer, 512U * 1024U));
-  g_object_set(G_OBJECT(pciehost_), "buffersize", buffer_size, "card-number", card_id_,
-               "queue", pcie_queue_, nullptr);
+  g_object_set(G_OBJECT(pciehost_), "buffersize", buffer_size, "card-number", card_id_, "queue",
+               pcie_queue_, nullptr);
 
-  g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256,
-               "drop", FALSE, nullptr);
+  g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
+               FALSE, nullptr);
   g_object_set(G_OBJECT(queue_element_), "max-size-buffers", 64, "max-size-bytes", 0,
                "max-size-time", static_cast<guint64>(0), "leaky", 0, nullptr);
 
@@ -676,9 +671,9 @@ bool HostPcieChannel::push_bytes(const std::vector<std::uint8_t>& payload,
   };
 
   auto* holder = new std::shared_ptr<std::vector<std::uint8_t>>(owned);
-  GstBuffer* buffer = gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(0), owned->data(),
-                                                  owned->size(), 0, owned->size(), holder,
-                                                  free_wrapped_payload);
+  GstBuffer* buffer =
+      gst_buffer_new_wrapped_full(static_cast<GstMemoryFlags>(0), owned->data(), owned->size(), 0,
+                                  owned->size(), holder, free_wrapped_payload);
   if (!buffer) {
     delete holder;
     remove_pending_sequence();
