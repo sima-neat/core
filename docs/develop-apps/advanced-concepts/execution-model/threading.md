@@ -1,59 +1,80 @@
 ---
 title: Threading model
-description: Which threads exist in a running pipeline, what each does, and where application code may run on them.
+description: Which threads exist in a running graph, what each does, and where application code may run on them.
 sidebar_position: 2
 slug: /develop-apps/advanced-concepts/threading
 ---
 
 # Threading model
 
-A live `Run` has more threads than is obvious from the public API. This page enumerates the thread census and explains where application code may run, and where it must not.
+A live `Run` does work on framework and runtime threads. Your app does not need to manage those threads, but it does need to keep its own push, pull, callback, and shutdown code disciplined.
 
 ## Thread census
 
-For a typical async-mode `Run`:
+For a typical `Run`:
 
 | Thread | Role | Owned by |
-|--------|------|----------|
-| GStreamer streaming threads | One per source pad path. Each pushes buffers down its branch of the pipeline. | GStreamer / `gst-launch` runtime |
-| MLA dispatcher thread | Submits MLA work and reaps completions. | The framework's MLA backend |
-| EV74 / CVU dispatcher threads | One per CVU-side stage. Submit kernels, poll for completion. | The framework's CVU backend |
-| Pull-side waiter threads | One per output Node — blocks on the output queue, hands samples to `Run::pull()`. | The framework |
-| Application threads | Whatever calls `push()`, `pull()`, `start()`, `stop()`, or any user callback. | The application |
+| --- | --- | --- |
+| GStreamer streaming threads | Move buffers through source, transform, and sink paths. | GStreamer runtime |
+| MLA dispatcher threads | Submit MLA work and reap completions. | Neat runtime |
+| EV74 / CVU dispatcher threads | Submit CVU-side kernels and poll for completion. | Neat runtime |
+| Pull-side waiters and bus watchers | Move output samples into public queues and report runtime errors. | Neat runtime |
+| Application threads | Call `Graph.build(...)`, `Graph.run(...)`, `Run.push(...)`, `Run.pull(...)`, `Run.stop()`, or callbacks. | Your application |
 
-Connected Graphs can add internal runtime-stage workers:
-
-| Thread | Role |
-|--------|------|
-| Stage executor threads | One per actor stage; serially handles `on_input` / `on_tick` for that stage. |
-| Mailbox dispatcher thread | Routes outgoing `StageOutMsg`s to consumer mailboxes. |
+Graph fragments, source nodes, and sink nodes can add runtime work, but the rule stays the same: the public `Run` is the handle your app controls.
 
 ## Where application code runs
 
-User code shows up in a few places:
+User code appears in these places:
 
-- **Direct calls into the framework** — `push()`, `pull()`, `build()`, `run()`, `start()`, `stop()`. These run on whatever application thread invokes them. They are safe to call concurrently from different threads as long as they target different `Run` instances; multiple threads calling `pull()` on the same `Run` is supported and fans out.
-- **Callbacks** — `Graph::set_tensor_callback()` and other callback-style hooks run on runtime
-  worker / pull-side threads. Keep them short; long-running callbacks back-pressure the pipeline.
-- **Custom `Node` implementations** — `Node::backend_fragment()` / `element_names()` etc. are called only at build time, on the application thread that called `Graph::build()`. They never run during `push()` / `pull()`.
-- **Custom `StageExecutor` implementations** — `on_input()` / `on_tick()` run on the executor thread the runtime owns. The runtime guarantees serial invocation per-stage, so stages may keep non-atomic per-instance state without locks.
+- **Direct API calls**: `build(...)`, `run(...)`, `push(...)`, `try_push(...)`, `pull(...)`, `close_input()`, `stop()`, and `close()` run on the application thread that invokes them.
+- **Drop callbacks**: `RunOptions.on_input_drop` runs on the pushing path. Keep it short; count and return.
+- **Tensor callbacks**: `Graph::set_tensor_callback(...)` is C++ callback-style consumption. Keep callbacks short because long work backpressures the runtime path.
+- **Custom node description**: public node construction and graph composition happen at build time, on the application thread.
+
+Do not hide slow work in callbacks. If a callback needs to do heavy work, hand the sample to your own queue and return.
 
 ## Locking rules
 
-The framework's public-API objects are not thread-safe by default — `Graph`, `Run`, `Tensor`, `TensorBuffer`, etc. assume one thread at a time. The exceptions:
+Treat `Graph`, `Run`, `Tensor`, and `Sample` as single-owner objects unless the API says otherwise.
 
-- `Run::push()` / `pull()` are mutually exclusive with each other but **internally synchronized** — concurrent push from one thread and pull from another is supported.
-- Runtime metrics snapshots are internally locked.
-- `Run::stop()` is idempotent and may be called from any thread.
+Supported pattern:
 
-When in doubt, treat objects as single-threaded and serialize external access.
+- one producer thread calls `push(...)` or `try_push(...)`;
+- one consumer thread calls `pull(...)`;
+- another coordinator thread may call `stop()` during shutdown.
 
-## Cancellation
+Risky pattern:
 
-`Run::stop()` is the cancellation primitive. Calling it once stops the runtime and unblocks any in-flight `pull()` (which returns `nullopt` for non-throwing variants, or raises for `pull_or_throw`). Pending `push()`es time out per the configured `push_timeout_ms`.
+- several producer threads push to the same `Run` without a lock;
+- several consumer threads pull from the same output without a clear ownership rule;
+- a callback calls back into the same `Run` and waits for more work.
+
+If you need multiple producers, serialize access before calling `Run.push(...)`. If you need multiple consumers, fan out after one thread pulls from Neat.
+
+## Shutdown and cancellation
+
+Use the shutdown primitive that matches intent:
+
+| Intent | Use |
+| --- | --- |
+| Finish queued work after the last input | `run.close_input()`, then pull until no more output arrives or `PullStatus::Closed` is returned. |
+| Stop now and unblock waiting work | `run.stop()` |
+| Release runtime resources | `run.close()` or let the `Run` object leave scope |
+
+`stop()` is the cancellation path. After cancellation, in-flight pulls unblock and pushes should stop. Do not keep pushing into a run that is closing.
+
+## Throughput thread shape
+
+For app-pushed live or high-throughput graphs, start with two application threads:
+
+1. A producer thread reads input, stamps `stream_id` / `frame_id`, and calls `try_push(...)` or `push(...)` according to the selected `OverflowPolicy`.
+2. A consumer thread pulls continuously and releases or copies outputs before they pin runtime-backed buffers.
+
+Add more application threads around your own queues, not around the same `Run` object. Make the hot loop boring. Boring is fast.
 
 ## Further reading
 
-- "Runs, parallelism, telemetry" — §13 and §48 of the design deep dive.
+- [Run a Graph](/develop-apps/development-workflow/pipeline) — runtime lifecycle, throughput, measurement, and backpressure.
 - [`Run`](/reference/cppapi/classes/simaai-neat-run) — the public runtime object.
-- `StageExecutor` — internal runtime-stage threading contract used by compiler-generated stages.
+- [Async vs sync timing model](/develop-apps/advanced-concepts/timing_model) — when work happens and when calls return.

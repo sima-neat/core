@@ -131,8 +131,13 @@ export default function ApiReferenceLink(props) {
     style.id = styleId;
     style.textContent = `
       nav.navbar,
-      header.navbar {
+      header.navbar,
+      .software-subnav,
+      .build-info-banner {
         display: none !important;
+      }
+      #__docusaurus {
+        padding-top: 0 !important;
       }
       footer.footer,
       footer[class*="footer"] {

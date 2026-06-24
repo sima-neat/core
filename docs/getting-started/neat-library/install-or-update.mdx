@@ -4,9 +4,12 @@ description: Install or update the Neat Library runtime, C++ files, GStreamer co
 sidebar_position: 2
 ---
 
-Use this page to install or update the Palette Neat Library. You can install it
-directly on a DevKit, or inside the Neat Development Environment when you build
-from a host machine.
+Use this page to install or update the Palette Neat Library.
+
+:::tip Neat Library within the Neat SDK
+When you pair a DevKit during `sima-cli sdk setup`, the SDK installs its included
+Neat Library and bundled PyNeat environment at `~/pyneat` on the DevKit automatically.
+:::
 
 ## Choose Where to Install
 
@@ -14,16 +17,8 @@ Run the installer from the environment where you build or run Neat applications:
 
 | Environment | Use this when |
 | --- | --- |
-| Neat Development Environment with DevKit Sync | You want the host build environment and paired DevKit runtime kept in sync automatically. |
-| Neat Development Environment without DevKit Sync | You only need to build in the container and will transfer binaries to a DevKit manually. |
+| Neat SDK | You want to upgrade the Neat Library in the Neat SDK without installing a new SDK version. |
 | DevKit | You want to install or update the runtime directly on the device. |
-
-:::note DevKit Sync keeps the runtime aligned
-When you install from inside an SDK container paired with a DevKit through DevKit
-Sync, the installer also installs the Neat Library on the paired DevKit. This
-keeps the host build environment and the DevKit runtime on the same Neat Library
-version.
-:::
 
 ## Prerequisites
 
@@ -35,72 +30,69 @@ Before you begin:
 - Make sure the environment running the installer can download SiMa.ai artifacts.
 - We recommend creating an account at [community.sima.ai](https://community.sima.ai) to access assets such as precompiled models for testing.
 
-The package installer verifies the package `manifest.json` `platform-version`
-before it changes Python, apt, or SDK sysroot packages. In the Neat Development
-Environment, it compares that value with `/etc/sdk-release` `SDK Version`; on a
-DevKit, it compares with `/etc/buildinfo` `DISTRO_VERSION`. Development-only
-installs on nonstandard images can set `NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON`
-to bypass the guard explicitly.
-
-## Prepare an Install Directory
+## Install the Neat Library
 
 Choose a working directory before running the installer. On the DevKit, install
 under `/media/nvme` to avoid filling the root file system. In the SDK container,
 use a container-local path such as `$HOME/neat`.
 
-<CodeTabs>
-<CodeTab label="Development Environment" lang="bash">
+Select your environment, then run the steps in order. Install in the **Neat SDK**
+container to cross-compile C++ applications; install on the **DevKit** to set up
+the runtime there, which also provisions PyNeat at `~/pyneat`. The installer
+commands are the same in both places — only the working directory and where you
+run them differ.
 
-<ShellCommand prompt="sdk-container">
+<CodeTabs>
+<CodeTab label="Neat SDK" lang="bash">
+
+Prepare a container-local install directory such as `$HOME/neat`:
+
+<ShellCommand prompt="username@neat-sdk-latest">
 cd $HOME && mkdir -p neat && cd neat
+</ShellCommand>
+
+Install the default Neat Library package selected by `sima-cli`. You can
+optionally install extras, including prebuilt tutorials, source-code tutorials,
+and tests:
+
+<ShellCommand prompt="username@neat-sdk-latest">
+sima-cli neat install core@v0.2.1
 </ShellCommand>
 
 </CodeTab>
 
 <CodeTab label="DevKit" lang="bash">
 
-<ShellCommand prompt="devkit">
+:::note Update DevKit firmware first
+Before installing the Neat Library on a DevKit, ensure the DevKit software version is compatible with the Neat Library. See the
+[Compatibility Guide](/getting-started/compatibility/) for more information.
+:::
+
+Prepare an install directory under `/media/nvme` to avoid filling the root file
+system:
+
+<ShellCommand prompt="modalix">
 cd /media/nvme && mkdir -p neat && cd neat
+</ShellCommand>
+
+Install the default Neat Library package selected by `sima-cli`. You can
+optionally install extras, including prebuilt tutorials, source-code tutorials,
+and tests:
+
+<ShellCommand prompt="modalix">
+sima-cli neat install core@v0.2.1
 </ShellCommand>
 
 </CodeTab>
 </CodeTabs>
 
-## Install the Default Package
-
-Use this option to install the default Neat Library package selected by
-`sima-cli`:
-
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core
-</ShellCommand>
-
-You can optionally install extras, including prebuilt tutorials, source-code
-tutorials, and tests.
-
-## Install a Selected Release
-
-Use this option to install a specific Neat Library release. Append the version to
-the package name:
-
-For Neat Library 0.1.0:
-
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@0.1.0
-</ShellCommand>
-
-For Neat Library 0.2.0:
-
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@0.2.0
-</ShellCommand>
-
 ## Default PyNeat Environment
 
-On the DevKit, installation also provisions a PyNeat virtual environment at
-`~/pyneat`:
+Installing the Neat Library on the DevKit also provisions a default PyNeat
+virtual environment at `~/pyneat` on the DevKit. This is the supported PyNeat
+environment — activate it directly:
 
-<ShellCommand prompt="devkit">
+<ShellCommand prompt="modalix">
 source ~/pyneat/bin/activate
 </ShellCommand>
 
@@ -118,7 +110,7 @@ If you prefer building from source, follow the
 [Build](/develop-apps/contribute/build) guide.
 
 For SDK setup and DevKit Sync onboarding, see
-[Neat Development Environment](/getting-started/dev-environment/).
+[Neat SDK](/getting-started/dev-environment/).
 
 ## Next Step
 

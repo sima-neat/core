@@ -154,7 +154,7 @@ function(add_pipeline_test_strict name)
   add_dependencies(${name} prepare_test_fixtures)
 
   target_link_libraries(${name}
-    PRIVATE sima_neat_internal
+    PRIVATE sima_neat sima_neat_internal_headers
   )
 
   # 🔑 CRITICAL: test include paths
@@ -329,6 +329,7 @@ set(UNIT_TESTS
   unit_sample_bundle_holder_test
   unit_graph_api_surface_test
   unit_graph_build_input_strategy_test
+  unit_graph_internal_zero_copy_fallback_test
   unit_graph_io_contract_test
   unit_graph_naming_transform_test
   unit_stage_contract_equivalence_test
@@ -667,7 +668,7 @@ foreach(target ${PERF_TARGETS})
     ${target}
     ${CMAKE_CURRENT_SOURCE_DIR}/perf/${target}.cpp
   )
-  target_link_libraries(${target} PRIVATE sima_neat_internal)
+  target_link_libraries(${target} PRIVATE sima_neat sima_neat_internal_headers)
   target_include_directories(${target}
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
@@ -724,7 +725,7 @@ if (FUZZING)
 
   function(add_pipeline_fuzz_target name source)
     add_executable(${name} ${source})
-    target_link_libraries(${name} PRIVATE sima_neat_internal)
+    target_link_libraries(${name} PRIVATE sima_neat sima_neat_internal_headers)
     target_include_directories(${name}
       PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -868,7 +869,7 @@ add_executable(
   ${CMAKE_CURRENT_SOURCE_DIR}/graph_migration/legacy/evo_route_matrix_legacy_runner.cpp
 )
 add_dependencies(evo_route_matrix_legacy_runner prepare_test_fixtures)
-target_link_libraries(evo_route_matrix_legacy_runner PRIVATE sima_neat_internal)
+target_link_libraries(evo_route_matrix_legacy_runner PRIVATE sima_neat sima_neat_internal_headers)
 target_include_directories(evo_route_matrix_legacy_runner
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -882,7 +883,7 @@ add_executable(
   ${CMAKE_CURRENT_SOURCE_DIR}/graph_migration/legacy/evo_tput_bench.cpp
 )
 add_dependencies(evo_tput_bench prepare_test_fixtures)
-target_link_libraries(evo_tput_bench PRIVATE sima_neat_internal)
+target_link_libraries(evo_tput_bench PRIVATE sima_neat sima_neat_internal_headers)
 target_include_directories(evo_tput_bench
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -896,7 +897,7 @@ add_executable(
   ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/visual_frontend_tput_test.cpp
 )
 add_dependencies(visual_frontend_tput_test prepare_test_fixtures)
-target_link_libraries(visual_frontend_tput_test PRIVATE sima_neat_internal)
+target_link_libraries(visual_frontend_tput_test PRIVATE sima_neat sima_neat_internal_headers)
 target_include_directories(visual_frontend_tput_test
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1545,7 +1546,7 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     e2e_pipelines/img_classification/resnet50_modelpack_test.cpp
   )
   add_dependencies(resnet50_modelpack_test prepare_test_fixtures)
-  target_link_libraries(resnet50_modelpack_test PRIVATE sima_neat_internal)
+  target_link_libraries(resnet50_modelpack_test PRIVATE sima_neat sima_neat_internal_headers)
   target_include_directories(resnet50_modelpack_test
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1626,7 +1627,7 @@ if (NOT macro_mixed_multistream_multimodel_tput_test IN_LIST PIPELINESESSION_TES
     e2e_pipelines/e2e_utils.cpp
   )
   add_dependencies(macro_mixed_multistream_multimodel_tput_test prepare_test_fixtures)
-  target_link_libraries(macro_mixed_multistream_multimodel_tput_test PRIVATE sima_neat_internal)
+  target_link_libraries(macro_mixed_multistream_multimodel_tput_test PRIVATE sima_neat sima_neat_internal_headers)
   target_include_directories(macro_mixed_multistream_multimodel_tput_test
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1795,7 +1796,7 @@ add_executable(
 add_dependencies(tess_a65_vs_ev74_bench prepare_test_fixtures)
 target_link_libraries(
   tess_a65_vs_ev74_bench
-  PRIVATE sima_neat_internal
+  PRIVATE sima_neat sima_neat_internal_headers
 )
 target_include_directories(
   tess_a65_vs_ev74_bench

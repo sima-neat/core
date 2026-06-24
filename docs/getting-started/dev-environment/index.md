@@ -1,11 +1,11 @@
 ---
-title: Neat Development Environment
-description: Set up the Neat Development Environment for fast, agent-ready Neat application development
+title: Neat SDK
+description: Set up the Neat SDK for fast, agent-ready Neat application development
 sidebar_position: 1
 ---
 
-The Neat Development Environment, also known as the SDK, is the recommended
-host-side workspace for building Neat applications and validating them on a
+The Neat Development Environment (referred to as Neat SDK) is the recommended
+host-side workspace for building large scale Neat applications and validating them on a
 Modalix DevKit. It brings the build tools, model tools, hardware connection, and
 agent-ready source context into one containerized workflow.
 
@@ -24,7 +24,7 @@ center of the SDK workflow.
 
 <div class="overview-section-label">Start here</div>
 
-Follow these sections in order when setting up the Neat Development Environment.
+Follow these sections in order when setting up the Neat SDK.
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
@@ -44,12 +44,33 @@ Follow these sections in order when setting up the Neat Development Environment.
   from a Linux container on your host.
 - **DevKit Sync:** pair the SDK with a Modalix DevKit and expose the same
   workspace in both places.
-- **Model tooling:** install the matching Model Compiler in the SDK when you
-  need to quantize and compile ONNX or GenAI models.
+- **Model tooling:** install the matching Model Compiler in the SDK. It is
+  required to compile or quantize ONNX or GenAI models yourself, and optional
+  only if you exclusively use precompiled model packages.
 - **Insight:** inspect workspace files, media sources, stream delivery, and
   runtime behavior from a browser.
 - **Agent-ready context:** use bundled Codex and Claude skills with current
   Neat source references and examples.
+
+## Host requirements
+
+Confirm your host machine meets these minimums before you install the SDK.
+Administrator (`sudo`) privileges are required to install the SDK on every
+supported host — not only for optional DevKit networking — because installing
+`sima-cli`, Docker Engine, the SDK image, and NFS packages all need elevated
+permissions.
+
+| Host OS | CPU | RAM | Free disk | Admin / sudo |
+| --- | --- | --- | --- | --- |
+| Ubuntu 22.04 / 24.04 (`x86_64` or `aarch64`) | 4 cores min | 16 GB min | 100 GB | `sudo` for SDK install (`sima-cli`, Docker, SDK image), NFS install/config, and shared-network/firewall setup |
+| Windows 11 via WSL (`x86_64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install in WSL (Docker, `sima-cli`), WSL networking, and NFS firewall rules |
+| macOS 15.5+ Apple Silicon (`aarch64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install (Homebrew, Colima, `sima-cli`), Full Disk Access (`nfsd`), and Internet Sharing |
+
+:::note GenAI model compilation needs more
+Compiling GenAI models with LLiMa is far heavier than the base SDK: 128 GB RAM
+is recommended and 512 GB of disk is preferred, and a higher core count helps.
+See [GenAI setup](/genai-llima/setup/) for the full requirements.
+:::
 
 ## Supported Platforms
 
@@ -58,7 +79,7 @@ Follow these sections in order when setting up the Neat Development Environment.
 | Ubuntu 22.04 and 24.04 through Docker Engine | x86_64 | Yes | Yes |
 | Windows 11 through WSL and Docker Engine | x86_64 | Yes | Yes |
 | Ubuntu 22.04 and 24.04 through Docker Engine | aarch64 | Yes | Yes with 2.1.2 or above |
-| macOS 15.5 or above through Colima | aarch64 | Yes | Yes with 2.1.2 or above |
+| macOS 15.5 or above through Colima | aarch64 | Yes | Yes with 2.1.2 or above, must install within the Neat SDK |
 
 ## Tools in the SDK
 
@@ -71,9 +92,10 @@ Neat Insight is served over HTTPS on port `9900` inside the SDK. Open
 another machine on the network. For more information, see
 [Insight](/tools/insight/).
 
-During SDK setup, `sima-cli` can prompt you to install the matching Model
-Compiler. For compiler setup and usage, see
-[Compile a Model](/compile-a-model/).
+During SDK setup, `sima-cli` prompts you to install the matching Model Compiler
+automatically. Install it if you compile or quantize models yourself; you can
+skip it if you only use precompiled model packages. For compiler setup and
+usage, see [Compile a Model](/compile-a-model/).
 
 ## VS Code Workflow
 

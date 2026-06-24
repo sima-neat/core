@@ -1,0 +1,203 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">Palette Neat software stack</title>
+  <desc id="desc">Palette Neat includes the Neat SDK, Neat Library, Model Compiler, LLiMa, and Modalix DevKit. The SDK path supports host-based model compilation, C++ builds, and DevKit validation. The direct DevKit path supports fewer moving parts for Python and PyNeat development.</desc>
+  <defs>
+    <linearGradient id="sdkGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4E8BDA"/>
+      <stop offset="1" stop-color="#BEE7DF"/>
+    </linearGradient>
+    <linearGradient id="devkitGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A8D8B2"/>
+      <stop offset="1" stop-color="#BFE9EC"/>
+    </linearGradient>
+    <linearGradient id="compilerGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#D9E9FF"/>
+      <stop offset="1" stop-color="#EEF6FF"/>
+    </linearGradient>
+    <linearGradient id="topAccent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A4CC2D"/>
+      <stop offset="0.5" stop-color="#C0E8DB"/>
+      <stop offset="1" stop-color="#76A9F0"/>
+    </linearGradient>
+    <clipPath id="hostPanelClip">
+      <rect x="64" y="146" width="636" height="570" rx="30"/>
+    </clipPath>
+    <clipPath id="devkitPanelClip">
+      <rect x="872" y="178" width="500" height="390" rx="28"/>
+    </clipPath>
+    <filter id="softShadow" x="-8%" y="-12%" width="116%" height="132%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#17314B" flood-opacity="0.12"/>
+    </filter>
+    <filter id="nodeShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#17314B" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg-start: #ffffff;
+        --bg-end: #f4f8fb;
+        --panel: #ffffff;
+        --panel-soft: #f8fbff;
+        --panel-alt: #f6fbf7;
+        --border: #d9e5ef;
+        --sdk-border: #76a9f0;
+        --devkit-border: #b8d9bd;
+        --text: #07120f;
+        --muted: #334254;
+        --subtle: #667484;
+        --blue: #0969da;
+        --green: #2f7d43;
+        --green-strong: #08783f;
+        --line-blue: #0969da;
+        --line-green: #4f9b57;
+        --badge-bg: #e8f1ff;
+        --badge-text: #0969da;
+        --legend-bg: rgba(255, 255, 255, 0.88);
+        --icon-bg-blue: #edf4ff;
+        --icon-bg-green: #eef7ef;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg-start: #07131e;
+          --bg-end: #102335;
+          --panel: #102033;
+          --panel-soft: #13283d;
+          --panel-alt: #142b27;
+          --border: #28435c;
+          --sdk-border: #5d94dc;
+          --devkit-border: #5e9a69;
+          --text: #f4f8ff;
+          --muted: #d3dfeb;
+          --subtle: #9eb0c2;
+          --blue: #7bb3ff;
+          --green: #8fd8a0;
+          --green-strong: #9ce8b7;
+          --line-blue: #63a8ff;
+          --line-green: #7fcb8f;
+          --badge-bg: #183457;
+          --badge-text: #9ac7ff;
+          --legend-bg: rgba(12, 26, 41, 0.86);
+          --icon-bg-blue: #183250;
+          --icon-bg-green: #19342a;
+        }
+      }
+
+      .sans { font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; }
+      .title { fill: var(--text); font-size: 42px; font-weight: 520; letter-spacing: 0; }
+      .subtitle { fill: var(--muted); font-size: 19px; font-weight: 430; }
+      .sectionTitle { fill: var(--text); font-size: 24px; font-weight: 500; }
+      .cardTitle { fill: var(--text); font-size: 22px; font-weight: 500; }
+      .body { fill: var(--muted); font-size: 17px; font-weight: 400; }
+      .small { fill: var(--subtle); font-size: 15px; font-weight: 450; }
+      .label { fill: var(--text); font-size: 17px; font-weight: 500; }
+      .callout .label { fill: var(--green-strong); }
+      .badge { fill: var(--badge-text); font-size: 14px; font-weight: 550; }
+      .flow { opacity: 1; stroke-dasharray: 14 14; animation: flow 1.4s linear infinite; }
+      @keyframes flow {
+        to { stroke-dashoffset: -28; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .flow {
+          stroke-dashoffset: 0;
+          animation: none;
+        }
+      }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="760" rx="34" fill="var(--bg-start)"/>
+  <path d="M0 0H1440V760H0Z" fill="var(--bg-end)" opacity="0.34"/>
+  <circle cx="103" cy="86" r="78" fill="#76A9F0" opacity="0.08"/>
+  <circle cx="1266" cy="640" r="108" fill="#8FD8A0" opacity="0.10"/>
+
+  <text x="720" y="70" class="sans title" text-anchor="middle">Neat Software Stack</text>
+  <text x="720" y="108" class="sans subtitle" text-anchor="middle">From model compilation to application development and execution on Modalix hardware.</text>
+
+  <g class="host">
+    <rect x="64" y="146" width="636" height="570" rx="30" fill="var(--panel)" stroke="var(--border)" stroke-width="2" filter="url(#softShadow)"/>
+    <rect x="66" y="146" width="632" height="8" fill="url(#topAccent)" opacity="0.9" clip-path="url(#hostPanelClip)"/>
+    <text x="96" y="194" class="sans sectionTitle">Host Side Development Environment</text>
+  </g>
+
+  <rect class="sdk-frame" x="104" y="228" width="564" height="466" rx="18" fill="none" stroke="var(--sdk-border)" stroke-width="2.5"/>
+  <g class="inner">
+    <rect x="272" y="204" width="230" height="48" rx="24" fill="url(#sdkGradient)" filter="url(#nodeShadow)"/>
+    <text x="364" y="235" class="sans label" text-anchor="middle">Neat SDK</text>
+    <text x="450" y="235" class="sans small" text-anchor="middle">(container)</text>
+  </g>
+
+  <g class="stack-card sdk-lib">
+    <rect x="140" y="272" width="492" height="88" rx="14" fill="var(--panel-soft)" stroke="var(--border)" stroke-width="1.5"/>
+    <circle cx="198" cy="316" r="28" fill="var(--icon-bg-blue)"/>
+    <path d="M189 316L181 308L189 300" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M207 300L215 308L207 316" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M202 296L194 326" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round"/>
+    <text x="246" y="306" class="sans cardTitle">Neat Library</text>
+    <text x="246" y="336" class="sans body">C++ Libraries for cross compilation.</text>
+  </g>
+
+  <g class="stack-card llima">
+    <rect x="140" y="378" width="492" height="88" rx="14" fill="var(--panel-soft)" stroke="var(--border)" stroke-width="1.5"/>
+    <circle cx="198" cy="422" r="28" fill="var(--icon-bg-blue)"/>
+    <path d="M198 396C202 411 209 418 224 422C209 426 202 433 198 448C194 433 187 426 172 422C187 418 194 411 198 396Z" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linejoin="round"/>
+    <text x="246" y="412" class="sans cardTitle">LLiMa</text>
+    <text x="246" y="442" class="sans body">GenAI compile, test, and benchmark tools.</text>
+  </g>
+
+  <g class="stack-card insight">
+    <rect x="140" y="484" width="492" height="88" rx="14" fill="var(--panel-soft)" stroke="var(--border)" stroke-width="1.5"/>
+    <circle cx="198" cy="528" r="28" fill="var(--icon-bg-blue)"/>
+    <rect x="180" y="516" width="36" height="25" rx="5" fill="none" stroke="var(--blue)" stroke-width="2.5"/>
+    <path d="M187 548L198 541L209 548M190 525H206M190 533H212" fill="none" stroke="var(--blue)" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="246" y="518" class="sans cardTitle">Insight</text>
+    <text x="246" y="548" class="sans body">Visualization, video, and app inspection tools.</text>
+  </g>
+
+  <g class="stack-card compiler">
+    <rect x="140" y="590" width="492" height="88" rx="14" fill="var(--panel-soft)" stroke="var(--border)" stroke-width="1.5"/>
+    <circle cx="198" cy="634" r="28" fill="var(--icon-bg-blue)"/>
+    <path d="M198 617V608M198 660V651M215 634H224M172 634H181M210 622L217 615M179 653L186 646M210 646L217 653M179 615L186 622" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="198" cy="634" r="13" fill="none" stroke="var(--blue)" stroke-width="2.5"/>
+    <text x="246" y="618" class="sans cardTitle">Model Compiler</text>
+    <rect x="246" y="628" width="108" height="24" rx="12" fill="var(--badge-bg)"/>
+    <text x="300" y="645" class="sans badge" text-anchor="middle">SDK extension</text>
+    <text x="246" y="672" class="sans body">Optimize, quantize, and compile AI models.</text>
+  </g>
+
+  <g class="devkit">
+    <rect x="872" y="178" width="500" height="410" rx="28" fill="var(--panel)" stroke="var(--devkit-border)" stroke-width="2" filter="url(#softShadow)"/>
+    <rect x="874" y="178" width="496" height="8" fill="url(#topAccent)" opacity="0.82" clip-path="url(#devkitPanelClip)"/>
+    <rect x="994" y="150" width="256" height="58" rx="29" fill="url(#devkitGradient)" filter="url(#nodeShadow)"/>
+    <text x="1122" y="187" class="sans label" text-anchor="middle">Modalix DevKit</text>
+    <rect x="904" y="232" width="436" height="276" rx="18" fill="none" stroke="var(--devkit-border)" stroke-opacity="0.56" stroke-width="1.7"/>
+  </g>
+
+  <g class="stack-card dev-lib">
+    <rect x="934" y="262" width="376" height="114" rx="14" fill="var(--panel-alt)" stroke="var(--border)" stroke-width="1.5"/>
+    <circle cx="1000" cy="319" r="34" fill="var(--icon-bg-green)"/>
+    <path d="M1000 297L1019 308V330L1000 341L981 330V308L1000 297Z" fill="none" stroke="var(--green)" stroke-width="2.8" stroke-linejoin="round"/>
+    <path d="M981 308L1000 319L1019 308M1000 319V341" fill="none" stroke="var(--green)" stroke-width="2.8" stroke-linejoin="round"/>
+    <text x="1060" y="305" class="sans cardTitle">Neat Library</text>
+    <text x="1060" y="335" class="sans body">Neat runtime library and</text>
+    <text x="1060" y="360" class="sans body">Python bindings.</text>
+  </g>
+
+  <g class="stack-card dev-llima">
+    <rect x="934" y="398" width="376" height="88" rx="14" fill="var(--panel-alt)" stroke="var(--border)" stroke-width="1.5"/>
+    <circle cx="1000" cy="442" r="28" fill="var(--icon-bg-green)"/>
+    <path d="M1000 418C1003 433 1010 439 1025 442C1010 445 1003 451 1000 466C997 451 990 445 975 442C990 439 997 433 1000 418Z" fill="none" stroke="var(--green)" stroke-width="2.8" stroke-linejoin="round"/>
+    <text x="1060" y="433" class="sans cardTitle">LLiMa</text>
+    <text x="1060" y="462" class="sans body">GenAI runtime and CLI tools.</text>
+  </g>
+
+  <g class="callout">
+    <rect x="914" y="522" width="416" height="42" rx="10" fill="var(--icon-bg-green)"/>
+    <text x="1122" y="549" class="sans label" fill="var(--green-strong)" text-anchor="middle">Alternative development environment</text>
+  </g>
+
+  <path class="flow" d="M700 402H872" fill="none" stroke="var(--line-blue)" stroke-width="3" stroke-linecap="round"/>
+  <circle class="endpoint" cx="700" cy="402" r="7" fill="var(--line-blue)"/>
+  <circle class="endpoint" cx="872" cy="402" r="7" fill="var(--line-green)"/>
+  <text x="770" y="380" class="sans label" text-anchor="middle">IP Network</text>
+
+</svg>

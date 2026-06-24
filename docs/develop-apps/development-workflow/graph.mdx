@@ -6,7 +6,7 @@ sidebar_position: 5
 
 # Graph
 
-In SiMa.ai Neat, the `Graph` [API](/reference/{lsa}/classes/simaai-neat-graph) is how you compose an application. A `Graph` describes a flow of connected nodes, from the inputs where data enters, through the processing nodes in the middle, to the outputs where results are produced. If you come from ML, think of a `Graph` like a small model graph.
+In SiMa.ai Neat, the `Graph` [API](/reference/{lsa}/classes/simaai-neat-graph) is how you compose an application. A `Graph` describes the flow from inputs, through processing nodes, to outputs. If you come from ML, think of a `Graph` like a small model graph for the app around your model.
 
 - Frames, tensors, or samples enter through **inputs** and leave through **outputs**. Processing happens in the middle through **nodes** such as decode, resize, preprocess, inference, postprocess, branching, and custom logic.
 
@@ -16,7 +16,7 @@ In SiMa.ai Neat, the `Graph` [API](/reference/{lsa}/classes/simaai-neat-graph) i
 
 ![A reusable Graph fragment inserted into a larger application Graph](../../images/graph-reusable-fragment.svg)
 
-Neat is designed so you spend your time describing the application, not building the runtime wiring by hand. The SDK provides pre-built [nodes](/develop-apps/development-workflow/node) and [node groups](/develop-apps/development-workflow/node#pre-built-node-groups) for common work such as input, decode, resize, preprocess, inference, postprocess, and output. These nodes automatically map to efficient, hardware-accelerated parts of the SoC where applicable. In a `Graph`, you declare which nodes to use, set their parameters, and connect them in the order your application needs.
+Neat lets you describe the application instead of hand-wiring the runtime. Use pre-built [nodes](/develop-apps/development-workflow/node) and [node groups](/develop-apps/development-workflow/node#pre-built-node-groups) for common work such as input, decode, resize, preprocess, inference, postprocess, and output. In a `Graph`, you declare the nodes, set their parameters, and connect them in the order your application needs.
 
 Underneath, Neat builds the executable runtime graph on GStreamer. Neat abstracts that implementation away, so you use the public `Graph` API instead of managing GStreamer elements, `appsrc`, `appsink`, queues, or internal runtime ports.
 
@@ -46,6 +46,121 @@ classifier.add(simaai::neat::nodes::Output("classes"));
 ```
 
 Here, `image` is the input endpoint and `classes` is the output endpoint. The Graph name, `classifier`, is only a label for diagnostics and visualization; it does not create an input or output.
+
+### Inspect endpoints before build
+
+Print the public endpoints before you build the graph. No ghost endpoints. If the name is not in this list, `Run` will not accept it later.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+for (const auto& name : classifier.inputs()) {
+  std::cout << "graph input: " << name << "\n";
+}
+for (const auto& name : classifier.outputs()) {
+  std::cout << "graph output: " << name << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+print("graph inputs:", classifier.inputs())
+print("graph outputs:", classifier.outputs())
+```
+
+</CodeTab>
+</CodeTabs>
+
+After `graph.build(...)`, inspect `run.input_names()` and `run.output_names()` on the live `Run`. The names should match the public boundary you meant to expose.
+
+## Choose source-owned or app-pushed topology
+
+Every graph has to answer one question: who owns the input?
+
+| Topology | Use it when | Runtime shape |
+| --- | --- | --- |
+| App-pushed | Your app already has frames, tensors, or samples | Add `nodes.input("name")`, then push with `run.push("name", ...)` or use `Graph.run([...])`. |
+| Source-owned | The graph should read from file, camera, RTSP, or another source node | Add a source node or source group, then build/run without pushing app input. |
+
+For app-pushed graphs, name the input endpoint around the application concept: `image`, `left_camera`, `metadata`, `prompt`. For source-owned graphs, inspect the output contract and pull what the source path emits.
+
+## Choose graph options
+
+Use [`GraphOptions`](/reference/{lsa}/structs/simaai-neat-graphoptions) for graph-level behavior. Use `RunOptions` later for live runtime behavior.
+
+| Goal | Use | Notes |
+| --- | --- | --- |
+| Label a graph in logs and exports | `Graph("name")` | This is a label, not an endpoint. |
+| Run several graphs in one process | `element_name_prefix` / `element_name_suffix` | Avoid generated element-name collisions and make diagnostics readable. |
+| Control graph diagnostics | `VerboseOptions` | Start with production output. Turn up debug output only when collecting evidence. |
+| Choose output queue behavior | `OutputOptions::Latest()`, `EveryFrame(...)`, or `Clocked(...)` | Pick freshness, completeness, or clocked delivery. |
+| Connect live graph fragments | `GraphLinkOptions` with `RealtimeLatestByStream` | Use for live fan-in where freshness and stream fairness matter more than preserving every frame. |
+| Bound callback work | `callback_timeout_ms` | Use with C++ callback-style output consumption so a slow callback does not hide as a graph problem. |
+| Tune advanced execution | `advanced_execution` | Use only after the default graph has a measured baseline. |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions options;
+options.element_name_prefix = "cam0_";
+
+simaai::neat::Graph graph("cam0_detector", options);
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.GraphOptions()
+options.element_name_prefix = "cam0_"
+
+graph = pyneat.Graph("cam0_detector", options)
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+```
+
+</CodeTab>
+</CodeTabs>
+
+`Latest()` keeps the newest result when the app cannot pull every output. Use `EveryFrame(...)` when every output matters. Use `Clocked(...)` when the output must follow the pipeline clock.
+
+## Validate before you build
+
+Use `graph.validate(...)` when you want graph-construction evidence without starting a live run.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphReport report = graph.validate();
+std::cout << report.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = graph.validate()
+print(report.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+`ValidateOptions.parse_launch` checks the generated pipeline string. `ValidateOptions.enforce_names` catches unnamed or unexpected elements. Use the report before changing graph options; evidence first, knobs later.
 
 ## Composing graphs
 
@@ -135,6 +250,15 @@ auto fan_out_graph = simaai::neat::graphs::Branch(
     {"original_image", "model_image"});
 ```
 
+Python uses the same endpoint names:
+
+```python
+fan_out_graph = pyneat.graphs.branch(
+    "image_input",
+    ["original_image", "model_image"],
+)
+```
+
 `fan_out_graph` is still an ordinary `Graph` fragment. You can connect it into a larger application like any other `Graph`.
 
 :::note
@@ -189,6 +313,16 @@ auto render_inputs_graph = simaai::neat::graphs::Combine(
     simaai::neat::CombinePolicy::ByFrame);
 ```
 
+Python uses `None_` for the no-combine policy because `None` is a reserved word:
+
+```python
+render_inputs_graph = pyneat.graphs.combine(
+    ["image", "bbox"],
+    "render_inputs",
+    pyneat.CombinePolicy.ByFrame,
+)
+```
+
 `render_inputs_graph` is still an ordinary `Graph` fragment. You can connect it into a larger application like any other `Graph`.
 
 :::note
@@ -197,6 +331,7 @@ auto render_inputs_graph = simaai::neat::graphs::Combine(
 - `ByFrame`: combine samples with the same `frame_id`.
 - `ByPts`: combine samples with the same presentation timestamp (`pts_ns`).
 - `None`: do not combine multiple producers; the graph fails and asks for an explicit policy.
+- Python spelling: `pyneat.CombinePolicy.None_`, `ByFrame`, or `ByPts`.
 
 There is no hidden fallback. With `ByFrame`, missing frame IDs are an error. With `ByPts`, missing timestamps are an error. This prevents Neat from silently combining the wrong samples.
 :::
@@ -340,6 +475,64 @@ auto classes = run.pull();
 
 If more than one input or output is available, an unnamed `push(...)` or `pull()` fails and lists the available endpoint names instead of guessing which one you intended.
 
+## Connect live fragments
+
+Use [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) when the connection between fragments needs a runtime policy.
+
+For live multistream fan-in, `RealtimeLatestByStream` keeps the latest sample per `Sample::stream_id` and schedules ready streams fairly downstream. If a source does not stamp `stream_id`, you can stamp a stable id on the link.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphLinkOptions link;
+link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+link.stream_id = "camera-0";
+
+app.connect(camera_fragment, detector_fragment, link);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+link = pyneat.GraphLinkOptions()
+link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+link.stream_id = "camera-0"
+
+app.connect(camera_fragment, detector_fragment, link)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use the default link policy when every frame must be preserved and backpressure is the correct behavior. Use realtime latest-by-stream when a live graph should stay fresh instead of collecting old frames. Set `queue_depth` only when you have a reason to bound that link differently from the default.
+
+`GraphLinkOptions` has three fields most app authors care about:
+
+| Field | Use it when |
+| --- | --- |
+| `policy` | The link needs a freshness or fairness policy instead of default backpressure. |
+| `queue_depth` | The link needs an explicit buffer bound. Leave the default until measurement shows the link is the bottleneck. |
+| `stream_id` | The upstream fragment does not stamp `Sample::stream_id`, but this link represents one stable stream. |
+
+
+## Scale from one stream to many
+
+A multistream graph needs identity before it needs tuning. Preserve `stream_id` and `frame_id` so runtime metrics, combine policies, and drop reports can tell one stream from another.
+
+| Pattern | Use it when | Watch |
+| --- | --- | --- |
+| One stream -> one model -> one output | You are proving the graph works | Output shape, dtype, and endpoint names. |
+| Many streams -> one model lane | The combined input rate fits one model path | Per-stream fairness and stale streams. |
+| Many streams -> multiple model lanes | One model path cannot keep up | Stream partitioning, route naming, and output accounting. |
+| One stream -> several models | Different decisions need the same input | Branch-level latency and target-normalized FPS. |
+| Many streams -> model + metadata/video outputs | Production output has several artifacts | Count target outputs separately from preview or telemetry. |
+
+Use `OutputOptions::Latest()` for live outputs where freshness wins. Use `EveryFrame(...)` for offline or lossless output. For fan-in, use `CombinePolicy::ByFrame` only when `frame_id` is present on every input, and `CombinePolicy::ByPts` only when timestamps are present.
+
+When you need runtime queues, drop policy, measurement, or drain behavior, move to [Run a Graph](/develop-apps/development-workflow/pipeline). `Graph` is where you describe the topology; `Run` is where you drive it.
+
 ## Practical examples
 
 ### Reusable model route
@@ -386,6 +579,50 @@ adapter.connect("raw", "image");                   // pass data directly between
 
 When used inside another graph, this can compile down to a direct wire. Neat keeps the names for readability and diagnostics, but it does not create useless runtime work.
 
+## Advanced graph tools
+
+Use these after the basic graph path works. They are reference tools, not the first path through the API.
+
+| Tool | Language | Use it when |
+| --- | --- | --- |
+| `add_output_tensor(...)` | C++ and Python | Advanced adapter: image or video output must become a CPU-friendly `UInt8` tensor with requested format, size, or frame rate before pull. |
+| `Graph::save(...)` / `Graph::load(...)`; Python `graph.save(...)` / `pyneat.Graph.load(...)` | C++ and Python | You want to persist and reload graph composition. |
+| `graph.custom(...)` | C++ and Python | You need to splice a backend fragment into a linear graph. |
+| `nodes::Custom(...)` / `pyneat.nodes.custom(...)` | C++ and Python | You need a custom node inside explicit topology. |
+| `run_rtsp(...)` | C++ and Python | The graph should serve an H.264 output over RTSP. |
+| `set_tensor_callback(...)` | C++ | C++ code needs callback-based tensor consumption instead of a pull loop. Pair with `GraphOptions.callback_timeout_ms` when callback latency matters. |
+
+Prefer public nodes and groups first. Reach for raw custom fragments only when a stable node does not exist for the task.
+
+### Save and reload graph definitions
+
+Save a graph when you want to hand a composed definition to another tool, keep a CI artifact, or compare graph construction across changes. Load it when the saved definition is the source of truth for the run.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.save("classifier.neat.json");
+
+simaai::neat::Graph loaded = simaai::neat::Graph::load("classifier.neat.json");
+auto run = loaded.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.save("classifier.neat.json")
+
+loaded = pyneat.Graph.load("classifier.neat.json")
+run = loaded.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Treat saved graph files as build artifacts unless your application deliberately versions them. They capture graph composition; they do not replace model contracts, input data, or runtime measurement.
+
 ## Best practices
 
 ### Endpoint naming
@@ -424,6 +661,7 @@ If a fragment contains several unnamed outputs, Neat assigns deterministic suffi
 
 - [Node](/develop-apps/development-workflow/node)
 - [Model](/develop-apps/development-workflow/model)
+- [Run a Graph](/develop-apps/development-workflow/pipeline)
 - [Public Graph and graph helpers](/develop-apps/advanced-concepts/graphs)
 
 ## Tutorials

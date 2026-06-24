@@ -1,6 +1,6 @@
-# Doxygen configuration for SiMa NEAT Graph
+# Doxygen configuration for SiMa.ai Neat Graph
 
-PROJECT_NAME           = "SiMa NEAT Graph"
+PROJECT_NAME           = "SiMa.ai Neat Graph"
 PROJECT_BRIEF          = "Typed, composable GStreamer pipelines in C++20"
 OUTPUT_DIRECTORY       = docs/doxygen/out
 

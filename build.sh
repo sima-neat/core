@@ -18,7 +18,6 @@ SOURCE_FS_TYPE=""
 cd "${REPO_ROOT}"
 
 # Defaults
-BUILD_SAMPLES=OFF
 BUILD_TESTS=OFF
 BUILD_TUTORIALS=OFF
 BUILD_DOCS=OFF
@@ -76,7 +75,7 @@ NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
 NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
 NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
-NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (samples/tutorials/tests)}"
+NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (tutorials/tests)}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 SIMANEAT_BOOTSTRAP_SIMA_CLI="${SIMANEAT_BOOTSTRAP_SIMA_CLI:-auto}"
 
@@ -267,7 +266,7 @@ Options:
   --dev-only     Build only the core library + headers (DEFAULT)
   --all          Build library + tests + tutorials + Python wheel
   --python       Build Python bindings (pyneat) in addition to selected targets
-  --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
+  --fuzz         Build fuzz-enabled package artifacts (core + dev + extras + wheel)
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
   --tsan         Enable TSan instrumentation for this build
   --install-neat-internals, --install-deps
@@ -310,7 +309,6 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dev-only)
-        BUILD_SAMPLES=OFF
         BUILD_TESTS=OFF
         shift
         ;;
@@ -325,7 +323,6 @@ parse_args() {
         shift
         ;;
       --doc)
-        BUILD_SAMPLES=OFF
         BUILD_TESTS=OFF
         BUILD_DOCS=ON
         DOCS_ONLY=ON
@@ -347,7 +344,6 @@ parse_args() {
         shift
         ;;
       --fuzz)
-        BUILD_SAMPLES=OFF
         BUILD_TESTS=ON
         BUILD_TUTORIALS=ON
         BUILD_DOCS=OFF
@@ -367,7 +363,6 @@ parse_args() {
         SIMA_ENABLE_ASAN=ON
         SIMA_ENABLE_UBSAN=ON
         SIMA_ENABLE_TSAN=OFF
-        BUILD_SAMPLES=OFF
         BUILD_TUTORIALS=OFF
         shift
         ;;
@@ -380,7 +375,6 @@ parse_args() {
         SIMA_ENABLE_ASAN=OFF
         SIMA_ENABLE_UBSAN=OFF
         SIMA_ENABLE_TSAN=ON
-        BUILD_SAMPLES=OFF
         BUILD_TUTORIALS=OFF
         shift
         ;;
@@ -448,9 +442,7 @@ apply_sanitizer_build_profile() {
     return 0
   fi
 
-  # Sanitizer lanes are test-focused; skip samples/examples to avoid
-  # optional UI/OpenGL dependencies in cross-build environments.
-  BUILD_SAMPLES=OFF
+  # Sanitizer lanes are test-focused; skip tutorials to keep payloads small.
   BUILD_TUTORIALS=OFF
   # Keep sanitizer extras payloads small by shipping only gate test binaries.
   SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=ON
@@ -1398,7 +1390,8 @@ ensure_neat_internals() {
 }
 
 ensure_neat_llima() {
-  # Sync LLiMa C++ runtime/dev packages from Vulcan package artifacts and install them.
+  # Sync LLiMa packages from Vulcan artifacts. Only core/dev are installed into
+  # the SDK sysroot; cli is cached for the final DevKit install artifact.
   local llima_ref
   if ! resolve_neat_llima_ref; then
     exit 1
@@ -1416,7 +1409,9 @@ ensure_neat_llima() {
   local using_cached_debs=0
   if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
-     compgen -G "${deb_cache_dir}/sima-lmm-*.deb" >/dev/null 2>&1; then
+     compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-core.deb" >/dev/null 2>&1 &&
+     compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-dev.deb" >/dev/null 2>&1 &&
+     compgen -G "${deb_cache_dir}/sima-lmm-*-Linux-cli.deb" >/dev/null 2>&1; then
     echo "Using cached LLiMa debs (${llima_ref})."
     artifact_dir="${deb_cache_dir}"
     using_cached_debs=1
@@ -1425,11 +1420,12 @@ ensure_neat_llima() {
     llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
   fi
 
-  local core_deb dev_deb
+  local core_deb dev_deb cli_deb
   core_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
   dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
-  if [[ -z "${core_deb}" || -z "${dev_deb}" ]]; then
-    echo "ERROR: Expected sima-lmm core/dev debs were not found in Vulcan LLiMa artifact." >&2
+  cli_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-cli.deb' | sort | head -n 1)"
+  if [[ -z "${core_deb}" || -z "${dev_deb}" || -z "${cli_deb}" ]]; then
+    echo "ERROR: Expected sima-lmm core/dev/cli debs were not found in Vulcan LLiMa artifact." >&2
     find "${artifact_dir}" -maxdepth 3 -type f -name '*.deb' -printf '  %f\n' | sort >&2
     rm -rf "${tmp_dir}"
     exit 1
@@ -1440,6 +1436,7 @@ ensure_neat_llima() {
     rm -f "${deb_cache_dir}"/sima-lmm-*.deb
     cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
     cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
+    cp -f "${cli_deb}" "${deb_cache_dir}/$(basename "${cli_deb}")"
   fi
 
   local -a llima_debs=("${core_deb}" "${dev_deb}")
@@ -1795,7 +1792,6 @@ print_build_config() {
   echo " SiMa Neat build configuration"
   echo "========================================"
   echo "Build type     : ${BUILD_TYPE}"
-  echo "Build samples  : ${BUILD_SAMPLES}"
   echo "Build tests    : ${BUILD_TESTS}"
   echo "Build tutorials: ${BUILD_TUTORIALS}"
   echo "Build docs     : ${BUILD_DOCS}"
@@ -1835,7 +1831,6 @@ configure_cmake() {
   local -a cmake_args=(
     -S . -B "${BUILD_DIR}"
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
-    -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}"
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
@@ -1972,8 +1967,8 @@ build_docs_only_if_requested() {
 }
 
 build_targets() {
-  # For dev-only builds, avoid building tests/tutorials/samples by targeting core lib.
-  if [[ "${BUILD_SAMPLES}" == "OFF" && "${BUILD_TESTS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
+  # For dev-only builds, avoid building tests/tutorials by targeting core lib.
+  if [[ "${BUILD_TESTS}" == "OFF" && "${BUILD_TUTORIALS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
     cmake --build "${BUILD_DIR}" --target sima_neat_libraries -j"${BUILD_JOBS}"
   else
     cmake --build "${BUILD_DIR}" -j"${BUILD_JOBS}"
@@ -2232,23 +2227,49 @@ run_install_sanity_check() {
   echo "Running install sanity check..."
   local install_test_dir="/tmp/sima-neat-install-test"
   rm -rf "${install_test_dir}"
+  local core_install_dir="${install_test_dir}/core"
+  local dev_install_dir="${install_test_dir}/dev"
 
-  cmake --install "${BUILD_DIR}" --component core --prefix "${install_test_dir}"
+  cmake --install "${BUILD_DIR}" --component core --prefix "${core_install_dir}"
+  cmake --install "${BUILD_DIR}" --component dev --prefix "${dev_install_dir}"
 
-  echo "Installed files:"
-  find "${install_test_dir}" | sed 's|^|  |'
+  echo "Installed core files:"
+  find "${core_install_dir}" | sed 's|^|  |'
+  echo "Installed dev files:"
+  find "${dev_install_dir}" | sed 's|^|  |'
 
-  # Ensure core libraries are present in the install tree
-  if [[ ! -f "${install_test_dir}/lib/libsima_neat.a" ]]; then
+  local -a core_real_libs=()
+  local -a core_soname_links=()
+  mapfile -t core_real_libs < <(find "${core_install_dir}/lib" -maxdepth 1 -type f -name 'libsima_neat.so.*' | sort)
+  mapfile -t core_soname_links < <(find "${core_install_dir}/lib" -maxdepth 1 -type l -name 'libsima_neat.so.*' | sort)
+  if [[ "${#core_real_libs[@]}" -lt 1 ]]; then
     echo
-    echo "ERROR: libsima_neat.a missing from install tree."
+    echo "ERROR: versioned libsima_neat shared object missing from core install tree."
     echo "Refusing to package an incomplete core .deb."
     exit 1
   fi
-  if [[ ! -e "${install_test_dir}/lib/libsima_neat.so" ]]; then
+  if [[ "${#core_soname_links[@]}" -lt 1 ]]; then
     echo
-    echo "ERROR: libsima_neat.so missing from install tree."
+    echo "ERROR: SONAME libsima_neat.so.* symlink missing from core install tree."
     echo "Refusing to package an incomplete core .deb."
+    exit 1
+  fi
+  if [[ -e "${core_install_dir}/lib/libsima_neat.so" ||
+        -e "${core_install_dir}/lib/libsima_neat.a" ||
+        -d "${core_install_dir}/include" ||
+        -d "${core_install_dir}/lib/cmake/SimaNeat" ]]; then
+    echo
+    echo "ERROR: core install tree contains development files."
+    echo "Refusing to package an incorrectly split core .deb."
+    exit 1
+  fi
+  if [[ ! -L "${dev_install_dir}/lib/libsima_neat.so" ||
+        ! -f "${dev_install_dir}/lib/libsima_neat.a" ||
+        ! -f "${dev_install_dir}/include/neat.h" ||
+        ! -f "${dev_install_dir}/lib/cmake/SimaNeat/SimaNeatConfig.cmake" ]]; then
+    echo
+    echo "ERROR: dev install tree is missing headers, CMake config, libsima_neat.so linker symlink, or libsima_neat.a."
+    echo "Refusing to package an incomplete dev .deb."
     exit 1
   fi
 }
@@ -2266,7 +2287,7 @@ build_deb_if_requested() {
     echo "Skipping DEB packaging (requires --all)."
   else
     echo
-    echo "Building DEB packages (core + extras)..."
+    echo "Building DEB packages (core + dev)..."
     # Remove stale debs so it's obvious what was generated
     rm -f ./*.deb
     cpack --config "${BUILD_DIR}/CPackConfig.cmake"
@@ -2356,6 +2377,7 @@ stage_package_artifacts_to_dist() {
   mkdir -p dist
   rm -f \
     dist/*-Linux-core.deb \
+    dist/*-Linux-dev.deb \
     dist/*-Linux-extras.tar.gz \
     dist/neat-*.deb \
     dist/simaai-common*.deb \
@@ -2467,6 +2489,7 @@ write_install_manifest() {
   append_dist_manifest_matches "${manifest_path}" 'neat-internals-dev_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'sima-lmm-*.deb'
   append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
+  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-dev.deb'
   append_dist_manifest_matches "${manifest_path}" '*.whl'
 
   echo "Built install manifest: ${manifest_path}"
@@ -2554,9 +2577,11 @@ generate_package_metadata_if_requested() {
   require_sima_cli_packages_build
 
   local core_deb=""
+  local dev_deb=""
   local extras_tar=""
   local wheel_path=""
   collect_single_dist_artifact 'sima-neat-*-Linux-core.deb' 'NEAT core .deb' core_deb
+  collect_single_dist_artifact 'sima-neat-*-Linux-dev.deb' 'NEAT dev .deb' dev_deb
   collect_single_dist_artifact '*-Linux-extras.tar.gz' 'extras tarball' extras_tar
   collect_single_dist_artifact '*.whl' 'Python wheel' wheel_path
 
@@ -2586,7 +2611,7 @@ generate_package_metadata_if_requested() {
     echo "sima-cli packages build does not support platform compatibility flags; metadata platforms will remain empty."
   fi
 
-  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
+  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json dist/metadata-extras.json
 
   "${SIMA_CLI_BIN}" packages build dist \
     --name "${NEAT_PACKAGE_NAME}" \
@@ -2627,6 +2652,18 @@ generate_package_metadata_if_requested() {
     --variant pyneat \
     "${package_compatibility_args[@]}"
 
+  "${SIMA_CLI_BIN}" packages build dist \
+    --name "${NEAT_PACKAGE_NAME}" \
+    --version "${package_version}" \
+    --description "SiMa.ai Neat extras for ${NEAT_PACKAGE_DESCRIPTION}" \
+    --install-script ":" \
+    --exclude ".deb" \
+    --exclude ".whl" \
+    --exclude ".sh" \
+    --exclude ".txt" \
+    --exclude ".json" \
+    --variant extras
+
   WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
 import json
 import os
@@ -2647,8 +2684,30 @@ metadata.setdefault("installation", {})["post-message"] = (
 metadata_path.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
 PY
 
+  EXTRAS_BASENAME="${extras_basename}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+metadata_path = Path("dist/metadata-extras.json")
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+extras_name = os.environ["EXTRAS_BASENAME"]
+resources = metadata.get("resources", [])
+if resources != [extras_name]:
+    raise SystemExit(
+        f"metadata-extras.json must contain only {extras_name!r}; got {resources!r}"
+    )
+metadata.setdefault("installation", {})["post-message"] = (
+    "[bold]SiMa.ai Neat extras downloaded.[/bold]\n"
+    f"The extras archive has been downloaded and extracted from: {extras_name}\n"
+    "It contains tutorial source, prebuilt tutorial binaries, and supporting "
+    "test/sample files.\n"
+)
+metadata_path.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
+PY
+
   echo "Built package metadata:"
-  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
+  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json dist/metadata-extras.json
 }
 
 print_artifact_summary() {

@@ -1,10 +1,11 @@
 ---
 title: Windows Host Notes
-description: Prepare a Windows 11 host for Neat SDK and DevKit-Sync
+description: Prepare a Windows 11 host for the Neat SDK and DevKit-Sync
 sidebar_position: 2
 ---
 
-Use this guide when your host machine is Windows 11 and you want to run Neat SDK with DevKit-Sync.
+Use this guide when your host machine is Windows 11 and you want to run the
+Neat Development Environment (referred to as Neat SDK) with DevKit-Sync.
 
 ## Prerequisites
 
@@ -15,8 +16,10 @@ Use this guide when your host machine is Windows 11 and you want to run Neat SDK
 
 ## Start from WSL
 
-Run Neat SDK commands from inside your WSL Linux distribution, not from PowerShell or Command Prompt.
-This includes `sima-cli install ghcr:sima-neat/sdk` and `sima-cli sdk setup --devkit <devkit-ip>`.
+Run Neat SDK commands from inside your WSL Linux
+distribution, not from PowerShell or Command Prompt. This includes
+`sima-cli install ghcr:sima-neat/sdk:v2.1-latest` and
+`sima-cli sdk setup --devkit <devkit-ip>`.
 
 ## WSL network mode
 
@@ -74,7 +77,8 @@ sima-cli sdk setup --devkit <devkit-ip>
 :::note Insight access on Windows direct links
 With Windows direct network sharing, Windows firewall and WSL port-forwarding behavior can prevent
 the Neat Insight web interface from being reached by other machines on the network. In this setup,
-open Insight directly on the Windows SDK host, for example at `https://localhost:9900`.
+open Insight directly on the Windows Neat SDK host, for
+example at `https://localhost:9900`.
 :::
 
 ## NFS firewall rules (PowerShell)
@@ -92,4 +96,4 @@ Add any additional ports required by your NFS server/client setup.
 
 ## Next step
 
-Return to [Neat Development Environment](/getting-started/dev-environment/) and continue with install/setup.
+Return to [Neat SDK](/getting-started/dev-environment/) and continue with install/setup.

@@ -221,13 +221,16 @@ jobs:
         set -euo pipefail
 
         mapfile -t CORE_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+        mapfile -t DEV_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-dev.deb' | sort)
         mapfile -t EXTRAS_TARS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-extras.tar.gz' | sort)
         mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
 
-        if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
-          echo "Expected exactly one NEAT core .deb, one extras tar.gz, and one wheel." >&2
+        if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#DEV_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+          echo "Expected exactly one NEAT core .deb, one NEAT dev .deb, one extras tar.gz, and one wheel." >&2
           echo "core debs: ${#CORE_DEBS[@]}" >&2
           printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+          echo "dev debs: ${#DEV_DEBS[@]}" >&2
+          printf '  %s\n' "${DEV_DEBS[@]}" >&2 || true
           echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
           printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
           echo "wheels: ${#WHEELS[@]}" >&2
@@ -277,7 +280,7 @@ jobs:
       artifact_folder: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 'core-fuzz' || '.' }}
       artifact_pattern: neat-core-dist
       artifact_glob: "*"
-      min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 9 || 10 }}
+      min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 10 || 11 }}
       publish_manifest: false
 
   build-pciehost-packages:
@@ -611,7 +614,7 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
+          rm -f ./*-Linux-core.deb ./*-Linux-dev.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
       - name: Pre-install devkit storage cleanup

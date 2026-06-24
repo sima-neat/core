@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NEAT = REPO_ROOT / "scripts" / "neat"
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def write_exe(path: Path, content: str) -> None:
@@ -45,7 +47,25 @@ def base_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
         "NEAT_INSIGHT_VENV_DIR": "",
         "SIMA_CLI_BIN": "",
         "SIMA_CLI_REGISTRY_FILE": str(home / ".sima-cli" / "registry.json"),
+        "SYSROOT": str(tmp_path / "missing-sysroot"),
     }
+
+
+def write_neat_debs(
+    cache: Path,
+    version: str,
+    *,
+    core: bool = True,
+    dev: bool = True,
+) -> None:
+    if core:
+        (cache / f"sima-neat-{version}-Linux-core.deb").write_text("", encoding="utf-8")
+    if dev:
+        (cache / f"sima-neat-{version}-Linux-dev.deb").write_text("", encoding="utf-8")
+
+
+def component_line(stdout: str, name: str) -> str:
+    return next(line for line in stdout.splitlines() if ANSI_RE.sub("", line).strip().startswith(name))
 
 
 def make_curl(bin_dir: Path, log_path: Path | None = None) -> None:
@@ -160,7 +180,7 @@ def test_sdk_status_parses_sysroot_cache_and_checks_updates(tmp_path: Path) -> N
     sysroot = tmp_path / "sysroot"
     cache = sysroot / "neat-install-packages"
     cache.mkdir(parents=True)
-    (cache / "sima-neat-0.0.0+main-1111111-Linux-core.deb").write_text("", encoding="utf-8")
+    write_neat_debs(cache, "0.0.0+main-1111111")
     (cache / "pyneat-0.0.0-cp311-cp311-linux_aarch64.whl").write_text("", encoding="utf-8")
     (cache / "neat-runtime_0.0.1-main-2222222_arm64.deb").write_text("", encoding="utf-8")
     (cache / "neat-gst-plugins_0.0.1-main-2222222_arm64.deb").write_text("", encoding="utf-8")
@@ -209,7 +229,7 @@ def test_status_update_available_note_is_yellow(tmp_path: Path) -> None:
     sysroot = tmp_path / "sysroot"
     cache = sysroot / "neat-install-packages"
     cache.mkdir(parents=True)
-    (cache / "sima-neat-0.0.0+main-1111111-Linux-core.deb").write_text("", encoding="utf-8")
+    write_neat_debs(cache, "0.0.0+main-1111111")
     env.update({"ELXR_SDK_RELEASE_FILE": str(sdk_release), "SYSROOT": str(sysroot)})
 
     proc = run_neat(tmp_path, ["--color=always"], env)
@@ -220,6 +240,41 @@ def test_status_update_available_note_is_yellow(tmp_path: Path) -> None:
         "\x1b[0;33mUpdate available: yellow component versions indicate "
         "available updates. Run: neat update.\x1b[0m"
     ) in proc.stdout
+
+
+def test_sdk_status_requires_neat_core_and_dev_debs(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    env["NO_COLOR"] = ""
+    sdk_release = tmp_path / "sdk-release"
+    sdk_release.write_text("SDK Version = 10.0.0.244\neLXr Version = 2.0.0\n", encoding="utf-8")
+    env["ELXR_SDK_RELEASE_FILE"] = str(sdk_release)
+
+    cases = (
+        ("missing-dev", {"dev": False}, "missing dev artifact"),
+        ("missing-core", {"core": False}, "missing core artifact"),
+        (
+            "mismatch",
+            {"core": True, "dev": False},
+            "core/dev version mismatch core=0.0.0+main-1111111 dev=0.0.0+main-2222222",
+        ),
+    )
+    for name, deb_kwargs, detail in cases:
+        sysroot = tmp_path / name / "sysroot"
+        cache = sysroot / "neat-install-packages"
+        cache.mkdir(parents=True)
+        write_neat_debs(cache, "0.0.0+main-1111111", **deb_kwargs)
+        if name == "mismatch":
+            write_neat_debs(cache, "0.0.0+main-2222222", core=False)
+        env["SYSROOT"] = str(sysroot)
+
+        proc = run_neat(tmp_path, ["--offline", "--color=always"], env)
+
+        assert proc.returncode == 0, proc.stderr
+        neat_core_line = component_line(proc.stdout, "Neat core")
+        assert "\x1b[0;33mnot installed" in neat_core_line
+        assert detail in neat_core_line
 
 
 def test_sdk_status_prints_exposed_ports_from_port_map(tmp_path: Path) -> None:
@@ -332,7 +387,7 @@ def test_json_status_exports_components_and_ports(tmp_path: Path) -> None:
     sysroot = tmp_path / "sysroot"
     cache = sysroot / "neat-install-packages"
     cache.mkdir(parents=True)
-    (cache / "sima-neat-0.0.0+main-1111111-Linux-core.deb").write_text("", encoding="utf-8")
+    write_neat_debs(cache, "0.0.0+main-1111111")
     (cache / "pyneat-0.0.0-cp311-cp311-linux_aarch64.whl").write_text("", encoding="utf-8")
     (cache / "neat-runtime_0.0.1-main-2222222_arm64.deb").write_text("", encoding="utf-8")
     (cache / "neat-gst-plugins_0.0.1-main-2222222_arm64.deb").write_text("", encoding="utf-8")
@@ -585,9 +640,7 @@ def test_status_infers_non_main_channel_from_core_version(tmp_path: Path) -> Non
     sysroot = tmp_path / "sysroot"
     cache = sysroot / "neat-install-packages"
     cache.mkdir(parents=True)
-    (cache / "sima-neat-0.0.0+feature-dash-name-9999999-Linux-core.deb").write_text(
-        "", encoding="utf-8"
-    )
+    write_neat_debs(cache, "0.0.0+feature-dash-name-9999999")
     env.update({"ELXR_SDK_RELEASE_FILE": str(sdk_release), "SYSROOT": str(sysroot)})
 
     proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
@@ -730,6 +783,7 @@ def test_devkit_status_uses_dpkg_and_pyneat_venv(tmp_path: Path) -> None:
         pkg="${@: -1}"
         case "$pkg" in
           sima-neat) printf '0.0.0+main-4444444' ;;
+          sima-neat-dev) printf '0.0.0+main-4444444' ;;
           neat-runtime) printf '0.0.1-main-5555555' ;;
           neat-gst-plugins) printf '0.0.1-main-5555555' ;;
           *) exit 1 ;;
@@ -778,7 +832,7 @@ def test_update_yes_dispatches_core_and_insight_commands(tmp_path: Path) -> None
     sysroot = tmp_path / "sysroot"
     cache = sysroot / "neat-install-packages"
     cache.mkdir(parents=True)
-    (cache / "sima-neat-0.0.0+main-1111111-Linux-core.deb").write_text("", encoding="utf-8")
+    write_neat_debs(cache, "0.0.0+main-1111111")
     insight_venv = tmp_path / "insight" / "venv"
     (insight_venv / "bin").mkdir(parents=True)
     make_pip(insight_venv / "bin" / "pip3", "neat-insight", "0.0.0+main.3333333")
@@ -819,7 +873,7 @@ def test_update_skips_current_core_and_insight_but_updates_playbooks(tmp_path: P
     sysroot = tmp_path / "sysroot"
     cache = sysroot / "neat-install-packages"
     cache.mkdir(parents=True)
-    (cache / "sima-neat-0.0.0+main-abcdef0-Linux-core.deb").write_text("", encoding="utf-8")
+    write_neat_debs(cache, "0.0.0+main-abcdef0")
     insight_venv = tmp_path / "insight" / "venv"
     (insight_venv / "bin").mkdir(parents=True)
     make_pip(insight_venv / "bin" / "pip3", "neat-insight", "0.0.0+main.7654321")
@@ -861,7 +915,7 @@ def test_update_core_only_current_exits_without_confirmation_or_sima_cli(tmp_pat
     sysroot = tmp_path / "sysroot"
     cache = sysroot / "neat-install-packages"
     cache.mkdir(parents=True)
-    (cache / "sima-neat-0.0.0+main-abcdef0-Linux-core.deb").write_text("", encoding="utf-8")
+    write_neat_debs(cache, "0.0.0+main-abcdef0")
     env.update({"ELXR_SDK_RELEASE_FILE": str(sdk_release), "SYSROOT": str(sysroot)})
 
     proc = run_neat(tmp_path, ["update", "--core-only", "--color=never"], env)
@@ -891,7 +945,10 @@ def test_update_channel_and_tag_override_core_only(tmp_path: Path) -> None:
         bin_dir / "dpkg-query",
         """\
         #!/usr/bin/env bash
-        [[ "${@: -1}" == "sima-neat" ]] && printf '0.0.0+main-1111111'
+        case "${@: -1}" in
+          sima-neat|sima-neat-dev) printf '0.0.0+main-1111111' ;;
+          *) exit 1 ;;
+        esac
         """,
     )
 
@@ -937,7 +994,10 @@ def test_vulcan_buildinfo_selects_core_update_environment(tmp_path: Path) -> Non
         bin_dir / "dpkg-query",
         """\
         #!/usr/bin/env bash
-        [[ "${@: -1}" == "sima-neat" ]] && printf '2.0.0+feat.x.1111111'
+        case "${@: -1}" in
+          sima-neat|sima-neat-dev) printf '2.0.0+feat.x.1111111' ;;
+          *) exit 1 ;;
+        esac
         """,
     )
 

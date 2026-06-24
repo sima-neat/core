@@ -17,13 +17,13 @@ For prebuilt package installation, see [Neat Library](/getting-started/neat-libr
 `build.sh` automatically detects the active environment:
 
 - Modalix DevKit native environment
-- Palette SDK environment (cross-compilation)
+- Neat SDK environment (cross-compilation)
 
 You can run the same `build.sh` commands in either environment.
 
 ### Cross Compilation Prerequisites
 
-Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward. You will need Palette SDK for cross compilation.
+Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward. You will need the Neat SDK for cross compilation.
 
 Install `sima-cli` first on the host machine, then install the SDK.
 
@@ -60,7 +60,7 @@ Supported `build.sh` options:
 - `--python`: Build Python bindings (`pyneat`) in addition to selected targets.
 - `--install-neat-internals`, `--install-deps`: Download and install deps artifacts before build.
 - `--doc`: Build docs only.
-- `--install`: After build/package, install generated artifacts into the current environment. In paired Palette SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
+- `--install`: After build/package, install generated artifacts into the current environment. In paired Neat SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
 - `--no-dist`: Skip distribution packaging.
 - `--clean`: Remove `build/` before configuring.
 - `--no-doc`: Skip docs build (even with `--all`).
@@ -112,7 +112,7 @@ Install dependencies without building core:
 - Build tree: `build/`
 - Docusaurus site output (when docs build runs): `website/build/`
 - Install sanity-check prefix: `/tmp/sima-neat-install-test`
-- Core package (`*.deb`) is generated on Linux full builds unless `--no-dist` is used.
+- Neat package artifacts (`*.deb`) are generated on Linux full builds unless `--no-dist` is used.
 - Extras package (`*extras.tar.gz`) is generated on Linux full builds unless `--no-dist` is used.
 - Python wheel (`dist/*.whl`) is generated when Python build is enabled.
 
