@@ -147,10 +147,6 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
 void RemoteRuntime::start(const int queue, const bool accelerator,
                           const std::string& remote_model_path,
                           const std::optional<std::string>& remote_model_options_path) const {
-  if (queue < 0 || queue > 5) {
-    throw std::runtime_error("queue must be in range 0..5");
-  }
-
   std::ostringstream ss;
   ss << "[ -x " << SshRunner::shell_escape(kRemoteHelper) << " ] || { echo missing_builder; exit 10; }; "
      << "[ -d /run/sima-neat/pcie ] || { echo missing_run_dir; exit 11; }; "

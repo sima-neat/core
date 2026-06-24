@@ -74,6 +74,7 @@ enum class BoxDecodeType {
   YoloV6,
   YoloV7,
   YoloV8,
+  YoloV26,
   YoloX,
 };
 

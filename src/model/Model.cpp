@@ -4817,6 +4817,10 @@ int resolve_preproc_input_width(const internal::PreprocessPlannerResult& plan,
   if (input && input->width > 0) {
     return input->width;
   }
+  // Use max width from Model::Options for the source-image envelope.
+  if (plan.modelpack_max_width > 0) {
+    return plan.modelpack_max_width;
+  }
   const auto* ingress =
       maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
   if (ingress != nullptr && ingress->width > 0) {
@@ -4827,14 +4831,6 @@ int resolve_preproc_input_width(const internal::PreprocessPlannerResult& plan,
   if (resolved_ingress != nullptr && resolved_ingress->width > 0) {
     return resolved_ingress->width;
   }
-  // Model-managed preproc is a user-facing image ingress even when the MPK route
-  // fans out internally into multiple tensor ingress contracts (for example, EVO50
-  // image_l + image_uv). In that case there is no single route ingress to project
-  // here, so fall back to the canonical modelpack image contract instead of
-  // treating the split internal ingress tensors as the public ingress.
-  if (plan.modelpack_max_width > 0) {
-    return plan.modelpack_max_width;
-  }
   return (plan.resolved_plan.effective.resize.width > 0) ? plan.resolved_plan.effective.resize.width
                                                          : 0;
 }
@@ -4843,6 +4839,10 @@ int resolve_preproc_input_height(const internal::PreprocessPlannerResult& plan,
                                  const InputInfo* input) {
   if (input && input->height > 0) {
     return input->height;
+  }
+  // Use max height from Model::Options for the source-image envelope.
+  if (plan.modelpack_max_height > 0) {
+    return plan.modelpack_max_height;
   }
   const auto* ingress =
       maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
@@ -4853,11 +4853,6 @@ int resolve_preproc_input_height(const internal::PreprocessPlannerResult& plan,
       maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
   if (resolved_ingress != nullptr && resolved_ingress->height > 0) {
     return resolved_ingress->height;
-  }
-  // See resolve_preproc_input_width(): multi-ingress internal contracts must not
-  // erase the public model-managed image ingress contract.
-  if (plan.modelpack_max_height > 0) {
-    return plan.modelpack_max_height;
   }
   return (plan.resolved_plan.effective.resize.height > 0)
              ? plan.resolved_plan.effective.resize.height

@@ -80,6 +80,8 @@ std::string box_decode_type_token(const BoxDecodeType type) {
     return "yolov7";
   case BoxDecodeType::YoloV8:
     return "yolov8";
+  case BoxDecodeType::YoloV26:
+    return "yolo26";
   case BoxDecodeType::YoloX:
     return "yolox";
   }

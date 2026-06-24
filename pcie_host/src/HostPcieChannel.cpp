@@ -451,6 +451,55 @@ TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owne
   return out;
 }
 
+bool sample_has_bbox_caps(GstSample* sample) {
+  GstCaps* caps = gst_sample_get_caps(sample);
+  if (!caps || gst_caps_is_empty(caps)) {
+    return false;
+  }
+
+  const GstStructure* structure = gst_caps_get_structure(caps, 0);
+  if (!structure) {
+    return false;
+  }
+
+  const char* media_type = gst_structure_get_name(structure);
+  const char* format = gst_structure_get_string(structure, "format");
+  return media_type && std::strcmp(media_type, "application/vnd.simaai.tensor") == 0 &&
+         format && std::strcmp(format, "BBOX") == 0;
+}
+
+TensorList bbox_tensor_from_output_payload(const std::shared_ptr<MappedSample>& owner) {
+  TensorList out;
+  if (!owner || !owner->map.data) {
+    return out;
+  }
+
+  Tensor tensor;
+  tensor.owner = owner;
+  tensor.data = owner->map.data;
+  tensor.size_bytes = owner->map.size;
+  tensor.dtype = TensorDType::UInt8;
+  tensor.layout = TensorLayout::Unknown;
+  tensor.shape = {static_cast<std::int64_t>(owner->map.size)};
+  tensor.strides_bytes = {1};
+  tensor.byte_offset = 0;
+  tensor.read_only = true;
+  tensor.route.name = "BBOX";
+  tensor.route.logical_index = 0;
+  tensor.route.backend_output_index = 0;
+  tensor.route.physical_index = 0;
+  out.push_back(std::move(tensor));
+  return out;
+}
+
+TensorList tensors_from_output_sample(const std::shared_ptr<MappedSample>& owner,
+                                      const PcieModelFacts& facts) {
+  if (owner && sample_has_bbox_caps(owner->sample)) {
+    return bbox_tensor_from_output_payload(owner);
+  }
+  return tensors_from_output_payload(owner, facts);
+}
+
 } // namespace
 
 HostPcieChannel::HostPcieChannel() {
@@ -708,7 +757,7 @@ GstFlowReturn HostPcieChannel::on_new_sample(GstElement* sink) {
     }
   }
 
-  TensorList result = tensors_from_output_payload(owner, facts_);
+  TensorList result = tensors_from_output_sample(owner, facts_);
 
   {
     std::lock_guard<std::mutex> lock(receive_mutex_);
