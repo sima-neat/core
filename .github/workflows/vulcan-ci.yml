@@ -553,9 +553,6 @@ jobs:
           fi
 
       - name: Run Tutorial Tests
-        env:
-          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
-          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
         run: |
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
           TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/share/sima-neat/tutorials/build.sh"
@@ -582,9 +579,6 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Run Python pytest from installed extras
-        env:
-          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
-          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
         run: |
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
