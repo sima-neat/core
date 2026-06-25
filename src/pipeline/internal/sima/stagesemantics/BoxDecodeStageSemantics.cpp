@@ -401,6 +401,46 @@ int infer_yolox_interleaved_class_depth(const BoxDecodeStaticContract& contract)
   return classes.value_or(0);
 }
 
+bool decode_type_is_ssd(BoxDecodeType type) {
+  return type == BoxDecodeType::Ssd;
+}
+
+// SSD groups per-level localization heads (depth = 4 * priors-per-cell) with
+// class-confidence heads (depth = num_classes * priors-per-cell). Heads are grouped
+// by role: the first half are localization, the second half confidence, paired per
+// feature level by spatial size. The number of priors-per-cell may differ per level
+// (e.g. 4/6/6/6/4/4), but the class count is identical across levels. Inference is
+// purely geometric so it works for any SSD variant (input size / feature-map count).
+int infer_ssd_grouped_class_depth(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
+    return 0;
+  }
+  const std::size_t levels = contract.tensors.size() / 2U;
+  std::optional<int> classes;
+  for (std::size_t i = 0; i < levels; ++i) {
+    const auto loc = tensor_hwc(contract.tensors[i]);
+    const auto conf = tensor_hwc(contract.tensors[i + levels]);
+    if (!loc.has_value() || !conf.has_value() || !same_hw(*loc, *conf) || loc->semantic_c < 4 ||
+        (loc->semantic_c % 4) != 0) {
+      return 0;
+    }
+    const int priors_per_cell = loc->semantic_c / 4;
+    if (priors_per_cell <= 0 || (conf->semantic_c % priors_per_cell) != 0) {
+      return 0;
+    }
+    const int candidate = conf->semantic_c / priors_per_cell;
+    if (candidate <= 0) {
+      return 0;
+    }
+    const auto next = consistent_positive_depth(classes, candidate);
+    if (!next.has_value() && classes.has_value()) {
+      return 0;
+    }
+    classes = next;
+  }
+  return classes.value_or(0);
+}
+
 int infer_packed_yolo_class_depth(const BoxDecodeStaticContract& contract) {
   std::optional<int> classes;
   for (const auto& tensor : contract.tensors) {
@@ -441,6 +481,15 @@ bool decode_type_is_packed_yolo(BoxDecodeType type) {
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
 
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (decode_type_is_ssd(contract.decode_type)) {
+    // SSD class count is derived from the loc/conf head geometry, not head names:
+    // confidence heads pack num_classes * priors-per-cell channels, so a name-based
+    // guess would over-count by the prior multiplier.
+    if (const int classes = infer_ssd_grouped_class_depth(contract); classes > 0) {
+      return classes;
+    }
+    return contract.num_classes;
+  }
   if (const int named = infer_named_class_depth(contract); named > 0) {
     return named;
   }
@@ -546,6 +595,22 @@ void apply_raw_yolov6_yolox_static_contract_overrides(BoxDecodeStaticContract* c
   }
 }
 
+void apply_ssd_static_contract_overrides(BoxDecodeStaticContract* contract) {
+  if (!contract || contract->decode_type != BoxDecodeType::Ssd) {
+    return;
+  }
+  // SSD confidence heads carry raw logits; the decoder applies softmax across the
+  // class dimension (background included) before thresholding. Grouped-by-role is the
+  // canonical SSD head layout (all localization heads, then all confidence heads).
+  contract->score_activation = BoxDecodeScoreActivation::Softmax;
+  if (contract->decode_type_option == BoxDecodeTypeOption::Auto) {
+    contract->decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+  }
+  if (contract->num_classes <= 0) {
+    contract->num_classes = infer_ssd_grouped_class_depth(*contract);
+  }
+}
+
 std::string resolve_boxdecode_input_dtype(const plugin_contracts::BoxDecodeContractSubset& subset) {
   std::string dtype;
   for (const auto& logical : subset.logical_inputs) {
@@ -610,6 +675,7 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   finalized.required_preprocess_meta_fields = required_preprocess_meta_fields;
   apply_yolov26_static_contract_overrides(&finalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&finalized);
+  apply_ssd_static_contract_overrides(&finalized);
   finalized.num_classes = resolve_boxdecode_num_classes(finalized, num_classes, "BoxDecode");
   return finalized;
 }
@@ -656,6 +722,7 @@ build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   BoxDecodeStaticContract normalized = contract;
   apply_yolov26_static_contract_overrides(&normalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&normalized);
+  apply_ssd_static_contract_overrides(&normalized);
   if (normalized.num_classes <= 0) {
     normalized.num_classes =
         resolve_boxdecode_num_classes(normalized, /*user_num_classes=*/0, "BoxDecode");

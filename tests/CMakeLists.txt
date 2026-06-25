@@ -228,6 +228,7 @@ set(UNIT_TESTS
   unit_contracts_test
   unit_boxdecode_render_manifest_from_model_test
   unit_boxdecode_yolo_layout_matrix_test
+  unit_boxdecode_ssd_layout_matrix_test
   unit_model_route_retarget_helper_test
   unit_dequant_processcvu_contract_equivalence_test
   unit_dequant_node_fragment_test

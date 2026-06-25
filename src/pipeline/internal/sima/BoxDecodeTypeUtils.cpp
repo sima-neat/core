@@ -107,6 +107,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolox" || lower == "yolo-x") {
     return BoxDecodeType::YoloX;
   }
+  if (lower == "ssd") {
+    return BoxDecodeType::Ssd;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }
