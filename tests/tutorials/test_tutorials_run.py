@@ -40,7 +40,7 @@ if not RTSP_URL:
 SMOKE_ARGS_BY_CHAPTER = {
     "003": ["--samples", "10"],
 }
-EXTRA_RUNTIME_CHAPTERS: set[str] = set()
+EXTRA_RUNTIME_CHAPTERS = {"018"}
 
 
 def _chapter_id(folder: str) -> str:
