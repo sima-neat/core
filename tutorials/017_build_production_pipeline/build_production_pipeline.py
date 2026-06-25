@@ -67,6 +67,8 @@ def main(argv: list[str]) -> int:
     if runner.pull(timeout_ms=2000) is not None:
       ok += 1
   runner.close()
+  if ok <= 0:
+    raise RuntimeError("runner produced no outputs")
   # END STEP
   # END CORE LOGIC
 

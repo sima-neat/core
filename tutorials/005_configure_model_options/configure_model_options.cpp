@@ -78,6 +78,8 @@ int main(int argc, char** argv) {
     if (!bgr.isContinuous())
       bgr = bgr.clone();
     auto out = model.run(std::vector<cv::Mat>{bgr}, /*timeout_ms=*/2000);
+    if (out.empty())
+      throw std::runtime_error("model produced no outputs");
     std::cout << "outputs=" << out.size() << "\n";
     // END STEP
     std::cout << "[OK] 005_configure_model_options\n";

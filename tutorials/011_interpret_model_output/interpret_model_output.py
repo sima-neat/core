@@ -55,6 +55,8 @@ def main(argv: list[str]) -> int:
     tensors = [sample.tensor]
   if not tensors:
     raise RuntimeError("no tensor output")
+  if not tensors[0].shape:
+    raise RuntimeError("output tensor shape is empty")
   print(f"sample_kind={sample.kind}")
   print(f"has_tensor={sample.tensor is not None}")
   print(f"num_fields={len(sample.fields)}")

@@ -102,6 +102,8 @@ def main(argv: list[str]) -> int:
   # END CORE LOGIC
 
   thread.join()
+  if pulled != args.n:
+    raise RuntimeError(f"pulled={pulled} != pushed={args.n}")
   print(f"pulled={pulled}")
   return 0
 

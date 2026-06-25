@@ -69,6 +69,8 @@ def main(argv: list[str]) -> int:
   while run.pull(timeout_ms=1000) is not None:
     pulled += 1
   measured = scope.stop()
+  if measured.counters.inputs_enqueued <= 0 or pulled <= 0:
+    raise RuntimeError("throughput run produced no measured inputs/outputs")
   # END STEP
   # END CORE LOGIC
   # STEP read-measurement

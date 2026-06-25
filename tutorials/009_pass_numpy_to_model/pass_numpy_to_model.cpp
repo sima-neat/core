@@ -61,11 +61,15 @@ int main(int argc, char** argv) {
     const std::size_t n = std::min<std::size_t>(mapped.size_bytes, 256);
     for (std::size_t i = 0; i < n; ++i)
       checksum += bytes[i];
+    if (tensor.shape.size() != 3U || mapped.size_bytes == 0U)
+      throw std::runtime_error("mapped tensor is empty or rank is wrong");
 
     // CORE LOGIC
     // STEP own-a-copy
     // clone() copies into CPU-owned storage, detached from the cv::Mat buffer.
     simaai::neat::Tensor owned = tensor.clone();
+    if (owned.dense_bytes_tight() == 0U)
+      throw std::runtime_error("cloned tensor is empty");
     // END STEP
     // END CORE LOGIC
 
