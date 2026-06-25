@@ -582,6 +582,9 @@ jobs:
           } >> "${GITHUB_ENV}"
 
       - name: Run Python pytest from installed extras
+        env:
+          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
+          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
         run: |
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then

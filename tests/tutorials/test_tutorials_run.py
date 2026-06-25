@@ -33,9 +33,14 @@ MODEL_PATH_BY_NAME = {
     "resnet_50": MODEL_RESNET,
     "yolo_v8s": MODEL_YOLO,
 }
+RTSP_URL = os.environ.get("SIMANEAT_APPS_TEST_RTSP_URL")
+if not RTSP_URL:
+  rtsp_urls = os.environ.get("SIMANEAT_APPS_TEST_RTSP_URLS", "")
+  RTSP_URL = re.split(r"[ ,;]+", rtsp_urls.strip(), maxsplit=1)[0] if rtsp_urls.strip() else None
 SMOKE_ARGS_BY_CHAPTER = {
     "003": ["--samples", "10"],
 }
+EXTRA_RUNTIME_CHAPTERS = {"018"}
 
 
 def _chapter_id(folder: str) -> str:
@@ -60,7 +65,7 @@ def _ctested_tutorial_py_files() -> list[tuple[str, Path]]:
   return [
       (folder, path)
       for folder, path in _tutorial_py_files()
-      if _chapter_id(folder) in ctested_chapters
+      if _chapter_id(folder) in ctested_chapters or _chapter_id(folder) in EXTRA_RUNTIME_CHAPTERS
   ]
 
 
@@ -209,10 +214,14 @@ def test_tutorial_runs(folder: str, py_path: Path) -> None:
     _skip_or_fail(f"{folder} uses unsupported smoke-test model {model_name}")
   if needs_model and not model_path:
     _skip_or_fail(f"set {MODEL_ENV_BY_NAME[model_name]} to run {folder}")
+  if tid == "018" and not RTSP_URL:
+    _skip_or_fail("set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS to run 018")
 
   cmd = [sys.executable, str(py_path)]
   if model_path:
     cmd += ["--model", model_path]
+  if tid == "018":
+    cmd += ["--url", RTSP_URL, "--frames", "10"]
   cmd += SMOKE_ARGS_BY_CHAPTER.get(tid, [])
 
   r = subprocess.run(
@@ -227,3 +236,15 @@ def test_tutorial_runs(folder: str, py_path: Path) -> None:
       f"--- STDOUT ---\n{r.stdout}\n"
       f"--- STDERR ---\n{r.stderr}"
   )
+  if tid == "018":
+    assert "rtsp_timeout" not in r.stdout, (
+        f"{folder} timed out while pulling RTSP frames\n"
+        f"--- STDOUT ---\n{r.stdout}\n"
+        f"--- STDERR ---\n{r.stderr}"
+    )
+    shape_count = len(re.findall(r"^frame=\d+ shape=", r.stdout, re.MULTILINE))
+    assert shape_count == 10, (
+        f"{folder} expected 10 decoded frames, got {shape_count}\n"
+        f"--- STDOUT ---\n{r.stdout}\n"
+        f"--- STDERR ---\n{r.stderr}"
+    )

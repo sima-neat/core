@@ -34,7 +34,7 @@ With the run live, loop and `pull(...)` with a timeout. Each successful pull yie
 
 **C++:** A frame is extracted with `tensors_from_sample(*sample, true)`; the loop checks for an empty list before reading `shape`.
 
-**Python:** A frame is `sample.tensor`; the loop checks for `None` before reading `sample.tensor.shape`.
+**Python:** A frame is read from the first entry in `sample.tensors` before printing its shape.
 
 ## Run
 
