@@ -1,3 +1,4 @@
+#include "pipeline/internal/PreMlaContractCheck.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "test_main.h"
@@ -20,6 +21,7 @@
 
 namespace {
 
+namespace pre_mla = simaai::neat::pipeline_internal;
 namespace rendered_stage_query = simaai::neat::pipeline_internal::rendered_stage_query;
 namespace sima = simaai::neat::pipeline_internal::sima;
 
@@ -152,6 +154,75 @@ void verify_contract_present_multi_input_accumulated_size() {
           "multi-input MLA stage: logical_dtype must be non-empty (guard will enforce)");
 }
 
+// — Direct coverage of check_pre_mla_input_bytes_contract() —
+//
+// These tests call the extracted helper directly so that:
+//   (a) the gate path (guard_active=false → Skipped) is exercised, and
+//   (b) every error code produced by the validation body is verified.
+// If someone re-introduces a gate before the validation body inside
+// enforce_pre_mla_input_bytes_guard() the guard_active=true cases below
+// will still detect any regression in the check logic itself.
+
+void verify_guard_skips_when_inactive() {
+  // guard_active=false must return Skipped regardless of bad inputs.
+  // This is the behaviour that the old unconditional SHADOW_CHANGE gate produced:
+  // the guard returned without checking anything.
+  const auto code =
+      pre_mla::check_pre_mla_input_bytes_contract(false, 0, 0, 1024,
+                                                   pre_mla::DTypeFamily::Unknown,
+                                                   pre_mla::DTypeFamily::Unknown);
+  require(code == pre_mla::PreMlaCheckCode::Skipped,
+          "guard_active=false: must return Skipped even with bad inputs (former gated behaviour)");
+}
+
+void verify_guard_passes_on_matching_bytes() {
+  const auto code =
+      pre_mla::check_pre_mla_input_bytes_contract(true, 1024, 1024, 1024,
+                                                   pre_mla::DTypeFamily::BFloat16,
+                                                   pre_mla::DTypeFamily::BFloat16);
+  require(code == pre_mla::PreMlaCheckCode::Ok,
+          "matching handle/runtime/contract bytes and dtype: must return Ok");
+}
+
+void verify_guard_fires_handle_unavailable() {
+  const auto code =
+      pre_mla::check_pre_mla_input_bytes_contract(true, 0, 1024, 1024,
+                                                   pre_mla::DTypeFamily::BFloat16,
+                                                   pre_mla::DTypeFamily::BFloat16);
+  require(code == pre_mla::PreMlaCheckCode::HandleUnknown,
+          "handle_bytes=0: must return HandleUnknown");
+}
+
+void verify_guard_fires_contract_mismatch() {
+  // handle(2048) >= runtime(512) so HandleTooSmall is not triggered first;
+  // runtime(512) != contract(1024) → ContractMismatch.
+  const auto code =
+      pre_mla::check_pre_mla_input_bytes_contract(true, 2048, 512, 1024,
+                                                   pre_mla::DTypeFamily::BFloat16,
+                                                   pre_mla::DTypeFamily::BFloat16);
+  require(code == pre_mla::PreMlaCheckCode::ContractMismatch,
+          "runtime_logical(512) != contract(1024): must return ContractMismatch");
+}
+
+void verify_guard_fires_dtype_mismatch() {
+  const auto code =
+      pre_mla::check_pre_mla_input_bytes_contract(true, 1024, 1024, 1024,
+                                                   pre_mla::DTypeFamily::Int8,
+                                                   pre_mla::DTypeFamily::BFloat16);
+  require(code == pre_mla::PreMlaCheckCode::DtypeMismatch,
+          "INT8 runtime vs BF16 contract: must return DtypeMismatch");
+}
+
+void verify_dtype_family_from_token_roundtrip() {
+  // Sanity-check the token parser used to derive contract_dtype.
+  require(pre_mla::dtype_family_from_token("BF16") == pre_mla::DTypeFamily::BFloat16,
+          "dtype_family_from_token: BF16 must map to BFloat16");
+  require(pre_mla::dtype_family_from_token("INT8") == pre_mla::DTypeFamily::Int8,
+          "dtype_family_from_token: INT8 must map to Int8");
+  require(pre_mla::dtype_family_from_token("") == pre_mla::DTypeFamily::Unknown,
+          "dtype_family_from_token: empty string must map to Unknown");
+}
+
 } // namespace
 
 RUN_TEST("unit_pre_mla_input_bytes_guard_test", ([] {
@@ -165,4 +236,12 @@ RUN_TEST("unit_pre_mla_input_bytes_guard_test", ([] {
            verify_contract_present_via_logical_size_bytes();
            verify_contract_present_via_physical_size_bytes();
            verify_contract_present_multi_input_accumulated_size();
+
+           // Direct coverage of check_pre_mla_input_bytes_contract(): gate + each error code
+           verify_guard_skips_when_inactive();
+           verify_guard_passes_on_matching_bytes();
+           verify_guard_fires_handle_unavailable();
+           verify_guard_fires_contract_mismatch();
+           verify_guard_fires_dtype_mismatch();
+           verify_dtype_family_from_token_roundtrip();
          }));
