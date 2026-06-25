@@ -83,8 +83,7 @@ enum class PreMlaCheckCode {
 // decision logic — including the skip path — is directly testable without env-var side effects.
 // Returns Skipped when !guard_active (matching the old gated behaviour), Ok on success, or the
 // first failing code. Callers handle error reporting and throwing.
-inline PreMlaCheckCode check_pre_mla_input_bytes_contract(bool guard_active,
-                                                          int64_t handle_bytes,
+inline PreMlaCheckCode check_pre_mla_input_bytes_contract(bool guard_active, int64_t handle_bytes,
                                                           int64_t runtime_logical_bytes,
                                                           int64_t contract_logical_bytes,
                                                           DTypeFamily runtime_dtype,

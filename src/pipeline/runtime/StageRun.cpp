@@ -503,11 +503,11 @@ const char* dtype_name(TensorDType dtype) {
   return "Unknown";
 }
 
-using pipeline_internal::DTypeFamily;
-using pipeline_internal::dtype_family_name;
-using pipeline_internal::dtype_family_from_token;
-using pipeline_internal::PreMlaCheckCode;
 using pipeline_internal::check_pre_mla_input_bytes_contract;
+using pipeline_internal::dtype_family_from_token;
+using pipeline_internal::dtype_family_name;
+using pipeline_internal::DTypeFamily;
+using pipeline_internal::PreMlaCheckCode;
 
 DTypeFamily dtype_family_from_tensor_dtype(TensorDType dtype) {
   switch (dtype) {

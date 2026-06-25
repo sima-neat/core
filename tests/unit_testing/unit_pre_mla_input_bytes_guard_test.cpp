@@ -167,28 +167,22 @@ void verify_guard_skips_when_inactive() {
   // guard_active=false must return Skipped regardless of bad inputs.
   // This is the behaviour that the old unconditional SHADOW_CHANGE gate produced:
   // the guard returned without checking anything.
-  const auto code =
-      pre_mla::check_pre_mla_input_bytes_contract(false, 0, 0, 1024,
-                                                   pre_mla::DTypeFamily::Unknown,
-                                                   pre_mla::DTypeFamily::Unknown);
+  const auto code = pre_mla::check_pre_mla_input_bytes_contract(
+      false, 0, 0, 1024, pre_mla::DTypeFamily::Unknown, pre_mla::DTypeFamily::Unknown);
   require(code == pre_mla::PreMlaCheckCode::Skipped,
           "guard_active=false: must return Skipped even with bad inputs (former gated behaviour)");
 }
 
 void verify_guard_passes_on_matching_bytes() {
-  const auto code =
-      pre_mla::check_pre_mla_input_bytes_contract(true, 1024, 1024, 1024,
-                                                   pre_mla::DTypeFamily::BFloat16,
-                                                   pre_mla::DTypeFamily::BFloat16);
+  const auto code = pre_mla::check_pre_mla_input_bytes_contract(
+      true, 1024, 1024, 1024, pre_mla::DTypeFamily::BFloat16, pre_mla::DTypeFamily::BFloat16);
   require(code == pre_mla::PreMlaCheckCode::Ok,
           "matching handle/runtime/contract bytes and dtype: must return Ok");
 }
 
 void verify_guard_fires_handle_unavailable() {
-  const auto code =
-      pre_mla::check_pre_mla_input_bytes_contract(true, 0, 1024, 1024,
-                                                   pre_mla::DTypeFamily::BFloat16,
-                                                   pre_mla::DTypeFamily::BFloat16);
+  const auto code = pre_mla::check_pre_mla_input_bytes_contract(
+      true, 0, 1024, 1024, pre_mla::DTypeFamily::BFloat16, pre_mla::DTypeFamily::BFloat16);
   require(code == pre_mla::PreMlaCheckCode::HandleUnknown,
           "handle_bytes=0: must return HandleUnknown");
 }
@@ -196,19 +190,15 @@ void verify_guard_fires_handle_unavailable() {
 void verify_guard_fires_contract_mismatch() {
   // handle(2048) >= runtime(512) so HandleTooSmall is not triggered first;
   // runtime(512) != contract(1024) → ContractMismatch.
-  const auto code =
-      pre_mla::check_pre_mla_input_bytes_contract(true, 2048, 512, 1024,
-                                                   pre_mla::DTypeFamily::BFloat16,
-                                                   pre_mla::DTypeFamily::BFloat16);
+  const auto code = pre_mla::check_pre_mla_input_bytes_contract(
+      true, 2048, 512, 1024, pre_mla::DTypeFamily::BFloat16, pre_mla::DTypeFamily::BFloat16);
   require(code == pre_mla::PreMlaCheckCode::ContractMismatch,
           "runtime_logical(512) != contract(1024): must return ContractMismatch");
 }
 
 void verify_guard_fires_dtype_mismatch() {
-  const auto code =
-      pre_mla::check_pre_mla_input_bytes_contract(true, 1024, 1024, 1024,
-                                                   pre_mla::DTypeFamily::Int8,
-                                                   pre_mla::DTypeFamily::BFloat16);
+  const auto code = pre_mla::check_pre_mla_input_bytes_contract(
+      true, 1024, 1024, 1024, pre_mla::DTypeFamily::Int8, pre_mla::DTypeFamily::BFloat16);
   require(code == pre_mla::PreMlaCheckCode::DtypeMismatch,
           "INT8 runtime vs BF16 contract: must return DtypeMismatch");
 }
