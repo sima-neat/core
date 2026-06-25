@@ -10,6 +10,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 try:
   import pyneat
 except ImportError:
@@ -23,6 +25,25 @@ def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
   ap.add_argument("--model", type=Path, required=True)
   args = ap.parse_args(argv[1:])
+
+  width = 224
+  height = 224
+  rgb = np.full((height, width, 3), 80, dtype=np.uint8)
+  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+
+  inp = pyneat.InputOptions()
+  inp.format = pyneat.Format.RGB
+  inp.width = width
+  inp.height = height
+  inp.depth = 3
+
+  direct = pyneat.Graph()
+  direct.add(pyneat.nodes.input(inp))
+  direct.add(pyneat.nodes.output())
+  direct_outputs = direct.run([tensor])
+  if not direct_outputs:
+    raise RuntimeError("direct Graph output missing tensor")
+  print(f"direct_rank={len(direct_outputs[0].shape)}")
 
   model = pyneat.Model(str(args.model))
 

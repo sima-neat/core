@@ -24,7 +24,7 @@ The first line turns a path-on-disk into a live, runnable `Model`: construction 
 
 **C++:** You pass `build_options(size)` as a second argument to declare the input contract this model expects — RGB color, `224×224`, and the ImageNet normalization ResNet-50 was trained with. Declaring it here tells the runtime how to turn a raw image into the tensor the model wants.
 
-**Python:** The preprocessing defaults are sensible, so `pyneat.Model(path)` takes just the archive path — no options object needed for this chapter.
+**Python:** You pass the same contract through `build_options(size)` when constructing `pyneat.Model`.
 
 ### Prepare the input {#step-prepare-input}
 
@@ -32,7 +32,7 @@ Next we produce exactly one image to classify. If you pass `--image`, it is read
 
 **C++:** The frame is a `cv::Mat`, produced by `load_rgb(...)` or as a gray placeholder.
 
-**Python:** The frame is a NumPy array built by `load_image(...)` (OpenCV under the hood).
+**Python:** The frame is a NumPy array built by `load_image(...)` and wrapped as a `Tensor` with RGB image metadata.
 
 ### Run inference and read the result {#step-run-inference}
 
