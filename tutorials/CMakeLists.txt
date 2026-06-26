@@ -241,6 +241,7 @@ install(
     PATTERN "*.md"
     PATTERN "*.jpg"
     PATTERN "*.png"
+    PATTERN "CMakeLists.txt"
 )
 
 install(
