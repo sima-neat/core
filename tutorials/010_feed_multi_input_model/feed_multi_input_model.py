@@ -33,8 +33,8 @@ def main(argv: list[str]) -> int:
 
   # STEP configure-tensor-input
   inp = pyneat.InputOptions()
-  inp.media_type = "application/vnd.simaai.tensor"
-  inp.format = "FP32"
+  inp.payload_type = pyneat.PayloadType.Tensor
+  inp.format = pyneat.Format.FP32
   inp.width = args.width
   inp.height = args.height
   inp.depth = 3
@@ -58,11 +58,16 @@ def main(argv: list[str]) -> int:
   # END STEP
 
   # STEP push-and-read
-  run.push(fields)
+  if not run.push(fields):
+    raise RuntimeError(f"push failed: {run.last_error()}")
   out = run.pull(timeout_ms=1000)
+  if out is None:
+    raise RuntimeError("graph produced no output")
   # END STEP
   # END CORE LOGIC
 
+  if not out.fields and out.tensor is None and not out.tensors:
+    raise RuntimeError("graph output has no payload")
   print(f"bundle_fields={len(out.fields)}")
   for field in out.fields:
     print(f"  port={field.port_name} has_tensor={field.tensor is not None}")

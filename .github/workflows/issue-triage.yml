@@ -1,0 +1,38 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to triage.
+        required: true
+        type: number
+      dry_run:
+        description: Propose actions without mutating the issue.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          !contains(github.event.issue.labels.*.name, 'no-ai-triage') &&
+          !contains(github.event.issue.labels.*.name, 'customer-confidential') &&
+          !contains(github.event.issue.labels.*.name, 'security') &&
+          !contains(github.event.issue.labels.*.name, 'manual-triage')
+        )
+      }}
+    uses: sima-neat/.github/.github/workflows/reusable-issue-triage.yml@main
+    with:
+      issue_number: ${{ github.event.issue.number || inputs.issue_number }}
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+      repo_triage_path: .github/issue-triage

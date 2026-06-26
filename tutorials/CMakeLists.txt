@@ -168,8 +168,6 @@ add_tutorial(tutorial_018_consume_rtsp_stream
   NO_TEST
   LABELS asset
 )
-# Keep the CTest recipe for future re-enablement; disabled because it depends on an external lab RTSP stream.
-if (FALSE)
 add_test(
   NAME tutorial_018_consume_rtsp_stream
   COMMAND /bin/sh -c [=[
@@ -182,7 +180,17 @@ if [ -z "${url}" ]; then
   echo "Skipping tutorial_018_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
   exit 77
 fi
-exec "$1" --url "${url}" --frames 1
+out="$("$1" --url "${url}" --frames 10)"
+printf '%s\n' "${out}"
+if printf '%s\n' "${out}" | grep -q 'rtsp_timeout'; then
+  echo "tutorial_018_consume_rtsp_stream: RTSP timeout while pulling frames" >&2
+  exit 1
+fi
+shape_count="$(printf '%s\n' "${out}" | grep -cE '^frame=[0-9]+ shape=')"
+if [ "${shape_count}" -ne 10 ]; then
+  echo "tutorial_018_consume_rtsp_stream: expected 10 decoded frames, got ${shape_count}" >&2
+  exit 1
+fi
 ]=] sh $<TARGET_FILE:tutorial_018_consume_rtsp_stream>
 )
 set_tests_properties(tutorial_018_consume_rtsp_stream PROPERTIES
@@ -190,7 +198,6 @@ set_tests_properties(tutorial_018_consume_rtsp_stream PROPERTIES
   RESOURCE_LOCK "dispatcher"
   SKIP_RETURN_CODE 77
 )
-endif()
 
 add_tutorial(tutorial_019_run_an_llm
   019_run_an_llm/run_an_llm.cpp
@@ -234,6 +241,7 @@ install(
     PATTERN "*.md"
     PATTERN "*.jpg"
     PATTERN "*.png"
+    PATTERN "CMakeLists.txt"
 )
 
 install(

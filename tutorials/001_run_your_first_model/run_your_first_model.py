@@ -33,6 +33,17 @@ def load_image(path: Path | None, size: int) -> np.ndarray:
   return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
+def build_options(size: int) -> pyneat.ModelOptions:
+  opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
+  opt.preprocess.input_max_width = size
+  opt.preprocess.input_max_height = size
+  opt.preprocess.input_max_depth = 3
+  opt.preprocess.preset = pyneat.NormalizePreset.ImageNet
+  return opt
+
+
 def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
   ap.add_argument("--model", type=Path, required=True)
@@ -42,13 +53,14 @@ def main(argv: list[str]) -> int:
   # CORE LOGIC
   # The three-line Neat story:
   # STEP load-model
-  model = pyneat.Model(str(args.model))
+  model = pyneat.Model(str(args.model), build_options(224))
   # END STEP
   # STEP prepare-input
   image = load_image(args.image, size=224)
+  tensor = pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)
   # END STEP
   # STEP run-inference
-  outputs = model.run([image], timeout_ms=2000)
+  outputs = model.run([tensor], timeout_ms=2000)
   # END STEP
   # END CORE LOGIC
 
