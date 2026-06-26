@@ -1910,6 +1910,14 @@ install(
     PATTERN "*.h"
 )
 
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tutorials/
+  DESTINATION share/sima-neat/tests/tutorials
+  COMPONENT extras
+  FILES_MATCHING
+    PATTERN "*.py"
+)
+
 # Install the generated CTest manifests and any nested installed-test metadata
 # from the build tree. CI installs the extras tarball, then discovers tests by
 # finding lib/sima-neat/tests/CTestTestfile.cmake under the extracted prefix.

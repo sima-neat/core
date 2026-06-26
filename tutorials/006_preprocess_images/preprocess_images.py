@@ -56,6 +56,8 @@ def main(argv: list[str]) -> int:
   rgb = np.full((args.size, args.size, 3), 120, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
   outputs = model.run([tensor], timeout_ms=2000)
+  if not outputs or not outputs[0].shape:
+    raise RuntimeError("model produced no ranked outputs")
   print(f"output_count={len(outputs)}")
   return 0
 

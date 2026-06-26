@@ -71,8 +71,13 @@ int main(int argc, char** argv) {
     // stages::Preproc runs just the preprocessing step from the model's Options
     // and returns the preprocessed Tensor.
     // STEP inspect-preproc
-    simaai::neat::Tensor pre =
-        simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model).front();
+    simaai::neat::TensorList pre_outputs =
+        simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model);
+    if (pre_outputs.empty())
+      throw std::runtime_error("preprocess produced no outputs");
+    simaai::neat::Tensor pre = pre_outputs.front();
+    if (pre.shape.empty())
+      throw std::runtime_error("preprocess output shape is empty");
     // END STEP
     // END CORE LOGIC
 

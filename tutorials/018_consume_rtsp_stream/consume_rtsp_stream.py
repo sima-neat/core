@@ -45,11 +45,12 @@ def main(argv: list[str]) -> int:
 
   # STEP pull-frames
   for i in range(args.frames):
-    sample = run.pull(timeout_ms=5000)
-    if sample is None or sample.tensor is None:
+    frame_sample = run.pull(timeout_ms=5000)
+    if frame_sample is None or not frame_sample.tensors:
       print(f"frame={i} rtsp_timeout")
       break
-    print(f"frame={i} shape={list(sample.tensor.shape)}")
+    frame_tensor = frame_sample.tensors[0]
+    print(f"frame={i} shape={list(frame_tensor.shape)}")
   # END STEP
   # END CORE LOGIC
   return 0

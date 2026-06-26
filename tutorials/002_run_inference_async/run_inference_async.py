@@ -23,6 +23,25 @@ import numpy as np
 import cv2
 
 
+def first_tensor(sample):
+  if sample.tensor is not None:
+    return sample.tensor
+  if sample.kind == pyneat.SampleKind.TensorSet and sample.tensors:
+    return sample.tensors[0]
+  raise RuntimeError("no tensor output")
+
+
+def build_options(size: int) -> pyneat.ModelOptions:
+  opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
+  opt.preprocess.input_max_width = size
+  opt.preprocess.input_max_height = size
+  opt.preprocess.input_max_depth = 3
+  opt.preprocess.preset = pyneat.NormalizePreset.ImageNet
+  return opt
+
+
 def load_image(path: Path | None, size: int) -> np.ndarray:
   if path is None:
     return np.full((size, size, 3), 99, dtype=np.uint8)
@@ -45,7 +64,7 @@ def main(argv: list[str]) -> int:
 
   # CORE LOGIC
   # STEP load-model
-  model = pyneat.Model(str(args.model))
+  model = pyneat.Model(str(args.model), build_options(224))
   route_opt = pyneat.ModelRouteOptions()
   route_opt.include_input = True
   route_opt.include_output = True
@@ -54,14 +73,14 @@ def main(argv: list[str]) -> int:
   # STEP build-async
   graph = pyneat.Graph()
   graph.add(model.graph(route_opt))
-  run = graph.build([frame])
+  run = graph.build([frame], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
   # END STEP
 
   # STEP push-frames
   # Producer thread pushes frames; main thread pulls predictions.
   def producer() -> None:
     for _ in range(args.n):
-      run.push([frame])
+      run.push([frame], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
     run.close_input()
 
   thread = threading.Thread(target=producer, name="frame_producer")
@@ -76,13 +95,15 @@ def main(argv: list[str]) -> int:
       if not thread.is_alive():
         break
       continue
-    top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
+    top1 = int(np.argmax(first_tensor(sample).to_numpy().reshape(-1)))
     print(f"top1={top1}")
     pulled += 1
   # END STEP
   # END CORE LOGIC
 
   thread.join()
+  if pulled != args.n:
+    raise RuntimeError(f"pulled={pulled} != pushed={args.n}")
   print(f"pulled={pulled}")
   return 0
 
