@@ -14,31 +14,32 @@ application, and validate the result on Modalix hardware.
 Use this overview to understand the main parts of Palette Neat and choose the
 right setup, model preparation, or application development path.
 
-<div class="overview-section-label">Software stack</div>
-
-Palette Neat includes four software components and the Modalix DevKit:
-
-- **Neat Development Environment** — the containerized environment for cross-compilation, DevKit pairing, agent-assisted workflows, and local validation.
-- **Neat Library** — the C++ and Python library and runtime for loading models, executing pipelines, and coordinating work across Modalix compute resources.
-- **Model Compiler** — the optional component for model quantization, compilation, and validation.
-- **LLiMa** — the GenAI toolkit, included with the development and model tooling, for compiling, testing, and benchmarking GenAI models.
-- **Modalix DevKit** — the target hardware where compiled model artifacts and Neat Library applications run and are validated.
-
+![Palette Neat software stack showing the Neat SDK, Neat Library, Model Compiler, LLiMa, and Modalix DevKit](../images/neat-software-stack-animated.svg)
 
 <div class="overview-section-label">Developer journey</div>
 
-If you are new to Palette Neat, work through these sections in order: confirm
-compatibility, set up the Neat Development Environment, install or update the
-Neat Library, prepare a model, and then build the application that uses it.
+:::tip If you are new to Palette Neat
+There are two supported ways to develop applications with Palette Neat:
+
+- **[Use the Neat SDK](/getting-started/dev-environment/)** when you want a more performant development environment,
+  especially if you plan to compile models, or cross-compile large scale C++ code.
+- **[Develop directly on the DevKit](/getting-started/neat-library/)** when you want fewer moving parts with the development environment, especially when you are not doing model compilation work.
+
+If you choose the SDK path, confirm your host meets the
+[host requirements](/getting-started/dev-environment/#host-requirements), then
+install the SDK. SDK installation applies compatible defaults, so you only need
+the Compatibility reference when you want to pin exact versions, upgrade
+components independently, or troubleshoot a version mismatch.
+:::
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Start Here</h2>
-    <p>Prepare your host machine, Neat Development Environment, and DevKit for local development and hardware validation.</p>
+    <p>Prepare your host machine, Neat SDK, and DevKit for local development and hardware validation.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Check Compatibility</strong><span>Confirm supported host, Neat Development Environment, DevKit software, Neat Library, and Model Compiler versions.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat Development Environment</strong><span>Install the SDK, pair a DevKit, and run on hardware with dk.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>Install or update the runtime and PyNeat on a DevKit or paired environment.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/"><strong>Neat SDK</strong><span>Use the SDK for a high performance host-based workflow, model compilation, C++ builds, and DevKit validation.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/neat-library/"><strong>Neat Library</strong><span>Install runtime and PyNeat directly when you want fewer moving parts to prototype apps on a DevKit.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/compatibility/"><strong>Compatibility Guide</strong><span>Reference guide for supported version combinations.</span></a></li>
     </ul>
   </section>
 

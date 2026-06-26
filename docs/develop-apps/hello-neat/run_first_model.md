@@ -312,7 +312,7 @@ Rebuild with the same commands as Hello Neat!, then run the binary:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ./build/sima_neat_hello      # on the DevKit
-dk build/sima_neat_hello     # from the Palette SDK host
+dk build/sima_neat_hello     # from the Neat SDK host
 ```
 
 </CodeTab>
@@ -323,7 +323,7 @@ Run the script:
 ```bash
 source ~/pyneat/bin/activate
 python3 hello_neat.py        # on the DevKit
-dk hello_neat.py             # from the Palette SDK host
+dk hello_neat.py             # from the Neat SDK host
 ```
 
 </CodeTab>

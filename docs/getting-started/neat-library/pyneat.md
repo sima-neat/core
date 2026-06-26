@@ -4,56 +4,48 @@ description: Install the PyNeat wheel in a custom Python virtual environment
 sidebar_position: 3
 ---
 
-The standard Neat Library installer provisions a default PyNeat virtual
-environment at `~/pyneat` on the DevKit. Use this page only when you need a
-custom Python environment.
+:::tip PyNeat is already installed with Neat Library
+PyNeat is bundled with the Neat Library and is installed automatically when you
+install the Neat Library.
 
-The Neat Library install artifacts include a PyNeat wheel. If you need a custom
-venv, conda environment, or other Python 3.11 setup, download the wheel and
-install it into that environment.
+By default, it is installed in a virtual environment at `~/pyneat`. You can skip
+this page unless you want to install PyNeat in a custom virtual environment, such
+as a separate venv or conda environment on the DevKit.
+:::
 
-Use this flow when the matching Neat Library release artifacts are already
-installed. The PyNeat-only target downloads the wheel, but it does not install
-or update the Neat `.deb` packages.
+Run the steps below on the DevKit. This instruction does not install or update the runtime `.deb` packages, so run it where the
+matching Neat Library runtime is already installed.
 
 ## Download the Wheel
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="devkit">
 sima-cli neat install core -t pyneat
 </ShellCommand>
 
 To download the wheel for a specific Neat Library release, include the version.
 
-For Neat Library 0.1.0:
+For Neat Library 0.2.1:
 
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@v0.1.0 -t pyneat
-</ShellCommand>
-
-For Neat Library 0.2.0:
-
-<ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@0.2.0 -t pyneat
+<ShellCommand prompt="devkit">
+sima-cli neat install core@0.2.1 -t pyneat
 </ShellCommand>
 
 ## Create a Python Environment
 
-Create and activate your target Python 3.11 environment:
+Create and activate a virtual environment with the environment's `python3`:
 
-<ShellCommand prompt="sdk-or-devkit">
-python3.11 -m venv ~/my-neat-env
+<ShellCommand prompt="devkit">
+python3 -m venv ~/my-neat-env
 source ~/my-neat-env/bin/activate
 </ShellCommand>
 
 ## Install the Wheel
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="devkit">
 pip install ./pyneat-*.whl
 </ShellCommand>
 
-The published wheel targets **CPython 3.11** on **`linux_aarch64`**, so install
-it into a matching environment. For supported Neat Library, SDK, and DevKit
-software combinations, see the
+For supported Neat Library, SDK, and DevKit software combinations, see the
 [Compatibility Guide](/getting-started/compatibility/).
 
 ## Next Step
