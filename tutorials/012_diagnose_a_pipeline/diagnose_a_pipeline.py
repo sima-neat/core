@@ -27,7 +27,7 @@ def main(argv: list[str]) -> int:
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
   inp = pyneat.InputOptions()
-  inp.format = "RGB"
+  inp.format = pyneat.Format.RGB
   inp.width = 128
   inp.height = 96
   inp.depth = 3
@@ -51,7 +51,9 @@ def main(argv: list[str]) -> int:
   measure = pyneat.MeasureOptions()
   measure.title = "tutorial 011 diagnosis"
   scope = run.start_measurement(measure)
-  run.run([tensor], timeout_ms=1000)
+  out = run.run([tensor], timeout_ms=1000)
+  if not out:
+    raise RuntimeError("missing output tensor")
   measured = scope.stop()
   # END STEP
 

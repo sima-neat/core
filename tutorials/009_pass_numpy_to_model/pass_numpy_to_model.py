@@ -36,6 +36,8 @@ def main(argv: list[str]) -> int:
   arr_back = tensor.to_numpy(copy=True)
   # END STEP
   # END CORE LOGIC
+  if arr_back.shape != arr.shape or not np.array_equal(arr_back, arr):
+    raise RuntimeError("numpy round-trip changed tensor data")
   print(f"numpy_roundtrip_shape={arr_back.shape}")
 
   # torch round-trip (skipped gracefully if torch isn't installed).
@@ -52,6 +54,8 @@ def main(argv: list[str]) -> int:
   th_back = tensor2.to_torch(copy=True)
   # END STEP
   # END CORE LOGIC
+  if tuple(th_back.shape) != tuple(th.shape) or not torch.equal(th_back, th):
+    raise RuntimeError("torch round-trip changed tensor data")
   print(f"torch_roundtrip_shape={tuple(th_back.shape)}")
   return 0
 

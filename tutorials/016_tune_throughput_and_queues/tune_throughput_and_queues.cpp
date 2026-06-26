@@ -86,6 +86,8 @@ int main(int argc, char** argv) {
     while (run.pull(/*timeout_ms=*/1000).has_value())
       ++pulled;
     const auto measured = scope.stop();
+    if (measured.counters.inputs_enqueued <= 0 || pulled <= 0)
+      throw std::runtime_error("throughput run produced no measured inputs/outputs");
     // END STEP
     // END CORE LOGIC
 

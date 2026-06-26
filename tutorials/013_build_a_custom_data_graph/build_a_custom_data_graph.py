@@ -46,11 +46,14 @@ def main(argv: list[str]) -> int:
 
   # STEP build-and-push
   run = graph.build()
-  run.push("image", [make_rgb_sample()])
+  if not run.push("image", [make_rgb_sample()]):
+    raise RuntimeError(f"push failed: {run.last_error()}")
   # END STEP
   # STEP pull-and-verify
   out = run.pull("out", 2000)
   run.close()
+  if out is None:
+    raise RuntimeError("graph produced no output")
   # END STEP
   # END CORE LOGIC
 

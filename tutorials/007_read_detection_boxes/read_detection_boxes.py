@@ -56,6 +56,8 @@ def main(argv: list[str]) -> int:
   rgb = np.full((args.height, args.width, 3), 80, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
   outputs = model.run([tensor], timeout_ms=2000)
+  if not outputs:
+    raise RuntimeError("model produced no outputs")
   # END STEP
   # END CORE LOGIC
 

@@ -32,7 +32,7 @@ Push one frame and pull one result synchronously. The single `run(...)` call is 
 
 **C++:** `run.run(...)` returns a `TensorList` — for a single-tensor output that means one entry, which the next step inspects via `out.size()` and `out.front()`.
 
-**Python:** `run.run(...)` returns a `Sample`, exposing `.kind`, `.tensor`, and `.fields` directly.
+**Python:** `run.run(...)` returns a `Sample`, exposing `.kind`, `.tensor`, `.tensors`, and `.fields` directly.
 
 ### Inspect the sample {#step-inspect-sample}
 
@@ -40,7 +40,7 @@ This is the lesson: read the structure before the payload. Check presence and ki
 
 **C++:** Report `out.size()` and tensor presence, throw if empty or if `out.front().shape` is empty, then print `rank` from `shape.size()`. (The `fields=0` line is a placeholder — `TensorList` does not carry the bundle field structure that the Python `Sample` does.)
 
-**Python:** Print `sample.kind`, `sample.tensor is not None`, `len(sample.fields)`, and `len(sample.tensor.shape)` — the full sum-type surface in one place. For a tensor-kind result `fields` is empty and `.tensor` is present; for a bundle you would branch on `.kind` and read `.fields` instead.
+**Python:** Print `sample.kind`, `sample.tensor is not None`, `len(sample.fields)`, and the first tensor rank — the full sum-type surface in one place. For a tensor-kind result `.tensor` is present; for a tensor-set result read `.tensors`; for a bundle branch on `.kind` and read `.fields`.
 
 ## Run
 
@@ -73,8 +73,8 @@ rank=3
 The Python build prints the same facts through the `Sample` surface:
 
 ```text
-sample_kind=SampleKind.Tensor
-has_tensor=True
+sample_kind=SampleKind.TensorSet
+has_tensor=False
 num_fields=0
 output_rank=3
 ```

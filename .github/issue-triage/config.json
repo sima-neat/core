@@ -1,0 +1,46 @@
+{
+  "labels": {
+    "allowed": [
+      "bug",
+      "documentation",
+      "enhancement",
+      "question",
+      "help wanted",
+      "needs-repro",
+      "triage",
+      "ci",
+      "tutorials"
+    ]
+  },
+  "automation": {
+    "apply_labels": true,
+    "post_comment": true
+  },
+  "cross_reference_repos": [
+    {
+      "repository": "sima-neat/sdk",
+      "ref": "develop",
+      "path": "sdk"
+    },
+    {
+      "repository": "sima-neat/sima-cli",
+      "ref": "develop",
+      "path": "sima-cli"
+    },
+    {
+      "repository": "sima-neat/model-compiler",
+      "ref": "develop",
+      "path": "model-compiler"
+    },
+    {
+      "repository": "sima-neat/insight",
+      "ref": "develop",
+      "path": "insight"
+    }
+  ],
+  "max_extended_repos": 2,
+  "triage_max_files": 20,
+  "triage_file_limit_bytes": 50000,
+  "triage_total_limit_bytes": 200000,
+  "max_comment_chars": 2400
+}

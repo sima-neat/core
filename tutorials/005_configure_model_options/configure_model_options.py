@@ -62,6 +62,8 @@ def main(argv: list[str]) -> int:
   bgr = np.full((640, 640, 3), 44, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
   outputs = model.run([tensor], timeout_ms=2000)
+  if not outputs:
+    raise RuntimeError("model produced no outputs")
   print(f"output_count={len(outputs)}")
   # END STEP
   return 0

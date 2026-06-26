@@ -5,8 +5,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SITE_DIR="${DOCS_LINK_SITE_DIR:-${REPO_ROOT}/website/build}"
 START_PATHS="${DOCS_LINK_START_PATHS:-all}"
 PORT="${DOCS_LINK_CHECK_PORT:-}"
-CONCURRENCY="${DOCS_LINK_CONCURRENCY:-25}"
+CONCURRENCY="${DOCS_LINK_CONCURRENCY:-10}"
 RETRY_ERRORS_COUNT="${DOCS_LINK_RETRY_ERRORS_COUNT:-3}"
+TIMEOUT_MS="${DOCS_LINK_TIMEOUT_MS:-30000}"
 HOST="localhost"
 SERVER_PID=""
 SERVER_LOG=""
@@ -124,6 +125,7 @@ for start_path in ${START_PATHS}; do
   npx --yes linkinator@7.6.1 "${start_url}" \
     --recurse \
     --concurrency "${CONCURRENCY}" \
+    --timeout "${TIMEOUT_MS}" \
     --retry-errors \
     --retry-errors-count "${RETRY_ERRORS_COUNT}" \
     --skip "^(mailto:|tel:|https?://(?!${HOST}:${PORT}))"
