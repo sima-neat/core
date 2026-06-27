@@ -24,19 +24,26 @@ center of the SDK workflow.
 
 <div class="overview-section-label">Start here</div>
 
-Follow these sections in order when setting up the Neat SDK.
+Start with SDK installation. Use the other SDK topics when you need to change
+settings, add Model Compiler later, or understand DevKit Sync behavior.
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
-    <h2>Setup Flow</h2>
-    <p>Install the SDK, connect it to a DevKit when available, then run applications on hardware from the same workspace.</p>
+    <h2>SDK Topics</h2>
+    <p>Install the SDK, then use optional configuration topics when you need to change settings, install Model Compiler, or work with a paired DevKit.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the Environment</strong><span>Install the SDK image that matches your DevKit software version.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/pair-with-a-devkit/"><strong>Pair with a DevKit</strong><span>Set up DevKit Sync, shared workspace mapping, and pairing updates.</span></a></li>
-      <li><a class="overview-link-card" href="/getting-started/dev-environment/run-on-the-devkit/"><strong>Run on the DevKit</strong><span>Use <code>dk</code> from the SDK shell to execute ARM64 binaries and Python scripts on hardware.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the Environment</strong><span>Install and set up the SDK package that matches your DevKit software version.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Understand workspace sharing, pairing updates, rsync fallback, and <code>dk</code> command execution.</span></a></li>
     </ul>
   </section>
 </div>
+
+To change SDK settings after installation, such as workspace location or DevKit
+pairing, see
+[Configure SDK](/getting-started/dev-environment/configure-sdk/).
+
+To install Model Compiler after SDK setup, see
+[Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
 
 ## What's Included
 
@@ -87,26 +94,13 @@ The SDK is the recommended place to install and update the
 [Neat Library](/getting-started/neat-library/) when you are building
 applications for a paired DevKit.
 
-Neat Insight is served over HTTPS on port `9900` inside the SDK. Open
-`https://localhost:9900` from the same host, or `https://<host-ip>:9900` from
-another machine on the network. For more information, see
-[Insight](/tools/insight/).
+To access the SDK from a terminal, VS Code, or a browser with Neat Insight, see
+[Install the Environment](/getting-started/dev-environment/install-the-environment/#access-the-sdk).
 
 During SDK setup, `sima-cli` prompts you to install the matching Model Compiler
 automatically. Install it if you compile or quantize models yourself; you can
 skip it if you only use precompiled model packages. For compiler setup and
 usage, see [Compile a Model](/compile-a-model/).
-
-## VS Code Workflow
-
-Connect VS Code to `ghcr.io-sima-neat-elxr-latest` with
-[Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers),
-then run `sima-cli login` once inside the container so the SDK can retrieve
-assets such as prebuilt models.
-
-Install the Codex or Claude Code extension in VS Code and ask what skills are
-available. When `Neat` appears, the environment is ready for assisted
-application development.
 
 ## Next Step
 

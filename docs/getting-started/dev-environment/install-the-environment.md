@@ -1,6 +1,6 @@
 ---
 title: Install the Environment
-description: Install the Neat SDK container
+description: Install and set up the Neat SDK container
 sidebar_position: 2
 ---
 
@@ -21,129 +21,85 @@ runs as a container on your host machine.
 
 To use DevKit Sync later, you also need:
 
-- Update your DevKit firmware to the latest with
-  [`sima-cli update`](/tools/sima-cli/update/). To stay on an older release, see
-  [Compatibility](/getting-started/compatibility/).
+- A DevKit running compatible software to the Neat SDK. Read the [Compatibility Guide](/getting-started/compatibility/) for more information.
 - Your host machine and DevKit on the same network with NFS traffic allowed.
 - Your DevKit IP address.
 
 ## Install
 
-Install the current released Neat SDK:
+Install the current Neat SDK 2.1 release channel:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.1-latest
+sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
 The first install can take several minutes because it downloads the Neat SDK
-container image. The command may not show a progress bar while the download is
-in progress.
+container image. After the image is downloaded, the installer starts SDK setup
+and asks whether you want to pair with a Modalix DevKit.
 
-The `v2.1-latest` tag tracks the latest Neat SDK patch release in the 2.1
-series. The current release is Neat SDK 2.1.2.1, which is compatible with
+If you choose to pair with a DevKit, enter the DevKit IP address when prompted.
+The setup flow configures the SDK workspace, starts the SDK container, and
+configures DevKit Sync. If you skip pairing, the SDK workspace is still created
+and you can pair later.
+
+The `release-2.1` package tracks the latest Neat SDK patch release in the 2.1
+series. The current release is Neat SDK 2.1.2.2, which is compatible with
 DevKit software 2.1.2.
 
-To install an older release for a DevKit on the 2.0.0 firmware, see
-[Compatibility](/getting-started/compatibility/).
+:::note Older SDK releases use the legacy two-step install flow
+For SDK 2.0.0, 2.1.2.0, or 2.1.2.1, install with the legacy image pull and setup
+commands. See [Two Step SDK Installation](/reference/two-step-sdk-installation/).
+:::
 
-## Set Up the Neat SDK Workspace
+To change SDK settings after installation, see
+[Configure SDK](/getting-started/dev-environment/configure-sdk/).
 
-After the image is installed, run `sima-cli sdk setup` before opening the Neat
-SDK shell. Choose the command for your situation and follow the prompts in your
-terminal.
+## Access the SDK
 
-If your DevKit is reachable from the host, pair it during setup before opening
-the Neat SDK shell:
+After setup succeeds, you can access the SDK from a terminal, Chrome browser,
+or VS Code.
 
-<ShellCommand prompt="user-host-machine">
-sima-cli sdk setup --devkit {devkit-ip}
-</ShellCommand>
+### Use the SDK Shell
 
-If your DevKit is not reachable yet, set up the Neat SDK workspace without
-pairing:
-
-<ShellCommand prompt="user-host-machine">
-sima-cli sdk setup
-</ShellCommand>
-
-During setup, `sima-cli` may ask you to:
-
-- select the installed `sdk:v2.1-latest` image if more than one SDK image is present;
-- choose a host workspace directory. Accept the default unless you need a
-  different workspace;
-- choose an SDK extensions directory and whether to install Model Compiler.
-  The Model Compiler is required to compile or quantize models yourself and is
-  optional only if you exclusively use precompiled model packages. Install it
-  here if you plan to compile or quantize models, and complete `sima-cli login`
-  if prompted.
-
-With `--devkit`, setup enables DevKit Sync. It exports your host workspace over
-NFS and mounts it as `/workspace` on the DevKit by default. Have these ready:
-
-- the DevKit IP address;
-- your host administrator password, if NFS needs to be installed or configured;
-- the DevKit user credentials when prompted. The default user is `sima` and the
-  default password is `edgeai`.
-
-You can add or update DevKit pairing later from
-[Pair with a DevKit](/getting-started/dev-environment/pair-with-a-devkit/).
-
-## Open the Neat SDK Shell
-
-After setup succeeds, open the Neat SDK shell with:
+Open the Neat SDK shell with:
 
 <ShellCommand prompt="user-host-machine">
 sima-cli sdk neat
 </ShellCommand>
 
-DevKit pairing is configured during setup. This command opens the configured
-Neat SDK container.
+### Use Chrome Browser
 
-## Install the Model Compiler
-
-The Model Compiler quantizes and compiles ONNX models so they can run on
-SiMa.ai's MLA. It is **required** when you compile or quantize models yourself,
-including GenAI models, and is **optional** only if you exclusively use
-precompiled model packages.
-
-The automatic path is during `sima-cli sdk setup`: `sima-cli` prompts you to
-install the matching Model Compiler as an extension inside the Neat SDK. You can
-also install it later, either inside the Neat SDK container (below) or standalone
-on a supported Ubuntu host (see
-[Compatibility](/getting-started/compatibility/#model-compiler)).
-
-If you skip it during setup, install it later from inside the Neat SDK. Run the
-command that matches your Neat SDK container architecture.
-
-For `amd64` Neat SDK containers:
+Neat Insight is served from inside the SDK and can be opened from a browser.
+From inside the SDK shell, run:
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+neat
 </ShellCommand>
 
-For `arm64` Neat SDK containers:
+The command output includes the Insight URL. Open that URL in Chrome to inspect
+workspace files, media sources, stream delivery, and runtime behavior. On a
+local host, the URL is typically `https://localhost:9900`. From another machine
+on the network, use the host IP address shown by the SDK environment. For more
+information, see [Insight](/tools/insight/).
 
-<ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
-</ShellCommand>
+### Use VS Code
 
-After installation, activate the compiler environment from inside the Neat SDK
-shell:
+Connect VS Code to the SDK container with
+[Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers),
+then run `sima-cli login` once inside the container so the SDK can retrieve
+assets such as prebuilt models.
 
-<ShellCommand prompt="username@neat-sdk-latest">
-activate-model-compiler
-</ShellCommand>
-
-To return to the default Neat SDK shell, run:
-
-<ShellCommand prompt="username@neat-sdk-latest">
-deactivate-model-compiler
-</ShellCommand>
+Install the Codex or Claude Code extension in VS Code and ask what skills are
+available.
 
 ## Upgrade
 
-To reinstall the current released Neat SDK image, rerun the install command
-above from the host.
+To reinstall or upgrade to the current SDK package, rerun the install command
+above from the host:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli neat install sdk@release-2.1
+</ShellCommand>
 
 To update the Neat Library inside an existing Neat SDK container, run the Neat
 CLI from the container shell:
@@ -159,6 +115,15 @@ changes.
 If you delete or recreate the Neat SDK container later, run `neat update` again
 inside the new container.
 
+## Uninstall
+
+To remove an installed SDK container, run:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli sdk remove
+</ShellCommand>
+
 ## Next Step
 
-Continue to [Pair with a DevKit](/getting-started/dev-environment/pair-with-a-devkit/).
+Continue to [DevKit Sync](/getting-started/dev-environment/devkit-sync/) to
+learn how SDK workspace sharing and `dk` command execution work.

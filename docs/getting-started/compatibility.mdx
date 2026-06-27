@@ -35,7 +35,7 @@ comes down to two rules:
 
 Each Neat SDK release series targets a specific DevKit software version. Patch
 revisions on the SDK may add tooling fixes without requiring a new DevKit image.
-For example, Neat SDK 2.1.2.x releases, including 2.1.2.1, are compatible with
+For example, Neat SDK 2.1.2.x releases, including 2.1.2.2, are compatible with
 DevKit software 2.1.2.
 
 You can also install a newer compatible Neat Library without reinstalling the
@@ -80,23 +80,20 @@ DevKit software version.
 | Neat SDK | Compatible host environment | Compatible DevKit software |
 | :--- | :--- | :--- |
 | **2.0.0** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.0.0** |
-| **2.1.2.1** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.1.2** |
+| **2.1.2.2** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.1.2** |
 
 Install the current released Neat SDK from the host:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.1-latest
+sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
-The `v2.1-latest` image currently resolves to Neat SDK 2.1.2.1. It remains on
-the DevKit software 2.1.2 compatibility baseline.
+The `release-2.1` SDK package currently resolves to Neat SDK 2.1.2.2. It
+remains on the DevKit software 2.1.2 compatibility baseline.
 
 Use an older Neat SDK only when your DevKit software is from
-that firmware. For Neat SDK 2.0.0:
-
-<ShellCommand prompt="user-host-machine">
-sima-cli install ghcr:sima-neat/sdk:v2.0.0
-</ShellCommand>
+that firmware. For SDK 2.0.0, 2.1.2.0, or 2.1.2.1, use the
+[Two Step SDK Installation](/reference/two-step-sdk-installation/).
 
 ## Neat Library
 
@@ -106,7 +103,7 @@ Neat SDK and on your DevKit.
 | Neat Library | Compatible Neat SDK | Compatible DevKit software | Notes |
 | :--- | :--- | :--- | :--- |
 | **0.1.0** | **2.0.0** | **2.0.0** | Maintained for the 2.0 firmware. |
-| **0.2.1** | **2.1.2.1** | **2.1.2** | Current latest 0.2 release. |
+| **0.2.1** | **2.1.2.2** | **2.1.2** | Current latest 0.2 release. |
 
 The DevKit software version matters because the on-device runtime, firmware, and
 system packages are installed as a matched set. If you mix components across
@@ -141,45 +138,27 @@ The Model Compiler can be installed in two ways:
 - inside a compatible Neat SDK. In this mode, use any host
   OS supported by that Neat SDK version. This is the path
   documented in
-  [Install the Model Compiler](/getting-started/dev-environment/install-the-environment/#install-the-model-compiler).
+  [Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
 - directly on a supported Ubuntu host machine or VM. In this mode, the host OS
-  must match the Model Compiler host requirement below. The standalone-host
-  install commands later in this section (the ones labeled `user-host-machine`)
-  cover this path.
+  must match the Model Compiler host requirement below. See
+  [Install Model Compiler](/getting-started/dev-environment/install-model-compiler/)
+  for the install commands.
 
-During `sima-cli sdk setup`, the setup flow prompts you to install the matching
+During SDK install/setup, the setup flow prompts you to install the matching
 Model Compiler version automatically when one is available for your environment.
 
 | Model Compiler | Compatible Neat SDK | Compatible host environment | Notes |
 | :--- | :--- | :--- | :--- |
 | **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | No Apple Silicon or aarch64/Linux support. |
-| **2.1.2** | **2.1.2.1** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon is supported by installing inside Neat SDK. |
+| **2.1.2** | **2.1.2.2** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon is supported by installing inside Neat SDK. |
 
 The host environment column applies to standalone Model Compiler installs. For
 example, a customer on an Ubuntu 22.04 host can still use Model Compiler 2.1.2
-by installing it inside Neat SDK 2.1.2.1, because the Neat SDK provides the
+by installing it inside Neat SDK 2.1.2.2, because the Neat SDK provides the
 compatible Ubuntu 24.04-based container environment.
 
-For a standalone Model Compiler installation, run the command that matches your
-host architecture:
-
-For Model Compiler 2.0.0 on `amd64` hosts:
-
-<ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.0.0 tools/model-compiler/amd64
-</ShellCommand>
-
-For Model Compiler 2.1.2 on `amd64` hosts:
-
-<ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
-</ShellCommand>
-
-For Model Compiler 2.1.2 on `arm64` hosts:
-
-<ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
-</ShellCommand>
+For installation steps, see
+[Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
 
 ## Verify Versions
 
@@ -195,7 +174,7 @@ installed component versions, and whether updates are available:
 ```text
 Neat Environment
   Mode               Neat SDK
-  SDK Version        2.1.2_Palette_SDK_neat_v2.1.2.1
+  SDK Version        2.1.2_Palette_SDK_neat_v2.1.2.2
   Platform Version   2.1.2
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
