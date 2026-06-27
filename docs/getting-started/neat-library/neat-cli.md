@@ -24,10 +24,10 @@ Neat Environment
   Update check       online
 
 Components
-  Neat core              0.2.1 channel=release latest=0.2.1
-  PyNeat                 0.2.1
-  neat-runtime           0.2.1
-  neat-gst-plugins       0.2.1
+  Neat core              0.2.2 channel=release latest=0.2.2
+  PyNeat                 0.2.2
+  neat-runtime           0.2.2
+  neat-gst-plugins       0.2.2
   neat-insight           0.0.3 channel=release status=Running venv=/opt/neat-insight/venv
   Model Compiler         2.1.2 run activate-model-compiler to activate
 
