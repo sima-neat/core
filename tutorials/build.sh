@@ -297,6 +297,38 @@ discover_simaneat_dir() {
 
 discover_simaneat_dir
 
+discover_cmake_prefix_paths() {
+  local -a candidates=()
+  local prefix
+  local simaneat_dir="${SIMANEAT_DIR%/}"
+
+  if [[ -n "${SYSROOT:-}" ]]; then
+    candidates+=("${SYSROOT}/usr")
+  fi
+
+  case "${simaneat_dir}" in
+    */usr/lib/aarch64-linux-gnu/cmake/SimaNeat)
+      prefix="${simaneat_dir%/lib/aarch64-linux-gnu/cmake/SimaNeat}"
+      candidates+=("${prefix}")
+      ;;
+    */usr/lib/cmake/SimaNeat)
+      prefix="${simaneat_dir%/lib/cmake/SimaNeat}"
+      candidates+=("${prefix}")
+      ;;
+  esac
+
+  local seen=";"
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    [[ -d "${candidate}" ]] || continue
+    case "${seen}" in
+      *";${candidate};"*) continue ;;
+    esac
+    seen+="${candidate};"
+    printf '%s\n' "${candidate}"
+  done
+}
+
 manifest_path() {
   local -a candidates=(
     "${REPO_ROOT}/deps/manifest.json"
@@ -471,6 +503,15 @@ Install Neat core package first, or pass one of:
   SimaNeat_DIR=<path-to-cmake/SimaNeat> tutorials/build.sh
 EOF
   exit 1
+fi
+
+mapfile -t cmake_prefix_paths < <(discover_cmake_prefix_paths)
+if [[ "${#cmake_prefix_paths[@]}" -gt 0 ]]; then
+  IFS=';'
+  cmake_prefix_path="${cmake_prefix_paths[*]}"
+  unset IFS
+  cmake_args+=("-DCMAKE_PREFIX_PATH=${cmake_prefix_path}")
+  echo "Using CMAKE_PREFIX_PATH=${cmake_prefix_path}"
 fi
 
 cmake "${cmake_args[@]}"

@@ -2336,6 +2336,12 @@ build_extras_archive_if_requested() {
       cp -f "tests/CMakeLists.txt" "${install_prefix}/share/sima-neat/tests/CMakeLists.txt"
       cp -f "tutorials/CMakeLists.txt" "${install_prefix}/share/sima-neat/tutorials/CMakeLists.txt"
 
+      if [[ ! -x "${install_prefix}/build.sh" ]]; then
+        echo "ERROR: extras install tree is missing root build.sh." >&2
+        echo "Expected layout: build.sh next to lib/ and share/." >&2
+        exit 1
+      fi
+
       if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then
         echo "ERROR: extras install tree is empty under ${install_prefix}." >&2
         exit 1
