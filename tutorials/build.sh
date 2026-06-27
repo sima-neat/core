@@ -300,23 +300,22 @@ discover_simaneat_dir
 discover_cmake_prefix_paths() {
   local -a candidates=()
   local prefix
+  local simaneat_dir="${SIMANEAT_DIR%/}"
 
   if [[ -n "${SYSROOT:-}" ]]; then
     candidates+=("${SYSROOT}/usr")
   fi
 
-  case "${SIMANEAT_DIR}" in
+  case "${simaneat_dir}" in
     */usr/lib/aarch64-linux-gnu/cmake/SimaNeat)
-      prefix="${SIMANEAT_DIR%/lib/aarch64-linux-gnu/cmake/SimaNeat}"
+      prefix="${simaneat_dir%/lib/aarch64-linux-gnu/cmake/SimaNeat}"
       candidates+=("${prefix}")
       ;;
     */usr/lib/cmake/SimaNeat)
-      prefix="${SIMANEAT_DIR%/lib/cmake/SimaNeat}"
+      prefix="${simaneat_dir%/lib/cmake/SimaNeat}"
       candidates+=("${prefix}")
       ;;
   esac
-
-  candidates+=("/opt/toolchain/aarch64/modalix/usr")
 
   local seen=";"
   local candidate
