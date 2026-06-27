@@ -245,9 +245,17 @@ install(
 )
 
 install(
-  FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
+  DESTINATION .
+  COMPONENT extras
+  PERMISSIONS
+    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE
+    WORLD_READ WORLD_EXECUTE
+)
+
+install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
   DESTINATION share/sima-neat/tutorials
   COMPONENT extras
   PERMISSIONS
