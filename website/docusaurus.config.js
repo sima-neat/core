@@ -161,7 +161,23 @@ const config = {
       },
     ],
   ],
-  plugins: [],
+  plugins: [
+    [
+      "@docusaurus/plugin-client-redirects",
+      {
+        redirects: [
+          {
+            from: "/getting-started/dev-environment/pair-with-a-devkit/",
+            to: "/getting-started/dev-environment/devkit-sync/",
+          },
+          {
+            from: "/getting-started/dev-environment/run-on-the-devkit/",
+            to: "/getting-started/dev-environment/devkit-sync/",
+          },
+        ],
+      },
+    ],
+  ],
   themeConfig: {
     docs: {
       sidebar: {
