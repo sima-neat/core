@@ -39,6 +39,7 @@ details, diagnostics, or environment knobs.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>Glossary</strong><span>Look up terms and acronyms used across the docs.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK Host Setup</strong><span>Host setup notes for Ubuntu, macOS, and Windows.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/two-step-sdk-installation/"><strong>Two Step SDK Installation</strong><span>Legacy image pull and setup flow for SDK 2.0.0, 2.1.2.0, and 2.1.2.1.</span></a></li>
     </ul>
   </section>
 </div>
