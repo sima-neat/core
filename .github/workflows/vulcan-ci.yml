@@ -558,9 +558,10 @@ jobs:
           SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
         run: |
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
-          TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/share/sima-neat/tutorials/build.sh"
+          TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/build.sh"
           if [[ ! -x "${TUTORIALS_BUILD_SH}" ]]; then
             echo "Installed tutorial build.sh not found or not executable: ${TUTORIALS_BUILD_SH}" >&2
+            echo "Expected extras layout: build.sh next to lib/ and share/ under ${EXTRAS_PREFIX}" >&2
             exit 1
           fi
           TUTORIAL_MODEL_DIR="/tmp"
