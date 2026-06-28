@@ -262,6 +262,7 @@ if [[ -z "${MODEL_TARGET_FOLDER}" ]]; then
   exit 1
 fi
 MODEL_TARGET_FOLDER="$(absolute_path "${MODEL_TARGET_FOLDER}")"
+BUILD_DIR="$(absolute_path "${BUILD_DIR}")"
 
 if [[ "${DO_CLEAN}" == "ON" ]]; then
   rm -rf "${BUILD_DIR}"
@@ -296,6 +297,97 @@ discover_simaneat_dir() {
 }
 
 discover_simaneat_dir
+
+discover_cmake_prefix_paths() {
+  local -a candidates=()
+  local prefix
+  local simaneat_dir="${SIMANEAT_DIR%/}"
+
+  if [[ -n "${SYSROOT:-}" ]]; then
+    candidates+=("${SYSROOT}/usr")
+  fi
+
+  case "${simaneat_dir}" in
+    */usr/lib/aarch64-linux-gnu/cmake/SimaNeat)
+      prefix="${simaneat_dir%/lib/aarch64-linux-gnu/cmake/SimaNeat}"
+      candidates+=("${prefix}")
+      ;;
+    */usr/lib/cmake/SimaNeat)
+      prefix="${simaneat_dir%/lib/cmake/SimaNeat}"
+      candidates+=("${prefix}")
+      ;;
+  esac
+
+  local seen=";"
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    [[ -d "${candidate}" ]] || continue
+    case "${seen}" in
+      *";${candidate};"*) continue ;;
+    esac
+    seen+="${candidate};"
+    printf '%s\n' "${candidate}"
+  done
+}
+
+discover_simaaimem_link_shim() {
+  local -a search_dirs=()
+  local prefix
+
+  if [[ -n "${SYSROOT:-}" ]]; then
+    search_dirs+=(
+      "${SYSROOT}/usr/lib/aarch64-linux-gnu"
+      "${SYSROOT}/usr/lib"
+      "${SYSROOT}/lib/aarch64-linux-gnu"
+      "${SYSROOT}/lib"
+    )
+  fi
+
+  for prefix in "${cmake_prefix_paths[@]:-}"; do
+    search_dirs+=(
+      "${prefix}/lib/aarch64-linux-gnu"
+      "${prefix}/lib"
+    )
+  done
+
+  search_dirs+=(
+    "/usr/lib/aarch64-linux-gnu"
+    "/usr/lib"
+    "/lib/aarch64-linux-gnu"
+    "/lib"
+    "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu"
+    "/opt/toolchain/aarch64/modalix/usr/lib"
+  )
+
+  local seen=";"
+  local dir
+  for dir in "${search_dirs[@]}"; do
+    [[ -d "${dir}" ]] || continue
+    case "${seen}" in
+      *";${dir};"*) continue ;;
+    esac
+    seen+="${dir};"
+
+    if [[ -e "${dir}/libsimaaimem.so" ]]; then
+      return 0
+    fi
+  done
+
+  for dir in "${search_dirs[@]}"; do
+    [[ -d "${dir}" ]] || continue
+
+    local candidate
+    for candidate in "${dir}"/libsimaaimem.so.*; do
+      [[ -e "${candidate}" ]] || continue
+
+      local shim_dir="${BUILD_DIR}/link-shims"
+      mkdir -p "${shim_dir}"
+      ln -sfn "${candidate}" "${shim_dir}/libsimaaimem.so"
+      printf '%s\n' "${shim_dir}"
+      return 0
+    done
+  done
+}
 
 manifest_path() {
   local -a candidates=(
@@ -471,6 +563,22 @@ Install Neat core package first, or pass one of:
   SimaNeat_DIR=<path-to-cmake/SimaNeat> tutorials/build.sh
 EOF
   exit 1
+fi
+
+mapfile -t cmake_prefix_paths < <(discover_cmake_prefix_paths)
+if [[ "${#cmake_prefix_paths[@]}" -gt 0 ]]; then
+  IFS=';'
+  cmake_prefix_path="${cmake_prefix_paths[*]}"
+  unset IFS
+  cmake_args+=("-DCMAKE_PREFIX_PATH=${cmake_prefix_path}")
+  echo "Using CMAKE_PREFIX_PATH=${cmake_prefix_path}"
+fi
+
+if simaaimem_shim_dir="$(discover_simaaimem_link_shim)" && [[ -n "${simaaimem_shim_dir}" ]]; then
+  linker_flags="${CMAKE_EXE_LINKER_FLAGS:-}"
+  linker_flags="${linker_flags:+${linker_flags} }-L${simaaimem_shim_dir}"
+  cmake_args+=("-DCMAKE_EXE_LINKER_FLAGS=${linker_flags}")
+  echo "Using tutorial link shim for libsimaaimem: ${simaaimem_shim_dir}"
 fi
 
 cmake "${cmake_args[@]}"
