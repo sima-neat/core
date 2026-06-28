@@ -262,6 +262,7 @@ if [[ -z "${MODEL_TARGET_FOLDER}" ]]; then
   exit 1
 fi
 MODEL_TARGET_FOLDER="$(absolute_path "${MODEL_TARGET_FOLDER}")"
+BUILD_DIR="$(absolute_path "${BUILD_DIR}")"
 
 if [[ "${DO_CLEAN}" == "ON" ]]; then
   rm -rf "${BUILD_DIR}"
