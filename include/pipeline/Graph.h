@@ -221,7 +221,6 @@ public:
   Graph& connect(std::shared_ptr<Node> from, std::shared_ptr<Node> to);
   Graph& connect(const Graph& from, std::shared_ptr<Node> to);
   Graph& connect(std::shared_ptr<Node> from, const Graph& to);
-  Graph& connect(const Model& from, const Model& to);
   Graph& connect(const Model& from, const Graph& to);
   Graph& connect(const Graph& from, const Model& to);
   Graph& connect(const Model& from, std::shared_ptr<Node> to);
