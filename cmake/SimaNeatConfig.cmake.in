@@ -50,6 +50,36 @@ if (NOT _simaneat_ext_deps_done AND TARGET SimaNeat::sima_neat_common)
         PROPERTY INTERFACE_LINK_DIRECTORIES "${_SimaNeat_OpenCV_LIBRARY_DIRS}")
     endif()
 
+    set(_SimaNeat_SIMAAIMEM_HINTS)
+    foreach(_SimaNeat_sysroot IN ITEMS "$ENV{SYSROOT}" "${CMAKE_SYSROOT}")
+      if (_SimaNeat_sysroot)
+        list(APPEND _SimaNeat_SIMAAIMEM_HINTS
+          "${_SimaNeat_sysroot}/usr/lib/aarch64-linux-gnu"
+          "${_SimaNeat_sysroot}/usr/lib"
+          "${_SimaNeat_sysroot}/lib/aarch64-linux-gnu"
+          "${_SimaNeat_sysroot}/lib")
+      endif()
+    endforeach()
+    list(APPEND _SimaNeat_SIMAAIMEM_HINTS
+      /usr/lib/aarch64-linux-gnu
+      /usr/lib
+      /lib/aarch64-linux-gnu
+      /lib)
+    find_library(_SimaNeat_SIMAAIMEM_LIBRARY
+      NAMES simaaimem
+      HINTS ${_SimaNeat_SIMAAIMEM_HINTS})
+    if (_SimaNeat_SIMAAIMEM_LIBRARY)
+      get_filename_component(_SimaNeat_SIMAAIMEM_LIBRARY_DIR
+        "${_SimaNeat_SIMAAIMEM_LIBRARY}" DIRECTORY)
+      set_property(TARGET SimaNeat::sima_neat_common APPEND
+        PROPERTY INTERFACE_LINK_DIRECTORIES "${_SimaNeat_SIMAAIMEM_LIBRARY_DIR}")
+    else()
+      message(WARNING
+        "SimaNeat: libsimaaimem.so was not found. Install "
+        "simaai-memory-lib-dev in the target environment so applications can "
+        "link SimaNeat::sima_neat.")
+    endif()
+
     if (NOT _SimaNeat_GST_FOUND)
       message(WARNING
         "SimaNeat: GStreamer development files were not found via pkg-config. "

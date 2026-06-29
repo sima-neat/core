@@ -215,6 +215,16 @@ jobs:
             sima-cli packages build --help >/dev/null
             cd /workspace
             ./build.sh ${CORE_BUILD_ARGS}
+            if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
+              (
+                cd dist
+                NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON ./install_neat_framework.sh --local
+              )
+              rm -rf /tmp/sima-neat-doc-examples-sdk
+              tests/docs/build_docs_examples.sh \
+                --environment sdk \
+                --build-root /tmp/sima-neat-doc-examples-sdk
+            fi
           '
 
       post_build_command: |
@@ -432,6 +442,12 @@ jobs:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           ./scripts/fix_devkit_runtime.sh
+
+      - name: Build docs C++ examples from DevKit-installed package
+        run: |
+          tests/docs/build_docs_examples.sh \
+            --environment devkit \
+            --build-root "${RUNNER_TEMP:-/tmp}/sima-neat-doc-examples-devkit"
 
       - name: Discover installed CTest directories
         run: |
