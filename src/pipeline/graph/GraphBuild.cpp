@@ -2878,6 +2878,10 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     br.diag->boundaries.reserve(nodes.size() ? nodes.size() - 1 : 0);
   }
 
+  // Prevents gstreamer plugin fragment having duplicate names which leads to
+  // undefined behavior when the gst-launch is contructed.
+  std::unordered_map<std::string, std::size_t> seen_element_names;
+
   for (size_t i = 0; i < nodes.size(); ++i) {
     if (!nodes[i]) {
       throw_session_error_simple(error_codes::kPipelineShape, "InvalidPipeline: null node");
@@ -2900,6 +2904,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     nr.kind = nodes[i]->kind();
     nr.user_label = nodes[i]->user_label();
     NodeFragment frag = make_node_fragment(nodes[i], (int)i, name_transform);
+    register_unique_element_names(seen_element_names, frag, i, nodes[i]->kind());
     nr.backend_fragment = apply_session_fast_path_options_to_fragment(frag.fragment, sess_opt);
     nr.elements = frag.element_names;
     br.diag->node_reports.push_back(nr);
