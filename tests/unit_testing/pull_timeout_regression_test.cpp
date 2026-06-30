@@ -37,7 +37,7 @@ RUN_TEST("pull_timeout_regression_test", [] {
   InputOptions input_opt;
   input_opt.payload_type = simaai::neat::PayloadType::Image;
   input_opt.format = simaai::neat::FormatTag::RGB;
-  input_opt.use_simaai_pool = false;
+  input_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   input_opt.max_width = 96;
   input_opt.max_height = 96;
   input_opt.max_depth = 3;

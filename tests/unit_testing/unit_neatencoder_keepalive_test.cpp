@@ -40,7 +40,7 @@ int main() {
     src_opt.do_timestamp = true;
     src_opt.block = true;
     src_opt.stream_type = 0;
-    src_opt.use_simaai_pool = false;
+    src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
 
     simaai::neat::Graph p;
     p.add(simaai::neat::nodes::Input(src_opt));

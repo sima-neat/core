@@ -122,7 +122,7 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     simaai::neat::InputOptions src_opt;
     src_opt.payload_type = simaai::neat::PayloadType::Image;
     src_opt.format = simaai::neat::FormatTag::RGB;
-    src_opt.use_simaai_pool = false;
+    src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
     src_opt.max_width = 16;
     src_opt.max_height = 16;
     src_opt.max_depth = 3;

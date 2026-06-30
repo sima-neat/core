@@ -1245,7 +1245,6 @@ static void dump_node_debug_options(const std::vector<std::shared_ptr<Node>>& no
          << " media_type=" << resolve_input_media_type(opt) << " format=" << opt.format
          << " w=" << opt.width << " h=" << opt.height << " d=" << opt.depth << " fps=" << opt.fps_n
          << "/" << opt.fps_d << " buffer_name=" << opt.buffer_name
-         << " use_simaai_pool=" << (opt.use_simaai_pool ? "true" : "false")
          << " pool_min=" << opt.pool_min_buffers << " pool_max=" << opt.pool_max_buffers;
       std::fprintf(stderr, "%s\n", os.str().c_str());
     }

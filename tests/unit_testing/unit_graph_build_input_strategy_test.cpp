@@ -4,13 +4,17 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <opencv2/core.hpp>
 
 #include <cstdlib>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -38,6 +42,27 @@ private:
   bool had_old_;
 };
 
+class FakeDownstreamKindNode final : public simaai::neat::Node {
+public:
+  explicit FakeDownstreamKindNode(std::string kind) : kind_(std::move(kind)) {}
+
+  std::string kind() const override {
+    return kind_;
+  }
+  simaai::neat::NodeCapsBehavior caps_behavior() const override {
+    return simaai::neat::NodeCapsBehavior::Dynamic;
+  }
+  std::string backend_fragment(int node_index) const override {
+    return "identity name=n" + std::to_string(node_index) + "_fake_downstream";
+  }
+  std::vector<std::string> element_names(int node_index) const override {
+    return {"n" + std::to_string(node_index) + "_fake_downstream"};
+  }
+
+private:
+  std::string kind_;
+};
+
 simaai::neat::Graph make_rgb_graph() {
   using namespace simaai::neat;
 
@@ -45,7 +70,7 @@ simaai::neat::Graph make_rgb_graph() {
   InputOptions src_opt;
   src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::RGB;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
@@ -141,5 +166,28 @@ RUN_TEST(
         require_tensor_sample_outputs(run_sample.run(Sample{sample_seed}, 1000),
                                       "async build sample");
         run_sample.stop();
+      }
+
+      // Legacy pool opt-out must remain SystemMemory even when downstream auto inference would
+      // otherwise choose a device-visible memory policy.
+      {
+        const ScopedEnvVar no_preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "0");
+
+        InputOptions legacy_opt;
+        legacy_opt.payload_type = PayloadType::Image;
+        legacy_opt.format = FormatTag::RGB;
+        legacy_opt.use_simaai_pool = false;
+
+        Graph graph;
+        graph.add(nodes::Input(legacy_opt));
+        graph.add(std::make_shared<FakeDownstreamKindNode>("Preproc"));
+        graph.add(nodes::Output(OutputOptions::EveryFrame(64)));
+
+        Run run = graph.build(std::vector<cv::Mat>{mat_seed}, run_opt);
+        const auto core = run_internal::core(run);
+        require(core != nullptr, "legacy pool opt-out: missing run core");
+        require(!core->pipeline.stream_opt.require_device_visible_input,
+                "legacy pool opt-out should not be rewritten to device-visible input");
+        run.stop();
       }
     }));

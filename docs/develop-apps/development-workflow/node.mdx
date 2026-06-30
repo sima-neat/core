@@ -240,8 +240,16 @@ Use `InputOptions` when the boundary needs an explicit payload, format, size, ti
 | Dynamic input limits | `max_width`, `max_height`, `max_depth`, `max_bytes` |
 | Timing and caps | `fps_n`, `fps_d`, `caps_override` |
 | Live-source behavior | `is_live`, `do_timestamp`, `block`, `stream_type` |
-| Allocation | `use_simaai_pool`, `pool_min_buffers`, `pool_max_buffers`, `memory_policy` |
+| Allocation | `memory_policy`, `pool_min_buffers`, `pool_max_buffers` |
 | Advanced metadata | `buffer_name`, `preprocess_meta` |
+
+`use_simaai_pool` is deprecated. Use `memory_policy` in new code:
+
+- If existing code used `use_simaai_pool=false`, use `memory_policy=SystemMemory`.
+- For the default SiMa allocation behavior, use `memory_policy=Auto`.
+- Use `Ev74` or `Dms0` only when the input boundary needs a specific target.
+- Existing code and older Graph JSON using `use_simaai_pool` are still accepted for compatibility.
+- New saved Graph JSON writes `memory_policy` instead of `use_simaai_pool`.
 
 Leave fields unset unless the graph boundary needs the contract. Guessing caps is how you summon the swamp.
 

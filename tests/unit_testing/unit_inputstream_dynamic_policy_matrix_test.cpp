@@ -80,7 +80,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              src_opt.max_width = 64;
              src_opt.max_height = 64;
              src_opt.max_depth = 3;
-             src_opt.use_simaai_pool = false;
+             src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
 
              Graph graph = make_basic_video_graph(src_opt);
              RunOptions run_opt = make_async_realtime_run_options();
@@ -115,7 +115,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              InputOptions src_opt;
              src_opt.payload_type = simaai::neat::PayloadType::Image;
              src_opt.format = simaai::neat::FormatTag::BGR;
-             src_opt.use_simaai_pool = false;
+             src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
 
              Graph graph = make_basic_video_graph(src_opt);
              RunOptions run_opt = make_async_realtime_run_options();
@@ -150,7 +150,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              src_opt.payload_type = simaai::neat::PayloadType::Image;
              src_opt.format = simaai::neat::FormatTag::BGR;
              src_opt.caps_override = "video/x-raw,format=BGR,width=16,height=16";
-             src_opt.use_simaai_pool = false;
+             src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
 
              Graph graph = make_basic_video_graph(src_opt);
              RunOptions run_opt = make_async_realtime_run_options();
@@ -189,7 +189,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              src_opt.max_width = 16;
              src_opt.max_height = 16;
              src_opt.max_depth = 3;
-             src_opt.use_simaai_pool = false;
+             src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
 
              Graph graph = make_basic_video_graph(src_opt);
              RunOptions run_opt = make_async_realtime_run_options();
@@ -233,7 +233,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              InputOptions src_opt;
              src_opt.payload_type = simaai::neat::PayloadType::Tensor;
              src_opt.format = simaai::neat::FormatTag::FP32;
-             src_opt.use_simaai_pool = false;
+             src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
 
              Graph graph;
              graph.add(nodes::Input(src_opt));

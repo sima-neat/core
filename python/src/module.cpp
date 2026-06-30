@@ -399,6 +399,17 @@ void warn_chw_to_hwc_copy_once(ImageSpec::PixelFormat fmt) {
   });
 }
 
+void warn_deprecated_use_simaai_pool_python_once() {
+  static std::once_flag warned;
+  std::call_once(warned, []() {
+    const char* msg = "pyneat.InputOptions.use_simaai_pool is deprecated. "
+                      "Set InputOptions.memory_policy instead.";
+    if (PyErr_WarnEx(PyExc_UserWarning, msg, 1) < 0) {
+      throw nb::python_error();
+    }
+  });
+}
+
 std::size_t int64_to_size_or_throw(int64_t value, const char* what) {
   if (value < 0) {
     throw std::runtime_error(std::string("invalid negative ") + what);
@@ -3126,7 +3137,13 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("block", &simaai::neat::InputOptions::block)
       .def_rw("stream_type", &simaai::neat::InputOptions::stream_type)
       .def_rw("max_bytes", &simaai::neat::InputOptions::max_bytes)
-      .def_rw("use_simaai_pool", &simaai::neat::InputOptions::use_simaai_pool)
+      .def_prop_rw(
+          "use_simaai_pool",
+          [](const simaai::neat::InputOptions& opt) { return opt.use_simaai_pool; },
+          [](simaai::neat::InputOptions& opt, bool value) {
+            warn_deprecated_use_simaai_pool_python_once();
+            opt.use_simaai_pool = value;
+          })
       .def_rw("pool_min_buffers", &simaai::neat::InputOptions::pool_min_buffers)
       .def_rw("pool_max_buffers", &simaai::neat::InputOptions::pool_max_buffers)
       .def_rw("memory_policy", &simaai::neat::InputOptions::memory_policy)
