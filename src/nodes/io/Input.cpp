@@ -151,7 +151,18 @@ OutputSpec Input::output_spec(const OutputSpec& input) const {
     }
   }
 
-  out.memory = opt_.use_simaai_pool ? "SimaAI" : "SystemMemory";
+  switch (opt_.memory_policy) {
+  case InputMemoryPolicy::Ev74:
+  case InputMemoryPolicy::Dms0:
+    out.memory = "SimaAI";
+    break;
+  case InputMemoryPolicy::SystemMemory:
+    out.memory = "SystemMemory";
+    break;
+  case InputMemoryPolicy::Auto:
+    out.memory = opt_.use_simaai_pool ? "SimaAI" : "SystemMemory";
+    break;
+  }
   out.byte_size = expected_byte_size(out);
   return out;
 }

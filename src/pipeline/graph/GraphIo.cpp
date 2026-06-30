@@ -576,6 +576,7 @@ void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
       << "\"block\":" << (opt.block ? "true" : "false") << ","
       << "\"stream_type\":" << opt.stream_type << "," << "\"max_bytes\":" << opt.max_bytes << ","
       << "\"use_simaai_pool\":" << (opt.use_simaai_pool ? "true" : "false") << ","
+      << "\"memory_policy\":" << static_cast<int>(opt.memory_policy) << ","
       << "\"pool_min_buffers\":" << opt.pool_min_buffers << ","
       << "\"pool_max_buffers\":" << opt.pool_max_buffers << "," << "\"buffer_name\":\""
       << json_escape(opt.buffer_name) << "\"}";
@@ -605,6 +606,8 @@ InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
   opt.stream_type = int_field(obj, "stream_type", opt.stream_type);
   opt.max_bytes = static_cast<std::uint64_t>(int_field(obj, "max_bytes", 0));
   opt.use_simaai_pool = bool_field(obj, "use_simaai_pool", opt.use_simaai_pool);
+  opt.memory_policy = static_cast<InputMemoryPolicy>(
+      int_field(obj, "memory_policy", static_cast<int>(opt.memory_policy)));
   opt.pool_min_buffers = int_field(obj, "pool_min_buffers", opt.pool_min_buffers);
   opt.pool_max_buffers = int_field(obj, "pool_max_buffers", opt.pool_max_buffers);
   opt.buffer_name = string_field(obj, "buffer_name", opt.buffer_name);

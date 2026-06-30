@@ -42,6 +42,28 @@ int main() {
     const simaai::neat::OutputSpec input_spec = appsrc_provider->output_spec({});
     require(input_spec.fps_num == 24 && input_spec.fps_den == 1,
             "Input output_spec should preserve fps options");
+    require(input_spec.memory == "SystemMemory",
+            "Auto policy should preserve use_simaai_pool=false memory reporting");
+
+    simaai::neat::InputOptions ev74_opt = appsrc_opt;
+    ev74_opt.memory_policy = simaai::neat::InputMemoryPolicy::Ev74;
+    ev74_opt.use_simaai_pool = false;
+    auto ev74_input = simaai::neat::nodes::Input(ev74_opt);
+    const auto* ev74_provider =
+        dynamic_cast<const simaai::neat::OutputSpecProvider*>(ev74_input.get());
+    require(ev74_provider != nullptr, "EV74 Input should provide output spec");
+    require(ev74_provider->output_spec({}).memory == "SimaAI",
+            "Ev74 memory policy should report SimaAI memory");
+
+    simaai::neat::InputOptions system_opt = appsrc_opt;
+    system_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
+    system_opt.use_simaai_pool = true;
+    auto system_input = simaai::neat::nodes::Input(system_opt);
+    const auto* system_provider =
+        dynamic_cast<const simaai::neat::OutputSpecProvider*>(system_input.get());
+    require(system_provider != nullptr, "SystemMemory Input should provide output spec");
+    require(system_provider->output_spec({}).memory == "SystemMemory",
+            "SystemMemory policy should report SystemMemory");
 
     auto caps =
         simaai::neat::nodes::CapsRaw("GRAY8", 10, 8, 30, simaai::neat::CapsMemory::SystemMemory);

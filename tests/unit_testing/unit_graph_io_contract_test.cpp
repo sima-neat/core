@@ -1,10 +1,13 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "nodes/common/Output.h"
+#include "nodes/io/Input.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 namespace {
@@ -23,6 +26,14 @@ void write_text(const std::string& path, const std::string& text) {
     throw std::runtime_error("failed to open temp file for write: " + path);
   }
   out << text;
+}
+
+std::string read_text(const std::string& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in.is_open()) {
+    throw std::runtime_error("failed to open temp file for read: " + path);
+  }
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 std::string io_case(const char* id, const std::string& msg) {
@@ -49,6 +60,34 @@ RUN_TEST("unit_graph_io_contract_test", ([] {
            require(!original.empty(),
                    io_case("roundtrip_non_empty", "saved pipeline should be non-empty"));
            require(original == restored, io_case("roundtrip_match", "save/load backend mismatch"));
+
+           Graph input_graph;
+           InputOptions input_opt;
+           input_opt.payload_type = PayloadType::Image;
+           input_opt.format = FormatTag::RGB;
+           input_opt.width = 16;
+           input_opt.height = 16;
+           input_opt.memory_policy = InputMemoryPolicy::Ev74;
+           input_opt.use_simaai_pool = false;
+           const auto input_node = nodes::Input(input_opt);
+           const auto output_a = nodes::Output("out_a");
+           const auto output_b = nodes::Output("out_b");
+           input_graph.connect(input_node, output_a);
+           input_graph.connect(input_node, output_b);
+
+           const std::string memory_policy_path = tmp_json_path("graph_io_memory_policy.json");
+           input_graph.save(memory_policy_path);
+           require_contains(
+               read_text(memory_policy_path), "\"memory_policy\":1",
+               io_case("memory_policy_saved", "input memory policy should be serialized"));
+
+           const Graph loaded_input = Graph::load(memory_policy_path);
+           const std::string memory_policy_roundtrip_path =
+               tmp_json_path("graph_io_memory_policy_roundtrip.json");
+           loaded_input.save(memory_policy_roundtrip_path);
+           require_contains(
+               read_text(memory_policy_roundtrip_path), "\"memory_policy\":1",
+               io_case("memory_policy_roundtrip", "input memory policy should survive save/load"));
 
            const std::string missing_file = tmp_json_path("graph_io_missing_input.json");
            {
