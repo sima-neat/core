@@ -399,7 +399,6 @@ bool apply_auto_memory_policy_from_downstream(InputOptions& src_opt,
   }
   const InputMemoryPolicy resolved = resolve_memory_policy_from_first_downstream_node(nodes);
   src_opt.memory_policy = resolved;
-  src_opt.use_simaai_pool = (resolved != InputMemoryPolicy::SystemMemory);
   return true;
 }
 
@@ -2020,7 +2019,6 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   {
     std::ostringstream detail;
     detail << "policy=" << input_memory_policy_name(src_opt.memory_policy)
-           << " use_simaai_pool=" << (src_opt.use_simaai_pool ? 1 : 0)
            << " first_downstream=" << first_effective_downstream_kind;
     add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
                                 memory_policy_auto_applied

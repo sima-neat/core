@@ -1877,7 +1877,6 @@ InputOptions appsrc_for_tensor_wire(const simaai::neat::Tensor& input, const Wir
     // Staged handoff for EVXX/EV74-packed tensors should preserve the EV-side ingress target.
     // Falling back to the generic ModelFragment=>DMS0 heuristic breaks standalone MLA ingress.
     opt.memory_policy = InputMemoryPolicy::Ev74;
-    opt.use_simaai_pool = true;
   }
   return opt;
 }

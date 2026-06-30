@@ -45,7 +45,7 @@ simaai::neat::Graph make_rgb_graph() {
   InputOptions src_opt;
   src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::RGB;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;

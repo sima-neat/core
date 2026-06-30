@@ -20,6 +20,13 @@ const char* stream_type_string(int stream_type) {
   }
 }
 
+InputMemoryPolicy effective_memory_policy(const InputOptions& opt) {
+  if (!opt.use_simaai_pool && opt.memory_policy == InputMemoryPolicy::Auto) {
+    return InputMemoryPolicy::SystemMemory;
+  }
+  return opt.memory_policy;
+}
+
 std::string build_caps_string(const InputOptions& opt) {
   if (!opt.caps_override.empty()) {
     return opt.caps_override;
@@ -151,16 +158,14 @@ OutputSpec Input::output_spec(const OutputSpec& input) const {
     }
   }
 
-  switch (opt_.memory_policy) {
+  switch (effective_memory_policy(opt_)) {
   case InputMemoryPolicy::Ev74:
   case InputMemoryPolicy::Dms0:
+  case InputMemoryPolicy::Auto:
     out.memory = "SimaAI";
     break;
   case InputMemoryPolicy::SystemMemory:
     out.memory = "SystemMemory";
-    break;
-  case InputMemoryPolicy::Auto:
-    out.memory = opt_.use_simaai_pool ? "SimaAI" : "SystemMemory";
     break;
   }
   out.byte_size = expected_byte_size(out);

@@ -26,7 +26,7 @@ int main() {
   Graph p;
   InputOptions src_opt;
   src_opt.payload_type = simaai::neat::PayloadType::Auto;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   p.add(nodes::Input(src_opt));
   p.custom("fakesink name=encoded_sink sync=false");
 

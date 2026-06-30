@@ -162,7 +162,7 @@ struct InputBufferPoolGuard {
 };
 
 struct ResolvedInputMemoryPolicy {
-  bool use_simaai_pool = true;
+  bool use_simaai_memory = true;
   std::uint64_t target_flag = 0;
   const char* target_source = "heuristic";
 };
