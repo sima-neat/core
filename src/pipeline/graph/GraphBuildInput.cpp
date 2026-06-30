@@ -397,6 +397,10 @@ bool apply_auto_memory_policy_from_downstream(InputOptions& src_opt,
   if (src_opt.memory_policy != InputMemoryPolicy::Auto) {
     return false;
   }
+  if (!src_opt.use_simaai_pool) {
+    src_opt.memory_policy = InputMemoryPolicy::SystemMemory;
+    return true;
+  }
   const InputMemoryPolicy resolved = resolve_memory_policy_from_first_downstream_node(nodes);
   src_opt.memory_policy = resolved;
   return true;
@@ -2022,7 +2026,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
            << " first_downstream=" << first_effective_downstream_kind;
     add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
                                 memory_policy_auto_applied
-                                    ? "auto policy resolved from first downstream node"
+                                    ? "auto policy resolved before appsrc build"
                                     : "policy already explicit (not auto-overridden)");
   }
 
