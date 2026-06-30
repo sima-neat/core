@@ -1,21 +1,2 @@
 # Default ownership
-* @manuel-roldan
-
-# Runtime and orchestration
-/src/pipeline/ @manuel-roldan
-/src/graph/ @manuel-roldan
-/include/pipeline/ @manuel-roldan
-/include/model/ @manuel-roldan
-
-# Documentation
-/docs/ @manuel-roldan
-/README.md @manuel-roldan
-
-# Tests
-/tests/ @manuel-roldan
-
-# Build and CI
-/.github/workflows/ @manuel-roldan
-/scripts/ @manuel-roldan
-/build.sh @manuel-roldan
-/CMakeLists.txt @manuel-roldan
+* @sima-neat/owners-core
