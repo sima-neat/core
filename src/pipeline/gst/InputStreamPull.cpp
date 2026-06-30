@@ -1040,6 +1040,11 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
   out.caps_string = pipeline_internal::gst_caps_to_string_safe(out_caps);
   out.media_type = media ? media : "";
   out.payload_type = payload_type_from_media_type(out.media_type);
+  const EncodedSpec::Codec encoded_codec = caps_to_codec(out.caps_string);
+  const bool is_encoded = encoded_codec != EncodedSpec::Codec::UNKNOWN;
+  if (is_encoded) {
+    out.payload_type = PayloadType::Encoded;
+  }
 
   fill_output_meta_from_sample(sample, &out);
 
@@ -1104,6 +1109,15 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
         log_sample_tensor_state(where, "zero_copy_output", out.tensors.front());
       }
     }
+    return out;
+  }
+
+  if (is_encoded && !copy_output) {
+    simaai::neat::Tensor neat = simaai::neat::from_gst_sample(sample);
+    log_sample_tensor_state(where, "encoded_zero_copy_output", neat);
+    out.kind = SampleKind::TensorSet;
+    out.tensors = TensorList{std::move(neat)};
+    out.owned = false;
     return out;
   }
 
