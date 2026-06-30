@@ -310,10 +310,10 @@ std::string sample_to_text_for_python(const Sample& sample) {
 // Python they are surfaced as the `Format` enum directly: reads return the underlying
 // FormatTag, writes accept a FormatTag only. Passing a plain string raises TypeError —
 // callers select a value from pyneat.Format (e.g. pyneat.Format.NV12).
-template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::* member) {
+template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::*member) {
   return [member](const C& self) { return (self.*member).tag; };
 }
-template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::* member) {
+template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::*member) {
   return [member](C& self, simaai::neat::FormatTag value) { self.*member = value; };
 }
 
