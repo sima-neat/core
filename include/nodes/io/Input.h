@@ -105,7 +105,12 @@ struct InputOptions {
   int stream_type = 0;         ///< `GST_APP_STREAM_TYPE_STREAM` by default.
   std::uint64_t max_bytes = 0; ///< `appsrc` `max-bytes` back-pressure threshold. `0` = unlimited.
 
-  /// @deprecated Accepted for source compatibility; set `memory_policy` instead.
+  /// @deprecated Accepted for source compatibility. Use `memory_policy` instead:
+  /// `false` maps to `InputMemoryPolicy::SystemMemory`; default SiMa allocation
+  /// behavior maps to `InputMemoryPolicy::Auto`; explicit targets use
+  /// `InputMemoryPolicy::Ev74` or `InputMemoryPolicy::Dms0`.
+  /// Older Graph JSON using this field is still accepted. New saved Graph JSON
+  /// writes `memory_policy`.
   bool use_simaai_pool = true;
   int pool_min_buffers = 1; ///< Minimum buffers held by the pool.
   int pool_max_buffers = 2; ///< Maximum buffers held by the pool.
