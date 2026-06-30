@@ -310,10 +310,10 @@ std::string sample_to_text_for_python(const Sample& sample) {
 // Python they are surfaced as the `Format` enum directly: reads return the underlying
 // FormatTag, writes accept a FormatTag only. Passing a plain string raises TypeError —
 // callers select a value from pyneat.Format (e.g. pyneat.Format.NV12).
-template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::* member) {
   return [member](const C& self) { return (self.*member).tag; };
 }
-template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::* member) {
   return [member](C& self, simaai::neat::FormatTag value) { self.*member = value; };
 }
 
@@ -394,6 +394,17 @@ void warn_chw_to_hwc_copy_once(ImageSpec::PixelFormat fmt) {
         "This helper requires a full memory copy (not zero-copy). "
         "For best performance, provide HWC uint8 input directly.";
     if (PyErr_WarnEx(PyExc_UserWarning, msg.c_str(), 1) < 0) {
+      throw nb::python_error();
+    }
+  });
+}
+
+void warn_deprecated_use_simaai_pool_python_once() {
+  static std::once_flag warned;
+  std::call_once(warned, []() {
+    const char* msg = "pyneat.InputOptions.use_simaai_pool is deprecated. "
+                      "Set InputOptions.memory_policy instead.";
+    if (PyErr_WarnEx(PyExc_UserWarning, msg, 1) < 0) {
       throw nb::python_error();
     }
   });
@@ -3126,7 +3137,13 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("block", &simaai::neat::InputOptions::block)
       .def_rw("stream_type", &simaai::neat::InputOptions::stream_type)
       .def_rw("max_bytes", &simaai::neat::InputOptions::max_bytes)
-      .def_rw("use_simaai_pool", &simaai::neat::InputOptions::use_simaai_pool)
+      .def_prop_rw(
+          "use_simaai_pool",
+          [](const simaai::neat::InputOptions& opt) { return opt.use_simaai_pool; },
+          [](simaai::neat::InputOptions& opt, bool value) {
+            warn_deprecated_use_simaai_pool_python_once();
+            opt.use_simaai_pool = value;
+          })
       .def_rw("pool_min_buffers", &simaai::neat::InputOptions::pool_min_buffers)
       .def_rw("pool_max_buffers", &simaai::neat::InputOptions::pool_max_buffers)
       .def_rw("memory_policy", &simaai::neat::InputOptions::memory_policy)

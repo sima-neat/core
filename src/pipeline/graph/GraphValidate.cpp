@@ -510,13 +510,13 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     buf = meta_buf;
   }
   const auto resolved_memory = resolve_input_memory_policy(src_opt);
-  if (resolved_memory.use_simaai_pool &&
+  if (resolved_memory.use_simaai_memory &&
       !maybe_add_simaai_meta(buf, next_input_frame_id(), src_opt)) {
     gst_buffer_unref(buf);
     rep.error_code = error_codes::kCaps;
     rep.repro_note = format_validate_note(
         "Graph::validate(input)", rep.error_code, "failed to attach GstSimaMeta",
-        "resolved_simaai_pool=true", "Verify SimaAI allocator/buffer-pool runtime availability.");
+        "resolved_simaai_memory=true", "Verify SimaAI allocator/buffer-pool runtime availability.");
     gst_object_unref(appsrc);
     gst_object_unref(sink);
     stop_and_unref(pipeline);

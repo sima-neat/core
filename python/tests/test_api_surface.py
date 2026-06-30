@@ -1,5 +1,6 @@
 
 import importlib
+import warnings
 
 import numpy as np
 import pytest
@@ -1187,7 +1188,7 @@ def test_graph_video_push_uses_input_format_without_image_semantic():
   opt = pyneat.InputOptions()
   opt.payload_type = pyneat.PayloadType.Image
   opt.format = pyneat.Format.RGB
-  opt.use_simaai_pool = False
+  opt.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
   graph.add(pyneat.nodes.input(opt))
   graph.add(pyneat.nodes.output())
 
@@ -1201,6 +1202,15 @@ def test_graph_video_push_uses_input_format_without_image_semantic():
   finally:
     run.close_input()
     run.close()
+
+
+def test_input_options_use_simaai_pool_is_deprecated_compatibility_property():
+  opt = pyneat.InputOptions()
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    opt.use_simaai_pool = False
+  assert opt.use_simaai_pool is False
+  assert any("use_simaai_pool is deprecated" in str(w.message) for w in caught)
 
 
 def test_graph_error_in_python_exposes_structured_fields():

@@ -68,7 +68,6 @@ RUN_TEST(
       input_opt.width = 16;
       input_opt.height = 16;
       input_opt.memory_policy = InputMemoryPolicy::Ev74;
-      input_opt.use_simaai_pool = false;
       const auto input_node = nodes::Input(input_opt);
       const auto output_a = nodes::Output("out_a");
       const auto output_b = nodes::Output("out_b");
@@ -77,8 +76,12 @@ RUN_TEST(
 
       const std::string memory_policy_path = tmp_json_path("graph_io_memory_policy.json");
       input_graph.save(memory_policy_path);
-      require_contains(read_text(memory_policy_path), "\"memory_policy\":1",
+      const std::string saved_memory_policy_json = read_text(memory_policy_path);
+      require_contains(saved_memory_policy_json, "\"memory_policy\":1",
                        io_case("memory_policy_saved", "input memory policy should be serialized"));
+      require(saved_memory_policy_json.find("\"use_simaai_pool\"") == std::string::npos,
+              io_case("deprecated_simaai_pool_omitted",
+                      "deprecated input pool flag should not be serialized"));
 
       const Graph loaded_input = Graph::load(memory_policy_path);
       const std::string memory_policy_roundtrip_path =
@@ -87,6 +90,28 @@ RUN_TEST(
       require_contains(
           read_text(memory_policy_roundtrip_path), "\"memory_policy\":1",
           io_case("memory_policy_roundtrip", "input memory policy should survive save/load"));
+
+      std::string legacy_memory_policy_json = saved_memory_policy_json;
+      const std::string memory_policy_key = "\"memory_policy\":1";
+      const std::size_t memory_policy_pos = legacy_memory_policy_json.find(memory_policy_key);
+      require(memory_policy_pos != std::string::npos,
+              io_case("legacy_simaai_pool_fixture", "memory policy fixture key missing"));
+      legacy_memory_policy_json.replace(memory_policy_pos, memory_policy_key.size(),
+                                        "\"use_simaai_pool\":false");
+      const std::string legacy_memory_policy_path =
+          tmp_json_path("graph_io_legacy_simaai_pool.json");
+      write_text(legacy_memory_policy_path, legacy_memory_policy_json);
+      const Graph loaded_legacy_input = Graph::load(legacy_memory_policy_path);
+      const std::string legacy_roundtrip_path =
+          tmp_json_path("graph_io_legacy_simaai_pool_roundtrip.json");
+      loaded_legacy_input.save(legacy_roundtrip_path);
+      const std::string legacy_roundtrip_json = read_text(legacy_roundtrip_path);
+      require_contains(legacy_roundtrip_json, "\"memory_policy\":3",
+                       io_case("legacy_simaai_pool_memory_policy",
+                               "legacy pool flag should convert to SystemMemory policy"));
+      require(legacy_roundtrip_json.find("\"use_simaai_pool\"") == std::string::npos,
+              io_case("legacy_simaai_pool_not_reserialized",
+                      "deprecated input pool flag should not be reserialized"));
 
       const std::string missing_file = tmp_json_path("graph_io_missing_input.json");
       {

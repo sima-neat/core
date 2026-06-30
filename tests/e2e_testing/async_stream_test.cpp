@@ -80,7 +80,7 @@ int main() {
     src_opt.is_live = true;
     src_opt.do_timestamp = true;
     src_opt.block = true;
-    src_opt.use_simaai_pool = false;
+    src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
     src_opt.max_bytes = static_cast<std::uint64_t>(img.total() * img.elemSize());
     p.add(simaai::neat::nodes::Input(src_opt));
 
