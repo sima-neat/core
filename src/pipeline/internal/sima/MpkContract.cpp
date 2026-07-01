@@ -1394,6 +1394,10 @@ parse_tensor_nodes(const json& nodes, const std::vector<std::vector<std::int64_t
     if (!shapes.empty()) {
       tensor.mpk_shape = (i < shapes.size()) ? shapes[i] : shapes.front();
     }
+    if (const auto node_shape = read_typed_tensor_shape_local(nodes[i]); !node_shape.empty()) {
+      tensor.mpk_shape = node_shape;
+      tensor.shape_semantics = MpkShapeSemantics::Geometry;
+    }
     if (!dtypes.empty()) {
       tensor.dtype = normalize_dtype_local((i < dtypes.size()) ? dtypes[i] : dtypes.front());
       tensor.dtype_source = dtype_source;
@@ -1402,6 +1406,12 @@ parse_tensor_nodes(const json& nodes, const std::vector<std::vector<std::int64_t
       if (!tensor.dtype.empty()) {
         tensor.dtype_source = fallback_dtype_source;
       }
+    }
+    if (const auto node_dtype = read_string_alias(
+            nodes[i], {"dtype", "scalar", "data_type", "element_type", "tensor_type"});
+        node_dtype.has_value() && !node_dtype->empty()) {
+      tensor.dtype = normalize_dtype_local(*node_dtype);
+      tensor.dtype_source = DTypeSource::ExplicitMpk;
     }
     finalize_tensor_contract(&tensor);
     out.push_back(std::move(tensor));

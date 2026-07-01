@@ -6852,12 +6852,15 @@ build_processcvu_mpk_detess_compile_inputs_local(const MpkContract& contract) {
     const auto& stage = *ordered_detess_stages[i];
     const auto& subset = ordered_subsets[i];
     const std::string frame_type = normalize_dtype_token_local(subset.frame_type);
-    if (i >= mla_published_outputs.size()) {
+    const auto* published_ptr = plugin_contracts::match_published_output_for_transport(
+        mla_published_outputs,
+        stage.input_tensors.empty() ? std::string() : stage.input_tensors.front().name, i);
+    if (published_ptr == nullptr) {
       throw std::runtime_error("processcvu MPK detess route requires MLA published boundary views");
     }
     const auto transport_view = validate_detess_ingress_transport_local(
-        mla_published_outputs[i], frame_type, subset.input_transport_shape,
-        subset.input_transport_size_bytes, stage.name);
+        *published_ptr, frame_type, subset.input_transport_shape, subset.input_transport_size_bytes,
+        stage.name);
     packed_input_sizes.push_back(transport_view.transport_size_bytes);
   }
 
@@ -7112,11 +7115,17 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
       throw std::runtime_error(
           "processcvu MPK detesscast route requires MLA published boundary views");
     }
-    const auto& published_input = mla_published_outputs[i];
     if (detess_stage.input_tensors.empty()) {
       throw std::runtime_error(
           "processcvu MPK detesscast route requires original detess transport tensors");
     }
+    const auto* published_input_ptr = plugin_contracts::match_published_output_for_transport(
+        mla_published_outputs, detess_stage.input_tensors.front().name, i);
+    if (published_input_ptr == nullptr) {
+      throw std::runtime_error(
+          "processcvu MPK detesscast route requires MLA published boundary views");
+    }
+    const auto& published_input = *published_input_ptr;
     const auto& transport_input = detess_stage.input_tensors.front();
     const auto transport_view = validate_detess_ingress_transport_local(
         transport_input, frame_type, subset.input_transport_shape,
@@ -7776,11 +7785,17 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
     const auto& detess = *ordered_stage_pairs[i].detess;
     const auto& dequant = *ordered_stage_pairs[i].dequant;
     const auto& head = ordered_subset.heads[i];
-    const auto& published_input = mla_published_outputs[i];
     if (detess.input_tensors.empty() || detess.output_tensors.empty() ||
         dequant.output_tensors.empty()) {
       throw std::runtime_error("processcvu MPK detessdequant route missing tensor metadata");
     }
+    const auto* published_input_ptr = plugin_contracts::match_published_output_for_transport(
+        mla_published_outputs, detess.input_tensors.front().name, i);
+    if (published_input_ptr == nullptr) {
+      throw std::runtime_error(
+          "processcvu MPK detessdequant route requires MLA published boundary views");
+    }
+    const auto& published_input = *published_input_ptr;
     const auto& dequant_output_tensor = dequant.output_tensors.front();
     const std::string resolved_input_dtype = normalize_dtype_token_local(head.frame_type);
     const auto transport_view = validate_detess_ingress_transport_local(

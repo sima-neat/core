@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -241,6 +242,14 @@ simaai::neat::OutputSpec make_rgb_input_spec(int width, int height) {
   return spec;
 }
 
+std::vector<int> shape3(int h, int w, int c) {
+  std::vector<int> out;
+  out.push_back(h);
+  out.push_back(w);
+  out.push_back(c);
+  return out;
+}
+
 } // namespace
 
 RUN_TEST("unit_preproc_contract_rules_test", [] {
@@ -335,10 +344,73 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
 
     require(node.options().input_img_type == "RGB",
             "model-managed Preproc must preserve resolved input format over upstream heuristics");
+    require(node.options().input_width() == 1280 && node.options().input_height() == 720,
+            "model-managed Preproc must bind actual input dimensions from upstream contract");
     const auto* cfg = node.config_json();
     require(cfg != nullptr && cfg->contains("input_img_type") &&
                 (*cfg)["input_img_type"].get<std::string>() == "RGB",
             "model-managed Preproc config must preserve resolved input_img_type");
+  }
+
+  {
+    PreprocOptions opt;
+    opt.model_managed_contract = true;
+    opt.set_input_shape({1080, 1920, 3});
+    opt.max_input_shape = shape3(1080, 1920, 3);
+    opt.input_img_type = "RGB";
+    opt.set_output_shape({640, 640, 3});
+    opt.scaled_width = 640;
+    opt.scaled_height = 640;
+    opt.output_img_type = "RGB";
+    opt.output_dtype = "EVXX_BFLOAT16";
+    opt.normalize = true;
+    opt.tessellate = false;
+
+    Preproc node(opt);
+    InputContract contract;
+    contract.media_type = "video/x-raw";
+    contract.format = "RGB";
+    contract.width = 256;
+    contract.height = 256;
+    contract.depth = 3;
+    node.apply_input_contract(contract, nullptr);
+
+    require(node.options().input_width() == 256 && node.options().input_height() == 256,
+            "model-managed Preproc must treat upstream contract as actual geometry");
+    require(node.options().max_input_width() == 1920 && node.options().max_input_height() == 1080,
+            "model-managed Preproc must preserve max_input_shape as capacity");
+  }
+
+  {
+    PreprocOptions opt;
+    opt.model_managed_contract = true;
+    opt.set_input_shape({1080, 1920, 3});
+    opt.max_input_shape = shape3(1080, 1920, 3);
+    opt.input_img_type = "RGB";
+    opt.set_output_shape({640, 640, 3});
+    opt.scaled_width = 640;
+    opt.scaled_height = 640;
+    opt.output_img_type = "RGB";
+    opt.output_dtype = "EVXX_BFLOAT16";
+    opt.normalize = true;
+    opt.tessellate = false;
+
+    Preproc node(opt);
+    InputContract contract;
+    contract.media_type = "video/x-raw";
+    contract.format = "RGB";
+    contract.width = 2048;
+    contract.height = 1080;
+    contract.depth = 3;
+    bool threw = false;
+    try {
+      node.apply_input_contract(contract, nullptr);
+    } catch (const std::exception& e) {
+      threw = true;
+      require_contains(std::string(e.what()), "exceeds max_input_width",
+                       "capacity violation should mention max_input_width");
+    }
+    require(threw, "model-managed Preproc must reject actual geometry beyond capacity");
   }
 
   {
