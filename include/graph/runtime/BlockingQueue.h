@@ -184,6 +184,23 @@ public:
     return true;
   }
 
+  /// Restore an item to the front of the queue. Intended for a consumer that popped an item but
+  /// could not acquire an external resource needed to publish it. Returns false if closed.
+  bool restore_front(T&& item) {
+    const bool timing = timing_enabled();
+    std::lock_guard<std::mutex> lock(mu_);
+    if (closed_) {
+      push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+    queue_.push_front(QueueEntry{std::move(item), timing
+                                                      ? std::chrono::steady_clock::now()
+                                                      : std::chrono::steady_clock::time_point{}});
+    update_high_watermark_locked();
+    cv_not_empty_.notify_one();
+    return true;
+  }
+
   /// Pop the next item into `out`. Blocks up to `timeout_ms` (or forever if -1). Returns false if
   /// closed and empty (or on timeout).
   bool pop(T& out, int timeout_ms = -1) {

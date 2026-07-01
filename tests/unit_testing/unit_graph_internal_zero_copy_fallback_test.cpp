@@ -93,4 +93,43 @@ RUN_TEST("unit_graph_internal_zero_copy_fallback_test", ([] {
                    "retry after releasing the older output should recover the queued frame");
            require(loan_core->pipeline.out_queue.empty(),
                    "successful retry should consume the preserved queued output");
+
+           constexpr simaai::neat::graph::NodeId kSinkNode = 7;
+           auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
+           graph_core->graph_execution_ =
+               std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
+           simaai::neat::runtime::Endpoint endpoint;
+           endpoint.kind = simaai::neat::runtime::Endpoint::Kind::GraphSink;
+           endpoint.node = kSinkNode;
+           graph_core->graph_execution_->plan.default_output = endpoint;
+           graph_core->graph_execution_->sinks[kSinkNode] =
+               std::make_shared<simaai::neat::runtime::GraphSinkQueue>();
+           graph_core->holder_loan_gate =
+               std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
+           graph_core->graph_execution_->sinks[kSinkNode]->push(
+               simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(3)});
+           graph_core->graph_execution_->sinks[kSinkNode]->push(
+               simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(4)});
+
+           simaai::neat::Sample graph_first;
+           require(graph_core->pull(0, graph_first, &err) == simaai::neat::PullStatus::Ok,
+                   "first graph output should acquire the only holder loan");
+           require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
+                   "first graph pull should remove exactly one queued output");
+
+           simaai::neat::Sample graph_blocked;
+           const auto graph_blocked_status = graph_core->pull(0, graph_blocked, &err);
+           require(graph_blocked_status == simaai::neat::PullStatus::Timeout,
+                   "graph loan exhaustion should backpressure as timeout");
+           require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
+                   "graph loan exhaustion must restore the queued output for retry");
+           require(graph_blocked.tensors.empty() && !graph_blocked.tensor.has_value(),
+                   "graph loan exhaustion must not publish an unloaned sample");
+
+           graph_first = simaai::neat::Sample{};
+           simaai::neat::Sample graph_second;
+           require(graph_core->pull(1000, graph_second, &err) == simaai::neat::PullStatus::Ok,
+                   "graph retry after releasing older output should recover the queued frame");
+           require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 0U,
+                   "successful graph retry should consume the restored queued output");
          }))

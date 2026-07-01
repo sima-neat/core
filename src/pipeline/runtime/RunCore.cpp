@@ -815,7 +815,8 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
   finalize_identity_diag();
 }
 
-std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms) {
+std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::NodeId node_id,
+                                                           int timeout_ms) {
   ExecutionGraphRuntime& execution = graph_execution();
   const bool has_timeout = (timeout_ms >= 0);
   const bool direct_sink =
@@ -876,7 +877,27 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     trace_graph_message_event(TraceGraphMessageEventType::QueueOut, args);
     trace_graph_message_event(TraceGraphMessageEventType::EdgeSinkRecv, args);
   }
-  return std::move(queued.sample);
+  return queued;
+}
+
+bool RunCore::graph_restore_sink_front(simaai::neat::graph::NodeId node_id,
+                                       RuntimeSinkQueueMsg&& msg) {
+  if (!graph_execution_) {
+    return false;
+  }
+  auto it = graph_execution_->sinks.find(node_id);
+  if (it == graph_execution_->sinks.end() || !it->second) {
+    return false;
+  }
+  return it->second->restore_front(std::move(msg));
+}
+
+std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms) {
+  auto queued = graph_pull_msg(node_id, timeout_ms);
+  if (!queued.has_value()) {
+    return std::nullopt;
+  }
+  return std::move(queued->sample);
 }
 
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,

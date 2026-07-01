@@ -540,7 +540,14 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
   if (!record_stats && state->core && state->core->graph_stats) {
     record_stats = state->core->graph_stats.get();
   }
-  auto result = GraphRun::pull_state(state, node_, timeout_ms);
+  std::optional<simaai::neat::runtime::RuntimeSinkQueueMsg> queued;
+  if (state->core) {
+    queued = state->core->graph_pull_msg(node_, timeout_ms);
+  }
+  std::optional<Sample> result;
+  if (queued.has_value()) {
+    result = std::move(queued->sample);
+  }
   if (result.has_value() && graph_debug_enabled()) {
     std::fprintf(stderr, "[GRAPH] output_pull node=%zu\n", static_cast<std::size_t>(node_));
     graph_debug_sample("output_pull", *result);
@@ -550,9 +557,10 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
     if (state->core) {
       std::string loan_error;
       if (!state->core->attach_public_output_loan(*result, &loan_error)) {
-        state->core->graph_request_stop(
-            "GraphRun::Output::pull: " +
-            (loan_error.empty() ? std::string("zero-copy output loan failed") : loan_error));
+        if (queued.has_value()) {
+          queued->sample = std::move(*result);
+          (void)state->core->graph_restore_sink_front(node_, std::move(*queued));
+        }
         return std::nullopt;
       }
       state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), *result,

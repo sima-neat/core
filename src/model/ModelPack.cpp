@@ -1456,6 +1456,29 @@ static std::optional<std::size_t> first_index(const std::vector<std::size_t>& in
   return indices.front();
 }
 
+static bool any_candidate_has_kind(const pipeline_internal::sima::MpkContract& contract,
+                                   const std::vector<std::size_t>& candidates,
+                                   ExecutionStageKind kind) {
+  for (const std::size_t idx : candidates) {
+    if (idx >= contract.plugins.size()) {
+      continue;
+    }
+    const auto& stage = contract.plugins[idx];
+    if (canonical_execution_stage_kind(!stage.kernel.empty() ? stage.kernel : stage.name) == kind) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool
+contract_graph_has_fused_detessdequant(const pipeline_internal::sima::MpkContract& contract) {
+  return std::any_of(
+      contract.graph.nodes.begin(), contract.graph.nodes.end(), [](const auto& node) {
+        return node.kind == pipeline_internal::sima::MpkGraphNodeKind::FusedDetessDequant;
+      });
+}
+
 static std::string pick_stage_name(const pipeline_internal::sima::MpkContract& contract,
                                    const std::vector<std::size_t>& candidates,
                                    ExecutionStageKind kind) {
@@ -1679,12 +1702,14 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
   } else if (!detess_indices.empty() && !cast_indices.empty() && dequant_indices.empty()) {
     append_stage(ExecutionStageKind::DetessCast, detess_indices, order_index);
   } else if (!detess_indices.empty() && !dequant_indices.empty()) {
-    if (detess_indices.size() == dequant_indices.size()) {
-      // Homogeneous egress: every MLA output is detessellated AND dequantized, so the route
-      // planner fuses them into one DetessDequant region; emit the matching fused stage.
+    if (any_candidate_has_kind(contract, dequant_indices, ExecutionStageKind::DetessDequant) ||
+        contract_graph_has_fused_detessdequant(contract)) {
+      // The fused MPK graph is the source of truth for whether detess/dequant operate on the same
+      // logical outputs. Equal raw plugin counts alone are not enough: heterogeneous egress can
+      // have one detess-only output and one dequant-only output with matching counts.
       append_stage(ExecutionStageKind::DetessDequant, dequant_indices, order_index);
     } else {
-      // Heterogeneous egress (e.g. one MLA output published dense/native and dequant-only):
+      // Heterogeneous egress (e.g. one MLA output published dense/native and one dequant-only):
       // the route planner does NOT fuse -- it produces separate Detess and Dequantize regions --
       // so emit matching separate Detess + Dequant stages. Each then carries its own canonical
       // compiled contract that its region materializes against (otherwise the Detess region's
