@@ -473,6 +473,11 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
            (st->pipeline.supports_push && !st->pipeline.stream.running());
   };
 
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  if (timeout_ms >= 0) {
+    deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  }
+
   std::unique_lock<std::mutex> lock(st->pipeline.out_mu);
   if (timeout_ms < 0) {
     while (!wait_ready()) {
@@ -484,7 +489,6 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
       st->pipeline.out_cv.wait_for(lock, kPullWaitPollQuantum);
     }
   } else {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (!wait_ready()) {
       const std::string loop_err = last_error();
       if (!loop_err.empty()) {
@@ -492,7 +496,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
         return handle_stream_error(loop_err);
       }
       const auto now = std::chrono::steady_clock::now();
-      if (now >= deadline) {
+      if (now >= *deadline) {
         lock.unlock();
         if (timeout_ms == 0) {
           // A zero-timeout pull is a non-blocking poll. This is used by pull_samples()
@@ -557,23 +561,47 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
         set_terminal_error(error_codes::kRuntimePull, "Run::pull: timeout waiting for output");
         return PullStatus::Timeout;
       }
-      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now);
       st->pipeline.out_cv.wait_for(lock, std::min(kPullWaitPollQuantum, remaining));
     }
   }
 
-  if (!st->pipeline.out_queue.empty()) {
+  while (!st->pipeline.out_queue.empty()) {
+    std::string loan_error;
+    if (!attach_public_holder_loan_or_error(*st, st->pipeline.out_queue.front(), &loan_error)) {
+      const std::string message =
+          "Run::pull: " +
+          (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
+          "; release older zero-copy outputs and retry";
+
+      const std::string loop_err = last_error();
+      if (!loop_err.empty()) {
+        lock.unlock();
+        return handle_stream_error(loop_err);
+      }
+
+      if (timeout_ms == 0) {
+        lock.unlock();
+        set_terminal_error(error_codes::kRuntimePull, message);
+        return PullStatus::Timeout;
+      }
+      if (timeout_ms > 0) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= *deadline) {
+          lock.unlock();
+          set_terminal_error(error_codes::kRuntimePull, message);
+          return PullStatus::Timeout;
+        }
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now);
+        st->pipeline.out_cv.wait_for(lock, std::min(kPullWaitPollQuantum, remaining));
+      } else {
+        st->pipeline.out_cv.wait_for(lock, kPullWaitPollQuantum);
+      }
+      continue;
+    }
     out = std::move(st->pipeline.out_queue.front());
     st->pipeline.out_queue.pop_front();
-    std::string loan_error;
-    if (!attach_public_holder_loan_or_error(*st, out, &loan_error)) {
-      lock.unlock();
-      set_terminal_error(error_codes::kRuntimePull,
-                         "Run::pull: " + (loan_error.empty()
-                                              ? std::string("zero-copy output loan failed")
-                                              : loan_error));
-      return PullStatus::Error;
-    }
     st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
     {
       const auto now = std::chrono::steady_clock::now();
