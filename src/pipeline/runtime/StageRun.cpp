@@ -12,6 +12,7 @@
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/PreMlaContractCheck.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
@@ -502,35 +503,11 @@ const char* dtype_name(TensorDType dtype) {
   return "Unknown";
 }
 
-enum class DTypeFamily {
-  Unknown = 0,
-  Int8,
-  Int16,
-  Int32,
-  BFloat16,
-  Float32,
-  Float64,
-};
-
-const char* dtype_family_name(DTypeFamily family) {
-  switch (family) {
-  case DTypeFamily::Int8:
-    return "INT8";
-  case DTypeFamily::Int16:
-    return "INT16";
-  case DTypeFamily::Int32:
-    return "INT32";
-  case DTypeFamily::BFloat16:
-    return "BF16";
-  case DTypeFamily::Float32:
-    return "FP32";
-  case DTypeFamily::Float64:
-    return "FP64";
-  case DTypeFamily::Unknown:
-    break;
-  }
-  return "UNKNOWN";
-}
+using pipeline_internal::check_pre_mla_input_bytes_contract;
+using pipeline_internal::dtype_family_from_token;
+using pipeline_internal::dtype_family_name;
+using pipeline_internal::DTypeFamily;
+using pipeline_internal::PreMlaCheckCode;
 
 DTypeFamily dtype_family_from_tensor_dtype(TensorDType dtype) {
   switch (dtype) {
@@ -548,32 +525,6 @@ DTypeFamily dtype_family_from_tensor_dtype(TensorDType dtype) {
     return DTypeFamily::Float32;
   case TensorDType::Float64:
     return DTypeFamily::Float64;
-  }
-  return DTypeFamily::Unknown;
-}
-
-DTypeFamily dtype_family_from_token(std::string token) {
-  token = upper_copy(std::move(token));
-  if (token.empty()) {
-    return DTypeFamily::Unknown;
-  }
-  if (token.find("BF16") != std::string::npos || token.find("BFLOAT16") != std::string::npos) {
-    return DTypeFamily::BFloat16;
-  }
-  if (token.find("INT8") != std::string::npos || token.find("UINT8") != std::string::npos) {
-    return DTypeFamily::Int8;
-  }
-  if (token.find("INT16") != std::string::npos || token.find("UINT16") != std::string::npos) {
-    return DTypeFamily::Int16;
-  }
-  if (token.find("INT32") != std::string::npos) {
-    return DTypeFamily::Int32;
-  }
-  if (token.find("FP64") != std::string::npos || token.find("FLOAT64") != std::string::npos) {
-    return DTypeFamily::Float64;
-  }
-  if (token.find("FP32") != std::string::npos || token.find("FLOAT32") != std::string::npos) {
-    return DTypeFamily::Float32;
   }
   return DTypeFamily::Unknown;
 }
@@ -1177,9 +1128,6 @@ bool mla_info_indicates_packed_envelope(const MlaOutputInfo& info) {
 void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_input,
                                        const std::vector<std::shared_ptr<Node>>& infer_group,
                                        const simaai::neat::Model& model, const char* stage_name) {
-  if (!shadow_change_env_enabled()) {
-    return;
-  }
   const MlaInputTensorInfo mla_input = stage_mla_input_tensor_info(infer_group);
   const int64_t contract_logical_bytes = mla_input.span_size_bytes;
   const std::string contract_input_dtype = mla_input.logical_dtype;
@@ -1242,21 +1190,30 @@ void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_inpu
     throw std::runtime_error(oss.str());
   };
 
-  if (handle_bytes <= 0) {
+  // shadow_change_env_enabled() is the runtime gate; passing it as guard_active makes the
+  // decision logic testable without env-var side effects (see PreMlaContractCheck.h).
+  switch (check_pre_mla_input_bytes_contract(shadow_change_env_enabled(), handle_bytes,
+                                             runtime_logical_bytes, contract_logical_bytes,
+                                             runtime_dtype, contract_dtype)) {
+  case PreMlaCheckCode::Skipped:
+    return;
+  case PreMlaCheckCode::Ok:
+    break;
+  case PreMlaCheckCode::HandleUnknown:
     fail_guard("PRE_MLA_INPUT_HANDLE_UNKNOWN", "handle_bytes_unavailable");
-  }
-  if (runtime_logical_bytes <= 0) {
+    break;
+  case PreMlaCheckCode::RuntimeUnknown:
     fail_guard("PRE_MLA_INPUT_RUNTIME_UNKNOWN", "runtime_logical_bytes_unavailable");
-  }
-  if (contract_dtype != DTypeFamily::Unknown && runtime_dtype != DTypeFamily::Unknown &&
-      runtime_dtype != contract_dtype) {
+    break;
+  case PreMlaCheckCode::DtypeMismatch:
     fail_guard("PRE_MLA_INPUT_DTYPE_MISMATCH", "runtime_dtype_ne_contract_input_dtype");
-  }
-  if (handle_bytes < runtime_logical_bytes) {
+    break;
+  case PreMlaCheckCode::HandleTooSmall:
     fail_guard("PRE_MLA_INPUT_HANDLE_TOO_SMALL", "handle_lt_runtime_logical");
-  }
-  if (runtime_logical_bytes != contract_logical_bytes) {
+    break;
+  case PreMlaCheckCode::ContractMismatch:
     fail_guard("PRE_MLA_INPUT_CONTRACT_MISMATCH", "runtime_logical_ne_contract_logical");
+    break;
   }
   if (stage_debug_enabled()) {
     std::fprintf(stderr,
