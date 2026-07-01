@@ -2101,25 +2101,7 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
   const auto envelope_start = InputStreamDecodeProfileClock::now();
   Sample out =
       sample_from_gst_envelope(sample, where, st.opt.copy_output, &st.opt.output_override, &st);
-  const auto mark_producer_lifetime = [&](auto&& self, Sample& s) -> void {
-    auto mark_tensor = [&](Tensor& tensor) {
-      if (tensor.storage && tensor.storage->kind == simaai::neat::StorageKind::GstSample &&
-          st.lifetime_token) {
-        tensor.storage->has_producer_stream_lifetime = true;
-        tensor.storage->producer_stream_lifetime = st.lifetime_token;
-      }
-    };
-    if (s.tensor.has_value()) {
-      mark_tensor(*s.tensor);
-    }
-    for (auto& tensor : s.tensors) {
-      mark_tensor(tensor);
-    }
-    for (auto& field : s.fields) {
-      self(self, field);
-    }
-  };
-  mark_producer_lifetime(mark_producer_lifetime, out);
+  pipeline_internal::mark_sample_producer_stream_lifetime(out, st.lifetime_token);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->envelope_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - envelope_start);

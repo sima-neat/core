@@ -29,6 +29,7 @@ bool sample_has_device_gstsample_producer_lifetime(const Sample& sample,
 std::string cross_run_zero_copy_sample_error(const char* where);
 bool sample_has_device_gstsample_holder(const Sample& sample);
 void attach_holder_release_to_sample(const Sample& sample, std::function<void()> on_release);
+void mark_sample_producer_stream_lifetime(Sample& sample, std::shared_ptr<void> lifetime_token);
 bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGatePtr& gate,
                                      std::string* err = nullptr);
 bool sample_has_transferable_zero_copy_loan(const Sample& sample, std::string* reason = nullptr);
