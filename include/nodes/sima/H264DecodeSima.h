@@ -31,7 +31,9 @@ namespace simaai::neat {
  *
  * @ingroup nodes_sima
  */
-class H264Decode final : public Node, public OutputSpecProvider {
+class SIMA_DEPRECATED("Use SimaDecode with SimaDecodeType::H264") H264Decode final
+    : public Node,
+      public OutputSpecProvider {
 public:
   /**
    * @brief Construct with explicit decoder configuration.
