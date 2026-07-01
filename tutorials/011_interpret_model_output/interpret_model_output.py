@@ -31,7 +31,7 @@ def main(argv: list[str]) -> int:
 
   # STEP configure-input
   inp = pyneat.InputOptions()
-  inp.format = "RGB"
+  inp.format = pyneat.Format.RGB
   inp.width = 160
   inp.height = 120
   inp.depth = 3
@@ -50,10 +50,17 @@ def main(argv: list[str]) -> int:
 
   # CORE LOGIC
   # STEP inspect-sample
+  tensors = list(sample.tensors) if sample.kind == pyneat.SampleKind.TensorSet else []
+  if sample.tensor is not None:
+    tensors = [sample.tensor]
+  if not tensors:
+    raise RuntimeError("no tensor output")
+  if not tensors[0].shape:
+    raise RuntimeError("output tensor shape is empty")
   print(f"sample_kind={sample.kind}")
   print(f"has_tensor={sample.tensor is not None}")
   print(f"num_fields={len(sample.fields)}")
-  print(f"output_rank={len(sample.tensor.shape)}")
+  print(f"output_rank={len(tensors[0].shape)}")
   # END STEP
   # END CORE LOGIC
   return 0

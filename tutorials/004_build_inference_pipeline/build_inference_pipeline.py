@@ -28,7 +28,7 @@ def main(argv: list[str]) -> int:
 
   # STEP configure-input
   inp = pyneat.InputOptions()
-  inp.format = "RGB"
+  inp.format = pyneat.Format.RGB
   inp.width = args.width
   inp.height = args.height
   inp.depth = 3

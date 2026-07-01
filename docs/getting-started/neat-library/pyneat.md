@@ -24,10 +24,10 @@ sima-cli neat install core -t pyneat
 
 To download the wheel for a specific Neat Library release, include the version.
 
-For Neat Library 0.2.1:
+For Neat Library 0.2.2:
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@0.2.1 -t pyneat
+sima-cli neat install core@0.2.2 -t pyneat
 </ShellCommand>
 
 ## Create a Python Environment

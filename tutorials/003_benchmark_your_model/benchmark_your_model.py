@@ -32,6 +32,8 @@ def main(argv: list[str]) -> int:
 
   # STEP run-benchmark
   report = model.benchmark(args.samples)
+  if report.latency_ms <= 0 or report.fps <= 0:
+    raise RuntimeError("benchmark produced no measured latency/fps")
   # END STEP
 
   # STEP read-report

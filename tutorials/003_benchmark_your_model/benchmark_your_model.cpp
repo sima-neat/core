@@ -46,6 +46,8 @@ int main(int argc, char** argv) {
 
     // STEP run-benchmark
     simaai::neat::BenchmarkReport report = model.benchmark(samples);
+    if (report.latency_ms <= 0.0 || report.fps <= 0.0)
+      throw std::runtime_error("benchmark produced no measured latency/fps");
     // END STEP
 
     // STEP read-report

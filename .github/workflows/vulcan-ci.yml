@@ -215,6 +215,16 @@ jobs:
             sima-cli packages build --help >/dev/null
             cd /workspace
             ./build.sh ${CORE_BUILD_ARGS}
+            if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
+              (
+                cd dist
+                NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON ./install_neat_framework.sh --local
+              )
+              rm -rf /tmp/sima-neat-doc-examples-sdk
+              tests/docs/build_docs_examples.sh \
+                --environment sdk \
+                --build-root /tmp/sima-neat-doc-examples-sdk
+            fi
           '
 
       post_build_command: |
@@ -678,14 +688,23 @@ jobs:
             exit 1
           fi
           echo "Using pytest dir: ${PYTEST_DIR}"
+          TUTORIALS_PYTEST_DIR="${EXTRAS_PREFIX}/share/sima-neat/tests/tutorials"
+          if [[ ! -d "${TUTORIALS_PYTEST_DIR}" ]]; then
+            echo "Installed tutorial pytest tests not found at ${TUTORIALS_PYTEST_DIR}" >&2
+            exit 1
+          fi
+          echo "Using tutorial pytest dir: ${TUTORIALS_PYTEST_DIR}"
           GST_REGISTRY_DIR="${RUNNER_TEMP:-/tmp}/sima-gst-registry-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           mkdir -p "${GST_REGISTRY_DIR}"
           echo "Using shared GStreamer registry dir: ${GST_REGISTRY_DIR}"
           mkdir -p _work
           printf '%s\n' "${EXTRAS_LIB_DIR}" > _work/extras_lib_dir.txt
           printf '%s\n' "${EXTRAS_PREFIX}" > _work/extras_prefix.txt
-          printf '%s\n' "${PYTEST_DIR}" > _work/pytest_dir.txt
           printf '%s\n' "${GST_REGISTRY_DIR}" > _work/gst_registry_dir.txt
+          {
+            printf 'PYTEST_DIR=%s\n' "${PYTEST_DIR}"
+            printf 'TUTORIALS_PYTEST_DIR=%s\n' "${TUTORIALS_PYTEST_DIR}"
+          } >> "${GITHUB_ENV}"
 
       - name: Rebase CTest paths to runner workspace
         run: |
@@ -722,6 +741,12 @@ jobs:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           ./scripts/fix_devkit_runtime.sh
+
+      - name: Build docs C++ examples from DevKit-installed package
+        run: |
+          tests/docs/build_docs_examples.sh \
+            --environment devkit \
+            --build-root "${RUNNER_TEMP:-/tmp}/sima-neat-doc-examples-devkit"
 
       - name: Discover installed CTest directories
         run: |
@@ -848,20 +873,35 @@ jobs:
           SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
         run: |
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
-          TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/share/sima-neat/tutorials/build.sh"
+          TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/build.sh"
           if [[ ! -x "${TUTORIALS_BUILD_SH}" ]]; then
             echo "Installed tutorial build.sh not found or not executable: ${TUTORIALS_BUILD_SH}" >&2
+            echo "Expected extras layout: build.sh next to lib/ and share/ under ${EXTRAS_PREFIX}" >&2
             exit 1
           fi
-          "${TUTORIALS_BUILD_SH}" --download-models-only
+          TUTORIAL_MODEL_DIR="/tmp"
+          "${TUTORIALS_BUILD_SH}" --download-models-only --model-target-folder "${TUTORIAL_MODEL_DIR}"
 
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
 
+          RESNET_TAR="${TUTORIAL_MODEL_DIR}/resnet_50.tar.gz"
+          YOLO_TAR="${TUTORIAL_MODEL_DIR}/yolo_v8s.tar.gz"
+          if [[ ! -s "${RESNET_TAR}" || ! -s "${YOLO_TAR}" ]]; then
+            echo "CTest did not produce expected tutorial model tarballs under ${TUTORIAL_MODEL_DIR}." >&2
+            exit 1
+          fi
+          {
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_RESNET=%s\n' "${RESNET_TAR}"
+            printf 'SIMA_NEAT_TUTORIAL_MODEL_YOLO=%s\n' "${YOLO_TAR}"
+          } >> "${GITHUB_ENV}"
+
       - name: Run Python pytest from installed extras
+        env:
+          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
+          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
         run: |
-          PYTEST_DIR="$(cat _work/pytest_dir.txt)"
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
             PYTHON_BIN="${PYNEAT_HOME}/bin/python"
@@ -875,7 +915,9 @@ jobs:
           "${PYTHON_BIN}" -m pip install --upgrade pip
           "${PYTHON_BIN}" -m pip install pytest
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
+          "${PYTHON_BIN}" -m pytest -q "${TUTORIALS_PYTEST_DIR}"
 
       - name: Cleanup test workspace tmp artifacts
         if: ${{ always() }}

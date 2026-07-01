@@ -977,13 +977,7 @@ resolve_model_ingress_memory_policy(const internal::PreprocessPlannerResult& pla
 
 void apply_model_ingress_memory_policy(InputOptions& opt,
                                        const internal::PreprocessPlannerResult& plan) {
-  const InputMemoryPolicy policy = resolve_model_ingress_memory_policy(plan);
-  opt.memory_policy = policy;
-  if (policy == InputMemoryPolicy::SystemMemory) {
-    opt.use_simaai_pool = false;
-  } else {
-    opt.use_simaai_pool = true;
-  }
+  opt.memory_policy = resolve_model_ingress_memory_policy(plan);
 }
 
 bool runner_debug_enabled() {
@@ -6103,13 +6097,13 @@ build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const 
       }
       std::fprintf(stderr,
                    "[model-runner] build_pipeline_nodes sync=%d tensor_mode=%d input_ptr=%d "
-                   "src_opt{media=%s format=%s w=%d h=%d d=%d mem_policy=%s use_simaai_pool=%d} "
+                   "src_opt{media=%s format=%s w=%d h=%d d=%d mem_policy=%s} "
                    "first_pre=%s include_pre=%d include_post=%d\n",
                    sync ? 1 : 0, tensor_mode ? 1 : 0, input ? 1 : 0,
                    resolve_input_media_type(src_opt).c_str(), src_opt.format.str().c_str(),
                    src_opt.width, src_opt.height, src_opt.depth,
-                   input_memory_policy_name(src_opt.memory_policy), src_opt.use_simaai_pool ? 1 : 0,
-                   first_pre, include_preprocess_stage ? 1 : 0, include_postprocess_stage ? 1 : 0);
+                   input_memory_policy_name(src_opt.memory_policy), first_pre,
+                   include_preprocess_stage ? 1 : 0, include_postprocess_stage ? 1 : 0);
     }
     nodes.push_back(simaai::neat::nodes::Input(src_opt));
   }

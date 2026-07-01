@@ -32,7 +32,7 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
              InputOptions src_opt;
              src_opt.payload_type = simaai::neat::PayloadType::Image;
              src_opt.format = simaai::neat::FormatTag::RGB;
-             src_opt.use_simaai_pool = false;
+             src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
              src_opt.caps_override = "video/x-raw,format=(string";
              invalid_caps.add(nodes::Input(src_opt));
              invalid_caps.add(nodes::Output(OutputOptions::Latest()));
@@ -50,7 +50,7 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
              InputOptions src_opt;
              src_opt.payload_type = simaai::neat::PayloadType::Image;
              src_opt.format = simaai::neat::FormatTag::RGB;
-             src_opt.use_simaai_pool = false;
+             src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
              bad_tensor_graph.add(nodes::Input(src_opt));
              bad_tensor_graph.add(nodes::Output(OutputOptions::Latest()));
 

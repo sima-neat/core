@@ -96,6 +96,8 @@ int main(int argc, char** argv) {
         ++ok;
     }
     runner.close();
+    if (ok <= 0)
+      throw std::runtime_error("runner produced no outputs");
     // END STEP
     // END CORE LOGIC
 

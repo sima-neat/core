@@ -47,8 +47,10 @@ def main(argv: list[str]) -> int:
   for frame in range(args.frames):
     for sid in range(args.streams):
       logical_frame = frame * args.streams + sid
-      run.push("left", [make_rgb_sample(str(sid), logical_frame)])
-      run.push("right", [make_rgb_sample(str(sid), logical_frame)])
+      if not run.push("left", [make_rgb_sample(str(sid), logical_frame)]):
+        raise RuntimeError(f"left push failed: {run.last_error()}")
+      if not run.push("right", [make_rgb_sample(str(sid), logical_frame)]):
+        raise RuntimeError(f"right push failed: {run.last_error()}")
   # END STEP
 
   # STEP pull-bundles
@@ -60,6 +62,8 @@ def main(argv: list[str]) -> int:
   run.close()
   # END STEP
 
+  if received != expected:
+    raise RuntimeError(f"expected={expected} received={received}")
   print(f"expected={expected} received={received}")
   return 0
 
