@@ -1,6 +1,7 @@
 #include "asset_utils.h"
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "test_utils.h"
 
@@ -212,7 +213,12 @@ int main() {
     parse_opt.alignment = simaai::neat::H264ParseOptions::Alignment::AU;
     parse_opt.stream_format = simaai::neat::H264ParseOptions::StreamFormat::ByteStream;
     p.add(simaai::neat::nodes::H264Parse(parse_opt));
-    p.add(simaai::neat::nodes::H264Decode(/*sima_allocator_type=*/2, /*out_format=*/"NV12"));
+    simaai::neat::SimaDecodeOptions dec;
+    dec.type = simaai::neat::SimaDecodeType::H264;
+    dec.sima_allocator_type = 2;
+    dec.out_format = simaai::neat::FormatTag::NV12;
+    dec.raw_output = false;
+    p.add(simaai::neat::nodes::SimaDecode(dec));
     p.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::EveryFrame(kExpectedFrames)));
 
     const std::string gst_desc = p.describe_backend();

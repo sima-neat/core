@@ -15,6 +15,7 @@
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264Parse.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 
 #include "test_utils.h"
@@ -124,7 +125,12 @@ int main(int argc, char** argv) {
     manual_vid.push_back(simaai::neat::nodes::Queue());
     manual_vid.push_back(simaai::neat::nodes::H264ParseAu(vo.parse_config_interval));
     manual_vid.push_back(simaai::neat::nodes::Queue());
-    manual_vid.push_back(simaai::neat::nodes::H264Decode(vo.sima_allocator_type, vo.out_format));
+    simaai::neat::SimaDecodeOptions vid_dec;
+    vid_dec.type = simaai::neat::SimaDecodeType::H264;
+    vid_dec.sima_allocator_type = vo.sima_allocator_type;
+    vid_dec.out_format = vo.out_format;
+    vid_dec.raw_output = false;
+    manual_vid.push_back(simaai::neat::nodes::SimaDecode(vid_dec));
 
     compare_graph_fragments(group_vid, graph_from_nodes(std::move(manual_vid)));
 

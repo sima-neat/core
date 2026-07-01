@@ -8,7 +8,7 @@
  * MetadataSender, RTSPInput, StillImageInput, UdpOutput), RTP helpers
  * (H264CapsFixup, H264Depacketize), and the SiMa-specific MLA-bearing nodes
  * (Cast, CastTess, Dequant, Detess, DetessCast, DetessDequant, H264DecodeSima,
- * FeatureHistogram, GriderFast, H264EncodeSima, H264Packetize, H264Parse,
+ * FeatureHistogram, GriderFast, H264EncodeSima, H264Packetize, H264Parse, SimaDecode,
  * PCIeSink/Src, Preproc, QuantTess, TrackDescriptor, TrackKLT, SimaArgMax,
  * SimaBoxDecode, SimaRender).
  *
@@ -54,4 +54,5 @@
 #include "nodes/sima/TrackKLT.h"
 #include "nodes/sima/SimaArgMax.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/SimaDecode.h"
 #include "nodes/sima/SimaRender.h"

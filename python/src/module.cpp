@@ -32,6 +32,7 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/SimaDecode.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
@@ -408,6 +409,14 @@ void warn_deprecated_use_simaai_pool_python_once() {
       throw nb::python_error();
     }
   });
+}
+
+void warn_deprecated_h264_decode_python() {
+  const char* msg = "pyneat.nodes.h264_decode is deprecated; use pyneat.nodes.sima_decode with "
+                    "SimaDecodeOptions.type = SimaDecodeType.H264";
+  if (PyErr_WarnEx(PyExc_DeprecationWarning, msg, 1) < 0) {
+    throw nb::python_error();
+  }
 }
 
 std::size_t int64_to_size_or_throw(int64_t value, const char* what) {
@@ -3543,6 +3552,23 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+  nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
+      .value("H264", simaai::neat::SimaDecodeType::H264)
+      .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
+      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG);
+  nb::class_<simaai::neat::SimaDecodeOptions>(m, "SimaDecodeOptions")
+      .def(nb::init<>())
+      .def_rw("type", &simaai::neat::SimaDecodeOptions::type)
+      .def_rw("sima_allocator_type", &simaai::neat::SimaDecodeOptions::sima_allocator_type)
+      .def_prop_rw("out_format", format_enum_getter(&simaai::neat::SimaDecodeOptions::out_format),
+                   format_enum_setter(&simaai::neat::SimaDecodeOptions::out_format))
+      .def_rw("decoder_name", &simaai::neat::SimaDecodeOptions::decoder_name)
+      .def_rw("raw_output", &simaai::neat::SimaDecodeOptions::raw_output)
+      .def_rw("next_element", &simaai::neat::SimaDecodeOptions::next_element)
+      .def_rw("dec_width", &simaai::neat::SimaDecodeOptions::dec_width)
+      .def_rw("dec_height", &simaai::neat::SimaDecodeOptions::dec_height)
+      .def_rw("dec_fps", &simaai::neat::SimaDecodeOptions::dec_fps)
+      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers);
 
   // Phase 4 (plan slice): CVU dtype-bridge atoms (cast/cast_tess/dequant/detess/detess_cast).
   // Advanced/expert nodes — the planner normally inserts them; the standalone forms exist for
@@ -4591,10 +4617,20 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::UdpOutputOptions{});
   nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
                 "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
-  nodes_mod.def("h264_decode", &simaai::neat::nodes::H264Decode, "sima_allocator_type"_a = 2,
-                "out_format"_a = "NV12", "decoder_name"_a = "", "raw_output"_a = false,
-                "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1, "dec_fps"_a = -1,
-                "num_buffers"_a = -1);
+  nodes_mod.def(
+      "h264_decode",
+      [](int sima_allocator_type, std::string out_format, std::string decoder_name, bool raw_output,
+         std::string next_element, int dec_width, int dec_height, int dec_fps, int num_buffers) {
+        warn_deprecated_h264_decode_python();
+        return simaai::neat::nodes::H264Decode(
+            sima_allocator_type, std::move(out_format), std::move(decoder_name), raw_output,
+            std::move(next_element), dec_width, dec_height, dec_fps, num_buffers);
+      },
+      "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
+      "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
+      "dec_fps"_a = -1, "num_buffers"_a = -1);
+  nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
+                "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(
       "h264_parse",
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::H264ParseOptions)>(

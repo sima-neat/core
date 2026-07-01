@@ -17,10 +17,10 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/rtp/H264Depacketize.h"
-#include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -2592,16 +2592,19 @@ int main(int argc, char** argv) {
         continue;
       }
 
+      simaai::neat::SimaDecodeOptions dec_opt;
+      dec_opt.type = simaai::neat::SimaDecodeType::H264;
+      dec_opt.sima_allocator_type = 2;
+      dec_opt.out_format = simaai::neat::FormatTag::NV12;
+      dec_opt.decoder_name = "decoder_" + stream.stream_id;
+      dec_opt.raw_output = true;
+      dec_opt.next_element = "CVU";
+      dec_opt.dec_width = args.stream_width;
+      dec_opt.dec_height = args.stream_height;
+      dec_opt.dec_fps = args.fps;
+      dec_opt.num_buffers = args.decoder_buffers;
       auto dec = simaai::neat::graph::helpers::add_pipeline(
-          g,
-          simaai::neat::nodes::H264Decode(/*sima_allocator_type=*/2, /*out_format=*/"NV12",
-                                          /*decoder_name=*/"decoder_" + stream.stream_id,
-                                          /*raw_output=*/true, /*next_element=*/"CVU",
-                                          /*dec_width=*/args.stream_width,
-                                          /*dec_height=*/args.stream_height,
-                                          /*dec_fps=*/args.fps,
-                                          /*num_buffers=*/args.decoder_buffers),
-          "dec_" + stream.stream_id);
+          g, simaai::neat::nodes::SimaDecode(dec_opt), "dec_" + stream.stream_id);
       auto dec_log = g.add(simaai::neat::graph::nodes::Map(
           [latency_tracker](simaai::neat::Sample& sample) {
             log_edge("dec_out", sample);

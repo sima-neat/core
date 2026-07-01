@@ -668,6 +668,7 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert hasattr(pyneat.nodes, "rtsp_input")
   assert hasattr(pyneat.nodes, "h264_depacketize")
   assert hasattr(pyneat.nodes, "h264_decode")
+  assert hasattr(pyneat.nodes, "sima_decode")
 
   _assert_not_type_error(lambda: pyneat.nodes.queue())
   _assert_not_type_error(lambda: pyneat.nodes.rtsp_input("rtsp://127.0.0.1:8554/src"))
@@ -691,20 +692,41 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
           enforce_h264_caps=True,
       )
   )
-  _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
-  _assert_not_type_error(
-      lambda: pyneat.nodes.h264_decode(
-          sima_allocator_type=2,
-          out_format="NV12",
-          decoder_name="",
-          raw_output=True,
-          next_element="",
-          dec_width=-1,
-          dec_height=-1,
-          dec_fps=-1,
-          num_buffers=7,
-      )
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
+    _assert_not_type_error(
+        lambda: pyneat.nodes.h264_decode(
+            sima_allocator_type=2,
+            out_format="NV12",
+            decoder_name="",
+            raw_output=True,
+            next_element="",
+            dec_width=-1,
+            dec_height=-1,
+            dec_fps=-1,
+            num_buffers=7,
+        )
+    )
+  assert any(
+      issubclass(warning.category, DeprecationWarning)
+      and "pyneat.nodes.h264_decode is deprecated" in str(warning.message)
+      for warning in caught
   )
+  native_decode = pyneat.SimaDecodeOptions()
+  assert native_decode.type == pyneat.SimaDecodeType.H264
+  assert native_decode.out_format == pyneat.Format.NV12
+  assert native_decode.raw_output is True
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode())
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.JPEG
+  native_decode.raw_output = False
+  native_decode.dec_width = 640
+  native_decode.dec_height = 480
+  native_decode.dec_fps = 30
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.MJPEG
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
 
 
 def test_mla_group_helper_present_and_accepts_model():

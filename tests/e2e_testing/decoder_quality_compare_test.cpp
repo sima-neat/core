@@ -10,10 +10,10 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264Depacketize.h"
-#include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "rtsp_port_utils.h"
 #include "test_utils.h"
@@ -418,7 +418,12 @@ static std::vector<Nv12Frame> decode_h264_file_frames(const std::filesystem::pat
   p.add(simaai::neat::nodes::H264Parse(parse_opt));
   p.add(simaai::neat::nodes::Queue());
   if (use_neatdecoder) {
-    p.add(simaai::neat::nodes::H264Decode(/*sima_allocator_type=*/2, /*out_format=*/"NV12"));
+    simaai::neat::SimaDecodeOptions dec;
+    dec.type = simaai::neat::SimaDecodeType::H264;
+    dec.sima_allocator_type = 2;
+    dec.out_format = simaai::neat::FormatTag::NV12;
+    dec.raw_output = false;
+    p.add(simaai::neat::nodes::SimaDecode(dec));
   } else {
     p.custom(decoder);
     p.add(simaai::neat::nodes::VideoConvert());
