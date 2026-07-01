@@ -32,6 +32,22 @@ bool run_push_timing_enabled() {
   return pipeline_internal::env_bool("SIMA_RUN_PUSH_TIMING", false);
 }
 
+bool allow_public_cross_run_gstsample_push() {
+  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
+}
+
+void enforce_public_sample_push_transferable(const Sample& msg, const char* where) {
+  if (!allow_public_cross_run_gstsample_push() &&
+      pipeline_internal::sample_has_device_gstsample_producer_lifetime(msg,
+                                                                       /*require_expired=*/false)) {
+    std::string reason;
+    if (!pipeline_internal::sample_has_transferable_zero_copy_loan(msg, &reason)) {
+      throw std::runtime_error(pipeline_internal::cross_run_zero_copy_sample_error(where) +
+                               (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+    }
+  }
+}
+
 int run_push_timing_limit() {
   static const int limit =
       std::max(0, pipeline_internal::env_int("SIMA_RUN_PUSH_TIMING_LIMIT", 32));
@@ -240,6 +256,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                                     std::string_view endpoint_name, const Sample& msgs,
                                     bool block) {
   for (const auto& msg : msgs) {
+    enforce_public_sample_push_transferable(msg, "Run::push");
     Sample stamped = stamp_public_graph_ingress_sample(core, msg);
     if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
       std::fprintf(stderr,
@@ -587,9 +604,11 @@ bool Run::push_message_impl(const Sample& msg, bool block) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: stream is closed"));
   }
+  enforce_public_sample_push_transferable(msg, "Run::push");
   return push_message_to_core(*core_, msg, block);
 }
 bool Run::push_sample_impl(const Sample& msg, bool block) {
+  enforce_public_sample_push_transferable(msg, "Run::push");
   if (core_ && core_->push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_impl(msg, block);
   }

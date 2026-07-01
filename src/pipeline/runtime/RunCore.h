@@ -8,6 +8,7 @@
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
 #include "pipeline/Run.h"
+#include "pipeline/internal/HolderLoanGate.h"
 
 #include <atomic>
 #include <chrono>
@@ -159,6 +160,7 @@ struct RunCore {
   PullStatus pull_named_output(std::string_view output_name, int timeout_ms, Sample& out,
                                PullError* err = nullptr);
   std::optional<Sample> pull_optional(int timeout_ms = -1);
+  bool attach_public_output_loan(Sample& sample, std::string* err = nullptr);
 
   RunStats stats() const;
   InputStreamStats input_stats() const;
@@ -202,6 +204,7 @@ struct RunCore {
   std::unique_ptr<ExecutionGraphPlan> graph_export_plan_;
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
+  pipeline_internal::HolderLoanGatePtr holder_loan_gate;
   std::shared_ptr<simaai::neat::graph::GraphRunStats> graph_stats;
 
   std::uint64_t latency_count = 0;

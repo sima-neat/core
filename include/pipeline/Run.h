@@ -127,6 +127,16 @@ struct RunAdvancedOptions {
    * remains the correctness fallback for all outputs.
    */
   bool prepare_output_cpu_visible = false;
+  /**
+   * @brief Bound live zero-copy GstSample holders returned by public pulls.
+   *
+   * A value > 0 turns each pulled device-backed GstSample into a tracked holder loan.  The credit
+   * is released when the returned Sample/Tensor holder is destroyed or explicitly dropped.  This
+   * is the framework-level version of the app-local fixed-loan gate used by high-channel-count
+   * decode→model handoffs: it prevents applications from over-loaning decoder output pools while
+   * preserving the existing zero-copy holder fast path.
+   */
+  int holder_loan_credits = 0;
 };
 
 /**

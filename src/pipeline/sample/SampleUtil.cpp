@@ -4,6 +4,7 @@
 #include "InputStreamUtil.h"
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
+#include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -11,6 +12,7 @@
 #include <gst/gst.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -20,6 +22,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::pipeline_internal {
@@ -62,6 +65,102 @@ bool sample_debug_enabled() {
 
 bool sample_bytes_enabled() {
   return env_bool("SIMA_SAMPLE_BYTES", false);
+}
+
+bool tensor_has_device_gstsample_producer_lifetime_local(const Tensor& tensor,
+                                                         bool require_expired) {
+  if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
+      !tensor.storage->has_producer_stream_lifetime) {
+    return false;
+  }
+  const bool device_backed = tensor.device.type != simaai::neat::DeviceType::CPU ||
+                             tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
+                             tensor.storage->sima_mem_target_flags != 0 ||
+                             !tensor.storage->sima_segments.empty();
+  if (!device_backed) {
+    return false;
+  }
+  return !require_expired || tensor.storage->producer_stream_lifetime.expired();
+}
+
+bool tensor_has_device_gstsample_holder_local(const Tensor& tensor) {
+  if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
+      !tensor.storage->holder) {
+    return false;
+  }
+  return tensor.device.type != simaai::neat::DeviceType::CPU ||
+         tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
+         tensor.storage->sima_mem_target_flags != 0 || !tensor.storage->sima_segments.empty();
+}
+
+struct ZeroCopyLoanToken {
+  ZeroCopyLoanToken(HolderLoanGatePtr gate_in, std::shared_ptr<void> producer_lifetime_in)
+      : gate(std::move(gate_in)), producer_lifetime(std::move(producer_lifetime_in)) {}
+  ~ZeroCopyLoanToken() {
+    release_once();
+  }
+
+  void release_once() noexcept {
+    bool expected = false;
+    if (released.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                         std::memory_order_relaxed)) {
+      if (gate) {
+        gate->release();
+      }
+    }
+  }
+
+  HolderLoanGatePtr gate;
+  std::shared_ptr<void> producer_lifetime;
+  std::atomic<bool> released{false};
+};
+
+struct GstBufferLoanKeepalive {
+  std::vector<std::shared_ptr<void>> loans;
+};
+
+GQuark zero_copy_loan_quark() {
+  static GQuark quark = g_quark_from_static_string("simaai-neat-zero-copy-loans");
+  return quark;
+}
+
+void destroy_gst_buffer_loan_keepalive(gpointer data) {
+  delete static_cast<GstBufferLoanKeepalive*>(data);
+}
+
+void collect_zero_copy_loans_from_sample(const Sample& sample,
+                                         std::vector<std::shared_ptr<void>>* out) {
+  if (!out) {
+    return;
+  }
+  auto add_tensor = [&](const Tensor& tensor) {
+    if (!tensor.storage || !tensor.storage->zero_copy_loan) {
+      return;
+    }
+    const auto& loan = tensor.storage->zero_copy_loan;
+    const auto found = std::find_if(out->begin(), out->end(), [&](const std::shared_ptr<void>& v) {
+      return v.get() == loan.get();
+    });
+    if (found == out->end()) {
+      out->push_back(loan);
+    }
+  };
+  auto walk = [&](auto&& self, const Sample& s) -> void {
+    if (sample_has_tensor_list(s)) {
+      for (const auto& tensor : s.tensors) {
+        add_tensor(tensor);
+      }
+    }
+    if (s.tensor.has_value()) {
+      add_tensor(*s.tensor);
+    }
+    if (s.kind == SampleKind::Bundle) {
+      for (const auto& field : s.fields) {
+        self(self, field);
+      }
+    }
+  };
+  walk(walk, sample);
 }
 
 bool restore_preprocess_meta_after_make_writable(GstBuffer* dst, GstBuffer* src, std::string* err) {
@@ -2093,6 +2192,294 @@ bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer
 
 void attach_tensor_set_meta_from_tensors(GstBuffer* buffer, const TensorList& tensors) {
   attach_tensor_set_meta_from_tensors_impl(buffer, tensors);
+}
+
+bool sample_has_device_gstsample_producer_lifetime(const Sample& sample, bool require_expired) {
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_has_device_gstsample_producer_lifetime_local(tensor, require_expired)) {
+        return true;
+      }
+    }
+  }
+  if (sample.tensor.has_value() &&
+      tensor_has_device_gstsample_producer_lifetime_local(*sample.tensor, require_expired)) {
+    return true;
+  }
+  if (sample.kind == SampleKind::Bundle) {
+    for (const auto& field : sample.fields) {
+      if (sample_has_device_gstsample_producer_lifetime(field, require_expired)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+std::string cross_run_zero_copy_sample_error(const char* where) {
+  return std::string(where ? where : "Run::push") +
+         ": Cannot pass this zero-copy frame into another running graph. The frame was produced "
+         "by another graph and must carry a live zero-copy loan before it can be reused safely. "
+         "Use the normal public output path so the runtime can attach a loan, keep producer and "
+         "consumer in one graph, or request owned/copy output for unsupported boundaries.";
+}
+
+bool sample_has_device_gstsample_holder(const Sample& sample) {
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_has_device_gstsample_holder_local(tensor)) {
+        return true;
+      }
+    }
+  }
+  if (sample.tensor.has_value() && tensor_has_device_gstsample_holder_local(*sample.tensor)) {
+    return true;
+  }
+  if (sample.kind == SampleKind::Bundle) {
+    for (const auto& field : sample.fields) {
+      if (sample_has_device_gstsample_holder(field)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+int count_distinct_device_gstsample_holders(const Sample& sample) {
+  std::vector<const void*> seen_storage;
+  auto add_tensor = [&](const Tensor& tensor) {
+    if (!tensor_has_device_gstsample_holder_local(tensor)) {
+      return;
+    }
+    const void* key = tensor.storage.get();
+    if (std::find(seen_storage.begin(), seen_storage.end(), key) == seen_storage.end()) {
+      seen_storage.push_back(key);
+    }
+  };
+  auto walk = [&](auto&& self, const Sample& s) -> void {
+    if (sample_has_tensor_list(s)) {
+      for (const auto& tensor : s.tensors) {
+        add_tensor(tensor);
+      }
+    }
+    if (s.tensor.has_value()) {
+      add_tensor(*s.tensor);
+    }
+    if (s.kind == SampleKind::Bundle) {
+      for (const auto& field : s.fields) {
+        self(self, field);
+      }
+    }
+  };
+  walk(walk, sample);
+  return static_cast<int>(seen_storage.size());
+}
+
+bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGatePtr& gate,
+                                     std::string* err) {
+  if (!gate || !gate->enabled()) {
+    if (err) {
+      *err = "producer output is not loan-managed";
+    }
+    return false;
+  }
+  std::vector<const void*> seen_storage;
+  std::vector<std::shared_ptr<ZeroCopyLoanToken>> acquired;
+  std::vector<std::shared_ptr<TensorBuffer>> acquired_storage;
+  auto attach_tensor = [&](const Tensor& tensor) -> bool {
+    if (!tensor_has_device_gstsample_holder_local(tensor)) {
+      return true;
+    }
+    const void* key = tensor.storage.get();
+    if (std::find(seen_storage.begin(), seen_storage.end(), key) != seen_storage.end()) {
+      return true;
+    }
+    seen_storage.push_back(key);
+    if (tensor.storage->zero_copy_loan) {
+      return true;
+    }
+    if (!gate->try_acquire()) {
+      if (err) {
+        *err = "zero-copy output loan credits are exhausted";
+      }
+      return false;
+    }
+    std::shared_ptr<void> producer_lifetime;
+    if (tensor.storage->has_producer_stream_lifetime) {
+      producer_lifetime = tensor.storage->producer_stream_lifetime.lock();
+    }
+    auto loan = std::make_shared<ZeroCopyLoanToken>(gate, std::move(producer_lifetime));
+    tensor.storage->zero_copy_loan = loan;
+    acquired.push_back(std::move(loan));
+    acquired_storage.push_back(tensor.storage);
+    return true;
+  };
+  bool ok = true;
+  auto walk = [&](auto&& self, const Sample& s) -> void {
+    if (!ok) {
+      return;
+    }
+    if (sample_has_tensor_list(s)) {
+      for (const auto& tensor : s.tensors) {
+        if (!attach_tensor(tensor)) {
+          ok = false;
+          return;
+        }
+      }
+    }
+    if (s.tensor.has_value() && !attach_tensor(*s.tensor)) {
+      ok = false;
+      return;
+    }
+    if (s.kind == SampleKind::Bundle) {
+      for (const auto& field : s.fields) {
+        self(self, field);
+        if (!ok) {
+          return;
+        }
+      }
+    }
+  };
+  walk(walk, sample);
+  if (!ok) {
+    for (auto& storage : acquired_storage) {
+      if (storage) {
+        storage->zero_copy_loan.reset();
+      }
+    }
+    for (auto& loan : acquired) {
+      if (loan) {
+        loan->release_once();
+      }
+    }
+    return false;
+  }
+  return true;
+}
+
+bool sample_has_transferable_zero_copy_loan(const Sample& sample, std::string* reason) {
+  bool saw_producer_backed_tensor = false;
+  bool ok = true;
+  auto check_tensor = [&](const Tensor& tensor) {
+    if (!tensor_has_device_gstsample_producer_lifetime_local(tensor, /*require_expired=*/false)) {
+      return;
+    }
+    saw_producer_backed_tensor = true;
+    if (tensor.storage->producer_stream_lifetime.expired()) {
+      ok = false;
+      if (reason) {
+        *reason = "the producer graph is no longer running";
+      }
+      return;
+    }
+    if (!tensor.storage->zero_copy_loan) {
+      ok = false;
+      if (reason) {
+        *reason = "the frame does not carry a live zero-copy loan";
+      }
+    }
+  };
+  auto walk = [&](auto&& self, const Sample& s) -> void {
+    if (!ok) {
+      return;
+    }
+    if (sample_has_tensor_list(s)) {
+      for (const auto& tensor : s.tensors) {
+        check_tensor(tensor);
+        if (!ok) {
+          return;
+        }
+      }
+    }
+    if (s.tensor.has_value()) {
+      check_tensor(*s.tensor);
+    }
+    if (s.kind == SampleKind::Bundle) {
+      for (const auto& field : s.fields) {
+        self(self, field);
+        if (!ok) {
+          return;
+        }
+      }
+    }
+  };
+  walk(walk, sample);
+  if (!saw_producer_backed_tensor && reason) {
+    *reason = "the sample does not contain a producer-owned zero-copy frame";
+  }
+  return ok && saw_producer_backed_tensor;
+}
+
+void attach_zero_copy_loans_to_gst_buffer(GstBuffer* buffer, const Sample& sample) {
+  if (!buffer) {
+    return;
+  }
+  std::vector<std::shared_ptr<void>> loans;
+  collect_zero_copy_loans_from_sample(sample, &loans);
+  if (loans.empty()) {
+    return;
+  }
+  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
+      gst_mini_object_get_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark()));
+  if (!keepalive) {
+    keepalive = new GstBufferLoanKeepalive();
+    gst_mini_object_set_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark(), keepalive,
+                              destroy_gst_buffer_loan_keepalive);
+  }
+  for (const auto& loan : loans) {
+    const auto found =
+        std::find_if(keepalive->loans.begin(), keepalive->loans.end(),
+                     [&](const std::shared_ptr<void>& v) { return v.get() == loan.get(); });
+    if (found == keepalive->loans.end()) {
+      keepalive->loans.push_back(loan);
+    }
+  }
+}
+
+void attach_holder_release_to_sample(const Sample& sample, std::function<void()> on_release) {
+  if (!on_release) {
+    return;
+  }
+  auto shared_release = std::make_shared<std::function<void()>>(std::move(on_release));
+  auto seen = std::make_shared<std::vector<const void*>>();
+  auto attach_tensor = [&](const Tensor& tensor) {
+    if (!tensor_has_device_gstsample_holder_local(tensor)) {
+      return;
+    }
+    const void* key = tensor.storage.get();
+    if (std::find(seen->begin(), seen->end(), key) != seen->end()) {
+      return;
+    }
+    seen->push_back(key);
+    if (tensor.storage->holder_loan_release_attached) {
+      return;
+    }
+    auto original_holder = tensor.storage->holder;
+    tensor.storage->holder_loan_release_attached = true;
+    tensor.storage->holder = std::shared_ptr<void>(
+        original_holder.get(), [original_holder, shared_release](void*) mutable {
+          original_holder.reset();
+          if (*shared_release) {
+            (*shared_release)();
+          }
+        });
+  };
+  auto walk = [&](auto&& self, const Sample& s) -> void {
+    if (sample_has_tensor_list(s)) {
+      for (const auto& tensor : s.tensors) {
+        attach_tensor(tensor);
+      }
+    }
+    if (s.tensor.has_value()) {
+      attach_tensor(*s.tensor);
+    }
+    if (s.kind == SampleKind::Bundle) {
+      for (const auto& field : s.fields) {
+        self(self, field);
+      }
+    }
+  };
+  walk(walk, sample);
 }
 
 bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_buffer,
