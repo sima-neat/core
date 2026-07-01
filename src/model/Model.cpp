@@ -4974,14 +4974,20 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   const int max_input_height = resolve_preproc_max_input_height(plan, input);
   const int max_input_width = resolve_preproc_max_input_width(plan, input);
   const int max_input_depth = resolve_preproc_max_input_depth(plan, input, opt->input_img_type);
+  std::vector<int> max_input_shape;
   if (max_input_height > 0 && max_input_width > 0) {
-    opt->max_input_shape = {max_input_height, max_input_width};
+    max_input_shape = {max_input_height, max_input_width};
     if (max_input_depth > 0) {
-      opt->max_input_shape.push_back(max_input_depth);
+      max_input_shape.push_back(max_input_depth);
     }
-  } else {
-    opt->max_input_shape.clear();
   }
+#ifdef SIMA_NEAT_INTERNAL
+  if (opt->model_lineage) {
+    auto lineage = std::make_shared<internal::ModelLineageBinding>(*opt->model_lineage);
+    lineage->preproc_max_input_shape = std::move(max_input_shape);
+    opt->model_lineage = std::move(lineage);
+  }
+#endif
   {
     // input_shape is the actual source geometry when known. If only an input
     // capacity envelope is known, keep the plugin config buildable by using

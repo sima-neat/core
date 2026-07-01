@@ -75,6 +75,27 @@ std::vector<int> compact_shape(std::initializer_list<int> dims) {
   return shape;
 }
 
+struct PreprocMaxInputShape {
+  int height = 0;
+  int width = 0;
+  int channels = 0;
+};
+
+PreprocMaxInputShape max_input_shape_from_model_lineage(const PreprocOptions& opt) {
+  PreprocMaxInputShape out;
+#ifdef SIMA_NEAT_INTERNAL
+  if (opt.model_lineage) {
+    const auto& shape = opt.model_lineage->preproc_max_input_shape;
+    out.height = PreprocOptions::shape_dim(shape, 0);
+    out.width = PreprocOptions::shape_dim(shape, 1);
+    out.channels = PreprocOptions::shape_channels(shape);
+  }
+#else
+  (void)opt;
+#endif
+  return out;
+}
+
 void require_supported_single_output_handoff(const PreprocOptions& opt) {
   if (opt.single_output_handoff) {
     return;
@@ -471,27 +492,27 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
     throw std::runtime_error("Preproc: missing input w/h/format from upstream input contract.");
   }
 
-  if (opt_.max_input_width() > 0 && contract.width > opt_.max_input_width()) {
+  const PreprocMaxInputShape max_shape = max_input_shape_from_model_lineage(opt_);
+  if (max_shape.width > 0 && contract.width > max_shape.width) {
     std::ostringstream oss;
     oss << "Preproc: input width " << contract.width << " exceeds max_input_width "
-        << opt_.max_input_width()
+        << max_shape.width
         << ". max_input_width is a capacity bound; increase the model preprocess input_max_width "
            "or provide a smaller input.";
     throw std::runtime_error(oss.str());
   }
-  if (opt_.max_input_height() > 0 && contract.height > opt_.max_input_height()) {
+  if (max_shape.height > 0 && contract.height > max_shape.height) {
     std::ostringstream oss;
     oss << "Preproc: input height " << contract.height << " exceeds max_input_height "
-        << opt_.max_input_height()
+        << max_shape.height
         << ". max_input_height is a capacity bound; increase the model preprocess "
            "input_max_height or provide a smaller input.";
     throw std::runtime_error(oss.str());
   }
-  if (opt_.max_input_channels() > 0 && contract.depth > 0 &&
-      contract.depth > opt_.max_input_channels()) {
+  if (max_shape.channels > 0 && contract.depth > 0 && contract.depth > max_shape.channels) {
     std::ostringstream oss;
     oss << "Preproc: input depth " << contract.depth << " exceeds max_input_depth "
-        << opt_.max_input_channels()
+        << max_shape.channels
         << ". max_input_depth is a capacity bound; increase the model preprocess input_max_depth "
            "or provide a compatible input.";
     throw std::runtime_error(oss.str());

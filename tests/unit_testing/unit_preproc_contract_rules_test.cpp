@@ -5,6 +5,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,6 +17,31 @@ void require_not_contains(const std::string& haystack, const std::string& needle
   if (haystack.find(needle) != std::string::npos) {
     throw std::runtime_error(msg + " (found unexpected: " + needle + ")");
   }
+}
+
+void set_model_managed_preproc_max_input_shape(simaai::neat::PreprocOptions* opt,
+                                               std::vector<int> shape) {
+  if (!opt) {
+    return;
+  }
+#ifdef SIMA_NEAT_INTERNAL
+  auto lineage = std::make_shared<simaai::neat::internal::ModelLineageBinding>();
+  lineage->preproc_max_input_shape = std::move(shape);
+  opt->model_lineage = std::move(lineage);
+#else
+  (void)shape;
+#endif
+}
+
+std::vector<int> model_managed_preproc_max_input_shape(const simaai::neat::PreprocOptions& opt) {
+#ifdef SIMA_NEAT_INTERNAL
+  if (opt.model_lineage) {
+    return opt.model_lineage->preproc_max_input_shape;
+  }
+#else
+  (void)opt;
+#endif
+  return {};
 }
 
 sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
@@ -356,7 +382,7 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
     PreprocOptions opt;
     opt.model_managed_contract = true;
     opt.set_input_shape({1080, 1920, 3});
-    opt.max_input_shape = shape3(1080, 1920, 3);
+    set_model_managed_preproc_max_input_shape(&opt, shape3(1080, 1920, 3));
     opt.input_img_type = "RGB";
     opt.set_output_shape({640, 640, 3});
     opt.scaled_width = 640;
@@ -377,15 +403,17 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
 
     require(node.options().input_width() == 256 && node.options().input_height() == 256,
             "model-managed Preproc must treat upstream contract as actual geometry");
-    require(node.options().max_input_width() == 1920 && node.options().max_input_height() == 1080,
-            "model-managed Preproc must preserve max_input_shape as capacity");
+    const auto max_shape = model_managed_preproc_max_input_shape(node.options());
+    require(PreprocOptions::shape_dim(max_shape, 1) == 1920 &&
+                PreprocOptions::shape_dim(max_shape, 0) == 1080,
+            "model-managed Preproc must preserve internal max input shape as capacity");
   }
 
   {
     PreprocOptions opt;
     opt.model_managed_contract = true;
     opt.set_input_shape({1080, 1920, 3});
-    opt.max_input_shape = shape3(1080, 1920, 3);
+    set_model_managed_preproc_max_input_shape(&opt, shape3(1080, 1920, 3));
     opt.input_img_type = "RGB";
     opt.set_output_shape({640, 640, 3});
     opt.scaled_width = 640;
