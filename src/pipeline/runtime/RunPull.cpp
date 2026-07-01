@@ -75,7 +75,7 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
                                               std::string_view where, Sample& out, PullError* err) {
   const std::string label(where.empty() ? "Run::pull" : where);
   std::optional<std::chrono::steady_clock::time_point> deadline;
-  if (timeout_ms >= 0) {
+  if (timeout_ms > 0) {
     deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   }
 

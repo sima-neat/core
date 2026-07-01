@@ -534,38 +534,62 @@ bool GraphRun::Input::push(const Sample& samples) const {
 
 std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stats) const {
   auto state = state_.lock();
-  if (!state)
+  if (!state || !state->core)
     return std::nullopt;
   GraphRunStats* record_stats = stats;
-  if (!record_stats && state->core && state->core->graph_stats) {
+  if (!record_stats && state->core->graph_stats) {
     record_stats = state->core->graph_stats.get();
   }
-  std::optional<simaai::neat::runtime::RuntimeSinkQueueMsg> queued;
-  if (state->core) {
-    queued = state->core->graph_pull_msg(node_, timeout_ms);
-  }
-  std::optional<Sample> result;
-  if (queued.has_value()) {
-    result = std::move(queued->sample);
-  }
-  if (result.has_value() && graph_debug_enabled()) {
-    std::fprintf(stderr, "[GRAPH] output_pull node=%zu\n", static_cast<std::size_t>(node_));
-    graph_debug_sample("output_pull", *result);
-  }
-  if (result.has_value()) {
-    const auto now = std::chrono::steady_clock::now();
-    if (state->core) {
-      std::string loan_error;
-      if (!state->core->attach_public_output_loan(*result, &loan_error)) {
-        if (queued.has_value()) {
-          queued->sample = std::move(*result);
-          (void)state->core->graph_restore_sink_front(node_, std::move(*queued));
-        }
+
+  const bool has_deadline = timeout_ms > 0;
+  const auto deadline =
+      has_deadline ? (std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms))
+                   : std::chrono::steady_clock::time_point{};
+
+  while (true) {
+    int wait_ms = timeout_ms;
+    if (has_deadline) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline)
         return std::nullopt;
+      wait_ms = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+    }
+
+    auto queued = state->core->graph_pull_msg(node_, wait_ms);
+    if (!queued.has_value())
+      return std::nullopt;
+
+    Sample result = std::move(queued->sample);
+    std::string loan_error;
+    if (!state->core->attach_public_output_loan(result, &loan_error)) {
+      queued->sample = std::move(result);
+      (void)state->core->graph_restore_sink_front(node_, std::move(*queued));
+      if (timeout_ms == 0)
+        return std::nullopt;
+      if (has_deadline) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+          return std::nullopt;
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+        std::this_thread::sleep_for(std::min(std::chrono::milliseconds(50), remaining));
+      } else {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
       }
-      state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), *result,
-                                              now);
-      state->core->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+      continue;
+    }
+
+    if (graph_debug_enabled()) {
+      std::fprintf(stderr, "[GRAPH] output_pull node=%zu\n", static_cast<std::size_t>(node_));
+      graph_debug_sample("output_pull", result);
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), result,
+                                            now);
+    state->core->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+    {
       std::lock_guard<std::mutex> timing_lock(state->core->latency_mu);
       if (!state->core->pull_timing_init) {
         state->core->first_pull_at = now;
@@ -587,12 +611,12 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
     if (node_ < state->execution().node_labels.size()) {
       label = state->execution().node_labels[node_].c_str();
     }
-    graph_log_output_rate(node_, *result, label);
+    graph_log_output_rate(node_, result, label);
     if (record_stats) {
-      record_stats->record(node_, *result);
+      record_stats->record(node_, result);
     }
+    return result;
   }
-  return result;
 }
 
 Sample GraphRun::Output::pull_or_throw(int timeout_ms, GraphRunStats* stats) const {

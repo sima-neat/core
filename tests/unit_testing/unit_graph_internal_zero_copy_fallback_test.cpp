@@ -7,9 +7,11 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -126,10 +128,16 @@ RUN_TEST("unit_graph_internal_zero_copy_fallback_test", ([] {
            require(graph_blocked.tensors.empty() && !graph_blocked.tensor.has_value(),
                    "graph loan exhaustion must not publish an unloaned sample");
 
-           graph_first = simaai::neat::Sample{};
            simaai::neat::Sample graph_second;
-           require(graph_core->pull(1000, graph_second, &err) == simaai::neat::PullStatus::Ok,
-                   "graph retry after releasing older output should recover the queued frame");
+           std::thread release_graph_first_after_delay([&graph_first] {
+             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+             graph_first = simaai::neat::Sample{};
+           });
+           const auto graph_waited_status = graph_core->pull(1000, graph_second, &err);
+           release_graph_first_after_delay.join();
+           require(graph_waited_status == simaai::neat::PullStatus::Ok,
+                   "graph positive-timeout pull should wait for loan release and recover the "
+                   "queued frame");
            require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 0U,
                    "successful graph retry should consume the restored queued output");
          }))
