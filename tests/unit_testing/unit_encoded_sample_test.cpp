@@ -179,6 +179,28 @@ int main() {
       require(run.last_error().empty(), "unexpected error after holder-backed encoded push");
     }
 
+    {
+      Graph p;
+      InputOptions src_opt;
+      src_opt.payload_type = simaai::neat::PayloadType::Auto;
+      src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
+      p.add(nodes::Input(src_opt));
+      p.custom("fakesink name=encoded_seed_caps_sink sync=false");
+
+      RunOptions run_opt;
+      Run run = p.build(Sample{h264_sample}, run_opt);
+      const std::string pipeline = p.last_pipeline();
+      require_contains(pipeline, "video/x-h264",
+                       "encoded seed build should preserve H264 caps media");
+      require_contains(pipeline, "stream-format=(string)byte-stream",
+                       "encoded seed build should preserve H264 stream-format caps");
+      require(pipeline.find("video/x-raw,format=ENCODED") == std::string::npos,
+              "encoded seed build must not infer raw ENCODED caps");
+      require(run.push(Sample{h264_sample}), "encoded seed caps push failed");
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      require(run.last_error().empty(), "unexpected error after encoded seed caps push");
+    }
+
     Graph p;
     InputOptions src_opt;
     src_opt.payload_type = simaai::neat::PayloadType::Auto;
