@@ -85,7 +85,7 @@ Use this map before you open the full API reference.
 | Read frames from a file | `nodes::FileInput(...)` plus decode nodes, or `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` plus decode nodes, or `pyneat.groups.video_input(...)` |
 | Read one image as a source | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | Read an RTSP stream | `nodes::RTSPInput(...)` or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)` or `pyneat.groups.rtsp_decoded_input(...)` |
-| Read HTTP multipart MJPEG | `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` | `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
+| Read HTTP multipart MJPEG | `nodes::groups::HttpMjpegDecodedInput(...)`, or `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` for manual framing | `pyneat.groups.http_mjpeg_decoded_input(...)`, or `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
 | Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |

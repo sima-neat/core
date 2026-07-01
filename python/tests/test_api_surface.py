@@ -757,6 +757,55 @@ def test_jpeg_framing_nodes_are_exposed():
   _assert_not_type_error(lambda: pyneat.nodes.jpeg_parse(parser))
 
 
+def test_http_mjpeg_decoded_input_group_is_exposed():
+  opt = pyneat.HttpMjpegDecodedInputOptions()
+  assert opt.url == ""
+  assert opt.timeout_seconds == 15
+  assert opt.retries == 3
+  assert opt.is_live is True
+  assert opt.do_timestamp is True
+  assert opt.multipart_boundary == ""
+  assert opt.multipart_single_stream is False
+  assert opt.insert_queue is True
+  assert opt.sync_mode is False
+  assert opt.sima_allocator_type == 2
+  assert opt.out_format == pyneat.Format.NV12
+  assert opt.decoder_raw_output is True
+  assert opt.dec_width == -1
+  assert opt.dec_height == -1
+  assert opt.dec_fps == -1
+  assert opt.num_buffers == -1
+
+  opt.url = "http://example.local/mjpeg"
+  opt.timeout_seconds = 9
+  opt.retries = -1
+  opt.user_agent = "NeatTest"
+  opt.multipart_boundary = "frame"
+  opt.multipart_single_stream = True
+  opt.decoder_name = "mjpeg_decoder"
+  opt.dec_width = 640
+  opt.dec_height = 480
+  opt.dec_fps = 30
+  opt.num_buffers = 8
+  _assert_not_type_error(lambda: pyneat.groups.http_mjpeg_decoded_input(opt))
+
+  spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert spec.format == "NV12"
+  assert spec.width == 640
+  assert spec.height == 480
+  assert spec.memory == "SimaAI"
+
+  opt.output_caps.enable = True
+  opt.output_caps.width = 320
+  opt.output_caps.height = 240
+  opt.output_caps.fps = 15
+  caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert caps_spec.width == 320
+  assert caps_spec.height == 240
+  assert caps_spec.fps_num == 15
+  assert caps_spec.memory == "SystemMemory"
+
+
 def test_mla_group_helper_present_and_accepts_model():
   model_path = _strict_resnet50_model_path()
   assert model_path.exists(), f"missing fixture: {model_path}"

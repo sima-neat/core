@@ -56,6 +56,9 @@ RUN_TEST(
       simaai::neat::SimaDecodeOptions sima_decode_opt;
       sima_decode_opt.type = simaai::neat::SimaDecodeType::JPEG;
       auto sima_decode = simaai::neat::nodes::SimaDecode(sima_decode_opt);
+      simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions http_mjpeg_opt;
+      http_mjpeg_opt.url = "http://example.local/mjpeg";
+      auto http_mjpeg_group = simaai::neat::nodes::groups::HttpMjpegDecodedInput(http_mjpeg_opt);
       simaai::neat::nodes::groups::ImageInputGroupOptions image_opt;
       image_opt.path = "test.jpg";
       auto group = simaai::neat::nodes::groups::ImageInputGroup(image_opt);
@@ -78,5 +81,6 @@ RUN_TEST(
       (void)multipart_demux;
       (void)jpeg_parse;
       (void)sima_decode;
+      (void)http_mjpeg_group;
       (void)group;
     }));
