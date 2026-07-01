@@ -207,6 +207,10 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   st->pipeline.zero_copy_fallback_enabled = stream_opt.public_output_contract &&
                                             (opt.preset == RunPreset::Balanced) &&
                                             !stream_opt.copy_output;
+  if (stream_opt.holder_loan_credits > 0) {
+    st->holder_loan_gate =
+        std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits);
+  }
   st->diag_enabled = env_bool("SIMA_ASYNC_TPUT_DIAG", false);
   if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
       pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {

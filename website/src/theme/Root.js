@@ -22,11 +22,14 @@ function BannerLink({href, children}) {
 
 function BuildInfoBanner() {
   const {siteConfig} = useDocusaurusContext();
+  const location = useLocation();
   const buildInfo = siteConfig.customFields?.buildInfo;
-  const [visible, setVisible] = useState(Boolean(buildInfo?.showBanner));
+  const hideInApiPreview = new URLSearchParams(location.search).get("apiPreview") === "1";
+  const [visible, setVisible] = useState(Boolean(buildInfo?.showBanner) && !hideInApiPreview);
 
   useEffect(() => {
-    if (!buildInfo?.showBanner) {
+    if (!buildInfo?.showBanner || hideInApiPreview) {
+      setVisible(false);
       return undefined;
     }
 
@@ -36,9 +39,9 @@ function BuildInfoBanner() {
     }, 3000);
 
     return () => window.clearTimeout(timer);
-  }, [buildInfo?.showBanner]);
+  }, [buildInfo?.showBanner, hideInApiPreview]);
 
-  if (!buildInfo?.showBanner || !visible) {
+  if (!buildInfo?.showBanner || hideInApiPreview || !visible) {
     return null;
   }
 

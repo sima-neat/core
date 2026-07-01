@@ -3,6 +3,7 @@
 #endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/Preproc.h"
 #include "pipeline/Graph.h"
 #include "pipeline/runtime/RunInternal.h"
 #include "test_main.h"
@@ -42,27 +43,6 @@ private:
   bool had_old_;
 };
 
-class FakeDownstreamKindNode final : public simaai::neat::Node {
-public:
-  explicit FakeDownstreamKindNode(std::string kind) : kind_(std::move(kind)) {}
-
-  std::string kind() const override {
-    return kind_;
-  }
-  simaai::neat::NodeCapsBehavior caps_behavior() const override {
-    return simaai::neat::NodeCapsBehavior::Dynamic;
-  }
-  std::string backend_fragment(int node_index) const override {
-    return "identity name=n" + std::to_string(node_index) + "_fake_downstream";
-  }
-  std::vector<std::string> element_names(int node_index) const override {
-    return {"n" + std::to_string(node_index) + "_fake_downstream"};
-  }
-
-private:
-  std::string kind_;
-};
-
 simaai::neat::Graph make_rgb_graph() {
   using namespace simaai::neat;
 
@@ -77,6 +57,28 @@ simaai::neat::Graph make_rgb_graph() {
   graph.add(nodes::Input(src_opt));
   graph.add(nodes::Output(OutputOptions::EveryFrame(64)));
   return graph;
+}
+
+simaai::neat::PreprocOptions make_downstream_preproc_options() {
+  simaai::neat::PreprocOptions opt;
+  opt.set_input_shape({48, 64, 3});
+  opt.set_output_shape({48, 64, 3});
+  opt.set_slice_shape({16, 64, 3});
+  opt.input_img_type = "RGB";
+  opt.output_img_type = "RGB";
+  opt.output_dtype = "EVXX_INT8";
+  opt.scaled_width = 64;
+  opt.scaled_height = 48;
+  opt.normalize = false;
+  opt.aspect_ratio = false;
+  opt.tessellate = true;
+  opt.single_output_handoff = true;
+  opt.next_cpu = "APU";
+  opt.upstream_name = "input";
+  opt.num_buffers = 4;
+  opt.q_scale = 0.25;
+  opt.q_zp = 0;
+  return opt;
 }
 
 simaai::neat::Sample tensor_to_sample(const simaai::neat::Tensor& tensor) {
@@ -180,7 +182,7 @@ RUN_TEST(
 
         Graph graph;
         graph.add(nodes::Input(legacy_opt));
-        graph.add(std::make_shared<FakeDownstreamKindNode>("Preproc"));
+        graph.add(nodes::Preproc(make_downstream_preproc_options()));
         graph.add(nodes::Output(OutputOptions::EveryFrame(64)));
 
         Run run = graph.build(std::vector<cv::Mat>{mat_seed}, run_opt);

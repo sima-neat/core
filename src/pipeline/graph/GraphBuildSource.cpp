@@ -125,6 +125,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
                    where ? where : "Graph::build(source)", error.c_str());
     }
   }
+  session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
   last_pipeline = br.pipeline_string;
   session_build_enforce_mla_num_buffers(last_pipeline, where);
   session_build_maybe_dump_pipeline_string(last_pipeline, where);

@@ -37,6 +37,36 @@ struct OutputTensorOverride {
   std::vector<OutputTensorOverrideEntry> outputs;
 };
 
+inline int estimate_public_zero_copy_holder_arity(const OutputTensorOverride& override) {
+  if (override.outputs.empty()) {
+    return 1;
+  }
+
+  std::unordered_set<std::string> keys;
+  bool all_keyed = true;
+  for (std::size_t i = 0; i < override.outputs.size(); ++i) {
+    const auto& entry = override.outputs[i];
+    if (!entry.segment_name.empty()) {
+      keys.insert("seg:" + entry.segment_name);
+    } else if (entry.memory_index >= 0) {
+      keys.insert("mem:" + std::to_string(entry.memory_index));
+    } else if (entry.logical_output_index >= 0) {
+      // Logical output index is not a physical-holder identity, but it is a
+      // conservative fallback for static multi-output contracts when segment
+      // metadata is unavailable.
+      keys.insert("logical:" + std::to_string(entry.logical_output_index));
+    } else {
+      all_keyed = false;
+      break;
+    }
+  }
+
+  if (!all_keyed || keys.empty()) {
+    return static_cast<int>(std::max<std::size_t>(1U, override.outputs.size()));
+  }
+  return static_cast<int>(std::max<std::size_t>(1U, keys.size()));
+}
+
 inline std::uint64_t
 output_override_entry_physical_span_bytes(const OutputTensorOverrideEntry& entry) {
   const std::uint64_t elem_bytes =

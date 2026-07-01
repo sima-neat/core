@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -38,6 +39,21 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 
 namespace simaai::neat::runtime {
 namespace {
+
+void tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
+                                           const GraphRuntimeOptions& graph_opt,
+                                           bool graph_internal_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto || stream_opt.copy_output) {
+    return;
+  }
+  const std::size_t edge_queue = graph_opt.edge_queue == 0 ? 256 : graph_opt.edge_queue;
+  const int edge_window =
+      static_cast<int>(std::min<std::size_t>(edge_queue, static_cast<std::size_t>(INT_MAX)));
+  stream_opt.holder_loan_sample_window =
+      std::max(stream_opt.holder_loan_sample_window, std::max(1, edge_window));
+  stream_opt.holder_loan_credits =
+      stream_opt.holder_loan_sample_window * std::max(1, stream_opt.holder_loan_per_sample_arity);
+}
 
 std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
   return static_cast<std::uint64_t>(
@@ -799,7 +815,8 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
   finalize_identity_diag();
 }
 
-std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms) {
+std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::NodeId node_id,
+                                                           int timeout_ms) {
   ExecutionGraphRuntime& execution = graph_execution();
   const bool has_timeout = (timeout_ms >= 0);
   const bool direct_sink =
@@ -860,7 +877,27 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     trace_graph_message_event(TraceGraphMessageEventType::QueueOut, args);
     trace_graph_message_event(TraceGraphMessageEventType::EdgeSinkRecv, args);
   }
-  return std::move(queued.sample);
+  return queued;
+}
+
+bool RunCore::graph_restore_sink_front(simaai::neat::graph::NodeId node_id,
+                                       RuntimeSinkQueueMsg&& msg) {
+  if (!graph_execution_) {
+    return false;
+  }
+  auto it = graph_execution_->sinks.find(node_id);
+  if (it == graph_execution_->sinks.end() || !it->second) {
+    return false;
+  }
+  return it->second->restore_front(std::move(msg));
+}
+
+std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms) {
+  auto queued = graph_pull_msg(node_id, timeout_ms);
+  if (!queued.has_value()) {
+    return std::nullopt;
+  }
+  return std::move(queued->sample);
 }
 
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -904,6 +941,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     SourceStreamBuildContext source = session_build_source_stream_internal(
         nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode, opt.require_sink,
         public_output_contract, "RunCore::start(plan/source)");
+    tune_internal_zero_copy_holder_window(source.stream_opt, opt.graph_options,
+                                          segment.boundary.graph_internal_output);
     const auto source_us = pipeline_internal::build_timing_us(source_start);
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
@@ -929,6 +968,10 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   InputStreamOptions build_stream_opt = ctx.stream_opt;
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
+  build_stream_opt.allow_graph_internal_zero_copy_input =
+      segment.boundary.needs_input && !segment.input_edges.empty();
+  tune_internal_zero_copy_holder_window(build_stream_opt, opt.graph_options,
+                                        segment.boundary.graph_internal_output);
   InputStream stream;
   const auto input_stream_start = pipeline_internal::build_timing_now();
   if (opt.image_seed) {
