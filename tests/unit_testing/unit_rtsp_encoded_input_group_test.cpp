@@ -15,6 +15,7 @@
 
 #include "test_utils.h"
 
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -64,6 +65,17 @@ void require_not_contains(const std::string& haystack, const std::string& needle
   }
 }
 
+void require_throws_with(const std::function<void()>& fn, const std::string& needle,
+                         const std::string& label) {
+  try {
+    fn();
+  } catch (const std::exception& e) {
+    require_contains(e.what(), needle, label);
+    return;
+  }
+  throw std::runtime_error(label + ": expected exception");
+}
+
 bool decoder_backend_available() {
   try {
     return simaai::neat::element_exists("neatdecoder");
@@ -91,7 +103,7 @@ simaai::neat::nodes::groups::RtspEncodedInputOptions make_h264_encoded_options()
 simaai::neat::nodes::groups::RtspEncodedInputOptions make_mjpeg_encoded_options() {
   simaai::neat::nodes::groups::RtspEncodedInputOptions opt;
   opt.url = "rtsp://example.local/mjpeg";
-  opt.decode_type = simaai::neat::nodes::groups::RtspDecodeType::MJPEG;
+  opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
   opt.latency_ms = 80;
   opt.mjpeg_payload_type = 26;
   return opt;
@@ -234,7 +246,7 @@ void check_decoded_h264_group() {
 void check_decoded_mjpeg_group() {
   simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
   opt.url = "rtsp://example.local/mjpeg";
-  opt.decode_type = simaai::neat::nodes::groups::RtspDecodeType::MJPEG;
+  opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
   opt.mjpeg_payload_type = 26;
   opt.decoder_name = "rtsp_mjpeg_decoder";
   opt.dec_width = 800;
@@ -264,6 +276,25 @@ void check_decoded_mjpeg_group() {
           "MJPEG decoded group should advertise decoder-native SimaAI output");
 }
 
+void check_invalid_codec_errors() {
+  auto encoded = make_h264_encoded_options();
+  encoded.codec = static_cast<simaai::neat::nodes::groups::RtspCodec>(999);
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspEncodedInput(encoded); },
+                      "unsupported codec", "encoded group invalid codec");
+  require_throws_with(
+      [&]() { (void)simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(encoded); },
+      "unsupported codec", "encoded output spec invalid codec");
+
+  simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
+  decoded.url = "rtsp://example.local/invalid";
+  decoded.codec = static_cast<simaai::neat::nodes::groups::RtspCodec>(999);
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspDecodedInput(decoded); },
+                      "unsupported codec", "decoded group invalid codec");
+  require_throws_with(
+      [&]() { (void)simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(decoded); },
+      "unsupported codec", "decoded output spec invalid codec");
+}
+
 } // namespace
 
 int main() {
@@ -275,6 +306,7 @@ int main() {
     check_no_queue_mode();
     check_decoded_h264_group();
     check_decoded_mjpeg_group();
+    check_invalid_codec_errors();
     std::cout << "[OK] unit_rtsp_encoded_input_group_test passed\n";
     return 0;
   } catch (const std::exception& e) {

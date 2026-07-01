@@ -3,6 +3,8 @@
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/PayloadType.h"
 
+#include <stdexcept>
+
 namespace simaai::neat::nodes::groups {
 namespace {
 
@@ -32,7 +34,7 @@ OutputSpec from_caps(const std::string& format, int width, int height, int fps,
 RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptions& opt) {
   RtspEncodedInputOptions out;
   out.url = opt.url;
-  out.decode_type = opt.decode_type;
+  out.codec = opt.codec;
   out.latency_ms = opt.latency_ms;
   out.tcp = opt.tcp;
   out.drop_on_latency = opt.drop_on_latency;
@@ -52,14 +54,14 @@ RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptio
   return out;
 }
 
-SimaDecodeType sima_decode_type(RtspDecodeType type) {
+SimaDecodeType sima_decode_type(RtspCodec type) {
   switch (type) {
-  case RtspDecodeType::H264:
+  case RtspCodec::H264:
     return SimaDecodeType::H264;
-  case RtspDecodeType::MJPEG:
+  case RtspCodec::MJPEG:
     return SimaDecodeType::MJPEG;
   }
-  return SimaDecodeType::H264;
+  throw std::invalid_argument("RtspDecodedInputOutputSpec: unsupported codec");
 }
 
 int h264_dec_width(const RtspDecodedInputOptions& opt) {
@@ -119,8 +121,8 @@ OutputSpec ImageInputGroupOutputSpec(const ImageInputGroupOptions& opt) {
 OutputSpec RtspEncodedInputOutputSpec(const RtspEncodedInputOptions& opt) {
   OutputSpec out;
   out.payload_type = PayloadType::Encoded;
-  switch (opt.decode_type) {
-  case RtspDecodeType::H264:
+  switch (opt.codec) {
+  case RtspCodec::H264:
     out.media_type = "video/x-h264";
     out.format = "H264";
     out.width = (opt.h264_width > 0) ? opt.h264_width : opt.fallback_h264_width;
@@ -129,11 +131,14 @@ OutputSpec RtspEncodedInputOutputSpec(const RtspEncodedInputOptions& opt) {
     out.fps_den = 1;
     out.note = "RtspEncodedInput H264 (hint)";
     break;
-  case RtspDecodeType::MJPEG:
+  case RtspCodec::MJPEG:
     out.media_type = "image/jpeg";
     out.format = "JPEG";
     out.note = "RtspEncodedInput MJPEG (hint)";
     break;
+  }
+  if (out.media_type.empty()) {
+    throw std::invalid_argument("RtspEncodedInputOutputSpec: unsupported codec");
   }
   out.certainty = SpecCertainty::Hint;
   return out;
@@ -148,16 +153,15 @@ OutputSpec RtspDecodedInputOutputSpec(const RtspDecodedInputOptions& opt) {
   }
 
   simaai::neat::SimaDecodeOptions dec;
-  dec.type = sima_decode_type(opt.decode_type);
+  dec.type = sima_decode_type(opt.codec);
   dec.sima_allocator_type = opt.sima_allocator_type;
   dec.out_format = opt.out_format;
   dec.decoder_name = opt.decoder_name;
   dec.raw_output = opt.decoder_raw_output;
   dec.next_element = opt.decoder_next_element;
-  dec.dec_width = (opt.decode_type == RtspDecodeType::H264) ? h264_dec_width(opt) : opt.dec_width;
-  dec.dec_height =
-      (opt.decode_type == RtspDecodeType::H264) ? h264_dec_height(opt) : opt.dec_height;
-  dec.dec_fps = (opt.decode_type == RtspDecodeType::H264) ? h264_dec_fps(opt) : opt.dec_fps;
+  dec.dec_width = (opt.codec == RtspCodec::H264) ? h264_dec_width(opt) : opt.dec_width;
+  dec.dec_height = (opt.codec == RtspCodec::H264) ? h264_dec_height(opt) : opt.dec_height;
+  dec.dec_fps = (opt.codec == RtspCodec::H264) ? h264_dec_fps(opt) : opt.dec_fps;
   dec.num_buffers = opt.num_buffers;
   simaai::neat::SimaDecode decoder(dec);
   OutputSpec out =

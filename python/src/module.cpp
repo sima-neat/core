@@ -3346,14 +3346,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("extra_fragment",
               &simaai::neat::nodes::groups::VideoInputGroupOptions::extra_fragment);
 
-  nb::enum_<simaai::neat::nodes::groups::RtspDecodeType>(m, "RtspDecodeType")
-      .value("H264", simaai::neat::nodes::groups::RtspDecodeType::H264)
-      .value("MJPEG", simaai::neat::nodes::groups::RtspDecodeType::MJPEG);
+  nb::enum_<simaai::neat::nodes::groups::RtspCodec>(m, "RtspCodec")
+      .value("H264", simaai::neat::nodes::groups::RtspCodec::H264)
+      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG);
 
   nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
       .def(nb::init<>())
       .def_rw("url", &simaai::neat::nodes::groups::RtspEncodedInputOptions::url)
-      .def_rw("decode_type", &simaai::neat::nodes::groups::RtspEncodedInputOptions::decode_type)
+      .def_rw("codec", &simaai::neat::nodes::groups::RtspEncodedInputOptions::codec)
       .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspEncodedInputOptions::latency_ms)
       .def_rw("tcp", &simaai::neat::nodes::groups::RtspEncodedInputOptions::tcp)
       .def_rw("drop_on_latency",
@@ -3396,7 +3396,6 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::nodes::groups::RtspDecodedInputOptions>(m, "RtspDecodedInputOptions")
       .def(nb::init<>())
       .def_rw("url", &simaai::neat::nodes::groups::RtspDecodedInputOptions::url)
-      .def_rw("decode_type", &simaai::neat::nodes::groups::RtspDecodedInputOptions::decode_type)
       .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspDecodedInputOptions::latency_ms)
       .def_rw("tcp", &simaai::neat::nodes::groups::RtspDecodedInputOptions::tcp)
       .def_rw("drop_on_latency",
@@ -3441,7 +3440,8 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoscale)
       .def_rw("output_caps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::output_caps)
       .def_rw("extra_fragment",
-              &simaai::neat::nodes::groups::RtspDecodedInputOptions::extra_fragment);
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::extra_fragment)
+      .def_rw("codec", &simaai::neat::nodes::groups::RtspDecodedInputOptions::codec);
 
   nb::class_<simaai::neat::nodes::groups::UdpH264OutputGroupOptions>(m, "UdpH264OutputGroupOptions")
       .def(nb::init<>())

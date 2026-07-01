@@ -758,14 +758,14 @@ def test_jpeg_framing_nodes_are_exposed():
 
 
 def test_rtsp_encoded_and_decoded_groups_are_exposed():
-  assert pyneat.RtspDecodeType.H264.name == "H264"
-  assert pyneat.RtspDecodeType.MJPEG.name == "MJPEG"
+  assert pyneat.RtspCodec.H264.name == "H264"
+  assert pyneat.RtspCodec.MJPEG.name == "MJPEG"
   _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize())
   _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize(26))
 
   encoded = pyneat.RtspEncodedInputOptions()
   assert encoded.url == ""
-  assert encoded.decode_type == pyneat.RtspDecodeType.H264
+  assert encoded.codec == pyneat.RtspCodec.H264
   assert encoded.latency_ms == 200
   assert encoded.tcp is True
   assert encoded.drop_on_latency is False
@@ -777,7 +777,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.auto_caps_from_stream is True
 
   encoded.url = "rtsp://example.local/mjpeg"
-  encoded.decode_type = pyneat.RtspDecodeType.MJPEG
+  encoded.codec = pyneat.RtspCodec.MJPEG
   group = pyneat.groups.rtsp_encoded_input(encoded)
   assert isinstance(group, pyneat.Graph)
   backend = group.describe_backend().lower()
@@ -792,7 +792,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded_spec.format == "JPEG"
 
   decoded = pyneat.RtspDecodedInputOptions()
-  assert decoded.decode_type == pyneat.RtspDecodeType.H264
+  assert decoded.codec == pyneat.RtspCodec.H264
   assert decoded.drop_on_latency is False
   assert decoded.buffer_mode == ""
   assert decoded.payload_type == 96
@@ -803,7 +803,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.num_buffers == -1
 
   decoded.url = "rtsp://example.local/mjpeg"
-  decoded.decode_type = pyneat.RtspDecodeType.MJPEG
+  decoded.codec = pyneat.RtspCodec.MJPEG
   decoded.dec_width = 640
   decoded.dec_height = 480
   decoded.dec_fps = 30

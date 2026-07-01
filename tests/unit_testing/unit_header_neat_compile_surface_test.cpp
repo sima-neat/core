@@ -59,14 +59,20 @@ RUN_TEST(
       auto sima_decode = simaai::neat::nodes::SimaDecode(sima_decode_opt);
       simaai::neat::nodes::groups::RtspEncodedInputOptions rtsp_encoded_opt;
       rtsp_encoded_opt.url = "rtsp://example.local/mjpeg";
-      rtsp_encoded_opt.decode_type = simaai::neat::nodes::groups::RtspDecodeType::MJPEG;
+      rtsp_encoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
       auto rtsp_encoded_group = simaai::neat::nodes::groups::RtspEncodedInput(rtsp_encoded_opt);
       auto rtsp_encoded_spec =
           simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(rtsp_encoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_decoded_opt;
       rtsp_decoded_opt.url = "rtsp://example.local/h264";
-      rtsp_decoded_opt.decode_type = simaai::neat::nodes::groups::RtspDecodeType::H264;
+      rtsp_decoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::H264;
       auto rtsp_decoded_group = simaai::neat::nodes::groups::RtspDecodedInput(rtsp_decoded_opt);
+      simaai::neat::nodes::groups::RtspDecodedInputOptions legacy_rtsp_decoded_opt{
+          "rtsp://example.local/h264",
+          200,
+          true,
+          96,
+      };
       simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions http_mjpeg_opt;
       http_mjpeg_opt.url = "http://example.local/mjpeg";
       auto http_mjpeg_group = simaai::neat::nodes::groups::HttpMjpegDecodedInput(http_mjpeg_opt);
@@ -96,6 +102,7 @@ RUN_TEST(
       (void)rtsp_encoded_group;
       (void)rtsp_encoded_spec;
       (void)rtsp_decoded_group;
+      (void)legacy_rtsp_decoded_opt;
       (void)http_mjpeg_group;
       (void)group;
     }));

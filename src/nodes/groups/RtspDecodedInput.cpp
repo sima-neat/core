@@ -22,7 +22,7 @@ bool use_h264_auto_caps(const RtspDecodedInputOptions& opt) {
 RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptions& opt) {
   RtspEncodedInputOptions out;
   out.url = opt.url;
-  out.decode_type = opt.decode_type;
+  out.codec = opt.codec;
   out.latency_ms = opt.latency_ms;
   out.tcp = opt.tcp;
   out.drop_on_latency = opt.drop_on_latency;
@@ -42,14 +42,14 @@ RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptio
   return out;
 }
 
-SimaDecodeType sima_decode_type(RtspDecodeType type) {
+SimaDecodeType sima_decode_type(RtspCodec type) {
   switch (type) {
-  case RtspDecodeType::H264:
+  case RtspCodec::H264:
     return SimaDecodeType::H264;
-  case RtspDecodeType::MJPEG:
+  case RtspCodec::MJPEG:
     return SimaDecodeType::MJPEG;
   }
-  throw std::invalid_argument("RtspDecodedInput: unsupported decode_type");
+  throw std::invalid_argument("RtspDecodedInput: unsupported codec");
 }
 
 } // namespace
@@ -64,21 +64,21 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
                              : ((opt.h264_height > 0) ? opt.h264_height : opt.fallback_h264_height);
   const int h264_dec_fps =
       (opt.dec_fps > 0) ? opt.dec_fps : ((opt.h264_fps > 0) ? opt.h264_fps : opt.fallback_h264_fps);
-  if (opt.decode_type == RtspDecodeType::H264 && opt.decoder_raw_output && !use_auto_caps &&
+  if (opt.codec == RtspCodec::H264 && opt.decoder_raw_output && !use_auto_caps &&
       (h264_dec_w <= 0 || h264_dec_h <= 0 || h264_dec_fps <= 0)) {
     throw std::runtime_error("RtspDecodedInput: decoder_raw_output requires h264 width/height/fps");
   }
 
   simaai::neat::SimaDecodeOptions dec;
-  dec.type = sima_decode_type(opt.decode_type);
+  dec.type = sima_decode_type(opt.codec);
   dec.sima_allocator_type = opt.sima_allocator_type;
   dec.out_format = opt.out_format;
   dec.decoder_name = opt.decoder_name;
   dec.raw_output = opt.decoder_raw_output;
   dec.next_element = opt.decoder_next_element;
-  dec.dec_width = (opt.decode_type == RtspDecodeType::H264) ? h264_dec_w : opt.dec_width;
-  dec.dec_height = (opt.decode_type == RtspDecodeType::H264) ? h264_dec_h : opt.dec_height;
-  dec.dec_fps = (opt.decode_type == RtspDecodeType::H264) ? h264_dec_fps : opt.dec_fps;
+  dec.dec_width = (opt.codec == RtspCodec::H264) ? h264_dec_w : opt.dec_width;
+  dec.dec_height = (opt.codec == RtspCodec::H264) ? h264_dec_h : opt.dec_height;
+  dec.dec_fps = (opt.codec == RtspCodec::H264) ? h264_dec_fps : opt.dec_fps;
   dec.num_buffers = opt.num_buffers;
 
   simaai::neat::Graph graph;

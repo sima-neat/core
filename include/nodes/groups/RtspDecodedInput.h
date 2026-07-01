@@ -33,15 +33,10 @@ namespace simaai::neat::nodes::groups {
  * @ingroup nodes_groups
  */
 struct RtspDecodedInputOptions {
-  std::string url; ///< `rtsp://` URL to consume.
-  RtspDecodeType decode_type =
-      RtspDecodeType::H264;     ///< RTSP decode path to build. Default preserves H.264 behavior.
-  int latency_ms = 200;         ///< Jitter-buffer latency in milliseconds.
-  bool tcp = true;              ///< If true, request the RTSP TCP transport.
-  bool drop_on_latency = false; ///< If true, ask `rtspsrc` to drop late buffers.
-  std::string buffer_mode;      ///< Optional `rtspsrc` buffer-mode value; empty = default.
-  int payload_type = 96;        ///< RTP payload type number for the H.264 stream.
-  int mjpeg_payload_type = 26;  ///< RTP payload type number for the MJPEG/RTP JPEG stream.
+  std::string url;       ///< `rtsp://` URL to consume.
+  int latency_ms = 200;  ///< Jitter-buffer latency in milliseconds.
+  bool tcp = true;       ///< If true, request the RTSP TCP transport.
+  int payload_type = 96; ///< RTP payload type number for the H.264 stream.
   int h264_parse_config_interval =
       -1;                   ///< SPS/PPS reinjection interval for the H.264 parser (-1 = default).
   int h264_fps = -1;        ///< Expected FPS injected into the parser caps (-1 = unspecified).
@@ -60,10 +55,6 @@ struct RtspDecodedInputOptions {
   bool decoder_raw_output = true;          ///< Request raw (non-encoded) output from the decoder.
   std::string
       decoder_next_element; ///< Optional next-element selector ("CVU" or "APU") for `neatdecoder`.
-  int dec_width = -1;       ///< Decoded frame width override; `-1` = upstream-defined.
-  int dec_height = -1;      ///< Decoded frame height override; `-1` = upstream-defined.
-  int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
-  int num_buffers = -1;     ///< Decoder output buffer pool size override; `-1` = element default.
 
   bool use_videoconvert = false; ///< Insert `videoconvert` after decode for format adaptation.
   bool use_videoscale = false;   ///< Insert `videoscale` after decode for resolution adaptation.
@@ -81,6 +72,16 @@ struct RtspDecodedInputOptions {
 
   /// Optional raw GStreamer fragment inserted into the group (advanced use).
   std::string extra_fragment;
+
+  RtspCodec codec =
+      RtspCodec::H264;          ///< RTSP codec path to build. Default preserves H.264 behavior.
+  bool drop_on_latency = false; ///< If true, ask `rtspsrc` to drop late buffers.
+  std::string buffer_mode;      ///< Optional `rtspsrc` buffer-mode value; empty = default.
+  int mjpeg_payload_type = 26;  ///< RTP payload type number for the MJPEG/RTP JPEG stream.
+  int dec_width = -1;           ///< Decoded frame width override; `-1` = upstream-defined.
+  int dec_height = -1;          ///< Decoded frame height override; `-1` = upstream-defined.
+  int dec_fps = -1;             ///< Decoded frame rate override; `-1` = upstream-defined.
+  int num_buffers = -1; ///< Decoder output buffer pool size override; `-1` = element default.
 };
 
 /**

@@ -15,8 +15,8 @@
 
 namespace simaai::neat::nodes::groups {
 
-/// RTSP stream decode path to build.
-enum class RtspDecodeType {
+/// RTSP stream codec path to depayload and parse.
+enum class RtspCodec {
   H264 = 0, ///< RTSP RTP/H.264 path.
   MJPEG,    ///< RTSP RTP/JPEG MJPEG path.
 };
@@ -30,9 +30,8 @@ enum class RtspDecodeType {
  * @ingroup nodes_groups
  */
 struct RtspEncodedInputOptions {
-  std::string url; ///< `rtsp://` URL to consume.
-  RtspDecodeType decode_type =
-      RtspDecodeType::H264; ///< Encoded RTSP path to build. Default preserves H.264 behavior.
+  std::string url;                   ///< `rtsp://` URL to consume.
+  RtspCodec codec = RtspCodec::H264; ///< Encoded RTSP path to build.
 
   int latency_ms = 200;         ///< Jitter-buffer latency in milliseconds.
   bool tcp = true;              ///< If true, request the RTSP TCP transport.

@@ -66,15 +66,15 @@ simaai::neat::Graph RtspEncodedInput(const RtspEncodedInputOptions& opt) {
   const bool insert_queue = opt.insert_queue && !(opt.sync_mode || force_sync);
 
   add_source_and_optional_queue(nodes, opt, insert_queue);
-  switch (opt.decode_type) {
-  case RtspDecodeType::H264:
+  switch (opt.codec) {
+  case RtspCodec::H264:
     add_h264_path(nodes, opt, insert_queue);
     break;
-  case RtspDecodeType::MJPEG:
+  case RtspCodec::MJPEG:
     add_mjpeg_path(nodes, opt, insert_queue);
     break;
   default:
-    throw std::invalid_argument("RtspEncodedInput: unsupported decode_type");
+    throw std::invalid_argument("RtspEncodedInput: unsupported codec");
   }
 
   simaai::neat::Graph graph;
