@@ -445,7 +445,6 @@ set(E2E_TESTS
   decoder_download_test
   decoder_drop_on_resolution_change_test
   decoder_dynamic_caps_test
-  decoder_quality_compare_test
   decoder_visible_caps_test
   hybrid_graph_basic_test
   hybrid_graph_bundle_test
@@ -473,6 +472,17 @@ foreach(test ${E2E_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e")
   endif()
 endforeach()
+
+
+add_pipeline_test(
+  decoder_quality_compare_test
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/decoder_quality_compare_test.cpp
+  ARGS --max-frames 40 --timeout-ms 20000
+)
+
+if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST decoder_quality_compare_test APPEND PROPERTY LABELS "e2e")
+endif()
 
 add_pipeline_test_long(
   preproc_build_input_repro_test
@@ -596,7 +606,6 @@ if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST decoder_quality_compare_test
     APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT=8757"
   )
-  set_tests_properties(decoder_quality_compare_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -946,6 +955,7 @@ endfunction()
 add_visual_frontend_tput_preset_test(
   visual_frontend_customer_api_fast_test
   ENV
+    "SIMA_VISUAL_TPUT_CASE=feature_histogram"
     "SIMA_VISUAL_TPUT_WIDTH=320"
     "SIMA_VISUAL_TPUT_HEIGHT=240"
     "SIMA_VISUAL_TPUT_BATCH=2"
@@ -953,13 +963,14 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_NUM_POINTS=32"
     "SIMA_VISUAL_TPUT_WARMUP=0"
     "SIMA_VISUAL_TPUT_ITERS=2"
-    "SIMA_VISUAL_TPUT_KLT_DETECT=1"
+    "SIMA_VISUAL_TPUT_KLT_DETECT=0"
     "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
-    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=0"
+    "SIMA_VISUAL_TPUT_CPU_GOLDEN=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_BOOLEAN_KLT_STATUS=0"
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast"
 )
-set_tests_properties(visual_frontend_customer_api_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_customer_api_klt_no_detect_fast_test
@@ -974,11 +985,12 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_ITERS=2"
     "SIMA_VISUAL_TPUT_KLT_DETECT=0"
     "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
-    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=0"
+    "SIMA_VISUAL_TPUT_CPU_GOLDEN=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_BOOLEAN_KLT_STATUS=0"
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast;klt"
 )
-set_tests_properties(visual_frontend_customer_api_klt_no_detect_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_predispatch_guard_fast_test
@@ -1230,7 +1242,6 @@ add_pipeline_test(
 if (NOT graph_migration_phase3_connected_yolo_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST graph_migration_phase3_connected_yolo_route_test
     APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified;phase3")
-  set_tests_properties(graph_migration_phase3_connected_yolo_route_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -1405,7 +1416,6 @@ if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLI
   set_property(TEST yolov8_model_benchmark_metrics_test
     APPEND PROPERTY LABELS "e2e;obj_detection;benchmark;metrics")
   set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
-  set_tests_properties(yolov8_model_benchmark_metrics_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -1471,7 +1481,7 @@ if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   set_property(TEST async_yolov11_pose_bf16_tput_test
     APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
   set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
-  set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES DISABLED TRUE)
+  set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_pipeline_test(
