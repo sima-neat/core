@@ -316,6 +316,7 @@ set(UNIT_TESTS
   unit_model_archive_loader_test
   unit_outputspec_test
   unit_pcie_nodes_test
+  unit_jpeg_framing_nodes_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test

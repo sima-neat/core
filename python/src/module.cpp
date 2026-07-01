@@ -46,10 +46,13 @@
 #include "nodes/common/FileInput.h"
 #include "nodes/common/ImageDecode.h"
 #include "nodes/common/JpegDecode.h"
+#include "nodes/common/JpegParse.h"
+#include "nodes/common/MultipartJpegDemux.h"
 #include "nodes/common/VideoScale.h"
 #include "nodes/common/ImageFreeze.h"
 #include "nodes/common/VideoRate.h"
 #include "nodes/common/VideoTrackSelect.h"
+#include "nodes/io/HttpSource.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
@@ -3569,6 +3572,21 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_height", &simaai::neat::SimaDecodeOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::SimaDecodeOptions::dec_fps)
       .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers);
+  nb::class_<simaai::neat::HttpSourceOptions>(m, "HttpSourceOptions")
+      .def(nb::init<>())
+      .def_rw("location", &simaai::neat::HttpSourceOptions::location)
+      .def_rw("timeout_seconds", &simaai::neat::HttpSourceOptions::timeout_seconds)
+      .def_rw("retries", &simaai::neat::HttpSourceOptions::retries)
+      .def_rw("is_live", &simaai::neat::HttpSourceOptions::is_live)
+      .def_rw("do_timestamp", &simaai::neat::HttpSourceOptions::do_timestamp)
+      .def_rw("user_agent", &simaai::neat::HttpSourceOptions::user_agent);
+  nb::class_<simaai::neat::MultipartJpegDemuxOptions>(m, "MultipartJpegDemuxOptions")
+      .def(nb::init<>())
+      .def_rw("boundary", &simaai::neat::MultipartJpegDemuxOptions::boundary)
+      .def_rw("single_stream", &simaai::neat::MultipartJpegDemuxOptions::single_stream);
+  nb::class_<simaai::neat::JpegParseOptions>(m, "JpegParseOptions")
+      .def(nb::init<>())
+      .def_rw("disable_passthrough", &simaai::neat::JpegParseOptions::disable_passthrough);
 
   // Phase 4 (plan slice): CVU dtype-bridge atoms (cast/cast_tess/dequant/detess/detess_cast).
   // Advanced/expert nodes — the planner normally inserts them; the standalone forms exist for
@@ -3710,9 +3728,14 @@ NB_MODULE(_pyneat_core, m) {
                 "height"_a = -1, "fps"_a = -1, "memory"_a = simaai::neat::CapsMemory::Any);
   nodes_mod.def("caps_nv12_sys_mem", &simaai::neat::nodes::CapsNV12SysMem, "width"_a, "height"_a,
                 "fps"_a);
+  nodes_mod.def("http_source", &simaai::neat::nodes::HttpSource, "options"_a);
   nodes_mod.def("file_input", &simaai::neat::nodes::FileInput, "path"_a);
   nodes_mod.def("image_decode", &simaai::neat::nodes::ImageDecode);
   nodes_mod.def("jpeg_decode", &simaai::neat::nodes::JpegDecode);
+  nodes_mod.def("multipart_jpeg_demux", &simaai::neat::nodes::MultipartJpegDemux,
+                "options"_a = simaai::neat::MultipartJpegDemuxOptions{});
+  nodes_mod.def("jpeg_parse", &simaai::neat::nodes::JpegParse,
+                "options"_a = simaai::neat::JpegParseOptions{});
   nodes_mod.def("video_scale", &simaai::neat::nodes::VideoScale);
   nodes_mod.def("video_rate", &simaai::neat::nodes::VideoRate);
   nodes_mod.def("image_freeze", &simaai::neat::nodes::ImageFreeze, "num_buffers"_a = -1);
