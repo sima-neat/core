@@ -87,6 +87,34 @@ std::unordered_map<const TensorBuffer*, TensorBufferRuntimeSidecar>& tensor_buff
   return sidecars;
 }
 
+void prune_expired_tensor_buffer_sidecars_locked() {
+  auto& sidecars = tensor_buffer_sidecars();
+  for (auto it = sidecars.begin(); it != sidecars.end();) {
+    const auto owner = it->second.owner.lock();
+    if (!owner || owner.get() != it->first) {
+      it = sidecars.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+void maybe_prune_expired_tensor_buffer_sidecars_locked() {
+  static std::size_t insertions_since_prune = 0;
+  constexpr std::size_t kPruneInterval = 512;
+  constexpr std::size_t kPruneSizeFloor = 1024;
+  auto& sidecars = tensor_buffer_sidecars();
+  ++insertions_since_prune;
+  if (sidecars.size() < kPruneSizeFloor && insertions_since_prune < kPruneInterval) {
+    return;
+  }
+  if (sidecars.size() < (4 * kPruneSizeFloor) && insertions_since_prune < kPruneInterval) {
+    return;
+  }
+  insertions_since_prune = 0;
+  prune_expired_tensor_buffer_sidecars_locked();
+}
+
 TensorBufferRuntimeSidecar*
 tensor_buffer_sidecar_locked(const std::shared_ptr<TensorBuffer>& storage, bool create) {
   if (!storage) {
@@ -106,6 +134,7 @@ tensor_buffer_sidecar_locked(const std::shared_ptr<TensorBuffer>& storage, bool 
     if (!create) {
       return nullptr;
     }
+    maybe_prune_expired_tensor_buffer_sidecars_locked();
     TensorBufferRuntimeSidecar sidecar;
     sidecar.owner = storage;
     it = sidecars.emplace(key, std::move(sidecar)).first;

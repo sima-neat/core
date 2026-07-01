@@ -5105,6 +5105,10 @@ PreprocOptions make_model_managed_preproc_options_base(const Model& model, bool 
   PreprocOptions opt;
   init_model_managed_processcvu_buffers(&opt, pack, sync);
   opt.model_managed_contract = true;
+#ifdef SIMA_NEAT_INTERNAL
+  opt.model_lineage =
+      make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
+#endif
   opt.next_cpu = pack.preproc_next_cpu();
   return opt;
 }
@@ -5145,10 +5149,6 @@ PreprocOptions make_preproc_options_from_typed_adapter(
     const Model& model, const internal::PreprocessPlannerResult& plan, const InputInfo* input,
     const std::string& element_name, const std::string& upstream_name, bool sync) {
   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
-#ifdef SIMA_NEAT_INTERNAL
-  opt.model_lineage =
-      make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
-#endif
   opt.element_name = element_name;
   opt.node_name = element_name.empty() ? opt.node_name : element_name;
   if (!upstream_name.empty()) {
