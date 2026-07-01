@@ -471,6 +471,32 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
     throw std::runtime_error("Preproc: missing input w/h/format from upstream input contract.");
   }
 
+  if (opt_.max_input_width() > 0 && contract.width > opt_.max_input_width()) {
+    std::ostringstream oss;
+    oss << "Preproc: input width " << contract.width << " exceeds max_input_width "
+        << opt_.max_input_width()
+        << ". max_input_width is a capacity bound; increase the model preprocess input_max_width "
+           "or provide a smaller input.";
+    throw std::runtime_error(oss.str());
+  }
+  if (opt_.max_input_height() > 0 && contract.height > opt_.max_input_height()) {
+    std::ostringstream oss;
+    oss << "Preproc: input height " << contract.height << " exceeds max_input_height "
+        << opt_.max_input_height()
+        << ". max_input_height is a capacity bound; increase the model preprocess "
+           "input_max_height or provide a smaller input.";
+    throw std::runtime_error(oss.str());
+  }
+  if (opt_.max_input_channels() > 0 && contract.depth > 0 &&
+      contract.depth > opt_.max_input_channels()) {
+    std::ostringstream oss;
+    oss << "Preproc: input depth " << contract.depth << " exceeds max_input_depth "
+        << opt_.max_input_channels()
+        << ". max_input_depth is a capacity bound; increase the model preprocess input_max_depth "
+           "or provide a compatible input.";
+    throw std::runtime_error(oss.str());
+  }
+
   opt_.set_input_shape(compact_shape({contract.height, contract.width, 0}));
   const std::string contract_format = upper_copy(contract.format);
   if (!opt_.model_managed_contract || opt_.input_img_type.empty()) {

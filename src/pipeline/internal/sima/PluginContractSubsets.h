@@ -280,6 +280,16 @@ extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage);
 ProcessMlaContractSubset extract_processmla_contract_subset_from_static_contract(
     const MlaStaticContract& contract, bool include_dispatcher_output_names = false);
 
+/// Match the published MLA boundary view that corresponds to a detess transport tensor, by name.
+/// Heterogeneous egress (an MLA output published in normal layout that bypasses detessellation)
+/// makes the detess-head list a SUBSET of the published-output list, so positional indexing
+/// mis-aligns the boundary (e.g. output_0's size attached to output_1's detess). Returns the
+/// published output whose name == transport_name; falls back to published[fallback_index] for
+/// legacy homogeneous MPKs whose names align in order; nullptr if neither resolves.
+const MpkTensorContract*
+match_published_output_for_transport(const std::vector<MpkTensorContract>& published_outputs,
+                                     const std::string& transport_name, std::size_t fallback_index);
+
 /// Extract all Detessellate subsets from an MPK (one per detess stage).
 std::vector<DetessellateContractSubset>
 extract_detessellate_contract_subsets_from_mpk(const MpkContract& contract);

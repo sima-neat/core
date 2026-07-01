@@ -4821,14 +4821,10 @@ int resolve_preproc_input_width(const internal::PreprocessPlannerResult& plan,
   if (resolved_ingress != nullptr && resolved_ingress->width > 0) {
     return resolved_ingress->width;
   }
-  // Model-managed preproc is a user-facing image ingress even when the MPK route
-  // fans out internally into multiple tensor ingress contracts (for example, EVO50
-  // image_l + image_uv). In that case there is no single route ingress to project
-  // here, so fall back to the canonical modelpack image contract instead of
-  // treating the split internal ingress tensors as the public ingress.
-  if (plan.modelpack_max_width > 0) {
-    return plan.modelpack_max_width;
-  }
+  // Do not fall back to modelpack_max_width here: max is an admission/capacity
+  // envelope, not the current source image width. For dynamic image ingress the
+  // actual width must come from the seed Sample, upstream caps, or an explicit
+  // fixed ingress contract and will be rebound through InputContractConfigurable.
   return (plan.resolved_plan.effective.resize.width > 0) ? plan.resolved_plan.effective.resize.width
                                                          : 0;
 }
@@ -4848,14 +4844,46 @@ int resolve_preproc_input_height(const internal::PreprocessPlannerResult& plan,
   if (resolved_ingress != nullptr && resolved_ingress->height > 0) {
     return resolved_ingress->height;
   }
-  // See resolve_preproc_input_width(): multi-ingress internal contracts must not
-  // erase the public model-managed image ingress contract.
-  if (plan.modelpack_max_height > 0) {
-    return plan.modelpack_max_height;
-  }
+  // See resolve_preproc_input_width(): max height is capacity, not actual input height.
   return (plan.resolved_plan.effective.resize.height > 0)
              ? plan.resolved_plan.effective.resize.height
              : 0;
+}
+
+int resolve_preproc_input_depth(const internal::PreprocessPlannerResult& plan,
+                                const InputInfo* input, const std::string& input_format);
+
+int resolve_preproc_max_input_width(const internal::PreprocessPlannerResult& plan,
+                                    const InputInfo* input) {
+  if (plan.modelpack_max_width > 0) {
+    return plan.modelpack_max_width;
+  }
+  if (input && input->width > 0) {
+    return input->width;
+  }
+  return resolve_preproc_input_width(plan, input);
+}
+
+int resolve_preproc_max_input_height(const internal::PreprocessPlannerResult& plan,
+                                     const InputInfo* input) {
+  if (plan.modelpack_max_height > 0) {
+    return plan.modelpack_max_height;
+  }
+  if (input && input->height > 0) {
+    return input->height;
+  }
+  return resolve_preproc_input_height(plan, input);
+}
+
+int resolve_preproc_max_input_depth(const internal::PreprocessPlannerResult& plan,
+                                    const InputInfo* input, const std::string& input_format) {
+  if (plan.modelpack_max_depth > 0) {
+    return plan.modelpack_max_depth;
+  }
+  if (input && input->depth > 0) {
+    return input->depth;
+  }
+  return resolve_preproc_input_depth(plan, input, input_format);
 }
 
 int resolve_preproc_input_depth(const internal::PreprocessPlannerResult& plan,
@@ -4940,12 +4968,32 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   const auto& effective = plan.resolved_plan.effective;
 
   opt->input_img_type = resolve_preproc_input_format(plan, input);
+  const int actual_input_height = resolve_preproc_input_height(plan, input);
+  const int actual_input_width = resolve_preproc_input_width(plan, input);
+  const int input_depth = resolve_preproc_input_depth(plan, input, opt->input_img_type);
+  const int max_input_height = resolve_preproc_max_input_height(plan, input);
+  const int max_input_width = resolve_preproc_max_input_width(plan, input);
+  const int max_input_depth = resolve_preproc_max_input_depth(plan, input, opt->input_img_type);
+  if (max_input_height > 0 && max_input_width > 0) {
+    opt->max_input_shape = {max_input_height, max_input_width};
+    if (max_input_depth > 0) {
+      opt->max_input_shape.push_back(max_input_depth);
+    }
+  } else {
+    opt->max_input_shape.clear();
+  }
   {
-    std::vector<int> input_shape = {resolve_preproc_input_height(plan, input),
-                                    resolve_preproc_input_width(plan, input)};
-    const int input_depth = resolve_preproc_input_depth(plan, input, opt->input_img_type);
+    // input_shape is the actual source geometry when known. If only an input
+    // capacity envelope is known, keep the plugin config buildable by using
+    // that envelope as the initial dynamic shape; Graph::build(seed) or
+    // upstream caps rebinding must replace it with actual runtime geometry.
+    std::vector<int> input_shape = {actual_input_height > 0 ? actual_input_height
+                                                            : max_input_height,
+                                    actual_input_width > 0 ? actual_input_width : max_input_width};
     if (input_depth > 0) {
       input_shape.push_back(input_depth);
+    } else if (max_input_depth > 0) {
+      input_shape.push_back(max_input_depth);
     }
     opt->set_input_shape(std::move(input_shape));
   }
@@ -5525,7 +5573,7 @@ std::vector<int> post_region_compiled_logical_output_indices(const internal::Mod
   return {};
 }
 
-std::vector<int>
+[[maybe_unused]] std::vector<int>
 upstream_logical_indices_for_post_region(const internal::ModelPack& pack,
                                          const std::vector<internal::RouteRegion>& regions,
                                          const std::size_t region_index) {
@@ -5558,52 +5606,57 @@ void validate_fanout_region_contract_alignment(const internal::ModelPack& pack,
     throw std::runtime_error("Model post region fanout contract is empty.");
   }
 
-  std::size_t upstream_outputs = 0U;
-  if (region_index == 0U) {
-    upstream_outputs = model_managed_mla_logical_output_count(pack);
-  } else {
-    upstream_outputs = post_region_compiled_logical_output_count(pack, regions[region_index - 1U]);
-  }
-  if (upstream_outputs != 0U && upstream_outputs != expected_outputs) {
+  // A fanout region handles a SUBSET of the MLA's logical outputs (those routed to this kernel
+  // kind). A heterogeneous egress -- e.g. an output published in normal layout that bypasses the
+  // detessellation fanout (per-token int8 "normal" output) -- is valid: that output simply does
+  // not appear in the Detess region while still appearing in the Dequant region. Validate each
+  // region against the MLA contract universe rather than assuming every fanout covers all MLA
+  // outputs (the old total-count equality) or a linear previous-region chain (which does not hold
+  // for DAG egress where one output skips a stage).
+  const auto region_in_indices = unique_logical_indices_from_bindings(region.inputs);
+  const auto region_out_indices = unique_logical_indices_from_bindings(region.outputs);
+
+  // Internal consistency: one fanout member per distinct logical output this region handles.
+  if (!region_in_indices.empty() && region_in_indices.size() != expected_outputs) {
     throw std::runtime_error(
-        "Model post region upstream logical output count mismatch for fanout stage.");
+        "Model post region fanout member count does not match its logical input count.");
   }
 
-  const std::size_t compiled_outputs = post_region_compiled_logical_output_count(pack, region);
-  if (compiled_outputs != 0U && compiled_outputs != expected_outputs) {
+  // Each region's logical indices must be a subset of the MLA's logical outputs.
+  const auto mla_indices = sorted_logical_index_set(model_managed_mla_logical_output_indices(pack));
+  if (!mla_indices.empty()) {
+    const auto in_universe = [&](int idx) {
+      return std::binary_search(mla_indices.begin(), mla_indices.end(), idx);
+    };
+    for (int idx : region_in_indices) {
+      if (!in_universe(idx)) {
+        throw std::runtime_error(
+            "Model post region fanout consumes a logical index absent from the MLA contract.");
+      }
+    }
+    for (int idx : region_out_indices) {
+      if (!in_universe(idx)) {
+        throw std::runtime_error(
+            "Model post region fanout produces a logical index absent from the MLA contract.");
+      }
+    }
+  }
+
+  // When model-managed post-process contracts are present, keep the stricter per-region
+  // compiled-count alignment as a sanity check. MPKs whose post stages are not model-managed
+  // (require_model_managed_postprocess_contract throws) skip it: materialization builds those
+  // nodes from the typed plugin adapters, not from these contracts.
+  bool have_compiled = false;
+  std::size_t compiled_outputs = 0U;
+  try {
+    compiled_outputs = post_region_compiled_logical_output_count(pack, region);
+    have_compiled = true;
+  } catch (const std::exception&) {
+    have_compiled = false;
+  }
+  if (have_compiled && compiled_outputs != 0U && compiled_outputs != expected_outputs) {
     throw std::runtime_error(
         "Model post region compiled logical output count mismatch for fanout stage.");
-  }
-
-  const auto expected_input_order = unique_logical_indices_from_bindings(region.inputs);
-  const auto upstream_input_order =
-      upstream_logical_indices_for_post_region(pack, regions, region_index);
-  if (!expected_input_order.empty() && !upstream_input_order.empty()) {
-    const bool require_exact_input_order =
-        region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast;
-    const bool inputs_match = require_exact_input_order
-                                  ? (expected_input_order == upstream_input_order)
-                                  : (sorted_logical_index_set(expected_input_order) ==
-                                     sorted_logical_index_set(upstream_input_order));
-    if (!inputs_match) {
-      throw std::runtime_error(
-          "Model post region upstream logical output ordering mismatch for fanout stage.");
-    }
-  }
-
-  const auto expected_output_order = unique_logical_indices_from_bindings(region.outputs);
-  const auto compiled_output_order = post_region_compiled_logical_output_indices(pack, region);
-  if (!expected_output_order.empty() && !compiled_output_order.empty()) {
-    const bool require_exact_output_order =
-        region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast;
-    const bool outputs_match = require_exact_output_order
-                                   ? (expected_output_order == compiled_output_order)
-                                   : (sorted_logical_index_set(expected_output_order) ==
-                                      sorted_logical_index_set(compiled_output_order));
-    if (!outputs_match) {
-      throw std::runtime_error(
-          "Model post region compiled logical output ordering mismatch for fanout stage.");
-    }
   }
 }
 
@@ -5826,6 +5879,91 @@ build_postprocess_nodes_impl(const Model& model, const internal::ModelPack& pack
   }
   std::vector<std::shared_ptr<Node>> nodes;
   nodes.reserve(post_regions.size());
+  if (std::getenv("NEAT_DUMP_POST_REGIONS") != nullptr) {
+    using GK = pipeline_internal::sima::RouteGraphKernelKind;
+    auto gk_name = [](GK k) -> const char* {
+      switch (k) {
+      case GK::Unknown:
+        return "Unknown";
+      case GK::Preproc:
+        return "Preproc";
+      case GK::Quant:
+        return "Quant";
+      case GK::Tess:
+        return "Tess";
+      case GK::QuantTess:
+        return "QuantTess";
+      case GK::Cast:
+        return "Cast";
+      case GK::CastTess:
+        return "CastTess";
+      case GK::Detess:
+        return "Detess";
+      case GK::DetessCast:
+        return "DetessCast";
+      case GK::DetessDequant:
+        return "DetessDequant";
+      case GK::Dequantize:
+        return "Dequantize";
+      case GK::BoxDecode:
+        return "BoxDecode";
+      case GK::Unpack:
+        return "Unpack";
+      case GK::Slice:
+        return "Slice";
+      case GK::PassThrough:
+        return "PassThrough";
+      case GK::Mla:
+        return "Mla";
+      }
+      return "?";
+    };
+    auto rk_name = [](internal::RouteRegionKind k) -> const char* {
+      switch (k) {
+      case internal::RouteRegionKind::Linear:
+        return "Linear";
+      case internal::RouteRegionKind::FanoutMap:
+        return "FanoutMap";
+      case internal::RouteRegionKind::FaninJoin:
+        return "FaninJoin";
+      case internal::RouteRegionKind::BoxDecodeTerminal:
+        return "BoxDecodeTerminal";
+      }
+      return "?";
+    };
+    auto safe_count = [&](const internal::RouteRegion& rr) -> long {
+      try {
+        return static_cast<long>(post_region_compiled_logical_output_count(pack, rr));
+      } catch (...) {
+        return -1;
+      }
+    };
+    auto join_idx = [](const std::vector<int>& v) {
+      std::string s;
+      for (int x : v)
+        s += std::to_string(x) + ",";
+      return s;
+    };
+    std::fprintf(stderr, "[post-regions] count=%zu mla_logical_outputs=%zu\n", post_regions.size(),
+                 model_managed_mla_logical_output_count(pack));
+    for (std::size_t i = 0; i < post_regions.size(); ++i) {
+      const auto& r = post_regions[i];
+      std::string mem;
+      for (auto m : r.member_plugin_indices)
+        mem += std::to_string(m) + ",";
+      std::fprintf(stderr,
+                   "[post-regions] [%zu] kind=%s op=%s members=%zu{%s} in_lidx={%s} out_lidx={%s}",
+                   i, rk_name(r.kind), gk_name(r.op_kind), r.member_plugin_indices.size(),
+                   mem.c_str(), join_idx(unique_logical_indices_from_bindings(r.inputs)).c_str(),
+                   join_idx(unique_logical_indices_from_bindings(r.outputs)).c_str());
+      if (r.kind == internal::RouteRegionKind::FanoutMap) {
+        long up = (i == 0U) ? static_cast<long>(model_managed_mla_logical_output_count(pack))
+                            : safe_count(post_regions[i - 1]);
+        std::fprintf(stderr, " upstream=%ld compiled=%ld", up, safe_count(r));
+      }
+      std::fprintf(stderr, "\n");
+    }
+  }
   for (std::size_t i = 0; i < post_regions.size(); ++i) {
     const auto& region = post_regions[i];
     if (region.kind == internal::RouteRegionKind::FaninJoin) {
