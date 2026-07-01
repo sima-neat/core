@@ -339,6 +339,29 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
     require(!opt.normalize,
             "PreprocOptions(Model) should derive normalize from the resolved preprocess plan, "
             "not from legacy graph defaults");
+#ifdef SIMA_NEAT_INTERNAL
+    const auto model_max_shape = model_managed_preproc_max_input_shape(opt);
+    require(PreprocOptions::shape_dim(model_max_shape, 1) >= opt.input_width() &&
+                PreprocOptions::shape_dim(model_max_shape, 0) >= opt.input_height(),
+            "PreprocOptions(Model) should preserve internal modelpack max input capacity");
+
+    Preproc capacity_node(opt);
+    InputContract oversized_contract;
+    oversized_contract.media_type = "video/x-raw";
+    oversized_contract.format = opt.input_img_type;
+    oversized_contract.width = PreprocOptions::shape_dim(model_max_shape, 1) + 1;
+    oversized_contract.height = opt.input_height();
+    oversized_contract.depth = opt.input_channels();
+    bool capacity_threw = false;
+    try {
+      capacity_node.apply_input_contract(oversized_contract, nullptr);
+    } catch (const std::exception& e) {
+      capacity_threw = true;
+      require_contains(std::string(e.what()), "exceeds max_input_width",
+                       "PreprocOptions(Model) capacity violation should mention max_input_width");
+    }
+    require(capacity_threw, "PreprocOptions(Model) must reject inputs above modelpack capacity");
+#endif
 
     Preproc node(opt);
     const std::string frag = node.backend_fragment(0);
