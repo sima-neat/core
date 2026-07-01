@@ -877,6 +877,14 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     throw std::invalid_argument("InputStream::try_push_message: encoded Sample missing storage");
   }
 
+  if (!st.opt.copy_input && input.storage->kind == simaai::neat::StorageKind::GstSample &&
+      input.storage->holder) {
+    return push_holder_transport(
+        st, input.storage->holder, "InputStream::try_push_message(encoded_holder)",
+        /*record_timings=*/st.timing_enabled, meta.frame_id, input_seq_override,
+        orig_input_seq_override, meta.stream_id, meta.stream_label, timing_override, &msg, &spec);
+  }
+
   const bool timings = st.timing_enabled;
   size_t nbytes = 0;
   std::string bytes_err;
