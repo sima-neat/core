@@ -6848,6 +6848,8 @@ build_processcvu_mpk_detess_compile_inputs_local(const MpkContract& contract) {
       ordered_subsets, runtime_output_names, runtime_output_names);
   std::vector<std::uint64_t> packed_input_sizes;
   packed_input_sizes.reserve(ordered_subsets.size());
+  std::vector<MpkTensorContract> routed_mla_published_outputs;
+  routed_mla_published_outputs.reserve(ordered_subsets.size());
   for (std::size_t i = 0; i < ordered_subsets.size(); ++i) {
     const auto& stage = *ordered_detess_stages[i];
     const auto& subset = ordered_subsets[i];
@@ -6862,10 +6864,11 @@ build_processcvu_mpk_detess_compile_inputs_local(const MpkContract& contract) {
         *published_ptr, frame_type, subset.input_transport_shape, subset.input_transport_size_bytes,
         stage.name);
     packed_input_sizes.push_back(transport_view.transport_size_bytes);
+    routed_mla_published_outputs.push_back(*published_ptr);
   }
 
   auto out = build_processcvu_compile_inputs_from_runtime_config(runtime);
-  apply_published_routed_input_bindings(&out, mla_published_outputs, &packed_input_sizes,
+  apply_published_routed_input_bindings(&out, routed_mla_published_outputs, &packed_input_sizes,
                                         runtime.graph_family);
   force_direct_materialization_for_inputs(&out);
 
@@ -7103,6 +7106,8 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
   entries.reserve(ordered_cast_stages.size());
   std::vector<MpkTensorContract> transport_inputs;
   transport_inputs.reserve(ordered_cast_stages.size());
+  std::vector<MpkTensorContract> routed_mla_published_outputs;
+  routed_mla_published_outputs.reserve(ordered_cast_stages.size());
   std::vector<std::uint64_t> packed_input_sizes;
   packed_input_sizes.reserve(ordered_subsets.size());
   std::uint64_t packed_output_offset = 0U;
@@ -7126,6 +7131,7 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
           "processcvu MPK detesscast route requires MLA published boundary views");
     }
     const auto& published_input = *published_input_ptr;
+    routed_mla_published_outputs.push_back(published_input);
     const auto& transport_input = detess_stage.input_tensors.front();
     const auto transport_view = validate_detess_ingress_transport_local(
         transport_input, frame_type, subset.input_transport_shape,
@@ -7272,7 +7278,7 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
   out.facts = build_processcvu_packed_route_facts(packed_parent_input_name, "output_tensor",
                                                   entries, runtime.primary_output_name,
                                                   runtime.published_output_names);
-  apply_published_routed_input_bindings(&out, mla_published_outputs, &packed_input_sizes,
+  apply_published_routed_input_bindings(&out, routed_mla_published_outputs, &packed_input_sizes,
                                         runtime.graph_family);
   force_direct_materialization_for_inputs(&out);
   for (std::size_t i = 0; i < out.facts.outputs.size() && i < entries.size(); ++i) {
@@ -7743,6 +7749,8 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
   entries.reserve(count);
   std::vector<MpkTensorContract> synthetic_inputs;
   synthetic_inputs.reserve(count);
+  std::vector<MpkTensorContract> routed_mla_published_outputs;
+  routed_mla_published_outputs.reserve(count);
   std::vector<std::uint64_t> packed_input_sizes;
   packed_input_sizes.reserve(count);
   std::vector<std::vector<std::int64_t>> canonical_output_shapes;
@@ -7796,6 +7804,7 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
           "processcvu MPK detessdequant route requires MLA published boundary views");
     }
     const auto& published_input = *published_input_ptr;
+    routed_mla_published_outputs.push_back(published_input);
     const auto& dequant_output_tensor = dequant.output_tensors.front();
     const std::string resolved_input_dtype = normalize_dtype_token_local(head.frame_type);
     const auto transport_view = validate_detess_ingress_transport_local(
@@ -8018,7 +8027,7 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
   out.facts = build_processcvu_packed_route_facts("input_tensor", "output_tensor", entries,
                                                   runtime.primary_output_name,
                                                   runtime.published_output_names);
-  apply_published_routed_input_bindings(&out, mla_published_outputs, &packed_input_sizes,
+  apply_published_routed_input_bindings(&out, routed_mla_published_outputs, &packed_input_sizes,
                                         runtime.graph_family);
   force_direct_materialization_for_inputs(&out);
   for (std::size_t i = 0; i < out.facts.outputs.size() && i < entries.size(); ++i) {
