@@ -757,6 +757,81 @@ def test_jpeg_framing_nodes_are_exposed():
   _assert_not_type_error(lambda: pyneat.nodes.jpeg_parse(parser))
 
 
+def test_rtsp_encoded_and_decoded_groups_are_exposed():
+  assert pyneat.RtspCodec.H264.name == "H264"
+  assert pyneat.RtspCodec.MJPEG.name == "MJPEG"
+  _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize())
+  _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize(26))
+
+  encoded = pyneat.RtspEncodedInputOptions()
+  assert encoded.url == ""
+  assert encoded.codec == pyneat.RtspCodec.H264
+  assert encoded.latency_ms == 200
+  assert encoded.tcp is True
+  assert encoded.drop_on_latency is False
+  assert encoded.buffer_mode == ""
+  assert encoded.insert_queue is True
+  assert encoded.sync_mode is False
+  assert encoded.h264_payload_type == 96
+  assert encoded.mjpeg_payload_type == 26
+  assert encoded.auto_caps_from_stream is True
+
+  encoded.url = "rtsp://example.local/mjpeg"
+  encoded.codec = pyneat.RtspCodec.MJPEG
+  group = pyneat.groups.rtsp_encoded_input(encoded)
+  assert isinstance(group, pyneat.Graph)
+  backend = group.describe_backend().lower()
+  assert "rtspsrc" in backend
+  assert "rtpjpegdepay" in backend
+  assert "jpegparse" in backend
+  assert "rtph264depay" not in backend
+
+  encoded_spec = pyneat.groups.rtsp_encoded_output_spec(encoded)
+  assert encoded_spec.payload_type == pyneat.PayloadType.Encoded
+  assert encoded_spec.media_type == "image/jpeg"
+  assert encoded_spec.format == "JPEG"
+
+  decoded = pyneat.RtspDecodedInputOptions()
+  assert decoded.codec == pyneat.RtspCodec.H264
+  assert decoded.drop_on_latency is False
+  assert decoded.buffer_mode == ""
+  assert decoded.payload_type == 96
+  assert decoded.mjpeg_payload_type == 26
+  assert decoded.dec_width == -1
+  assert decoded.dec_height == -1
+  assert decoded.dec_fps == -1
+  assert decoded.num_buffers == -1
+
+  decoded.url = "rtsp://example.local/mjpeg"
+  decoded.codec = pyneat.RtspCodec.MJPEG
+  decoded.dec_width = 640
+  decoded.dec_height = 480
+  decoded.dec_fps = 30
+  decoded_group = pyneat.groups.rtsp_decoded_input(decoded)
+  assert isinstance(decoded_group, pyneat.Graph)
+  try:
+    decoded_backend = decoded_group.describe_backend().lower()
+  except RuntimeError as exc:
+    message = str(exc).lower()
+    if (
+        "required gstreamer element not found: neatdecoder" not in message
+        and "required neat factory is missing" not in message
+    ):
+      raise
+    pytest.skip("native decoder backend is not available in this environment")
+  assert "rtpjpegdepay" in decoded_backend
+  assert "jpegparse" in decoded_backend
+  assert "neatdecoder" in decoded_backend
+  assert "dec-type=mjpeg" in decoded_backend
+
+  decoded_spec = pyneat.groups.rtsp_decoded_output_spec(decoded)
+  assert decoded_spec.media_type == "video/x-raw"
+  assert decoded_spec.format == "NV12"
+  assert decoded_spec.width == 640
+  assert decoded_spec.height == 480
+  assert decoded_spec.memory == "SimaAI"
+
+
 def test_http_mjpeg_decoded_input_group_is_exposed():
   opt = pyneat.HttpMjpegDecodedInputOptions()
   assert opt.url == ""
