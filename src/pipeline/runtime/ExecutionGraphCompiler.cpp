@@ -11,7 +11,7 @@
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
-#include "pipeline/internal/InputPolicy.h"
+#include "pipeline/internal/CapsStringUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
 
 #include <algorithm>
@@ -867,7 +867,13 @@ build_runtime_graph_from_connected_public_view(const View& view,
 
 OutputSpec input_options_to_output_spec(const InputOptions& opt) {
   OutputSpec spec;
-  spec.media_type = resolve_input_media_type(opt);
+  const std::string caps_media = pipeline_internal::caps_media_type(opt.caps_override);
+  const PayloadType caps_payload =
+      opt.caps_override.empty()
+          ? PayloadType::Auto
+          : pipeline_internal::payload_type_from_caps_string(opt.caps_override);
+  spec.media_type = !caps_media.empty() ? caps_media : resolve_input_media_type(opt);
+  spec.payload_type = opt.payload_type != PayloadType::Auto ? opt.payload_type : caps_payload;
   spec.format = opt.format.str();
   spec.width = opt.width;
   spec.height = opt.height;
@@ -879,9 +885,17 @@ OutputSpec input_options_to_output_spec(const InputOptions& opt) {
 }
 
 bool input_options_complete(const InputOptions& opt) {
-  const std::string media_type = resolve_input_media_type(opt);
+  const std::string caps_media = pipeline_internal::caps_media_type(opt.caps_override);
+  const PayloadType caps_payload =
+      opt.caps_override.empty()
+          ? PayloadType::Auto
+          : pipeline_internal::payload_type_from_caps_string(opt.caps_override);
+  const std::string media_type = !caps_media.empty() ? caps_media : resolve_input_media_type(opt);
   if (media_type.empty()) {
     return false;
+  }
+  if (!opt.caps_override.empty() && caps_payload == PayloadType::Encoded) {
+    return true;
   }
   if (media_type == "video/x-raw") {
     return !opt.format.empty() && opt.width > 0 && opt.height > 0;
