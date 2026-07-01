@@ -1750,6 +1750,9 @@ match_published_output_for_transport(const std::vector<MpkTensorContract>& publi
         return &candidate;
       }
     }
+    if (fallback_index < published_outputs.size()) {
+      return &published_outputs[fallback_index];
+    }
     std::ostringstream names;
     names << "[";
     for (std::size_t i = 0; i < published_outputs.size(); ++i) {
