@@ -1609,6 +1609,17 @@ if (NOT rtsp_pull_frame_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  rtsp_encoded_boundary_caps_test
+  e2e_testing/rtsp_encoded_boundary_caps_test.cpp
+)
+
+if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY LABELS "e2e;rtsp")
+  set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+add_pipeline_test(
   hybrid_graph_rtsp_resnet50_tput_test
   e2e_pipelines/img_classification/hybrid_graph_rtsp_resnet50_tput_test.cpp
 )
@@ -1893,6 +1904,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   file_read_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
+  rtsp_encoded_boundary_caps_test
   rtsp_pull_frame_test
 )
 foreach(_simaneat_decoder_media_test IN LISTS SIMANEAT_DECODER_MEDIA_E2E_TESTS)

@@ -107,6 +107,38 @@ int main() {
     require(jpeg_spec.media_type == "image/jpeg",
             "JPEG caps_override should infer image/jpeg media_type");
 
+    simaai::neat::InputOptions raw_feature_caps_opt;
+    raw_feature_caps_opt.payload_type = simaai::neat::PayloadType::Auto;
+    raw_feature_caps_opt.caps_override =
+        "video/x-raw(memory:SystemMemory),format=(string)NV12,width=(int)16,height=(int)8";
+    auto raw_feature_caps_input = simaai::neat::nodes::Input(raw_feature_caps_opt);
+    const auto* raw_feature_caps_provider =
+        dynamic_cast<const simaai::neat::OutputSpecProvider*>(raw_feature_caps_input.get());
+    require(raw_feature_caps_provider != nullptr,
+            "raw feature caps Input should provide output spec");
+    const simaai::neat::OutputSpec raw_feature_spec = raw_feature_caps_provider->output_spec({});
+    require(raw_feature_spec.payload_type == simaai::neat::PayloadType::Image,
+            "raw caps features should infer Image payload_type");
+    require(raw_feature_spec.media_type == "video/x-raw",
+            "raw caps features should infer canonical video/x-raw media_type");
+
+    simaai::neat::InputOptions tensor_feature_caps_opt;
+    tensor_feature_caps_opt.payload_type = simaai::neat::PayloadType::Auto;
+    tensor_feature_caps_opt.caps_override =
+        "application/vnd.simaai.tensor(memory:SystemMemory),rank=(int)3,dim0=(int)8,"
+        "dim1=(int)16,dim2=(int)3";
+    auto tensor_feature_caps_input = simaai::neat::nodes::Input(tensor_feature_caps_opt);
+    const auto* tensor_feature_caps_provider =
+        dynamic_cast<const simaai::neat::OutputSpecProvider*>(tensor_feature_caps_input.get());
+    require(tensor_feature_caps_provider != nullptr,
+            "tensor feature caps Input should provide output spec");
+    const simaai::neat::OutputSpec tensor_feature_spec =
+        tensor_feature_caps_provider->output_spec({});
+    require(tensor_feature_spec.payload_type == simaai::neat::PayloadType::Tensor,
+            "tensor caps features should infer Tensor payload_type");
+    require(tensor_feature_spec.media_type == "application/vnd.simaai.tensor",
+            "tensor caps features should infer canonical tensor media_type");
+
     auto caps =
         simaai::neat::nodes::CapsRaw("GRAY8", 10, 8, 30, simaai::neat::CapsMemory::SystemMemory);
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes{appsrc, caps};
