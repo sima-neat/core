@@ -217,6 +217,26 @@ void destroy_gst_buffer_loan_keepalive(gpointer data) {
   delete static_cast<GstBufferLoanKeepalive*>(data);
 }
 
+void attach_zero_copy_loan_to_gst_buffer_local(GstBuffer* buffer,
+                                               const std::shared_ptr<void>& loan) {
+  if (!buffer || !loan) {
+    return;
+  }
+  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
+      gst_mini_object_get_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark()));
+  if (!keepalive) {
+    keepalive = new GstBufferLoanKeepalive();
+    gst_mini_object_set_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark(), keepalive,
+                              destroy_gst_buffer_loan_keepalive);
+  }
+  const auto found =
+      std::find_if(keepalive->loans.begin(), keepalive->loans.end(),
+                   [&](const std::shared_ptr<void>& v) { return v.get() == loan.get(); });
+  if (found == keepalive->loans.end()) {
+    keepalive->loans.push_back(loan);
+  }
+}
+
 void collect_zero_copy_loans_from_sample(const Sample& sample,
                                          std::vector<std::shared_ptr<void>>* out) {
   if (!out) {
@@ -2424,6 +2444,10 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
     std::shared_ptr<void> producer_lifetime = producer_lifetime_weak.lock();
     auto loan = std::make_shared<ZeroCopyLoanToken>(gate, std::move(producer_lifetime));
     auto original_holder = tensor.storage->holder;
+    if (GstBuffer* holder_buffer = buffer_from_tensor_holder(original_holder)) {
+      attach_zero_copy_loan_to_gst_buffer_local(holder_buffer, loan);
+      gst_buffer_unref(holder_buffer);
+    }
     tensor.storage->holder =
         std::shared_ptr<void>(original_holder.get(), [original_holder, loan](void*) mutable {
           original_holder.reset();
@@ -2560,20 +2584,8 @@ void attach_zero_copy_loans_to_gst_buffer(GstBuffer* buffer, const Sample& sampl
   if (loans.empty()) {
     return;
   }
-  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
-      gst_mini_object_get_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark()));
-  if (!keepalive) {
-    keepalive = new GstBufferLoanKeepalive();
-    gst_mini_object_set_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark(), keepalive,
-                              destroy_gst_buffer_loan_keepalive);
-  }
   for (const auto& loan : loans) {
-    const auto found =
-        std::find_if(keepalive->loans.begin(), keepalive->loans.end(),
-                     [&](const std::shared_ptr<void>& v) { return v.get() == loan.get(); });
-    if (found == keepalive->loans.end()) {
-      keepalive->loans.push_back(loan);
-    }
+    attach_zero_copy_loan_to_gst_buffer_local(buffer, loan);
   }
 }
 
