@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace simaai::neat::internal {
 
@@ -38,6 +39,7 @@ struct ModelLineageBinding {
   ModelLineageStageRole stage_role = ModelLineageStageRole::Infer;
   RequestedPostRouteKind requested_post = RequestedPostRouteKind::Auto;
   std::string requester_kind;
+  std::vector<int> preproc_max_input_shape;
 };
 
 class ModelLineageProvider {

@@ -47,10 +47,9 @@ struct PreprocOptions {
   /// Initialize options from a loaded `Model` (pulls input/output shapes, dtype, scale/zp).
   explicit PreprocOptions(const simaai::neat::Model& model);
 
-  std::vector<int> input_shape;     ///< Input image shape (H, W, C).
-  std::vector<int> output_shape;    ///< Output tensor shape after resize/normalize.
-  std::vector<int> slice_shape;     ///< Optional slice/tile shape used for batched processing.
-  std::vector<int> max_input_shape; ///< Maximum admissible input image shape (H, W, C).
+  std::vector<int> input_shape;  ///< Input image shape (H, W, C).
+  std::vector<int> output_shape; ///< Output tensor shape after resize/normalize.
+  std::vector<int> slice_shape;  ///< Optional slice/tile shape used for batched processing.
 
   int scaled_width = 0;  ///< Intermediate scaled width (before crop/pad), pixels.
   int scaled_height = 0; ///< Intermediate scaled height (before crop/pad), pixels.
@@ -136,21 +135,6 @@ struct PreprocOptions {
   /// Input channel count.
   int input_channels() const {
     return shape_channels(input_shape);
-  }
-
-  /// Maximum admissible input image height.
-  int max_input_height() const {
-    return shape_dim(max_input_shape, 0);
-  }
-
-  /// Maximum admissible input image width.
-  int max_input_width() const {
-    return shape_dim(max_input_shape, 1);
-  }
-
-  /// Maximum admissible input channel count.
-  int max_input_channels() const {
-    return shape_channels(max_input_shape);
   }
 
   /// Output tensor height.

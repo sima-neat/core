@@ -1052,10 +1052,7 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
   stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
-  if (opt.advanced.holder_loan_credits > 0) {
-    stream_opt.holder_loan_credits = opt.advanced.holder_loan_credits;
-    stream_opt.holder_loan_credits_auto = false;
-  } else if (output_mem.zero_copy) {
+  if (output_mem.zero_copy) {
     stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
     stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
     stream_opt.holder_loan_credits_auto = true;
