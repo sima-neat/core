@@ -260,7 +260,7 @@ int main() {
     InputOptions src_opt;
     src_opt.payload_type = PayloadType::Image;
     src_opt.format = simaai::neat::FormatTag::RGB;
-    src_opt.use_simaai_pool = true;
+    src_opt.memory_policy = simaai::neat::InputMemoryPolicy::Ev74;
     p.add(nodes::Input(src_opt));
 
     PreprocOptions pre_opt;
@@ -403,7 +403,7 @@ int main() {
       InputOptions fmt_src;
       fmt_src.payload_type = PayloadType::Image;
       fmt_src.format = "";
-      fmt_src.use_simaai_pool = true;
+      fmt_src.memory_policy = simaai::neat::InputMemoryPolicy::Ev74;
       p2.add(nodes::Input(fmt_src));
       auto fmt_preproc = std::make_shared<Preproc>(fmt_opt);
       p2.add(fmt_preproc);

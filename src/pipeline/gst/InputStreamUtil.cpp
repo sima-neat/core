@@ -983,19 +983,33 @@ void debug_pool_log(const char* msg) {
 
 void debug_pool_log_alloc_policy(const InputOptions& opt, bool tensor_media,
                                  GstMemoryFlags target_flag, const char* source,
-                                 bool use_simaai_pool_effective) {
+                                 bool use_simaai_memory) {
   if (!pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) &&
       !pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false)) {
     return;
   }
   std::fprintf(stderr,
-               "[DBG] input_alloc_policy policy=%s use_simaai_pool=%d effective_pool=%d media=%s "
+               "[DBG] input_alloc_policy policy=%s use_simaai_memory=%d media=%s "
                "format=%s target=0x%x source=%s buffer_name=%s\n",
-               input_memory_policy_name(opt.memory_policy), opt.use_simaai_pool ? 1 : 0,
-               use_simaai_pool_effective ? 1 : 0, tensor_media ? "tensor" : "other",
-               opt.format.str().c_str(), static_cast<unsigned>(target_flag),
-               source ? source : "unknown",
+               input_memory_policy_name(opt.memory_policy), use_simaai_memory ? 1 : 0,
+               tensor_media ? "tensor" : "other", opt.format.str().c_str(),
+               static_cast<unsigned>(target_flag), source ? source : "unknown",
                opt.buffer_name.empty() ? "<default>" : opt.buffer_name.c_str());
+}
+
+void warn_deprecated_use_simaai_pool_once() {
+  static std::once_flag warned;
+  std::call_once(warned, []() {
+    std::fprintf(stderr, "[WARN] InputOptions::use_simaai_pool is deprecated. "
+                         "Set InputOptions::memory_policy instead.\n");
+  });
+}
+
+InputMemoryPolicy effective_input_memory_policy(const InputOptions& opt) {
+  if (!opt.use_simaai_pool && opt.memory_policy == InputMemoryPolicy::Auto) {
+    return InputMemoryPolicy::SystemMemory;
+  }
+  return opt.memory_policy;
 }
 
 bool pool_stats_enabled() {
@@ -1050,6 +1064,81 @@ void log_pool_stats(const char* stage, GstBufferPool* pool, const PoolStats& sta
 }
 
 } // namespace
+
+ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt) {
+  ResolvedInputMemoryPolicy resolved;
+  if (!opt.use_simaai_pool) {
+    warn_deprecated_use_simaai_pool_once();
+  }
+  const InputMemoryPolicy memory_policy = effective_input_memory_policy(opt);
+#if SIMA_HAS_SIMAAI_POOL
+  const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
+  const std::string format_up = upper_copy(opt.format.str());
+  const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
+  const bool bf16_tensor = tensor_media && (format_up.find("BF16") != std::string::npos ||
+                                            format_up.find("BFLOAT16") != std::string::npos);
+  const bool ifm0_hint = upper_copy(opt.buffer_name) == "IFM0";
+
+  resolved.use_simaai_memory = true;
+  resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_EV74);
+
+  switch (memory_policy) {
+  case InputMemoryPolicy::Ev74:
+    resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_EV74);
+    resolved.target_source = "policy";
+    break;
+  case InputMemoryPolicy::Dms0:
+    resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS0);
+    resolved.target_source = "policy";
+    break;
+  case InputMemoryPolicy::SystemMemory:
+    resolved.use_simaai_memory = false;
+    resolved.target_source = "policy";
+    break;
+  case InputMemoryPolicy::Auto: {
+    const std::string target_override =
+        upper_copy(pipeline_internal::env_str("SIMA_INPUTSTREAM_TENSOR_TARGET", ""));
+    if (target_override == "EV74") {
+      resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_EV74);
+      resolved.target_source = "env";
+    } else if (target_override == "DMS0") {
+      resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS0);
+      resolved.target_source = "env";
+    } else {
+      resolved.target_flag =
+          static_cast<std::uint64_t>((bf16_tensor || ifm0_hint) ? GST_SIMAAI_MEMORY_TARGET_DMS0
+                                                                : GST_SIMAAI_MEMORY_TARGET_EV74);
+      resolved.target_source = "heuristic";
+    }
+  } break;
+  }
+#else
+  switch (memory_policy) {
+  case InputMemoryPolicy::Ev74:
+  case InputMemoryPolicy::Dms0:
+    resolved.use_simaai_memory = true;
+    resolved.target_source = "policy";
+    break;
+  case InputMemoryPolicy::SystemMemory:
+  case InputMemoryPolicy::Auto:
+    resolved.use_simaai_memory = false;
+    resolved.target_source = "unavailable";
+    break;
+  }
+#endif
+  return resolved;
+}
+
+static bool explicit_device_policy(InputMemoryPolicy policy) {
+  return policy == InputMemoryPolicy::Ev74 || policy == InputMemoryPolicy::Dms0;
+}
+
+#if !SIMA_HAS_SIMAAI_POOL
+static bool inputstream_alloc_debug_enabled() {
+  return pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) ||
+         pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false);
+}
+#endif
 
 std::vector<int64_t> tensor_shape_from_compat_dims(int width, int height, int depth,
                                                    TensorLayout layout) {
@@ -2069,55 +2158,14 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard) {
 #if SIMA_HAS_SIMAAI_POOL
   const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
-  const std::string format_up = upper_copy(opt.format.str());
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
-  const bool bf16_tensor = tensor_media && (format_up.find("BF16") != std::string::npos ||
-                                            format_up.find("BFLOAT16") != std::string::npos);
-  const bool ifm0_hint = upper_copy(opt.buffer_name) == "IFM0";
-  GstMemoryFlags target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74);
-  const char* target_source = "heuristic";
-  bool force_system_memory = false;
-  bool use_simaai_pool_effective = opt.use_simaai_pool;
+  const ResolvedInputMemoryPolicy resolved = resolve_input_memory_policy(opt);
+  const auto target_flag = static_cast<GstMemoryFlags>(resolved.target_flag);
 
-  switch (opt.memory_policy) {
-  case InputMemoryPolicy::Ev74:
-    target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74);
-    target_source = "policy";
-    break;
-  case InputMemoryPolicy::Dms0:
-    target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_DMS0);
-    target_source = "policy";
-    break;
-  case InputMemoryPolicy::SystemMemory:
-    force_system_memory = true;
-    use_simaai_pool_effective = false;
-    target_source = "policy";
-    break;
-  case InputMemoryPolicy::Auto:
-    break;
-  }
+  debug_pool_log_alloc_policy(opt, tensor_media, target_flag, resolved.target_source,
+                              resolved.use_simaai_memory);
 
-  if (!force_system_memory && opt.memory_policy == InputMemoryPolicy::Auto) {
-    const std::string target_override =
-        upper_copy(pipeline_internal::env_str("SIMA_INPUTSTREAM_TENSOR_TARGET", ""));
-    if (target_override == "EV74") {
-      target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74);
-      target_source = "env";
-    } else if (target_override == "DMS0") {
-      target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_DMS0);
-      target_source = "env";
-    } else {
-      target_flag =
-          static_cast<GstMemoryFlags>((bf16_tensor || ifm0_hint) ? GST_SIMAAI_MEMORY_TARGET_DMS0
-                                                                 : GST_SIMAAI_MEMORY_TARGET_EV74);
-      target_source = "heuristic";
-    }
-  }
-
-  debug_pool_log_alloc_policy(opt, tensor_media, target_flag, target_source,
-                              use_simaai_pool_effective && !force_system_memory);
-
-  if (use_simaai_pool_effective && !force_system_memory) {
+  if (resolved.use_simaai_memory) {
     GstBufferPool* pool = guard.pool.get();
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
@@ -2164,13 +2212,20 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                      "falling back to system allocator.");
       pool = nullptr;
     }
+    if (explicit_device_policy(opt.memory_policy)) {
+      debug_pool_log("Input: explicit device memory policy requires simaai pool allocation.");
+      return nullptr;
+    }
     debug_pool_log("Input: simaai pool allocation failed; falling back to system allocator.");
-  } else if (opt.use_simaai_pool && force_system_memory) {
-    debug_pool_log("Input: memory_policy=SystemMemory; bypassing simaai pool.");
   }
 #else
-  (void)opt;
   (void)guard;
+  if (explicit_device_policy(opt.memory_policy)) {
+    if (inputstream_alloc_debug_enabled()) {
+      std::fprintf(stderr, "Input: explicit device memory policy requires simaai pool support.\n");
+    }
+    return nullptr;
+  }
 #endif
 
   const auto t_alloc_start = std::chrono::steady_clock::now();
@@ -2186,7 +2241,7 @@ int64_t next_input_frame_id() {
 
 bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptions& opt) {
 #if SIMA_HAS_SIMAAI_POOL
-  if (!buffer || !opt.use_simaai_pool)
+  if (!buffer || !resolve_input_memory_policy(opt).use_simaai_memory)
     return false;
   dump_sima_meta(buffer, "maybe_add_simaai_meta(before)");
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");

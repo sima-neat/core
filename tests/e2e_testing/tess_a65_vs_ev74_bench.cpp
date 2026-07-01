@@ -603,7 +603,7 @@ Ev74RunSummary run_ev74_benchmark(const TessBenchCase& c, const BenchOptions& op
   in.width = c.input_width;
   in.height = c.input_height;
   in.depth = c.input_channels;
-  in.use_simaai_pool = true;
+  in.memory_policy = simaai::neat::InputMemoryPolicy::Ev74;
   in.pool_min_buffers = 2;
   in.pool_max_buffers = 2;
   in.buffer_name = "input_tensor";

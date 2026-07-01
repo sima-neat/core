@@ -40,7 +40,7 @@ int main() {
     input_opt.width = 96;
     input_opt.height = 96;
     input_opt.depth = 3;
-    input_opt.use_simaai_pool = false;
+    input_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
     graph.add(nodes::Input(input_opt));
 
     OutputOptions output_opt;

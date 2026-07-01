@@ -161,6 +161,14 @@ struct InputBufferPoolGuard {
   std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)> pool{nullptr, +[](GstBufferPool*) {}};
 };
 
+struct ResolvedInputMemoryPolicy {
+  bool use_simaai_memory = true;
+  std::uint64_t target_flag = 0;
+  const char* target_source = "heuristic";
+};
+
+ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt);
+
 struct StreamIdOverride {
   std::optional<std::string> value;
   StreamIdOverride() = default;

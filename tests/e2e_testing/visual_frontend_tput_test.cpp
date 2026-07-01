@@ -1562,9 +1562,6 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
   src_opt.is_live = true;
   src_opt.do_timestamp = true;
   src_opt.block = true;
-  // The SiMaAI appsrc pool currently over-reserves for large packed tensor batches; direct
-  // EV74 tensor handoff is the safe default for batch_size>1, with an env override for pool sweeps.
-  src_opt.use_simaai_pool = env_flag("SIMA_VISUAL_TPUT_USE_POOL", input_batch(c) == 1);
   src_opt.pool_min_buffers = std::max(2, env_int_local("SIMA_VISUAL_TPUT_NUM_BUFFERS", 4));
   src_opt.pool_max_buffers = src_opt.pool_min_buffers;
   src_opt.memory_policy = simaai::neat::InputMemoryPolicy::Ev74;

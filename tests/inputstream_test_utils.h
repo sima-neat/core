@@ -92,7 +92,7 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
   InputOptions src_opt;
   src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = spec.format;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   p.add(nodes::Input(src_opt));
   if (!spec.gst_element.empty())
     p.custom(spec.gst_element);
@@ -177,7 +177,7 @@ inline void run_inputstream_format_change_test(const InputstreamFormatChangeSpec
   InputOptions src_opt;
   src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::Auto;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   p.add(nodes::Input(src_opt));
   p.add(nodes::Output(OutputOptions::Latest()));
 
