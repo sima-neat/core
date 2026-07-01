@@ -4,7 +4,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
-#include "pipeline/runtime/RunInternal.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -171,23 +171,19 @@ RUN_TEST(
       // Legacy pool opt-out must remain SystemMemory even when downstream auto inference would
       // otherwise choose a device-visible memory policy.
       {
-        const ScopedEnvVar no_preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "0");
-
         InputOptions legacy_opt;
         legacy_opt.payload_type = PayloadType::Image;
         legacy_opt.format = FormatTag::RGB;
         legacy_opt.use_simaai_pool = false;
 
-        Graph graph;
-        graph.add(nodes::Input(legacy_opt));
-        graph.add(std::make_shared<FakeDownstreamKindNode>("Preproc"));
-        graph.add(nodes::Output(OutputOptions::EveryFrame(64)));
+        std::vector<std::shared_ptr<Node>> graph_nodes;
+        graph_nodes.push_back(simaai::neat::nodes::Input(legacy_opt));
+        graph_nodes.push_back(std::make_shared<FakeDownstreamKindNode>("Preproc"));
 
-        Run run = graph.build(std::vector<cv::Mat>{mat_seed}, run_opt);
-        const auto core = run_internal::core(run);
-        require(core != nullptr, "legacy pool opt-out: missing run core");
-        require(!core->pipeline.stream_opt.require_device_visible_input,
+        const bool applied = session_test::apply_auto_memory_policy_from_downstream_for_test(
+            legacy_opt, graph_nodes);
+        require(applied, "legacy pool opt-out: expected auto memory policy resolution");
+        require(legacy_opt.memory_policy == InputMemoryPolicy::SystemMemory,
                 "legacy pool opt-out should not be rewritten to device-visible input");
-        run.stop();
       }
     }));
