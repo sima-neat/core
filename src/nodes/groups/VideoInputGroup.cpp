@@ -6,8 +6,8 @@
 #include "nodes/common/Queue.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/common/VideoScale.h"
-#include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264Parse.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/internal/SyncBuild.h"
 
 #include <memory>
@@ -47,7 +47,12 @@ simaai::neat::Graph VideoInputGroup(const VideoInputGroupOptions& opt) {
   if (insert_queue)
     nodes.push_back(nodes::Queue());
 
-  nodes.push_back(nodes::H264Decode(opt.sima_allocator_type, opt.out_format));
+  simaai::neat::SimaDecodeOptions dec;
+  dec.type = simaai::neat::SimaDecodeType::H264;
+  dec.sima_allocator_type = opt.sima_allocator_type;
+  dec.out_format = opt.out_format;
+  dec.raw_output = false;
+  nodes.push_back(nodes::SimaDecode(dec));
 
   if (opt.use_videoconvert)
     nodes.push_back(nodes::VideoConvert());
