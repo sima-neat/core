@@ -69,6 +69,22 @@ bool graph_sched_log_first_stream() {
   return cached == 1;
 }
 
+void enforce_graphrun_public_sample_push_transferable(const Sample& sample, const char* where) {
+  if (env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false)) {
+    return;
+  }
+  if (!simaai::neat::pipeline_internal::sample_has_device_gstsample_producer_lifetime(
+          sample, /*require_expired=*/false)) {
+    return;
+  }
+  std::string reason;
+  if (!simaai::neat::pipeline_internal::sample_has_transferable_zero_copy_loan(sample, &reason)) {
+    throw std::runtime_error(
+        simaai::neat::pipeline_internal::cross_run_zero_copy_sample_error(where) +
+        (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+  }
+}
+
 bool graph_is_sched_label(const std::string& label) {
   if (label.empty())
     return false;
@@ -419,6 +435,7 @@ bool GraphRun::push_state(const std::shared_ptr<State>& state, NodeId node_id, P
                          "already stopped)\n");
     return false;
   }
+  enforce_graphrun_public_sample_push_transferable(sample, "GraphRun::push");
   state->core->inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
   const auto entry_at = std::chrono::steady_clock::now();
   const bool ok = state->core->graph_push(node_id, port, has_port, sample,
@@ -586,8 +603,7 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
     }
 
     const auto now = std::chrono::steady_clock::now();
-    state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), result,
-                                            now);
+    state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), result, now);
     state->core->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
     {
       std::lock_guard<std::mutex> timing_lock(state->core->latency_mu);

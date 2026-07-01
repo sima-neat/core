@@ -131,8 +131,7 @@ bool allow_cross_run_gstsample_push() {
   return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
 }
 
-void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample,
-                                              const char* where,
+void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample, const char* where,
                                               bool allow_graph_internal_zero_copy_input) {
   if (allow_cross_run_gstsample_push()) {
     static std::atomic<bool> warned{false};
@@ -148,8 +147,9 @@ void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample
   if (pipeline_internal::sample_has_device_gstsample_producer_lifetime(sample,
                                                                        /*require_expired=*/false)) {
     if (allow_graph_internal_zero_copy_input &&
-        !pipeline_internal::sample_has_device_gstsample_producer_lifetime(sample,
-                                                                          /*require_expired=*/true)) {
+        !pipeline_internal::sample_has_device_gstsample_producer_lifetime(
+            sample,
+            /*require_expired=*/true)) {
       return;
     }
     std::string reason;
