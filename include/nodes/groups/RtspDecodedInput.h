@@ -1,21 +1,22 @@
 /**
  * @file
  * @ingroup nodes_groups
- * @brief `RtspDecodedInput` — RTSP source plus H.264 depacketize/parse plus hardware decode.
+ * @brief `RtspDecodedInput` - RTSP source plus depacketize/parse plus hardware decode.
  *
- * The "live camera" preset: pulls an H.264 stream from an `rtsp://` URL, depacketizes
- * and parses the bitstream, and runs SiMa hardware H.264 decode to emit raw frames
- * for downstream Nodes. Typical placement: very first Graph in a Graph that
- * consumes a live IP camera feed.
+ * The "live camera" preset: pulls an encoded stream from an `rtsp://` URL,
+ * depacketizes and parses it, and runs SiMa hardware decode to emit raw frames
+ * for downstream Nodes. H.264 is the default path for source compatibility.
  *
+ * @see RtspEncodedInput
  * @see VideoInputGroup
  * @see ImageInputGroup
- * @see H264Parse
+ * @see SimaDecode
  */
 #pragma once
 
 #include "pipeline/Graph.h"
 #include "contracts/ContractTypes.h"
+#include "nodes/groups/RtspEncodedInput.h"
 #include "pipeline/FormatSpec.h"
 
 #include <string>
@@ -25,17 +26,22 @@ namespace simaai::neat::nodes::groups {
 /**
  * @brief Configuration for `RtspDecodedInput`.
  *
- * Controls the RTSP source (URL, transport, latency), the H.264 parse stage's
- * fallback caps when the live stream omits them, and the SiMa hardware-decoder
- * output configuration.
+ * Controls the RTSP source, codec-specific depacketize/parse stage, and SiMa
+ * hardware-decoder output configuration. Defaults preserve the existing H.264
+ * behavior.
  *
  * @ingroup nodes_groups
  */
 struct RtspDecodedInputOptions {
-  std::string url;       ///< `rtsp://` URL to consume.
-  int latency_ms = 200;  ///< Jitter-buffer latency in milliseconds.
-  bool tcp = true;       ///< If true, request the RTSP TCP transport.
-  int payload_type = 96; ///< RTP payload type number for the H.264 stream.
+  std::string url; ///< `rtsp://` URL to consume.
+  RtspDecodeType decode_type =
+      RtspDecodeType::H264;     ///< RTSP decode path to build. Default preserves H.264 behavior.
+  int latency_ms = 200;         ///< Jitter-buffer latency in milliseconds.
+  bool tcp = true;              ///< If true, request the RTSP TCP transport.
+  bool drop_on_latency = false; ///< If true, ask `rtspsrc` to drop late buffers.
+  std::string buffer_mode;      ///< Optional `rtspsrc` buffer-mode value; empty = default.
+  int payload_type = 96;        ///< RTP payload type number for the H.264 stream.
+  int mjpeg_payload_type = 26;  ///< RTP payload type number for the MJPEG/RTP JPEG stream.
   int h264_parse_config_interval =
       -1;                   ///< SPS/PPS reinjection interval for the H.264 parser (-1 = default).
   int h264_fps = -1;        ///< Expected FPS injected into the parser caps (-1 = unspecified).
@@ -54,6 +60,10 @@ struct RtspDecodedInputOptions {
   bool decoder_raw_output = true;          ///< Request raw (non-encoded) output from the decoder.
   std::string
       decoder_next_element; ///< Optional next-element selector ("CVU" or "APU") for `neatdecoder`.
+  int dec_width = -1;       ///< Decoded frame width override; `-1` = upstream-defined.
+  int dec_height = -1;      ///< Decoded frame height override; `-1` = upstream-defined.
+  int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
+  int num_buffers = -1;     ///< Decoder output buffer pool size override; `-1` = element default.
 
   bool use_videoconvert = false; ///< Insert `videoconvert` after decode for format adaptation.
   bool use_videoscale = false;   ///< Insert `videoscale` after decode for resolution adaptation.
@@ -74,17 +84,16 @@ struct RtspDecodedInputOptions {
 };
 
 /**
- * @brief Build the live-RTSP input Graph: source, depayload+parse, hardware H.264 decode.
+ * @brief Build the live-RTSP input Graph: source, depayload+parse, hardware decode.
  *
- * Typical chain: `rtspsrc` -> RTP H.264 depayloader -> `H264Parse` -> SiMa hardware
- * H.264 decoder -> optional `videoconvert` / `videoscale`. Use this as the head of
- * a Graph that runs detection or analytics on a live IP camera feed.
+ * Typical H.264 chain: `RtspEncodedInput(H264)` -> `SimaDecode(H264)`.
+ * Typical MJPEG chain: `RtspEncodedInput(MJPEG)` -> `SimaDecode(MJPEG)`.
  *
  * @param opt Configuration (URL, transport, parser fallback caps, decoder output).
  * @return The configured `Graph` ready to be `add()`ed to a Graph.
  *
- * @see VideoInputGroup
- * @see H264Parse
+ * @see RtspEncodedInput
+ * @see SimaDecode
  * @ingroup nodes_groups
  */
 simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt);

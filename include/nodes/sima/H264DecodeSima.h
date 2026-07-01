@@ -31,9 +31,7 @@ namespace simaai::neat {
  *
  * @ingroup nodes_sima
  */
-class SIMA_DEPRECATED("Use SimaDecode with SimaDecodeType::H264") H264Decode final
-    : public Node,
-      public OutputSpecProvider {
+class H264Decode final : public Node, public OutputSpecProvider {
 public:
   /**
    * @brief Construct with explicit decoder configuration.
@@ -48,6 +46,7 @@ public:
    * @param dec_fps             Decoded framerate override; `-1` = let upstream decide.
    * @param num_buffers         Output buffer pool size; `-1` = element default.
    */
+  SIMA_DEPRECATED("Use SimaDecode with SimaDecodeType::H264")
   H264Decode(int sima_allocator_type = 2, std::string out_format = "NV12",
              std::string decoder_name = {}, bool raw_output = false, std::string next_element = {},
              int dec_width = -1, int dec_height = -1, int dec_fps = -1, int num_buffers = -1);

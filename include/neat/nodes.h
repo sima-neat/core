@@ -6,7 +6,7 @@
  * common GStreamer-backed nodes (FileInput, ImageDecode/Freeze, JpegDecode, JpegParse,
  * MultipartJpegDemux, Output, Queue, VideoConvert/Rate/Scale, VideoTrackSelect, Caps),
  * I/O nodes (HttpSource, Input, MetadataSender, RTSPInput, StillImageInput, UdpOutput), RTP helpers
- * (H264CapsFixup, H264Depacketize), and the SiMa-specific MLA-bearing nodes
+ * (H264CapsFixup, H264Depacketize, RTPJpegDepacketize), and the SiMa-specific MLA-bearing nodes
  * (Cast, CastTess, Dequant, Detess, DetessCast, DetessDequant, H264DecodeSima,
  * FeatureHistogram, GriderFast, H264EncodeSima, H264Packetize, H264Parse, SimaDecode,
  * PCIeSink/Src, Preproc, QuantTess, TrackDescriptor, TrackKLT, SimaArgMax,
@@ -37,6 +37,7 @@
 #include "nodes/io/UdpOutput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/CastTess.h"
 #include "nodes/sima/Dequant.h"

@@ -39,6 +39,7 @@
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
+#include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
@@ -63,6 +64,7 @@
 #include "nodes/sima/Detess.h"
 #include "nodes/sima/DetessCast.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/PCIeSink.h"
 #include "pipeline/Run.h"
@@ -3344,6 +3346,39 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("extra_fragment",
               &simaai::neat::nodes::groups::VideoInputGroupOptions::extra_fragment);
 
+  nb::enum_<simaai::neat::nodes::groups::RtspDecodeType>(m, "RtspDecodeType")
+      .value("H264", simaai::neat::nodes::groups::RtspDecodeType::H264)
+      .value("MJPEG", simaai::neat::nodes::groups::RtspDecodeType::MJPEG);
+
+  nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
+      .def(nb::init<>())
+      .def_rw("url", &simaai::neat::nodes::groups::RtspEncodedInputOptions::url)
+      .def_rw("decode_type", &simaai::neat::nodes::groups::RtspEncodedInputOptions::decode_type)
+      .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspEncodedInputOptions::latency_ms)
+      .def_rw("tcp", &simaai::neat::nodes::groups::RtspEncodedInputOptions::tcp)
+      .def_rw("drop_on_latency",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::drop_on_latency)
+      .def_rw("buffer_mode", &simaai::neat::nodes::groups::RtspEncodedInputOptions::buffer_mode)
+      .def_rw("insert_queue", &simaai::neat::nodes::groups::RtspEncodedInputOptions::insert_queue)
+      .def_rw("sync_mode", &simaai::neat::nodes::groups::RtspEncodedInputOptions::sync_mode)
+      .def_rw("h264_payload_type",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_payload_type)
+      .def_rw("mjpeg_payload_type",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::mjpeg_payload_type)
+      .def_rw("h264_parse_config_interval",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_parse_config_interval)
+      .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_fps)
+      .def_rw("h264_width", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_width)
+      .def_rw("h264_height", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_height)
+      .def_rw("auto_caps_from_stream",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::auto_caps_from_stream)
+      .def_rw("fallback_h264_fps",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_fps)
+      .def_rw("fallback_h264_width",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_width)
+      .def_rw("fallback_h264_height",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_height);
+
   nb::class_<simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps>(
       m, "RtspDecodedInputOutputCaps")
       .def(nb::init<>())
@@ -3361,9 +3396,15 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::nodes::groups::RtspDecodedInputOptions>(m, "RtspDecodedInputOptions")
       .def(nb::init<>())
       .def_rw("url", &simaai::neat::nodes::groups::RtspDecodedInputOptions::url)
+      .def_rw("decode_type", &simaai::neat::nodes::groups::RtspDecodedInputOptions::decode_type)
       .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspDecodedInputOptions::latency_ms)
       .def_rw("tcp", &simaai::neat::nodes::groups::RtspDecodedInputOptions::tcp)
+      .def_rw("drop_on_latency",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::drop_on_latency)
+      .def_rw("buffer_mode", &simaai::neat::nodes::groups::RtspDecodedInputOptions::buffer_mode)
       .def_rw("payload_type", &simaai::neat::nodes::groups::RtspDecodedInputOptions::payload_type)
+      .def_rw("mjpeg_payload_type",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::mjpeg_payload_type)
       .def_rw("h264_parse_config_interval",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::h264_parse_config_interval)
       .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::h264_fps)
@@ -3390,6 +3431,10 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_raw_output)
       .def_rw("decoder_next_element",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_next_element)
+      .def_rw("dec_width", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_width)
+      .def_rw("dec_height", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_height)
+      .def_rw("dec_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_fps)
+      .def_rw("num_buffers", &simaai::neat::nodes::groups::RtspDecodedInputOptions::num_buffers)
       .def_rw("use_videoconvert",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoconvert)
       .def_rw("use_videoscale",
@@ -3838,6 +3883,8 @@ NB_MODULE(_pyneat_core, m) {
   // RTP/H264 + PCIe transport nodes.
   nodes_mod.def("h264_caps_fixup", &simaai::neat::nodes::H264CapsFixup, "fallback_fps"_a = 30,
                 "fallback_width"_a = 1280, "fallback_height"_a = 720);
+  nodes_mod.def("rtp_jpeg_depacketize", &simaai::neat::nodes::RTPJpegDepacketize,
+                "payload_type"_a = 26);
   nodes_mod.def("h264_encode_sw", &simaai::neat::nodes::H264EncodeSW, "bitrate_kbps"_a = 4000);
   nodes_mod.def("pcie_src", &simaai::neat::nodes::PCIeSrc,
                 "options"_a = simaai::neat::PCIeSrcOptions{});
@@ -3849,6 +3896,7 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
   groups_mod.def("http_mjpeg_decoded_input", &simaai::neat::nodes::groups::HttpMjpegDecodedInput,
                  "options"_a);
+  groups_mod.def("rtsp_encoded_input", &simaai::neat::nodes::groups::RtspEncodedInput, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
@@ -3860,6 +3908,8 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("http_mjpeg_decoded_output_spec",
                  &simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec, "options"_a);
+  groups_mod.def("rtsp_encoded_output_spec",
+                 &simaai::neat::nodes::groups::RtspEncodedInputOutputSpec, "options"_a);
   groups_mod.def("rtsp_decoded_output_spec",
                  &simaai::neat::nodes::groups::RtspDecodedInputOutputSpec, "options"_a);
 
