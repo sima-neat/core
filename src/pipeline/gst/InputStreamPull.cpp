@@ -1765,6 +1765,73 @@ void strip_tensor_storage_for_decode_template(Tensor* tensor) {
   }
 }
 
+bool tensor_is_device_gstsample_holder(const Tensor& tensor) {
+  if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
+      !tensor.storage->holder) {
+    return false;
+  }
+  return tensor.device.type != simaai::neat::DeviceType::CPU ||
+         tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
+         tensor.storage->sima_mem_target_flags != 0 || !tensor.storage->sima_segments.empty();
+}
+
+bool sample_has_device_gstsample_holder(const Sample& sample) {
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_is_device_gstsample_holder(tensor)) {
+        return true;
+      }
+    }
+  }
+  if (sample.tensor.has_value() && tensor_is_device_gstsample_holder(*sample.tensor)) {
+    return true;
+  }
+  for (const auto& field : sample.fields) {
+    if (sample_has_device_gstsample_holder(field)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void attach_holder_loan_release_to_sample(Sample& sample,
+                                          const pipeline_internal::HolderLoanGatePtr& gate) {
+  if (!gate) {
+    return;
+  }
+  std::vector<const void*> seen_storage;
+  auto attach_tensor = [&](Tensor& tensor) {
+    if (!tensor_is_device_gstsample_holder(tensor)) {
+      return;
+    }
+    const void* key = tensor.storage.get();
+    if (std::find(seen_storage.begin(), seen_storage.end(), key) != seen_storage.end()) {
+      return;
+    }
+    seen_storage.push_back(key);
+    auto original_holder = tensor.storage->holder;
+    tensor.storage->holder =
+        std::shared_ptr<void>(original_holder.get(), [original_holder, gate](void*) mutable {
+          original_holder.reset();
+          gate->release();
+        });
+  };
+  auto walk = [&](auto&& self, Sample& s) -> void {
+    if (sample_has_tensor_list(s)) {
+      for (auto& tensor : s.tensors) {
+        attach_tensor(tensor);
+      }
+    }
+    if (s.tensor.has_value()) {
+      attach_tensor(*s.tensor);
+    }
+    for (auto& field : s.fields) {
+      self(self, field);
+    }
+  };
+  walk(walk, sample);
+}
+
 std::optional<Sample>
 instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
                                           const CachedTensorSetOutputDecode& cache) {
@@ -2020,6 +2087,25 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
   const auto envelope_start = InputStreamDecodeProfileClock::now();
   Sample out =
       sample_from_gst_envelope(sample, where, st.opt.copy_output, &st.opt.output_override, &st);
+  const auto mark_producer_lifetime = [&](auto&& self, Sample& s) -> void {
+    auto mark_tensor = [&](Tensor& tensor) {
+      if (tensor.storage && tensor.storage->kind == simaai::neat::StorageKind::GstSample &&
+          st.lifetime_token) {
+        tensor.storage->has_producer_stream_lifetime = true;
+        tensor.storage->producer_stream_lifetime = st.lifetime_token;
+      }
+    };
+    if (s.tensor.has_value()) {
+      mark_tensor(*s.tensor);
+    }
+    for (auto& tensor : s.tensors) {
+      mark_tensor(tensor);
+    }
+    for (auto& field : s.fields) {
+      self(self, field);
+    }
+  };
+  mark_producer_lifetime(mark_producer_lifetime, out);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->envelope_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - envelope_start);

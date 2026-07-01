@@ -506,9 +506,13 @@ struct TensorBuffer {
       map_fn; ///< Custom map function (set for non-trivial storage kinds).
   std::uint64_t sima_mem_target_flags =
       0; ///< SIMA memory target flags (advanced; for accelerator-aware allocators).
-  std::uint64_t sima_mem_flags = 0;   ///< SIMA memory flags (cache, alignment, etc.).
-  std::vector<Segment> sima_segments; ///< Named segments for multi-region buffers (composite
-                                      ///< formats, packed outputs).
+  std::uint64_t sima_mem_flags = 0;          ///< SIMA memory flags (cache, alignment, etc.).
+  std::vector<Segment> sima_segments;        ///< Named segments for multi-region buffers (composite
+                                             ///< formats, packed outputs).
+  bool has_producer_stream_lifetime = false; ///< True when producer_stream_lifetime is meaningful.
+  std::weak_ptr<void> producer_stream_lifetime; ///< Runtime lifetime token for GstSample producers.
+  bool holder_loan_release_attached = false; ///< Internal: holder already releases a loan credit.
+  std::shared_ptr<void> zero_copy_loan;      ///< Internal: keeps a zero-copy output loan alive.
 
   /**
    * @brief Map the buffer for read/write access; returns a scoped `Mapping`.

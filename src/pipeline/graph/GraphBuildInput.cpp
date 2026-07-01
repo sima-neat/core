@@ -1052,6 +1052,17 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
   stream_opt.copy_output = !output_mem.zero_copy;
   stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
+  if (opt.advanced.holder_loan_credits > 0) {
+    stream_opt.holder_loan_credits = opt.advanced.holder_loan_credits;
+    stream_opt.holder_loan_credits_auto = false;
+  } else if (output_mem.zero_copy) {
+    stream_opt.holder_loan_sample_window = std::max(3, queue_depth + 2);
+    stream_opt.holder_loan_credits = stream_opt.holder_loan_sample_window;
+    stream_opt.holder_loan_credits_auto = true;
+  } else {
+    stream_opt.holder_loan_credits = 0;
+    stream_opt.holder_loan_credits_auto = false;
+  }
   // Honor opt.advanced.copy_input as the single source of truth for input
   // lifetime semantics. The previous "|| mode == RunMode::Sync" override
   // was a heuristic from when Sync-mode callers were assumed to pass
@@ -1072,6 +1083,20 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.startup_preflight = opt.startup_preflight;
   stream_opt.worker_poll_ms = preset_default_worker_poll_ms(opt.preset);
   return stream_opt;
+}
+
+void finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
+  if (!stream_opt.holder_loan_credits_auto || stream_opt.copy_output ||
+      !stream_opt.public_output_contract) {
+    return;
+  }
+  const int sample_window = std::max(1, stream_opt.holder_loan_sample_window);
+  int arity = 1;
+  if (stream_opt.output_override.has_value()) {
+    arity = estimate_public_zero_copy_holder_arity(*stream_opt.output_override);
+  }
+  stream_opt.holder_loan_per_sample_arity = std::max(1, arity);
+  stream_opt.holder_loan_credits = sample_window * stream_opt.holder_loan_per_sample_arity;
 }
 
 void validate_shape_limits_or_throw(const InputStreamOptions::ResolvedShapeLimits& limits,
@@ -1862,6 +1887,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   if (has_sink) {
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
+  finalize_public_zero_copy_holder_loan_credits(stream_opt);
   if (sync_mode) {
     br.pipeline_string =
         session_build_clamp_sync_pipeline(std::move(br.pipeline_string), sync_num_buffers_override);
@@ -2550,10 +2576,32 @@ Run Graph::build(const std::vector<cv::Mat>& inputs, const RunOptions& opt) {
 }
 
 Run Graph::build(const TensorList& inputs, const RunOptions& opt) {
+  if (!pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false)) {
+    Sample sample = sample_from_tensors(inputs);
+    if (pipeline_internal::sample_has_device_gstsample_producer_lifetime(
+            sample, /*require_expired=*/false)) {
+      std::string reason;
+      if (!pipeline_internal::sample_has_transferable_zero_copy_loan(sample, &reason)) {
+        throw std::runtime_error(
+            pipeline_internal::cross_run_zero_copy_sample_error("Graph::build(tensors)") +
+            (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+      }
+    }
+  }
   return build_seeded_internal(inputs, RunMode::Async, opt);
 }
 
 Run Graph::build(const Sample& inputs, const RunOptions& opt) {
+  if (!pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false) &&
+      pipeline_internal::sample_has_device_gstsample_producer_lifetime(inputs,
+                                                                       /*require_expired=*/false)) {
+    std::string reason;
+    if (!pipeline_internal::sample_has_transferable_zero_copy_loan(inputs, &reason)) {
+      throw std::runtime_error(
+          pipeline_internal::cross_run_zero_copy_sample_error("Graph::build(sample)") +
+          (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+    }
+  }
   return build_seeded_internal(inputs, RunMode::Async, opt);
 }
 
@@ -2838,6 +2886,10 @@ bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& op
 
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode) {
   return make_stream_options(opt, mode);
+}
+
+void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt) {
+  finalize_public_zero_copy_holder_loan_credits(stream_opt);
 }
 
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,

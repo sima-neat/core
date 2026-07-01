@@ -24,6 +24,11 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
   state->max_input_bytes_guard = opt.max_input_bytes;
   state->diag = std::move(diag);
   state->guard = std::move(guard);
+  state->lifetime_token = std::make_shared<int>(0);
+  if (opt.holder_loan_credits > 0) {
+    state->holder_loan_gate =
+        std::make_shared<pipeline_internal::HolderLoanGate>(opt.holder_loan_credits);
+  }
   state->timing_enabled = opt.enable_timings;
   state->current_key = spec.caps_key;
   state->last_spec = spec;
@@ -642,6 +647,7 @@ void InputStream::close() {
     std::fprintf(stderr, "[STOP] InputStream::close begin\n");
   }
   stop();
+  state_->lifetime_token.reset();
   if (state_->pending_buffer) {
     release_input_buffer(state_->pending_buffer, "InputStream::close:pending_buffer");
     state_->pending_buffer = nullptr;

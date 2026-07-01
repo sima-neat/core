@@ -89,6 +89,10 @@ struct InputStreamOptions {
   bool copy_output = true;
   bool copy_input = false;
   bool prepare_output_cpu_visible = false;
+  int holder_loan_credits = 0;
+  bool holder_loan_credits_auto = false;
+  int holder_loan_sample_window = 1;
+  int holder_loan_per_sample_arity = 1;
   // When true, CPU-backed Tensor inputs are rejected before the slow
   // InputStream memcpy fallback.  Device-first routes should receive tensors
   // constructed in the required memory placement; set

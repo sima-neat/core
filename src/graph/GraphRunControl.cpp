@@ -548,6 +548,13 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
   if (result.has_value()) {
     const auto now = std::chrono::steady_clock::now();
     if (state->core) {
+      std::string loan_error;
+      if (!state->core->attach_public_output_loan(*result, &loan_error)) {
+        state->core->graph_request_stop(
+            "GraphRun::Output::pull: " +
+            (loan_error.empty() ? std::string("zero-copy output loan failed") : loan_error));
+        return std::nullopt;
+      }
       state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), *result,
                                               now);
       state->core->outputs_pulled.fetch_add(1, std::memory_order_relaxed);

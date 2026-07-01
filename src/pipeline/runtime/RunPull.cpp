@@ -36,6 +36,37 @@ using pipeline_internal::trim_copy;
 
 namespace {
 
+bool attach_public_holder_loan_or_error(runtime::RunCore& core, Sample& sample,
+                                        std::string* message) {
+  auto gate = core.holder_loan_gate;
+  if (!gate || !gate->enabled() || !pipeline_internal::sample_has_device_gstsample_holder(sample)) {
+    return true;
+  }
+  const int required = pipeline_internal::count_distinct_device_gstsample_holders(sample);
+  if (core.pipeline.stream_opt.holder_loan_credits_auto &&
+      required > core.pipeline.stream_opt.holder_loan_per_sample_arity) {
+    core.pipeline.stream_opt.holder_loan_per_sample_arity = required;
+    const int sample_window = std::max(1, core.pipeline.stream_opt.holder_loan_sample_window);
+    core.pipeline.stream_opt.holder_loan_credits = sample_window * required;
+    gate->configure(core.pipeline.stream_opt.holder_loan_credits);
+  }
+  std::string err;
+  if (!pipeline_internal::attach_zero_copy_loan_to_sample(sample, gate, &err)) {
+    if (message) {
+      std::ostringstream oss;
+      oss << "zero-copy output loan credits exhausted";
+      if (!err.empty()) {
+        oss << ": " << err;
+      }
+      oss << " (sample_requires=" << required << " holder" << (required == 1 ? "" : "s")
+          << ", credit_limit=" << gate->credit_limit() << ", in_flight=" << gate->inflight() << ")";
+      *message = oss.str();
+    }
+    return false;
+  }
+  return true;
+}
+
 constexpr auto kPullWaitPollQuantum = std::chrono::milliseconds(50);
 
 std::string decorate_with_error_code(const std::string& code, const std::string& message) {
@@ -349,6 +380,10 @@ PullStatus Run::pull(std::string_view output_name, int timeout_ms, Sample& out, 
   return core_->pull_named_output(output_name, timeout_ms, out, err);
 }
 
+bool runtime::RunCore::attach_public_output_loan(Sample& sample, std::string* err) {
+  return attach_public_holder_loan_or_error(*this, sample, err);
+}
+
 PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
@@ -368,6 +403,14 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
     auto sample = st->graph_pull(endpoint->node, timeout_ms);
     if (sample.has_value()) {
       Sample value = std::move(*sample);
+      std::string loan_error;
+      if (!attach_public_holder_loan_or_error(*st, value, &loan_error)) {
+        set_terminal_error(error_codes::kRuntimePull,
+                           "Run::pull: " + (loan_error.empty()
+                                                ? std::string("zero-copy output loan failed")
+                                                : loan_error));
+        return PullStatus::Error;
+      }
       const auto now = std::chrono::steady_clock::now();
       st->record_graph_sample_output(default_output_name(*st), value, now);
       runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphOutputPull,
@@ -522,6 +565,15 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   if (!st->pipeline.out_queue.empty()) {
     out = std::move(st->pipeline.out_queue.front());
     st->pipeline.out_queue.pop_front();
+    std::string loan_error;
+    if (!attach_public_holder_loan_or_error(*st, out, &loan_error)) {
+      lock.unlock();
+      set_terminal_error(error_codes::kRuntimePull,
+                         "Run::pull: " + (loan_error.empty()
+                                              ? std::string("zero-copy output loan failed")
+                                              : loan_error));
+      return PullStatus::Error;
+    }
     st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
     {
       const auto now = std::chrono::steady_clock::now();
@@ -582,6 +634,14 @@ PullStatus runtime::RunCore::pull_named_output(std::string_view output_name, int
   auto sample = graph_pull(endpoint->node, timeout_ms);
   if (sample.has_value()) {
     Sample value = std::move(*sample);
+    std::string loan_error;
+    if (!attach_public_holder_loan_or_error(*this, value, &loan_error)) {
+      set_terminal_error(
+          error_codes::kRuntimePull,
+          "Run::pull(\"" + std::string(output_name) + "\"): " +
+              (loan_error.empty() ? std::string("zero-copy output loan failed") : loan_error));
+      return PullStatus::Error;
+    }
     const auto now = std::chrono::steady_clock::now();
     record_graph_sample_output(output_name, value, now);
     runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphOutputPull,
