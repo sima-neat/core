@@ -35,6 +35,7 @@
 #include "nodes/sima/SimaDecode.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
+#include "nodes/groups/HttpMjpegDecodedInput.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
@@ -3182,6 +3183,70 @@ NB_MODULE(_pyneat_core, m) {
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
                  "policy"_a = simaai::neat::CombinePolicy::ByFrame);
 
+  nb::class_<simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps>(
+      m, "HttpMjpegDecodedInputOutputCaps")
+      .def(nb::init<>())
+      .def_rw("enable",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::enable)
+      .def_prop_rw(
+          "format",
+          format_enum_getter(
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::format),
+          format_enum_setter(
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::format))
+      .def_rw("width",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::width)
+      .def_rw("height",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::height)
+      .def_rw("fps", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::fps)
+      .def_rw("memory",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::memory);
+
+  nb::class_<simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions>(
+      m, "HttpMjpegDecodedInputOptions")
+      .def(nb::init<>())
+      .def_rw("url", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::url)
+      .def_rw("timeout_seconds",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::timeout_seconds)
+      .def_rw("retries", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::retries)
+      .def_rw("is_live", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::is_live)
+      .def_rw("do_timestamp",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::do_timestamp)
+      .def_rw("user_agent", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::user_agent)
+      .def_rw("multipart_boundary",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::multipart_boundary)
+      .def_rw("multipart_single_stream",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::multipart_single_stream)
+      .def_rw("insert_queue",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::insert_queue)
+      .def_rw("sync_mode", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::sync_mode)
+      .def_rw("sima_allocator_type",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::sima_allocator_type)
+      .def_prop_rw("out_format",
+                   format_enum_getter(
+                       &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::out_format),
+                   format_enum_setter(
+                       &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::out_format))
+      .def_rw("decoder_name",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::decoder_name)
+      .def_rw("decoder_raw_output",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::decoder_raw_output)
+      .def_rw("decoder_next_element",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::decoder_next_element)
+      .def_rw("dec_width", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::dec_width)
+      .def_rw("dec_height", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::dec_height)
+      .def_rw("dec_fps", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::dec_fps)
+      .def_rw("num_buffers",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::num_buffers)
+      .def_rw("use_videoconvert",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videoconvert)
+      .def_rw("use_videoscale",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videoscale)
+      .def_rw("output_caps",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::output_caps)
+      .def_rw("extra_fragment",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::extra_fragment);
+
   nb::class_<simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps>(
       m, "ImageInputGroupOutputCaps")
       .def(nb::init<>())
@@ -3782,6 +3847,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::module_ groups_mod = m.def_submodule("groups", "Reusable Graph fragment helpers");
   groups_mod.def("image_input", &simaai::neat::nodes::groups::ImageInputGroup, "options"_a);
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
+  groups_mod.def("http_mjpeg_decoded_input", &simaai::neat::nodes::groups::HttpMjpegDecodedInput,
+                 "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
@@ -3791,6 +3858,8 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("video_input_output_spec", &simaai::neat::nodes::groups::VideoInputGroupOutputSpec,
                  "options"_a);
+  groups_mod.def("http_mjpeg_decoded_output_spec",
+                 &simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec, "options"_a);
   groups_mod.def("rtsp_decoded_output_spec",
                  &simaai::neat::nodes::groups::RtspDecodedInputOutputSpec, "options"_a);
 

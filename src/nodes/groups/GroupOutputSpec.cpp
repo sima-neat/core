@@ -1,5 +1,7 @@
 #include "nodes/groups/GroupOutputSpec.h"
 
+#include "nodes/sima/SimaDecode.h"
+
 namespace simaai::neat::nodes::groups {
 namespace {
 
@@ -27,6 +29,30 @@ OutputSpec from_caps(const std::string& format, int width, int height, int fps,
 }
 
 } // namespace
+
+OutputSpec HttpMjpegDecodedInputOutputSpec(const HttpMjpegDecodedInputOptions& opt) {
+  const auto& c = opt.output_caps;
+  if (c.enable) {
+    return from_caps(c.format.empty() ? "NV12" : c.format, c.width, c.height, c.fps, c.memory,
+                     "HttpMjpegDecodedInput output_caps", SpecCertainty::Derived);
+  }
+
+  simaai::neat::SimaDecodeOptions dec;
+  dec.type = simaai::neat::SimaDecodeType::MJPEG;
+  dec.sima_allocator_type = opt.sima_allocator_type;
+  dec.out_format = opt.out_format;
+  dec.decoder_name = opt.decoder_name;
+  dec.raw_output = opt.decoder_raw_output;
+  dec.next_element = opt.decoder_next_element;
+  dec.dec_width = opt.dec_width;
+  dec.dec_height = opt.dec_height;
+  dec.dec_fps = opt.dec_fps;
+  dec.num_buffers = opt.num_buffers;
+  simaai::neat::SimaDecode decoder(dec);
+  OutputSpec out = decoder.output_spec({});
+  out.note = "HttpMjpegDecodedInput (hint)";
+  return out;
+}
 
 OutputSpec ImageInputGroupOutputSpec(const ImageInputGroupOptions& opt) {
   const auto& c = opt.output_caps;

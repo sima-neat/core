@@ -272,6 +272,7 @@ set(UNIT_TESTS
   unit_gst_video_meta_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
+  unit_http_mjpeg_decoded_group_test
   unit_input_policy_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
