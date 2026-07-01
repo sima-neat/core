@@ -968,6 +968,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   InputStreamOptions build_stream_opt = ctx.stream_opt;
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
+  build_stream_opt.allow_graph_internal_zero_copy_input =
+      segment.boundary.needs_input && !segment.input_edges.empty();
   tune_internal_zero_copy_holder_window(build_stream_opt, opt.graph_options,
                                         segment.boundary.graph_internal_output);
   InputStream stream;
