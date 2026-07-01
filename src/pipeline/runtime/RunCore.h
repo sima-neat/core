@@ -186,6 +186,9 @@ struct RunCore {
                                   std::chrono::steady_clock::time_point at);
   void graph_sanitize_pipeline_input(std::size_t index, Sample& sample);
   void graph_restore_stream_id_if_needed(std::size_t index, Sample& sample);
+  std::optional<RuntimeSinkQueueMsg> graph_pull_msg(simaai::neat::graph::NodeId node_id,
+                                                    int timeout_ms);
+  bool graph_restore_sink_front(simaai::neat::graph::NodeId node_id, RuntimeSinkQueueMsg&& msg);
   std::optional<Sample> graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms);
 
   RunOptions opt;
