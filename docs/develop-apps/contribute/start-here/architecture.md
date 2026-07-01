@@ -410,14 +410,15 @@ Additionally, runtime paths may verify required plugins are present:
 A `Graph` is built by adding `Node` objects:
 
 ```cpp
-sima::Graph s;
+simaai::neat::Graph graph;
 simaai::neat::SimaDecodeOptions decode_options;
 decode_options.type = simaai::neat::SimaDecodeType::H264;
+decode_options.raw_output = false;
 
-s.add(nodes::RTSPInput("rtsp://..."))
- .add(nodes::SimaDecode(decode_options))
- .add(nodes::Caps(/*...NV12...*/))
- .add(nodes::Output());
+graph.add(simaai::neat::nodes::RTSPInput("rtsp://example/live"))
+     .add(simaai::neat::nodes::SimaDecode(decode_options))
+     .add(simaai::neat::nodes::CapsNV12SysMem(-1, -1, -1))
+     .add(simaai::neat::nodes::Output());
 ```
 
 Internally:
