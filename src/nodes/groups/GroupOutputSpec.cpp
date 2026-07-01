@@ -32,8 +32,7 @@ OutputSpec from_caps(const std::string& format, int width, int height, int fps,
 
 OutputSpec HttpMjpegDecodedInputOutputSpec(const HttpMjpegDecodedInputOptions& opt) {
   const auto& c = opt.output_caps;
-  const bool has_caps = c.enable || c.width > 0 || c.height > 0 || c.fps > 0;
-  if (has_caps) {
+  if (c.enable) {
     return from_caps(c.format.empty() ? "NV12" : c.format, c.width, c.height, c.fps, c.memory,
                      "HttpMjpegDecodedInput output_caps", SpecCertainty::Derived);
   }

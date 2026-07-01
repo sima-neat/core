@@ -787,7 +787,19 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   opt.dec_height = 480
   opt.dec_fps = 30
   opt.num_buffers = 8
-  _assert_not_type_error(lambda: pyneat.groups.http_mjpeg_decoded_input(opt))
+  group = pyneat.groups.http_mjpeg_decoded_input(opt)
+  assert isinstance(group, pyneat.Graph)
+  try:
+    backend = group.describe_backend().lower()
+  except RuntimeError as exc:
+    if "required gstreamer element not found: neatdecoder" not in str(exc).lower():
+      raise
+    pytest.skip("neatdecoder is not available in this environment")
+  assert "souphttpsrc" in backend
+  assert "multipartdemux" in backend
+  assert "jpegparse" in backend
+  assert "neatdecoder" in backend
+  assert "dec-type=mjpeg" in backend
 
   spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
   assert spec.format == "NV12"
@@ -795,10 +807,16 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   assert spec.height == 480
   assert spec.memory == "SimaAI"
 
-  opt.output_caps.enable = True
   opt.output_caps.width = 320
   opt.output_caps.height = 240
   opt.output_caps.fps = 15
+  disabled_caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert disabled_caps_spec.width == 640
+  assert disabled_caps_spec.height == 480
+  assert disabled_caps_spec.fps_num == 30
+  assert disabled_caps_spec.memory == "SimaAI"
+
+  opt.output_caps.enable = True
   caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
   assert caps_spec.width == 320
   assert caps_spec.height == 240

@@ -112,6 +112,7 @@ Use source-owned groups when the graph should read media by itself. Build those 
 | Still image fixture | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
 | Video file | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
 | Live RTSP H.264 stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url` | `latency_ms`, `tcp`, fallback H.264 width/height/FPS, `out_format`, `output_caps` |
+| HTTP multipart MJPEG stream | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, decoded width/height/FPS, `output_caps` |
 | Raw or encoded video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)` or `H264RtpUdpFromEncoded()` | `host`, `channel`, `video_port_base`, encoder/RTP options |
 | RTP/H.264 over UDP output | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | destination host/port when the defaults are not right | `h264_caps`, `payload_type`, `config_interval` |
 

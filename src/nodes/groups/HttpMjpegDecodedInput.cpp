@@ -19,7 +19,7 @@ namespace simaai::neat::nodes::groups {
 namespace {
 
 bool caps_enabled(const HttpMjpegDecodedInputOptions::OutputCaps& c) {
-  return c.enable || c.width > 0 || c.height > 0 || c.fps > 0;
+  return c.enable;
 }
 
 } // namespace
