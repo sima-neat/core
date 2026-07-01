@@ -132,7 +132,8 @@ bool allow_cross_run_gstsample_push() {
 }
 
 void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample,
-                                              const char* where) {
+                                              const char* where,
+                                              bool allow_graph_internal_zero_copy_input) {
   if (allow_cross_run_gstsample_push()) {
     static std::atomic<bool> warned{false};
     bool expected = false;
@@ -146,6 +147,11 @@ void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample
   }
   if (pipeline_internal::sample_has_device_gstsample_producer_lifetime(sample,
                                                                        /*require_expired=*/false)) {
+    if (allow_graph_internal_zero_copy_input &&
+        !pipeline_internal::sample_has_device_gstsample_producer_lifetime(sample,
+                                                                          /*require_expired=*/true)) {
+      return;
+    }
     std::string reason;
     if (!pipeline_internal::sample_has_transferable_zero_copy_loan(sample, &reason)) {
       throw std::runtime_error(pipeline_internal::cross_run_zero_copy_sample_error(where) +
@@ -1411,7 +1417,8 @@ bool InputStream::try_push_message(const Sample& msg) {
   // including the tensor-envelope branch which previously had no guard.
   enforce_device_visible_push_or_throw(st->opt.require_device_visible_input, transport_msg,
                                        "InputStream::try_push_message");
-  enforce_live_gstsample_producer_or_throw(transport_msg, "InputStream::try_push_message");
+  enforce_live_gstsample_producer_or_throw(transport_msg, "InputStream::try_push_message",
+                                           st->opt.allow_graph_internal_zero_copy_input);
   if (spec.kind == SampleMediaKind::RawVideo) {
     spec.fps_n = st->src_opt.fps_n;
     spec.fps_d = st->src_opt.fps_d;

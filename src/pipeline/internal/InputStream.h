@@ -103,6 +103,10 @@ struct InputStreamOptions {
   // transport appsinks, where downstream edge/view contracts must be preserved
   // instead of being rewritten as public terminal outputs.
   bool public_output_contract = true;
+  // Same-graph pipeline-to-pipeline pushes are still owned by the live graph
+  // runtime, so they do not need a public cross-Run loan attached by Run::pull.
+  // Public/cross-Run ingress keeps this false and must carry a transferable loan.
+  bool allow_graph_internal_zero_copy_input = false;
   DynamicCapability dynamic_capability = DynamicCapability::StaticOnly;
   ShapePolicy shape_policy = ShapePolicy::BoundedDynamic;
   ResolvedShapeLimits shape_limits{};
