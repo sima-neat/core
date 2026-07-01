@@ -729,6 +729,34 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
 
 
+def test_jpeg_framing_nodes_are_exposed():
+  http = pyneat.HttpSourceOptions()
+  assert http.location == ""
+  assert http.timeout_seconds == 15
+  assert http.retries == 3
+  assert http.is_live is False
+  assert http.do_timestamp is False
+  http.location = "http://example.local/mjpeg"
+  http.is_live = True
+  http.do_timestamp = True
+  http.user_agent = "NeatTest"
+  _assert_not_type_error(lambda: pyneat.nodes.http_source(http))
+
+  demux = pyneat.MultipartJpegDemuxOptions()
+  assert demux.boundary == ""
+  assert demux.single_stream is False
+  demux.boundary = "frame"
+  demux.single_stream = True
+  _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux())
+  _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux(demux))
+
+  parser = pyneat.JpegParseOptions()
+  assert parser.disable_passthrough is True
+  parser.disable_passthrough = False
+  _assert_not_type_error(lambda: pyneat.nodes.jpeg_parse())
+  _assert_not_type_error(lambda: pyneat.nodes.jpeg_parse(parser))
+
+
 def test_mla_group_helper_present_and_accepts_model():
   model_path = _strict_resnet50_model_path()
   assert model_path.exists(), f"missing fixture: {model_path}"

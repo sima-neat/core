@@ -221,7 +221,7 @@ Key types:
 **Purpose:** Provide ready-to-use Node implementations that emit deterministic GStreamer fragments.
 
 Examples:
-- `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
+- `nodes/io/HttpSource`, `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
 - `nodes/common/*` (Caps, Queue, Output, etc.)
 - `nodes/sima/*` (SiMa.ai decode/encode/parse/pay nodes)
 - `nodes/rtp/*` (depay/payload helpers)

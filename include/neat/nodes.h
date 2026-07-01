@@ -3,9 +3,9 @@
  * @brief Umbrella include for SiMa NEAT's atomic Node types.
  *
  * Pulls in every built-in Node the framework ships, organized by subdirectory:
- * common GStreamer-backed nodes (FileInput, ImageDecode/Freeze, JpegDecode, Output,
- * Queue, VideoConvert/Rate/Scale, VideoTrackSelect, Caps), I/O nodes (Input,
- * MetadataSender, RTSPInput, StillImageInput, UdpOutput), RTP helpers
+ * common GStreamer-backed nodes (FileInput, ImageDecode/Freeze, JpegDecode, JpegParse,
+ * MultipartJpegDemux, Output, Queue, VideoConvert/Rate/Scale, VideoTrackSelect, Caps),
+ * I/O nodes (HttpSource, Input, MetadataSender, RTSPInput, StillImageInput, UdpOutput), RTP helpers
  * (H264CapsFixup, H264Depacketize), and the SiMa-specific MLA-bearing nodes
  * (Cast, CastTess, Dequant, Detess, DetessCast, DetessDequant, H264DecodeSima,
  * FeatureHistogram, GriderFast, H264EncodeSima, H264Packetize, H264Parse, SimaDecode,
@@ -21,12 +21,15 @@
 #include "nodes/common/ImageDecode.h"
 #include "nodes/common/ImageFreeze.h"
 #include "nodes/common/JpegDecode.h"
+#include "nodes/common/JpegParse.h"
+#include "nodes/common/MultipartJpegDemux.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/common/VideoRate.h"
 #include "nodes/common/VideoScale.h"
 #include "nodes/common/VideoTrackSelect.h"
+#include "nodes/io/HttpSource.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/RTSPInput.h"
