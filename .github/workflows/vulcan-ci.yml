@@ -367,7 +367,7 @@ jobs:
           PY
           )"
           short_sha="${GITHUB_SHA:0:12}"
-          prefix="core/pciehost/${DEB_ARCH}/${branch_key}/${short_sha}"
+          prefix="core/${branch_key}/${short_sha}/pciehost/${DEB_ARCH}"
 
           s3_args=(--sse aws:kms)
           if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
@@ -444,7 +444,7 @@ jobs:
           fi
 
           for deb_arch in amd64 arm64; do
-            prefix="core/pciehost/${deb_arch}/${branch_key}/${short_sha}"
+            prefix="core/${branch_key}/${short_sha}/pciehost/${deb_arch}"
             work_dir="_vulcan/pciehost/${deb_arch}"
             resources_tsv="${work_dir}/resources.tsv"
             install_script="${work_dir}/install_pciehost.sh"
@@ -537,7 +537,8 @@ jobs:
               },
               "artifact": {
                   "type": "debian-packages",
-                  "repository": f"core/pciehost/{deb_arch}",
+                  "repository": "core",
+                  "package_path": f"pciehost/{deb_arch}",
                   "arches": [deb_arch],
               },
               "repository": os.environ["GITHUB_REPOSITORY"],
@@ -566,21 +567,14 @@ jobs:
               --content-type application/json \
               "${s3_args[@]}"
 
-            printf '%s\n' "${short_sha}" > "${work_dir}/latest.tag"
-            aws s3 cp \
-              "${work_dir}/latest.tag" \
-              "s3://${ARTIFACT_BUCKET}/core/pciehost/${deb_arch}/${branch_key}/latest.tag" \
-              --content-type text/plain \
-              "${s3_args[@]}"
-
             if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
               aws cloudfront create-invalidation \
                 --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-                --paths "/${prefix}/metadata.json" "/${prefix}/install_pciehost.sh" "/core/pciehost/${deb_arch}/${branch_key}/latest.tag"
+                --paths "/${prefix}/metadata.json" "/${prefix}/install_pciehost.sh"
             fi
 
             cat "${work_dir}/metadata.json"
-            echo "Promoted core/pciehost/${deb_arch}/${branch_key}/latest.tag -> ${short_sha}"
+            echo "Published PCIe host ${deb_arch} metadata under s3://${ARTIFACT_BUCKET}/${prefix}/"
           done
         env:
           ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
@@ -920,10 +914,11 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' }}
+    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
+      - publish-pciehost-package
       - test-devkit
     uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
     with:
