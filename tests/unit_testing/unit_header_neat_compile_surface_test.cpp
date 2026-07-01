@@ -48,6 +48,9 @@ RUN_TEST(
       simaai::neat::stages::BoxDecodeOptions decode_opt(simaai::neat::BoxDecodeType::YoloV8);
       auto in = simaai::neat::nodes::Input();
       auto out = simaai::neat::nodes::Output();
+      simaai::neat::SimaDecodeOptions sima_decode_opt;
+      sima_decode_opt.type = simaai::neat::SimaDecodeType::JPEG;
+      auto sima_decode = simaai::neat::nodes::SimaDecode(sima_decode_opt);
       simaai::neat::nodes::groups::ImageInputGroupOptions image_opt;
       image_opt.path = "test.jpg";
       auto group = simaai::neat::nodes::groups::ImageInputGroup(image_opt);
@@ -66,5 +69,6 @@ RUN_TEST(
       (void)decode_opt;
       (void)in;
       (void)out;
+      (void)sima_decode;
       (void)group;
     }));
