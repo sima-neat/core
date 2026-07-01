@@ -411,8 +411,11 @@ A `Graph` is built by adding `Node` objects:
 
 ```cpp
 sima::Graph s;
+simaai::neat::SimaDecodeOptions decode_options;
+decode_options.type = simaai::neat::SimaDecodeType::H264;
+
 s.add(nodes::RTSPInput("rtsp://..."))
- .add(nodes::H264DecodeSima())
+ .add(nodes::SimaDecode(decode_options))
  .add(nodes::Caps(/*...NV12...*/))
  .add(nodes::Output());
 ```

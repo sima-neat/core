@@ -411,6 +411,14 @@ void warn_deprecated_use_simaai_pool_python_once() {
   });
 }
 
+void warn_deprecated_h264_decode_python() {
+  const char* msg = "pyneat.nodes.h264_decode is deprecated; use pyneat.nodes.sima_decode with "
+                    "SimaDecodeOptions.type = SimaDecodeType.H264";
+  if (PyErr_WarnEx(PyExc_DeprecationWarning, msg, 1) < 0) {
+    throw nb::python_error();
+  }
+}
+
 std::size_t int64_to_size_or_throw(int64_t value, const char* what) {
   if (value < 0) {
     throw std::runtime_error(std::string("invalid negative ") + what);
@@ -4609,10 +4617,18 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::UdpOutputOptions{});
   nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
                 "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
-  nodes_mod.def("h264_decode", &simaai::neat::nodes::H264Decode, "sima_allocator_type"_a = 2,
-                "out_format"_a = "NV12", "decoder_name"_a = "", "raw_output"_a = false,
-                "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1, "dec_fps"_a = -1,
-                "num_buffers"_a = -1);
+  nodes_mod.def(
+      "h264_decode",
+      [](int sima_allocator_type, std::string out_format, std::string decoder_name, bool raw_output,
+         std::string next_element, int dec_width, int dec_height, int dec_fps, int num_buffers) {
+        warn_deprecated_h264_decode_python();
+        return simaai::neat::nodes::H264Decode(
+            sima_allocator_type, std::move(out_format), std::move(decoder_name), raw_output,
+            std::move(next_element), dec_width, dec_height, dec_fps, num_buffers);
+      },
+      "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
+      "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
+      "dec_fps"_a = -1, "num_buffers"_a = -1);
   nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
                 "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(

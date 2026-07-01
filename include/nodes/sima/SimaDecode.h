@@ -45,7 +45,7 @@ struct SimaDecodeOptions {
  * @brief Hardware-accelerated native decoder node.
  *
  * Use this for encoded streams that should be decoded by the SiMa native decoder.
- * Existing `H264Decode` remains available as the compatibility H.264 wrapper.
+ * Deprecated `H264Decode` remains available as the compatibility H.264 wrapper.
  *
  * @ingroup nodes_sima
  */

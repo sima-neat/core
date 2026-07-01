@@ -86,6 +86,7 @@ Use this map before you open the full API reference.
 | Read one image as a source | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
 | Read an RTSP stream | `nodes::RTSPInput(...)` or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)` or `pyneat.groups.rtsp_decoded_input(...)` |
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
+| Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Build a reusable video input path | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -95,6 +96,10 @@ Use this map before you open the full API reference.
 | Convert logits to class index | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
 
 Use groups when you want a tested fragment. Use individual nodes when you need explicit topology. Use `Graph` helpers such as `graphs::Branch(...)` and `graphs::Combine(...)` for fan-out and fan-in instead of hiding topology behind duplicated outputs.
+
+`nodes::H264Decode(...)` and `pyneat.nodes.h264_decode(...)` are deprecated
+compatibility wrappers. New H.264 decode graphs should use `SimaDecode` with
+`SimaDecodeType::H264`.
 
 
 ## Source-owned and sink groups

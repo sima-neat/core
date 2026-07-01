@@ -692,19 +692,26 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
           enforce_h264_caps=True,
       )
   )
-  _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
-  _assert_not_type_error(
-      lambda: pyneat.nodes.h264_decode(
-          sima_allocator_type=2,
-          out_format="NV12",
-          decoder_name="",
-          raw_output=True,
-          next_element="",
-          dec_width=-1,
-          dec_height=-1,
-          dec_fps=-1,
-          num_buffers=7,
-      )
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
+    _assert_not_type_error(
+        lambda: pyneat.nodes.h264_decode(
+            sima_allocator_type=2,
+            out_format="NV12",
+            decoder_name="",
+            raw_output=True,
+            next_element="",
+            dec_width=-1,
+            dec_height=-1,
+            dec_fps=-1,
+            num_buffers=7,
+        )
+    )
+  assert any(
+      issubclass(warning.category, DeprecationWarning)
+      and "pyneat.nodes.h264_decode is deprecated" in str(warning.message)
+      for warning in caught
   )
   native_decode = pyneat.SimaDecodeOptions()
   assert native_decode.type == pyneat.SimaDecodeType.H264
