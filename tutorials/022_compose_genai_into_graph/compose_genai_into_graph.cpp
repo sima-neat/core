@@ -1,5 +1,8 @@
 #include "neat.h"
 
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -10,6 +13,7 @@ namespace genai = simaai::neat::genai;
 
 struct Args {
   std::filesystem::path model;
+  std::filesystem::path image;
 };
 
 Args parse_args(int argc, char** argv) {
@@ -18,18 +22,35 @@ Args parse_args(int argc, char** argv) {
     const std::string arg = argv[i];
     if (arg == "--model" && i + 1 < argc) {
       args.model = argv[++i];
+    } else if (arg == "--image" && i + 1 < argc) {
+      args.image = argv[++i];
     } else {
-      throw std::runtime_error("usage: compose_genai_into_graph --model <llima_model_dir>");
+      throw std::runtime_error(
+          "usage: compose_genai_into_graph --model <vlm_model_dir> --image <image>");
     }
   }
-  if (args.model.empty()) {
-    throw std::runtime_error("missing required --model <llima_model_dir>");
+  if (args.model.empty() || args.image.empty()) {
+    throw std::runtime_error("missing required --model <vlm_model_dir> or --image <image>");
   }
   return args;
 }
 
 simaai::neat::Sample make_text_sample(const std::string& port, const std::string& text) {
   return simaai::neat::make_tensor_sample(port, simaai::neat::Tensor::from_text(text));
+}
+
+simaai::neat::Sample make_image_sample(const std::filesystem::path& image_path) {
+  cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
+  if (bgr.empty()) {
+    throw std::runtime_error("failed to read image: " + image_path.string());
+  }
+
+  cv::Mat rgb;
+  cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+  return simaai::neat::make_tensor_sample(
+      "image", simaai::neat::Tensor::from_cv_mat(
+                   rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
+                   simaai::neat::TensorMemory::CPU));
 }
 
 std::string sample_text(const simaai::neat::Sample& sample) {
@@ -66,7 +87,10 @@ int main(int argc, char** argv) {
 
     // STEP push-prompt
     simaai::neat::Run run = app.build();
-    if (!run.push("prompt", make_text_sample("prompt", "Explain what an API gateway does."))) {
+    if (!run.push("image", make_image_sample(args.image))) {
+      throw std::runtime_error("push(image) failed: " + run.last_error());
+    }
+    if (!run.push("prompt", make_text_sample("prompt", "Describe this image in one sentence."))) {
       throw std::runtime_error("push(prompt) failed: " + run.last_error());
     }
     // END STEP

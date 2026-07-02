@@ -5,7 +5,7 @@
 | --- | --- |
 | Difficulty | Advanced |
 | Estimated Read Time | 20-25 minutes |
-| Model | Qwen3-VL-4B-Instruct-GPTQ-a16w4 |
+| Model | LFM2-VL-1.6B-a16w4 |
 | Labels | genai, graph, composition, streaming, advanced |
 
 ## Concept
@@ -26,9 +26,9 @@ The vision-language fragment exposes `prompt`, `image`, and `use_cached_image` i
 
 Add the fragment to a larger application graph. The fragment keeps its public endpoint names, so application code can push and pull by name.
 
-### Build and push a prompt {#step-push-prompt}
+### Build and push graph inputs {#step-push-prompt}
 
-Build the graph into a `Run`, push a text sample to the `prompt` input, and let the GenAI stage produce tokens.
+Build the graph into a `Run`, push an image sample to the `image` input, then push a text sample to the `prompt` input and let the GenAI stage produce tokens.
 
 ### Pull tokens and completion metadata {#step-pull-results}
 
@@ -36,31 +36,34 @@ Pull from `tokens` until a `done` sample arrives. The `done` sample is a bundle 
 
 ## Run
 
-First, download an LLM such as Qwen3 4B from Hugging Face using the LLiMa CLI:
+On the Modalix DevKit, download the LFM2-VL 1.6B VLM from Hugging Face using the LLiMa CLI:
 
 ```bash
-llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
+llima pull LFM2-VL-1.6B-a16w4
 ```
 
-Run the tutorial on Modalix with the deployed model directory:
+Run the tutorial on Modalix with the DevKit-local model directory and a local image:
 
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/022_compose_genai_into_graph/compose_genai_into_graph.py \
-  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_022_compose_genai_into_graph \
-  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_022_compose_genai_into_graph
 ./build/tutorials-standalone/tutorial_022_compose_genai_into_graph \
-  --model /media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
+  --image share/sima-neat/tutorials/assets/fronalpstock_1330.jpg
 ```
 
 Expected output prints the graph description and a streamed answer pulled from the `tokens` output.

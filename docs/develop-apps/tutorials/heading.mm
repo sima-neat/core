@@ -82,8 +82,10 @@ To rebuild a C++ tutorial from source:
 `build.sh` auto-detects `SimaNeatConfig.cmake` from the installed Neat Library
 and writes rebuilt binaries under `build/tutorials-standalone/`.
 
-Some tutorials need Model Zoo artifacts. `build.sh` downloads required models
-automatically before a C++ build. To download models without rebuilding:
+Some MPK tutorials need Model Zoo artifacts. `build.sh` downloads those required
+models automatically before a C++ build. GenAI tutorials use LLiMa model
+directories and are skipped by this automatic Model Zoo download path. To
+download MPK tutorial models without rebuilding:
 
 ```bash
 ./build.sh --download-models-only

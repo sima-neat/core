@@ -39,7 +39,7 @@ The response should include the served names registered in this tutorial: `llm`,
 ## Run
 
 
-First, download the LLM, VLM, and ASR models from Hugging Face using the LLiMa CLI:
+On the Modalix DevKit, download the LLM, VLM, and ASR models from Hugging Face using the LLiMa CLI:
 
 ```bash
 llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
@@ -47,7 +47,7 @@ llima pull Qwen3-VL-4B-Instruct-GPTQ-a16w4
 llima pull whisper-small-a16w8
 ```
 
-Start the server on Modalix with all three deployed model directories:
+Start the server on Modalix with all three DevKit-local model directories:
 
 **Python:**
 ```bash
