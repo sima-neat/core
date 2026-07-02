@@ -177,13 +177,6 @@ if [ -z "${url}" ]; then
   url="${urls%%[ ,;]*}"
 fi
 if [ -z "${url}" ]; then
-  url="${SIMANEAT_APPS_TEST_RTSP_URL:-}"
-fi
-if [ -z "${url}" ]; then
-  urls="${SIMANEAT_APPS_TEST_RTSP_URLS:-}"
-  url="${urls%%[ ,;]*}"
-fi
-if [ -z "${url}" ]; then
   echo "Skipping tutorial_018_consume_rtsp_stream: set SIMANEAT_TEST_RTSP_H264_URL or SIMANEAT_TEST_RTSP_H264_URLS"
   exit 77
 fi

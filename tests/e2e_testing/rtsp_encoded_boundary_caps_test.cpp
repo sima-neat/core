@@ -56,15 +56,6 @@ std::string first_rtsp_url_from_env() {
       return urls.front();
     }
   }
-  if (const char* single = std::getenv("SIMANEAT_APPS_TEST_RTSP_URL"); single && *single) {
-    return trim_copy(single);
-  }
-  if (const char* many = std::getenv("SIMANEAT_APPS_TEST_RTSP_URLS"); many && *many) {
-    std::vector<std::string> urls = split_rtsp_urls(many);
-    if (!urls.empty()) {
-      return urls.front();
-    }
-  }
   return {};
 }
 

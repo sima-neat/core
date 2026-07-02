@@ -37,11 +37,6 @@ RTSP_URL = os.environ.get("SIMANEAT_TEST_RTSP_H264_URL")
 if not RTSP_URL:
   rtsp_urls = os.environ.get("SIMANEAT_TEST_RTSP_H264_URLS", "")
   RTSP_URL = re.split(r"[ ,;]+", rtsp_urls.strip(), maxsplit=1)[0] if rtsp_urls.strip() else None
-if not RTSP_URL:
-  RTSP_URL = os.environ.get("SIMANEAT_APPS_TEST_RTSP_URL")
-if not RTSP_URL:
-  rtsp_urls = os.environ.get("SIMANEAT_APPS_TEST_RTSP_URLS", "")
-  RTSP_URL = re.split(r"[ ,;]+", rtsp_urls.strip(), maxsplit=1)[0] if rtsp_urls.strip() else None
 SMOKE_ARGS_BY_CHAPTER = {
     "003": ["--samples", "10"],
 }

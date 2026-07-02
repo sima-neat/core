@@ -40,7 +40,7 @@ With the run live, loop and `pull(...)` with a timeout. Each successful pull yie
 
 This chapter consumes a live RTSP stream, so you must supply a reachable `--url`; if you do not have a camera, publish an MP4 through `mediamtx` + `ffmpeg` and point `--url` at it. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
 
-CTest reads `SIMANEAT_TEST_RTSP_H264_URL` for this chapter's RTSP source. If you manage several sources, set `SIMANEAT_TEST_RTSP_H264_URLS` and the first URL is used. The legacy `SIMANEAT_APPS_TEST_RTSP_URL` and `SIMANEAT_APPS_TEST_RTSP_URLS` names are still accepted as fallbacks.
+CTest reads `SIMANEAT_TEST_RTSP_H264_URL` for this chapter's RTSP source. If you manage several sources, set `SIMANEAT_TEST_RTSP_H264_URLS` and the first URL is used.
 
 **Python:**
 ```bash
