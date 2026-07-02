@@ -305,9 +305,9 @@ jobs:
       matrix:
         include:
           - deb_arch: amd64
-            runs_on: ubuntu-24.04
+            runs_on: ubuntu-22.04
           - deb_arch: arm64
-            runs_on: ubuntu-24.04-arm
+            runs_on: ubuntu-22.04-arm
 
     steps:
       - name: Checkout code
