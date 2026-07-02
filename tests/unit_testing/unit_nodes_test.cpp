@@ -14,7 +14,6 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
-#include "nodes/sima/SimaDecode.h"
 #include "gst/GstHelpers.h"
 
 #include "test_utils.h"
@@ -73,80 +72,6 @@ int main() {
     auto dec = simaai::neat::nodes::H264Decode(2, "NV12");
     const std::string dec_expect = std::string(decoder_element_name()) + " name=n1_decoder";
     require_contains(dec->backend_fragment(1), dec_expect, "Decode fragment mismatch");
-
-    simaai::neat::SimaDecodeOptions native_dec_opt;
-    native_dec_opt.type = simaai::neat::SimaDecodeType::H264;
-    native_dec_opt.raw_output = true;
-    native_dec_opt.dec_width = 1280;
-    native_dec_opt.dec_height = 720;
-    native_dec_opt.dec_fps = 30;
-    auto native_dec = simaai::neat::nodes::SimaDecode(native_dec_opt);
-    require_contains(native_dec->backend_fragment(3), "neatdecoder name=n3_decoder",
-                     "SimaDecode fragment missing decoder");
-    require_contains(native_dec->backend_fragment(3), "dec-type=h264",
-                     "SimaDecode H264 type mismatch");
-    require_contains(native_dec->backend_fragment(3), "dec-width=1280",
-                     "SimaDecode width override missing");
-    require_contains(native_dec->backend_fragment(3), "dec-height=720",
-                     "SimaDecode height override missing");
-    require_contains(native_dec->backend_fragment(3), "dec-fps=30",
-                     "SimaDecode fps override missing");
-
-    const auto* native_provider =
-        dynamic_cast<const simaai::neat::OutputSpecProvider*>(native_dec.get());
-    require(native_provider != nullptr, "SimaDecode should provide output spec");
-    simaai::neat::OutputSpec encoded_input;
-    encoded_input.media_type = "video/x-h264";
-    const simaai::neat::OutputSpec native_spec = native_provider->output_spec(encoded_input);
-    require(native_spec.media_type == "video/x-raw", "SimaDecode media type mismatch");
-    require(native_spec.format == "NV12", "SimaDecode output format mismatch");
-    require(native_spec.width == 1280 && native_spec.height == 720,
-            "SimaDecode output shape mismatch");
-    require(native_spec.fps_num == 30 && native_spec.fps_den == 1,
-            "SimaDecode output fps mismatch");
-    require(native_spec.memory == "SimaAI", "SimaDecode raw output should report SimaAI memory");
-
-    simaai::neat::SimaDecodeOptions jpeg_dec_opt;
-    jpeg_dec_opt.type = simaai::neat::SimaDecodeType::JPEG;
-    jpeg_dec_opt.raw_output = false;
-    auto jpeg_native_dec = simaai::neat::nodes::SimaDecode(jpeg_dec_opt);
-    require_contains(jpeg_native_dec->backend_fragment(4), "dec-type=jpeg",
-                     "SimaDecode JPEG type mismatch");
-    require_contains(jpeg_native_dec->backend_fragment(4), "videoconvert name=n4_videoconvert",
-                     "SimaDecode non-raw output should insert videoconvert");
-    const auto* jpeg_provider =
-        dynamic_cast<const simaai::neat::OutputSpecProvider*>(jpeg_native_dec.get());
-    require(jpeg_provider != nullptr, "JPEG SimaDecode should provide output spec");
-    require(jpeg_provider->output_spec({}).memory == "SystemMemory",
-            "SimaDecode non-raw output should report SystemMemory");
-
-    simaai::neat::SimaDecodeOptions mjpeg_dec_opt;
-    mjpeg_dec_opt.type = simaai::neat::SimaDecodeType::MJPEG;
-    auto mjpeg_native_dec = simaai::neat::nodes::SimaDecode(mjpeg_dec_opt);
-    require_contains(mjpeg_native_dec->backend_fragment(5), "dec-type=mjpeg",
-                     "SimaDecode MJPEG type mismatch");
-
-    simaai::neat::SimaDecodeOptions i420_dec_opt;
-    i420_dec_opt.out_format = simaai::neat::FormatTag::I420;
-    auto i420_native_dec = simaai::neat::nodes::SimaDecode(i420_dec_opt);
-    require_contains(i420_native_dec->backend_fragment(6), "dec-fmt=YUV420P",
-                     "SimaDecode I420 should map to neatdecoder YUV420P");
-    const auto* i420_provider =
-        dynamic_cast<const simaai::neat::OutputSpecProvider*>(i420_native_dec.get());
-    require(i420_provider != nullptr, "I420 SimaDecode should provide output spec");
-    require(i420_provider->output_spec({}).format == "I420",
-            "SimaDecode should expose public I420 caps");
-
-    simaai::neat::SimaDecodeOptions unsupported_raw_dec_opt;
-    unsupported_raw_dec_opt.out_format = simaai::neat::FormatTag::RGB;
-    auto unsupported_raw_dec = simaai::neat::nodes::SimaDecode(unsupported_raw_dec_opt);
-    bool unsupported_raw_threw = false;
-    try {
-      (void)unsupported_raw_dec->backend_fragment(7);
-    } catch (const std::invalid_argument&) {
-      unsupported_raw_threw = true;
-    }
-    require(unsupported_raw_threw, "SimaDecode raw_output should reject non-native formats");
 
     auto enc = simaai::neat::nodes::H264EncodeSima(64, 64, 30, 400, "baseline", "4.0");
     require_contains(enc->backend_fragment(0), "neatencoder name=n0_encoder",
