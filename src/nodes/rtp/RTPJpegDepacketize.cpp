@@ -16,8 +16,10 @@ std::string RTPJpegDepacketize::backend_fragment(int node_index) const {
   const std::string dep = "n" + std::to_string(node_index) + "_rtpjpegdepay";
 
   std::ostringstream ss;
-  ss << "capsfilter name=" << rtp
-     << " caps=\"application/x-rtp,media=video,encoding-name=JPEG,clock-rate=90000";
+  ss << "capsfilter name=" << rtp << " caps=\"application/x-rtp,media=video,clock-rate=90000";
+  if (payload_type_ != 26) {
+    ss << ",encoding-name=JPEG";
+  }
   if (payload_type_ > 0) {
     ss << ",payload=" << payload_type_;
   }

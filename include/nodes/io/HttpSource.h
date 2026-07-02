@@ -25,6 +25,7 @@ struct HttpSourceOptions {
   bool is_live = false;      ///< If true, mark the source as live.
   bool do_timestamp = false; ///< If true, timestamp outgoing buffers with stream time.
   std::string user_agent;    ///< Optional HTTP User-Agent override.
+  bool ssl_strict = true;    ///< If false, disable strict TLS certificate validation.
 };
 
 /**

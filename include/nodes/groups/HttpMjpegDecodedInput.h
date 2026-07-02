@@ -35,6 +35,7 @@ struct HttpMjpegDecodedInputOptions {
   bool is_live = true;            ///< Mark the HTTP source as live.
   bool do_timestamp = true;       ///< Timestamp outgoing source buffers with stream time.
   std::string user_agent;         ///< Optional HTTP User-Agent override.
+  bool ssl_strict = true;         ///< If false, disable strict TLS certificate validation.
   std::string multipart_boundary; ///< Optional multipart boundary override; empty = auto-detect.
   bool multipart_single_stream = false; ///< If true, assume multipart content type is stable.
   bool insert_queue = true;             ///< Insert queues around source/framing and decode.
@@ -48,7 +49,7 @@ struct HttpMjpegDecodedInputOptions {
       decoder_next_element; ///< Optional next-element selector ("CVU" or "APU") for `neatdecoder`.
   int dec_width = -1;       ///< Decoded frame width override; `-1` = upstream-defined.
   int dec_height = -1;      ///< Decoded frame height override; `-1` = upstream-defined.
-  int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
+  int dec_fps = -1;         ///< Decoded frame rate override; also fixes missing input caps.
   int num_buffers = -1;     ///< Decoder output buffer pool size override; `-1` = element default.
 
   bool use_videoconvert = false; ///< Insert `videoconvert` after decode for format adaptation.

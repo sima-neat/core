@@ -3215,6 +3215,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("do_timestamp",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::do_timestamp)
       .def_rw("user_agent", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::user_agent)
+      .def_rw("ssl_strict", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::ssl_strict)
       .def_rw("multipart_boundary",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::multipart_boundary)
       .def_rw("multipart_single_stream",
@@ -3689,7 +3690,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("retries", &simaai::neat::HttpSourceOptions::retries)
       .def_rw("is_live", &simaai::neat::HttpSourceOptions::is_live)
       .def_rw("do_timestamp", &simaai::neat::HttpSourceOptions::do_timestamp)
-      .def_rw("user_agent", &simaai::neat::HttpSourceOptions::user_agent);
+      .def_rw("user_agent", &simaai::neat::HttpSourceOptions::user_agent)
+      .def_rw("ssl_strict", &simaai::neat::HttpSourceOptions::ssl_strict);
   nb::class_<simaai::neat::MultipartJpegDemuxOptions>(m, "MultipartJpegDemuxOptions")
       .def(nb::init<>())
       .def_rw("boundary", &simaai::neat::MultipartJpegDemuxOptions::boundary)

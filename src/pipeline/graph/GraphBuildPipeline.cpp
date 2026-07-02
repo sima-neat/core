@@ -7,6 +7,7 @@
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "internal/GraphBuildInternal.h"
 
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "pipeline/ErrorCodes.h"
@@ -826,6 +827,13 @@ struct H264CapsFixupCtx {
   bool derived_logged = false;
   bool derived_dims_logged = false;
   bool sprop_logged = false;
+};
+
+struct EncodedCapsFixupCtx {
+  std::string element_name;
+  std::string media_type;
+  int fallback_fps = -1;
+  bool logged = false;
 };
 
 static bool h264_sdp_dump_enabled() {
@@ -1980,6 +1988,169 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
   }
 }
 
+static bool encoded_caps_fixup_apply(GstStructure* s, EncodedCapsFixupCtx* ctx, bool* out_changed) {
+  if (!s || !ctx)
+    return false;
+  const char* media = gst_structure_get_name(s);
+  if (!media || ctx->media_type != media)
+    return true;
+
+  bool changed = false;
+  int num = 0;
+  int den = 0;
+  const bool has_fps = gst_structure_get_fraction(s, "framerate", &num, &den) && num > 0 && den > 0;
+  if (!has_fps && ctx->fallback_fps > 0) {
+    gst_structure_set(s, "framerate", GST_TYPE_FRACTION, ctx->fallback_fps, 1, nullptr);
+    changed = true;
+  }
+
+  if (out_changed)
+    *out_changed = changed;
+  return true;
+}
+
+static bool encoded_caps_fixup_apply_caps(GstCaps* caps, EncodedCapsFixupCtx* ctx,
+                                          bool* out_changed) {
+  if (!caps || !ctx)
+    return false;
+  bool changed = false;
+  const guint n = gst_caps_get_size(caps);
+  for (guint i = 0; i < n; ++i) {
+    GstStructure* s = gst_caps_get_structure(caps, i);
+    bool structure_changed = false;
+    if (!encoded_caps_fixup_apply(s, ctx, &structure_changed)) {
+      return false;
+    }
+    changed = changed || structure_changed;
+  }
+  if (out_changed)
+    *out_changed = changed;
+  return true;
+}
+
+static void encoded_caps_fixup_log_once(EncodedCapsFixupCtx* ctx) {
+  if (!ctx || ctx->logged || ctx->fallback_fps <= 0)
+    return;
+  std::fprintf(stderr, "[caps] %s: %s missing/invalid framerate; applying %d/1\n",
+               ctx->element_name.c_str(), ctx->media_type.c_str(), ctx->fallback_fps);
+  ctx->logged = true;
+}
+
+static GstPadProbeReturn encoded_caps_fixup_cb(GstPad* pad, GstPadProbeInfo* info,
+                                               gpointer user_data) {
+  (void)pad;
+  auto* ctx = reinterpret_cast<EncodedCapsFixupCtx*>(user_data);
+  if (!ctx)
+    return GST_PAD_PROBE_OK;
+
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM) != 0) {
+    GstQuery* query = GST_PAD_PROBE_INFO_QUERY(info);
+    if (!query || GST_QUERY_TYPE(query) != GST_QUERY_ACCEPT_CAPS) {
+      return GST_PAD_PROBE_OK;
+    }
+
+    GstCaps* caps = nullptr;
+    gst_query_parse_accept_caps(query, &caps);
+    if (!caps || gst_caps_get_size(caps) < 1)
+      return GST_PAD_PROBE_OK;
+
+    GstCaps* new_caps = gst_caps_copy(caps);
+    bool changed = false;
+    if (!encoded_caps_fixup_apply_caps(new_caps, ctx, &changed)) {
+      gst_caps_unref(new_caps);
+      return GST_PAD_PROBE_OK;
+    }
+    if (!changed) {
+      gst_caps_unref(new_caps);
+      return GST_PAD_PROBE_OK;
+    }
+
+    encoded_caps_fixup_log_once(ctx);
+    GstQuery* new_query = gst_query_new_accept_caps(new_caps);
+    gboolean ok = gst_pad_peer_query(pad, new_query);
+    gboolean result = FALSE;
+    if (ok) {
+      gst_query_parse_accept_caps_result(new_query, &result);
+    }
+    gst_query_set_accept_caps_result(query, result);
+    gst_query_unref(new_query);
+    gst_caps_unref(new_caps);
+    return GST_PAD_PROBE_HANDLED;
+  }
+
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM) == 0)
+    return GST_PAD_PROBE_OK;
+
+  GstEvent* ev = GST_PAD_PROBE_INFO_EVENT(info);
+  if (!ev || GST_EVENT_TYPE(ev) != GST_EVENT_CAPS)
+    return GST_PAD_PROBE_OK;
+
+  GstCaps* caps = nullptr;
+  gst_event_parse_caps(ev, &caps);
+  if (!caps || gst_caps_get_size(caps) < 1)
+    return GST_PAD_PROBE_OK;
+
+  GstCaps* new_caps = gst_caps_copy(caps);
+  bool changed = false;
+  if (!encoded_caps_fixup_apply_caps(new_caps, ctx, &changed)) {
+    gst_caps_unref(new_caps);
+    return GST_PAD_PROBE_OK;
+  }
+  if (!changed) {
+    gst_caps_unref(new_caps);
+    return GST_PAD_PROBE_OK;
+  }
+
+  encoded_caps_fixup_log_once(ctx);
+  GstEvent* new_ev = gst_event_new_caps(new_caps);
+  gst_caps_unref(new_caps);
+  gst_event_unref(ev);
+  GST_PAD_PROBE_INFO_DATA(info) = new_ev;
+  return GST_PAD_PROBE_OK;
+}
+
+static void attach_encoded_caps_fixups(GstElement* pipeline,
+                                       const std::vector<std::shared_ptr<Node>>& nodes,
+                                       const NameTransform& name_transform) {
+  if (!pipeline)
+    return;
+
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    const auto* fix = dynamic_cast<const EncodedCapsFixup*>(nodes[i].get());
+    if (!fix)
+      continue;
+
+    const auto names =
+        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+    if (names.empty())
+      continue;
+
+    GstElement* elem = gst_bin_get_by_name(GST_BIN(pipeline), names[0].c_str());
+    if (!elem)
+      continue;
+
+    GstPad* src = gst_element_get_static_pad(elem, "src");
+    if (!src) {
+      gst_object_unref(elem);
+      continue;
+    }
+
+    auto* ctx = new EncodedCapsFixupCtx();
+    ctx->element_name = names[0];
+    ctx->media_type = fix->options().media_type;
+    ctx->fallback_fps = fix->options().fallback_fps;
+    gst_pad_add_probe(
+        src,
+        static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM |
+                                     GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM),
+        encoded_caps_fixup_cb, ctx,
+        +[](gpointer p) { delete reinterpret_cast<EncodedCapsFixupCtx*>(p); });
+
+    gst_object_unref(src);
+    gst_object_unref(elem);
+  }
+}
+
 // =====================================================================================
 // Bus/meta plumbing + improved error diagnostics (parse_error + DOT dumps)
 // =====================================================================================
@@ -2000,6 +2171,12 @@ void session_build_attach_h264_caps_fixups(GstElement* pipeline,
                                            const std::vector<std::shared_ptr<Node>>& nodes,
                                            const NameTransform& name_transform) {
   attach_h264_caps_fixups(pipeline, nodes, name_transform);
+}
+
+void session_build_attach_encoded_caps_fixups(GstElement* pipeline,
+                                              const std::vector<std::shared_ptr<Node>>& nodes,
+                                              const NameTransform& name_transform) {
+  attach_encoded_caps_fixups(pipeline, nodes, name_transform);
 }
 
 } // namespace simaai::neat

@@ -51,6 +51,7 @@ RUN_TEST(
       simaai::neat::HttpSourceOptions http_opt;
       http_opt.location = "http://example.local/mjpeg";
       auto http = simaai::neat::nodes::HttpSource(http_opt);
+      auto encoded_caps_fixup = simaai::neat::nodes::EncodedCapsFixup({"image/jpeg", 30});
       auto multipart_demux = simaai::neat::nodes::MultipartJpegDemux();
       auto jpeg_parse = simaai::neat::nodes::JpegParse();
       auto rtp_jpeg_depay = simaai::neat::nodes::RTPJpegDepacketize();
@@ -95,6 +96,7 @@ RUN_TEST(
       (void)in;
       (void)out;
       (void)http;
+      (void)encoded_caps_fixup;
       (void)multipart_demux;
       (void)jpeg_parse;
       (void)rtp_jpeg_depay;
