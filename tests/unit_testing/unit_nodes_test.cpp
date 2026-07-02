@@ -72,8 +72,8 @@ int main() {
                      "CameraInput source missing");
     require_contains(cam->backend_fragment(0), "neatcamerabridge name=n0_camera_bridge",
                      "CameraInput fallback bridge missing");
-    require_contains(cam->backend_fragment(0), "buffer-size=3110400",
-                     "CameraInput NV12 bridge size mismatch");
+    require(cam->backend_fragment(0).find(" buffer-size=") == std::string::npos,
+            "CameraInput bridge should derive buffer size from actual camera buffers");
     if (!simaai::neat::element_exists("neatcamerabridge")) {
       throw std::runtime_error("private neatcamerabridge factory not registered");
     }

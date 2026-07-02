@@ -113,8 +113,7 @@ std::string CameraInput::backend_fragment(int node_index) const {
   std::ostringstream ss;
   ss << "libcamerasrc name=" << src_name;
   const bool has_zero_copy = libcamerasrc_property_exists("simaai-zero-copy");
-  const bool has_zero_copy_required =
-      libcamerasrc_property_exists("simaai-zero-copy-required");
+  const bool has_zero_copy_required = libcamerasrc_property_exists("simaai-zero-copy-required");
   if (has_zero_copy) {
     ss << " simaai-zero-copy=true";
   }
@@ -147,10 +146,9 @@ std::string CameraInput::backend_fragment(int node_index) const {
     ss << " ! neatcamerabridge name=" << camera_bridge_name(node_index);
     ss << " buffer-name=" << gst_quote(opt_.buffer_name);
     ss << " num-buffers=" << std::max<std::uint32_t>(2U, opt_.queue_depth);
-    const std::uint64_t bytes = camera_expected_frame_bytes(opt_.width, opt_.height, opt_.format);
-    if (bytes > 0) {
-      ss << " buffer-size=" << bytes;
-    }
+    // Let the private bridge derive the copy span from each GstBuffer/GstVideoMeta.  libcamera
+    // buffers may have padded strides or plane offsets, and forcing a tight width*height size would
+    // make the fallback copy treat row padding as image data and truncate the later planes.
     ss << " copy-allowed=true";
   }
 
@@ -195,8 +193,8 @@ OutputSpec CameraInput::output_spec(const OutputSpec& /*input*/) const {
                  : "libcamerasrc camera input; Neat requests device zero-copy";
   out.byte_size = expected_byte_size(out);
   if (out.byte_size == 0) {
-    out.byte_size = static_cast<std::size_t>(
-        camera_expected_frame_bytes(opt_.width, opt_.height, opt_.format));
+    out.byte_size =
+        static_cast<std::size_t>(camera_expected_frame_bytes(opt_.width, opt_.height, opt_.format));
   }
   return out;
 }
