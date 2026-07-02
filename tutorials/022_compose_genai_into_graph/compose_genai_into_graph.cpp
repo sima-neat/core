@@ -48,9 +48,8 @@ simaai::neat::Sample make_image_sample(const std::filesystem::path& image_path) 
   cv::Mat rgb;
   cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
   return simaai::neat::make_tensor_sample(
-      "image", simaai::neat::Tensor::from_cv_mat(
-                   rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
-                   simaai::neat::TensorMemory::CPU));
+      "image", simaai::neat::Tensor::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                                 simaai::neat::TensorMemory::CPU));
 }
 
 std::string sample_text(const simaai::neat::Sample& sample) {
