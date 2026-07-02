@@ -22,17 +22,19 @@
 <g id="code0" class="fanim" opacity="1">
 <text x="76" y="212" class="fsans fcap">STEP 1 · Load model</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">model = pyneat.Model(str(args.model))</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">model = pyneat.Model(str(args.model), build…</text>
 </g>
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Prepare input</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">image = load_image(args.image, size=224)</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">tensor = pyneat.Tensor.from_numpy(image, co…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Run inference</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">outputs = model.run([image], timeout_ms=200…</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">outputs = model.run([tensor], timeout_ms=20…</text>
 </g>
 </g>
 <g filter="url(#fsh)">

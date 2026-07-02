@@ -24,9 +24,9 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">inp = pyneat.InputOptions()</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">inp.media_type = &quot;application/vnd.simaai.te…</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">inp.payload_type = pyneat.PayloadType.Tensor</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">inp.format = &quot;FP32&quot;</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">inp.format = pyneat.Format.FP32</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">inp.width = args.width</text>
 <text x="76" y="352" class="fmono fln">5</text>
@@ -59,9 +59,15 @@
 <g id="code3" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 4 · Push and read</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">run.push(fields)</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">if not run.push(fields):</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">out = run.pull(timeout_ms=1000)</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">  raise RuntimeError(f&quot;push failed: {run.la…</text>
+<text x="76" y="300" class="fmono fln">3</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">out = run.pull(timeout_ms=1000)</text>
+<text x="76" y="326" class="fmono fln">4</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">if out is None:</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">  raise RuntimeError(&quot;graph produced no out…</text>
 </g>
 </g>
 <g filter="url(#fsh)">
