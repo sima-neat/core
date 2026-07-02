@@ -21,7 +21,7 @@ enum class PayloadType {
   Auto = 0, ///< Infer from tensor/sample metadata when possible.
   Image,    ///< Decoded image pixels (`video/x-raw` internally).
   Tensor,   ///< Tensor payload (`application/vnd.simaai.tensor` internally).
-  Encoded,  ///< Encoded video/byte-stream payloads such as H.264.
+  Encoded,  ///< Encoded video/byte-stream payloads such as H.264, H.265, or JPEG.
 };
 
 /// Compatibility alias for code written during the InputOptions migration.
@@ -35,7 +35,7 @@ inline PayloadType payload_type_from_media_type(std::string_view media_type) {
   if (media_type == "application/vnd.simaai.tensor") {
     return PayloadType::Tensor;
   }
-  if (media_type == "video/x-h264") {
+  if (media_type == "video/x-h264" || media_type == "video/x-h265" || media_type == "image/jpeg") {
     return PayloadType::Encoded;
   }
   return PayloadType::Auto;

@@ -136,6 +136,43 @@ RUN_TEST(
         require_contains(*err, "width", "graph policy: expected width error");
       }
 
+      // Encoded seed samples carry a full caps contract that cannot be reconstructed from
+      // format/shape fields alone.
+      {
+        const std::string caps =
+            "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au,"
+            "parsed=(boolean)true";
+        InputOptions opt;
+        SampleSpec seed;
+        seed.kind = SampleMediaKind::Encoded;
+        seed.media_type = "video/x-h264";
+        seed.format = "ENCODED";
+        seed.caps_string = caps;
+
+        const InputOptions out = complete_input_options_from_seed_spec(opt, seed);
+        require(out.payload_type == PayloadType::Encoded,
+                "encoded seed should resolve Input payload_type");
+        require(out.caps_override == caps, "encoded seed should preserve exact caps string");
+      }
+
+      // Explicit caps are user-owned and should not be replaced by seed inference.
+      {
+        InputOptions opt;
+        opt.payload_type = PayloadType::Encoded;
+        opt.caps_override = "video/x-h264,stream-format=(string)avc,alignment=(string)au";
+
+        SampleSpec seed;
+        seed.kind = SampleMediaKind::Encoded;
+        seed.media_type = "video/x-h264";
+        seed.format = "ENCODED";
+        seed.caps_string = "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au,"
+                           "parsed=(boolean)true";
+
+        const InputOptions out = complete_input_options_from_seed_spec(opt, seed);
+        require(out.caps_override == opt.caps_override,
+                "explicit caps_override should win over encoded seed caps");
+      }
+
       // Model-vs-Graph parity where rules are equivalent (seed-as-max behavior).
       {
         ModelInputPolicyRequest mreq;
