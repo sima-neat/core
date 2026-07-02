@@ -102,6 +102,51 @@ Use groups when you want a tested fragment. Use individual nodes when you need e
 compatibility wrappers. New H.264 decode graphs should use `SimaDecode` with
 `SimaDecodeType::H264`.
 
+## Encoded decode paths
+
+Use `SimaDecode` for encoded streams that should be decoded by the native SiMa
+decoder. It accepts H.264, JPEG, and MJPEG after the stream has already been
+framed into complete encoded samples:
+
+| Encoded input | Native decoder option | Typical upstream path |
+| --- | --- | --- |
+| H.264 access units | `SimaDecodeType::H264` | RTSP H.264 depacketize + parse, or another parsed H.264 source |
+| Single JPEG frames | `SimaDecodeType::JPEG` | `JpegParse()` or an app-provided encoded JPEG sample |
+| MJPEG frame stream | `SimaDecodeType::MJPEG` | HTTP multipart demux + `JpegParse()`, or RTSP JPEG depacketize + `JpegParse()` |
+
+`SimaDecodeOptions::raw_output` defaults to `true`. In that mode the decoder
+emits native raw buffers, normally NV12 in SiMaAI memory, which is the intended
+path before CVU preprocessing and MLA inference. Set `raw_output=false` only
+when the next stage needs CPU-visible `video/x-raw(memory:SystemMemory)` buffers.
+
+`nodes::JpegDecode()` and `pyneat.nodes.jpeg_decode()` are separate CPU/GStreamer
+JPEG decode nodes. Use them for simple CPU image pipelines. Do not use them for
+native MJPEG video decode before model preprocessing.
+
+For RTSP, prefer the codec-aware groups when the source shape is standard:
+
+```cpp
+simaai::neat::nodes::groups::RtspEncodedInputOptions encoded;
+encoded.url = "rtsp://camera.example/live";
+encoded.codec = simaai::neat::nodes::groups::RtspCodec::H264; // default
+
+simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
+decoded.url = "rtsp://camera.example/live";
+decoded.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+decoded.dec_width = 1280;
+decoded.dec_height = 720;
+decoded.dec_fps = 30;
+```
+
+`RtspEncodedInput(...)` stops after source depacketization and parse/framing.
+Use it when your app needs the encoded samples, for example to split one parsed
+stream into decode and video-output graphs. `RtspDecodedInput(...)` appends
+`SimaDecode(...)` and returns raw decoded video.
+
+For HTTP multipart MJPEG, use `HttpMjpegDecodedInput(...)`. HTTP multipart
+MJPEG is not RTP, so it uses `HttpSource -> MultipartJpegDemux -> JpegParse ->
+SimaDecode(MJPEG)` rather than RTSP depacketization.
+
 
 ## Source-owned and sink groups
 
