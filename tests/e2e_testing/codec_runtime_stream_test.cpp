@@ -30,6 +30,7 @@ using simaai::neat::Run;
 using simaai::neat::RunOptions;
 using simaai::neat::Sample;
 using simaai::neat::StorageKind;
+using simaai::neat::Tensor;
 using simaai::neat::nodes::groups::HttpMjpegDecodedInput;
 using simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions;
 using simaai::neat::nodes::groups::RtspCodec;
@@ -133,6 +134,10 @@ std::vector<TestCase> all_test_cases() {
   return {test_case_for(CaseKind::RtspH264Decoded),
           test_case_for(CaseKind::RtspMjpegEncodedBoundary),
           test_case_for(CaseKind::RtspMjpegDecoded), test_case_for(CaseKind::HttpMjpegDecoded)};
+}
+
+std::vector<TestCase> sync_smoke_test_cases() {
+  return {test_case_for(CaseKind::RtspH264Decoded), test_case_for(CaseKind::HttpMjpegDecoded)};
 }
 
 void replace_all(std::string& value, const std::string& needle, const std::string& replacement) {
@@ -269,8 +274,9 @@ Sample pull_or_throw(Run& run, const std::string& output_name, int timeout_ms,
   throw std::runtime_error(redact_configured_stream_urls(message));
 }
 
-Graph make_source_graph(const TestCase& test_case, const std::string& url) {
-  Graph graph(test_case.name);
+Graph make_source_graph(const TestCase& test_case, const std::string& url,
+                        const simaai::neat::GraphOptions& graph_options = {}) {
+  Graph graph(test_case.name, graph_options);
   switch (test_case.kind) {
   case CaseKind::RtspH264Decoded: {
     RtspDecodedInputOptions options;
@@ -312,6 +318,11 @@ Graph make_source_graph(const TestCase& test_case, const std::string& url) {
   return graph;
 }
 
+void require_tensor_contract(const TestCase& test_case, const Tensor& tensor) {
+  require(!tensor.shape.empty(), test_case.name + ": decoded tensor shape is empty");
+  require(tensor.storage != nullptr, test_case.name + ": decoded tensor missing storage");
+}
+
 void require_sample_contract(const TestCase& test_case, const Sample& sample) {
   const std::string metadata =
       sample.caps_string + " " + sample.media_type + " " + sample.payload_tag + " " + sample.format;
@@ -337,9 +348,7 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample) {
             test_case.name + ": expected raw image payload");
     const simaai::neat::TensorList tensors = simaai::neat::tensors_from_sample(sample, true);
     require(tensors.size() == 1U, test_case.name + ": expected one decoded tensor");
-    const auto& tensor = tensors.front();
-    require(!tensor.shape.empty(), test_case.name + ": decoded tensor shape is empty");
-    require(tensor.storage != nullptr, test_case.name + ": decoded tensor missing storage");
+    require_tensor_contract(test_case, tensors.front());
     break;
   }
   }
@@ -408,6 +417,23 @@ void run_decoded_source(const TestCase& test_case, const std::string& url, int f
   std::cout << "[OK] " << test_case.name << " frames=" << pulled << "\n";
 }
 
+void run_decoded_source_sync(const TestCase& test_case, const std::string& url, int frames,
+                             int timeout_ms) {
+  simaai::neat::GraphOptions graph_options;
+  graph_options.callback_timeout_ms = timeout_ms;
+  Graph graph = make_source_graph(test_case, url, graph_options);
+
+  int callbacks = 0;
+  graph.set_tensor_callback([&](const Tensor& tensor) {
+    require_tensor_contract(test_case, tensor);
+    ++callbacks;
+    return callbacks < frames;
+  });
+  graph.run();
+  require(callbacks == frames, test_case.name + ": sync callback count mismatch");
+  std::cout << "[OK] " << test_case.name << "-sync frames=" << callbacks << "\n";
+}
+
 int skip_missing_env(const TestCase& test_case) {
   std::cout << "[SKIP] set " << test_case.singular_env << " or " << test_case.plural_env
             << " to run " << test_case.name << "\n";
@@ -451,6 +477,12 @@ int main(int argc, char** argv) {
       }
       run_test_case(test_case, url, args);
       ran_any_case = true;
+    }
+    for (const auto& test_case : sync_smoke_test_cases()) {
+      const std::string url = first_url_from_env(test_case);
+      if (!url.empty()) {
+        run_decoded_source_sync(test_case, url, args.frames, args.timeout_ms);
+      }
     }
     return ran_any_case ? 0 : 77;
   } catch (const std::exception& e) {
