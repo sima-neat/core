@@ -33,7 +33,12 @@ MODEL_PATH_BY_NAME = {
     "resnet_50": MODEL_RESNET,
     "yolo_v8s": MODEL_YOLO,
 }
-RTSP_URL = os.environ.get("SIMANEAT_APPS_TEST_RTSP_URL")
+RTSP_URL = os.environ.get("SIMANEAT_TEST_RTSP_H264_URL")
+if not RTSP_URL:
+  rtsp_urls = os.environ.get("SIMANEAT_TEST_RTSP_H264_URLS", "")
+  RTSP_URL = re.split(r"[ ,;]+", rtsp_urls.strip(), maxsplit=1)[0] if rtsp_urls.strip() else None
+if not RTSP_URL:
+  RTSP_URL = os.environ.get("SIMANEAT_APPS_TEST_RTSP_URL")
 if not RTSP_URL:
   rtsp_urls = os.environ.get("SIMANEAT_APPS_TEST_RTSP_URLS", "")
   RTSP_URL = re.split(r"[ ,;]+", rtsp_urls.strip(), maxsplit=1)[0] if rtsp_urls.strip() else None
@@ -215,7 +220,7 @@ def test_tutorial_runs(folder: str, py_path: Path) -> None:
   if needs_model and not model_path:
     _skip_or_fail(f"set {MODEL_ENV_BY_NAME[model_name]} to run {folder}")
   if tid == "018" and not RTSP_URL:
-    _skip_or_fail("set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS to run 018")
+    _skip_or_fail("set SIMANEAT_TEST_RTSP_H264_URL or SIMANEAT_TEST_RTSP_H264_URLS to run 018")
 
   cmd = [sys.executable, str(py_path)]
   if model_path:

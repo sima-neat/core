@@ -47,6 +47,15 @@ std::vector<std::string> split_rtsp_urls(const std::string& value) {
 }
 
 std::string first_rtsp_url_from_env() {
+  if (const char* single = std::getenv("SIMANEAT_TEST_RTSP_H264_URL"); single && *single) {
+    return trim_copy(single);
+  }
+  if (const char* many = std::getenv("SIMANEAT_TEST_RTSP_H264_URLS"); many && *many) {
+    std::vector<std::string> urls = split_rtsp_urls(many);
+    if (!urls.empty()) {
+      return urls.front();
+    }
+  }
   if (const char* single = std::getenv("SIMANEAT_APPS_TEST_RTSP_URL"); single && *single) {
     return trim_copy(single);
   }
@@ -90,7 +99,8 @@ int main() {
     simaai::neat::gst_init_once();
     const std::string rtsp_url = first_rtsp_url_from_env();
     if (rtsp_url.empty()) {
-      std::cout << "[SKIP] set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS\n";
+      std::cout << "[SKIP] set SIMANEAT_TEST_RTSP_H264_URL or "
+                   "SIMANEAT_TEST_RTSP_H264_URLS\n";
       return 77;
     }
 
