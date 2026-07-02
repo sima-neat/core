@@ -5,9 +5,16 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SITE_DIR="${DOCS_LINK_SITE_DIR:-${REPO_ROOT}/website/build}"
 START_PATHS="${DOCS_LINK_START_PATHS:-all}"
 PORT="${DOCS_LINK_CHECK_PORT:-}"
-CONCURRENCY="${DOCS_LINK_CONCURRENCY:-6}"
+# Keep concurrency low and the per-request timeout generous: the site is served
+# by a single-process static server (`serve`) sharing the CI runner's few cores
+# with the linkinator crawler, so aggressive concurrency starves the server and
+# a request can stall past the timeout. linkinator surfaces that stall as an
+# aborted request (AbortController DOMException) and exits non-zero, which reads
+# as a spurious link failure. Fewer in-flight requests + a longer timeout keep
+# the crawl within what the local server can service.
+CONCURRENCY="${DOCS_LINK_CONCURRENCY:-2}"
 RETRY_ERRORS_COUNT="${DOCS_LINK_RETRY_ERRORS_COUNT:-3}"
-TIMEOUT_MS="${DOCS_LINK_TIMEOUT_MS:-30000}"
+TIMEOUT_MS="${DOCS_LINK_TIMEOUT_MS:-60000}"
 CHECK_ATTEMPTS="${DOCS_LINK_CHECK_ATTEMPTS:-3}"
 HOST="localhost"
 SERVER_PID=""
