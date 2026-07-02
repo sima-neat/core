@@ -229,9 +229,8 @@ simaai::neat::Tensor make_padded_decoder_nv12_tensor(int w, int visible_h, int p
   const std::size_t uv_h = static_cast<std::size_t>(visible_h / 2);
   const std::size_t uv_offset = y_stride * static_cast<std::size_t>(physical_y_h);
   const std::size_t visible_end = uv_offset + uv_stride * uv_h;
-  const std::size_t padded_frame_bytes =
-      y_stride * static_cast<std::size_t>(physical_y_h) +
-      uv_stride * static_cast<std::size_t>(physical_y_h / 2);
+  const std::size_t padded_frame_bytes = y_stride * static_cast<std::size_t>(physical_y_h) +
+                                         uv_stride * static_cast<std::size_t>(physical_y_h / 2);
 
   GstBuffer* buffer = gst_buffer_new_allocate(nullptr, padded_frame_bytes, nullptr);
   require(buffer != nullptr, "failed to allocate padded decoder buffer");
@@ -242,11 +241,9 @@ simaai::neat::Tensor make_padded_decoder_nv12_tensor(int w, int visible_h, int p
   offsets[1] = uv_offset;
   strides[0] = static_cast<gint>(y_stride);
   strides[1] = static_cast<gint>(uv_stride);
-  GstVideoMeta* meta = gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE,
-                                                       GST_VIDEO_FORMAT_NV12,
-                                                       static_cast<guint>(w),
-                                                       static_cast<guint>(visible_h), 2, offsets,
-                                                       strides);
+  GstVideoMeta* meta = gst_buffer_add_video_meta_full(
+      buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_NV12, static_cast<guint>(w),
+      static_cast<guint>(visible_h), 2, offsets, strides);
   require(meta != nullptr, "failed to attach padded decoder GstVideoMeta");
   GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
   require(sample != nullptr, "failed to wrap padded decoder sample");

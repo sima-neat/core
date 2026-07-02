@@ -423,9 +423,8 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     stream.fps_num = candidate.fps_num;
     stream.fps_den = candidate.fps_den;
     if (decoder_candidate_uses_zero_copy_output(candidate)) {
-      stream.requested_policy =
-          pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
-          pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
+      stream.requested_policy = pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
+                                pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
     } else {
       stream.requested_policy = 0; // daemon AUTO policy.
     }
