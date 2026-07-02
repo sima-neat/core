@@ -36,6 +36,7 @@ Important environment:
   DEVKIT_PASSWORD            Optional sudo password used by installers
   SUDO_PASSWORD              Optional host sudo password; sudo may prompt if unset
   SIMAPCIE_CARD_INSTALL_CMD  Optional command to install card runtime
+  SIMAPCIE_CARD_INSTALL_DIR  Optional card-side working dir for sima-cli install
   SIMAPCIE_CARD_GST_DEBUG    Optional card-side GST debug string
 EOF
 }
@@ -265,20 +266,27 @@ install_card_runtime() {
   ssh_card \
     "REMOTE_VULCAN_ENV=$(shell_quote "${VULCAN_ENV}") \
      REMOTE_PACKAGE_SPEC=$(shell_quote "${package_spec}") \
+     REMOTE_CARD_INSTALL_DIR=$(shell_quote "${SIMAPCIE_CARD_INSTALL_DIR:-}") \
      REMOTE_DEVKIT_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
      REMOTE_SUDO_PASSWORD=$(shell_quote "${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}") \
      bash -s" <<'REMOTE_INSTALL'
 set -euo pipefail
 
-if [[ ! -d /workspace ]]; then
-  echo "ERROR: /workspace does not exist on the PCIe card." >&2
-  exit 1
-fi
 export PATH="/data/sima-cli/.venv/bin:${HOME}/.sima-cli/.venv/bin:${PATH}"
 if ! command -v sima-cli >/dev/null 2>&1; then
   echo "ERROR: sima-cli is not installed on the PCIe card after bootstrap." >&2
   exit 1
 fi
+
+card_install_dir="${REMOTE_CARD_INSTALL_DIR}"
+if [[ -z "${card_install_dir}" ]]; then
+  if [[ -d /workspace ]]; then
+    card_install_dir="/workspace"
+  else
+    card_install_dir="${HOME:-/tmp}/sima-neat-card-install"
+  fi
+fi
+mkdir -p "${card_install_dir}"
 
 export SIMA_CLI_CHECK_FOR_UPDATE=0
 export DEVKIT_PASSWORD="${REMOTE_DEVKIT_PASSWORD}"
@@ -309,7 +317,7 @@ SUDO_WRAPPER
 }
 setup_remote_sudo_wrapper
 trap 'rm -rf "${REMOTE_SUDO_WRAPPER_DIR:-}"' EXIT
-cd /workspace
+cd "${card_install_dir}"
 sima-cli install --neat --env "${REMOTE_VULCAN_ENV}" "${REMOTE_PACKAGE_SPEC}" -t all
 REMOTE_INSTALL
 }
