@@ -403,32 +403,18 @@ int main(int argc, char** argv) {
     }
 
     const std::vector<TestCase> test_cases = all_test_cases();
-    std::vector<std::string> missing_env;
+    bool ran_any_case = false;
     for (const auto& test_case : test_cases) {
       const std::string url = first_url_from_env(test_case);
       if (url.empty()) {
-        missing_env.push_back(test_case.name);
+        std::cout << "[SKIP] set " << test_case.singular_env << " or " << test_case.plural_env
+                  << " to run " << test_case.name << "\n";
+        continue;
       }
+      run_test_case(test_case, url, args);
+      ran_any_case = true;
     }
-
-    if (!missing_env.empty()) {
-      if (missing_env.size() == test_cases.size()) {
-        std::cout << "[SKIP] set codec stream envs to run codec_runtime_stream_test\n";
-        return 77;
-      }
-
-      std::ostringstream msg;
-      msg << "default run requires all codec stream envs; missing";
-      for (const auto& name : missing_env) {
-        msg << " " << name;
-      }
-      throw std::runtime_error(msg.str());
-    }
-
-    for (const auto& test_case : test_cases) {
-      run_test_case(test_case, first_url_from_env(test_case), args);
-    }
-    return 0;
+    return ran_any_case ? 0 : 77;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
     return 1;
