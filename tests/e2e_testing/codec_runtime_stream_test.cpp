@@ -352,9 +352,8 @@ void run_encoded_boundary(const TestCase& test_case, const std::string& url, int
 
   boundary_run.close();
   source_run.close();
-  std::cout << "[OK] " << test_case.name << " url=" << url << " frames=" << frames
-            << " source_pull=" << source_pull << " boundary_push=" << boundary_push
-            << " boundary_pull=" << boundary_pull << "\n";
+  std::cout << "[OK] " << test_case.name << " frames=" << frames << " source_pull=" << source_pull
+            << " boundary_push=" << boundary_push << " boundary_pull=" << boundary_pull << "\n";
 }
 
 void run_decoded_source(const TestCase& test_case, const std::string& url, int frames,
@@ -368,7 +367,7 @@ void run_decoded_source(const TestCase& test_case, const std::string& url, int f
     ++pulled;
   }
   run.close();
-  std::cout << "[OK] " << test_case.name << " url=" << url << " frames=" << pulled << "\n";
+  std::cout << "[OK] " << test_case.name << " frames=" << pulled << "\n";
 }
 
 int skip_missing_env(const TestCase& test_case) {
