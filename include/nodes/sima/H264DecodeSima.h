@@ -11,6 +11,7 @@
 
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
+#include "pipeline/Deprecated.h"
 
 #include <memory>
 #include <string>
@@ -24,6 +25,9 @@ namespace simaai::neat {
  * Place after an `H264Parse` (or any AU-aligned H.264 source) when running on a SiMa
  * board. The decoder produces raw video (NV12 by default) ready for downstream
  * preprocessing.
+ *
+ * @deprecated Use `SimaDecode` with `SimaDecodeType::H264` for new H.264 decode
+ * graphs.
  *
  * @ingroup nodes_sima
  */
@@ -42,6 +46,7 @@ public:
    * @param dec_fps             Decoded framerate override; `-1` = let upstream decide.
    * @param num_buffers         Output buffer pool size; `-1` = element default.
    */
+  SIMA_DEPRECATED("Use SimaDecode with SimaDecodeType::H264")
   H264Decode(int sima_allocator_type = 2, std::string out_format = "NV12",
              std::string decoder_name = {}, bool raw_output = false, std::string next_element = {},
              int dec_width = -1, int dec_height = -1, int dec_fps = -1, int num_buffers = -1);
@@ -114,6 +119,9 @@ private:
 
 namespace simaai::neat::nodes {
 /// Convenience factory for a hardware `H264Decode` Node — see the class docs for parameters.
+///
+/// @deprecated Use `SimaDecode` with `SimaDecodeType::H264`.
+SIMA_DEPRECATED("Use SimaDecode with SimaDecodeType::H264")
 std::shared_ptr<simaai::neat::Node>
 H264Decode(int sima_allocator_type = 2, std::string out_format = "NV12",
            std::string decoder_name = {}, bool raw_output = false, std::string next_element = {},

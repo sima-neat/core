@@ -2445,6 +2445,15 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
 
 } // namespace
 
+namespace session_test {
+
+bool apply_auto_memory_policy_from_downstream_for_test(
+    InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& nodes) {
+  return apply_auto_memory_policy_from_downstream(src_opt, nodes);
+}
+
+} // namespace session_test
+
 std::optional<OutputTensorOverride> build_public_terminal_output_override_with_fallback(
     const pipeline_internal::sima::SimaPluginStaticManifest& manifest,
     const pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector& endpoint,

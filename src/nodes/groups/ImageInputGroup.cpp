@@ -8,9 +8,9 @@
 #include "nodes/common/VideoRate.h"
 #include "nodes/common/VideoScale.h"
 #include "nodes/common/JpegDecode.h"
-#include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/internal/EnvUtil.h"
 
 #include <memory>
@@ -108,11 +108,19 @@ simaai::neat::Graph ImageInputGroup(const ImageInputGroupOptions& opt) {
     }
     nodes.push_back(nodes::H264Parse(/*config_interval=*/1));
 
-    const std::string out_fmt = caps.format.empty() ? "RGB" : caps.format;
-    nodes.push_back(nodes::H264Decode(opt.sima_decoder.sima_allocator_type, out_fmt,
-                                      opt.sima_decoder.decoder_name, opt.sima_decoder.raw_output,
-                                      opt.sima_decoder.next_element, caps.width, caps.height,
-                                      caps.fps));
+    const std::string out_fmt =
+        caps.format.empty() ? (opt.sima_decoder.raw_output ? "NV12" : "RGB") : caps.format;
+    simaai::neat::SimaDecodeOptions dec;
+    dec.type = simaai::neat::SimaDecodeType::H264;
+    dec.sima_allocator_type = opt.sima_decoder.sima_allocator_type;
+    dec.out_format = out_fmt;
+    dec.decoder_name = opt.sima_decoder.decoder_name;
+    dec.raw_output = opt.sima_decoder.raw_output;
+    dec.next_element = opt.sima_decoder.next_element;
+    dec.dec_width = caps.width;
+    dec.dec_height = caps.height;
+    dec.dec_fps = caps.fps;
+    nodes.push_back(nodes::SimaDecode(dec));
   }
 
   if (caps_enabled(caps)) {

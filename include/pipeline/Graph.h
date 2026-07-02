@@ -38,6 +38,7 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/SimaDecode.h"
 
 #include <atomic>
 #include <cstdint>

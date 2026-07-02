@@ -272,6 +272,8 @@ set(UNIT_TESTS
   unit_gst_video_meta_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
+  unit_http_mjpeg_decoded_group_test
+  unit_rtsp_encoded_input_group_test
   unit_input_policy_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
@@ -316,6 +318,7 @@ set(UNIT_TESTS
   unit_model_archive_loader_test
   unit_outputspec_test
   unit_pcie_nodes_test
+  unit_jpeg_framing_nodes_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
@@ -339,6 +342,7 @@ set(UNIT_TESTS
   unit_sima_boxdecode_static_contract_extractor_test
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
+  unit_sima_decode_test
   unit_kernel200_envelope_guard_test
   unit_processcvu_binding_table_uses_runtime_outputs_test
   unit_processcvu_preproc_runtime_vs_exposed_outputs_test
