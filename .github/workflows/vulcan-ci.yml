@@ -328,14 +328,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./pcie_host/build.sh --with-tests --install-deps-only
+          ./pcie_host/build.sh --all --install-deps-only
 
       - name: Build PCIe host Debian packages
         shell: bash
         run: |
           set -euo pipefail
           cd pcie_host
-          ./build.sh --clean --with-tests
+          ./build.sh --clean --all
         env:
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
@@ -356,15 +356,19 @@ jobs:
             -name "sima-pcie-host-dev_*_${DEB_ARCH}.deb" | sort)
           mapfile -t extras_tars < <(find pcie_host/dist -maxdepth 1 -type f \
             -name "sima-pcie-host-*-Linux-${DEB_ARCH}-extras.tar.gz" | sort)
+          mapfile -t wheels < <(find pcie_host/dist -maxdepth 1 -type f \
+            -name "pypciehost-*.whl" | sort)
 
-          if [[ "${#runtime_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 || "${#extras_tars[@]}" -ne 1 ]]; then
-            echo "Expected exactly one runtime deb, one dev deb, and one extras tarball for ${DEB_ARCH}." >&2
+          if [[ "${#runtime_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 || "${#extras_tars[@]}" -ne 1 || "${#wheels[@]}" -ne 1 ]]; then
+            echo "Expected exactly one runtime deb, one dev deb, one extras tarball, and one pypciehost wheel for ${DEB_ARCH}." >&2
             printf 'runtime debs (%s):\n' "${#runtime_debs[@]}" >&2
             printf '  %s\n' "${runtime_debs[@]}" >&2 || true
             printf 'dev debs (%s):\n' "${#dev_debs[@]}" >&2
             printf '  %s\n' "${dev_debs[@]}" >&2 || true
             printf 'extras tarballs (%s):\n' "${#extras_tars[@]}" >&2
             printf '  %s\n' "${extras_tars[@]}" >&2 || true
+            printf 'wheels (%s):\n' "${#wheels[@]}" >&2
+            printf '  %s\n' "${wheels[@]}" >&2 || true
             exit 1
           fi
 
@@ -376,6 +380,9 @@ jobs:
           file "${extras_tars[0]}"
           tar -tzf "${extras_tars[0]}" >/dev/null
           sha256sum "${extras_tars[0]}" > "${extras_tars[0]}.sha256"
+          file "${wheels[0]}"
+          python3 -m zipfile --test "${wheels[0]}"
+          sha256sum "${wheels[0]}" > "${wheels[0]}.sha256"
         env:
           DEB_ARCH: ${{ matrix.deb_arch }}
 
@@ -409,11 +416,14 @@ jobs:
             pcie_host/dist/*.deb \
             pcie_host/dist/*.deb.sha256 \
             pcie_host/dist/*-extras.tar.gz \
-            pcie_host/dist/*-extras.tar.gz.sha256; do
+            pcie_host/dist/*-extras.tar.gz.sha256 \
+            pcie_host/dist/pypciehost-*.whl \
+            pcie_host/dist/pypciehost-*.whl.sha256; do
             name="$(basename "${path}")"
             case "${name}" in
               *.deb) content_type="application/vnd.debian.binary-package" ;;
               *.tar.gz) content_type="application/gzip" ;;
+              *.whl) content_type="application/octet-stream" ;;
               *.sha256) content_type="text/plain" ;;
               *) content_type="application/octet-stream" ;;
             esac
@@ -497,11 +507,11 @@ jobs:
               --query 'Contents[].Key' \
               --output text \
               | tr '\t' '\n' \
-              | grep -E '(\.deb|-extras\.tar\.gz)$' \
+              | grep -E '(\.deb|-extras\.tar\.gz|pypciehost-.*\.whl)$' \
               | sort)
 
-            if [[ "${#package_keys[@]}" -ne 3 ]]; then
-              echo "Expected two PCIe host debs and one extras tarball under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
+            if [[ "${#package_keys[@]}" -ne 4 ]]; then
+              echo "Expected two PCIe host debs, one extras tarball, and one pypciehost wheel under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
               printf 'found (%s):\n' "${#package_keys[@]}" >&2
               printf '  %s\n' "${package_keys[@]}" >&2 || true
               exit 1
@@ -536,6 +546,7 @@ jobs:
             export DEB_ARCH="${deb_arch}"
             export RESOURCES_TSV="${resources_tsv}"
             export METADATA_PATH="${work_dir}/metadata.json"
+            export PYPCIEHOST_METADATA_PATH="${work_dir}/metadata-pypciehost.json"
             python3 - <<'PY'
           import json
           import os
@@ -545,19 +556,27 @@ jobs:
           deb_arch = os.environ["DEB_ARCH"]
           resources = []
           resource_checksums = {}
+          resource_sizes = {}
           total_size_bytes = 0
+          wheel_resources = []
           for line in Path(os.environ["RESOURCES_TSV"]).read_text(
               encoding="utf-8").splitlines():
               resource, checksum, size_bytes = line.split("\t")
               resources.append(resource)
               resource_checksums[resource] = checksum
-              total_size_bytes += int(size_bytes)
+              resource_sizes[resource] = int(size_bytes)
+              total_size_bytes += resource_sizes[resource]
+              if resource.startswith("pypciehost-") and resource.endswith(".whl"):
+                  wheel_resources.append(resource)
+
+          if len(wheel_resources) != 1:
+              raise SystemExit(f"expected exactly one pypciehost wheel, got {wheel_resources!r}")
 
           metadata = {
               "name": f"gh:sima-neat/pciehost/{deb_arch}",
               "version": os.environ["GITHUB_SHA"][:12],
               "release": "",
-              "description": f"SiMa.ai NEAT PCIe host runtime and development packages ({deb_arch})",
+              "description": f"SiMa.ai NEAT PCIe host runtime, development, and Python packages ({deb_arch})",
               "platforms": [
                   {
                       "type": "host",
@@ -569,8 +588,9 @@ jobs:
               "resources-checksum": resource_checksums,
               "selectable-resources": [],
               "installation": {
-                  "script": "./install_pciehost.sh",
-                  "post-message": "[bold]sima-pcie-host installed successfully.[/bold]\\n",
+                  "script": "./install_pciehost.sh --python",
+                  "post-message": "[bold]sima-pcie-host and pypciehost installed successfully.[/bold]\\n"
+                                  "Activate pypciehost with: source ~/pypciehost/bin/activate\\n",
               },
               "artifact": {
                   "type": "debian-packages",
@@ -590,6 +610,35 @@ jobs:
           }
           Path(os.environ["METADATA_PATH"]).write_text(
               json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+          wheel = wheel_resources[0]
+          pypciehost_metadata = dict(metadata)
+          pypciehost_metadata.update({
+              "name": f"gh:sima-neat/pypciehost/{deb_arch}",
+              "description": f"pypciehost wheel for SiMa.ai NEAT PCIe host ({deb_arch})",
+              "resources": [wheel],
+              "resources-checksum": {wheel: resource_checksums[wheel]},
+              "installation": {
+                  "script": ":",
+                  "post-message": "[bold]pypciehost wheel downloaded.[/bold]\\n"
+                                  f"Install it with: python3 -m pip install ./{wheel}\\n"
+                                  "pypciehost requires the matching sima-pcie-host runtime package. "
+                                  "If it is not installed yet, run: sima-cli neat install core/pciehost/"
+                                  f"{deb_arch}\\n",
+              },
+              "artifact": {
+                  "type": "python-wheel",
+                  "repository": "core",
+                  "package_path": f"pciehost/{deb_arch}",
+                  "arches": [deb_arch],
+              },
+              "size": {
+                  "download": f"{max(1, (resource_sizes[wheel] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+                  "install": "1MB",
+              },
+          })
+          Path(os.environ["PYPCIEHOST_METADATA_PATH"]).write_text(
+              json.dumps(pypciehost_metadata, indent=2) + "\n", encoding="utf-8")
           PY
 
             aws s3 cp \
@@ -604,13 +653,20 @@ jobs:
               --content-type application/json \
               "${s3_args[@]}"
 
+            aws s3 cp \
+              "${work_dir}/metadata-pypciehost.json" \
+              "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-pypciehost.json" \
+              --content-type application/json \
+              "${s3_args[@]}"
+
             if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
               aws cloudfront create-invalidation \
                 --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-                --paths "/${prefix}/metadata.json" "/${prefix}/install_pciehost.sh"
+                --paths "/${prefix}/metadata.json" "/${prefix}/metadata-pypciehost.json" "/${prefix}/install_pciehost.sh"
             fi
 
             cat "${work_dir}/metadata.json"
+            cat "${work_dir}/metadata-pypciehost.json"
             echo "Published PCIe host ${deb_arch} metadata under s3://${ARTIFACT_BUCKET}/${prefix}/"
           done
         env:

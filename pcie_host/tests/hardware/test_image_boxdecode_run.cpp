@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -72,7 +73,9 @@ struct Args {
   std::string card_env = env_or_default("SIMAPCIE_CARD_ENV", "");
   std::string card_gst_debug = env_or_default("SIMAPCIE_CARD_GST_DEBUG", "");
   std::string card_gst_debug_file = env_or_default("SIMAPCIE_CARD_GST_DEBUG_FILE", "");
-  int iterations = 1;
+  int sync_iterations = env_int_or_default("SIMAPCIE_SYNC_ITERATIONS", 50);
+  int iterations = env_int_or_default("SIMAPCIE_BOXDECODE_ITERATIONS",
+                                      env_int_or_default("SIMAPCIE_TEST_ITERATIONS", 1000));
   int resize_source_width = 0;
   int resize_source_height = 0;
   bool resize_alternate = false;
@@ -119,7 +122,8 @@ void usage(const char* argv0) {
                " [--score-threshold f] [--nms-iou-threshold f] [--top-k n]"
                " [--card-env 'NAME=VALUE ...']"
                " [--card-gst-debug spec] [--card-gst-debug-file path]"
-               " [--iterations n] [--resize-source WxH] [--resize-alternate]"
+               " [--sync-iterations n] [--iterations n] [--resize-source WxH]"
+               " [--resize-alternate]"
                " [--require-detection|--allow-empty-detections]"
                " [--require-person]"
                " [--opencv-overload]\n";
@@ -160,6 +164,8 @@ Args parse_args(int argc, char** argv) {
       args.card_gst_debug = require_value(argc, argv, i, "--card-gst-debug");
     } else if (arg == "--card-gst-debug-file") {
       args.card_gst_debug_file = require_value(argc, argv, i, "--card-gst-debug-file");
+    } else if (arg == "--sync-iterations") {
+      args.sync_iterations = std::stoi(require_value(argc, argv, i, "--sync-iterations"));
     } else if (arg == "--iterations") {
       args.iterations = std::stoi(require_value(argc, argv, i, "--iterations"));
     } else if (arg == "--resize-source") {
@@ -199,8 +205,8 @@ Args parse_args(int argc, char** argv) {
   if (args.top_k <= 0) {
     throw std::runtime_error("--top-k must be positive for boxdecode");
   }
-  if (args.iterations <= 0) {
-    throw std::runtime_error("--iterations must be positive");
+  if (args.sync_iterations <= 0 || args.iterations <= 0) {
+    throw std::runtime_error("--sync-iterations and --iterations must be positive");
   }
   return args;
 }
@@ -536,7 +542,8 @@ int main(int argc, char** argv) {
     std::cout << "  boxdecode=" << args.decode_type_name
               << " score_threshold=" << args.score_threshold
               << " nms_iou_threshold=" << args.nms_iou_threshold << " top_k=" << args.top_k << "\n";
-    std::cout << "  iterations=" << args.iterations << " resize_source="
+    std::cout << "  sync_iterations=" << args.sync_iterations
+              << " async_iterations=" << args.iterations << " resize_source="
               << (args.resize_source_width > 0 ? (std::to_string(args.resize_source_width) + "x" +
                                                   std::to_string(args.resize_source_height))
                                                : std::string("none"))
@@ -612,35 +619,84 @@ int main(int argc, char** argv) {
       print_mat(resized);
     }
 
-    for (int iter = 0; iter < args.iterations; ++iter) {
-      const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
-      std::cout << "iteration " << (iter + 1) << "/" << args.iterations << "\n";
-
+    auto push_frame = [&](const cv::Mat& frame, const int iteration, const char* phase) {
       if (args.opencv_overload) {
 #if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-        std::cout << "push image with OpenCV overload...\n";
         if (!host.push(frame)) {
-          throw std::runtime_error("push returned false");
+          throw std::runtime_error(std::string(phase) + " push returned false at iteration " +
+                                   std::to_string(iteration));
         }
 #endif
       } else {
         pcie::Tensor image = make_bgr_image_tensor(frame);
-        print_image(image);
-        std::cout << "push image tensor...\n";
         if (!host.push(image)) {
-          throw std::runtime_error("push returned false");
+          throw std::runtime_error(std::string(phase) + " push returned false at iteration " +
+                                   std::to_string(iteration));
         }
       }
+    };
 
-      std::cout << "pull outputs with timeout_ms=" << args.pull_timeout_ms << "...\n";
+    auto pull_and_validate = [&](const cv::Mat& frame, const int iteration, const char* phase) {
       const auto result = host.pull(args.pull_timeout_ms);
       if (!result.has_value()) {
-        throw std::runtime_error("pull timed out without a result");
+        throw std::runtime_error(std::string(phase) +
+                                 " pull timed out without a result at iteration " +
+                                 std::to_string(iteration));
       }
-      print_outputs(*result);
       validate_bbox_payload(*result, frame.cols, frame.rows, args.score_threshold, args.top_k,
                             args.require_detection, args.require_person);
+      return *result;
+    };
+
+    for (int iter = 0; iter < args.sync_iterations; ++iter) {
+      const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
+      const bool log_iteration = args.sync_iterations == 1 || iter == 0 || (iter + 1) % 10 == 0 ||
+                                 (iter + 1) == args.sync_iterations;
+      if (log_iteration) {
+        std::cout << "sync iteration " << (iter + 1) << "/" << args.sync_iterations << "\n";
+      }
+
+      if (log_iteration && args.opencv_overload) {
+        if (log_iteration) {
+          std::cout << "push image with OpenCV overload...\n";
+        }
+      } else if (log_iteration) {
+        pcie::Tensor image = make_bgr_image_tensor(frame);
+        print_image(image);
+        std::cout << "push image tensor...\n";
+      }
+      push_frame(frame, iter + 1, "sync");
+
+      if (log_iteration) {
+        std::cout << "pull outputs with timeout_ms=" << args.pull_timeout_ms << "...\n";
+      }
+      const auto result = pull_and_validate(frame, iter + 1, "sync");
+      if (log_iteration) {
+        print_outputs(result);
+      }
     }
+
+    std::cout << "starting async producer/consumer phase: " << args.iterations << " iteration(s)\n";
+    auto producer = std::async(std::launch::async, [&] {
+      for (int iter = 0; iter < args.iterations; ++iter) {
+        if (iter == 0 || (iter + 1) % 100 == 0 || (iter + 1) == args.iterations) {
+          std::cout << "async producer " << (iter + 1) << "/" << args.iterations << "\n";
+        }
+        const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
+        push_frame(frame, iter + 1, "async");
+      }
+    });
+    auto consumer = std::async(std::launch::async, [&] {
+      for (int iter = 0; iter < args.iterations; ++iter) {
+        if (iter == 0 || (iter + 1) % 100 == 0 || (iter + 1) == args.iterations) {
+          std::cout << "async consumer " << (iter + 1) << "/" << args.iterations << "\n";
+        }
+        const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
+        (void)pull_and_validate(frame, iter + 1, "async");
+      }
+    });
+    producer.get();
+    consumer.get();
 
     std::cout << "stopping...\n";
     host.stop();

@@ -16,6 +16,10 @@ CARD_HOST="${SIMAPCIE_CARD_HOST:-10.0.0.2}"
 CARD_USER="${SIMAPCIE_USER:-sima}"
 CARD_ID="${SIMAPCIE_CARD_ID:-0}"
 QUEUE="${SIMAPCIE_QUEUE:-0}"
+STRESS_QUEUES="${SIMAPCIE_STRESS_QUEUES:-0 1 2 3}"
+SYNC_ITERATIONS="${SIMAPCIE_SYNC_ITERATIONS:-50}"
+TEST_ITERATIONS="${SIMAPCIE_TEST_ITERATIONS:-1000}"
+STRESS_ITERATIONS="${SIMAPCIE_STRESS_ITERATIONS:-${TEST_ITERATIONS}}"
 READINESS_TIMEOUT_MS="${SIMAPCIE_READINESS_TIMEOUT_MS:-180000}"
 PULL_TIMEOUT_MS="${SIMAPCIE_PULL_TIMEOUT_MS:-30000}"
 MODE="run"
@@ -38,6 +42,11 @@ Important environment:
   SIMAPCIE_CARD_INSTALL_CMD  Optional command to install card runtime
   SIMAPCIE_CARD_INSTALL_DIR  Optional card-side working dir for sima-cli install
   SIMAPCIE_CARD_GST_DEBUG    Optional card-side GST debug string
+  SIMAPCIE_SYNC_ITERATIONS   Synchronous warmup push/pull iterations (default: 50)
+  SIMAPCIE_TEST_ITERATIONS   Push/pull iterations for run tests (default: 1000)
+  SIMAPCIE_STRESS_QUEUES     Queues used by parallel stress (default: 0 1 2 3)
+  SIMAPCIE_STRESS_ITERATIONS Push/pull iterations per stress queue (default: SIMAPCIE_TEST_ITERATIONS)
+  SIMAPCIE_PYTHON_VENV       pypciehost venv path (default: ~/pypciehost)
 EOF
 }
 
@@ -125,12 +134,28 @@ cleanup_host_pcie_device() {
   fi
 
   if command -v pgrep >/dev/null 2>&1; then
-    mapfile -t host_pids < <(pgrep -f "${known_pattern}" || true)
+    mapfile -t host_pids < <(
+      for pid in $(pgrep -f "${known_pattern}" || true); do
+        [[ "${pid}" != "$$" && "${pid}" != "${PPID}" ]] || continue
+        cmdline="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)"
+        first_arg="${cmdline%% *}"
+        base="$(basename "${first_arg}")"
+        case "${base}" in
+          test_tensor_run|test_image_run|test_image_boxdecode_run|test_queue_blocker|gst-launch-1.0)
+            printf '%s\n' "${pid}"
+            ;;
+        esac
+      done
+    )
     if [[ "${#host_pids[@]}" -gt 0 ]]; then
       echo "Stopping known host PCIe smoke processes: ${host_pids[*]}"
       kill "${host_pids[@]}" 2>/dev/null || true
       sleep 1
-      mapfile -t host_pids < <(pgrep -f "${known_pattern}" || true)
+      mapfile -t host_pids < <(
+        for pid in "${host_pids[@]}"; do
+          kill -0 "${pid}" 2>/dev/null && printf '%s\n' "${pid}"
+        done
+      )
       if [[ "${#host_pids[@]}" -gt 0 ]]; then
         echo "Force-stopping known host PCIe smoke processes: ${host_pids[*]}"
         kill -9 "${host_pids[@]}" 2>/dev/null || true
@@ -381,27 +406,31 @@ verify_card_plugins() {
 cleanup_queue() {
   cleanup_host_pcie_device
 
-  ssh_card "REMOTE_QUEUE=$(shell_quote "${QUEUE}") bash -s" <<'REMOTE_CLEANUP' || true
+  ssh_card "REMOTE_QUEUE=$(shell_quote "${QUEUE}") REMOTE_STRESS_QUEUES=$(shell_quote "${STRESS_QUEUES}") bash -s" <<'REMOTE_CLEANUP' || true
 set -euo pipefail
 
-pattern="[p]cie-pipeline-builder.*--queue([ =])?${REMOTE_QUEUE}([^0-9]|$)"
-if command -v pgrep >/dev/null 2>&1; then
-  mapfile -t pids < <(pgrep -f "${pattern}" || true)
-  if [[ "${#pids[@]}" -gt 0 ]]; then
-    kill "${pids[@]}" 2>/dev/null || true
-    sleep 1
+queues="${REMOTE_QUEUE} ${REMOTE_STRESS_QUEUES}"
+for queue in ${queues}; do
+  [[ -n "${queue}" ]] || continue
+  pattern="[p]cie-pipeline-builder.*--queue([ =])?${queue}([^0-9]|$)"
+  if command -v pgrep >/dev/null 2>&1; then
     mapfile -t pids < <(pgrep -f "${pattern}" || true)
     if [[ "${#pids[@]}" -gt 0 ]]; then
-      kill -9 "${pids[@]}" 2>/dev/null || true
+      kill "${pids[@]}" 2>/dev/null || true
+      sleep 1
+      mapfile -t pids < <(pgrep -f "${pattern}" || true)
+      if [[ "${#pids[@]}" -gt 0 ]]; then
+        kill -9 "${pids[@]}" 2>/dev/null || true
+      fi
     fi
   fi
-fi
 
-rm -f \
-  "/run/sima-neat/pcie/q${REMOTE_QUEUE}.pid" \
-  "/run/sima-neat/pcie/q${REMOTE_QUEUE}.status" \
-  "/tmp/q${REMOTE_QUEUE}-card.gst.log" \
-  2>/dev/null || true
+  rm -f \
+    "/run/sima-neat/pcie/q${queue}.pid" \
+    "/run/sima-neat/pcie/q${queue}.status" \
+    "/tmp/q${queue}-card.gst.log" \
+    2>/dev/null || true
+done
 REMOTE_CLEANUP
 }
 
@@ -414,11 +443,53 @@ run_ctest() {
   export SIMAPCIE_PULL_TIMEOUT_MS="${PULL_TIMEOUT_MS}"
   export SIMAPCIE_CARD_GST_DEBUG="${SIMAPCIE_CARD_GST_DEBUG:-}"
   export SIMAPCIE_CARD_GST_DEBUG_FILE="${SIMAPCIE_CARD_GST_DEBUG_FILE:-/tmp/q${QUEUE}-card.gst.log}"
+  export SIMAPCIE_SYNC_ITERATIONS="${SYNC_ITERATIONS}"
+  export SIMAPCIE_TEST_ITERATIONS="${TEST_ITERATIONS}"
+  export SIMAPCIE_STRESS_QUEUES="${STRESS_QUEUES}"
+  export SIMAPCIE_STRESS_ITERATIONS="${STRESS_ITERATIONS}"
 
   ctest \
     --test-dir "${TEST_DIR}" \
     --output-on-failure \
     --no-tests=error
+}
+
+run_pytest() {
+  local python_venv="${SIMAPCIE_PYTHON_VENV:-${HOME}/pypciehost}"
+  local python_bin="${SIMAPCIE_PYTHON_BIN:-${python_venv}/bin/python}"
+  local pytest_dir="${WORKSPACE}/pcie_host/python/tests"
+
+  if [[ ! -x "${python_bin}" ]]; then
+    echo "ERROR: expected pypciehost Python at ${python_bin}" >&2
+    echo "       The PCIe host package should install pypciehost via install_pciehost.sh --python." >&2
+    exit 1
+  fi
+  if [[ ! -d "${pytest_dir}" ]]; then
+    echo "ERROR: pypciehost pytest directory not found: ${pytest_dir}" >&2
+    exit 1
+  fi
+
+  "${python_bin}" - <<'PY'
+import pypciehost
+print(f"pypciehost={pypciehost.__version__}")
+PY
+
+  "${python_bin}" -m pip install pytest pillow numpy
+
+  export SIMAPCIE_CARD_HOST="${CARD_HOST}"
+  export SIMAPCIE_USER="${CARD_USER}"
+  export SIMAPCIE_CARD_ID="${CARD_ID}"
+  export SIMAPCIE_QUEUE="${QUEUE}"
+  export SIMAPCIE_READINESS_TIMEOUT_MS="${READINESS_TIMEOUT_MS}"
+  export SIMAPCIE_PULL_TIMEOUT_MS="${PULL_TIMEOUT_MS}"
+  export SIMAPCIE_CARD_GST_DEBUG="${SIMAPCIE_CARD_GST_DEBUG:-}"
+  export SIMAPCIE_CARD_GST_DEBUG_FILE="${SIMAPCIE_CARD_GST_DEBUG_FILE:-/tmp/q${QUEUE}-card.gst.log}"
+  export SIMAPCIE_SYNC_ITERATIONS="${SYNC_ITERATIONS}"
+  export SIMAPCIE_TEST_ITERATIONS="${TEST_ITERATIONS}"
+  export SIMAPCIE_STRESS_QUEUES="${STRESS_QUEUES}"
+  export SIMAPCIE_STRESS_ITERATIONS="${STRESS_ITERATIONS}"
+
+  "${python_bin}" -m pytest -q "${pytest_dir}"
 }
 
 main() {
@@ -433,6 +504,8 @@ main() {
   verify_card_plugins
   cleanup_queue
   run_ctest
+  cleanup_queue
+  run_pytest
 }
 
 if [[ "${MODE}" == "cleanup-only" ]]; then

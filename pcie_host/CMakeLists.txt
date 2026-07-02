@@ -27,6 +27,7 @@ include(CMakePackageConfigHelpers)
 
 option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
 option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware smoke tests" OFF)
+option(SIMAPCIE_BUILD_PYTHON "Build PCIe host Python bindings via nanobind" OFF)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
 set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
@@ -37,6 +38,9 @@ if (DEFINED COPROC_BUILD_TESTS)
 endif()
 if (DEFINED COPROC_BUILD_HARDWARE_TESTS)
   set(SIMAPCIE_BUILD_HARDWARE_TESTS "${COPROC_BUILD_HARDWARE_TESTS}")
+endif()
+if (DEFINED COPROC_BUILD_PYTHON)
+  set(SIMAPCIE_BUILD_PYTHON "${COPROC_BUILD_PYTHON}")
 endif()
 
 get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
@@ -205,6 +209,10 @@ endif()
 
 if (SIMAPCIE_BUILD_HARDWARE_TESTS)
   add_subdirectory(tests/hardware)
+endif()
+
+if (SIMAPCIE_BUILD_PYTHON)
+  add_subdirectory(python)
 endif()
 
 set(CPACK_GENERATOR "DEB")

@@ -27,6 +27,10 @@ simapcie_add_hardware_test(test_image_run test_image_run.cpp)
 simapcie_add_hardware_test(test_image_boxdecode_run test_image_boxdecode_run.cpp)
 simapcie_add_hardware_test(test_queue_blocker test_queue_blocker.cpp)
 
+install(PROGRAMS test_tensor_parallel_queues.sh
+  DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}"
+  COMPONENT PcieHostExtras)
+
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/CTestTestfile.cmake.in"
   "${CMAKE_CURRENT_BINARY_DIR}/PcieHostExtrasCTestTestfile.cmake"

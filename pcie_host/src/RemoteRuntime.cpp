@@ -25,6 +25,7 @@ constexpr int kCommandTimeoutSec = 30;
 constexpr const char* kRemoteModelDir = "/tmp";
 constexpr const char* kRemoteHelper = "/usr/bin/pcie-pipeline-builder";
 constexpr const char* kDefaultIdentityFile = ".ssh/sima_neat_pcie_ed25519";
+constexpr const char* kDefaultMlashmCtrlIoTimeout = "MLASHM_CTRL_IO_TIMEOUT_MS=5000";
 
 std::optional<std::string> default_identity_file() {
   const char* home = std::getenv("HOME");
@@ -97,6 +98,12 @@ std::vector<std::string> split_card_env(const std::string& raw) {
     out.push_back(std::move(token));
   }
   return out;
+}
+
+bool env_contains_name(const std::vector<std::string>& env, const std::string& name) {
+  const std::string prefix = name + "=";
+  return std::any_of(env.begin(), env.end(),
+                     [&prefix](const std::string& entry) { return entry.rfind(prefix, 0) == 0; });
 }
 
 } // namespace
@@ -179,14 +186,23 @@ void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
      << "[ -d /var/log/sima-neat/pcie ] || { echo missing_log_dir; exit 12; }; "
      << "pidfile=" << SshRunner::shell_escape(pid_path(queue)) << "; "
      << "statusfile=" << SshRunner::shell_escape(status_path(queue)) << "; "
-     << "if [ -f \"$pidfile\" ]; then " << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+     << "if [ -f \"$pidfile\" ]; then "
+     << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
      << "if [ -n \"$pid\" ] && kill -0 \"$pid\" >/dev/null 2>&1; then "
      << "if tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -q 'pcie-pipeline-builder'; "
         "then "
-     << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
-     << "else " << "rm -f \"$statusfile\"; " << "fi; ";
+     << "echo queue_busy; exit 9; "
+     << "fi; "
+     << "fi; "
+     << "rm -f \"$pidfile\" \"$statusfile\"; "
+     << "else "
+     << "rm -f \"$statusfile\"; "
+     << "fi; ";
   ss << "nohup ";
-  const std::vector<std::string> card_env = split_card_env(connection_.card_env);
+  std::vector<std::string> card_env = split_card_env(connection_.card_env);
+  if (!env_contains_name(card_env, "MLASHM_CTRL_IO_TIMEOUT_MS")) {
+    card_env.emplace_back(kDefaultMlashmCtrlIoTimeout);
+  }
   const bool needs_env = !card_env.empty() || !connection_.card_gst_debug.empty();
   if (needs_env) {
     ss << "env ";
@@ -266,19 +282,23 @@ RemoteStatus RemoteRuntime::wait_ready(const int queue, const int readiness_time
 
 void RemoteRuntime::stop(const int queue) const {
   std::ostringstream ss;
-  ss << "pid=''; " << "if [ -f " << SshRunner::shell_escape(pid_path(queue)) << " ]; then "
-     << "pid=$(cat " << SshRunner::shell_escape(pid_path(queue)) << "); " << "elif [ -f "
-     << SshRunner::shell_escape(status_path(queue)) << " ]; then "
+  ss << "pid=''; "
+     << "if [ -f " << SshRunner::shell_escape(pid_path(queue)) << " ]; then "
+     << "pid=$(cat " << SshRunner::shell_escape(pid_path(queue)) << "); "
+     << "elif [ -f " << SshRunner::shell_escape(status_path(queue)) << " ]; then "
      << "pid=$(sed -n 's/.*\"pid\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "
-     << SshRunner::shell_escape(status_path(queue)) << " | head -n1); " << "fi; "
-     << "if [ -n \"$pid\" ]; then " << "kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
-     << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; "
+     << SshRunner::shell_escape(status_path(queue)) << " | head -n1); "
+     << "fi; "
+     << "if [ -n \"$pid\" ]; then "
+     << "kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f " << SshRunner::shell_escape(pid_path(queue))
+     << "; exit 0; }; "
      << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -q 'pcie-pipeline-builder' || "
         "exit 0; "
      << "kill -TERM \"$pid\" >/dev/null 2>&1 || true; "
      << "for i in $(seq 1 20); do kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
      << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; sleep 0.25; done; "
-     << "echo still_running_after_sigterm; exit 13; " << "fi";
+     << "echo still_running_after_sigterm; exit 13; "
+     << "fi";
 
   std::vector<std::string> cmd = ssh_base();
   cmd.push_back(ss.str());

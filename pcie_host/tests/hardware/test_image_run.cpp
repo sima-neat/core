@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -51,6 +52,9 @@ struct Args {
   int queue = env_int_or_default("SIMAPCIE_QUEUE", 0);
   int readiness_timeout_ms = env_int_or_default("SIMAPCIE_READINESS_TIMEOUT_MS", 180000);
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
+  int sync_iterations = env_int_or_default("SIMAPCIE_SYNC_ITERATIONS", 50);
+  int iterations = env_int_or_default("SIMAPCIE_IMAGE_ITERATIONS",
+                                      env_int_or_default("SIMAPCIE_TEST_ITERATIONS", 1000));
   std::string card_env = env_or_default("SIMAPCIE_CARD_ENV", "");
   std::string card_gst_debug = env_or_default("SIMAPCIE_CARD_GST_DEBUG", "");
   std::string card_gst_debug_file = env_or_default("SIMAPCIE_CARD_GST_DEBUG_FILE", "");
@@ -69,6 +73,7 @@ void usage(const char* argv0) {
             << " [--model model.tar.gz] [--image image.jpg] [--card-host host]"
                " [--card-id n] [--user user] [--queue n]"
                " [--readiness-timeout-ms ms] [--pull-timeout-ms ms]"
+               " [--sync-iterations n] [--iterations n]"
                " [--card-env 'NAME=VALUE ...']"
                " [--card-gst-debug spec] [--card-gst-debug-file path]"
                " [--opencv-overload]\n";
@@ -94,6 +99,10 @@ Args parse_args(int argc, char** argv) {
       args.readiness_timeout_ms = std::stoi(require_value(argc, argv, i, "--readiness-timeout-ms"));
     } else if (arg == "--pull-timeout-ms") {
       args.pull_timeout_ms = std::stoi(require_value(argc, argv, i, "--pull-timeout-ms"));
+    } else if (arg == "--sync-iterations") {
+      args.sync_iterations = std::stoi(require_value(argc, argv, i, "--sync-iterations"));
+    } else if (arg == "--iterations") {
+      args.iterations = std::stoi(require_value(argc, argv, i, "--iterations"));
     } else if (arg == "--card-env") {
       args.card_env = require_value(argc, argv, i, "--card-env");
     } else if (arg == "--card-gst-debug") {
@@ -115,6 +124,10 @@ Args parse_args(int argc, char** argv) {
   }
   if (!std::filesystem::is_regular_file(args.image)) {
     throw std::runtime_error("image path does not exist or is not a regular file: " + args.image);
+  }
+  if (args.readiness_timeout_ms <= 0 || args.pull_timeout_ms <= 0 || args.sync_iterations <= 0 ||
+      args.iterations <= 0) {
+    throw std::runtime_error("timeouts and iterations must be positive");
   }
   return args;
 }
@@ -303,6 +316,8 @@ int main(int argc, char** argv) {
                                          : conn.card_host)
               << " card_id=" << conn.card_id << " user=" << conn.user << " queue=" << conn.queue
               << "\n";
+    std::cout << "  sync_iterations=" << args.sync_iterations
+              << " async_iterations=" << args.iterations << "\n";
     if (!conn.card_env.empty()) {
       std::cout << "  card_env=" << conn.card_env << "\n";
     }
@@ -342,28 +357,85 @@ int main(int argc, char** argv) {
     print_status("ready status", host.status());
     print_model_info(info);
 
-    if (args.opencv_overload) {
-#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-      std::cout << "push image with OpenCV overload...\n";
-      if (!host.push(bgr)) {
-        throw std::runtime_error("push returned false");
-      }
-#endif
-    } else {
-      pcie::Tensor image = make_bgr_image_tensor(bgr);
+    pcie::Tensor image;
+    if (!args.opencv_overload) {
+      image = make_bgr_image_tensor(bgr);
       print_image(image);
-      std::cout << "push image tensor...\n";
-      if (!host.push(image)) {
-        throw std::runtime_error("push returned false");
+    }
+
+    for (int iteration = 1; iteration <= args.sync_iterations; ++iteration) {
+      const bool log_iteration = args.sync_iterations == 1 || iteration == 1 ||
+                                 iteration % 10 == 0 || iteration == args.sync_iterations;
+      if (log_iteration) {
+        std::cout << "sync iteration " << iteration << "/" << args.sync_iterations << "\n";
+      }
+
+      if (args.opencv_overload) {
+#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
+        if (log_iteration) {
+          std::cout << "push image with OpenCV overload...\n";
+        }
+        if (!host.push(bgr)) {
+          throw std::runtime_error("sync push returned false at iteration " +
+                                   std::to_string(iteration));
+        }
+#endif
+      } else {
+        if (log_iteration) {
+          std::cout << "push image tensor...\n";
+        }
+        if (!host.push(image)) {
+          throw std::runtime_error("sync push returned false at iteration " +
+                                   std::to_string(iteration));
+        }
+      }
+
+      if (log_iteration) {
+        std::cout << "pull outputs with timeout_ms=" << args.pull_timeout_ms << "...\n";
+      }
+      const auto result = host.pull(args.pull_timeout_ms);
+      if (!result.has_value()) {
+        throw std::runtime_error("sync pull timed out without a result at iteration " +
+                                 std::to_string(iteration));
+      }
+      if (log_iteration) {
+        print_outputs(*result);
       }
     }
 
-    std::cout << "pull outputs with timeout_ms=" << args.pull_timeout_ms << "...\n";
-    const auto result = host.pull(args.pull_timeout_ms);
-    if (!result.has_value()) {
-      throw std::runtime_error("pull timed out without a result");
-    }
-    print_outputs(*result);
+    std::cout << "starting async producer/consumer phase: " << args.iterations << " iteration(s)\n";
+    auto producer = std::async(std::launch::async, [&] {
+      for (int iteration = 1; iteration <= args.iterations; ++iteration) {
+        if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
+          std::cout << "async producer " << iteration << "/" << args.iterations << "\n";
+        }
+        if (args.opencv_overload) {
+#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
+          if (!host.push(bgr)) {
+            throw std::runtime_error("async push returned false at iteration " +
+                                     std::to_string(iteration));
+          }
+#endif
+        } else if (!host.push(image)) {
+          throw std::runtime_error("async push returned false at iteration " +
+                                   std::to_string(iteration));
+        }
+      }
+    });
+    auto consumer = std::async(std::launch::async, [&] {
+      for (int iteration = 1; iteration <= args.iterations; ++iteration) {
+        if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
+          std::cout << "async consumer " << iteration << "/" << args.iterations << "\n";
+        }
+        const auto result = host.pull(args.pull_timeout_ms);
+        if (!result.has_value()) {
+          throw std::runtime_error("async pull timed out without a result at iteration " +
+                                   std::to_string(iteration));
+        }
+      }
+    });
+    producer.get();
+    consumer.get();
 
     std::cout << "stopping...\n";
     host.stop();

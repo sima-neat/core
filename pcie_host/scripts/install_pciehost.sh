@@ -13,6 +13,9 @@ Options:
   --deb <path>             Install this runtime DEB instead of auto-detecting it
   --dev-deb <path>         Install this development DEB instead of auto-detecting it
   --search-dir <dir>       Directory to search for DEBs (default: this script's directory)
+  --python                 Install pypciehost wheel into a Python venv
+  --python-wheel <path>    Install this pypciehost wheel instead of auto-detecting it
+  --python-venv <dir>      Python venv path (default: ~/pypciehost)
   --runtime-only           Do not install sima-pcie-host-dev
   --skip-setup             Do not run pcie-setup.sh after package install
   --setup-args <s>         Extra arguments passed to pcie-setup.sh
@@ -23,10 +26,14 @@ Examples:
   ./install_pciehost.sh
   ./install_pciehost.sh --deb sima-pcie-host_<version>_amd64.deb
   ./install_pciehost.sh --runtime-only
+  ./install_pciehost.sh --python
   ./install_pciehost.sh --setup-args "--hosts 10.0.0.2"
   ./install_pciehost.sh --skip-setup
 
 Environment:
+  SIMAPCIE_INSTALL_PYTHON=1     Same as --python
+  SIMAPCIE_PYTHON_WHEEL=<path>  Same as --python-wheel
+  SIMAPCIE_PYTHON_VENV=<dir>    Same as --python-venv
   SIMAPCIE_RUNTIME_ONLY=1       Same as --runtime-only
   SIMAPCIE_SKIP_SETUP=1         Same as --skip-setup
   SIMAPCIE_SETUP_ARGS="..."     Same as --setup-args
@@ -50,7 +57,10 @@ env_truthy() {
 
 DEB_PATH=""
 DEV_DEB_PATH=""
+PYTHON_WHEEL_PATH=""
+PYTHON_VENV=""
 SEARCH_DIR=""
+INSTALL_PYTHON="OFF"
 RUNTIME_ONLY="OFF"
 RUN_SETUP="ON"
 SETUP_ARGS=""
@@ -58,6 +68,15 @@ SETUP_BEST_EFFORT="OFF"
 
 if env_truthy "${SIMAPCIE_RUNTIME_ONLY:-}"; then
   RUNTIME_ONLY="ON"
+fi
+if env_truthy "${SIMAPCIE_INSTALL_PYTHON:-}"; then
+  INSTALL_PYTHON="ON"
+fi
+if [[ -n "${SIMAPCIE_PYTHON_WHEEL:-}" ]]; then
+  PYTHON_WHEEL_PATH="${SIMAPCIE_PYTHON_WHEEL}"
+fi
+if [[ -n "${SIMAPCIE_PYTHON_VENV:-}" ]]; then
+  PYTHON_VENV="${SIMAPCIE_PYTHON_VENV}"
 fi
 if env_truthy "${SIMAPCIE_SKIP_SETUP:-}"; then
   RUN_SETUP="OFF"
@@ -93,6 +112,28 @@ while [[ $# -gt 0 ]]; do
         echo "ERROR: --search-dir requires a value" >&2
         exit 1
       fi
+      shift 2
+      ;;
+    --python)
+      INSTALL_PYTHON="ON"
+      shift
+      ;;
+    --python-wheel)
+      PYTHON_WHEEL_PATH="${2:-}"
+      if [[ -z "${PYTHON_WHEEL_PATH}" ]]; then
+        echo "ERROR: --python-wheel requires a value" >&2
+        exit 1
+      fi
+      INSTALL_PYTHON="ON"
+      shift 2
+      ;;
+    --python-venv)
+      PYTHON_VENV="${2:-}"
+      if [[ -z "${PYTHON_VENV}" ]]; then
+        echo "ERROR: --python-venv requires a value" >&2
+        exit 1
+      fi
+      INSTALL_PYTHON="ON"
       shift 2
       ;;
     --runtime-only)
@@ -144,6 +185,14 @@ detect_deb_arch() {
 }
 
 latest_matching_deb() {
+  local dir="$1"
+  local pattern="$2"
+  find "${dir}" -maxdepth 1 -type f -name "${pattern}" -printf '%T@ %p\n' 2>/dev/null \
+    | sort -nr \
+    | awk 'NR == 1 {print $2}'
+}
+
+latest_matching_file() {
   local dir="$1"
   local pattern="$2"
   find "${dir}" -maxdepth 1 -type f -name "${pattern}" -printf '%T@ %p\n' 2>/dev/null \
@@ -221,6 +270,14 @@ if [[ "${RUNTIME_ONLY}" != "ON" && -z "${DEV_DEB_PATH}" ]]; then
   done
 fi
 
+if [[ "${INSTALL_PYTHON}" == "ON" && -z "${PYTHON_WHEEL_PATH}" ]]; then
+  for dir in "${search_dirs[@]}"; do
+    [[ -d "${dir}" ]] || continue
+    PYTHON_WHEEL_PATH="$(latest_matching_file "${dir}" "pypciehost-*.whl")"
+    [[ -n "${PYTHON_WHEEL_PATH}" ]] && break
+  done
+fi
+
 if [[ -z "${DEB_PATH}" || ! -f "${DEB_PATH}" ]]; then
   echo "ERROR: no sima-pcie-host DEB found for ${deb_arch}." >&2
   echo "       Search dirs: ${search_dirs[*]}" >&2
@@ -230,10 +287,27 @@ if [[ "${RUNTIME_ONLY}" != "ON" && -n "${DEV_DEB_PATH}" && ! -f "${DEV_DEB_PATH}
   echo "ERROR: sima-pcie-host-dev DEB does not exist: ${DEV_DEB_PATH}" >&2
   exit 1
 fi
+if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
+  if [[ -z "${PYTHON_WHEEL_PATH}" || ! -f "${PYTHON_WHEEL_PATH}" ]]; then
+    echo "ERROR: no pypciehost wheel found." >&2
+    echo "       Search dirs: ${search_dirs[*]}" >&2
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 is required to install pypciehost." >&2
+    exit 1
+  fi
+  if [[ -z "${PYTHON_VENV}" ]]; then
+    PYTHON_VENV="${HOME}/pypciehost"
+  fi
+fi
 
 DEB_PATH="$(absolute_path "${DEB_PATH}")"
 if [[ -n "${DEV_DEB_PATH}" ]]; then
   DEV_DEB_PATH="$(absolute_path "${DEV_DEB_PATH}")"
+fi
+if [[ -n "${PYTHON_WHEEL_PATH}" ]]; then
+  PYTHON_WHEEL_PATH="$(absolute_path "${PYTHON_WHEEL_PATH}")"
 fi
 
 apt_install_opts=(install -y --reinstall --allow-downgrades)
@@ -251,6 +325,15 @@ fi
 
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then
   gst-inspect-1.0 neatpciehost >/dev/null 2>&1 || true
+fi
+
+if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
+  echo "Installing ${PYTHON_WHEEL_PATH} into ${PYTHON_VENV}"
+  if [[ ! -x "${PYTHON_VENV}/bin/python" ]]; then
+    python3 -m venv --system-site-packages "${PYTHON_VENV}"
+  fi
+  "${PYTHON_VENV}/bin/python" -m pip install --upgrade pip
+  "${PYTHON_VENV}/bin/python" -m pip install --no-deps --force-reinstall "${PYTHON_WHEEL_PATH}"
 fi
 
 if [[ "${RUN_SETUP}" == "ON" ]]; then
@@ -271,4 +354,8 @@ if [[ "${RUN_SETUP}" == "ON" ]]; then
   fi
 fi
 
-echo "sima-pcie-host installed."
+if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
+  echo "sima-pcie-host installed. Python venv: ${PYTHON_VENV}"
+else
+  echo "sima-pcie-host installed."
+fi
