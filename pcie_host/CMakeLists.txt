@@ -26,7 +26,6 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
-option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host example apps" OFF)
 option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware smoke tests" OFF)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
@@ -35,9 +34,6 @@ set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
 
 if (DEFINED COPROC_BUILD_TESTS)
   set(SIMAPCIE_BUILD_TESTS "${COPROC_BUILD_TESTS}")
-endif()
-if (DEFINED COPROC_BUILD_EXAMPLES)
-  set(SIMAPCIE_BUILD_EXAMPLES "${COPROC_BUILD_EXAMPLES}")
 endif()
 if (DEFINED COPROC_BUILD_HARDWARE_TESTS)
   set(SIMAPCIE_BUILD_HARDWARE_TESTS "${COPROC_BUILD_HARDWARE_TESTS}")
@@ -94,28 +90,6 @@ endif()
 target_include_directories(sima_neat_pcie_host PRIVATE
   ${SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR}
 )
-
-if (SIMAPCIE_BUILD_EXAMPLES)
-  add_executable(sima_pcie_metadata_dump
-    ${CMAKE_CURRENT_SOURCE_DIR}/examples/sima_pcie_metadata_dump.cpp
-  )
-  target_link_libraries(sima_pcie_metadata_dump PRIVATE sima_neat_pcie_host)
-
-  add_executable(sima_pcie_tensor_smoke
-    ${CMAKE_CURRENT_SOURCE_DIR}/examples/sima_pcie_tensor_smoke.cpp
-  )
-  target_link_libraries(sima_pcie_tensor_smoke PRIVATE sima_neat_pcie_host)
-
-  add_executable(sima_pcie_image_smoke
-    ${CMAKE_CURRENT_SOURCE_DIR}/examples/sima_pcie_image_smoke.cpp
-  )
-  target_link_libraries(sima_pcie_image_smoke PRIVATE sima_neat_pcie_host)
-
-  install(TARGETS sima_pcie_metadata_dump
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    COMPONENT Development
-  )
-endif()
 
 install(TARGETS sima_neat_pcie_host
   EXPORT SimaPCIeHostTargets

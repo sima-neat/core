@@ -2,10 +2,6 @@ find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc)
 
 set(SIMAPCIE_HARDWARE_TEST_INSTALL_DIR
   "lib/sima-pcie-host/tests")
-set(SIMAPCIE_HARDWARE_TEST_ASSET_INSTALL_DIR
-  "${CMAKE_INSTALL_DATADIR}/sima-pcie-host/test-assets")
-set(SIMAPCIE_HARDWARE_TEST_DEFAULT_IMAGE
-  "../../../share/sima-pcie-host/test-assets/test_image.jpg")
 
 function(simapcie_add_hardware_test name source)
   add_executable(${name} ${source})
@@ -19,7 +15,7 @@ function(simapcie_add_hardware_test name source)
   target_compile_definitions(${name}
     PRIVATE
       DEFAULT_MODEL_PATH=""
-      DEFAULT_SOURCE_IMAGE="${SIMAPCIE_HARDWARE_TEST_DEFAULT_IMAGE}")
+      DEFAULT_SOURCE_IMAGE="")
   install(TARGETS ${name}
     RUNTIME DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}"
     COMPONENT PcieHostExtras)
@@ -39,8 +35,4 @@ configure_file(
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/PcieHostExtrasCTestTestfile.cmake"
   RENAME CTestTestfile.cmake
   DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}"
-  COMPONENT PcieHostExtras)
-
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/test_image.jpg"
-  DESTINATION "${SIMAPCIE_HARDWARE_TEST_ASSET_INSTALL_DIR}"
   COMPONENT PcieHostExtras)

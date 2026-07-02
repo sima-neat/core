@@ -8,7 +8,6 @@ cd "${SCRIPT_DIR}"
 BUILD_DIR="build"
 BUILD_TYPE="Release"
 BUILD_TESTS="OFF"
-BUILD_EXAMPLES="OFF"
 CLEAN_BUILD="OFF"
 MAKE_DEB="ON"
 INSTALL_DEPS_ONLY="OFF"
@@ -34,7 +33,6 @@ Usage: ./build.sh [options]
 Options:
   --clean             Remove build directory before configure
   --with-tests        Build unit and hardware smoke tests
-  --with-examples     Build OpenCV examples (does not install into DEB)
   --no-deb            Skip DEB package generation
   --install-deps-only Install PCIe host build dependencies, then exit
   --build-dir <dir>   Build directory (default: build)
@@ -94,10 +92,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-tests)
       BUILD_TESTS="ON"
-      shift
-      ;;
-    --with-examples)
-      BUILD_EXAMPLES="ON"
       shift
       ;;
     --no-deb)
@@ -384,7 +378,6 @@ echo " SiMa NEAT PCIe host build configuration"
 echo "========================================"
 echo "Build type      : ${BUILD_TYPE}"
 echo "Build tests     : ${BUILD_TESTS}"
-echo "Build examples  : ${BUILD_EXAMPLES}"
 echo "Generate DEB    : ${MAKE_DEB}"
 echo "Clean build     : ${CLEAN_BUILD}"
 echo "Build dir       : ${BUILD_DIR}"
@@ -434,7 +427,6 @@ cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \
-  -DSIMAPCIE_BUILD_EXAMPLES="${BUILD_EXAMPLES}" \
   -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
   -DSIMAPCIE_NEATPCIEHOST_INCLUDE_DIR="${INCLUDE_STAGE_DIR}"
 

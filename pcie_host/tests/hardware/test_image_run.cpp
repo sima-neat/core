@@ -39,9 +39,7 @@ int env_int_or_default(const char* name, const int fallback) {
     }
   } catch (const std::exception&) {
   }
-  {
-    throw std::runtime_error(std::string("invalid integer in ") + name + ": " + value);
-  }
+  { throw std::runtime_error(std::string("invalid integer in ") + name + ": " + value); }
 }
 
 struct Args {
@@ -219,36 +217,31 @@ void print_model_info(const pcie::ModelInfo& info) {
     const auto& input = info.inputs[i];
     std::cout << "    [" << i << "] name=" << (input.name.empty() ? "<unnamed>" : input.name)
               << " dtype=" << (input.dtype.empty() ? "<unknown>" : input.dtype)
-              << " shape=" << shape_string(input.shape)
-              << " size_bytes=" << input.size_bytes << "\n";
+              << " shape=" << shape_string(input.shape) << " size_bytes=" << input.size_bytes
+              << "\n";
   }
   std::cout << "  expected outputs (" << info.outputs.size() << ")\n";
   for (std::size_t i = 0; i < info.outputs.size(); ++i) {
     const auto& output = info.outputs[i];
     std::cout << "    [" << i << "] name=" << (output.name.empty() ? "<unnamed>" : output.name)
               << " dtype=" << (output.dtype.empty() ? "<unknown>" : output.dtype)
-              << " shape=" << shape_string(output.shape)
-              << " size_bytes=" << output.size_bytes << "\n";
+              << " shape=" << shape_string(output.shape) << " size_bytes=" << output.size_bytes
+              << "\n";
   }
 }
 
 void print_image(const pcie::Tensor& image) {
   std::cout << "constructed image input\n";
-  std::cout << "  name=" << image.route.name
-            << " dtype=" << dtype_name(image.dtype)
+  std::cout << "  name=" << image.route.name << " dtype=" << dtype_name(image.dtype)
             << " shape=" << shape_string(image.shape)
-            << " strides=" << shape_string(image.strides_bytes)
-            << " format=BGR"
+            << " strides=" << shape_string(image.strides_bytes) << " format=BGR"
             << " size_bytes=" << image.size_bytes << "\n";
 }
 
 void print_mat(const cv::Mat& image) {
   std::cout << "loaded OpenCV image\n";
-  std::cout << "  width=" << image.cols
-            << " height=" << image.rows
-            << " channels=" << image.channels()
-            << " step=" << image.step[0]
-            << " format=BGR"
+  std::cout << "  width=" << image.cols << " height=" << image.rows
+            << " channels=" << image.channels() << " step=" << image.step[0] << " format=BGR"
             << " bytes=" << (static_cast<std::size_t>(image.rows) * image.step[0]) << "\n";
 }
 
@@ -257,10 +250,9 @@ void print_outputs(const pcie::TensorList& outputs) {
   for (std::size_t i = 0; i < outputs.size(); ++i) {
     const auto& output = outputs[i];
     std::cout << "  [" << i << "] name=" << output.route.name
-              << " dtype=" << dtype_name(output.dtype)
-              << " shape=" << shape_string(output.shape)
-              << " size_bytes=" << output.size_bytes
-              << " byte_offset=" << output.byte_offset << "\n";
+              << " dtype=" << dtype_name(output.dtype) << " shape=" << shape_string(output.shape)
+              << " size_bytes=" << output.size_bytes << " byte_offset=" << output.byte_offset
+              << "\n";
   }
 }
 
@@ -296,9 +288,8 @@ int main(int argc, char** argv) {
 
     if (args.opencv_overload) {
 #if !defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-      throw std::runtime_error(
-          "installed SimaPCIeHost headers do not provide the OpenCV overload; "
-          "rebuild/reinstall sima-pcie-host-dev and rebuild this test");
+      throw std::runtime_error("installed SimaPCIeHost headers do not provide the OpenCV overload; "
+                               "rebuild/reinstall sima-pcie-host-dev and rebuild this test");
 #endif
     }
 
@@ -310,8 +301,8 @@ int main(int argc, char** argv) {
     std::cout << "  card_host="
               << (conn.card_host.empty() ? ("10.0." + std::to_string(conn.card_id) + ".2")
                                          : conn.card_host)
-              << " card_id=" << conn.card_id << " user=" << conn.user
-              << " queue=" << conn.queue << "\n";
+              << " card_id=" << conn.card_id << " user=" << conn.user << " queue=" << conn.queue
+              << "\n";
     if (!conn.card_env.empty()) {
       std::cout << "  card_env=" << conn.card_env << "\n";
     }

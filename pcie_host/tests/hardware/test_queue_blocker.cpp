@@ -122,7 +122,8 @@ Args parse_args(int argc, char** argv) {
   }
   if (args.readiness_timeout_ms <= 0 || args.pull_timeout_ms <= 0 || args.interval_ms < 0 ||
       args.iterations < 0) {
-    throw std::runtime_error("timeouts and iteration values must be non-negative, with positive timeouts");
+    throw std::runtime_error(
+        "timeouts and iteration values must be non-negative, with positive timeouts");
   }
   return args;
 }
@@ -350,13 +351,12 @@ int main(int argc, char** argv) {
     std::cout << "  card_host="
               << (conn.card_host.empty() ? ("10.0." + std::to_string(conn.card_id) + ".2")
                                          : conn.card_host)
-              << " card_id=" << conn.card_id << " user=" << conn.user
-              << " queue=" << conn.queue << "\n";
+              << " card_id=" << conn.card_id << " user=" << conn.user << " queue=" << conn.queue
+              << "\n";
     std::cout << "  readiness_timeout_ms=" << args.readiness_timeout_ms
-              << " pull_timeout_ms=" << args.pull_timeout_ms
-              << " interval_ms=" << args.interval_ms
-              << " iterations=" << (args.iterations == 0 ? std::string("forever")
-                                                         : std::to_string(args.iterations))
+              << " pull_timeout_ms=" << args.pull_timeout_ms << " interval_ms=" << args.interval_ms
+              << " iterations="
+              << (args.iterations == 0 ? std::string("forever") : std::to_string(args.iterations))
               << "\n";
 
     pcie::SimaPCIeHost host(conn);
@@ -371,8 +371,8 @@ int main(int argc, char** argv) {
     print_status("ready status", host.status());
     std::cout << "inputs=" << info.inputs.size() << " outputs=" << info.outputs.size() << "\n";
     for (std::size_t i = 0; i < info.inputs.size(); ++i) {
-      std::cout << "  input[" << i << "] name="
-                << (info.inputs[i].name.empty() ? "<unnamed>" : info.inputs[i].name)
+      std::cout << "  input[" << i
+                << "] name=" << (info.inputs[i].name.empty() ? "<unnamed>" : info.inputs[i].name)
                 << " shape=" << shape_string(info.inputs[i].shape)
                 << " size_bytes=" << info.inputs[i].size_bytes << "\n";
     }
@@ -395,8 +395,7 @@ int main(int argc, char** argv) {
                 << "\n";
       const auto result = host.pull(args.pull_timeout_ms);
       if (result.has_value()) {
-        std::cout << "iteration " << iteration << ": received outputs=" << result->size()
-                  << "\n";
+        std::cout << "iteration " << iteration << ": received outputs=" << result->size() << "\n";
       } else {
         std::cout << "iteration " << iteration << ": pull timed out; keeping queue occupied\n";
       }

@@ -285,18 +285,11 @@ extra setup arguments when discovery is not available:
 dist/install_pciehost.sh --setup-args "--hosts 10.0.0.2"
 ```
 
-For `load_metadata()` investigation, no PCIe card or SSH setup is required, so
-the setup step can be skipped:
+For metadata-only investigation, no PCIe card or SSH setup is required, so the
+setup step can be skipped:
 
 ```bash
 dist/install_pciehost.sh --skip-setup
-```
-
-To print metadata on a laptop without a PCIe card, build examples and run:
-
-```bash
-./build.sh --with-examples
-sima_pcie_metadata_dump --model /path/model.tar.gz
 ```
 
 The package installs the real plugin under:

@@ -71,8 +71,7 @@ void print_shape(const std::vector<std::int64_t>& shape) {
 void print_tensor_info(const pcie::TensorInfo& tensor, std::size_t index) {
   std::cout << "  [" << index << "]"
             << " name=" << (tensor.name.empty() ? "<unnamed>" : tensor.name)
-            << " dtype=" << (tensor.dtype.empty() ? "<unknown>" : tensor.dtype)
-            << " shape=";
+            << " dtype=" << (tensor.dtype.empty() ? "<unknown>" : tensor.dtype) << " shape=";
   print_shape(tensor.shape);
   std::cout << " size_bytes=" << tensor.size_bytes << "\n";
 }

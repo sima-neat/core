@@ -51,9 +51,7 @@ int env_int_or_default(const char* name, const int fallback) {
     }
   } catch (const std::exception&) {
   }
-  {
-    throw std::runtime_error(std::string("invalid integer in ") + name + ": " + value);
-  }
+  { throw std::runtime_error(std::string("invalid integer in ") + name + ": " + value); }
 }
 
 struct Args {
@@ -148,8 +146,8 @@ Args parse_args(int argc, char** argv) {
     } else if (arg == "--pull-timeout-ms") {
       args.pull_timeout_ms = std::stoi(require_value(argc, argv, i, "--pull-timeout-ms"));
     } else if (arg == "--decode-type") {
-      args.decode_type = parse_decode_type(require_value(argc, argv, i, "--decode-type"),
-                                           &args.decode_type_name);
+      args.decode_type =
+          parse_decode_type(require_value(argc, argv, i, "--decode-type"), &args.decode_type_name);
     } else if (arg == "--score-threshold") {
       args.score_threshold = std::stof(require_value(argc, argv, i, "--score-threshold"));
     } else if (arg == "--nms-iou-threshold") {
@@ -305,36 +303,31 @@ void print_model_info(const pcie::ModelInfo& info) {
     const auto& input = info.inputs[i];
     std::cout << "    [" << i << "] name=" << (input.name.empty() ? "<unnamed>" : input.name)
               << " dtype=" << (input.dtype.empty() ? "<unknown>" : input.dtype)
-              << " shape=" << shape_string(input.shape)
-              << " size_bytes=" << input.size_bytes << "\n";
+              << " shape=" << shape_string(input.shape) << " size_bytes=" << input.size_bytes
+              << "\n";
   }
   std::cout << "  expected outputs (" << info.outputs.size() << ")\n";
   for (std::size_t i = 0; i < info.outputs.size(); ++i) {
     const auto& output = info.outputs[i];
     std::cout << "    [" << i << "] name=" << (output.name.empty() ? "<unnamed>" : output.name)
               << " dtype=" << (output.dtype.empty() ? "<unknown>" : output.dtype)
-              << " shape=" << shape_string(output.shape)
-              << " size_bytes=" << output.size_bytes << "\n";
+              << " shape=" << shape_string(output.shape) << " size_bytes=" << output.size_bytes
+              << "\n";
   }
 }
 
 void print_image(const pcie::Tensor& image) {
   std::cout << "constructed image input\n";
-  std::cout << "  name=" << image.route.name
-            << " dtype=" << dtype_name(image.dtype)
+  std::cout << "  name=" << image.route.name << " dtype=" << dtype_name(image.dtype)
             << " shape=" << shape_string(image.shape)
-            << " strides=" << shape_string(image.strides_bytes)
-            << " format=BGR"
+            << " strides=" << shape_string(image.strides_bytes) << " format=BGR"
             << " size_bytes=" << image.size_bytes << "\n";
 }
 
 void print_mat(const cv::Mat& image) {
   std::cout << "loaded OpenCV image\n";
-  std::cout << "  width=" << image.cols
-            << " height=" << image.rows
-            << " channels=" << image.channels()
-            << " step=" << image.step[0]
-            << " format=BGR"
+  std::cout << "  width=" << image.cols << " height=" << image.rows
+            << " channels=" << image.channels() << " step=" << image.step[0] << " format=BGR"
             << " bytes=" << (static_cast<std::size_t>(image.rows) * image.step[0]) << "\n";
 }
 
@@ -343,10 +336,9 @@ void print_outputs(const pcie::TensorList& outputs) {
   for (std::size_t i = 0; i < outputs.size(); ++i) {
     const auto& output = outputs[i];
     std::cout << "  [" << i << "] name=" << output.route.name
-              << " dtype=" << dtype_name(output.dtype)
-              << " shape=" << shape_string(output.shape)
-              << " size_bytes=" << output.size_bytes
-              << " byte_offset=" << output.byte_offset << "\n";
+              << " dtype=" << dtype_name(output.dtype) << " shape=" << shape_string(output.shape)
+              << " size_bytes=" << output.size_bytes << " byte_offset=" << output.byte_offset
+              << "\n";
   }
 }
 
@@ -378,10 +370,8 @@ T read_le_value(const std::uint8_t* data, const std::size_t size, const std::siz
   return value;
 }
 
-std::vector<BBoxRecord> parse_bbox_payload(const pcie::TensorList& outputs,
-                                           const int image_width,
-                                           const int image_height,
-                                           const int top_k,
+std::vector<BBoxRecord> parse_bbox_payload(const pcie::TensorList& outputs, const int image_width,
+                                           const int image_height, const int top_k,
                                            BBoxSummary* summary) {
   if (outputs.empty()) {
     throw std::runtime_error("boxdecode produced no output tensors");
@@ -458,13 +448,9 @@ std::vector<BBoxRecord> parse_bbox_payload(const pcie::TensorList& outputs,
   return records;
 }
 
-void validate_bbox_payload(const pcie::TensorList& outputs,
-                           const int image_width,
-                           const int image_height,
-                           const float score_threshold,
-                           const int top_k,
-                           const bool require_detection,
-                           const bool require_person) {
+void validate_bbox_payload(const pcie::TensorList& outputs, const int image_width,
+                           const int image_height, const float score_threshold, const int top_k,
+                           const bool require_detection, const bool require_person) {
   BBoxSummary summary;
   const std::vector<BBoxRecord> records =
       parse_bbox_payload(outputs, image_width, image_height, top_k, &summary);
@@ -482,12 +468,10 @@ void validate_bbox_payload(const pcie::TensorList& outputs,
   }
 
   std::cout << "BBOX payload\n";
-  std::cout << "  detections=" << summary.header_count
-            << " valid_records=" << summary.valid_count
+  std::cout << "  detections=" << summary.header_count << " valid_records=" << summary.valid_count
             << " high_score_records=" << summary.high_score_count
-            << " person_records=" << summary.person_count
-            << " max_score=" << std::fixed << std::setprecision(4) << summary.max_score
-            << std::defaultfloat
+            << " person_records=" << summary.person_count << " max_score=" << std::fixed
+            << std::setprecision(4) << summary.max_score << std::defaultfloat
             << " capacity=" << summary.payload_capacity << "\n";
 
   const std::size_t printed = std::min<std::size_t>(records.size(), 5);
@@ -534,9 +518,8 @@ int main(int argc, char** argv) {
 
     if (args.opencv_overload) {
 #if !defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-      throw std::runtime_error(
-          "installed SimaPCIeHost headers do not provide the OpenCV overload; "
-          "rebuild/reinstall sima-pcie-host-dev and rebuild this test");
+      throw std::runtime_error("installed SimaPCIeHost headers do not provide the OpenCV overload; "
+                               "rebuild/reinstall sima-pcie-host-dev and rebuild this test");
 #endif
     }
 
@@ -548,18 +531,15 @@ int main(int argc, char** argv) {
     std::cout << "  card_host="
               << (conn.card_host.empty() ? ("10.0." + std::to_string(conn.card_id) + ".2")
                                          : conn.card_host)
-              << " card_id=" << conn.card_id << " user=" << conn.user
-              << " queue=" << conn.queue << "\n";
+              << " card_id=" << conn.card_id << " user=" << conn.user << " queue=" << conn.queue
+              << "\n";
     std::cout << "  boxdecode=" << args.decode_type_name
               << " score_threshold=" << args.score_threshold
-              << " nms_iou_threshold=" << args.nms_iou_threshold
-              << " top_k=" << args.top_k << "\n";
-    std::cout << "  iterations=" << args.iterations
-              << " resize_source="
-              << (args.resize_source_width > 0
-                      ? (std::to_string(args.resize_source_width) + "x" +
-                         std::to_string(args.resize_source_height))
-                      : std::string("none"))
+              << " nms_iou_threshold=" << args.nms_iou_threshold << " top_k=" << args.top_k << "\n";
+    std::cout << "  iterations=" << args.iterations << " resize_source="
+              << (args.resize_source_width > 0 ? (std::to_string(args.resize_source_width) + "x" +
+                                                  std::to_string(args.resize_source_height))
+                                               : std::string("none"))
               << " resize_alternate=" << (args.resize_alternate ? "true" : "false")
               << " require_detection=" << (args.require_detection ? "true" : "false")
               << " require_person=" << (args.require_person ? "true" : "false") << "\n";
@@ -623,8 +603,7 @@ int main(int argc, char** argv) {
       cv::Mat resized;
       const int resized_width = std::max(96, bgr.cols / 2);
       const int resized_height = std::max(96, bgr.rows / 2);
-      cv::resize(bgr, resized, cv::Size(resized_width, resized_height), 0.0, 0.0,
-                 cv::INTER_LINEAR);
+      cv::resize(bgr, resized, cv::Size(resized_width, resized_height), 0.0, 0.0, cv::INTER_LINEAR);
       if (!resized.isContinuous()) {
         resized = resized.clone();
       }

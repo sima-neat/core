@@ -19,7 +19,8 @@ void require(bool condition, const std::string& message) {
 int main() {
   try {
     const std::string tensor_caps = pcie_internal::HostPcieChannel::tensor_set_caps();
-    require(tensor_caps == "application/vnd.simaai.tensor, representation=(string)tensor-set, storage=(string)tensorbuffer",
+    require(tensor_caps == "application/vnd.simaai.tensor, representation=(string)tensor-set, "
+                           "storage=(string)tensorbuffer",
             "unexpected tensor-set caps: " + tensor_caps);
 
     simaai::neat::pcie::Tensor tensor;
@@ -31,8 +32,8 @@ int main() {
     image.dtype = simaai::neat::pcie::TensorDType::UInt8;
     image.layout = simaai::neat::pcie::TensorLayout::HWC;
     image.shape = {480, 640, 3};
-    image.image = simaai::neat::pcie::ImageSpec{
-        .format = simaai::neat::pcie::ImageSpec::PixelFormat::BGR};
+    image.image =
+        simaai::neat::pcie::ImageSpec{.format = simaai::neat::pcie::ImageSpec::PixelFormat::BGR};
     const std::string image_caps = pcie_internal::HostPcieChannel::caps_for_tensors({image});
     require(image_caps == "video/x-raw,format=(string)BGR,width=(int)640,height=(int)480",
             "unexpected image caps: " + image_caps);

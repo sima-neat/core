@@ -237,14 +237,12 @@ SimaPCIeHost::SimaPCIeHost(ConnectionOptions connection)
 
 SimaPCIeHost::~SimaPCIeHost() noexcept = default;
 
-ModelInfo SimaPCIeHost::load_metadata(const std::string& model_path,
-                                       const ModelOptions& options) {
+ModelInfo SimaPCIeHost::load_metadata(const std::string& model_path, const ModelOptions& options) {
   return impl_->load_metadata(model_path, options);
 }
 
-ModelInfo SimaPCIeHost::init_pipeline(const std::string& model_path,
-                                       const ModelOptions& options,
-                                       const int readiness_timeout_ms) {
+ModelInfo SimaPCIeHost::init_pipeline(const std::string& model_path, const ModelOptions& options,
+                                      const int readiness_timeout_ms) {
   return impl_->init_pipeline(model_path, options, readiness_timeout_ms);
 }
 
