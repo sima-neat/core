@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     options.system_prompt = "You are concise.";
     options.max_new_tokens = 96;
     options.streaming = true;
+    options.encode_images_on_input = false;
 
     simaai::neat::Graph genai_fragment =
         genai::graphs::VisionLanguage(model, options, "genai_stage");

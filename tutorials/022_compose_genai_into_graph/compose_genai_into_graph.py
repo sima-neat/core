@@ -34,6 +34,7 @@ def main() -> int:
     options.system_prompt = "You are concise."
     options.max_new_tokens = 96
     options.streaming = True
+    options.encode_images_on_input = False
 
     genai_fragment = neat.genai.graphs.vision_language(model, options, "genai_stage")
     # END STEP
