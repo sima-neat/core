@@ -155,6 +155,35 @@ ssh_card() {
     "${CARD_USER}@${CARD_HOST}" "$@"
 }
 
+remote_sudo_wrapper_script() {
+  cat <<'REMOTE_SUDO'
+setup_remote_sudo_wrapper() {
+  local password="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+  if [[ -z "${password}" || ! -x /usr/bin/sudo ]]; then
+    return 0
+  fi
+
+  REMOTE_SUDO_WRAPPER_DIR="$(mktemp -d /tmp/sima-neat-sudo-wrapper.XXXXXX)"
+  export REMOTE_SUDO_WRAPPER_DIR
+  cat > "${REMOTE_SUDO_WRAPPER_DIR}/sudo" <<'SUDO_WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+real_sudo="/usr/bin/sudo"
+password="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+if "${real_sudo}" -n true 2>/dev/null; then
+  exec "${real_sudo}" "$@"
+fi
+if [[ -z "${password}" ]]; then
+  exec "${real_sudo}" "$@"
+fi
+printf '%s\n' "${password}" | "${real_sudo}" -S -p '' "$@"
+SUDO_WRAPPER
+  chmod 0700 "${REMOTE_SUDO_WRAPPER_DIR}/sudo"
+  export PATH="${REMOTE_SUDO_WRAPPER_DIR}:${PATH}"
+}
+REMOTE_SUDO
+}
+
 preflight() {
   sanitize_path
   require_cmd sima-cli
@@ -193,7 +222,7 @@ install_host_test_runtime_deps() {
 }
 
 ensure_card_sima_cli() {
-  if ssh_card 'export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"; command -v sima-cli >/dev/null 2>&1'; then
+  if ssh_card 'export PATH="/data/sima-cli/.venv/bin:${HOME}/.sima-cli/.venv/bin:${PATH}"; command -v sima-cli >/dev/null 2>&1'; then
     return
   fi
 
@@ -204,7 +233,19 @@ ensure_card_sima_cli() {
   fi
 
   echo "Installing sima-cli on PCIe card"
-  ssh_card 'set -euo pipefail; bash -s' < "${installer}"
+  local remote_installer="/tmp/sima-neat-install-sima-cli-main.sh"
+  ssh_card "cat > $(shell_quote "${remote_installer}")" < "${installer}"
+  ssh_card \
+    "REMOTE_INSTALLER=$(shell_quote "${remote_installer}") \
+     DEVKIT_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
+     SUDO_PASSWORD=$(shell_quote "${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}") \
+     bash -s" <<REMOTE_BOOTSTRAP
+set -euo pipefail
+$(remote_sudo_wrapper_script)
+setup_remote_sudo_wrapper
+trap 'rm -rf "\${REMOTE_SUDO_WRAPPER_DIR:-}" "\${REMOTE_INSTALLER}"' EXIT
+bash "\${REMOTE_INSTALLER}"
+REMOTE_BOOTSTRAP
 }
 
 install_card_runtime() {
@@ -233,7 +274,7 @@ if [[ ! -d /workspace ]]; then
   echo "ERROR: /workspace does not exist on the PCIe card." >&2
   exit 1
 fi
-export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
+export PATH="/data/sima-cli/.venv/bin:${HOME}/.sima-cli/.venv/bin:${PATH}"
 if ! command -v sima-cli >/dev/null 2>&1; then
   echo "ERROR: sima-cli is not installed on the PCIe card after bootstrap." >&2
   exit 1
@@ -242,6 +283,32 @@ fi
 export SIMA_CLI_CHECK_FOR_UPDATE=0
 export DEVKIT_PASSWORD="${REMOTE_DEVKIT_PASSWORD}"
 export SUDO_PASSWORD="${REMOTE_SUDO_PASSWORD}"
+setup_remote_sudo_wrapper() {
+  local password="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+  if [[ -z "${password}" || ! -x /usr/bin/sudo ]]; then
+    return 0
+  fi
+
+  REMOTE_SUDO_WRAPPER_DIR="$(mktemp -d /tmp/sima-neat-sudo-wrapper.XXXXXX)"
+  export REMOTE_SUDO_WRAPPER_DIR
+  cat > "${REMOTE_SUDO_WRAPPER_DIR}/sudo" <<'SUDO_WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+real_sudo="/usr/bin/sudo"
+password="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+if "${real_sudo}" -n true 2>/dev/null; then
+  exec "${real_sudo}" "$@"
+fi
+if [[ -z "${password}" ]]; then
+  exec "${real_sudo}" "$@"
+fi
+printf '%s\n' "${password}" | "${real_sudo}" -S -p '' "$@"
+SUDO_WRAPPER
+  chmod 0700 "${REMOTE_SUDO_WRAPPER_DIR}/sudo"
+  export PATH="${REMOTE_SUDO_WRAPPER_DIR}:${PATH}"
+}
+setup_remote_sudo_wrapper
+trap 'rm -rf "${REMOTE_SUDO_WRAPPER_DIR:-}"' EXIT
 cd /workspace
 sima-cli install --neat --env "${REMOTE_VULCAN_ENV}" "${REMOTE_PACKAGE_SPEC}" -t all
 REMOTE_INSTALL
