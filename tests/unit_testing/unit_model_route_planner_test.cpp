@@ -862,6 +862,21 @@ RUN_TEST(
                 "single MLA public BF16 route should select no post adapter");
         require(!planned.route_plan.post_cast_bf16_to_fp32,
                 "single MLA public BF16 route should not request BF16->FP32 post cast");
+
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.enable = AutoFlag::On;
+        Model model(fixture.tar_path, opt);
+        const auto input_specs = model.input_specs();
+        require(input_specs.size() == 1U, "single MLA public BF16 route should expose one input");
+        require(!input_specs.front().dtypes.empty() &&
+                    input_specs.front().dtypes.front() == TensorDType::BFloat16,
+                "single MLA public BF16 route should expose BF16 input dtype");
+        const auto output_specs = model.output_specs();
+        require(output_specs.size() == 1U, "single MLA public BF16 route should expose one output");
+        require(!output_specs.front().dtypes.empty() &&
+                    output_specs.front().dtypes.front() == TensorDType::BFloat16,
+                "single MLA public BF16 route should expose BF16 output dtype without post cast");
       }
 
       {

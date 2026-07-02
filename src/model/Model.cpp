@@ -1713,6 +1713,9 @@ InputInfo input_info_from_tensor(const simaai::neat::Tensor& tensor, bool image_
     } else if (tensor.dtype == TensorDType::Float32) {
       info.format = "FP32";
       info.format_source = InputInfo::FormatSource::Explicit;
+    } else if (tensor.dtype == TensorDType::BFloat16) {
+      info.format = "BF16";
+      info.format_source = InputInfo::FormatSource::Explicit;
     } else if (tensor.dtype == TensorDType::Int8) {
       info.format = "INT8";
       info.format_source = InputInfo::FormatSource::Explicit;
