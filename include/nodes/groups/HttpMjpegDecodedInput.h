@@ -35,7 +35,6 @@ struct HttpMjpegDecodedInputOptions {
   bool is_live = true;            ///< Mark the HTTP source as live.
   bool do_timestamp = true;       ///< Timestamp outgoing source buffers with stream time.
   std::string user_agent;         ///< Optional HTTP User-Agent override.
-  bool ssl_strict = true;         ///< If false, disable strict TLS certificate validation.
   std::string multipart_boundary; ///< Optional multipart boundary override; empty = auto-detect.
   bool multipart_single_stream = false; ///< If true, assume multipart content type is stable.
   bool insert_queue = true;             ///< Insert queues around source/framing and decode.
@@ -68,6 +67,8 @@ struct HttpMjpegDecodedInputOptions {
 
   /// Optional raw GStreamer fragment inserted into the group (advanced use).
   std::string extra_fragment;
+
+  bool ssl_strict = true; ///< If false, disable strict TLS certificate validation.
 };
 
 /**

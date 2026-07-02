@@ -3215,7 +3215,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("do_timestamp",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::do_timestamp)
       .def_rw("user_agent", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::user_agent)
-      .def_rw("ssl_strict", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::ssl_strict)
       .def_rw("multipart_boundary",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::multipart_boundary)
       .def_rw("multipart_single_stream",
@@ -3248,7 +3247,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_caps",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::output_caps)
       .def_rw("extra_fragment",
-              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::extra_fragment);
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::extra_fragment)
+      .def_rw("ssl_strict", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::ssl_strict);
 
   nb::class_<simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps>(
       m, "ImageInputGroupOutputCaps")
