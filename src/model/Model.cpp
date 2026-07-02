@@ -60,6 +60,7 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -2698,6 +2699,52 @@ bool plan_uses_bundled_fan_in(const internal::PreprocessPlannerResult& plan) {
   return session_route_has_multi_io_pre_fan_in(plan.session_route_plan);
 }
 
+// True when the public model input already feeds the MLA session boundary
+// directly (no model-managed pre stage in front of processmla). QMLA public-IO
+// artifacts fall into this bucket: MLA owns input quant/tess, so the input
+// buffer still needs canonical TensorSet route metadata ("data", logical slot
+// 0, physical slot 0) even when there is only one public tensor. Without this
+// route processor, appsrc pushes a plain raw tensor buffer and processmla's
+// MLASHM input binder cannot resolve the requested input segment.
+bool plan_uses_direct_mla_tensor_set_ingress(const internal::PreprocessPlannerResult& plan) {
+  return pipeline_requires_tensor_input(plan) && !plan.session_route_plan.include_pre_stage;
+}
+
+bool plan_uses_model_input_route_processor(const internal::PreprocessPlannerResult& plan) {
+  return plan_uses_bundled_fan_in(plan) || plan_uses_direct_mla_tensor_set_ingress(plan);
+}
+
+bool plan_uses_direct_mla_public_output_boundary(
+    const internal::PreprocessPlannerResult& plan) {
+  return plan_uses_direct_mla_tensor_set_ingress(plan) &&
+         !plan.session_route_plan.include_post_stage;
+}
+
+simaai::neat::RunOptions run_options_for_model_public_boundary(
+    const internal::PreprocessPlannerResult& plan, simaai::neat::RunOptions run_opt) {
+  if (run_opt.output_memory == OutputMemory::Auto &&
+      plan_uses_direct_mla_public_output_boundary(plan)) {
+    // Direct MLA/QMLA public-IO artifacts expose the MLA session as the public
+    // boundary: the input route processor stamps the single public input as a
+    // canonical TensorSet for MLASHM, and the terminal MLA output is surfaced
+    // directly to Model::build()/benchmark() with no model-managed post stage.
+    //
+    // The current processmla MLASHM zero-copy public-output path is backed by a
+    // small plugin-owned pool and can starve under repeated public pulls before
+    // the application has a chance to recycle every loan. Auto must favor the
+    // safe public API contract here: copy the public output into framework-owned
+    // Tensor storage, which releases the MLASHM/Gst buffer immediately after
+    // pull. Internal Graph stage-chaining still forces ZeroCopy in StageRun and
+    // does not pass through this Model boundary helper.
+    run_opt.output_memory = OutputMemory::Owned;
+    if (runner_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[model-runner] direct MLA public output: Auto output_memory -> Owned\n");
+    }
+  }
+  return run_opt;
+}
+
 pipeline_internal::sima::RouteGraphKernelKind
 route_graph_kind_from_ordered_op(const internal::OrderedRouteOp& op) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
@@ -3426,6 +3473,23 @@ std::string ingress_tensor_debug_string(const Tensor& tensor) {
   return oss.str();
 }
 
+internal::IngressTensorContract make_direct_mla_fallback_ingress_contract(
+    const internal::PreprocessPlannerResult& plan, const std::string& segment_name) {
+  internal::IngressTensorContract ingress;
+  ingress.valid = true;
+  ingress.ingress_index = 0;
+  ingress.media_type = "application/vnd.simaai.tensor";
+  ingress.dtype = normalize_processcvu_dtype_token(plan.modelpack_format, plan.modelpack_format);
+  ingress.rank = 0;
+  ingress.batch = 1;
+  ingress.width = plan.modelpack_max_width;
+  ingress.height = plan.modelpack_max_height;
+  ingress.depth = plan.modelpack_max_depth;
+  ingress.source_tensor_name = !segment_name.empty() ? segment_name : std::string("ifm0");
+  ingress.source_stage = "session_ingress";
+  return ingress;
+}
+
 class ModelIngressRouteProcessor final : public pipeline_internal::InputRouteProcessor {
 public:
   ModelIngressRouteProcessor(Model model, internal::PreprocessPlannerResult plan,
@@ -3436,8 +3500,13 @@ public:
         joined_packed_segment_name_(main_route_joined_input_segment_name(model_)),
         consumer_keeps_distinct_physical_inputs_(
             main_session_consumer_keeps_distinct_physical_inputs(model_)),
-        is_fan_in_route_(plan_uses_bundled_fan_in(plan_)) {
-    if (!is_fan_in_route_) {
+        is_fan_in_route_(plan_uses_bundled_fan_in(plan_)),
+        direct_tensor_set_ingress_(plan_uses_direct_mla_tensor_set_ingress(plan_)) {
+    if (direct_tensor_set_ingress_ && ingress_contracts_.empty()) {
+      ingress_contracts_.push_back(make_direct_mla_fallback_ingress_contract(
+          plan_, joined_packed_segment_name_));
+    }
+    if (!uses_direct_tensor_set_route()) {
       // Legacy multi-ingress: spin up per-ingress branch sessions. The
       // bundled-appsrc fan-in path skips branch_sessions entirely; the
       // user's tensors flow directly through Run::push → InputStream's
@@ -3453,9 +3522,9 @@ public:
 
   Sample seed_tensors(const TensorList& inputs, const char* where) const override {
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "ingress inputs");
-    if (is_fan_in_route_) {
-      // Bundled fan-in: stamp ingress identity on each user tensor and emit
-      // a TensorSet sample. No branch-session run, no clone, no join.
+    if (uses_direct_tensor_set_route()) {
+      // Bundled fan-in and direct-MLA/QMLA ingress both stamp ingress identity
+      // and emit a TensorSet sample. No branch-session run, no clone, no join.
       return build_fan_in_sample(inputs, where);
     }
     if (ingress_contracts_.size() > 1U ||
@@ -3480,7 +3549,7 @@ public:
       return seed;
     }
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "ingress inputs");
-    if (is_fan_in_route_) {
+    if (uses_direct_tensor_set_route()) {
       return build_fan_in_sample_from_samples(inputs, where);
     }
     if (ingress_contracts_.size() > 1U ||
@@ -3494,7 +3563,7 @@ public:
   }
 
   Sample process_tensors(const TensorList& inputs, const char* where) const override {
-    if (is_fan_in_route_) {
+    if (uses_direct_tensor_set_route()) {
       return build_fan_in_sample(inputs, where);
     }
     TensorList prepared = prepare_ingress_tensors(inputs, ingress_contracts_, where);
@@ -3517,7 +3586,7 @@ public:
       propagate_atomic_sample_identity(inputs.front(), &processed);
       return processed;
     }
-    if (is_fan_in_route_) {
+    if (uses_direct_tensor_set_route()) {
       if (inputs.size() == 1U && sample_represents_multi_ingress_item(inputs.front()) &&
           ingress_contracts_.size() > 1U) {
         Sample bundle = inputs.front();
@@ -3549,6 +3618,9 @@ public:
   // the bundled multi-IO pre element can route per-binding via the
   // SIMA_TENSOR_SET_META descriptors. No branch processing, no join.
   Sample build_fan_in_sample(const TensorList& inputs, const char* where) const {
+    if (direct_tensor_set_ingress_) {
+      return build_direct_mla_tensor_set_sample(inputs, where);
+    }
     TensorList prepared = prepare_ingress_tensors(inputs, ingress_contracts_, where);
     for (std::size_t i = 0; i < prepared.size() && i < ingress_contracts_.size(); ++i) {
       Sample stamped = sample_from_tensors(TensorList{prepared[i]});
@@ -3566,6 +3638,9 @@ public:
   }
 
   Sample build_fan_in_sample_from_samples(const Sample& inputs, const char* where) const {
+    if (direct_tensor_set_ingress_) {
+      return build_direct_mla_tensor_set_sample_from_samples(inputs, where);
+    }
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
     TensorList prepared;
     prepared.reserve(inputs.size());
@@ -3588,6 +3663,117 @@ public:
   }
 
 private:
+  bool uses_direct_tensor_set_route() const { return is_fan_in_route_ || direct_tensor_set_ingress_; }
+
+  int direct_mla_consumer_input_index(const internal::IngressTensorContract& ingress,
+                                      std::size_t fallback_index) const {
+    if (ingress.dst_input_index >= 0) {
+      return ingress.dst_input_index;
+    }
+    if (ingress.ingress_index >= 0) {
+      return ingress.ingress_index;
+    }
+    return static_cast<int>(fallback_index);
+  }
+
+  std::vector<std::size_t> direct_mla_ingress_order() const {
+    std::vector<std::size_t> order(ingress_contracts_.size());
+    std::iota(order.begin(), order.end(), 0U);
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t lhs, std::size_t rhs) {
+      return direct_mla_consumer_input_index(ingress_contracts_[lhs], lhs) <
+             direct_mla_consumer_input_index(ingress_contracts_[rhs], rhs);
+    });
+    return order;
+  }
+
+  internal::IngressConsumerTensorIdentity direct_mla_consumer_identity(
+      const internal::IngressTensorContract& ingress, std::size_t public_index,
+      std::size_t transport_index) const {
+    const int consumer_index = direct_mla_consumer_input_index(ingress, public_index);
+    internal::IngressConsumerTensorIdentity identity;
+    if (consumer_index >= 0 &&
+        static_cast<std::size_t>(consumer_index) < joined_consumer_identities_.size()) {
+      identity = joined_consumer_identities_[static_cast<std::size_t>(consumer_index)];
+    }
+    if (identity.logical_index < 0) {
+      identity.logical_index = consumer_index;
+    }
+    if (identity.physical_index < 0) {
+      identity.physical_index =
+          consumer_keeps_distinct_physical_inputs_ ? consumer_index : 0;
+    }
+    if (identity.route_slot < 0) {
+      identity.route_slot = consumer_index;
+    }
+    // TensorSet transport order is the MLA/plugin input order below. Keep the
+    // memory index aligned with that order so processmla binds each Gst memory
+    // region to the matching compiled MLA input, while preserving the public
+    // model input order at Model::input_specs()/Model::build(TensorList).
+    identity.memory_index = static_cast<int>(transport_index);
+    return identity;
+  }
+
+  Tensor stamp_direct_mla_ingress_tensor(Tensor tensor,
+                                         const internal::IngressTensorContract& ingress,
+                                         std::size_t public_index,
+                                         std::size_t transport_index) const {
+    const std::string ingress_name =
+        !ingress.source_tensor_name.empty()
+            ? ingress.source_tensor_name
+            : ("ifm" + std::to_string(direct_mla_consumer_input_index(ingress, public_index)));
+    tensor.route.name = ingress_name;
+    tensor.route.segment_name = ingress_name;
+    if (tensor.route.backend_name.empty() || tensor.route.backend_name == "output_tensor") {
+      tensor.route.backend_name = ingress_name;
+    }
+    return internal::remap_tensor_to_consumer_identity(
+        std::move(tensor),
+        direct_mla_consumer_identity(ingress, public_index, transport_index));
+  }
+
+  TensorList prepare_direct_mla_tensors(const TensorList& inputs, const char* where) const {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "tensor inputs");
+    const auto order = direct_mla_ingress_order();
+    TensorList prepared;
+    prepared.reserve(inputs.size());
+    for (std::size_t transport_index = 0; transport_index < order.size(); ++transport_index) {
+      const std::size_t public_index = order[transport_index];
+      const auto& ingress = ingress_contracts_[public_index];
+      Tensor tensor = inputs[public_index];
+      validate_single_tensor_ingress_expectation(ingress, input_info_from_tensor(tensor, false),
+                                                 where);
+      prepared.push_back(stamp_direct_mla_ingress_tensor(std::move(tensor), ingress, public_index,
+                                                         transport_index));
+    }
+    return prepared;
+  }
+
+  Sample build_direct_mla_tensor_set_sample(const TensorList& inputs, const char* where) const {
+    TensorList prepared = prepare_direct_mla_tensors(inputs, where);
+    Sample out = sample_from_tensors(prepared);
+    out.payload_type = PayloadType::Tensor;
+    out.media_type = "application/vnd.simaai.tensor";
+    return out;
+  }
+
+  Sample build_direct_mla_tensor_set_sample_from_samples(const Sample& inputs,
+                                                         const char* where) const {
+    require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
+    TensorList public_tensors;
+    public_tensors.reserve(inputs.size());
+    for (std::size_t i = 0; i < inputs.size(); ++i) {
+      const TensorList tensors = tensors_from_sample(inputs[i], true);
+      if (tensors.empty()) {
+        throw std::runtime_error(std::string(where ? where : "InputRouteProcessor") +
+                                 ": ingress sample has no tensors");
+      }
+      public_tensors.push_back(tensors.front());
+    }
+    Sample out = build_direct_mla_tensor_set_sample(public_tensors, where);
+    propagate_common_sample_identity(inputs, &out);
+    return out;
+  }
+
   std::string fan_in_parent_segment_name() const {
     // ProcessCvu pre-adapter kernels expose one ConfigManager input named
     // "input_tensor". Bundled appsrc fan-in is the appsrc -> first-consumer
@@ -3845,6 +4031,10 @@ private:
   // single TensorSet Sample directly instead of running per-ingress branches
   // and joining. Gated on SIMA_NEAT_MULTI_IO_BUNDLED_APPSRC.
   bool is_fan_in_route_ = false;
+  // Whether this is a single/direct MLA session boundary (not an EV pre-stage
+  // fan-in) that still requires TensorSet metadata so processmla can bind the
+  // public input segment for QMLA/public-IO artifacts.
+  bool direct_tensor_set_ingress_ = false;
   mutable std::vector<Graph> branch_graphs_;
   mutable std::vector<Run> branch_runners_;
 };
@@ -7196,7 +7386,7 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   if (!build_opt.name_suffix.empty()) {
     pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
   }
-  const bool use_input_route_processor = plan_uses_bundled_fan_in(impl_->preprocess_plan);
+  const bool use_input_route_processor = plan_uses_model_input_route_processor(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
   auto nodes = build_pipeline_nodes(*this, pack, impl_->options, impl_->preprocess_plan, build_opt,
                                     nullptr, false, externalize_preprocess);
@@ -7205,7 +7395,9 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  Run run = p.build(dummy_inputs, run_opt);
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(dummy_inputs, effective_run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (tensor_mode) {
     const auto src_opts2 = input_appsrc_options_list(true);
@@ -7240,7 +7432,7 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
         "Model::build(TensorList): multi-ingress image convenience is unsupported; use "
         "Model::build(Sample)");
   }
-  const bool use_input_route_processor = plan_uses_bundled_fan_in(impl_->preprocess_plan);
+  const bool use_input_route_processor = plan_uses_model_input_route_processor(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
   std::optional<InputInfo> image_input_info;
   if (!tensor_mode) {
@@ -7255,7 +7447,9 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  Run run = p.build(inputs, run_opt);
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(inputs, effective_run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (!tensor_mode) {
     return Runner(std::move(run), ingress_names);
@@ -7285,7 +7479,7 @@ Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::Rout
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
-  const bool use_input_route_processor = plan_uses_bundled_fan_in(impl_->preprocess_plan);
+  const bool use_input_route_processor = plan_uses_model_input_route_processor(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
   const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   std::optional<InputInfo> image_input_info;
@@ -7306,7 +7500,9 @@ Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::Rout
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  Run run = p.build(inputs, run_opt);
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(inputs, effective_run_opt);
   return Runner(std::move(run), ingress_names);
 }
 
@@ -7357,7 +7553,9 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
                                     &info, false, false);
   Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
   add_nodes_to_graph(p, std::move(nodes));
-  Run run = p.build(inputs, run_opt);
+  const RunOptions effective_run_opt =
+      run_options_for_model_public_boundary(impl_->preprocess_plan, run_opt);
+  Run run = p.build(inputs, effective_run_opt);
   return Runner(std::move(run));
 }
 #endif
@@ -7448,6 +7646,8 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
 
   {
     Runner runner = build(inputs, Model::RouteOptions{}, throughput_run_options);
+    const bool defer_eos_until_outputs_drained =
+        plan_uses_direct_mla_public_output_boundary(impl_->preprocess_plan);
     for (int i = 0; i < kWarmupSamples; ++i) {
       if (!runner.push(inputs)) {
         runner.close();
@@ -7480,8 +7680,13 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
           throw std::runtime_error("Model::benchmark: throughput measured push failed");
         }
       }
-      runner.close_input();
+      if (!defer_eos_until_outputs_drained) {
+        runner.close_input();
+      }
       pull_thread.join();
+      if (defer_eos_until_outputs_drained) {
+        runner.close_input();
+      }
     } catch (...) {
       runner.close_input();
       if (pull_thread.joinable()) {
@@ -8115,6 +8320,8 @@ Graph ModelAccess::build_graph_fragment(const Model& model, Model::RouteOptions 
   runtime::FragmentBoundaryHints fragment_hints;
   const bool tensor_mode = pipeline_requires_tensor_input(model.impl_->preprocess_plan);
   const bool bundled_fan_in = plan_uses_bundled_fan_in(model.impl_->preprocess_plan);
+  const bool use_input_route_processor =
+      plan_uses_model_input_route_processor(model.impl_->preprocess_plan);
   fragment_hints.tensor_mode = tensor_mode;
   fragment_hints.bundled_fan_in = bundled_fan_in;
   fragment_hints.ingress_inputs = model.input_appsrc_options_list(tensor_mode);
@@ -8144,7 +8351,7 @@ Graph ModelAccess::build_graph_fragment(const Model& model, Model::RouteOptions 
     }
   }
 
-  if (bundled_fan_in) {
+  if (use_input_route_processor) {
     ModelAccess::configure_session_input_route(graph, model, opt);
     fragment_hints.input_route_processor = graph.input_route_processor_;
   }
