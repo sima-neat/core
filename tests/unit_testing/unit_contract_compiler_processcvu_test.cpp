@@ -318,6 +318,42 @@ make_pre_and_post_cast_contract_for_exact_name_regression() {
 }
 
 simaai::neat::pipeline_internal::sima::MpkContract
+make_dequant_second_mla_output_contract_for_routing_regression() {
+  using simaai::neat::pipeline_internal::sima::MpkContract;
+  using simaai::neat::pipeline_internal::sima::MpkContractEdge;
+  using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
+  using simaai::neat::pipeline_internal::sima::MpkQuantContract;
+
+  MpkPluginIoContract mla;
+  mla.name = "MLA_0";
+  mla.processor = "MLA";
+  mla.kernel = "mla";
+  mla.sequence = 0;
+  mla.output_tensors = {
+      make_test_tensor("ofm0", "INT8", {1, 1, 4}, 4U),
+      make_test_tensor("ofm1", "INT8", {1, 1, 8}, 8U),
+  };
+
+  MpkPluginIoContract dequant;
+  dequant.name = "dequantize_1";
+  dequant.processor = "EV74";
+  dequant.kernel = "dequantization_transform";
+  dequant.sequence = 1;
+  dequant.canonical_input_dtype = "INT8";
+  dequant.canonical_output_dtype = "FP32";
+  dequant.input_tensors = {make_test_tensor("ofm1", "INT8", {1, 1, 8}, 8U)};
+  dequant.output_tensors = {make_test_tensor("head1", "FP32", {1, 1, 8}, 32U)};
+  dequant.quant = MpkQuantContract{{0.25}, {-3}, -1};
+
+  MpkContract contract;
+  contract.plugins = {mla, dequant};
+  contract.edges = {
+      MpkContractEdge{0U, 1, 1U, 0, "MLA_0", "dequantize_1", "ofm1"},
+  };
+  return contract;
+}
+
+simaai::neat::pipeline_internal::sima::MpkContract
 make_rank_aware_detessdequant_contract(const std::vector<std::int64_t>& frame_shape,
                                        const std::string& input_dtype,
                                        const std::string& output_dtype) {
@@ -1267,6 +1303,30 @@ RUN_TEST(
                 "post-cast contract should preserve the first post-MLA head shape");
         require(cast_compiled.runtime_contract.logical_outputs.size() == 2U,
                 "post-cast contract should expose both routed output heads");
+      }
+
+      {
+        const auto dequant_contract =
+            make_dequant_second_mla_output_contract_for_routing_regression();
+        const auto dequant_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            dequant_contract, simaai::neat::internal::ExecutionStageKind::Dequant);
+
+        require(dequant_compiled.runtime_contract.logical_inputs.size() == 1U,
+                "split dequant regression should compile one routed input");
+        require(dequant_compiled.runtime_contract.input_bindings.size() == 1U,
+                "split dequant regression should compile one input binding");
+        require(dequant_compiled.runtime_contract.physical_inputs.size() == 1U,
+                "split dequant regression should keep local physical inputs compact");
+        require(dequant_compiled.runtime_contract.logical_inputs.front().segment_name == "ofm1",
+                "split dequant regression should bind to the consumed non-first MLA output");
+        require(dequant_compiled.runtime_contract.logical_inputs.front().physical_index == 0,
+                "split dequant regression should use a compact local physical input index");
+        require(dequant_compiled.runtime_contract.input_bindings.front().source_segment_name ==
+                    "ofm1",
+                "split dequant regression should route from the consumed MLA segment");
+        require(
+            dequant_compiled.runtime_contract.input_bindings.front().src_physical_output_index == 1,
+            "split dequant regression should bind to the consumed physical MLA output");
       }
 
       // The rank-aware detess/detessdequant projection sub-tests previously

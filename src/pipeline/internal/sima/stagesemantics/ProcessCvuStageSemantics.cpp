@@ -3722,8 +3722,16 @@ void enforce_packed_parent_input_views(
 
 bool published_inputs_share_single_physical_parent(
     const std::vector<MpkTensorContract>& published_inputs) {
-  if (published_inputs.size() <= 1U) {
+  if (published_inputs.empty()) {
     return true;
+  }
+  if (published_inputs.size() == 1U) {
+    const auto& published = published_inputs.front();
+    const int physical_index = published.source_physical_index >= 0
+                                   ? published.source_physical_index
+                               : published.physical_index >= 0 ? published.physical_index
+                                                               : -1;
+    return physical_index <= 0;
   }
 
   std::vector<int> physical_indices;
@@ -7313,9 +7321,19 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_dense_unary_post_ro
   if (mla_published_outputs.size() < stages.size()) {
     throw std::runtime_error(route_name + " route requires MLA published boundary views");
   }
-  const std::vector<MpkTensorContract> routed_mla_published_outputs(
-      mla_published_outputs.begin(),
-      mla_published_outputs.begin() + static_cast<std::ptrdiff_t>(stages.size()));
+  std::vector<MpkTensorContract> routed_mla_published_outputs;
+  routed_mla_published_outputs.reserve(stages.size());
+  for (std::size_t i = 0; i < stages.size(); ++i) {
+    const auto* stage = stages[i];
+    const auto* published_ptr = plugin_contracts::match_published_output_for_transport(
+        mla_published_outputs,
+        stage && !stage->input_tensors.empty() ? stage->input_tensors.front().name : std::string(),
+        i);
+    if (published_ptr == nullptr) {
+      throw std::runtime_error(route_name + " route requires MLA published boundary views");
+    }
+    routed_mla_published_outputs.push_back(*published_ptr);
+  }
 
   const auto* terminal_stage = find_terminal_stage_after_outputs_local(contract, stages);
   std::vector<std::string> published_output_names;
