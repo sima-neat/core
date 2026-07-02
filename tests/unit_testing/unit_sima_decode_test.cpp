@@ -59,6 +59,10 @@ void check_default_h264_raw_output() {
   require_not_contains(fragment, "videoconvert", "raw_output=true should not insert videoconvert");
   require_not_contains(fragment, "capsfilter", "raw_output=true should not insert capsfilter");
   require_element_names(decode.element_names(3), {"n3_decoder"}, "default H.264 raw output");
+  require(decode.buffer_name_hint(3) == "n3_decoder",
+          "SimaDecode should expose default decoder buffer name");
+  require(decode.memory_contract() == simaai::neat::MemoryContract::PreferDeviceZeroCopy,
+          "raw SimaDecode should advertise device zero-copy output");
 
   const simaai::neat::OutputSpec out = decode.output_spec(encoded_h264_spec());
   require(out.media_type == "video/x-raw", "SimaDecode output media type mismatch");
@@ -100,6 +104,8 @@ void check_jpeg_raw_output_options() {
   require_contains(fragment, "dec-fps=30", "SimaDecode fps override missing");
   require_contains(fragment, "num-buffers=8", "SimaDecode pool override missing");
   require_element_names(decode.element_names(4), {"jpeg_decoder"}, "JPEG raw output");
+  require(decode.buffer_name_hint(4) == "jpeg_decoder",
+          "SimaDecode should expose explicit decoder buffer name");
 
   const simaai::neat::OutputSpec out = decode.output_spec({});
   require(out.format == "I420", "SimaDecode should expose public I420 caps");
@@ -128,6 +134,8 @@ void check_mjpeg_system_memory_output() {
                    "raw_output=false should request SystemMemory raw caps");
   require_element_names(decode.element_names(5), {"n5_decoder", "n5_videoconvert", "n5_raw_caps"},
                         "MJPEG SystemMemory output");
+  require(decode.memory_contract() == simaai::neat::MemoryContract::AllowEitherButReport,
+          "converted SimaDecode should not advertise device zero-copy output");
 
   const simaai::neat::OutputSpec out = decode.output_spec({});
   require(out.width == 800 && out.height == 600, "MJPEG explicit shape mismatch");

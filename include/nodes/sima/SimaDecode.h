@@ -59,6 +59,11 @@ public:
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Dynamic;
   }
+  MemoryContract memory_contract() const override {
+    return opt_.raw_output ? MemoryContract::PreferDeviceZeroCopy
+                           : MemoryContract::AllowEitherButReport;
+  }
+  std::string buffer_name_hint(int node_index) const override;
 
   std::string backend_fragment(int node_index) const override;
   std::vector<std::string> element_names(int node_index) const override;

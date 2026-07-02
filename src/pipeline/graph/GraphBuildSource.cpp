@@ -9,6 +9,10 @@
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
 
+#include "builder/OutputSpec.h"
+#include "nodes/io/Input.h"
+#include "nodes/sima/Preproc.h"
+
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
@@ -21,6 +25,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -66,6 +71,280 @@ void maybe_compile_source_contracts(BuildResult* build_result,
   compile_input.processcvu_requested_run_target = sess_opt.processcvu_requested_run_target;
   compile_input.processcvu = sess_opt.processcvu;
   session_build_compile_contracts(build_result, nodes, compile_input, where, nullptr);
+}
+
+std::string source_meta_upper_copy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  return value;
+}
+
+bool source_meta_debug_enabled() {
+  static const bool enabled =
+      env_bool("SIMA_SOURCE_META_DEBUG", false) || env_bool("SIMA_INPUTSTREAM_META_DEBUG", false);
+  return enabled;
+}
+
+int source_meta_channels_from_format(const std::string& format, int fallback = -1) {
+  const std::string up = source_meta_upper_copy(format);
+  if (up == "GRAY" || up == "GRAY8")
+    return 1;
+  if (up == "RGB" || up == "BGR" || up == "NV12" || up == "I420" || up == "YUYV")
+    return 3;
+  return fallback;
+}
+
+bool source_meta_dtype_is_quantized(const std::string& dtype) {
+  const std::string up = source_meta_upper_copy(dtype);
+  return up == "INT8" || up == "UINT8" || up == "U8" || up == "EVXX_INT8" ||
+         up == "INT16" || up == "UINT16" || up == "EVXX_INT16";
+}
+
+std::optional<PreprocessMetaTemplate>
+source_meta_template_from_preproc(const PreprocOptions& opt, const OutputSpec& source_spec) {
+  PreprocessMetaTemplate meta;
+  meta.enabled = true;
+  meta.normalize = opt.normalize;
+  meta.quantize = source_meta_dtype_is_quantized(opt.output_dtype);
+  meta.tessellate = opt.tessellate;
+  meta.target_width = opt.output_width() > 0 ? opt.output_width() : opt.scaled_width;
+  meta.target_height = opt.output_height() > 0 ? opt.output_height() : opt.scaled_height;
+  meta.scaled_width = opt.scaled_width > 0 ? opt.scaled_width : meta.target_width;
+  meta.scaled_height = opt.scaled_height > 0 ? opt.scaled_height : meta.target_height;
+  meta.resize_mode =
+      (meta.target_width > 0 && meta.target_height > 0) ? (opt.aspect_ratio ? "letterbox"
+                                                                            : "stretch")
+                                                        : "none";
+  meta.pad_value = opt.pad_value;
+  meta.color_in = !opt.input_img_type.empty() ? opt.input_img_type : source_spec.format;
+  meta.color_out = opt.output_img_type;
+  return meta;
+}
+
+OutputSpec source_meta_output_spec_for_node(const std::shared_ptr<Node>& node) {
+  if (!node)
+    return {};
+  const auto* provider = dynamic_cast<const OutputSpecProvider*>(node.get());
+  if (!provider)
+    return {};
+  return provider->output_spec({});
+}
+
+std::optional<PreprocessMetaTemplate>
+derive_source_preprocess_meta_template(const std::vector<std::shared_ptr<Node>>& nodes,
+                                       std::size_t source_index, const OutputSpec& source_spec) {
+  for (std::size_t i = source_index + 1; i < nodes.size(); ++i) {
+    if (!nodes[i])
+      continue;
+    if (nodes[i]->input_role() != InputRole::None)
+      break;
+    if (const auto* preproc = dynamic_cast<const Preproc*>(nodes[i].get())) {
+      return source_meta_template_from_preproc(preproc->options(), source_spec);
+    }
+    if (nodes[i]->memory_contract() == MemoryContract::PreferDeviceZeroCopy) {
+      break;
+    }
+  }
+  return std::nullopt;
+}
+
+InputOptions source_meta_input_options_for_node(const std::vector<std::shared_ptr<Node>>& nodes,
+                                                std::size_t node_index,
+                                                const std::string& buffer_name) {
+  InputOptions opt;
+  opt.buffer_name = buffer_name;
+  opt.use_simaai_pool = true;
+  opt.memory_policy = InputMemoryPolicy::Ev74;
+
+  const OutputSpec spec = source_meta_output_spec_for_node(nodes[node_index]);
+  if (spec.media_type == "video/x-raw" ||
+      is_raw_video_format(format_tag_from_string(spec.format))) {
+    opt.payload_type = PayloadType::Image;
+  }
+  if (!spec.format.empty()) {
+    opt.format = spec.format;
+  }
+  opt.width = spec.width;
+  opt.height = spec.height;
+  opt.depth = spec.depth > 0 ? spec.depth : source_meta_channels_from_format(spec.format, -1);
+  opt.fps_n = spec.fps_num;
+  opt.fps_d = spec.fps_den > 0 ? spec.fps_den : 1;
+  opt.max_width = spec.width;
+  opt.max_height = spec.height;
+  opt.max_depth = opt.depth;
+  opt.preprocess_meta = derive_source_preprocess_meta_template(nodes, node_index, spec);
+  return opt;
+}
+
+struct SourceSimaMetaProbeCtx {
+  InputOptions opt;
+  InputBufferPoolGuard guard;
+  std::string element_name;
+  std::string buffer_name;
+  std::atomic<bool> logged{false};
+};
+
+struct RawVideoCapsInfo {
+  int width = -1;
+  int height = -1;
+};
+
+RawVideoCapsInfo source_meta_current_raw_video_caps(GstPad* pad) {
+  RawVideoCapsInfo out;
+  if (!pad)
+    return out;
+  GstCaps* caps = gst_pad_get_current_caps(pad);
+  if (!caps) {
+    caps = gst_pad_query_caps(pad, nullptr);
+  }
+  if (!caps)
+    return out;
+  if (!gst_caps_is_empty(caps)) {
+    GstStructure* s = gst_caps_get_structure(caps, 0);
+    if (s && g_strcmp0(gst_structure_get_name(s), "video/x-raw") == 0) {
+      (void)gst_structure_get_int(s, "width", &out.width);
+      (void)gst_structure_get_int(s, "height", &out.height);
+    }
+  }
+  gst_caps_unref(caps);
+  return out;
+}
+
+void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
+                                                 SourceSimaMetaProbeCtx* ctx) {
+  if (!buffer || !ctx || !ctx->opt.preprocess_meta.has_value())
+    return;
+  if (has_simaai_preprocess_meta(buffer))
+    return;
+
+  int width = ctx->opt.width;
+  int height = ctx->opt.height;
+  if (width <= 0 || height <= 0) {
+    const RawVideoCapsInfo caps = source_meta_current_raw_video_caps(pad);
+    if (width <= 0)
+      width = caps.width;
+    if (height <= 0)
+      height = caps.height;
+  }
+  if (width <= 0 || height <= 0)
+    return;
+
+  (void)apply_simaai_preprocess_meta_template(buffer, ctx->opt, width, height);
+}
+
+GstPadProbeReturn source_sima_meta_probe_cb(GstPad* pad, GstPadProbeInfo* info,
+                                            gpointer user_data) {
+  auto* ctx = static_cast<SourceSimaMetaProbeCtx*>(user_data);
+  if (!ctx || !info || (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0)
+    return GST_PAD_PROBE_OK;
+
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!buffer)
+    return GST_PAD_PROBE_OK;
+
+  const int64_t frame_id = next_input_frame_id();
+  SampleTimingOverrides timing;
+  timing.frame_id = frame_id;
+  if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))) {
+    timing.pts_ns = static_cast<uint64_t>(GST_BUFFER_PTS(buffer));
+  }
+  if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))) {
+    timing.dts_ns = static_cast<uint64_t>(GST_BUFFER_DTS(buffer));
+  }
+  if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))) {
+    timing.duration_ns = static_cast<uint64_t>(GST_BUFFER_DURATION(buffer));
+  }
+
+  // Source/decode metadata is stamped before this buffer crosses any graph edge.
+  // Leave the stream id empty here: graph links and realtime routing own per-source
+  // identity, so multi-source graphs do not collapse to a synthetic "0" stream.
+  GstBuffer* writable = attach_simaai_meta_inplace(
+      buffer, ctx->opt, ctx->guard, ctx->element_name.c_str(), std::optional<int64_t>{frame_id},
+      StreamIdOverride{std::optional<std::string>{std::string{}}},
+      BufferNameOverride{std::optional<std::string>{ctx->buffer_name}});
+  if (!writable)
+    return GST_PAD_PROBE_OK;
+
+  const std::optional<int64_t> frame_opt{frame_id};
+  const std::optional<std::string> stream_id{std::string{}};
+  const std::optional<std::string> buffer_name{ctx->buffer_name};
+  (void)update_simaai_meta_fields(writable, frame_opt, frame_opt, frame_opt, stream_id,
+                                  buffer_name, timing.pts_ns, buffer_name,
+                                  std::optional<int>{0});
+  (void)write_sample_timing_to_gst_buffer(writable, timing);
+  source_meta_maybe_apply_preprocess_template(pad, writable, ctx);
+
+  GST_PAD_PROBE_INFO_DATA(info) = writable;
+
+  if (source_meta_debug_enabled() && !ctx->logged.exchange(true)) {
+    std::fprintf(stderr,
+                 "[source-meta] attached GstSimaMeta at %s buffer-name=%s preprocess_meta=%d\n",
+                 ctx->element_name.c_str(), ctx->buffer_name.c_str(),
+                 ctx->opt.preprocess_meta.has_value() ? 1 : 0);
+    dump_sima_meta_full(writable, ctx->element_name.c_str());
+  }
+  return GST_PAD_PROBE_OK;
+}
+
+void source_sima_meta_probe_destroy(gpointer data) {
+  delete static_cast<SourceSimaMetaProbeCtx*>(data);
+}
+
+void attach_source_sima_meta_probes(GstElement* pipeline,
+                                    const std::vector<std::shared_ptr<Node>>& nodes,
+                                    const NameTransform& name_transform) {
+  if (!pipeline)
+    return;
+
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    const auto& node = nodes[i];
+    if (!node || node->memory_contract() != MemoryContract::PreferDeviceZeroCopy) {
+      continue;
+    }
+    const std::string buffer_name = node->buffer_name_hint(static_cast<int>(i));
+    if (buffer_name.empty())
+      continue;
+
+    std::vector<std::string> element_names = node->element_names(static_cast<int>(i));
+    if (element_names.empty())
+      continue;
+    element_names = apply_name_transform(name_transform, element_names);
+    const std::string source_tail = element_names.back();
+
+    GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline), source_tail.c_str());
+    if (!element) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string("source metadata probe could not find element '") + source_tail +
+              "' for node " + node->kind(),
+          "Ensure device-output node element_names() matches backend_fragment().");
+    }
+    GstPad* pad = gst_element_get_static_pad(element, "src");
+    gst_object_unref(element);
+    if (!pad) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string("source metadata probe could not find static src pad on '") + source_tail +
+              "' for node " + node->kind(),
+          "Device-output nodes need a static src pad for metadata stamping.");
+    }
+
+    auto* ctx = new SourceSimaMetaProbeCtx();
+    ctx->opt = source_meta_input_options_for_node(nodes, i, buffer_name);
+    ctx->element_name = source_tail;
+    ctx->buffer_name = buffer_name;
+    gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, source_sima_meta_probe_cb, ctx,
+                      source_sima_meta_probe_destroy);
+    gst_object_unref(pad);
+
+    if (source_meta_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[source-meta] armed source metadata probe on %s buffer-name=%s "
+                   "preprocess_meta=%d\n",
+                   source_tail.c_str(), buffer_name.c_str(),
+                   ctx->opt.preprocess_meta.has_value() ? 1 : 0);
+    }
+  }
 }
 
 PreparedSourcePipeline prepare_source_pipeline_from_nodes(
@@ -142,6 +421,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   attach_stage_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);
   attach_element_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);
   attach_element_flow_probes(pipeline.get(), br.diag);
+  attach_source_sima_meta_probes(pipeline.get(), build_nodes, name_transform);
   session_build_attach_debug_detess_input_probes(pipeline.get());
   session_build_attach_debug_appsink_probes(pipeline.get());
   session_build_attach_debug_all_buffer_probes(pipeline.get());

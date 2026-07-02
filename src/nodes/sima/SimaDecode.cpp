@@ -77,6 +77,11 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
 
 SimaDecode::SimaDecode(SimaDecodeOptions opt) : opt_(std::move(opt)) {}
 
+std::string SimaDecode::buffer_name_hint(int node_index) const {
+  return opt_.decoder_name.empty() ? ("n" + std::to_string(node_index) + "_decoder")
+                                   : opt_.decoder_name;
+}
+
 std::string SimaDecode::backend_fragment(int node_index) const {
   require_tensordecoder("SimaDecode::backend_fragment");
   require_raw_output_format_supported(opt_);
