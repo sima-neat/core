@@ -9,6 +9,7 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/FormatSpec.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -39,6 +40,19 @@ struct SimaDecodeOptions {
   int dec_height = -1;      ///< Decoded frame height override; `-1` = upstream-defined.
   int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
   int num_buffers = -1;     ///< Output buffer pool size override; `-1` = element default.
+  int input_buffers = -1;   ///< Encoded input buffer pool size override; `-1` = element default.
+  std::string decoder_tuning; ///< Optional decoder tuning profile; empty = element default.
+  bool memory_opt = false;    ///< Enable decoder low-memory mode when supported by the platform.
+
+  // Framework-owned graph admission lease.  These are normally populated by
+  // RunCore when a graph contains multiple automatic hardware decoders, so app
+  // code can keep using decoder_tuning:auto while the runtime applies a
+  // graph-wide pool/tuning decision before any decoder starts allocating.
+  bool admission_required = false;
+  std::string admission_group_id;
+  int admission_stream_index = -1;
+  std::uint64_t admission_lease_token_hi = 0;
+  std::uint64_t admission_lease_token_lo = 0;
 };
 
 /**

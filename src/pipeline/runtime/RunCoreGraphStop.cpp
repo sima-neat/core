@@ -1,5 +1,6 @@
 #include "RunCore.h"
 
+#include "pipeline/internal/DecoderAdmissionClient.h"
 #include "pipeline/internal/EnvUtil.h"
 
 #include <algorithm>
@@ -72,6 +73,27 @@ void RunCore::stop_graph() {
                    static_cast<long long>(
                        pipe->transport.identity_map_miss_count.load(std::memory_order_relaxed)));
     }
+  }
+
+  if (execution.decoder_admission_active) {
+    std::string release_error;
+    const bool released = pipeline_internal::release_decoder_graph(
+        execution.decoder_admission_group_uuid, &release_error);
+    if (!released && (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false) ||
+                      simaai::neat::graph::graph_debug_enabled())) {
+      std::fprintf(stderr, "[GRAPH] decoder_admission_release_failed group=%s err=%s\n",
+                   pipeline_internal::decoder_admission_uuid_to_string(
+                       execution.decoder_admission_group_uuid)
+                       .c_str(),
+                   release_error.empty() ? "<unknown>" : release_error.c_str());
+    } else if (released && (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false) ||
+                            simaai::neat::graph::graph_debug_enabled())) {
+      std::fprintf(stderr, "[GRAPH] decoder_admission_released group=%s\n",
+                   pipeline_internal::decoder_admission_uuid_to_string(
+                       execution.decoder_admission_group_uuid)
+                       .c_str());
+    }
+    execution.decoder_admission_active = false;
   }
 
   graph_signal_stop();

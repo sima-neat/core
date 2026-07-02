@@ -3,6 +3,8 @@
 #include "gst/GstHelpers.h"
 
 #include <memory>
+#include <cstdio>
+#include <cstdlib>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -56,8 +58,30 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
   if (!dec_fmt.empty()) {
     ss << " dec-fmt=" << dec_fmt;
   }
+  if (opt.raw_output && opt.type == SimaDecodeType::H264 && dec_fmt == "NV12" &&
+      upper_copy_ascii(opt.next_element) != "APU") {
+    /*
+     * H.264->NV12 paths feeding the SiMa compute stack should use the decoder's
+     * loaned output buffers by default.  The property is internal to neatdecoder;
+     * users still express only raw_output/NV12/CVU at the graph level.
+     */
+    ss << " zero-copy-output=true";
+  }
   if (!opt.next_element.empty()) {
     ss << " next-element=" << opt.next_element;
+  }
+  if (opt.admission_required) {
+    ss << " decoder-admission-required=true";
+  }
+  if (!opt.admission_group_id.empty()) {
+    ss << " admission-group-id=\"" << opt.admission_group_id << "\"";
+  }
+  if (opt.admission_stream_index >= 0) {
+    ss << " admission-stream-index=" << opt.admission_stream_index;
+  }
+  if (opt.admission_lease_token_hi != 0 || opt.admission_lease_token_lo != 0) {
+    ss << " admission-lease-token-hi=" << opt.admission_lease_token_hi;
+    ss << " admission-lease-token-lo=" << opt.admission_lease_token_lo;
   }
   if (opt.dec_width > 0) {
     ss << " dec-width=" << opt.dec_width;
@@ -71,6 +95,12 @@ void append_decoder_properties(std::ostringstream& ss, const SimaDecodeOptions& 
   if (opt.num_buffers > 0) {
     ss << " num-buffers=" << opt.num_buffers;
   }
+}
+
+bool decoder_fragment_debug_enabled() {
+  const char* raw = std::getenv("SIMA_DECODER_FRAGMENT_DEBUG");
+  return raw && *raw && std::string(raw) != "0" && std::string(raw) != "false" &&
+         std::string(raw) != "FALSE" && std::string(raw) != "no" && std::string(raw) != "NO";
 }
 
 } // namespace
@@ -93,14 +123,36 @@ std::string SimaDecode::backend_fragment(int node_index) const {
   ss << "neatdecoder name=" << dec;
   append_decoder_properties(ss, opt_);
   if (opt_.raw_output) {
-    return ss.str();
+    std::string fragment = ss.str();
+    if (decoder_fragment_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECFRAG] node_index=%d decoder=%s type=%s raw_output=1 "
+                   "width=%d height=%d fps=%d num_buffers=%d input_buffers=%d "
+                   "tuning=%s memory_opt=%d fragment=\"%s\"\n",
+                   node_index, dec.c_str(), decoder_type_name(opt_.type), opt_.dec_width,
+                   opt_.dec_height, opt_.dec_fps, opt_.num_buffers, opt_.input_buffers,
+                   opt_.decoder_tuning.empty() ? "<element-default>" : opt_.decoder_tuning.c_str(),
+                   opt_.memory_opt ? 1 : 0, fragment.c_str());
+    }
+    return fragment;
   }
 
   const std::string vc = "n" + std::to_string(node_index) + "_videoconvert";
   const std::string cap = "n" + std::to_string(node_index) + "_raw_caps";
   ss << " ! videoconvert name=" << vc << " ! capsfilter name=" << cap << " caps=\""
      << "video/x-raw(memory:SystemMemory),format=" << public_output_format(opt_.out_format) << "\"";
-  return ss.str();
+  std::string fragment = ss.str();
+  if (decoder_fragment_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[DECFRAG] node_index=%d decoder=%s type=%s raw_output=0 "
+                 "width=%d height=%d fps=%d num_buffers=%d input_buffers=%d "
+                 "tuning=%s memory_opt=%d fragment=\"%s\"\n",
+                 node_index, dec.c_str(), decoder_type_name(opt_.type), opt_.dec_width,
+                 opt_.dec_height, opt_.dec_fps, opt_.num_buffers, opt_.input_buffers,
+                 opt_.decoder_tuning.empty() ? "<element-default>" : opt_.decoder_tuning.c_str(),
+                 opt_.memory_opt ? 1 : 0, fragment.c_str());
+  }
+  return fragment;
 }
 
 std::vector<std::string> SimaDecode::element_names(int node_index) const {

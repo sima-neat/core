@@ -436,6 +436,17 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
       NormalizedCompositionEdgeKind kind =
           normalized_kind_from_public_edge_kind(edge, bypassed_boundary);
       std::string to_port = edge.to_port;
+      const bool implicit_became_runtime = bypassed_boundary &&
+                                           is_implicit_composition_edge(edge) &&
+                                           kind == NormalizedCompositionEdgeKind::RuntimePort;
+      if (implicit_became_runtime) {
+        if (from_port.empty()) {
+          from_port = "out";
+        }
+        if (to_port.empty()) {
+          to_port = "in";
+        }
+      }
       if (kind == NormalizedCompositionEdgeKind::ImplicitLinear) {
         from_port.clear();
         to_port.clear();

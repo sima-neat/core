@@ -728,6 +728,11 @@ bool sample_uses_joined_tensor_envelope_transport(const Sample& sample) {
   return running_offset > 0U;
 }
 
+bool sample_is_single_tensor_set_tensor_payload(const Sample& sample) {
+  return sample.kind == SampleKind::TensorSet && sample.tensors.size() == 1U &&
+         sample.fields.empty() && sample_payload_type(sample) == PayloadType::Tensor;
+}
+
 SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const char* where) {
   const std::string tag = where ? where : "SampleSpec";
   const TensorList tensors = tensors_from_sample(sample, false);
@@ -1537,6 +1542,17 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
       spec.height = h;
       spec.depth = -1;
       spec.required_bytes_actual = max_end;
+      if (input.storage && input.storage->kind == StorageKind::GstSample &&
+          input.storage->size_bytes > spec.required_bytes_actual) {
+        /*
+         * GstVideoMeta describes visible rows through per-plane shape/stride/offset, but decoder
+         * buffers can include padded plane tails (for example 720p NV12 commonly uses a 768-line
+         * physical luma plane).  Preserve the GstBuffer's logical transport span so re-wrapping a
+         * zero-copy decoded frame across Branch/Combine does not shrink the view and force
+         * downstream preproc to rediscover the physical frame stride from a packed parent buffer.
+         */
+        spec.required_bytes_actual = input.storage->size_bytes;
+      }
     } else {
       if (input.is_composite()) {
         throw std::invalid_argument(tag + ": packed video must not use planes");
@@ -1930,7 +1946,8 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
   }
 
   if (sample_has_tensor_list(sample)) {
-    if (sample.tensors.size() > 1U || sample_uses_single_tensor_envelope_transport(sample) ||
+    if (sample.tensors.size() > 1U || sample_is_single_tensor_set_tensor_payload(sample) ||
+        sample_uses_single_tensor_envelope_transport(sample) ||
         sample_uses_joined_tensor_envelope_transport(sample)) {
       return tensor_envelope_spec_from_sample_or_throw(sample, "SampleSpec");
     }

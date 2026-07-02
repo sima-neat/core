@@ -301,6 +301,111 @@ int resolve_state_snapshot_timeout_ms(const char* where) {
   return std::max(0, timeout_ms);
 }
 
+std::string gobject_property_debug_string(GObject* object, const char* property) {
+  if (!object || !property) {
+    return "<invalid>";
+  }
+  GParamSpec* spec = g_object_class_find_property(G_OBJECT_GET_CLASS(object), property);
+  if (!spec) {
+    return "<missing>";
+  }
+  GValue value = G_VALUE_INIT;
+  g_value_init(&value, G_PARAM_SPEC_VALUE_TYPE(spec));
+  g_object_get_property(object, property, &value);
+  gchar* raw = g_strdup_value_contents(&value);
+  std::string out = raw ? raw : "<null>";
+  if (raw) {
+    g_free(raw);
+  }
+  g_value_unset(&value);
+  return out;
+}
+
+bool gst_element_is_neatdecoder(GstElement* element) {
+  if (!element) {
+    return false;
+  }
+  GstElementFactory* factory = gst_element_get_factory(element);
+  if (!factory) {
+    return false;
+  }
+  const gchar* factory_name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+  return factory_name && std::strcmp(factory_name, "neatdecoder") == 0;
+}
+
+void debug_dump_neatdecoder_elements(GstElement* pipeline, GstState target, const char* where) {
+  if (!env_bool("SIMA_DECODER_ELEMENT_DEBUG", false)) {
+    return;
+  }
+  if (!pipeline || !GST_IS_BIN(pipeline)) {
+    std::fprintf(stderr, "[DECELM] where=%s target=%s pipeline=<not-a-bin>\n",
+                 where ? where : "<unknown>", gst_element_state_get_name(target));
+    return;
+  }
+
+  static const char* kProps[] = {
+      "decoder-admission-required",
+      "admission-group-id",
+      "admission-stream-index",
+      "admission-lease-token-hi",
+      "admission-lease-token-lo",
+      "decoder-tuning",
+      "memory-opt",
+      "num-buffers",
+      "dec-ip-cnt",
+      "dec-width",
+      "dec-height",
+      "dec-fps",
+      "next-element",
+  };
+
+  std::size_t count = 0;
+  GstIterator* it = gst_bin_iterate_recurse(GST_BIN(pipeline));
+  if (!it) {
+    std::fprintf(stderr, "[DECELM] where=%s target=%s iterator=<null>\n",
+                 where ? where : "<unknown>", gst_element_state_get_name(target));
+    return;
+  }
+
+  while (true) {
+    GValue item = G_VALUE_INIT;
+    const GstIteratorResult r = gst_iterator_next(it, &item);
+    if (r == GST_ITERATOR_OK) {
+      GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+      if (gst_element_is_neatdecoder(element)) {
+        ++count;
+        const gchar* elem_name = GST_OBJECT_NAME(element);
+        std::ostringstream line;
+        line << "[DECELM] where=" << (where ? where : "<unknown>")
+             << " target=" << gst_element_state_get_name(target)
+             << " name=" << (elem_name ? elem_name : "<unnamed>");
+        for (const char* prop : kProps) {
+          line << ' ' << prop << '=' << gobject_property_debug_string(G_OBJECT(element), prop);
+        }
+        line << '\n';
+        std::fprintf(stderr, "%s", line.str().c_str());
+      }
+      g_value_unset(&item);
+      continue;
+    }
+    if (r == GST_ITERATOR_RESYNC) {
+      gst_iterator_resync(it);
+      continue;
+    }
+    if (r == GST_ITERATOR_ERROR) {
+      std::fprintf(stderr, "[DECELM] where=%s target=%s iterator=error count=%zu\n",
+                   where ? where : "<unknown>", gst_element_state_get_name(target), count);
+    }
+    break;
+  }
+  gst_iterator_free(it);
+
+  if (count == 0) {
+    std::fprintf(stderr, "[DECELM] where=%s target=%s decoders=0\n", where ? where : "<unknown>",
+                 gst_element_state_get_name(target));
+  }
+}
+
 } // namespace
 
 void set_state_or_throw(GstElement* pipeline, GstState target, const char* where,
@@ -310,6 +415,7 @@ void set_state_or_throw(GstElement* pipeline, GstState target, const char* where
     session_build_throw_session_error_simple(error_codes::kPipelineShape,
                                              std::string(where) + ": pipeline is null");
   }
+  debug_dump_neatdecoder_elements(pipeline, target, where);
 
   while (true) {
     const int timeout_ms = resolve_state_change_timeout_ms(where);
