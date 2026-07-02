@@ -23,7 +23,7 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">inp = pyneat.InputOptions()</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">inp.format = &quot;RGB&quot;</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">inp.format = pyneat.Format.RGB</text>
 <text x="76" y="300" class="fmono fln">3</text>
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">inp.width = args.width</text>
 <text x="76" y="326" class="fmono fln">4</text>

@@ -45,6 +45,10 @@
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">tensor = pyneat.Tensor.from_numpy(rgb, copy…</text>
 <text x="76" y="300" class="fmono fln">3</text>
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">outputs = model.run([tensor], timeout_ms=20…</text>
+<text x="76" y="326" class="fmono fln">4</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">if not outputs:</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">  raise RuntimeError(&quot;model produced no out…</text>
 </g>
 <g id="code3" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 4 · Read boxes</text>

@@ -28,6 +28,10 @@
 <text x="76" y="212" class="fsans fcap">STEP 2 · Run benchmark</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">report = model.benchmark(args.samples)</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">if report.latency_ms &lt;= 0 or report.fps &lt;=…</text>
+<text x="76" y="300" class="fmono fln">3</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">  raise RuntimeError(&quot;benchmark produced no…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Read report</text>

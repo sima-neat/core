@@ -92,6 +92,53 @@ if [[ "${BASE_PATH}" != "/" ]]; then
   READY_URL="${BASE_URL}${BASE_PATH}"
 fi
 
+# Routes served from external repositories via tools/autodoc.py (the "mount"
+# values in autodoc.conf.json) track those upstream repos at build time, so a
+# broken internal link introduced upstream would otherwise block core's docs
+# deploy even when nothing in core changed. Exclude these externally-sourced
+# routes from the strict gate — core-owned routes stay strictly checked, and
+# link quality inside the imported docs is owned by the source repos' own CI.
+# Override with DOCS_LINK_EXTERNAL_ROUTES (space-separated route prefixes,
+# relative to the site root; empty disables the exclusion).
+if [[ -z "${DOCS_LINK_EXTERNAL_ROUTES+x}" ]]; then
+  autodoc_conf="${REPO_ROOT}/tools/autodoc.conf.json"
+  if [[ -f "${autodoc_conf}" ]]; then
+    DOCS_LINK_EXTERNAL_ROUTES="$(AUTODOC_CONF="${autodoc_conf}" python3 - <<'PY'
+import json
+import os
+
+with open(os.environ["AUTODOC_CONF"], encoding="utf-8") as handle:
+    conf = json.load(handle)
+
+mounts = []
+for source in conf.get("sources", []):
+    mount = str(source.get("mount", "")).strip().strip("/")
+    if mount and mount not in mounts:
+        mounts.append(mount)
+
+print(" ".join(mounts))
+PY
+)"
+  else
+    DOCS_LINK_EXTERNAL_ROUTES=""
+  fi
+fi
+
+EXTERNAL_SKIP=""
+for route in ${DOCS_LINK_EXTERNAL_ROUTES}; do
+  route="${route#/}"
+  route="${route%/}"
+  [[ -z "${route}" ]] && continue
+  prefix="${BASE_PATH}${route}"
+  if [[ -n "${EXTERNAL_SKIP}" ]]; then
+    EXTERNAL_SKIP+="|"
+  fi
+  EXTERNAL_SKIP+="${prefix}(/|\$)"
+done
+if [[ -n "${EXTERNAL_SKIP}" ]]; then
+  echo "Excluding externally-sourced routes from the strict link gate: ${DOCS_LINK_EXTERNAL_ROUTES}"
+fi
+
 echo "Serving docs from ${SITE_DIR} at ${READY_URL}"
 npx --yes serve@14.2.6 "${SERVE_DIR}" -l "${PORT}" >"${SERVER_LOG}" 2>&1 &
 SERVER_PID="$!"
@@ -134,13 +181,19 @@ for start_path in ${START_PATHS}; do
   echo "Checking internal docs links from ${start_url}"
   attempt=1
   while true; do
-    if npx --yes linkinator@7.6.1 "${start_url}" \
-      --recurse \
-      --concurrency "${CONCURRENCY}" \
-      --timeout "${TIMEOUT_MS}" \
-      --retry-errors \
-      --retry-errors-count "${RETRY_ERRORS_COUNT}" \
-      --skip "^(mailto:|tel:|https?://(?!${HOST}:${PORT}))"; then
+    linkinator_args=(
+      "${start_url}"
+      --recurse
+      --concurrency "${CONCURRENCY}"
+      --timeout "${TIMEOUT_MS}"
+      --retry-errors
+      --retry-errors-count "${RETRY_ERRORS_COUNT}"
+      --skip "^(mailto:|tel:|https?://(?!${HOST}:${PORT}))"
+    )
+    if [[ -n "${EXTERNAL_SKIP}" ]]; then
+      linkinator_args+=(--skip "${EXTERNAL_SKIP}")
+    fi
+    if npx --yes linkinator@7.6.1 "${linkinator_args[@]}"; then
       break
     fi
 
