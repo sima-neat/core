@@ -62,6 +62,14 @@ install_build_deps() {
     return 1
   fi
 
+  local pkg_config_provider="pkg-config"
+  if apt-cache show pkgconf >/dev/null 2>&1; then
+    # GitHub-hosted Ubuntu 22.04 runners already use pkgconf as the pkg-config
+    # provider. Keep that provider instead of forcing the older pkg-config
+    # package, which removes pkgconf and can break module discovery on the image.
+    pkg_config_provider="pkgconf"
+  fi
+
   local packages=(
     build-essential
     ca-certificates
@@ -69,8 +77,9 @@ install_build_deps() {
     curl
     dpkg-dev
     file
-    pkg-config
+    "${pkg_config_provider}"
     tar
+    libunwind-dev
     libglib2.0-dev
     libgstreamer1.0-dev
     libgstreamer-plugins-base1.0-dev
