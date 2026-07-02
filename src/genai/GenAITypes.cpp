@@ -198,7 +198,8 @@ void GenerationStream::Producer::push(TokenSample sample) {
 }
 
 void GenerationStream::Producer::finish(std::string finish_reason,
-                                        std::optional<std::uint32_t> generated_tokens) {
+                                        std::optional<std::uint32_t> generated_tokens,
+                                        std::string language) {
   TokenSample sample;
   {
     std::lock_guard<std::mutex> lock(impl_.metrics_mutex);
@@ -213,6 +214,7 @@ void GenerationStream::Producer::finish(std::string finish_reason,
     }
     sample.metrics = impl_.metrics;
     sample.finish_reason = impl_.finish_reason;
+    sample.language = std::move(language);
   }
   sample.is_final = true;
 

@@ -82,7 +82,7 @@ Sample make_done_sample(const GenerationResult& result, const Sample& source,
                        source),
       make_text_sample(format_double(result.metrics.tokens_per_second), "tokens_per_second",
                        source),
-      make_text_sample(language, "language", source),
+      make_text_sample(result.language.empty() ? language : result.language, "language", source),
   };
   return done;
 }
@@ -189,6 +189,7 @@ public:
           result.text = transcript;
           result.metrics = token->metrics;
           result.finish_reason = token->finish_reason.empty() ? "stop" : token->finish_reason;
+          result.language = token->language;
           (void)emit_or_append(done_port_, make_done_sample(result, msg.sample, request.language),
                                out);
           saw_final = true;

@@ -265,13 +265,17 @@ def test_genai_value_types_and_text_sample_helpers():
   result = pyneat.GenerationResult()
   result.text = "done"
   result.finish_reason = "stop"
+  result.language = "en"
   result.metrics.generated_tokens = 1
+  assert result.language == "en"
   assert result.metrics.generated_tokens == 1
 
   token = pyneat.TokenSample()
   token.text = "d"
+  token.language = "en"
   token.is_final = False
   assert token.text == "d"
+  assert token.language == "en"
 
 
 def test_genai_top_level_and_namespace_aliases_exist():

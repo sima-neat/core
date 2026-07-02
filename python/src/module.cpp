@@ -2106,6 +2106,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("text", &simaai::neat::genai::GenerationResult::text)
       .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
       .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
+      .def_rw("language", &simaai::neat::genai::GenerationResult::language)
       .def_prop_rw(
           "tool_calls",
           [](const simaai::neat::genai::GenerationResult& result) {
@@ -2121,6 +2122,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
       .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
       .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
+      .def_rw("language", &simaai::neat::genai::TokenSample::language)
       .def_prop_rw(
           "tool_calls",
           [](const simaai::neat::genai::TokenSample& sample) {

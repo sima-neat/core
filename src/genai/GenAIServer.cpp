@@ -314,12 +314,16 @@ std::string completion_chunk(const std::string& model_name, const std::string& t
 
 std::string audio_chunk(const std::string& text, bool finished,
                         const std::optional<std::string>& finish_reason = std::nullopt,
-                        const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                        const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                        const std::string& language = {}) {
   nlohmann::json chunk;
   chunk["object"] = finished ? "audio.transcription.done" : "audio.transcription.chunk";
   chunk["text"] = text;
   if (finished) {
     chunk["finish_reason"] = finish_reason.value_or("stop");
+    if (!language.empty()) {
+      chunk["language"] = language;
+    }
   }
   if (metrics.has_value()) {
     if (metrics->time_to_first_token_s > 0.0) {
@@ -1329,6 +1333,7 @@ struct GenAIServer::Impl {
         const auto result = model->run(request);
         set_json(res, {{"text", result.text},
                        {"model", model_name},
+                       {"language", result.language},
                        {"finish_reason", choice_finish_reason(result.finish_reason)}});
       }
     } catch (const std::exception& e) {
@@ -1359,7 +1364,8 @@ struct GenAIServer::Impl {
               const auto metrics = metrics_with_ttft_once(sample->metrics, ttft_sent);
               if (sample->is_final) {
                 const auto final_chunk =
-                    audio_chunk("", true, choice_finish_reason(sample->finish_reason), metrics) +
+                    audio_chunk("", true, choice_finish_reason(sample->finish_reason), metrics,
+                                sample->language) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
