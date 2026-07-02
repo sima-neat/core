@@ -135,6 +135,51 @@ std::vector<TestCase> all_test_cases() {
           test_case_for(CaseKind::RtspMjpegDecoded), test_case_for(CaseKind::HttpMjpegDecoded)};
 }
 
+void replace_all(std::string& value, const std::string& needle, const std::string& replacement) {
+  if (needle.empty()) {
+    return;
+  }
+  std::size_t pos = 0;
+  while ((pos = value.find(needle, pos)) != std::string::npos) {
+    value.replace(pos, needle.size(), replacement);
+    pos += replacement.size();
+  }
+}
+
+std::vector<std::string> configured_urls_from_env(const TestCase& test_case) {
+  std::vector<std::string> urls;
+  if (const char* single = std::getenv(test_case.singular_env.c_str()); single && *single) {
+    const std::string trimmed = trim_copy(single);
+    if (!trimmed.empty()) {
+      urls.push_back(trimmed);
+    }
+  }
+  if (const char* many = std::getenv(test_case.plural_env.c_str()); many && *many) {
+    const std::vector<std::string> split = split_urls(many);
+    urls.insert(urls.end(), split.begin(), split.end());
+  }
+  return urls;
+}
+
+std::string redact_configured_stream_urls(std::string value) {
+  for (const auto& test_case : all_test_cases()) {
+    for (const auto& url : configured_urls_from_env(test_case)) {
+      replace_all(value, url, "<redacted-stream-url>");
+    }
+  }
+  return value;
+}
+
+void suppress_url_bearing_runtime_diagnostics() {
+  ::setenv("SIMA_PULL_TIMEOUT_DIAG", "0", 1);
+  ::setenv("SIMA_ASYNC_TPUT_DIAG", "0", 1);
+  ::setenv("SIMA_GRAPH_DIAG_ON_STOP", "0", 1);
+  ::setenv("SIMA_GRAPH_PIPELINE_DIAG_SUMMARY", "0", 1);
+  ::setenv("SIMA_INPUTSTREAM_DEBUG", "0", 1);
+  ::setenv("SIMA_GRAPH_DEBUG", "0", 1);
+  ::setenv("SIMA_PIPELINE_STRING_DEBUG", "0", 1);
+}
+
 CaseKind parse_case_kind(const std::string& value) {
   if (value == "rtsp-h264-decoded") {
     return CaseKind::RtspH264Decoded;
@@ -221,14 +266,7 @@ Sample pull_or_throw(Run& run, const std::string& output_name, int timeout_ms,
   if (!error.code.empty()) {
     message += " (code=" + error.code + ")";
   }
-  if (error.report.has_value()) {
-    message += "\nreport_json=" + error.report->to_json();
-  }
-  const std::string last_error = run.last_error();
-  if (!last_error.empty()) {
-    message += "\nlast_error=" + last_error;
-  }
-  throw std::runtime_error(message);
+  throw std::runtime_error(redact_configured_stream_urls(message));
 }
 
 Graph make_source_graph(const TestCase& test_case, const std::string& url) {
@@ -388,6 +426,7 @@ void run_test_case(const TestCase& test_case, const std::string& url, const Args
 
 int main(int argc, char** argv) {
   try {
+    suppress_url_bearing_runtime_diagnostics();
     simaai::neat::gst_init_once();
     const Args args = parse_args(argc, argv);
 
@@ -415,7 +454,7 @@ int main(int argc, char** argv) {
     }
     return ran_any_case ? 0 : 77;
   } catch (const std::exception& e) {
-    std::cerr << "[FAIL] " << e.what() << "\n";
+    std::cerr << "[FAIL] " << redact_configured_stream_urls(e.what()) << "\n";
     return 1;
   }
 }
