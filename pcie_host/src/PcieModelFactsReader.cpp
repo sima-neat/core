@@ -196,49 +196,6 @@ application_output_contracts(const simaai::neat::pipeline_internal::sima::MpkCon
   return {};
 }
 
-std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>
-apply_public_tensor_names_and_shapes(
-    const std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>& public_contracts,
-    const std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>& boundary_contracts) {
-  if (public_contracts.empty()) {
-    return boundary_contracts;
-  }
-
-  std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract> out;
-  out.reserve(public_contracts.size());
-  for (std::size_t i = 0; i < public_contracts.size(); ++i) {
-    const auto& public_tensor = public_contracts[i];
-    const bool have_boundary = i < boundary_contracts.size();
-    const auto& source = have_boundary ? boundary_contracts[i] : public_tensor;
-
-    auto tensor = source;
-    tensor.tensor_index = static_cast<int>(i);
-    tensor.name = !public_tensor.name.empty() ? public_tensor.name : public_tensor.segment_name;
-    tensor.segment_name =
-        !public_tensor.segment_name.empty() ? public_tensor.segment_name : tensor.name;
-
-    const auto public_shape = best_shape(public_tensor);
-    if (!public_shape.empty()) {
-      tensor.logical_shape = public_shape;
-      tensor.mpk_shape = public_shape;
-    }
-
-    if (have_boundary) {
-      const std::string boundary_dtype = best_dtype(source);
-      if (!boundary_dtype.empty()) {
-        tensor.dtype = boundary_dtype;
-        tensor.logical_dtype = boundary_dtype;
-      }
-      tensor.size_bytes = source.size_bytes;
-      tensor.physical_index = source.physical_index;
-      tensor.byte_offset = source.byte_offset;
-    }
-
-    out.push_back(std::move(tensor));
-  }
-  return out;
-}
-
 bool graph_has_preprocess(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
   for (const auto& node : contract.graph.nodes) {
     if (node.kind == simaai::neat::pipeline_internal::sima::MpkGraphNodeKind::FusedPreproc ||
@@ -264,7 +221,7 @@ bool graph_has_boxdecode(const simaai::neat::pipeline_internal::sima::MpkContrac
 
 } // namespace
 
-PcieModelFacts read_model_facts(const std::string& model_path, const bool accelerator) {
+PcieModelFacts read_model_facts(const std::string& model_path) {
   TempDir temp;
 
   simaai::neat::internal::ModelArchiveLoaderOptions loader_options;
@@ -286,30 +243,17 @@ PcieModelFacts read_model_facts(const std::string& model_path, const bool accele
 
   const auto public_inputs = application_input_contracts(*contract);
   const auto public_outputs = application_output_contracts(*contract);
-  const auto inputs =
-      accelerator
-          ? apply_public_tensor_names_and_shapes(
-                public_inputs,
-                simaai::neat::pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(
-                    *contract))
-          : public_inputs;
-  const auto outputs =
-      accelerator
-          ? apply_public_tensor_names_and_shapes(
-                public_outputs,
-                simaai::neat::pipeline_internal::sima::get_mla_logical_outputs_contract(*contract))
-          : public_outputs;
 
   PcieModelFacts facts;
   facts.has_preprocess = graph_has_preprocess(*contract);
   facts.has_boxdecode = graph_has_boxdecode(*contract);
 
-  for (const auto& input : inputs) {
+  for (const auto& input : public_inputs) {
     auto converted = convert_tensor(input);
     facts.packed_input_bytes += converted.size_bytes;
     facts.inputs.push_back(std::move(converted));
   }
-  for (const auto& output : outputs) {
+  for (const auto& output : public_outputs) {
     auto converted = convert_tensor(output, true);
     facts.packed_output_bytes += converted.size_bytes;
     facts.outputs.push_back(std::move(converted));

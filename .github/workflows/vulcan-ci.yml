@@ -316,20 +316,34 @@ jobs:
           clean: true
           fetch-depth: 0
 
+      - name: Install sima-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/install_sima_cli_main.sh
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
+
       - name: Install PCIe host build dependencies
         shell: bash
         run: |
           set -euo pipefail
-          ./pcie_host/build.sh --install-deps-only
+          ./pcie_host/build.sh --with-tests --install-deps-only
 
       - name: Build PCIe host Debian packages
         shell: bash
         run: |
           set -euo pipefail
           cd pcie_host
-          ./build.sh --clean
+          ./build.sh --clean --with-tests
         env:
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+
+      - name: Run PCIe host unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir pcie_host/build --output-on-failure --no-tests=error
 
       - name: Verify PCIe host Debian packages
         shell: bash
@@ -340,13 +354,17 @@ jobs:
             -name "sima-pcie-host_*_${DEB_ARCH}.deb" ! -name "sima-pcie-host-dev_*" | sort)
           mapfile -t dev_debs < <(find pcie_host/dist -maxdepth 1 -type f \
             -name "sima-pcie-host-dev_*_${DEB_ARCH}.deb" | sort)
+          mapfile -t extras_tars < <(find pcie_host/dist -maxdepth 1 -type f \
+            -name "sima-pcie-host-*-Linux-${DEB_ARCH}-extras.tar.gz" | sort)
 
-          if [[ "${#runtime_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 ]]; then
-            echo "Expected exactly one runtime and one dev PCIe host deb for ${DEB_ARCH}." >&2
+          if [[ "${#runtime_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 || "${#extras_tars[@]}" -ne 1 ]]; then
+            echo "Expected exactly one runtime deb, one dev deb, and one extras tarball for ${DEB_ARCH}." >&2
             printf 'runtime debs (%s):\n' "${#runtime_debs[@]}" >&2
             printf '  %s\n' "${runtime_debs[@]}" >&2 || true
             printf 'dev debs (%s):\n' "${#dev_debs[@]}" >&2
             printf '  %s\n' "${dev_debs[@]}" >&2 || true
+            printf 'extras tarballs (%s):\n' "${#extras_tars[@]}" >&2
+            printf '  %s\n' "${extras_tars[@]}" >&2 || true
             exit 1
           fi
 
@@ -355,6 +373,9 @@ jobs:
             dpkg-deb -I "${deb}"
             sha256sum "${deb}" > "${deb}.sha256"
           done
+          file "${extras_tars[0]}"
+          tar -tzf "${extras_tars[0]}" >/dev/null
+          sha256sum "${extras_tars[0]}" > "${extras_tars[0]}.sha256"
         env:
           DEB_ARCH: ${{ matrix.deb_arch }}
 
@@ -384,12 +405,18 @@ jobs:
             s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
           fi
 
-          for path in pcie_host/dist/*.deb pcie_host/dist/*.deb.sha256; do
+          for path in \
+            pcie_host/dist/*.deb \
+            pcie_host/dist/*.deb.sha256 \
+            pcie_host/dist/*-extras.tar.gz \
+            pcie_host/dist/*-extras.tar.gz.sha256; do
             name="$(basename "${path}")"
-            content_type="application/vnd.debian.binary-package"
-            if [[ "${name}" == *.sha256 ]]; then
-              content_type="text/plain"
-            fi
+            case "${name}" in
+              *.deb) content_type="application/vnd.debian.binary-package" ;;
+              *.tar.gz) content_type="application/gzip" ;;
+              *.sha256) content_type="text/plain" ;;
+              *) content_type="application/octet-stream" ;;
+            esac
             aws s3 cp \
               "${path}" \
               "s3://${ARTIFACT_BUCKET}/${prefix}/${name}" \
@@ -464,23 +491,23 @@ jobs:
             : > "${resources_tsv}"
             install -m 0755 "${install_script_source}" "${install_script}"
 
-            mapfile -t deb_keys < <(aws s3api list-objects-v2 \
+            mapfile -t package_keys < <(aws s3api list-objects-v2 \
               --bucket "${ARTIFACT_BUCKET}" \
               --prefix "${prefix}/" \
               --query 'Contents[].Key' \
               --output text \
               | tr '\t' '\n' \
-              | grep -E '\.deb$' \
+              | grep -E '(\.deb|-extras\.tar\.gz)$' \
               | sort)
 
-            if [[ "${#deb_keys[@]}" -ne 2 ]]; then
-              echo "Expected two PCIe host debs under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
-              printf 'found (%s):\n' "${#deb_keys[@]}" >&2
-              printf '  %s\n' "${deb_keys[@]}" >&2 || true
+            if [[ "${#package_keys[@]}" -ne 3 ]]; then
+              echo "Expected two PCIe host debs and one extras tarball under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
+              printf 'found (%s):\n' "${#package_keys[@]}" >&2
+              printf '  %s\n' "${package_keys[@]}" >&2 || true
               exit 1
             fi
 
-            for key in "${deb_keys[@]}"; do
+            for key in "${package_keys[@]}"; do
               size_bytes="$(aws s3api head-object \
                 --bucket "${ARTIFACT_BUCKET}" \
                 --key "${key}" \
@@ -954,14 +981,87 @@ jobs:
           echo "Disk usage after cleanup:"
           df -h "${TMP_ROOT}" || true
 
+  test-pciehost-coproc:
+    name: Test PCIe Host Coproc
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
+      - resolve-vulcan-config
+      - publish-vulcan-artifacts
+      - publish-pciehost-package
+    runs-on: [self-hosted, Linux, X64, pcie-host]
+    concurrency:
+      group: bench31-pcie-slot0
+      cancel-in-progress: false
+    env:
+      VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      SIMA_CLI_CHECK_FOR_UPDATE: "0"
+      SIMAPCIE_CARD_HOST: "10.0.0.2"
+      SIMAPCIE_USER: "sima"
+      SIMAPCIE_CARD_ID: "0"
+      SIMAPCIE_QUEUE: "0"
+      SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
+      SIMAPCIE_PULL_TIMEOUT_MS: "30000"
+      SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
+      SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
+      DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+      SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Install sima-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/install_sima_cli_main.sh
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" neat install --help >/dev/null
+
+      - name: Run PCIe host/card smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REF_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          export SHORT_SHA="${GITHUB_SHA:0:12}"
+          ./scripts/ci/run_pciehost_coproc_smoke.sh
+
+      - name: Collect PCIe smoke artifacts
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          ./scripts/ci/collect_pciehost_coproc_artifacts.sh
+
+      - name: Upload PCIe smoke artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pciehost-coproc-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _work/pciehost-artifacts
+          if-no-files-found: warn
+
+      - name: Cleanup PCIe queue
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -x ./scripts/ci/run_pciehost_coproc_smoke.sh ]]; then
+            ./scripts/ci/run_pciehost_coproc_smoke.sh --cleanup-only || true
+          fi
+
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' }}
+    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && needs.test-pciehost-coproc.result == 'success' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
       - publish-pciehost-package
       - test-devkit
+      - test-pciehost-coproc
     uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
     with:
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}

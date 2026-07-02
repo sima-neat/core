@@ -74,23 +74,19 @@ public:
     }
   }
 
-  ModelInfo load_metadata(const std::string& model_path, const ModelOptions& options,
-                          const bool accelerator) {
+  ModelInfo load_metadata(const std::string& model_path, const ModelOptions& options) {
     std::lock_guard<std::mutex> lock(mu_);
     if (state_ == PipelineState::Ready || channel_.is_running()) {
       throw std::runtime_error("cannot load metadata while PCIe pipeline is running");
     }
-    const auto model_options = internal::write_model_options_json(options);
-    if (accelerator && model_options.json.has_value()) {
-      throw std::invalid_argument("accelerator cannot be combined with image/boxdecode options");
-    }
-    facts_ = internal::read_model_facts(model_path, accelerator);
+    (void)internal::write_model_options_json(options);
+    facts_ = internal::read_model_facts(model_path);
     model_info_ = internal::to_public_model_info(facts_);
     return model_info_;
   }
 
   ModelInfo init_pipeline(const std::string& model_path, const ModelOptions& options,
-                          const bool accelerator, const int readiness_timeout_ms) {
+                          const int readiness_timeout_ms) {
     std::lock_guard<std::mutex> lock(mu_);
     validate_queue(connection_.queue);
     if (readiness_timeout_ms <= 0) {
@@ -101,11 +97,8 @@ public:
     }
 
     auto model_options = internal::write_model_options_json(options);
-    if (accelerator && model_options.json.has_value()) {
-      throw std::invalid_argument("accelerator cannot be combined with image/boxdecode options");
-    }
 
-    facts_ = internal::read_model_facts(model_path, accelerator);
+    facts_ = internal::read_model_facts(model_path);
     model_info_ = internal::to_public_model_info(facts_);
     const std::string remote_model_path = remote_.upload_file(model_path);
 
@@ -121,7 +114,7 @@ public:
     state_ = PipelineState::Starting;
     bool remote_started = false;
     try {
-      remote_.start(connection_.queue, accelerator, remote_model_path, remote_options_path);
+      remote_.start(connection_.queue, remote_model_path, remote_options_path);
       remote_started = true;
       (void)remote_.wait_ready(connection_.queue, readiness_timeout_ms);
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
@@ -245,16 +238,14 @@ SimaPCIeHost::SimaPCIeHost(ConnectionOptions connection)
 SimaPCIeHost::~SimaPCIeHost() noexcept = default;
 
 ModelInfo SimaPCIeHost::load_metadata(const std::string& model_path,
-                                       const ModelOptions& options,
-                                       const bool accelerator) {
-  return impl_->load_metadata(model_path, options, accelerator);
+                                       const ModelOptions& options) {
+  return impl_->load_metadata(model_path, options);
 }
 
 ModelInfo SimaPCIeHost::init_pipeline(const std::string& model_path,
                                        const ModelOptions& options,
-                                       const bool accelerator,
                                        const int readiness_timeout_ms) {
-  return impl_->init_pipeline(model_path, options, accelerator, readiness_timeout_ms);
+  return impl_->init_pipeline(model_path, options, readiness_timeout_ms);
 }
 
 void SimaPCIeHost::stop() {

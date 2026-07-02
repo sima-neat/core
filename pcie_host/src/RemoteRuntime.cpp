@@ -144,8 +144,7 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
   return remote_path;
 }
 
-void RemoteRuntime::start(const int queue, const bool accelerator,
-                          const std::string& remote_model_path,
+void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
                           const std::optional<std::string>& remote_model_options_path) const {
   std::ostringstream ss;
   ss << "[ -x " << SshRunner::shell_escape(kRemoteHelper)
@@ -175,9 +174,6 @@ void RemoteRuntime::start(const int queue, const bool accelerator,
   }
   ss << SshRunner::shell_escape(kRemoteHelper) << " --model "
      << SshRunner::shell_escape(remote_model_path) << " --queue " << queue;
-  if (accelerator) {
-    ss << " --accelerator";
-  }
   if (remote_model_options_path.has_value()) {
     ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
   }

@@ -12,7 +12,6 @@ namespace {
 
 struct Args {
   std::string model;
-  bool accelerator_only = false;
 };
 
 std::string value(int argc, char** argv, int& i, const char* name) {
@@ -23,7 +22,7 @@ std::string value(int argc, char** argv, int& i, const char* name) {
 }
 
 void usage() {
-  std::cerr << "usage: sima_pcie_metadata_dump --model model.tar.gz [--accelerator-only]\n";
+  std::cerr << "usage: sima_pcie_metadata_dump --model model.tar.gz\n";
 }
 
 Args parse(int argc, char** argv) {
@@ -32,8 +31,6 @@ Args parse(int argc, char** argv) {
     const std::string arg = argv[i] ? argv[i] : "";
     if (arg == "--model") {
       out.model = value(argc, argv, i, "--model");
-    } else if (arg == "--accelerator-only") {
-      out.accelerator_only = true;
     } else if (arg == "-h" || arg == "--help") {
       usage();
       std::exit(0);
@@ -79,12 +76,7 @@ int main(int argc, char** argv) {
   try {
     const Args args = parse(argc, argv);
     pcie::SimaPCIeHost host;
-    if (!args.accelerator_only) {
-      print_model_info("tensor route", host.load_metadata(args.model));
-      std::cout << "\n";
-    }
-    constexpr bool accelerator = true;
-    print_model_info("accelerator route", host.load_metadata(args.model, {}, accelerator));
+    print_model_info("tensor route", host.load_metadata(args.model));
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "ERROR: " << e.what() << "\n";

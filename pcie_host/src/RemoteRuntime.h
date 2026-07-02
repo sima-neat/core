@@ -21,7 +21,7 @@ public:
   explicit RemoteRuntime(ConnectionOptions connection);
 
   std::string upload_file(const std::string& local_path) const;
-  void start(int queue, bool accelerator, const std::string& remote_model_path,
+  void start(int queue, const std::string& remote_model_path,
              const std::optional<std::string>& remote_model_options_path) const;
   RemoteStatus wait_ready(int queue, int readiness_timeout_ms) const;
   void stop(int queue) const;

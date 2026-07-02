@@ -33,7 +33,7 @@ Usage: ./build.sh [options]
 
 Options:
   --clean             Remove build directory before configure
-  --with-tests        Build unit tests
+  --with-tests        Build unit and hardware smoke tests
   --with-examples     Build OpenCV examples (does not install into DEB)
   --no-deb            Skip DEB package generation
   --install-deps-only Install PCIe host build dependencies, then exit
@@ -64,20 +64,26 @@ install_build_deps() {
     return 1
   fi
 
-  run_privileged apt-get update
-  run_privileged apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    cmake \
-    curl \
-    dpkg-dev \
-    file \
-    pkg-config \
-    tar \
-    libglib2.0-dev \
-    libgstreamer1.0-dev \
-    libgstreamer-plugins-base1.0-dev \
+  local packages=(
+    build-essential
+    ca-certificates
+    cmake
+    curl
+    dpkg-dev
+    file
+    pkg-config
+    tar
+    libglib2.0-dev
+    libgstreamer1.0-dev
+    libgstreamer-plugins-base1.0-dev
     nlohmann-json3-dev
+  )
+  if [[ "${BUILD_TESTS}" == "ON" ]]; then
+    packages+=(libopencv-dev)
+  fi
+
+  run_privileged apt-get update
+  run_privileged apt-get install -y --no-install-recommends "${packages[@]}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -260,129 +266,74 @@ detect_multiarch() {
   esac
 }
 
-artifact_available() {
-  [[ -f "${PLUGIN_SOURCE}" && -f "${HEADER_SOURCE}" ]]
-}
-
-url_encode_path_component() {
-  python3 - "$1" <<'PY'
-import sys
-from urllib.parse import quote
-
-print(quote(sys.argv[1], safe=""))
-PY
-}
-
-vulcan_artifact_base_url() {
-  local env_name
-  env_name="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
-  if [[ -n "${VULCAN_BASE_URL}" ]]; then
-    printf '%s\n' "${VULCAN_BASE_URL%/}"
-    return 0
-  fi
-  case "${env_name}" in
-    dev) printf '%s\n' "https://artifacts.neat.paconsultings.com" ;;
-    stg|staging) printf '%s\n' "https://artifacts.stg.neat.sima.ai" ;;
-    prod|production) printf '%s\n' "https://artifacts.neat.sima.ai" ;;
+deb_arch_from_multiarch() {
+  case "$1" in
+    x86_64-linux-gnu)
+      echo "amd64"
+      ;;
+    aarch64-linux-gnu)
+      echo "arm64"
+      ;;
     *)
-      echo "ERROR: unsupported SIMAPCIE_VULCAN_ENV: ${env_name}" >&2
-      echo "       Set SIMAPCIE_VULCAN_BASE_URL to override the artifact base URL." >&2
-      return 1
+      echo "ERROR: cannot determine Debian architecture for multiarch '$1'" >&2
+      exit 1
       ;;
   esac
 }
 
-download_text() {
-  local url="$1"
-  curl -fsSL "${url}"
+package_version() {
+  python3 - "${DEPS_MANIFEST}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = Path(sys.argv[1])
+print(json.loads(manifest.read_text(encoding="utf-8"))["package-version"])
+PY
 }
 
-download_artifact_from_vulcan_ref() {
+artifact_available() {
+  [[ -f "${PLUGIN_SOURCE}" && -f "${HEADER_SOURCE}" ]]
+}
+
+install_artifact_from_vulcan_ref() {
   local ref_spec="$1"
   local ref="${ref_spec%%:*}"
   local spec="${ref_spec#*:}"
-  local artifact_name="pcie-host-artifact-${HOST_MULTIARCH}"
-  local tarball_name="${artifact_name}.tar.gz"
-  local tmp_dir download_dir tarball checksum_file expected actual
-  local base_url ref_key resolved_spec artifact_base
+  local target="${ARTIFACT_REPOSITORY}/pcie-host/${HOST_MULTIARCH}@${ref}:${spec}"
+  local install_dir="${SCRIPT_DIR}/artifacts"
+  local sima_cli_args=(neat install --env "${VULCAN_ENV}" -d "${install_dir}")
 
-  if ! base_url="$(vulcan_artifact_base_url "${VULCAN_ENV}")"; then
+  if [[ -n "${VULCAN_BASE_URL}" ]]; then
+    sima_cli_args+=(--base-url "${VULCAN_BASE_URL}")
+  fi
+  sima_cli_args+=("${target}")
+
+  mkdir -p "${install_dir}"
+  rm -rf \
+    "${install_dir}/${HOST_MULTIARCH}" \
+    "${install_dir}/pcie-host-artifact-${HOST_MULTIARCH}" \
+    "${install_dir}/pcie-host-artifact-${HOST_MULTIARCH}.tar.gz"
+
+  echo "Installing PCIe host artifact ${target} from Vulcan env ${VULCAN_ENV}..."
+  if ! sima-cli "${sima_cli_args[@]}"; then
     return 1
   fi
-  ref_key="$(url_encode_path_component "${ref}")"
-
-  if [[ "${spec}" == "latest" ]]; then
-    if ! resolved_spec="$(download_text "${base_url}/${ARTIFACT_REPOSITORY}/${ref_key}/latest.tag" | tr -d '[:space:]')"; then
-      return 1
-    fi
-    if [[ -z "${resolved_spec}" ]]; then
-      return 1
-    fi
-  else
-    resolved_spec="${spec}"
-  fi
-
-  tmp_dir="$(mktemp -d /tmp/sima-pcie-host-artifact-XXXXXX)"
-  download_dir="${tmp_dir}/download"
-  mkdir -p "${download_dir}"
-  artifact_base="${base_url}/${ARTIFACT_REPOSITORY}/${ref_key}/${resolved_spec}/pcie-host/${HOST_MULTIARCH}"
-
-  echo "Downloading PCIe host artifact ${artifact_name} from Vulcan ${ARTIFACT_REPOSITORY}@${ref}:${resolved_spec}..."
-  if ! curl -fsSL "${artifact_base}/${tarball_name}" -o "${download_dir}/${tarball_name}"; then
-    rm -rf "${tmp_dir}"
-    return 1
-  fi
-  if ! curl -fsSL "${artifact_base}/${tarball_name}.sha256" -o "${download_dir}/${tarball_name}.sha256"; then
-    rm -rf "${tmp_dir}"
-    return 1
-  fi
-
-  tarball="${download_dir}/${tarball_name}"
-  checksum_file="${tarball}.sha256"
-  if [[ ! -f "${tarball}" || ! -f "${checksum_file}" ]]; then
-    echo "ERROR: downloaded artifact is missing ${tarball_name} or checksum" >&2
-    find "${download_dir}" -maxdepth 2 -type f -print >&2 || true
-    rm -rf "${tmp_dir}"
-    return 1
-  fi
-
-  expected="$(awk '{print $1; exit}' "${checksum_file}")"
-  actual="$(sha256sum "${tarball}" | awk '{print $1}')"
-  if [[ -z "${expected}" || "${expected}" != "${actual}" ]]; then
-    echo "ERROR: checksum mismatch for ${tarball_name}" >&2
-    echo "       expected: ${expected:-<empty>}" >&2
-    echo "       actual  : ${actual}" >&2
-    rm -rf "${tmp_dir}"
-    return 1
-  fi
-
-  rm -rf "${SCRIPT_DIR}/artifacts/${HOST_MULTIARCH}"
-  mkdir -p "${SCRIPT_DIR}/artifacts"
-  tar -xzf "${tarball}" -C "${SCRIPT_DIR}/artifacts"
-  rm -rf "${tmp_dir}"
 
   if ! artifact_available; then
-    echo "ERROR: extracted PCIe host artifact is incomplete under artifacts/${HOST_MULTIARCH}" >&2
+    echo "ERROR: installed PCIe host artifact is incomplete under artifacts/${HOST_MULTIARCH}" >&2
     echo "       expected ${PLUGIN_SOURCE}" >&2
     echo "       expected ${HEADER_SOURCE}" >&2
     return 1
   fi
 
-  ARTIFACT_RESOLVED_REF="${ref}:${resolved_spec}"
+  ARTIFACT_RESOLVED_REF="${ref}:${spec}"
 }
 
 ensure_artifact_downloaded() {
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "ERROR: curl is required to download PCIe host artifacts." >&2
-    echo "       Install curl before running this build." >&2
-    exit 1
-  fi
-  if ! command -v sha256sum >/dev/null 2>&1; then
-    echo "ERROR: sha256sum is required to verify PCIe host artifacts." >&2
-    exit 1
-  fi
-  if ! command -v tar >/dev/null 2>&1; then
-    echo "ERROR: tar is required to extract PCIe host artifacts." >&2
+  if ! command -v sima-cli >/dev/null 2>&1; then
+    echo "ERROR: sima-cli is required to install PCIe host artifacts." >&2
+    echo "       Install sima-cli before running this build." >&2
     exit 1
   fi
 
@@ -391,7 +342,7 @@ ensure_artifact_downloaded() {
   fi
 
   local requested_ref="${ARTIFACT_REQUESTED_REF}"
-  if download_artifact_from_vulcan_ref "${requested_ref}"; then
+  if install_artifact_from_vulcan_ref "${requested_ref}"; then
     echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
     return 0
   fi
@@ -400,17 +351,19 @@ ensure_artifact_downloaded() {
         "${ARTIFACT_SNAP_TAG_POLICY}" != "ON" &&
         "${requested_ref}" != "develop:latest" ]]; then
     echo "No PCIe host artifact found for '${requested_ref}'; retrying develop:latest." >&2
-    if download_artifact_from_vulcan_ref "develop:latest"; then
+    if install_artifact_from_vulcan_ref "develop:latest"; then
       echo "Using PCIe host artifact ${ARTIFACT_RESOLVED_REF}."
       return 0
     fi
   fi
 
-  echo "ERROR: failed to download PCIe host artifact for ${requested_ref}" >&2
+  echo "ERROR: failed to install PCIe host artifact for ${requested_ref}" >&2
   exit 1
 }
 
 HOST_MULTIARCH="$(detect_multiarch)"
+DEB_ARCH="$(deb_arch_from_multiarch "${HOST_MULTIARCH}")"
+PACKAGE_VERSION="$(package_version)"
 case "${BUILD_DIR}" in
   /*)
     BUILD_DIR_ABS="${BUILD_DIR}"
@@ -437,6 +390,8 @@ echo "Clean build     : ${CLEAN_BUILD}"
 echo "Build dir       : ${BUILD_DIR}"
 echo "Build dir abs   : ${BUILD_DIR_ABS}"
 echo "Host multiarch  : ${HOST_MULTIARCH}"
+echo "Debian arch     : ${DEB_ARCH}"
+echo "Package version : ${PACKAGE_VERSION}"
 echo "Artifact repo   : ${ARTIFACT_REPOSITORY}"
 echo "Vulcan env      : ${VULCAN_ENV}"
 echo "Plugin source   : ${PLUGIN_SOURCE}"
@@ -478,6 +433,7 @@ cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
+  -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_EXAMPLES="${BUILD_EXAMPLES}" \
   -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
   -DSIMAPCIE_NEATPCIEHOST_INCLUDE_DIR="${INCLUDE_STAGE_DIR}"
@@ -496,9 +452,26 @@ if [[ -f "${INSTALLER_SOURCE}" ]]; then
   chmod 0755 "${INSTALLER_STAGE}"
 fi
 
+if [[ "${BUILD_TESTS}" == "ON" ]]; then
+  echo
+  echo "Building PCIe host extras archive..."
+  extras_name="sima-pcie-host-${PACKAGE_VERSION}-Linux-${DEB_ARCH}-extras"
+  extras_dir="${PACKAGE_DIR}/${extras_name}"
+  extras_tar="${PACKAGE_DIR}/${extras_name}.tar.gz"
+  rm -rf "${extras_dir}" "${extras_tar}" "${extras_tar}.sha256"
+  mkdir -p "${PACKAGE_DIR}"
+  cmake --install "${BUILD_DIR_ABS}" \
+    --component PcieHostExtras \
+    --prefix "${extras_dir}"
+  tar -C "${extras_dir}" -czf "${extras_tar}" .
+  sha256sum "${extras_tar}" > "${extras_tar}.sha256"
+  rm -rf "${extras_dir}"
+fi
+
 echo
 echo "========================================"
 echo " Build completed successfully"
 echo "========================================"
 ls -lh "${PACKAGE_DIR}"/*.deb 2>/dev/null || true
+ls -lh "${PACKAGE_DIR}"/*-extras.tar.gz "${PACKAGE_DIR}"/*-extras.tar.gz.sha256 2>/dev/null || true
 ls -lh "${INSTALLER_STAGE}" 2>/dev/null || true

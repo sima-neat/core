@@ -31,6 +31,9 @@ Environment:
   SIMAPCIE_SKIP_SETUP=1         Same as --skip-setup
   SIMAPCIE_SETUP_ARGS="..."     Same as --setup-args
   SIMAPCIE_SETUP_BEST_EFFORT=1  Same as --setup-best-effort
+  SUDO_PASSWORD=<password>       sudo password for non-interactive installs
+  DEVKIT_PASSWORD=<password>     fallback sudo password for CI/devkit hosts
+                                  If neither is set, sudo may prompt interactively.
 EOF
 }
 
@@ -156,6 +159,36 @@ absolute_path() {
   printf '%s/%s\n' "${dir}" "${base}"
 }
 
+run_sudo() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+    return
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "ERROR: root privileges or sudo are required to install sima-pcie-host packages." >&2
+    return 1
+  fi
+
+  if sudo -n true >/dev/null 2>&1; then
+    sudo -n "$@"
+    return
+  fi
+
+  local pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+  if [[ -z "${pw}" ]]; then
+    sudo "$@"
+    return
+  fi
+
+  if ! printf '%s\n' "${pw}" | sudo -S -p '' -v >/dev/null 2>&1; then
+    echo "ERROR: sudo authentication failed." >&2
+    return 1
+  fi
+
+  printf '%s\n' "${pw}" | sudo -S -p '' "$@"
+}
+
 deb_arch="$(detect_deb_arch)"
 case "${deb_arch}" in
   amd64|arm64)
@@ -203,25 +236,17 @@ if [[ -n "${DEV_DEB_PATH}" ]]; then
   DEV_DEB_PATH="$(absolute_path "${DEV_DEB_PATH}")"
 fi
 
-if [[ "$(id -u)" -eq 0 ]]; then
-  apt_cmd=(apt)
-elif command -v sudo >/dev/null 2>&1; then
-  apt_cmd=(sudo apt)
-else
-  echo "ERROR: root privileges or sudo are required to install sima-pcie-host packages." >&2
-  exit 1
-fi
 apt_install_opts=(install -y --reinstall --allow-downgrades)
 
 echo "Installing ${DEB_PATH}"
 if [[ "${RUNTIME_ONLY}" != "ON" && -n "${DEV_DEB_PATH}" ]]; then
   echo "Installing ${DEV_DEB_PATH}"
-  "${apt_cmd[@]}" "${apt_install_opts[@]}" "${DEB_PATH}" "${DEV_DEB_PATH}"
+  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}" "${DEV_DEB_PATH}"
 else
   if [[ "${RUNTIME_ONLY}" != "ON" ]]; then
     echo "WARN: no sima-pcie-host-dev DEB found; installing runtime package only" >&2
   fi
-  "${apt_cmd[@]}" "${apt_install_opts[@]}" "${DEB_PATH}"
+  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}"
 fi
 
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then

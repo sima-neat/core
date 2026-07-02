@@ -55,13 +55,12 @@ constexpr const char* kSinkReadyMessage = "neat-pcie-sink-started";
 
 volatile std::sig_atomic_t g_stop_requested = 0;
 
-enum class Mode { Tensor, Accelerator, Image, BoxDecode };
+enum class Mode { Tensor, Image, BoxDecode };
 
 struct CliOptions {
   std::filesystem::path model;
   std::filesystem::path model_options;
   int queue = -1;
-  bool accelerator = false;
   bool print_gst = false;
 };
 
@@ -114,16 +113,13 @@ private:
 
 std::string usage() {
   return "usage: pcie-pipeline-builder --model <model.tar.gz> "
-         "--queue <0..5> [--accelerator] "
-         "[--model-options <options.json>] [--print-gst]";
+         "--queue <0..5> [--model-options <options.json>] [--print-gst]";
 }
 
 std::string mode_name(const Mode mode) {
   switch (mode) {
   case Mode::Tensor:
     return "tensor";
-  case Mode::Accelerator:
-    return "accelerator";
   case Mode::Image:
     return "image";
   case Mode::BoxDecode:
@@ -157,7 +153,6 @@ CliOptions parse_cli(int argc, char** argv) {
   bool have_model = false;
   bool have_model_options = false;
   bool have_queue = false;
-  bool have_accelerator = false;
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i] ? argv[i] : "";
@@ -184,11 +179,6 @@ CliOptions parse_cli(int argc, char** argv) {
       if (!parse_int(value, &opt.queue))
         throw PciePipelineError("usage", "invalid --queue '" + value + "'");
       have_queue = true;
-    } else if (arg == "--accelerator") {
-      if (have_accelerator)
-        throw PciePipelineError("usage", "duplicate --accelerator");
-      opt.accelerator = true;
-      have_accelerator = true;
     } else if (arg == "--print-gst") {
       opt.print_gst = true;
     } else {
@@ -204,8 +194,6 @@ CliOptions parse_cli(int argc, char** argv) {
     throw PciePipelineError("usage", "--model must not be empty");
   if (have_model_options && opt.model_options.empty())
     throw PciePipelineError("usage", "--model-options must not be empty");
-  if (opt.accelerator && have_model_options)
-    throw PciePipelineError("usage", "--accelerator cannot be combined with --model-options");
   return opt;
 }
 
@@ -514,15 +502,12 @@ Mode apply_model_options_json(const nlohmann::json& root, Model::Options* opt) {
 
 void apply_route_owned_options(const Mode mode, Model::Options* opt) {
   opt->upstream_name = "n0_pciesrc";
-  opt->preprocess.kind =
-      (mode == Mode::Tensor || mode == Mode::Accelerator) ? InputKind::Tensor : InputKind::Image;
+  opt->preprocess.kind = (mode == Mode::Tensor) ? InputKind::Tensor : InputKind::Image;
 }
 
 ResolvedOptions resolve_options(const CliOptions& opt) {
   ResolvedOptions resolved;
-  if (opt.accelerator) {
-    resolved.mode = Mode::Accelerator;
-  } else if (opt.model_options.empty()) {
+  if (opt.model_options.empty()) {
     resolved.mode = Mode::Tensor;
   } else {
     const nlohmann::json root = read_model_options_file(opt.model_options);
@@ -743,11 +728,7 @@ Graph compose_graph(const CliOptions& opt, const ResolvedOptions& resolved,
   src_options.queue = opt.queue;
   graph.add(simaai::neat::nodes::PCIeSrc(src_options));
 
-  if (resolved.mode == Mode::Accelerator) {
-    graph.add(model->inference());
-  } else {
-    graph.add(model->graph());
-  }
+  graph.add(model->graph());
 
   PCIeSinkOptions sink_options;
   sink_options.queue = opt.queue;

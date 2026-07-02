@@ -28,7 +28,7 @@ struct PcieModelFacts {
   bool has_boxdecode = false;
 };
 
-PcieModelFacts read_model_facts(const std::string& model_path, bool accelerator);
+PcieModelFacts read_model_facts(const std::string& model_path);
 ModelInfo to_public_model_info(const PcieModelFacts& facts);
 
 } // namespace simaai::neat::pcie::internal

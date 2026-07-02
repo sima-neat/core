@@ -163,12 +163,10 @@ public:
   explicit SimaPCIeHost(ConnectionOptions connection = {});
 
   ModelInfo load_metadata(const std::string& model_path,
-                          const ModelOptions& options = {},
-                          bool accelerator = false);
+                          const ModelOptions& options = {});
   ModelInfo init_pipeline(const std::string& model_path,
                           const ModelOptions& options = {},
-                          bool accelerator = false,
-                          int readiness_timeout_ms = 20000);
+                          int readiness_timeout_ms = 180000);
 
   void stop();
   Status status() const;
@@ -183,12 +181,10 @@ public:
 
 `load_metadata(...)` parses the local model archive, validates representable
 options, updates cached model information, and does not touch the card.
-`accelerator=true` makes metadata use the direct MLA boundary contract. This is
-useful when the application wants to push accelerator-ready `BF16`/`INT8`
-tensors directly. With the default tensor route, metadata uses the logical
-full-model tensor contract, commonly `FP32` when quant/cast and dequant/postcast
-stages are present. `init_pipeline(...)` does the same metadata resolution plus
-model upload, card runtime startup, readiness wait, and local host channel setup.
+Metadata uses the logical full-model tensor contract, commonly `FP32` when
+quant/cast and dequant/postcast stages are present. `init_pipeline(...)` does
+the same metadata resolution plus model upload, card runtime startup, readiness
+wait, and local host channel setup.
 
 `run(...)` is the simplest synchronous API and is equivalent to `push(...)`
 followed by `pull()`. For pipelined use, call `push(...)` and `pull()` directly.
@@ -217,19 +213,6 @@ pcie::ModelInfo model_info = host.init_pipeline("model.tar.gz");
 pcie::Tensor input = make_input_tensor_somehow(model_info.inputs.front());
 pcie::TensorList output = host.run(input);
 host.stop();
-```
-
-### Accelerator Tensor Example
-
-```cpp
-namespace pcie = simaai::neat::pcie;
-
-pcie::SimaPCIeHost host;
-const bool accelerator = true;
-pcie::ModelInfo model_info = host.load_metadata("model.tar.gz", {}, accelerator);
-
-// model_info now describes the direct MLA boundary contract, for example BF16 or INT8.
-host.init_pipeline("model.tar.gz", {}, accelerator);
 ```
 
 ### Minimal Image Example

@@ -234,10 +234,9 @@ public:
   SimaPCIeHost(const SimaPCIeHost&) = delete;
   SimaPCIeHost& operator=(const SimaPCIeHost&) = delete;
 
-  ModelInfo load_metadata(const std::string& model_path, const ModelOptions& options = {},
-                          bool accelerator = false);
+  ModelInfo load_metadata(const std::string& model_path, const ModelOptions& options = {});
   ModelInfo init_pipeline(const std::string& model_path, const ModelOptions& options = {},
-                          bool accelerator = false, int readiness_timeout_ms = 20000);
+                          int readiness_timeout_ms = 180000);
   void stop();
 
   Status status() const;

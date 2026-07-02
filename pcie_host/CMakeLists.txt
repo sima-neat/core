@@ -27,6 +27,7 @@ include(CMakePackageConfigHelpers)
 
 option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
 option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host example apps" OFF)
+option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware smoke tests" OFF)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
 set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
@@ -37,6 +38,9 @@ if (DEFINED COPROC_BUILD_TESTS)
 endif()
 if (DEFINED COPROC_BUILD_EXAMPLES)
   set(SIMAPCIE_BUILD_EXAMPLES "${COPROC_BUILD_EXAMPLES}")
+endif()
+if (DEFINED COPROC_BUILD_HARDWARE_TESTS)
+  set(SIMAPCIE_BUILD_HARDWARE_TESTS "${COPROC_BUILD_HARDWARE_TESTS}")
 endif()
 
 get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
@@ -223,6 +227,10 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
+endif()
+
+if (SIMAPCIE_BUILD_HARDWARE_TESTS)
+  add_subdirectory(tests/hardware)
 endif()
 
 set(CPACK_GENERATOR "DEB")
