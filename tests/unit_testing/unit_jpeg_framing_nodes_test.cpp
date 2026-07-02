@@ -1,3 +1,4 @@
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/JpegParse.h"
 #include "nodes/common/MultipartJpegDemux.h"
 #include "nodes/io/HttpSource.h"
@@ -16,6 +17,7 @@ int main() {
     http_opt.is_live = true;
     http_opt.do_timestamp = true;
     http_opt.user_agent = "NeatTest";
+    http_opt.ssl_strict = false;
     auto http = simaai::neat::nodes::HttpSource(http_opt);
     require_contains(http->backend_fragment(9), "souphttpsrc name=n9_souphttpsrc",
                      "HttpSource name mismatch");
@@ -28,6 +30,8 @@ int main() {
                      "HttpSource timestamp flag mismatch");
     require_contains(http->backend_fragment(9), "user-agent=\"NeatTest\"",
                      "HttpSource user-agent mismatch");
+    require_contains(http->backend_fragment(9), "ssl-strict=false",
+                     "HttpSource ssl-strict mismatch");
     require(http->element_names(9).size() == 1, "HttpSource element_names size mismatch");
     require(http->element_names(9).front() == "n9_souphttpsrc", "HttpSource element name mismatch");
 
@@ -87,6 +91,23 @@ int main() {
             "JpegParse should preserve known framerate");
     require(jpeg_parse_spec.memory.empty() && jpeg_parse_spec.byte_size == 0,
             "JpegParse should not preserve raw buffer fields");
+
+    simaai::neat::EncodedCapsFixupOptions fixup_opt;
+    fixup_opt.media_type = "image/jpeg";
+    fixup_opt.fallback_fps = 30;
+    auto fixup = simaai::neat::nodes::EncodedCapsFixup(fixup_opt);
+    require(fixup->kind() == "EncodedCapsFixup", "EncodedCapsFixup kind mismatch");
+    require_contains(fixup->backend_fragment(12), "identity name=n12_encoded_capsfix",
+                     "EncodedCapsFixup fragment mismatch");
+    require(fixup->element_names(12).size() == 1, "EncodedCapsFixup element_names size mismatch");
+    require(fixup->element_names(12).front() == "n12_encoded_capsfix",
+            "EncodedCapsFixup element name mismatch");
+    const auto* raw_fixup = dynamic_cast<simaai::neat::EncodedCapsFixup*>(fixup.get());
+    require(raw_fixup != nullptr, "EncodedCapsFixup dynamic_cast failed");
+    require(raw_fixup->options().media_type == "image/jpeg",
+            "EncodedCapsFixup media_type option mismatch");
+    require(raw_fixup->options().fallback_fps == 30,
+            "EncodedCapsFixup fallback_fps option mismatch");
 
     std::cout << "[OK] unit_jpeg_framing_nodes_test passed\n";
     return 0;

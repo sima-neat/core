@@ -1,6 +1,7 @@
 #include "nodes/groups/HttpMjpegDecodedInput.h"
 
 #include "nodes/common/Caps.h"
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/JpegParse.h"
 #include "nodes/common/MultipartJpegDemux.h"
 #include "nodes/common/Queue.h"
@@ -40,6 +41,7 @@ simaai::neat::Graph HttpMjpegDecodedInput(const HttpMjpegDecodedInputOptions& op
   source.is_live = opt.is_live;
   source.do_timestamp = opt.do_timestamp;
   source.user_agent = opt.user_agent;
+  source.ssl_strict = opt.ssl_strict;
   nodes.push_back(nodes::HttpSource(std::move(source)));
 
   if (insert_queue)
@@ -54,6 +56,10 @@ simaai::neat::Graph HttpMjpegDecodedInput(const HttpMjpegDecodedInputOptions& op
 
   if (insert_queue)
     nodes.push_back(nodes::Queue());
+
+  if (opt.dec_fps > 0) {
+    nodes.push_back(nodes::EncodedCapsFixup({"image/jpeg", opt.dec_fps}));
+  }
 
   simaai::neat::SimaDecodeOptions dec;
   dec.type = simaai::neat::SimaDecodeType::MJPEG;

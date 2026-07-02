@@ -2,6 +2,7 @@
 #include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/GroupOutputSpec.h"
 
+#include "nodes/common/EncodedCapsFixup.h"
 #include "gst/GstHelpers.h"
 #include "nodes/common/JpegParse.h"
 #include "nodes/common/Queue.h"
@@ -18,6 +19,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -76,12 +78,13 @@ void require_throws_with(const std::function<void()>& fn, const std::string& nee
   throw std::runtime_error(label + ": expected exception");
 }
 
-bool decoder_backend_available() {
+std::optional<std::string> describe_backend_if_available(const Graph& graph,
+                                                         const std::string& label) {
   try {
-    return simaai::neat::element_exists("neatdecoder");
+    return graph.describe_backend(false);
   } catch (const std::exception& e) {
-    std::cout << "[INFO] decoder backend checks skipped: " << e.what() << "\n";
-    return false;
+    std::cout << "[INFO] " << label << ": backend checks skipped: " << e.what() << "\n";
+    return std::nullopt;
   }
 }
 
@@ -113,11 +116,16 @@ void check_rtp_jpeg_depacketize_node() {
   auto node = simaai::neat::nodes::RTPJpegDepacketize(26);
   const std::string fragment = node->backend_fragment(7);
   require_contains(fragment, "application/x-rtp", "RTP JPEG caps missing");
-  require_contains(fragment, "encoding-name=JPEG", "RTP JPEG encoding-name missing");
   require_contains(fragment, "clock-rate=90000", "RTP JPEG clock-rate missing");
   require_contains(fragment, "payload=26", "RTP JPEG payload type missing");
+  require_not_contains(fragment, "encoding-name=JPEG",
+                       "static RTP JPEG payload 26 should not require encoding-name");
   require_contains(fragment, "rtpjpegdepay", "RTP JPEG depay element missing");
   require(node->element_names(7).size() == 2U, "RTPJpegDepacketize element_names size mismatch");
+
+  auto dynamic_node = simaai::neat::nodes::RTPJpegDepacketize(96);
+  require_contains(dynamic_node->backend_fragment(8), "encoding-name=JPEG",
+                   "dynamic RTP JPEG payload should require encoding-name");
 
   const auto* provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(node.get());
   require(provider != nullptr, "RTPJpegDepacketize should provide output spec");
@@ -142,14 +150,16 @@ void check_h264_encoded_group() {
   manual.push_back(simaai::neat::nodes::Queue());
   compare_graph_fragments(group, graph_from_nodes(std::move(manual)), "H264 encoded topology");
 
-  const std::string backend = group.describe_backend(false);
-  require_contains(backend, "rtspsrc", "H264 encoded backend should contain rtspsrc");
-  require_contains(backend, "drop-on-latency=true",
-                   "H264 encoded backend should forward drop-on-latency");
-  require_contains(backend, "buffer-mode=none", "H264 encoded backend should forward buffer-mode");
-  require_contains(backend, "rtph264depay", "H264 encoded backend should contain rtph264depay");
-  require_contains(backend, "h264parse", "H264 encoded backend should contain h264parse");
-  require_contains(backend, "payload=97", "H264 encoded backend should use H264 payload type");
+  if (const auto backend = describe_backend_if_available(group, "H264 encoded backend")) {
+    require_contains(*backend, "rtspsrc", "H264 encoded backend should contain rtspsrc");
+    require_contains(*backend, "drop-on-latency=true",
+                     "H264 encoded backend should forward drop-on-latency");
+    require_contains(*backend, "buffer-mode=none",
+                     "H264 encoded backend should forward buffer-mode");
+    require_contains(*backend, "rtph264depay", "H264 encoded backend should contain rtph264depay");
+    require_contains(*backend, "h264parse", "H264 encoded backend should contain h264parse");
+    require_contains(*backend, "payload=97", "H264 encoded backend should use H264 payload type");
+  }
 
   const auto spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(opt);
   require(spec.payload_type == simaai::neat::PayloadType::Encoded,
@@ -170,8 +180,10 @@ void check_h264_auto_caps_fixup() {
   opt.fallback_h264_fps = 30;
   const Graph group = simaai::neat::nodes::groups::RtspEncodedInput(opt);
   require_contains(group.describe(), "H264CapsFixup", "H264 auto caps should add H264CapsFixup");
-  require_contains(group.describe_backend(false), "h264_capsfix",
-                   "H264 auto caps backend should include caps fixup identity");
+  if (const auto backend = describe_backend_if_available(group, "H264 auto caps backend")) {
+    require_contains(*backend, "h264_capsfix",
+                     "H264 auto caps backend should include caps fixup identity");
+  }
 }
 
 void check_mjpeg_encoded_group() {
@@ -187,13 +199,15 @@ void check_mjpeg_encoded_group() {
   manual.push_back(simaai::neat::nodes::Queue());
   compare_graph_fragments(group, graph_from_nodes(std::move(manual)), "MJPEG encoded topology");
 
-  const std::string backend = group.describe_backend(false);
-  require_contains(backend, "rtpjpegdepay", "MJPEG encoded backend should contain rtpjpegdepay");
-  require_contains(backend, "jpegparse", "MJPEG encoded backend should contain jpegparse");
-  require_contains(backend, "encoding-name=JPEG",
-                   "MJPEG encoded backend should request RTP JPEG caps");
-  require_contains(backend, "payload=26", "MJPEG encoded backend should use MJPEG payload type");
-  require_not_contains(backend, "h264parse", "MJPEG encoded backend should not contain h264parse");
+  if (const auto backend = describe_backend_if_available(group, "MJPEG encoded backend")) {
+    require_contains(*backend, "rtpjpegdepay", "MJPEG encoded backend should contain rtpjpegdepay");
+    require_contains(*backend, "jpegparse", "MJPEG encoded backend should contain jpegparse");
+    require_not_contains(*backend, "encoding-name=JPEG",
+                         "static RTP JPEG payload 26 should not require encoding-name");
+    require_contains(*backend, "payload=26", "MJPEG encoded backend should use MJPEG payload type");
+    require_not_contains(*backend, "h264parse",
+                         "MJPEG encoded backend should not contain h264parse");
+  }
 
   const auto spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(opt);
   require(spec.payload_type == simaai::neat::PayloadType::Encoded,
@@ -208,8 +222,10 @@ void check_no_queue_mode() {
   const Graph group = simaai::neat::nodes::groups::RtspEncodedInput(opt);
   require(count_substrings(group.describe(), "Queue") == 0,
           "insert_queue=false encoded topology should not include queues");
-  require_not_contains(group.describe_backend(false), "queue name=",
-                       "insert_queue=false encoded backend should not contain queues");
+  if (const auto backend = describe_backend_if_available(group, "no-queue encoded backend")) {
+    require_not_contains(
+        *backend, "queue name=", "insert_queue=false encoded backend should not contain queues");
+  }
 }
 
 void check_decoded_h264_group() {
@@ -225,13 +241,12 @@ void check_decoded_h264_group() {
 
   const Graph group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
   require_contains(group.describe(), "SimaDecode", "H264 decoded graph should contain SimaDecode");
-  if (decoder_backend_available()) {
-    const std::string backend = group.describe_backend(false);
-    require_contains(backend, "rtph264depay", "H264 decoded backend should contain H264 depay");
-    require_contains(backend, "neatdecoder", "H264 decoded backend should contain neatdecoder");
-    require_contains(backend, "dec-type=h264", "H264 decoded backend should use SimaDecode(H264)");
-    require_contains(backend, "num-buffers=6", "H264 decoded backend should forward num_buffers");
-    require_not_contains(backend, "rtpjpegdepay",
+  if (const auto backend = describe_backend_if_available(group, "H264 decoded backend")) {
+    require_contains(*backend, "rtph264depay", "H264 decoded backend should contain H264 depay");
+    require_contains(*backend, "neatdecoder", "H264 decoded backend should contain neatdecoder");
+    require_contains(*backend, "dec-type=h264", "H264 decoded backend should use SimaDecode(H264)");
+    require_contains(*backend, "num-buffers=6", "H264 decoded backend should forward num_buffers");
+    require_not_contains(*backend, "rtpjpegdepay",
                          "H264 decoded backend should not contain RTP JPEG");
   }
 
@@ -255,16 +270,19 @@ void check_decoded_mjpeg_group() {
 
   const Graph group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
   require_contains(group.describe(), "SimaDecode", "MJPEG decoded graph should contain SimaDecode");
-  if (decoder_backend_available()) {
-    const std::string backend = group.describe_backend(false);
-    require_contains(backend, "rtpjpegdepay",
+  require_contains(group.describe(), "EncodedCapsFixup",
+                   "MJPEG decoded graph with dec_fps should fix encoded caps");
+  if (const auto backend = describe_backend_if_available(group, "MJPEG decoded backend")) {
+    require_contains(*backend, "rtpjpegdepay",
                      "MJPEG decoded backend should contain RTP JPEG depay");
-    require_contains(backend, "jpegparse", "MJPEG decoded backend should contain jpegparse");
-    require_contains(backend, "neatdecoder", "MJPEG decoded backend should contain neatdecoder");
-    require_contains(backend, "dec-type=mjpeg",
+    require_contains(*backend, "jpegparse", "MJPEG decoded backend should contain jpegparse");
+    require_contains(*backend, "neatdecoder", "MJPEG decoded backend should contain neatdecoder");
+    require_contains(*backend, "dec-type=mjpeg",
                      "MJPEG decoded backend should use SimaDecode(MJPEG)");
-    require_contains(backend, "dec-width=800", "MJPEG decoded backend should forward dec_width");
-    require_not_contains(backend, "rtph264depay",
+    require_contains(*backend, "dec-width=800", "MJPEG decoded backend should forward dec_width");
+    require_contains(*backend, "encoded_capsfix",
+                     "MJPEG decoded backend should include encoded caps fixup");
+    require_not_contains(*backend, "rtph264depay",
                          "MJPEG decoded backend should not contain RTP H264 depay");
   }
 
@@ -274,6 +292,11 @@ void check_decoded_mjpeg_group() {
   require(spec.width == 800 && spec.height == 600, "MJPEG decoded group shape mismatch");
   require(spec.fps_num == 25 && spec.memory == "SimaAI",
           "MJPEG decoded group should advertise decoder-native SimaAI output");
+
+  opt.dec_fps = -1;
+  const Graph no_fps_group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  require_not_contains(no_fps_group.describe(), "EncodedCapsFixup",
+                       "MJPEG decoded graph without dec_fps should not insert caps fixup");
 }
 
 void check_invalid_codec_errors() {

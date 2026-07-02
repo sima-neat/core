@@ -80,7 +80,7 @@ struct RtspDecodedInputOptions {
   int mjpeg_payload_type = 26;  ///< RTP payload type number for the MJPEG/RTP JPEG stream.
   int dec_width = -1;           ///< Decoded frame width override; `-1` = upstream-defined.
   int dec_height = -1;          ///< Decoded frame height override; `-1` = upstream-defined.
-  int dec_fps = -1;             ///< Decoded frame rate override; `-1` = upstream-defined.
+  int dec_fps = -1;     ///< Decoded frame rate override; for MJPEG also fixes missing input caps.
   int num_buffers = -1; ///< Decoder output buffer pool size override; `-1` = element default.
 };
 

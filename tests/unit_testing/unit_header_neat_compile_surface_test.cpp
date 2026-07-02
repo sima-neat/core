@@ -51,6 +51,7 @@ RUN_TEST(
       simaai::neat::HttpSourceOptions http_opt;
       http_opt.location = "http://example.local/mjpeg";
       auto http = simaai::neat::nodes::HttpSource(http_opt);
+      auto encoded_caps_fixup = simaai::neat::nodes::EncodedCapsFixup({"image/jpeg", 30});
       auto multipart_demux = simaai::neat::nodes::MultipartJpegDemux();
       auto jpeg_parse = simaai::neat::nodes::JpegParse();
       auto rtp_jpeg_depay = simaai::neat::nodes::RTPJpegDepacketize();
@@ -76,6 +77,12 @@ RUN_TEST(
       simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions http_mjpeg_opt;
       http_mjpeg_opt.url = "http://example.local/mjpeg";
       auto http_mjpeg_group = simaai::neat::nodes::groups::HttpMjpegDecodedInput(http_mjpeg_opt);
+      simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions legacy_http_mjpeg_opt{
+          "http://example.local/mjpeg", 15, 3, true, true, "Neat", "frame"};
+      require(legacy_http_mjpeg_opt.multipart_boundary == "frame",
+              "HttpMjpegDecodedInputOptions aggregate field order changed");
+      require(legacy_http_mjpeg_opt.ssl_strict,
+              "HttpMjpegDecodedInputOptions ssl_strict should default to true");
       simaai::neat::nodes::groups::ImageInputGroupOptions image_opt;
       image_opt.path = "test.jpg";
       auto group = simaai::neat::nodes::groups::ImageInputGroup(image_opt);
@@ -95,6 +102,7 @@ RUN_TEST(
       (void)in;
       (void)out;
       (void)http;
+      (void)encoded_caps_fixup;
       (void)multipart_demux;
       (void)jpeg_parse;
       (void)rtp_jpeg_depay;
@@ -104,5 +112,6 @@ RUN_TEST(
       (void)rtsp_decoded_group;
       (void)legacy_rtsp_decoded_opt;
       (void)http_mjpeg_group;
+      (void)legacy_http_mjpeg_opt;
       (void)group;
     }));

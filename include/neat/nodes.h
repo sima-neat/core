@@ -3,8 +3,8 @@
  * @brief Umbrella include for SiMa NEAT's atomic Node types.
  *
  * Pulls in every built-in Node the framework ships, organized by subdirectory:
- * common GStreamer-backed nodes (FileInput, ImageDecode/Freeze, JpegDecode, JpegParse,
- * MultipartJpegDemux, Output, Queue, VideoConvert/Rate/Scale, VideoTrackSelect, Caps),
+ * common GStreamer-backed nodes (EncodedCapsFixup, FileInput, ImageDecode/Freeze, JpegDecode,
+ * JpegParse, MultipartJpegDemux, Output, Queue, VideoConvert/Rate/Scale, VideoTrackSelect, Caps),
  * I/O nodes (HttpSource, Input, MetadataSender, RTSPInput, StillImageInput, UdpOutput), RTP helpers
  * (H264CapsFixup, H264Depacketize, RTPJpegDepacketize), and the SiMa-specific MLA-bearing nodes
  * (Cast, CastTess, Dequant, Detess, DetessCast, DetessDequant, H264DecodeSima,
@@ -17,6 +17,7 @@
 #pragma once
 
 #include "nodes/common/Caps.h"
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/FileInput.h"
 #include "nodes/common/ImageDecode.h"
 #include "nodes/common/ImageFreeze.h"

@@ -48,7 +48,7 @@ struct HttpMjpegDecodedInputOptions {
       decoder_next_element; ///< Optional next-element selector ("CVU" or "APU") for `neatdecoder`.
   int dec_width = -1;       ///< Decoded frame width override; `-1` = upstream-defined.
   int dec_height = -1;      ///< Decoded frame height override; `-1` = upstream-defined.
-  int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
+  int dec_fps = -1;         ///< Decoded frame rate override; also fixes missing input caps.
   int num_buffers = -1;     ///< Decoder output buffer pool size override; `-1` = element default.
 
   bool use_videoconvert = false; ///< Insert `videoconvert` after decode for format adaptation.
@@ -67,6 +67,8 @@ struct HttpMjpegDecodedInputOptions {
 
   /// Optional raw GStreamer fragment inserted into the group (advanced use).
   std::string extra_fragment;
+
+  bool ssl_strict = true; ///< If false, disable strict TLS certificate validation.
 };
 
 /**

@@ -21,7 +21,8 @@ std::string HttpSource::backend_fragment(int node_index) const {
   ss << "souphttpsrc name=" << el << " location=\"" << opt_.location << "\""
      << " timeout=" << opt_.timeout_seconds << " retries=" << opt_.retries
      << " is-live=" << (opt_.is_live ? "true" : "false")
-     << " do-timestamp=" << (opt_.do_timestamp ? "true" : "false");
+     << " do-timestamp=" << (opt_.do_timestamp ? "true" : "false")
+     << " ssl-strict=" << (opt_.ssl_strict ? "true" : "false");
   if (!opt_.user_agent.empty()) {
     ss << " user-agent=\"" << opt_.user_agent << "\"";
   }

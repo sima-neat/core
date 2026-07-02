@@ -147,6 +147,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   session_build_attach_debug_element_buffer_probes(pipeline.get());
   session_build_attach_boxdecode_debug_probes(pipeline.get());
   session_build_attach_h264_caps_fixups(pipeline.get(), build_nodes, name_transform);
+  session_build_attach_encoded_caps_fixups(pipeline.get(), build_nodes, name_transform);
   session_build_attach_rtsp_debug(pipeline.get(), build_nodes, name_transform);
 
   // --- 6. resolve and configure sink ------------------------------------------------

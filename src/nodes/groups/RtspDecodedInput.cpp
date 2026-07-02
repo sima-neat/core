@@ -1,6 +1,7 @@
 #include "nodes/groups/RtspDecodedInput.h"
 
 #include "nodes/common/Caps.h"
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/common/VideoScale.h"
 #include "nodes/sima/SimaDecode.h"
@@ -83,6 +84,9 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
 
   simaai::neat::Graph graph;
   graph.add(RtspEncodedInput(encoded_options_from_decoded(opt)));
+  if (opt.codec == RtspCodec::MJPEG && opt.dec_fps > 0) {
+    graph.add(nodes::EncodedCapsFixup({"image/jpeg", opt.dec_fps}));
+  }
   graph.add(nodes::SimaDecode(dec));
 
   if (opt.use_videoconvert)

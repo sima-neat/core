@@ -736,10 +736,12 @@ def test_jpeg_framing_nodes_are_exposed():
   assert http.retries == 3
   assert http.is_live is False
   assert http.do_timestamp is False
+  assert http.ssl_strict is True
   http.location = "http://example.local/mjpeg"
   http.is_live = True
   http.do_timestamp = True
   http.user_agent = "NeatTest"
+  http.ssl_strict = False
   _assert_not_type_error(lambda: pyneat.nodes.http_source(http))
 
   demux = pyneat.MultipartJpegDemuxOptions()
@@ -839,6 +841,7 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   assert opt.retries == 3
   assert opt.is_live is True
   assert opt.do_timestamp is True
+  assert opt.ssl_strict is True
   assert opt.multipart_boundary == ""
   assert opt.multipart_single_stream is False
   assert opt.insert_queue is True
@@ -855,6 +858,7 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   opt.timeout_seconds = 9
   opt.retries = -1
   opt.user_agent = "NeatTest"
+  opt.ssl_strict = False
   opt.multipart_boundary = "frame"
   opt.multipart_single_stream = True
   opt.decoder_name = "mjpeg_decoder"
@@ -871,6 +875,7 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
       raise
     pytest.skip("neatdecoder is not available in this environment")
   assert "souphttpsrc" in backend
+  assert "ssl-strict=false" in backend
   assert "multipartdemux" in backend
   assert "jpegparse" in backend
   assert "neatdecoder" in backend
