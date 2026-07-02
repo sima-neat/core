@@ -550,7 +550,13 @@ std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
 void HostPcieChannel::start_with_caps(const std::string& caps_string) {
   if (running_.load()) {
     if (caps_string != caps_) {
-      throw std::runtime_error("host PCIe channel already running with different caps");
+      GstCaps* caps = gst_caps_from_string(caps_string.c_str());
+      if (!caps) {
+        throw std::runtime_error("failed to parse caps: " + caps_string);
+      }
+      g_object_set(G_OBJECT(appsrc_), "caps", caps, nullptr);
+      gst_caps_unref(caps);
+      caps_ = caps_string;
     }
     return;
   }

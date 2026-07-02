@@ -18,18 +18,18 @@ Options:
 
 Inputs:
   SIMAPCIE_YOLOV8_MODEL       Existing YOLOv8 model tar.gz path
-  SIMAPCIE_YOLO26_MODEL       Existing YOLO26 model tar.gz path
   SIMAPCIE_TEST_IMAGE         Existing test image path
+  SIMAPCIE_BOXDECODE_IMAGE    Existing object-detection image path
   SIMAPCIE_YOLOV8_MODEL_URL   Direct URL fallback for YOLOv8 model
-  SIMAPCIE_YOLO26_MODEL_URL   Direct URL fallback for YOLO26 model
   SIMAPCIE_TEST_IMAGE_URL     Direct URL fallback for test image
+  SIMAPCIE_BOXDECODE_IMAGE_URL
+                              Direct URL fallback for object-detection image
   SIMAPCIE_YOLOV8_MODEL_NAME  modelzoo name (default: yolo_v8s)
-  SIMAPCIE_YOLO26_MODEL_NAME  optional modelzoo name for YOLO26
 
 Outputs:
   SIMAPCIE_YOLOV8_MODEL=<path>
-  SIMAPCIE_YOLO26_MODEL=<path>
   SIMAPCIE_TEST_IMAGE=<path>
+  SIMAPCIE_BOXDECODE_IMAGE=<path>
 EOF
 }
 
@@ -152,7 +152,6 @@ resolve_yolov8_model() {
     return
   fi
   if first_existing_file \
-      "${WORKSPACE}/models/yolov8n_mod_1_inputs_mpk_mlatess_bf16.tar.gz" \
       "${WORKSPACE}/models/yolo_v8s.tar.gz" \
       "${WORKSPACE}/models/yolov8s.tar.gz"; then
     return
@@ -174,41 +173,11 @@ resolve_yolov8_model() {
     absolute_path "${found}"
     return
   fi
-  echo "ERROR: failed to resolve YOLOv8 model. Set SIMAPCIE_YOLOV8_MODEL or SIMAPCIE_YOLOV8_MODEL_URL." >&2
-  exit 1
-}
-
-resolve_yolo26_model() {
-  local value="${SIMAPCIE_YOLO26_MODEL:-}"
-  if is_file "${value}"; then
-    absolute_path "${value}"
-    return
-  fi
   if first_existing_file \
-      "${WORKSPACE}/models/yolo26m-det-bf16-mla_tess-b1.tar.gz" \
-      "${WORKSPACE}/models/yolo26m-det-bf16-mla_tess-b1_mpk.tar.gz"; then
+      "${WORKSPACE}/models/yolov8n_mod_1_inputs_mpk_mlatess_bf16.tar.gz"; then
     return
   fi
-  local found
-  found="$(find_cached_model '*yolo26*.tar.gz' || true)"
-  if is_file "${found}"; then
-    absolute_path "${found}"
-    return
-  fi
-  if [[ -n "${SIMAPCIE_YOLO26_MODEL_URL:-}" ]]; then
-    local dest="${CACHE_DIR}/$(basename "${SIMAPCIE_YOLO26_MODEL_URL%%\?*}")"
-    download_file "${SIMAPCIE_YOLO26_MODEL_URL}" "${dest}"
-    absolute_path "${dest}"
-    return
-  fi
-  if [[ -n "${SIMAPCIE_YOLO26_MODEL_NAME:-}" ]]; then
-    found="$(resolve_from_modelzoo "${SIMAPCIE_YOLO26_MODEL_NAME}" '*yolo26*.tar.gz' || true)"
-    if is_file "${found}"; then
-      absolute_path "${found}"
-      return
-    fi
-  fi
-  echo "ERROR: failed to resolve YOLO26 model. Set SIMAPCIE_YOLO26_MODEL, SIMAPCIE_YOLO26_MODEL_URL, or SIMAPCIE_YOLO26_MODEL_NAME." >&2
+  echo "ERROR: failed to resolve YOLOv8 model. Set SIMAPCIE_YOLOV8_MODEL or SIMAPCIE_YOLOV8_MODEL_URL." >&2
   exit 1
 }
 
@@ -234,17 +203,34 @@ resolve_test_image() {
   absolute_path "${dest}"
 }
 
+resolve_boxdecode_image() {
+  local value="${SIMAPCIE_BOXDECODE_IMAGE:-}"
+  if is_file "${value}"; then
+    absolute_path "${value}"
+    return
+  fi
+  if first_existing_file \
+      "${WORKSPACE}/core/tests/images/people.jpg" \
+      "${WORKSPACE}/tests/images/people.jpg"; then
+    return
+  fi
+  local url="${SIMAPCIE_BOXDECODE_IMAGE_URL:-https://raw.githubusercontent.com/ultralytics/yolov5/master/data/images/zidane.jpg}"
+  local dest="${CACHE_DIR}/boxdecode_image.jpg"
+  download_file "${url}" "${dest}"
+  absolute_path "${dest}"
+}
+
 YOLOV8_MODEL="$(resolve_yolov8_model)"
-YOLO26_MODEL="$(resolve_yolo26_model)"
 TEST_IMAGE="$(resolve_test_image)"
+BOXDECODE_IMAGE="$(resolve_boxdecode_image)"
 
 {
   printf 'SIMAPCIE_YOLOV8_MODEL=%s\n' "${YOLOV8_MODEL}"
-  printf 'SIMAPCIE_YOLO26_MODEL=%s\n' "${YOLO26_MODEL}"
   printf 'SIMAPCIE_TEST_IMAGE=%s\n' "${TEST_IMAGE}"
+  printf 'SIMAPCIE_BOXDECODE_IMAGE=%s\n' "${BOXDECODE_IMAGE}"
 } | tee "${ENV_FILE:-/dev/stdout}" >/dev/null
 
 printf 'Resolved PCIe host hardware test assets:\n'
 printf '  SIMAPCIE_YOLOV8_MODEL=%s\n' "${YOLOV8_MODEL}"
-printf '  SIMAPCIE_YOLO26_MODEL=%s\n' "${YOLO26_MODEL}"
 printf '  SIMAPCIE_TEST_IMAGE=%s\n' "${TEST_IMAGE}"
+printf '  SIMAPCIE_BOXDECODE_IMAGE=%s\n' "${BOXDECODE_IMAGE}"

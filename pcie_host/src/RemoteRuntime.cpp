@@ -3,6 +3,7 @@
 #include "SshRunner.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -71,6 +72,31 @@ std::string json_string_or(const nlohmann::json& object, const char* key,
 
 std::string default_card_gst_debug_file(const int queue) {
   return "/var/log/sima-neat/pcie/q" + std::to_string(queue) + ".gst.log";
+}
+
+bool is_env_name_char(const char ch) {
+  return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_';
+}
+
+std::vector<std::string> split_card_env(const std::string& raw) {
+  std::vector<std::string> out;
+  std::istringstream stream(raw);
+  std::string token;
+  while (stream >> token) {
+    const std::size_t eq = token.find('=');
+    if (eq == std::string::npos || eq == 0) {
+      throw std::runtime_error("card_env entries must be NAME=VALUE assignments");
+    }
+    for (std::size_t i = 0; i < eq; ++i) {
+      const char ch = token[i];
+      if ((i == 0 && std::isdigit(static_cast<unsigned char>(ch))) || !is_env_name_char(ch)) {
+        throw std::runtime_error("card_env contains invalid environment variable name: " +
+                                 token.substr(0, eq));
+      }
+    }
+    out.push_back(std::move(token));
+  }
+  return out;
 }
 
 } // namespace
@@ -160,8 +186,16 @@ void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
      << "echo queue_busy; exit 9; " << "fi; " << "fi; " << "rm -f \"$pidfile\" \"$statusfile\"; "
      << "else " << "rm -f \"$statusfile\"; " << "fi; ";
   ss << "nohup ";
+  const std::vector<std::string> card_env = split_card_env(connection_.card_env);
+  const bool needs_env = !card_env.empty() || !connection_.card_gst_debug.empty();
+  if (needs_env) {
+    ss << "env ";
+    for (const auto& entry : card_env) {
+      ss << SshRunner::shell_escape(entry) << " ";
+    }
+  }
   if (!connection_.card_gst_debug.empty()) {
-    ss << "env GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
+    ss << "GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
     if (connection_.card_gst_debug_no_color) {
       ss << "GST_DEBUG_NO_COLOR=1 ";
     }

@@ -1,9 +1,11 @@
 #include <simaai/neat/pcie/SimaPCIeHost.h>
 
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <cstdlib>
@@ -28,6 +30,14 @@ std::string env_or_default(const char* name, const char* fallback) {
   return fallback ? fallback : "";
 }
 
+std::string env_or_default(const char* primary, const char* secondary, const char* fallback) {
+  const std::string primary_value = env_or_default(primary, "");
+  if (!primary_value.empty()) {
+    return primary_value;
+  }
+  return env_or_default(secondary, fallback);
+}
+
 int env_int_or_default(const char* name, const int fallback) {
   const std::string value = env_or_default(name, "");
   if (value.empty()) {
@@ -47,8 +57,9 @@ int env_int_or_default(const char* name, const int fallback) {
 }
 
 struct Args {
-  std::string model = env_or_default("SIMAPCIE_YOLO26_MODEL", DEFAULT_MODEL_PATH);
-  std::string image = env_or_default("SIMAPCIE_TEST_IMAGE", DEFAULT_SOURCE_IMAGE);
+  std::string model = env_or_default("SIMAPCIE_YOLOV8_MODEL", DEFAULT_MODEL_PATH);
+  std::string image =
+      env_or_default("SIMAPCIE_BOXDECODE_IMAGE", "SIMAPCIE_TEST_IMAGE", DEFAULT_SOURCE_IMAGE);
   std::string card_host = env_or_default("SIMAPCIE_CARD_HOST", "");
   std::string user = env_or_default("SIMAPCIE_USER", "sima");
   int card_id = env_int_or_default("SIMAPCIE_CARD_ID", 0);
@@ -58,10 +69,17 @@ struct Args {
   float score_threshold = 0.25f;
   float nms_iou_threshold = 0.45f;
   int top_k = 100;
-  pcie::BoxDecodeType decode_type = pcie::BoxDecodeType::YoloV26;
-  std::string decode_type_name = "YoloV26";
+  pcie::BoxDecodeType decode_type = pcie::BoxDecodeType::YoloV8;
+  std::string decode_type_name = "YoloV8";
+  std::string card_env = env_or_default("SIMAPCIE_CARD_ENV", "");
   std::string card_gst_debug = env_or_default("SIMAPCIE_CARD_GST_DEBUG", "");
   std::string card_gst_debug_file = env_or_default("SIMAPCIE_CARD_GST_DEBUG_FILE", "");
+  int iterations = 1;
+  int resize_source_width = 0;
+  int resize_source_height = 0;
+  bool resize_alternate = false;
+  bool require_detection = true;
+  bool require_person = false;
   bool opencv_overload = false;
 };
 
@@ -79,13 +97,19 @@ pcie::BoxDecodeType parse_decode_type(const std::string& value, std::string* dis
     }
     return pcie::BoxDecodeType::YoloV8;
   }
-  if (value == "yolo26" || value == "yolov26" || value == "YoloV26") {
-    if (display_name) {
-      *display_name = "YoloV26";
-    }
-    return pcie::BoxDecodeType::YoloV26;
-  }
   throw std::runtime_error("unsupported --decode-type: " + value);
+}
+
+void parse_size_arg(const std::string& value, int* width, int* height) {
+  const std::size_t sep = value.find('x');
+  if (sep == std::string::npos || sep == 0 || sep + 1 >= value.size()) {
+    throw std::runtime_error("size must use WxH syntax");
+  }
+  *width = std::stoi(value.substr(0, sep));
+  *height = std::stoi(value.substr(sep + 1));
+  if (*width <= 0 || *height <= 0) {
+    throw std::runtime_error("size must be positive");
+  }
 }
 
 void usage(const char* argv0) {
@@ -93,9 +117,13 @@ void usage(const char* argv0) {
             << " [--model model.tar.gz] [--image image.jpg] [--card-host host]"
                " [--card-id n] [--user user] [--queue n]"
                " [--readiness-timeout-ms ms] [--pull-timeout-ms ms]"
-               " [--decode-type yolov8|yolo26]"
+               " [--decode-type yolov8]"
                " [--score-threshold f] [--nms-iou-threshold f] [--top-k n]"
+               " [--card-env 'NAME=VALUE ...']"
                " [--card-gst-debug spec] [--card-gst-debug-file path]"
+               " [--iterations n] [--resize-source WxH] [--resize-alternate]"
+               " [--require-detection|--allow-empty-detections]"
+               " [--require-person]"
                " [--opencv-overload]\n";
 }
 
@@ -128,10 +156,26 @@ Args parse_args(int argc, char** argv) {
       args.nms_iou_threshold = std::stof(require_value(argc, argv, i, "--nms-iou-threshold"));
     } else if (arg == "--top-k") {
       args.top_k = std::stoi(require_value(argc, argv, i, "--top-k"));
+    } else if (arg == "--card-env") {
+      args.card_env = require_value(argc, argv, i, "--card-env");
     } else if (arg == "--card-gst-debug") {
       args.card_gst_debug = require_value(argc, argv, i, "--card-gst-debug");
     } else if (arg == "--card-gst-debug-file") {
       args.card_gst_debug_file = require_value(argc, argv, i, "--card-gst-debug-file");
+    } else if (arg == "--iterations") {
+      args.iterations = std::stoi(require_value(argc, argv, i, "--iterations"));
+    } else if (arg == "--resize-source") {
+      parse_size_arg(require_value(argc, argv, i, "--resize-source"), &args.resize_source_width,
+                     &args.resize_source_height);
+    } else if (arg == "--resize-alternate") {
+      args.resize_alternate = true;
+    } else if (arg == "--require-detection") {
+      args.require_detection = true;
+    } else if (arg == "--allow-empty-detections") {
+      args.require_detection = false;
+    } else if (arg == "--require-person") {
+      args.require_person = true;
+      args.require_detection = true;
     } else if (arg == "--opencv-overload") {
       args.opencv_overload = true;
     } else if (arg == "-h" || arg == "--help") {
@@ -156,6 +200,9 @@ Args parse_args(int argc, char** argv) {
   }
   if (args.top_k <= 0) {
     throw std::runtime_error("--top-k must be positive for boxdecode");
+  }
+  if (args.iterations <= 0) {
+    throw std::runtime_error("--iterations must be positive");
   }
   return args;
 }
@@ -303,6 +350,24 @@ void print_outputs(const pcie::TensorList& outputs) {
   }
 }
 
+struct BBoxRecord {
+  float x1 = 0.0f;
+  float y1 = 0.0f;
+  float x2 = 0.0f;
+  float y2 = 0.0f;
+  float score = 0.0f;
+  std::int32_t class_id = -1;
+};
+
+struct BBoxSummary {
+  std::uint32_t header_count = 0;
+  std::size_t payload_capacity = 0;
+  std::size_t valid_count = 0;
+  std::size_t high_score_count = 0;
+  std::size_t person_count = 0;
+  float max_score = 0.0f;
+};
+
 template <typename T>
 T read_le_value(const std::uint8_t* data, const std::size_t size, const std::size_t offset) {
   if (offset + sizeof(T) > size) {
@@ -313,9 +378,16 @@ T read_le_value(const std::uint8_t* data, const std::size_t size, const std::siz
   return value;
 }
 
-void print_bbox_payload(const pcie::TensorList& outputs) {
+std::vector<BBoxRecord> parse_bbox_payload(const pcie::TensorList& outputs,
+                                           const int image_width,
+                                           const int image_height,
+                                           const int top_k,
+                                           BBoxSummary* summary) {
   if (outputs.empty()) {
     throw std::runtime_error("boxdecode produced no output tensors");
+  }
+  if (outputs.size() != 1) {
+    throw std::runtime_error("boxdecode should produce exactly one BBOX output tensor");
   }
 
   const pcie::Tensor& bbox = outputs.front();
@@ -332,14 +404,17 @@ void print_bbox_payload(const pcie::TensorList& outputs) {
   if (count > max_records) {
     throw std::runtime_error("BBOX detection count exceeds payload capacity");
   }
+  if (count > static_cast<std::uint32_t>(top_k)) {
+    throw std::runtime_error("BBOX detection count exceeds configured top_k");
+  }
 
-  std::cout << "BBOX payload\n";
-  std::cout << "  detections=" << count
-            << " payload_bytes=" << bbox.size_bytes
-            << " record_bytes=" << kRecordBytes << "\n";
+  std::vector<BBoxRecord> records;
+  records.reserve(count);
+  BBoxSummary local;
+  local.header_count = count;
+  local.payload_capacity = max_records;
 
-  const std::uint32_t printed = std::min<std::uint32_t>(count, 5);
-  for (std::uint32_t i = 0; i < printed; ++i) {
+  for (std::uint32_t i = 0; i < count; ++i) {
     const std::size_t base = kHeaderBytes + static_cast<std::size_t>(i) * kRecordBytes;
     const std::int32_t x = read_le_value<std::int32_t>(bytes, bbox.size_bytes, base + 0);
     const std::int32_t y = read_le_value<std::int32_t>(bytes, bbox.size_bytes, base + 4);
@@ -347,12 +422,83 @@ void print_bbox_payload(const pcie::TensorList& outputs) {
     const std::int32_t h = read_le_value<std::int32_t>(bytes, bbox.size_bytes, base + 12);
     const float score = read_le_value<float>(bytes, bbox.size_bytes, base + 16);
     const std::int32_t class_id = read_le_value<std::int32_t>(bytes, bbox.size_bytes, base + 20);
-    std::cout << "  [" << i << "] x=" << x
-              << " y=" << y
-              << " w=" << w
-              << " h=" << h
-              << " score=" << std::fixed << std::setprecision(4) << score
-              << " class_id=" << class_id << std::defaultfloat << "\n";
+
+    if (!std::isfinite(score) || score < 0.0f || score > 1.0f) {
+      throw std::runtime_error("BBOX record has invalid score");
+    }
+    if (class_id < 0) {
+      throw std::runtime_error("BBOX record has invalid class id");
+    }
+    if (w <= 0 || h <= 0) {
+      throw std::runtime_error("BBOX record has non-positive dimensions");
+    }
+
+    constexpr float kCoordTolerance = 2.0f;
+    const float x1 = static_cast<float>(x);
+    const float y1 = static_cast<float>(y);
+    const float x2 = static_cast<float>(x + w);
+    const float y2 = static_cast<float>(y + h);
+    if (x1 < -kCoordTolerance || y1 < -kCoordTolerance ||
+        x2 > static_cast<float>(image_width) + kCoordTolerance ||
+        y2 > static_cast<float>(image_height) + kCoordTolerance) {
+      throw std::runtime_error("BBOX record coordinates exceed source image bounds");
+    }
+
+    local.valid_count += 1;
+    local.max_score = std::max(local.max_score, score);
+    if (class_id == 0) {
+      local.person_count += 1;
+    }
+    records.push_back(BBoxRecord{x1, y1, x2, y2, score, class_id});
+  }
+
+  if (summary) {
+    *summary = local;
+  }
+  return records;
+}
+
+void validate_bbox_payload(const pcie::TensorList& outputs,
+                           const int image_width,
+                           const int image_height,
+                           const float score_threshold,
+                           const int top_k,
+                           const bool require_detection,
+                           const bool require_person) {
+  BBoxSummary summary;
+  const std::vector<BBoxRecord> records =
+      parse_bbox_payload(outputs, image_width, image_height, top_k, &summary);
+  for (const auto& record : records) {
+    if (record.score >= score_threshold) {
+      summary.high_score_count += 1;
+    }
+  }
+
+  if (require_detection && summary.high_score_count == 0) {
+    throw std::runtime_error("BBOX payload has no detection at or above score threshold");
+  }
+  if (require_person && summary.person_count == 0) {
+    throw std::runtime_error("BBOX payload has no person-class detection");
+  }
+
+  std::cout << "BBOX payload\n";
+  std::cout << "  detections=" << summary.header_count
+            << " valid_records=" << summary.valid_count
+            << " high_score_records=" << summary.high_score_count
+            << " person_records=" << summary.person_count
+            << " max_score=" << std::fixed << std::setprecision(4) << summary.max_score
+            << std::defaultfloat
+            << " capacity=" << summary.payload_capacity << "\n";
+
+  const std::size_t printed = std::min<std::size_t>(records.size(), 5);
+  for (std::size_t i = 0; i < printed; ++i) {
+    const BBoxRecord& record = records[i];
+    std::cout << "  [" << i << "] x=" << static_cast<int>(std::round(record.x1))
+              << " y=" << static_cast<int>(std::round(record.y1))
+              << " w=" << static_cast<int>(std::round(record.x2 - record.x1))
+              << " h=" << static_cast<int>(std::round(record.y2 - record.y1))
+              << " score=" << std::fixed << std::setprecision(4) << record.score
+              << " class_id=" << record.class_id << std::defaultfloat << "\n";
   }
 }
 
@@ -379,6 +525,7 @@ int main(int argc, char** argv) {
     conn.card_id = args.card_id;
     conn.user = args.user;
     conn.queue = args.queue;
+    conn.card_env = args.card_env;
     conn.card_gst_debug = args.card_gst_debug;
     conn.card_gst_debug_file = args.card_gst_debug_file;
 
@@ -407,6 +554,18 @@ int main(int argc, char** argv) {
               << " score_threshold=" << args.score_threshold
               << " nms_iou_threshold=" << args.nms_iou_threshold
               << " top_k=" << args.top_k << "\n";
+    std::cout << "  iterations=" << args.iterations
+              << " resize_source="
+              << (args.resize_source_width > 0
+                      ? (std::to_string(args.resize_source_width) + "x" +
+                         std::to_string(args.resize_source_height))
+                      : std::string("none"))
+              << " resize_alternate=" << (args.resize_alternate ? "true" : "false")
+              << " require_detection=" << (args.require_detection ? "true" : "false")
+              << " require_person=" << (args.require_person ? "true" : "false") << "\n";
+    if (!conn.card_env.empty()) {
+      std::cout << "  card_env=" << conn.card_env << "\n";
+    }
     if (!conn.card_gst_debug.empty()) {
       std::cout << "  card_gst_debug=" << conn.card_gst_debug << "\n";
       std::cout << "  card_gst_debug_file="
@@ -418,6 +577,17 @@ int main(int argc, char** argv) {
 
     cv::Mat bgr = load_bgr_image(args.image);
     print_mat(bgr);
+    if (args.resize_source_width > 0) {
+      cv::Mat resized;
+      cv::resize(bgr, resized, cv::Size(args.resize_source_width, args.resize_source_height), 0.0,
+                 0.0, cv::INTER_LINEAR);
+      if (!resized.isContinuous()) {
+        resized = resized.clone();
+      }
+      bgr = resized;
+      std::cout << "resized source image\n";
+      print_mat(bgr);
+    }
 
     pcie::SimaPCIeHost host(conn);
     print_status("initial status", host.status());
@@ -447,29 +617,51 @@ int main(int argc, char** argv) {
     print_status("ready status", host.status());
     print_model_info(info);
 
-    if (args.opencv_overload) {
-#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-      std::cout << "push image with OpenCV overload...\n";
-      if (!host.push(bgr)) {
-        throw std::runtime_error("push returned false");
+    std::vector<cv::Mat> frames;
+    frames.push_back(bgr);
+    if (args.resize_alternate) {
+      cv::Mat resized;
+      const int resized_width = std::max(96, bgr.cols / 2);
+      const int resized_height = std::max(96, bgr.rows / 2);
+      cv::resize(bgr, resized, cv::Size(resized_width, resized_height), 0.0, 0.0,
+                 cv::INTER_LINEAR);
+      if (!resized.isContinuous()) {
+        resized = resized.clone();
       }
-#endif
-    } else {
-      pcie::Tensor image = make_bgr_image_tensor(bgr);
-      print_image(image);
-      std::cout << "push image tensor...\n";
-      if (!host.push(image)) {
-        throw std::runtime_error("push returned false");
-      }
+      frames.push_back(resized);
+      std::cout << "alternate resized image\n";
+      print_mat(resized);
     }
 
-    std::cout << "pull outputs with timeout_ms=" << args.pull_timeout_ms << "...\n";
-    const auto result = host.pull(args.pull_timeout_ms);
-    if (!result.has_value()) {
-      throw std::runtime_error("pull timed out without a result");
+    for (int iter = 0; iter < args.iterations; ++iter) {
+      const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
+      std::cout << "iteration " << (iter + 1) << "/" << args.iterations << "\n";
+
+      if (args.opencv_overload) {
+#if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
+        std::cout << "push image with OpenCV overload...\n";
+        if (!host.push(frame)) {
+          throw std::runtime_error("push returned false");
+        }
+#endif
+      } else {
+        pcie::Tensor image = make_bgr_image_tensor(frame);
+        print_image(image);
+        std::cout << "push image tensor...\n";
+        if (!host.push(image)) {
+          throw std::runtime_error("push returned false");
+        }
+      }
+
+      std::cout << "pull outputs with timeout_ms=" << args.pull_timeout_ms << "...\n";
+      const auto result = host.pull(args.pull_timeout_ms);
+      if (!result.has_value()) {
+        throw std::runtime_error("pull timed out without a result");
+      }
+      print_outputs(*result);
+      validate_bbox_payload(*result, frame.cols, frame.rows, args.score_threshold, args.top_k,
+                            args.require_detection, args.require_person);
     }
-    print_outputs(*result);
-    print_bbox_payload(*result);
 
     std::cout << "stopping...\n";
     host.stop();

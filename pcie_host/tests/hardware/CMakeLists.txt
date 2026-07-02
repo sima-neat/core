@@ -1,4 +1,4 @@
-find_package(OpenCV REQUIRED COMPONENTS core imgcodecs)
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs imgproc)
 
 set(SIMAPCIE_HARDWARE_TEST_INSTALL_DIR
   "lib/sima-pcie-host/tests")
@@ -13,7 +13,8 @@ function(simapcie_add_hardware_test name source)
     PRIVATE
       sima_neat_pcie_host
       opencv_core
-      opencv_imgcodecs)
+      opencv_imgcodecs
+      opencv_imgproc)
   target_include_directories(${name} PRIVATE ${OpenCV_INCLUDE_DIRS})
   target_compile_definitions(${name}
     PRIVATE

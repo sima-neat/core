@@ -293,7 +293,7 @@ resolve_assets() {
     --env-file "${env_file}"
   # shellcheck disable=SC1090
   source "${env_file}"
-  export SIMAPCIE_YOLOV8_MODEL SIMAPCIE_YOLO26_MODEL SIMAPCIE_TEST_IMAGE
+  export SIMAPCIE_YOLOV8_MODEL SIMAPCIE_TEST_IMAGE SIMAPCIE_BOXDECODE_IMAGE
 }
 
 verify_card_plugins() {
