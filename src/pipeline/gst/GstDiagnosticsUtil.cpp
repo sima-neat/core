@@ -680,22 +680,28 @@ void stop_and_unref(GstElement*& e) {
   enqueue_teardown(local, /*flush=*/true);
 }
 
-void stop_and_unref_no_flush(GstElement*& e) {
+void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
   if (!e)
     return;
 
   GstElement* local = e;
   e = nullptr;
 
-  // Defer teardown to the reaper to avoid blocking in gst_element_set_state.
-  if (env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", true)) {
+  // Defer teardown to the reaper to avoid blocking in gst_element_set_state for
+  // legacy push/appsrc paths.  Live/source pipelines (CameraInput/RTSP/etc.)
+  // prefer bounded synchronous NULL teardown so Run::close() does not return
+  // while source streaming threads can still touch downstream plugin/runtime
+  // state.  The env var remains an explicit escape hatch in both directions.
+  const bool defer_no_flush =
+      env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
+  if (defer_no_flush) {
     enqueue_teardown(local, /*flush=*/false);
     return;
   }
 
   begin_teardown(local, /*flush=*/false);
 
-  const bool async_only = env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
+  const bool async_only = !prefer_synchronous && env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
   if (!async_only) {
     const int timeout_ms = teardown_timeout_ms();
     if (finish_teardown(local, timeout_ms))

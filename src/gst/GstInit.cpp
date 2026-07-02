@@ -1,6 +1,7 @@
 // src/gst/GstInit.cpp
 #include "gst/GstInit.h"
 
+#include "gst/NeatCameraMemoryBridge.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -1396,6 +1397,9 @@ void gst_init_once() {
       gst_meta_register_custom(SIMA_TENSOR_SET_META_NAME, sima_tensor_set_tags,
                                sima_custom_meta_transform,
                                const_cast<char*>(SIMA_TENSOR_SET_META_NAME), nullptr);
+    }
+    if (!register_neat_camera_memory_bridge()) {
+      throw std::runtime_error("Failed to register Neat private camera memory bridge");
     }
     if (env_bool("SIMA_GST_SUPPRESS_JSON_WARNINGS", true)) {
       g_log_set_handler("Json",

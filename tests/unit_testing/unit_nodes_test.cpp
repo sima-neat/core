@@ -9,6 +9,7 @@
 #include "nodes/common/VideoRate.h"
 #include "nodes/common/ImageDecode.h"
 #include "nodes/io/RTSPInput.h"
+#include "nodes/io/CameraInput.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
@@ -63,6 +64,19 @@ int main() {
     auto rtsp = simaai::neat::nodes::RTSPInput("rtsp://example", 200, true);
     require_contains(rtsp->backend_fragment(1), "rtspsrc name=n1_rtspsrc",
                      "RTSPInput name mismatch");
+
+    simaai::neat::CameraInputOptions cam_opt;
+    cam_opt.allow_cpu_fallback = true;
+    auto cam = simaai::neat::nodes::CameraInput(cam_opt);
+    require_contains(cam->backend_fragment(0), "libcamerasrc name=n0_camera_src",
+                     "CameraInput source missing");
+    require_contains(cam->backend_fragment(0), "neatcamerabridge name=n0_camera_bridge",
+                     "CameraInput fallback bridge missing");
+    require_contains(cam->backend_fragment(0), "buffer-size=3110400",
+                     "CameraInput NV12 bridge size mismatch");
+    if (!simaai::neat::element_exists("neatcamerabridge")) {
+      throw std::runtime_error("private neatcamerabridge factory not registered");
+    }
 
     auto depay = simaai::neat::nodes::H264Depacketize(97);
     require_contains(depay->backend_fragment(2), "rtph264depay name=n2_depay",
