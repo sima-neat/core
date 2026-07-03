@@ -84,8 +84,10 @@ Use this map before you open the full API reference.
 | App pulls a full sample | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
 | Read frames from a file | `nodes::FileInput(...)` plus decode nodes, or `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` plus decode nodes, or `pyneat.groups.video_input(...)` |
 | Read one image as a source | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
-| Read an RTSP stream | `nodes::RTSPInput(...)` or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)` or `pyneat.groups.rtsp_decoded_input(...)` |
+| Read an RTSP stream | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, or `pyneat.groups.rtsp_decoded_input(...)` |
+| Read HTTP multipart MJPEG | `nodes::groups::HttpMjpegDecodedInput(...)`, or `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` for manual framing | `pyneat.groups.http_mjpeg_decoded_input(...)`, or `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
+| Decode encoded video | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
 | Scale or rate-limit video | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
 | Build a reusable image input path | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
 | Build a reusable video input path | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
@@ -96,6 +98,55 @@ Use this map before you open the full API reference.
 
 Use groups when you want a tested fragment. Use individual nodes when you need explicit topology. Use `Graph` helpers such as `graphs::Branch(...)` and `graphs::Combine(...)` for fan-out and fan-in instead of hiding topology behind duplicated outputs.
 
+`nodes::H264Decode(...)` and `pyneat.nodes.h264_decode(...)` are deprecated
+compatibility wrappers. New H.264 decode graphs should use `SimaDecode` with
+`SimaDecodeType::H264`.
+
+## Encoded decode paths
+
+Use `SimaDecode` for encoded streams that should be decoded by the native SiMa
+decoder. It accepts H.264, JPEG, and MJPEG after the stream has already been
+framed into complete encoded samples:
+
+| Encoded input | Native decoder option | Typical upstream path |
+| --- | --- | --- |
+| H.264 access units | `SimaDecodeType::H264` | RTSP H.264 depacketize + parse, or another parsed H.264 source |
+| Single JPEG frames | `SimaDecodeType::JPEG` | `JpegParse()` or an app-provided encoded JPEG sample |
+| MJPEG frame stream | `SimaDecodeType::MJPEG` | HTTP multipart demux + `JpegParse()`, or RTSP JPEG depacketize + `JpegParse()` |
+
+`SimaDecodeOptions::raw_output` defaults to `true`. In that mode the decoder
+emits native raw buffers, normally NV12 in SiMaAI memory, which is the intended
+path before CVU preprocessing and MLA inference. Set `raw_output=false` only
+when the next stage needs CPU-visible `video/x-raw(memory:SystemMemory)` buffers.
+
+`nodes::JpegDecode()` and `pyneat.nodes.jpeg_decode()` are separate CPU/GStreamer
+JPEG decode nodes. Use them for simple CPU image pipelines. Do not use them for
+native MJPEG video decode before model preprocessing.
+
+For RTSP, prefer the codec-aware groups when the source shape is standard:
+
+```cpp
+simaai::neat::nodes::groups::RtspEncodedInputOptions encoded;
+encoded.url = "rtsp://camera.example/live";
+encoded.codec = simaai::neat::nodes::groups::RtspCodec::H264; // default
+
+simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
+decoded.url = "rtsp://camera.example/live";
+decoded.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+decoded.dec_width = 1280;
+decoded.dec_height = 720;
+decoded.dec_fps = 30;
+```
+
+`RtspEncodedInput(...)` stops after source depacketization and parse/framing.
+Use it when your app needs the encoded samples, for example to split one parsed
+stream into decode and video-output graphs. `RtspDecodedInput(...)` appends
+`SimaDecode(...)` and returns raw decoded video.
+
+For HTTP multipart MJPEG, use `HttpMjpegDecodedInput(...)`. HTTP multipart
+MJPEG is not RTP, so it uses `HttpSource -> MultipartJpegDemux -> JpegParse ->
+SimaDecode(MJPEG)` rather than RTSP depacketization.
+
 
 ## Source-owned and sink groups
 
@@ -105,7 +156,9 @@ Use source-owned groups when the graph should read media by itself. Build those 
 | --- | --- | --- | --- |
 | Still image fixture | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
 | Video file | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
-| Live RTSP H.264 stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url` | `latency_ms`, `tcp`, fallback H.264 width/height/FPS, `out_format`, `output_caps` |
+| Live RTSP encoded H.264 or MJPEG stream | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec` when not H.264 | `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP payload type |
+| Live RTSP decoded H.264 or MJPEG stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec` when not H.264 | `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, decoded width/height/FPS, `out_format`, `output_caps` |
+| HTTP multipart MJPEG stream | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, decoded width/height/FPS, `output_caps` |
 | Raw or encoded video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)` or `H264RtpUdpFromEncoded()` | `host`, `channel`, `video_port_base`, encoder/RTP options |
 | RTP/H.264 over UDP output | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | destination host/port when the defaults are not right | `h264_caps`, `payload_type`, `config_interval` |
 
