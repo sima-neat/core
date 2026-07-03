@@ -108,6 +108,8 @@ int main() {
             "EncodedCapsFixup media_type option mismatch");
     require(raw_fixup->options().fallback_fps == 30,
             "EncodedCapsFixup fallback_fps option mismatch");
+    require(!raw_fixup->options().use_rtsp_sdp_fps,
+            "EncodedCapsFixup should default to fallback-only FPS repair");
 
     std::cout << "[OK] unit_jpeg_framing_nodes_test passed\n";
     return 0;

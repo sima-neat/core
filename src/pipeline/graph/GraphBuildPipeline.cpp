@@ -942,6 +942,7 @@ struct EncodedCapsFixupCtx {
   int fallback_fps = -1;
   int rtp_payload_type = -1;
   std::string rtp_encoding_name;
+  bool use_rtsp_sdp_fps = false;
   std::atomic<int> sdp_fps{0};
   bool logged = false;
   bool missing_logged = false;
@@ -2297,8 +2298,11 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     ctx->element_name = names[0];
     ctx->media_type = fix->options().media_type;
     ctx->fallback_fps = fix->options().fallback_fps;
-    ctx->rtsp_element_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
-    if (ctx->media_type == "image/jpeg") {
+    ctx->use_rtsp_sdp_fps = fix->options().use_rtsp_sdp_fps;
+    if (ctx->use_rtsp_sdp_fps) {
+      ctx->rtsp_element_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
+    }
+    if (ctx->use_rtsp_sdp_fps && ctx->media_type == "image/jpeg") {
       ctx->rtp_payload_type = find_rtp_jpeg_payload_type_for_fixup(nodes, i);
       ctx->rtp_encoding_name = "JPEG";
     }

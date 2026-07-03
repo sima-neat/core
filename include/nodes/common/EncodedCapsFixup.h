@@ -17,6 +17,7 @@ namespace simaai::neat {
 struct EncodedCapsFixupOptions {
   std::string media_type; ///< Encoded media type to patch, e.g. `"image/jpeg"`.
   int fallback_fps = -1;  ///< Framerate inserted when caps omit a valid rate; `-1` = no patch.
+  bool use_rtsp_sdp_fps = false; ///< Prefer RTSP SDP framerate before fallback FPS when available.
 };
 
 /**
