@@ -29,16 +29,11 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 namespace sima_codec_perf {
-
-#ifndef SIMA_TEST_CODEC_PERF_H264_FIXTURE
-#define SIMA_TEST_CODEC_PERF_H264_FIXTURE ""
-#endif
 
 struct EncodedFrame {
   std::vector<std::uint8_t> bytes;
@@ -127,10 +122,7 @@ inline std::filesystem::path h264_fixture_path() {
   if (const char* env = std::getenv("SIMA_TEST_CODEC_PERF_H264_FIXTURE"); env && *env) {
     return fs::path(env);
   }
-  if (std::string_view(SIMA_TEST_CODEC_PERF_H264_FIXTURE).empty()) {
-    return sima_test::test_decoder_fixture_path();
-  }
-  return fs::path(SIMA_TEST_CODEC_PERF_H264_FIXTURE);
+  return sima_test::test_codec_perf_h264_fixture_path();
 }
 
 inline std::vector<EncodedFrame> extract_h264_access_units(int max_frames) {

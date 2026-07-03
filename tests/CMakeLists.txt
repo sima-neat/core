@@ -74,7 +74,6 @@ set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/model-
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 set(SIMA_TEST_DECODER_FIXTURE "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
 set(SIMA_TEST_CODEC_PERF_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/codec-perf")
-set(SIMA_TEST_CODEC_PERF_H264_FIXTURE "${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}/h264_1280x720_30fps.h264")
 
 add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
@@ -697,10 +696,6 @@ foreach(target ${PERF_TARGETS})
   )
   if (target STREQUAL "perf_runtime_codec_h264_decode_test")
     add_dependencies(${target} prepare_perf_codec_fixtures)
-    target_compile_definitions(${target}
-      PRIVATE
-        SIMA_TEST_CODEC_PERF_H264_FIXTURE="${SIMA_TEST_CODEC_PERF_H264_FIXTURE}"
-    )
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
@@ -1877,13 +1872,13 @@ install(
   COMPONENT extras
 )
 
-# Model-archive + decoder fixtures used by the modelpack/security suites.
+# Model-archive, decoder, and codec perf fixtures used by installed tests.
 # Keep install/package jobs self-contained too. Some CI/CD paths package or
 # install the test extras without explicitly building an individual test
-# executable first; in that case the build-time prepare_test_fixtures target
-# may not have been requested yet. Regenerate the deterministic fixture tree
-# immediately before installing it so installed runners see the same manifest
-# and archives as build-tree CTest.
+# executable first; in that case the build-time fixture targets may not have
+# been requested yet. Regenerate the deterministic fixture trees immediately
+# before installing them so installed runners see the same assets as build-tree
+# CTest.
 install(
   CODE "
 execute_process(
@@ -1907,6 +1902,19 @@ execute_process(
 if (NOT _sima_decoder_fixture_rv EQUAL 0)
   message(FATAL_ERROR \"failed to prepare decoder test fixture\")
 endif()
+execute_process(
+  COMMAND \"${Python3_EXECUTABLE}\"
+          \"${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py\"
+          --output-dir \"${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}\"
+          --width 1280
+          --height 720
+          --fps 30
+  WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
+  RESULT_VARIABLE _sima_codec_perf_fixture_rv
+)
+if (NOT _sima_codec_perf_fixture_rv EQUAL 0)
+  message(FATAL_ERROR \"failed to prepare codec perf test fixtures\")
+endif()
 "
   COMPONENT extras
 )
@@ -1918,6 +1926,11 @@ install(
 install(
   DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/decoder/"
   DESTINATION lib/sima-neat/test-assets/decoder
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_BINARY_DIR}/test-assets/codec-perf/"
+  DESTINATION lib/sima-neat/test-assets/codec-perf
   COMPONENT extras
 )
 install(
