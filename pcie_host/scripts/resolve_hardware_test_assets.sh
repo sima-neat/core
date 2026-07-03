@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: resolve_hardware_test_assets.sh [options]
 
-Resolve model and image paths for PCIe host hardware smoke tests. Explicit
+Resolve model and image paths for PCIe host hardware tests. Explicit
 environment variables win, local caches are searched next, and downloads are
 used only when configured or modelzoo can provide the model.
 
@@ -153,7 +153,9 @@ resolve_yolov8_model() {
   fi
   if first_existing_file \
       "${WORKSPACE}/models/yolo_v8s.tar.gz" \
-      "${WORKSPACE}/models/yolov8s.tar.gz"; then
+      "${WORKSPACE}/models/yolov8s.tar.gz" \
+      "${WORKSPACE}/../models/yolo_v8s.tar.gz" \
+      "${WORKSPACE}/../models/yolov8s.tar.gz"; then
     return
   fi
   local found
@@ -174,7 +176,8 @@ resolve_yolov8_model() {
     return
   fi
   if first_existing_file \
-      "${WORKSPACE}/models/yolov8n_mod_1_inputs_mpk_mlatess_bf16.tar.gz"; then
+      "${WORKSPACE}/models/yolov8n_mod_1_inputs_mpk_mlatess_bf16.tar.gz" \
+      "${WORKSPACE}/../models/yolov8n_mod_1_inputs_mpk_mlatess_bf16.tar.gz"; then
     return
   fi
   echo "ERROR: failed to resolve YOLOv8 model. Set SIMAPCIE_YOLOV8_MODEL or SIMAPCIE_YOLOV8_MODEL_URL." >&2
@@ -192,9 +195,12 @@ resolve_test_image() {
     return
   fi
   if first_existing_file \
+      "${WORKSPACE}/pcie_host/tests/hardware/assets/test_image.jpg" \
       "${WORKSPACE}/core/pcie_host/tests/hardware/assets/test_image.jpg" \
       "${WORKSPACE}/tests/test_image_run/test_image.jpg" \
-      "${WORKSPACE}/tests/test_image_boxdecode_run/test_image.jpg"; then
+      "${WORKSPACE}/tests/test_image_boxdecode_run/test_image.jpg" \
+      "${WORKSPACE}/../tests/test_image_run/test_image.jpg" \
+      "${WORKSPACE}/../tests/test_image_boxdecode_run/test_image.jpg"; then
     return
   fi
   local url="${SIMAPCIE_TEST_IMAGE_URL:-https://raw.githubusercontent.com/ultralytics/yolov5/master/data/images/zidane.jpg}"
@@ -210,8 +216,9 @@ resolve_boxdecode_image() {
     return
   fi
   if first_existing_file \
+      "${WORKSPACE}/tests/images/people.jpg" \
       "${WORKSPACE}/core/tests/images/people.jpg" \
-      "${WORKSPACE}/tests/images/people.jpg"; then
+      "${WORKSPACE}/../tests/images/people.jpg"; then
     return
   fi
   local url="${SIMAPCIE_BOXDECODE_IMAGE_URL:-https://raw.githubusercontent.com/ultralytics/yolov5/master/data/images/zidane.jpg}"

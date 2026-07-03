@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
-ARTIFACT_DIR="${SIMAPCIE_ARTIFACT_DIR:-${WORKSPACE}/_work/pciehost-artifacts}"
-CARD_HOST="${SIMAPCIE_CARD_HOST:-10.0.0.2}"
-CARD_USER="${SIMAPCIE_USER:-sima}"
-QUEUE="${SIMAPCIE_QUEUE:-0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "${SCRIPT_DIR}/common.sh"
+sanitize_path
 
 mkdir -p "${ARTIFACT_DIR}/host" "${ARTIFACT_DIR}/card"
 
@@ -23,10 +22,7 @@ run_card() {
   shift
   {
     echo "+ $*"
-    ssh \
-      -o ConnectTimeout=10 \
-      -o StrictHostKeyChecking=accept-new \
-      "${CARD_USER}@${CARD_HOST}" "$@"
+    ssh_card "$@"
   } >"${ARTIFACT_DIR}/card/${name}" 2>&1 || true
 }
 
@@ -45,9 +41,14 @@ fi
 run_card "gst-inspect-neatpciesrc.txt" gst-inspect-1.0 neatpciesrc
 run_card "gst-inspect-neatpciesink.txt" gst-inspect-1.0 neatpciesink
 run_card "pcie-pipeline-builder-version.txt" bash -lc "command -v pcie-pipeline-builder; pcie-pipeline-builder --help | head -n 80"
-run_card "q${QUEUE}.status.txt" cat "/run/sima-neat/pcie/q${QUEUE}.status"
-run_card "q${QUEUE}.log.txt" cat "/var/log/sima-neat/pcie/q${QUEUE}.log"
-run_card "q${QUEUE}-card.gst.log.txt" cat "/tmp/q${QUEUE}-card.gst.log"
+
+queues="${QUEUE} ${STRESS_QUEUES}"
+for queue in ${queues}; do
+  [[ -n "${queue}" ]] || continue
+  run_card "q${queue}.status.txt" cat "/run/sima-neat/pcie/q${queue}.status"
+  run_card "q${queue}.log.txt" cat "/var/log/sima-neat/pcie/q${queue}.log"
+  run_card "q${queue}-card.gst.log.txt" cat "/tmp/q${queue}-card.gst.log"
+done
 
 find "${ARTIFACT_DIR}" -type f -empty -delete 2>/dev/null || true
-echo "Collected PCIe host coproc artifacts under ${ARTIFACT_DIR}"
+echo "Collected PCIe host hardware artifacts under ${ARTIFACT_DIR}"

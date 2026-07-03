@@ -26,7 +26,7 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
-option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware smoke tests" OFF)
+option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware tests" OFF)
 option(SIMAPCIE_BUILD_PYTHON "Build PCIe host Python bindings via nanobind" OFF)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")

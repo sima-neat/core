@@ -163,7 +163,7 @@ def _load_bgr_image(path: Path) -> np.ndarray:
   try:
     from PIL import Image
   except ImportError:
-    pytest.skip("Pillow is required for image PCIe Python smoke tests")
+    pytest.skip("Pillow is required for image PCIe Python hardware tests")
 
   with Image.open(path) as image:
     rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
@@ -381,8 +381,8 @@ def test_image_boxdecode_run_yolov8():
 
     image_tensor = pcie.Tensor.from_numpy(
         image,
-      image_format=pcie.PixelFormat.BGR,
-      route_name="input_image",
+        image_format=pcie.PixelFormat.BGR,
+        route_name="input_image",
     )
 
     def push_once():

@@ -588,7 +588,7 @@ jobs:
               "resources-checksum": resource_checksums,
               "selectable-resources": [],
               "installation": {
-                  "script": "./install_pciehost.sh --python",
+                  "script": "bash ./install_pciehost.sh --python",
                   "post-message": "[bold]sima-pcie-host and pypciehost installed successfully.[/bold]\\n"
                                   "Activate pypciehost with: source ~/pypciehost/bin/activate\\n",
               },
@@ -1039,8 +1039,8 @@ jobs:
           echo "Disk usage after cleanup:"
           df -h "${TMP_ROOT}" || true
 
-  test-pciehost-coproc:
-    name: Test PCIe Host Coproc
+  test-pciehost-hardware:
+    name: Test PCIe Host Hardware
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
@@ -1060,6 +1060,10 @@ jobs:
       SIMAPCIE_QUEUE: "0"
       SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
       SIMAPCIE_PULL_TIMEOUT_MS: "30000"
+      SIMAPCIE_SYNC_ITERATIONS: "50"
+      SIMAPCIE_TEST_ITERATIONS: "1000"
+      SIMAPCIE_STRESS_QUEUES: "0 1 2 3"
+      SIMAPCIE_STRESS_ITERATIONS: "1000"
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
       SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
       DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
@@ -1081,45 +1085,121 @@ jobs:
           "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
           "${HOME}/.sima-cli/.venv/bin/sima-cli" neat install --help >/dev/null
 
-      - name: Run PCIe host/card smoke
+      - name: Resolve PCIe artifact ref
         shell: bash
         run: |
           set -euo pipefail
-          export REF_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          export SHORT_SHA="${GITHUB_SHA:0:12}"
-          ./scripts/ci/run_pciehost_coproc_smoke.sh
+          echo "REF_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" >> "${GITHUB_ENV}"
+          echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "${GITHUB_ENV}"
 
-      - name: Collect PCIe smoke artifacts
+      - name: Prepare PCIe host hardware workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/preflight.sh
+
+      - name: Install PCIe host package from Vulcan artifact
+        id: install_pciehost_package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_host_package.sh
+
+      - name: Install PCIe host test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_host_test_deps.sh
+
+      - name: Cleanup PCIe queues before card install
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Install Neat runtime on PCIe card
+        id: install_pcie_card_runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_card_runtime.sh
+
+      - name: Extract PCIe host extras
+        id: extract_pciehost_extras
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/extract_extras.sh
+
+      - name: Resolve PCIe hardware test assets
+        id: resolve_pciehost_assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/resolve_assets.sh
+
+      - name: Verify PCIe card runtime
+        id: verify_pcie_card_runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/verify_card_runtime.sh
+
+      - name: Cleanup PCIe queues before C++ tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Run PCIe host C++ CTest suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/run_ctest.sh
+
+      - name: Cleanup PCIe queues before Python tests
         if: ${{ always() }}
         shell: bash
         run: |
-          ./scripts/ci/collect_pciehost_coproc_artifacts.sh
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh || true
 
-      - name: Upload PCIe smoke artifacts
+      - name: Run pypciehost Python pytest suite
+        if: ${{ !cancelled() && steps.install_pciehost_package.outcome == 'success' && steps.install_pcie_card_runtime.outcome == 'success' && steps.extract_pciehost_extras.outcome == 'success' && steps.resolve_pciehost_assets.outcome == 'success' && steps.verify_pcie_card_runtime.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/run_pytest.sh
+
+      - name: Collect PCIe hardware test artifacts
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          ./scripts/ci/pciehost/collect_artifacts.sh
+
+      - name: Upload PCIe hardware test artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: pciehost-coproc-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pciehost-hardware-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/pciehost-artifacts
           if-no-files-found: warn
 
-      - name: Cleanup PCIe queue
+      - name: Cleanup PCIe queues
         if: ${{ always() }}
         shell: bash
         run: |
-          if [[ -x ./scripts/ci/run_pciehost_coproc_smoke.sh ]]; then
-            ./scripts/ci/run_pciehost_coproc_smoke.sh --cleanup-only || true
-          fi
+          ./scripts/ci/pciehost/cleanup_queue.sh || true
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && needs.test-pciehost-coproc.result == 'success' }}
+    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && needs.test-pciehost-hardware.result == 'success' }}
     needs:
       - detect-changes
       - resolve-vulcan-config
       - publish-pciehost-package
       - test-devkit
-      - test-pciehost-coproc
+      - test-pciehost-hardware
     uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
     with:
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}

@@ -35,7 +35,7 @@ Usage: ./build.sh [options]
 Options:
   --all               Build tests, Python bindings, and DEB packages
   --clean             Remove build directory before configure
-  --with-tests        Build unit and hardware smoke tests
+  --with-tests        Build unit and hardware tests
   --python            Build Python bindings and package a Python wheel
   --no-deb            Skip DEB package generation
   --install-deps-only Install PCIe host build dependencies, then exit
@@ -480,7 +480,10 @@ if runtime_debs and full_paths:
         resource_sizes[resource] = size
         total_size += size
 
-    install_script = "./install_pciehost.sh --python" if wheels else "./install_pciehost.sh"
+    install_script = (
+        "bash ./install_pciehost.sh --python" if wheels else
+        "bash ./install_pciehost.sh"
+    )
     post_message = "[bold]sima-pcie-host installed successfully.[/bold]\n"
     if wheels:
         post_message = (
