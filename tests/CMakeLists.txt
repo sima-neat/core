@@ -73,6 +73,8 @@ set(PIPELINESESSION_TEST_BLACKLIST
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/model-archive")
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 set(SIMA_TEST_DECODER_FIXTURE "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
+set(SIMA_TEST_CODEC_PERF_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/codec-perf")
+set(SIMA_TEST_CODEC_PERF_H264_FIXTURE "${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}/h264_1280x720_30fps.h264")
 
 add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
@@ -84,6 +86,18 @@ add_custom_target(prepare_test_fixtures ALL
     --output ${SIMA_TEST_DECODER_FIXTURE}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Preparing deterministic test fixtures"
+  VERBATIM
+)
+
+add_custom_target(prepare_perf_codec_fixtures
+  COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py
+    --output-dir ${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}
+    --width 1280
+    --height 720
+    --fps 30
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Preparing codec performance fixtures"
   VERBATIM
 )
 
@@ -665,6 +679,8 @@ set(PERF_TARGETS
   perf_runtime_graph_async_rgb_test
   perf_runtime_graph_fanout_test
   perf_runtime_graph_join_bundle_test
+  perf_runtime_codec_mjpeg_decode_test
+  perf_runtime_codec_h264_decode_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -679,6 +695,13 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
+  if (target STREQUAL "perf_runtime_codec_h264_decode_test")
+    add_dependencies(${target} prepare_perf_codec_fixtures)
+    target_compile_definitions(${target}
+      PRIVATE
+        SIMA_TEST_CODEC_PERF_H264_FIXTURE="${SIMA_TEST_CODEC_PERF_H264_FIXTURE}"
+    )
+  endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
 

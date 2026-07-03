@@ -31,6 +31,8 @@ SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_session_async_rgb", "perf_runtime_graph_async_rgb_test"),
     ScenarioSpec("runtime_graph_fanout", "perf_runtime_graph_fanout_test"),
     ScenarioSpec("runtime_graph_join_bundle", "perf_runtime_graph_join_bundle_test"),
+    ScenarioSpec("runtime_codec_mjpeg_decode", "perf_runtime_codec_mjpeg_decode_test"),
+    ScenarioSpec("runtime_codec_h264_decode", "perf_runtime_codec_h264_decode_test"),
 )
 
 
