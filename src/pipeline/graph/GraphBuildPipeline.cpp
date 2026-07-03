@@ -2138,7 +2138,8 @@ static bool encoded_caps_fixup_apply(GstStructure* s, EncodedCapsFixupCtx* ctx, 
   int den = 0;
   const bool has_fps = gst_structure_get_fraction(s, "framerate", &num, &den) && num > 0 && den > 0;
   if (!has_fps) {
-    const int fps = (ctx->fallback_fps > 0) ? ctx->fallback_fps : ctx->sdp_fps.load();
+    const int sdp_fps = ctx->sdp_fps.load();
+    const int fps = (sdp_fps > 0) ? sdp_fps : ctx->fallback_fps;
     if (fps > 0) {
       gst_structure_set(s, "framerate", GST_TYPE_FRACTION, fps, 1, nullptr);
       changed = true;
@@ -2178,9 +2179,10 @@ static bool encoded_caps_fixup_apply_caps(GstCaps* caps, EncodedCapsFixupCtx* ct
 static int encoded_caps_fixup_applied_fps(const EncodedCapsFixupCtx* ctx) {
   if (!ctx)
     return -1;
-  if (ctx->fallback_fps > 0)
-    return ctx->fallback_fps;
-  return ctx->sdp_fps.load();
+  const int sdp_fps = ctx->sdp_fps.load();
+  if (sdp_fps > 0)
+    return sdp_fps;
+  return ctx->fallback_fps;
 }
 
 static void encoded_caps_fixup_log_once(EncodedCapsFixupCtx* ctx) {

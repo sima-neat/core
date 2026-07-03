@@ -1895,6 +1895,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   session_build_attach_debug_appsink_probes(pipeline);
   session_build_attach_debug_all_buffer_probes(pipeline);
   session_build_attach_debug_element_buffer_probes(pipeline);
+  session_build_attach_encoded_caps_fixups(pipeline, build_nodes, name_transform);
 
   GstElement* sink = nullptr;
   if (has_sink) {
