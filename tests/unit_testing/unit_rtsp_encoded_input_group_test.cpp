@@ -128,6 +128,12 @@ void check_rtp_jpeg_depacketize_node() {
   require_contains(dynamic_node->backend_fragment(8), "encoding-name=JPEG",
                    "dynamic RTP JPEG payload should require encoding-name");
 
+  auto unfiltered_node = simaai::neat::nodes::RTPJpegDepacketize(0);
+  require_contains(unfiltered_node->backend_fragment(9), "encoding-name=JPEG",
+                   "unfiltered RTP JPEG payload should still require JPEG encoding");
+  require_not_contains(unfiltered_node->backend_fragment(9),
+                       "payload=", "unfiltered RTP JPEG payload should not filter by payload");
+
   const auto* provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(node.get());
   require(provider != nullptr, "RTPJpegDepacketize should provide output spec");
   const simaai::neat::OutputSpec spec = provider->output_spec({});
@@ -331,6 +337,11 @@ void check_mjpeg_sdp_fps_matches_selected_payload() {
       simaai::neat::session_test::parse_sdp_fps_for_rtp_payload_for_test(kMixedSdp, 96, "JPEG");
   require(h264_payload_as_jpeg_fps == 0,
           "MJPEG SDP FPS should not use H264 RTP media with the same payload filter");
+
+  const int unfiltered_mjpeg_fps =
+      simaai::neat::session_test::parse_sdp_fps_for_rtp_payload_for_test(kMixedSdp, -1, "JPEG");
+  require(unfiltered_mjpeg_fps == 15,
+          "MJPEG SDP FPS should match JPEG media when payload filtering is disabled");
 
   constexpr const char* kSessionFpsSdp = "v=0\r\n"
                                          "o=- 0 0 IN IP4 127.0.0.1\r\n"
