@@ -10,6 +10,7 @@
 #include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/RTPJpegDepacketize.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/internal/BuildTiming.h"
@@ -21,6 +22,7 @@
 #include <neat/PreparedRuntimeBridge.h>
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -809,6 +811,102 @@ static int parse_sdp_fps(const GstSDPMessage* sdp) {
   return 0;
 }
 
+static bool ascii_iequals_prefix(const char* lhs, const char* rhs, size_t len) {
+  if (!lhs || !rhs)
+    return false;
+  for (size_t i = 0; i < len; ++i) {
+    if (lhs[i] == '\0' || rhs[i] == '\0')
+      return false;
+    if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+        std::tolower(static_cast<unsigned char>(rhs[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool sdp_media_has_payload(const GstSDPMedia* media, int payload_type) {
+  if (!media || payload_type <= 0)
+    return false;
+  const guint format_count = gst_sdp_media_formats_len(media);
+  for (guint i = 0; i < format_count; ++i) {
+    const char* format = gst_sdp_media_get_format(media, i);
+    if (!format)
+      continue;
+    char* end = nullptr;
+    const long payload = std::strtol(format, &end, 10);
+    if (end != format && payload == payload_type)
+      return true;
+  }
+  return false;
+}
+
+static bool sdp_rtpmap_matches_encoding(const char* value, int payload_type,
+                                        const char* encoding_name) {
+  if (!value || payload_type <= 0 || !encoding_name || !*encoding_name)
+    return false;
+  char* end = nullptr;
+  const long payload = std::strtol(value, &end, 10);
+  if (end == value || payload != payload_type)
+    return false;
+  while (*end && std::isspace(static_cast<unsigned char>(*end))) {
+    ++end;
+  }
+  const size_t encoding_len = std::strlen(encoding_name);
+  if (!ascii_iequals_prefix(end, encoding_name, encoding_len))
+    return false;
+  const char next = end[encoding_len];
+  return next == '\0' || next == '/' || std::isspace(static_cast<unsigned char>(next));
+}
+
+static bool sdp_media_matches_payload_encoding(const GstSDPMedia* media, int payload_type,
+                                               const char* encoding_name) {
+  if (!sdp_media_has_payload(media, payload_type))
+    return false;
+
+  bool saw_rtpmap_for_payload = false;
+  const int attr_count = gst_sdp_media_attributes_len(media);
+  for (int i = 0; i < attr_count; ++i) {
+    const GstSDPAttribute* attr = gst_sdp_media_get_attribute(media, i);
+    if (!attr || !attr->key || !attr->value || std::strcmp(attr->key, "rtpmap") != 0)
+      continue;
+
+    char* end = nullptr;
+    const long payload = std::strtol(attr->value, &end, 10);
+    if (end == attr->value || payload != payload_type)
+      continue;
+
+    saw_rtpmap_for_payload = true;
+    if (sdp_rtpmap_matches_encoding(attr->value, payload_type, encoding_name))
+      return true;
+  }
+
+  return !saw_rtpmap_for_payload;
+}
+
+static int parse_sdp_fps_for_rtp_payload(const GstSDPMessage* sdp, int payload_type,
+                                         const char* encoding_name) {
+  if (!sdp)
+    return 0;
+
+  const guint media_count = gst_sdp_message_medias_len(sdp);
+  for (guint i = 0; i < media_count; ++i) {
+    const GstSDPMedia* media = gst_sdp_message_get_media(sdp, i);
+    if (!media)
+      continue;
+    const char* media_type = gst_sdp_media_get_media(media);
+    if (media_type && std::strcmp(media_type, "video") != 0)
+      continue;
+    if (!sdp_media_matches_payload_encoding(media, payload_type, encoding_name))
+      continue;
+    const int fps = parse_sdp_fps_value(gst_sdp_media_get_attribute_val(media, "framerate"));
+    if (fps > 0)
+      return fps;
+  }
+
+  return parse_sdp_fps_value(gst_sdp_message_get_attribute_val(sdp, "framerate"));
+}
+
 struct H264CapsFixupCtx {
   std::string element_name;
   std::string rtsp_element_name;
@@ -834,6 +932,8 @@ struct EncodedCapsFixupCtx {
   std::string media_type;
   std::string rtsp_element_name;
   int fallback_fps = -1;
+  int rtp_payload_type = -1;
+  std::string rtp_encoding_name;
   std::atomic<int> sdp_fps{0};
   bool logged = false;
   bool missing_logged = false;
@@ -1702,6 +1802,18 @@ find_h264_capsfilter_name_for_fixup(const std::vector<std::shared_ptr<Node>>& no
   return {};
 }
 
+static int find_rtp_jpeg_payload_type_for_fixup(const std::vector<std::shared_ptr<Node>>& nodes,
+                                                size_t fixup_index) {
+  if (fixup_index == 0)
+    return -1;
+  for (size_t i = fixup_index; i-- > 0;) {
+    const auto* depay = dynamic_cast<const RTPJpegDepacketize*>(nodes[i].get());
+    if (depay)
+      return depay->payload_type();
+  }
+  return -1;
+}
+
 static H264CapsFixupCtx* make_h264_caps_fixup_ctx(GstElement* pipeline, const H264CapsFixup& fix,
                                                   const std::string& element_name,
                                                   const std::string& rtsp_element_name) {
@@ -1726,7 +1838,10 @@ static void encoded_caps_fixup_on_sdp(GstElement* /*src*/, GstSDPMessage* sdp, g
   if (!ctx || !sdp)
     return;
 
-  const int fps = parse_sdp_fps(sdp);
+  const int fps = (ctx->rtp_payload_type > 0 && !ctx->rtp_encoding_name.empty())
+                      ? parse_sdp_fps_for_rtp_payload(sdp, ctx->rtp_payload_type,
+                                                      ctx->rtp_encoding_name.c_str())
+                      : parse_sdp_fps(sdp);
   if (fps <= 0)
     return;
   int expected = 0;
@@ -2173,6 +2288,11 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     ctx->media_type = fix->options().media_type;
     ctx->fallback_fps = fix->options().fallback_fps;
     ctx->rtsp_element_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
+    if (ctx->media_type == "image/jpeg") {
+      ctx->rtp_payload_type = find_rtp_jpeg_payload_type_for_fixup(nodes, i);
+      if (ctx->rtp_payload_type > 0)
+        ctx->rtp_encoding_name = "JPEG";
+    }
     if (!ctx->rtsp_element_name.empty()) {
       GstElement* rtspsrc = gst_bin_get_by_name(GST_BIN(pipeline), ctx->rtsp_element_name.c_str());
       if (rtspsrc) {
@@ -2219,5 +2339,27 @@ void session_build_attach_encoded_caps_fixups(GstElement* pipeline,
                                               const NameTransform& name_transform) {
   attach_encoded_caps_fixups(pipeline, nodes, name_transform);
 }
+
+namespace session_test {
+
+int parse_sdp_fps_for_rtp_payload_for_test(const char* sdp_text, int payload_type,
+                                           const char* encoding_name) {
+  if (!sdp_text)
+    return 0;
+
+  GstSDPMessage* sdp = nullptr;
+  if (gst_sdp_message_new(&sdp) != GST_SDP_OK || !sdp)
+    return 0;
+
+  const auto* data = reinterpret_cast<const guint8*>(sdp_text);
+  const GstSDPResult result =
+      gst_sdp_message_parse_buffer(data, static_cast<guint>(std::strlen(sdp_text)), sdp);
+  const int fps =
+      (result == GST_SDP_OK) ? parse_sdp_fps_for_rtp_payload(sdp, payload_type, encoding_name) : 0;
+  gst_sdp_message_free(sdp);
+  return fps;
+}
+
+} // namespace session_test
 
 } // namespace simaai::neat
