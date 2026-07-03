@@ -865,6 +865,7 @@ static bool sdp_media_matches_payload_encoding(const GstSDPMedia* media, int pay
     return false;
 
   bool saw_rtpmap_for_payload = false;
+  bool saw_static_jpeg_payload_rtpmap = false;
   const int attr_count = gst_sdp_media_attributes_len(media);
   for (int i = 0; i < attr_count; ++i) {
     const GstSDPAttribute* attr = gst_sdp_media_get_attribute(media, i);
@@ -877,8 +878,15 @@ static bool sdp_media_matches_payload_encoding(const GstSDPMedia* media, int pay
       continue;
 
     saw_rtpmap_for_payload = true;
+    if (payload == 26)
+      saw_static_jpeg_payload_rtpmap = true;
     if (sdp_rtpmap_matches_encoding(attr->value, payload_type, encoding_name))
       return true;
+  }
+
+  if (payload_type <= 0 && std::strcmp(encoding_name, "JPEG") == 0 &&
+      sdp_media_has_payload(media, 26) && !saw_static_jpeg_payload_rtpmap) {
+    return true;
   }
 
   return payload_type > 0 && !saw_rtpmap_for_payload;

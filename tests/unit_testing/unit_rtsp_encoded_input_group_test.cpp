@@ -343,6 +343,21 @@ void check_mjpeg_sdp_fps_matches_selected_payload() {
   require(unfiltered_mjpeg_fps == 15,
           "MJPEG SDP FPS should match JPEG media when payload filtering is disabled");
 
+  constexpr const char* kStaticJpegSdp = "v=0\r\n"
+                                         "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                                         "s=Static JPEG payload stream\r\n"
+                                         "t=0 0\r\n"
+                                         "m=video 0 RTP/AVP 96\r\n"
+                                         "a=rtpmap:96 H264/90000\r\n"
+                                         "a=framerate:30\r\n"
+                                         "m=video 0 RTP/AVP 26\r\n"
+                                         "a=framerate:15\r\n";
+
+  const int static_jpeg_fps = simaai::neat::session_test::parse_sdp_fps_for_rtp_payload_for_test(
+      kStaticJpegSdp, -1, "JPEG");
+  require(static_jpeg_fps == 15,
+          "MJPEG SDP FPS should recognize static RTP JPEG payload without rtpmap");
+
   constexpr const char* kSessionFpsSdp = "v=0\r\n"
                                          "o=- 0 0 IN IP4 127.0.0.1\r\n"
                                          "s=Session FPS stream\r\n"
