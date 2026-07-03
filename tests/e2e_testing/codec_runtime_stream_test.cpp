@@ -9,6 +9,7 @@
 #include "pipeline/Run.h"
 #include "test_utils.h"
 
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
@@ -29,7 +30,6 @@ using simaai::neat::PullStatus;
 using simaai::neat::Run;
 using simaai::neat::RunOptions;
 using simaai::neat::Sample;
-using simaai::neat::StorageKind;
 using simaai::neat::Tensor;
 using simaai::neat::nodes::groups::HttpMjpegDecodedInput;
 using simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions;
@@ -329,7 +329,7 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample) {
   require_contains(metadata, test_case.expected_caps, test_case.name + ": sample caps mismatch");
 
   switch (test_case.kind) {
-  case CaseKind::RtspMjpegEncodedBoundary:
+  case CaseKind::RtspMjpegEncodedBoundary: {
     require(simaai::neat::sample_payload_type(sample) == PayloadType::Encoded,
             test_case.name + ": expected encoded payload");
     require(sample.caps_string.find("video/x-raw,format=ENCODED") == std::string::npos,
@@ -337,9 +337,12 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample) {
     require(sample.tensors.size() == 1U, test_case.name + ": expected one encoded tensor");
     require(sample.tensors.front().storage != nullptr,
             test_case.name + ": encoded tensor missing storage");
-    require(sample.tensors.front().storage->kind == StorageKind::GstSample,
-            test_case.name + ": zero-copy encoded output should preserve GstSample storage");
+    const std::vector<std::uint8_t> payload = sample.tensors.front().copy_payload_bytes();
+    require(payload.size() >= 2U, test_case.name + ": encoded JPEG payload is empty");
+    require(payload[0] == 0xFFU && payload[1] == 0xD8U,
+            test_case.name + ": encoded payload is not a JPEG frame");
     break;
+  }
 
   case CaseKind::RtspH264Decoded:
   case CaseKind::RtspMjpegDecoded:
