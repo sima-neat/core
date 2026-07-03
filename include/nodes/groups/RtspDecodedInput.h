@@ -44,10 +44,11 @@ struct RtspDecodedInputOptions {
   int h264_height = -1;     ///< Expected height injected into the parser caps (-1 = unspecified).
   bool insert_queue = true; ///< Insert a queue between depayloader and parser.
   bool sync_mode = false;   ///< If true, sink elements run in sync (real-time) mode.
-  bool auto_caps_from_stream = true; ///< Try to derive caps automatically from the live stream.
-  int fallback_h264_fps = -1;        ///< Fallback FPS used if auto-caps fails.
-  int fallback_h264_width = -1;      ///< Fallback width used if auto-caps fails.
-  int fallback_h264_height = -1;     ///< Fallback height used if auto-caps fails.
+  bool auto_caps_from_stream =
+      true; ///< Try to derive caps automatically from the live stream, including RTSP MJPEG FPS.
+  int fallback_h264_fps = -1;    ///< Fallback FPS used if H.264 auto-caps fails.
+  int fallback_h264_width = -1;  ///< Fallback width used if auto-caps fails.
+  int fallback_h264_height = -1; ///< Fallback height used if auto-caps fails.
 
   int sima_allocator_type = 2;             ///< SiMa allocator type for decoder output buffers.
   FormatSpec out_format = FormatTag::NV12; ///< Pixel format produced by the decoder.
@@ -80,7 +81,7 @@ struct RtspDecodedInputOptions {
   int mjpeg_payload_type = 26;  ///< RTP payload type number for the MJPEG/RTP JPEG stream.
   int dec_width = -1;           ///< Decoded frame width override; `-1` = upstream-defined.
   int dec_height = -1;          ///< Decoded frame height override; `-1` = upstream-defined.
-  int dec_fps = -1;     ///< Decoded frame rate override; for MJPEG also fixes missing input caps.
+  int dec_fps = -1; ///< Decoded frame rate override; for MJPEG also a missing-caps FPS fallback.
   int num_buffers = -1; ///< Decoder output buffer pool size override; `-1` = element default.
 };
 

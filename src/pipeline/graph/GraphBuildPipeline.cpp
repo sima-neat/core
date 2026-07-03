@@ -832,8 +832,11 @@ struct H264CapsFixupCtx {
 struct EncodedCapsFixupCtx {
   std::string element_name;
   std::string media_type;
+  std::string rtsp_element_name;
   int fallback_fps = -1;
+  std::atomic<int> sdp_fps{0};
   bool logged = false;
+  bool missing_logged = false;
 };
 
 static bool h264_sdp_dump_enabled() {
@@ -1718,6 +1721,18 @@ static H264CapsFixupCtx* make_h264_caps_fixup_ctx(GstElement* pipeline, const H2
   return ctx;
 }
 
+static void encoded_caps_fixup_on_sdp(GstElement* /*src*/, GstSDPMessage* sdp, gpointer user_data) {
+  auto* ctx = reinterpret_cast<EncodedCapsFixupCtx*>(user_data);
+  if (!ctx || !sdp)
+    return;
+
+  const int fps = parse_sdp_fps(sdp);
+  if (fps <= 0)
+    return;
+  int expected = 0;
+  ctx->sdp_fps.compare_exchange_strong(expected, fps);
+}
+
 struct RtspDebugCtx {
   std::string element_name;
   std::atomic<bool> stop{false};
@@ -1999,9 +2014,18 @@ static bool encoded_caps_fixup_apply(GstStructure* s, EncodedCapsFixupCtx* ctx, 
   int num = 0;
   int den = 0;
   const bool has_fps = gst_structure_get_fraction(s, "framerate", &num, &den) && num > 0 && den > 0;
-  if (!has_fps && ctx->fallback_fps > 0) {
-    gst_structure_set(s, "framerate", GST_TYPE_FRACTION, ctx->fallback_fps, 1, nullptr);
-    changed = true;
+  if (!has_fps) {
+    const int fps = (ctx->fallback_fps > 0) ? ctx->fallback_fps : ctx->sdp_fps.load();
+    if (fps > 0) {
+      gst_structure_set(s, "framerate", GST_TYPE_FRACTION, fps, 1, nullptr);
+      changed = true;
+    } else if (!ctx->missing_logged) {
+      std::fprintf(stderr,
+                   "[caps] %s: %s missing/invalid framerate; no fallback or RTSP SDP "
+                   "framerate available\n",
+                   ctx->element_name.c_str(), ctx->media_type.c_str());
+      ctx->missing_logged = true;
+    }
   }
 
   if (out_changed)
@@ -2028,11 +2052,20 @@ static bool encoded_caps_fixup_apply_caps(GstCaps* caps, EncodedCapsFixupCtx* ct
   return true;
 }
 
+static int encoded_caps_fixup_applied_fps(const EncodedCapsFixupCtx* ctx) {
+  if (!ctx)
+    return -1;
+  if (ctx->fallback_fps > 0)
+    return ctx->fallback_fps;
+  return ctx->sdp_fps.load();
+}
+
 static void encoded_caps_fixup_log_once(EncodedCapsFixupCtx* ctx) {
-  if (!ctx || ctx->logged || ctx->fallback_fps <= 0)
+  const int fps = encoded_caps_fixup_applied_fps(ctx);
+  if (!ctx || ctx->logged || fps <= 0)
     return;
   std::fprintf(stderr, "[caps] %s: %s missing/invalid framerate; applying %d/1\n",
-               ctx->element_name.c_str(), ctx->media_type.c_str(), ctx->fallback_fps);
+               ctx->element_name.c_str(), ctx->media_type.c_str(), fps);
   ctx->logged = true;
 }
 
@@ -2139,6 +2172,14 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     ctx->element_name = names[0];
     ctx->media_type = fix->options().media_type;
     ctx->fallback_fps = fix->options().fallback_fps;
+    ctx->rtsp_element_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
+    if (!ctx->rtsp_element_name.empty()) {
+      GstElement* rtspsrc = gst_bin_get_by_name(GST_BIN(pipeline), ctx->rtsp_element_name.c_str());
+      if (rtspsrc) {
+        g_signal_connect(rtspsrc, "on-sdp", G_CALLBACK(encoded_caps_fixup_on_sdp), ctx);
+        gst_object_unref(rtspsrc);
+      }
+    }
     gst_pad_add_probe(
         src,
         static_cast<GstPadProbeType>(GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM |
