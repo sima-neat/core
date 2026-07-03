@@ -13,6 +13,7 @@
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/PayloadType.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 
 #include "test_utils.h"
 
@@ -294,9 +295,54 @@ void check_decoded_mjpeg_group() {
           "MJPEG decoded group should advertise decoder-native SimaAI output");
 
   opt.dec_fps = -1;
+  const Graph auto_fps_group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  require_contains(auto_fps_group.describe(), "EncodedCapsFixup",
+                   "MJPEG decoded graph with auto caps should fix encoded caps");
+  if (const auto backend =
+          describe_backend_if_available(auto_fps_group, "MJPEG auto-fps decoded backend")) {
+    require_contains(*backend, "encoded_capsfix",
+                     "MJPEG auto-fps backend should include encoded caps fixup");
+  }
+
+  opt.auto_caps_from_stream = false;
   const Graph no_fps_group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
-  require_not_contains(no_fps_group.describe(), "EncodedCapsFixup",
-                       "MJPEG decoded graph without dec_fps should not insert caps fixup");
+  require_not_contains(
+      no_fps_group.describe(), "EncodedCapsFixup",
+      "MJPEG decoded graph without auto caps or dec_fps should not insert caps fixup");
+}
+
+void check_mjpeg_sdp_fps_matches_selected_payload() {
+  constexpr const char* kMixedSdp = "v=0\r\n"
+                                    "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                                    "s=Mixed codec stream\r\n"
+                                    "t=0 0\r\n"
+                                    "m=video 0 RTP/AVP 96\r\n"
+                                    "a=rtpmap:96 H264/90000\r\n"
+                                    "a=framerate:30\r\n"
+                                    "m=video 0 RTP/AVP 26\r\n"
+                                    "a=rtpmap:26 JPEG/90000\r\n"
+                                    "a=framerate:15\r\n";
+
+  const int mjpeg_fps =
+      simaai::neat::session_test::parse_sdp_fps_for_rtp_payload_for_test(kMixedSdp, 26, "JPEG");
+  require(mjpeg_fps == 15, "MJPEG SDP FPS should come from selected RTP/JPEG payload");
+
+  const int h264_payload_as_jpeg_fps =
+      simaai::neat::session_test::parse_sdp_fps_for_rtp_payload_for_test(kMixedSdp, 96, "JPEG");
+  require(h264_payload_as_jpeg_fps == 0,
+          "MJPEG SDP FPS should not use H264 RTP media with the same payload filter");
+
+  constexpr const char* kSessionFpsSdp = "v=0\r\n"
+                                         "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                                         "s=Session FPS stream\r\n"
+                                         "t=0 0\r\n"
+                                         "a=framerate:24\r\n"
+                                         "m=video 0 RTP/AVP 26\r\n"
+                                         "a=rtpmap:26 JPEG/90000\r\n";
+
+  const int session_fps = simaai::neat::session_test::parse_sdp_fps_for_rtp_payload_for_test(
+      kSessionFpsSdp, 26, "JPEG");
+  require(session_fps == 24, "MJPEG SDP FPS should fall back to session-level framerate");
 }
 
 void check_invalid_codec_errors() {
@@ -329,6 +375,7 @@ int main() {
     check_no_queue_mode();
     check_decoded_h264_group();
     check_decoded_mjpeg_group();
+    check_mjpeg_sdp_fps_matches_selected_payload();
     check_invalid_codec_errors();
     std::cout << "[OK] unit_rtsp_encoded_input_group_test passed\n";
     return 0;
