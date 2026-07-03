@@ -752,6 +752,14 @@ def test_jpeg_framing_nodes_are_exposed():
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux())
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux(demux))
 
+  fixup = pyneat.EncodedCapsFixupOptions()
+  assert fixup.media_type == ""
+  assert fixup.fallback_fps == -1
+  assert fixup.use_rtsp_sdp_fps is False
+  fixup.media_type = "image/jpeg"
+  fixup.fallback_fps = 30
+  _assert_not_type_error(lambda: pyneat.nodes.encoded_caps_fixup(fixup))
+
   parser = pyneat.JpegParseOptions()
   assert parser.disable_passthrough is True
   parser.disable_passthrough = False

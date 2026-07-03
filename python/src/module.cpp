@@ -45,6 +45,7 @@
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/common/Caps.h"
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/FileInput.h"
 #include "nodes/common/ImageDecode.h"
 #include "nodes/common/JpegDecode.h"
@@ -3696,6 +3697,11 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("boundary", &simaai::neat::MultipartJpegDemuxOptions::boundary)
       .def_rw("single_stream", &simaai::neat::MultipartJpegDemuxOptions::single_stream);
+  nb::class_<simaai::neat::EncodedCapsFixupOptions>(m, "EncodedCapsFixupOptions")
+      .def(nb::init<>())
+      .def_rw("media_type", &simaai::neat::EncodedCapsFixupOptions::media_type)
+      .def_rw("fallback_fps", &simaai::neat::EncodedCapsFixupOptions::fallback_fps)
+      .def_rw("use_rtsp_sdp_fps", &simaai::neat::EncodedCapsFixupOptions::use_rtsp_sdp_fps);
   nb::class_<simaai::neat::JpegParseOptions>(m, "JpegParseOptions")
       .def(nb::init<>())
       .def_rw("disable_passthrough", &simaai::neat::JpegParseOptions::disable_passthrough);
@@ -3846,6 +3852,7 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("jpeg_decode", &simaai::neat::nodes::JpegDecode);
   nodes_mod.def("multipart_jpeg_demux", &simaai::neat::nodes::MultipartJpegDemux,
                 "options"_a = simaai::neat::MultipartJpegDemuxOptions{});
+  nodes_mod.def("encoded_caps_fixup", &simaai::neat::nodes::EncodedCapsFixup, "options"_a);
   nodes_mod.def("jpeg_parse", &simaai::neat::nodes::JpegParse,
                 "options"_a = simaai::neat::JpegParseOptions{});
   nodes_mod.def("video_scale", &simaai::neat::nodes::VideoScale);
