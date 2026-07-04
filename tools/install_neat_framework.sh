@@ -957,7 +957,8 @@ maybe_relax_sima_lmm_dep() {
       return 0
       ;;
   esac
-  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1 ||
+      ! command -v python3 >/dev/null 2>&1; then
     out_array+=("${deb}")
     return 0
   fi
@@ -981,6 +982,7 @@ maybe_relax_sima_lmm_dep() {
   if python3 - "${unpack_dir}/DEBIAN/control" "${local_lmm_core_version}" \
       "${local_lmm_dev_version}" "${changed_marker}" <<'PY'
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1006,6 +1008,13 @@ def relax_package(package: str, body: str) -> str:
     def repl(match: re.Match[str]) -> str:
         required = match.group(1).strip()
         if minor_family(local) != minor_family(required):
+            return match.group(0)
+        if subprocess.run(
+            ["dpkg", "--compare-versions", local, "ge", required],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode != 0:
             return match.group(0)
         changed_marker.write_text("1")
         return f"{package} (>= {local})"
