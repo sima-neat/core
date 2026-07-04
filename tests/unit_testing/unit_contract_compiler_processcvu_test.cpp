@@ -863,6 +863,20 @@ RUN_TEST(
         require(indexed.stages.front().logical_stage_id == "n1_preproc",
                 "standalone preproc contract should use actual node index for logical stage id");
       }
+      {
+        ContractCompileInput remapped_input;
+        remapped_input.node_indices = {7};
+        pipeline_internal::sima::ManifestBuildDiagnostics remapped_diagnostics;
+        const CompiledPipelineContracts remapped = compile_node_contracts(
+            {nodes::Preproc(make_preproc_options())}, remapped_input, &remapped_diagnostics);
+        require(remapped_diagnostics.errors.empty(),
+                "remapped compile_node_contracts should not emit errors");
+        require(remapped.stages.size() == 1U, "remapped compile should contain one semantic stage");
+        require(remapped.stages.front().element_name == "n7_preproc",
+                "fused branch contracts should use actual rendered node index");
+        require(remapped.stages.front().logical_stage_id == "n7_preproc",
+                "fused branch contracts should preserve actual rendered stage id");
+      }
       require(processcvu.exposed_view.exposed_logical_outputs.size() == 1U,
               "preproc exposed view should expose one selected output");
       require(processcvu.preproc_single_output_handoff,

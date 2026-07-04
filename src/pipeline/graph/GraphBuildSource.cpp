@@ -75,11 +75,15 @@ InputContract input_contract_from_fused_ingress_spec(const OutputSpec& spec);
 void maybe_compile_source_contracts(BuildResult* build_result,
                                     const std::vector<std::shared_ptr<Node>>& nodes,
                                     const GraphOptions& sess_opt, const char* where,
-                                    const OutputSpec* ingress_spec = nullptr) {
+                                    const OutputSpec* ingress_spec = nullptr,
+                                    const std::vector<int>* node_indices = nullptr) {
   ContractCompileInput compile_input;
   compile_input.pipeline_label = where ? where : "Graph::build(source)";
   compile_input.processcvu_requested_run_target = sess_opt.processcvu_requested_run_target;
   compile_input.processcvu = sess_opt.processcvu;
+  if (node_indices) {
+    compile_input.node_indices = *node_indices;
+  }
   if (ingress_spec) {
     compile_input.ingress.ingress_spec = *ingress_spec;
     compile_input.ingress.ingress_contract = input_contract_from_fused_ingress_spec(*ingress_spec);
@@ -958,6 +962,117 @@ NameTransform fused_branch_name_transform(const NameTransform& base, std::size_t
   // stay unique while the public graph remains unchanged.
   out.suffix = "_b" + std::to_string(branch_index) + base.suffix;
   return out;
+}
+
+NameTransform fused_branch_local_name_transform(std::size_t branch_index) {
+  NameTransform out;
+  out.suffix = "_b" + std::to_string(branch_index);
+  return out;
+}
+
+void apply_name_transform_to_fused_manifest_stage(pipeline_internal::sima::StageStaticSpec* stage,
+                                                  const NameTransform& name_transform) {
+  if (!stage || !name_transform_enabled(name_transform)) {
+    return;
+  }
+  stage->element_name = apply_name_transform(name_transform, stage->element_name);
+  stage->logical_stage_id = apply_name_transform(name_transform, stage->logical_stage_id);
+  for (auto& binding : stage->input_bindings) {
+    binding.src_stage_id = apply_name_transform(name_transform, binding.src_stage_id);
+  }
+}
+
+void append_compiled_contracts(BuildResult* dst, const BuildResult& src) {
+  if (!dst || !src.compiled_contracts) {
+    return;
+  }
+  if (!dst->compiled_contracts) {
+    dst->compiled_contracts = std::make_shared<CompiledPipelineContracts>();
+    dst->compiled_contracts->fully_renderable = true;
+  }
+  dst->compiled_contracts->fully_renderable =
+      dst->compiled_contracts->fully_renderable && src.compiled_contracts->fully_renderable;
+  dst->compiled_contracts->stages.insert(dst->compiled_contracts->stages.end(),
+                                         src.compiled_contracts->stages.begin(),
+                                         src.compiled_contracts->stages.end());
+}
+
+void append_rendered_manifest(BuildResult* dst, const BuildResult& src,
+                              const NameTransform& local_name_transform) {
+  if (!dst || !src.rendered_manifest.has_value()) {
+    return;
+  }
+  if (!dst->rendered_manifest.has_value()) {
+    dst->rendered_manifest = pipeline_internal::sima::SimaPluginStaticManifest{};
+  }
+  for (auto stage : src.rendered_manifest->stages) {
+    apply_name_transform_to_fused_manifest_stage(&stage, local_name_transform);
+    dst->rendered_manifest->stages.push_back(std::move(stage));
+  }
+}
+
+void append_manifest_diagnostics(BuildResult* dst, const BuildResult& src) {
+  if (!dst) {
+    return;
+  }
+  dst->manifest_diagnostics.errors.insert(dst->manifest_diagnostics.errors.end(),
+                                          src.manifest_diagnostics.errors.begin(),
+                                          src.manifest_diagnostics.errors.end());
+  dst->manifest_diagnostics.warnings.insert(dst->manifest_diagnostics.warnings.end(),
+                                            src.manifest_diagnostics.warnings.begin(),
+                                            src.manifest_diagnostics.warnings.end());
+}
+
+void append_model_source_paths(BuildResult* dst, const BuildResult& src) {
+  if (!dst) {
+    return;
+  }
+  for (const auto& path : src.model_source_paths) {
+    if (std::find(dst->model_source_paths.begin(), dst->model_source_paths.end(), path) ==
+        dst->model_source_paths.end()) {
+      dst->model_source_paths.push_back(path);
+    }
+  }
+}
+
+void merge_fused_contract_build_result(BuildResult* dst, const BuildResult& src,
+                                       const NameTransform& local_name_transform) {
+  append_compiled_contracts(dst, src);
+  append_rendered_manifest(dst, src, local_name_transform);
+  append_manifest_diagnostics(dst, src);
+  append_model_source_paths(dst, src);
+}
+
+void maybe_compile_fused_realtime_contracts(
+    BuildResult* br, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
+    const std::vector<std::vector<int>>& branch_actual_indices, const GraphOptions& sess_opt,
+    const char* where, const OutputSpec& fused_ingress_spec) {
+  if (!br) {
+    return;
+  }
+
+  BuildResult consumer_result;
+  maybe_compile_source_contracts(&consumer_result, consumer_nodes, sess_opt, where,
+                                 &fused_ingress_spec);
+  merge_fused_contract_build_result(br, consumer_result, NameTransform{});
+
+  for (std::size_t branch_index = 0; branch_index < branch_nodes.size(); ++branch_index) {
+    const auto& nodes = branch_nodes[branch_index];
+    if (nodes.empty()) {
+      continue;
+    }
+    const std::vector<int>* node_indices = nullptr;
+    if (branch_index < branch_actual_indices.size() &&
+        branch_actual_indices[branch_index].size() == nodes.size()) {
+      node_indices = &branch_actual_indices[branch_index];
+    }
+    BuildResult branch_result;
+    maybe_compile_source_contracts(&branch_result, nodes, sess_opt, where,
+                                   /*ingress_spec=*/nullptr, node_indices);
+    merge_fused_contract_build_result(br, branch_result,
+                                      fused_branch_local_name_transform(branch_index));
+  }
 }
 
 struct FusedRealtimePadProbeCtx {
@@ -2065,7 +2180,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   BuildResult br =
       build_fused_realtime_source_pipeline(ingress, build_consumer_nodes, build_branch_nodes,
                                            branch_actual_indices, name_transform, "mysink");
-  maybe_compile_source_contracts(&br, build_consumer_nodes, sess_opt, where, &fused_ingress_spec);
+  maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
+                                         branch_actual_indices, sess_opt, where,
+                                         fused_ingress_spec);
   if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
     const auto endpoint = session_build_public_output_endpoint_selector(build_consumer_nodes);
     std::string error;
