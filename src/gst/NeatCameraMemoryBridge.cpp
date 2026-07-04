@@ -183,6 +183,14 @@ guint64 first_buffer_phys(GstBuffer* buffer) {
 }
 
 struct ExistingSimaMeta {
+  bool has_buffer_id = false;
+  gint64 buffer_id = 0;
+  bool has_buffer_name = false;
+  std::string buffer_name;
+  bool has_buffer_offset = false;
+  gint64 buffer_offset = 0;
+  bool has_stream_id = false;
+  std::string stream_id;
   bool has_frame_id = false;
   gint64 frame_id = 0;
   bool has_pcie_buffer_id = false;
@@ -198,6 +206,24 @@ ExistingSimaMeta read_existing_sima_meta(GstBuffer* buffer) {
   if (!s)
     return out;
   gint64 v = 0;
+  if (gst_structure_get_int64(s, "buffer-id", &v) && v > 0) {
+    out.has_buffer_id = true;
+    out.buffer_id = v;
+  }
+  const char* name = gst_structure_get_string(s, "buffer-name");
+  if (name && *name) {
+    out.has_buffer_name = true;
+    out.buffer_name = name;
+  }
+  if (gst_structure_get_int64(s, "buffer-offset", &v)) {
+    out.has_buffer_offset = true;
+    out.buffer_offset = v;
+  }
+  const char* stream = gst_structure_get_string(s, "stream-id");
+  if (stream && *stream) {
+    out.has_stream_id = true;
+    out.stream_id = stream;
+  }
   if (gst_structure_get_int64(s, "frame-id", &v)) {
     out.has_frame_id = true;
     out.frame_id = v;
@@ -232,16 +258,25 @@ bool stamp_sima_meta(GstNeatCameraMemoryBridge* self, GstBuffer* buffer, guint64
   }
 
   const gint64 frame_id = old.has_frame_id ? old.frame_id : self->sequence_id++;
+  // Pass-through EV74 camera buffers may already carry the camera plugin's
+  // exact segment identity. Preserve it instead of replacing it with the first
+  // memory's physical address; multi-plane/DMABUF sources can have a more
+  // precise `buffer-id`/offset/name contract than the bridge can infer.
+  const gint64 buffer_id =
+      (passthrough && old.has_buffer_id) ? old.buffer_id : static_cast<gint64>(phys_addr);
+  const std::string buffer_name =
+      (passthrough && old.has_buffer_name) ? old.buffer_name : bridge_buffer_name(self);
+  const gint64 buffer_offset = (passthrough && old.has_buffer_offset) ? old.buffer_offset : 0;
+  const std::string stream_id = old.has_stream_id ? old.stream_id : std::string("0");
   const guint64 timestamp = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))
                                 ? static_cast<guint64>(GST_BUFFER_PTS(buffer))
                                 : static_cast<guint64>(0);
-  const gchar* name = bridge_buffer_name(self);
-  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(phys_addr), "buffer-name",
-                    G_TYPE_STRING, name, "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0),
-                    "stream-id", G_TYPE_STRING, "0", "frame-id", G_TYPE_INT64, frame_id,
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, buffer_id, "buffer-name", G_TYPE_STRING,
+                    buffer_name.c_str(), "buffer-offset", G_TYPE_INT64, buffer_offset, "stream-id",
+                    G_TYPE_STRING, stream_id.c_str(), "frame-id", G_TYPE_INT64, frame_id,
                     "orig-input-seq", G_TYPE_INT64, frame_id, "timestamp", G_TYPE_UINT64, timestamp,
-                    "origin_stage_id", G_TYPE_STRING, name, "origin_output_slot", G_TYPE_INT, 0,
-                    nullptr);
+                    "origin_stage_id", G_TYPE_STRING, buffer_name.c_str(), "origin_output_slot",
+                    G_TYPE_INT, 0, nullptr);
   if (old.has_pcie_buffer_id) {
     gst_structure_set(s, "pcie-buffer-id", G_TYPE_INT64, old.pcie_buffer_id, nullptr);
   }
@@ -249,7 +284,8 @@ bool stamp_sima_meta(GstNeatCameraMemoryBridge* self, GstBuffer* buffer, guint64
   if (debug_enabled(self)) {
     GST_INFO_OBJECT(
         self, "%s GstSimaMeta buffer-id=%" G_GUINT64_FORMAT " name=%s frame=%" G_GINT64_FORMAT,
-        passthrough ? "passthrough" : "copied", phys_addr, name, frame_id);
+        passthrough ? "passthrough" : "copied", static_cast<guint64>(buffer_id),
+        buffer_name.c_str(), frame_id);
   }
   return true;
 }
