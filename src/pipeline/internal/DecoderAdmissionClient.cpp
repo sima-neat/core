@@ -13,6 +13,7 @@
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <vector>
@@ -29,6 +30,7 @@ constexpr std::uint16_t kCmdAdmitGraphResp = 3;
 constexpr std::uint16_t kCmdReleaseGraph = 4;
 constexpr std::uint16_t kCmdCheckGraph = 6;
 constexpr std::uint32_t kStatusSuccess = 501;
+constexpr int kSocketIoTimeoutMs = 5000;
 
 struct DecAdmissionV2Header {
   std::uint32_t magic;
@@ -100,6 +102,31 @@ std::string errno_message(const char* what, int err) {
   return oss.str();
 }
 
+std::string timeout_message(const char* what) {
+  std::ostringstream oss;
+  oss << what << " timed out after " << kSocketIoTimeoutMs << " ms";
+  return oss.str();
+}
+
+bool set_socket_io_timeouts(int fd, std::string* error) {
+  timeval tv{};
+  tv.tv_sec = kSocketIoTimeoutMs / 1000;
+  tv.tv_usec = (kSocketIoTimeoutMs % 1000) * 1000;
+  if (::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
+    if (error) {
+      *error = errno_message("set decoder admission send timeout", errno);
+    }
+    return false;
+  }
+  if (::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0) {
+    if (error) {
+      *error = errno_message("set decoder admission receive timeout", errno);
+    }
+    return false;
+  }
+  return true;
+}
+
 std::array<std::uint8_t, 16> random_uuid() {
   std::array<std::uint8_t, 16> out{};
   std::random_device rd;
@@ -149,6 +176,10 @@ int connect_socket(std::string* error, bool* endpoint_missing) {
     }
     return -1;
   }
+  if (!set_socket_io_timeouts(fd, error)) {
+    ::close(fd);
+    return -1;
+  }
   return fd;
 }
 
@@ -170,7 +201,9 @@ bool send_packet(int fd, const std::vector<std::uint8_t>& packet, std::string* e
   const ssize_t n = ::send(fd, packet.data(), packet.size(), MSG_NOSIGNAL);
   if (n < 0) {
     if (error) {
-      *error = errno_message("send decoder admission request", errno);
+      *error = (errno == EAGAIN || errno == EWOULDBLOCK)
+                   ? timeout_message("send decoder admission request")
+                   : errno_message("send decoder admission request", errno);
     }
     return false;
   }
@@ -191,7 +224,9 @@ bool recv_packet(int fd, std::vector<std::uint8_t>& packet, std::string* error) 
       return recv_packet(fd, packet, error);
     }
     if (error) {
-      *error = errno_message("read decoder admission response", errno);
+      *error = (errno == EAGAIN || errno == EWOULDBLOCK)
+                   ? timeout_message("read decoder admission response")
+                   : errno_message("read decoder admission response", errno);
     }
     return false;
   }
