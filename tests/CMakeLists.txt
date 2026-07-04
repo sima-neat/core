@@ -73,6 +73,7 @@ set(PIPELINESESSION_TEST_BLACKLIST
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/model-archive")
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 set(SIMA_TEST_DECODER_FIXTURE "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
+set(SIMA_TEST_CODEC_PERF_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/codec-perf")
 
 add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
@@ -84,6 +85,18 @@ add_custom_target(prepare_test_fixtures ALL
     --output ${SIMA_TEST_DECODER_FIXTURE}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Preparing deterministic test fixtures"
+  VERBATIM
+)
+
+add_custom_target(prepare_perf_codec_fixtures
+  COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py
+    --output-dir ${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}
+    --width 1280
+    --height 720
+    --fps 30
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Preparing codec performance fixtures"
   VERBATIM
 )
 
@@ -665,6 +678,8 @@ set(PERF_TARGETS
   perf_runtime_graph_async_rgb_test
   perf_runtime_graph_fanout_test
   perf_runtime_graph_join_bundle_test
+  perf_runtime_codec_mjpeg_decode_test
+  perf_runtime_codec_h264_decode_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -679,6 +694,9 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
+  if (target STREQUAL "perf_runtime_codec_h264_decode_test")
+    add_dependencies(${target} prepare_perf_codec_fixtures)
+  endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
 
@@ -1623,6 +1641,47 @@ if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+add_pipeline_test_long(
+  codec_runtime_stream_test
+  e2e_testing/codec_runtime_stream_test.cpp
+)
+
+if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY LABELS "e2e;codec;rtsp;http_mjpeg")
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+
+  add_test(
+    NAME codec_runtime_stream_contract_test
+    COMMAND codec_runtime_stream_test --frames 5 --repeat 2 --determinism
+  )
+  append_pipeline_test_env(codec_runtime_stream_contract_test)
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;http_mjpeg;determinism;lifecycle")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_test(
+    NAME codec_runtime_bad_url_diagnostics
+    COMMAND codec_runtime_stream_test --case bad-url-diagnostics --timeout-ms 2000
+  )
+  append_pipeline_test_env(codec_runtime_bad_url_diagnostics)
+  set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY LABELS "strict;e2e;codec;failure")
+  set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY RESOURCE_LOCK "rtsp")
+endif()
+
+add_pipeline_test_long(
+  codec_decode_accuracy_test
+  e2e_testing/codec_decode_accuracy_test.cpp
+)
+
+if (NOT codec_decode_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(codec_decode_accuracy_test prepare_perf_codec_fixtures)
+  set_property(TEST codec_decode_accuracy_test APPEND PROPERTY LABELS "e2e;codec;accuracy")
+  set_property(TEST codec_decode_accuracy_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
 add_pipeline_test(
   hybrid_graph_rtsp_resnet50_tput_test
   e2e_pipelines/img_classification/hybrid_graph_rtsp_resnet50_tput_test.cpp
@@ -1843,13 +1902,13 @@ install(
   COMPONENT extras
 )
 
-# Model-archive + decoder fixtures used by the modelpack/security suites.
+# Model-archive, decoder, and codec perf fixtures used by installed tests.
 # Keep install/package jobs self-contained too. Some CI/CD paths package or
 # install the test extras without explicitly building an individual test
-# executable first; in that case the build-time prepare_test_fixtures target
-# may not have been requested yet. Regenerate the deterministic fixture tree
-# immediately before installing it so installed runners see the same manifest
-# and archives as build-tree CTest.
+# executable first; in that case the build-time fixture targets may not have
+# been requested yet. Regenerate the deterministic fixture trees immediately
+# before installing them so installed runners see the same assets as build-tree
+# CTest.
 install(
   CODE "
 execute_process(
@@ -1873,6 +1932,19 @@ execute_process(
 if (NOT _sima_decoder_fixture_rv EQUAL 0)
   message(FATAL_ERROR \"failed to prepare decoder test fixture\")
 endif()
+execute_process(
+  COMMAND \"${Python3_EXECUTABLE}\"
+          \"${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py\"
+          --output-dir \"${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}\"
+          --width 1280
+          --height 720
+          --fps 30
+  WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
+  RESULT_VARIABLE _sima_codec_perf_fixture_rv
+)
+if (NOT _sima_codec_perf_fixture_rv EQUAL 0)
+  message(FATAL_ERROR \"failed to prepare codec perf test fixtures\")
+endif()
 "
   COMPONENT extras
 )
@@ -1884,6 +1956,11 @@ install(
 install(
   DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/decoder/"
   DESTINATION lib/sima-neat/test-assets/decoder
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_BINARY_DIR}/test-assets/codec-perf/"
+  DESTINATION lib/sima-neat/test-assets/codec-perf
   COMPONENT extras
 )
 install(
@@ -1906,6 +1983,8 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   decoder_quality_compare_test
   decoder_visible_caps_test
   file_read_test
+  codec_decode_accuracy_test
+  codec_runtime_stream_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test

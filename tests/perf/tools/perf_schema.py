@@ -66,6 +66,8 @@ REQUIRED_SCENARIO_IDS = (
     "runtime_session_async_rgb",
     "runtime_graph_fanout",
     "runtime_graph_join_bundle",
+    "runtime_codec_mjpeg_decode",
+    "runtime_codec_h264_decode",
 )
 
 
