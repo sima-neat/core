@@ -1886,17 +1886,26 @@ static GstPadProbeReturn h264_caps_fixup_cb(GstPad* pad, GstPadProbeInfo* info,
   return GST_PAD_PROBE_OK;
 }
 
+static int rendered_node_index(size_t local_index, const std::vector<int>* node_indices) {
+  if (!node_indices || local_index >= node_indices->size()) {
+    return static_cast<int>(local_index);
+  }
+  return (*node_indices)[local_index];
+}
+
 static std::string find_rtsp_input_name_for_fixup(const std::vector<std::shared_ptr<Node>>& nodes,
                                                   size_t fixup_index,
-                                                  const NameTransform& name_transform) {
+                                                  const NameTransform& name_transform,
+                                                  const std::vector<int>* node_indices = nullptr) {
   if (fixup_index == 0)
     return {};
   for (size_t i = fixup_index; i-- > 0;) {
     const auto* rtsp = dynamic_cast<const RTSPInput*>(nodes[i].get());
     if (!rtsp)
       continue;
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (!names.empty())
       return names[0];
   }
@@ -1905,14 +1914,16 @@ static std::string find_rtsp_input_name_for_fixup(const std::vector<std::shared_
 
 static std::string
 find_h264_capsfilter_name_for_fixup(const std::vector<std::shared_ptr<Node>>& nodes,
-                                    size_t fixup_index, const NameTransform& name_transform) {
+                                    size_t fixup_index, const NameTransform& name_transform,
+                                    const std::vector<int>* node_indices = nullptr) {
   if (fixup_index == 0)
     return {};
   for (size_t i = fixup_index; i-- > 0;) {
     if (nodes[i]->kind() != "H264Depacketize")
       continue;
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (!names.empty())
       return names.back();
   }
@@ -2142,15 +2153,17 @@ static void rtsp_pad_removed(GstElement* src, GstPad* pad, gpointer /*user_data*
 }
 
 static void attach_rtsp_debug(GstElement* pipeline, const std::vector<std::shared_ptr<Node>>& nodes,
-                              const NameTransform& name_transform) {
+                              const NameTransform& name_transform,
+                              const std::vector<int>* node_indices = nullptr) {
   if (!pipeline || !rtsp_stats_debug_enabled())
     return;
   for (size_t i = 0; i < nodes.size(); ++i) {
     const auto* rtsp = dynamic_cast<const RTSPInput*>(nodes[i].get());
     if (!rtsp)
       continue;
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (names.empty())
       continue;
     GstElement* rtspsrc = gst_bin_get_by_name(GST_BIN(pipeline), names[0].c_str());
@@ -2171,7 +2184,8 @@ static void attach_rtsp_debug(GstElement* pipeline, const std::vector<std::share
 
 static void attach_h264_caps_fixups(GstElement* pipeline,
                                     const std::vector<std::shared_ptr<Node>>& nodes,
-                                    const NameTransform& name_transform) {
+                                    const NameTransform& name_transform,
+                                    const std::vector<int>* node_indices = nullptr) {
   if (!pipeline)
     return;
 
@@ -2180,8 +2194,9 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
     if (!fix)
       continue;
 
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (names.empty())
       continue;
 
@@ -2195,7 +2210,8 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
       continue;
     }
 
-    const std::string rtsp_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
+    const std::string rtsp_name =
+        find_rtsp_input_name_for_fixup(nodes, i, name_transform, node_indices);
     auto* ctx = make_h264_caps_fixup_ctx(pipeline, *fix, names[0], rtsp_name);
     gst_pad_add_probe(
         src,
@@ -2208,7 +2224,8 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
     gst_object_unref(src);
     gst_object_unref(elem);
 
-    const std::string upstream_caps = find_h264_capsfilter_name_for_fixup(nodes, i, name_transform);
+    const std::string upstream_caps =
+        find_h264_capsfilter_name_for_fixup(nodes, i, name_transform, node_indices);
     if (upstream_caps.empty() || upstream_caps == names[0])
       continue;
 
@@ -2378,7 +2395,8 @@ static GstPadProbeReturn encoded_caps_fixup_cb(GstPad* pad, GstPadProbeInfo* inf
 
 static void attach_encoded_caps_fixups(GstElement* pipeline,
                                        const std::vector<std::shared_ptr<Node>>& nodes,
-                                       const NameTransform& name_transform) {
+                                       const NameTransform& name_transform,
+                                       const std::vector<int>* node_indices = nullptr) {
   if (!pipeline)
     return;
 
@@ -2387,8 +2405,9 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     if (!fix)
       continue;
 
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (names.empty())
       continue;
 
@@ -2408,7 +2427,8 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     ctx->fallback_fps = fix->options().fallback_fps;
     ctx->use_rtsp_sdp_fps = fix->options().use_rtsp_sdp_fps;
     if (ctx->use_rtsp_sdp_fps) {
-      ctx->rtsp_element_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
+      ctx->rtsp_element_name =
+          find_rtsp_input_name_for_fixup(nodes, i, name_transform, node_indices);
     }
     if (ctx->use_rtsp_sdp_fps && ctx->media_type == "image/jpeg") {
       ctx->rtp_payload_type = find_rtp_jpeg_payload_type_for_fixup(nodes, i);
@@ -2445,20 +2465,23 @@ GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, cons
 
 void session_build_attach_rtsp_debug(GstElement* pipeline,
                                      const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const NameTransform& name_transform) {
-  attach_rtsp_debug(pipeline, nodes, name_transform);
+                                     const NameTransform& name_transform,
+                                     const std::vector<int>* node_indices) {
+  attach_rtsp_debug(pipeline, nodes, name_transform, node_indices);
 }
 
 void session_build_attach_h264_caps_fixups(GstElement* pipeline,
                                            const std::vector<std::shared_ptr<Node>>& nodes,
-                                           const NameTransform& name_transform) {
-  attach_h264_caps_fixups(pipeline, nodes, name_transform);
+                                           const NameTransform& name_transform,
+                                           const std::vector<int>* node_indices) {
+  attach_h264_caps_fixups(pipeline, nodes, name_transform, node_indices);
 }
 
 void session_build_attach_encoded_caps_fixups(GstElement* pipeline,
                                               const std::vector<std::shared_ptr<Node>>& nodes,
-                                              const NameTransform& name_transform) {
-  attach_encoded_caps_fixups(pipeline, nodes, name_transform);
+                                              const NameTransform& name_transform,
+                                              const std::vector<int>* node_indices) {
+  attach_encoded_caps_fixups(pipeline, nodes, name_transform, node_indices);
 }
 
 namespace session_test {

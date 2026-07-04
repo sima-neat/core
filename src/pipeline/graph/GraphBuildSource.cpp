@@ -1788,7 +1788,8 @@ BuildResult build_fused_realtime_source_pipeline(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes,
     const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
-    const NameTransform& name_transform, const std::string& appsink_name) {
+    const std::vector<std::vector<int>>& branch_actual_indices, const NameTransform& name_transform,
+    const std::string& appsink_name) {
   BuildResult br;
   br.diag = std::make_shared<DiagCtx>();
   br.appsink_name = apply_name_transform(name_transform, appsink_name);
@@ -1825,13 +1826,14 @@ BuildResult build_fused_realtime_source_pipeline(
     bool saw_branch_queue = false;
     const bool queue_pre_leaky_downstream =
         env_bool("SIMA_FUSED_REALTIME_QUEUE_PRE_LEAKY_DOWNSTREAM", false);
-    for (const auto& node : nodes) {
+    for (std::size_t node_index = 0; node_index < nodes.size(); ++node_index) {
+      const auto& node = nodes[node_index];
       const bool is_queue = node && node->kind() == "Queue";
       const bool force_pre_queue_leaky =
           queue_pre_leaky_downstream && is_queue && !saw_branch_queue;
-      append_fused_node_fragment(&br, &ss, node, actual_index++, branch_transform,
-                                 /*prepend_link=*/!first,
-                                 force_pre_queue_leaky ? " leaky=downstream" : nullptr);
+      append_fused_node_fragment(
+          &br, &ss, node, branch_actual_indices[branch_index][node_index], branch_transform,
+          /*prepend_link=*/!first, force_pre_queue_leaky ? " leaky=downstream" : nullptr);
       if (is_queue) {
         saw_branch_queue = true;
       }
@@ -1902,8 +1904,22 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     branch_name_transforms.push_back(fused_branch_name_transform(name_transform, branch_index));
   }
-  BuildResult br = build_fused_realtime_source_pipeline(
-      ingress, build_consumer_nodes, build_branch_nodes, name_transform, "mysink");
+  std::vector<std::vector<int>> branch_actual_indices;
+  branch_actual_indices.reserve(build_branch_nodes.size());
+  int next_branch_actual_index = static_cast<int>(build_consumer_nodes.size());
+  for (const auto& branch_nodes : build_branch_nodes) {
+    // Fused branches are rendered after the consumer nodes in one pipeline, so
+    // any post-parse probes must use these global indices to find element names.
+    std::vector<int> indices;
+    indices.reserve(branch_nodes.size());
+    for (std::size_t i = 0; i < branch_nodes.size(); ++i) {
+      indices.push_back(next_branch_actual_index++);
+    }
+    branch_actual_indices.push_back(std::move(indices));
+  }
+  BuildResult br =
+      build_fused_realtime_source_pipeline(ingress, build_consumer_nodes, build_branch_nodes,
+                                           branch_actual_indices, name_transform, "mysink");
   maybe_compile_source_contracts(&br, build_consumer_nodes, sess_opt, where, &fused_ingress_spec);
   if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
     const auto endpoint = session_build_public_output_endpoint_selector(build_consumer_nodes);
@@ -1934,12 +1950,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     std::vector<std::shared_ptr<Node>> logical = build_branch_nodes[branch_index];
     logical.insert(logical.end(), build_consumer_nodes.begin(), build_consumer_nodes.end());
-    int actual_index = static_cast<int>(build_consumer_nodes.size());
-    for (std::size_t prior = 0; prior < branch_index; ++prior) {
-      actual_index += static_cast<int>(build_branch_nodes[prior].size());
-    }
     for (std::size_t i = 0; i < build_branch_nodes[branch_index].size(); ++i) {
-      attach_source_sima_meta_probe_for_node(pipeline.get(), logical, i, actual_index++,
+      attach_source_sima_meta_probe_for_node(pipeline.get(), logical, i,
+                                             branch_actual_indices[branch_index][i],
                                              branch_name_transforms[branch_index]);
     }
   }
@@ -1954,12 +1967,18 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   session_build_attach_boxdecode_debug_probes(pipeline.get());
   attach_fused_realtime_pad_probes(pipeline.get());
   session_build_attach_h264_caps_fixups(pipeline.get(), build_consumer_nodes, name_transform);
+  session_build_attach_encoded_caps_fixups(pipeline.get(), build_consumer_nodes, name_transform);
   session_build_attach_rtsp_debug(pipeline.get(), build_consumer_nodes, name_transform);
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     session_build_attach_h264_caps_fixups(pipeline.get(), build_branch_nodes[branch_index],
-                                          branch_name_transforms[branch_index]);
+                                          branch_name_transforms[branch_index],
+                                          &branch_actual_indices[branch_index]);
+    session_build_attach_encoded_caps_fixups(pipeline.get(), build_branch_nodes[branch_index],
+                                             branch_name_transforms[branch_index],
+                                             &branch_actual_indices[branch_index]);
     session_build_attach_rtsp_debug(pipeline.get(), build_branch_nodes[branch_index],
-                                    branch_name_transforms[branch_index]);
+                                    branch_name_transforms[branch_index],
+                                    &branch_actual_indices[branch_index]);
   }
 
   pipeline_internal::GstSinkPtr sink;

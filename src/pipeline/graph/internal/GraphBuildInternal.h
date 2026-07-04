@@ -66,13 +66,16 @@ void session_build_attach_debug_element_buffer_probes(GstElement* pipeline);
 void session_build_attach_boxdecode_debug_probes(GstElement* pipeline);
 void session_build_attach_rtsp_debug(GstElement* pipeline,
                                      const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const NameTransform& name_transform);
+                                     const NameTransform& name_transform,
+                                     const std::vector<int>* node_indices = nullptr);
 void session_build_attach_h264_caps_fixups(GstElement* pipeline,
                                            const std::vector<std::shared_ptr<Node>>& nodes,
-                                           const NameTransform& name_transform);
+                                           const NameTransform& name_transform,
+                                           const std::vector<int>* node_indices = nullptr);
 void session_build_attach_encoded_caps_fixups(GstElement* pipeline,
                                               const std::vector<std::shared_ptr<Node>>& nodes,
-                                              const NameTransform& name_transform);
+                                              const NameTransform& name_transform,
+                                              const std::vector<int>* node_indices = nullptr);
 
 void session_build_enforce_mla_num_buffers(const std::string& pipeline, const char* context,
                                            bool allow_one = false);
