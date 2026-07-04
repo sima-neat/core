@@ -1555,8 +1555,8 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
 void release_realtime_frame_credits(const std::vector<RealtimeFrameCredit>& credits,
                                     const char* mode) {
   for (const auto& credit : credits) {
-    (void)release_loan_for_key(
-        LoanKey{credit.namespace_id, credit.stream_id, credit.frame_id}, mode);
+    (void)release_loan_for_key(LoanKey{credit.namespace_id, credit.stream_id, credit.frame_id},
+                               mode);
   }
 }
 

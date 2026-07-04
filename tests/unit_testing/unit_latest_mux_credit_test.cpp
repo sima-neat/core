@@ -36,11 +36,10 @@ simaai::neat::Sample make_gst_sample_backed_sample(std::optional<MuxLoanKey> key
     require(meta != nullptr, "failed to attach GstSimaMeta");
     GstStructure* s = gst_custom_meta_get_structure(meta);
     require(s != nullptr, "failed to access GstSimaMeta structure");
-    gst_structure_set(s, kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanNamespaceField,
-                      G_TYPE_UINT64, static_cast<guint64>(key->namespace_id),
-                      kLoanStreamIdField, G_TYPE_STRING, key->stream_id.c_str(),
-                      kLoanFrameIdField, G_TYPE_INT64, static_cast<gint64>(key->frame_id),
-                      nullptr);
+    gst_structure_set(s, kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanNamespaceField, G_TYPE_UINT64,
+                      static_cast<guint64>(key->namespace_id), kLoanStreamIdField, G_TYPE_STRING,
+                      key->stream_id.c_str(), kLoanFrameIdField, G_TYPE_INT64,
+                      static_cast<gint64>(key->frame_id), nullptr);
   }
 
   GstCaps* caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width",
