@@ -19,6 +19,7 @@
 #include "pipeline/GraphReport.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
@@ -419,6 +420,142 @@ void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
   (void)apply_simaai_preprocess_meta_template(buffer, ctx->opt, width, height);
 }
 
+bool source_sima_meta_structure_mutable(GstStructure* s) {
+  if (!s) {
+    return false;
+  }
+#if defined(GST_STRUCTURE_IS_MUTABLE)
+  return GST_STRUCTURE_IS_MUTABLE(s);
+#elif defined(GST_STRUCTURE_IS_WRITABLE)
+  return GST_STRUCTURE_IS_WRITABLE(s);
+#else
+  return false;
+#endif
+}
+
+GstStructure* source_sima_meta_get_mutable_structure(GstBuffer* buffer) {
+  if (!buffer) {
+    return nullptr;
+  }
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  if (!meta) {
+    return nullptr;
+  }
+  GstStructure* s = gst_custom_meta_get_structure(meta);
+  if (!s) {
+    return nullptr;
+  }
+  if (source_sima_meta_structure_mutable(s)) {
+    return s;
+  }
+  if (!gst_buffer_is_writable(buffer)) {
+    return nullptr;
+  }
+
+  GstStructure* snapshot = gst_structure_copy(s);
+  gst_buffer_remove_meta(buffer, &meta->meta);
+  meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+  s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  if (!s) {
+    if (snapshot) {
+      gst_structure_free(snapshot);
+    }
+    return nullptr;
+  }
+  if (snapshot) {
+    gst_structure_foreach(
+        snapshot,
+        +[](GQuark field_id, const GValue* value, gpointer user_data) -> gboolean {
+          auto* dst = static_cast<GstStructure*>(user_data);
+          gst_structure_set_value(dst, g_quark_to_string(field_id), value);
+          return TRUE;
+        },
+        s);
+    gst_structure_free(snapshot);
+  }
+  return s;
+}
+
+void source_sima_meta_set_int64_if_missing(GstStructure* s, const char* field, gint64 value) {
+  gint64 existing = 0;
+  if (!s || gst_structure_get_int64(s, field, &existing) == TRUE) {
+    return;
+  }
+  gst_structure_set(s, field, G_TYPE_INT64, value, nullptr);
+}
+
+void source_sima_meta_set_uint64_if_missing(GstStructure* s, const char* field, guint64 value) {
+  guint64 existing = 0;
+  if (!s || gst_structure_get_uint64(s, field, &existing) == TRUE) {
+    return;
+  }
+  gst_structure_set(s, field, G_TYPE_UINT64, value, nullptr);
+}
+
+void source_sima_meta_set_int_if_missing(GstStructure* s, const char* field, gint value) {
+  gint existing = 0;
+  if (!s || gst_structure_get_int(s, field, &existing) == TRUE) {
+    return;
+  }
+  gst_structure_set(s, field, G_TYPE_INT, value, nullptr);
+}
+
+void source_sima_meta_set_string_if_missing(GstStructure* s, const char* field,
+                                            const std::string& value) {
+  if (!s || value.empty()) {
+    return;
+  }
+  const gchar* existing = gst_structure_get_string(s, field);
+  if (existing && *existing) {
+    return;
+  }
+  gst_structure_set(s, field, G_TYPE_STRING, value.c_str(), nullptr);
+}
+
+GstBuffer* source_sima_meta_preserve_existing(GstBuffer* buffer, SourceSimaMetaProbeCtx* ctx,
+                                              const SampleTimingOverrides& timing) {
+  GstBuffer* writable = gst_buffer_make_writable(buffer);
+  if (!writable) {
+    return nullptr;
+  }
+  GstStructure* s = source_sima_meta_get_mutable_structure(writable);
+  if (!s) {
+    return writable;
+  }
+
+  gint64 existing_frame = 0;
+  const bool has_frame = gst_structure_get_int64(s, "frame-id", &existing_frame) == TRUE;
+  const gint64 frame_id =
+      has_frame ? existing_frame : static_cast<gint64>(timing.frame_id.value_or(0));
+  source_sima_meta_set_int64_if_missing(s, "frame-id", frame_id);
+  source_sima_meta_set_int64_if_missing(s, "input-seq", frame_id);
+  source_sima_meta_set_int64_if_missing(s, "orig-input-seq", frame_id);
+
+  const gchar* stream_id = gst_structure_get_string(s, "stream-id");
+  if (stream_id && *stream_id) {
+    source_sima_meta_set_string_if_missing(s, "orig-stream-id", stream_id);
+  }
+
+  const std::string fallback_buffer_name = ctx ? ctx->buffer_name : std::string{};
+  source_sima_meta_set_string_if_missing(s, "buffer-name", fallback_buffer_name);
+  const gchar* buffer_name = gst_structure_get_string(s, "buffer-name");
+  source_sima_meta_set_string_if_missing(s, "origin_stage_id",
+                                         (buffer_name && *buffer_name) ? std::string(buffer_name)
+                                                                       : fallback_buffer_name);
+  source_sima_meta_set_int_if_missing(s, "origin_output_slot", 0);
+
+  gint64 phys_addr = 0;
+  if (gst_buffer_n_memory(writable) > 0) {
+    phys_addr = static_cast<gint64>(
+        gst_simaai_segment_memory_get_phys_addr(gst_buffer_peek_memory(writable, 0)));
+  }
+  source_sima_meta_set_int64_if_missing(s, "buffer-id", phys_addr);
+  source_sima_meta_set_int64_if_missing(s, "buffer-offset", 0);
+  source_sima_meta_set_uint64_if_missing(
+      s, "timestamp", static_cast<guint64>(timing.pts_ns.value_or(static_cast<std::uint64_t>(0))));
+  return writable;
+}
+
 GstPadProbeReturn source_sima_meta_probe_cb(GstPad* pad, GstPadProbeInfo* info,
                                             gpointer user_data) {
   auto* ctx = static_cast<SourceSimaMetaProbeCtx*>(user_data);
@@ -442,23 +579,31 @@ GstPadProbeReturn source_sima_meta_probe_cb(GstPad* pad, GstPadProbeInfo* info,
     timing.duration_ns = static_cast<uint64_t>(GST_BUFFER_DURATION(buffer));
   }
 
-  // Source/decode metadata is stamped before this buffer crosses any graph edge.
-  // Leave the stream id empty here: graph links and realtime routing own per-source
-  // identity, so multi-source graphs do not collapse to a synthetic "0" stream.
-  GstBuffer* writable = attach_simaai_meta_inplace(
-      buffer, ctx->opt, ctx->guard, ctx->element_name.c_str(), timing.frame_id,
-      StreamIdOverride{std::optional<std::string>{std::string{}}},
-      BufferNameOverride{std::optional<std::string>{ctx->buffer_name}});
+  const bool had_sima_meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta") != nullptr;
+  GstBuffer* writable = nullptr;
+  if (had_sima_meta) {
+    writable = source_sima_meta_preserve_existing(buffer, ctx, timing);
+  } else {
+    // Source/decode metadata is stamped before this buffer crosses any graph edge.
+    // Leave the stream id empty here: graph links and realtime routing own per-source
+    // identity, so multi-source graphs do not collapse to a synthetic "0" stream.
+    writable = attach_simaai_meta_inplace(
+        buffer, ctx->opt, ctx->guard, ctx->element_name.c_str(), timing.frame_id,
+        StreamIdOverride{std::optional<std::string>{std::string{}}},
+        BufferNameOverride{std::optional<std::string>{ctx->buffer_name}});
+  }
   if (!writable)
     return GST_PAD_PROBE_OK;
 
-  const std::optional<int64_t> frame_opt = timing.frame_id;
-  const std::optional<int64_t> input_seq = frame_opt;
-  const std::optional<int64_t> orig_input_seq = input_seq;
-  const std::optional<std::string> stream_id = std::string{};
-  const std::optional<std::string> buffer_name{ctx->buffer_name};
-  (void)update_simaai_meta_fields(writable, frame_opt, input_seq, orig_input_seq, stream_id,
-                                  buffer_name, timing.pts_ns, buffer_name, std::optional<int>{0});
+  if (!had_sima_meta) {
+    const std::optional<int64_t> frame_opt = timing.frame_id;
+    const std::optional<int64_t> input_seq = frame_opt;
+    const std::optional<int64_t> orig_input_seq = input_seq;
+    const std::optional<std::string> stream_id = std::string{};
+    const std::optional<std::string> buffer_name{ctx->buffer_name};
+    (void)update_simaai_meta_fields(writable, frame_opt, input_seq, orig_input_seq, stream_id,
+                                    buffer_name, timing.pts_ns, buffer_name, std::optional<int>{0});
+  }
   (void)write_sample_timing_to_gst_buffer(writable, timing);
   source_meta_maybe_apply_preprocess_template(pad, writable, ctx);
 

@@ -701,7 +701,11 @@ gpointer worker_main(gpointer data) {
     bool push_eos = false;
 
     g_mutex_lock(&self->lock);
-    while (!self->stopping && !self->flushing) {
+    while (!self->stopping) {
+      if (self->flushing) {
+        g_cond_wait(&self->cond, &self->lock);
+        continue;
+      }
       PendingSlot* slot = take_next_slot_locked(self, &loan_acquired);
       if (slot && slot->pending) {
         buffer = slot->pending;
