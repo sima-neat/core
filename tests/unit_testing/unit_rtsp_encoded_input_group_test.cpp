@@ -6,6 +6,7 @@
 #include "gst/GstHelpers.h"
 #include "nodes/common/JpegParse.h"
 #include "nodes/common/Queue.h"
+#include "nodes/common/VideoRate.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/rtp/H264Depacketize.h"
@@ -204,6 +205,9 @@ void check_mjpeg_encoded_group() {
   manual.push_back(simaai::neat::nodes::RTPJpegDepacketize(opt.mjpeg_payload_type));
   manual.push_back(simaai::neat::nodes::JpegParse());
   manual.push_back(simaai::neat::nodes::Queue());
+  simaai::neat::EncodedCapsFixupOptions fixup{"image/jpeg", opt.source_fps};
+  fixup.use_rtsp_sdp_fps = opt.auto_caps_from_stream && opt.source_fps <= 0;
+  manual.push_back(simaai::neat::nodes::EncodedCapsFixup(fixup));
   compare_graph_fragments(group, graph_from_nodes(std::move(manual)), "MJPEG encoded topology");
 
   if (const auto backend = describe_backend_if_available(group, "MJPEG encoded backend")) {
@@ -212,6 +216,8 @@ void check_mjpeg_encoded_group() {
     require_not_contains(*backend, "encoding-name=JPEG",
                          "static RTP JPEG payload 26 should not require encoding-name");
     require_contains(*backend, "payload=26", "MJPEG encoded backend should use MJPEG payload type");
+    require_contains(*backend, "encoded_capsfix",
+                     "MJPEG encoded backend should include caps fixup");
     require_not_contains(*backend, "h264parse",
                          "MJPEG encoded backend should not contain h264parse");
   }
@@ -221,6 +227,37 @@ void check_mjpeg_encoded_group() {
           "MJPEG encoded group should advertise encoded payload");
   require(spec.media_type == "image/jpeg", "MJPEG encoded group media type mismatch");
   require(spec.format == "JPEG", "MJPEG encoded group format mismatch");
+}
+
+void check_source_fps_forwarding() {
+  auto h264 = make_h264_encoded_options();
+  h264.h264_fps = -1;
+  h264.source_fps = 45;
+  const Graph h264_group = simaai::neat::nodes::groups::RtspEncodedInput(h264);
+  if (const auto backend = describe_backend_if_available(h264_group, "H264 source_fps backend")) {
+    require_contains(*backend, "framerate=(fraction)45/1",
+                     "H264 source_fps should configure H264 caps");
+    require_not_contains(*backend, "h264_capsfix",
+                         "complete H264 source caps should not need auto caps fixup");
+  }
+  const auto h264_spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(h264);
+  require(h264_spec.fps_num == 45, "H264 encoded spec should use source_fps");
+
+  auto mjpeg = make_mjpeg_encoded_options();
+  mjpeg.source_fps = 120;
+  const Graph mjpeg_group = simaai::neat::nodes::groups::RtspEncodedInput(mjpeg);
+  if (const auto backend = describe_backend_if_available(mjpeg_group, "MJPEG source_fps backend")) {
+    require_contains(*backend, "encoded_capsfix", "MJPEG source_fps should add encoded caps fixup");
+  }
+  const auto mjpeg_spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(mjpeg);
+  require(mjpeg_spec.fps_num == 120, "MJPEG encoded spec should use source_fps");
+
+  auto bad = make_h264_encoded_options();
+  bad.source_fps = 60;
+  bad.h264_fps = 30;
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspEncodedInput(bad); },
+                      "source_fps conflicts with h264_fps",
+                      "conflicting H264 encoded FPS declarations");
 }
 
 void check_no_queue_mode() {
@@ -279,6 +316,8 @@ void check_decoded_mjpeg_group() {
   require_contains(group.describe(), "SimaDecode", "MJPEG decoded graph should contain SimaDecode");
   require_contains(group.describe(), "EncodedCapsFixup",
                    "MJPEG decoded graph with dec_fps should fix encoded caps");
+  require(count_substrings(group.describe(), "EncodedCapsFixup") == 1,
+          "MJPEG decoded graph should use one encoded caps fixup");
   if (const auto backend = describe_backend_if_available(group, "MJPEG decoded backend")) {
     require_contains(*backend, "rtpjpegdepay",
                      "MJPEG decoded backend should contain RTP JPEG depay");
@@ -321,6 +360,101 @@ void check_decoded_mjpeg_group() {
       "MJPEG decoded graph without auto caps or dec_fps should not insert caps fixup");
 }
 
+void check_decoded_source_fps_and_videorate() {
+  simaai::neat::nodes::groups::RtspDecodedInputOptions h264;
+  h264.url = "rtsp://example.local/h264";
+  h264.h264_width = 1920;
+  h264.h264_height = 1080;
+  h264.source_fps = 120;
+  const Graph h264_group = simaai::neat::nodes::groups::RtspDecodedInput(h264);
+  if (const auto backend =
+          describe_backend_if_available(h264_group, "H264 decoded source_fps backend")) {
+    require_contains(*backend, "framerate=(fraction)120/1",
+                     "H264 decoded source_fps should configure source caps");
+    require_contains(*backend, "dec-fps=120",
+                     "H264 decoded source_fps should configure decoder FPS");
+  }
+
+  auto h264_fallback = h264;
+  h264_fallback.source_fps = -1;
+  h264_fallback.h264_fps = -1;
+  h264_fallback.fallback_h264_fps = 30;
+  const Graph h264_fallback_group = simaai::neat::nodes::groups::RtspDecodedInput(h264_fallback);
+  require_contains(h264_fallback_group.describe(), "H264CapsFixup",
+                   "H264 fallback FPS should keep auto caps fixup active");
+  if (const auto backend =
+          describe_backend_if_available(h264_fallback_group, "H264 fallback FPS backend")) {
+    require_contains(*backend, "h264_capsfix",
+                     "H264 fallback FPS should be handled by H264CapsFixup");
+    require_contains(*backend, "dec-fps=30",
+                     "H264 fallback FPS should still configure decoder FPS");
+    require_not_contains(*backend, "framerate=(fraction)30/1",
+                         "H264 fallback FPS must not be promoted to hard source caps");
+  }
+
+  simaai::neat::nodes::groups::RtspDecodedInputOptions mjpeg;
+  mjpeg.url = "rtsp://example.local/mjpeg";
+  mjpeg.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+  mjpeg.dec_width = 1920;
+  mjpeg.dec_height = 1080;
+  mjpeg.source_fps = 120;
+  const Graph mjpeg_group = simaai::neat::nodes::groups::RtspDecodedInput(mjpeg);
+  if (const auto backend =
+          describe_backend_if_available(mjpeg_group, "MJPEG decoded source_fps backend")) {
+    require_contains(*backend, "encoded_capsfix",
+                     "MJPEG decoded source_fps should configure encoded caps repair");
+    require_contains(*backend, "dec-fps=120",
+                     "MJPEG decoded source_fps should configure decoder FPS");
+  }
+
+  mjpeg.use_videorate = true;
+  mjpeg.video_rate_fps = 30;
+  mjpeg.output_caps.fps = 120;
+  const Graph video_rate_group = simaai::neat::nodes::groups::RtspDecodedInput(mjpeg);
+  require_contains(video_rate_group.describe(), "VideoRate",
+                   "use_videorate should insert VideoRate");
+  if (const auto backend =
+          describe_backend_if_available(video_rate_group, "MJPEG videorate backend")) {
+    require_contains(*backend, "videorate", "videorate backend should be present");
+    require_contains(*backend, "framerate=30/1",
+                     "video_rate_fps should configure downstream framerate caps");
+    require_contains(*backend, "dec-fps=120",
+                     "video_rate_fps should not change decoder source FPS");
+  }
+
+  auto default_rate = mjpeg;
+  default_rate.video_rate_fps = -1;
+  default_rate.output_caps.fps = -1;
+  const Graph default_rate_group = simaai::neat::nodes::groups::RtspDecodedInput(default_rate);
+  if (const auto backend =
+          describe_backend_if_available(default_rate_group, "MJPEG default videorate backend")) {
+    require_contains(*backend, "framerate=120/1",
+                     "videorate should use source_fps when video_rate_fps is unset");
+  }
+
+  auto bad_decoder = mjpeg;
+  bad_decoder.dec_fps = 60;
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspDecodedInput(bad_decoder); },
+                      "source_fps conflicts with dec_fps",
+                      "conflicting decoded source and decoder FPS");
+
+  auto bad_tail = mjpeg;
+  bad_tail.use_videorate = false;
+  bad_tail.video_rate_fps = -1;
+  bad_tail.output_caps.fps = 30;
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspDecodedInput(bad_tail); },
+                      "output_caps.fps conflicts with source_fps",
+                      "conflicting decoded source and output caps FPS without videorate");
+
+  auto bad_videorate = mjpeg;
+  bad_videorate.use_videorate = false;
+  bad_videorate.video_rate_fps = 30;
+  bad_videorate.output_caps.fps = -1;
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspDecodedInput(bad_videorate); },
+                      "video_rate_fps requires use_videorate=true",
+                      "video_rate_fps without videorate");
+}
+
 void check_decoded_mjpeg_output_caps_decoder_fallback() {
   simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
   opt.url = "rtsp://example.local/mjpeg";
@@ -330,6 +464,8 @@ void check_decoded_mjpeg_output_caps_decoder_fallback() {
   opt.output_caps.fps = 30;
 
   const Graph fallback_group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  require_not_contains(fallback_group.describe(), "CapsRaw",
+                       "disabled output_caps fallback should not insert tail caps");
   if (const auto backend =
           describe_backend_if_available(fallback_group, "MJPEG output-caps fallback backend")) {
     require_contains(*backend, "dec-type=mjpeg",
@@ -342,6 +478,8 @@ void check_decoded_mjpeg_output_caps_decoder_fallback() {
                      "MJPEG output-caps fallback should configure decoder fps");
     require_contains(*backend, "encoded_capsfix",
                      "MJPEG output-caps fps fallback should fix encoded caps");
+    require_not_contains(*backend, "memory:SystemMemory",
+                         "disabled output_caps fallback should not force system memory");
   }
 
   auto explicit_opt = opt;
@@ -457,9 +595,11 @@ int main() {
     check_h264_encoded_group();
     check_h264_auto_caps_fixup();
     check_mjpeg_encoded_group();
+    check_source_fps_forwarding();
     check_no_queue_mode();
     check_decoded_h264_group();
     check_decoded_mjpeg_group();
+    check_decoded_source_fps_and_videorate();
     check_decoded_mjpeg_output_caps_decoder_fallback();
     check_mjpeg_sdp_fps_matches_selected_payload();
     check_invalid_codec_errors();

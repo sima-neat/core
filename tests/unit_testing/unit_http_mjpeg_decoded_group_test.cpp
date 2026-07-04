@@ -8,6 +8,7 @@
 #include "nodes/common/MultipartJpegDemux.h"
 #include "nodes/common/Queue.h"
 #include "nodes/common/VideoConvert.h"
+#include "nodes/common/VideoRate.h"
 #include "nodes/common/VideoScale.h"
 #include "nodes/io/HttpSource.h"
 #include "nodes/sima/SimaDecode.h"
@@ -16,6 +17,7 @@
 
 #include "test_utils.h"
 
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -65,6 +67,17 @@ void require_not_contains(const std::string& haystack, const std::string& needle
   if (haystack.find(needle) != std::string::npos) {
     throw std::runtime_error(msg + " (unexpected: " + needle + ")");
   }
+}
+
+void require_throws_with(const std::function<void()>& fn, const std::string& needle,
+                         const std::string& label) {
+  try {
+    fn();
+  } catch (const std::exception& e) {
+    require_contains(e.what(), needle, label);
+    return;
+  }
+  throw std::runtime_error(label + ": expected exception");
 }
 
 std::optional<std::string> describe_backend_if_available(const Graph& graph,
@@ -180,6 +193,84 @@ int main() {
             "HTTP MJPEG group default raw decoder output should advertise SimaAI memory");
     require_contains(group.describe(), "EncodedCapsFixup",
                      "HTTP MJPEG group with dec_fps should fix encoded caps");
+
+    simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions source_fps_opt = opt;
+    source_fps_opt.dec_fps = -1;
+    source_fps_opt.source_fps = 25;
+    const Graph source_fps_group =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInput(source_fps_opt);
+    require_contains(source_fps_group.describe(), "EncodedCapsFixup",
+                     "HTTP MJPEG source_fps should fix encoded caps");
+    if (const auto backend =
+            describe_backend_if_available(source_fps_group, "source_fps backend")) {
+      require_contains(*backend, "dec-fps=25",
+                       "HTTP MJPEG source_fps should configure decoder FPS");
+      require_contains(*backend, "encoded_capsfix",
+                       "HTTP MJPEG source_fps should configure encoded caps fixup");
+    }
+    const simaai::neat::OutputSpec source_fps_spec =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(source_fps_opt);
+    require(source_fps_spec.fps_num == 25, "HTTP MJPEG source_fps should advertise decoder FPS");
+
+    simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions video_rate_opt = source_fps_opt;
+    video_rate_opt.source_fps = 30;
+    video_rate_opt.use_videorate = true;
+    video_rate_opt.video_rate_fps = 15;
+    video_rate_opt.output_caps.format = simaai::neat::FormatTag::I420;
+    video_rate_opt.output_caps.width = 320;
+    video_rate_opt.output_caps.height = 240;
+    const Graph video_rate_group =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInput(video_rate_opt);
+    require_contains(video_rate_group.describe(), "VideoRate",
+                     "HTTP MJPEG use_videorate should insert VideoRate");
+    if (const auto backend =
+            describe_backend_if_available(video_rate_group, "video-rate backend")) {
+      require_contains(*backend, "videorate", "HTTP MJPEG backend should include videorate");
+      require_contains(*backend, "dec-fps=30",
+                       "HTTP MJPEG video_rate_fps should not change decoder FPS");
+      require_contains(*backend, "framerate=15/1",
+                       "HTTP MJPEG video_rate_fps should set downstream caps");
+      require_not_contains(*backend, "format=I420",
+                           "HTTP MJPEG disabled output_caps should not force format");
+      require_not_contains(*backend, "width=320",
+                           "HTTP MJPEG disabled output_caps should not force width");
+      require_not_contains(*backend, "height=240",
+                           "HTTP MJPEG disabled output_caps should not force height");
+    }
+    const simaai::neat::OutputSpec video_rate_spec =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(video_rate_opt);
+    require(video_rate_spec.fps_num == 15,
+            "HTTP MJPEG video_rate_fps should advertise rate-limited FPS");
+
+    simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions default_rate_opt = source_fps_opt;
+    default_rate_opt.use_videorate = true;
+    const Graph default_rate_group =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInput(default_rate_opt);
+    if (const auto backend =
+            describe_backend_if_available(default_rate_group, "default video-rate backend")) {
+      require_contains(*backend, "framerate=25/1",
+                       "HTTP MJPEG videorate should default to source_fps");
+    }
+
+    simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions bad_decoder = source_fps_opt;
+    bad_decoder.dec_fps = 30;
+    require_throws_with(
+        [&]() { (void)simaai::neat::nodes::groups::HttpMjpegDecodedInput(bad_decoder); },
+        "source_fps conflicts with dec_fps", "HTTP MJPEG conflicting source and decoder FPS");
+
+    simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions bad_videorate = source_fps_opt;
+    bad_videorate.video_rate_fps = 15;
+    require_throws_with(
+        [&]() { (void)simaai::neat::nodes::groups::HttpMjpegDecodedInput(bad_videorate); },
+        "video_rate_fps requires use_videorate=true", "HTTP MJPEG video_rate_fps without node");
+
+    simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions bad_tail = source_fps_opt;
+    bad_tail.output_caps.enable = true;
+    bad_tail.output_caps.fps = 15;
+    require_throws_with(
+        [&]() { (void)simaai::neat::nodes::groups::HttpMjpegDecodedInput(bad_tail); },
+        "output_caps.fps conflicts with source_fps",
+        "HTTP MJPEG source and output FPS conflict without videorate");
 
     simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions disabled_caps_opt = opt;
     disabled_caps_opt.output_caps.width = 320;
