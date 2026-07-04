@@ -14,6 +14,7 @@
 #include "pipeline/internal/DecoderAdmissionClient.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
 #include <atomic>
@@ -95,6 +96,26 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
 
 std::uint64_t edge_port_key(NodeId id, PortId port) {
   return (static_cast<std::uint64_t>(id) << 32) | static_cast<std::uint64_t>(port);
+}
+
+void configure_graph_public_output_loan_gate(const std::shared_ptr<RunCore>& core,
+                                             const GraphRuntimeOptions& graph_options,
+                                             RunMode mode) {
+  if (!core) {
+    return;
+  }
+
+  InputStreamOptions stream_opt =
+      simaai::neat::session_build_make_stream_options(graph_options.pipeline, mode);
+  stream_opt.public_output_contract = true;
+  simaai::neat::session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+
+  core->pipeline.stream_opt = stream_opt;
+  core->pipeline.copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
+  core->holder_loan_gate =
+      stream_opt.holder_loan_credits > 0
+          ? std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits)
+          : nullptr;
 }
 
 bool is_simple_linear_plan(const ExecutionGraphPlan& plan) {
@@ -1577,6 +1598,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   core->opt = opt.run_options;
   core->mode = opt.mode;
   core->graph_options = std::move(opt.graph_options);
+  configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
   core->graph_execution().plan = std::move(plan);
 

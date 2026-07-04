@@ -3,6 +3,7 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -47,6 +48,34 @@ simaai::neat::Sample make_fake_device_gst_sample(int id) {
 } // namespace
 
 RUN_TEST("unit_graph_internal_zero_copy_fallback_test", ([] {
+           {
+             simaai::neat::runtime::ExecutionGraphPlan plan;
+
+             simaai::neat::RunOptions run_opt;
+             run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+
+             simaai::neat::runtime::RunCoreStartOptions start_opt;
+             start_opt.run_options = run_opt;
+             start_opt.mode = simaai::neat::RunMode::Async;
+             start_opt.graph_options =
+                 simaai::neat::runtime::graph_runtime_options_from_run_options(run_opt);
+
+             auto core =
+                 simaai::neat::runtime::RunCore::start(std::move(plan), std::move(start_opt));
+             require(core != nullptr, "graph RunCore should start");
+             require(core->holder_loan_gate != nullptr,
+                     "public graph zero-copy outputs should initialize a holder loan gate");
+             require(core->holder_loan_gate->enabled(),
+                     "public graph zero-copy holder loan gate should be enabled");
+             require(!core->pipeline.stream_opt.copy_output,
+                     "public graph zero-copy stream options should preserve zero-copy output");
+             require(core->pipeline.stream_opt.public_output_contract,
+                     "public graph output loans should use public output contract semantics");
+             require(core->pipeline.stream_opt.holder_loan_credits > 0,
+                     "public graph zero-copy holder loan credits should be configured");
+             core->stop();
+           }
+
            auto public_core = make_balanced_zero_copy_core(true);
            require(public_core->pipeline.zero_copy_fallback_enabled,
                    "public balanced zero-copy output should keep the copy fallback enabled");
