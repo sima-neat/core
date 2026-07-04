@@ -8,7 +8,6 @@
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
-#include "gst/GstLatestByStreamMux.h"
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
@@ -1785,39 +1784,6 @@ void attach_fused_realtime_branch_counters(GstElement* pipeline, std::size_t bra
   std::fflush(stderr);
 }
 
-GstPadProbeReturn fused_realtime_loan_release_probe_cb(GstPad*, GstPadProbeInfo* info, gpointer) {
-  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
-    return GST_PAD_PROBE_OK;
-  }
-  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
-  if (buffer) {
-    (void)pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(buffer);
-  }
-  return GST_PAD_PROBE_OK;
-}
-
-void attach_fused_realtime_loan_release_probe(GstElement* pipeline,
-                                              const std::string& appsink_name) {
-  if (!pipeline || appsink_name.empty()) {
-    return;
-  }
-  GstElement* raw_sink = gst_bin_get_by_name(GST_BIN(pipeline), appsink_name.c_str());
-  if (!raw_sink) {
-    return;
-  }
-  GstPad* sink_pad = gst_element_get_static_pad(raw_sink, "sink");
-  if (sink_pad) {
-    gst_pad_add_probe(sink_pad, GST_PAD_PROBE_TYPE_BUFFER, fused_realtime_loan_release_probe_cb,
-                      nullptr, nullptr);
-    if (env_bool("SIMA_LATEST_MUX_LOAN_DEBUG", false)) {
-      std::fprintf(stderr, "[latestmux][loan] armed terminal release probe appsink=%s\n",
-                   appsink_name.c_str());
-    }
-    gst_object_unref(sink_pad);
-  }
-  gst_object_unref(raw_sink);
-}
-
 BuildResult build_fused_realtime_source_pipeline(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes,
@@ -1987,9 +1953,6 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   session_build_attach_debug_element_buffer_probes(pipeline.get());
   session_build_attach_boxdecode_debug_probes(pipeline.get());
   attach_fused_realtime_pad_probes(pipeline.get());
-  if (has_sink) {
-    attach_fused_realtime_loan_release_probe(pipeline.get(), br.appsink_name);
-  }
   session_build_attach_h264_caps_fixups(pipeline.get(), build_consumer_nodes, name_transform);
   session_build_attach_rtsp_debug(pipeline.get(), build_consumer_nodes, name_transform);
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {

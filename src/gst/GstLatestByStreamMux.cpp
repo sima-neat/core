@@ -3,6 +3,7 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 
 #include <gst/gst.h>
 
@@ -1482,17 +1483,20 @@ bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer) {
   return false;
 }
 
-void release_latest_by_stream_mux_loan_for_sample(const Sample& sample) {
-  std::vector<LoanKey> keys;
-  auto add_key = [&keys](const Sample& s) {
+std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample& sample) {
+  std::vector<RealtimeFrameCredit> credits;
+  auto add_key = [&credits](const Sample& s) {
     if (s.frame_id < 0 || s.stream_id.empty()) {
       return;
     }
-    const LoanKey key{0, s.stream_id, s.frame_id};
-    const auto found = std::find_if(keys.begin(), keys.end(),
-                                    [&](const LoanKey& existing) { return existing == key; });
-    if (found == keys.end()) {
-      keys.push_back(key);
+    const RealtimeFrameCredit credit{0, s.stream_id, s.frame_id};
+    const auto found =
+        std::find_if(credits.begin(), credits.end(), [&](const RealtimeFrameCredit& existing) {
+          return existing.namespace_id == credit.namespace_id &&
+                 existing.frame_id == credit.frame_id && existing.stream_id == credit.stream_id;
+        });
+    if (found == credits.end()) {
+      credits.push_back(credit);
     }
   };
   auto walk = [&](auto&& self, const Sample& s) -> void {
@@ -1502,9 +1506,19 @@ void release_latest_by_stream_mux_loan_for_sample(const Sample& sample) {
     }
   };
   walk(walk, sample);
-  for (const auto& key : keys) {
-    release_latest_by_stream_mux_loan(key.stream_id, key.frame_id);
+  return credits;
+}
+
+void release_realtime_frame_credits(const std::vector<RealtimeFrameCredit>& credits,
+                                    const char* mode) {
+  for (const auto& credit : credits) {
+    (void)release_loan_for_key(
+        LoanKey{credit.namespace_id, credit.stream_id, credit.frame_id}, mode);
   }
+}
+
+void release_realtime_frame_credits_for_sample(const Sample& sample, const char* mode) {
+  release_realtime_frame_credits(realtime_frame_credits_for_sample(sample), mode);
 }
 
 } // namespace pipeline_internal

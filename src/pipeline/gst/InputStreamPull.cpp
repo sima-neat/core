@@ -1,6 +1,5 @@
 #include "InputStreamInternal.h"
 
-#include "gst/GstLatestByStreamMux.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/TensorAdapters.h"
@@ -1242,9 +1241,7 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
 Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_output,
                                 const std::optional<OutputTensorOverride>* override_opt,
                                 InputStream::State* st) {
-  Sample out = output_from_sample_stream(sample, where, copy_output, override_opt, st);
-  pipeline_internal::release_latest_by_stream_mux_loan_for_sample(out);
-  return out;
+  return output_from_sample_stream(sample, where, copy_output, override_opt, st);
 }
 
 Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_output,

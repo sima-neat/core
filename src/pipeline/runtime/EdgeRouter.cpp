@@ -1,5 +1,6 @@
 #include "EdgeRouter.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -260,7 +261,9 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
   }
 
   auto sink_it = runtime_->sinks.find(sink_node);
+  const auto realtime_credits = pipeline_internal::realtime_frame_credits_for_sample(sample);
   if (sink_it == runtime_->sinks.end() || !sink_it->second) {
+    pipeline_internal::release_realtime_frame_credits(realtime_credits, "graph-sink-discard");
     return true;
   }
 
@@ -281,6 +284,7 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     if (trace) {
       trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
     }
+    pipeline_internal::release_realtime_frame_credits(realtime_credits, "graph-sink-drop");
     if (!stop_requested(callbacks)) {
       std::ostringstream msg;
       msg << "GraphRun: sink backpressure timeout (node=" << static_cast<std::size_t>(sink_node)
@@ -294,6 +298,7 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
   if (trace) {
     trace_graph_message_event(TraceGraphMessageEventType::QueueIn, trace_args);
   }
+  pipeline_internal::release_realtime_frame_credits(realtime_credits, "graph-sink");
   return true;
 }
 
