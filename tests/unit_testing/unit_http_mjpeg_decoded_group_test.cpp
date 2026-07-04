@@ -216,6 +216,9 @@ int main() {
     video_rate_opt.source_fps = 30;
     video_rate_opt.use_videorate = true;
     video_rate_opt.video_rate_fps = 15;
+    video_rate_opt.output_caps.format = simaai::neat::FormatTag::I420;
+    video_rate_opt.output_caps.width = 320;
+    video_rate_opt.output_caps.height = 240;
     const Graph video_rate_group =
         simaai::neat::nodes::groups::HttpMjpegDecodedInput(video_rate_opt);
     require_contains(video_rate_group.describe(), "VideoRate",
@@ -227,6 +230,12 @@ int main() {
                        "HTTP MJPEG video_rate_fps should not change decoder FPS");
       require_contains(*backend, "framerate=15/1",
                        "HTTP MJPEG video_rate_fps should set downstream caps");
+      require_not_contains(*backend, "format=I420",
+                           "HTTP MJPEG disabled output_caps should not force format");
+      require_not_contains(*backend, "width=320",
+                           "HTTP MJPEG disabled output_caps should not force width");
+      require_not_contains(*backend, "height=240",
+                           "HTTP MJPEG disabled output_caps should not force height");
     }
     const simaai::neat::OutputSpec video_rate_spec =
         simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(video_rate_opt);

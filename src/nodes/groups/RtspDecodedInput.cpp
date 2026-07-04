@@ -85,7 +85,7 @@ int resolve_video_rate_fps(const RtspDecodedInputOptions& opt, int source_fps) {
     throw std::invalid_argument(
         "RtspDecodedInput: use_videorate requires video_rate_fps or source_fps");
   }
-  if (opt.output_caps.fps > 0 && opt.output_caps.fps != fps) {
+  if (tail_caps_enabled(opt.output_caps) && opt.output_caps.fps > 0 && opt.output_caps.fps != fps) {
     throw std::invalid_argument("RtspDecodedInput: output_caps.fps conflicts with video_rate_fps");
   }
   return fps;

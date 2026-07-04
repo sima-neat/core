@@ -121,9 +121,12 @@ simaai::neat::Graph HttpMjpegDecodedInput(const HttpMjpegDecodedInputOptions& op
 
   if (caps_enabled(opt.output_caps) || opt.use_videorate) {
     const auto& c = opt.output_caps;
-    const auto memory = caps_enabled(c) ? c.memory : simaai::neat::CapsMemory::Any;
+    const bool tail_caps = caps_enabled(c);
+    const auto memory = tail_caps ? c.memory : simaai::neat::CapsMemory::Any;
     const int fps = (video_rate_fps > 0) ? video_rate_fps : c.fps;
-    nodes.push_back(nodes::CapsRaw(c.format, c.width, c.height, fps, memory));
+    nodes.push_back(nodes::CapsRaw(tail_caps ? c.format : simaai::neat::FormatSpec{},
+                                   tail_caps ? c.width : -1, tail_caps ? c.height : -1, fps,
+                                   memory));
   }
 
   if (!opt.extra_fragment.empty()) {

@@ -409,7 +409,7 @@ void check_decoded_source_fps_and_videorate() {
 
   mjpeg.use_videorate = true;
   mjpeg.video_rate_fps = 30;
-  mjpeg.output_caps.fps = 30;
+  mjpeg.output_caps.fps = 120;
   const Graph video_rate_group = simaai::neat::nodes::groups::RtspDecodedInput(mjpeg);
   require_contains(video_rate_group.describe(), "VideoRate",
                    "use_videorate should insert VideoRate");
