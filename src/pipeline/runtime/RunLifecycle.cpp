@@ -350,6 +350,14 @@ void runtime::RunCore::close() {
 void Run::close() {
   if (!core_)
     return;
+  const bool has_graph = static_cast<bool>(core_->graph_execution_);
+  std::fprintf(stderr,
+               "[GRAPH] Run::close dispatch core=%p graph_execution=%d core_closed=%d "
+               "diag_on_stop=%d stop_trace=%d\n",
+               static_cast<void*>(core_.get()), static_cast<int>(has_graph),
+               static_cast<int>(core_->closed.load(std::memory_order_relaxed)),
+               static_cast<int>(pipeline_internal::env_bool("SIMA_GRAPH_DIAG_ON_STOP", false)),
+               static_cast<int>(pipeline_internal::env_bool("SIMA_STOP_TRACE", false)));
   core_->close();
   core_.reset();
 }

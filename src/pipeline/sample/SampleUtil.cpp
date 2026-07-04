@@ -1045,6 +1045,16 @@ GstBuffer* buffer_from_tensor_or_copy(const Sample& field, const SampleSpec& spe
   }
   if (source_preproc_meta_buffer && has_simaai_preprocess_meta(source_preproc_meta_buffer) &&
       !has_simaai_preprocess_meta(buf)) {
+    std::string writable_err;
+    if (!ensure_writable_for_meta(&buf, spec, "preprocess meta copy", &writable_err)) {
+      gst_buffer_unref(source_preproc_meta_buffer);
+      gst_buffer_unref(buf);
+      if (err) {
+        *err = writable_err.empty() ? "Sample field preprocess meta buffer not writable"
+                                    : writable_err;
+      }
+      return nullptr;
+    }
     std::string copy_err;
     if (!copy_simaai_preprocess_meta(buf, source_preproc_meta_buffer, &copy_err)) {
       gst_buffer_unref(source_preproc_meta_buffer);
@@ -1055,22 +1065,28 @@ GstBuffer* buffer_from_tensor_or_copy(const Sample& field, const SampleSpec& spe
       return nullptr;
     }
   }
-  if (!has_simaai_preprocess_meta(buf) && t.semantic.preprocess.has_value() &&
-      !write_simaai_preprocess_meta(buf, *t.semantic.preprocess)) {
-    if (source_preproc_meta_buffer) {
-      gst_buffer_unref(source_preproc_meta_buffer);
+  if (!has_simaai_preprocess_meta(buf) && t.semantic.preprocess.has_value()) {
+    std::string writable_err;
+    if (!ensure_writable_for_meta(&buf, spec, "preprocess meta apply", &writable_err) ||
+        !write_simaai_preprocess_meta(buf, *t.semantic.preprocess)) {
+      if (source_preproc_meta_buffer) {
+        gst_buffer_unref(source_preproc_meta_buffer);
+      }
+      gst_buffer_unref(buf);
+      if (err) {
+        *err = writable_err.empty() ? "Sample field preprocess meta apply failed" : writable_err;
+      }
+      return nullptr;
     }
-    gst_buffer_unref(buf);
-    if (err) {
-      *err = "Sample field preprocess meta apply failed";
-    }
-    return nullptr;
   }
   // Plan 1: framework owns preproc_axis_perm. The plugin writes geometry/affine/flags
   // but never axis_perm; merge the user-resolved layout_convert.perm onto the
   // existing meta here without overwriting plugin-authored fields.
   if (t.semantic.preprocess.has_value() && t.semantic.preprocess->has_axis_perm()) {
-    merge_simaai_preprocess_axis_perm(buf, t.semantic.preprocess->axis_perm);
+    std::string writable_err;
+    if (ensure_writable_for_meta(&buf, spec, "preprocess axis_perm merge", &writable_err)) {
+      merge_simaai_preprocess_axis_perm(buf, t.semantic.preprocess->axis_perm);
+    }
   }
   if (source_preproc_meta_buffer) {
     gst_buffer_unref(source_preproc_meta_buffer);
@@ -1307,9 +1323,11 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
 
   GstBuffer* first_source_buffer = nullptr;
   bool appended_memory = false;
-  for (const auto& tensor : bundle.tensors) {
+  TensorList descriptor_tensors = bundle.tensors;
+  for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
+    const auto& tensor = bundle.tensors[tensor_index];
     if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
-        !tensor.storage->holder) {
+        !tensor.storage->holder || !tensor_has_device_gstsample_holder_local(tensor)) {
       if (first_source_buffer) {
         gst_buffer_unref(first_source_buffer);
       }
@@ -1378,6 +1396,7 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
     }
 
     gst_buffer_append_memory(assembled, gst_memory_ref(memory));
+    descriptor_tensors[tensor_index].route.memory_index = static_cast<int>(tensor_index);
     appended_memory = true;
     gst_buffer_unref(source_buffer);
   }
@@ -1417,6 +1436,33 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
     if (err) {
       *err = preprocess_err.empty() ? "tensor-set multi-source preprocess meta failed"
                                     : preprocess_err;
+    }
+    return false;
+  }
+
+  TensorBufferView descriptor;
+  std::string descriptor_err;
+  if (!tensor_buffer_descriptor_from_tensors(descriptor_tensors, &descriptor, &descriptor_err)) {
+    gst_buffer_unref(assembled);
+    if (*out_caps) {
+      gst_caps_unref(*out_caps);
+      *out_caps = nullptr;
+    }
+    if (err) {
+      *err = descriptor_err.empty() ? "tensor-set multi-source descriptor failed" : descriptor_err;
+    }
+    return false;
+  }
+
+  std::string attach_err;
+  if (!attach_tensor_set_meta_from_descriptor_view_impl(assembled, descriptor, &attach_err)) {
+    gst_buffer_unref(assembled);
+    if (*out_caps) {
+      gst_caps_unref(*out_caps);
+      *out_caps = nullptr;
+    }
+    if (err) {
+      *err = attach_err.empty() ? "tensor-set multi-source meta attach failed" : attach_err;
     }
     return false;
   }
@@ -2444,10 +2490,11 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
     std::shared_ptr<void> producer_lifetime = producer_lifetime_weak.lock();
     auto loan = std::make_shared<ZeroCopyLoanToken>(gate, std::move(producer_lifetime));
     auto original_holder = tensor.storage->holder;
-    if (GstBuffer* holder_buffer = buffer_from_tensor_holder(original_holder)) {
-      attach_zero_copy_loan_to_gst_buffer_local(holder_buffer, loan);
-      gst_buffer_unref(holder_buffer);
-    }
+    // Public-output loan credit tracks the exported Sample/holder lifetime, not the lifetime of
+    // the producer's pooled GstBuffer.  Attaching the credit token to the original GstBuffer qdata
+    // lets buffer-pool reuse pin credits after the public Sample is gone and causes false
+    // backpressure stalls.  Cross-Run pushes still attach live loans to the newly created
+    // downstream GstBuffer via attach_zero_copy_loans_to_gst_buffer().
     tensor.storage->holder =
         std::shared_ptr<void>(original_holder.get(), [original_holder, loan](void*) mutable {
           original_holder.reset();
@@ -2716,6 +2763,13 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
     if (seg_name.empty()) {
       seg_name = std::string("ifm") + std::to_string(i);
     }
+    if (std::find(segment_names.begin(), segment_names.end(), seg_name) != segment_names.end()) {
+      if (err) {
+        *err = std::string("bundled input: duplicate segment name '") + seg_name +
+               "' requires materialized fallback";
+      }
+      return false;
+    }
     segment_names.push_back(std::move(seg_name));
     segment_bytes.push_back(bytes);
     if (!gst_simaai_memory_allocation_params_add_segment(&params, static_cast<gsize>(bytes),
@@ -2910,8 +2964,44 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
           packed_parent_segment_name.has_value()
               ? build_packed_tensor_set_backing(bundle, *packed_parent_segment_name, &sample_buf,
                                                 &sample_caps, &materialized_err)
-              : build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
-                                                      &materialized_err);
+              : ([&]() {
+                  // Native multi-IFM / multi-physical TensorSet ingress should not take the
+                  // generic materialized path first: that path allocates temporary GstBuffers and
+                  // then copies again into a segmented buffer.  Prefer the direct segmented
+                  // allocation for dense CPU tensors (one unavoidable host->SiMa copy) and the
+                  // adopted multi-source path for already device-backed GstSamples.  Fall back to
+                  // the legacy materializer for non-dense tensors or unsupported backing.
+                  std::string direct_err;
+                  if (build_bundled_input_gst_buffer(bundle.tensors, &sample_buf, &direct_err)) {
+                    if (!build_tensor_set_envelope_caps(bundle, &sample_caps, &direct_err)) {
+                      if (sample_buf) {
+                        gst_buffer_unref(sample_buf);
+                        sample_buf = nullptr;
+                      }
+                      materialized_err = direct_err;
+                      return false;
+                    }
+                    std::string preprocess_err;
+                    if (!copy_bundle_tensor_preprocess_meta(sample_buf, bundle.tensors,
+                                                            &preprocess_err)) {
+                      gst_buffer_unref(sample_buf);
+                      sample_buf = nullptr;
+                      if (sample_caps) {
+                        gst_caps_unref(sample_caps);
+                        sample_caps = nullptr;
+                      }
+                      materialized_err = preprocess_err;
+                      return false;
+                    }
+                    return true;
+                  }
+                  if (allow_zero_copy && try_build_multi_source_tensor_set_backing(
+                                             bundle, &sample_buf, &sample_caps, &direct_err)) {
+                    return true;
+                  }
+                  return build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                               &materialized_err);
+                })();
       if (!built) {
         if (err) {
           *err = materialized_err.empty() ? "Sample tensor-set materialized backing failed"

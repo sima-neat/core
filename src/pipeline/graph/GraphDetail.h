@@ -342,7 +342,7 @@ void enforce_names_contract(GstElement* pipeline, const BuildResult& br);
 
 /** Set a pipeline state and throw NeatError on failure. */
 void set_state_or_throw(GstElement* pipeline, GstState target, const char* where,
-                        const std::shared_ptr<DiagCtx>& diag);
+                        const std::shared_ptr<DiagCtx>& diag, int snapshot_wait_override_ms = -1);
 
 // -------------------------------------------------------------------------------------
 // Shared build/run validation helpers

@@ -433,13 +433,10 @@ RUN_TEST("graph_migration_phaseC_model_endpoint_exposure_test", [] {
   duplicate_left_b.add(nodes::Input("image_l"));
   Graph duplicate_app;
   duplicate_app.connect(duplicate_left_a, model);
-  threw = false;
-  try {
-    duplicate_app.connect(duplicate_left_b, model);
-  } catch (const std::exception& e) {
-    threw = true;
-    require_contains(std::string(e.what()), "already connected",
-                     "duplicate model input diagnostic should mention endpoint occupancy");
-  }
-  require(threw, "same model input endpoint should not accept two direct sources");
+  duplicate_app.connect(duplicate_left_b, model);
+  const GraphReport duplicate_report = duplicate_app.validate();
+  require(!duplicate_report.error_code.empty(),
+          "same model input endpoint should not accept two direct sources");
+  require_contains(duplicate_report.repro_note, "duplicate Model ingress endpoint 'image_l'",
+                   "duplicate model input diagnostic should mention endpoint occupancy");
 });

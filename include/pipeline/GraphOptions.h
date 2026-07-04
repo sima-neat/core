@@ -44,10 +44,12 @@ namespace simaai::neat {
 /**
  * @brief Runtime policy for a connection between two public Graph fragments.
  *
- * `Default` preserves the existing lossless/backpressure semantics. `RealtimeLatestByStream`
- * is for live multi-stream fan-in: producers never block on the consumer; the runtime keeps only
- * the latest frame per `Sample::stream_id` (or per source edge if stream_id is empty) and schedules
- * ready streams fairly into the downstream graph.
+ * `Default` preserves lossless/backpressure semantics for ordinary one-to-one edges. If multiple
+ * producers connect to the same live public input, the framework promotes those edges to
+ * `RealtimeLatestByStream` automatically so users do not need app-local fan-in mutex code.
+ * `RealtimeLatestByStream` keeps producers non-blocking, retains only the latest frame per
+ * `Sample::stream_id` (or per source edge if stream_id is empty), and schedules ready streams
+ * fairly into the downstream graph.
  */
 enum class GraphLinkPolicy {
   Default = 0,

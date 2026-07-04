@@ -21,6 +21,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -77,6 +78,44 @@ std::vector<std::string> tail_lines(const std::string& path, size_t max_lines) {
     buf.push_back(line);
   }
   return std::vector<std::string>(buf.begin(), buf.end());
+}
+
+void drop_one_keep_latest_output(std::deque<Sample>& queue, const Sample& incoming) {
+  if (queue.empty()) {
+    return;
+  }
+
+  if (!incoming.stream_id.empty()) {
+    const auto same_stream = std::find_if(queue.begin(), queue.end(), [&](const Sample& queued) {
+      return queued.stream_id == incoming.stream_id;
+    });
+    if (same_stream != queue.end()) {
+      queue.erase(same_stream);
+      return;
+    }
+
+    std::unordered_map<std::string, std::size_t> queued_by_stream;
+    for (const Sample& queued : queue) {
+      if (!queued.stream_id.empty()) {
+        ++queued_by_stream[queued.stream_id];
+      }
+    }
+
+    const auto duplicate_stream =
+        std::find_if(queue.begin(), queue.end(), [&](const Sample& queued) {
+          if (queued.stream_id.empty()) {
+            return false;
+          }
+          const auto it = queued_by_stream.find(queued.stream_id);
+          return it != queued_by_stream.end() && it->second > 1;
+        });
+    if (duplicate_stream != queue.end()) {
+      queue.erase(duplicate_stream);
+      return;
+    }
+  }
+
+  queue.pop_front();
 }
 
 bool contains_case_insensitive(const std::string& haystack, const std::string& needle) {
@@ -340,7 +379,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
           }
           // Drop oldest to make room for the new output.
           if (!st->pipeline.out_queue.empty()) {
-            st->pipeline.out_queue.pop_front();
+            drop_one_keep_latest_output(st->pipeline.out_queue, out);
             st->outputs_dropped.fetch_add(1, std::memory_order_relaxed);
           }
         }

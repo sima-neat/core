@@ -46,9 +46,8 @@ int int_arg(int argc, char** argv, const std::string& key, int def) {
 }
 
 std::string lower_copy(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return value;
 }
 
@@ -71,8 +70,7 @@ neat::BoxDecodeType decode_type_from_token(const std::string& token) {
   throw std::runtime_error("unsupported --decode token: " + token);
 }
 
-template <typename Shape>
-std::string shape_string(const Shape& shape) {
+template <typename Shape> std::string shape_string(const Shape& shape) {
   std::string out = "[";
   for (std::size_t i = 0; i < shape.size(); ++i) {
     out += std::to_string(shape[i]);

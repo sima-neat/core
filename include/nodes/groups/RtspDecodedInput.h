@@ -83,6 +83,11 @@ struct RtspDecodedInputOptions {
   int dec_height = -1;          ///< Decoded frame height override; `-1` = upstream-defined.
   int dec_fps = -1; ///< Decoded frame rate override; for MJPEG also a missing-caps FPS fallback.
   int num_buffers = -1; ///< Decoder output buffer pool size override; `-1` = element default.
+  int decoder_input_buffers =
+      -1;                     ///< Decoder input buffer pool size override; `-1` = element default.
+  std::string decoder_tuning; ///< Optional decoder tuning profile; empty = element default.
+  bool decoder_memory_opt =
+      false; ///< Enable decoder low-memory mode when supported by the platform.
 };
 
 /**

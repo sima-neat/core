@@ -938,9 +938,15 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     }
     const auto source_start = pipeline_internal::build_timing_now();
     const bool public_output_contract = !segment.boundary.graph_internal_output;
-    SourceStreamBuildContext source = session_build_source_stream_internal(
-        nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode, opt.require_sink,
-        public_output_contract, "RunCore::start(plan/source)");
+    SourceStreamBuildContext source =
+        segment.fused_realtime_ingress.has_value()
+            ? session_build_fused_realtime_source_stream_internal(
+                  *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
+                  opt.run_options, opt.mode, opt.require_sink, public_output_contract,
+                  "RunCore::start(plan/fused-realtime)")
+            : session_build_source_stream_internal(
+                  nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
+                  opt.require_sink, public_output_contract, "RunCore::start(plan/source)");
     tune_internal_zero_copy_holder_window(source.stream_opt, opt.graph_options,
                                           segment.boundary.graph_internal_output);
     const auto source_us = pipeline_internal::build_timing_us(source_start);

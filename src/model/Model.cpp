@@ -34,6 +34,7 @@
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
+#include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
@@ -55,6 +56,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -136,6 +138,35 @@ convert_model_managed_route_flags(const internal::SessionRoutePlan::ModelManaged
   flags.include_pre_stage = src.include_pre_stage;
   flags.boxdecode_selected = src.boxdecode_selected;
   return flags;
+}
+
+std::vector<internal::ExecutionStageKind>
+convert_model_managed_post_kinds(const std::vector<internal::SessionPostStageOp>& post_chain) {
+  std::vector<internal::ExecutionStageKind> out;
+  out.reserve(post_chain.size());
+  for (const auto op : post_chain) {
+    switch (op) {
+    case internal::SessionPostStageOp::Detess:
+      out.push_back(internal::ExecutionStageKind::Detess);
+      break;
+    case internal::SessionPostStageOp::DetessCast:
+      out.push_back(internal::ExecutionStageKind::DetessCast);
+      break;
+    case internal::SessionPostStageOp::DetessDequant:
+      out.push_back(internal::ExecutionStageKind::DetessDequant);
+      break;
+    case internal::SessionPostStageOp::Dequantize:
+      out.push_back(internal::ExecutionStageKind::Dequant);
+      break;
+    case internal::SessionPostStageOp::BoxDecode:
+      out.push_back(internal::ExecutionStageKind::BoxDecode);
+      break;
+    case internal::SessionPostStageOp::Cast:
+      out.push_back(internal::ExecutionStageKind::Cast);
+      break;
+    }
+  }
+  return out;
 }
 using pipeline_internal::env_bool;
 using pipeline_internal::env_int;
@@ -2717,14 +2748,14 @@ bool plan_uses_model_input_route_processor(const internal::PreprocessPlannerResu
   return plan_uses_bundled_fan_in(plan) || plan_uses_direct_mla_tensor_set_ingress(plan);
 }
 
-bool plan_uses_direct_mla_public_output_boundary(
-    const internal::PreprocessPlannerResult& plan) {
+bool plan_uses_direct_mla_public_output_boundary(const internal::PreprocessPlannerResult& plan) {
   return plan_uses_direct_mla_tensor_set_ingress(plan) &&
          !plan.session_route_plan.include_post_stage;
 }
 
-simaai::neat::RunOptions run_options_for_model_public_boundary(
-    const internal::PreprocessPlannerResult& plan, simaai::neat::RunOptions run_opt) {
+simaai::neat::RunOptions
+run_options_for_model_public_boundary(const internal::PreprocessPlannerResult& plan,
+                                      simaai::neat::RunOptions run_opt) {
   if (run_opt.output_memory == OutputMemory::Auto &&
       plan_uses_direct_mla_public_output_boundary(plan)) {
     // Direct MLA/QMLA public-IO artifacts expose the MLA session as the public
@@ -3039,6 +3070,55 @@ internal::IngressConsumerTensorIdentity joined_tensor_identity_or_fallback(
   return identity;
 }
 
+std::string resolve_mla_executable_path_from_mpk_contract(
+    const pipeline_internal::sima::MpkContract& contract) {
+  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
+  if (!mla_stage || mla_stage->executable.empty()) {
+    return {};
+  }
+  const std::filesystem::path raw(mla_stage->executable);
+  if (raw.is_absolute()) {
+    return raw.string();
+  }
+
+  std::filesystem::path package_root;
+  if (!contract.mpk_json_path.empty()) {
+    package_root = std::filesystem::path(contract.mpk_json_path).parent_path();
+    if (package_root.filename() == "etc") {
+      package_root = package_root.parent_path();
+    }
+  }
+
+  std::vector<std::filesystem::path> candidates;
+  if (!package_root.empty()) {
+    candidates.push_back(package_root / "share" / raw);
+    candidates.push_back(package_root / raw);
+  }
+  candidates.push_back(raw);
+
+  for (const auto& candidate : candidates) {
+    std::error_code ec;
+    if (!candidate.empty() && std::filesystem::exists(candidate, ec) &&
+        std::filesystem::is_regular_file(candidate, ec)) {
+      return candidate.string();
+    }
+  }
+  return candidates.empty() ? raw.string() : candidates.front().string();
+}
+
+std::optional<pipeline_internal::sima::MlaElfIoTopology>
+read_mla_elf_io_topology_from_mpk_contract(const pipeline_internal::sima::MpkContract& contract) {
+  const std::string elf_path = resolve_mla_executable_path_from_mpk_contract(contract);
+  if (elf_path.empty()) {
+    return std::nullopt;
+  }
+  pipeline_internal::sima::MlaElfIoTopology topology;
+  if (!pipeline_internal::sima::read_mla_elf_io_topology(elf_path, &topology) || !topology.valid) {
+    return std::nullopt;
+  }
+  return topology;
+}
+
 std::vector<internal::IngressConsumerTensorIdentity>
 main_route_joined_input_identities(const Model& model) {
   const auto identities_from_static_contract =
@@ -3120,6 +3200,17 @@ main_route_joined_input_identities(const Model& model) {
           physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs,
           !mla_stage->name.empty() ? mla_stage->name : std::string("mla"),
           boundary_inputs.empty() ? nullptr : &boundary_inputs);
+      mla_contract.consumer_keeps_distinct_physical_inputs =
+          pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_opt);
+      if (const auto topology = read_mla_elf_io_topology_from_mpk_contract(*mpk_opt);
+          topology.has_value()) {
+        mla_contract.elf_ifm_symbol_names = topology->ifm_symbol_names;
+        mla_contract.elf_ofm_symbol_names = topology->ofm_symbol_names;
+        if (topology->monolithic_ifm || !topology->ifm_symbol_names.empty()) {
+          mla_contract.consumer_keeps_distinct_physical_inputs =
+              pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(*topology);
+        }
+      }
       if (mla_stage->input_tensors.size() == 1U && mla_contract.inputs.size() > 1U &&
           mla_contract.physical_inputs.size() > 1U) {
         // The joined ingress transport may pack multiple consumer inputs into one
@@ -3194,6 +3285,10 @@ main_route_joined_input_identities(const Model& model) {
 bool main_session_consumer_keeps_distinct_physical_inputs(const Model& model) {
   const auto& pack = internal::ModelAccess::pack(model);
   if (const auto& mpk_opt = pack.mpk_contract(); mpk_opt.has_value()) {
+    if (const auto topology = read_mla_elf_io_topology_from_mpk_contract(*mpk_opt);
+        topology.has_value() && (topology->monolithic_ifm || !topology->ifm_symbol_names.empty())) {
+      return pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(*topology);
+    }
     return pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_opt);
   }
   return false;
@@ -3476,8 +3571,9 @@ std::string ingress_tensor_debug_string(const Tensor& tensor) {
   return oss.str();
 }
 
-internal::IngressTensorContract make_direct_mla_fallback_ingress_contract(
-    const internal::PreprocessPlannerResult& plan, const std::string& segment_name) {
+internal::IngressTensorContract
+make_direct_mla_fallback_ingress_contract(const internal::PreprocessPlannerResult& plan,
+                                          const std::string& segment_name) {
   internal::IngressTensorContract ingress;
   ingress.valid = true;
   ingress.ingress_index = 0;
@@ -3506,8 +3602,8 @@ public:
         is_fan_in_route_(plan_uses_bundled_fan_in(plan_)),
         direct_tensor_set_ingress_(plan_uses_direct_mla_tensor_set_ingress(plan_)) {
     if (direct_tensor_set_ingress_ && ingress_contracts_.empty()) {
-      ingress_contracts_.push_back(make_direct_mla_fallback_ingress_contract(
-          plan_, joined_packed_segment_name_));
+      ingress_contracts_.push_back(
+          make_direct_mla_fallback_ingress_contract(plan_, joined_packed_segment_name_));
     }
     if (!uses_direct_tensor_set_route()) {
       // Legacy multi-ingress: spin up per-ingress branch sessions. The
@@ -3666,7 +3762,9 @@ public:
   }
 
 private:
-  bool uses_direct_tensor_set_route() const { return is_fan_in_route_ || direct_tensor_set_ingress_; }
+  bool uses_direct_tensor_set_route() const {
+    return is_fan_in_route_ || direct_tensor_set_ingress_;
+  }
 
   int direct_mla_consumer_input_index(const internal::IngressTensorContract& ingress,
                                       std::size_t fallback_index) const {
@@ -3689,9 +3787,9 @@ private:
     return order;
   }
 
-  internal::IngressConsumerTensorIdentity direct_mla_consumer_identity(
-      const internal::IngressTensorContract& ingress, std::size_t public_index,
-      std::size_t transport_index) const {
+  internal::IngressConsumerTensorIdentity
+  direct_mla_consumer_identity(const internal::IngressTensorContract& ingress,
+                               std::size_t public_index, std::size_t transport_index) const {
     const int consumer_index = direct_mla_consumer_input_index(ingress, public_index);
     internal::IngressConsumerTensorIdentity identity;
     if (consumer_index >= 0 &&
@@ -3702,8 +3800,7 @@ private:
       identity.logical_index = consumer_index;
     }
     if (identity.physical_index < 0) {
-      identity.physical_index =
-          consumer_keeps_distinct_physical_inputs_ ? consumer_index : 0;
+      identity.physical_index = consumer_keeps_distinct_physical_inputs_ ? consumer_index : 0;
     }
     if (identity.route_slot < 0) {
       identity.route_slot = consumer_index;
@@ -3730,8 +3827,7 @@ private:
       tensor.route.backend_name = ingress_name;
     }
     return internal::remap_tensor_to_consumer_identity(
-        std::move(tensor),
-        direct_mla_consumer_identity(ingress, public_index, transport_index));
+        std::move(tensor), direct_mla_consumer_identity(ingress, public_index, transport_index));
   }
 
   TensorList prepare_direct_mla_tensors(const TensorList& inputs, const char* where) const {
@@ -4515,7 +4611,8 @@ struct Model::Impl {
     pack.set_model_managed_stage_facts(
         /*processcvu_preproc_single_output_handoff=*/processcvu_pre_stage_selected,
         convert_model_managed_route_flags(
-            preprocess_plan.session_route_plan.model_managed_route_flags));
+            preprocess_plan.session_route_plan.model_managed_route_flags),
+        convert_model_managed_post_kinds(preprocess_plan.session_route_plan.post_chain));
     auto& rp = preprocess_plan.resolved_plan;
     const std::string pre_name = resolved_pre_stage_name(pack, preprocess_plan);
     const std::string infer_upstream = preprocess_plan.session_route_plan.include_pre_stage
@@ -7389,7 +7486,8 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   if (!build_opt.name_suffix.empty()) {
     pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
   }
-  const bool use_input_route_processor = plan_uses_model_input_route_processor(impl_->preprocess_plan);
+  const bool use_input_route_processor =
+      plan_uses_model_input_route_processor(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
   auto nodes = build_pipeline_nodes(*this, pack, impl_->options, impl_->preprocess_plan, build_opt,
                                     nullptr, false, externalize_preprocess);
@@ -7435,7 +7533,8 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
         "Model::build(TensorList): multi-ingress image convenience is unsupported; use "
         "Model::build(Sample)");
   }
-  const bool use_input_route_processor = plan_uses_model_input_route_processor(impl_->preprocess_plan);
+  const bool use_input_route_processor =
+      plan_uses_model_input_route_processor(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
   std::optional<InputInfo> image_input_info;
   if (!tensor_mode) {
@@ -7482,7 +7581,8 @@ Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::Rout
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
-  const bool use_input_route_processor = plan_uses_model_input_route_processor(impl_->preprocess_plan);
+  const bool use_input_route_processor =
+      plan_uses_model_input_route_processor(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
   const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   std::optional<InputInfo> image_input_info;

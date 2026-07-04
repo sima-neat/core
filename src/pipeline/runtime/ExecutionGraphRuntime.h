@@ -14,6 +14,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -74,6 +75,10 @@ public:
     std::uint64_t scheduled = 0;
     std::uint64_t overwritten = 0;
     std::uint64_t dispatch_failed = 0;
+    std::uint64_t ready_wait_ns = 0;
+    std::uint64_t ready_wait_max_ns = 0;
+    std::uint64_t dispatch_ns = 0;
+    std::uint64_t dispatch_max_ns = 0;
     std::size_t ready = 0;
   };
 
@@ -98,6 +103,7 @@ public:
 private:
   struct Pending {
     simaai::neat::Sample sample;
+    std::chrono::steady_clock::time_point ready_at;
     std::size_t edge_index = invalid_edge_index();
     bool has_sample = false;
     bool queued = false;
@@ -122,6 +128,10 @@ private:
   std::atomic<std::uint64_t> scheduled_{0};
   std::atomic<std::uint64_t> overwritten_{0};
   std::atomic<std::uint64_t> dispatch_failed_{0};
+  std::atomic<std::uint64_t> ready_wait_ns_{0};
+  std::atomic<std::uint64_t> ready_wait_max_ns_{0};
+  std::atomic<std::uint64_t> dispatch_ns_{0};
+  std::atomic<std::uint64_t> dispatch_max_ns_{0};
 };
 
 struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {

@@ -107,7 +107,7 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
   const bool destination_is_public_output =
       dynamic_cast<const Output*>(vertices[to].get()) != nullptr;
   if (!destination_is_public_output) {
-    for (const auto& edge : edges) {
+    for (auto& edge : edges) {
       if (edge.kind != CompositionEdgeKind::PublicEndpoint || !edge.endpoint.has_value()) {
         continue;
       }
@@ -116,7 +116,21 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
             edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
         const bool incoming_realtime =
             link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-        if (existing_realtime && incoming_realtime) {
+        if (existing_realtime || incoming_realtime ||
+            (edge.link_options.policy == GraphLinkPolicy::Default &&
+             link_options.policy == GraphLinkPolicy::Default)) {
+          /*
+           * Multiple producers feeding one live input should use the framework
+           * C++ fair-mux path by default.  This keeps source producers
+           * non-blocking, preserves one latest loaned Sample per stream/edge,
+           * and schedules into the consumer through RealtimeLatestLink instead
+           * of asking users to insert app-local mutex/funnel code.
+           */
+          edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+          link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+          edge.link_options.queue_depth =
+              std::max(edge.link_options.queue_depth, link_options.queue_depth);
+          link_options.queue_depth = edge.link_options.queue_depth;
           continue;
         }
         throw std::runtime_error("Graph::connect: destination endpoint '" + to_endpoint +

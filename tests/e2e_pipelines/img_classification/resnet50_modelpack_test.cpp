@@ -457,7 +457,10 @@ static DecodedImageSample run_image_decode_to_appsink(const std::string& image_p
                                                       int fps, bool print_pipeline) {
   simaai::neat::nodes::groups::ImageInputGroupOptions opt;
   opt.path = image_path;
-  opt.imagefreeze_num_buffers = env_int("SIMA_JPEG_IMAGEFREEZE_BUFFERS", 120);
+  // This fixture validates the still-image -> decoded-frame -> model path.  Keep it one-shot by
+  // default so it does not double as a decoder burst stress test; set SIMA_JPEG_IMAGEFREEZE_BUFFERS
+  // explicitly when debugging burst/restart behavior.
+  opt.imagefreeze_num_buffers = env_int("SIMA_JPEG_IMAGEFREEZE_BUFFERS", 1);
   if (opt.imagefreeze_num_buffers > 0) {
     std::cout << "[jpeg_decode] imagefreeze buffers=" << opt.imagefreeze_num_buffers << "\n";
   }

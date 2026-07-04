@@ -23,9 +23,8 @@ using GstNeatCameraMemoryBridge = struct _GstNeatCameraMemoryBridge;
 using GstNeatCameraMemoryBridgeClass = struct _GstNeatCameraMemoryBridgeClass;
 
 #define GST_TYPE_NEAT_CAMERA_MEMORY_BRIDGE (gst_neat_camera_memory_bridge_get_type())
-#define GST_NEAT_CAMERA_MEMORY_BRIDGE(obj)                                                        \
-  (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_NEAT_CAMERA_MEMORY_BRIDGE,                         \
-                              GstNeatCameraMemoryBridge))
+#define GST_NEAT_CAMERA_MEMORY_BRIDGE(obj)                                                         \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_NEAT_CAMERA_MEMORY_BRIDGE, GstNeatCameraMemoryBridge))
 
 struct _GstNeatCameraMemoryBridge {
   GstElement parent;
@@ -52,15 +51,15 @@ struct _GstNeatCameraMemoryBridgeClass {
 
 GType gst_neat_camera_memory_bridge_get_type();
 
-G_DEFINE_TYPE_WITH_CODE(
-    GstNeatCameraMemoryBridge, gst_neat_camera_memory_bridge, GST_TYPE_ELEMENT,
-    GST_DEBUG_CATEGORY_INIT(gst_neat_camera_memory_bridge_debug_category, "neatcamerabridge", 0,
-                            "Neat private adaptive camera memory bridge"));
+G_DEFINE_TYPE_WITH_CODE(GstNeatCameraMemoryBridge, gst_neat_camera_memory_bridge, GST_TYPE_ELEMENT,
+                        GST_DEBUG_CATEGORY_INIT(gst_neat_camera_memory_bridge_debug_category,
+                                                "neatcamerabridge", 0,
+                                                "Neat private adaptive camera memory bridge"));
 
-static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE(
-    "sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
-static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE(
-    "src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
+static GstStaticPadTemplate sink_template =
+    GST_STATIC_PAD_TEMPLATE("sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
+static GstStaticPadTemplate src_template =
+    GST_STATIC_PAD_TEMPLATE("src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
 
 enum {
   PROP_0,
@@ -110,25 +109,25 @@ bool ensure_pool(GstNeatCameraMemoryBridge* self, gsize required_size) {
     return false;
   }
 
-  const GstMemoryFlags flags = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74 |
-                                                           GST_SIMAAI_MEMORY_FLAG_CACHED);
+  const GstMemoryFlags flags =
+      static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74 | GST_SIMAAI_MEMORY_FLAG_CACHED);
   const gsize segment_size = required_size;
   const gchar* segment_name = bridge_buffer_name(self);
   const guint buffers = std::max<guint>(1, self->num_buffers);
   GstBufferPool* pool = gst_simaai_allocate_buffer_pool2(
       GST_OBJECT(self), allocator, buffers, buffers, flags, 1, &segment_size, &segment_name);
   if (!pool) {
-    GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("Failed to allocate EV74 SiMaAI camera pool"),
-                      ("size=%" G_GSIZE_FORMAT " num-buffers=%u name=%s", required_size,
-                       buffers, segment_name));
+    GST_ELEMENT_ERROR(
+        self, RESOURCE, FAILED, ("Failed to allocate EV74 SiMaAI camera pool"),
+        ("size=%" G_GSIZE_FORMAT " num-buffers=%u name=%s", required_size, buffers, segment_name));
     return false;
   }
 
   self->pool = pool;
   self->pool_size = required_size;
   if (debug_enabled(self)) {
-    GST_INFO_OBJECT(self, "created EV74 camera bridge pool size=%" G_GSIZE_FORMAT
-                         " buffers=%u name=%s",
+    GST_INFO_OBJECT(self,
+                    "created EV74 camera bridge pool size=%" G_GSIZE_FORMAT " buffers=%u name=%s",
                     required_size, buffers, segment_name);
   }
   return true;
@@ -237,19 +236,20 @@ bool stamp_sima_meta(GstNeatCameraMemoryBridge* self, GstBuffer* buffer, guint64
                                 ? static_cast<guint64>(GST_BUFFER_PTS(buffer))
                                 : static_cast<guint64>(0);
   const gchar* name = bridge_buffer_name(self);
-  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(phys_addr),
-                    "buffer-name", G_TYPE_STRING, name, "buffer-offset", G_TYPE_INT64,
-                    static_cast<gint64>(0), "stream-id", G_TYPE_STRING, "0", "frame-id",
-                    G_TYPE_INT64, frame_id, "orig-input-seq", G_TYPE_INT64, frame_id,
-                    "timestamp", G_TYPE_UINT64, timestamp, "origin_stage_id", G_TYPE_STRING,
-                    name, "origin_output_slot", G_TYPE_INT, 0, nullptr);
+  gst_structure_set(s, "buffer-id", G_TYPE_INT64, static_cast<gint64>(phys_addr), "buffer-name",
+                    G_TYPE_STRING, name, "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0),
+                    "stream-id", G_TYPE_STRING, "0", "frame-id", G_TYPE_INT64, frame_id,
+                    "orig-input-seq", G_TYPE_INT64, frame_id, "timestamp", G_TYPE_UINT64, timestamp,
+                    "origin_stage_id", G_TYPE_STRING, name, "origin_output_slot", G_TYPE_INT, 0,
+                    nullptr);
   if (old.has_pcie_buffer_id) {
     gst_structure_set(s, "pcie-buffer-id", G_TYPE_INT64, old.pcie_buffer_id, nullptr);
   }
 
   if (debug_enabled(self)) {
-    GST_INFO_OBJECT(self, "%s GstSimaMeta buffer-id=%" G_GUINT64_FORMAT " name=%s frame=%" G_GINT64_FORMAT,
-                    passthrough ? "passthrough" : "copied", phys_addr, name, frame_id);
+    GST_INFO_OBJECT(
+        self, "%s GstSimaMeta buffer-id=%" G_GUINT64_FORMAT " name=%s frame=%" G_GINT64_FORMAT,
+        passthrough ? "passthrough" : "copied", phys_addr, name, frame_id);
   }
   return true;
 }
@@ -317,10 +317,9 @@ GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input
     return nullptr;
   }
   if (inmap.size < required) {
-    GST_ELEMENT_ERROR(self, STREAM, FORMAT,
-                      ("Camera input buffer smaller than required bridge size"),
-                      ("input=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, inmap.size,
-                       required));
+    GST_ELEMENT_ERROR(
+        self, STREAM, FORMAT, ("Camera input buffer smaller than required bridge size"),
+        ("input=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, inmap.size, required));
     gst_buffer_unmap(input, &inmap);
     gst_buffer_unref(out);
     return nullptr;
@@ -333,9 +332,9 @@ GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input
     return nullptr;
   }
   if (outmap.size < required) {
-    GST_ELEMENT_ERROR(self, STREAM, FORMAT, ("EV74 camera output buffer is too small"),
-                      ("output=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, outmap.size,
-                       required));
+    GST_ELEMENT_ERROR(
+        self, STREAM, FORMAT, ("EV74 camera output buffer is too small"),
+        ("output=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, outmap.size, required));
     gst_buffer_unmap(out, &outmap);
     gst_buffer_unmap(input, &inmap);
     gst_buffer_unref(out);
@@ -486,11 +485,12 @@ void bridge_finalize(GObject* object) {
 
 GstStateChangeReturn bridge_change_state(GstElement* element, GstStateChange transition) {
   auto* self = GST_NEAT_CAMERA_MEMORY_BRIDGE(element);
-  if (transition == GST_STATE_CHANGE_READY_TO_NULL || transition == GST_STATE_CHANGE_PAUSED_TO_READY) {
+  if (transition == GST_STATE_CHANGE_READY_TO_NULL ||
+      transition == GST_STATE_CHANGE_PAUSED_TO_READY) {
     release_pool(self);
   }
-  return GST_ELEMENT_CLASS(gst_neat_camera_memory_bridge_parent_class)->change_state(element,
-                                                                                    transition);
+  return GST_ELEMENT_CLASS(gst_neat_camera_memory_bridge_parent_class)
+      ->change_state(element, transition);
 }
 
 void gst_neat_camera_memory_bridge_class_init(GstNeatCameraMemoryBridgeClass* klass) {
@@ -504,10 +504,11 @@ void gst_neat_camera_memory_bridge_class_init(GstNeatCameraMemoryBridgeClass* kl
 
   gst_element_class_add_static_pad_template(element_class, &sink_template);
   gst_element_class_add_static_pad_template(element_class, &src_template);
-  gst_element_class_set_static_metadata(
-      element_class, "Neat private camera memory bridge", "Filter/Converter/Video",
-      "Adaptively passes through EV74 SiMaAI camera buffers or copies OS camera buffers into EV74 SiMaAI memory",
-      "SiMa.ai");
+  gst_element_class_set_static_metadata(element_class, "Neat private camera memory bridge",
+                                        "Filter/Converter/Video",
+                                        "Adaptively passes through EV74 SiMaAI camera buffers or "
+                                        "copies OS camera buffers into EV74 SiMaAI memory",
+                                        "SiMa.ai");
 
   g_object_class_install_property(
       gobject_class, PROP_BUFFER_NAME,

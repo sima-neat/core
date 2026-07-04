@@ -193,6 +193,37 @@ void check_h264_auto_caps_fixup() {
   }
 }
 
+void check_h264_explicit_fallback_caps_without_probe() {
+  auto opt = make_h264_encoded_options();
+  opt.auto_caps_from_stream = false;
+  opt.h264_width = -1;
+  opt.h264_height = -1;
+  opt.h264_fps = -1;
+  opt.fallback_h264_width = 1280;
+  opt.fallback_h264_height = 720;
+  opt.fallback_h264_fps = 25;
+
+  const Graph group = simaai::neat::nodes::groups::RtspEncodedInput(opt);
+  const std::string backend = group.describe_backend(false);
+  require_contains(backend, "width=(int)1280,height=(int)720",
+                   "H264 explicit fallback backend should enforce geometry");
+  require_contains(backend, "framerate=(fraction)25/1",
+                   "H264 explicit fallback backend should enforce fps");
+  require_not_contains(backend, "h264_capsfix",
+                       "H264 explicit fallback backend should not add auto caps fixup");
+
+  const auto spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(opt);
+  require(spec.width == 1280 && spec.height == 720,
+          "H264 explicit fallback output spec shape mismatch");
+  require(spec.fps_num == 25 && spec.fps_den == 1,
+          "H264 explicit fallback output spec fps mismatch");
+
+  opt.fallback_h264_height = -1;
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspEncodedInput(opt); },
+                      "H.264 explicit caps require width, height, and fps",
+                      "H264 explicit fallback should reject incomplete caps");
+}
+
 void check_mjpeg_encoded_group() {
   const auto opt = make_mjpeg_encoded_options();
   const Graph group = simaai::neat::nodes::groups::RtspEncodedInput(opt);
@@ -397,6 +428,7 @@ int main() {
     check_rtp_jpeg_depacketize_node();
     check_h264_encoded_group();
     check_h264_auto_caps_fixup();
+    check_h264_explicit_fallback_caps_without_probe();
     check_mjpeg_encoded_group();
     check_no_queue_mode();
     check_decoded_h264_group();

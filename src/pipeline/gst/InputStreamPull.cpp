@@ -1,5 +1,6 @@
 #include "InputStreamInternal.h"
 
+#include "gst/GstLatestByStreamMux.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/TensorAdapters.h"
@@ -836,6 +837,23 @@ static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out)
   } else if (out->input_seq >= 0) {
     out->orig_input_seq = out->input_seq;
   }
+
+  const char* stream_id = gst_structure_get_string(s, "stream-id");
+  const char* buffer_name = gst_structure_get_string(s, "buffer-name");
+  const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
+  if (orig_stream_id && *orig_stream_id) {
+    if (!stream_id || !*stream_id || (buffer_name && std::string(stream_id) == buffer_name)) {
+      out->stream_id = orig_stream_id;
+    } else {
+      out->stream_id = stream_id;
+    }
+  } else if (stream_id) {
+    out->stream_id = stream_id;
+  }
+  if (buffer_name) {
+    out->stream_label = buffer_name;
+    out->segment_name = buffer_name;
+  }
 }
 
 static Sample output_from_sample_stream_inner(GstSample* sample, const char* where,
@@ -1224,7 +1242,9 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
 Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_output,
                                 const std::optional<OutputTensorOverride>* override_opt,
                                 InputStream::State* st) {
-  return output_from_sample_stream(sample, where, copy_output, override_opt, st);
+  Sample out = output_from_sample_stream(sample, where, copy_output, override_opt, st);
+  pipeline_internal::release_latest_by_stream_mux_loan_for_sample(out);
+  return out;
 }
 
 Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_output,
@@ -1767,6 +1787,10 @@ void clear_dynamic_sample_fields_for_decode_template(Sample* sample) {
   sample->pts_ns = -1;
   sample->dts_ns = -1;
   sample->duration_ns = -1;
+  sample->stream_id.clear();
+  sample->stream_label.clear();
+  sample->segment_name.clear();
+  sample->route_slot = -1;
 }
 
 void strip_tensor_storage_for_decode_template(Tensor* tensor) {

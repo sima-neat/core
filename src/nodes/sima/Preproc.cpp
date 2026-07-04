@@ -96,6 +96,42 @@ PreprocMaxInputShape max_input_shape_from_model_lineage(const PreprocOptions& op
   return out;
 }
 
+bool model_lineage_preproc_max_width_explicit(const PreprocOptions& opt) {
+#ifdef SIMA_NEAT_INTERNAL
+  if (opt.model_lineage) {
+    // The model lineage stores only capacity bounds in preproc_max_input_shape.
+    // Runtime/caps rebinding may change the actual input shape, but it must not
+    // silently grow beyond that bound.
+    return !opt.model_lineage->preproc_max_input_shape.empty();
+  }
+#else
+  (void)opt;
+#endif
+  return false;
+}
+
+bool model_lineage_preproc_max_height_explicit(const PreprocOptions& opt) {
+#ifdef SIMA_NEAT_INTERNAL
+  if (opt.model_lineage) {
+    return !opt.model_lineage->preproc_max_input_shape.empty();
+  }
+#else
+  (void)opt;
+#endif
+  return false;
+}
+
+bool model_lineage_preproc_max_depth_explicit(const PreprocOptions& opt) {
+#ifdef SIMA_NEAT_INTERNAL
+  if (opt.model_lineage) {
+    return PreprocOptions::shape_channels(opt.model_lineage->preproc_max_input_shape) > 0;
+  }
+#else
+  (void)opt;
+#endif
+  return false;
+}
+
 void require_supported_single_output_handoff(const PreprocOptions& opt) {
   if (opt.single_output_handoff) {
     return;
@@ -493,7 +529,8 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
   }
 
   const PreprocMaxInputShape max_shape = max_input_shape_from_model_lineage(opt_);
-  if (max_shape.width > 0 && contract.width > max_shape.width) {
+  if (max_shape.width > 0 && contract.width > max_shape.width &&
+      model_lineage_preproc_max_width_explicit(opt_)) {
     std::ostringstream oss;
     oss << "Preproc: input width " << contract.width << " exceeds max_input_width "
         << max_shape.width
@@ -501,7 +538,8 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
            "or provide a smaller input.";
     throw std::runtime_error(oss.str());
   }
-  if (max_shape.height > 0 && contract.height > max_shape.height) {
+  if (max_shape.height > 0 && contract.height > max_shape.height &&
+      model_lineage_preproc_max_height_explicit(opt_)) {
     std::ostringstream oss;
     oss << "Preproc: input height " << contract.height << " exceeds max_input_height "
         << max_shape.height
@@ -509,7 +547,8 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
            "input_max_height or provide a smaller input.";
     throw std::runtime_error(oss.str());
   }
-  if (max_shape.channels > 0 && contract.depth > 0 && contract.depth > max_shape.channels) {
+  if (max_shape.channels > 0 && contract.depth > 0 && contract.depth > max_shape.channels &&
+      model_lineage_preproc_max_depth_explicit(opt_)) {
     std::ostringstream oss;
     oss << "Preproc: input depth " << contract.depth << " exceeds max_input_depth "
         << max_shape.channels

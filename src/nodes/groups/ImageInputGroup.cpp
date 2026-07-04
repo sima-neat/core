@@ -11,7 +11,6 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/SimaDecode.h"
-#include "pipeline/internal/EnvUtil.h"
 
 #include <memory>
 #include <stdexcept>
@@ -52,15 +51,10 @@ simaai::neat::Graph ImageInputGroup(const ImageInputGroupOptions& opt) {
     nodes.push_back(nodes::Custom(opt.extra_fragment));
   }
 
-  int imagefreeze_num_buffers = opt.imagefreeze_num_buffers;
-  if (opt.sima_decoder.enable && imagefreeze_num_buffers > 0) {
-    const int min_buffers = pipeline_internal::env_int("SIMA_IMAGEFREEZE_MIN_BUFFERS", 120);
-    if (min_buffers > 0 && imagefreeze_num_buffers < min_buffers) {
-      imagefreeze_num_buffers = min_buffers;
-    }
-  }
-
-  nodes.push_back(nodes::ImageFreeze(imagefreeze_num_buffers));
+  // Honor explicit finite source counts exactly.  A still-image fixture that asks for one frame
+  // must not be silently inflated into a large burst before the hardware encode/decode path; burst
+  // stress belongs in dedicated decoder tests, not in every finite image source.
+  nodes.push_back(nodes::ImageFreeze(opt.imagefreeze_num_buffers));
 
   auto caps = opt.output_caps;
   bool want_videorate = opt.use_videorate;

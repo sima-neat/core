@@ -82,6 +82,19 @@ int main() {
     require_contains(depay->backend_fragment(2), "rtph264depay name=n2_depay",
                      "Depay fragment mismatch");
     require_contains(depay->backend_fragment(2), "payload=97", "Depay payload mismatch");
+    require(depay->backend_fragment(2).find("width=(int)[") == std::string::npos,
+            "Depay without explicit caps should not emit open-ended width ranges");
+    auto depay_partial = simaai::neat::nodes::H264Depacketize(
+        97, /*h264_parse_config_interval=*/1, /*h264_fps=*/30,
+        /*h264_width=*/1280, /*h264_height=*/-1, /*enforce_h264_caps=*/true);
+    bool depay_partial_threw = false;
+    try {
+      (void)depay_partial->backend_fragment(2);
+    } catch (const std::exception& e) {
+      depay_partial_threw =
+          std::string(e.what()).find("require width, height, and fps") != std::string::npos;
+    }
+    require(depay_partial_threw, "Partial H264 caps should throw an actionable error");
 
     auto dec = simaai::neat::nodes::H264Decode(2, "NV12");
     const std::string dec_expect = std::string(decoder_element_name()) + " name=n1_decoder";

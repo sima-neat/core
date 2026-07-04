@@ -17,6 +17,7 @@
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
+#include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
@@ -598,6 +599,87 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
   contract->model_path = props.model_path;
   contract->batch_size = props.batch_size;
   contract->batch_sz_model = props.batch_sz_model;
+}
+
+static void
+apply_mla_elf_io_topology_to_contract(pipeline_internal::sima::MlaStaticContract* contract) {
+  if (!contract || contract->model_path.empty()) {
+    return;
+  }
+  pipeline_internal::sima::MlaElfIoTopology topology;
+  if (!pipeline_internal::sima::read_mla_elf_io_topology(contract->model_path, &topology) ||
+      !topology.valid) {
+    if (env_truthy_local("SIMA_MLA_CONTRACT_DEBUG") && !topology.error.empty()) {
+      std::fprintf(stderr, "[mla-contract] elf topology unavailable path=%s err=%s\n",
+                   contract->model_path.c_str(), topology.error.c_str());
+    }
+    return;
+  }
+
+  const auto validate_dense_symbols = [](const std::vector<std::string>& symbols,
+                                         const char* direction, const std::string& model_path) {
+    for (std::size_t i = 0; i < symbols.size(); ++i) {
+      if (symbols[i].empty()) {
+        throw std::runtime_error("ModelFragment: MLA ELF " + std::string(direction) +
+                                 " topology has a hole at index " + std::to_string(i) + " for '" +
+                                 model_path + "'");
+      }
+    }
+  };
+  const auto topology_mismatch = [&](const char* direction, std::size_t mpk_count,
+                                     std::size_t elf_count) {
+    throw std::runtime_error("ModelFragment: MLA ELF/MPK " + std::string(direction) +
+                             " topology mismatch for '" + contract->model_path +
+                             "': MPK "
+                             "normalized contract has " +
+                             std::to_string(mpk_count) + " physical " + direction +
+                             "(s), but the ELF exposes " + std::to_string(elf_count) +
+                             " physical " + direction +
+                             "(s). Recompile the model or fix the MPK/ELF pairing.");
+  };
+
+  if (!topology.ifm_symbol_names.empty()) {
+    validate_dense_symbols(topology.ifm_symbol_names, "IFM", contract->model_path);
+    if (contract->physical_inputs.size() != topology.ifm_symbol_names.size()) {
+      topology_mismatch("IFM", contract->physical_inputs.size(), topology.ifm_symbol_names.size());
+    }
+  } else if (topology.monolithic_ifm && contract->physical_inputs.size() > 1U) {
+    topology_mismatch("IFM", contract->physical_inputs.size(), 1U);
+  }
+
+  if (!topology.ofm_symbol_names.empty()) {
+    validate_dense_symbols(topology.ofm_symbol_names, "OFM", contract->model_path);
+    if (contract->dispatcher_physical_outputs.size() != topology.ofm_symbol_names.size()) {
+      topology_mismatch("OFM", contract->dispatcher_physical_outputs.size(),
+                        topology.ofm_symbol_names.size());
+    }
+    for (std::size_t i = 0; i < topology.ofm_symbol_names.size(); ++i) {
+      contract->dispatcher_physical_outputs[i].segment_name = topology.ofm_symbol_names[i];
+    }
+  } else if (topology.monolithic_ofm && contract->dispatcher_physical_outputs.size() > 1U) {
+    topology_mismatch("OFM", contract->dispatcher_physical_outputs.size(), 1U);
+  }
+
+  contract->elf_ifm_symbol_names = topology.ifm_symbol_names;
+  contract->elf_ofm_symbol_names = topology.ofm_symbol_names;
+
+  // Only override the MPK graph heuristic when the ELF gave an IFM-side
+  // topology signal. OFM-only matches are useful for output naming but should
+  // not change input coalescing behavior.
+  if (topology.monolithic_ifm || !topology.ifm_symbol_names.empty()) {
+    contract->consumer_keeps_distinct_physical_inputs =
+        pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(topology);
+  }
+
+  if (env_truthy_local("SIMA_MLA_CONTRACT_DEBUG")) {
+    std::fprintf(stderr,
+                 "[mla-contract] elf topology path=%s monolithic_ifm=%d ifm_slots=%zu "
+                 "monolithic_ofm=%d ofm_slots=%zu keep_distinct_ifm=%d\n",
+                 contract->model_path.c_str(), topology.monolithic_ifm ? 1 : 0,
+                 topology.ifm_symbol_names.size(), topology.monolithic_ofm ? 1 : 0,
+                 topology.ofm_symbol_names.size(),
+                 contract->consumer_keeps_distinct_physical_inputs ? 1 : 0);
+  }
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -1666,7 +1748,7 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
     const pipeline_internal::sima::MpkContract& contract, const std::vector<std::size_t>& ordered,
     std::optional<std::size_t> mla_rank,
     const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags,
-    std::size_t order_index) {
+    const std::vector<ExecutionStageKind>& route_post_kinds, std::size_t order_index) {
   std::vector<ExecutionStage> stages;
   const auto detess_indices =
       collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
@@ -1693,6 +1775,41 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
     stage.kind = k;
     stages.push_back(std::move(stage));
   };
+
+  if (!route_post_kinds.empty()) {
+    std::size_t ord = order_index;
+    for (const auto kind : route_post_kinds) {
+      switch (kind) {
+      case ExecutionStageKind::Detess:
+        append_stage(kind, detess_indices, ord++);
+        break;
+      case ExecutionStageKind::DetessCast:
+        append_stage(kind, !detess_indices.empty() ? detess_indices : cast_indices, ord++);
+        break;
+      case ExecutionStageKind::DetessDequant:
+        append_stage(kind, !dequant_indices.empty() ? dequant_indices : detess_indices, ord++);
+        break;
+      case ExecutionStageKind::Dequant:
+        append_stage(kind, dequant_indices, ord++);
+        break;
+      case ExecutionStageKind::BoxDecode:
+        append_stage(kind, boxdecode_indices, ord++);
+        break;
+      case ExecutionStageKind::Cast:
+        append_stage(kind, cast_indices, ord++);
+        break;
+      case ExecutionStageKind::Unknown:
+      case ExecutionStageKind::Preproc:
+      case ExecutionStageKind::Quant:
+      case ExecutionStageKind::Tess:
+      case ExecutionStageKind::QuantTess:
+      case ExecutionStageKind::CastTess:
+      case ExecutionStageKind::Mla:
+        break;
+      }
+    }
+    return stages;
+  }
 
   const bool route_requests_boxdecode = route_flags.has_value() && route_flags->boxdecode_selected;
   if (!boxdecode_indices.empty() || route_requests_boxdecode) {
@@ -1730,7 +1847,8 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
 
 static ExecutionPlan build_execution_plan_from_mpk_contract(
     const pipeline_internal::sima::MpkContract& contract, PipelineType requested_pipeline_type,
-    const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags) {
+    const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags,
+    const std::vector<ExecutionStageKind>& route_post_kinds) {
   ExecutionPlan plan;
   const auto ordered = ordered_plugin_indices(contract);
   const auto mla_rank = mla_rank_in_order(contract, ordered);
@@ -1745,8 +1863,8 @@ static ExecutionPlan build_execution_plan_from_mpk_contract(
     plan.infer.push_back(*mla);
     ++stage_order;
   }
-  const auto post =
-      make_post_stages_from_contract(contract, ordered, mla_rank, route_flags, stage_order);
+  const auto post = make_post_stages_from_contract(contract, ordered, mla_rank, route_flags,
+                                                   route_post_kinds, stage_order);
   if (!post.empty()) {
     plan.post.insert(plan.post.end(), post.begin(), post.end());
   }
@@ -2875,6 +2993,7 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
             " config or simaai__params section).");
       }
       apply_mla_runtime_properties_to_contract(*mla_props, &mla_contract);
+      apply_mla_elf_io_topology_to_contract(&mla_contract);
       if (should_publish_mla_outputs_as_packed_parent_for_boxdecode(
               stages, stage_index, mla_contract, direct_mla_to_boxdecode)) {
         (void)publish_mla_outputs_as_packed_parent(&mla_contract);
@@ -3791,9 +3910,11 @@ ModelPack ModelPack::clone_with_overrides(const std::string& upstream_name,
 
 void ModelPack::set_model_managed_stage_facts(
     std::optional<bool> processcvu_preproc_single_output_handoff,
-    std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags) {
+    std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags,
+    std::vector<ExecutionStageKind> model_managed_post_kinds) {
   processcvu_preproc_single_output_handoff_ = processcvu_preproc_single_output_handoff;
   model_managed_route_flags_ = std::move(model_managed_route_flags);
+  model_managed_post_kinds_ = std::move(model_managed_post_kinds);
 }
 
 void ModelPack::init(const std::string& tar_gz) {
@@ -3807,6 +3928,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   route_graph_.reset();
   processcvu_preproc_single_output_handoff_.reset();
   model_managed_route_flags_.reset();
+  model_managed_post_kinds_.clear();
 
   if (options_.num_buffers_cvu != 4 || options_.num_buffers_mla != 4) {
     throw std::runtime_error(
@@ -3959,8 +4081,8 @@ ExecutionPlan ModelPack::execution_plan() const {
     throw std::runtime_error(
         "ModelPack: strict MPK contract required to derive the typed execution plan");
   }
-  return build_execution_plan_from_mpk_contract(*mpk_contract_, pipeline_type_,
-                                                model_managed_route_flags_);
+  return build_execution_plan_from_mpk_contract(
+      *mpk_contract_, pipeline_type_, model_managed_route_flags_, model_managed_post_kinds_);
 }
 
 std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(

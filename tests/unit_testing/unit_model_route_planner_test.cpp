@@ -434,8 +434,9 @@ sima_test::ModelArchiveFixture make_multi_ingress_cast_join_fixture(const std::s
 
 enum class SingleMlaPostFixtureKind { None, Cast, Detess, Dequant };
 
-sima_test::ModelArchiveFixture make_single_mla_public_route_fixture(
-    const std::string& tag, const SingleMlaPostFixtureKind post_kind) {
+sima_test::ModelArchiveFixture
+make_single_mla_public_route_fixture(const std::string& tag,
+                                     const SingleMlaPostFixtureKind post_kind) {
   const bool dequant = post_kind == SingleMlaPostFixtureKind::Dequant;
   const bool detess = post_kind == SingleMlaPostFixtureKind::Detess;
   const std::string mla_output_dtype = dequant ? "int8" : "bfloat16";
@@ -549,14 +550,16 @@ sima_test::ModelArchiveFixture make_single_mla_public_route_fixture(
 
   std::ostringstream mpk;
   mpk << R"json({
-  "name": ")json" << tag << R"json(",
+  "name": ")json"
+      << tag << R"json(",
   "model_path": "single_mla_public_route.onnx",
   "model_sdk_version": "2.1.0",
   "sequence": 1,
   "input_nodes": [
     { "name": "x", "type": "buffer", "size": 32, "dtype": "bfloat16", "shape": [1, 2, 2, 4] }
   ],
-  "plugins": [)json" << plugins.str() << R"json(
+  "plugins": [)json"
+      << plugins.str() << R"json(
   ]
 })json";
 

@@ -1,6 +1,7 @@
 // src/gst/GstInit.cpp
 #include "gst/GstInit.h"
 
+#include "gst/GstLatestByStreamMux.h"
 #include "gst/NeatCameraMemoryBridge.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/BuildTiming.h"
@@ -1244,6 +1245,14 @@ void gst_init_once() {
       install_stdio_filters();
     }
 
+    // Keep CVU preprocess outputs as a fixed pool by default.  If a model path
+    // cannot consume frames fast enough, backpressure should surface to the
+    // runtime scheduler where live inputs can drop/retry deterministically; the
+    // plugin must not keep allocating replacement CMA buffers at the hottest
+    // point of the graph.  Leave an explicit environment override for bring-up
+    // diagnostics and compatibility experiments.
+    g_setenv("SIMA_PROCESSCVU_ALLOW_OVERFLOW_ALLOC", "0", FALSE);
+
     const gchar* plugin_env_1_0 = g_getenv("GST_PLUGIN_PATH_1_0");
     const gchar* registry_env_1_0 = g_getenv("GST_REGISTRY_1_0");
     const gchar* registry_env = g_getenv("GST_REGISTRY");
@@ -1400,6 +1409,9 @@ void gst_init_once() {
     }
     if (!register_neat_camera_memory_bridge()) {
       throw std::runtime_error("Failed to register Neat private camera memory bridge");
+    }
+    if (!register_latest_by_stream_mux()) {
+      throw std::runtime_error("Failed to register Neat latest-by-stream mux");
     }
     if (env_bool("SIMA_GST_SUPPRESS_JSON_WARNINGS", true)) {
       g_log_set_handler("Json",

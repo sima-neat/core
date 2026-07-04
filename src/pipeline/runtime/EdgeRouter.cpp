@@ -1,8 +1,11 @@
 #include "EdgeRouter.h"
+#include "pipeline/internal/EnvUtil.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <sstream>
 #include <utility>
 
@@ -46,6 +49,17 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
   }
 }
 
+bool realtime_link_diag_enabled() {
+  return pipeline_internal::env_bool("SIMA_GRAPH_REALTIME_LINK_DEBUG", false) ||
+         pipeline_internal::env_bool("SIMA_GRAPH_DIAG_ON_STOP", false);
+}
+
+int realtime_link_log_every() {
+  static const int every =
+      std::max(0, pipeline_internal::env_int("SIMA_GRAPH_REALTIME_LINK_LOG_EVERY", 0));
+  return every;
+}
+
 } // namespace
 
 RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options)
@@ -83,6 +97,7 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
     }
   }
   const std::string key = key_for_(sample, edge_index);
+  const auto offered_at = std::chrono::steady_clock::now();
   {
     std::lock_guard<std::mutex> lock(mu_);
     if (closed_) {
@@ -93,6 +108,7 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
       overwritten_.fetch_add(1, std::memory_order_relaxed);
     }
     pending.sample = std::move(sample);
+    pending.ready_at = offered_at;
     pending.edge_index = edge_index;
     pending.has_sample = true;
     if (!pending.queued) {
@@ -139,12 +155,17 @@ RealtimeLatestLink::Stats RealtimeLatestLink::stats() const {
                .scheduled = scheduled_.load(std::memory_order_relaxed),
                .overwritten = overwritten_.load(std::memory_order_relaxed),
                .dispatch_failed = dispatch_failed_.load(std::memory_order_relaxed),
+               .ready_wait_ns = ready_wait_ns_.load(std::memory_order_relaxed),
+               .ready_wait_max_ns = ready_wait_max_ns_.load(std::memory_order_relaxed),
+               .dispatch_ns = dispatch_ns_.load(std::memory_order_relaxed),
+               .dispatch_max_ns = dispatch_max_ns_.load(std::memory_order_relaxed),
                .ready = ready_.size()};
 }
 
 void RealtimeLatestLink::run_() {
   while (true) {
     Sample sample;
+    std::chrono::steady_clock::time_point ready_at;
     std::size_t edge_index = invalid_edge_index();
     {
       std::unique_lock<std::mutex> lock(mu_);
@@ -164,9 +185,13 @@ void RealtimeLatestLink::run_() {
       }
       Pending& pending = it->second;
       sample = std::move(pending.sample);
+      ready_at = pending.ready_at;
       edge_index = pending.edge_index;
       pending.has_sample = false;
       pending.queued = false;
+    }
+    if (ready_at.time_since_epoch().count() != 0) {
+      atomic_add_max(ready_wait_ns_, ready_wait_max_ns_, elapsed_ns_since(ready_at));
     }
 
     if (!dispatch_) {
@@ -176,7 +201,9 @@ void RealtimeLatestLink::run_() {
       }
       return;
     }
+    const auto dispatch_start = std::chrono::steady_clock::now();
     if (!dispatch_(downstream_, std::move(sample), edge_index)) {
+      atomic_add_max(dispatch_ns_, dispatch_max_ns_, elapsed_ns_since(dispatch_start));
       dispatch_failed_.fetch_add(1, std::memory_order_relaxed);
       if (stop_ && stop_()) {
         return;
@@ -186,7 +213,29 @@ void RealtimeLatestLink::run_() {
       }
       return;
     }
-    scheduled_.fetch_add(1, std::memory_order_relaxed);
+    atomic_add_max(dispatch_ns_, dispatch_max_ns_, elapsed_ns_since(dispatch_start));
+    const std::uint64_t scheduled = scheduled_.fetch_add(1, std::memory_order_relaxed) + 1U;
+    const int log_every = realtime_link_log_every();
+    if (log_every > 0 && scheduled % static_cast<std::uint64_t>(log_every) == 0U &&
+        realtime_link_diag_enabled()) {
+      const Stats s = stats();
+      const std::uint64_t dispatched = s.scheduled + s.dispatch_failed;
+      const auto avg_ms = [](std::uint64_t total_ns, std::uint64_t count) {
+        return count == 0 ? 0.0
+                          : static_cast<double>(total_ns) / static_cast<double>(count) / 1.0e6;
+      };
+      std::fprintf(
+          stderr,
+          "[GRAPH] realtime_link_progress downstream_kind=%d downstream_index=%zu "
+          "offered=%llu scheduled=%llu overwritten=%llu ready=%zu "
+          "avg_ready_wait_ms=%.3f max_ready_wait_ms=%.3f avg_dispatch_ms=%.3f "
+          "max_dispatch_ms=%.3f\n",
+          static_cast<int>(downstream_.kind), downstream_.index,
+          static_cast<unsigned long long>(s.offered), static_cast<unsigned long long>(s.scheduled),
+          static_cast<unsigned long long>(s.overwritten), s.ready,
+          avg_ms(s.ready_wait_ns, dispatched), static_cast<double>(s.ready_wait_max_ns) / 1.0e6,
+          avg_ms(s.dispatch_ns, dispatched), static_cast<double>(s.dispatch_max_ns) / 1.0e6);
+    }
   }
 }
 

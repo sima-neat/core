@@ -103,6 +103,19 @@ struct BoundaryPolicy {
   bool direct_graph_sink = false;
 };
 
+struct FusedRealtimeIngressBranch {
+  std::size_t edge_index = static_cast<std::size_t>(-1);
+  graph::NodeId source_node = graph::kInvalidNode;
+  std::string stream_id;
+  std::vector<std::shared_ptr<Node>> nodes;
+  OutputSpec output_spec;
+  bool output_complete = false;
+};
+
+struct FusedRealtimeIngress {
+  std::vector<FusedRealtimeIngressBranch> branches;
+};
+
 struct MaterializedNodeAttribution {
   enum class Role {
     SegmentNode,
@@ -130,6 +143,8 @@ struct PipelineSegmentPlan {
   OutputSpec output_spec;
   bool output_complete = false;
   std::optional<FragmentBoundaryHints> boundary_hints;
+  std::optional<FusedRealtimeIngress> fused_realtime_ingress;
+  bool consumed_by_fused_realtime_ingress = false;
 
   GraphOptions route_options;
   RunOptions run_options;
@@ -199,6 +214,7 @@ struct EdgePlan {
   OutputSpec spec;
   bool spec_complete = false;
   GraphLinkOptions link_options;
+  bool consumed_by_fused_realtime_ingress = false;
 };
 
 struct PublicGraphNodePlan {

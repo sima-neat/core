@@ -692,8 +692,7 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
   // prefer bounded synchronous NULL teardown so Run::close() does not return
   // while source streaming threads can still touch downstream plugin/runtime
   // state.  The env var remains an explicit escape hatch in both directions.
-  const bool defer_no_flush =
-      env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
+  const bool defer_no_flush = env_bool("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", !prefer_synchronous);
   if (defer_no_flush) {
     enqueue_teardown(local, /*flush=*/false);
     return;

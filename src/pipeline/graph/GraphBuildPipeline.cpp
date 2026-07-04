@@ -409,7 +409,7 @@ void debug_dump_neatdecoder_elements(GstElement* pipeline, GstState target, cons
 } // namespace
 
 void set_state_or_throw(GstElement* pipeline, GstState target, const char* where,
-                        const std::shared_ptr<DiagCtx>& diag) {
+                        const std::shared_ptr<DiagCtx>& diag, int snapshot_wait_override_ms) {
   const auto timing_start = pipeline_internal::build_timing_now();
   if (!pipeline) {
     session_build_throw_session_error_simple(error_codes::kPipelineShape,
@@ -474,7 +474,9 @@ void set_state_or_throw(GstElement* pipeline, GstState target, const char* where
 
     GstState cur = GST_STATE_VOID_PENDING;
     GstState pend = GST_STATE_VOID_PENDING;
-    const int snapshot_timeout_ms = resolve_state_snapshot_timeout_ms(where);
+    const int snapshot_timeout_ms = snapshot_wait_override_ms >= 0
+                                        ? snapshot_wait_override_ms
+                                        : resolve_state_snapshot_timeout_ms(where);
     const GstClockTime snapshot_timeout =
         snapshot_timeout_ms <= 0 ? static_cast<GstClockTime>(0)
                                  : static_cast<GstClockTime>(snapshot_timeout_ms) * GST_MSECOND;

@@ -413,8 +413,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
       if (st->pipeline && !st->teardown_started.exchange(true)) {
         GstElement* pipeline = st->pipeline;
         st->pipeline = nullptr;
-        pipeline_internal::stop_and_unref_no_flush(pipeline,
-                                                   st->opt.prefer_synchronous_teardown);
+        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.prefer_synchronous_teardown);
       }
     }
     st->worker_done.store(true);
@@ -589,8 +588,7 @@ void InputStream::stop() {
     if (state_->pipeline && !state_->teardown_started.exchange(true)) {
       GstElement* pipeline = state_->pipeline;
       state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline,
-                                                 state_->opt.prefer_synchronous_teardown);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
     }
   }
   if (state_->worker.joinable()) {
@@ -679,8 +677,7 @@ void InputStream::close() {
     if (!state_->teardown_started.exchange(true)) {
       GstElement* pipeline = state_->pipeline;
       state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline,
-                                                 state_->opt.prefer_synchronous_teardown);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
     } else {
       state_->pipeline = nullptr;
     }

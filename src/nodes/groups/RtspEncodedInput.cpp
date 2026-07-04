@@ -16,9 +16,43 @@
 namespace simaai::neat::nodes::groups {
 namespace {
 
+struct ResolvedH264Caps {
+  int fps = -1;
+  int width = -1;
+  int height = -1;
+  bool auto_caps = false;
+};
+
 bool use_h264_auto_caps(const RtspEncodedInputOptions& opt) {
   return opt.auto_caps_from_stream &&
          (opt.h264_fps <= 0 || opt.h264_width <= 0 || opt.h264_height <= 0);
+}
+
+ResolvedH264Caps resolve_h264_caps(const RtspEncodedInputOptions& opt) {
+  ResolvedH264Caps out;
+  out.fps = opt.h264_fps;
+  out.width = opt.h264_width;
+  out.height = opt.h264_height;
+  out.auto_caps = use_h264_auto_caps(opt);
+
+  if (!out.auto_caps) {
+    if (out.fps <= 0) {
+      out.fps = opt.fallback_h264_fps;
+    }
+    if (out.width <= 0) {
+      out.width = opt.fallback_h264_width;
+    }
+    if (out.height <= 0) {
+      out.height = opt.fallback_h264_height;
+    }
+    if (out.fps <= 0 || out.width <= 0 || out.height <= 0) {
+      throw std::runtime_error(
+          "RtspEncodedInput: H.264 explicit caps require width, height, and fps when "
+          "auto_caps_from_stream is false");
+    }
+  }
+
+  return out;
 }
 
 void add_source_and_optional_queue(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
@@ -32,14 +66,14 @@ void add_source_and_optional_queue(std::vector<std::shared_ptr<simaai::neat::Nod
 
 void add_h264_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                    const RtspEncodedInputOptions& opt, bool insert_queue) {
-  const bool auto_caps = use_h264_auto_caps(opt);
+  const ResolvedH264Caps caps = resolve_h264_caps(opt);
   nodes.push_back(nodes::H264Depacketize(opt.h264_payload_type, opt.h264_parse_config_interval,
-                                         opt.h264_fps, opt.h264_width, opt.h264_height,
-                                         /*enforce_h264_caps=*/!auto_caps));
+                                         caps.fps, caps.width, caps.height,
+                                         /*enforce_h264_caps=*/!caps.auto_caps));
   if (insert_queue) {
     nodes.push_back(nodes::Queue());
   }
-  if (auto_caps) {
+  if (caps.auto_caps) {
     nodes.push_back(nodes::H264CapsFixup(opt.fallback_h264_fps, opt.fallback_h264_width,
                                          opt.fallback_h264_height));
   }

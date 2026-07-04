@@ -52,6 +52,9 @@ set -euo pipefail
 # - NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP: ON/OFF (default: ON) relax selected
 #   exact simaai-memory-lib dependencies to the matching minor-version family
 #   when the board carries the SDK's git-suffixed compatible memory package.
+# - NEAT_INSTALLER_RELAX_SIMA_LMM_DEP: ON/OFF (default: ON) relax sima-neat's
+#   lower sima-lmm-core/dev dependency to the bundled local LMM DEB version when
+#   both packages are from the same minor-version family.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
 # - NEAT_INSTALLER_APT_UPDATE: AUTO/ON/OFF (default: AUTO) controls whether the
@@ -69,6 +72,7 @@ NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
+NEAT_INSTALLER_RELAX_SIMA_LMM_DEP="${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
@@ -873,12 +877,18 @@ installed = sys.argv[2]
 changed_marker = Path(sys.argv[3])
 text = control.read_text()
 
-# Some SDK/DevKit images ship simaai-memory-lib as a git-suffixed build such as
-# 2.0.0~git..., while selected runtime DEBs can depend on the unsuffixed exact
-# version 2.0.0. Debian treats 2.0.0~git as lower than 2.0.0, so the exact
-# dependency makes otherwise compatible boards uninstallable. Only relax this
-# dependency when the installed version is the matching git-suffixed build, and
-# cap the relaxed range to the same minor-version family.
+# Some SDK/DevKit images ship simaai-memory-lib as a same-upstream local build
+# such as 2.0.0~git..., 2.1.1+neat1, or 2.1.1-1 while selected runtime DEBs can
+# depend on the unsuffixed exact version 2.0.0/2.1.1. Debian exact-version
+# dependencies make otherwise compatible boards uninstallable. Only relax this
+# dependency when the installed version is the exact required version or the same
+# upstream version plus a Debian suffix, and cap the relaxed range to the same
+# minor-version family.
+def same_upstream_family(installed: str, required: str) -> bool:
+    if installed == required:
+        return True
+    return any(installed.startswith(required + suffix) for suffix in ("~", "+", "-"))
+
 def next_minor_bound(version: str):
     match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)(?:[.+~-].*)?$", version)
     if not match:
@@ -891,7 +901,7 @@ def next_minor_bound(version: str):
 
 def repl(match: re.Match[str]) -> str:
     required = match.group(1).strip()
-    if installed == required or installed.startswith(required + "~"):
+    if same_upstream_family(installed, required):
         upper = next_minor_bound(required)
         if upper is None:
             return match.group(0)
@@ -915,11 +925,120 @@ PY
   out_array+=("${deb}")
 }
 
+local_deb_version_for_package() {
+  local package="$1"
+  local deb pkg version
+  for deb in "${DEBS[@]}"; do
+    [[ -f "${deb}" ]] || continue
+    pkg="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    [[ "${pkg}" == "${package}" ]] || continue
+    version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
+    if [[ -n "${version}" ]]; then
+      printf '%s\n' "${version}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+maybe_relax_sima_lmm_dep() {
+  local deb="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+
+  if [[ "${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP}" != "ON" ]]; then
+    out_array+=("${deb}")
+    return 0
+  fi
+  case "$(basename "${deb}")" in
+    sima-neat-*-Linux-core.deb | sima-neat-*-Linux-dev.deb) ;;
+    *)
+      out_array+=("${deb}")
+      return 0
+      ;;
+  esac
+  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    out_array+=("${deb}")
+    return 0
+  fi
+
+  local local_lmm_core_version local_lmm_dev_version
+  local_lmm_core_version="$(local_deb_version_for_package sima-lmm-core || true)"
+  local_lmm_dev_version="$(local_deb_version_for_package sima-lmm-dev || true)"
+  if [[ -z "${local_lmm_core_version}" && -z "${local_lmm_dev_version}" ]]; then
+    out_array+=("${deb}")
+    return 0
+  fi
+
+  local tmp_dir unpack_dir out_deb changed_marker
+  tmp_dir="$(mktemp -d /tmp/sima-neat-deb-normalize-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${tmp_dir}")
+  unpack_dir="${tmp_dir}/unpack"
+  out_deb="${tmp_dir}/$(basename "${deb}")"
+  changed_marker="${tmp_dir}/changed"
+
+  dpkg-deb -R "${deb}" "${unpack_dir}"
+  if python3 - "${unpack_dir}/DEBIAN/control" "${local_lmm_core_version}" \
+      "${local_lmm_dev_version}" "${changed_marker}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+control = Path(sys.argv[1])
+local_versions = {
+    "sima-lmm-core": sys.argv[2],
+    "sima-lmm-dev": sys.argv[3],
+}
+changed_marker = Path(sys.argv[4])
+text = control.read_text()
+
+def minor_family(version: str):
+    match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)(?:\.\d+)?(?:[.+~-].*)?$", version)
+    if not match:
+        return None
+    return match.groups()
+
+def relax_package(package: str, body: str) -> str:
+    local = local_versions.get(package, "").strip()
+    if not local:
+        return body
+
+    def repl(match: re.Match[str]) -> str:
+        required = match.group(1).strip()
+        if minor_family(local) != minor_family(required):
+            return match.group(0)
+        changed_marker.write_text("1")
+        return f"{package} (>= {local})"
+
+    return re.sub(rf"{re.escape(package)}\s*\(>=\s*([^)]+)\)", repl, body)
+
+new_text = relax_package("sima-lmm-core", text)
+new_text = relax_package("sima-lmm-dev", new_text)
+if new_text != text:
+    control.write_text(new_text)
+PY
+  then
+    if [[ -f "${changed_marker}" ]]; then
+      log "Relaxed $(basename "${deb}") dependency on bundled sima-lmm package version(s): core=${local_lmm_core_version:-<none>} dev=${local_lmm_dev_version:-<none>}"
+      dpkg-deb -b "${unpack_dir}" "${out_deb}" >/dev/null
+      out_array+=("${out_deb}")
+      return 0
+    fi
+  fi
+
+  out_array+=("${deb}")
+}
+
 prepare_debs_for_board_install() {
   local -a prepared=()
+  local -a memory_prepared=()
   local deb
   for deb in "${DEBS[@]}"; do
-    maybe_relax_simaai_memory_dep "${deb}" prepared
+    maybe_relax_simaai_memory_dep "${deb}" memory_prepared
+  done
+  DEBS=("${memory_prepared[@]}")
+  for deb in "${DEBS[@]}"; do
+    maybe_relax_sima_lmm_dep "${deb}" prepared
   done
   DEBS=("${prepared[@]}")
 }
@@ -1103,6 +1222,80 @@ repair_stale_global_dispatcher_lib() {
   fi
 }
 
+find_packaged_sima_neat_versioned_lib() {
+  local candidate
+  local selected=""
+  while IFS= read -r candidate; do
+    case "${candidate}" in
+      /usr/lib/libsima_neat.so.2.*)
+        [[ "${candidate}" != *".bak"* && -e "${candidate}" ]] || continue
+        selected="${candidate}"
+        ;;
+    esac
+  done < <(dpkg-query -L sima-neat 2>/dev/null | sort -V)
+  if [[ -n "${selected}" ]]; then
+    printf '%s\n' "${selected}"
+    return 0
+  fi
+
+  find /usr/lib -maxdepth 1 -type f -name 'libsima_neat.so.2.*' ! -name '*.bak*' 2>/dev/null \
+    | sort -V \
+    | tail -n 1
+}
+
+repair_global_sima_neat_lib_links() {
+  local versioned_lib
+  versioned_lib="$(find_packaged_sima_neat_versioned_lib || true)"
+  if [[ -z "${versioned_lib}" || ! -e "${versioned_lib}" ]]; then
+    log "libsima_neat link repair skipped; packaged versioned library not found."
+    return 0
+  fi
+
+  local soname_link="/usr/lib/libsima_neat.so.2"
+  local devel_link="/usr/lib/libsima_neat.so"
+  local soname_target
+  soname_target="$(basename "${versioned_lib}")"
+
+  if [[ ! -L "${soname_link}" || "$(readlink "${soname_link}")" != "${soname_target}" ]]; then
+    log "Repairing ${soname_link} -> ${soname_target}"
+    run_sudo ln -sfn "${soname_target}" "${soname_link}"
+  fi
+
+  if [[ ! -L "${devel_link}" || "$(readlink "${devel_link}")" != "libsima_neat.so.2" ]]; then
+    log "Repairing ${devel_link} -> libsima_neat.so.2"
+    run_sudo ln -sfn "libsima_neat.so.2" "${devel_link}"
+  fi
+}
+
+verify_global_sima_neat_lib_links() {
+  local versioned_lib
+  versioned_lib="$(find_packaged_sima_neat_versioned_lib || true)"
+  if [[ -z "${versioned_lib}" || ! -e "${versioned_lib}" ]]; then
+    echo "Could not find packaged /usr/lib/libsima_neat.so.2.* after install." >&2
+    exit 1
+  fi
+
+  local resolved
+  resolved="$(readlink -f /usr/lib/libsima_neat.so.2 2>/dev/null || true)"
+  if [[ -z "${resolved}" || "${resolved}" != "${versioned_lib}" || "${resolved}" == *".bak"* ]]; then
+    echo "/usr/lib/libsima_neat.so.2 does not resolve to the packaged library." >&2
+    echo "  expected: ${versioned_lib}" >&2
+    echo "  actual:   ${resolved:-<missing>}" >&2
+    exit 1
+  fi
+
+  local devel_resolved
+  devel_resolved="$(readlink -f /usr/lib/libsima_neat.so 2>/dev/null || true)"
+  if [[ "${devel_resolved}" != "${versioned_lib}" ]]; then
+    echo "/usr/lib/libsima_neat.so does not resolve to the packaged library." >&2
+    echo "  expected: ${versioned_lib}" >&2
+    echo "  actual:   ${devel_resolved:-<missing>}" >&2
+    exit 1
+  fi
+
+  log "Verified libsima_neat links resolve to ${versioned_lib}"
+}
+
 install_debs_on_board() {
   prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
@@ -1125,6 +1318,8 @@ install_debs_on_board() {
   fi
   if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
+    repair_global_sima_neat_lib_links
+    verify_global_sima_neat_lib_links
     activate_board_runtime_after_install
     restart_board_codec_services
     verify_board_codec_services
@@ -1136,6 +1331,8 @@ install_debs_on_board() {
   remove_installed_local_deb_packages
   if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
+    repair_global_sima_neat_lib_links
+    verify_global_sima_neat_lib_links
     activate_board_runtime_after_install
     restart_board_codec_services
     verify_board_codec_services
@@ -1152,6 +1349,8 @@ install_debs_on_board() {
 
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
   repair_stale_global_dispatcher_lib
+  repair_global_sima_neat_lib_links
+  verify_global_sima_neat_lib_links
   activate_board_runtime_after_install
   restart_board_codec_services
   verify_board_codec_services

@@ -459,7 +459,9 @@ int main(int argc, char** argv) {
     }
 
     int num_streams = 2;
-    int iterations = 200;
+    // Keep the default as a bounded throughput smoke: the RTSP side uses software H.264 servers
+    // and can be the limiting factor on shared DevKits.  Larger sweeps can still pass --iters.
+    int iterations = 100;
     int fps = kRtspFps;
     int port = kRtspPort;
     int rtsp_servers = 2;
