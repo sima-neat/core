@@ -361,6 +361,31 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode) {
   return true;
 }
 
+GQuark latest_mux_buffer_loan_release_quark() {
+  static GQuark q = g_quark_from_static_string("sima-latest-mux-buffer-loan-release-v1");
+  return q;
+}
+
+void release_loan_qdata(gpointer data) {
+  std::unique_ptr<LoanKey> key(static_cast<LoanKey*>(data));
+  if (key) {
+    (void)release_loan_for_key_impl(*key, "buffer-finalize");
+  }
+}
+
+bool attach_buffer_loan_release(GstBuffer* buffer, const LoanKey& key) {
+  if (!buffer || key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
+    return false;
+  }
+  auto* owned_key = new (std::nothrow) LoanKey(key);
+  if (!owned_key) {
+    return false;
+  }
+  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(buffer), latest_mux_buffer_loan_release_quark(),
+                            owned_key, release_loan_qdata);
+  return true;
+}
+
 GType gst_latest_by_stream_mux_get_type();
 
 G_DEFINE_TYPE_WITH_CODE(GstLatestByStreamMux, gst_latest_by_stream_mux, GST_TYPE_ELEMENT,
@@ -729,14 +754,16 @@ gpointer worker_main(gpointer data) {
       bool loan_registered = false;
       if (loan_acquired) {
         if (read_stream_frame_key(buffer, &stream_id, &frame_id)) {
-          if (stamp_latest_mux_loan_key(buffer, self->loan_namespace, stream_id, frame_id)) {
+          const LoanKey loan_key{self->loan_namespace, stream_id, frame_id};
+          if (stamp_latest_mux_loan_key(buffer, self->loan_namespace, stream_id, frame_id) &&
+              attach_buffer_loan_release(buffer, loan_key)) {
             register_loan_for_key(self, loan_state, stream_id, frame_id);
             loan_registered = true;
           } else {
             release_acquired_loan_without_output(loan_state);
             if (loan_debug_enabled()) {
               std::fprintf(stderr,
-                           "[latestmux][loan] failed to stamp loan key stream=%s frame=%lld; "
+                           "[latestmux][loan] failed to arm loan release stream=%s frame=%lld; "
                            "released credit\n",
                            stream_id.c_str(), static_cast<long long>(frame_id));
             }
