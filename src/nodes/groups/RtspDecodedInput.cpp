@@ -20,6 +20,24 @@ bool use_h264_auto_caps(const RtspDecodedInputOptions& opt) {
          (opt.h264_fps <= 0 || opt.h264_width <= 0 || opt.h264_height <= 0);
 }
 
+int mjpeg_dec_width(const RtspDecodedInputOptions& opt) {
+  if (opt.dec_width > 0 || opt.use_videoscale || !caps_enabled(opt.output_caps))
+    return opt.dec_width;
+  return (opt.output_caps.width > 0) ? opt.output_caps.width : opt.dec_width;
+}
+
+int mjpeg_dec_height(const RtspDecodedInputOptions& opt) {
+  if (opt.dec_height > 0 || opt.use_videoscale || !caps_enabled(opt.output_caps))
+    return opt.dec_height;
+  return (opt.output_caps.height > 0) ? opt.output_caps.height : opt.dec_height;
+}
+
+int mjpeg_dec_fps(const RtspDecodedInputOptions& opt) {
+  if (opt.dec_fps > 0 || !caps_enabled(opt.output_caps))
+    return opt.dec_fps;
+  return (opt.output_caps.fps > 0) ? opt.output_caps.fps : opt.dec_fps;
+}
+
 RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptions& opt) {
   RtspEncodedInputOptions out;
   out.url = opt.url;
@@ -65,6 +83,9 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
                              : ((opt.h264_height > 0) ? opt.h264_height : opt.fallback_h264_height);
   const int h264_dec_fps =
       (opt.dec_fps > 0) ? opt.dec_fps : ((opt.h264_fps > 0) ? opt.h264_fps : opt.fallback_h264_fps);
+  const int mjpeg_dec_w = mjpeg_dec_width(opt);
+  const int mjpeg_dec_h = mjpeg_dec_height(opt);
+  const int mjpeg_dec_f = mjpeg_dec_fps(opt);
   if (opt.codec == RtspCodec::H264 && opt.decoder_raw_output && !use_auto_caps &&
       (h264_dec_w <= 0 || h264_dec_h <= 0 || h264_dec_fps <= 0)) {
     throw std::runtime_error("RtspDecodedInput: decoder_raw_output requires h264 width/height/fps");
@@ -77,15 +98,15 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
   dec.decoder_name = opt.decoder_name;
   dec.raw_output = opt.decoder_raw_output;
   dec.next_element = opt.decoder_next_element;
-  dec.dec_width = (opt.codec == RtspCodec::H264) ? h264_dec_w : opt.dec_width;
-  dec.dec_height = (opt.codec == RtspCodec::H264) ? h264_dec_h : opt.dec_height;
-  dec.dec_fps = (opt.codec == RtspCodec::H264) ? h264_dec_fps : opt.dec_fps;
+  dec.dec_width = (opt.codec == RtspCodec::H264) ? h264_dec_w : mjpeg_dec_w;
+  dec.dec_height = (opt.codec == RtspCodec::H264) ? h264_dec_h : mjpeg_dec_h;
+  dec.dec_fps = (opt.codec == RtspCodec::H264) ? h264_dec_fps : mjpeg_dec_f;
   dec.num_buffers = opt.num_buffers;
 
   simaai::neat::Graph graph;
   graph.add(RtspEncodedInput(encoded_options_from_decoded(opt)));
-  if (opt.codec == RtspCodec::MJPEG && (opt.dec_fps > 0 || opt.auto_caps_from_stream)) {
-    EncodedCapsFixupOptions fixup{"image/jpeg", opt.dec_fps};
+  if (opt.codec == RtspCodec::MJPEG && (mjpeg_dec_f > 0 || opt.auto_caps_from_stream)) {
+    EncodedCapsFixupOptions fixup{"image/jpeg", mjpeg_dec_f};
     fixup.use_rtsp_sdp_fps = opt.auto_caps_from_stream;
     graph.add(nodes::EncodedCapsFixup(fixup));
   }

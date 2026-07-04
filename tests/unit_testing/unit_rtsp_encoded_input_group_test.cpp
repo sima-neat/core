@@ -317,6 +317,62 @@ void check_decoded_mjpeg_group() {
       "MJPEG decoded graph without auto caps or dec_fps should not insert caps fixup");
 }
 
+void check_decoded_mjpeg_output_caps_decoder_fallback() {
+  simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
+  opt.url = "rtsp://example.local/mjpeg";
+  opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+  opt.auto_caps_from_stream = false;
+  opt.output_caps.width = 1280;
+  opt.output_caps.height = 720;
+  opt.output_caps.fps = 30;
+
+  const Graph fallback_group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  if (const auto backend =
+          describe_backend_if_available(fallback_group, "MJPEG output-caps fallback backend")) {
+    require_contains(*backend, "dec-type=mjpeg",
+                     "MJPEG output-caps fallback should still use SimaDecode(MJPEG)");
+    require_contains(*backend, "dec-width=1280",
+                     "MJPEG output-caps fallback should configure decoder width");
+    require_contains(*backend, "dec-height=720",
+                     "MJPEG output-caps fallback should configure decoder height");
+    require_contains(*backend, "dec-fps=30",
+                     "MJPEG output-caps fallback should configure decoder fps");
+    require_contains(*backend, "encoded_capsfix",
+                     "MJPEG output-caps fps fallback should fix encoded caps");
+  }
+
+  auto explicit_opt = opt;
+  explicit_opt.dec_width = 800;
+  explicit_opt.dec_height = 600;
+  explicit_opt.dec_fps = 25;
+  const Graph explicit_group = simaai::neat::nodes::groups::RtspDecodedInput(explicit_opt);
+  if (const auto backend =
+          describe_backend_if_available(explicit_group, "MJPEG explicit decoder backend")) {
+    require_contains(*backend, "dec-width=800", "explicit MJPEG dec_width should win");
+    require_contains(*backend, "dec-height=600", "explicit MJPEG dec_height should win");
+    require_contains(*backend, "dec-fps=25", "explicit MJPEG dec_fps should win");
+    require_not_contains(*backend, "dec-width=1280",
+                         "output caps should not override explicit dec_width");
+    require_not_contains(*backend, "dec-height=720",
+                         "output caps should not override explicit dec_height");
+    require_not_contains(*backend, "dec-fps=30",
+                         "output caps should not override explicit dec_fps");
+  }
+
+  auto scaled_opt = opt;
+  scaled_opt.use_videoscale = true;
+  const Graph scaled_group = simaai::neat::nodes::groups::RtspDecodedInput(scaled_opt);
+  if (const auto backend =
+          describe_backend_if_available(scaled_group, "MJPEG scaled output backend")) {
+    require_contains(*backend, "dec-fps=30",
+                     "MJPEG output-caps fps should still configure decoder fps");
+    require_not_contains(*backend, "dec-width=1280",
+                         "scaled output width should not become decoder width");
+    require_not_contains(*backend, "dec-height=720",
+                         "scaled output height should not become decoder height");
+  }
+}
+
 void check_mjpeg_sdp_fps_matches_selected_payload() {
   constexpr const char* kMixedSdp = "v=0\r\n"
                                     "o=- 0 0 IN IP4 127.0.0.1\r\n"
@@ -401,6 +457,7 @@ int main() {
     check_no_queue_mode();
     check_decoded_h264_group();
     check_decoded_mjpeg_group();
+    check_decoded_mjpeg_output_caps_decoder_fallback();
     check_mjpeg_sdp_fps_matches_selected_payload();
     check_invalid_codec_errors();
     std::cout << "[OK] unit_rtsp_encoded_input_group_test passed\n";
