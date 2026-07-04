@@ -5,6 +5,7 @@
 #include "pipeline/RunExport.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <algorithm>
@@ -85,11 +86,16 @@ void drop_one_keep_latest_output(std::deque<Sample>& queue, const Sample& incomi
     return;
   }
 
+  const auto release_drop_credit = [](const Sample& sample) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(sample, "async-output-drop");
+  };
+
   if (!incoming.stream_id.empty()) {
     const auto same_stream = std::find_if(queue.begin(), queue.end(), [&](const Sample& queued) {
       return queued.stream_id == incoming.stream_id;
     });
     if (same_stream != queue.end()) {
+      release_drop_credit(*same_stream);
       queue.erase(same_stream);
       return;
     }
@@ -110,11 +116,13 @@ void drop_one_keep_latest_output(std::deque<Sample>& queue, const Sample& incomi
           return it != queued_by_stream.end() && it->second > 1;
         });
     if (duplicate_stream != queue.end()) {
+      release_drop_credit(*duplicate_stream);
       queue.erase(duplicate_stream);
       return;
     }
   }
 
+  release_drop_credit(queue.front());
   queue.pop_front();
 }
 
