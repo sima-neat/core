@@ -1,4 +1,5 @@
 #include "graph_migration/common/phase3_graph_test_utils.h"
+#include "nodes/common/Caps.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
@@ -47,6 +48,18 @@ simaai::neat::Graph live_camera_source_fragment(const std::string& buffer_name) 
   opt.buffer_name = buffer_name;
   simaai::neat::Graph g;
   g.add(simaai::neat::nodes::CameraInput(opt));
+  return g;
+}
+
+simaai::neat::Graph mixed_live_and_finite_source_fragment() {
+  simaai::neat::CameraInputOptions live_opt;
+  live_opt.buffer_name = "mixed_live_camera";
+
+  simaai::neat::Graph g;
+  g.connect(simaai::neat::nodes::CameraInput(live_opt), simaai::neat::nodes::Output("live"));
+  g.connect(simaai::neat::nodes::Custom("videotestsrc num-buffers=1 pattern=black",
+                                        simaai::neat::InputRole::Source),
+            simaai::neat::nodes::Output("finite"));
   return g;
 }
 
@@ -114,5 +127,15 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
     simaai::neat::Graph app;
     app.connect(left, sink);
     app.connect(right, sink);
+  }
+
+  {
+    auto mixed = mixed_live_and_finite_source_fragment();
+    auto sink = push_passthrough_fragment("finite", "classes");
+    simaai::neat::Graph app;
+    app.connect(mixed, sink);
+    require_throws_contains([&] { app.connect(mixed, sink); }, "already connected",
+                            "finite branch in a mixed live/non-live imported fragment should not "
+                            "auto-promote duplicate fan-in");
   }
 });

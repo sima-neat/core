@@ -42,61 +42,35 @@ bool node_is_live_source(const Node* node) {
   return false;
 }
 
-bool range_is_live_source_context(const auto& graph, std::size_t start, std::size_t end) {
-  if (start >= end || end > graph.vertices.size()) {
-    return false;
-  }
-  bool has_live_source = false;
-  for (std::size_t i = start; i < end; ++i) {
-    const Node* node = graph.vertices[i].get();
-    if (!node) {
-      continue;
-    }
-    if (node->input_role() == InputRole::Push) {
-      return false;
-    }
-    has_live_source = has_live_source || node_is_live_source(node);
-  }
-  return has_live_source;
-}
-
-bool imported_range_contains(const auto& range, std::size_t vertex) {
-  constexpr std::size_t kInvalid = static_cast<std::size_t>(-1);
-  return range.start != kInvalid && range.end != kInvalid && vertex >= range.start &&
-         vertex < range.end;
-}
-
 bool vertex_is_live_source_context(const auto& graph, std::size_t vertex) {
   if (vertex >= graph.vertices.size()) {
     return false;
   }
-  std::size_t best_start = static_cast<std::size_t>(-1);
-  std::size_t best_end = static_cast<std::size_t>(-1);
-  std::size_t best_size = static_cast<std::size_t>(-1);
-  const auto consider = [&](const auto& range) {
-    if (!imported_range_contains(range, vertex) || range.end < range.start) {
-      return;
+
+  bool has_live_source = false;
+  std::vector<std::size_t> stack{vertex};
+  std::vector<bool> seen(graph.vertices.size(), false);
+  while (!stack.empty()) {
+    const std::size_t current = stack.back();
+    stack.pop_back();
+    if (current >= graph.vertices.size() || seen[current]) {
+      continue;
     }
-    const std::size_t size = range.end - range.start;
-    if (size < best_size) {
-      best_start = range.start;
-      best_end = range.end;
-      best_size = size;
+    seen[current] = true;
+
+    const Node* node = graph.vertices[current].get();
+    if (node && node->input_role() == InputRole::Push) {
+      return false;
     }
-  };
-  for (const auto& item : graph.imported_fragments) {
-    consider(item.second);
+    has_live_source = has_live_source || node_is_live_source(node);
+
+    for (const auto& edge : graph.edges) {
+      if (edge.to == current && edge.from < graph.vertices.size()) {
+        stack.push_back(edge.from);
+      }
+    }
   }
-  for (const auto& item : graph.imported_nodes) {
-    consider(item.second);
-  }
-  for (const auto& item : graph.imported_models) {
-    consider(item.second);
-  }
-  if (best_size != static_cast<std::size_t>(-1)) {
-    return range_is_live_source_context(graph, best_start, best_end);
-  }
-  return range_is_live_source_context(graph, vertex, vertex + 1U);
+  return has_live_source;
 }
 
 } // namespace
