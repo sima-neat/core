@@ -27,6 +27,7 @@ namespace {
 
 constexpr const char* kFactoryName = "neatlatestbystreammux";
 constexpr const char* kLoanValidField = "neat-latest-mux-loan-valid";
+constexpr const char* kLoanNamespaceField = "neat-latest-mux-loan-namespace";
 constexpr const char* kLoanStreamIdField = "neat-latest-mux-loan-stream-id";
 constexpr const char* kLoanFrameIdField = "neat-latest-mux-loan-frame-id";
 
@@ -124,6 +125,7 @@ struct _GstLatestByStreamMux {
   GstSegment pending_segment;
   GstCaps* current_caps = nullptr;
   GThread* worker = nullptr;
+  std::uint64_t loan_namespace = 0;
   std::uint64_t stats_pushes = 0;
 };
 
@@ -132,19 +134,25 @@ struct _GstLatestByStreamMuxClass {
 };
 
 struct LoanKey {
+  std::uint64_t namespace_id = 0;
   std::string stream_id;
   std::int64_t frame_id = -1;
 
   bool operator==(const LoanKey& other) const {
-    return frame_id == other.frame_id && stream_id == other.stream_id;
+    return namespace_id == other.namespace_id && frame_id == other.frame_id &&
+           stream_id == other.stream_id;
   }
 };
 
 struct LoanKeyHash {
   std::size_t operator()(const LoanKey& key) const noexcept {
-    const std::size_t h1 = std::hash<std::string>{}(key.stream_id);
-    const std::size_t h2 = std::hash<std::int64_t>{}(key.frame_id);
-    return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6U) + (h1 >> 2U));
+    std::size_t h = std::hash<std::uint64_t>{}(key.namespace_id);
+    const auto mix = [&h](std::size_t value) {
+      h ^= value + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U);
+    };
+    mix(std::hash<std::string>{}(key.stream_id));
+    mix(std::hash<std::int64_t>{}(key.frame_id));
+    return h;
   }
 };
 
@@ -166,6 +174,11 @@ std::unordered_map<LoanKey, std::shared_ptr<LoanEntry>, LoanKeyHash>& loan_regis
 }
 
 std::atomic<std::uint64_t>& loan_sequence_counter() {
+  static std::atomic<std::uint64_t> counter{1};
+  return counter;
+}
+
+std::atomic<std::uint64_t>& mux_namespace_counter() {
   static std::atomic<std::uint64_t> counter{1};
   return counter;
 }
@@ -231,16 +244,17 @@ bool ensure_sima_meta_structure_mutable(GstBuffer* buffer, GstStructure** struct
   return true;
 }
 
-bool stamp_latest_mux_loan_key(GstBuffer* buffer, const std::string& stream_id,
-                               std::int64_t frame_id) {
-  if (!buffer || stream_id.empty() || frame_id < 0) {
+bool stamp_latest_mux_loan_key(GstBuffer* buffer, std::uint64_t namespace_id,
+                               const std::string& stream_id, std::int64_t frame_id) {
+  if (!buffer || namespace_id == 0 || stream_id.empty() || frame_id < 0) {
     return false;
   }
   GstStructure* s = nullptr;
   if (!ensure_sima_meta_structure_mutable(buffer, &s)) {
     return false;
   }
-  gst_structure_set(s, kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanStreamIdField, G_TYPE_STRING,
+  gst_structure_set(s, kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanNamespaceField, G_TYPE_UINT64,
+                    static_cast<guint64>(namespace_id), kLoanStreamIdField, G_TYPE_STRING,
                     stream_id.c_str(), kLoanFrameIdField, G_TYPE_INT64,
                     static_cast<gint64>(frame_id), nullptr);
   return true;
@@ -260,11 +274,14 @@ bool read_latest_mux_loan_key(GstBuffer* buffer, LoanKey* key) {
     return false;
   }
   const char* stream = gst_structure_get_string(s, kLoanStreamIdField);
+  guint64 namespace_id = 0;
   gint64 frame = -1;
-  if (!stream || !*stream || gst_structure_get_int64(s, kLoanFrameIdField, &frame) != TRUE ||
-      frame < 0) {
+  if (gst_structure_get_uint64(s, kLoanNamespaceField, &namespace_id) != TRUE ||
+      namespace_id == 0 || !stream || !*stream ||
+      gst_structure_get_int64(s, kLoanFrameIdField, &frame) != TRUE || frame < 0) {
     return false;
   }
+  key->namespace_id = static_cast<std::uint64_t>(namespace_id);
   key->stream_id = stream;
   key->frame_id = static_cast<std::int64_t>(frame);
   return true;
@@ -316,6 +333,30 @@ void release_all_loans_for_mux(GstLatestByStreamMux* self) {
   for (const auto& entry : entries) {
     release_loan_entry(entry, /*by_output=*/false);
   }
+}
+
+bool release_loan_for_key_impl(const LoanKey& key, const char* mode) {
+  if (key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
+    return false;
+  }
+  std::shared_ptr<LoanEntry> entry;
+  {
+    std::lock_guard<std::mutex> lock(loan_registry_mutex());
+    auto& registry = loan_registry();
+    auto it = registry.find(key);
+    if (it == registry.end()) {
+      return false;
+    }
+    entry = it->second;
+    registry.erase(it);
+  }
+  if (loan_debug_enabled()) {
+    std::fprintf(stderr, "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=%s\n",
+                 static_cast<unsigned long long>(key.namespace_id), key.stream_id.c_str(),
+                 static_cast<long long>(key.frame_id), mode ? mode : "key");
+  }
+  release_loan_entry(entry, /*by_output=*/true);
+  return true;
 }
 
 GType gst_latest_by_stream_mux_get_type();
@@ -427,7 +468,7 @@ void register_loan_for_key(GstLatestByStreamMux* self,
   std::shared_ptr<LoanEntry> replaced;
   {
     std::lock_guard<std::mutex> lock(loan_registry_mutex());
-    LoanKey key{stream_id, frame_id};
+    LoanKey key{self->loan_namespace, stream_id, frame_id};
     auto& registry = loan_registry();
     auto it = registry.find(key);
     if (it != registry.end()) {
@@ -442,8 +483,11 @@ void register_loan_for_key(GstLatestByStreamMux* self,
     release_loan_entry(replaced, /*by_output=*/false);
   }
   if (loan_debug_enabled()) {
-    std::fprintf(stderr, "[latestmux][loan] register stream=%s frame=%lld inflight=%d limit=%d\n",
-                 stream_id.c_str(), static_cast<long long>(frame_id), state->gate->inflight(),
+    std::fprintf(stderr,
+                 "[latestmux][loan] register ns=%llu stream=%s frame=%lld inflight=%d "
+                 "limit=%d\n",
+                 static_cast<unsigned long long>(self->loan_namespace), stream_id.c_str(),
+                 static_cast<long long>(frame_id), state->gate->inflight(),
                  state->gate->credit_limit());
   }
 }
@@ -683,7 +727,7 @@ gpointer worker_main(gpointer data) {
       bool loan_registered = false;
       if (loan_acquired) {
         if (read_stream_frame_key(buffer, &stream_id, &frame_id)) {
-          if (stamp_latest_mux_loan_key(buffer, stream_id, frame_id)) {
+          if (stamp_latest_mux_loan_key(buffer, self->loan_namespace, stream_id, frame_id)) {
             register_loan_for_key(self, loan_state, stream_id, frame_id);
             loan_registered = true;
           } else {
@@ -717,7 +761,8 @@ gpointer worker_main(gpointer data) {
         GST_WARNING_OBJECT(self, "downstream push returned %s", gst_flow_get_name(flow));
       }
       if (loan_registered && flow != GST_FLOW_OK) {
-        simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan(stream_id, frame_id);
+        (void)release_loan_for_key_impl(LoanKey{self->loan_namespace, stream_id, frame_id},
+                                        "push-failure");
       }
       continue;
     }
@@ -1257,6 +1302,9 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
 void gst_latest_by_stream_mux_init(GstLatestByStreamMux* self) {
   new (&self->slots) SlotVector();
   new (&self->stream_ids) StringVector();
+  do {
+    self->loan_namespace = mux_namespace_counter().fetch_add(1, std::memory_order_relaxed);
+  } while (self->loan_namespace == 0);
   g_mutex_init(&self->lock);
   g_cond_init(&self->cond);
   self->srcpad = gst_pad_new_from_static_template(&src_template, "src");
@@ -1281,23 +1329,50 @@ bool register_latest_by_stream_mux() {
 namespace pipeline_internal {
 
 bool release_loan_for_key(const LoanKey& key, const char* mode) {
+  if (key.namespace_id != 0) {
+    return release_loan_for_key_impl(key, mode);
+  }
   if (key.stream_id.empty() || key.frame_id < 0) {
     return false;
   }
   std::shared_ptr<LoanEntry> entry;
+  LoanKey selected;
+  bool found = false;
+  bool ambiguous = false;
   {
     std::lock_guard<std::mutex> lock(loan_registry_mutex());
     auto& registry = loan_registry();
-    auto it = registry.find(key);
-    if (it == registry.end()) {
-      return false;
+    for (const auto& item : registry) {
+      if (item.first.stream_id != key.stream_id || item.first.frame_id != key.frame_id ||
+          !item.second) {
+        continue;
+      }
+      if (found) {
+        ambiguous = true;
+        break;
+      }
+      selected = item.first;
+      entry = item.second;
+      found = true;
     }
-    entry = it->second;
-    registry.erase(it);
+    if (found && !ambiguous) {
+      registry.erase(selected);
+    }
+  }
+  if (!found || ambiguous) {
+    if (ambiguous && loan_debug_enabled()) {
+      std::fprintf(
+          stderr, "[latestmux][loan] ambiguous unqualified release stream=%s frame=%lld mode=%s\n",
+          key.stream_id.c_str(), static_cast<long long>(key.frame_id), mode ? mode : "key");
+    }
+    return false;
   }
   if (loan_debug_enabled()) {
-    std::fprintf(stderr, "[latestmux][loan] release stream=%s frame=%lld mode=%s\n",
-                 key.stream_id.c_str(), static_cast<long long>(key.frame_id), mode ? mode : "key");
+    std::fprintf(stderr,
+                 "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=%s "
+                 "(unqualified)\n",
+                 static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
+                 static_cast<long long>(selected.frame_id), mode ? mode : "key");
   }
   release_loan_entry(entry, /*by_output=*/true);
   return true;
@@ -1310,6 +1385,8 @@ bool release_oldest_loan_for_stream(const std::string& stream_id) {
   std::shared_ptr<LoanEntry> entry;
   LoanKey selected;
   bool found = false;
+  bool ambiguous_namespace = false;
+  std::uint64_t namespace_id = 0;
   std::uint64_t best_sequence = std::numeric_limits<std::uint64_t>::max();
   {
     std::lock_guard<std::mutex> lock(loan_registry_mutex());
@@ -1318,6 +1395,12 @@ bool release_oldest_loan_for_stream(const std::string& stream_id) {
       if (item.first.stream_id != stream_id || !item.second) {
         continue;
       }
+      if (namespace_id == 0) {
+        namespace_id = item.first.namespace_id;
+      } else if (namespace_id != item.first.namespace_id) {
+        ambiguous_namespace = true;
+        break;
+      }
       if (!found || item.second->sequence < best_sequence) {
         selected = item.first;
         entry = item.second;
@@ -1325,23 +1408,31 @@ bool release_oldest_loan_for_stream(const std::string& stream_id) {
         found = true;
       }
     }
-    if (found) {
+    if (found && !ambiguous_namespace) {
       registry.erase(selected);
     }
   }
-  if (!found) {
+  if (!found || ambiguous_namespace) {
+    if (ambiguous_namespace && loan_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[latestmux][loan] ambiguous stream-fifo release stream=%s across mux "
+                   "namespaces\n",
+                   stream_id.c_str());
+    }
     return false;
   }
   if (loan_debug_enabled()) {
-    std::fprintf(stderr, "[latestmux][loan] release stream=%s frame=%lld mode=stream-fifo\n",
-                 selected.stream_id.c_str(), static_cast<long long>(selected.frame_id));
+    std::fprintf(stderr,
+                 "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=stream-fifo\n",
+                 static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
+                 static_cast<long long>(selected.frame_id));
   }
   release_loan_entry(entry, /*by_output=*/true);
   return true;
 }
 
 void release_latest_by_stream_mux_loan(const std::string& stream_id, std::int64_t frame_id) {
-  (void)release_loan_for_key(LoanKey{stream_id, frame_id}, "key");
+  (void)release_loan_for_key(LoanKey{0, stream_id, frame_id}, "key");
 }
 
 bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer) {
@@ -1397,7 +1488,7 @@ void release_latest_by_stream_mux_loan_for_sample(const Sample& sample) {
     if (s.frame_id < 0 || s.stream_id.empty()) {
       return;
     }
-    const LoanKey key{s.stream_id, s.frame_id};
+    const LoanKey key{0, s.stream_id, s.frame_id};
     const auto found = std::find_if(keys.begin(), keys.end(),
                                     [&](const LoanKey& existing) { return existing == key; });
     if (found == keys.end()) {
