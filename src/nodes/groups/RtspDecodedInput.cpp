@@ -107,7 +107,7 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
   graph.add(RtspEncodedInput(encoded_options_from_decoded(opt)));
   if (opt.codec == RtspCodec::MJPEG && (mjpeg_dec_f > 0 || opt.auto_caps_from_stream)) {
     EncodedCapsFixupOptions fixup{"image/jpeg", mjpeg_dec_f};
-    fixup.use_rtsp_sdp_fps = opt.auto_caps_from_stream;
+    fixup.use_rtsp_sdp_fps = opt.auto_caps_from_stream && mjpeg_dec_f <= 0;
     graph.add(nodes::EncodedCapsFixup(fixup));
   }
   graph.add(nodes::SimaDecode(dec));

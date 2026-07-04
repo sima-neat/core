@@ -2147,7 +2147,8 @@ static bool encoded_caps_fixup_apply(GstStructure* s, EncodedCapsFixupCtx* ctx, 
     } else if (!ctx->missing_logged) {
       std::fprintf(stderr,
                    "[caps] %s: %s missing/invalid framerate; no fallback or RTSP SDP "
-                   "framerate available\n",
+                   "framerate available. Set an explicit FPS fallback, e.g. "
+                   "RtspDecodedInput(MJPEG) dec_fps or output_caps.fps\n",
                    ctx->element_name.c_str(), ctx->media_type.c_str());
       ctx->missing_logged = true;
     }

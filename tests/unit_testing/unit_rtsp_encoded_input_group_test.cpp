@@ -287,6 +287,8 @@ void check_decoded_mjpeg_group() {
     require_contains(*backend, "dec-type=mjpeg",
                      "MJPEG decoded backend should use SimaDecode(MJPEG)");
     require_contains(*backend, "dec-width=800", "MJPEG decoded backend should forward dec_width");
+    require_contains(*backend, "dec-height=600", "MJPEG decoded backend should forward dec_height");
+    require_contains(*backend, "dec-fps=25", "MJPEG decoded backend should forward dec_fps");
     require_contains(*backend, "encoded_capsfix",
                      "MJPEG decoded backend should include encoded caps fixup");
     require_not_contains(*backend, "rtph264depay",
@@ -308,6 +310,8 @@ void check_decoded_mjpeg_group() {
           describe_backend_if_available(auto_fps_group, "MJPEG auto-fps decoded backend")) {
     require_contains(*backend, "encoded_capsfix",
                      "MJPEG auto-fps backend should include encoded caps fixup");
+    require_not_contains(*backend,
+                         "dec-fps=", "MJPEG auto-fps backend should not invent a decoder FPS");
   }
 
   opt.auto_caps_from_stream = false;
@@ -321,7 +325,6 @@ void check_decoded_mjpeg_output_caps_decoder_fallback() {
   simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
   opt.url = "rtsp://example.local/mjpeg";
   opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
-  opt.auto_caps_from_stream = false;
   opt.output_caps.width = 1280;
   opt.output_caps.height = 720;
   opt.output_caps.fps = 30;
