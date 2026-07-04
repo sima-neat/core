@@ -1128,6 +1128,9 @@ HolderFastPathResult try_push_message_holder_fastpath(
     if (holder_buf) {
       BuiltBuffer pending;
       pending.buffer = gst_buffer_ref(holder_buf);
+      pipeline_internal::attach_zero_copy_loans_to_gst_buffer(pending.buffer, msg);
+      pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(
+          pending.buffer, input.storage ? input.storage->holder : std::shared_ptr<void>{});
       queue_pending_buffer(st, pending, spec, "InputStream::try_push_message(holder)");
       holder_guard.release();
       release_input_buffer(holder_buf, "InputStream::try_push_message:holder_queue_unref");
