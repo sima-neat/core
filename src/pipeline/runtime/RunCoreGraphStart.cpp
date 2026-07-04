@@ -246,9 +246,9 @@ bool decoder_candidate_uses_zero_copy_output(const DecoderAdmissionCandidate& ca
 // Admission reserves decoder resources, so its shape must describe the
 // decoder boundary itself.  Do not fall back to the segment tail: downstream
 // Caps/Preproc/Model nodes may intentionally scale 1080p decode down to 640p.
-OutputSpec decoder_local_output_spec(
-    std::span<const std::shared_ptr<simaai::neat::Node>> nodes, std::size_t decoder_index,
-    const OutputSpec& segment_input_spec) {
+OutputSpec decoder_local_output_spec(std::span<const std::shared_ptr<simaai::neat::Node>> nodes,
+                                     std::size_t decoder_index,
+                                     const OutputSpec& segment_input_spec) {
   if (decoder_index >= nodes.size()) {
     return {};
   }
@@ -258,14 +258,12 @@ OutputSpec decoder_local_output_spec(
         segment_input_spec);
   } catch (const std::exception& e) {
     if (decoder_plan_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[DECPLAN] admission_local_spec_skip node_index=%zu reason=%s\n",
+      std::fprintf(stderr, "[DECPLAN] admission_local_spec_skip node_index=%zu reason=%s\n",
                    decoder_index, e.what());
     }
   } catch (...) {
     if (decoder_plan_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[DECPLAN] admission_local_spec_skip node_index=%zu reason=unknown\n",
+      std::fprintf(stderr, "[DECPLAN] admission_local_spec_skip node_index=%zu reason=unknown\n",
                    decoder_index);
     }
   }
@@ -294,18 +292,15 @@ void collect_decoder_candidate_from_node(
   const std::uint32_t explicit_width = positive_u32_or_zero(opt.dec_width);
   const std::uint32_t explicit_height = positive_u32_or_zero(opt.dec_height);
   const std::uint32_t explicit_fps = positive_u32_or_zero(opt.dec_fps);
-  const std::uint32_t width = explicit_width != 0U
-                                  ? explicit_width
-                                  : positive_u32_or_zero(decoder_output_spec.width);
-  const std::uint32_t height = explicit_height != 0U
-                                   ? explicit_height
-                                   : positive_u32_or_zero(decoder_output_spec.height);
-  std::uint32_t fps_num = explicit_fps != 0U
-                              ? explicit_fps
-                              : positive_u32_or_zero(decoder_output_spec.fps_num);
-  std::uint32_t fps_den =
-      decoder_output_spec.fps_den > 0 ? static_cast<std::uint32_t>(decoder_output_spec.fps_den)
-                                      : 1U;
+  const std::uint32_t width =
+      explicit_width != 0U ? explicit_width : positive_u32_or_zero(decoder_output_spec.width);
+  const std::uint32_t height =
+      explicit_height != 0U ? explicit_height : positive_u32_or_zero(decoder_output_spec.height);
+  std::uint32_t fps_num =
+      explicit_fps != 0U ? explicit_fps : positive_u32_or_zero(decoder_output_spec.fps_num);
+  std::uint32_t fps_den = decoder_output_spec.fps_den > 0
+                              ? static_cast<std::uint32_t>(decoder_output_spec.fps_den)
+                              : 1U;
   if (explicit_fps != 0U) {
     fps_den = 1;
   }
@@ -364,10 +359,10 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
       if (!dynamic_cast<const simaai::neat::SimaDecode*>(runtime->nodes[node_index].get())) {
         continue;
       }
-      const OutputSpec decoder_spec = decoder_local_output_spec(
-          std::span<const std::shared_ptr<simaai::neat::Node>>(runtime->nodes.data(),
-                                                              runtime->nodes.size()),
-          node_index, runtime->seg.input_spec);
+      const OutputSpec decoder_spec =
+          decoder_local_output_spec(std::span<const std::shared_ptr<simaai::neat::Node>>(
+                                        runtime->nodes.data(), runtime->nodes.size()),
+                                    node_index, runtime->seg.input_spec);
       collect_decoder_candidate_from_node(
           execution, pipeline_index, node_index, runtime->nodes[node_index],
           runtime_node_for_materialized_decoder(*runtime, node_index), decoder_spec,
@@ -383,10 +378,10 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
           if (!dynamic_cast<const simaai::neat::SimaDecode*>(branch.nodes[node_index].get())) {
             continue;
           }
-          const OutputSpec decoder_spec = decoder_local_output_spec(
-              std::span<const std::shared_ptr<simaai::neat::Node>>(branch.nodes.data(),
-                                                                  branch.nodes.size()),
-              node_index, {});
+          const OutputSpec decoder_spec =
+              decoder_local_output_spec(std::span<const std::shared_ptr<simaai::neat::Node>>(
+                                            branch.nodes.data(), branch.nodes.size()),
+                                        node_index, {});
           collect_decoder_candidate_from_node(
               execution, pipeline_index, node_index, branch.nodes[node_index], branch.source_node,
               decoder_spec, /*fused_branch=*/true, branch_index, candidates, auto_h264_decoders,
