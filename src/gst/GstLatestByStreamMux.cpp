@@ -1504,6 +1504,9 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
     // Latest-by-stream mux credits are registered under the mux instance namespace stamped on
     // GstSimaMeta. Prefer that exact key so drops/stops can release credits unambiguously when
     // multiple muxes in the process reuse the same stream/frame ids.
+    if (!tensor.storage || tensor.storage->kind != StorageKind::GstSample) {
+      return false;
+    }
     const std::shared_ptr<void> holder = holder_from_tensor(tensor);
     GstBuffer* buffer = holder ? buffer_from_tensor_holder(holder) : nullptr;
     if (!buffer) {
@@ -1517,7 +1520,7 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
     }
     return found;
   };
-  auto add_key = [&](const Sample& s) {
+  auto collect_stamped_keys = [&](auto&& self, const Sample& s) -> bool {
     bool found_stamped_key = false;
     if (s.tensor) {
       found_stamped_key = add_tensor_key(*s.tensor) || found_stamped_key;
@@ -1525,13 +1528,22 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
     for (const auto& tensor : s.tensors) {
       found_stamped_key = add_tensor_key(tensor) || found_stamped_key;
     }
-    if (found_stamped_key || s.frame_id < 0 || s.stream_id.empty()) {
+    for (const auto& field : s.fields) {
+      found_stamped_key = self(self, field) || found_stamped_key;
+    }
+    return found_stamped_key;
+  };
+  if (collect_stamped_keys(collect_stamped_keys, sample)) {
+    return credits;
+  }
+  auto add_fallback_key = [&](const Sample& s) {
+    if (s.frame_id < 0 || s.stream_id.empty()) {
       return;
     }
     add_credit(LoanKey{0, s.stream_id, s.frame_id});
   };
   auto walk = [&](auto&& self, const Sample& s) -> void {
-    add_key(s);
+    add_fallback_key(s);
     for (const auto& field : s.fields) {
       self(self, field);
     }

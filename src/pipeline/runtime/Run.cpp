@@ -81,13 +81,17 @@ std::vector<std::string> tail_lines(const std::string& path, size_t max_lines) {
   return std::vector<std::string>(buf.begin(), buf.end());
 }
 
+void release_realtime_output_credits(const Sample& sample, const char* mode) {
+  pipeline_internal::release_realtime_frame_credits_for_sample(sample, mode);
+}
+
 void drop_one_keep_latest_output(std::deque<Sample>& queue, const Sample& incoming) {
   if (queue.empty()) {
     return;
   }
 
   const auto release_drop_credit = [](const Sample& sample) {
-    pipeline_internal::release_realtime_frame_credits_for_sample(sample, "async-output-drop");
+    release_realtime_output_credits(sample, "async-output-drop");
   };
 
   if (!incoming.stream_id.empty()) {
@@ -274,6 +278,15 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   }
 
   auto on_output = [st](Sample out) {
+    const auto realtime_credits = pipeline_internal::realtime_frame_credits_for_sample(out);
+    bool realtime_credits_released = false;
+    const auto release_incoming_realtime_credits = [&](const char* mode) {
+      if (realtime_credits_released) {
+        return;
+      }
+      pipeline_internal::release_realtime_frame_credits(realtime_credits, mode);
+      realtime_credits_released = true;
+    };
     if (st->stop_requested.load()) {
       if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
@@ -287,6 +300,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
             "[PIPELINE] on_output_drop kind=%s frame_id=%lld stream_id=%s reason=stop_requested\n",
             kind, static_cast<long long>(out.frame_id), out.stream_id.c_str());
       }
+      release_incoming_realtime_credits("async-output-stop");
       return;
     }
 
@@ -356,6 +370,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       const bool copy_output = st->pipeline.copy_output_latched.load(std::memory_order_relaxed);
       if (copy_output && has_zero_copy_output) {
         force_copy_sample_if_zero_copy(out);
+        release_incoming_realtime_credits("async-output-copy");
       }
       if (max > 0) {
         OverflowPolicy output_drop = st->opt.overflow_policy;
@@ -383,6 +398,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                            "reason=queue_full\n",
                            kind, static_cast<long long>(out.frame_id), out.stream_id.c_str());
             }
+            release_incoming_realtime_credits("async-output-drop-incoming");
             return;
           }
           // Drop oldest to make room for the new output.
@@ -392,9 +408,12 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
           }
         }
       }
-      if (st->stop_requested.load())
+      if (st->stop_requested.load()) {
+        release_incoming_realtime_credits("async-output-stop");
         return;
+      }
       st->pipeline.out_queue.push_back(std::move(out));
+      release_incoming_realtime_credits("async-output-queue");
       st->outputs_ready.fetch_add(1, std::memory_order_relaxed);
       if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {

@@ -78,6 +78,17 @@ int main() {
     require(credits[0].stream_id == "mux-stream", "credit should use stamped mux stream id");
     require(credits[0].frame_id == 42, "credit should use stamped mux frame id");
 
+    simaai::neat::Sample bundled;
+    bundled.kind = simaai::neat::SampleKind::Bundle;
+    bundled.stream_id = "fallback-stream";
+    bundled.frame_id = 7;
+    bundled.fields.push_back(namespaced);
+    credits = simaai::neat::pipeline_internal::realtime_frame_credits_for_sample(bundled);
+    require(credits.size() == 1U, "bundle should prefer stamped child credit over fallback key");
+    require(credits[0].namespace_id == 1234U, "bundle credit should preserve child mux namespace");
+    require(credits[0].stream_id == "mux-stream", "bundle credit should use child mux stream id");
+    require(credits[0].frame_id == 42, "bundle credit should use child mux frame id");
+
     const simaai::neat::Sample fallback = make_gst_sample_backed_sample(std::nullopt);
     credits = simaai::neat::pipeline_internal::realtime_frame_credits_for_sample(fallback);
     require(credits.size() == 1U, "expected one fallback realtime credit");
