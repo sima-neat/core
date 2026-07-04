@@ -670,6 +670,13 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
         ". Reduce the number of streams/fps/resolution, stop another decoder workload, or check "
         "the decoder daemon/admission socket.");
   }
+
+  // Arm the existing RunCore cleanup path before any post-admission validation can throw.
+  // If the daemon accepted the graph but returns a malformed/stale lease response, graph
+  // teardown still releases the reserved group.
+  execution.decoder_admission_active = true;
+  execution.decoder_admission_group_uuid = admission.group_uuid;
+
   if (admission.leases.size() != candidates.size()) {
     throw std::runtime_error(
         "RunCore::start(graph): decoder admission returned a lease count that does not match the "
@@ -690,8 +697,6 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     }
     apply_decoder_admission_lease(execution, candidates[i], admission, *it->second);
   }
-  execution.decoder_admission_active = true;
-  execution.decoder_admission_group_uuid = admission.group_uuid;
 
   if (decoder_plan_debug_enabled()) {
     std::fprintf(stderr, "[DECPLAN] admission_accepted streams=%zu group=%s reserved_bytes=%llu\n",
