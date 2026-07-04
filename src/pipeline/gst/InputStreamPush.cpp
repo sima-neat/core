@@ -868,6 +868,7 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   }
   dump_buffer_memories(buf, where ? where : "InputStream::push_holder_transport");
   validate_holder_video_meta_or_throw(st, buf);
+  pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(buf, holder);
 
   if (GstSample* sample = holder_as_gstsample(holder)) {
     const bool has_tensor_set =

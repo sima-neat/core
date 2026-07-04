@@ -12,6 +12,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/CapsStringUtil.h"
+#include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
 
 #include <algorithm>
@@ -220,6 +221,9 @@ GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& 
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
   }
+  if (!b.stream_id.empty()) {
+    a.stream_id = b.stream_id;
+  }
   return a;
 }
 
@@ -418,6 +422,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     link_options = merge_link_options(link_options, edge.link_options);
     if (!edge.stream_id.empty()) {
       stream_id = edge.stream_id;
+    } else if (!edge.link_options.stream_id.empty()) {
+      stream_id = edge.link_options.stream_id;
     }
     if (!from_port.empty() && !edge.from_port.empty() && from_port != edge.from_port) {
       throw std::runtime_error(
@@ -1915,7 +1921,12 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_normalized_link_policies(normalized, lowering.runtime_node_for_vertex, &plan);
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
-    fuse_realtime_fan_in_segments(lowering.graph, &plan);
+    // Prefer the C++ graph-runtime RealtimeLatestLink path for live fan-in.
+    // The legacy fused ingress collapses live source branches into one
+    // monolithic GStreamer pipeline and is kept only as an explicit rollback.
+    if (pipeline_internal::env_bool("SIMA_GRAPH_LEGACY_FUSED_REALTIME_INGRESS", false)) {
+      fuse_realtime_fan_in_segments(lowering.graph, &plan);
+    }
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,
                                view.named_fragments, &plan);
     map_explicit_public_vertex_endpoints(runtime_node_for_vertex, view.vertices, &plan);

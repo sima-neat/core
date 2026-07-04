@@ -98,7 +98,8 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
                                   .kind = CompositionEdgeKind::RuntimePort,
                                   .from_port = std::move(from_port),
                                   .to_port = std::move(to_port),
-                                  .link_options = link_options});
+                                  .link_options = link_options,
+                                  .stream_id = link_options.stream_id});
   recompute_unique_tail();
 }
 
@@ -114,7 +115,7 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
 
   const bool destination_is_public_output =
       dynamic_cast<const Output*>(vertices[to].get()) != nullptr;
-  std::string incoming_stream_id;
+  std::string incoming_stream_id = link_options.stream_id;
   if (!destination_is_public_output) {
     for (auto& edge : edges) {
       if (edge.kind != CompositionEdgeKind::PublicEndpoint || !edge.endpoint.has_value()) {
@@ -142,7 +143,9 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
           link_options.queue_depth = edge.link_options.queue_depth;
           if (edge.stream_id.empty()) {
             edge.stream_id =
-                automatic_realtime_stream_id(edge.from, edge.to, edge.endpoint->to_endpoint);
+                edge.link_options.stream_id.empty()
+                    ? automatic_realtime_stream_id(edge.from, edge.to, edge.endpoint->to_endpoint)
+                    : edge.link_options.stream_id;
           }
           if (incoming_stream_id.empty()) {
             incoming_stream_id = automatic_realtime_stream_id(from, to, to_endpoint);

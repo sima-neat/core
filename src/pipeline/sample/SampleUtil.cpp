@@ -217,16 +217,16 @@ void destroy_gst_buffer_loan_keepalive(gpointer data) {
   delete static_cast<GstBufferLoanKeepalive*>(data);
 }
 
-void attach_zero_copy_loan_to_gst_buffer_local(GstBuffer* buffer,
-                                               const std::shared_ptr<void>& loan) {
-  if (!buffer || !loan) {
+void attach_zero_copy_loan_to_mini_object_local(GstMiniObject* object,
+                                                const std::shared_ptr<void>& loan) {
+  if (!object || !loan) {
     return;
   }
   auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
-      gst_mini_object_get_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark()));
+      gst_mini_object_get_qdata(object, zero_copy_loan_quark()));
   if (!keepalive) {
     keepalive = new GstBufferLoanKeepalive();
-    gst_mini_object_set_qdata(GST_MINI_OBJECT(buffer), zero_copy_loan_quark(), keepalive,
+    gst_mini_object_set_qdata(object, zero_copy_loan_quark(), keepalive,
                               destroy_gst_buffer_loan_keepalive);
   }
   const auto found =
@@ -235,6 +235,47 @@ void attach_zero_copy_loan_to_gst_buffer_local(GstBuffer* buffer,
   if (found == keepalive->loans.end()) {
     keepalive->loans.push_back(loan);
   }
+}
+
+void attach_zero_copy_loan_to_gst_buffer_local(GstBuffer* buffer,
+                                               const std::shared_ptr<void>& loan) {
+  attach_zero_copy_loan_to_mini_object_local(buffer ? GST_MINI_OBJECT(buffer) : nullptr, loan);
+}
+
+void attach_zero_copy_loan_to_gst_sample_local(GstSample* sample,
+                                               const std::shared_ptr<void>& loan) {
+  attach_zero_copy_loan_to_mini_object_local(sample ? GST_MINI_OBJECT(sample) : nullptr, loan);
+}
+
+void collect_zero_copy_loans_from_mini_object(GstMiniObject* object,
+                                              std::vector<std::shared_ptr<void>>* out) {
+  if (!object || !out) {
+    return;
+  }
+  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
+      gst_mini_object_get_qdata(object, zero_copy_loan_quark()));
+  if (!keepalive) {
+    return;
+  }
+  for (const auto& loan : keepalive->loans) {
+    if (!loan) {
+      continue;
+    }
+    const auto found = std::find_if(out->begin(), out->end(), [&](const std::shared_ptr<void>& v) {
+      return v.get() == loan.get();
+    });
+    if (found == out->end()) {
+      out->push_back(loan);
+    }
+  }
+}
+
+GstSample* gst_sample_from_holder(const std::shared_ptr<void>& holder) {
+  if (!holder) {
+    return nullptr;
+  }
+  auto* sample = static_cast<GstSample*>(holder.get());
+  return (sample && GST_IS_SAMPLE(sample)) ? sample : nullptr;
 }
 
 void collect_zero_copy_loans_from_sample(const Sample& sample,
@@ -256,6 +297,9 @@ void collect_zero_copy_loans_from_sample(const Sample& sample,
     }
     if (!loan) {
       return;
+    }
+    if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
+      attach_zero_copy_loan_to_gst_sample_local(sample, loan);
     }
     const auto found = std::find_if(out->begin(), out->end(), [&](const std::shared_ptr<void>& v) {
       return v.get() == loan.get();
@@ -2475,6 +2519,9 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
         return false;
       }
       if (auto existing = sidecar->zero_copy_loan.lock()) {
+        if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
+          attach_zero_copy_loan_to_gst_sample_local(sample, existing);
+        }
         return true;
       }
       if (sidecar->has_producer_stream_lifetime) {
@@ -2506,6 +2553,9 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
       if (sidecar) {
         sidecar->zero_copy_loan = loan;
       }
+    }
+    if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
+      attach_zero_copy_loan_to_gst_sample_local(sample, loan);
     }
     acquired.push_back(std::move(loan));
     acquired_storage.push_back({tensor.storage, std::move(original_holder)});
@@ -2628,6 +2678,23 @@ void attach_zero_copy_loans_to_gst_buffer(GstBuffer* buffer, const Sample& sampl
   }
   std::vector<std::shared_ptr<void>> loans;
   collect_zero_copy_loans_from_sample(sample, &loans);
+  if (loans.empty()) {
+    return;
+  }
+  for (const auto& loan : loans) {
+    attach_zero_copy_loan_to_gst_buffer_local(buffer, loan);
+  }
+}
+
+void attach_zero_copy_loans_from_holder_to_gst_buffer(GstBuffer* buffer,
+                                                      const std::shared_ptr<void>& holder) {
+  if (!buffer) {
+    return;
+  }
+  std::vector<std::shared_ptr<void>> loans;
+  if (GstSample* sample = gst_sample_from_holder(holder)) {
+    collect_zero_copy_loans_from_mini_object(GST_MINI_OBJECT(sample), &loans);
+  }
   if (loans.empty()) {
     return;
   }
