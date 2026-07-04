@@ -36,7 +36,7 @@ GST_DEBUG_CATEGORY_STATIC(gst_latest_by_stream_mux_debug_category);
 using GstLatestByStreamMux = struct _GstLatestByStreamMux;
 using GstLatestByStreamMuxClass = struct _GstLatestByStreamMuxClass;
 #define GST_TYPE_LATEST_BY_STREAM_MUX (gst_latest_by_stream_mux_get_type())
-#define GST_LATEST_BY_STREAM_MUX(obj)                                                           \
+#define GST_LATEST_BY_STREAM_MUX(obj)                                                              \
   (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_LATEST_BY_STREAM_MUX, GstLatestByStreamMux))
 
 int configured_max_inflight_per_stream() {
@@ -240,8 +240,8 @@ bool stamp_latest_mux_loan_key(GstBuffer* buffer, const std::string& stream_id,
   if (!ensure_sima_meta_structure_mutable(buffer, &s)) {
     return false;
   }
-  gst_structure_set(s, kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanStreamIdField,
-                    G_TYPE_STRING, stream_id.c_str(), kLoanFrameIdField, G_TYPE_INT64,
+  gst_structure_set(s, kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanStreamIdField, G_TYPE_STRING,
+                    stream_id.c_str(), kLoanFrameIdField, G_TYPE_INT64,
                     static_cast<gint64>(frame_id), nullptr);
   return true;
 }
@@ -330,10 +330,10 @@ enum {
   PROP_STREAM_IDS,
 };
 
-static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE(
-    "sink_%u", GST_PAD_SINK, GST_PAD_REQUEST, GST_STATIC_CAPS_ANY);
-static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE(
-    "src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
+static GstStaticPadTemplate sink_template =
+    GST_STATIC_PAD_TEMPLATE("sink_%u", GST_PAD_SINK, GST_PAD_REQUEST, GST_STATIC_CAPS_ANY);
+static GstStaticPadTemplate src_template =
+    GST_STATIC_PAD_TEMPLATE("src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS_ANY);
 
 bool debug_enabled() {
   const gchar* env = g_getenv("SIMA_LATEST_MUX_DEBUG");
@@ -411,7 +411,8 @@ bool read_stream_key(GstBuffer* buffer, std::string* stream_id) {
   return true;
 }
 
-void register_loan_for_key(GstLatestByStreamMux* self, const std::shared_ptr<StreamLoanState>& state,
+void register_loan_for_key(GstLatestByStreamMux* self,
+                           const std::shared_ptr<StreamLoanState>& state,
                            const std::string& stream_id, std::int64_t frame_id) {
   if (!self || !state || !state->gate || !state->gate->enabled() || stream_id.empty() ||
       frame_id < 0) {
@@ -441,10 +442,9 @@ void register_loan_for_key(GstLatestByStreamMux* self, const std::shared_ptr<Str
     release_loan_entry(replaced, /*by_output=*/false);
   }
   if (loan_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[latestmux][loan] register stream=%s frame=%lld inflight=%d limit=%d\n",
-                 stream_id.c_str(), static_cast<long long>(frame_id),
-                 state->gate->inflight(), state->gate->credit_limit());
+    std::fprintf(stderr, "[latestmux][loan] register stream=%s frame=%lld inflight=%d limit=%d\n",
+                 stream_id.c_str(), static_cast<long long>(frame_id), state->gate->inflight(),
+                 state->gate->credit_limit());
   }
 }
 
@@ -557,8 +557,7 @@ bool all_slots_eos_locked(const GstLatestByStreamMux* self) {
 }
 
 bool slot_has_loan_credit(const PendingSlot* slot) {
-  if (!slot || !slot->loan_state || !slot->loan_state->gate ||
-      !slot->loan_state->gate->enabled()) {
+  if (!slot || !slot->loan_state || !slot->loan_state->gate || !slot->loan_state->gate->enabled()) {
     return true;
   }
   return slot->loan_state->gate->inflight() < slot->loan_state->gate->credit_limit();
@@ -751,8 +750,7 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
     gst_buffer_unref(buffer);
     return GST_FLOW_FLUSHING;
   }
-  const std::uint64_t received_before =
-      slot->received.fetch_add(1, std::memory_order_relaxed);
+  const std::uint64_t received_before = slot->received.fetch_add(1, std::memory_order_relaxed);
   if (slot->pending) {
     slot->replaced.fetch_add(1, std::memory_order_relaxed);
   }
@@ -1047,23 +1045,22 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
   }
   g_mutex_unlock(&self->lock);
 
-  std::fprintf(stderr, "[latestmux][stats] reason=%s slots=%zu\n",
-               reason ? reason : "unknown", rows.size());
+  std::fprintf(stderr, "[latestmux][stats] reason=%s slots=%zu\n", reason ? reason : "unknown",
+               rows.size());
   for (const auto& row : rows) {
-    std::fprintf(stderr,
-                 "[latestmux][stats] slot=%u stream=%s chain=%llu replaced=%llu emitted=%llu "
-                 "pending=%d eos=%d no_credit_skips=%llu loans_registered=%llu "
-                 "loans_released_output=%llu loans_released_without_output=%llu missing_key=%llu "
-                 "loan_inflight=%d loan_limit=%d\n",
-                 row.index, row.stream_id.c_str(), static_cast<unsigned long long>(row.received),
-                 static_cast<unsigned long long>(row.replaced),
-                 static_cast<unsigned long long>(row.emitted), row.pending ? 1 : 0,
-                 row.eos ? 1 : 0, static_cast<unsigned long long>(row.no_credit_skips),
-                 static_cast<unsigned long long>(row.loans_registered),
-                 static_cast<unsigned long long>(row.loans_released_by_output),
-                 static_cast<unsigned long long>(row.loans_released_without_output),
-                 static_cast<unsigned long long>(row.missing_key), row.loan_inflight,
-                 row.loan_limit);
+    std::fprintf(
+        stderr,
+        "[latestmux][stats] slot=%u stream=%s chain=%llu replaced=%llu emitted=%llu "
+        "pending=%d eos=%d no_credit_skips=%llu loans_registered=%llu "
+        "loans_released_output=%llu loans_released_without_output=%llu missing_key=%llu "
+        "loan_inflight=%d loan_limit=%d\n",
+        row.index, row.stream_id.c_str(), static_cast<unsigned long long>(row.received),
+        static_cast<unsigned long long>(row.replaced), static_cast<unsigned long long>(row.emitted),
+        row.pending ? 1 : 0, row.eos ? 1 : 0, static_cast<unsigned long long>(row.no_credit_skips),
+        static_cast<unsigned long long>(row.loans_registered),
+        static_cast<unsigned long long>(row.loans_released_by_output),
+        static_cast<unsigned long long>(row.loans_released_without_output),
+        static_cast<unsigned long long>(row.missing_key), row.loan_inflight, row.loan_limit);
   }
   std::fflush(stderr);
 }
@@ -1247,8 +1244,7 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
   gst_element_class_set_static_metadata(element_class, "Neat latest-by-stream mux", "Generic",
                                         "Keeps one latest buffer per live stream and pushes fairly",
                                         "SiMa.ai");
-  gst_element_class_add_pad_template(element_class,
-                                     gst_static_pad_template_get(&sink_template));
+  gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&sink_template));
   gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&src_template));
 
   g_object_class_install_property(
@@ -1301,8 +1297,7 @@ bool release_loan_for_key(const LoanKey& key, const char* mode) {
   }
   if (loan_debug_enabled()) {
     std::fprintf(stderr, "[latestmux][loan] release stream=%s frame=%lld mode=%s\n",
-                 key.stream_id.c_str(), static_cast<long long>(key.frame_id),
-                 mode ? mode : "key");
+                 key.stream_id.c_str(), static_cast<long long>(key.frame_id), mode ? mode : "key");
   }
   release_loan_entry(entry, /*by_output=*/true);
   return true;
@@ -1403,10 +1398,8 @@ void release_latest_by_stream_mux_loan_for_sample(const Sample& sample) {
       return;
     }
     const LoanKey key{s.stream_id, s.frame_id};
-    const auto found =
-        std::find_if(keys.begin(), keys.end(), [&](const LoanKey& existing) {
-          return existing == key;
-        });
+    const auto found = std::find_if(keys.begin(), keys.end(),
+                                    [&](const LoanKey& existing) { return existing == key; });
     if (found == keys.end()) {
       keys.push_back(key);
     }

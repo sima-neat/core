@@ -47,9 +47,8 @@ namespace simaai::neat {
  * `Default` preserves lossless/backpressure semantics for ordinary one-to-one edges. If multiple
  * producers connect to the same live public input, the framework promotes those edges to
  * `RealtimeLatestByStream` automatically so users do not need app-local fan-in mutex code.
- * `RealtimeLatestByStream` keeps producers non-blocking, retains only the latest frame per
- * `Sample::stream_id` (or per source edge if stream_id is empty), and schedules ready streams
- * fairly into the downstream graph.
+ * `RealtimeLatestByStream` keeps producers non-blocking, retains only the latest frame per source
+ * edge, and schedules ready streams fairly into the downstream graph.
  */
 enum class GraphLinkPolicy {
   Default = 0,
@@ -62,10 +61,6 @@ enum class GraphLinkPolicy {
 struct GraphLinkOptions {
   GraphLinkPolicy policy = GraphLinkPolicy::Default;
   int queue_depth = 16;
-  /// Optional stream id to stamp on samples crossing this link before realtime scheduling.
-  /// Useful when source plugins emit a generic/default stream id but the composed Graph fan-in
-  /// needs stable per-source identity. Empty preserves the incoming sample stream id.
-  std::string stream_id;
 };
 
 /**

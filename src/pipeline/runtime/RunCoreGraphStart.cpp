@@ -63,6 +63,20 @@ using simaai::neat::graph::StageOutMsg;
 using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
 
+std::string gst_double_quote(std::string value) {
+  std::string out;
+  out.reserve(value.size() + 2U);
+  out.push_back('"');
+  for (char c : value) {
+    if (c == '"' || c == '\\') {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
+  out.push_back('"');
+  return out;
+}
+
 std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
   return static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
@@ -162,16 +176,14 @@ void dump_decoder_plan_debug(const ExecutionGraphRuntime& execution) {
           "[DECPLAN] seg=%zu mat_index=%zu runtime_node=%lld label=%s "
           "source_like=%d needs_input=%d needs_output=%d graph_internal_output=%d "
           "type=%s decoder=%s raw_output=%d next=%s width=%d height=%d fps=%d "
-          "num_buffers=%d input_buffers=%d tuning=%s memory_opt=%d\n",
+          "num_buffers=%d\n",
           static_cast<std::size_t>(seg.id), i, static_cast<long long>(runtime_node), label.c_str(),
           seg.boundary.source_like ? 1 : 0, seg.boundary.needs_input ? 1 : 0,
           seg.boundary.needs_output ? 1 : 0, seg.boundary.graph_internal_output ? 1 : 0,
           sima_decode_type_debug_name(opt.type),
           opt.decoder_name.empty() ? "<auto>" : opt.decoder_name.c_str(), opt.raw_output ? 1 : 0,
           opt.next_element.empty() ? "<default>" : opt.next_element.c_str(), opt.dec_width,
-          opt.dec_height, opt.dec_fps, opt.num_buffers, opt.input_buffers,
-          opt.decoder_tuning.empty() ? "<element-default>" : opt.decoder_tuning.c_str(),
-          opt.memory_opt ? 1 : 0);
+          opt.dec_height, opt.dec_fps, opt.num_buffers);
     }
   }
 
@@ -192,14 +204,6 @@ struct DecoderAdmissionCandidate {
   bool fused_branch = false;
   std::size_t fused_branch_index = static_cast<std::size_t>(-1);
 };
-
-bool is_auto_decoder_tuning(const std::string& tuning) {
-  if (tuning.empty()) {
-    return true;
-  }
-  const std::string token = simaai::neat::upper_copy_ascii(tuning);
-  return token == "AUTO" || token == "DEFAULT";
-}
 
 simaai::neat::graph::NodeId
 runtime_node_for_materialized_decoder(const PipelineSegmentRuntime& runtime, std::size_t index) {
@@ -251,10 +255,6 @@ void collect_decoder_candidate_from_node(
   }
   const auto& opt = dec->options();
   if (opt.type != simaai::neat::SimaDecodeType::H264) {
-    return;
-  }
-  const bool allow_explicit_tuning = env_bool("SIMA_DECODER_ADMISSION_INCLUDE_EXPLICIT", false);
-  if (!is_auto_decoder_tuning(opt.decoder_tuning) && !allow_explicit_tuning) {
     return;
   }
   if (auto_h264_decoders) {
@@ -357,6 +357,99 @@ std::string decoder_admission_candidate_description(const ExecutionGraphRuntime&
   return oss.str();
 }
 
+struct DecoderAdmissionProperties {
+  std::string group_id;
+  int stream_index = -1;
+  std::uint64_t lease_token_hi = 0;
+  std::uint64_t lease_token_lo = 0;
+  int input_buffers = -1;
+  std::string tuning;
+  bool memory_opt = false;
+  bool zero_copy_output = false;
+};
+
+class RuntimeAdmittedSimaDecode final : public simaai::neat::Node,
+                                        public simaai::neat::OutputSpecProvider {
+public:
+  RuntimeAdmittedSimaDecode(simaai::neat::SimaDecodeOptions opt,
+                            DecoderAdmissionProperties admission)
+      : opt_(std::move(opt)), admission_(std::move(admission)), inner_(opt_) {}
+
+  std::string kind() const override {
+    return "SimaDecode";
+  }
+
+  simaai::neat::NodeCapsBehavior caps_behavior() const override {
+    return inner_.caps_behavior();
+  }
+
+  simaai::neat::MemoryContract memory_contract() const override {
+    return admission_.zero_copy_output ? simaai::neat::MemoryContract::PreferDeviceZeroCopy
+                                       : simaai::neat::MemoryContract::AllowEitherButReport;
+  }
+
+  std::string buffer_name_hint(int node_index) const override {
+    return opt_.decoder_name.empty() ? ("n" + std::to_string(node_index) + "_decoder")
+                                     : opt_.decoder_name;
+  }
+
+  std::string backend_fragment(int node_index) const override {
+    std::string fragment = inner_.backend_fragment(node_index);
+    const std::string props = admission_properties_fragment();
+    if (props.empty()) {
+      return fragment;
+    }
+    const std::size_t next = fragment.find(" ! ");
+    if (next == std::string::npos) {
+      fragment += props;
+      return fragment;
+    }
+    fragment.insert(next, props);
+    return fragment;
+  }
+
+  std::vector<std::string> element_names(int node_index) const override {
+    return inner_.element_names(node_index);
+  }
+
+  simaai::neat::OutputSpec output_spec(const simaai::neat::OutputSpec& input) const override {
+    return inner_.output_spec(input);
+  }
+
+private:
+  std::string admission_properties_fragment() const {
+    std::ostringstream ss;
+    if (admission_.zero_copy_output) {
+      ss << " zero-copy-output=true";
+    }
+    ss << " decoder-admission-required=true";
+    if (!admission_.group_id.empty()) {
+      ss << " admission-group-id=" << gst_double_quote(admission_.group_id);
+    }
+    if (admission_.stream_index >= 0) {
+      ss << " admission-stream-index=" << admission_.stream_index;
+    }
+    if (admission_.lease_token_hi != 0 || admission_.lease_token_lo != 0) {
+      ss << " admission-lease-token-hi=" << admission_.lease_token_hi;
+      ss << " admission-lease-token-lo=" << admission_.lease_token_lo;
+    }
+    if (admission_.input_buffers > 0) {
+      ss << " dec-ip-cnt=" << admission_.input_buffers;
+    }
+    if (!admission_.tuning.empty() && admission_.tuning != "default") {
+      ss << " decoder-tuning=" << admission_.tuning;
+    }
+    if (admission_.memory_opt) {
+      ss << " memory-opt=true";
+    }
+    return ss.str();
+  }
+
+  simaai::neat::SimaDecodeOptions opt_;
+  DecoderAdmissionProperties admission_;
+  simaai::neat::SimaDecode inner_;
+};
+
 void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
                                    const DecoderAdmissionCandidate& candidate,
                                    const pipeline_internal::DecoderAdmissionResult& admission,
@@ -373,27 +466,25 @@ void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
   }
 
   auto opt = candidate.options;
-  opt.admission_required = true;
-  opt.admission_group_id =
-      pipeline_internal::decoder_admission_uuid_to_string(admission.group_uuid);
-  opt.admission_stream_index = static_cast<int>(lease.stream_index);
-  opt.admission_lease_token_hi = lease.lease_token_hi;
-  opt.admission_lease_token_lo = lease.lease_token_lo;
   if (lease.resolved_output_buffers > 0) {
     opt.num_buffers = static_cast<int>(lease.resolved_output_buffers);
   }
-  if (lease.resolved_input_buffers > 0) {
-    opt.input_buffers = static_cast<int>(lease.resolved_input_buffers);
-  }
-  /*
-   * Do not write the resolved tuning back as a GStreamer property here.  The
-   * lease bind carries that decision to the decoder daemon before START_DECODER,
-   * while leaving the plugin's parser/startup gate in its normal AUTO behavior.
-   * This avoids making automatic graph admission look like a user-specified
-   * decoder-tuning override.
-   */
 
-  auto replacement = simaai::neat::nodes::SimaDecode(opt);
+  DecoderAdmissionProperties admission_props;
+  admission_props.group_id =
+      pipeline_internal::decoder_admission_uuid_to_string(admission.group_uuid);
+  admission_props.stream_index = static_cast<int>(lease.stream_index);
+  admission_props.lease_token_hi = lease.lease_token_hi;
+  admission_props.lease_token_lo = lease.lease_token_lo;
+  if (lease.resolved_input_buffers > 0) {
+    admission_props.input_buffers = static_cast<int>(lease.resolved_input_buffers);
+  }
+  admission_props.tuning = pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
+  admission_props.memory_opt = lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
+  admission_props.zero_copy_output = decoder_candidate_uses_zero_copy_output(candidate);
+
+  auto replacement =
+      std::make_shared<RuntimeAdmittedSimaDecode>(std::move(opt), std::move(admission_props));
   if (candidate.fused_branch) {
     if (!runtime.seg.fused_realtime_ingress.has_value() ||
         candidate.fused_branch_index >= runtime.seg.fused_realtime_ingress->branches.size()) {
@@ -896,11 +987,11 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         const std::size_t link_index = execution.realtime_links.size();
         realtime_link_by_target.emplace(key, link_index);
         execution.realtime_links.push_back(
-            std::make_unique<RealtimeLatestLink>(*downstream, e.link_options));
+            std::make_unique<RealtimeLatestLink>(*downstream, e.link_options, e.stream_id));
         it = realtime_link_by_target.find(key);
       } else if (it->second < execution.realtime_links.size() &&
                  execution.realtime_links[it->second]) {
-        execution.realtime_links[it->second]->add_edge_options(eidx, e.link_options);
+        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id);
       }
       outs.push_back(DownstreamTarget{DownstreamTarget::Kind::RealtimeLatestLink, it->second,
                                       e.to_port, eidx});

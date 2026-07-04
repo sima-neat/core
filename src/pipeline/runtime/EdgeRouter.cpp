@@ -62,9 +62,10 @@ int realtime_link_log_every() {
 
 } // namespace
 
-RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options)
+RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options,
+                                       std::string stream_id)
     : downstream_(downstream), options_(options) {
-  add_edge_options(downstream_.edge_index, options_);
+  add_edge_stream_id(downstream_.edge_index, stream_id);
 }
 
 RealtimeLatestLink::~RealtimeLatestLink() {
@@ -120,12 +121,12 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
   return true;
 }
 
-void RealtimeLatestLink::add_edge_options(std::size_t edge_index, const GraphLinkOptions& options) {
-  if (edge_index == invalid_edge_index() || options.stream_id.empty()) {
+void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::string& stream_id) {
+  if (edge_index == invalid_edge_index() || stream_id.empty()) {
     return;
   }
   std::lock_guard<std::mutex> lock(mu_);
-  stream_id_by_edge_[edge_index] = options.stream_id;
+  stream_id_by_edge_[edge_index] = stream_id;
 }
 
 void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error) {

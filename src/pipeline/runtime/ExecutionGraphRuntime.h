@@ -82,13 +82,13 @@ public:
     std::size_t ready = 0;
   };
 
-  RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options);
+  RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options, std::string stream_id);
   RealtimeLatestLink(const RealtimeLatestLink&) = delete;
   RealtimeLatestLink& operator=(const RealtimeLatestLink&) = delete;
   ~RealtimeLatestLink();
 
   bool offer(simaai::neat::Sample&& sample, std::size_t edge_index);
-  void add_edge_options(std::size_t edge_index, const GraphLinkOptions& options);
+  void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id);
   void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
   void close();
   void join();

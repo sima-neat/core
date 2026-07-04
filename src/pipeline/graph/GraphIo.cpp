@@ -1369,8 +1369,8 @@ void Graph::save(const std::string& path) const {
       if (edge.link_options.policy != GraphLinkPolicy::Default) {
         oss << ",\"link_policy\":\"" << link_policy_name(edge.link_options.policy) << "\","
             << "\"link_queue_depth\":" << edge.link_options.queue_depth;
-        if (!edge.link_options.stream_id.empty()) {
-          oss << ",\"link_stream_id\":\"" << json_escape(edge.link_options.stream_id) << "\"";
+        if (!edge.stream_id.empty()) {
+          oss << ",\"link_stream_id\":\"" << json_escape(edge.stream_id) << "\"";
         }
       }
       oss << "}";
@@ -1588,7 +1588,7 @@ Graph Graph::load(const std::string& path) {
       if (link_policy == "realtime_latest_by_stream") {
         edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
         edge.link_options.queue_depth = int_field(eobj, "link_queue_depth", 16);
-        edge.link_options.stream_id = string_field(eobj, "link_stream_id", "");
+        edge.stream_id = string_field(eobj, "link_stream_id", "");
       } else if (!link_policy.empty() && link_policy != "default") {
         throw_io_error(error_codes::kIoParse, "Graph::load", path,
                        "unsupported edge link_policy '" + link_policy + "'");

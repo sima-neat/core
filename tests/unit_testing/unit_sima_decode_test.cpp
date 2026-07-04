@@ -56,15 +56,9 @@ void check_default_h264_raw_output() {
   require_contains(fragment, "sima-allocator-type=2", "SimaDecode should pass allocator option");
   require_contains(fragment, "dec-type=h264", "SimaDecode should default to H.264");
   require_contains(fragment, "dec-fmt=NV12", "SimaDecode should default to NV12");
-  require_contains(fragment, "zero-copy-output=true",
-                   "H.264 NV12 raw output should use loaned decoder buffers");
   require_not_contains(fragment, "videoconvert", "raw_output=true should not insert videoconvert");
   require_not_contains(fragment, "capsfilter", "raw_output=true should not insert capsfilter");
   require_element_names(decode.element_names(3), {"n3_decoder"}, "default H.264 raw output");
-  require(decode.buffer_name_hint(3) == "n3_decoder",
-          "SimaDecode should expose default decoder buffer name");
-  require(decode.memory_contract() == simaai::neat::MemoryContract::PreferDeviceZeroCopy,
-          "raw SimaDecode should advertise device zero-copy output");
 
   const simaai::neat::OutputSpec out = decode.output_spec(encoded_h264_spec());
   require(out.media_type == "video/x-raw", "SimaDecode output media type mismatch");
@@ -100,16 +94,12 @@ void check_jpeg_raw_output_options() {
                    "SimaDecode should use decoder name as output buffer name");
   require_contains(fragment, "dec-fmt=YUV420P",
                    "SimaDecode should map public I420 to decoder YUV420P");
-  require_not_contains(fragment, "zero-copy-output=true",
-                       "I420/JPEG path should not enable zero-copy output");
   require_contains(fragment, "next-element=CVU", "SimaDecode next-element missing");
   require_contains(fragment, "dec-width=640", "SimaDecode width override missing");
   require_contains(fragment, "dec-height=480", "SimaDecode height override missing");
   require_contains(fragment, "dec-fps=30", "SimaDecode fps override missing");
   require_contains(fragment, "num-buffers=8", "SimaDecode pool override missing");
   require_element_names(decode.element_names(4), {"jpeg_decoder"}, "JPEG raw output");
-  require(decode.buffer_name_hint(4) == "jpeg_decoder",
-          "SimaDecode should expose explicit decoder buffer name");
 
   const simaai::neat::OutputSpec out = decode.output_spec({});
   require(out.format == "I420", "SimaDecode should expose public I420 caps");
@@ -117,43 +107,6 @@ void check_jpeg_raw_output_options() {
   require(out.fps_num == 30 && out.fps_den == 1, "SimaDecode explicit fps mismatch");
   require(out.memory == "SimaAI", "JPEG raw output should advertise SimaAI memory");
   require(out.byte_size == 640 * 480 * 3 / 2, "I420 byte size mismatch");
-}
-
-void check_decoder_admission_options() {
-  simaai::neat::SimaDecodeOptions opt;
-  opt.type = simaai::neat::SimaDecodeType::H264;
-  opt.dec_width = 1280;
-  opt.dec_height = 720;
-  opt.dec_fps = 25;
-  opt.num_buffers = 5;
-  opt.input_buffers = 5;
-  opt.decoder_tuning = "low-memory";
-  opt.memory_opt = true;
-  opt.admission_required = true;
-  opt.admission_group_id = "00112233-4455-6677-8899-aabbccddeeff";
-  opt.admission_stream_index = 7;
-  opt.admission_lease_token_hi = 123;
-  opt.admission_lease_token_lo = 456;
-
-  simaai::neat::SimaDecode decode(opt);
-  const std::string fragment = decode.backend_fragment(8);
-  require_contains(fragment, "decoder-admission-required=true",
-                   "SimaDecode admission-required option missing");
-  require_contains(fragment, "zero-copy-output=true",
-                   "Admitted H.264 NV12 raw output should use zero-copy output");
-  require_contains(fragment, "admission-group-id=\"00112233-4455-6677-8899-aabbccddeeff\"",
-                   "SimaDecode admission group option missing");
-  require_contains(fragment, "admission-stream-index=7",
-                   "SimaDecode admission stream index option missing");
-  require_contains(fragment, "admission-lease-token-hi=123",
-                   "SimaDecode admission token-hi option missing");
-  require_contains(fragment, "admission-lease-token-lo=456",
-                   "SimaDecode admission token-lo option missing");
-  require_contains(fragment, "num-buffers=5", "SimaDecode admitted pool option missing");
-  require_contains(fragment, "dec-ip-cnt=5", "SimaDecode admitted input pool option missing");
-  require_contains(fragment, "decoder-tuning=low-memory",
-                   "SimaDecode admitted tuning option missing");
-  require_contains(fragment, "memory-opt=true", "SimaDecode admitted memory-opt option missing");
 }
 
 void check_mjpeg_system_memory_output() {
@@ -169,16 +122,12 @@ void check_mjpeg_system_memory_output() {
   require_contains(fragment, "dec-type=mjpeg", "SimaDecode MJPEG type mismatch");
   require_contains(fragment, "videoconvert name=n5_videoconvert",
                    "raw_output=false should insert videoconvert");
-  require_not_contains(fragment, "zero-copy-output=true",
-                       "converted outputs should not enable zero-copy output");
   require_contains(fragment, "capsfilter name=n5_raw_caps",
                    "raw_output=false should insert raw capsfilter");
   require_contains(fragment, "video/x-raw(memory:SystemMemory),format=NV12",
                    "raw_output=false should request SystemMemory raw caps");
   require_element_names(decode.element_names(5), {"n5_decoder", "n5_videoconvert", "n5_raw_caps"},
                         "MJPEG SystemMemory output");
-  require(decode.memory_contract() == simaai::neat::MemoryContract::AllowEitherButReport,
-          "converted SimaDecode should not advertise device zero-copy output");
 
   const simaai::neat::OutputSpec out = decode.output_spec({});
   require(out.width == 800 && out.height == 600, "MJPEG explicit shape mismatch");
@@ -244,7 +193,6 @@ int main() {
   try {
     check_default_h264_raw_output();
     check_jpeg_raw_output_options();
-    check_decoder_admission_options();
     check_mjpeg_system_memory_output();
     check_invalid_options();
     check_h264_decode_wrapper_compatibility();

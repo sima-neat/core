@@ -177,6 +177,7 @@ struct NormalizedCompositionEdge {
   std::string from_endpoint;
   std::string to_endpoint;
   GraphLinkOptions link_options;
+  std::string stream_id;
 };
 
 struct NormalizedPublicView {
@@ -218,9 +219,6 @@ GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& 
   }
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
-  }
-  if (!b.stream_id.empty()) {
-    a.stream_id = b.stream_id;
   }
   return a;
 }
@@ -383,7 +381,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   std::unordered_set<std::string> emitted_edges;
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
-                            std::string to_endpoint, GraphLinkOptions link_options) {
+                            std::string to_endpoint, GraphLinkOptions link_options,
+                            std::string stream_id) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
     }
@@ -392,7 +391,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::string key = std::to_string(from) + ":" + std::to_string(to) + ":" +
                             std::to_string(static_cast<int>(kind)) + ":" + from_port + ":" +
-                            to_port + ":" + std::to_string(static_cast<int>(link_options.policy));
+                            to_port + ":" + std::to_string(static_cast<int>(link_options.policy)) +
+                            ":" + stream_id;
     if (!emitted_edges.insert(key).second) {
       return;
     }
@@ -403,17 +403,22 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
                                                   .to_port = std::move(to_port),
                                                   .from_endpoint = std::move(from_endpoint),
                                                   .to_endpoint = std::move(to_endpoint),
-                                                  .link_options = link_options});
+                                                  .link_options = link_options,
+                                                  .stream_id = std::move(stream_id)});
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     GraphLinkOptions, std::vector<bool>&)>
+                     GraphLinkOptions, std::string, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
-                    GraphLinkOptions link_options, std::vector<bool>& visiting) {
+                    GraphLinkOptions link_options, std::string stream_id,
+                    std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
     link_options = merge_link_options(link_options, edge.link_options);
+    if (!edge.stream_id.empty()) {
+      stream_id = edge.stream_id;
+    }
     if (!from_port.empty() && !edge.from_port.empty() && from_port != edge.from_port) {
       throw std::runtime_error(
           "compile_public_graph: boundary normalization encountered conflicting source ports");
@@ -452,7 +457,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
         to_port.clear();
       }
       add_edge(start_norm, to_norm, kind, std::move(from_port), std::move(to_port),
-               std::move(from_endpoint), std::move(to_endpoint), link_options);
+               std::move(from_endpoint), std::move(to_endpoint), link_options,
+               std::move(stream_id));
       return;
     }
 
@@ -468,7 +474,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     for (const std::size_t next_edge : outgoing[to_original]) {
       follow_edge(start_norm, next_edge, from_port, from_endpoint, to_endpoint, true, link_options,
-                  visiting);
+                  stream_id, visiting);
     }
     visiting[to_original] = false;
   };
@@ -480,7 +486,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::size_t from_norm = out.vertex_for_original[edge.from];
     std::vector<bool> visiting(n, false);
-    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, {}, visiting);
+    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, {}, {}, visiting);
   }
 
   // Pipeline-quality pass: if public composition produced a simple one-to-one connection,
@@ -1325,6 +1331,9 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
       }
       GraphLinkOptions& dst = plan->edges[edge_index].link_options;
       dst = merge_link_options(dst, edge.link_options);
+      if (!edge.stream_id.empty()) {
+        plan->edges[edge_index].stream_id = edge.stream_id;
+      }
     }
   }
 }
@@ -1379,6 +1388,7 @@ void attach_public_graph_view(const View& view,
       e.runtime_to = runtime_node_for_vertex[edge.to];
     }
     e.link_options = edge.link_options;
+    e.stream_id = edge.stream_id;
     e.runtime_edge_indices = runtime_edge_path(plan->edges, e.runtime_from, e.runtime_to);
     plan->public_edges.push_back(std::move(e));
   }
@@ -1493,8 +1503,8 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       FusedRealtimeIngressBranch branch;
       branch.edge_index = edge_index;
       branch.source_node = edge.from;
-      branch.stream_id = edge.link_options.stream_id.empty() ? ("stream" + std::to_string(ordinal))
-                                                             : edge.link_options.stream_id;
+      branch.stream_id =
+          edge.stream_id.empty() ? ("stream" + std::to_string(ordinal)) : edge.stream_id;
       branch.nodes = source.nodes;
       branch.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
       branch.output_complete = edge.spec_complete || source.output_complete;

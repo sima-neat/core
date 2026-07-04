@@ -1066,7 +1066,8 @@ fused_stage_counter_kind_for_pad(const std::string& elem_name, const std::string
 
   if (factory.find("boxdecode") != std::string::npos ||
       factory.find("objectdecode") != std::string::npos ||
-      elem.find("boxdecode") != std::string::npos || elem.find("objectdecode") != std::string::npos) {
+      elem.find("boxdecode") != std::string::npos ||
+      elem.find("objectdecode") != std::string::npos) {
     if (is_sink) {
       return FusedStageCounterKind::BoxDecodeSink;
     }
@@ -1155,15 +1156,16 @@ void print_fused_stage_counter_snapshot(const std::shared_ptr<FusedStageCounterS
       }
       highs << counts[idx].first << ':' << counts[idx].second;
     }
-    std::fprintf(stderr,
-                 "[fused-stage-counters] stage=%s total=%llu streams=%zu min=%llu max=%llu "
-                 "missing_meta=%llu unknown_stream=%llu lows=%s highs=%s\n",
-                 fused_stage_counter_kind_name(kind), static_cast<unsigned long long>(stage_total),
-                 counts.size(), static_cast<unsigned long long>(min_count),
-                 static_cast<unsigned long long>(max_count),
-                 static_cast<unsigned long long>(data.missing_meta.load(std::memory_order_relaxed)),
-                 static_cast<unsigned long long>(data.unknown_stream.load(std::memory_order_relaxed)),
-                 lows.str().c_str(), highs.str().c_str());
+    std::fprintf(
+        stderr,
+        "[fused-stage-counters] stage=%s total=%llu streams=%zu min=%llu max=%llu "
+        "missing_meta=%llu unknown_stream=%llu lows=%s highs=%s\n",
+        fused_stage_counter_kind_name(kind), static_cast<unsigned long long>(stage_total),
+        counts.size(), static_cast<unsigned long long>(min_count),
+        static_cast<unsigned long long>(max_count),
+        static_cast<unsigned long long>(data.missing_meta.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(data.unknown_stream.load(std::memory_order_relaxed)),
+        lows.str().c_str(), highs.str().c_str());
   }
   std::fflush(stderr);
 }
@@ -1213,8 +1215,7 @@ GstPadProbeReturn fused_stage_counter_probe_cb(GstPad*, GstPadProbeInfo* info, g
 
 void attach_fused_stage_counter_probe(GstPad* pad,
                                       const std::shared_ptr<FusedStageCounterState>& state,
-                                      FusedStageCounterKind stage,
-                                      const std::string& element_name,
+                                      FusedStageCounterKind stage, const std::string& element_name,
                                       const std::string& factory_name,
                                       std::optional<std::size_t> stream_index_override = {}) {
   if (!pad || !state || stage == FusedStageCounterKind::Count) {
@@ -1234,7 +1235,8 @@ void attach_fused_stage_counter_probe(GstPad* pad,
   if (env_bool("SIMA_FUSED_STAGE_COUNTERS_DEBUG", false)) {
     const char* stream = "";
     std::string stream_storage;
-    if (stream_index_override.has_value() && *stream_index_override < state->expected_streams.size()) {
+    if (stream_index_override.has_value() &&
+        *stream_index_override < state->expected_streams.size()) {
       stream_storage = state->expected_streams[*stream_index_override];
       stream = stream_storage.c_str();
     }

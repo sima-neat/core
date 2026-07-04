@@ -18,6 +18,14 @@
 #include <vector>
 
 namespace simaai::neat {
+namespace {
+
+std::string automatic_realtime_stream_id(std::size_t from, std::size_t to,
+                                         const std::string& endpoint) {
+  return "edge" + std::to_string(from) + "_to_" + std::to_string(to) + "_" + endpoint;
+}
+
+} // namespace
 
 Graph::CompositionGraph::VertexId Graph::CompositionGraph::append_vertex(NodePtr node) {
   if (!vertices.empty() && tail == kInvalid) {
@@ -106,6 +114,7 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
 
   const bool destination_is_public_output =
       dynamic_cast<const Output*>(vertices[to].get()) != nullptr;
+  std::string incoming_stream_id;
   if (!destination_is_public_output) {
     for (auto& edge : edges) {
       if (edge.kind != CompositionEdgeKind::PublicEndpoint || !edge.endpoint.has_value()) {
@@ -131,6 +140,13 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
           edge.link_options.queue_depth =
               std::max(edge.link_options.queue_depth, link_options.queue_depth);
           link_options.queue_depth = edge.link_options.queue_depth;
+          if (edge.stream_id.empty()) {
+            edge.stream_id =
+                automatic_realtime_stream_id(edge.from, edge.to, edge.endpoint->to_endpoint);
+          }
+          if (incoming_stream_id.empty()) {
+            incoming_stream_id = automatic_realtime_stream_id(from, to, to_endpoint);
+          }
           continue;
         }
         throw std::runtime_error("Graph::connect: destination endpoint '" + to_endpoint +
@@ -148,6 +164,7 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
       .endpoint = EndpointEdgeMeta{.from_endpoint = std::move(from_endpoint),
                                    .to_endpoint = std::move(to_endpoint)},
       .link_options = link_options,
+      .stream_id = std::move(incoming_stream_id),
   });
   recompute_unique_tail();
 }
