@@ -270,6 +270,7 @@ set(UNIT_TESTS
   unit_gst_helpers_test
   unit_gst_init_guard_test
   unit_gst_video_meta_test
+  unit_latest_mux_credit_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
   unit_http_mjpeg_decoded_group_test

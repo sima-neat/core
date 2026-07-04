@@ -4,6 +4,7 @@
 #include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
 
@@ -1485,11 +1486,11 @@ bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer) {
 
 std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample& sample) {
   std::vector<RealtimeFrameCredit> credits;
-  auto add_key = [&credits](const Sample& s) {
-    if (s.frame_id < 0 || s.stream_id.empty()) {
+  auto add_credit = [&credits](const LoanKey& key) {
+    if (key.frame_id < 0 || key.stream_id.empty()) {
       return;
     }
-    const RealtimeFrameCredit credit{0, s.stream_id, s.frame_id};
+    const RealtimeFrameCredit credit{key.namespace_id, key.stream_id, key.frame_id};
     const auto found =
         std::find_if(credits.begin(), credits.end(), [&](const RealtimeFrameCredit& existing) {
           return existing.namespace_id == credit.namespace_id &&
@@ -1498,6 +1499,36 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
     if (found == credits.end()) {
       credits.push_back(credit);
     }
+  };
+  auto add_tensor_key = [&](const Tensor& tensor) {
+    // Latest-by-stream mux credits are registered under the mux instance namespace stamped on
+    // GstSimaMeta. Prefer that exact key so drops/stops can release credits unambiguously when
+    // multiple muxes in the process reuse the same stream/frame ids.
+    const std::shared_ptr<void> holder = holder_from_tensor(tensor);
+    GstBuffer* buffer = holder ? buffer_from_tensor_holder(holder) : nullptr;
+    if (!buffer) {
+      return false;
+    }
+    LoanKey key;
+    const bool found = read_latest_mux_loan_key(buffer, &key);
+    gst_buffer_unref(buffer);
+    if (found) {
+      add_credit(key);
+    }
+    return found;
+  };
+  auto add_key = [&](const Sample& s) {
+    bool found_stamped_key = false;
+    if (s.tensor) {
+      found_stamped_key = add_tensor_key(*s.tensor) || found_stamped_key;
+    }
+    for (const auto& tensor : s.tensors) {
+      found_stamped_key = add_tensor_key(tensor) || found_stamped_key;
+    }
+    if (found_stamped_key || s.frame_id < 0 || s.stream_id.empty()) {
+      return;
+    }
+    add_credit(LoanKey{0, s.stream_id, s.frame_id});
   };
   auto walk = [&](auto&& self, const Sample& s) -> void {
     add_key(s);
