@@ -785,15 +785,18 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.h264_payload_type == 96
   assert encoded.mjpeg_payload_type == 26
   assert encoded.auto_caps_from_stream is True
+  assert encoded.source_fps == -1
 
   encoded.url = "rtsp://example.local/mjpeg"
   encoded.codec = pyneat.RtspCodec.MJPEG
+  encoded.source_fps = 120
   group = pyneat.groups.rtsp_encoded_input(encoded)
   assert isinstance(group, pyneat.Graph)
   backend = group.describe_backend().lower()
   assert "rtspsrc" in backend
   assert "rtpjpegdepay" in backend
   assert "jpegparse" in backend
+  assert "encoded_capsfix" in backend
   assert "rtph264depay" not in backend
 
   encoded_spec = pyneat.groups.rtsp_encoded_output_spec(encoded)
@@ -811,12 +814,20 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.dec_height == -1
   assert decoded.dec_fps == -1
   assert decoded.num_buffers == -1
+  assert decoded.source_fps == -1
+  assert decoded.use_videorate is False
+  assert decoded.video_rate_fps == -1
 
   decoded.url = "rtsp://example.local/mjpeg"
   decoded.codec = pyneat.RtspCodec.MJPEG
   decoded.dec_width = 640
   decoded.dec_height = 480
-  decoded.dec_fps = 30
+  decoded.source_fps = 30
+  decoded.use_videorate = True
+  decoded.video_rate_fps = 15
+  decoded.output_caps.width = 640
+  decoded.output_caps.height = 480
+  decoded.output_caps.fps = 15
   decoded_group = pyneat.groups.rtsp_decoded_input(decoded)
   assert isinstance(decoded_group, pyneat.Graph)
   try:
@@ -833,6 +844,9 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert "jpegparse" in decoded_backend
   assert "neatdecoder" in decoded_backend
   assert "dec-type=mjpeg" in decoded_backend
+  assert "dec-fps=30" in decoded_backend
+  assert "videorate" in decoded_backend
+  assert "framerate=15/1" in decoded_backend
 
   decoded_spec = pyneat.groups.rtsp_decoded_output_spec(decoded)
   assert decoded_spec.media_type == "video/x-raw"
@@ -861,6 +875,9 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   assert opt.dec_height == -1
   assert opt.dec_fps == -1
   assert opt.num_buffers == -1
+  assert opt.source_fps == -1
+  assert opt.use_videorate is False
+  assert opt.video_rate_fps == -1
 
   opt.url = "http://example.local/mjpeg"
   opt.timeout_seconds = 9
@@ -872,7 +889,11 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   opt.decoder_name = "mjpeg_decoder"
   opt.dec_width = 640
   opt.dec_height = 480
-  opt.dec_fps = 30
+  opt.source_fps = 30
+  opt.use_videorate = True
+  opt.video_rate_fps = 15
+  opt.output_caps.enable = True
+  opt.output_caps.fps = 15
   opt.num_buffers = 8
   group = pyneat.groups.http_mjpeg_decoded_input(opt)
   assert isinstance(group, pyneat.Graph)
@@ -888,16 +909,20 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   assert "jpegparse" in backend
   assert "neatdecoder" in backend
   assert "dec-type=mjpeg" in backend
+  assert "dec-fps=30" in backend
+  assert "videorate" in backend
+  assert "framerate=15/1" in backend
 
   spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
   assert spec.format == "NV12"
-  assert spec.width == 640
-  assert spec.height == 480
-  assert spec.memory == "SimaAI"
+  assert spec.fps_num == 15
 
+  opt.output_caps.enable = False
   opt.output_caps.width = 320
   opt.output_caps.height = 240
   opt.output_caps.fps = 15
+  opt.use_videorate = False
+  opt.video_rate_fps = -1
   disabled_caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
   assert disabled_caps_spec.width == 640
   assert disabled_caps_spec.height == 480

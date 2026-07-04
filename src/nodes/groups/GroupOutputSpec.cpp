@@ -51,6 +51,7 @@ RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptio
   out.fallback_h264_fps = opt.fallback_h264_fps;
   out.fallback_h264_width = opt.fallback_h264_width;
   out.fallback_h264_height = opt.fallback_h264_height;
+  out.source_fps = (opt.source_fps > 0) ? opt.source_fps : opt.dec_fps;
   return out;
 }
 
@@ -76,16 +77,60 @@ int h264_dec_height(const RtspDecodedInputOptions& opt) {
 }
 
 int h264_dec_fps(const RtspDecodedInputOptions& opt) {
-  return (opt.dec_fps > 0) ? opt.dec_fps
-                           : ((opt.h264_fps > 0) ? opt.h264_fps : opt.fallback_h264_fps);
+  if (opt.source_fps > 0)
+    return opt.source_fps;
+  if (opt.h264_fps > 0)
+    return opt.h264_fps;
+  if (opt.dec_fps > 0)
+    return opt.dec_fps;
+  return opt.fallback_h264_fps;
+}
+
+int mjpeg_dec_fps(const RtspDecodedInputOptions& opt) {
+  if (opt.source_fps > 0)
+    return opt.source_fps;
+  if (opt.dec_fps > 0)
+    return opt.dec_fps;
+  const bool has_caps = opt.output_caps.enable || opt.output_caps.width > 0 ||
+                        opt.output_caps.height > 0 || opt.output_caps.fps > 0;
+  return has_caps ? opt.output_caps.fps : -1;
+}
+
+int encoded_h264_fps(const RtspEncodedInputOptions& opt) {
+  if (opt.source_fps > 0)
+    return opt.source_fps;
+  if (opt.h264_fps > 0)
+    return opt.h264_fps;
+  return opt.fallback_h264_fps;
+}
+
+int decoded_tail_fps(const RtspDecodedInputOptions& opt, int source_fps) {
+  if (!opt.use_videorate)
+    return opt.output_caps.fps;
+  return (opt.video_rate_fps > 0) ? opt.video_rate_fps : source_fps;
+}
+
+int http_mjpeg_dec_fps(const HttpMjpegDecodedInputOptions& opt) {
+  if (opt.source_fps > 0)
+    return opt.source_fps;
+  return opt.dec_fps;
+}
+
+int http_mjpeg_tail_fps(const HttpMjpegDecodedInputOptions& opt, int source_fps) {
+  if (!opt.use_videorate)
+    return opt.output_caps.fps;
+  return (opt.video_rate_fps > 0) ? opt.video_rate_fps : source_fps;
 }
 
 } // namespace
 
 OutputSpec HttpMjpegDecodedInputOutputSpec(const HttpMjpegDecodedInputOptions& opt) {
   const auto& c = opt.output_caps;
-  if (c.enable) {
-    return from_caps(c.format.empty() ? "NV12" : c.format, c.width, c.height, c.fps, c.memory,
+  const int source_fps = http_mjpeg_dec_fps(opt);
+  if (c.enable || opt.use_videorate) {
+    const int fps = http_mjpeg_tail_fps(opt, source_fps);
+    const auto memory = c.enable ? c.memory : simaai::neat::CapsMemory::Any;
+    return from_caps(c.format.empty() ? "NV12" : c.format, c.width, c.height, fps, memory,
                      "HttpMjpegDecodedInput output_caps", SpecCertainty::Derived);
   }
 
@@ -98,7 +143,7 @@ OutputSpec HttpMjpegDecodedInputOutputSpec(const HttpMjpegDecodedInputOptions& o
   dec.next_element = opt.decoder_next_element;
   dec.dec_width = opt.dec_width;
   dec.dec_height = opt.dec_height;
-  dec.dec_fps = opt.dec_fps;
+  dec.dec_fps = source_fps;
   dec.num_buffers = opt.num_buffers;
   simaai::neat::SimaDecode decoder(dec);
   OutputSpec out = decoder.output_spec({});
@@ -127,13 +172,15 @@ OutputSpec RtspEncodedInputOutputSpec(const RtspEncodedInputOptions& opt) {
     out.format = "H264";
     out.width = (opt.h264_width > 0) ? opt.h264_width : opt.fallback_h264_width;
     out.height = (opt.h264_height > 0) ? opt.h264_height : opt.fallback_h264_height;
-    out.fps_num = (opt.h264_fps > 0) ? opt.h264_fps : opt.fallback_h264_fps;
+    out.fps_num = encoded_h264_fps(opt);
     out.fps_den = 1;
     out.note = "RtspEncodedInput H264 (hint)";
     break;
   case RtspCodec::MJPEG:
     out.media_type = "image/jpeg";
     out.format = "JPEG";
+    out.fps_num = opt.source_fps;
+    out.fps_den = 1;
     out.note = "RtspEncodedInput MJPEG (hint)";
     break;
   }
@@ -147,8 +194,11 @@ OutputSpec RtspEncodedInputOutputSpec(const RtspEncodedInputOptions& opt) {
 OutputSpec RtspDecodedInputOutputSpec(const RtspDecodedInputOptions& opt) {
   const auto& c = opt.output_caps;
   const bool has_caps = c.enable || c.width > 0 || c.height > 0 || c.fps > 0;
-  if (has_caps) {
-    return from_caps(c.format.empty() ? "NV12" : c.format, c.width, c.height, c.fps, c.memory,
+  const int source_fps = (opt.codec == RtspCodec::H264) ? h264_dec_fps(opt) : mjpeg_dec_fps(opt);
+  if (has_caps || opt.use_videorate) {
+    const int fps = decoded_tail_fps(opt, source_fps);
+    const auto memory = has_caps ? c.memory : simaai::neat::CapsMemory::Any;
+    return from_caps(c.format.empty() ? "NV12" : c.format, c.width, c.height, fps, memory,
                      "RtspDecodedInput output_caps", SpecCertainty::Derived);
   }
 
@@ -161,7 +211,7 @@ OutputSpec RtspDecodedInputOutputSpec(const RtspDecodedInputOptions& opt) {
   dec.next_element = opt.decoder_next_element;
   dec.dec_width = (opt.codec == RtspCodec::H264) ? h264_dec_width(opt) : opt.dec_width;
   dec.dec_height = (opt.codec == RtspCodec::H264) ? h264_dec_height(opt) : opt.dec_height;
-  dec.dec_fps = (opt.codec == RtspCodec::H264) ? h264_dec_fps(opt) : opt.dec_fps;
+  dec.dec_fps = source_fps;
   dec.num_buffers = opt.num_buffers;
   simaai::neat::SimaDecode decoder(dec);
   OutputSpec out =

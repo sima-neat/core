@@ -68,7 +68,10 @@ struct HttpMjpegDecodedInputOptions {
   /// Optional raw GStreamer fragment inserted into the group (advanced use).
   std::string extra_fragment;
 
-  bool ssl_strict = true; ///< If false, disable strict TLS certificate validation.
+  bool ssl_strict = true;     ///< If false, disable strict TLS certificate validation.
+  int source_fps = -1;        ///< Declared source stream FPS; feeds caps repair and decoder FPS.
+  bool use_videorate = false; ///< Insert `videorate` after decode to enforce an output FPS.
+  int video_rate_fps = -1;    ///< FPS requested from `videorate`; `-1` = use `source_fps`.
 };
 
 /**

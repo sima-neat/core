@@ -61,12 +61,16 @@ RUN_TEST(
       simaai::neat::nodes::groups::RtspEncodedInputOptions rtsp_encoded_opt;
       rtsp_encoded_opt.url = "rtsp://example.local/mjpeg";
       rtsp_encoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+      rtsp_encoded_opt.source_fps = 120;
       auto rtsp_encoded_group = simaai::neat::nodes::groups::RtspEncodedInput(rtsp_encoded_opt);
       auto rtsp_encoded_spec =
           simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(rtsp_encoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_decoded_opt;
       rtsp_decoded_opt.url = "rtsp://example.local/h264";
       rtsp_decoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::H264;
+      rtsp_decoded_opt.source_fps = 30;
+      rtsp_decoded_opt.use_videorate = true;
+      rtsp_decoded_opt.video_rate_fps = 15;
       auto rtsp_decoded_group = simaai::neat::nodes::groups::RtspDecodedInput(rtsp_decoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions legacy_rtsp_decoded_opt{
           "rtsp://example.local/h264",
@@ -76,6 +80,9 @@ RUN_TEST(
       };
       simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions http_mjpeg_opt;
       http_mjpeg_opt.url = "http://example.local/mjpeg";
+      http_mjpeg_opt.source_fps = 25;
+      http_mjpeg_opt.use_videorate = true;
+      http_mjpeg_opt.video_rate_fps = 10;
       auto http_mjpeg_group = simaai::neat::nodes::groups::HttpMjpegDecodedInput(http_mjpeg_opt);
       simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions legacy_http_mjpeg_opt{
           "http://example.local/mjpeg", 15, 3, true, true, "Neat", "frame"};

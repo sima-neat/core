@@ -172,6 +172,46 @@ int main() {
     require(img_spec.width == 32 && img_spec.height == 16, "image group spec shape mismatch");
     require(img_spec.byte_size == 32 * 16 * 3 / 2, "image group spec byte size mismatch");
 
+    simaai::neat::nodes::groups::RtspEncodedInputOptions rtsp_encoded;
+    rtsp_encoded.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+    rtsp_encoded.source_fps = 120;
+    simaai::neat::OutputSpec rtsp_encoded_spec =
+        simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(rtsp_encoded);
+    require(rtsp_encoded_spec.fps_num == 120,
+            "RTSP encoded source_fps should advertise encoded FPS");
+
+    simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_decoded;
+    rtsp_decoded.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
+    rtsp_decoded.dec_width = 1280;
+    rtsp_decoded.dec_height = 720;
+    rtsp_decoded.source_fps = 120;
+    simaai::neat::OutputSpec rtsp_decoded_spec =
+        simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(rtsp_decoded);
+    require(rtsp_decoded_spec.fps_num == 120,
+            "RTSP decoded source_fps should advertise decoder FPS");
+
+    rtsp_decoded.use_videorate = true;
+    rtsp_decoded.video_rate_fps = 30;
+    simaai::neat::OutputSpec rtsp_rate_spec =
+        simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(rtsp_decoded);
+    require(rtsp_rate_spec.fps_num == 30,
+            "RTSP decoded video_rate_fps should advertise rate-limited FPS");
+
+    simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions http_mjpeg;
+    http_mjpeg.dec_width = 1280;
+    http_mjpeg.dec_height = 720;
+    http_mjpeg.source_fps = 25;
+    simaai::neat::OutputSpec http_mjpeg_spec =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(http_mjpeg);
+    require(http_mjpeg_spec.fps_num == 25, "HTTP MJPEG source_fps should advertise decoder FPS");
+
+    http_mjpeg.use_videorate = true;
+    http_mjpeg.video_rate_fps = 10;
+    simaai::neat::OutputSpec http_rate_spec =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(http_mjpeg);
+    require(http_rate_spec.fps_num == 10,
+            "HTTP MJPEG video_rate_fps should advertise rate-limited FPS");
+
     std::cout << "[OK] unit_outputspec_test passed\n";
     return 0;
   } catch (const std::exception& e) {

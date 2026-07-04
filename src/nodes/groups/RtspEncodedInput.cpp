@@ -1,5 +1,6 @@
 #include "nodes/groups/RtspEncodedInput.h"
 
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/JpegParse.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/RTSPInput.h"
@@ -10,15 +11,33 @@
 
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
 namespace simaai::neat::nodes::groups {
 namespace {
 
+void require_same_fps_if_set(const char* group, int source_fps, const char* option_name,
+                             int option_fps) {
+  if (source_fps > 0 && option_fps > 0 && option_fps != source_fps) {
+    throw std::invalid_argument(std::string(group) + ": source_fps conflicts with " + option_name);
+  }
+}
+
+int h264_source_fps(const RtspEncodedInputOptions& opt) {
+  require_same_fps_if_set("RtspEncodedInput", opt.source_fps, "h264_fps", opt.h264_fps);
+  return (opt.source_fps > 0) ? opt.source_fps : opt.h264_fps;
+}
+
+int h264_fixup_fps(const RtspEncodedInputOptions& opt) {
+  const int source = h264_source_fps(opt);
+  return (source > 0) ? source : opt.fallback_h264_fps;
+}
+
 bool use_h264_auto_caps(const RtspEncodedInputOptions& opt) {
   return opt.auto_caps_from_stream &&
-         (opt.h264_fps <= 0 || opt.h264_width <= 0 || opt.h264_height <= 0);
+         (h264_source_fps(opt) <= 0 || opt.h264_width <= 0 || opt.h264_height <= 0);
 }
 
 void add_source_and_optional_queue(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
@@ -33,14 +52,15 @@ void add_source_and_optional_queue(std::vector<std::shared_ptr<simaai::neat::Nod
 void add_h264_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                    const RtspEncodedInputOptions& opt, bool insert_queue) {
   const bool auto_caps = use_h264_auto_caps(opt);
+  const int source_fps = h264_source_fps(opt);
   nodes.push_back(nodes::H264Depacketize(opt.h264_payload_type, opt.h264_parse_config_interval,
-                                         opt.h264_fps, opt.h264_width, opt.h264_height,
+                                         source_fps, opt.h264_width, opt.h264_height,
                                          /*enforce_h264_caps=*/!auto_caps));
   if (insert_queue) {
     nodes.push_back(nodes::Queue());
   }
   if (auto_caps) {
-    nodes.push_back(nodes::H264CapsFixup(opt.fallback_h264_fps, opt.fallback_h264_width,
+    nodes.push_back(nodes::H264CapsFixup(h264_fixup_fps(opt), opt.fallback_h264_width,
                                          opt.fallback_h264_height));
   }
 }
@@ -51,6 +71,11 @@ void add_mjpeg_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
   nodes.push_back(nodes::JpegParse());
   if (insert_queue) {
     nodes.push_back(nodes::Queue());
+  }
+  if (opt.source_fps > 0 || opt.auto_caps_from_stream) {
+    EncodedCapsFixupOptions fixup{"image/jpeg", opt.source_fps};
+    fixup.use_rtsp_sdp_fps = opt.auto_caps_from_stream && opt.source_fps <= 0;
+    nodes.push_back(nodes::EncodedCapsFixup(fixup));
   }
 }
 

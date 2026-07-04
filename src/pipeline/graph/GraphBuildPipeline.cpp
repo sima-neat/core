@@ -2148,7 +2148,8 @@ static bool encoded_caps_fixup_apply(GstStructure* s, EncodedCapsFixupCtx* ctx, 
       std::fprintf(stderr,
                    "[caps] %s: %s missing/invalid framerate; no fallback or RTSP SDP "
                    "framerate available. Set an explicit FPS fallback, e.g. "
-                   "RtspDecodedInput(MJPEG) dec_fps or output_caps.fps\n",
+                   "RtspEncodedInput/RtspDecodedInput/HttpMjpegDecodedInput source_fps; legacy "
+                   "decoded-input dec_fps or output_caps.fps also works where supported\n",
                    ctx->element_name.c_str(), ctx->media_type.c_str());
       ctx->missing_logged = true;
     }
