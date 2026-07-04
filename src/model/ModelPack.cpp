@@ -17,7 +17,6 @@
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
-#include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
@@ -599,87 +598,6 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
   contract->model_path = props.model_path;
   contract->batch_size = props.batch_size;
   contract->batch_sz_model = props.batch_sz_model;
-}
-
-static void
-apply_mla_elf_io_topology_to_contract(pipeline_internal::sima::MlaStaticContract* contract) {
-  if (!contract || contract->model_path.empty()) {
-    return;
-  }
-  pipeline_internal::sima::MlaElfIoTopology topology;
-  if (!pipeline_internal::sima::read_mla_elf_io_topology(contract->model_path, &topology) ||
-      !topology.valid) {
-    if (env_truthy_local("SIMA_MLA_CONTRACT_DEBUG") && !topology.error.empty()) {
-      std::fprintf(stderr, "[mla-contract] elf topology unavailable path=%s err=%s\n",
-                   contract->model_path.c_str(), topology.error.c_str());
-    }
-    return;
-  }
-
-  const auto validate_dense_symbols = [](const std::vector<std::string>& symbols,
-                                         const char* direction, const std::string& model_path) {
-    for (std::size_t i = 0; i < symbols.size(); ++i) {
-      if (symbols[i].empty()) {
-        throw std::runtime_error("ModelFragment: MLA ELF " + std::string(direction) +
-                                 " topology has a hole at index " + std::to_string(i) + " for '" +
-                                 model_path + "'");
-      }
-    }
-  };
-  const auto topology_mismatch = [&](const char* direction, std::size_t mpk_count,
-                                     std::size_t elf_count) {
-    throw std::runtime_error("ModelFragment: MLA ELF/MPK " + std::string(direction) +
-                             " topology mismatch for '" + contract->model_path +
-                             "': MPK "
-                             "normalized contract has " +
-                             std::to_string(mpk_count) + " physical " + direction +
-                             "(s), but the ELF exposes " + std::to_string(elf_count) +
-                             " physical " + direction +
-                             "(s). Recompile the model or fix the MPK/ELF pairing.");
-  };
-
-  if (!topology.ifm_symbol_names.empty()) {
-    validate_dense_symbols(topology.ifm_symbol_names, "IFM", contract->model_path);
-    if (contract->physical_inputs.size() != topology.ifm_symbol_names.size()) {
-      topology_mismatch("IFM", contract->physical_inputs.size(), topology.ifm_symbol_names.size());
-    }
-  } else if (topology.monolithic_ifm && contract->physical_inputs.size() > 1U) {
-    topology_mismatch("IFM", contract->physical_inputs.size(), 1U);
-  }
-
-  if (!topology.ofm_symbol_names.empty()) {
-    validate_dense_symbols(topology.ofm_symbol_names, "OFM", contract->model_path);
-    if (contract->dispatcher_physical_outputs.size() != topology.ofm_symbol_names.size()) {
-      topology_mismatch("OFM", contract->dispatcher_physical_outputs.size(),
-                        topology.ofm_symbol_names.size());
-    }
-    for (std::size_t i = 0; i < topology.ofm_symbol_names.size(); ++i) {
-      contract->dispatcher_physical_outputs[i].segment_name = topology.ofm_symbol_names[i];
-    }
-  } else if (topology.monolithic_ofm && contract->dispatcher_physical_outputs.size() > 1U) {
-    topology_mismatch("OFM", contract->dispatcher_physical_outputs.size(), 1U);
-  }
-
-  contract->elf_ifm_symbol_names = topology.ifm_symbol_names;
-  contract->elf_ofm_symbol_names = topology.ofm_symbol_names;
-
-  // Only override the MPK graph heuristic when the ELF gave an IFM-side
-  // topology signal. OFM-only matches are useful for output naming but should
-  // not change input coalescing behavior.
-  if (topology.monolithic_ifm || !topology.ifm_symbol_names.empty()) {
-    contract->consumer_keeps_distinct_physical_inputs =
-        pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(topology);
-  }
-
-  if (env_truthy_local("SIMA_MLA_CONTRACT_DEBUG")) {
-    std::fprintf(stderr,
-                 "[mla-contract] elf topology path=%s monolithic_ifm=%d ifm_slots=%zu "
-                 "monolithic_ofm=%d ofm_slots=%zu keep_distinct_ifm=%d\n",
-                 contract->model_path.c_str(), topology.monolithic_ifm ? 1 : 0,
-                 topology.ifm_symbol_names.size(), topology.monolithic_ofm ? 1 : 0,
-                 topology.ofm_symbol_names.size(),
-                 contract->consumer_keeps_distinct_physical_inputs ? 1 : 0);
-  }
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -2993,7 +2911,6 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
             " config or simaai__params section).");
       }
       apply_mla_runtime_properties_to_contract(*mla_props, &mla_contract);
-      apply_mla_elf_io_topology_to_contract(&mla_contract);
       if (should_publish_mla_outputs_as_packed_parent_for_boxdecode(
               stages, stage_index, mla_contract, direct_mla_to_boxdecode)) {
         (void)publish_mla_outputs_as_packed_parent(&mla_contract);

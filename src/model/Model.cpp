@@ -34,7 +34,6 @@
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
-#include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
@@ -3070,55 +3069,6 @@ internal::IngressConsumerTensorIdentity joined_tensor_identity_or_fallback(
   return identity;
 }
 
-std::string resolve_mla_executable_path_from_mpk_contract(
-    const pipeline_internal::sima::MpkContract& contract) {
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
-  if (!mla_stage || mla_stage->executable.empty()) {
-    return {};
-  }
-  const std::filesystem::path raw(mla_stage->executable);
-  if (raw.is_absolute()) {
-    return raw.string();
-  }
-
-  std::filesystem::path package_root;
-  if (!contract.mpk_json_path.empty()) {
-    package_root = std::filesystem::path(contract.mpk_json_path).parent_path();
-    if (package_root.filename() == "etc") {
-      package_root = package_root.parent_path();
-    }
-  }
-
-  std::vector<std::filesystem::path> candidates;
-  if (!package_root.empty()) {
-    candidates.push_back(package_root / "share" / raw);
-    candidates.push_back(package_root / raw);
-  }
-  candidates.push_back(raw);
-
-  for (const auto& candidate : candidates) {
-    std::error_code ec;
-    if (!candidate.empty() && std::filesystem::exists(candidate, ec) &&
-        std::filesystem::is_regular_file(candidate, ec)) {
-      return candidate.string();
-    }
-  }
-  return candidates.empty() ? raw.string() : candidates.front().string();
-}
-
-std::optional<pipeline_internal::sima::MlaElfIoTopology>
-read_mla_elf_io_topology_from_mpk_contract(const pipeline_internal::sima::MpkContract& contract) {
-  const std::string elf_path = resolve_mla_executable_path_from_mpk_contract(contract);
-  if (elf_path.empty()) {
-    return std::nullopt;
-  }
-  pipeline_internal::sima::MlaElfIoTopology topology;
-  if (!pipeline_internal::sima::read_mla_elf_io_topology(elf_path, &topology) || !topology.valid) {
-    return std::nullopt;
-  }
-  return topology;
-}
-
 std::vector<internal::IngressConsumerTensorIdentity>
 main_route_joined_input_identities(const Model& model) {
   const auto identities_from_static_contract =
@@ -3202,15 +3152,6 @@ main_route_joined_input_identities(const Model& model) {
           boundary_inputs.empty() ? nullptr : &boundary_inputs);
       mla_contract.consumer_keeps_distinct_physical_inputs =
           pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_opt);
-      if (const auto topology = read_mla_elf_io_topology_from_mpk_contract(*mpk_opt);
-          topology.has_value()) {
-        mla_contract.elf_ifm_symbol_names = topology->ifm_symbol_names;
-        mla_contract.elf_ofm_symbol_names = topology->ofm_symbol_names;
-        if (topology->monolithic_ifm || !topology->ifm_symbol_names.empty()) {
-          mla_contract.consumer_keeps_distinct_physical_inputs =
-              pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(*topology);
-        }
-      }
       if (mla_stage->input_tensors.size() == 1U && mla_contract.inputs.size() > 1U &&
           mla_contract.physical_inputs.size() > 1U) {
         // The joined ingress transport may pack multiple consumer inputs into one
@@ -3285,10 +3226,6 @@ main_route_joined_input_identities(const Model& model) {
 bool main_session_consumer_keeps_distinct_physical_inputs(const Model& model) {
   const auto& pack = internal::ModelAccess::pack(model);
   if (const auto& mpk_opt = pack.mpk_contract(); mpk_opt.has_value()) {
-    if (const auto topology = read_mla_elf_io_topology_from_mpk_contract(*mpk_opt);
-        topology.has_value() && (topology->monolithic_ifm || !topology->ifm_symbol_names.empty())) {
-      return pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(*topology);
-    }
     return pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_opt);
   }
   return false;
