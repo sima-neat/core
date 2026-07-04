@@ -100,7 +100,94 @@ InputContract input_contract_from_fused_ingress_spec(const OutputSpec& spec) {
   return out;
 }
 
+const char* payload_type_label(PayloadType payload_type) {
+  switch (payload_type) {
+  case PayloadType::Image:
+    return "Image";
+  case PayloadType::Tensor:
+    return "Tensor";
+  case PayloadType::Encoded:
+    return "Encoded";
+  case PayloadType::Auto:
+  default:
+    return "Auto";
+  }
+}
+
+bool known_memory_token(const std::string& value) {
+  return !value.empty() && value != "Unknown";
+}
+
+[[noreturn]] void throw_fused_realtime_caps_mismatch(const char* field, std::size_t lhs_branch,
+                                                     const std::string& lhs, std::size_t rhs_branch,
+                                                     const std::string& rhs) {
+  std::ostringstream ss;
+  ss << "Graph::build(fused realtime ingress): branch output caps differ for " << field
+     << " (branch " << lhs_branch << " has '" << lhs << "', branch " << rhs_branch << " has '"
+     << rhs
+     << "'). Realtime fused fan-in requires homogeneous media/format contracts; normalize each "
+        "branch before the fan-in or use explicit non-fused routing.";
+  throw std::runtime_error(ss.str());
+}
+
+void validate_fused_realtime_ingress_caps(const runtime::FusedRealtimeIngress& ingress) {
+  struct StringField {
+    const char* name = "";
+    std::string value;
+    std::size_t branch = 0;
+    bool set = false;
+    bool ignore_unknown_memory = false;
+  };
+
+  StringField media{.name = "media_type"};
+  StringField format{.name = "format"};
+  StringField dtype{.name = "dtype"};
+  StringField layout{.name = "layout"};
+  StringField memory{.name = "memory", .ignore_unknown_memory = true};
+  PayloadType payload_type = PayloadType::Auto;
+  std::size_t payload_branch = 0;
+
+  const auto update = [](StringField* field, std::size_t branch, const std::string& value) {
+    if (!field || value.empty()) {
+      return;
+    }
+    if (field->ignore_unknown_memory && !known_memory_token(value)) {
+      return;
+    }
+    if (!field->set) {
+      field->value = value;
+      field->branch = branch;
+      field->set = true;
+      return;
+    }
+    if (field->value != value) {
+      throw_fused_realtime_caps_mismatch(field->name, field->branch, field->value, branch, value);
+    }
+  };
+
+  for (std::size_t branch = 0; branch < ingress.branches.size(); ++branch) {
+    const OutputSpec& spec = ingress.branches[branch].output_spec;
+    update(&media, branch, spec.media_type);
+    update(&format, branch, spec.format);
+    update(&dtype, branch, spec.dtype);
+    update(&layout, branch, spec.layout);
+    update(&memory, branch, spec.memory);
+    if (spec.payload_type != PayloadType::Auto) {
+      if (payload_type == PayloadType::Auto) {
+        payload_type = spec.payload_type;
+        payload_branch = branch;
+      } else if (payload_type != spec.payload_type) {
+        throw_fused_realtime_caps_mismatch("payload_type", payload_branch,
+                                           payload_type_label(payload_type), branch,
+                                           payload_type_label(spec.payload_type));
+      }
+    }
+  }
+}
+
 OutputSpec fused_ingress_spec_for_contracts(const runtime::FusedRealtimeIngress& ingress) {
+  validate_fused_realtime_ingress_caps(ingress);
+
   OutputSpec merged;
   for (const auto& branch : ingress.branches) {
     const OutputSpec& spec = branch.output_spec;

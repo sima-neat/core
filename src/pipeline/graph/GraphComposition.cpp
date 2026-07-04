@@ -25,6 +25,80 @@ std::string automatic_realtime_stream_id(std::size_t from, std::size_t to,
   return "edge" + std::to_string(from) + "_to_" + std::to_string(to) + "_" + endpoint;
 }
 
+bool node_is_live_source(const Node* node) {
+  if (!node || node->input_role() != InputRole::Source) {
+    return false;
+  }
+  const std::string kind = node->kind();
+  if (kind == "RTSPInput" || kind == "CameraInput" || kind == "PCIeSrc") {
+    return true;
+  }
+  if (kind == "HttpSource") {
+    // HttpSource can be finite or live depending on its options.  Keep this
+    // private check local instead of expanding public Node ABI for a review
+    // hardening fix.
+    return node->backend_fragment(0).find("is-live=true") != std::string::npos;
+  }
+  return false;
+}
+
+bool range_is_live_source_context(const auto& graph, std::size_t start, std::size_t end) {
+  if (start >= end || end > graph.vertices.size()) {
+    return false;
+  }
+  bool has_live_source = false;
+  for (std::size_t i = start; i < end; ++i) {
+    const Node* node = graph.vertices[i].get();
+    if (!node) {
+      continue;
+    }
+    if (node->input_role() == InputRole::Push) {
+      return false;
+    }
+    has_live_source = has_live_source || node_is_live_source(node);
+  }
+  return has_live_source;
+}
+
+bool imported_range_contains(const auto& range, std::size_t vertex) {
+  constexpr std::size_t kInvalid = static_cast<std::size_t>(-1);
+  return range.start != kInvalid && range.end != kInvalid && vertex >= range.start &&
+         vertex < range.end;
+}
+
+bool vertex_is_live_source_context(const auto& graph, std::size_t vertex) {
+  if (vertex >= graph.vertices.size()) {
+    return false;
+  }
+  std::size_t best_start = static_cast<std::size_t>(-1);
+  std::size_t best_end = static_cast<std::size_t>(-1);
+  std::size_t best_size = static_cast<std::size_t>(-1);
+  const auto consider = [&](const auto& range) {
+    if (!imported_range_contains(range, vertex) || range.end < range.start) {
+      return;
+    }
+    const std::size_t size = range.end - range.start;
+    if (size < best_size) {
+      best_start = range.start;
+      best_end = range.end;
+      best_size = size;
+    }
+  };
+  for (const auto& item : graph.imported_fragments) {
+    consider(item.second);
+  }
+  for (const auto& item : graph.imported_nodes) {
+    consider(item.second);
+  }
+  for (const auto& item : graph.imported_models) {
+    consider(item.second);
+  }
+  if (best_size != static_cast<std::size_t>(-1)) {
+    return range_is_live_source_context(graph, best_start, best_end);
+  }
+  return range_is_live_source_context(graph, vertex, vertex + 1U);
+}
+
 } // namespace
 
 Graph::CompositionGraph::VertexId Graph::CompositionGraph::append_vertex(NodePtr node) {
@@ -126,9 +200,11 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
             edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
         const bool incoming_realtime =
             link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-        if (existing_realtime || incoming_realtime ||
-            (edge.link_options.policy == GraphLinkPolicy::Default &&
-             link_options.policy == GraphLinkPolicy::Default)) {
+        const bool default_live_fan_in = edge.link_options.policy == GraphLinkPolicy::Default &&
+                                         link_options.policy == GraphLinkPolicy::Default &&
+                                         vertex_is_live_source_context(*this, edge.from) &&
+                                         vertex_is_live_source_context(*this, from);
+        if (existing_realtime || incoming_realtime || default_live_fan_in) {
           /*
            * Multiple producers feeding one live input should use the framework
            * C++ fair-mux path by default.  This keeps source producers
