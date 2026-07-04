@@ -375,6 +375,23 @@ void check_decoded_source_fps_and_videorate() {
                      "H264 decoded source_fps should configure decoder FPS");
   }
 
+  auto h264_fallback = h264;
+  h264_fallback.source_fps = -1;
+  h264_fallback.h264_fps = -1;
+  h264_fallback.fallback_h264_fps = 30;
+  const Graph h264_fallback_group = simaai::neat::nodes::groups::RtspDecodedInput(h264_fallback);
+  require_contains(h264_fallback_group.describe(), "H264CapsFixup",
+                   "H264 fallback FPS should keep auto caps fixup active");
+  if (const auto backend =
+          describe_backend_if_available(h264_fallback_group, "H264 fallback FPS backend")) {
+    require_contains(*backend, "h264_capsfix",
+                     "H264 fallback FPS should be handled by H264CapsFixup");
+    require_contains(*backend, "dec-fps=30",
+                     "H264 fallback FPS should still configure decoder FPS");
+    require_not_contains(*backend, "framerate=(fraction)30/1",
+                         "H264 fallback FPS must not be promoted to hard source caps");
+  }
+
   simaai::neat::nodes::groups::RtspDecodedInputOptions mjpeg;
   mjpeg.url = "rtsp://example.local/mjpeg";
   mjpeg.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
@@ -447,6 +464,8 @@ void check_decoded_mjpeg_output_caps_decoder_fallback() {
   opt.output_caps.fps = 30;
 
   const Graph fallback_group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  require_not_contains(fallback_group.describe(), "CapsRaw",
+                       "disabled output_caps fallback should not insert tail caps");
   if (const auto backend =
           describe_backend_if_available(fallback_group, "MJPEG output-caps fallback backend")) {
     require_contains(*backend, "dec-type=mjpeg",
@@ -459,6 +478,8 @@ void check_decoded_mjpeg_output_caps_decoder_fallback() {
                      "MJPEG output-caps fallback should configure decoder fps");
     require_contains(*backend, "encoded_capsfix",
                      "MJPEG output-caps fps fallback should fix encoded caps");
+    require_not_contains(*backend, "memory:SystemMemory",
+                         "disabled output_caps fallback should not force system memory");
   }
 
   auto explicit_opt = opt;

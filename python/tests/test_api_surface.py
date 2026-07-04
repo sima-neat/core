@@ -817,6 +817,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.source_fps == -1
   assert decoded.use_videorate is False
   assert decoded.video_rate_fps == -1
+  assert decoded.output_caps.memory == pyneat.CapsMemory.Any
 
   decoded.url = "rtsp://example.local/mjpeg"
   decoded.codec = pyneat.RtspCodec.MJPEG
@@ -878,6 +879,7 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   assert opt.source_fps == -1
   assert opt.use_videorate is False
   assert opt.video_rate_fps == -1
+  assert opt.output_caps.memory == pyneat.CapsMemory.Any
 
   opt.url = "http://example.local/mjpeg"
   opt.timeout_seconds = 9
@@ -934,7 +936,11 @@ def test_http_mjpeg_decoded_input_group_is_exposed():
   assert caps_spec.width == 320
   assert caps_spec.height == 240
   assert caps_spec.fps_num == 15
-  assert caps_spec.memory == "SystemMemory"
+  assert caps_spec.memory == "SimaAI"
+
+  opt.output_caps.memory = pyneat.CapsMemory.SystemMemory
+  system_caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert system_caps_spec.memory == "SystemMemory"
 
 
 def test_mla_group_helper_present_and_accepts_model():

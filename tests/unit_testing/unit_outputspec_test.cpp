@@ -196,6 +196,28 @@ int main() {
         simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(rtsp_decoded);
     require(rtsp_rate_spec.fps_num == 30,
             "RTSP decoded video_rate_fps should advertise rate-limited FPS");
+    require(rtsp_rate_spec.width == 1280 && rtsp_rate_spec.height == 720,
+            "RTSP decoded videorate-only spec should preserve decoder shape");
+    require(rtsp_rate_spec.format == "NV12" && rtsp_rate_spec.memory == "SimaAI",
+            "RTSP decoded videorate-only spec should preserve decoder format and memory");
+    require(rtsp_rate_spec.layout == "Planar" && rtsp_rate_spec.byte_size == 1280 * 720 * 3 / 2,
+            "RTSP decoded videorate-only spec should preserve decoder layout and byte size");
+
+    auto rtsp_tail_caps = rtsp_decoded;
+    rtsp_tail_caps.output_caps.enable = true;
+    rtsp_tail_caps.output_caps.width = 640;
+    rtsp_tail_caps.output_caps.height = 360;
+    rtsp_tail_caps.output_caps.fps = 30;
+    simaai::neat::OutputSpec rtsp_tail_spec =
+        simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(rtsp_tail_caps);
+    require(rtsp_tail_spec.width == 640 && rtsp_tail_spec.height == 360,
+            "RTSP decoded output_caps should apply explicit shape");
+    require(rtsp_tail_spec.memory == "SimaAI",
+            "RTSP decoded output_caps should preserve decoder memory by default");
+    rtsp_tail_caps.output_caps.memory = simaai::neat::CapsMemory::SystemMemory;
+    rtsp_tail_spec = simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(rtsp_tail_caps);
+    require(rtsp_tail_spec.memory == "SystemMemory",
+            "RTSP decoded output_caps should force system memory when requested");
 
     simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions http_mjpeg;
     http_mjpeg.dec_width = 1280;
@@ -211,6 +233,28 @@ int main() {
         simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(http_mjpeg);
     require(http_rate_spec.fps_num == 10,
             "HTTP MJPEG video_rate_fps should advertise rate-limited FPS");
+    require(http_rate_spec.width == 1280 && http_rate_spec.height == 720,
+            "HTTP MJPEG videorate-only spec should preserve decoder shape");
+    require(http_rate_spec.format == "NV12" && http_rate_spec.memory == "SimaAI",
+            "HTTP MJPEG videorate-only spec should preserve decoder format and memory");
+    require(http_rate_spec.layout == "Planar" && http_rate_spec.byte_size == 1280 * 720 * 3 / 2,
+            "HTTP MJPEG videorate-only spec should preserve decoder layout and byte size");
+
+    auto http_tail_caps = http_mjpeg;
+    http_tail_caps.output_caps.enable = true;
+    http_tail_caps.output_caps.width = 640;
+    http_tail_caps.output_caps.height = 360;
+    http_tail_caps.output_caps.fps = 10;
+    simaai::neat::OutputSpec http_tail_spec =
+        simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(http_tail_caps);
+    require(http_tail_spec.width == 640 && http_tail_spec.height == 360,
+            "HTTP MJPEG output_caps should apply explicit shape");
+    require(http_tail_spec.memory == "SimaAI",
+            "HTTP MJPEG output_caps should preserve decoder memory by default");
+    http_tail_caps.output_caps.memory = simaai::neat::CapsMemory::SystemMemory;
+    http_tail_spec = simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec(http_tail_caps);
+    require(http_tail_spec.memory == "SystemMemory",
+            "HTTP MJPEG output_caps should force system memory when requested");
 
     std::cout << "[OK] unit_outputspec_test passed\n";
     return 0;

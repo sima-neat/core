@@ -12,8 +12,8 @@
 namespace simaai::neat::nodes::groups {
 namespace {
 
-bool caps_enabled(const RtspDecodedInputOptions::OutputCaps& c) {
-  return c.enable || c.width > 0 || c.height > 0 || c.fps > 0;
+bool tail_caps_enabled(const RtspDecodedInputOptions::OutputCaps& c) {
+  return c.enable;
 }
 
 bool use_h264_auto_caps(const RtspDecodedInputOptions& opt) {
@@ -30,7 +30,7 @@ void require_same_fps_if_set(const char* group, int source_fps, const char* opti
 }
 
 int output_caps_fps_fallback(const RtspDecodedInputOptions& opt) {
-  return caps_enabled(opt.output_caps) ? opt.output_caps.fps : -1;
+  return opt.output_caps.fps;
 }
 
 int resolve_h264_source_fps(const RtspDecodedInputOptions& opt) {
@@ -92,13 +92,13 @@ int resolve_video_rate_fps(const RtspDecodedInputOptions& opt, int source_fps) {
 }
 
 int mjpeg_dec_width(const RtspDecodedInputOptions& opt) {
-  if (opt.dec_width > 0 || opt.use_videoscale || !caps_enabled(opt.output_caps))
+  if (opt.dec_width > 0 || opt.use_videoscale)
     return opt.dec_width;
   return (opt.output_caps.width > 0) ? opt.output_caps.width : opt.dec_width;
 }
 
 int mjpeg_dec_height(const RtspDecodedInputOptions& opt) {
-  if (opt.dec_height > 0 || opt.use_videoscale || !caps_enabled(opt.output_caps))
+  if (opt.dec_height > 0 || opt.use_videoscale)
     return opt.dec_height;
   return (opt.output_caps.height > 0) ? opt.output_caps.height : opt.dec_height;
 }
@@ -124,7 +124,9 @@ RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptio
   out.fallback_h264_fps = opt.fallback_h264_fps;
   out.fallback_h264_width = opt.fallback_h264_width;
   out.fallback_h264_height = opt.fallback_h264_height;
-  out.source_fps = source_fps;
+  out.source_fps = (opt.codec == RtspCodec::H264)
+                       ? ((opt.source_fps > 0) ? opt.source_fps : opt.h264_fps)
+                       : source_fps;
   return out;
 }
 
@@ -180,11 +182,13 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
   if (opt.use_videoscale)
     graph.add(nodes::VideoScale());
 
-  if (caps_enabled(opt.output_caps) || opt.use_videorate) {
+  const bool tail_caps = tail_caps_enabled(opt.output_caps);
+  if (tail_caps || opt.use_videorate) {
     const auto& c = opt.output_caps;
-    const auto memory = caps_enabled(c) ? c.memory : simaai::neat::CapsMemory::Any;
-    const int fps = (video_rate_fps > 0) ? video_rate_fps : c.fps;
-    graph.add(nodes::CapsRaw(c.format, c.width, c.height, fps, memory));
+    const auto memory = tail_caps ? c.memory : simaai::neat::CapsMemory::Any;
+    const int fps = (video_rate_fps > 0) ? video_rate_fps : (tail_caps ? c.fps : -1);
+    graph.add(nodes::CapsRaw(tail_caps ? c.format : simaai::neat::FormatSpec{},
+                             tail_caps ? c.width : -1, tail_caps ? c.height : -1, fps, memory));
   }
 
   if (!opt.extra_fragment.empty()) {
