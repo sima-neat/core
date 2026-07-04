@@ -504,6 +504,11 @@ collect_debs_in_install_order() {
 
   # Install low-level runtime packages first, then LLiMa, then NEAT core/dev.
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib-dev_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-dev_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-tools_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-common_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'appcomplex_*.deb'
@@ -654,6 +659,11 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/sima-neat-*-Linux-dev.deb \
     "${cache_dir}"/neat-*.deb \
     "${cache_dir}"/simaai-common*.deb \
+    "${cache_dir}"/simaai-memory-lib_*.deb \
+    "${cache_dir}"/simaai-memory-lib-dev_*.deb \
+    "${cache_dir}"/libcamera_*.deb \
+    "${cache_dir}"/libcamera-dev_*.deb \
+    "${cache_dir}"/libcamera-tools_*.deb \
     "${cache_dir}"/neat-common_*.deb \
     "${cache_dir}"/neat-appcomplex_*.deb \
     "${cache_dir}"/appcomplex_*.deb \
