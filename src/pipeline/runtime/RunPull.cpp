@@ -92,7 +92,7 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
           std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now).count());
     }
 
-    auto queued = core.graph_pull_msg(node_id, wait_ms);
+    auto queued = core.graph_pull_msg_with_restore_reservation(node_id, wait_ms);
     if (!queued.has_value()) {
       const std::string graph_err = core.last_error();
       if (!graph_err.empty()) {
@@ -107,6 +107,7 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
     std::string loan_error;
     if (attach_public_holder_loan_or_error(core, queued->sample, &loan_error)) {
       out = std::move(queued->sample);
+      (void)core.graph_release_sink_restore_reservation(node_id);
       return PullStatus::Ok;
     }
 
@@ -114,7 +115,7 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
         label + ": " +
         (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
         "; release older zero-copy outputs and retry";
-    if (!core.graph_restore_sink_front(node_id, std::move(*queued))) {
+    if (!core.graph_restore_reserved_sink_front(node_id, std::move(*queued))) {
       pipeline_internal::error_util::set_pull_error(
           err, error_codes::kRuntimePull, message + " (failed to restore graph output queue)");
       return PullStatus::Error;

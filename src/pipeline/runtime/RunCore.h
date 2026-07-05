@@ -188,7 +188,12 @@ struct RunCore {
   void graph_restore_stream_id_if_needed(std::size_t index, Sample& sample);
   std::optional<RuntimeSinkQueueMsg> graph_pull_msg(simaai::neat::graph::NodeId node_id,
                                                     int timeout_ms);
+  std::optional<RuntimeSinkQueueMsg>
+  graph_pull_msg_with_restore_reservation(simaai::neat::graph::NodeId node_id, int timeout_ms);
   bool graph_restore_sink_front(simaai::neat::graph::NodeId node_id, RuntimeSinkQueueMsg&& msg);
+  bool graph_restore_reserved_sink_front(simaai::neat::graph::NodeId node_id,
+                                         RuntimeSinkQueueMsg&& msg);
+  bool graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id);
   std::optional<Sample> graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms);
 
   RunOptions opt;

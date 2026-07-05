@@ -815,9 +815,10 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
   finalize_identity_diag();
 }
 
-std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::NodeId node_id,
-                                                           int timeout_ms) {
-  ExecutionGraphRuntime& execution = graph_execution();
+std::optional<RuntimeSinkQueueMsg> graph_pull_msg_impl(RunCore& core,
+                                                       simaai::neat::graph::NodeId node_id,
+                                                       int timeout_ms, bool reserve_restore_slot) {
+  ExecutionGraphRuntime& execution = core.graph_execution();
   const bool has_timeout = (timeout_ms >= 0);
   const bool direct_sink =
       execution.direct_sink_nodes.find(node_id) != execution.direct_sink_nodes.end();
@@ -838,11 +839,13 @@ std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::
         pipe.transport.cv.wait_until(
             lock, std::chrono::steady_clock::now() + std::chrono::milliseconds(build_timeout_ms),
             [&] {
-              return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested();
+              return pipe.transport.built.load(std::memory_order_acquire) ||
+                     core.graph_stop_requested();
             });
       } else {
         pipe.transport.cv.wait(lock, [&] {
-          return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested();
+          return pipe.transport.built.load(std::memory_order_acquire) ||
+                 core.graph_stop_requested();
         });
       }
       if (!pipe.transport.built.load(std::memory_order_acquire)) {
@@ -864,7 +867,10 @@ std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::
 
   RuntimeSinkQueueMsg queued;
   const int wait_ms = has_timeout ? timeout_ms : -1;
-  if (!it->second->pop(queued, wait_ms)) {
+  const bool popped = reserve_restore_slot
+                          ? it->second->pop_with_restore_reservation(queued, wait_ms)
+                          : it->second->pop(queued, wait_ms);
+  if (!popped) {
     std::fprintf(stderr,
                  "[GRAPH] GraphRun::pull: queue pop returned empty for node %zu (timeout=%dms or "
                  "queue closed)\n",
@@ -880,6 +886,17 @@ std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::
   return queued;
 }
 
+std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::NodeId node_id,
+                                                           int timeout_ms) {
+  return graph_pull_msg_impl(*this, node_id, timeout_ms, false);
+}
+
+std::optional<RuntimeSinkQueueMsg>
+RunCore::graph_pull_msg_with_restore_reservation(simaai::neat::graph::NodeId node_id,
+                                                 int timeout_ms) {
+  return graph_pull_msg_impl(*this, node_id, timeout_ms, true);
+}
+
 bool RunCore::graph_restore_sink_front(simaai::neat::graph::NodeId node_id,
                                        RuntimeSinkQueueMsg&& msg) {
   if (!graph_execution_) {
@@ -890,6 +907,29 @@ bool RunCore::graph_restore_sink_front(simaai::neat::graph::NodeId node_id,
     return false;
   }
   return it->second->restore_front(std::move(msg));
+}
+
+bool RunCore::graph_restore_reserved_sink_front(simaai::neat::graph::NodeId node_id,
+                                                RuntimeSinkQueueMsg&& msg) {
+  if (!graph_execution_) {
+    return false;
+  }
+  auto it = graph_execution_->sinks.find(node_id);
+  if (it == graph_execution_->sinks.end() || !it->second) {
+    return false;
+  }
+  return it->second->restore_reserved_front(std::move(msg));
+}
+
+bool RunCore::graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id) {
+  if (!graph_execution_) {
+    return false;
+  }
+  auto it = graph_execution_->sinks.find(node_id);
+  if (it == graph_execution_->sinks.end() || !it->second) {
+    return false;
+  }
+  return it->second->release_restore_reservation();
 }
 
 std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms) {

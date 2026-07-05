@@ -573,7 +573,7 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
           std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
     }
 
-    auto queued = state->core->graph_pull_msg(node_, wait_ms);
+    auto queued = state->core->graph_pull_msg_with_restore_reservation(node_, wait_ms);
     if (!queued.has_value())
       return std::nullopt;
 
@@ -581,7 +581,7 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
     std::string loan_error;
     if (!state->core->attach_public_output_loan(result, &loan_error)) {
       queued->sample = std::move(result);
-      (void)state->core->graph_restore_sink_front(node_, std::move(*queued));
+      (void)state->core->graph_restore_reserved_sink_front(node_, std::move(*queued));
       if (timeout_ms == 0)
         return std::nullopt;
       if (has_deadline) {
@@ -596,6 +596,8 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
       }
       continue;
     }
+
+    (void)state->core->graph_release_sink_restore_reservation(node_);
 
     if (graph_debug_enabled()) {
       std::fprintf(stderr, "[GRAPH] output_pull node=%zu\n", static_cast<std::size_t>(node_));
