@@ -831,7 +831,7 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   if (st.current_key.has_value()) {
     const CapKey& key = *st.current_key;
     if (!has_simaai_preprocess_meta(buf) && key.width > 0 && key.height > 0 &&
-        st.src_opt.preprocess_meta.has_value()) {
+        st.src_opt.preprocess_meta.has_value() && st.src_opt.preprocess_meta->enabled) {
       if (!apply_simaai_preprocess_meta_template(buf, st.src_opt, key.width, key.height)) {
         throw std::runtime_error(
             std::string(where ? where : "InputStream::push_holder_transport") +
