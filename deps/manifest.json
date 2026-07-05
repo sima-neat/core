@@ -1,7 +1,7 @@
 {
   "internals": {
-    "branch": "codex/internals-linux-codec-service",
-    "spec": "8971d5a39c06"
+    "branch": "develop",
+    "spec": "5dc565c093f4"
   },
   "llima": {
     "policy": "snap"
