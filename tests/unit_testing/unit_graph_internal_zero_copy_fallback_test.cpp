@@ -13,6 +13,7 @@
 #include "test_utils.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/CameraInput.h"
+#include "nodes/io/HttpSource.h"
 #include "nodes/io/Input.h"
 
 #include <gst/gst.h>
@@ -312,12 +313,34 @@ RUN_TEST(
         graph.add(simaai::neat::nodes::Output(name));
         return graph;
       };
+      auto finite_http_source_with_live_text = [](const std::string& name) {
+        simaai::neat::HttpSourceOptions opt;
+        opt.location = "https://example.invalid/video?is-live=true";
+        opt.is_live = false;
+        simaai::neat::Graph graph(name);
+        graph.add(simaai::neat::nodes::HttpSource(std::move(opt)));
+        return graph;
+      };
       auto consumer = [] {
         simaai::neat::Graph graph("consumer");
         graph.add(simaai::neat::nodes::Input("image"));
         graph.add(simaai::neat::nodes::Output("detections"));
         return graph;
       };
+
+      simaai::neat::Graph finite_http_app("finite_http_fan_in");
+      auto finite_http0 = finite_http_source_with_live_text("finite_http0");
+      auto finite_http1 = finite_http_source_with_live_text("finite_http1");
+      auto finite_http_detector = consumer();
+      finite_http_app.connect(finite_http0, finite_http_detector);
+      bool finite_http_rejected = false;
+      try {
+        finite_http_app.connect(finite_http1, finite_http_detector);
+      } catch (const std::exception& e) {
+        finite_http_rejected = std::string(e.what()).find("already connected") != std::string::npos;
+      }
+      require(finite_http_rejected,
+              "finite HttpSource URLs containing is-live=true text must not auto-promote fan-in");
 
       simaai::neat::Graph mixed_policy_app("mixed_policy_live_fan_in");
       auto cam0 = live_source("cam0");

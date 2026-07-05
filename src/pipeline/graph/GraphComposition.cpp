@@ -11,6 +11,8 @@
 
 #include "GraphDetail.h"
 
+#include "nodes/io/HttpSource.h"
+
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -34,10 +36,8 @@ bool node_is_live_source(const Node* node) {
     return true;
   }
   if (kind == "HttpSource") {
-    // HttpSource can be finite or live depending on its options.  Keep this
-    // private check local instead of expanding public Node ABI for a review
-    // hardening fix.
-    return node->backend_fragment(0).find("is-live=true") != std::string::npos;
+    const auto* http = dynamic_cast<const HttpSource*>(node);
+    return http && http->options().is_live;
   }
   return false;
 }
