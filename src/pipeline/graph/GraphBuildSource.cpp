@@ -982,7 +982,45 @@ void apply_name_transform_to_fused_manifest_stage(pipeline_internal::sima::Stage
   }
 }
 
-void append_compiled_contracts(BuildResult* dst, const BuildResult& src) {
+void apply_name_transform_to_runtime_contract(CompiledRuntimeContract* contract,
+                                              const NameTransform& name_transform) {
+  if (!contract || !name_transform_enabled(name_transform)) {
+    return;
+  }
+  for (auto& binding : contract->input_bindings) {
+    binding.src_stage_id = apply_name_transform(name_transform, binding.src_stage_id);
+  }
+}
+
+void apply_name_transform_to_compiled_contract_stage(CompiledNodeContract* stage,
+                                                     const NameTransform& name_transform) {
+  if (!stage || !name_transform_enabled(name_transform)) {
+    return;
+  }
+  stage->element_name = apply_name_transform(name_transform, stage->element_name);
+  stage->logical_stage_id = apply_name_transform(name_transform, stage->logical_stage_id);
+  if (stage->processcvu) {
+    apply_name_transform_to_runtime_contract(&stage->processcvu->runtime_contract, name_transform);
+  }
+  if (stage->processmla) {
+    apply_name_transform_to_runtime_contract(&stage->processmla->runtime_contract, name_transform);
+  }
+  if (stage->boxdecode) {
+    apply_name_transform_to_runtime_contract(&stage->boxdecode->runtime_contract, name_transform);
+  }
+  if (stage->dequant) {
+    apply_name_transform_to_runtime_contract(&stage->dequant->runtime_contract, name_transform);
+  }
+  if (stage->transport) {
+    apply_name_transform_to_runtime_contract(&stage->transport->runtime_contract, name_transform);
+  }
+  for (auto& child : stage->child_stages) {
+    apply_name_transform_to_compiled_contract_stage(&child, name_transform);
+  }
+}
+
+void append_compiled_contracts(BuildResult* dst, const BuildResult& src,
+                               const NameTransform& local_name_transform) {
   if (!dst || !src.compiled_contracts) {
     return;
   }
@@ -992,9 +1030,12 @@ void append_compiled_contracts(BuildResult* dst, const BuildResult& src) {
   }
   dst->compiled_contracts->fully_renderable =
       dst->compiled_contracts->fully_renderable && src.compiled_contracts->fully_renderable;
-  dst->compiled_contracts->stages.insert(dst->compiled_contracts->stages.end(),
-                                         src.compiled_contracts->stages.begin(),
-                                         src.compiled_contracts->stages.end());
+  dst->compiled_contracts->stages.reserve(dst->compiled_contracts->stages.size() +
+                                          src.compiled_contracts->stages.size());
+  for (auto stage : src.compiled_contracts->stages) {
+    apply_name_transform_to_compiled_contract_stage(&stage, local_name_transform);
+    dst->compiled_contracts->stages.push_back(std::move(stage));
+  }
 }
 
 void append_rendered_manifest(BuildResult* dst, const BuildResult& src,
@@ -1037,7 +1078,7 @@ void append_model_source_paths(BuildResult* dst, const BuildResult& src) {
 
 void merge_fused_contract_build_result(BuildResult* dst, const BuildResult& src,
                                        const NameTransform& local_name_transform) {
-  append_compiled_contracts(dst, src);
+  append_compiled_contracts(dst, src, local_name_transform);
   append_rendered_manifest(dst, src, local_name_transform);
   append_manifest_diagnostics(dst, src);
   append_model_source_paths(dst, src);

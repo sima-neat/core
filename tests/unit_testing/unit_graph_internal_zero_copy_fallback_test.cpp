@@ -5,10 +5,14 @@
 #include "pipeline/internal/InputStream.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
+#include "pipeline/Graph.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
+#include "nodes/common/Output.h"
+#include "nodes/io/CameraInput.h"
+#include "nodes/io/Input.h"
 
 #include <gst/gst.h>
 
@@ -232,4 +236,60 @@ RUN_TEST(
               "loan release must follow exported holders and downstream transfer buffers, not "
               "extra GstSample refs");
       gst_sample_unref(external_sample_ref);
+
+      auto live_source = [](const std::string& name) {
+        simaai::neat::CameraInputOptions opt;
+        opt.buffer_name = name;
+        simaai::neat::Graph graph(name);
+        graph.add(simaai::neat::nodes::CameraInput(opt));
+        return graph;
+      };
+      auto app_sink = [](const std::string& name) {
+        simaai::neat::Graph graph(name);
+        graph.add(simaai::neat::nodes::Output(name));
+        return graph;
+      };
+      auto consumer = [] {
+        simaai::neat::Graph graph("consumer");
+        graph.add(simaai::neat::nodes::Input("image"));
+        graph.add(simaai::neat::nodes::Output("detections"));
+        return graph;
+      };
+
+      simaai::neat::Graph mixed_policy_app("mixed_policy_live_fan_in");
+      auto cam0 = live_source("cam0");
+      auto cam1 = live_source("cam1");
+      auto preview = app_sink("preview");
+      auto detector = consumer();
+      mixed_policy_app.connect(cam0, preview);
+      mixed_policy_app.connect(cam0, detector);
+      mixed_policy_app.connect(cam1, detector);
+      const auto mixed_plan =
+          simaai::neat::runtime::compile_public_graph(mixed_policy_app, simaai::neat::RunOptions{});
+      bool saw_shared_fanout_trunk = false;
+      bool saw_default_fanout_branch = false;
+      bool saw_realtime_fanout_branch = false;
+      for (const auto& edge : mixed_plan.edges) {
+        const bool from_fanout = edge.from < mixed_plan.node_labels.size() &&
+                                 mixed_plan.node_labels[edge.from].rfind("fanout", 0) == 0;
+        const bool to_fanout = edge.to < mixed_plan.node_labels.size() &&
+                               mixed_plan.node_labels[edge.to].rfind("fanout", 0) == 0;
+        if (to_fanout) {
+          saw_shared_fanout_trunk = true;
+          require(edge.link_options.policy == simaai::neat::GraphLinkPolicy::Default,
+                  "realtime fan-in policy must not attach to a shared FanOut trunk");
+        }
+        if (from_fanout && edge.link_options.policy == simaai::neat::GraphLinkPolicy::Default) {
+          saw_default_fanout_branch = true;
+        }
+        if (from_fanout &&
+            edge.link_options.policy == simaai::neat::GraphLinkPolicy::RealtimeLatestByStream) {
+          saw_realtime_fanout_branch = true;
+        }
+      }
+      require(saw_shared_fanout_trunk, "test graph should lower shared producer through FanOut");
+      require(saw_default_fanout_branch,
+              "default branch from shared FanOut should keep default policy");
+      require(saw_realtime_fanout_branch,
+              "fan-in branch from shared FanOut should keep realtime policy");
     }))

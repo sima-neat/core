@@ -1316,6 +1316,10 @@ std::vector<std::size_t> runtime_edge_path(std::span<const EdgePlan> edges, grap
   return {};
 }
 
+bool is_generated_fanout_node(const ExecutionGraphPlan& plan, graph::NodeId node) {
+  return node < plan.node_labels.size() && plan.node_labels[node].rfind("fanout", 0) == 0;
+}
+
 void apply_normalized_link_policies(const NormalizedPublicView& view,
                                     const std::vector<graph::NodeId>& runtime_node_for_vertex,
                                     ExecutionGraphPlan* plan) {
@@ -1331,7 +1335,18 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
     }
     const auto path = runtime_edge_path(plan->edges, runtime_node_for_vertex[edge.from],
                                         runtime_node_for_vertex[edge.to]);
-    for (const std::size_t edge_index : path) {
+    std::size_t first_policy_edge = 0U;
+    if (path.size() > 1U) {
+      const auto first = path.front();
+      if (first < plan->edges.size() && is_generated_fanout_node(*plan, plan->edges[first].to)) {
+        // A normalized public edge may lower through a generated FanOut when the same producer also
+        // feeds another branch.  Keep non-default realtime/drop policy on the selected branch edge;
+        // applying it to the shared producer->FanOut trunk would change unrelated default branches.
+        first_policy_edge = 1U;
+      }
+    }
+    for (std::size_t path_pos = first_policy_edge; path_pos < path.size(); ++path_pos) {
+      const std::size_t edge_index = path[path_pos];
       if (edge_index >= plan->edges.size()) {
         continue;
       }
