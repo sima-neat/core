@@ -3264,7 +3264,12 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::output_caps)
       .def_rw("extra_fragment",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::extra_fragment)
-      .def_rw("ssl_strict", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::ssl_strict);
+      .def_rw("ssl_strict", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::ssl_strict)
+      .def_rw("source_fps", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::source_fps)
+      .def_rw("use_videorate",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videorate)
+      .def_rw("video_rate_fps",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::video_rate_fps);
 
   nb::class_<simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps>(
       m, "ImageInputGroupOutputCaps")
@@ -3394,7 +3399,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("fallback_h264_width",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_width)
       .def_rw("fallback_h264_height",
-              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_height);
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_height)
+      .def_rw("source_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::source_fps);
 
   nb::class_<simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps>(
       m, "RtspDecodedInputOutputCaps")
@@ -3458,7 +3464,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_caps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::output_caps)
       .def_rw("extra_fragment",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::extra_fragment)
-      .def_rw("codec", &simaai::neat::nodes::groups::RtspDecodedInputOptions::codec);
+      .def_rw("codec", &simaai::neat::nodes::groups::RtspDecodedInputOptions::codec)
+      .def_rw("source_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::source_fps)
+      .def_rw("use_videorate", &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videorate)
+      .def_rw("video_rate_fps",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::video_rate_fps);
 
   nb::class_<simaai::neat::nodes::groups::UdpH264OutputGroupOptions>(m, "UdpH264OutputGroupOptions")
       .def(nb::init<>())

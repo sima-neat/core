@@ -67,8 +67,7 @@ struct RtspDecodedInputOptions {
     int width = -1;                      ///< Output width (-1 = leave unspecified).
     int height = -1;                     ///< Output height (-1 = leave unspecified).
     int fps = -1;                        ///< Output frame rate (-1 = leave unspecified).
-    simaai::neat::CapsMemory memory =
-        simaai::neat::CapsMemory::SystemMemory; ///< Buffer memory domain.
+    simaai::neat::CapsMemory memory = simaai::neat::CapsMemory::Any; ///< Buffer memory domain.
   } output_caps; ///< Optional explicit output caps applied at the group's tail.
 
   /// Optional raw GStreamer fragment inserted into the group (advanced use).
@@ -83,6 +82,9 @@ struct RtspDecodedInputOptions {
   int dec_height = -1;          ///< Decoded frame height override; `-1` = upstream-defined.
   int dec_fps = -1; ///< Decoded frame rate override; for MJPEG also a missing-caps FPS fallback.
   int num_buffers = -1; ///< Decoder output buffer pool size override; `-1` = element default.
+  int source_fps = -1;  ///< Declared source stream FPS; feeds source caps and decoder FPS when set.
+  bool use_videorate = false; ///< Insert `videorate` after decode to enforce an output FPS.
+  int video_rate_fps = -1; ///< FPS requested from `videorate`; `-1` = use the resolved source FPS.
 };
 
 /**

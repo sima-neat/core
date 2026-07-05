@@ -50,6 +50,8 @@ struct RtspEncodedInputOptions {
   int fallback_h264_fps = -1;        ///< Fallback H.264 FPS used if auto-caps fails.
   int fallback_h264_width = -1;      ///< Fallback H.264 width used if auto-caps fails.
   int fallback_h264_height = -1;     ///< Fallback H.264 height used if auto-caps fails.
+  int source_fps =
+      -1; ///< Declared source stream FPS for codec caps repair (-1 = use legacy FPS fields).
 };
 
 /**

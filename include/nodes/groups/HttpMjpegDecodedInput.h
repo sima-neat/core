@@ -61,14 +61,16 @@ struct HttpMjpegDecodedInputOptions {
     int width = -1;                      ///< Output width (-1 = leave unspecified).
     int height = -1;                     ///< Output height (-1 = leave unspecified).
     int fps = -1;                        ///< Output frame rate (-1 = leave unspecified).
-    simaai::neat::CapsMemory memory =
-        simaai::neat::CapsMemory::SystemMemory; ///< Buffer memory domain.
+    simaai::neat::CapsMemory memory = simaai::neat::CapsMemory::Any; ///< Buffer memory domain.
   } output_caps; ///< Optional explicit output caps applied at the group's tail.
 
   /// Optional raw GStreamer fragment inserted into the group (advanced use).
   std::string extra_fragment;
 
-  bool ssl_strict = true; ///< If false, disable strict TLS certificate validation.
+  bool ssl_strict = true;     ///< If false, disable strict TLS certificate validation.
+  int source_fps = -1;        ///< Declared source stream FPS; feeds caps repair and decoder FPS.
+  bool use_videorate = false; ///< Insert `videorate` after decode to enforce an output FPS.
+  int video_rate_fps = -1;    ///< FPS requested from `videorate`; `-1` = use `source_fps`.
 };
 
 /**
