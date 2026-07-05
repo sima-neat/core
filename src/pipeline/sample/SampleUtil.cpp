@@ -2519,9 +2519,6 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
         return false;
       }
       if (auto existing = sidecar->zero_copy_loan.lock()) {
-        if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
-          attach_zero_copy_loan_to_gst_sample_local(sample, existing);
-        }
         return true;
       }
       if (sidecar->has_producer_stream_lifetime) {
@@ -2537,11 +2534,11 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
     std::shared_ptr<void> producer_lifetime = producer_lifetime_weak.lock();
     auto loan = std::make_shared<ZeroCopyLoanToken>(gate, std::move(producer_lifetime));
     auto original_holder = tensor.storage->holder;
-    // Public-output loan credit tracks the exported Sample/holder lifetime, not the lifetime of
-    // the producer's pooled GstBuffer.  Attaching the credit token to the original GstBuffer qdata
-    // lets buffer-pool reuse pin credits after the public Sample is gone and causes false
-    // backpressure stalls.  Cross-Run pushes still attach live loans to the newly created
-    // downstream GstBuffer via attach_zero_copy_loans_to_gst_buffer().
+    // Public-output loan credit tracks the exported Tensor holder lifetime, not the lifetime of
+    // the producer's pooled GstSample/GstBuffer.  Attaching the credit token to GStreamer qdata
+    // here lets appsink/pool references pin credits after the public Sample is gone and causes
+    // false backpressure stalls.  Cross-Run pushes still discover the live loan from this
+    // TensorBuffer sidecar and attach it to the newly created downstream GstBuffer.
     tensor.storage->holder =
         std::shared_ptr<void>(original_holder.get(), [original_holder, loan](void*) mutable {
           original_holder.reset();
@@ -2553,9 +2550,6 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
       if (sidecar) {
         sidecar->zero_copy_loan = loan;
       }
-    }
-    if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
-      attach_zero_copy_loan_to_gst_sample_local(sample, loan);
     }
     acquired.push_back(std::move(loan));
     acquired_storage.push_back({tensor.storage, std::move(original_holder)});

@@ -3,10 +3,13 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
+
+#include <gst/gst.h>
 
 #include <chrono>
 #include <memory>
@@ -43,6 +46,31 @@ simaai::neat::Sample make_fake_device_gst_sample(int id) {
   sample.kind = simaai::neat::SampleKind::TensorSet;
   sample.tensors.push_back(std::move(tensor));
   return sample;
+}
+
+simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** external_ref) {
+  gst_init(nullptr, nullptr);
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 1, nullptr);
+  GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
+  gst_buffer_unref(buffer);
+  require(sample != nullptr, "test GstSample allocation should succeed");
+  if (external_ref) {
+    *external_ref = gst_sample_ref(sample);
+  }
+
+  auto storage = simaai::neat::pipeline_internal::make_gst_sample_storage(sample);
+  gst_sample_unref(sample);
+  require(storage != nullptr, "test GstSample storage should be created");
+  storage->device.type = simaai::neat::DeviceType::SIMA_CVU;
+
+  simaai::neat::Tensor tensor;
+  tensor.device.type = simaai::neat::DeviceType::SIMA_CVU;
+  tensor.storage = std::move(storage);
+
+  simaai::neat::Sample out;
+  out.kind = simaai::neat::SampleKind::TensorSet;
+  out.tensors.push_back(std::move(tensor));
+  return out;
 }
 
 } // namespace
@@ -169,4 +197,25 @@ RUN_TEST("unit_graph_internal_zero_copy_fallback_test", ([] {
                    "queued frame");
            require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 0U,
                    "successful graph retry should consume the restored queued output");
+
+           auto qdata_core = std::make_shared<simaai::neat::runtime::RunCore>();
+           qdata_core->pipeline.supports_pull = true;
+           qdata_core->holder_loan_gate =
+               std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
+           GstSample* external_sample_ref = nullptr;
+           {
+             std::lock_guard<std::mutex> lock(qdata_core->pipeline.out_mu);
+             qdata_core->pipeline.out_queue.push_back(
+                 make_device_gst_sample_with_external_ref(&external_sample_ref));
+           }
+           require(external_sample_ref != nullptr, "test should retain an external GstSample ref");
+           simaai::neat::Sample qdata_output;
+           require(qdata_core->pull(0, qdata_output, &err) == simaai::neat::PullStatus::Ok,
+                   "GstSample-backed output should acquire a loan");
+           require(qdata_core->holder_loan_gate->inflight() == 1,
+                   "GstSample-backed output should hold one loan while exported");
+           qdata_output = simaai::neat::Sample{};
+           require(qdata_core->holder_loan_gate->inflight() == 0,
+                   "loan release must follow the exported Tensor holder, not extra GstSample refs");
+           gst_sample_unref(external_sample_ref);
          }))
