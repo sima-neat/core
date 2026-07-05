@@ -393,7 +393,6 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
         field.stream_label = entry.name;
       }
     }
-    out.kind = SampleKind::TensorSet;
     return out;
   }
   if (!sample_has_tensor_list(canonical) || canonical.tensors.size() != 1U)
