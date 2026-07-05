@@ -34,7 +34,8 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
                                      std::string* err = nullptr);
 bool sample_has_transferable_zero_copy_loan(const Sample& sample, std::string* reason = nullptr);
 void attach_zero_copy_loans_to_gst_buffer(GstBuffer* buffer, const Sample& sample);
-void attach_zero_copy_loans_from_holder_to_gst_buffer(GstBuffer* buffer,
+bool holder_has_zero_copy_loans(const std::shared_ptr<void>& holder);
+bool attach_zero_copy_loans_from_holder_to_gst_buffer(GstBuffer* buffer,
                                                       const std::shared_ptr<void>& holder);
 int count_distinct_device_gstsample_holders(const Sample& sample);
 

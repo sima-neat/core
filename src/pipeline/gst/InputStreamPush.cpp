@@ -868,7 +868,28 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   }
   dump_buffer_memories(buf, where ? where : "InputStream::push_holder_transport");
   validate_holder_video_meta_or_throw(st, buf);
-  pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(buf, holder);
+  if (pipeline_internal::holder_has_zero_copy_loans(holder)) {
+    GstBuffer* loan_transfer_buf = gst_buffer_new();
+    if (!loan_transfer_buf) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                               ": failed to allocate zero-copy loan transfer buffer");
+    }
+    const GstBufferCopyFlags copy_flags =
+        static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                                        GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
+    if (!gst_buffer_copy_into(loan_transfer_buf, buf, copy_flags, 0, -1)) {
+      gst_buffer_unref(loan_transfer_buf);
+      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                               ": failed to wrap zero-copy holder buffer for transfer");
+    }
+    if (pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(loan_transfer_buf,
+                                                                            holder)) {
+      release_input_buffer(buf, "InputStream::push_holder_transport:loan_source_unref");
+      buf = loan_transfer_buf;
+    } else {
+      gst_buffer_unref(loan_transfer_buf);
+    }
+  }
 
   if (GstSample* sample = holder_as_gstsample(holder)) {
     const bool has_tensor_set =

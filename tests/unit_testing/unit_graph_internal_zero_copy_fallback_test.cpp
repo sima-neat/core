@@ -3,6 +3,7 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
@@ -75,147 +76,160 @@ simaai::neat::Sample make_device_gst_sample_with_external_ref(GstSample** extern
 
 } // namespace
 
-RUN_TEST("unit_graph_internal_zero_copy_fallback_test", ([] {
-           {
-             simaai::neat::runtime::ExecutionGraphPlan plan;
+RUN_TEST(
+    "unit_graph_internal_zero_copy_fallback_test", ([] {
+      {
+        simaai::neat::runtime::ExecutionGraphPlan plan;
 
-             simaai::neat::RunOptions run_opt;
-             run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+        simaai::neat::RunOptions run_opt;
+        run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
 
-             simaai::neat::runtime::RunCoreStartOptions start_opt;
-             start_opt.run_options = run_opt;
-             start_opt.mode = simaai::neat::RunMode::Async;
-             start_opt.graph_options =
-                 simaai::neat::runtime::graph_runtime_options_from_run_options(run_opt);
+        simaai::neat::runtime::RunCoreStartOptions start_opt;
+        start_opt.run_options = run_opt;
+        start_opt.mode = simaai::neat::RunMode::Async;
+        start_opt.graph_options =
+            simaai::neat::runtime::graph_runtime_options_from_run_options(run_opt);
 
-             auto core =
-                 simaai::neat::runtime::RunCore::start(std::move(plan), std::move(start_opt));
-             require(core != nullptr, "graph RunCore should start");
-             require(core->holder_loan_gate != nullptr,
-                     "public graph zero-copy outputs should initialize a holder loan gate");
-             require(core->holder_loan_gate->enabled(),
-                     "public graph zero-copy holder loan gate should be enabled");
-             require(!core->pipeline.stream_opt.copy_output,
-                     "public graph zero-copy stream options should preserve zero-copy output");
-             require(core->pipeline.stream_opt.public_output_contract,
-                     "public graph output loans should use public output contract semantics");
-             require(core->pipeline.stream_opt.holder_loan_credits > 0,
-                     "public graph zero-copy holder loan credits should be configured");
-             core->stop();
-           }
+        auto core = simaai::neat::runtime::RunCore::start(std::move(plan), std::move(start_opt));
+        require(core != nullptr, "graph RunCore should start");
+        require(core->holder_loan_gate != nullptr,
+                "public graph zero-copy outputs should initialize a holder loan gate");
+        require(core->holder_loan_gate->enabled(),
+                "public graph zero-copy holder loan gate should be enabled");
+        require(!core->pipeline.stream_opt.copy_output,
+                "public graph zero-copy stream options should preserve zero-copy output");
+        require(core->pipeline.stream_opt.public_output_contract,
+                "public graph output loans should use public output contract semantics");
+        require(core->pipeline.stream_opt.holder_loan_credits > 0,
+                "public graph zero-copy holder loan credits should be configured");
+        core->stop();
+      }
 
-           auto public_core = make_balanced_zero_copy_core(true);
-           require(public_core->pipeline.zero_copy_fallback_enabled,
-                   "public balanced zero-copy output should keep the copy fallback enabled");
-           require(!public_core->pipeline.copy_output_latched.load(std::memory_order_relaxed),
-                   "public zero-copy output should start unlatched");
+      auto public_core = make_balanced_zero_copy_core(true);
+      require(public_core->pipeline.zero_copy_fallback_enabled,
+              "public balanced zero-copy output should keep the copy fallback enabled");
+      require(!public_core->pipeline.copy_output_latched.load(std::memory_order_relaxed),
+              "public zero-copy output should start unlatched");
 
-           auto graph_internal_core = make_balanced_zero_copy_core(false);
-           require(!graph_internal_core->pipeline.zero_copy_fallback_enabled,
-                   "graph-internal zero-copy transport must not clone tensors back to CPU under "
-                   "queue pressure");
-           require(
-               !graph_internal_core->pipeline.copy_output_latched.load(std::memory_order_relaxed),
-               "graph-internal zero-copy transport should start unlatched");
+      auto graph_internal_core = make_balanced_zero_copy_core(false);
+      require(!graph_internal_core->pipeline.zero_copy_fallback_enabled,
+              "graph-internal zero-copy transport must not clone tensors back to CPU under "
+              "queue pressure");
+      require(!graph_internal_core->pipeline.copy_output_latched.load(std::memory_order_relaxed),
+              "graph-internal zero-copy transport should start unlatched");
 
-           auto loan_core = std::make_shared<simaai::neat::runtime::RunCore>();
-           loan_core->pipeline.supports_pull = true;
-           loan_core->holder_loan_gate =
-               std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
-           {
-             std::lock_guard<std::mutex> lock(loan_core->pipeline.out_mu);
-             loan_core->pipeline.out_queue.push_back(make_fake_device_gst_sample(1));
-             loan_core->pipeline.out_queue.push_back(make_fake_device_gst_sample(2));
-           }
+      auto loan_core = std::make_shared<simaai::neat::runtime::RunCore>();
+      loan_core->pipeline.supports_pull = true;
+      loan_core->holder_loan_gate =
+          std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
+      {
+        std::lock_guard<std::mutex> lock(loan_core->pipeline.out_mu);
+        loan_core->pipeline.out_queue.push_back(make_fake_device_gst_sample(1));
+        loan_core->pipeline.out_queue.push_back(make_fake_device_gst_sample(2));
+      }
 
-           simaai::neat::Sample first;
-           simaai::neat::PullError err;
-           require(loan_core->pull(0, first, &err) == simaai::neat::PullStatus::Ok,
-                   "first zero-copy output should acquire the only holder loan");
-           require(loan_core->holder_loan_gate->inflight() == 1,
-                   "first output should hold one loan credit");
-           require(loan_core->pipeline.out_queue.size() == 1U,
-                   "first pull should remove exactly one queued output");
+      simaai::neat::Sample first;
+      simaai::neat::PullError err;
+      require(loan_core->pull(0, first, &err) == simaai::neat::PullStatus::Ok,
+              "first zero-copy output should acquire the only holder loan");
+      require(loan_core->holder_loan_gate->inflight() == 1,
+              "first output should hold one loan credit");
+      require(loan_core->pipeline.out_queue.size() == 1U,
+              "first pull should remove exactly one queued output");
 
-           simaai::neat::Sample blocked;
-           const auto blocked_status = loan_core->pull(0, blocked, &err);
-           require(blocked_status == simaai::neat::PullStatus::Timeout,
-                   "loan exhaustion should backpressure as timeout, not consume the output");
-           require(loan_core->pipeline.out_queue.size() == 1U,
-                   "loan exhaustion must leave the queued output available for retry");
-           require(blocked.tensors.empty() && !blocked.tensor.has_value(),
-                   "failed loan acquisition must not publish an unloaned sample");
+      simaai::neat::Sample blocked;
+      const auto blocked_status = loan_core->pull(0, blocked, &err);
+      require(blocked_status == simaai::neat::PullStatus::Timeout,
+              "loan exhaustion should backpressure as timeout, not consume the output");
+      require(loan_core->pipeline.out_queue.size() == 1U,
+              "loan exhaustion must leave the queued output available for retry");
+      require(blocked.tensors.empty() && !blocked.tensor.has_value(),
+              "failed loan acquisition must not publish an unloaned sample");
 
-           first = simaai::neat::Sample{};
-           simaai::neat::Sample second;
-           require(loan_core->pull(1000, second, &err) == simaai::neat::PullStatus::Ok,
-                   "retry after releasing the older output should recover the queued frame");
-           require(loan_core->pipeline.out_queue.empty(),
-                   "successful retry should consume the preserved queued output");
+      first = simaai::neat::Sample{};
+      simaai::neat::Sample second;
+      require(loan_core->pull(1000, second, &err) == simaai::neat::PullStatus::Ok,
+              "retry after releasing the older output should recover the queued frame");
+      require(loan_core->pipeline.out_queue.empty(),
+              "successful retry should consume the preserved queued output");
 
-           constexpr simaai::neat::graph::NodeId kSinkNode = 7;
-           auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
-           graph_core->graph_execution_ =
-               std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
-           simaai::neat::runtime::Endpoint endpoint;
-           endpoint.kind = simaai::neat::runtime::Endpoint::Kind::GraphSink;
-           endpoint.node = kSinkNode;
-           graph_core->graph_execution_->plan.default_output = endpoint;
-           graph_core->graph_execution_->sinks[kSinkNode] =
-               std::make_shared<simaai::neat::runtime::GraphSinkQueue>();
-           graph_core->holder_loan_gate =
-               std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
-           graph_core->graph_execution_->sinks[kSinkNode]->push(
-               simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(3)});
-           graph_core->graph_execution_->sinks[kSinkNode]->push(
-               simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(4)});
+      constexpr simaai::neat::graph::NodeId kSinkNode = 7;
+      auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
+      graph_core->graph_execution_ =
+          std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
+      simaai::neat::runtime::Endpoint endpoint;
+      endpoint.kind = simaai::neat::runtime::Endpoint::Kind::GraphSink;
+      endpoint.node = kSinkNode;
+      graph_core->graph_execution_->plan.default_output = endpoint;
+      graph_core->graph_execution_->sinks[kSinkNode] =
+          std::make_shared<simaai::neat::runtime::GraphSinkQueue>();
+      graph_core->holder_loan_gate =
+          std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
+      graph_core->graph_execution_->sinks[kSinkNode]->push(
+          simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(3)});
+      graph_core->graph_execution_->sinks[kSinkNode]->push(
+          simaai::neat::runtime::RuntimeSinkQueueMsg{make_fake_device_gst_sample(4)});
 
-           simaai::neat::Sample graph_first;
-           require(graph_core->pull(0, graph_first, &err) == simaai::neat::PullStatus::Ok,
-                   "first graph output should acquire the only holder loan");
-           require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
-                   "first graph pull should remove exactly one queued output");
+      simaai::neat::Sample graph_first;
+      require(graph_core->pull(0, graph_first, &err) == simaai::neat::PullStatus::Ok,
+              "first graph output should acquire the only holder loan");
+      require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
+              "first graph pull should remove exactly one queued output");
 
-           simaai::neat::Sample graph_blocked;
-           const auto graph_blocked_status = graph_core->pull(0, graph_blocked, &err);
-           require(graph_blocked_status == simaai::neat::PullStatus::Timeout,
-                   "graph loan exhaustion should backpressure as timeout");
-           require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
-                   "graph loan exhaustion must restore the queued output for retry");
-           require(graph_blocked.tensors.empty() && !graph_blocked.tensor.has_value(),
-                   "graph loan exhaustion must not publish an unloaned sample");
+      simaai::neat::Sample graph_blocked;
+      const auto graph_blocked_status = graph_core->pull(0, graph_blocked, &err);
+      require(graph_blocked_status == simaai::neat::PullStatus::Timeout,
+              "graph loan exhaustion should backpressure as timeout");
+      require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 1U,
+              "graph loan exhaustion must restore the queued output for retry");
+      require(graph_blocked.tensors.empty() && !graph_blocked.tensor.has_value(),
+              "graph loan exhaustion must not publish an unloaned sample");
 
-           simaai::neat::Sample graph_second;
-           std::thread release_graph_first_after_delay([&graph_first] {
-             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-             graph_first = simaai::neat::Sample{};
-           });
-           const auto graph_waited_status = graph_core->pull(1000, graph_second, &err);
-           release_graph_first_after_delay.join();
-           require(graph_waited_status == simaai::neat::PullStatus::Ok,
-                   "graph positive-timeout pull should wait for loan release and recover the "
-                   "queued frame");
-           require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 0U,
-                   "successful graph retry should consume the restored queued output");
+      simaai::neat::Sample graph_second;
+      std::thread release_graph_first_after_delay([&graph_first] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        graph_first = simaai::neat::Sample{};
+      });
+      const auto graph_waited_status = graph_core->pull(1000, graph_second, &err);
+      release_graph_first_after_delay.join();
+      require(graph_waited_status == simaai::neat::PullStatus::Ok,
+              "graph positive-timeout pull should wait for loan release and recover the "
+              "queued frame");
+      require(graph_core->graph_execution_->sinks[kSinkNode]->size() == 0U,
+              "successful graph retry should consume the restored queued output");
 
-           auto qdata_core = std::make_shared<simaai::neat::runtime::RunCore>();
-           qdata_core->pipeline.supports_pull = true;
-           qdata_core->holder_loan_gate =
-               std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
-           GstSample* external_sample_ref = nullptr;
-           {
-             std::lock_guard<std::mutex> lock(qdata_core->pipeline.out_mu);
-             qdata_core->pipeline.out_queue.push_back(
-                 make_device_gst_sample_with_external_ref(&external_sample_ref));
-           }
-           require(external_sample_ref != nullptr, "test should retain an external GstSample ref");
-           simaai::neat::Sample qdata_output;
-           require(qdata_core->pull(0, qdata_output, &err) == simaai::neat::PullStatus::Ok,
-                   "GstSample-backed output should acquire a loan");
-           require(qdata_core->holder_loan_gate->inflight() == 1,
-                   "GstSample-backed output should hold one loan while exported");
-           qdata_output = simaai::neat::Sample{};
-           require(qdata_core->holder_loan_gate->inflight() == 0,
-                   "loan release must follow the exported Tensor holder, not extra GstSample refs");
-           gst_sample_unref(external_sample_ref);
-         }))
+      auto qdata_core = std::make_shared<simaai::neat::runtime::RunCore>();
+      qdata_core->pipeline.supports_pull = true;
+      qdata_core->holder_loan_gate =
+          std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
+      GstSample* external_sample_ref = nullptr;
+      {
+        std::lock_guard<std::mutex> lock(qdata_core->pipeline.out_mu);
+        qdata_core->pipeline.out_queue.push_back(
+            make_device_gst_sample_with_external_ref(&external_sample_ref));
+      }
+      require(external_sample_ref != nullptr, "test should retain an external GstSample ref");
+      simaai::neat::Sample qdata_output;
+      require(qdata_core->pull(0, qdata_output, &err) == simaai::neat::PullStatus::Ok,
+              "GstSample-backed output should acquire a loan");
+      require(qdata_core->holder_loan_gate->inflight() == 1,
+              "GstSample-backed output should hold one loan while exported");
+      auto qdata_holder = qdata_output.tensors.front().storage->holder;
+      require(simaai::neat::pipeline_internal::holder_has_zero_copy_loans(qdata_holder),
+              "holder-only pushes should be able to discover the live loan");
+      GstBuffer* transfer_buffer = gst_buffer_new_allocate(nullptr, 1, nullptr);
+      require(transfer_buffer != nullptr, "test transfer GstBuffer allocation should succeed");
+      require(simaai::neat::pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(
+                  transfer_buffer, qdata_holder),
+              "holder-only push should transfer the live loan to the downstream buffer");
+      qdata_output = simaai::neat::Sample{};
+      qdata_holder.reset();
+      require(qdata_core->holder_loan_gate->inflight() == 1,
+              "downstream transfer buffer should pin the loan after the exported holder is "
+              "released");
+      gst_buffer_unref(transfer_buffer);
+      require(qdata_core->holder_loan_gate->inflight() == 0,
+              "loan release must follow exported holders and downstream transfer buffers, not "
+              "extra GstSample refs");
+      gst_sample_unref(external_sample_ref);
+    }))

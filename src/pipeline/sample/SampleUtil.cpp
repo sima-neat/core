@@ -206,6 +206,7 @@ struct ZeroCopyLoanToken {
 
 struct GstBufferLoanKeepalive {
   std::vector<std::shared_ptr<void>> loans;
+  std::vector<std::weak_ptr<void>> weak_loans;
 };
 
 GQuark zero_copy_loan_quark() {
@@ -237,6 +238,28 @@ void attach_zero_copy_loan_to_mini_object_local(GstMiniObject* object,
   }
 }
 
+void attach_zero_copy_loan_weak_to_mini_object_local(GstMiniObject* object,
+                                                     const std::shared_ptr<void>& loan) {
+  if (!object || !loan) {
+    return;
+  }
+  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
+      gst_mini_object_get_qdata(object, zero_copy_loan_quark()));
+  if (!keepalive) {
+    keepalive = new GstBufferLoanKeepalive();
+    gst_mini_object_set_qdata(object, zero_copy_loan_quark(), keepalive,
+                              destroy_gst_buffer_loan_keepalive);
+  }
+  const auto duplicate = std::find_if(keepalive->weak_loans.begin(), keepalive->weak_loans.end(),
+                                      [&](const std::weak_ptr<void>& v) {
+                                        auto existing = v.lock();
+                                        return existing && existing.get() == loan.get();
+                                      });
+  if (duplicate == keepalive->weak_loans.end()) {
+    keepalive->weak_loans.push_back(loan);
+  }
+}
+
 void attach_zero_copy_loan_to_gst_buffer_local(GstBuffer* buffer,
                                                const std::shared_ptr<void>& loan) {
   attach_zero_copy_loan_to_mini_object_local(buffer ? GST_MINI_OBJECT(buffer) : nullptr, loan);
@@ -245,6 +268,11 @@ void attach_zero_copy_loan_to_gst_buffer_local(GstBuffer* buffer,
 void attach_zero_copy_loan_to_gst_sample_local(GstSample* sample,
                                                const std::shared_ptr<void>& loan) {
   attach_zero_copy_loan_to_mini_object_local(sample ? GST_MINI_OBJECT(sample) : nullptr, loan);
+}
+
+void attach_zero_copy_loan_weak_to_gst_sample_local(GstSample* sample,
+                                                    const std::shared_ptr<void>& loan) {
+  attach_zero_copy_loan_weak_to_mini_object_local(sample ? GST_MINI_OBJECT(sample) : nullptr, loan);
 }
 
 void collect_zero_copy_loans_from_mini_object(GstMiniObject* object,
@@ -266,6 +294,18 @@ void collect_zero_copy_loans_from_mini_object(GstMiniObject* object,
     });
     if (found == out->end()) {
       out->push_back(loan);
+    }
+  }
+  for (const auto& weak : keepalive->weak_loans) {
+    auto loan = weak.lock();
+    if (!loan) {
+      continue;
+    }
+    const auto found = std::find_if(out->begin(), out->end(), [&](const std::shared_ptr<void>& v) {
+      return v.get() == loan.get();
+    });
+    if (found == out->end()) {
+      out->push_back(std::move(loan));
     }
   }
 }
@@ -2519,6 +2559,9 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
         return false;
       }
       if (auto existing = sidecar->zero_copy_loan.lock()) {
+        if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
+          attach_zero_copy_loan_weak_to_gst_sample_local(sample, existing);
+        }
         return true;
       }
       if (sidecar->has_producer_stream_lifetime) {
@@ -2535,10 +2578,10 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
     auto loan = std::make_shared<ZeroCopyLoanToken>(gate, std::move(producer_lifetime));
     auto original_holder = tensor.storage->holder;
     // Public-output loan credit tracks the exported Tensor holder lifetime, not the lifetime of
-    // the producer's pooled GstSample/GstBuffer.  Attaching the credit token to GStreamer qdata
-    // here lets appsink/pool references pin credits after the public Sample is gone and causes
-    // false backpressure stalls.  Cross-Run pushes still discover the live loan from this
-    // TensorBuffer sidecar and attach it to the newly created downstream GstBuffer.
+    // the producer's pooled GstSample/GstBuffer.  A weak marker on the GstSample lets holder-only
+    // pushes discover the loan while the exported holder is alive without letting appsink/pool refs
+    // pin credits after the public Sample is gone.  Cross-Run Sample pushes still discover the live
+    // loan from this TensorBuffer sidecar and attach it to the downstream GstBuffer.
     tensor.storage->holder =
         std::shared_ptr<void>(original_holder.get(), [original_holder, loan](void*) mutable {
           original_holder.reset();
@@ -2550,6 +2593,9 @@ bool attach_zero_copy_loan_to_sample(const Sample& sample, const HolderLoanGateP
       if (sidecar) {
         sidecar->zero_copy_loan = loan;
       }
+    }
+    if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
+      attach_zero_copy_loan_weak_to_gst_sample_local(sample, loan);
     }
     acquired.push_back(std::move(loan));
     acquired_storage.push_back({tensor.storage, std::move(original_holder)});
@@ -2680,21 +2726,30 @@ void attach_zero_copy_loans_to_gst_buffer(GstBuffer* buffer, const Sample& sampl
   }
 }
 
-void attach_zero_copy_loans_from_holder_to_gst_buffer(GstBuffer* buffer,
+bool holder_has_zero_copy_loans(const std::shared_ptr<void>& holder) {
+  std::vector<std::shared_ptr<void>> loans;
+  if (GstSample* sample = gst_sample_from_holder(holder)) {
+    collect_zero_copy_loans_from_mini_object(GST_MINI_OBJECT(sample), &loans);
+  }
+  return !loans.empty();
+}
+
+bool attach_zero_copy_loans_from_holder_to_gst_buffer(GstBuffer* buffer,
                                                       const std::shared_ptr<void>& holder) {
   if (!buffer) {
-    return;
+    return false;
   }
   std::vector<std::shared_ptr<void>> loans;
   if (GstSample* sample = gst_sample_from_holder(holder)) {
     collect_zero_copy_loans_from_mini_object(GST_MINI_OBJECT(sample), &loans);
   }
   if (loans.empty()) {
-    return;
+    return false;
   }
   for (const auto& loan : loans) {
     attach_zero_copy_loan_to_gst_buffer_local(buffer, loan);
   }
+  return true;
 }
 
 void attach_holder_release_to_sample(const Sample& sample, std::function<void()> on_release) {
