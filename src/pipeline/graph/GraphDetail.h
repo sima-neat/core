@@ -276,6 +276,29 @@ std::string rewrite_fragment_names(const std::string& fragment,
 NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
                                 const NameTransform& transform);
 
+/**
+ * Records the element names a node's fragment contributes to an assembled pipeline, asserting
+ * global uniqueness.
+ *
+ * Element names must be unique across a single gst-launch string: `.<name>` pad references and
+ * name-based element lookup are otherwise ambiguous and the resulting links are undefined. On a
+ * collision this throws a structured `misconfig.pipeline_shape` SessionError naming both offending
+ * nodes. We deliberately do NOT auto-rename colliding elements: fixed names originate from MPK
+ * `stage-id`, which is the wiring source of truth, so a rewrite could corrupt model-path routing.
+ *
+ * Shared by every construction path that feeds `gst_parse_launch` (the linear `build_pipeline_full`
+ * assembly and the RTSP launch-string assembly). The caller owns @p seen and reuses it across the
+ * whole node list. Diagnostic/serialization paths (describe/save) intentionally do not call this.
+ *
+ * @param seen       Accumulated element-name -> first-emitting node index map (caller-owned).
+ * @param frag       Fragment whose element names are being registered.
+ * @param node_index Index of the node that produced @p frag (for diagnostics).
+ * @param node_kind  Kind label of that node (for diagnostics).
+ */
+void register_unique_element_names(std::unordered_map<std::string, std::size_t>& seen,
+                                   const NodeFragment& frag, std::size_t node_index,
+                                   const std::string& node_kind);
+
 // -------------------------------------------------------------------------------------
 // Build/diagnostics shared helpers
 // -------------------------------------------------------------------------------------

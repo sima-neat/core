@@ -425,10 +425,16 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
 
   const NameTransform name_transform = make_name_transform(opt_);
   std::ostringstream ss;
+  // Same global element-name uniqueness invariant the standard build path enforces: this RTSP
+  // launch string also feeds gst_parse_launch, so duplicate names would make `.<name>` pad
+  // references ambiguous.
+  std::unordered_map<std::string, std::size_t> seen_element_names;
   for (size_t i = 0; i < nodes.size(); ++i) {
     if (i)
       ss << " ! ";
     NodeFragment frag = make_node_fragment(nodes[i], static_cast<int>(i), name_transform);
+    register_unique_element_names(seen_element_names, frag, i,
+                                  nodes[i] ? nodes[i]->kind() : "<null>");
     ss << frag.fragment;
   }
   std::string launch = ss.str();

@@ -7,6 +7,8 @@
  */
 #include "pipeline/Graph.h"
 #include "GraphDetail.h"
+#include "internal/GraphBuildInternal.h"
+#include "pipeline/ErrorCodes.h"
 
 #include "gst/GstInit.h"
 #include "gst/GstParseLaunch.h"
@@ -244,6 +246,27 @@ NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
   const std::string original_fragment = node->backend_fragment(index);
   out.fragment = rewrite_fragment_names(original_fragment, mapping);
   return out;
+}
+
+void register_unique_element_names(std::unordered_map<std::string, std::size_t>& seen,
+                                   const NodeFragment& frag, std::size_t node_index,
+                                   const std::string& node_kind) {
+  for (const std::string& element_name : frag.element_names) {
+    if (element_name.empty()) {
+      continue;
+    }
+    const auto [it, inserted] = seen.emplace(element_name, node_index);
+    if (inserted) {
+      continue;
+    }
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        "InvalidPipeline: duplicate GStreamer element name '" + element_name +
+            "' produced by node " + std::to_string(node_index) + " (" + node_kind + ") and node " +
+            std::to_string(it->second) +
+            "; element names must be unique so pipeline links are unambiguous. This usually means "
+            "the same Node instance was reused or two nodes share a fixed element name.");
+  }
 }
 
 } // namespace simaai::neat
