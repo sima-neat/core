@@ -158,6 +158,29 @@ RUN_TEST(
       require(loan_core->pipeline.out_queue.empty(),
               "successful retry should consume the preserved queued output");
 
+      {
+        simaai::neat::graph::runtime::BlockingQueue<int> bounded_queue(1);
+        require(bounded_queue.try_push(1), "bounded queue should accept first item");
+        int restored_candidate = 0;
+        require(bounded_queue.pop(restored_candidate, 0),
+                "test should pop the first bounded queue item");
+        require(restored_candidate == 1, "bounded queue pop should return the first item");
+        require(bounded_queue.try_push(2),
+                "producer should be able to refill the single capacity slot after pop");
+        require(!bounded_queue.restore_front(std::move(restored_candidate)),
+                "restore_front must not grow a bounded queue past capacity");
+        require(bounded_queue.size() == 1U,
+                "failed restore_front must leave bounded queue at capacity, not above it");
+        const auto bounded_stats = bounded_queue.stats();
+        require(bounded_stats.high_watermark == 1U,
+                "failed restore_front must not raise the bounded queue high-watermark");
+        require(bounded_stats.push_timeout_count == 1U,
+                "failed restore_front should be accounted as a capacity rejection");
+        int remaining = 0;
+        require(bounded_queue.pop(remaining, 0), "bounded queue should still contain one item");
+        require(remaining == 2, "capacity-preserving restore failure should keep the live item");
+      }
+
       constexpr simaai::neat::graph::NodeId kSinkNode = 7;
       auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
       graph_core->graph_execution_ =
