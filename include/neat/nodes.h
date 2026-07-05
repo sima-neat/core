@@ -31,6 +31,7 @@
 #include "nodes/common/VideoScale.h"
 #include "nodes/common/VideoTrackSelect.h"
 #include "nodes/io/HttpSource.h"
+#include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/RTSPInput.h"

@@ -401,6 +401,7 @@ private:
     std::string to_port;
     std::optional<EndpointEdgeMeta> endpoint;
     GraphLinkOptions link_options;
+    std::string stream_id;
   };
   struct GroupMeta;
   struct NamedFragment;

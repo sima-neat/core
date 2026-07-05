@@ -44,6 +44,12 @@ inline const std::vector<std::string>& default_preprocess_meta_required_fields()
 struct ContractCompileInput {
   std::string pipeline_label;
   int node_index = 0;
+  // Optional render-time node indices for pipelines whose launch fragments are
+  // materialized with non-local indices (for example fused branches embedded
+  // after a shared consumer segment). When set, each entry maps the logical
+  // node position in the compile list to the actual GStreamer node index used
+  // to render element names.
+  std::vector<int> node_indices;
   InputContractFacts ingress;
   const CompiledNodeContract* immediate_upstream = nullptr;
   bool strict = true;

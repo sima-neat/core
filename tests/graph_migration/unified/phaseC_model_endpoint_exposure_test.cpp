@@ -438,8 +438,12 @@ RUN_TEST("graph_migration_phaseC_model_endpoint_exposure_test", [] {
     duplicate_app.connect(duplicate_left_b, model);
   } catch (const std::exception& e) {
     threw = true;
-    require_contains(std::string(e.what()), "already connected",
+    require_contains(std::string(e.what()), "image_l",
                      "duplicate model input diagnostic should mention endpoint occupancy");
+    require_contains(std::string(e.what()), "already connected",
+                     "duplicate model input diagnostic should fail at connect-time");
+    require_contains(std::string(e.what()), "explicit Combine graph",
+                     "duplicate model input diagnostic should guide explicit fan-in");
   }
   require(threw, "same model input endpoint should not accept two direct sources");
 });

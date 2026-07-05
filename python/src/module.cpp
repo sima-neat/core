@@ -41,6 +41,7 @@
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
+#include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
@@ -3181,6 +3182,35 @@ NB_MODULE(_pyneat_core, m) {
       .def_static("every_frame", &simaai::neat::OutputOptions::EveryFrame, "max_buffers"_a = 30)
       .def_static("clocked", &simaai::neat::OutputOptions::Clocked, "max_buffers"_a = 1);
 
+  nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
+      .def(nb::init<>())
+      .def_prop_rw(
+          "camera_name",
+          [](const simaai::neat::CameraInputOptions& opt) -> nb::object {
+            if (!opt.camera_name.has_value()) {
+              return nb::none();
+            }
+            return nb::str(opt.camera_name->c_str(), opt.camera_name->size());
+          },
+          [](simaai::neat::CameraInputOptions& opt, nb::handle camera_name) {
+            if (camera_name.is_none()) {
+              opt.camera_name = std::nullopt;
+              return;
+            }
+            opt.camera_name = nb::cast<std::string>(camera_name);
+          },
+          nb::for_setter(nb::arg("camera_name").none()))
+      .def_rw("width", &simaai::neat::CameraInputOptions::width)
+      .def_rw("height", &simaai::neat::CameraInputOptions::height)
+      .def_rw("framerate_num", &simaai::neat::CameraInputOptions::framerate_num)
+      .def_rw("framerate_den", &simaai::neat::CameraInputOptions::framerate_den)
+      .def_rw("format", &simaai::neat::CameraInputOptions::format)
+      .def_rw("buffer_name", &simaai::neat::CameraInputOptions::buffer_name)
+      .def_rw("insert_queue", &simaai::neat::CameraInputOptions::insert_queue)
+      .def_rw("leaky_queue", &simaai::neat::CameraInputOptions::leaky_queue)
+      .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
+      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
+
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
@@ -3814,6 +3844,8 @@ NB_MODULE(_pyneat_core, m) {
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(std::string, simaai::neat::InputOptions)>(
           &simaai::neat::nodes::Input),
       "name"_a, "options"_a = simaai::neat::InputOptions{});
+  nodes_mod.def("camera_input", &simaai::neat::nodes::CameraInput,
+                "options"_a = simaai::neat::CameraInputOptions{});
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),

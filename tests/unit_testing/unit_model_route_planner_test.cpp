@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -431,6 +432,198 @@ sima_test::ModelArchiveFixture make_multi_ingress_cast_join_fixture(const std::s
                                                     });
 }
 
+enum class SingleMlaPostFixtureKind { None, Cast, Detess, Dequant };
+
+sima_test::ModelArchiveFixture
+make_single_mla_public_route_fixture(const std::string& tag,
+                                     const SingleMlaPostFixtureKind post_kind) {
+  const bool dequant = post_kind == SingleMlaPostFixtureKind::Dequant;
+  const bool detess = post_kind == SingleMlaPostFixtureKind::Detess;
+  const std::string mla_output_dtype = dequant ? "int8" : "bfloat16";
+  const std::string mla_output_shape = detess ? "[1, 16]" : "[1, 2, 2, 4]";
+  const int mla_output_size = dequant ? 16 : 32;
+  const std::string mla_output_layout = detess ? "tessellated" : "normal";
+
+  std::ostringstream plugins;
+  plugins << R"json(
+    {
+      "name": "MLA_0",
+      "sequence": 1,
+      "processor": "MLA",
+      "config_params": {
+        "desired_batch_size": 1,
+        "actual_batch_size": 1,
+        "number_of_quads_to_user": 1,
+        "input_types": [{ "scalar": "bfloat16", "shape": [1, 2, 2, 4] }],
+        "output_types": [{ "scalar": ")json"
+          << mla_output_dtype << R"json(", "shape": )json" << mla_output_shape << R"json( }]
+      },
+      "input_nodes": [
+        { "name": "x", "type": "buffer", "size": 32, "dtype": "bfloat16", "shape": [1, 2, 2, 4] }
+      ],
+      "output_nodes": [
+        { "name": "MLA_0/y", "type": "buffer", "size": )json"
+          << mla_output_size << R"json(, "dtype": ")json" << mla_output_dtype
+          << R"json(", "shape": )json" << mla_output_shape << R"json(, "layout": ")json"
+          << mla_output_layout << R"json(" }
+      ],
+      "type": "sgpProcess",
+      "resources": { "executable": "placeholder.elf" }
+    })json";
+
+  switch (post_kind) {
+  case SingleMlaPostFixtureKind::None:
+    break;
+  case SingleMlaPostFixtureKind::Cast:
+    plugins << R"json(,
+    {
+      "name": "cast_0",
+      "sequence": 2,
+      "processor": "EV74",
+      "config_params": {
+        "kernel": "cast",
+        "params": {
+          "input_shapes": [[1, 2, 2, 4]],
+          "output_shapes": [[1, 2, 2, 4]],
+          "out_dtype": "float32"
+        }
+      },
+      "input_nodes": [
+        { "name": "MLA_0/y", "type": "buffer", "size": 32, "dtype": "bfloat16", "shape": [1, 2, 2, 4] }
+      ],
+      "output_nodes": [
+        { "name": "cast_0/y", "type": "buffer", "size": 64, "dtype": "float32", "shape": [1, 2, 2, 4] }
+      ],
+      "type": "sgpProcess"
+    })json";
+    break;
+  case SingleMlaPostFixtureKind::Detess:
+    plugins << R"json(,
+    {
+      "name": "detess_0",
+      "sequence": 2,
+      "processor": "EV74",
+      "config_params": {
+        "kernel": "detessellation_transform",
+        "params": {
+          "input_shapes": [[1, 16]],
+          "output_shapes": [[1, 2, 2, 4]],
+          "slice_shape": [1, 16],
+          "frame_type": "bfloat16",
+          "frame_shape": [1, 2, 2, 4]
+        }
+      },
+      "input_nodes": [
+        { "name": "MLA_0/y", "type": "buffer", "size": 32, "dtype": "bfloat16", "shape": [1, 16] }
+      ],
+      "output_nodes": [
+        { "name": "detess_0/y", "type": "buffer", "size": 32, "dtype": "bfloat16", "shape": [1, 2, 2, 4] }
+      ],
+      "type": "sgpProcess"
+    })json";
+    break;
+  case SingleMlaPostFixtureKind::Dequant:
+    plugins << R"json(,
+    {
+      "name": "dequant_0",
+      "sequence": 2,
+      "processor": "EV74",
+      "config_params": {
+        "kernel": "dequantization_transform",
+        "params": {
+          "channel_params": [[1.0, 0]],
+          "input_data_type": "int8",
+          "input_shapes": [[1, 2, 2, 4]],
+          "output_shapes": [[1, 2, 2, 4]]
+        }
+      },
+      "input_nodes": [
+        { "name": "MLA_0/y", "type": "buffer", "size": 16, "dtype": "int8", "shape": [1, 2, 2, 4] }
+      ],
+      "output_nodes": [
+        { "name": "dequant_0/y", "type": "buffer", "size": 64, "dtype": "float32", "shape": [1, 2, 2, 4] }
+      ],
+      "type": "sgpProcess"
+    })json";
+    break;
+  }
+
+  std::ostringstream mpk;
+  mpk << R"json({
+  "name": ")json"
+      << tag << R"json(",
+  "model_path": "single_mla_public_route.onnx",
+  "model_sdk_version": "2.1.0",
+  "sequence": 1,
+  "input_nodes": [
+    { "name": "x", "type": "buffer", "size": 32, "dtype": "bfloat16", "shape": [1, 2, 2, 4] }
+  ],
+  "plugins": [)json"
+      << plugins.str() << R"json(
+  ]
+})json";
+
+  return sima_test::make_model_archive_fixture(
+      tag,
+      {
+          {"etc/single_mla_public_route_mpk.json", mpk.str()},
+          {"etc/pipeline_sequence.json",
+           R"json({
+  "pipelines": [{
+    "sequence": [
+      {
+        "sequence_id": 1,
+        "name": "MLA_0",
+        "pluginId": "processmla",
+        "configPath": "0_process_mla.json",
+        "processor": "MLA",
+        "kernel": "infer",
+        "input": "x"
+      }
+    ]
+  }]
+})json"},
+          {"etc/0_process_mla.json",
+           R"json({
+  "node_name": "MLA_0",
+  "input_buffers": [{"name": "x"}],
+  "input_format": ["EV81_BFLOAT16"],
+  "data_type": ["EV81_BFLOAT16"],
+  "input_width": [2],
+  "input_height": [2],
+  "input_depth": [4],
+  "output_width": [2],
+  "output_height": [2],
+  "output_depth": [4]
+})json"},
+      },
+      true);
+}
+
+struct RoutePlannerFixtureResult {
+  simaai::neat::internal::RouteCapability capability;
+  simaai::neat::internal::SessionRoutePlan route_plan;
+};
+
+RoutePlannerFixtureResult route_plan_for_fixture(const sima_test::ModelArchiveFixture& fixture) {
+  using namespace simaai::neat;
+  using namespace simaai::neat::internal;
+
+  Model::Options opt;
+  opt.preprocess.kind = InputKind::Tensor;
+  opt.preprocess.enable = AutoFlag::On;
+  Model model(fixture.tar_path, opt);
+
+  const auto& pack = ModelAccess::pack(model);
+  const PreprocessCapabilities capabilities = inspect_preprocess_capabilities(pack);
+  const PreprocessPlannerResult preprocess_plan = plan_preprocess(opt, capabilities);
+  RoutePlannerFixtureResult out;
+  out.capability = extract_route_capability(pack, preprocess_plan);
+  const ModelSemantics semantics = build_model_semantics(pack);
+  out.route_plan = build_route_plan(opt, semantics, &out.capability, &pack);
+  return out;
+}
+
 std::filesystem::path core_root() {
   return sima_test::test_source_root();
 }
@@ -643,6 +836,114 @@ RUN_TEST(
         require(route_plan.ingress_regions[1].op_kind ==
                     pipeline_internal::sima::RouteGraphKernelKind::PassThrough,
                 "fanin join region should preserve pass-through join kind");
+      }
+
+      {
+        const auto fixture = make_single_mla_public_route_fixture(
+            "model_route_single_mla_public_bf16_no_post", SingleMlaPostFixtureKind::None);
+        const auto planned = route_plan_for_fixture(fixture);
+
+        require(planned.capability.ordered_post_ops.empty(),
+                "single MLA public BF16 route should not advertise ordered post ops");
+        require(!planned.capability.has_external_post,
+                "single MLA public BF16 route should not have external post stage");
+        require(!planned.capability.has_external_post_cast,
+                "single MLA public BF16 route should not have external post cast");
+        require(!planned.capability.needs.post_cast,
+                "single MLA public BF16 route should not need post cast");
+        require(planned.capability.mla_output_bf16,
+                "single MLA public BF16 route should still record BF16 MLA output fact");
+        require(planned.route_plan.post_chain.empty(),
+                "single MLA public BF16 route must not synthesize post chain");
+        require(planned.route_plan.post_regions.empty(),
+                "single MLA public BF16 route must not synthesize post regions");
+        require(!planned.route_plan.include_post_stage,
+                "single MLA public BF16 route must remain infer-only on output");
+        require(planned.route_plan.selected_post_kind == PostRouteStageKind::None,
+                "single MLA public BF16 route should select no post kind");
+        require(planned.route_plan.post_adapter == SessionPostAdapterKind::None,
+                "single MLA public BF16 route should select no post adapter");
+        require(!planned.route_plan.post_cast_bf16_to_fp32,
+                "single MLA public BF16 route should not request BF16->FP32 post cast");
+
+        Model::Options opt;
+        opt.preprocess.kind = InputKind::Tensor;
+        opt.preprocess.enable = AutoFlag::On;
+        Model model(fixture.tar_path, opt);
+        const auto input_specs = model.input_specs();
+        require(input_specs.size() == 1U, "single MLA public BF16 route should expose one input");
+        require(!input_specs.front().dtypes.empty() &&
+                    input_specs.front().dtypes.front() == TensorDType::BFloat16,
+                "single MLA public BF16 route should expose BF16 input dtype");
+        const auto output_specs = model.output_specs();
+        require(output_specs.size() == 1U, "single MLA public BF16 route should expose one output");
+        require(!output_specs.front().dtypes.empty() &&
+                    output_specs.front().dtypes.front() == TensorDType::BFloat16,
+                "single MLA public BF16 route should expose BF16 output dtype without post cast");
+      }
+
+      {
+        const auto fixture = make_single_mla_public_route_fixture(
+            "model_route_single_mla_explicit_cast", SingleMlaPostFixtureKind::Cast);
+        const auto planned = route_plan_for_fixture(fixture);
+
+        require(planned.capability.has_external_post_cast,
+                "explicit post cast fixture should advertise post cast capability");
+        require(planned.route_plan.post_chain.size() == 1U &&
+                    planned.route_plan.post_chain.front() == SessionPostStageOp::Cast,
+                "explicit post cast fixture should keep cast post chain");
+        require(planned.route_plan.post_regions.size() == 1U &&
+                    planned.route_plan.post_regions.front().op_kind ==
+                        pipeline_internal::sima::RouteGraphKernelKind::Cast,
+                "explicit post cast fixture should keep cast post region");
+        require(planned.route_plan.include_post_stage,
+                "explicit post cast fixture should include post stage");
+        require(planned.route_plan.selected_post_kind == PostRouteStageKind::Cast,
+                "explicit post cast fixture should select cast post kind");
+        require(planned.route_plan.post_cast_bf16_to_fp32,
+                "explicit post cast fixture should record BF16->FP32 post cast");
+      }
+
+      {
+        const auto fixture = make_single_mla_public_route_fixture(
+            "model_route_single_mla_explicit_detess", SingleMlaPostFixtureKind::Detess);
+        const auto planned = route_plan_for_fixture(fixture);
+
+        require(planned.capability.has_external_detess,
+                "explicit detess fixture should advertise detess capability");
+        require(planned.route_plan.post_chain.size() == 1U &&
+                    planned.route_plan.post_chain.front() == SessionPostStageOp::Detess,
+                "explicit detess fixture should keep detess post chain");
+        require(planned.route_plan.post_regions.size() == 1U &&
+                    planned.route_plan.post_regions.front().op_kind ==
+                        pipeline_internal::sima::RouteGraphKernelKind::Detess,
+                "explicit detess fixture should keep detess post region");
+        require(planned.route_plan.selected_post_kind == PostRouteStageKind::Detess,
+                "explicit detess fixture should select detess post kind");
+        require(!planned.route_plan.post_cast_bf16_to_fp32,
+                "explicit detess fixture should not record BF16->FP32 post cast");
+      }
+
+      {
+        const auto fixture = make_single_mla_public_route_fixture(
+            "model_route_single_mla_explicit_dequant", SingleMlaPostFixtureKind::Dequant);
+        const auto planned = route_plan_for_fixture(fixture);
+
+        require(planned.capability.mla_output_quantized,
+                "explicit dequant fixture should record quantized MLA output");
+        require(planned.capability.has_external_dequant,
+                "explicit dequant fixture should advertise dequant capability");
+        require(planned.route_plan.post_chain.size() == 1U &&
+                    planned.route_plan.post_chain.front() == SessionPostStageOp::Dequantize,
+                "explicit dequant fixture should keep dequant post chain");
+        require(planned.route_plan.post_regions.size() == 1U &&
+                    planned.route_plan.post_regions.front().op_kind ==
+                        pipeline_internal::sima::RouteGraphKernelKind::Dequantize,
+                "explicit dequant fixture should keep dequant post region");
+        require(planned.route_plan.selected_post_kind == PostRouteStageKind::Dequantize,
+                "explicit dequant fixture should select dequant post kind");
+        require(!planned.route_plan.post_cast_bf16_to_fp32,
+                "explicit dequant fixture should not record BF16->FP32 post cast");
       }
 
       const auto check_real_model_route =

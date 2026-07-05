@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -34,12 +35,14 @@ std::string H264Depacketize::backend_fragment(int node_index) const {
   ss << "! capsfilter name=" << hcc
      << " caps=\"video/x-h264,parsed=true,stream-format=(string)byte-stream,alignment=(string)au";
   if (enforce_h264_caps_) {
-    if (h264_width_ > 0 && h264_height_ > 0) {
-      ss << ",width=(int)" << h264_width_ << ",height=(int)" << h264_height_;
-    } else {
-      ss << ",width=(int)[1,4096],height=(int)[1,4096]";
+    const bool has_any_caps = h264_width_ > 0 || h264_height_ > 0 || h264_fps_ > 0;
+    const bool has_all_caps = h264_width_ > 0 && h264_height_ > 0 && h264_fps_ > 0;
+    if (has_any_caps && !has_all_caps) {
+      throw std::runtime_error(
+          "H264Depacketize: enforced H.264 caps require width, height, and fps");
     }
-    if (h264_fps_ > 0) {
+    if (has_all_caps) {
+      ss << ",width=(int)" << h264_width_ << ",height=(int)" << h264_height_;
       ss << ",framerate=(fraction)" << h264_fps_ << "/1";
     }
   }
@@ -62,11 +65,15 @@ OutputSpec H264Depacketize::output_spec(const OutputSpec& /*input*/) const {
   out.media_type = "video/x-h264";
   out.format = "H264";
   if (enforce_h264_caps_) {
-    if (h264_width_ > 0 && h264_height_ > 0) {
+    const bool has_any_caps = h264_width_ > 0 || h264_height_ > 0 || h264_fps_ > 0;
+    const bool has_all_caps = h264_width_ > 0 && h264_height_ > 0 && h264_fps_ > 0;
+    if (has_any_caps && !has_all_caps) {
+      throw std::runtime_error(
+          "H264Depacketize: enforced H.264 caps require width, height, and fps");
+    }
+    if (has_all_caps) {
       out.width = h264_width_;
       out.height = h264_height_;
-    }
-    if (h264_fps_ > 0) {
       out.fps_num = h264_fps_;
       out.fps_den = 1;
     }

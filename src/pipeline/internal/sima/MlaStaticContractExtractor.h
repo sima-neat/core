@@ -62,7 +62,9 @@ struct MlaStaticContract {
   // strings. Empty = no .elf topology available; runtime falls back to the
   // legacy synthesized naming.
   //   ifm_symbol_names[i] e.g. "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0"
+  //                      or "data.ifm.persistent.qmla_ifm_0.b0"
   //   ofm_symbol_names[i] e.g. "data.ofm.persistent.output_00/MLA_0/sigmoid_64.b0"
+  //                      or "data.ofm.persistent.afe_mla_output_0.b0"
   std::vector<std::string> elf_ifm_symbol_names; ///< IFM placeholder symbols from the .elf.
   std::vector<std::string> elf_ofm_symbol_names; ///< OFM placeholder symbols from the .elf.
 };

@@ -301,15 +301,121 @@ int resolve_state_snapshot_timeout_ms(const char* where) {
   return std::max(0, timeout_ms);
 }
 
+std::string gobject_property_debug_string(GObject* object, const char* property) {
+  if (!object || !property) {
+    return "<invalid>";
+  }
+  GParamSpec* spec = g_object_class_find_property(G_OBJECT_GET_CLASS(object), property);
+  if (!spec) {
+    return "<missing>";
+  }
+  GValue value = G_VALUE_INIT;
+  g_value_init(&value, G_PARAM_SPEC_VALUE_TYPE(spec));
+  g_object_get_property(object, property, &value);
+  gchar* raw = g_strdup_value_contents(&value);
+  std::string out = raw ? raw : "<null>";
+  if (raw) {
+    g_free(raw);
+  }
+  g_value_unset(&value);
+  return out;
+}
+
+bool gst_element_is_neatdecoder(GstElement* element) {
+  if (!element) {
+    return false;
+  }
+  GstElementFactory* factory = gst_element_get_factory(element);
+  if (!factory) {
+    return false;
+  }
+  const gchar* factory_name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+  return factory_name && std::strcmp(factory_name, "neatdecoder") == 0;
+}
+
+void debug_dump_neatdecoder_elements(GstElement* pipeline, GstState target, const char* where) {
+  if (!env_bool("SIMA_DECODER_ELEMENT_DEBUG", false)) {
+    return;
+  }
+  if (!pipeline || !GST_IS_BIN(pipeline)) {
+    std::fprintf(stderr, "[DECELM] where=%s target=%s pipeline=<not-a-bin>\n",
+                 where ? where : "<unknown>", gst_element_state_get_name(target));
+    return;
+  }
+
+  static const char* kProps[] = {
+      "decoder-admission-required",
+      "admission-group-id",
+      "admission-stream-index",
+      "admission-lease-token-hi",
+      "admission-lease-token-lo",
+      "decoder-tuning",
+      "memory-opt",
+      "num-buffers",
+      "dec-ip-cnt",
+      "dec-width",
+      "dec-height",
+      "dec-fps",
+      "next-element",
+  };
+
+  std::size_t count = 0;
+  GstIterator* it = gst_bin_iterate_recurse(GST_BIN(pipeline));
+  if (!it) {
+    std::fprintf(stderr, "[DECELM] where=%s target=%s iterator=<null>\n",
+                 where ? where : "<unknown>", gst_element_state_get_name(target));
+    return;
+  }
+
+  while (true) {
+    GValue item = G_VALUE_INIT;
+    const GstIteratorResult r = gst_iterator_next(it, &item);
+    if (r == GST_ITERATOR_OK) {
+      GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+      if (gst_element_is_neatdecoder(element)) {
+        ++count;
+        const gchar* elem_name = GST_OBJECT_NAME(element);
+        std::ostringstream line;
+        line << "[DECELM] where=" << (where ? where : "<unknown>")
+             << " target=" << gst_element_state_get_name(target)
+             << " name=" << (elem_name ? elem_name : "<unnamed>");
+        for (const char* prop : kProps) {
+          line << ' ' << prop << '=' << gobject_property_debug_string(G_OBJECT(element), prop);
+        }
+        line << '\n';
+        std::fprintf(stderr, "%s", line.str().c_str());
+      }
+      g_value_unset(&item);
+      continue;
+    }
+    if (r == GST_ITERATOR_RESYNC) {
+      gst_iterator_resync(it);
+      continue;
+    }
+    if (r == GST_ITERATOR_ERROR) {
+      std::fprintf(stderr, "[DECELM] where=%s target=%s iterator=error count=%zu\n",
+                   where ? where : "<unknown>", gst_element_state_get_name(target), count);
+    }
+    break;
+  }
+  gst_iterator_free(it);
+
+  if (count == 0) {
+    std::fprintf(stderr, "[DECELM] where=%s target=%s decoders=0\n", where ? where : "<unknown>",
+                 gst_element_state_get_name(target));
+  }
+}
+
 } // namespace
 
 void set_state_or_throw(GstElement* pipeline, GstState target, const char* where,
-                        const std::shared_ptr<DiagCtx>& diag) {
+                        const std::shared_ptr<DiagCtx>& diag, int snapshot_wait_override_ms) {
   const auto timing_start = pipeline_internal::build_timing_now();
   if (!pipeline) {
     session_build_throw_session_error_simple(error_codes::kPipelineShape,
                                              std::string(where) + ": pipeline is null");
   }
+  debug_dump_neatdecoder_elements(pipeline, target, where);
 
   while (true) {
     const int timeout_ms = resolve_state_change_timeout_ms(where);
@@ -368,7 +474,9 @@ void set_state_or_throw(GstElement* pipeline, GstState target, const char* where
 
     GstState cur = GST_STATE_VOID_PENDING;
     GstState pend = GST_STATE_VOID_PENDING;
-    const int snapshot_timeout_ms = resolve_state_snapshot_timeout_ms(where);
+    const int snapshot_timeout_ms = snapshot_wait_override_ms >= 0
+                                        ? snapshot_wait_override_ms
+                                        : resolve_state_snapshot_timeout_ms(where);
     const GstClockTime snapshot_timeout =
         snapshot_timeout_ms <= 0 ? static_cast<GstClockTime>(0)
                                  : static_cast<GstClockTime>(snapshot_timeout_ms) * GST_MSECOND;
@@ -1778,17 +1886,26 @@ static GstPadProbeReturn h264_caps_fixup_cb(GstPad* pad, GstPadProbeInfo* info,
   return GST_PAD_PROBE_OK;
 }
 
+static int rendered_node_index(size_t local_index, const std::vector<int>* node_indices) {
+  if (!node_indices || local_index >= node_indices->size()) {
+    return static_cast<int>(local_index);
+  }
+  return (*node_indices)[local_index];
+}
+
 static std::string find_rtsp_input_name_for_fixup(const std::vector<std::shared_ptr<Node>>& nodes,
                                                   size_t fixup_index,
-                                                  const NameTransform& name_transform) {
+                                                  const NameTransform& name_transform,
+                                                  const std::vector<int>* node_indices = nullptr) {
   if (fixup_index == 0)
     return {};
   for (size_t i = fixup_index; i-- > 0;) {
     const auto* rtsp = dynamic_cast<const RTSPInput*>(nodes[i].get());
     if (!rtsp)
       continue;
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (!names.empty())
       return names[0];
   }
@@ -1797,14 +1914,16 @@ static std::string find_rtsp_input_name_for_fixup(const std::vector<std::shared_
 
 static std::string
 find_h264_capsfilter_name_for_fixup(const std::vector<std::shared_ptr<Node>>& nodes,
-                                    size_t fixup_index, const NameTransform& name_transform) {
+                                    size_t fixup_index, const NameTransform& name_transform,
+                                    const std::vector<int>* node_indices = nullptr) {
   if (fixup_index == 0)
     return {};
   for (size_t i = fixup_index; i-- > 0;) {
     if (nodes[i]->kind() != "H264Depacketize")
       continue;
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (!names.empty())
       return names.back();
   }
@@ -2034,15 +2153,17 @@ static void rtsp_pad_removed(GstElement* src, GstPad* pad, gpointer /*user_data*
 }
 
 static void attach_rtsp_debug(GstElement* pipeline, const std::vector<std::shared_ptr<Node>>& nodes,
-                              const NameTransform& name_transform) {
+                              const NameTransform& name_transform,
+                              const std::vector<int>* node_indices = nullptr) {
   if (!pipeline || !rtsp_stats_debug_enabled())
     return;
   for (size_t i = 0; i < nodes.size(); ++i) {
     const auto* rtsp = dynamic_cast<const RTSPInput*>(nodes[i].get());
     if (!rtsp)
       continue;
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (names.empty())
       continue;
     GstElement* rtspsrc = gst_bin_get_by_name(GST_BIN(pipeline), names[0].c_str());
@@ -2063,7 +2184,8 @@ static void attach_rtsp_debug(GstElement* pipeline, const std::vector<std::share
 
 static void attach_h264_caps_fixups(GstElement* pipeline,
                                     const std::vector<std::shared_ptr<Node>>& nodes,
-                                    const NameTransform& name_transform) {
+                                    const NameTransform& name_transform,
+                                    const std::vector<int>* node_indices = nullptr) {
   if (!pipeline)
     return;
 
@@ -2072,8 +2194,9 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
     if (!fix)
       continue;
 
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (names.empty())
       continue;
 
@@ -2087,7 +2210,8 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
       continue;
     }
 
-    const std::string rtsp_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
+    const std::string rtsp_name =
+        find_rtsp_input_name_for_fixup(nodes, i, name_transform, node_indices);
     auto* ctx = make_h264_caps_fixup_ctx(pipeline, *fix, names[0], rtsp_name);
     gst_pad_add_probe(
         src,
@@ -2100,7 +2224,8 @@ static void attach_h264_caps_fixups(GstElement* pipeline,
     gst_object_unref(src);
     gst_object_unref(elem);
 
-    const std::string upstream_caps = find_h264_capsfilter_name_for_fixup(nodes, i, name_transform);
+    const std::string upstream_caps =
+        find_h264_capsfilter_name_for_fixup(nodes, i, name_transform, node_indices);
     if (upstream_caps.empty() || upstream_caps == names[0])
       continue;
 
@@ -2272,7 +2397,8 @@ static GstPadProbeReturn encoded_caps_fixup_cb(GstPad* pad, GstPadProbeInfo* inf
 
 static void attach_encoded_caps_fixups(GstElement* pipeline,
                                        const std::vector<std::shared_ptr<Node>>& nodes,
-                                       const NameTransform& name_transform) {
+                                       const NameTransform& name_transform,
+                                       const std::vector<int>* node_indices = nullptr) {
   if (!pipeline)
     return;
 
@@ -2281,8 +2407,9 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     if (!fix)
       continue;
 
+    const int rendered_index = rendered_node_index(i, node_indices);
     const auto names =
-        apply_name_transform(name_transform, nodes[i]->element_names(static_cast<int>(i)));
+        apply_name_transform(name_transform, nodes[i]->element_names(rendered_index));
     if (names.empty())
       continue;
 
@@ -2302,7 +2429,8 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
     ctx->fallback_fps = fix->options().fallback_fps;
     ctx->use_rtsp_sdp_fps = fix->options().use_rtsp_sdp_fps;
     if (ctx->use_rtsp_sdp_fps) {
-      ctx->rtsp_element_name = find_rtsp_input_name_for_fixup(nodes, i, name_transform);
+      ctx->rtsp_element_name =
+          find_rtsp_input_name_for_fixup(nodes, i, name_transform, node_indices);
     }
     if (ctx->use_rtsp_sdp_fps && ctx->media_type == "image/jpeg") {
       ctx->rtp_payload_type = find_rtp_jpeg_payload_type_for_fixup(nodes, i);
@@ -2339,20 +2467,23 @@ GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, cons
 
 void session_build_attach_rtsp_debug(GstElement* pipeline,
                                      const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const NameTransform& name_transform) {
-  attach_rtsp_debug(pipeline, nodes, name_transform);
+                                     const NameTransform& name_transform,
+                                     const std::vector<int>* node_indices) {
+  attach_rtsp_debug(pipeline, nodes, name_transform, node_indices);
 }
 
 void session_build_attach_h264_caps_fixups(GstElement* pipeline,
                                            const std::vector<std::shared_ptr<Node>>& nodes,
-                                           const NameTransform& name_transform) {
-  attach_h264_caps_fixups(pipeline, nodes, name_transform);
+                                           const NameTransform& name_transform,
+                                           const std::vector<int>* node_indices) {
+  attach_h264_caps_fixups(pipeline, nodes, name_transform, node_indices);
 }
 
 void session_build_attach_encoded_caps_fixups(GstElement* pipeline,
                                               const std::vector<std::shared_ptr<Node>>& nodes,
-                                              const NameTransform& name_transform) {
-  attach_encoded_caps_fixups(pipeline, nodes, name_transform);
+                                              const NameTransform& name_transform,
+                                              const std::vector<int>* node_indices) {
+  attach_encoded_caps_fixups(pipeline, nodes, name_transform, node_indices);
 }
 
 namespace session_test {

@@ -127,6 +127,20 @@ METADATA_SENDER_OPTION_FIELDS = (
     "metadata_port_base",
 )
 
+CAMERA_INPUT_OPTION_FIELDS = (
+    "camera_name",
+    "width",
+    "height",
+    "framerate_num",
+    "framerate_den",
+    "format",
+    "buffer_name",
+    "insert_queue",
+    "leaky_queue",
+    "queue_depth",
+    "allow_cpu_fallback",
+)
+
 
 def _strict_resnet50_model_path():
   return model_fixtures.strict_model_tar_path("SIMA_RESNET50_TAR")
@@ -426,6 +440,41 @@ def test_output_stage_option_structs_expose_expected_fields():
       "OptiViewMakeJson",
   ):
     assert not hasattr(pyneat, removed_name)
+
+
+def test_camera_input_surface_is_exposed():
+  assert hasattr(pyneat, "CameraInputOptions")
+  assert hasattr(pyneat.nodes, "camera_input")
+
+  opt = pyneat.CameraInputOptions()
+  for field in CAMERA_INPUT_OPTION_FIELDS:
+    assert hasattr(opt, field), field
+
+  opt.camera_name = "imx477 5-001a"
+  opt.width = 1280
+  opt.height = 720
+  opt.framerate_num = 60
+  opt.framerate_den = 1
+  opt.format = "NV12"
+  opt.buffer_name = "camera0"
+  opt.queue_depth = 4
+  opt.allow_cpu_fallback = True
+
+  assert opt.camera_name == "imx477 5-001a"
+  assert opt.width == 1280
+  assert opt.height == 720
+  assert opt.framerate_num == 60
+  assert opt.format == "NV12"
+  assert opt.buffer_name == "camera0"
+  assert opt.queue_depth == 4
+  assert opt.allow_cpu_fallback is True
+  opt.camera_name = None
+  assert opt.camera_name is None
+
+  node = pyneat.nodes.camera_input(opt)
+  assert isinstance(node, pyneat.Node)
+  assert node.kind() == "CameraInput"
+  assert node.input_role() == pyneat.InputRole.Source
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():

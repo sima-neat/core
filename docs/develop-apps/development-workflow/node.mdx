@@ -84,6 +84,7 @@ Use this map before you open the full API reference.
 | App pulls a full sample | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
 | Read frames from a file | `nodes::FileInput(...)` plus decode nodes, or `nodes::groups::VideoInputGroup(...)` | `pyneat.nodes.file_input(...)` plus decode nodes, or `pyneat.groups.video_input(...)` |
 | Read one image as a source | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| Read a MIPI/libcamera camera | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
 | Read an RTSP stream | `nodes::RTSPInput(...)`, `nodes::groups::RtspEncodedInput(...)`, or `nodes::groups::RtspDecodedInput(...)` | `pyneat.nodes.rtsp_input(...)`, `pyneat.groups.rtsp_encoded_input(...)`, or `pyneat.groups.rtsp_decoded_input(...)` |
 | Read HTTP multipart MJPEG | `nodes::groups::HttpMjpegDecodedInput(...)`, or `nodes::HttpSource(...)`, `MultipartJpegDemux()`, `JpegParse()` for manual framing | `pyneat.groups.http_mjpeg_decoded_input(...)`, or `pyneat.nodes.http_source(...)`, `pyneat.nodes.multipart_jpeg_demux()`, `pyneat.nodes.jpeg_parse()` |
 | Decode images | `nodes::ImageDecode()` or `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` or `pyneat.nodes.jpeg_decode()` |
@@ -156,6 +157,7 @@ Use source-owned groups when the graph should read media by itself. Build those 
 | --- | --- | --- | --- |
 | Still image fixture | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
 | Video file | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
+| Live MIPI/libcamera camera | `nodes::CameraInput(...)` / `pyneat.nodes.camera_input(...)` | `width`, `height`, `framerate_num`, `format`; optional `camera_name` | `allow_cpu_fallback`, queue fields, `buffer_name` |
 | Live RTSP encoded H.264 or MJPEG stream | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec` when not H.264 | `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP payload type |
 | Live RTSP decoded H.264 or MJPEG stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec` when not H.264 | `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, decoded width/height/FPS, `out_format`, `output_caps` |
 | HTTP multipart MJPEG stream | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, decoded width/height/FPS, `output_caps` |
@@ -167,6 +169,8 @@ A source-owned graph is a different runtime shape than an app-pushed graph:
 ```text
 source group -> model -> output
 ```
+
+For MIPI cameras, use [`CameraInput`](/reference/nodes/camera-input) directly rather than wrapping the camera in an app-pushed `Input`. Validate the camera with libcamera/GStreamer first, then build the graph as `CameraInput -> model -> Output`. See [Use a MIPI Camera](/develop-apps/advanced-concepts/mipi-camera-input) for the full path.
 
 Run it with `graph.build()` or `graph.run()` without an input argument. Do not add an `Input("image")` in front of a source group unless your app really has a second public input to push.
 
@@ -217,6 +221,7 @@ Start with a group when the media plumbing is standard. Drop to individual nodes
 Some SiMa nodes are common enough that they have focused reference or how-to pages:
 
 - [`Preproc`](/reference/nodes/preproc): fused CVU image preprocessing for resize, color conversion, normalization, quantization, tessellation, and runtime ROI lists.
+- [`CameraInput`](/reference/nodes/camera-input): source-owned MIPI/libcamera frames with adaptive SiMaAI memory handoff for downstream CVU/MLA stages.
 - [`SimaBoxDecode`](/reference/boxdecode_decode_types): detection postprocessing that decodes model heads into bounding boxes and uses upstream preprocess metadata for coordinate mapping.
 
 <a id="boundary-nodes"></a>

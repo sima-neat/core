@@ -64,6 +64,11 @@ bool dtype_is_quantized_like(std::string raw) {
          raw.find("INT32") != std::string::npos || raw.find("UINT32") != std::string::npos;
 }
 
+bool route_needs_explicit_post_cast(const ModelSemantics& semantics,
+                                    const RouteCapability* capability) {
+  return semantics.post_cast_needed || (capability != nullptr && capability->needs.post_cast);
+}
+
 std::string canonical_dtype_for_signal(std::string raw) {
   raw = upper_copy(std::move(raw));
   if (raw.find("BFLOAT16") != std::string::npos || raw.find("BF16") != std::string::npos) {
@@ -3410,12 +3415,6 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   out.use_preproc = user_requested_preproc;
   out.boxdecode_selected = user_requested_boxdecode(options);
 
-  const auto dtype_is_bf16_like = [](const std::string& raw) {
-    const std::string token = lower_copy(raw);
-    return token.find("bf16") != std::string::npos || token.find("bfloat16") != std::string::npos;
-  };
-  const bool mla_output_is_bf16 = dtype_is_bf16_like(semantics.mla_output_dtype_raw);
-
   const bool use_ordered_pre_ops = have_capability && !capability->ordered_pre_ops.empty();
   if (use_ordered_pre_ops) {
     std::vector<SessionPreStageOp> desired_pre_chain;
@@ -3769,10 +3768,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
       }
       if (has_duplicate_ops(desired_post_chain)) {
         std::vector<SessionPostStageOp> canonical_post_chain;
-        bool needs_post_cast = semantics.post_cast_needed || mla_output_is_bf16;
-        if (have_capability) {
-          needs_post_cast = needs_post_cast || capability->needs.post_cast;
-        }
+        bool needs_post_cast = route_needs_explicit_post_cast(semantics, capability);
         if (needs_tess && needs_quant) {
           canonical_post_chain.push_back(SessionPostStageOp::DetessDequant);
           needs_post_cast = false;
@@ -3824,10 +3820,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
                                   "advertised boxdecode capability");
       }
     } else {
-      bool needs_post_cast = semantics.post_cast_needed || mla_output_is_bf16;
-      if (have_capability) {
-        needs_post_cast = needs_post_cast || capability->needs.post_cast;
-      }
+      bool needs_post_cast = route_needs_explicit_post_cast(semantics, capability);
       if (needs_tess && needs_quant) {
         if (has_detess_adapter || has_dequant_adapter) {
           out.post_chain.push_back(SessionPostStageOp::DetessDequant);

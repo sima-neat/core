@@ -113,6 +113,40 @@ RUN_TEST(
               io_case("legacy_simaai_pool_not_reserialized",
                       "deprecated input pool flag should not be reserialized"));
 
+      Graph stream_source("stream_source");
+      stream_source.add(nodes::Input("image"));
+      stream_source.add(nodes::Output("frame"));
+      Graph stream_sink("stream_sink");
+      stream_sink.add(nodes::Input("frame"));
+      stream_sink.add(nodes::Output("classes"));
+
+      Graph stream_app("graph_io_default_link_stream_id");
+      GraphLinkOptions stream_link;
+      stream_link.stream_id = "persisted-stream-0";
+      stream_app.connect(stream_source, stream_sink, stream_link);
+
+      const std::string stream_link_path = tmp_json_path("graph_io_default_link_stream_id.json");
+      stream_app.save(stream_link_path);
+      const std::string stream_link_json = read_text(stream_link_path);
+      require_contains(
+          stream_link_json, "\"link_stream_id\":\"persisted-stream-0\"",
+          io_case("default_link_stream_id_saved", "default-link stream id should be serialized"));
+      require(stream_link_json.find("\"link_policy\"") == std::string::npos,
+              io_case("default_link_policy_omitted",
+                      "default-link stream id should not require a non-default policy"));
+
+      const Graph loaded_stream_app = Graph::load(stream_link_path);
+      const std::string stream_link_roundtrip_path =
+          tmp_json_path("graph_io_default_link_stream_id_roundtrip.json");
+      loaded_stream_app.save(stream_link_roundtrip_path);
+      const std::string stream_link_roundtrip_json = read_text(stream_link_roundtrip_path);
+      require_contains(stream_link_roundtrip_json, "\"link_stream_id\":\"persisted-stream-0\"",
+                       io_case("default_link_stream_id_roundtrip",
+                               "default-link stream id should survive Graph::load/save"));
+      require(stream_link_roundtrip_json.find("\"link_policy\"") == std::string::npos,
+              io_case("default_link_policy_roundtrip_omitted",
+                      "default-link stream id roundtrip should keep default policy implicit"));
+
       const std::string missing_file = tmp_json_path("graph_io_missing_input.json");
       {
         std::error_code ec;

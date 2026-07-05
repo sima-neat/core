@@ -1176,8 +1176,15 @@ void validate_semantic_payload(const BenchCase& c, const simaai::neat::TensorLis
       require(std::isfinite(value), c.name + ": output point must be finite");
     }
     const auto status = tensor_values<std::int32_t>(outputs.at(1), c.name + ": output_status");
+    const bool require_boolean_status =
+        env_flag("SIMA_VISUAL_TPUT_REQUIRE_BOOLEAN_KLT_STATUS", true);
     for (const auto value : status) {
-      require(value == 0 || value == 1, c.name + ": status must be 0 or 1");
+      if (require_boolean_status) {
+        require(value == 0 || value == 1,
+                c.name + ": status must be 0 or 1, got " + std::to_string(value));
+      } else {
+        require(value >= 0, c.name + ": status must be non-negative, got " + std::to_string(value));
+      }
     }
     validate_cpu_klt_golden(c, outputs.at(0), outputs.at(1), c.name + ": KLT CPU golden");
     if (c.klt_detect_new_features != 0) {

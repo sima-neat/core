@@ -2487,6 +2487,11 @@ write_install_manifest() {
   } > "${manifest_path}"
 
   append_dist_manifest_matches "${manifest_path}" 'simaai-common*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib-dev_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'libcamera_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'libcamera-dev_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'libcamera-tools_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'neat-common_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'neat-appcomplex_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'neat-ev74-firmware_*.deb'

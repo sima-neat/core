@@ -757,8 +757,8 @@ json public_view_to_json(const runtime::ExecutionGraphPlan& plan) {
     if (edge.link_options.policy != GraphLinkPolicy::Default) {
       e["link_policy"] = "realtime_latest_by_stream";
       e["link_queue_depth"] = edge.link_options.queue_depth;
-      if (!edge.link_options.stream_id.empty()) {
-        e["link_stream_id"] = edge.link_options.stream_id;
+      if (!edge.stream_id.empty()) {
+        e["link_stream_id"] = edge.stream_id;
       }
     }
     json runtime_edges = json::array();
@@ -854,8 +854,8 @@ json graph_topology_to_json(const runtime::RunCore& core) {
     if (edge.link_options.policy != GraphLinkPolicy::Default) {
       e["link_policy"] = "realtime_latest_by_stream";
       e["link_queue_depth"] = edge.link_options.queue_depth;
-      if (!edge.link_options.stream_id.empty()) {
-        e["link_stream_id"] = edge.link_options.stream_id;
+      if (!edge.stream_id.empty()) {
+        e["link_stream_id"] = edge.stream_id;
       }
     }
     edges.push_back(std::move(e));

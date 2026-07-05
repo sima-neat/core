@@ -13,6 +13,7 @@
 #include <cstring>
 #include <iostream>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace simaai::neat {
@@ -104,11 +105,85 @@ GstSample* make_tensor_sample_with_contract_meta() {
   return sample;
 }
 
+simaai::neat::Tensor make_test_tensor(std::vector<int64_t> shape, std::size_t bytes) {
+  simaai::neat::Tensor tensor;
+  tensor.shape = std::move(shape);
+  tensor.dtype = simaai::neat::TensorDType::UInt8;
+  tensor.storage = simaai::neat::make_cpu_owned_storage(bytes);
+  return tensor;
+}
+
+simaai::neat::Sample make_named_tensor_field(const std::string& name) {
+  simaai::neat::Sample field =
+      simaai::neat::sample_from_tensors(simaai::neat::TensorList{make_test_tensor({2, 2}, 4)});
+  field.stream_label = name;
+  field.segment_name = name;
+  return field;
+}
+
+void check_bundle_output_override_preserves_bundle_kind() {
+  simaai::neat::Sample bundle;
+  bundle.kind = simaai::neat::SampleKind::Bundle;
+  bundle.frame_id = 17;
+  bundle.stream_id = "camera0";
+  bundle.fields.push_back(make_named_tensor_field("old_boxes"));
+  bundle.fields.push_back(make_named_tensor_field("old_scores"));
+
+  simaai::neat::OutputTensorOverride override;
+  simaai::neat::OutputTensorOverrideEntry boxes;
+  boxes.name = "boxes";
+  boxes.segment_name = "boxes_seg";
+  boxes.shape = {1, 4};
+  boxes.dtype = simaai::neat::TensorDType::UInt8;
+  boxes.logical_output_index = 3;
+  boxes.memory_index = 8;
+  boxes.route_slot = 11;
+  simaai::neat::OutputTensorOverrideEntry scores;
+  scores.name = "scores";
+  scores.segment_name = "scores_seg";
+  scores.shape = {1, 2};
+  scores.dtype = simaai::neat::TensorDType::UInt8;
+  scores.logical_output_index = 4;
+  scores.memory_index = 9;
+  scores.route_slot = 12;
+  override.outputs = {boxes, scores};
+
+  simaai::neat::Sample out =
+      simaai::neat::apply_output_tensor_override(bundle, override, /*materialize_output=*/false);
+  require(out.kind == simaai::neat::SampleKind::Bundle,
+          "output override on Bundle must preserve Bundle kind");
+  require(out.size() == 2U, "Bundle output override should preserve logical field count");
+  require(simaai::neat::sample_is_multi_output(out),
+          "Bundle output override should remain visible as multi-output");
+  require(out.fields.size() == 2U, "Bundle output override should preserve fields");
+  require(out.tensors.empty(), "Bundle output override should not expose root TensorSet payload");
+  require(out[0].stream_label == "boxes", "operator[] should expose first bundle field");
+  require(out.fields[0].stream_label == "boxes", "first field stream label override mismatch");
+  require(out.fields[0].segment_name == "boxes_seg", "first field segment override mismatch");
+  require(out.fields[0].logical_output_index == 3 && out.fields[0].output_index == 3,
+          "first field logical output override mismatch");
+  require(out.fields[0].memory_index == 8 && out.fields[0].route_slot == 11,
+          "first field route override mismatch");
+  require(out.fields[0].tensors.front().shape == std::vector<int64_t>({1, 4}),
+          "first field tensor shape override mismatch");
+  require(out[1].stream_label == "scores", "operator[] should expose second bundle field");
+  require(out.fields[1].stream_label == "scores", "second field stream label override mismatch");
+  require(out.fields[1].segment_name == "scores_seg", "second field segment override mismatch");
+  require(out.fields[1].logical_output_index == 4 && out.fields[1].output_index == 4,
+          "second field logical output override mismatch");
+  require(out.fields[1].memory_index == 9 && out.fields[1].route_slot == 12,
+          "second field route override mismatch");
+  require(out.fields[1].tensors.front().shape == std::vector<int64_t>({1, 2}),
+          "second field tensor shape override mismatch");
+}
+
 } // namespace
 
 int main() {
   try {
     simaai::neat::gst_init_once();
+
+    check_bundle_output_override_preserves_bundle_kind();
 
     GstSample* source = make_tensor_sample_with_contract_meta();
     require(source != nullptr, "source sample creation failed");

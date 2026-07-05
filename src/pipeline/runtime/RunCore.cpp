@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -38,6 +39,21 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 
 namespace simaai::neat::runtime {
 namespace {
+
+void tune_internal_zero_copy_holder_window(InputStreamOptions& stream_opt,
+                                           const GraphRuntimeOptions& graph_opt,
+                                           bool graph_internal_output) {
+  if (!graph_internal_output || !stream_opt.holder_loan_credits_auto || stream_opt.copy_output) {
+    return;
+  }
+  const std::size_t edge_queue = graph_opt.edge_queue == 0 ? 256 : graph_opt.edge_queue;
+  const int edge_window =
+      static_cast<int>(std::min<std::size_t>(edge_queue, static_cast<std::size_t>(INT_MAX)));
+  stream_opt.holder_loan_sample_window =
+      std::max(stream_opt.holder_loan_sample_window, std::max(1, edge_window));
+  stream_opt.holder_loan_credits =
+      stream_opt.holder_loan_sample_window * std::max(1, stream_opt.holder_loan_per_sample_arity);
+}
 
 std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
   return static_cast<std::uint64_t>(
@@ -799,8 +815,10 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
   finalize_identity_diag();
 }
 
-std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms) {
-  ExecutionGraphRuntime& execution = graph_execution();
+std::optional<RuntimeSinkQueueMsg> graph_pull_msg_impl(RunCore& core,
+                                                       simaai::neat::graph::NodeId node_id,
+                                                       int timeout_ms, bool reserve_restore_slot) {
+  ExecutionGraphRuntime& execution = core.graph_execution();
   const bool has_timeout = (timeout_ms >= 0);
   const bool direct_sink =
       execution.direct_sink_nodes.find(node_id) != execution.direct_sink_nodes.end();
@@ -821,11 +839,13 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
         pipe.transport.cv.wait_until(
             lock, std::chrono::steady_clock::now() + std::chrono::milliseconds(build_timeout_ms),
             [&] {
-              return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested();
+              return pipe.transport.built.load(std::memory_order_acquire) ||
+                     core.graph_stop_requested();
             });
       } else {
         pipe.transport.cv.wait(lock, [&] {
-          return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested();
+          return pipe.transport.built.load(std::memory_order_acquire) ||
+                 core.graph_stop_requested();
         });
       }
       if (!pipe.transport.built.load(std::memory_order_acquire)) {
@@ -847,7 +867,10 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
 
   RuntimeSinkQueueMsg queued;
   const int wait_ms = has_timeout ? timeout_ms : -1;
-  if (!it->second->pop(queued, wait_ms)) {
+  const bool popped = reserve_restore_slot
+                          ? it->second->pop_with_restore_reservation(queued, wait_ms)
+                          : it->second->pop(queued, wait_ms);
+  if (!popped) {
     std::fprintf(stderr,
                  "[GRAPH] GraphRun::pull: queue pop returned empty for node %zu (timeout=%dms or "
                  "queue closed)\n",
@@ -860,7 +883,61 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     trace_graph_message_event(TraceGraphMessageEventType::QueueOut, args);
     trace_graph_message_event(TraceGraphMessageEventType::EdgeSinkRecv, args);
   }
-  return std::move(queued.sample);
+  return queued;
+}
+
+std::optional<RuntimeSinkQueueMsg> RunCore::graph_pull_msg(simaai::neat::graph::NodeId node_id,
+                                                           int timeout_ms) {
+  return graph_pull_msg_impl(*this, node_id, timeout_ms, false);
+}
+
+std::optional<RuntimeSinkQueueMsg>
+RunCore::graph_pull_msg_with_restore_reservation(simaai::neat::graph::NodeId node_id,
+                                                 int timeout_ms) {
+  return graph_pull_msg_impl(*this, node_id, timeout_ms, true);
+}
+
+bool RunCore::graph_restore_sink_front(simaai::neat::graph::NodeId node_id,
+                                       RuntimeSinkQueueMsg&& msg) {
+  if (!graph_execution_) {
+    return false;
+  }
+  auto it = graph_execution_->sinks.find(node_id);
+  if (it == graph_execution_->sinks.end() || !it->second) {
+    return false;
+  }
+  return it->second->restore_front(std::move(msg));
+}
+
+bool RunCore::graph_restore_reserved_sink_front(simaai::neat::graph::NodeId node_id,
+                                                RuntimeSinkQueueMsg&& msg) {
+  if (!graph_execution_) {
+    return false;
+  }
+  auto it = graph_execution_->sinks.find(node_id);
+  if (it == graph_execution_->sinks.end() || !it->second) {
+    return false;
+  }
+  return it->second->restore_reserved_front(std::move(msg));
+}
+
+bool RunCore::graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id) {
+  if (!graph_execution_) {
+    return false;
+  }
+  auto it = graph_execution_->sinks.find(node_id);
+  if (it == graph_execution_->sinks.end() || !it->second) {
+    return false;
+  }
+  return it->second->release_restore_reservation();
+}
+
+std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms) {
+  auto queued = graph_pull_msg(node_id, timeout_ms);
+  if (!queued.has_value()) {
+    return std::nullopt;
+  }
+  return std::move(queued->sample);
 }
 
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -901,9 +978,17 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     }
     const auto source_start = pipeline_internal::build_timing_now();
     const bool public_output_contract = !segment.boundary.graph_internal_output;
-    SourceStreamBuildContext source = session_build_source_stream_internal(
-        nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode, opt.require_sink,
-        public_output_contract, "RunCore::start(plan/source)");
+    SourceStreamBuildContext source =
+        segment.fused_realtime_ingress.has_value()
+            ? session_build_fused_realtime_source_stream_internal(
+                  *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
+                  opt.run_options, opt.mode, opt.require_sink, public_output_contract,
+                  "RunCore::start(plan/fused-realtime)")
+            : session_build_source_stream_internal(
+                  nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
+                  opt.require_sink, public_output_contract, "RunCore::start(plan/source)");
+    tune_internal_zero_copy_holder_window(source.stream_opt, opt.graph_options,
+                                          segment.boundary.graph_internal_output);
     const auto source_us = pipeline_internal::build_timing_us(source_start);
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
@@ -929,6 +1014,10 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   InputStreamOptions build_stream_opt = ctx.stream_opt;
   build_stream_opt.startup_preflight =
       opt.allow_startup_preflight && ctx.stream_opt.startup_preflight;
+  build_stream_opt.allow_graph_internal_zero_copy_input =
+      segment.boundary.needs_input && !segment.input_edges.empty();
+  tune_internal_zero_copy_holder_window(build_stream_opt, opt.graph_options,
+                                        segment.boundary.graph_internal_output);
   InputStream stream;
   const auto input_stream_start = pipeline_internal::build_timing_now();
   if (opt.image_seed) {

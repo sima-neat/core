@@ -83,6 +83,6 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
 // -----------------------------
 void stop_and_unref(GstElement*& e);
 // Skip flush events during teardown (avoid gst_element_send_event deadlocks).
-void stop_and_unref_no_flush(GstElement*& e);
+void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous = false);
 
 } // namespace simaai::neat::pipeline_internal
