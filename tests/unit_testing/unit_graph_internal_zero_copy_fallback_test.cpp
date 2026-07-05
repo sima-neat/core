@@ -382,6 +382,21 @@ RUN_TEST(
       simaai::neat::GraphLinkOptions stream_link;
       stream_link.stream_id = "compat_stream";
 
+      simaai::neat::Graph default_stream_one_to_one_app("default_link_stream_id_one_to_one");
+      auto one_to_one_src = live_source("one_to_one_src");
+      auto one_to_one_sink = app_sink("one_to_one_sink");
+      default_stream_one_to_one_app.connect(one_to_one_src, one_to_one_sink, stream_link);
+      const auto default_stream_one_to_one_plan = simaai::neat::runtime::compile_public_graph(
+          default_stream_one_to_one_app, simaai::neat::RunOptions{});
+      bool saw_one_to_one_stream_id = false;
+      for (const auto& edge : default_stream_one_to_one_plan.edges) {
+        if (edge.stream_id == "compat_stream") {
+          saw_one_to_one_stream_id = true;
+        }
+      }
+      require(saw_one_to_one_stream_id,
+              "default one-to-one stream_id link should remain explicit for runtime stamping");
+
       simaai::neat::Graph default_stream_fanout_app("default_link_stream_id_fanout");
       auto fanout_src = live_source("fanout_src");
       auto fanout_stream_sink = app_sink("fanout_stream_sink");

@@ -516,6 +516,12 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     if (!default_link(edge.link_options)) {
       continue;
     }
+    if (!edge.stream_id.empty() || !edge.link_options.stream_id.empty()) {
+      // An explicit stream identity is edge semantics, even when the link uses
+      // the default buffering policy.  Keep a runtime edge so the router can
+      // stamp the requested stream_id instead of fusing the edge away.
+      continue;
+    }
     if (vertex_is_runtime_node(out.runtime_vertices, edge.from) ||
         vertex_is_runtime_node(out.runtime_vertices, edge.to)) {
       continue;
