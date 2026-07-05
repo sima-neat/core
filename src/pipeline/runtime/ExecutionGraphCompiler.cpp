@@ -1320,6 +1320,13 @@ bool is_generated_fanout_node(const ExecutionGraphPlan& plan, graph::NodeId node
   return node < plan.node_labels.size() && plan.node_labels[node].rfind("fanout", 0) == 0;
 }
 
+std::string normalized_edge_stream_id(const NormalizedCompositionEdge& edge) {
+  if (!edge.stream_id.empty()) {
+    return edge.stream_id;
+  }
+  return edge.link_options.stream_id;
+}
+
 void apply_normalized_link_policies(const NormalizedPublicView& view,
                                     const std::vector<graph::NodeId>& runtime_node_for_vertex,
                                     ExecutionGraphPlan* plan) {
@@ -1327,7 +1334,10 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
     return;
   }
   for (const auto& edge : view.edges) {
-    if (default_link(edge.link_options)) {
+    const std::string stream_id = normalized_edge_stream_id(edge);
+    const bool propagate_policy = !default_link(edge.link_options);
+    const bool propagate_stream_id = !stream_id.empty();
+    if (!propagate_policy && !propagate_stream_id) {
       continue;
     }
     if (edge.from >= runtime_node_for_vertex.size() || edge.to >= runtime_node_for_vertex.size()) {
@@ -1340,8 +1350,9 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
       const auto first = path.front();
       if (first < plan->edges.size() && is_generated_fanout_node(*plan, plan->edges[first].to)) {
         // A normalized public edge may lower through a generated FanOut when the same producer also
-        // feeds another branch.  Keep non-default realtime/drop policy on the selected branch edge;
-        // applying it to the shared producer->FanOut trunk would change unrelated default branches.
+        // feeds another branch.  Keep branch-specific realtime/drop policy and stream identity on
+        // the selected branch edge; applying either to the shared producer->FanOut trunk would
+        // change unrelated default branches.
         first_policy_edge = 1U;
       }
     }
@@ -1351,9 +1362,12 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
         continue;
       }
       GraphLinkOptions& dst = plan->edges[edge_index].link_options;
-      dst = merge_link_options(dst, edge.link_options);
-      if (!edge.stream_id.empty()) {
-        plan->edges[edge_index].stream_id = edge.stream_id;
+      if (propagate_policy) {
+        dst = merge_link_options(dst, edge.link_options);
+      }
+      if (propagate_stream_id) {
+        plan->edges[edge_index].stream_id = stream_id;
+        dst.stream_id = stream_id;
       }
     }
   }

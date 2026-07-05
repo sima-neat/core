@@ -61,6 +61,21 @@ int realtime_link_log_every() {
   return every;
 }
 
+void apply_link_stream_id(const ExecutionGraphRuntime& runtime, std::size_t edge_index,
+                          simaai::neat::Sample& sample) {
+  if (edge_index == invalid_edge_index() || edge_index >= runtime.plan.edges.size()) {
+    return;
+  }
+  const std::string& stream_id = runtime.plan.edges[edge_index].stream_id;
+  if (stream_id.empty()) {
+    return;
+  }
+  sample.stream_id = stream_id;
+  if (sample.stream_label.empty()) {
+    sample.stream_label = stream_id;
+  }
+}
+
 } // namespace
 
 RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options,
@@ -310,6 +325,8 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
     request_stop(callbacks, "EdgeRouter: missing runtime state");
     return false;
   }
+
+  apply_link_stream_id(*runtime_, target.edge_index, sample);
 
   if (target.kind == DownstreamTarget::Kind::RealtimeLatestLink) {
     if (target.index >= runtime_->realtime_links.size() ||

@@ -7,6 +7,7 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/Graph.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
+#include "pipeline/runtime/EdgeRouter.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -292,4 +293,75 @@ RUN_TEST(
               "default branch from shared FanOut should keep default policy");
       require(saw_realtime_fanout_branch,
               "fan-in branch from shared FanOut should keep realtime policy");
+
+      simaai::neat::GraphLinkOptions stream_link;
+      stream_link.stream_id = "compat_stream";
+
+      simaai::neat::Graph default_stream_fanout_app("default_link_stream_id_fanout");
+      auto fanout_src = live_source("fanout_src");
+      auto fanout_stream_sink = app_sink("fanout_stream_sink");
+      auto fanout_plain_sink = app_sink("fanout_plain_sink");
+      default_stream_fanout_app.connect(fanout_src, fanout_stream_sink, stream_link);
+      default_stream_fanout_app.connect(fanout_src, fanout_plain_sink);
+      const auto default_stream_fanout_plan = simaai::neat::runtime::compile_public_graph(
+          default_stream_fanout_app, simaai::neat::RunOptions{});
+      bool saw_stream_id_fanout_trunk = false;
+      bool saw_stream_id_branch = false;
+      bool saw_empty_default_branch = false;
+      for (const auto& edge : default_stream_fanout_plan.edges) {
+        const bool from_fanout =
+            edge.from < default_stream_fanout_plan.node_labels.size() &&
+            default_stream_fanout_plan.node_labels[edge.from].rfind("fanout", 0) == 0;
+        const bool to_fanout =
+            edge.to < default_stream_fanout_plan.node_labels.size() &&
+            default_stream_fanout_plan.node_labels[edge.to].rfind("fanout", 0) == 0;
+        if (to_fanout) {
+          saw_stream_id_fanout_trunk = true;
+          require(edge.stream_id.empty(),
+                  "stream_id-only branch must not stamp the shared FanOut trunk");
+        }
+        if (from_fanout && edge.stream_id == "compat_stream") {
+          saw_stream_id_branch = true;
+        }
+        if (from_fanout && edge.stream_id.empty() &&
+            edge.link_options.policy == simaai::neat::GraphLinkPolicy::Default) {
+          saw_empty_default_branch = true;
+        }
+      }
+      require(saw_stream_id_fanout_trunk,
+              "default stream-id test graph should lower shared producer through FanOut");
+      require(saw_stream_id_branch,
+              "default-link stream_id should stamp only the selected FanOut branch");
+      require(saw_empty_default_branch, "other FanOut default branches should remain unstamped");
+
+      constexpr simaai::neat::graph::NodeId kStreamSinkNode = 42;
+      simaai::neat::runtime::ExecutionGraphRuntime stream_runtime;
+      simaai::neat::runtime::EdgePlan stream_edge;
+      stream_edge.to = kStreamSinkNode;
+      stream_edge.stream_id = "runtime_stream";
+      stream_runtime.plan.edges.push_back(std::move(stream_edge));
+      stream_runtime.sinks[kStreamSinkNode] =
+          std::make_shared<simaai::neat::runtime::GraphSinkQueue>();
+      simaai::neat::runtime::EdgeRouter stream_router(stream_runtime);
+      simaai::neat::runtime::EdgeRouterCallbacks stream_callbacks;
+      stream_callbacks.stop_requested = [] { return false; };
+      simaai::neat::runtime::EdgeRouterOptions stream_router_options;
+      simaai::neat::Sample routed_sample;
+      routed_sample.stream_id = "input_stream";
+      simaai::neat::runtime::DownstreamTarget stream_target{
+          simaai::neat::runtime::DownstreamTarget::Kind::GraphSink,
+          static_cast<std::size_t>(kStreamSinkNode),
+          simaai::neat::graph::kInvalidPort,
+          0U,
+      };
+      require(stream_router.dispatch_to_target(stream_target, std::move(routed_sample),
+                                               stream_router_options, stream_callbacks),
+              "EdgeRouter should route default-link stream-id samples to graph sinks");
+      simaai::neat::runtime::RuntimeSinkQueueMsg routed_out;
+      require(stream_runtime.sinks[kStreamSinkNode]->pop(routed_out, 0),
+              "stream-id router test should enqueue one sink sample");
+      require(routed_out.sample.stream_id == "runtime_stream",
+              "default runtime edges should stamp samples with their link stream_id");
+      require(routed_out.sample.stream_label == "runtime_stream",
+              "default runtime edge stream_id should provide a stream label when missing");
     }))
