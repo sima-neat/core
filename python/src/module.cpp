@@ -3184,7 +3184,22 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
       .def(nb::init<>())
-      .def_rw("camera_name", &simaai::neat::CameraInputOptions::camera_name)
+      .def_prop_rw(
+          "camera_name",
+          [](const simaai::neat::CameraInputOptions& opt) -> nb::object {
+            if (!opt.camera_name.has_value()) {
+              return nb::none();
+            }
+            return nb::str(opt.camera_name->c_str(), opt.camera_name->size());
+          },
+          [](simaai::neat::CameraInputOptions& opt, nb::handle camera_name) {
+            if (camera_name.is_none()) {
+              opt.camera_name = std::nullopt;
+              return;
+            }
+            opt.camera_name = nb::cast<std::string>(camera_name);
+          },
+          nb::for_setter(nb::arg("camera_name").none()))
       .def_rw("width", &simaai::neat::CameraInputOptions::width)
       .def_rw("height", &simaai::neat::CameraInputOptions::height)
       .def_rw("framerate_num", &simaai::neat::CameraInputOptions::framerate_num)
