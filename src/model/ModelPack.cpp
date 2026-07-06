@@ -1456,6 +1456,29 @@ static std::optional<std::size_t> first_index(const std::vector<std::size_t>& in
   return indices.front();
 }
 
+static bool any_candidate_has_kind(const pipeline_internal::sima::MpkContract& contract,
+                                   const std::vector<std::size_t>& candidates,
+                                   ExecutionStageKind kind) {
+  for (const std::size_t idx : candidates) {
+    if (idx >= contract.plugins.size()) {
+      continue;
+    }
+    const auto& stage = contract.plugins[idx];
+    if (canonical_execution_stage_kind(!stage.kernel.empty() ? stage.kernel : stage.name) == kind) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool
+contract_graph_has_fused_detessdequant(const pipeline_internal::sima::MpkContract& contract) {
+  return std::any_of(
+      contract.graph.nodes.begin(), contract.graph.nodes.end(), [](const auto& node) {
+        return node.kind == pipeline_internal::sima::MpkGraphNodeKind::FusedDetessDequant;
+      });
+}
+
 static std::string pick_stage_name(const pipeline_internal::sima::MpkContract& contract,
                                    const std::vector<std::size_t>& candidates,
                                    ExecutionStageKind kind) {
@@ -1643,7 +1666,7 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
     const pipeline_internal::sima::MpkContract& contract, const std::vector<std::size_t>& ordered,
     std::optional<std::size_t> mla_rank,
     const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags,
-    std::size_t order_index) {
+    const std::vector<ExecutionStageKind>& route_post_kinds, std::size_t order_index) {
   std::vector<ExecutionStage> stages;
   const auto detess_indices =
       collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
@@ -1657,52 +1680,93 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
   const auto cast_indices = collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
                                                            {ExecutionStageKind::Cast});
 
-  ExecutionStageKind kind = ExecutionStageKind::Unknown;
-  std::vector<std::size_t> candidates;
-  const bool route_requests_boxdecode = route_flags.has_value() && route_flags->boxdecode_selected;
-  if (!boxdecode_indices.empty() || route_requests_boxdecode) {
-    kind = ExecutionStageKind::BoxDecode;
-    if (!boxdecode_indices.empty()) {
-      candidates = boxdecode_indices;
-    } else {
-      candidates.clear();
+  const auto append_stage = [&](ExecutionStageKind k, const std::vector<std::size_t>& cands,
+                                std::size_t ord) {
+    ExecutionStage stage;
+    stage.order_index = ord;
+    stage.mpk_plugin_index = first_index(cands);
+    stage.stage_name = pick_stage_name(contract, cands, k);
+    stage.factory_name = require_stage_factory(k);
+    stage.plugin_id = plugin_id_for_stage_kind(k);
+    stage.processor = processor_for_stage_kind(k);
+    stage.kernel = kernel_for_stage_kind(k);
+    stage.kind = k;
+    stages.push_back(std::move(stage));
+  };
+
+  if (!route_post_kinds.empty()) {
+    std::size_t ord = order_index;
+    for (const auto kind : route_post_kinds) {
+      switch (kind) {
+      case ExecutionStageKind::Detess:
+        append_stage(kind, detess_indices, ord++);
+        break;
+      case ExecutionStageKind::DetessCast:
+        append_stage(kind, !detess_indices.empty() ? detess_indices : cast_indices, ord++);
+        break;
+      case ExecutionStageKind::DetessDequant:
+        append_stage(kind, !dequant_indices.empty() ? dequant_indices : detess_indices, ord++);
+        break;
+      case ExecutionStageKind::Dequant:
+        append_stage(kind, dequant_indices, ord++);
+        break;
+      case ExecutionStageKind::BoxDecode:
+        append_stage(kind, boxdecode_indices, ord++);
+        break;
+      case ExecutionStageKind::Cast:
+        append_stage(kind, cast_indices, ord++);
+        break;
+      case ExecutionStageKind::Unknown:
+      case ExecutionStageKind::Preproc:
+      case ExecutionStageKind::Quant:
+      case ExecutionStageKind::Tess:
+      case ExecutionStageKind::QuantTess:
+      case ExecutionStageKind::CastTess:
+      case ExecutionStageKind::Mla:
+        break;
+      }
     }
-  } else if (!detess_indices.empty() && !cast_indices.empty() && dequant_indices.empty()) {
-    kind = ExecutionStageKind::DetessCast;
-    candidates = detess_indices;
-  } else if (!detess_indices.empty() && !dequant_indices.empty()) {
-    kind = ExecutionStageKind::DetessDequant;
-    candidates = !dequant_indices.empty() ? dequant_indices : detess_indices;
-  } else if (!detess_indices.empty()) {
-    kind = ExecutionStageKind::Detess;
-    candidates = detess_indices;
-  } else if (!dequant_indices.empty()) {
-    kind = ExecutionStageKind::Dequant;
-    candidates = dequant_indices;
-  } else if (!cast_indices.empty()) {
-    kind = ExecutionStageKind::Cast;
-    candidates = cast_indices;
-  }
-  if (kind == ExecutionStageKind::Unknown) {
     return stages;
   }
 
-  ExecutionStage stage;
-  stage.order_index = order_index;
-  stage.mpk_plugin_index = first_index(candidates);
-  stage.stage_name = pick_stage_name(contract, candidates, kind);
-  stage.factory_name = require_stage_factory(kind);
-  stage.plugin_id = plugin_id_for_stage_kind(kind);
-  stage.processor = processor_for_stage_kind(kind);
-  stage.kernel = kernel_for_stage_kind(kind);
-  stage.kind = kind;
-  stages.push_back(std::move(stage));
+  const bool route_requests_boxdecode = route_flags.has_value() && route_flags->boxdecode_selected;
+  if (!boxdecode_indices.empty() || route_requests_boxdecode) {
+    append_stage(ExecutionStageKind::BoxDecode,
+                 boxdecode_indices.empty() ? std::vector<std::size_t>{} : boxdecode_indices,
+                 order_index);
+  } else if (!detess_indices.empty() && !cast_indices.empty() && dequant_indices.empty()) {
+    append_stage(ExecutionStageKind::DetessCast, detess_indices, order_index);
+  } else if (!detess_indices.empty() && !dequant_indices.empty()) {
+    if (any_candidate_has_kind(contract, dequant_indices, ExecutionStageKind::DetessDequant) ||
+        contract_graph_has_fused_detessdequant(contract)) {
+      // The fused MPK graph is the source of truth for whether detess/dequant operate on the same
+      // logical outputs. Equal raw plugin counts alone are not enough: heterogeneous egress can
+      // have one detess-only output and one dequant-only output with matching counts.
+      append_stage(ExecutionStageKind::DetessDequant, dequant_indices, order_index);
+    } else {
+      // Heterogeneous egress (e.g. one MLA output published dense/native and one dequant-only):
+      // the route planner does NOT fuse -- it produces separate Detess and Dequantize regions --
+      // so emit matching separate Detess + Dequant stages. Each then carries its own canonical
+      // compiled contract that its region materializes against (otherwise the Detess region's
+      // require_model_managed_postprocess_contract(Detess) finds only a fused DetessDequant
+      // contract and throws "requires a canonical compiled contract").
+      append_stage(ExecutionStageKind::Detess, detess_indices, order_index);
+      append_stage(ExecutionStageKind::Dequant, dequant_indices, order_index + 1U);
+    }
+  } else if (!detess_indices.empty()) {
+    append_stage(ExecutionStageKind::Detess, detess_indices, order_index);
+  } else if (!dequant_indices.empty()) {
+    append_stage(ExecutionStageKind::Dequant, dequant_indices, order_index);
+  } else if (!cast_indices.empty()) {
+    append_stage(ExecutionStageKind::Cast, cast_indices, order_index);
+  }
   return stages;
 }
 
 static ExecutionPlan build_execution_plan_from_mpk_contract(
     const pipeline_internal::sima::MpkContract& contract, PipelineType requested_pipeline_type,
-    const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags) {
+    const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags,
+    const std::vector<ExecutionStageKind>& route_post_kinds) {
   ExecutionPlan plan;
   const auto ordered = ordered_plugin_indices(contract);
   const auto mla_rank = mla_rank_in_order(contract, ordered);
@@ -1717,8 +1781,8 @@ static ExecutionPlan build_execution_plan_from_mpk_contract(
     plan.infer.push_back(*mla);
     ++stage_order;
   }
-  const auto post =
-      make_post_stages_from_contract(contract, ordered, mla_rank, route_flags, stage_order);
+  const auto post = make_post_stages_from_contract(contract, ordered, mla_rank, route_flags,
+                                                   route_post_kinds, stage_order);
   if (!post.empty()) {
     plan.post.insert(plan.post.end(), post.begin(), post.end());
   }
@@ -2709,6 +2773,12 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
   facts.reserve(stages.size());
   for (std::size_t stage_index = 0; stage_index < stages.size(); ++stage_index) {
     const auto& stage = stages[stage_index];
+    if (std::getenv("NEAT_DUMP_POST_REGIONS") != nullptr) {
+      std::fprintf(stderr, "[modelpack-stage] ctx=%d idx=%zu kind=%d name=%s uses_pcvu=%d\n",
+                   static_cast<int>(stage_context), stage_index, static_cast<int>(stage.kind),
+                   stage.stage_name.c_str(),
+                   execution_stage_uses_processcvu_contract(stage.kind) ? 1 : 0);
+    }
     ModelFragment::StageFacts entry;
     entry.stage_name = stage.stage_name;
     entry.stage_order = stage.order_index;
@@ -3757,9 +3827,11 @@ ModelPack ModelPack::clone_with_overrides(const std::string& upstream_name,
 
 void ModelPack::set_model_managed_stage_facts(
     std::optional<bool> processcvu_preproc_single_output_handoff,
-    std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags) {
+    std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags,
+    std::vector<ExecutionStageKind> model_managed_post_kinds) {
   processcvu_preproc_single_output_handoff_ = processcvu_preproc_single_output_handoff;
   model_managed_route_flags_ = std::move(model_managed_route_flags);
+  model_managed_post_kinds_ = std::move(model_managed_post_kinds);
 }
 
 void ModelPack::init(const std::string& tar_gz) {
@@ -3773,6 +3845,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   route_graph_.reset();
   processcvu_preproc_single_output_handoff_.reset();
   model_managed_route_flags_.reset();
+  model_managed_post_kinds_.clear();
 
   if (options_.num_buffers_cvu != 4 || options_.num_buffers_mla != 4) {
     throw std::runtime_error(
@@ -3925,8 +3998,8 @@ ExecutionPlan ModelPack::execution_plan() const {
     throw std::runtime_error(
         "ModelPack: strict MPK contract required to derive the typed execution plan");
   }
-  return build_execution_plan_from_mpk_contract(*mpk_contract_, pipeline_type_,
-                                                model_managed_route_flags_);
+  return build_execution_plan_from_mpk_contract(
+      *mpk_contract_, pipeline_type_, model_managed_route_flags_, model_managed_post_kinds_);
 }
 
 std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(

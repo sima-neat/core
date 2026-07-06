@@ -221,7 +221,7 @@ Key types:
 **Purpose:** Provide ready-to-use Node implementations that emit deterministic GStreamer fragments.
 
 Examples:
-- `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
+- `nodes/io/HttpSource`, `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
 - `nodes/common/*` (Caps, Queue, Output, etc.)
 - `nodes/sima/*` (SiMa.ai decode/encode/parse/pay nodes)
 - `nodes/rtp/*` (depay/payload helpers)
@@ -410,11 +410,15 @@ Additionally, runtime paths may verify required plugins are present:
 A `Graph` is built by adding `Node` objects:
 
 ```cpp
-sima::Graph s;
-s.add(nodes::RTSPInput("rtsp://..."))
- .add(nodes::H264DecodeSima())
- .add(nodes::Caps(/*...NV12...*/))
- .add(nodes::Output());
+simaai::neat::Graph graph;
+simaai::neat::SimaDecodeOptions decode_options;
+decode_options.type = simaai::neat::SimaDecodeType::H264;
+decode_options.raw_output = false;
+
+graph.add(simaai::neat::nodes::RTSPInput("rtsp://example/live"))
+     .add(simaai::neat::nodes::SimaDecode(decode_options))
+     .add(simaai::neat::nodes::CapsNV12SysMem(-1, -1, -1))
+     .add(simaai::neat::nodes::Output());
 ```
 
 Internally:

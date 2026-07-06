@@ -35,13 +35,13 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">mopt = pyneat.ModelOptions()</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">mopt.input_max_width = int(tensor.shape[1])</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">mopt.preprocess.kind = pyneat.InputKind.Ima…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">mopt.input_max_height = int(tensor.shape[0])</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">mopt.preprocess.color_convert.input_format…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">mopt.input_max_depth = int(tensor.shape[2])</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">mopt.preprocess.input_max_width = int(tenso…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">mopt.name_suffix = &quot;_prod&quot;</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">mopt.preprocess.input_max_height = int(tens…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Build runner</text>

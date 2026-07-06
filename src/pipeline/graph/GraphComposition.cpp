@@ -11,6 +11,8 @@
 
 #include "GraphDetail.h"
 
+#include "nodes/io/HttpSource.h"
+
 #include <algorithm>
 #include <stdexcept>
 #include <string>
@@ -18,6 +20,60 @@
 #include <vector>
 
 namespace simaai::neat {
+namespace {
+
+std::string automatic_realtime_stream_id(std::size_t from, std::size_t to,
+                                         const std::string& endpoint) {
+  return "edge" + std::to_string(from) + "_to_" + std::to_string(to) + "_" + endpoint;
+}
+
+bool node_is_live_source(const Node* node) {
+  if (!node || node->input_role() != InputRole::Source) {
+    return false;
+  }
+  const std::string kind = node->kind();
+  if (kind == "RTSPInput" || kind == "CameraInput" || kind == "PCIeSrc") {
+    return true;
+  }
+  if (kind == "HttpSource") {
+    const auto* http = dynamic_cast<const HttpSource*>(node);
+    return http && http->options().is_live;
+  }
+  return false;
+}
+
+bool vertex_is_live_source_context(const auto& graph, std::size_t vertex) {
+  if (vertex >= graph.vertices.size()) {
+    return false;
+  }
+
+  bool has_live_source = false;
+  std::vector<std::size_t> stack{vertex};
+  std::vector<bool> seen(graph.vertices.size(), false);
+  while (!stack.empty()) {
+    const std::size_t current = stack.back();
+    stack.pop_back();
+    if (current >= graph.vertices.size() || seen[current]) {
+      continue;
+    }
+    seen[current] = true;
+
+    const Node* node = graph.vertices[current].get();
+    if (node && node->input_role() == InputRole::Push) {
+      return false;
+    }
+    has_live_source = has_live_source || node_is_live_source(node);
+
+    for (const auto& edge : graph.edges) {
+      if (edge.to == current && edge.from < graph.vertices.size()) {
+        stack.push_back(edge.from);
+      }
+    }
+  }
+  return has_live_source;
+}
+
+} // namespace
 
 Graph::CompositionGraph::VertexId Graph::CompositionGraph::append_vertex(NodePtr node) {
   if (!vertices.empty() && tail == kInvalid) {
@@ -90,7 +146,8 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
                                   .kind = CompositionEdgeKind::RuntimePort,
                                   .from_port = std::move(from_port),
                                   .to_port = std::move(to_port),
-                                  .link_options = link_options});
+                                  .link_options = link_options,
+                                  .stream_id = link_options.stream_id});
   recompute_unique_tail();
 }
 
@@ -106,8 +163,9 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
 
   const bool destination_is_public_output =
       dynamic_cast<const Output*>(vertices[to].get()) != nullptr;
+  std::string incoming_stream_id = link_options.stream_id;
   if (!destination_is_public_output) {
-    for (const auto& edge : edges) {
+    for (auto& edge : edges) {
       if (edge.kind != CompositionEdgeKind::PublicEndpoint || !edge.endpoint.has_value()) {
         continue;
       }
@@ -116,7 +174,32 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
             edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
         const bool incoming_realtime =
             link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-        if (existing_realtime && incoming_realtime) {
+        const bool default_live_fan_in = edge.link_options.policy == GraphLinkPolicy::Default &&
+                                         link_options.policy == GraphLinkPolicy::Default &&
+                                         vertex_is_live_source_context(*this, edge.from) &&
+                                         vertex_is_live_source_context(*this, from);
+        if (existing_realtime || incoming_realtime || default_live_fan_in) {
+          /*
+           * Multiple producers feeding one live input should use the framework
+           * C++ fair-mux path by default.  This keeps source producers
+           * non-blocking, preserves one latest loaned Sample per stream/edge,
+           * and schedules into the consumer through RealtimeLatestLink instead
+           * of asking users to insert app-local mutex/funnel code.
+           */
+          edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+          link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+          edge.link_options.queue_depth =
+              std::max(edge.link_options.queue_depth, link_options.queue_depth);
+          link_options.queue_depth = edge.link_options.queue_depth;
+          if (edge.stream_id.empty()) {
+            edge.stream_id =
+                edge.link_options.stream_id.empty()
+                    ? automatic_realtime_stream_id(edge.from, edge.to, edge.endpoint->to_endpoint)
+                    : edge.link_options.stream_id;
+          }
+          if (incoming_stream_id.empty()) {
+            incoming_stream_id = automatic_realtime_stream_id(from, to, to_endpoint);
+          }
           continue;
         }
         throw std::runtime_error("Graph::connect: destination endpoint '" + to_endpoint +
@@ -134,6 +217,7 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
       .endpoint = EndpointEdgeMeta{.from_endpoint = std::move(from_endpoint),
                                    .to_endpoint = std::move(to_endpoint)},
       .link_options = link_options,
+      .stream_id = std::move(incoming_stream_id),
   });
   recompute_unique_tail();
 }

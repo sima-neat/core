@@ -127,6 +127,39 @@ void enforce_device_visible_push_or_throw(bool require_device_visible,
   }
 }
 
+bool allow_cross_run_gstsample_push() {
+  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
+}
+
+void enforce_live_gstsample_producer_or_throw(const simaai::neat::Sample& sample, const char* where,
+                                              bool allow_graph_internal_zero_copy_input) {
+  if (allow_cross_run_gstsample_push()) {
+    static std::atomic<bool> warned{false};
+    bool expected = false;
+    if (warned.compare_exchange_strong(expected, true)) {
+      std::fprintf(stderr,
+                   "[WARN] SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH=1 is enabling unsafe legacy "
+                   "zero-copy frame transfer between running graphs; frame memory may be stale or "
+                   "recycled.\n");
+    }
+    return;
+  }
+  if (pipeline_internal::sample_has_device_gstsample_producer_lifetime(sample,
+                                                                       /*require_expired=*/false)) {
+    if (allow_graph_internal_zero_copy_input &&
+        !pipeline_internal::sample_has_device_gstsample_producer_lifetime(
+            sample,
+            /*require_expired=*/true)) {
+      return;
+    }
+    std::string reason;
+    if (!pipeline_internal::sample_has_transferable_zero_copy_loan(sample, &reason)) {
+      throw std::runtime_error(pipeline_internal::cross_run_zero_copy_sample_error(where) +
+                               (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+    }
+  }
+}
+
 const Tensor* first_tensor_for_preprocess_meta(const Sample& sample) {
   if (sample_has_tensor_list(sample) && !sample.tensors.empty()) {
     return &sample.tensors.front();
@@ -516,6 +549,9 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
   if (log_refcount_on_push) {
     log_push_refcount(where, buffer);
   }
+  if (fail_msg) {
+    pipeline_internal::attach_zero_copy_loans_to_gst_buffer(buffer, *fail_msg);
+  }
   if (holder_debug_enabled()) {
     const bool has_tensor_set =
         gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME) != nullptr;
@@ -596,6 +632,9 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
                  where ? where : "<null>", static_cast<void*>(sample), static_cast<void*>(buffer),
                  static_cast<std::size_t>(buffer ? gst_buffer_get_size(buffer) : 0U),
                  buffer ? gst_buffer_n_memory(buffer) : 0U, has_tensor_set ? 1 : 0);
+  }
+  if (fail_msg) {
+    pipeline_internal::attach_zero_copy_loans_to_gst_buffer(buffer, *fail_msg);
   }
   GstFlowReturn ret = gst_app_src_push_sample(GST_APP_SRC(st.appsrc), sample);
   if (holder_debug_enabled()) {
@@ -791,12 +830,66 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   }
   if (st.current_key.has_value()) {
     const CapKey& key = *st.current_key;
-    if (!has_simaai_preprocess_meta(buf) && key.width > 0 && key.height > 0) {
-      (void)apply_simaai_preprocess_meta_template(buf, st.src_opt, key.width, key.height);
+    if (!has_simaai_preprocess_meta(buf) && key.width > 0 && key.height > 0 &&
+        st.src_opt.preprocess_meta.has_value() && st.src_opt.preprocess_meta->enabled) {
+      if (!apply_simaai_preprocess_meta_template(buf, st.src_opt, key.width, key.height)) {
+        throw std::runtime_error(
+            std::string(where ? where : "InputStream::push_holder_transport") +
+            ": Cannot attach preprocessing metadata to this zero-copy frame. Box decoding and "
+            "other post-processing stages need the original frame size to produce correct results. "
+            "Copy the frame before pushing it, or make sure preprocessing metadata is provided by "
+            "the source graph.");
+      }
     }
+  }
+  if (std::getenv("SIMA_JPEG_ZC_TRACE")) {
+    GstVideoMeta* vmeta = gst_buffer_get_video_meta(buf);
+    GstCustomMeta* smeta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
+    GstStructure* ss = smeta ? gst_custom_meta_get_structure(smeta) : nullptr;
+    const char* bname = ss ? gst_structure_get_string(ss, "buffer-name") : nullptr;
+    gint64 bid = -1;
+    if (ss)
+      gst_structure_get_int64(ss, "buffer-id", &bid);
+    std::fprintf(stderr,
+                 "[JPEG_ZC_TRACE] holder_push where=%s size=%zu mems=%u appsrc_buffer_name=%s "
+                 "cur_key=%s spec=%s vmeta=%dx%d fmt=%d n_planes=%u sima_name=%s bid=%lld "
+                 "has_preproc=%d\n",
+                 where ? where : "<null>", static_cast<std::size_t>(gst_buffer_get_size(buf)),
+                 static_cast<unsigned>(gst_buffer_n_memory(buf)), st.src_opt.buffer_name.c_str(),
+                 st.current_key.has_value() ? st.current_key->to_string().c_str() : "<none>",
+                 fail_spec ? fail_spec->caps_key.to_string().c_str() : "<none>",
+                 vmeta ? static_cast<int>(vmeta->width) : -1,
+                 vmeta ? static_cast<int>(vmeta->height) : -1,
+                 vmeta ? static_cast<int>(vmeta->format) : -1,
+                 vmeta ? static_cast<unsigned>(vmeta->n_planes) : 0U, bname ? bname : "<none>",
+                 static_cast<long long>(bid), has_simaai_preprocess_meta(buf) ? 1 : 0);
+    dump_sima_meta_full(buf, "JPEG_ZC_TRACE");
+    dump_buffer_memories(buf, "JPEG_ZC_TRACE");
   }
   dump_buffer_memories(buf, where ? where : "InputStream::push_holder_transport");
   validate_holder_video_meta_or_throw(st, buf);
+  if (pipeline_internal::holder_has_zero_copy_loans(holder)) {
+    GstBuffer* loan_transfer_buf = gst_buffer_new();
+    if (!loan_transfer_buf) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                               ": failed to allocate zero-copy loan transfer buffer");
+    }
+    const GstBufferCopyFlags copy_flags =
+        static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                                        GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
+    if (!gst_buffer_copy_into(loan_transfer_buf, buf, copy_flags, 0, -1)) {
+      gst_buffer_unref(loan_transfer_buf);
+      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                               ": failed to wrap zero-copy holder buffer for transfer");
+    }
+    if (pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(loan_transfer_buf,
+                                                                            holder)) {
+      release_input_buffer(buf, "InputStream::push_holder_transport:loan_source_unref");
+      buf = loan_transfer_buf;
+    } else {
+      gst_buffer_unref(loan_transfer_buf);
+    }
+  }
 
   if (GstSample* sample = holder_as_gstsample(holder)) {
     const bool has_tensor_set =
@@ -875,6 +968,14 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
                               const SampleTimingOverrides& timing_override) {
   if (!input.storage) {
     throw std::invalid_argument("InputStream::try_push_message: encoded Sample missing storage");
+  }
+
+  if (!st.opt.copy_input && input.storage->kind == simaai::neat::StorageKind::GstSample &&
+      input.storage->holder) {
+    return push_holder_transport(
+        st, input.storage->holder, "InputStream::try_push_message(encoded_holder)",
+        /*record_timings=*/st.timing_enabled, meta.frame_id, input_seq_override,
+        orig_input_seq_override, meta.stream_id, meta.stream_label, timing_override, &msg, &spec);
   }
 
   const bool timings = st.timing_enabled;
@@ -1048,6 +1149,9 @@ HolderFastPathResult try_push_message_holder_fastpath(
     if (holder_buf) {
       BuiltBuffer pending;
       pending.buffer = gst_buffer_ref(holder_buf);
+      pipeline_internal::attach_zero_copy_loans_to_gst_buffer(pending.buffer, msg);
+      pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(
+          pending.buffer, input.storage ? input.storage->holder : std::shared_ptr<void>{});
       queue_pending_buffer(st, pending, spec, "InputStream::try_push_message(holder)");
       holder_guard.release();
       release_input_buffer(holder_buf, "InputStream::try_push_message:holder_queue_unref");
@@ -1074,6 +1178,36 @@ HolderFastPathResult try_push_message_holder_fastpath(
       holder_buf = nullptr;
     }
     if (holder_buf) {
+      if (std::getenv("SIMA_JPEG_ZC_TRACE")) {
+        GstVideoMeta* vmeta = gst_buffer_get_video_meta(holder_buf);
+        GstCustomMeta* smeta = gst_buffer_get_custom_meta(holder_buf, "GstSimaMeta");
+        GstStructure* ss = smeta ? gst_custom_meta_get_structure(smeta) : nullptr;
+        const char* bname = ss ? gst_structure_get_string(ss, "buffer-name") : nullptr;
+        gint64 bid = -1;
+        gint64 input_seq = -1;
+        if (ss) {
+          gst_structure_get_int64(ss, "buffer-id", &bid);
+          gst_structure_get_int64(ss, "input-seq", &input_seq);
+        }
+        std::fprintf(
+            stderr,
+            "[JPEG_ZC_TRACE] fastpath holder size=%zu mems=%u appsrc_buffer_name=%s "
+            "cur_key=%s spec=%s vmeta=%dx%d fmt=%d n_planes=%u sima_name=%s bid=%lld "
+            "input_seq=%lld has_preproc=%d holder_ref=%ld buffer_ref=%d\n",
+            static_cast<std::size_t>(gst_buffer_get_size(holder_buf)),
+            static_cast<unsigned>(gst_buffer_n_memory(holder_buf)), st.src_opt.buffer_name.c_str(),
+            st.current_key.has_value() ? st.current_key->to_string().c_str() : "<none>",
+            spec.caps_key.to_string().c_str(), vmeta ? static_cast<int>(vmeta->width) : -1,
+            vmeta ? static_cast<int>(vmeta->height) : -1,
+            vmeta ? static_cast<int>(vmeta->format) : -1,
+            vmeta ? static_cast<unsigned>(vmeta->n_planes) : 0U, bname ? bname : "<none>",
+            static_cast<long long>(bid), static_cast<long long>(input_seq),
+            has_simaai_preprocess_meta(holder_buf) ? 1 : 0,
+            input.storage && input.storage->holder ? input.storage->holder.use_count() : 0L,
+            GST_MINI_OBJECT_REFCOUNT_VALUE(holder_buf));
+        dump_sima_meta_full(holder_buf, "JPEG_ZC_TRACE_FASTPATH");
+        dump_buffer_memories(holder_buf, "JPEG_ZC_TRACE_FASTPATH");
+      }
       holder_guard.release();
       out.handled = push_holder_buffer_with_appsrc(
           st, holder_buf, "InputStream::try_push_message(holder)",
@@ -1295,9 +1429,7 @@ bool InputStream::try_push_message(const Sample& msg) {
   auto st = state_;
   const SeqOverrides seq = seq_overrides_for_message(*st, transport_msg);
   const MessageMetaOverrides meta = message_meta_overrides(transport_msg);
-  if (!sample_has_tensor_list(transport_msg)) {
-    verify_buffer_name_override(st->src_opt, meta.stream_label, "InputStream::try_push_message");
-  }
+  verify_buffer_name_override(st->src_opt, meta.stream_label, "InputStream::try_push_message");
   const simaai::neat::Tensor* input_tensor =
       sample_has_tensor_list(transport_msg) && !transport_msg.tensors.empty()
           ? &transport_msg.tensors.front()
@@ -1310,6 +1442,8 @@ bool InputStream::try_push_message(const Sample& msg) {
   // including the tensor-envelope branch which previously had no guard.
   enforce_device_visible_push_or_throw(st->opt.require_device_visible_input, transport_msg,
                                        "InputStream::try_push_message");
+  enforce_live_gstsample_producer_or_throw(transport_msg, "InputStream::try_push_message",
+                                           st->opt.allow_graph_internal_zero_copy_input);
   if (spec.kind == SampleMediaKind::RawVideo) {
     spec.fps_n = st->src_opt.fps_n;
     spec.fps_d = st->src_opt.fps_d;
@@ -1421,13 +1555,20 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
 
   if (holder_result.holder_failed && holder_debug_enabled()) {
-    std::fprintf(stderr, "[HOLDER] push_message fallback to copy err=%s\n",
+    std::fprintf(stderr, "[HOLDER] push_message holder path failed err=%s\n",
                  holder_result.holder_fail_reason.empty()
                      ? "<unknown>"
                      : holder_result.holder_fail_reason.c_str());
   }
-  if (allow_zero_copy_transport && input.storage->kind == simaai::neat::StorageKind::GstSample &&
-      !holder_result.holder_failed) {
+  if (allow_zero_copy_transport && input.storage->kind == simaai::neat::StorageKind::GstSample) {
+    if (holder_result.holder_failed) {
+      throw std::runtime_error(
+          "InputStream::try_push_message: Cannot use this zero-copy frame as input because its "
+          "frame metadata could not be prepared safely. Copy the frame before pushing it, or keep "
+          "the producer and consumer in one graph. Details: " +
+          (holder_result.holder_fail_reason.empty() ? std::string("holder metadata failed")
+                                                    : holder_result.holder_fail_reason));
+    }
     throw std::runtime_error("InputStream::try_push_message: " +
                              (holder_result.holder_err.empty() ? std::string("missing GstBuffer")
                                                                : holder_result.holder_err));

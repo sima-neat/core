@@ -8,7 +8,7 @@ import requests
 
 def print_stream(response: requests.Response) -> None:
     ttft = None
-    tps = None
+    tps_samples = []
 
     for line in response.iter_lines(decode_unicode=True):
         if not line or not line.startswith("data:"):
@@ -23,7 +23,8 @@ def print_stream(response: requests.Response) -> None:
             raise RuntimeError(event.get("error", "audio transcription failed"))
 
         ttft = event.get("ttft", ttft)
-        tps = event.get("tps", tps)
+        if "tps" in event:
+            tps_samples.append(float(event["tps"]))
 
         text = event.get("text", "")
         if text:
@@ -32,8 +33,12 @@ def print_stream(response: requests.Response) -> None:
     print()
     if ttft is not None:
         print(f"server ttft: {ttft:.4f}s")
-    if tps is not None:
-        print(f"server tps: {tps:.2f} tokens/s")
+    if tps_samples:
+        avg_tps = sum(tps_samples) / len(tps_samples)
+        print(
+            f"server tps: avg={avg_tps:.2f} min={min(tps_samples):.2f} "
+            f"max={max(tps_samples):.2f} tokens/s"
+        )
 
 
 def main() -> int:

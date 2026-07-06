@@ -33,8 +33,7 @@ namespace simaai::neat::nodes::groups {
 struct ImageInputGroupOptions {
   std::string path; ///< Filesystem path to the still image to read.
   /// Number of buffers `imagefreeze` should produce (-1 = unlimited).
-  /// If `sima_decoder` is enabled and this is >0, it may be clamped to a minimum
-  /// to allow decoder startup. Set `SIMA_IMAGEFREEZE_MIN_BUFFERS=0` to disable.
+  /// Positive finite counts are honored exactly; use a dedicated decoder stress test for bursts.
   int imagefreeze_num_buffers = -1;
   int fps = 30;           ///< Output frame rate produced by `imagefreeze`.
   bool sync_mode = false; ///< If true, sink elements run in sync (real-time) mode.

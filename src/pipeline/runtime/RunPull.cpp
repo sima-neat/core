@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -36,7 +37,106 @@ using pipeline_internal::trim_copy;
 
 namespace {
 
+bool attach_public_holder_loan_or_error(runtime::RunCore& core, Sample& sample,
+                                        std::string* message) {
+  auto gate = core.holder_loan_gate;
+  if (!gate || !gate->enabled() || !pipeline_internal::sample_has_device_gstsample_holder(sample)) {
+    return true;
+  }
+  const int required = pipeline_internal::count_distinct_device_gstsample_holders(sample);
+  if (core.pipeline.stream_opt.holder_loan_credits_auto &&
+      required > core.pipeline.stream_opt.holder_loan_per_sample_arity) {
+    core.pipeline.stream_opt.holder_loan_per_sample_arity = required;
+    const int sample_window = std::max(1, core.pipeline.stream_opt.holder_loan_sample_window);
+    core.pipeline.stream_opt.holder_loan_credits = sample_window * required;
+    gate->configure(core.pipeline.stream_opt.holder_loan_credits);
+  }
+  std::string err;
+  if (!pipeline_internal::attach_zero_copy_loan_to_sample(sample, gate, &err)) {
+    if (message) {
+      std::ostringstream oss;
+      oss << "zero-copy output loan credits exhausted";
+      if (!err.empty()) {
+        oss << ": " << err;
+      }
+      oss << " (sample_requires=" << required << " holder" << (required == 1 ? "" : "s")
+          << ", credit_limit=" << gate->credit_limit() << ", in_flight=" << gate->inflight() << ")";
+      *message = oss.str();
+    }
+    return false;
+  }
+  return true;
+}
+
 constexpr auto kPullWaitPollQuantum = std::chrono::milliseconds(50);
+
+PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
+                                              simaai::neat::graph::NodeId node_id, int timeout_ms,
+                                              std::string_view where, Sample& out, PullError* err) {
+  const std::string label(where.empty() ? "Run::pull" : where);
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  if (timeout_ms > 0) {
+    deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  }
+
+  for (;;) {
+    int wait_ms = timeout_ms;
+    if (deadline.has_value()) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= *deadline) {
+        pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                                      label + ": timeout waiting for graph output");
+        return PullStatus::Timeout;
+      }
+      wait_ms = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now).count());
+    }
+
+    auto queued = core.graph_pull_msg_with_restore_reservation(node_id, wait_ms);
+    if (!queued.has_value()) {
+      const std::string graph_err = core.last_error();
+      if (!graph_err.empty()) {
+        pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull, graph_err);
+        return PullStatus::Error;
+      }
+      pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                                    label + ": timeout waiting for graph output");
+      return PullStatus::Timeout;
+    }
+
+    std::string loan_error;
+    if (attach_public_holder_loan_or_error(core, queued->sample, &loan_error)) {
+      out = std::move(queued->sample);
+      (void)core.graph_release_sink_restore_reservation(node_id);
+      return PullStatus::Ok;
+    }
+
+    const std::string message =
+        label + ": " +
+        (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
+        "; release older zero-copy outputs and retry";
+    if (!core.graph_restore_reserved_sink_front(node_id, std::move(*queued))) {
+      pipeline_internal::error_util::set_pull_error(
+          err, error_codes::kRuntimePull, message + " (failed to restore graph output queue)");
+      return PullStatus::Error;
+    }
+    if (timeout_ms == 0) {
+      pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull, message);
+      return PullStatus::Timeout;
+    }
+    if (deadline.has_value()) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= *deadline) {
+        pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull, message);
+        return PullStatus::Timeout;
+      }
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now);
+      std::this_thread::sleep_for(std::min(kPullWaitPollQuantum, remaining));
+    } else {
+      std::this_thread::sleep_for(kPullWaitPollQuantum);
+    }
+  }
+}
 
 std::string decorate_with_error_code(const std::string& code, const std::string& message) {
   return pipeline_internal::error_util::decorate_error(code, message);
@@ -349,6 +449,10 @@ PullStatus Run::pull(std::string_view output_name, int timeout_ms, Sample& out, 
   return core_->pull_named_output(output_name, timeout_ms, out, err);
 }
 
+bool runtime::RunCore::attach_public_output_loan(Sample& sample, std::string* err) {
+  return attach_public_holder_loan_or_error(*this, sample, err);
+}
+
 PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
@@ -365,9 +469,10 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
                              available_output_names(*this));
       return PullStatus::Error;
     }
-    auto sample = st->graph_pull(endpoint->node, timeout_ms);
-    if (sample.has_value()) {
-      Sample value = std::move(*sample);
+    Sample value;
+    const PullStatus graph_status = pull_graph_output_with_public_loan(
+        *st, endpoint->node, timeout_ms, "Run::pull", value, err);
+    if (graph_status == PullStatus::Ok) {
       const auto now = std::chrono::steady_clock::now();
       st->record_graph_sample_output(default_output_name(*st), value, now);
       runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphOutputPull,
@@ -383,13 +488,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
       st->last_pull_at = now;
       return PullStatus::Ok;
     }
-    const std::string graph_err = st->last_error();
-    if (!graph_err.empty()) {
-      set_terminal_error(error_codes::kRuntimePull, graph_err);
-      return PullStatus::Error;
-    }
-    set_terminal_error(error_codes::kRuntimePull, "Run::pull: timeout waiting for graph output");
-    return PullStatus::Timeout;
+    return graph_status;
   }
   if (!st->pipeline.supports_pull) {
     set_terminal_error(error_codes::kRuntimePull,
@@ -430,6 +529,11 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
            (st->pipeline.supports_push && !st->pipeline.stream.running());
   };
 
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  if (timeout_ms >= 0) {
+    deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  }
+
   std::unique_lock<std::mutex> lock(st->pipeline.out_mu);
   if (timeout_ms < 0) {
     while (!wait_ready()) {
@@ -441,7 +545,6 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
       st->pipeline.out_cv.wait_for(lock, kPullWaitPollQuantum);
     }
   } else {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (!wait_ready()) {
       const std::string loop_err = last_error();
       if (!loop_err.empty()) {
@@ -449,7 +552,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
         return handle_stream_error(loop_err);
       }
       const auto now = std::chrono::steady_clock::now();
-      if (now >= deadline) {
+      if (now >= *deadline) {
         lock.unlock();
         if (timeout_ms == 0) {
           // A zero-timeout pull is a non-blocking poll. This is used by pull_samples()
@@ -514,12 +617,45 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
         set_terminal_error(error_codes::kRuntimePull, "Run::pull: timeout waiting for output");
         return PullStatus::Timeout;
       }
-      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now);
       st->pipeline.out_cv.wait_for(lock, std::min(kPullWaitPollQuantum, remaining));
     }
   }
 
-  if (!st->pipeline.out_queue.empty()) {
+  while (!st->pipeline.out_queue.empty()) {
+    std::string loan_error;
+    if (!attach_public_holder_loan_or_error(*st, st->pipeline.out_queue.front(), &loan_error)) {
+      const std::string message =
+          "Run::pull: " +
+          (loan_error.empty() ? std::string("zero-copy output loan unavailable") : loan_error) +
+          "; release older zero-copy outputs and retry";
+
+      const std::string loop_err = last_error();
+      if (!loop_err.empty()) {
+        lock.unlock();
+        return handle_stream_error(loop_err);
+      }
+
+      if (timeout_ms == 0) {
+        lock.unlock();
+        set_terminal_error(error_codes::kRuntimePull, message);
+        return PullStatus::Timeout;
+      }
+      if (timeout_ms > 0) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= *deadline) {
+          lock.unlock();
+          set_terminal_error(error_codes::kRuntimePull, message);
+          return PullStatus::Timeout;
+        }
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now);
+        st->pipeline.out_cv.wait_for(lock, std::min(kPullWaitPollQuantum, remaining));
+      } else {
+        st->pipeline.out_cv.wait_for(lock, kPullWaitPollQuantum);
+      }
+      continue;
+    }
     out = std::move(st->pipeline.out_queue.front());
     st->pipeline.out_queue.pop_front();
     st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
@@ -579,9 +715,11 @@ PullStatus runtime::RunCore::pull_named_output(std::string_view output_name, int
     return PullStatus::Error;
   }
 
-  auto sample = graph_pull(endpoint->node, timeout_ms);
-  if (sample.has_value()) {
-    Sample value = std::move(*sample);
+  Sample value;
+  const PullStatus graph_status = pull_graph_output_with_public_loan(
+      *this, endpoint->node, timeout_ms, "Run::pull(\"" + std::string(output_name) + "\")", value,
+      err);
+  if (graph_status == PullStatus::Ok) {
     const auto now = std::chrono::steady_clock::now();
     record_graph_sample_output(output_name, value, now);
     runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphOutputPull,
@@ -597,15 +735,7 @@ PullStatus runtime::RunCore::pull_named_output(std::string_view output_name, int
     last_pull_at = now;
     return PullStatus::Ok;
   }
-
-  const std::string graph_err = last_error();
-  if (!graph_err.empty()) {
-    set_terminal_error(error_codes::kRuntimePull, graph_err);
-    return PullStatus::Error;
-  }
-  set_terminal_error(error_codes::kRuntimePull, "Run::pull(\"" + std::string(output_name) +
-                                                    "\"): timeout waiting for graph output");
-  return PullStatus::Timeout;
+  return graph_status;
 }
 
 std::optional<Sample> runtime::RunCore::pull_optional(int timeout_ms) {

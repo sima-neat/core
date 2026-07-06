@@ -1,5 +1,5 @@
 // src/pipeline/internal/InputStream.cpp
-#include "InputStream.h"
+#include "InputStreamInternal.h"
 
 #include "pipeline/GraphOptions.h"
 #include "pipeline/EncodedSampleUtil.h"
@@ -42,124 +42,6 @@
 namespace simaai::neat {
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
-
-using pipeline_internal::DiagCtx;
-
-struct InputStream::State {
-  GstElement* pipeline = nullptr;
-  GstElement* appsrc = nullptr;
-  GstElement* appsink = nullptr;
-  InputOptions src_opt;
-  InputStreamOptions opt;
-  InputStreamOptions::DynamicCapability dynamic_capability =
-      InputStreamOptions::DynamicCapability::StaticOnly;
-  InputStreamOptions::ShapePolicy shape_policy = InputStreamOptions::ShapePolicy::BoundedDynamic;
-  InputStreamOptions::ResolvedShapeLimits shape_limits{};
-  InputStreamOptions::ByteGuardOrigin byte_guard_origin =
-      InputStreamOptions::ByteGuardOrigin::Unset;
-  bool allow_ingress_cvu_format_renegotiation = false;
-  bool allow_dynamic_growth = false;
-  std::size_t max_input_bytes_guard = 0;
-  InputBufferPoolGuard pool_guard;
-  GstBuffer* reusable_buffer = nullptr;
-  size_t reusable_bytes = 0;
-  std::shared_ptr<DiagCtx> diag;
-  std::shared_ptr<void> guard;
-  std::thread worker;
-  std::mutex pipeline_mu;
-  std::atomic<bool> running{false};
-  std::atomic<bool> stop_requested{false};
-  std::atomic<bool> worker_done{true};
-  std::atomic<bool> teardown_on_exit{false};
-  bool use_callbacks = false;
-  std::mutex cb_mu;
-  std::condition_variable cb_cv;
-  std::deque<GstSample*> cb_queue;
-  std::size_t cb_queue_max = 0;
-  std::atomic<bool> cb_eos{false};
-  std::atomic<int> cb_inflight{0};
-  GstAppSinkCallbacks cb_handlers{};
-  struct CallbackCtx {
-    std::shared_ptr<InputStream::State> st;
-  };
-  std::unique_ptr<CallbackCtx> cb_ctx;
-  std::function<void(Sample)> callback;
-  mutable std::mutex error_mu;
-  std::string error;
-  std::optional<CapKey> current_key;
-  std::optional<CapKey> pending_key;
-  int pending_count = 0;
-  GstBuffer* pending_buffer = nullptr;
-  std::optional<SampleSpec> pending_spec;
-  std::uint64_t pending_alloc_ns = 0;
-  std::uint64_t pending_map_ns = 0;
-  std::uint64_t pending_copy_ns = 0;
-  std::optional<SampleSpec> last_spec;
-  std::function<void(const SampleSpec&, const SampleSpec&)> on_caps_change;
-  std::optional<SampleSpec> current_tensor_spec;
-  size_t alloc_bytes = 0;
-  bool timing_enabled = false;
-  GstCaps* current_caps = nullptr;
-  GstVideoInfo current_vinfo{};
-  std::atomic<std::uint64_t> dropped_frames{0};
-  std::atomic<std::uint64_t> renegotiations{0};
-  std::atomic<std::uint64_t> alloc_grows{0};
-  std::atomic<std::uint64_t> growth_blocked{0};
-  std::atomic<std::uint64_t> renegotiation_blocked{0};
-  std::atomic<std::uint64_t> push_count{0};
-  std::atomic<std::uint64_t> push_failures{0};
-  std::atomic<std::uint64_t> pull_count{0};
-  std::atomic<std::uint64_t> poll_count{0};
-  std::atomic<std::uint64_t> alloc_ns{0};
-  std::atomic<std::uint64_t> map_ns{0};
-  std::atomic<std::uint64_t> copy_ns{0};
-  std::atomic<std::uint64_t> push_ns{0};
-  std::atomic<std::uint64_t> pull_wait_ns{0};
-  std::atomic<std::uint64_t> decode_ns{0};
-  std::atomic<std::int64_t> last_push_ns{0};
-  std::atomic<std::int64_t> inflight{0};
-  std::atomic<std::int64_t> next_input_seq{0};
-  std::mutex preprocess_meta_mu;
-  std::deque<std::int64_t> preprocess_meta_order;
-  std::unordered_map<std::int64_t, PreprocessRuntimeMeta> preprocess_meta_by_input_seq;
-  std::atomic<bool> eos_sent{false};
-  std::atomic<bool> teardown_started{false};
-  std::mutex stop_mu;
-  std::atomic<bool> stop_started{false};
-  std::atomic<int> gst_calls{0};
-  std::mutex gst_mu;
-  std::condition_variable gst_cv;
-};
-
-struct GstCallGuard {
-  InputStream::State& st;
-  explicit GstCallGuard(InputStream::State& state) : st(state) {
-    st.gst_calls.fetch_add(1, std::memory_order_relaxed);
-  }
-  ~GstCallGuard() {
-    if (st.gst_calls.fetch_sub(1, std::memory_order_relaxed) == 1) {
-      std::lock_guard<std::mutex> lock(st.gst_mu);
-      st.gst_cv.notify_all();
-    }
-  }
-};
-
-struct CallbackInflightGuard {
-  std::shared_ptr<InputStream::State> st;
-  explicit CallbackInflightGuard(const std::shared_ptr<InputStream::State>& state) : st(state) {
-    if (st) {
-      st->cb_inflight.fetch_add(1, std::memory_order_relaxed);
-    }
-  }
-  ~CallbackInflightGuard() {
-    if (!st)
-      return;
-    if (st->cb_inflight.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-      std::lock_guard<std::mutex> lock(st->cb_mu);
-      st->cb_cv.notify_all();
-    }
-  }
-};
 
 bool buffer_name_matches_expected(const std::string& expected_list, const std::string& actual) {
   const std::string expected = trim_copy(expected_list);
@@ -477,11 +359,6 @@ bool maybe_drop_appsink_last_sample(GstElement* appsink) {
   return true;
 }
 
-struct WeakRefTag {
-  int id = 0;
-  const char* label = nullptr;
-};
-
 void mini_object_weak_notify(gpointer data, GstMiniObject* obj) {
   auto* tag = static_cast<WeakRefTag*>(data);
   const char* type = obj ? g_type_name(GST_MINI_OBJECT_TYPE(obj)) : "<null>";
@@ -574,8 +451,9 @@ void verify_buffer_name_override(const InputOptions& opt,
     return;
   const char* tag = where ? where : "InputStream";
   std::ostringstream oss;
-  oss << tag << ": buffer-name mismatch (expected '" << expected << "', got '"
-      << *buffer_name_override << "')";
+  oss << tag << ": Input frame was sent to the wrong model input. Expected input name: '"
+      << expected << "'; received: '" << *buffer_name_override
+      << "'. Check the input buffer name used when connecting the source to the model.";
   throw std::runtime_error(oss.str());
 }
 
@@ -637,29 +515,6 @@ bool handle_appsrc_push_fail(InputStream::State& st, const char* where, GstFlowR
   set_stream_error(st, format_push_failure_error(st, where, ret));
   return true;
 }
-
-struct BufferUnrefGuard {
-  GstBuffer** buffer = nullptr;
-  const char* where = nullptr;
-  BufferUnrefGuard(GstBuffer** buf, const char* tag) : buffer(buf), where(tag) {}
-  BufferUnrefGuard(const BufferUnrefGuard&) = delete;
-  BufferUnrefGuard& operator=(const BufferUnrefGuard&) = delete;
-  ~BufferUnrefGuard() {
-    if (buffer && *buffer) {
-      release_input_buffer(*buffer, where);
-    }
-  }
-  void release() {
-    buffer = nullptr;
-  }
-};
-
-struct BuiltBuffer {
-  GstBuffer* buffer = nullptr;
-  std::uint64_t alloc_ns = 0;
-  std::uint64_t map_ns = 0;
-  std::uint64_t copy_ns = 0;
-};
 
 InputDropInfo drop_info_from_spec(const SampleSpec& spec, const char* reason) {
   InputDropInfo info;
@@ -770,6 +625,13 @@ BuiltBuffer build_buffer_with_fill(
     int input_height) {
   const char* tag = (op_tag && *op_tag) ? op_tag : "build_buffer_with_fill";
   verify_buffer_name_override(st.src_opt, buffer_name_override, where);
+  // Some build paths intentionally seed raw-video inputs with dynamic caps
+  // (format known, geometry learned from the first pushed frame). In that
+  // case InputStream::create() starts with alloc_bytes == 0. Grow here as the
+  // final allocator-side guard so all copy-based push paths honor the same
+  // max_input_bytes/dynamic-growth policy even when a caller did not pre-grow
+  // through maybe_update_caps_for_spec().
+  ensure_alloc_for_bytes(st, required_bytes, where);
   std::chrono::steady_clock::time_point t_alloc_start{};
   if (record_timings)
     t_alloc_start = std::chrono::steady_clock::now();
@@ -942,12 +804,6 @@ void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* wh
     st.reusable_bytes = 0;
   }
 }
-
-enum class CapsDecision {
-  Push,
-  Queue,
-  Flush,
-};
 
 // Caps policy:
 // - Caps always reflect actual frame geometry.

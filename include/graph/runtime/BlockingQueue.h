@@ -87,16 +87,21 @@ public:
     }
     if (capacity_ > 0) {
       if (timeout_ms < 0) {
-        cv_not_full_.wait(lock, [&] { return closed_ || queue_.size() < capacity_; });
+        cv_not_full_.wait(lock, [&] { return closed_ || has_capacity_locked(); });
       } else if (!cv_not_full_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
-                                        [&] { return closed_ || queue_.size() < capacity_; })) {
+                                        [&] { return closed_ || has_capacity_locked(); })) {
         record_push_wait(t0, timing);
         push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
-      if (closed_ || (capacity_ > 0 && queue_.size() >= capacity_)) {
+      if (closed_) {
         record_push_wait(t0, timing);
         push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
+      if (!has_capacity_locked()) {
+        record_push_wait(t0, timing);
+        push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
     }
@@ -122,16 +127,21 @@ public:
     }
     if (capacity_ > 0) {
       if (timeout_ms < 0) {
-        cv_not_full_.wait(lock, [&] { return closed_ || queue_.size() < capacity_; });
+        cv_not_full_.wait(lock, [&] { return closed_ || has_capacity_locked(); });
       } else if (!cv_not_full_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
-                                        [&] { return closed_ || queue_.size() < capacity_; })) {
+                                        [&] { return closed_ || has_capacity_locked(); })) {
         record_push_wait(t0, timing);
         push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
-      if (closed_ || (capacity_ > 0 && queue_.size() >= capacity_)) {
+      if (closed_) {
         record_push_wait(t0, timing);
         push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
+      if (!has_capacity_locked()) {
+        record_push_wait(t0, timing);
+        push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
     }
@@ -152,7 +162,7 @@ public:
       push_closed_count_.fetch_add(1, std::memory_order_relaxed);
       return false;
     }
-    if (capacity_ > 0 && queue_.size() >= capacity_) {
+    if (!has_capacity_locked()) {
       push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
       return false;
     }
@@ -172,7 +182,7 @@ public:
       push_closed_count_.fetch_add(1, std::memory_order_relaxed);
       return false;
     }
-    if (capacity_ > 0 && queue_.size() >= capacity_) {
+    if (!has_capacity_locked()) {
       push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
       return false;
     }
@@ -184,35 +194,72 @@ public:
     return true;
   }
 
+  /// Restore an item to the front of the queue. Intended for a consumer that popped an item but
+  /// could not acquire an external resource needed to publish it. Returns false if closed or full.
+  bool restore_front(T&& item) {
+    const bool timing = timing_enabled();
+    std::lock_guard<std::mutex> lock(mu_);
+    if (closed_) {
+      push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+    if (!has_capacity_locked()) {
+      push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+    queue_.push_front(QueueEntry{std::move(item), timing
+                                                      ? std::chrono::steady_clock::now()
+                                                      : std::chrono::steady_clock::time_point{}});
+    update_high_watermark_locked();
+    cv_not_empty_.notify_one();
+    return true;
+  }
+
+  /// Pop the next item while keeping its bounded-capacity slot reserved for either
+  /// `restore_reserved_front()` or `release_restore_reservation()`. Use this for two-phase
+  /// consumers that may have to put the exact item back after checking an external resource.
+  bool pop_with_restore_reservation(T& out, int timeout_ms = -1) {
+    return pop_impl(out, timeout_ms, true);
+  }
+
+  /// Restore an item popped by `pop_with_restore_reservation()` without exposing the reserved slot
+  /// to producers in between. Returns false only if the queue was closed or no reservation exists.
+  bool restore_reserved_front(T&& item) {
+    const bool timing = timing_enabled();
+    std::lock_guard<std::mutex> lock(mu_);
+    if (restore_reservations_ == 0) {
+      return false;
+    }
+    --restore_reservations_;
+    if (closed_) {
+      push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+      cv_not_full_.notify_one();
+      return false;
+    }
+    queue_.push_front(QueueEntry{std::move(item), timing
+                                                      ? std::chrono::steady_clock::now()
+                                                      : std::chrono::steady_clock::time_point{}});
+    update_high_watermark_locked();
+    cv_not_empty_.notify_one();
+    return true;
+  }
+
+  /// Release a slot reserved by `pop_with_restore_reservation()` after the popped item has been
+  /// successfully consumed and will not be restored.
+  bool release_restore_reservation() {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (restore_reservations_ == 0) {
+      return false;
+    }
+    --restore_reservations_;
+    cv_not_full_.notify_one();
+    return true;
+  }
+
   /// Pop the next item into `out`. Blocks up to `timeout_ms` (or forever if -1). Returns false if
   /// closed and empty (or on timeout).
   bool pop(T& out, int timeout_ms = -1) {
-    const bool timing = timing_enabled();
-    const auto t0 =
-        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    std::unique_lock<std::mutex> lock(mu_);
-    if (timeout_ms < 0) {
-      cv_not_empty_.wait(lock, [&] { return closed_ || !queue_.empty(); });
-    } else {
-      cv_not_empty_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
-                             [&] { return closed_ || !queue_.empty(); });
-    }
-    record_pop_wait(t0, timing);
-    if (queue_.empty()) {
-      if (closed_) {
-        pop_closed_empty_count_.fetch_add(1, std::memory_order_relaxed);
-      } else {
-        pop_timeout_count_.fetch_add(1, std::memory_order_relaxed);
-      }
-      return false;
-    }
-    QueueEntry entry = std::move(queue_.front());
-    queue_.pop_front();
-    record_residence(entry.enqueue_time, timing);
-    out = std::move(entry.value);
-    pop_count_.fetch_add(1, std::memory_order_relaxed);
-    cv_not_full_.notify_one();
-    return true;
+    return pop_impl(out, timeout_ms, false);
   }
 
   /// Close the queue: wakes blocked threads and refuses further pushes.
@@ -254,7 +301,7 @@ public:
     s.high_watermark = high_watermark_.load(std::memory_order_relaxed);
     {
       std::lock_guard<std::mutex> lock(mu_);
-      s.current_size = queue_.size();
+      s.current_size = effective_size_locked();
       s.capacity = capacity_;
       s.closed = closed_;
     }
@@ -281,6 +328,48 @@ private:
     while (cur < value && !dst.compare_exchange_weak(cur, value, std::memory_order_relaxed,
                                                      std::memory_order_relaxed)) {
     }
+  }
+
+  bool has_capacity_locked() const {
+    return capacity_ == 0 || effective_size_locked() < capacity_;
+  }
+
+  std::size_t effective_size_locked() const {
+    return queue_.size() + restore_reservations_;
+  }
+
+  bool pop_impl(T& out, int timeout_ms, bool reserve_restore_slot) {
+    const bool timing = timing_enabled();
+    const auto t0 =
+        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    std::unique_lock<std::mutex> lock(mu_);
+    if (timeout_ms < 0) {
+      cv_not_empty_.wait(lock, [&] { return closed_ || !queue_.empty(); });
+    } else {
+      cv_not_empty_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
+                             [&] { return closed_ || !queue_.empty(); });
+    }
+    record_pop_wait(t0, timing);
+    if (queue_.empty()) {
+      if (closed_) {
+        pop_closed_empty_count_.fetch_add(1, std::memory_order_relaxed);
+      } else {
+        pop_timeout_count_.fetch_add(1, std::memory_order_relaxed);
+      }
+      return false;
+    }
+    QueueEntry entry = std::move(queue_.front());
+    queue_.pop_front();
+    if (reserve_restore_slot) {
+      ++restore_reservations_;
+    }
+    record_residence(entry.enqueue_time, timing);
+    out = std::move(entry.value);
+    pop_count_.fetch_add(1, std::memory_order_relaxed);
+    if (!reserve_restore_slot) {
+      cv_not_full_.notify_one();
+    }
+    return true;
   }
 
   void record_push_wait(std::chrono::steady_clock::time_point start, bool enabled) const {
@@ -325,6 +414,7 @@ private:
 
   std::deque<QueueEntry> queue_;
   std::size_t capacity_ = 0;
+  std::size_t restore_reservations_ = 0;
   bool closed_ = false;
   mutable std::atomic<std::uint64_t> push_count_{0};
   mutable std::atomic<std::uint64_t> pop_count_{0};

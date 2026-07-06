@@ -45,6 +45,16 @@ InputOptions complete_input_options_from_seed_spec(const InputOptions& opt,
   const bool default_media_seed = (out.payload_type == defaults.payload_type) &&
                                   out.format.empty() && out.width <= 0 && out.height <= 0 &&
                                   out.depth <= 0;
+  if (seed.kind == SampleMediaKind::Encoded && !seed.caps_string.empty() &&
+      (out.payload_type == PayloadType::Auto || out.payload_type == PayloadType::Encoded ||
+       default_media_seed)) {
+    out.payload_type = PayloadType::Encoded;
+    out.caps_override = seed.caps_string;
+    if (out.format.empty() && !seed.format.empty()) {
+      out.format = seed.format;
+    }
+    return out;
+  }
   if ((out.payload_type == PayloadType::Auto || default_media_seed) && !seed.media_type.empty()) {
     out.payload_type = input_type_from_media_type(seed.media_type);
   }

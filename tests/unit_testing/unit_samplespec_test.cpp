@@ -10,6 +10,7 @@
 #include "test_utils.h"
 
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <cstring>
 #include <iostream>
@@ -222,6 +223,64 @@ simaai::neat::Tensor make_runtime_shared_parent_subview_tensor() {
   return head1;
 }
 
+simaai::neat::Tensor make_padded_decoder_nv12_tensor(int w, int visible_h, int physical_y_h) {
+  const std::size_t y_stride = static_cast<std::size_t>(w);
+  const std::size_t uv_stride = static_cast<std::size_t>(w);
+  const std::size_t uv_h = static_cast<std::size_t>(visible_h / 2);
+  const std::size_t uv_offset = y_stride * static_cast<std::size_t>(physical_y_h);
+  const std::size_t visible_end = uv_offset + uv_stride * uv_h;
+  const std::size_t padded_frame_bytes = y_stride * static_cast<std::size_t>(physical_y_h) +
+                                         uv_stride * static_cast<std::size_t>(physical_y_h / 2);
+
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, padded_frame_bytes, nullptr);
+  require(buffer != nullptr, "failed to allocate padded decoder buffer");
+
+  gsize offsets[GST_VIDEO_MAX_PLANES] = {0};
+  gint strides[GST_VIDEO_MAX_PLANES] = {0};
+  offsets[0] = 0;
+  offsets[1] = uv_offset;
+  strides[0] = static_cast<gint>(y_stride);
+  strides[1] = static_cast<gint>(uv_stride);
+  GstVideoMeta* meta = gst_buffer_add_video_meta_full(
+      buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_NV12, static_cast<guint>(w),
+      static_cast<guint>(visible_h), 2, offsets, strides);
+  require(meta != nullptr, "failed to attach padded decoder GstVideoMeta");
+  GstSample* sample = gst_sample_new(buffer, nullptr, nullptr, nullptr);
+  require(sample != nullptr, "failed to wrap padded decoder sample");
+
+  simaai::neat::Tensor t;
+  t.storage = simaai::neat::pipeline_internal::make_gst_sample_storage(sample);
+  gst_sample_unref(sample);
+  gst_buffer_unref(buffer);
+  require(t.storage != nullptr, "failed to create GstSample storage for padded decoder tensor");
+  require(t.storage->size_bytes == padded_frame_bytes,
+          "padded decoder GstSample storage size mismatch");
+
+  t.dtype = simaai::neat::TensorDType::UInt8;
+  t.layout = simaai::neat::TensorLayout::HW;
+  t.shape = {visible_h, w};
+  t.device = {simaai::neat::DeviceType::SIMA_CVU, 0};
+  t.read_only = true;
+  t.semantic.image = simaai::neat::ImageSpec{simaai::neat::ImageSpec::PixelFormat::NV12, ""};
+
+  simaai::neat::Plane y;
+  y.role = simaai::neat::PlaneRole::Y;
+  y.shape = {visible_h, w};
+  y.strides_bytes = {static_cast<int64_t>(y_stride), 1};
+  y.byte_offset = 0;
+
+  simaai::neat::Plane uv;
+  uv.role = simaai::neat::PlaneRole::UV;
+  uv.shape = {visible_h / 2, w};
+  uv.strides_bytes = {static_cast<int64_t>(uv_stride), 1};
+  uv.byte_offset = static_cast<int64_t>(uv_offset);
+
+  t.planes = {y, uv};
+  require(visible_end < padded_frame_bytes,
+          "test fixture must have a padded tail beyond visible plane extents");
+  return t;
+}
+
 } // namespace
 
 int main() {
@@ -289,6 +348,35 @@ int main() {
               "NV12 UV offset mismatch");
       require(spec.required_bytes_actual == static_cast<std::size_t>(w * h + (w * h) / 2),
               "NV12 bytes mismatch");
+    }
+
+    {
+      const int w = 1280;
+      const int visible_h = 720;
+      const int physical_y_h = 768;
+      Tensor padded = make_padded_decoder_nv12_tensor(w, visible_h, physical_y_h);
+
+      InputOptions opt;
+      opt.payload_type = PayloadType::Image;
+      opt.format = FormatTag::NV12;
+      SampleSpec spec = derive_tensor_spec_or_throw(padded, opt, "padded decoder NV12");
+
+      const std::size_t uv_offset =
+          static_cast<std::size_t>(w) * static_cast<std::size_t>(physical_y_h);
+      const std::size_t visible_end =
+          uv_offset + static_cast<std::size_t>(w) * static_cast<std::size_t>(visible_h / 2);
+      const std::size_t padded_frame_bytes =
+          static_cast<std::size_t>(w) * static_cast<std::size_t>(physical_y_h) * 3U / 2U;
+      require(visible_end == 1443840U, "padded fixture visible span mismatch");
+      require(padded_frame_bytes == 1474560U, "padded fixture frame span mismatch");
+      require(spec.required_bytes_actual == padded_frame_bytes,
+              "GstSample-backed NV12 spec must preserve decoder padded frame span");
+
+      padded.storage = make_cpu_owned_storage(padded_frame_bytes);
+      padded.device = {DeviceType::CPU, 0};
+      SampleSpec cpu_spec = derive_tensor_spec_or_throw(padded, opt, "padded CPU NV12");
+      require(cpu_spec.required_bytes_actual == visible_end,
+              "CPU-owned NV12 spec should not grow to unused storage capacity");
     }
 
     {

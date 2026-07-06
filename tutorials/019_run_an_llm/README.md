@@ -46,13 +46,13 @@ For UI-style output, call `stream()` and iterate the returned `GenerationStream`
 
 ## Run
 
-First, download an LLM such as Qwen3 4B from Hugging Face using the LLiMa CLI:
+On the Modalix DevKit, download an LLM such as Qwen3 4B from Hugging Face using the LLiMa CLI:
 
 ```bash
 llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
 ```
 
-Run the tutorial on Modalix with the deployed model directory:
+Run the tutorial on Modalix with the DevKit-local model directory:
 
 **Python:**
 ```bash

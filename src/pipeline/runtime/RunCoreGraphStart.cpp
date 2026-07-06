@@ -1,16 +1,20 @@
 #include "RunCore.h"
 
 #include "ExecutionGraphPlan.h"
+#include "builder/OutputSpec.h"
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/GraphReport.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/BuildTiming.h"
+#include "pipeline/internal/DecoderAdmissionClient.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
 #include <atomic>
@@ -61,6 +65,20 @@ using simaai::neat::graph::StageOutMsg;
 using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
 
+std::string gst_double_quote(std::string value) {
+  std::string out;
+  out.reserve(value.size() + 2U);
+  out.push_back('"');
+  for (char c : value) {
+    if (c == '"' || c == '\\') {
+      out.push_back('\\');
+    }
+    out.push_back(c);
+  }
+  out.push_back('"');
+  return out;
+}
+
 std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
   return static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
@@ -78,6 +96,26 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
 
 std::uint64_t edge_port_key(NodeId id, PortId port) {
   return (static_cast<std::uint64_t>(id) << 32) | static_cast<std::uint64_t>(port);
+}
+
+void configure_graph_public_output_loan_gate(const std::shared_ptr<RunCore>& core,
+                                             const GraphRuntimeOptions& graph_options,
+                                             RunMode mode) {
+  if (!core) {
+    return;
+  }
+
+  InputStreamOptions stream_opt =
+      simaai::neat::session_build_make_stream_options(graph_options.pipeline, mode);
+  stream_opt.public_output_contract = true;
+  simaai::neat::session_build_finalize_public_zero_copy_holder_loan_credits(stream_opt);
+
+  core->pipeline.stream_opt = stream_opt;
+  core->pipeline.copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
+  core->holder_loan_gate =
+      stream_opt.holder_loan_credits > 0
+          ? std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits)
+          : nullptr;
 }
 
 bool is_simple_linear_plan(const ExecutionGraphPlan& plan) {
@@ -105,6 +143,567 @@ std::size_t runtime_node_count(const ExecutionGraphPlan& plan) {
     bump(edge.to);
   }
   return count;
+}
+
+bool decoder_plan_debug_enabled() {
+  return env_bool("SIMA_DECODER_PLAN_DEBUG", false) ||
+         env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+const char* sima_decode_type_debug_name(simaai::neat::SimaDecodeType type) {
+  switch (type) {
+  case simaai::neat::SimaDecodeType::H264:
+    return "h264";
+  case simaai::neat::SimaDecodeType::JPEG:
+    return "jpeg";
+  case simaai::neat::SimaDecodeType::MJPEG:
+    return "mjpeg";
+  }
+  return "unknown";
+}
+
+void dump_decoder_plan_debug(const ExecutionGraphRuntime& execution) {
+  if (!decoder_plan_debug_enabled()) {
+    return;
+  }
+
+  std::size_t count = 0;
+  for (const auto& runtime : execution.pipelines) {
+    if (!runtime) {
+      continue;
+    }
+    const auto& seg = runtime->seg;
+    for (std::size_t i = 0; i < runtime->nodes.size(); ++i) {
+      const auto& node = runtime->nodes[i];
+      const auto* dec = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
+      if (!dec) {
+        continue;
+      }
+      ++count;
+      simaai::neat::graph::NodeId runtime_node = simaai::neat::graph::kInvalidNode;
+      if (i < seg.materialized_node_attribution.size()) {
+        runtime_node = seg.materialized_node_attribution[i].runtime_node;
+      } else if (i < seg.node_ids.size()) {
+        runtime_node = seg.node_ids[i];
+      }
+      std::string label = "<unknown>";
+      if (runtime_node != simaai::neat::graph::kInvalidNode &&
+          static_cast<std::size_t>(runtime_node) < execution.node_labels.size() &&
+          !execution.node_labels[static_cast<std::size_t>(runtime_node)].empty()) {
+        label = execution.node_labels[static_cast<std::size_t>(runtime_node)];
+      }
+      const auto& opt = dec->options();
+      std::fprintf(
+          stderr,
+          "[DECPLAN] seg=%zu mat_index=%zu runtime_node=%lld label=%s "
+          "source_like=%d needs_input=%d needs_output=%d graph_internal_output=%d "
+          "type=%s decoder=%s raw_output=%d next=%s width=%d height=%d fps=%d "
+          "num_buffers=%d\n",
+          static_cast<std::size_t>(seg.id), i, static_cast<long long>(runtime_node), label.c_str(),
+          seg.boundary.source_like ? 1 : 0, seg.boundary.needs_input ? 1 : 0,
+          seg.boundary.needs_output ? 1 : 0, seg.boundary.graph_internal_output ? 1 : 0,
+          sima_decode_type_debug_name(opt.type),
+          opt.decoder_name.empty() ? "<auto>" : opt.decoder_name.c_str(), opt.raw_output ? 1 : 0,
+          opt.next_element.empty() ? "<default>" : opt.next_element.c_str(), opt.dec_width,
+          opt.dec_height, opt.dec_fps, opt.num_buffers);
+    }
+  }
+
+  std::fprintf(stderr, "[DECPLAN] total_decoders=%zu segments=%zu stages=%zu edges=%zu\n", count,
+               execution.pipelines.size(), execution.stage_groups.size(),
+               execution.plan.edges.size());
+}
+
+struct DecoderAdmissionCandidate {
+  std::size_t pipeline_index = 0;
+  std::size_t node_index = 0;
+  simaai::neat::graph::NodeId runtime_node = simaai::neat::graph::kInvalidNode;
+  simaai::neat::SimaDecodeOptions options;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  std::uint32_t fps_num = 0;
+  std::uint32_t fps_den = 1;
+  bool fused_branch = false;
+  std::size_t fused_branch_index = static_cast<std::size_t>(-1);
+};
+
+simaai::neat::graph::NodeId
+runtime_node_for_materialized_decoder(const PipelineSegmentRuntime& runtime, std::size_t index) {
+  if (index < runtime.seg.materialized_node_attribution.size()) {
+    return runtime.seg.materialized_node_attribution[index].runtime_node;
+  }
+  if (index < runtime.seg.node_ids.size()) {
+    return runtime.seg.node_ids[index];
+  }
+  return simaai::neat::graph::kInvalidNode;
+}
+
+std::string decoder_runtime_label(const ExecutionGraphRuntime& execution,
+                                  simaai::neat::graph::NodeId runtime_node) {
+  if (runtime_node != simaai::neat::graph::kInvalidNode &&
+      static_cast<std::size_t>(runtime_node) < execution.node_labels.size() &&
+      !execution.node_labels[static_cast<std::size_t>(runtime_node)].empty()) {
+    return execution.node_labels[static_cast<std::size_t>(runtime_node)];
+  }
+  return "<unknown>";
+}
+
+std::uint32_t positive_u32_or_zero(int value) {
+  return value > 0 ? static_cast<std::uint32_t>(value) : 0U;
+}
+
+bool decoder_candidate_uses_zero_copy_output(const DecoderAdmissionCandidate& candidate) {
+  const auto& opt = candidate.options;
+  if (opt.type != simaai::neat::SimaDecodeType::H264 || !opt.raw_output) {
+    return false;
+  }
+  if (!opt.out_format.empty() && opt.out_format.tag != simaai::neat::FormatTag::NV12) {
+    return false;
+  }
+  const std::string next = simaai::neat::upper_copy_ascii(opt.next_element);
+  return next.empty() || next == "CVU";
+}
+
+// Admission reserves decoder resources, so its shape must describe the
+// decoder boundary itself.  Do not fall back to the segment tail: downstream
+// Caps/Preproc/Model nodes may intentionally scale 1080p decode down to 640p.
+OutputSpec decoder_local_output_spec(std::span<const std::shared_ptr<simaai::neat::Node>> nodes,
+                                     std::size_t decoder_index,
+                                     const OutputSpec& segment_input_spec) {
+  if (decoder_index >= nodes.size()) {
+    return {};
+  }
+  try {
+    return derive_output_spec(
+        std::span<const std::shared_ptr<simaai::neat::Node>>(nodes.data(), decoder_index + 1U),
+        segment_input_spec);
+  } catch (const std::exception& e) {
+    if (decoder_plan_debug_enabled()) {
+      std::fprintf(stderr, "[DECPLAN] admission_local_spec_skip node_index=%zu reason=%s\n",
+                   decoder_index, e.what());
+    }
+  } catch (...) {
+    if (decoder_plan_debug_enabled()) {
+      std::fprintf(stderr, "[DECPLAN] admission_local_spec_skip node_index=%zu reason=unknown\n",
+                   decoder_index);
+    }
+  }
+  return {};
+}
+
+void collect_decoder_candidate_from_node(
+    ExecutionGraphRuntime& execution, std::size_t pipeline_index, std::size_t node_index,
+    const std::shared_ptr<simaai::neat::Node>& node, simaai::neat::graph::NodeId runtime_node,
+    const OutputSpec& decoder_output_spec, bool fused_branch, std::size_t fused_branch_index,
+    std::vector<DecoderAdmissionCandidate>& candidates, std::size_t* auto_h264_decoders,
+    std::size_t* missing_shape_decoders) {
+  (void)execution;
+  const auto* dec = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
+  if (!dec) {
+    return;
+  }
+  const auto& opt = dec->options();
+  if (opt.type != simaai::neat::SimaDecodeType::H264) {
+    return;
+  }
+  if (auto_h264_decoders) {
+    ++(*auto_h264_decoders);
+  }
+
+  const std::uint32_t explicit_width = positive_u32_or_zero(opt.dec_width);
+  const std::uint32_t explicit_height = positive_u32_or_zero(opt.dec_height);
+  const std::uint32_t explicit_fps = positive_u32_or_zero(opt.dec_fps);
+  const std::uint32_t width =
+      explicit_width != 0U ? explicit_width : positive_u32_or_zero(decoder_output_spec.width);
+  const std::uint32_t height =
+      explicit_height != 0U ? explicit_height : positive_u32_or_zero(decoder_output_spec.height);
+  std::uint32_t fps_num =
+      explicit_fps != 0U ? explicit_fps : positive_u32_or_zero(decoder_output_spec.fps_num);
+  std::uint32_t fps_den = decoder_output_spec.fps_den > 0
+                              ? static_cast<std::uint32_t>(decoder_output_spec.fps_den)
+                              : 1U;
+  if (explicit_fps != 0U) {
+    fps_den = 1;
+  }
+  if (fps_num == 0U) {
+    fps_num = 1;
+    fps_den = 1;
+  }
+
+  if (width == 0U || height == 0U) {
+    if (missing_shape_decoders) {
+      ++(*missing_shape_decoders);
+    }
+    if (decoder_plan_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECPLAN] admission_candidate_skip reason=missing_decoder_local_shape "
+                   "pipeline=%zu node_index=%zu runtime_node=%lld local=%dx%d explicit=%ux%u\n",
+                   pipeline_index, node_index, static_cast<long long>(runtime_node),
+                   decoder_output_spec.width, decoder_output_spec.height, explicit_width,
+                   explicit_height);
+    }
+    return;
+  }
+
+  DecoderAdmissionCandidate candidate;
+  candidate.pipeline_index = pipeline_index;
+  candidate.node_index = node_index;
+  candidate.runtime_node = runtime_node;
+  candidate.options = opt;
+  candidate.width = width;
+  candidate.height = height;
+  candidate.fps_num = fps_num;
+  candidate.fps_den = fps_den == 0U ? 1U : fps_den;
+  candidate.fused_branch = fused_branch;
+  candidate.fused_branch_index = fused_branch_index;
+  candidates.push_back(std::move(candidate));
+}
+
+bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
+                                          std::vector<DecoderAdmissionCandidate>& candidates,
+                                          std::size_t* auto_h264_decoders,
+                                          std::size_t* missing_shape_decoders) {
+  if (auto_h264_decoders) {
+    *auto_h264_decoders = 0;
+  }
+  if (missing_shape_decoders) {
+    *missing_shape_decoders = 0;
+  }
+
+  for (std::size_t pipeline_index = 0; pipeline_index < execution.pipelines.size();
+       ++pipeline_index) {
+    auto& runtime = execution.pipelines[pipeline_index];
+    if (!runtime) {
+      continue;
+    }
+    for (std::size_t node_index = 0; node_index < runtime->nodes.size(); ++node_index) {
+      if (!dynamic_cast<const simaai::neat::SimaDecode*>(runtime->nodes[node_index].get())) {
+        continue;
+      }
+      const OutputSpec decoder_spec =
+          decoder_local_output_spec(std::span<const std::shared_ptr<simaai::neat::Node>>(
+                                        runtime->nodes.data(), runtime->nodes.size()),
+                                    node_index, runtime->seg.input_spec);
+      collect_decoder_candidate_from_node(
+          execution, pipeline_index, node_index, runtime->nodes[node_index],
+          runtime_node_for_materialized_decoder(*runtime, node_index), decoder_spec,
+          /*fused_branch=*/false, static_cast<std::size_t>(-1), candidates, auto_h264_decoders,
+          missing_shape_decoders);
+    }
+
+    if (runtime->seg.fused_realtime_ingress.has_value()) {
+      const auto& ingress = *runtime->seg.fused_realtime_ingress;
+      for (std::size_t branch_index = 0; branch_index < ingress.branches.size(); ++branch_index) {
+        const auto& branch = ingress.branches[branch_index];
+        for (std::size_t node_index = 0; node_index < branch.nodes.size(); ++node_index) {
+          if (!dynamic_cast<const simaai::neat::SimaDecode*>(branch.nodes[node_index].get())) {
+            continue;
+          }
+          const OutputSpec decoder_spec =
+              decoder_local_output_spec(std::span<const std::shared_ptr<simaai::neat::Node>>(
+                                            branch.nodes.data(), branch.nodes.size()),
+                                        node_index, {});
+          collect_decoder_candidate_from_node(
+              execution, pipeline_index, node_index, branch.nodes[node_index], branch.source_node,
+              decoder_spec, /*fused_branch=*/true, branch_index, candidates, auto_h264_decoders,
+              missing_shape_decoders);
+        }
+      }
+    }
+  }
+  return !candidates.empty();
+}
+
+std::string decoder_admission_candidate_description(const ExecutionGraphRuntime& execution,
+                                                    const DecoderAdmissionCandidate& candidate) {
+  std::ostringstream oss;
+  oss << "seg=" << execution.pipelines[candidate.pipeline_index]->seg.id;
+  if (candidate.fused_branch) {
+    oss << " branch=" << candidate.fused_branch_index;
+  }
+  oss << " mat_index=" << candidate.node_index
+      << " runtime_node=" << static_cast<long long>(candidate.runtime_node)
+      << " label=" << decoder_runtime_label(execution, candidate.runtime_node) << " "
+      << candidate.width << "x" << candidate.height << "@" << candidate.fps_num << "/"
+      << candidate.fps_den;
+  return oss.str();
+}
+
+struct DecoderAdmissionProperties {
+  std::string group_id;
+  int stream_index = -1;
+  std::uint64_t lease_token_hi = 0;
+  std::uint64_t lease_token_lo = 0;
+  int input_buffers = -1;
+  std::string tuning;
+  bool memory_opt = false;
+  bool zero_copy_output = false;
+};
+
+class RuntimeAdmittedSimaDecode final : public simaai::neat::Node,
+                                        public simaai::neat::OutputSpecProvider {
+public:
+  RuntimeAdmittedSimaDecode(simaai::neat::SimaDecodeOptions opt,
+                            DecoderAdmissionProperties admission)
+      : opt_(std::move(opt)), admission_(std::move(admission)), inner_(opt_) {}
+
+  std::string kind() const override {
+    return "SimaDecode";
+  }
+
+  simaai::neat::NodeCapsBehavior caps_behavior() const override {
+    return inner_.caps_behavior();
+  }
+
+  simaai::neat::MemoryContract memory_contract() const override {
+    return admission_.zero_copy_output ? simaai::neat::MemoryContract::PreferDeviceZeroCopy
+                                       : simaai::neat::MemoryContract::AllowEitherButReport;
+  }
+
+  std::string buffer_name_hint(int node_index) const override {
+    return opt_.decoder_name.empty() ? ("n" + std::to_string(node_index) + "_decoder")
+                                     : opt_.decoder_name;
+  }
+
+  std::string backend_fragment(int node_index) const override {
+    std::string fragment = inner_.backend_fragment(node_index);
+    const std::string props = admission_properties_fragment();
+    if (props.empty()) {
+      return fragment;
+    }
+    const std::size_t next = fragment.find(" ! ");
+    if (next == std::string::npos) {
+      fragment += props;
+      return fragment;
+    }
+    fragment.insert(next, props);
+    return fragment;
+  }
+
+  std::vector<std::string> element_names(int node_index) const override {
+    return inner_.element_names(node_index);
+  }
+
+  simaai::neat::OutputSpec output_spec(const simaai::neat::OutputSpec& input) const override {
+    return inner_.output_spec(input);
+  }
+
+private:
+  std::string admission_properties_fragment() const {
+    std::ostringstream ss;
+    if (admission_.zero_copy_output) {
+      ss << " zero-copy-output=true";
+    }
+    ss << " decoder-admission-required=true";
+    if (!admission_.group_id.empty()) {
+      ss << " admission-group-id=" << gst_double_quote(admission_.group_id);
+    }
+    if (admission_.stream_index >= 0) {
+      ss << " admission-stream-index=" << admission_.stream_index;
+    }
+    if (admission_.lease_token_hi != 0 || admission_.lease_token_lo != 0) {
+      ss << " admission-lease-token-hi=" << admission_.lease_token_hi;
+      ss << " admission-lease-token-lo=" << admission_.lease_token_lo;
+    }
+    if (admission_.input_buffers > 0) {
+      ss << " dec-ip-cnt=" << admission_.input_buffers;
+    }
+    if (!admission_.tuning.empty() && admission_.tuning != "default") {
+      ss << " decoder-tuning=" << admission_.tuning;
+    }
+    if (admission_.memory_opt) {
+      ss << " memory-opt=true";
+    }
+    return ss.str();
+  }
+
+  simaai::neat::SimaDecodeOptions opt_;
+  DecoderAdmissionProperties admission_;
+  simaai::neat::SimaDecode inner_;
+};
+
+void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
+                                   const DecoderAdmissionCandidate& candidate,
+                                   const pipeline_internal::DecoderAdmissionResult& admission,
+                                   const pipeline_internal::DecoderAdmissionLease& lease) {
+  if (candidate.pipeline_index >= execution.pipelines.size() ||
+      !execution.pipelines[candidate.pipeline_index]) {
+    throw std::runtime_error(
+        "RunCore::start(graph): decoder admission internal pipeline index invalid");
+  }
+  auto& runtime = *execution.pipelines[candidate.pipeline_index];
+  if (!candidate.fused_branch && candidate.node_index >= runtime.nodes.size()) {
+    throw std::runtime_error(
+        "RunCore::start(graph): decoder admission internal node index invalid");
+  }
+
+  auto opt = candidate.options;
+  if (lease.resolved_output_buffers > 0) {
+    opt.num_buffers = static_cast<int>(lease.resolved_output_buffers);
+  }
+
+  DecoderAdmissionProperties admission_props;
+  admission_props.group_id =
+      pipeline_internal::decoder_admission_uuid_to_string(admission.group_uuid);
+  admission_props.stream_index = static_cast<int>(lease.stream_index);
+  admission_props.lease_token_hi = lease.lease_token_hi;
+  admission_props.lease_token_lo = lease.lease_token_lo;
+  if (lease.resolved_input_buffers > 0) {
+    admission_props.input_buffers = static_cast<int>(lease.resolved_input_buffers);
+  }
+  admission_props.tuning = pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
+  admission_props.memory_opt = lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
+  admission_props.zero_copy_output = decoder_candidate_uses_zero_copy_output(candidate);
+
+  auto replacement =
+      std::make_shared<RuntimeAdmittedSimaDecode>(std::move(opt), std::move(admission_props));
+  if (candidate.fused_branch) {
+    if (!runtime.seg.fused_realtime_ingress.has_value() ||
+        candidate.fused_branch_index >= runtime.seg.fused_realtime_ingress->branches.size()) {
+      throw std::runtime_error(
+          "RunCore::start(graph): decoder admission fused branch index invalid");
+    }
+    auto& branch = runtime.seg.fused_realtime_ingress->branches[candidate.fused_branch_index];
+    if (candidate.node_index >= branch.nodes.size()) {
+      throw std::runtime_error(
+          "RunCore::start(graph): decoder admission fused branch node index invalid");
+    }
+    branch.nodes[candidate.node_index] = replacement;
+  } else {
+    runtime.nodes[candidate.node_index] = replacement;
+    if (candidate.node_index < runtime.seg.nodes.size()) {
+      runtime.seg.nodes[candidate.node_index] = replacement;
+    }
+  }
+
+  if (decoder_plan_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[DECPLAN] admission_bind %s stream=%u out=%u in=%u tuning=%s token=%llu:%llu "
+                 "bytes=%llu\n",
+                 decoder_admission_candidate_description(execution, candidate).c_str(),
+                 lease.stream_index, lease.resolved_output_buffers, lease.resolved_input_buffers,
+                 pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning),
+                 static_cast<unsigned long long>(lease.lease_token_hi),
+                 static_cast<unsigned long long>(lease.lease_token_lo),
+                 static_cast<unsigned long long>(lease.estimated_reserved_bytes));
+  }
+}
+
+void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
+  if (env_bool("SIMA_DECODER_ADMISSION_DISABLE", false)) {
+    if (decoder_plan_debug_enabled()) {
+      std::fprintf(stderr, "[DECPLAN] admission_skip reason=disabled_by_env\n");
+    }
+    return;
+  }
+
+  std::vector<DecoderAdmissionCandidate> candidates;
+  std::size_t auto_h264_decoders = 0;
+  std::size_t missing_shape_decoders = 0;
+  collect_decoder_admission_candidates(execution, candidates, &auto_h264_decoders,
+                                       &missing_shape_decoders);
+  if (auto_h264_decoders <= 1) {
+    return;
+  }
+  if (missing_shape_decoders > 0) {
+    const std::string msg =
+        "RunCore::start(graph): automatic decoder admission requires decoded width/height for "
+        "each H.264 decoder in a multi-decoder graph; missing shape for " +
+        std::to_string(missing_shape_decoders) + " of " + std::to_string(auto_h264_decoders) +
+        " decoder(s).";
+    if (env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {
+      throw std::runtime_error(msg);
+    }
+    if (decoder_plan_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECPLAN] admission_skip reason=missing_shape auto_h264=%zu missing=%zu\n",
+                   auto_h264_decoders, missing_shape_decoders);
+    }
+    return;
+  }
+  if (candidates.size() <= 1) {
+    return;
+  }
+
+  std::vector<pipeline_internal::DecoderAdmissionStreamRequest> streams;
+  streams.reserve(candidates.size());
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const auto& candidate = candidates[i];
+    pipeline_internal::DecoderAdmissionStreamRequest stream;
+    stream.stream_index = static_cast<std::uint32_t>(i);
+    stream.codec = 101;       // Decoder daemon admission protocol AVC/H.264 id.
+    stream.stream_mode = 202; // Align-split input mode used by parser/depay paths.
+    stream.width = candidate.width;
+    stream.height = candidate.height;
+    stream.fps_num = candidate.fps_num;
+    stream.fps_den = candidate.fps_den;
+    if (decoder_candidate_uses_zero_copy_output(candidate)) {
+      stream.requested_policy = pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
+                                pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
+    } else {
+      stream.requested_policy = 0; // daemon AUTO policy.
+    }
+    if (decoder_plan_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECPLAN] admission_request %s stream=%u policy=0x%x zero_copy_output=%d\n",
+                   decoder_admission_candidate_description(execution, candidate).c_str(),
+                   stream.stream_index, stream.requested_policy,
+                   decoder_candidate_uses_zero_copy_output(candidate) ? 1 : 0);
+    }
+    streams.push_back(stream);
+  }
+
+  auto admission = pipeline_internal::admit_decoder_graph(streams, false);
+  if (!admission.admitted) {
+    const bool require = env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false);
+    if (admission.endpoint_missing && !require) {
+      if (decoder_plan_debug_enabled()) {
+        std::fprintf(stderr, "[DECPLAN] admission_skip reason=endpoint_unavailable err=%s\n",
+                     admission.error.c_str());
+      }
+      return;
+    }
+    throw std::runtime_error(
+        "RunCore::start(graph): decoder admission rejected this multi-decoder graph before "
+        "starting hardware decode. " +
+        admission.error +
+        ". Reduce the number of streams/fps/resolution, stop another decoder workload, or check "
+        "the decoder daemon/admission socket.");
+  }
+
+  // Arm the existing RunCore cleanup path before any post-admission validation can throw.
+  // If the daemon accepted the graph but returns a malformed/stale lease response, graph
+  // teardown still releases the reserved group.
+  execution.decoder_admission_active = true;
+  execution.decoder_admission_group_uuid = admission.group_uuid;
+
+  if (admission.leases.size() != candidates.size()) {
+    throw std::runtime_error(
+        "RunCore::start(graph): decoder admission returned a lease count that does not match the "
+        "planned decoder count");
+  }
+
+  std::unordered_map<std::uint32_t, const pipeline_internal::DecoderAdmissionLease*>
+      lease_by_stream;
+  for (const auto& lease : admission.leases) {
+    lease_by_stream[lease.stream_index] = &lease;
+  }
+  for (std::size_t i = 0; i < candidates.size(); ++i) {
+    const auto stream_index = static_cast<std::uint32_t>(i);
+    auto it = lease_by_stream.find(stream_index);
+    if (it == lease_by_stream.end()) {
+      throw std::runtime_error(
+          "RunCore::start(graph): decoder admission response missing a stream lease");
+    }
+    apply_decoder_admission_lease(execution, candidates[i], admission, *it->second);
+  }
+
+  if (decoder_plan_debug_enabled()) {
+    std::fprintf(stderr, "[DECPLAN] admission_accepted streams=%zu group=%s reserved_bytes=%llu\n",
+                 candidates.size(),
+                 pipeline_internal::decoder_admission_uuid_to_string(admission.group_uuid).c_str(),
+                 static_cast<unsigned long long>(admission.estimated_reserved_bytes));
+  }
 }
 
 GraphReport make_graph_start_report(const ExecutionGraphPlan& plan, const std::string& detail) {
@@ -225,6 +824,9 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.pipelines.reserve(execution.plan.pipeline_segments.size());
   for (const auto& seg : execution.plan.pipeline_segments) {
+    if (seg.consumed_by_fused_realtime_ingress) {
+      continue;
+    }
     GraphOptions sess_opt = seg.route_options;
     if (sess_opt.element_name_suffix.empty()) {
       sess_opt.element_name_suffix = "_graph";
@@ -442,6 +1044,9 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   for (std::size_t eidx = 0; eidx < execution.plan.edges.size(); ++eidx) {
     const auto& e = execution.plan.edges[eidx];
+    if (e.consumed_by_fused_realtime_ingress) {
+      continue;
+    }
     if (e.from < has_out.size()) {
       has_out[e.from] = true;
     }
@@ -459,11 +1064,11 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         const std::size_t link_index = execution.realtime_links.size();
         realtime_link_by_target.emplace(key, link_index);
         execution.realtime_links.push_back(
-            std::make_unique<RealtimeLatestLink>(*downstream, e.link_options));
+            std::make_unique<RealtimeLatestLink>(*downstream, e.link_options, e.stream_id));
         it = realtime_link_by_target.find(key);
       } else if (it->second < execution.realtime_links.size() &&
                  execution.realtime_links[it->second]) {
-        execution.realtime_links[it->second]->add_edge_options(eidx, e.link_options);
+        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id);
       }
       outs.push_back(DownstreamTarget{DownstreamTarget::Kind::RealtimeLatestLink, it->second,
                                       e.to_port, eidx});
@@ -621,7 +1226,17 @@ void start_realtime_links(const std::shared_ptr<RunCore>& core) {
           const auto router_callbacks = make_edge_router_callbacks(core);
           EdgeRouterDispatchOptions dispatch_options;
           dispatch_options.sanitize_pipeline_input_before_enqueue = true;
-          dispatch_options.drop_pipeline_input_when_full = true;
+          /*
+           * RealtimeLatestLink already gives live sources the non-blocking
+           * "latest frame per stream" behavior: offers overwrite each stream's
+           * pending slot instead of backpressuring decoders.  The scheduler
+           * side must not drop again when the downstream Model/input queue is
+           * temporarily full; doing so biases fan-in toward whichever streams
+           * happened to arrive last.  Block here until the downstream queue can
+           * accept the selected stream, preserving the C++ fair-mux semantics
+           * while keeping source producers non-blocking and zero-copy.
+           */
+          dispatch_options.drop_pipeline_input_when_full = false;
           dispatch_options.sink_backpressure_context = target.index;
           DownstreamTarget routed = target;
           routed.edge_index = edge_index;
@@ -988,6 +1603,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
   core->opt = opt.run_options;
   core->mode = opt.mode;
   core->graph_options = std::move(opt.graph_options);
+  configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
   core->graph_execution().plan = std::move(plan);
 
@@ -1001,6 +1617,10 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
     step_start = pipeline_internal::build_timing_now();
     materialize_stage_runtimes(core);
     const auto materialize_stages_us = pipeline_internal::build_timing_us(step_start);
+    dump_decoder_plan_debug(core->graph_execution());
+    step_start = pipeline_internal::build_timing_now();
+    apply_decoder_admission_if_needed(core->graph_execution());
+    const auto decoder_admission_us = pipeline_internal::build_timing_us(step_start);
     step_start = pipeline_internal::build_timing_now();
     build_adjacency_and_sinks(core);
     const auto adjacency_us = pipeline_internal::build_timing_us(step_start);
@@ -1032,6 +1652,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
         {{"labels", labels_us},
          {"materialize_pipelines", materialize_pipelines_us},
          {"materialize_stages", materialize_stages_us},
+         {"decoder_admission", decoder_admission_us},
          {"adjacency", adjacency_us},
          {"prebuild_complete", prebuild_complete_us},
          {"prebuild_seed", prebuild_seed_us},

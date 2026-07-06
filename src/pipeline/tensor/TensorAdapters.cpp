@@ -14,6 +14,10 @@
  *     - For packed RGB/BGR/GRAY8: produces dense HWC (or HW for GRAY8) with row stride
  *     - For NV12/I420: produces a composite tensor with planes (Y/UV or Y/U/V)
  *
+ *  3) encoded media caps recognized by caps_to_codec()
+ *     - Wraps the GstSample in StorageKind::GstSample (read-only)
+ *     - Represents the payload as a dense UInt8 byte vector view
+ *
  * Semantics confirmed by other repo code:
  *  - Tensor::map_read() applies Tensor::byte_offset (already pointer-adjusted).
  *  - Composite tensors should keep Tensor::byte_offset == 0 and use plane byte_offsets.
@@ -26,6 +30,8 @@
 
 #include "pipeline/TensorAdapters.h"
 
+#include "pipeline/EncodedSampleUtil.h"
+#include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/TensorUtil.h" // make_gst_sample_storage()
 #include "pipeline/internal/TensorMath.h"
@@ -485,6 +491,31 @@ Tensor from_gst_video_sample(GstSample* sample, GstCaps* caps) {
   throw std::runtime_error("from_gst_sample: unsupported pixel format");
 }
 
+Tensor from_gst_encoded_sample(GstSample* sample, GstCaps* caps, GstBuffer* buffer) {
+  auto storage = simaai::neat::pipeline_internal::make_gst_sample_storage(sample);
+  if (!storage) {
+    throw std::runtime_error("from_gst_sample: missing encoded storage");
+  }
+
+  const std::string caps_string = pipeline_internal::gst_caps_to_string_safe(caps);
+
+  Tensor out;
+  out.storage = std::move(storage);
+  out.dtype = simaai::neat::TensorDType::UInt8;
+  out.device = out.storage->device;
+  out.read_only = true;
+  out.layout = simaai::neat::TensorLayout::Unknown;
+  out.shape = {static_cast<int64_t>(gst_buffer_get_size(buffer))};
+  out.strides_bytes = {1};
+  out.semantic.encoded = simaai::neat::EncodedSpec{};
+  out.semantic.encoded->codec = caps_to_codec(caps_string);
+  if (const auto preprocess = read_simaai_preprocess_meta(buffer); preprocess.has_value()) {
+    out.semantic.preprocess = *preprocess;
+  }
+
+  return out;
+}
+
 } // namespace
 
 //==============================================================================
@@ -503,6 +534,7 @@ Tensor from_gst_sample(GstSample* sample) {
 
   const GstStructure* st = gst_caps_get_structure(caps, 0);
   const char* media = st ? gst_structure_get_name(st) : nullptr;
+  const std::string caps_string = pipeline_internal::gst_caps_to_string_safe(caps);
 
   // Tensor sample path.
   if (media && std::string(media) == "application/vnd.simaai.tensor") {
@@ -511,6 +543,14 @@ Tensor from_gst_sample(GstSample* sample) {
       throw std::runtime_error("from_gst_sample: missing buffer");
     }
     return from_gst_tensor_sample(sample, st, buffer);
+  }
+
+  if (caps_to_codec(caps_string) != simaai::neat::EncodedSpec::Codec::UNKNOWN) {
+    GstBuffer* buffer = gst_sample_get_buffer(sample);
+    if (!buffer) {
+      throw std::runtime_error("from_gst_sample: missing buffer");
+    }
+    return from_gst_encoded_sample(sample, caps, buffer);
   }
 
   // Raw video path.

@@ -35,9 +35,9 @@
 <text x="76" y="300" class="fmono fln">3</text>
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">    logical_frame = frame * args.streams +…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">    run.push(&quot;left&quot;, [make_rgb_sample(str(s…</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">    if not run.push(&quot;left&quot;, [make_rgb_sampl…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">    run.push(&quot;right&quot;, [make_rgb_sample(str(…</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">      raise RuntimeError(f&quot;left push failed…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Pull bundles</text>

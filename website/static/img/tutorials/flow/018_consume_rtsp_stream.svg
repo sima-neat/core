@@ -48,9 +48,9 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">for i in range(args.frames):</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">  sample = run.pull(timeout_ms=5000)</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">  frame_sample = run.pull(timeout_ms=5000)</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">  if sample is None or sample.tensor is Non…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">  if frame_sample is None or not frame_samp…</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">    print(f&quot;frame={i} rtsp_timeout&quot;)</text>
 <text x="76" y="352" class="fmono fln">5</text>

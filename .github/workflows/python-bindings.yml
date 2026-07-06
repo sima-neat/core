@@ -35,3 +35,4 @@ jobs:
           python -m build --wheel
           python -m pip install --force-reinstall dist/pyneat-*.whl
           python -c "import pyneat; print(pyneat.__version__)"
+          python -c "import pyneat; assert hasattr(pyneat, 'CameraInputOptions'); assert hasattr(pyneat.nodes, 'camera_input')"

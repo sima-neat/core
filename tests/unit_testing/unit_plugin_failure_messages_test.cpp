@@ -4,8 +4,8 @@
 #include "nodes/common/Output.h"
 #include "nodes/common/Caps.h"
 #include "nodes/io/Input.h"
-#include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
@@ -38,7 +38,6 @@ using simaai::neat::Run;
 using simaai::neat::RunOptions;
 using simaai::neat::Sample;
 using simaai::neat::nodes::Custom;
-using simaai::neat::nodes::H264Decode;
 using simaai::neat::nodes::H264EncodeSima;
 using simaai::neat::nodes::Input;
 using simaai::neat::nodes::Output;
@@ -650,12 +649,14 @@ static void test_neatdecoder_failure() {
 
   Graph p;
   p.add(Input(src_opt));
-  p.add(H264Decode(/*sima_allocator_type=*/2,
-                   /*out_format=*/"NV12",
-                   /*decoder_name=*/"decoder_fail",
-                   /*raw_output=*/false,
-                   /*next_element=*/"",
-                   /*dec_width=*/128));
+  simaai::neat::SimaDecodeOptions dec;
+  dec.type = simaai::neat::SimaDecodeType::H264;
+  dec.sima_allocator_type = 2;
+  dec.out_format = simaai::neat::FormatTag::NV12;
+  dec.decoder_name = "decoder_fail";
+  dec.raw_output = false;
+  dec.dec_width = 128;
+  p.add(simaai::neat::nodes::SimaDecode(dec));
   p.add(Output(simaai::neat::OutputOptions::Latest()));
 
   Sample sample =

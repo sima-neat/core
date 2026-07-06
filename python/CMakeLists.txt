@@ -49,6 +49,7 @@ target_include_directories(_pyneat_core PRIVATE
 # to set LD_LIBRARY_PATH before importing pyneat.
 set(PYNEAT_RUNTIME_RPATH_DIRS
   "$ORIGIN"
+  "$ORIGIN/../lib"
   "$ORIGIN/../neat-internals/gst-plugins"
   "/usr/lib/aarch64-linux-gnu/neat/gst-plugins"
   "/usr/lib/aarch64-linux-gnu/neat/runtime"

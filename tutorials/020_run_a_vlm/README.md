@@ -5,7 +5,7 @@
 | --- | --- |
 | Difficulty | Beginner |
 | Estimated Read Time | 10-15 minutes |
-| Model | Qwen3-VL-4B-Instruct-GPTQ-a16w4 |
+| Model | LFM2-VL-1.6B-a16w4 |
 | Labels | genai, vlm, image, cache, multimodal |
 
 ## Concept
@@ -42,25 +42,25 @@ When you use `messages`, attach images to the user message that needs them. This
 
 ## Run
 
-First, download a VLM such as Qwen3-VL 4B from Hugging Face using the LLiMa CLI:
+On the Modalix DevKit, download the LFM2-VL 1.6B VLM from Hugging Face using the LLiMa CLI:
 
 ```bash
-llima pull Qwen3-VL-4B-Instruct-GPTQ-a16w4
+llima pull LFM2-VL-1.6B-a16w4
 ```
 
-Run the tutorial on Modalix with the deployed model directory and a local image:
+Run the tutorial on Modalix with the DevKit-local model directory and a local image:
 
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
-  --model /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image tests/images/people.jpg
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_020_run_a_vlm \
-  --model /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image tests/images/people.jpg
 ```
 
@@ -68,7 +68,7 @@ python3 share/sima-neat/tutorials/020_run_a_vlm/run_a_vlm.py \
 ```bash
 ./build.sh --target tutorial_020_run_a_vlm
 ./build/tutorials-standalone/tutorial_020_run_a_vlm \
-  --model /media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4 \
+  --model /media/nvme/llima/models/LFM2-VL-1.6B-a16w4 \
   --image tests/images/people.jpg
 ```
 

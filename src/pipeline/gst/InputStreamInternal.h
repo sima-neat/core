@@ -14,6 +14,7 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
+#include "pipeline/internal/HolderLoanGate.h"
 
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
@@ -95,6 +96,8 @@ struct InputStream::State {
   size_t reusable_bytes = 0;
   std::shared_ptr<DiagCtx> diag;
   std::shared_ptr<void> guard;
+  std::shared_ptr<void> lifetime_token;
+  pipeline_internal::HolderLoanGatePtr holder_loan_gate;
   std::thread worker;
   std::mutex pipeline_mu;
   std::atomic<bool> running{false};

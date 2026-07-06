@@ -836,6 +836,23 @@ static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out)
   } else if (out->input_seq >= 0) {
     out->orig_input_seq = out->input_seq;
   }
+
+  const char* stream_id = gst_structure_get_string(s, "stream-id");
+  const char* buffer_name = gst_structure_get_string(s, "buffer-name");
+  const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
+  if (orig_stream_id && *orig_stream_id) {
+    if (!stream_id || !*stream_id || (buffer_name && std::string(stream_id) == buffer_name)) {
+      out->stream_id = orig_stream_id;
+    } else {
+      out->stream_id = stream_id;
+    }
+  } else if (stream_id) {
+    out->stream_id = stream_id;
+  }
+  if (buffer_name) {
+    out->stream_label = buffer_name;
+    out->segment_name = buffer_name;
+  }
 }
 
 static Sample output_from_sample_stream_inner(GstSample* sample, const char* where,
@@ -1040,6 +1057,11 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
   out.caps_string = pipeline_internal::gst_caps_to_string_safe(out_caps);
   out.media_type = media ? media : "";
   out.payload_type = payload_type_from_media_type(out.media_type);
+  const EncodedSpec::Codec encoded_codec = caps_to_codec(out.caps_string);
+  const bool is_encoded = encoded_codec != EncodedSpec::Codec::UNKNOWN;
+  if (is_encoded) {
+    out.payload_type = PayloadType::Encoded;
+  }
 
   fill_output_meta_from_sample(sample, &out);
 
@@ -1104,6 +1126,15 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
         log_sample_tensor_state(where, "zero_copy_output", out.tensors.front());
       }
     }
+    return out;
+  }
+
+  if (is_encoded && !copy_output) {
+    simaai::neat::Tensor neat = simaai::neat::from_gst_sample(sample);
+    log_sample_tensor_state(where, "encoded_zero_copy_output", neat);
+    out.kind = SampleKind::TensorSet;
+    out.tensors = TensorList{std::move(neat)};
+    out.owned = false;
     return out;
   }
 
@@ -1753,6 +1784,10 @@ void clear_dynamic_sample_fields_for_decode_template(Sample* sample) {
   sample->pts_ns = -1;
   sample->dts_ns = -1;
   sample->duration_ns = -1;
+  sample->stream_id.clear();
+  sample->stream_label.clear();
+  sample->segment_name.clear();
+  sample->route_slot = -1;
 }
 
 void strip_tensor_storage_for_decode_template(Tensor* tensor) {
@@ -1763,6 +1798,73 @@ void strip_tensor_storage_for_decode_template(Tensor* tensor) {
   if (!inputstream_fast_static_preprocess_meta_enabled()) {
     tensor->semantic.preprocess.reset();
   }
+}
+
+bool tensor_is_device_gstsample_holder(const Tensor& tensor) {
+  if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
+      !tensor.storage->holder) {
+    return false;
+  }
+  return tensor.device.type != simaai::neat::DeviceType::CPU ||
+         tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
+         tensor.storage->sima_mem_target_flags != 0 || !tensor.storage->sima_segments.empty();
+}
+
+bool sample_has_device_gstsample_holder(const Sample& sample) {
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_is_device_gstsample_holder(tensor)) {
+        return true;
+      }
+    }
+  }
+  if (sample.tensor.has_value() && tensor_is_device_gstsample_holder(*sample.tensor)) {
+    return true;
+  }
+  for (const auto& field : sample.fields) {
+    if (sample_has_device_gstsample_holder(field)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void attach_holder_loan_release_to_sample(Sample& sample,
+                                          const pipeline_internal::HolderLoanGatePtr& gate) {
+  if (!gate) {
+    return;
+  }
+  std::vector<const void*> seen_storage;
+  auto attach_tensor = [&](Tensor& tensor) {
+    if (!tensor_is_device_gstsample_holder(tensor)) {
+      return;
+    }
+    const void* key = tensor.storage.get();
+    if (std::find(seen_storage.begin(), seen_storage.end(), key) != seen_storage.end()) {
+      return;
+    }
+    seen_storage.push_back(key);
+    auto original_holder = tensor.storage->holder;
+    tensor.storage->holder =
+        std::shared_ptr<void>(original_holder.get(), [original_holder, gate](void*) mutable {
+          original_holder.reset();
+          gate->release();
+        });
+  };
+  auto walk = [&](auto&& self, Sample& s) -> void {
+    if (sample_has_tensor_list(s)) {
+      for (auto& tensor : s.tensors) {
+        attach_tensor(tensor);
+      }
+    }
+    if (s.tensor.has_value()) {
+      attach_tensor(*s.tensor);
+    }
+    for (auto& field : s.fields) {
+      self(self, field);
+    }
+  };
+  walk(walk, sample);
 }
 
 std::optional<Sample>
@@ -2020,6 +2122,7 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
   const auto envelope_start = InputStreamDecodeProfileClock::now();
   Sample out =
       sample_from_gst_envelope(sample, where, st.opt.copy_output, &st.opt.output_override, &st);
+  pipeline_internal::mark_sample_producer_stream_lifetime(out, st.lifetime_token);
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->envelope_ms +=
         inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - envelope_start);

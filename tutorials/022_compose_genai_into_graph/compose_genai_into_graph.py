@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 import argparse
 
+import cv2
+import numpy as np
 import pyneat as neat
+
+
+def load_rgb_image(path: str) -> np.ndarray:
+    image_bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+    if image_bgr is None:
+        raise RuntimeError(f"failed to read image: {path}")
+    return np.asarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
 
 
 def sample_text(sample) -> str:
@@ -14,7 +23,8 @@ def sample_text(sample) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", required=True, help="Path to a deployed LLiMa model directory")
+    parser.add_argument("--model", required=True, help="Path to a deployed VLM model directory")
+    parser.add_argument("--image", required=True, help="Path to an image file")
     args = parser.parse_args()
 
     # STEP create-fragment
@@ -24,6 +34,7 @@ def main() -> int:
     options.system_prompt = "You are concise."
     options.max_new_tokens = 96
     options.streaming = True
+    options.encode_images_on_input = False
 
     genai_fragment = neat.genai.graphs.vision_language(model, options, "genai_stage")
     # END STEP
@@ -36,7 +47,14 @@ def main() -> int:
 
     # STEP push-prompt
     run = app.build()
-    prompt = neat.make_text_sample("prompt", "Explain what an API gateway does.")
+    image_tensor = neat.Tensor.from_numpy(
+        load_rgb_image(args.image), copy=True, image_format=neat.PixelFormat.RGB
+    )
+    image = neat.make_tensor_sample("image", image_tensor)
+    if not run.push("image", [image]):
+        raise RuntimeError(f"push(image) failed: {run.last_error()}")
+
+    prompt = neat.make_text_sample("prompt", "Describe this image in one sentence.")
     if not run.push("prompt", [prompt]):
         raise RuntimeError(f"push(prompt) failed: {run.last_error()}")
     # END STEP

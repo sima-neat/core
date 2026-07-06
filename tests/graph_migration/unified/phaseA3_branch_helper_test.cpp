@@ -22,6 +22,13 @@ simaai::neat::Graph output_graph(const std::string& name) {
   return g;
 }
 
+simaai::neat::Graph passthrough_graph(const std::string& input, const std::string& output) {
+  simaai::neat::Graph g(input);
+  g.add(simaai::neat::nodes::Input(input));
+  g.add(simaai::neat::nodes::Output(output));
+  return g;
+}
+
 void require_throws_contains(const std::function<void()>& fn, const std::string& needle,
                              const std::string& label) {
   try {
@@ -71,5 +78,27 @@ RUN_TEST("graph_migration_phaseA3_branch_helper_test", [] {
     require(model_sample.has_value(), "Branch helper model pull timed out");
     require(model_sample->stream_id == "branch-helper", "Branch helper model stream_id mismatch");
     run.close();
+  }
+
+  {
+    auto source = input_graph("source");
+    auto branch = simaai::neat::graphs::Branch("source", {"detector_h264", "video_h264"});
+    auto detector = passthrough_graph("detector_h264", "detections");
+    auto video = passthrough_graph("video_h264", "video");
+
+    simaai::neat::Graph app;
+    app.connect(source, branch);
+
+    simaai::neat::GraphLinkOptions realtime;
+    realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    realtime.queue_depth = 1;
+    realtime.stream_id = "stream0";
+    app.connect(branch, detector, realtime);
+    app.connect(branch, video, realtime);
+
+    const auto report = app.validate();
+    require(report.error_code.empty(),
+            "Branch boundary elision with realtime fanout should validate, got " +
+                report.error_code + ": " + report.repro_note);
   }
 });

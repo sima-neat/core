@@ -630,11 +630,35 @@ void validate_detessdequant_head_contract_local(const MpkPluginIoContract& detes
   int slice_h = 0;
   int slice_w = 0;
   int slice_c = 0;
-  if (!canonical_slice_dhwc_from_shape(head.slice_shape, &slice_d, &slice_h, &slice_w, &slice_c)) {
+  // Align the slice rank to the frame rank before extracting channels. A per-tile slice may omit
+  // leading (batch) dims that the frame carries -- e.g. a non-image boxes tensor with slice
+  // [300,4] and frame [1,300,4]. canonical_slice_dhwc_from_shape reads a rank-2 shape as
+  // (h,w),channels=1 but a rank-3 shape as (h,w,c), so without this the slice would report
+  // channels=1 against the frame's channels=4 and spuriously fail the channel-consistency check.
+  // Left-padding with 1s preserves image slices (e.g. [1,18,512] vs frame [1,35,35,512]).
+  std::vector<std::int64_t> slice_for_geometry = head.slice_shape;
+  while (slice_for_geometry.size() < head.frame_shape.size()) {
+    slice_for_geometry.insert(slice_for_geometry.begin(), 1);
+  }
+  if (!canonical_slice_dhwc_from_shape(slice_for_geometry, &slice_d, &slice_h, &slice_w,
+                                       &slice_c)) {
     throw std::runtime_error("detessdequant validation requires canonical slice geometry for '" +
                              detess.name + "'");
   }
   const int logical_slice_channels = std::max(slice_c, 1);
+  if (std::getenv("NEAT_DUMP_POST_REGIONS") != nullptr) {
+    const auto js = [](const std::vector<std::int64_t>& v) {
+      std::string s;
+      for (auto x : v)
+        s += std::to_string(x) + ",";
+      return s;
+    };
+    std::fprintf(
+        stderr,
+        "[ddq-geom] %s frame_shape={%s} slice_shape={%s} per_head_in={%s} slice_c=%d frame_ch=%d\n",
+        detess.name.c_str(), js(head.frame_shape).c_str(), js(head.slice_shape).c_str(),
+        js(head.per_head_input_shape).c_str(), slice_c, frame_dims.channels);
+  }
   if (logical_slice_channels != frame_dims.channels) {
     throw std::runtime_error(
         "detessdequant validation found mismatched detess frame/slice geometry for '" +
@@ -649,6 +673,21 @@ void validate_detessdequant_head_contract_local(const MpkPluginIoContract& detes
   if (head.input_transport_shape.empty() || head.input_transport_size_bytes == 0U) {
     throw std::runtime_error("detessdequant validation requires packed transport geometry for '" +
                              detess.name + "'");
+  }
+  if (std::getenv("NEAT_DUMP_POST_REGIONS") != nullptr) {
+    const auto& it0 = detess.input_tensors.front();
+    std::string tsh, ish;
+    for (auto v : head.input_transport_shape)
+      tsh += std::to_string(v) + ",";
+    for (auto v : it0.mpk_shape)
+      ish += std::to_string(v) + ",";
+    std::fprintf(
+        stderr,
+        "[detessdequant] %s: head.transport_bytes=%llu detess.in.size_bytes=%llu "
+        "in_dtype=%s in_logical_dtype=%s transport_shape={%s} in_mpk_shape={%s} n_in=%zu\n",
+        detess.name.c_str(), static_cast<unsigned long long>(head.input_transport_size_bytes),
+        static_cast<unsigned long long>(it0.size_bytes), it0.dtype.c_str(),
+        it0.logical_dtype.c_str(), tsh.c_str(), ish.c_str(), detess.input_tensors.size());
   }
   if (head.input_transport_size_bytes !=
       static_cast<std::uint64_t>(detess.input_tensors.front().size_bytes)) {
@@ -1480,8 +1519,8 @@ extract_tessellate_contract_subset_from_stage(const MpkPluginIoContract& stage) 
   subset.align_c16 = stage.has_align_c16 && stage.align_c16;
   subset.cblock = stage.has_cblock && stage.cblock;
   subset.batch_size = explicit_stage_batch_size_or_one(stage);
-  if (!stage.output_tensors.empty() && stage.output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes = static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
+  for (const auto& tensor : stage.output_tensors) {
+    subset.output_size_bytes += static_cast<std::uint64_t>(tensor.size_bytes);
   }
 
   const std::array present = {
@@ -1519,9 +1558,8 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkCont
   subset.output_shape = preferred_geometry_shape_from_stage_tensor(
       *tess_stage,
       tess_stage->output_tensors.empty() ? nullptr : &tess_stage->output_tensors.front(), true);
-  if (!tess_stage->output_tensors.empty() && tess_stage->output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes =
-        static_cast<std::uint64_t>(tess_stage->output_tensors.front().size_bytes);
+  for (const auto& tensor : tess_stage->output_tensors) {
+    subset.output_size_bytes += static_cast<std::uint64_t>(tensor.size_bytes);
   }
   subset.input_dtype = normalize_dtype_token(!quant_stage->canonical_input_dtype.empty()
                                                  ? quant_stage->canonical_input_dtype
@@ -1574,8 +1612,8 @@ extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage) {
   subset.input_shape = preferred_stage_input_tensor_shape(stage, stage.input_tensors.front());
   subset.output_shape = preferred_geometry_shape_from_stage_tensor(
       stage, stage.output_tensors.empty() ? nullptr : &stage.output_tensors.front(), true);
-  if (!stage.output_tensors.empty() && stage.output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes = static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
+  for (const auto& tensor : stage.output_tensors) {
+    subset.output_size_bytes += static_cast<std::uint64_t>(tensor.size_bytes);
   }
   subset.input_dtype = normalize_dtype_token(!stage.canonical_input_dtype.empty()
                                                  ? stage.canonical_input_dtype
@@ -1702,6 +1740,41 @@ ProcessMlaContractSubset extract_processmla_contract_subset_from_static_contract
   return subset;
 }
 
+const MpkTensorContract*
+match_published_output_for_transport(const std::vector<MpkTensorContract>& published_outputs,
+                                     const std::string& transport_name,
+                                     std::size_t fallback_index) {
+  if (!transport_name.empty()) {
+    for (const auto& candidate : published_outputs) {
+      if (candidate.name == transport_name) {
+        return &candidate;
+      }
+    }
+    if (fallback_index < published_outputs.size()) {
+      return &published_outputs[fallback_index];
+    }
+    std::ostringstream names;
+    names << "[";
+    for (std::size_t i = 0; i < published_outputs.size(); ++i) {
+      if (i > 0) {
+        names << ", ";
+      }
+      names << (published_outputs[i].name.empty() ? "<unnamed>" : published_outputs[i].name);
+    }
+    names << "]";
+    throw std::runtime_error(
+        "Model tensor names do not match the expected model connections. Neat could not find "
+        "output tensor '" +
+        transport_name + "'. Available model outputs: " + names.str() +
+        ". Rebuild the model package with consistent tensor names, or update the graph to use "
+        "one of the available output names.");
+  }
+  if (fallback_index < published_outputs.size()) {
+    return &published_outputs[fallback_index];
+  }
+  return nullptr;
+}
+
 std::vector<DetessellateContractSubset>
 extract_detessellate_contract_subsets_from_mpk(const MpkContract& contract) {
   const auto stages = collect_stages_for_family(contract, "detess");
@@ -1729,7 +1802,14 @@ extract_detessellate_contract_subsets_from_mpk(const MpkContract& contract) {
     }
 
     DetessellateContractSubset subset;
-    const auto& published_output = mla_published_outputs[i];
+    const auto* published_output_ptr = match_published_output_for_transport(
+        mla_published_outputs, stage->input_tensors.front().name, i);
+    if (published_output_ptr == nullptr) {
+      throw std::runtime_error(
+          "detessellate contract subset extraction could not match a published MLA boundary for '" +
+          stage->name + "'");
+    }
+    const auto& published_output = *published_output_ptr;
     const auto boundary = detess_boundary_shape_view_from_stage(
         *stage, &stage->input_tensors.front(), published_output.size_bytes);
     subset.input_shape = boundary.logical_input_shape;
@@ -1820,7 +1900,32 @@ extract_detessdequant_contract_subset_from_mpk(const MpkContract& contract) {
       throw std::runtime_error(
           "detessdequant contract subset extraction missing detess input tensor");
     }
-    const auto& published_input = mla_published_outputs[i];
+    // Match the published MLA boundary to THIS detess by its transport-tensor name, not by
+    // position. A heterogeneous egress -- where one MLA output is published in normal layout and
+    // bypasses detessellation -- makes the detess-head list a SUBSET of the published-output list,
+    // so positional indexing (mla_published_outputs[i]) grabs the wrong boundary (e.g. output_0's
+    // 627200-byte size attached to output_1's detess head). The detess input tensor name equals
+    // the published unpack-output name, so match on that; fall back to positional for legacy
+    // homogeneous MPKs whose names may not align.
+    const std::string& transport_name = detess.input_tensors.front().name;
+    const MpkTensorContract* published_input_ptr = nullptr;
+    if (!transport_name.empty()) {
+      for (const auto& candidate : mla_published_outputs) {
+        if (candidate.name == transport_name) {
+          published_input_ptr = &candidate;
+          break;
+        }
+      }
+    }
+    if (published_input_ptr == nullptr && i < mla_published_outputs.size()) {
+      published_input_ptr = &mla_published_outputs[i];
+    }
+    if (published_input_ptr == nullptr) {
+      throw std::runtime_error("detessdequant contract subset extraction could not match a "
+                               "published MLA boundary for '" +
+                               detess.name + "'");
+    }
+    const auto& published_input = *published_input_ptr;
     DetessDequantHeadContractSubset head;
     const auto boundary = detess_boundary_shape_view_from_stage(
         detess, &detess.input_tensors.front(), published_input.size_bytes);
