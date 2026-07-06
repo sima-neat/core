@@ -5626,6 +5626,73 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   std::uint64_t packed_input_offset = 0U;
   std::uint64_t packed_output_offset = 0U;
 
+  // Reconcile the packed INPUT layout with the model's ingress (push) order.
+  //
+  // The framework assembles the user's pushed TensorList into the single packed
+  // "input_tensor" buffer in model ingress order (contract.ingress_tensors),
+  // laying each region out at the cumulative byte offset of the preceding
+  // ingress tensors. The branches below, however, are sequenced in MLA-boundary
+  // (IFM pack) order, which for some models differs from ingress order — e.g.
+  // RF-DETR transformer_after_gather declares ingress [feature, gather] but its
+  // IFM pack consumes [gather, feature]. Sequencing each branch's read offset by
+  // boundary order would then point every branch at the wrong ingress region
+  // (feature bytes cast/tessellated as gather and vice versa), producing a
+  // scrambled IFM and garbage MLA output. Instead, compute each branch's read
+  // offset from where its source ingress tensor actually lands in the
+  // ingress-order buffer. Falls back to sequential branch accumulation when the
+  // per-branch ingress identity cannot be resolved unambiguously (e.g. a branch
+  // whose upstream is an intermediate rather than a top-level ingress tensor),
+  // which preserves prior behavior for models where the two orders coincide.
+  std::vector<std::int64_t> branch_ingress_byte_offsets;
+  {
+    const auto ingress_index_for_name = [&](const std::string& name) -> int {
+      for (std::size_t k = 0; k < contract.ingress_tensors.size(); ++k) {
+        if (!contract.ingress_tensors[k].name.empty() && contract.ingress_tensors[k].name == name) {
+          return static_cast<int>(k);
+        }
+      }
+      return -1;
+    };
+    if (!contract.ingress_tensors.empty()) {
+      // Resolve, per branch, which ingress tensor it consumes (by name) and how
+      // many bytes that ingress region occupies. The ingress-order byte offset
+      // is then the sum of the sizes of the branches whose ingress tensor is
+      // declared earlier — independent of contract.ingress_tensors[].size_bytes,
+      // which is not always populated on the top-level ingress list.
+      std::vector<int> ingress_index(count, -1);
+      std::vector<std::uint64_t> branch_size(count, 0U);
+      bool all_mapped = true;
+      for (std::size_t i = 0; i < count; ++i) {
+        const auto* upstream =
+            pre_mla_branch_upstream_input_tensor_local(*boundary, siblings[i], i);
+        if (upstream == nullptr || upstream->name.empty() || upstream->size_bytes == 0U) {
+          all_mapped = false;
+          break;
+        }
+        const int idx = ingress_index_for_name(upstream->name);
+        if (idx < 0) {
+          all_mapped = false;
+          break;
+        }
+        ingress_index[i] = idx;
+        branch_size[i] = static_cast<std::uint64_t>(upstream->size_bytes);
+      }
+      if (all_mapped) {
+        std::vector<std::int64_t> resolved(count, 0);
+        for (std::size_t i = 0; i < count; ++i) {
+          std::uint64_t offset = 0U;
+          for (std::size_t j = 0; j < count; ++j) {
+            if (ingress_index[j] < ingress_index[i]) {
+              offset += branch_size[j];
+            }
+          }
+          resolved[i] = static_cast<std::int64_t>(offset);
+        }
+        branch_ingress_byte_offsets = std::move(resolved);
+      }
+    }
+  }
+
   for (std::size_t i = 0; i < count; ++i) {
     const auto& branch = branch_runtimes[i];
     if (branch.input_tensors.empty() || branch.output_tensors.empty()) {
@@ -5746,7 +5813,9 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
     entry.input_tensor = &input_tensor_contract;
     entry.input_dtype = normalize_dtype_token_local(input_dtype);
     entry.input_layout.clear();
-    entry.input_byte_offset = static_cast<std::int64_t>(packed_input_offset);
+    entry.input_byte_offset = !branch_ingress_byte_offsets.empty()
+                                  ? branch_ingress_byte_offsets[i]
+                                  : static_cast<std::int64_t>(packed_input_offset);
     packed_input_offset += packed_input_sizes.back();
     entry.output_tensor = &output_tensor_contract;
     entry.output_physical_name =
