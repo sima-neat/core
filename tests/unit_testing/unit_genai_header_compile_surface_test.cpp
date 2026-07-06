@@ -32,9 +32,13 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            request.prompt = std::string{"hello"};
            GenerationResult result;
            result.text = "world";
+           result.no_speech_prob = 0.1F;
+           result.avg_logprob = -0.2F;
            GenerationMetrics metrics;
            TokenSample token;
            token.text = "tok";
+           token.no_speech_prob = 0.3F;
+           token.avg_logprob = -0.4F;
            ChatMessage message{"user", "hello"};
            ImageList images;
            VisionLanguageOptions vision_language_options;

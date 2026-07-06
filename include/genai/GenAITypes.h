@@ -113,6 +113,8 @@ struct GenerationResult {
   GenerationMetrics metrics;
   std::string finish_reason;
   std::string language;
+  std::optional<float> no_speech_prob;
+  std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
 };
 
@@ -122,6 +124,8 @@ struct TokenSample {
   bool is_final = false;
   std::string finish_reason;
   std::string language;
+  std::optional<float> no_speech_prob;
+  std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
 };
 
@@ -178,7 +182,8 @@ private:
     void record_text(const std::string& text, bool stream_end);
     void push(TokenSample sample);
     void finish(std::string finish_reason, std::optional<std::uint32_t> generated_tokens,
-                std::string language = {});
+                std::string language = {}, std::optional<float> no_speech_prob = std::nullopt,
+                std::optional<float> avg_logprob = std::nullopt);
     bool cancelled() const;
     GenerationMetrics current_metrics() const;
 

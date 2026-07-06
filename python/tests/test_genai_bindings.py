@@ -266,16 +266,24 @@ def test_genai_value_types_and_text_sample_helpers():
   result.text = "done"
   result.finish_reason = "stop"
   result.language = "en"
+  result.no_speech_prob = 0.1
+  result.avg_logprob = -0.2
   result.metrics.generated_tokens = 1
   assert result.language == "en"
+  assert result.no_speech_prob == pytest.approx(0.1)
+  assert result.avg_logprob == pytest.approx(-0.2)
   assert result.metrics.generated_tokens == 1
 
   token = pyneat.TokenSample()
   token.text = "d"
   token.language = "en"
+  token.no_speech_prob = 0.3
+  token.avg_logprob = -0.4
   token.is_final = False
   assert token.text == "d"
   assert token.language == "en"
+  assert token.no_speech_prob == pytest.approx(0.3)
+  assert token.avg_logprob == pytest.approx(-0.4)
 
 
 def test_genai_top_level_and_namespace_aliases_exist():

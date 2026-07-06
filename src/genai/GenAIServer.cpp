@@ -315,7 +315,9 @@ std::string completion_chunk(const std::string& model_name, const std::string& t
 std::string audio_chunk(const std::string& text, bool finished,
                         const std::optional<std::string>& finish_reason = std::nullopt,
                         const std::optional<GenerationMetrics>& metrics = std::nullopt,
-                        const std::string& language = {}) {
+                        const std::string& language = {},
+                        std::optional<float> no_speech_prob = std::nullopt,
+                        std::optional<float> avg_logprob = std::nullopt) {
   nlohmann::json chunk;
   chunk["object"] = finished ? "audio.transcription.done" : "audio.transcription.chunk";
   chunk["text"] = text;
@@ -323,6 +325,12 @@ std::string audio_chunk(const std::string& text, bool finished,
     chunk["finish_reason"] = finish_reason.value_or("stop");
     if (!language.empty()) {
       chunk["language"] = language;
+    }
+    if (no_speech_prob.has_value()) {
+      chunk["no_speech_prob"] = *no_speech_prob;
+    }
+    if (avg_logprob.has_value()) {
+      chunk["avg_logprob"] = *avg_logprob;
     }
   }
   if (metrics.has_value()) {
@@ -1331,10 +1339,17 @@ struct GenAIServer::Impl {
         request.audio_file = audio_path;
         request.language = language;
         const auto result = model->run(request);
-        set_json(res, {{"text", result.text},
-                       {"model", model_name},
-                       {"language", result.language},
-                       {"finish_reason", choice_finish_reason(result.finish_reason)}});
+        nlohmann::json body = {{"text", result.text},
+                               {"model", model_name},
+                               {"language", result.language},
+                               {"finish_reason", choice_finish_reason(result.finish_reason)}};
+        if (result.no_speech_prob.has_value()) {
+          body["no_speech_prob"] = *result.no_speech_prob;
+        }
+        if (result.avg_logprob.has_value()) {
+          body["avg_logprob"] = *result.avg_logprob;
+        }
+        set_json(res, std::move(body));
       }
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
@@ -1365,7 +1380,7 @@ struct GenAIServer::Impl {
               if (sample->is_final) {
                 const auto final_chunk =
                     audio_chunk("", true, choice_finish_reason(sample->finish_reason), metrics,
-                                sample->language) +
+                                sample->language, sample->no_speech_prob, sample->avg_logprob) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();

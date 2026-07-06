@@ -84,6 +84,14 @@ Sample make_done_sample(const GenerationResult& result, const Sample& source,
                        source),
       make_text_sample(result.language.empty() ? language : result.language, "language", source),
   };
+  if (result.no_speech_prob.has_value()) {
+    done.fields.push_back(
+        make_text_sample(format_double(*result.no_speech_prob), "no_speech_prob", source));
+  }
+  if (result.avg_logprob.has_value()) {
+    done.fields.push_back(
+        make_text_sample(format_double(*result.avg_logprob), "avg_logprob", source));
+  }
   return done;
 }
 
@@ -190,6 +198,8 @@ public:
           result.metrics = token->metrics;
           result.finish_reason = token->finish_reason.empty() ? "stop" : token->finish_reason;
           result.language = token->language;
+          result.no_speech_prob = token->no_speech_prob;
+          result.avg_logprob = token->avg_logprob;
           (void)emit_or_append(done_port_, make_done_sample(result, msg.sample, request.language),
                                out);
           saw_final = true;

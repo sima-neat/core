@@ -2124,6 +2124,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
       .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
       .def_rw("language", &simaai::neat::genai::GenerationResult::language)
+      .def_rw("no_speech_prob", &simaai::neat::genai::GenerationResult::no_speech_prob)
+      .def_rw("avg_logprob", &simaai::neat::genai::GenerationResult::avg_logprob)
       .def_prop_rw(
           "tool_calls",
           [](const simaai::neat::genai::GenerationResult& result) {
@@ -2140,6 +2142,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
       .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
       .def_rw("language", &simaai::neat::genai::TokenSample::language)
+      .def_rw("no_speech_prob", &simaai::neat::genai::TokenSample::no_speech_prob)
+      .def_rw("avg_logprob", &simaai::neat::genai::TokenSample::avg_logprob)
       .def_prop_rw(
           "tool_calls",
           [](const simaai::neat::genai::TokenSample& sample) {

@@ -50,6 +50,8 @@ struct ASRModel::Impl {
     GenerationResult result;
     result.text = std::move(transcription.text);
     result.language = std::move(transcription.language);
+    result.no_speech_prob = transcription.no_speech_prob;
+    result.avg_logprob = transcription.avg_logprob;
     result.finish_reason = "stop";
     return result;
   }
@@ -117,7 +119,8 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
               language);
         }
         producer.finish(producer.cancelled() ? "interrupted" : "stop",
-                        std::optional<std::uint32_t>(0), transcription.language);
+                        std::optional<std::uint32_t>(0), transcription.language,
+                        transcription.no_speech_prob, transcription.avg_logprob);
       },
       [model = impl_] {
         if (model && model->whisper_model) {
