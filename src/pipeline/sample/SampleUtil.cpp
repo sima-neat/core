@@ -1656,7 +1656,14 @@ bool tensor_buffer_descriptor_from_packed_tensors(const TensorList& tensors,
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     const Tensor& tensor = tensors[i];
     const std::size_t logical_bytes = tensor_bytes_tight(tensor);
-    const std::size_t transport_bytes = tensor_transport_span_bytes_for_materialization(tensor);
+    // The packed-parent consumer (pre-MLA casttess/quanttess) reads each logical
+    // input at its logical-tight byte offset, so lay tensors out tightly. Only a
+    // genuinely tessellated tensor's larger physical span is meaningful payload;
+    // a device tensor's benign alignment padding (runtime_segment > tight, no
+    // tess) must be dropped or it shifts every subsequent tensor off-contract.
+    const std::size_t transport_bytes =
+        tensor.semantic.tess.has_value() ? tensor_transport_span_bytes_for_materialization(tensor)
+                                         : logical_bytes;
     if (logical_bytes == 0U || transport_bytes == 0U) {
       if (err) {
         *err = "tensor buffer descriptor: packed tensor has zero byte size";
@@ -1752,7 +1759,11 @@ bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& pa
   std::vector<std::size_t> tensor_transport_bytes;
   tensor_transport_bytes.reserve(bundle.tensors.size());
   for (const auto& tensor : bundle.tensors) {
-    const std::size_t bytes = tensor_transport_span_bytes_for_materialization(tensor);
+    // Match tensor_buffer_descriptor_from_packed_tensors: lay out tightly unless
+    // the tensor is genuinely tessellated (drop benign device alignment padding).
+    const std::size_t bytes = tensor.semantic.tess.has_value()
+                                  ? tensor_transport_span_bytes_for_materialization(tensor)
+                                  : tensor_bytes_tight(tensor);
     if (bytes == 0U) {
       if (*out_caps) {
         gst_caps_unref(*out_caps);

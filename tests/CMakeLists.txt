@@ -366,6 +366,7 @@ set(UNIT_TESTS
   unit_tensorbuffer_bind_preserve_source_view_test
   unit_tensorbuffer_publish_view_segment_name_precedence_test
   unit_sample_tensor_set_materialized_parent_offsets_test
+  unit_sample_packed_parent_alignment_padding_test
   unit_yolov8_mla_handoff_segment_test
   unit_yolov8_contract_subset_test
   unit_agg_model_managed_no_standalone_json_test
