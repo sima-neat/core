@@ -25,7 +25,7 @@ public:
   HostPcieChannel(const HostPcieChannel&) = delete;
   HostPcieChannel& operator=(const HostPcieChannel&) = delete;
 
-  void configure(const PcieModelFacts& facts, int queue, int card_id);
+  void configure(const PcieModelFacts& facts, int queue, int card_id, int max_inflight);
   void stop();
   bool is_running() const;
 
@@ -50,6 +50,7 @@ private:
   GstElement* appsink_ = nullptr;
 
   std::atomic<bool> running_{false};
+  std::atomic<bool> stop_requested_{false};
   std::atomic<std::uint64_t> sequence_{0};
   std::mutex pending_mutex_;
   std::deque<std::uint64_t> pending_sequences_;
@@ -61,6 +62,7 @@ private:
   PcieModelFacts facts_;
   int pcie_queue_ = 0;
   int card_id_ = 0;
+  int max_inflight_ = 0;
   std::string caps_;
 };
 

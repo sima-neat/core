@@ -50,6 +50,7 @@ struct Args {
   std::string user = env_or_default("SIMAPCIE_USER", "sima");
   int card_id = env_int_or_default("SIMAPCIE_CARD_ID", 0);
   int queue = env_int_or_default("SIMAPCIE_QUEUE", 0);
+  int max_inflight = env_int_or_default("SIMAPCIE_MAX_INFLIGHT", 0);
   int readiness_timeout_ms = env_int_or_default("SIMAPCIE_READINESS_TIMEOUT_MS", 180000);
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
   int sync_iterations = env_int_or_default("SIMAPCIE_SYNC_ITERATIONS", 50);
@@ -71,7 +72,7 @@ std::string require_value(int argc, char** argv, int& i, const char* name) {
 void usage(const char* argv0) {
   std::cerr << "usage: " << argv0
             << " [--model model.tar.gz] [--image image.jpg] [--card-host host]"
-               " [--card-id n] [--user user] [--queue n]"
+               " [--card-id n] [--user user] [--queue n] [--max-inflight n]"
                " [--readiness-timeout-ms ms] [--pull-timeout-ms ms]"
                " [--sync-iterations n] [--iterations n]"
                " [--card-env 'NAME=VALUE ...']"
@@ -95,6 +96,8 @@ Args parse_args(int argc, char** argv) {
       args.user = require_value(argc, argv, i, "--user");
     } else if (arg == "--queue") {
       args.queue = std::stoi(require_value(argc, argv, i, "--queue"));
+    } else if (arg == "--max-inflight") {
+      args.max_inflight = std::stoi(require_value(argc, argv, i, "--max-inflight"));
     } else if (arg == "--readiness-timeout-ms") {
       args.readiness_timeout_ms = std::stoi(require_value(argc, argv, i, "--readiness-timeout-ms"));
     } else if (arg == "--pull-timeout-ms") {
@@ -125,9 +128,15 @@ Args parse_args(int argc, char** argv) {
   if (!std::filesystem::is_regular_file(args.image)) {
     throw std::runtime_error("image path does not exist or is not a regular file: " + args.image);
   }
-  if (args.readiness_timeout_ms <= 0 || args.pull_timeout_ms <= 0 || args.sync_iterations <= 0 ||
-      args.iterations <= 0) {
-    throw std::runtime_error("timeouts and iterations must be positive");
+  if (args.max_inflight < 0 || args.max_inflight > 256 ||
+      args.readiness_timeout_ms <= 0 || args.pull_timeout_ms <= 0 || args.sync_iterations < 0 ||
+      args.iterations < 0) {
+    throw std::runtime_error(
+        "max-inflight must be in range 0..256, timeouts must be positive, and iterations must be "
+        "non-negative");
+  }
+  if (args.sync_iterations == 0 && args.iterations == 0) {
+    throw std::runtime_error("at least one of sync or async iterations must be positive");
   }
   return args;
 }
@@ -292,6 +301,7 @@ int main(int argc, char** argv) {
     conn.card_id = args.card_id;
     conn.user = args.user;
     conn.queue = args.queue;
+    conn.max_inflight = args.max_inflight;
     conn.card_env = args.card_env;
     conn.card_gst_debug = args.card_gst_debug;
     conn.card_gst_debug_file = args.card_gst_debug_file;
@@ -315,7 +325,7 @@ int main(int argc, char** argv) {
               << (conn.card_host.empty() ? ("10.0." + std::to_string(conn.card_id) + ".2")
                                          : conn.card_host)
               << " card_id=" << conn.card_id << " user=" << conn.user << " queue=" << conn.queue
-              << "\n";
+              << " max_inflight=" << conn.max_inflight << "\n";
     std::cout << "  sync_iterations=" << args.sync_iterations
               << " async_iterations=" << args.iterations << "\n";
     if (!conn.card_env.empty()) {

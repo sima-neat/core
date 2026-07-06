@@ -370,6 +370,7 @@ NB_MODULE(_pypciehost_core, m) {
       .def_rw("card_id", &pcie::ConnectionOptions::card_id)
       .def_rw("user", &pcie::ConnectionOptions::user)
       .def_rw("queue", &pcie::ConnectionOptions::queue)
+      .def_rw("max_inflight", &pcie::ConnectionOptions::max_inflight)
       .def_rw("card_env", &pcie::ConnectionOptions::card_env)
       .def_rw("card_gst_debug", &pcie::ConnectionOptions::card_gst_debug)
       .def_rw("card_gst_debug_file", &pcie::ConnectionOptions::card_gst_debug_file)
@@ -377,14 +378,16 @@ NB_MODULE(_pypciehost_core, m) {
       .def(
           "__init__",
           [](pcie::ConnectionOptions* self, std::string card_host, int card_id, std::string user,
-             int queue) {
+             int queue, int max_inflight) {
             new (self) pcie::ConnectionOptions();
             self->card_host = std::move(card_host);
             self->card_id = card_id;
             self->user = std::move(user);
             self->queue = queue;
+            self->max_inflight = max_inflight;
           },
-          "card_host"_a = "", "card_id"_a = 0, "user"_a = "sima", "queue"_a = 0);
+          "card_host"_a = "", "card_id"_a = 0, "user"_a = "sima", "queue"_a = 0,
+          "max_inflight"_a = 0);
 
   nb::class_<pcie::ModelOptions::Preprocess::Resize>(m, "PreprocessResizeOptions")
       .def(nb::init<>())

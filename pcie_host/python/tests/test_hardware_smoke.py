@@ -46,6 +46,7 @@ def _connection() -> pcie.ConnectionOptions:
       card_id=_env_int("SIMAPCIE_CARD_ID", 0),
       user=_env("SIMAPCIE_USER", "sima"),
       queue=_env_int("SIMAPCIE_QUEUE", 0),
+      max_inflight=_env_int("SIMAPCIE_MAX_INFLIGHT", 0),
   )
   conn.card_env = _env("SIMAPCIE_CARD_ENV")
   conn.card_gst_debug = _env("SIMAPCIE_CARD_GST_DEBUG")

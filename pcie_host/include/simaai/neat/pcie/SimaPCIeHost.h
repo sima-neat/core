@@ -31,6 +31,7 @@ struct ConnectionOptions {
   int card_id = 0;
   std::string user = "sima";
   int queue = 0;
+  int max_inflight = 0;
   std::string card_env;
   std::string card_gst_debug;
   std::string card_gst_debug_file;

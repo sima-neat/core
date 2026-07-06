@@ -511,13 +511,19 @@ HostPcieChannel::~HostPcieChannel() {
   stop();
 }
 
-void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, const int card_id) {
+void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, const int card_id,
+                                const int max_inflight) {
   if (running_.load()) {
     throw std::runtime_error("cannot configure HostPcieChannel while running");
+  }
+  if (max_inflight < 0) {
+    throw std::invalid_argument("max_inflight must be non-negative");
   }
   facts_ = facts;
   pcie_queue_ = queue;
   card_id_ = card_id;
+  max_inflight_ = max_inflight;
+  stop_requested_.store(false);
 }
 
 std::string HostPcieChannel::tensor_set_caps() {
@@ -586,12 +592,13 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
   const std::size_t auto_buffer = std::max(facts_.packed_input_bytes, facts_.packed_output_bytes);
   const guint64 buffer_size =
       static_cast<guint64>(std::max<std::size_t>(auto_buffer, 512U * 1024U));
+  const guint queue_depth = static_cast<guint>(max_inflight_);
   g_object_set(G_OBJECT(pciehost_), "buffersize", buffer_size, "card-number", card_id_, "queue",
-               pcie_queue_, nullptr);
+               pcie_queue_, "queuedepth", queue_depth, nullptr);
 
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
                FALSE, nullptr);
-  g_object_set(G_OBJECT(queue_element_), "max-size-buffers", 64, "max-size-bytes", 0,
+  g_object_set(G_OBJECT(queue_element_), "max-size-buffers", queue_depth, "max-size-bytes", 0,
                "max-size-time", static_cast<guint64>(0), "leaky", 0, nullptr);
 
   g_signal_connect(appsink_, "new-sample", G_CALLBACK(on_new_sample_static), this);
@@ -607,10 +614,12 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
     stop();
     throw std::runtime_error("failed to set host PCIe pipeline to PLAYING");
   }
+  stop_requested_.store(false);
   running_.store(true);
 }
 
 void HostPcieChannel::stop() {
+  stop_requested_.store(true);
   running_.store(false);
   if (appsrc_) {
     GstFlowReturn ret = GST_FLOW_OK;
@@ -707,10 +716,10 @@ bool HostPcieChannel::push_bytes(const std::vector<std::uint8_t>& payload,
 std::optional<TensorList> HostPcieChannel::pull(const int timeout_ms) {
   std::unique_lock<std::mutex> lock(receive_mutex_);
   if (timeout_ms < 0) {
-    receive_cv_.wait(lock, [&] { return !received_results_.empty() || !running_.load(); });
+    receive_cv_.wait(lock, [&] { return !received_results_.empty() || stop_requested_.load(); });
   } else {
     const bool ready = receive_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&] {
-      return !received_results_.empty() || !running_.load();
+      return !received_results_.empty() || stop_requested_.load();
     });
     if (!ready) {
       return std::nullopt;

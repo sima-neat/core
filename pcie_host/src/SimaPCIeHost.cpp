@@ -89,6 +89,7 @@ public:
                           const int readiness_timeout_ms) {
     std::lock_guard<std::mutex> lock(mu_);
     validate_queue(connection_.queue);
+    validate_max_inflight(connection_.max_inflight);
     if (readiness_timeout_ms <= 0) {
       throw std::invalid_argument("readiness_timeout_ms must be positive");
     }
@@ -118,7 +119,8 @@ public:
       remote_started = true;
       (void)remote_.wait_ready(connection_.queue, readiness_timeout_ms);
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
-      channel_.configure(facts_, connection_.queue, connection_.card_id);
+      channel_.configure(facts_, connection_.queue, connection_.card_id,
+                         connection_.max_inflight);
       state_ = PipelineState::Ready;
     } catch (...) {
       state_ = PipelineState::Failed;
@@ -161,8 +163,10 @@ public:
   }
 
   bool push(const TensorList& tensors) {
-    std::lock_guard<std::mutex> lock(mu_);
-    ensure_ready();
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      ensure_ready();
+    }
     return channel_.push(tensors);
   }
 
@@ -190,6 +194,12 @@ private:
   static void validate_queue(const int queue) {
     if (queue < 0 || queue > 5) {
       throw std::invalid_argument("queue must be in range 0..5");
+    }
+  }
+
+  static void validate_max_inflight(const int max_inflight) {
+    if (max_inflight < 0 || max_inflight > 256) {
+      throw std::invalid_argument("max_inflight must be in range 0..256");
     }
   }
 
