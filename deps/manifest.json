@@ -1,7 +1,6 @@
 {
   "internals": {
-    "branch": "develop",
-    "spec": "5dc565c093f4"
+    "policy": "snap"
   },
   "llima": {
     "policy": "snap"
