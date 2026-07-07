@@ -5275,21 +5275,21 @@ const MpkPluginIoContract* find_pre_mla_boundary_stage_local(const MpkContract& 
 // (IFM pack for packer-style models, MLA itself for native multi-IFM models).
 // Falls back to the resolver's natural (suffix-based) ordering if any branch
 // key is missing or none of the branch keys aligns with the boundary keys.
-void reorder_pre_mla_siblings_by_boundary_local(const MpkContract& contract,
+bool reorder_pre_mla_siblings_by_boundary_local(const MpkContract& contract,
                                                 std::vector<PreMlaSiblingStage>* siblings) {
   if (siblings == nullptr || siblings->size() <= 1U) {
-    return;
+    return false;
   }
   const auto* boundary = find_pre_mla_boundary_stage_local(contract);
   if (boundary == nullptr) {
-    return;
+    return false;
   }
   std::vector<std::string> branch_keys;
   branch_keys.reserve(siblings->size());
   for (const auto& sib : *siblings) {
     const auto* anchor = sib.tess ? sib.tess : (sib.quant ? sib.quant : sib.cast);
     if (!anchor || anchor->output_tensors.empty() || anchor->output_tensors.front().name.empty()) {
-      return;
+      return false;
     }
     branch_keys.push_back(anchor->output_tensors.front().name);
   }
@@ -5299,13 +5299,22 @@ void reorder_pre_mla_siblings_by_boundary_local(const MpkContract& contract,
     boundary_keys.push_back(it.name);
   }
   if (auto perm = reorder_indices_by_mla_boundary_local(branch_keys, boundary_keys)) {
+    bool order_changed = false;
+    for (std::size_t i = 0; i < perm->size(); ++i) {
+      if ((*perm)[i] != i) {
+        order_changed = true;
+        break;
+      }
+    }
     std::vector<PreMlaSiblingStage> reordered;
     reordered.reserve(perm->size());
     for (auto idx : *perm) {
       reordered.push_back((*siblings)[idx]);
     }
     *siblings = std::move(reordered);
+    return order_changed;
   }
+  return false;
 }
 
 // Forward declarations of helpers that live further down in this file but are
@@ -5536,7 +5545,8 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   }
   // Reorder siblings to match the MLA-boundary input order. Mirrors the
   // detessdequant path's reorder against mla_published_outputs.
-  reorder_pre_mla_siblings_by_boundary_local(contract, &siblings);
+  const bool branch_order_reordered =
+      reorder_pre_mla_siblings_by_boundary_local(contract, &siblings);
   const auto* boundary = find_pre_mla_boundary_stage_local(contract);
   if (boundary == nullptr) {
     throw std::runtime_error(
@@ -5626,23 +5636,10 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   std::uint64_t packed_input_offset = 0U;
   std::uint64_t packed_output_offset = 0U;
 
-  // Reconcile the packed INPUT layout with the model's ingress (push) order.
-  //
-  // The framework assembles the user's pushed TensorList into the single packed
-  // "input_tensor" buffer in model ingress order (contract.ingress_tensors),
-  // laying each region out at the cumulative byte offset of the preceding
-  // ingress tensors. The branches below, however, are sequenced in MLA-boundary
-  // (IFM pack) order, which for some models differs from ingress order — e.g.
-  // RF-DETR transformer_after_gather declares ingress [feature, gather] but its
-  // IFM pack consumes [gather, feature]. Sequencing each branch's read offset by
-  // boundary order would then point every branch at the wrong ingress region
-  // (feature bytes cast/tessellated as gather and vice versa), producing a
-  // scrambled IFM and garbage MLA output. Instead, compute each branch's read
-  // offset from where its source ingress tensor actually lands in the
-  // ingress-order buffer. Falls back to sequential branch accumulation when the
-  // per-branch ingress identity cannot be resolved unambiguously (e.g. a branch
-  // whose upstream is an intermediate rather than a top-level ingress tensor),
-  // which preserves prior behavior for models where the two orders coincide.
+  // Branch descriptors are emitted in MLA-boundary order, while the packed
+  // parent input is laid out in public ingress order. Resolve each branch's
+  // read offset by source ingress identity; use sequential offsets only when
+  // the boundary order did not reorder the branches.
   std::vector<std::int64_t> branch_ingress_byte_offsets;
   {
     const auto ingress_index_for_name = [&](const std::string& name) -> int {
@@ -5691,6 +5688,11 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
         branch_ingress_byte_offsets = std::move(resolved);
       }
     }
+  }
+  if (branch_order_reordered && branch_ingress_byte_offsets.empty()) {
+    throw std::runtime_error(
+        "processcvu MPK pre-MLA multi-io route reordered branches by MLA boundary "
+        "but could not resolve every branch to public ingress order");
   }
 
   for (std::size_t i = 0; i < count; ++i) {
