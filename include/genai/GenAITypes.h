@@ -104,6 +104,7 @@ struct GenerationRequest {
   std::optional<std::filesystem::path> audio_file;
   std::string language = "en";
   std::uint32_t max_new_tokens = 0;
+  bool enable_thinking = false;
   Json tools = Json::array();
   Json tool_choice = nullptr;
 };

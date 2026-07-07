@@ -170,6 +170,18 @@ bool json_bool(const nlohmann::json& body, const char* key, bool default_value =
   return default_value;
 }
 
+bool request_enable_thinking(const nlohmann::json& body) {
+  bool enable_thinking = json_bool(body, "enable_thinking", false);
+  if (body.contains("chat_template_kwargs") && body.at("chat_template_kwargs").is_object()) {
+    enable_thinking =
+        json_bool(body.at("chat_template_kwargs"), "enable_thinking", enable_thinking);
+  }
+  if (body.contains("options") && body.at("options").is_object()) {
+    enable_thinking = json_bool(body.at("options"), "enable_thinking", enable_thinking);
+  }
+  return enable_thinking;
+}
+
 std::string choice_finish_reason(const std::string& finish_reason) {
   return finish_reason.empty() ? "stop" : finish_reason;
 }
@@ -939,6 +951,7 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      request.enable_thinking = request_enable_thinking(body);
       request.messages = parse_chat_messages(body);
       if (body.contains("tools") && body.at("tools").is_array()) {
         request.tools = body.at("tools");
@@ -988,6 +1001,7 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      request.enable_thinking = request_enable_thinking(body);
       request.prompt = completion_prompt(body);
       if (const auto max_tokens = json_u32(body, {"max_tokens", "max_completion_tokens"})) {
         request.max_new_tokens = *max_tokens;
@@ -1027,6 +1041,7 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      request.enable_thinking = request_enable_thinking(body);
       request.messages = parse_chat_messages(body);
       if (body.contains("tools") && body.at("tools").is_array()) {
         request.tools = body.at("tools");
@@ -1081,6 +1096,7 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      request.enable_thinking = request_enable_thinking(body);
       request.messages.push_back(std::move(message));
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
