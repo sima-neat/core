@@ -91,6 +91,7 @@ struct GraphRuntimeOptions {
 inline GraphRuntimeOptions
 graph_runtime_options_from_run_options(const RunOptions& opt, const VerboseOptions& verbose = {}) {
   GraphRuntimeOptions out;
+  out.edge_queue = opt.queue_depth > 0 ? static_cast<std::size_t>(opt.queue_depth) : 0U;
   out.verbose = verbose;
   out.pipeline = opt;
   out.power_monitor = opt.power_monitor;

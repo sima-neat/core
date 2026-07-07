@@ -8,6 +8,7 @@
 #include "graph/nodes/StageNode.h"
 #include "graph/runtime/BlockingQueue.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/PipelineSegmentRuntime.h"
 #include "pipeline/runtime/TraceMessageEvents.h"
@@ -29,6 +30,11 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace simaai::neat::pipeline_internal {
+struct RealtimeFrameCreditLane;
+using RealtimeFrameCreditLanePtr = std::shared_ptr<RealtimeFrameCreditLane>;
+} // namespace simaai::neat::pipeline_internal
 
 namespace simaai::neat::runtime {
 
@@ -79,6 +85,13 @@ public:
     std::uint64_t ready_wait_max_ns = 0;
     std::uint64_t dispatch_ns = 0;
     std::uint64_t dispatch_max_ns = 0;
+    std::uint64_t no_credit_skips = 0;
+    std::uint64_t credit_registered = 0;
+    std::uint64_t credit_released_by_output = 0;
+    std::uint64_t credit_released_without_output = 0;
+    std::uint64_t credit_missing_key = 0;
+    std::size_t credit_inflight = 0;
+    std::size_t credit_limit = 0;
     std::size_t ready = 0;
   };
 
@@ -93,6 +106,7 @@ public:
   void close();
   void join();
   Stats stats() const;
+  std::string debug_stream_ids() const;
   const DownstreamTarget& downstream() const noexcept {
     return downstream_;
   }
@@ -110,6 +124,7 @@ private:
   };
 
   std::string key_for_(const simaai::neat::Sample& sample, std::size_t edge_index) const;
+  pipeline_internal::RealtimeFrameCreditLanePtr credit_lane_for_key_locked_(const std::string& key);
   void run_();
 
   DownstreamTarget downstream_;
@@ -120,8 +135,13 @@ private:
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::unordered_map<std::string, Pending> pending_;
+  std::unordered_map<std::string, pipeline_internal::RealtimeFrameCreditLanePtr> credit_lanes_;
+  pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
   std::deque<std::string> ready_;
+  std::uint64_t credit_namespace_ = 0;
+  int credit_limit_per_stream_ = 0;
+  int credit_limit_global_ = 0;
   bool closed_ = false;
   std::thread worker_;
   std::atomic<std::uint64_t> offered_{0};
@@ -132,6 +152,7 @@ private:
   std::atomic<std::uint64_t> ready_wait_max_ns_{0};
   std::atomic<std::uint64_t> dispatch_ns_{0};
   std::atomic<std::uint64_t> dispatch_max_ns_{0};
+  std::atomic<std::uint64_t> no_credit_skips_{0};
 };
 
 struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
@@ -139,12 +160,39 @@ struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
   std::function<bool()> stop_requested_fn;
 
   bool emit(simaai::neat::graph::StageOutMsg msg) override {
-    return emit_fn ? emit_fn(std::move(msg)) : false;
+    const auto credits = pipeline_internal::realtime_frame_credits_for_sample(msg.sample);
+    const bool ok = emit_fn ? emit_fn(std::move(msg)) : false;
+    if (ok && !credits.empty()) {
+      std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+      if (track_emitted_credits_) {
+        emitted_credits_.insert(emitted_credits_.end(), credits.begin(), credits.end());
+      }
+    }
+    return ok;
   }
 
   bool stop_requested() const override {
     return stop_requested_fn ? stop_requested_fn() : true;
   }
+
+  void begin_input_credit_tracking() {
+    std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+    emitted_credits_.clear();
+    track_emitted_credits_ = true;
+  }
+
+  std::vector<pipeline_internal::RealtimeFrameCredit> end_input_credit_tracking() {
+    std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+    track_emitted_credits_ = false;
+    std::vector<pipeline_internal::RealtimeFrameCredit> out;
+    out.swap(emitted_credits_);
+    return out;
+  }
+
+private:
+  std::mutex emitted_credit_mu_;
+  bool track_emitted_credits_ = false;
+  std::vector<pipeline_internal::RealtimeFrameCredit> emitted_credits_;
 };
 
 struct StageRuntime {

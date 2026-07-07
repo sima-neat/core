@@ -3,6 +3,7 @@
 #endif
 
 #include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/Graph.h"
@@ -12,6 +13,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 #include "nodes/common/Output.h"
+#include "graphs/Fragments.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/HttpSource.h"
 #include "nodes/io/Input.h"
@@ -19,10 +21,13 @@
 #include <gst/gst.h>
 
 #include <chrono>
+#include <condition_variable>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -109,6 +114,21 @@ RUN_TEST(
         require(core->pipeline.stream_opt.holder_loan_credits > 0,
                 "public graph zero-copy holder loan credits should be configured");
         core->stop();
+      }
+
+      {
+        simaai::neat::RunOptions run_opt;
+        run_opt.queue_depth = 7;
+        const auto graph_opt =
+            simaai::neat::runtime::graph_runtime_options_from_run_options(run_opt);
+        require(graph_opt.edge_queue == 7U,
+                "public Graph::build should use RunOptions::queue_depth for graph edge queues");
+
+        run_opt.queue_depth = 0;
+        const auto unbounded_graph_opt =
+            simaai::neat::runtime::graph_runtime_options_from_run_options(run_opt);
+        require(unbounded_graph_opt.edge_queue == 0U,
+                "queue_depth=0 should preserve the graph runtime's unbounded queue convention");
       }
 
       auto public_core = make_balanced_zero_copy_core(true);
@@ -224,6 +244,39 @@ RUN_TEST(
               "graph loan exhaustion must restore the queued output for retry");
       require(graph_blocked.tensors.empty() && !graph_blocked.tensor.has_value(),
               "graph loan exhaustion must not publish an unloaned sample");
+
+      {
+        GstSample* external_sample = nullptr;
+        simaai::neat::Sample exported = make_device_gst_sample_with_external_ref(&external_sample);
+        auto gate = std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(1);
+        std::string loan_error;
+        require(simaai::neat::pipeline_internal::attach_zero_copy_loan_to_sample(exported, gate,
+                                                                                 &loan_error),
+                loan_error.empty() ? "test sample should acquire zero-copy holder loan"
+                                   : loan_error.c_str());
+        require(gate->inflight() == 1, "exported zero-copy sample should hold one loan credit");
+
+        GstBuffer* source_buffer = gst_sample_get_buffer(external_sample);
+        require(source_buffer != nullptr, "external test GstSample should carry a GstBuffer");
+        GstBuffer* transfer_buffer = gst_buffer_new();
+        require(transfer_buffer != nullptr, "test transfer GstBuffer should allocate");
+        const GstBufferCopyFlags copy_flags =
+            static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                                            GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
+        require(gst_buffer_copy_into(transfer_buffer, source_buffer, copy_flags, 0, -1),
+                "test transfer GstBuffer should wrap source memories");
+        simaai::neat::pipeline_internal::attach_zero_copy_loans_to_gst_buffer(transfer_buffer,
+                                                                              exported);
+
+        exported = simaai::neat::Sample{};
+        require(gate->inflight() == 1,
+                "downstream transfer buffer should own the loan after exported Sample release");
+        gst_buffer_unref(transfer_buffer);
+        require(gate->inflight() == 0,
+                "source GstSample weak loan marker must not pin the holder loan after transfer "
+                "buffer release");
+        gst_sample_unref(external_sample);
+      }
 
       constexpr simaai::neat::graph::NodeId kBoundedSinkNode = 8;
       auto bounded_graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
@@ -379,6 +432,51 @@ RUN_TEST(
       require(saw_realtime_fanout_branch,
               "fan-in branch from shared FanOut should keep realtime policy");
 
+      simaai::neat::Graph redundant_branch_fan_in_app("redundant_branch_live_fan_in");
+      auto redundant_detector = [] {
+        simaai::neat::Graph graph("detector");
+        graph.add(simaai::neat::nodes::Input("detector_frame"));
+        graph.add(simaai::neat::nodes::Output("detections"));
+        return graph;
+      }();
+      for (int stream = 0; stream < 2; ++stream) {
+        auto source = live_source("redundant_cam" + std::to_string(stream));
+        auto one_output_branch = simaai::neat::graphs::Branch("source", {"detector_frame"});
+
+        simaai::neat::GraphLinkOptions decoded_link;
+        decoded_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        decoded_link.queue_depth = 1;
+        decoded_link.stream_id = "redundant_stream" + std::to_string(stream);
+        redundant_branch_fan_in_app.connect(source, one_output_branch, decoded_link);
+
+        simaai::neat::GraphLinkOptions detector_link;
+        detector_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        detector_link.queue_depth = 16;
+        detector_link.stream_id = "redundant_stream" + std::to_string(stream);
+        redundant_branch_fan_in_app.connect(one_output_branch, redundant_detector, detector_link);
+      }
+      const auto redundant_branch_plan = simaai::neat::runtime::compile_public_graph(
+          redundant_branch_fan_in_app, simaai::neat::RunOptions{});
+      int redundant_realtime_edges = 0;
+      bool saw_redundant_stream0 = false;
+      bool saw_redundant_stream1 = false;
+      for (const auto& edge : redundant_branch_plan.edges) {
+        if (edge.link_options.policy != simaai::neat::GraphLinkPolicy::RealtimeLatestByStream) {
+          continue;
+        }
+        ++redundant_realtime_edges;
+        if (edge.stream_id == "redundant_stream0") {
+          saw_redundant_stream0 = true;
+        }
+        if (edge.stream_id == "redundant_stream1") {
+          saw_redundant_stream1 = true;
+        }
+      }
+      require(redundant_realtime_edges >= 2,
+              "one-output Branch elision must preserve realtime fan-in runtime edges");
+      require(saw_redundant_stream0 && saw_redundant_stream1,
+              "one-output Branch elision must preserve per-stream realtime identities");
+
       simaai::neat::GraphLinkOptions stream_link;
       stream_link.stream_id = "compat_stream";
 
@@ -464,4 +562,80 @@ RUN_TEST(
               "default runtime edges should stamp samples with their link stream_id");
       require(routed_out.sample.stream_label == "runtime_stream",
               "default runtime edge stream_id should provide a stream label when missing");
+
+      simaai::neat::runtime::DownstreamTarget realtime_target{
+          simaai::neat::runtime::DownstreamTarget::Kind::PipelineInput,
+          static_cast<std::size_t>(kStreamSinkNode),
+          simaai::neat::graph::kInvalidPort,
+          0U,
+      };
+      ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", "1", 1);
+      simaai::neat::runtime::RealtimeLatestLink realtime_link(
+          realtime_target, simaai::neat::GraphLinkOptions{}, "credit_stream");
+      std::mutex realtime_mu;
+      std::condition_variable realtime_cv;
+      std::vector<std::int64_t> dispatched_frames;
+      std::string realtime_error;
+      realtime_link.start(
+          [&](const simaai::neat::runtime::DownstreamTarget&, simaai::neat::Sample&& sample,
+              std::size_t) {
+            {
+              std::lock_guard<std::mutex> lock(realtime_mu);
+              dispatched_frames.push_back(sample.frame_id);
+            }
+            realtime_cv.notify_all();
+            return true;
+          },
+          [] { return false; },
+          [&](const std::string& msg) {
+            std::lock_guard<std::mutex> lock(realtime_mu);
+            realtime_error = msg;
+            realtime_cv.notify_all();
+          });
+
+      simaai::neat::Sample credit_first = make_fake_device_gst_sample(7);
+      credit_first.stream_id = "credit_stream";
+      credit_first.frame_id = 1;
+      require(realtime_link.offer(std::move(credit_first), 0U),
+              "realtime credit link should accept the first frame");
+      {
+        std::unique_lock<std::mutex> lock(realtime_mu);
+        require(realtime_cv.wait_for(lock, std::chrono::seconds(1),
+                                     [&] { return dispatched_frames.size() == 1U; }),
+                "first realtime credit frame should dispatch promptly");
+        require(dispatched_frames.front() == 1, "first dispatched realtime frame should match");
+      }
+
+      simaai::neat::Sample credit_second = make_fake_device_gst_sample(8);
+      credit_second.stream_id = "credit_stream";
+      credit_second.frame_id = 2;
+      require(realtime_link.offer(std::move(credit_second), 0U),
+              "realtime credit link should accept the second frame");
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      {
+        std::lock_guard<std::mutex> lock(realtime_mu);
+        require(dispatched_frames.size() == 1U,
+                "second realtime frame must wait while the first frame credit is in-flight");
+      }
+      simaai::neat::pipeline_internal::release_realtime_frame_credits(
+          {simaai::neat::pipeline_internal::RealtimeFrameCredit{0, "credit_stream", 1}},
+          "unit-graph-realtime-output");
+      {
+        std::unique_lock<std::mutex> lock(realtime_mu);
+        require(realtime_cv.wait_for(lock, std::chrono::seconds(1),
+                                     [&] { return dispatched_frames.size() == 2U; }),
+                "second realtime credit frame should dispatch after output releases credit");
+        require(dispatched_frames.back() == 2, "second dispatched realtime frame should match");
+        require(realtime_error.empty(), "realtime credit link should not report an error");
+      }
+      realtime_link.close();
+      realtime_link.join();
+      const auto realtime_stats = realtime_link.stats();
+      require(realtime_stats.credit_registered >= 2U,
+              "decoder-backed PipelineInput realtime links should register graph-owned frame "
+              "credits");
+      require(realtime_stats.credit_released_by_output >= 1U,
+              "realtime link should observe downstream credit release");
+      require(realtime_stats.no_credit_skips > 0U,
+              "realtime link should account credit-throttled scheduling attempts");
     }))
