@@ -141,13 +141,43 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
   if (to_port.empty()) {
     throw std::runtime_error("Graph::connect: port name must not be empty");
   }
+  std::string incoming_stream_id = link_options.stream_id;
+  for (auto& edge : edges) {
+    if (edge.kind != CompositionEdgeKind::RuntimePort) {
+      continue;
+    }
+    if (edge.to == to && edge.to_port == to_port) {
+      const bool existing_realtime =
+          edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+      const bool incoming_realtime = link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+      const bool default_live_fan_in = edge.link_options.policy == GraphLinkPolicy::Default &&
+                                       link_options.policy == GraphLinkPolicy::Default &&
+                                       vertex_is_live_source_context(*this, edge.from) &&
+                                       vertex_is_live_source_context(*this, from);
+      if (existing_realtime || incoming_realtime || default_live_fan_in) {
+        edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+        link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
+        edge.link_options.queue_depth =
+            std::max(edge.link_options.queue_depth, link_options.queue_depth);
+        link_options.queue_depth = edge.link_options.queue_depth;
+        if (edge.stream_id.empty()) {
+          edge.stream_id = edge.link_options.stream_id.empty()
+                               ? automatic_realtime_stream_id(edge.from, edge.to, edge.to_port)
+                               : edge.link_options.stream_id;
+        }
+        if (incoming_stream_id.empty()) {
+          incoming_stream_id = automatic_realtime_stream_id(from, to, to_port);
+        }
+      }
+    }
+  }
   edges.push_back(CompositionEdge{.from = from,
                                   .to = to,
                                   .kind = CompositionEdgeKind::RuntimePort,
                                   .from_port = std::move(from_port),
                                   .to_port = std::move(to_port),
                                   .link_options = link_options,
-                                  .stream_id = link_options.stream_id});
+                                  .stream_id = std::move(incoming_stream_id)});
   recompute_unique_tail();
 }
 

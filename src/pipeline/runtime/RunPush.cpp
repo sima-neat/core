@@ -5,6 +5,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 
 #include <algorithm>
@@ -313,6 +314,13 @@ struct InputQueueAdmission {
   const char* reason = "";
 };
 
+void release_realtime_credits_for_dropped_input(const InputItem& item, const char* mode) {
+  if (item.kind != QueuedInputKind::Message) {
+    return;
+  }
+  pipeline_internal::release_realtime_frame_credits_for_sample(item.msg, mode);
+}
+
 InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
                                              runtime::PipelineSegmentRuntime& segment,
                                              std::unique_lock<std::mutex>& lock, bool block) {
@@ -342,6 +350,8 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
     }
   } else if (core.opt.overflow_policy == OverflowPolicy::KeepLatest) {
     if (run_internal::queue_full(segment.in_queue, max)) {
+      release_realtime_credits_for_dropped_input(segment.in_queue.front(),
+                                                 "async-input-drop-oldest");
       segment.in_queue.pop_front();
       core.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
     }

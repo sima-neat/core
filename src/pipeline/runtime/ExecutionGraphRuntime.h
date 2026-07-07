@@ -30,6 +30,11 @@
 #include <utility>
 #include <vector>
 
+namespace simaai::neat::pipeline_internal {
+struct RealtimeFrameCreditLane;
+using RealtimeFrameCreditLanePtr = std::shared_ptr<RealtimeFrameCreditLane>;
+} // namespace simaai::neat::pipeline_internal
+
 namespace simaai::neat::runtime {
 
 using BlockingQueueSample = simaai::neat::graph::runtime::BlockingQueue<simaai::neat::Sample>;
@@ -79,6 +84,13 @@ public:
     std::uint64_t ready_wait_max_ns = 0;
     std::uint64_t dispatch_ns = 0;
     std::uint64_t dispatch_max_ns = 0;
+    std::uint64_t no_credit_skips = 0;
+    std::uint64_t credit_registered = 0;
+    std::uint64_t credit_released_by_output = 0;
+    std::uint64_t credit_released_without_output = 0;
+    std::uint64_t credit_missing_key = 0;
+    std::size_t credit_inflight = 0;
+    std::size_t credit_limit = 0;
     std::size_t ready = 0;
   };
 
@@ -93,6 +105,7 @@ public:
   void close();
   void join();
   Stats stats() const;
+  std::string debug_stream_ids() const;
   const DownstreamTarget& downstream() const noexcept {
     return downstream_;
   }
@@ -110,6 +123,7 @@ private:
   };
 
   std::string key_for_(const simaai::neat::Sample& sample, std::size_t edge_index) const;
+  pipeline_internal::RealtimeFrameCreditLanePtr credit_lane_for_key_locked_(const std::string& key);
   void run_();
 
   DownstreamTarget downstream_;
@@ -120,8 +134,13 @@ private:
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::unordered_map<std::string, Pending> pending_;
+  std::unordered_map<std::string, pipeline_internal::RealtimeFrameCreditLanePtr> credit_lanes_;
+  pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
   std::deque<std::string> ready_;
+  std::uint64_t credit_namespace_ = 0;
+  int credit_limit_per_stream_ = 0;
+  int credit_limit_global_ = 0;
   bool closed_ = false;
   std::thread worker_;
   std::atomic<std::uint64_t> offered_{0};
@@ -132,6 +151,7 @@ private:
   std::atomic<std::uint64_t> ready_wait_max_ns_{0};
   std::atomic<std::uint64_t> dispatch_ns_{0};
   std::atomic<std::uint64_t> dispatch_max_ns_{0};
+  std::atomic<std::uint64_t> no_credit_skips_{0};
 };
 
 struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {

@@ -170,6 +170,9 @@ simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
   dec.dec_height = (opt.codec == RtspCodec::H264) ? h264_dec_h : mjpeg_dec_h;
   dec.dec_fps = source_fps;
   dec.num_buffers = opt.num_buffers;
+  dec.input_buffers = opt.decoder_input_buffers;
+  dec.decoder_tuning = opt.decoder_tuning;
+  dec.memory_opt = opt.decoder_memory_opt;
 
   simaai::neat::Graph graph;
   graph.add(RtspEncodedInput(encoded_options_from_decoded(opt, source_fps)));

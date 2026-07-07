@@ -1,11 +1,14 @@
 #include "pipeline/internal/DecoderAdmissionClient.h"
 
+#include "pipeline/internal/EnvUtil.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <iomanip>
 #include <random>
@@ -95,6 +98,22 @@ static_assert(sizeof(DecAdmissionV2ReleaseGraph) == 24,
               "decoder admission v2 release ABI size changed");
 
 std::atomic<std::uint64_t> g_request_id{1};
+
+bool decoder_admission_debug_enabled() {
+  return env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+std::string uuid_to_string_local(const std::array<std::uint8_t, 16>& uuid) {
+  std::ostringstream oss;
+  oss << std::hex << std::setfill('0');
+  for (std::size_t i = 0; i < uuid.size(); ++i) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) {
+      oss << '-';
+    }
+    oss << std::setw(2) << static_cast<unsigned>(uuid[i]);
+  }
+  return oss.str();
+}
 
 std::string errno_message(const char* what, int err) {
   std::ostringstream oss;
@@ -258,6 +277,11 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
   bool endpoint_missing = false;
   const int fd = connect_socket(&err, &endpoint_missing);
   if (fd < 0) {
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] connect_failed dry_run=%d endpoint_missing=%d err=%s\n",
+                   dry_run ? 1 : 0, endpoint_missing ? 1 : 0,
+                   err.empty() ? "<unknown>" : err.c_str());
+    }
     result.endpoint_missing = endpoint_missing;
     result.error = err;
     return result;
@@ -303,11 +327,30 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
   req.status = 0;
   req.request_id = g_request_id.fetch_add(1, std::memory_order_relaxed);
 
+  if (decoder_admission_debug_enabled()) {
+    std::fprintf(stderr, "[DECADM] request dry_run=%d id=%llu streams=%zu group=%s payload=%zu\n",
+                 dry_run ? 1 : 0, static_cast<unsigned long long>(req.request_id), streams.size(),
+                 uuid_to_string_local(result.group_uuid).c_str(), payload.size());
+    for (const auto& stream : streams) {
+      std::fprintf(stderr,
+                   "[DECADM] request_stream id=%llu stream=%u codec=%u mode=%u %ux%u@%u/%u "
+                   "policy=0x%x\n",
+                   static_cast<unsigned long long>(req.request_id), stream.stream_index,
+                   stream.codec, stream.stream_mode, stream.width, stream.height, stream.fps_num,
+                   stream.fps_den == 0 ? 1 : stream.fps_den, stream.requested_policy);
+    }
+  }
+
   std::vector<std::uint8_t> packet(sizeof(req) + payload.size());
   std::memcpy(packet.data(), &req, sizeof(req));
   std::memcpy(packet.data() + sizeof(req), payload.data(), payload.size());
   if (!send_packet(fd, packet, &err)) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] send_failed id=%llu err=%s\n",
+                   static_cast<unsigned long long>(req.request_id),
+                   err.empty() ? "<unknown>" : err.c_str());
+    }
     result.error = err;
     return result;
   }
@@ -315,11 +358,20 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
   std::vector<std::uint8_t> resp_packet;
   if (!recv_packet(fd, resp_packet, &err)) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] recv_failed id=%llu err=%s\n",
+                   static_cast<unsigned long long>(req.request_id),
+                   err.empty() ? "<unknown>" : err.c_str());
+    }
     result.error = err;
     return result;
   }
   if (resp_packet.size() < sizeof(DecAdmissionV2Header)) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] bad_response id=%llu reason=missing_header bytes=%zu\n",
+                   static_cast<unsigned long long>(req.request_id), resp_packet.size());
+    }
     result.error = "decoder admission response missing header";
     return result;
   }
@@ -328,16 +380,34 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
   if (resp.magic != kMagic || resp.version != kVersion || resp.command != kCmdAdmitGraphResp ||
       resp.request_id != req.request_id) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECADM] bad_response id=%llu reason=header_mismatch magic=0x%x version=%u "
+                   "cmd=%u resp_id=%llu\n",
+                   static_cast<unsigned long long>(req.request_id), resp.magic, resp.version,
+                   resp.command, static_cast<unsigned long long>(resp.request_id));
+    }
     result.error = "decoder admission response header mismatch";
     return result;
   }
   if (resp.payload_size > 1024U * 1024U) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] bad_response id=%llu reason=payload_too_large size=%u\n",
+                   static_cast<unsigned long long>(req.request_id), resp.payload_size);
+    }
     result.error = "decoder admission response payload is too large";
     return result;
   }
   if (resp.payload_size != resp_packet.size() - sizeof(resp)) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECADM] bad_response id=%llu reason=payload_size_mismatch declared=%u "
+                   "packet=%zu\n",
+                   static_cast<unsigned long long>(req.request_id), resp.payload_size,
+                   resp_packet.size());
+    }
     result.error = "decoder admission response payload size mismatch";
     return result;
   }
@@ -347,9 +417,18 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
 
   if (resp.status != kStatusSuccess) {
     result.error = status_payload_message(resp, resp_payload);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] rejected id=%llu status=%u err=%s\n",
+                   static_cast<unsigned long long>(req.request_id), resp.status,
+                   result.error.empty() ? "<unknown>" : result.error.c_str());
+    }
     return result;
   }
   if (resp_payload.size() < sizeof(DecAdmissionV2AdmitGraphResp)) {
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] bad_response id=%llu reason=missing_graph_payload bytes=%zu\n",
+                   static_cast<unsigned long long>(req.request_id), resp_payload.size());
+    }
     result.error = "decoder admission success response missing graph payload";
     return result;
   }
@@ -359,10 +438,24 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
   const std::size_t lease_bytes = resp_payload.size() - sizeof(graph_resp);
   if (lease_bytes !=
       static_cast<std::size_t>(graph_resp.stream_count) * sizeof(DecAdmissionV2Lease)) {
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECADM] bad_response id=%llu reason=lease_payload_mismatch streams=%u "
+                   "lease_bytes=%zu\n",
+                   static_cast<unsigned long long>(req.request_id), graph_resp.stream_count,
+                   lease_bytes);
+    }
     result.error = "decoder admission response lease count does not match payload size";
     return result;
   }
   if (graph_resp.stream_count != streams.size()) {
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECADM] bad_response id=%llu reason=stream_count_mismatch response=%u "
+                   "request=%zu\n",
+                   static_cast<unsigned long long>(req.request_id), graph_resp.stream_count,
+                   streams.size());
+    }
     result.error = "decoder admission response stream count does not match request";
     return result;
   }
@@ -384,6 +477,23 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
     result.leases.push_back(lease);
   }
   result.admitted = true;
+  if (decoder_admission_debug_enabled()) {
+    std::fprintf(stderr, "[DECADM] accepted id=%llu group=%s streams=%u reserved_bytes=%llu\n",
+                 static_cast<unsigned long long>(req.request_id),
+                 uuid_to_string_local(result.group_uuid).c_str(), graph_resp.stream_count,
+                 static_cast<unsigned long long>(result.estimated_reserved_bytes));
+    for (const auto& lease : result.leases) {
+      std::fprintf(stderr,
+                   "[DECADM] lease id=%llu stream=%u out=%u in=%u tuning=%s token=%llu:%llu "
+                   "bytes=%llu\n",
+                   static_cast<unsigned long long>(req.request_id), lease.stream_index,
+                   lease.resolved_output_buffers, lease.resolved_input_buffers,
+                   decoder_admission_tuning_name(lease.resolved_tuning),
+                   static_cast<unsigned long long>(lease.lease_token_hi),
+                   static_cast<unsigned long long>(lease.lease_token_lo),
+                   static_cast<unsigned long long>(lease.estimated_reserved_bytes));
+    }
+  }
   return result;
 }
 
@@ -404,6 +514,11 @@ bool release_decoder_graph(const std::array<std::uint8_t, 16>& group_uuid, std::
   bool endpoint_missing = false;
   const int fd = connect_socket(&err, &endpoint_missing);
   if (fd < 0) {
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] release_connect_failed group=%s endpoint_missing=%d err=%s\n",
+                   uuid_to_string_local(group_uuid).c_str(), endpoint_missing ? 1 : 0,
+                   err.empty() ? "<unknown>" : err.c_str());
+    }
     if (error) {
       *error = err;
     }
@@ -421,11 +536,22 @@ bool release_decoder_graph(const std::array<std::uint8_t, 16>& group_uuid, std::
   req.status = 0;
   req.request_id = g_request_id.fetch_add(1, std::memory_order_relaxed);
 
+  if (decoder_admission_debug_enabled()) {
+    std::fprintf(stderr, "[DECADM] release_request id=%llu group=%s\n",
+                 static_cast<unsigned long long>(req.request_id),
+                 uuid_to_string_local(group_uuid).c_str());
+  }
+
   std::vector<std::uint8_t> packet(sizeof(req) + sizeof(release));
   std::memcpy(packet.data(), &req, sizeof(req));
   std::memcpy(packet.data() + sizeof(req), &release, sizeof(release));
   if (!send_packet(fd, packet, &err)) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] release_send_failed id=%llu err=%s\n",
+                   static_cast<unsigned long long>(req.request_id),
+                   err.empty() ? "<unknown>" : err.c_str());
+    }
     if (error) {
       *error = err;
     }
@@ -435,6 +561,11 @@ bool release_decoder_graph(const std::array<std::uint8_t, 16>& group_uuid, std::
   std::vector<std::uint8_t> resp_packet;
   if (!recv_packet(fd, resp_packet, &err)) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] release_recv_failed id=%llu err=%s\n",
+                   static_cast<unsigned long long>(req.request_id),
+                   err.empty() ? "<unknown>" : err.c_str());
+    }
     if (error) {
       *error = err;
     }
@@ -442,6 +573,11 @@ bool release_decoder_graph(const std::array<std::uint8_t, 16>& group_uuid, std::
   }
   if (resp_packet.size() < sizeof(DecAdmissionV2Header)) {
     ::close(fd);
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECADM] release_bad_response id=%llu reason=missing_header bytes=%zu\n",
+                   static_cast<unsigned long long>(req.request_id), resp_packet.size());
+    }
     if (error) {
       *error = "decoder admission release response missing header";
     }
@@ -453,12 +589,22 @@ bool release_decoder_graph(const std::array<std::uint8_t, 16>& group_uuid, std::
 
   if (resp.magic != kMagic || resp.version != kVersion || resp.command != kCmdReleaseGraph ||
       resp.request_id != req.request_id || resp.status != kStatusSuccess) {
+    if (decoder_admission_debug_enabled()) {
+      std::fprintf(stderr, "[DECADM] release_failed id=%llu status=%u command=%u resp_id=%llu\n",
+                   static_cast<unsigned long long>(req.request_id), resp.status, resp.command,
+                   static_cast<unsigned long long>(resp.request_id));
+    }
     if (error) {
       std::ostringstream oss;
       oss << "decoder admission release failed: " << decoder_admission_status_name(resp.status);
       *error = oss.str();
     }
     return false;
+  }
+  if (decoder_admission_debug_enabled()) {
+    std::fprintf(stderr, "[DECADM] release_ok id=%llu group=%s\n",
+                 static_cast<unsigned long long>(req.request_id),
+                 uuid_to_string_local(group_uuid).c_str());
   }
   return true;
 }

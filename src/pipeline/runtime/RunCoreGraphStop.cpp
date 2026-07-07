@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -47,6 +48,45 @@ unsigned long long ull(std::uint64_t value) {
   return static_cast<unsigned long long>(value);
 }
 
+bool decoder_cma_debug_enabled() {
+  return pipeline_internal::env_bool("SIMA_DECODER_CMA_DEBUG", false) ||
+         pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+void log_decoder_cma_snapshot(const char* event) {
+  if (!decoder_cma_debug_enabled()) {
+    return;
+  }
+  std::ifstream in("/proc/meminfo");
+  if (!in.is_open()) {
+    std::fprintf(stderr, "[DECCMA] event=%s read_failed=1\n", event ? event : "snapshot");
+    return;
+  }
+  long mem_free_kb = -1;
+  long mem_available_kb = -1;
+  long cma_total_kb = -1;
+  long cma_free_kb = -1;
+  std::string key;
+  long value = 0;
+  std::string unit;
+  while (in >> key >> value >> unit) {
+    if (key == "MemFree:") {
+      mem_free_kb = value;
+    } else if (key == "MemAvailable:") {
+      mem_available_kb = value;
+    } else if (key == "CmaTotal:") {
+      cma_total_kb = value;
+    } else if (key == "CmaFree:") {
+      cma_free_kb = value;
+    }
+  }
+  std::fprintf(stderr,
+               "[DECCMA] event=%s mem_free_kb=%ld mem_available_kb=%ld cma_total_kb=%ld "
+               "cma_free_kb=%ld cma_used_kb=%ld\n",
+               event ? event : "snapshot", mem_free_kb, mem_available_kb, cma_total_kb, cma_free_kb,
+               (cma_total_kb >= 0 && cma_free_kb >= 0) ? (cma_total_kb - cma_free_kb) : -1);
+}
+
 void dump_realtime_link_diag(const ExecutionGraphRuntime& execution) {
   for (std::size_t i = 0; i < execution.realtime_links.size(); ++i) {
     const auto& link = execution.realtime_links[i];
@@ -55,17 +95,25 @@ void dump_realtime_link_diag(const ExecutionGraphRuntime& execution) {
     }
     const RealtimeLatestLink::Stats stats = link->stats();
     const DownstreamTarget& downstream = link->downstream();
+    const std::string stream_ids = link->debug_stream_ids();
     const std::uint64_t dispatched = stats.scheduled + stats.dispatch_failed;
     std::fprintf(stderr,
                  "[GRAPH] realtime_link index=%zu downstream_kind=%d downstream_index=%zu "
-                 "edge=%zu offered=%llu scheduled=%llu overwritten=%llu dispatch_failed=%llu "
+                 "edge=%zu streams=%s offered=%llu scheduled=%llu overwritten=%llu "
+                 "dispatch_failed=%llu "
                  "ready=%zu avg_ready_wait_ms=%.3f max_ready_wait_ms=%.3f "
-                 "avg_dispatch_ms=%.3f max_dispatch_ms=%.3f\n",
+                 "avg_dispatch_ms=%.3f max_dispatch_ms=%.3f no_credit_skips=%llu "
+                 "credit_inflight=%zu credit_limit=%zu credit_registered=%llu "
+                 "credit_released=%llu/%llu credit_missing_key=%llu\n",
                  i, static_cast<int>(downstream.kind), downstream.index, downstream.edge_index,
-                 ull(stats.offered), ull(stats.scheduled), ull(stats.overwritten),
-                 ull(stats.dispatch_failed), stats.ready, avg_ms(stats.ready_wait_ns, dispatched),
+                 stream_ids.empty() ? "<none>" : stream_ids.c_str(), ull(stats.offered),
+                 ull(stats.scheduled), ull(stats.overwritten), ull(stats.dispatch_failed),
+                 stats.ready, avg_ms(stats.ready_wait_ns, dispatched),
                  ns_to_ms(stats.ready_wait_max_ns), avg_ms(stats.dispatch_ns, dispatched),
-                 ns_to_ms(stats.dispatch_max_ns));
+                 ns_to_ms(stats.dispatch_max_ns), ull(stats.no_credit_skips), stats.credit_inflight,
+                 stats.credit_limit, ull(stats.credit_registered),
+                 ull(stats.credit_released_by_output), ull(stats.credit_released_without_output),
+                 ull(stats.credit_missing_key));
   }
 }
 
@@ -173,6 +221,7 @@ void RunCore::stop_graph() {
   }
 
   if (execution.decoder_admission_active) {
+    log_decoder_cma_snapshot("before_admission_release");
     std::string release_error;
     const bool released = pipeline_internal::release_decoder_graph(
         execution.decoder_admission_group_uuid, &release_error);
@@ -191,6 +240,8 @@ void RunCore::stop_graph() {
                        .c_str());
     }
     execution.decoder_admission_active = false;
+    log_decoder_cma_snapshot(released ? "after_admission_release"
+                                      : "after_admission_release_failed");
   }
 
   graph_signal_stop();

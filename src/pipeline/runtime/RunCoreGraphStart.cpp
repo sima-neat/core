@@ -14,6 +14,7 @@
 #include "pipeline/internal/DecoderAdmissionClient.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <functional>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <span>
@@ -148,6 +150,62 @@ std::size_t runtime_node_count(const ExecutionGraphPlan& plan) {
 bool decoder_plan_debug_enabled() {
   return env_bool("SIMA_DECODER_PLAN_DEBUG", false) ||
          env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+bool decoder_cma_debug_enabled() {
+  return env_bool("SIMA_DECODER_CMA_DEBUG", false) ||
+         env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+struct CmaSnapshot {
+  long mem_free_kb = -1;
+  long mem_available_kb = -1;
+  long cma_total_kb = -1;
+  long cma_free_kb = -1;
+};
+
+bool read_cma_snapshot(CmaSnapshot& out) {
+  std::ifstream in("/proc/meminfo");
+  if (!in.is_open()) {
+    return false;
+  }
+  std::string key;
+  long value = 0;
+  std::string unit;
+  while (in >> key >> value >> unit) {
+    if (key == "MemFree:") {
+      out.mem_free_kb = value;
+    } else if (key == "MemAvailable:") {
+      out.mem_available_kb = value;
+    } else if (key == "CmaTotal:") {
+      out.cma_total_kb = value;
+    } else if (key == "CmaFree:") {
+      out.cma_free_kb = value;
+    }
+  }
+  return true;
+}
+
+void log_decoder_cma_snapshot(const char* event, std::size_t streams = 0,
+                              std::uint64_t reserved_bytes = 0) {
+  if (!decoder_cma_debug_enabled()) {
+    return;
+  }
+  CmaSnapshot snap;
+  if (!read_cma_snapshot(snap)) {
+    std::fprintf(stderr, "[DECCMA] event=%s streams=%zu reserved_bytes=%llu read_failed=1\n",
+                 event ? event : "snapshot", streams,
+                 static_cast<unsigned long long>(reserved_bytes));
+    return;
+  }
+  std::fprintf(stderr,
+               "[DECCMA] event=%s streams=%zu reserved_bytes=%llu mem_free_kb=%ld "
+               "mem_available_kb=%ld cma_total_kb=%ld cma_free_kb=%ld cma_used_kb=%ld\n",
+               event ? event : "snapshot", streams, static_cast<unsigned long long>(reserved_bytes),
+               snap.mem_free_kb, snap.mem_available_kb, snap.cma_total_kb, snap.cma_free_kb,
+               (snap.cma_total_kb >= 0 && snap.cma_free_kb >= 0)
+                   ? (snap.cma_total_kb - snap.cma_free_kb)
+                   : -1);
 }
 
 const char* sima_decode_type_debug_name(simaai::neat::SimaDecodeType type) {
@@ -440,6 +498,14 @@ struct DecoderAdmissionProperties {
   bool zero_copy_output = false;
 };
 
+bool explicit_decoder_tuning(const std::string& tuning) {
+  return !tuning.empty() && tuning != "auto" && tuning != "default";
+}
+
+bool decoder_tuning_uses_memory_opt(const std::string& tuning) {
+  return tuning == "low-memory" || tuning == "throughput-low-latency";
+}
+
 class RuntimeAdmittedSimaDecode final : public simaai::neat::Node,
                                         public simaai::neat::OutputSpecProvider {
 public:
@@ -538,8 +604,16 @@ void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
   }
 
   auto opt = candidate.options;
-  if (lease.resolved_output_buffers > 0) {
-    opt.num_buffers = static_cast<int>(lease.resolved_output_buffers);
+  const bool explicit_output_buffers = opt.num_buffers > 0;
+  const int resolved_output_buffers =
+      lease.resolved_output_buffers > 0 ? static_cast<int>(lease.resolved_output_buffers) : 0;
+  if (resolved_output_buffers > 0 &&
+      (!explicit_output_buffers || opt.num_buffers < resolved_output_buffers)) {
+    // The admission daemon returns the decoder's safe output-pool contract for
+    // the admitted graph.  Treat it as a floor, not only as a default: an
+    // explicit lower app value can admit successfully but then starve the
+    // zero-copy decoder after the native pool is exhausted.
+    opt.num_buffers = resolved_output_buffers;
   }
 
   DecoderAdmissionProperties admission_props;
@@ -548,12 +622,26 @@ void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
   admission_props.stream_index = static_cast<int>(lease.stream_index);
   admission_props.lease_token_hi = lease.lease_token_hi;
   admission_props.lease_token_lo = lease.lease_token_lo;
-  if (lease.resolved_input_buffers > 0) {
+  if (opt.input_buffers > 0) {
+    admission_props.input_buffers = opt.input_buffers;
+  } else if (lease.resolved_input_buffers > 0) {
     admission_props.input_buffers = static_cast<int>(lease.resolved_input_buffers);
   }
-  admission_props.tuning = pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
-  admission_props.memory_opt = lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
+  admission_props.tuning =
+      explicit_decoder_tuning(opt.decoder_tuning)
+          ? opt.decoder_tuning
+          : pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
+  admission_props.memory_opt = opt.memory_opt ||
+                               decoder_tuning_uses_memory_opt(admission_props.tuning) ||
+                               lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
   admission_props.zero_copy_output = decoder_candidate_uses_zero_copy_output(candidate);
+
+  // RuntimeAdmittedSimaDecode injects the admitted properties itself.  Clear
+  // the generic node fields so the final neatdecoder fragment has one
+  // authoritative dec-ip-cnt / decoder-tuning / memory-opt setting.
+  opt.input_buffers = -1;
+  opt.decoder_tuning.clear();
+  opt.memory_opt = false;
 
   auto replacement =
       std::make_shared<RuntimeAdmittedSimaDecode>(std::move(opt), std::move(admission_props));
@@ -578,10 +666,11 @@ void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
 
   if (decoder_plan_debug_enabled()) {
     std::fprintf(stderr,
-                 "[DECPLAN] admission_bind %s stream=%u out=%u in=%u tuning=%s token=%llu:%llu "
-                 "bytes=%llu\n",
+                 "[DECPLAN] admission_bind %s stream=%u out=%d/%u in=%d/%u tuning=%s "
+                 "token=%llu:%llu bytes=%llu\n",
                  decoder_admission_candidate_description(execution, candidate).c_str(),
-                 lease.stream_index, lease.resolved_output_buffers, lease.resolved_input_buffers,
+                 lease.stream_index, opt.num_buffers, lease.resolved_output_buffers,
+                 admission_props.input_buffers, lease.resolved_input_buffers,
                  pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning),
                  static_cast<unsigned long long>(lease.lease_token_hi),
                  static_cast<unsigned long long>(lease.lease_token_lo),
@@ -625,6 +714,8 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     return;
   }
 
+  log_decoder_cma_snapshot("before_admission_request", candidates.size());
+
   std::vector<pipeline_internal::DecoderAdmissionStreamRequest> streams;
   streams.reserve(candidates.size());
   for (std::size_t i = 0; i < candidates.size(); ++i) {
@@ -655,6 +746,7 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
 
   auto admission = pipeline_internal::admit_decoder_graph(streams, false);
   if (!admission.admitted) {
+    log_decoder_cma_snapshot("after_admission_rejected", candidates.size());
     const bool require = env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false);
     if (admission.endpoint_missing && !require) {
       if (decoder_plan_debug_enabled()) {
@@ -670,6 +762,8 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
         ". Reduce the number of streams/fps/resolution, stop another decoder workload, or check "
         "the decoder daemon/admission socket.");
   }
+  log_decoder_cma_snapshot("after_admission_accepted", candidates.size(),
+                           admission.estimated_reserved_bytes);
 
   // Arm the existing RunCore cleanup path before any post-admission validation can throw.
   // If the daemon accepted the graph but returns a malformed/stale lease response, graph
@@ -704,6 +798,8 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
                  pipeline_internal::decoder_admission_uuid_to_string(admission.group_uuid).c_str(),
                  static_cast<unsigned long long>(admission.estimated_reserved_bytes));
   }
+  log_decoder_cma_snapshot("after_admission_bound", candidates.size(),
+                           admission.estimated_reserved_bytes);
 }
 
 GraphReport make_graph_start_report(const ExecutionGraphPlan& plan, const std::string& detail) {
@@ -1401,7 +1497,25 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
         Sample sample = *sample_opt;
         last_output = std::chrono::steady_clock::now();
         emit_diag("sample");
+        if (env_bool("SIMA_GRAPH_PRE_RESTORE_DEBUG", false)) {
+          static std::atomic<int> pre_restore_logs{0};
+          const int seen = pre_restore_logs.fetch_add(1, std::memory_order_relaxed);
+          if (seen < env_int("SIMA_GRAPH_PRE_RESTORE_DEBUG_LIMIT", 64)) {
+            std::fprintf(stderr,
+                         "[GRAPH] pre_restore_output seg=%zu kind=%d stream_id=%s frame_id=%lld "
+                         "input_seq=%lld orig_input_seq=%lld pts_ns=%lld fields=%zu "
+                         "tensors=%zu\n",
+                         static_cast<std::size_t>(pipe.seg.id), static_cast<int>(sample.kind),
+                         sample.stream_id.c_str(), static_cast<long long>(sample.frame_id),
+                         static_cast<long long>(sample.input_seq),
+                         static_cast<long long>(sample.orig_input_seq),
+                         static_cast<long long>(sample.pts_ns), sample.fields.size(),
+                         sample.tensors.size());
+          }
+        }
         core->graph_restore_stream_id_if_needed(i, sample);
+        pipeline_internal::release_realtime_frame_credits_for_sample(sample,
+                                                                     "graph-pipeline-output");
         simaai::neat::graph::log_first_decoded_once(sample, pipe.seg.id);
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("pipeline_pull", sample);
@@ -1479,18 +1593,30 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
         trace_graph_message_event(TraceGraphMessageEventType::EdgeSinkRecv, args);
       }
       Sample sample = std::move(queued.sample);
+      const auto realtime_credits = pipeline_internal::realtime_frame_credits_for_sample(sample);
+      bool realtime_credits_released = false;
+      const auto release_input_realtime_credits = [&](const char* mode) {
+        if (realtime_credits_released) {
+          return;
+        }
+        pipeline_internal::release_realtime_frame_credits(realtime_credits, mode);
+        realtime_credits_released = true;
+      };
       if (simaai::neat::graph::graph_debug_enabled()) {
         simaai::neat::graph::graph_debug_sample("pipeline_push_pop", sample);
       }
 
-      const auto sanitize_start = std::chrono::steady_clock::now();
-      core->graph_sanitize_pipeline_input(i, sample);
-      pipe.transport.telemetry.push_thread_sanitize_calls.fetch_add(1, std::memory_order_relaxed);
-      atomic_add_max(pipe.transport.telemetry.push_thread_sanitize_ns,
-                     pipe.transport.telemetry.push_thread_sanitize_max_ns,
-                     elapsed_ns_since(sanitize_start));
+      if (!queued.sanitized) {
+        const auto sanitize_start = std::chrono::steady_clock::now();
+        core->graph_sanitize_pipeline_input(i, sample);
+        pipe.transport.telemetry.push_thread_sanitize_calls.fetch_add(1, std::memory_order_relaxed);
+        atomic_add_max(pipe.transport.telemetry.push_thread_sanitize_ns,
+                       pipe.transport.telemetry.push_thread_sanitize_max_ns,
+                       elapsed_ns_since(sanitize_start));
+      }
 
       if (simaai::neat::graph::is_encoded_sample(sample) && sample.caps_string.empty()) {
+        release_input_realtime_credits("pipeline-input-invalid");
         core->graph_request_stop("GraphRun: encoded Sample missing caps_string");
         return;
       }
@@ -1504,6 +1630,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
           atomic_add_max(pipe.transport.telemetry.push_thread_ensure_build_ns,
                          pipe.transport.telemetry.push_thread_ensure_build_max_ns,
                          elapsed_ns_since(ensure_start));
+          release_input_realtime_credits("pipeline-input-build-failed");
           core->graph_request_stop(build_err.empty() ? "GraphRun: pipeline build failed"
                                                      : build_err);
           return;
@@ -1527,6 +1654,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
                      pipe.transport.telemetry.push_thread_push_samples_max_ns,
                      elapsed_ns_since(push_start));
       if (!pushed) {
+        release_input_realtime_credits("pipeline-input-push-failed");
         const std::string err = pipe.run_core ? pipe.run_core->last_error() : std::string{};
         if (realtime_edge && !core->graph_stop_requested() && err.empty()) {
           continue;

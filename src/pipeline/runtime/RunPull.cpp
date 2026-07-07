@@ -8,6 +8,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 
 #include <gst/gst.h>
@@ -108,6 +109,7 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
     if (attach_public_holder_loan_or_error(core, queued->sample, &loan_error)) {
       out = std::move(queued->sample);
       (void)core.graph_release_sink_restore_reservation(node_id);
+      pipeline_internal::release_realtime_frame_credits_for_sample(out, "graph-sink-pull");
       return PullStatus::Ok;
     }
 
@@ -670,6 +672,9 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
     }
     lock.unlock();
     st->pipeline.out_cv.notify_one();
+    if (st->push_sample_policy != runtime::PushSamplePolicy::PreserveSample) {
+      pipeline_internal::release_realtime_frame_credits_for_sample(out, "async-output-pull");
+    }
     return PullStatus::Ok;
   }
 
