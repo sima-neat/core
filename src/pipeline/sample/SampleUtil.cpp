@@ -8,6 +8,7 @@
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
@@ -475,10 +476,35 @@ std::size_t tensor_transport_span_bytes_for_materialization(const Tensor& tensor
   return preserve_runtime_segment ? runtime_segment_bytes : tight_bytes;
 }
 
+std::vector<std::int64_t> packed_tensor_descriptor_strides(const Tensor& tensor,
+                                                           std::size_t logical_bytes,
+                                                           std::size_t transport_bytes) {
+  if (!tensor.is_dense() || tensor.semantic.tess.has_value() || transport_bytes != logical_bytes ||
+      tensor.strides_bytes.empty() || tensor.strides_bytes.size() != tensor.shape.size() ||
+      tensor.is_contiguous()) {
+    return tensor.strides_bytes;
+  }
+  const std::size_t elem_bytes = dtype_bytes(tensor.dtype);
+  if (elem_bytes == 0U) {
+    return tensor.strides_bytes;
+  }
+  return contiguous_strides_bytes(tensor.shape, elem_bytes);
+}
+
 bool copy_tensor_transport_payload_to(const Tensor& tensor, std::uint8_t* dst,
                                       std::size_t transport_bytes, std::string* err) {
   const std::size_t logical_bytes = tensor_bytes_tight(tensor);
   if (transport_bytes <= logical_bytes) {
+    if (tensor.is_dense() && !tensor.semantic.tess.has_value() &&
+        transport_bytes == logical_bytes) {
+      if (!tensor.copy_dense_bytes_tight_to(dst, transport_bytes)) {
+        if (err) {
+          *err = "tensor transport copy: dense strided logical copy failed";
+        }
+        return false;
+      }
+      return true;
+    }
     return copy_tensor_payload_to(tensor, dst, transport_bytes, err);
   }
 
@@ -1682,7 +1708,14 @@ bool tensor_buffer_descriptor_from_packed_tensors(const TensorList& tensors,
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     const Tensor& tensor = tensors[i];
     const std::size_t logical_bytes = tensor_bytes_tight(tensor);
-    const std::size_t transport_bytes = tensor_transport_span_bytes_for_materialization(tensor);
+    // The packed-parent consumer (pre-MLA casttess/quanttess) reads each logical
+    // input at its logical-tight byte offset, so lay tensors out tightly. Only a
+    // genuinely tessellated tensor's larger physical span is meaningful payload;
+    // a device tensor's benign alignment padding (runtime_segment > tight, no
+    // tess) must be dropped or it shifts every subsequent tensor off-contract.
+    const std::size_t transport_bytes =
+        tensor.semantic.tess.has_value() ? tensor_transport_span_bytes_for_materialization(tensor)
+                                         : logical_bytes;
     if (logical_bytes == 0U || transport_bytes == 0U) {
       if (err) {
         *err = "tensor buffer descriptor: packed tensor has zero byte size";
@@ -1710,7 +1743,8 @@ bool tensor_buffer_descriptor_from_packed_tensors(const TensorList& tensors,
     descriptor_tensor.dtype = tensor_set_dtype_from_tensor(tensor);
     descriptor_tensor.layout = tensor_set_layout_from_tensor(tensor);
     descriptor_tensor.shape = tensor.shape;
-    descriptor_tensor.stride_bytes = tensor.strides_bytes;
+    descriptor_tensor.stride_bytes =
+        packed_tensor_descriptor_strides(tensor, logical_bytes, transport_bytes);
     if (tensor.semantic.quant.has_value()) {
       TensorBufferQuantDescriptor quant;
       const QuantSpec& source = *tensor.semantic.quant;
@@ -1778,7 +1812,11 @@ bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& pa
   std::vector<std::size_t> tensor_transport_bytes;
   tensor_transport_bytes.reserve(bundle.tensors.size());
   for (const auto& tensor : bundle.tensors) {
-    const std::size_t bytes = tensor_transport_span_bytes_for_materialization(tensor);
+    // Match tensor_buffer_descriptor_from_packed_tensors: lay out tightly unless
+    // the tensor is genuinely tessellated (drop benign device alignment padding).
+    const std::size_t bytes = tensor.semantic.tess.has_value()
+                                  ? tensor_transport_span_bytes_for_materialization(tensor)
+                                  : tensor_bytes_tight(tensor);
     if (bytes == 0U) {
       if (*out_caps) {
         gst_caps_unref(*out_caps);
