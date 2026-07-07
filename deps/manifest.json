@@ -1,7 +1,6 @@
 {
   "internals": {
-    "branch": "develop",
-    "spec": "5dc565c093f4"
+    "policy": "snap"
   },
   "llima": {
     "policy": "snap"
@@ -9,6 +8,6 @@
   "sdk": {
     "channel": "develop"
   },
-  "package-version": "0.2.0",
+  "package-version": "0.3.0",
   "platform-version": "2.1.2"
 }
