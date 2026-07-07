@@ -1775,6 +1775,9 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
         core->graph_request_stop("GraphRun: pipeline push failed");
         return;
       }
+      if (!pipe.transport.has_output) {
+        release_input_realtime_credits("pipeline-input-sink-only-pushed");
+      }
     }
   });
 }

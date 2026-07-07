@@ -1046,8 +1046,8 @@ bool EdgeRouter::dispatch_to_targets(const std::vector<DownstreamTarget>& target
   }
 
   const auto realtime_credits = pipeline_internal::realtime_frame_credits_for_sample(sample);
-  (void)pipeline_internal::retain_registered_realtime_frame_credits(
-      realtime_credits, targets.size() - 1U, "graph-fanout");
+  (void)pipeline_internal::retain_realtime_frame_credits(realtime_credits, targets.size() - 1U,
+                                                         "graph-fanout");
 
   bool ok = true;
   for (const auto& target : targets) {
