@@ -25,7 +25,8 @@ center of the SDK workflow.
 <div class="overview-section-label">Start here</div>
 
 Start with SDK installation. Use the other SDK topics when you need to change
-settings, add Model Compiler later, or understand DevKit Sync behavior.
+settings, add Model Compiler later, understand DevKit Sync behavior, or prepare
+offline packages for restricted networks.
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
@@ -34,6 +35,7 @@ settings, add Model Compiler later, or understand DevKit Sync behavior.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the Environment</strong><span>Install and set up the SDK package that matches your DevKit software version.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Understand workspace sharing, pairing updates, rsync fallback, and <code>dk</code> command execution.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Offline Installation</strong><span>Download SDK and Model Compiler packages for restricted network environments.</span></a></li>
     </ul>
   </section>
 </div>
@@ -44,6 +46,9 @@ pairing, see
 
 To install Model Compiler after SDK setup, see
 [Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
+
+For hosts that cannot download packages directly, see
+[Offline Installation](/getting-started/dev-environment/offline-installation/).
 
 ## What's Included
 
