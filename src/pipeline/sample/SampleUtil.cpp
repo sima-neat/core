@@ -7,6 +7,7 @@
 #include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
@@ -449,10 +450,35 @@ std::size_t tensor_transport_span_bytes_for_materialization(const Tensor& tensor
   return preserve_runtime_segment ? runtime_segment_bytes : tight_bytes;
 }
 
+std::vector<std::int64_t> packed_tensor_descriptor_strides(const Tensor& tensor,
+                                                           std::size_t logical_bytes,
+                                                           std::size_t transport_bytes) {
+  if (!tensor.is_dense() || tensor.semantic.tess.has_value() || transport_bytes != logical_bytes ||
+      tensor.strides_bytes.empty() || tensor.strides_bytes.size() != tensor.shape.size() ||
+      tensor.is_contiguous()) {
+    return tensor.strides_bytes;
+  }
+  const std::size_t elem_bytes = dtype_bytes(tensor.dtype);
+  if (elem_bytes == 0U) {
+    return tensor.strides_bytes;
+  }
+  return contiguous_strides_bytes(tensor.shape, elem_bytes);
+}
+
 bool copy_tensor_transport_payload_to(const Tensor& tensor, std::uint8_t* dst,
                                       std::size_t transport_bytes, std::string* err) {
   const std::size_t logical_bytes = tensor_bytes_tight(tensor);
   if (transport_bytes <= logical_bytes) {
+    if (tensor.is_dense() && !tensor.semantic.tess.has_value() &&
+        transport_bytes == logical_bytes) {
+      if (!tensor.copy_dense_bytes_tight_to(dst, transport_bytes)) {
+        if (err) {
+          *err = "tensor transport copy: dense strided logical copy failed";
+        }
+        return false;
+      }
+      return true;
+    }
     return copy_tensor_payload_to(tensor, dst, transport_bytes, err);
   }
 
@@ -1691,7 +1717,8 @@ bool tensor_buffer_descriptor_from_packed_tensors(const TensorList& tensors,
     descriptor_tensor.dtype = tensor_set_dtype_from_tensor(tensor);
     descriptor_tensor.layout = tensor_set_layout_from_tensor(tensor);
     descriptor_tensor.shape = tensor.shape;
-    descriptor_tensor.stride_bytes = tensor.strides_bytes;
+    descriptor_tensor.stride_bytes =
+        packed_tensor_descriptor_strides(tensor, logical_bytes, transport_bytes);
     if (tensor.semantic.quant.has_value()) {
       TensorBufferQuantDescriptor quant;
       const QuantSpec& source = *tensor.semantic.quant;
