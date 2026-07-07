@@ -571,6 +571,7 @@ struct VisionLanguageModel::Impl {
     }
 
     simaai::llima::Chat chat(*vlm_helper);
+    chat.set_enable_thinking(request.enable_thinking);
     chat.set_messages(built.messages);
     if (!request.tools.empty()) {
       chat.set_tools(request.tools);

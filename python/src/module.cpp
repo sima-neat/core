@@ -2101,6 +2101,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("audio_file", &simaai::neat::genai::GenerationRequest::audio_file)
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
+      .def_rw("enable_thinking", &simaai::neat::genai::GenerationRequest::enable_thinking)
       .def_prop_rw(
           "tools",
           [](const simaai::neat::genai::GenerationRequest& request) {
