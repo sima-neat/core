@@ -5,6 +5,7 @@
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -75,6 +76,7 @@ struct TensorBufferRuntimeSidecar {
   std::weak_ptr<void> producer_stream_lifetime;
   bool holder_loan_release_attached = false;
   std::weak_ptr<void> zero_copy_loan;
+  std::vector<RealtimeFrameCredit> realtime_frame_credits;
 };
 
 std::mutex& tensor_buffer_sidecar_mutex() {
@@ -205,6 +207,11 @@ struct ZeroCopyLoanToken {
 };
 
 struct GstBufferLoanKeepalive {
+  // The same producer GstSample can be fanned out to multiple graph edges. One edge may be
+  // attaching a loan marker while another edge probes/transfers it into a downstream appsrc, so
+  // protect the marker vectors. Without this, vector reallocation can race with shared_ptr/weak_ptr
+  // iteration and corrupt the holder-loan bookkeeping under high stream counts.
+  std::mutex mu;
   std::vector<std::shared_ptr<void>> loans;
   std::vector<std::weak_ptr<void>> weak_loans;
 };
@@ -214,8 +221,28 @@ GQuark zero_copy_loan_quark() {
   return quark;
 }
 
+std::mutex& zero_copy_loan_qdata_mutex() {
+  static std::mutex mu;
+  return mu;
+}
+
 void destroy_gst_buffer_loan_keepalive(gpointer data) {
   delete static_cast<GstBufferLoanKeepalive*>(data);
+}
+
+GstBufferLoanKeepalive* loan_keepalive_for_mini_object(GstMiniObject* object, bool create) {
+  if (!object) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> lock(zero_copy_loan_qdata_mutex());
+  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
+      gst_mini_object_get_qdata(object, zero_copy_loan_quark()));
+  if (!keepalive && create) {
+    keepalive = new GstBufferLoanKeepalive();
+    gst_mini_object_set_qdata(object, zero_copy_loan_quark(), keepalive,
+                              destroy_gst_buffer_loan_keepalive);
+  }
+  return keepalive;
 }
 
 void attach_zero_copy_loan_to_mini_object_local(GstMiniObject* object,
@@ -223,13 +250,11 @@ void attach_zero_copy_loan_to_mini_object_local(GstMiniObject* object,
   if (!object || !loan) {
     return;
   }
-  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
-      gst_mini_object_get_qdata(object, zero_copy_loan_quark()));
+  auto* keepalive = loan_keepalive_for_mini_object(object, /*create=*/true);
   if (!keepalive) {
-    keepalive = new GstBufferLoanKeepalive();
-    gst_mini_object_set_qdata(object, zero_copy_loan_quark(), keepalive,
-                              destroy_gst_buffer_loan_keepalive);
+    return;
   }
+  std::lock_guard<std::mutex> lock(keepalive->mu);
   const auto found =
       std::find_if(keepalive->loans.begin(), keepalive->loans.end(),
                    [&](const std::shared_ptr<void>& v) { return v.get() == loan.get(); });
@@ -243,13 +268,15 @@ void attach_zero_copy_loan_weak_to_mini_object_local(GstMiniObject* object,
   if (!object || !loan) {
     return;
   }
-  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
-      gst_mini_object_get_qdata(object, zero_copy_loan_quark()));
+  auto* keepalive = loan_keepalive_for_mini_object(object, /*create=*/true);
   if (!keepalive) {
-    keepalive = new GstBufferLoanKeepalive();
-    gst_mini_object_set_qdata(object, zero_copy_loan_quark(), keepalive,
-                              destroy_gst_buffer_loan_keepalive);
+    return;
   }
+  std::lock_guard<std::mutex> lock(keepalive->mu);
+  keepalive->weak_loans.erase(
+      std::remove_if(keepalive->weak_loans.begin(), keepalive->weak_loans.end(),
+                     [](const std::weak_ptr<void>& v) { return v.expired(); }),
+      keepalive->weak_loans.end());
   const auto duplicate = std::find_if(keepalive->weak_loans.begin(), keepalive->weak_loans.end(),
                                       [&](const std::weak_ptr<void>& v) {
                                         auto existing = v.lock();
@@ -280,11 +307,11 @@ void collect_zero_copy_loans_from_mini_object(GstMiniObject* object,
   if (!object || !out) {
     return;
   }
-  auto* keepalive = static_cast<GstBufferLoanKeepalive*>(
-      gst_mini_object_get_qdata(object, zero_copy_loan_quark()));
+  auto* keepalive = loan_keepalive_for_mini_object(object, /*create=*/false);
   if (!keepalive) {
     return;
   }
+  std::lock_guard<std::mutex> lock(keepalive->mu);
   for (const auto& loan : keepalive->loans) {
     if (!loan) {
       continue;
@@ -296,9 +323,10 @@ void collect_zero_copy_loans_from_mini_object(GstMiniObject* object,
       out->push_back(loan);
     }
   }
-  for (const auto& weak : keepalive->weak_loans) {
-    auto loan = weak.lock();
+  for (auto it = keepalive->weak_loans.begin(); it != keepalive->weak_loans.end();) {
+    auto loan = it->lock();
     if (!loan) {
+      it = keepalive->weak_loans.erase(it);
       continue;
     }
     const auto found = std::find_if(out->begin(), out->end(), [&](const std::shared_ptr<void>& v) {
@@ -307,6 +335,7 @@ void collect_zero_copy_loans_from_mini_object(GstMiniObject* object,
     if (found == out->end()) {
       out->push_back(std::move(loan));
     }
+    ++it;
   }
 }
 
@@ -337,9 +366,6 @@ void collect_zero_copy_loans_from_sample(const Sample& sample,
     }
     if (!loan) {
       return;
-    }
-    if (GstSample* sample = gst_sample_from_holder(tensor.storage->holder)) {
-      attach_zero_copy_loan_to_gst_sample_local(sample, loan);
     }
     const auto found = std::find_if(out->begin(), out->end(), [&](const std::shared_ptr<void>& v) {
       return v.get() == loan.get();
@@ -2723,6 +2749,104 @@ void attach_zero_copy_loans_to_gst_buffer(GstBuffer* buffer, const Sample& sampl
   }
   for (const auto& loan : loans) {
     attach_zero_copy_loan_to_gst_buffer_local(buffer, loan);
+  }
+}
+
+bool sample_has_zero_copy_loans(const Sample& sample) {
+  std::vector<std::shared_ptr<void>> loans;
+  collect_zero_copy_loans_from_sample(sample, &loans);
+  return !loans.empty();
+}
+
+bool realtime_credit_valid_for_sidecar(const RealtimeFrameCredit& credit) {
+  return credit.namespace_id != 0 && !credit.stream_id.empty() && credit.frame_id >= 0;
+}
+
+void add_realtime_credit_dedup(std::vector<RealtimeFrameCredit>* out,
+                               const RealtimeFrameCredit& credit) {
+  if (!out || !realtime_credit_valid_for_sidecar(credit)) {
+    return;
+  }
+  const auto found = std::find_if(out->begin(), out->end(), [&](const RealtimeFrameCredit& item) {
+    return item.namespace_id == credit.namespace_id && item.stream_id == credit.stream_id &&
+           item.frame_id == credit.frame_id && item.input_seq == credit.input_seq &&
+           item.orig_input_seq == credit.orig_input_seq &&
+           item.graph_private == credit.graph_private;
+  });
+  if (found == out->end()) {
+    out->push_back(credit);
+  }
+}
+
+void collect_attached_realtime_frame_credits_from_tensor(const Tensor& tensor,
+                                                         std::vector<RealtimeFrameCredit>* out) {
+  if (!out || !tensor.storage) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(tensor_buffer_sidecar_mutex());
+  const auto* sidecar = tensor_buffer_sidecar_locked(tensor.storage, /*create=*/false);
+  if (!sidecar) {
+    return;
+  }
+  for (const auto& credit : sidecar->realtime_frame_credits) {
+    add_realtime_credit_dedup(out, credit);
+  }
+}
+
+void collect_attached_realtime_frame_credits_from_sample(const Sample& sample,
+                                                         std::vector<RealtimeFrameCredit>* out) {
+  if (!out) {
+    return;
+  }
+  if (sample.tensor.has_value()) {
+    collect_attached_realtime_frame_credits_from_tensor(*sample.tensor, out);
+  }
+  for (const auto& tensor : sample.tensors) {
+    collect_attached_realtime_frame_credits_from_tensor(tensor, out);
+  }
+  for (const auto& field : sample.fields) {
+    collect_attached_realtime_frame_credits_from_sample(field, out);
+  }
+}
+
+void attach_realtime_frame_credit_to_tensor(const Tensor& tensor,
+                                            const RealtimeFrameCredit& credit) {
+  if (!tensor.storage || !realtime_credit_valid_for_sidecar(credit)) {
+    return;
+  }
+  RealtimeFrameCredit graph_credit = credit;
+  graph_credit.graph_private = true;
+  std::lock_guard<std::mutex> lock(tensor_buffer_sidecar_mutex());
+  auto* sidecar = tensor_buffer_sidecar_locked(tensor.storage, /*create=*/true);
+  if (!sidecar) {
+    return;
+  }
+  add_realtime_credit_dedup(&sidecar->realtime_frame_credits, graph_credit);
+}
+
+std::vector<RealtimeFrameCredit> attached_realtime_frame_credits_from_sample(const Sample& sample) {
+  std::vector<RealtimeFrameCredit> credits;
+  collect_attached_realtime_frame_credits_from_sample(sample, &credits);
+  return credits;
+}
+
+bool sample_has_attached_realtime_frame_credit(const Sample& sample) {
+  return !attached_realtime_frame_credits_from_sample(sample).empty();
+}
+
+void attach_realtime_frame_credit_to_sample(const Sample& sample,
+                                            const RealtimeFrameCredit& credit) {
+  if (!realtime_credit_valid_for_sidecar(credit)) {
+    return;
+  }
+  if (sample.tensor.has_value()) {
+    attach_realtime_frame_credit_to_tensor(*sample.tensor, credit);
+  }
+  for (const auto& tensor : sample.tensors) {
+    attach_realtime_frame_credit_to_tensor(tensor, credit);
+  }
+  for (const auto& field : sample.fields) {
+    attach_realtime_frame_credit_to_sample(field, credit);
   }
 }
 

@@ -78,6 +78,45 @@ RUN_TEST(
           true,
           96,
       };
+      simaai::neat::nodes::groups::RtspDecodedInputOptions legacy_rtsp_videorate_opt{
+          "rtsp://example.local/h264",
+          200,
+          true,
+          96,
+          -1,
+          30,
+          1920,
+          1080,
+          true,
+          false,
+          true,
+          -1,
+          -1,
+          -1,
+          2,
+          simaai::neat::FormatTag::NV12,
+          "decoder",
+          true,
+          "CVU",
+          false,
+          false,
+          {},
+          "",
+          simaai::neat::nodes::groups::RtspCodec::H264,
+          false,
+          "",
+          26,
+          -1,
+          -1,
+          -1,
+          -1,
+          30,
+          true,
+      };
+      require(legacy_rtsp_videorate_opt.use_videorate,
+              "RtspDecodedInputOptions aggregate field order changed before use_videorate");
+      require(legacy_rtsp_videorate_opt.decoder_input_buffers == -1,
+              "RtspDecodedInputOptions new decoder fields must remain appended");
       simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions http_mjpeg_opt;
       http_mjpeg_opt.url = "http://example.local/mjpeg";
       http_mjpeg_opt.source_fps = 25;

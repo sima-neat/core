@@ -39,7 +39,15 @@ def main(argv: list[str]) -> int:
   # CORE LOGIC
   # STEP build-combine-graph
   graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.ByFrame)
-  run = graph.build()
+  expected = args.streams * args.frames
+  run_options = pyneat.RunOptions()
+  # This tutorial intentionally pushes the whole deterministic batch before
+  # pulling joined bundles. Size the bounded graph queues for that batch so the
+  # example demonstrates Combine(ByFrame) rather than producer backpressure.
+  # Production live-stream code should usually pull concurrently instead of
+  # growing queues this way.
+  run_options.queue_depth = max(run_options.queue_depth, expected)
+  run = graph.build(run_options)
   # END STEP
   # END CORE LOGIC
 
@@ -54,7 +62,6 @@ def main(argv: list[str]) -> int:
   # END STEP
 
   # STEP pull-bundles
-  expected = args.streams * args.frames
   received = 0
   for _ in range(expected):
     if run.pull("combined", 2000) is not None:

@@ -60,6 +60,26 @@ bool allow_inputstream_cpu_to_device_copy() {
   return raw && *raw && std::strcmp(raw, "0") != 0;
 }
 
+bool encoded_holder_zero_copy_input_enabled(const InputStream::State& st) {
+  if (st.opt.copy_input) {
+    return false;
+  }
+  if (const char* raw = std::getenv("SIMA_INPUTSTREAM_ENCODED_HOLDER_ZERO_COPY")) {
+    return *raw && std::strcmp(raw, "0") != 0;
+  }
+  /*
+   * Encoded GstSample holder transport is a zero-copy optimization for
+   * in-process graph edges.  It is safe for the blocking decode path, where the
+   * original compressed sample is consumed by one downstream pipeline.  For
+   * non-blocking preview/egress paths (for example H264 -> VideoSender/Insight)
+   * the same upstream holder may also feed the decoder branch.  Forwarding that
+   * shared holder lets downstream parser/payload stages retain or mutate the
+   * original GstBuffer long enough to starve the sibling branch.  Copy only the
+   * compressed payload on those egress paths; raw decoder tensors stay zero-copy.
+   */
+  return st.src_opt.block;
+}
+
 bool tensor_requires_cpu_to_device_copy_for_push(const simaai::neat::Tensor& tensor) {
   if (!tensor.storage) {
     return false;
@@ -606,6 +626,53 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
   return true;
 }
 
+bool wrap_holder_buffer_for_zero_copy_loan_transfer(GstBuffer** buffer, const Sample* sample,
+                                                    const std::shared_ptr<void>& holder,
+                                                    const char* where) {
+  if (!buffer || !*buffer) {
+    return false;
+  }
+  const bool sample_has_loans =
+      sample != nullptr && pipeline_internal::sample_has_zero_copy_loans(*sample);
+  const bool holder_has_loans = pipeline_internal::holder_has_zero_copy_loans(holder);
+  if (!sample_has_loans && !holder_has_loans) {
+    return false;
+  }
+
+  GstBuffer* transfer = gst_buffer_new();
+  if (!transfer) {
+    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                             ": failed to allocate zero-copy loan transfer buffer");
+  }
+  const GstBufferCopyFlags copy_flags =
+      static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                                      GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
+  if (!gst_buffer_copy_into(transfer, *buffer, copy_flags, 0, -1)) {
+    gst_buffer_unref(transfer);
+    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                             ": failed to wrap zero-copy holder buffer for transfer");
+  }
+
+  bool attached = false;
+  if (sample_has_loans) {
+    pipeline_internal::attach_zero_copy_loans_to_gst_buffer(transfer, *sample);
+    attached = true;
+  }
+  if (holder_has_loans) {
+    attached =
+        pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(transfer, holder) ||
+        attached;
+  }
+  if (!attached) {
+    gst_buffer_unref(transfer);
+    return false;
+  }
+
+  release_input_buffer(*buffer, "InputStream::zero_copy_transfer:loan_source_unref");
+  *buffer = transfer;
+  return true;
+}
+
 GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
   if (!holder) {
     return nullptr;
@@ -868,28 +935,8 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   }
   dump_buffer_memories(buf, where ? where : "InputStream::push_holder_transport");
   validate_holder_video_meta_or_throw(st, buf);
-  if (pipeline_internal::holder_has_zero_copy_loans(holder)) {
-    GstBuffer* loan_transfer_buf = gst_buffer_new();
-    if (!loan_transfer_buf) {
-      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
-                               ": failed to allocate zero-copy loan transfer buffer");
-    }
-    const GstBufferCopyFlags copy_flags =
-        static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
-                                        GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
-    if (!gst_buffer_copy_into(loan_transfer_buf, buf, copy_flags, 0, -1)) {
-      gst_buffer_unref(loan_transfer_buf);
-      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
-                               ": failed to wrap zero-copy holder buffer for transfer");
-    }
-    if (pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(loan_transfer_buf,
-                                                                            holder)) {
-      release_input_buffer(buf, "InputStream::push_holder_transport:loan_source_unref");
-      buf = loan_transfer_buf;
-    } else {
-      gst_buffer_unref(loan_transfer_buf);
-    }
-  }
+  (void)wrap_holder_buffer_for_zero_copy_loan_transfer(
+      &buf, fail_msg, holder, where ? where : "InputStream::push_holder_transport");
 
   if (GstSample* sample = holder_as_gstsample(holder)) {
     const bool has_tensor_set =
@@ -970,8 +1017,8 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
     throw std::invalid_argument("InputStream::try_push_message: encoded Sample missing storage");
   }
 
-  if (!st.opt.copy_input && input.storage->kind == simaai::neat::StorageKind::GstSample &&
-      input.storage->holder) {
+  if (encoded_holder_zero_copy_input_enabled(st) &&
+      input.storage->kind == simaai::neat::StorageKind::GstSample && input.storage->holder) {
     return push_holder_transport(
         st, input.storage->holder, "InputStream::try_push_message(encoded_holder)",
         /*record_timings=*/st.timing_enabled, meta.frame_id, input_seq_override,
@@ -1147,6 +1194,9 @@ HolderFastPathResult try_push_message_holder_fastpath(
       holder_buf = nullptr;
     }
     if (holder_buf) {
+      (void)wrap_holder_buffer_for_zero_copy_loan_transfer(
+          &holder_buf, &msg, input.storage ? input.storage->holder : std::shared_ptr<void>{},
+          "InputStream::try_push_message(holder)");
       BuiltBuffer pending;
       pending.buffer = gst_buffer_ref(holder_buf);
       pipeline_internal::attach_zero_copy_loans_to_gst_buffer(pending.buffer, msg);
@@ -1208,6 +1258,9 @@ HolderFastPathResult try_push_message_holder_fastpath(
         dump_sima_meta_full(holder_buf, "JPEG_ZC_TRACE_FASTPATH");
         dump_buffer_memories(holder_buf, "JPEG_ZC_TRACE_FASTPATH");
       }
+      (void)wrap_holder_buffer_for_zero_copy_loan_transfer(
+          &holder_buf, &msg, input.storage ? input.storage->holder : std::shared_ptr<void>{},
+          "InputStream::try_push_message(holder)");
       holder_guard.release();
       out.handled = push_holder_buffer_with_appsrc(
           st, holder_buf, "InputStream::try_push_message(holder)",
