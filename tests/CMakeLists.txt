@@ -1456,6 +1456,19 @@ if (NOT sync_yolov8_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  yolov8_dynamic_boxdecode_geometry_test
+  e2e_pipelines/obj_detection/yolov8_dynamic_boxdecode_geometry_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT yolov8_dynamic_boxdecode_geometry_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_dynamic_boxdecode_geometry_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;dynamic")
+endif()
+
+add_pipeline_test(
   sync_yolov8_test_detessdequant
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
   e2e_pipelines/e2e_utils.cpp
