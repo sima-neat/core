@@ -206,6 +206,21 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
                    "explicit BoxDecode must reject a detection decoder for a segmentation MPK "
                    "contract");
 
+           simaai::neat::Model::Options managed_opt = model_opt;
+           managed_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8Seg;
+           simaai::neat::Model managed_model(tar_path, managed_opt);
+           auto managed_node = simaai::neat::nodes::SimaBoxDecode(
+               managed_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100);
+           const auto* managed_box =
+               dynamic_cast<const simaai::neat::SimaBoxDecode*>(managed_node.get());
+           require(managed_box != nullptr,
+                   "model-managed boxdecode factory should return a concrete SimaBoxDecode node");
+           const std::string managed_fragment = managed_box->backend_fragment(0);
+           require(managed_fragment.find("original-width=") == std::string::npos,
+                   "model-managed boxdecode should let metadata drive original width");
+           require(managed_fragment.find("original-height=") == std::string::npos,
+                   "model-managed boxdecode should let metadata drive original height");
+
            auto standalone_node =
                simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,
                                                   100, "manual_boxdecode", 1280, 720, 640, 640);
