@@ -2324,7 +2324,9 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("policy", &GraphLinkOptions::policy)
       .def_rw("queue_depth", &GraphLinkOptions::queue_depth)
-      .def_rw("stream_id", &GraphLinkOptions::stream_id);
+      .def_rw("stream_id", &GraphLinkOptions::stream_id)
+      .def_rw("max_inflight_per_stream", &GraphLinkOptions::max_inflight_per_stream)
+      .def_rw("max_inflight_total", &GraphLinkOptions::max_inflight_total);
 
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())

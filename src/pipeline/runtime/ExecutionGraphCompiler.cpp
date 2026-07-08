@@ -225,6 +225,12 @@ GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& 
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
   }
+  if (b.max_inflight_per_stream != -1) {
+    a.max_inflight_per_stream = std::max(a.max_inflight_per_stream, b.max_inflight_per_stream);
+  }
+  if (b.max_inflight_total != -1) {
+    a.max_inflight_total = std::max(a.max_inflight_total, b.max_inflight_total);
+  }
   if (!b.stream_id.empty()) {
     a.stream_id = b.stream_id;
   }
