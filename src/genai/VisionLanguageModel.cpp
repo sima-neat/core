@@ -507,10 +507,10 @@ struct VisionLanguageModel::Impl {
     bos_token = load_bos_token(info.root);
     vlm_helper = std::make_unique<simaai::llima::VlmHelper>(cfg, info.root / "devkit", std::nullopt,
                                                             std::nullopt);
-    text_streamer = std::make_unique<simaai::llima::TextStreamer>(
-        vlm_helper->get_tokenizer(),
-        [this](const std::string& metric, double value) { record_metric(metric, value); },
-        [](const std::string&, bool) {});
+	    text_streamer = std::make_unique<simaai::llima::TextStreamer>(
+	        vlm_helper->get_tokenizer(),
+	        [this](const std::string& metric, double value) { record_metric(metric, value); },
+	        [](const std::string&, bool, bool) {});
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
         vlm_helper->get_pad_token_id(), *text_streamer, true);
@@ -687,7 +687,7 @@ struct VisionLanguageModel::Impl {
   void configure_run_callbacks() {
     text_streamer->set_info_callback(
         [this](const std::string& metric, double value) { record_metric(metric, value); });
-    text_streamer->set_text_callback([](const std::string&, bool) {});
+    text_streamer->set_text_callback([](const std::string&, bool, bool) {});
   }
 
   void reset_metrics() {
@@ -795,7 +795,7 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
         const bool buffer_for_tools = !request.tools.empty();
         std::string buffered_text;
         model->text_streamer->set_text_callback([&producer, buffer_for_tools, &buffered_text](
-                                                    const std::string& text, bool stream_end) {
+                                                    const std::string& text, bool stream_end, bool) {
           if (buffer_for_tools) {
             buffered_text += text;
             return;
