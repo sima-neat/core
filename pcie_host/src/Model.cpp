@@ -87,11 +87,10 @@ public:
     if (readiness_timeout_ms <= 0) {
       throw std::invalid_argument("readiness_timeout_ms must be positive");
     }
-    if (state_ == PipelineState::Ready && channel_.is_running()) {
+    if (state_ == PipelineState::Ready) {
       return;
     }
-    if (channel_.is_running() || state_ == PipelineState::Ready ||
-        state_ == PipelineState::Starting) {
+    if (channel_.is_running() || state_ == PipelineState::Starting) {
       close_locked();
     }
 
@@ -132,7 +131,7 @@ public:
 
   bool running() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return state_ == PipelineState::Ready && channel_.is_running();
+    return state_ == PipelineState::Ready;
   }
 
   void close() {
@@ -186,7 +185,7 @@ private:
   }
 
   void ensure_ready() const {
-    if (state_ != PipelineState::Ready || !channel_.is_running()) {
+    if (state_ != PipelineState::Ready) {
       throw std::runtime_error("PCIe model is not built; call model.build() before run/push/pull");
     }
   }

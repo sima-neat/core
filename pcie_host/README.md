@@ -83,7 +83,7 @@ struct ConnectionOptions {
   int card_id = 0;            // PCIe card/plugin index; default host is 10.0.<card_id>.2.
   std::string user = "sima";
   int queue = 0;              // PCIe queue, 0..5.
-  int max_inflight = 0;
+  int max_inflight = 10;
   std::string card_env;
   std::string card_gst_debug; // Optional card-side GST_DEBUG spec for pcie-pipeline-builder.
   std::string card_gst_debug_file;

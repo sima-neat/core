@@ -459,7 +459,7 @@ NB_MODULE(_pyneatpcie_core, m) {
             self->max_inflight = max_inflight;
           },
           "card_host"_a = "", "card_id"_a = 0, "user"_a = "sima", "queue"_a = 0,
-          "max_inflight"_a = 0);
+          "max_inflight"_a = 10);
 
   nb::class_<pcie::ModelOptions::Preprocess::Resize>(m, "PreprocessResizeOptions")
       .def(nb::init<>())

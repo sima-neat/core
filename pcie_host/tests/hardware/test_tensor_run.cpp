@@ -3,14 +3,17 @@
 #include "SignalCloseGuard.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <future>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -50,7 +53,7 @@ struct Args {
   std::string user = env_or_default("SIMAPCIE_USER", "sima");
   int card_id = env_int_or_default("SIMAPCIE_CARD_ID", 0);
   int queue = env_int_or_default("SIMAPCIE_QUEUE", 0);
-  int max_inflight = env_int_or_default("SIMAPCIE_MAX_INFLIGHT", 0);
+  int max_inflight = env_int_or_default("SIMAPCIE_MAX_INFLIGHT", 10);
   int readiness_timeout_ms = env_int_or_default("SIMAPCIE_READINESS_TIMEOUT_MS", 180000);
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
   int burst_iterations = env_int_or_default("SIMAPCIE_BURST_ITERATIONS", 0);
@@ -438,36 +441,65 @@ int main(int argc, char** argv) {
       std::cout << "starting parallel burst phase: " << args.burst_iterations
                 << " push/pull iteration(s)\n";
       const auto burst_started = std::chrono::steady_clock::now();
+      std::mutex burst_error_mutex;
+      std::exception_ptr burst_error;
+      std::atomic_bool burst_failed = false;
+      const auto fail_burst = [&](std::exception_ptr error) {
+        {
+          std::lock_guard<std::mutex> lock(burst_error_mutex);
+          if (!burst_error) {
+            burst_error = std::move(error);
+          }
+        }
+        burst_failed.store(true);
+      };
       auto producer = std::async(std::launch::async, [&] {
-        for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
-          if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
-            std::cout << "burst producer " << iteration << "/" << args.burst_iterations << "\n";
+        try {
+          for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
+            if (burst_failed.load()) {
+              return;
+            }
+            if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
+              std::cout << "burst producer " << iteration << "/" << args.burst_iterations << "\n";
+            }
+            if (!model.push(inputs)) {
+              throw std::runtime_error("burst push returned false at iteration " +
+                                       std::to_string(iteration));
+            }
           }
-          if (!model.push(inputs)) {
-            throw std::runtime_error("burst push returned false at iteration " +
-                                     std::to_string(iteration));
-          }
+        } catch (...) {
+          fail_burst(std::current_exception());
         }
       });
       auto consumer = std::async(std::launch::async, [&] {
-        for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
-          if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
-            std::cout << "burst consumer " << iteration << "/" << args.burst_iterations
-                      << " timeout_ms=" << args.pull_timeout_ms << "\n";
+        try {
+          for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
+            if (burst_failed.load()) {
+              return;
+            }
+            if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
+              std::cout << "burst consumer " << iteration << "/" << args.burst_iterations
+                        << " timeout_ms=" << args.pull_timeout_ms << "\n";
+            }
+            const auto result = model.pull(args.pull_timeout_ms);
+            if (!result.has_value()) {
+              throw std::runtime_error("burst pull timed out without a result at iteration " +
+                                       std::to_string(iteration));
+            }
+            validate_outputs(*result, info.outputs);
+            if (iteration == 1) {
+              print_outputs(*result);
+            }
           }
-          const auto result = model.pull(args.pull_timeout_ms);
-          if (!result.has_value()) {
-            throw std::runtime_error("burst pull timed out without a result at iteration " +
-                                     std::to_string(iteration));
-          }
-          validate_outputs(*result, info.outputs);
-          if (iteration == 1) {
-            print_outputs(*result);
-          }
+        } catch (...) {
+          fail_burst(std::current_exception());
         }
       });
       producer.get();
       consumer.get();
+      if (burst_error) {
+        std::rethrow_exception(burst_error);
+      }
       const auto burst_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - burst_started)
                                 .count();

@@ -65,7 +65,7 @@ struct Args {
   std::string user = env_or_default("SIMAPCIE_USER", "sima");
   int card_id = env_int_or_default("SIMAPCIE_CARD_ID", 0);
   int queue = env_int_or_default("SIMAPCIE_QUEUE", 0);
-  int max_inflight = env_int_or_default("SIMAPCIE_MAX_INFLIGHT", 0);
+  int max_inflight = env_int_or_default("SIMAPCIE_MAX_INFLIGHT", 10);
   int readiness_timeout_ms = env_int_or_default("SIMAPCIE_READINESS_TIMEOUT_MS", 180000);
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
   float score_threshold = 0.25f;

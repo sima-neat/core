@@ -190,9 +190,6 @@ TensorList tensors_from_output_sample(const std::shared_ptr<MappedSample>& owner
   if (owner && sample_has_bbox_caps(owner->sample)) {
     return bbox_tensor_from_output_payload(owner);
   }
-  if (TensorList tensors = tensors_from_tensor_set_meta(owner); !tensors.empty()) {
-    return tensors;
-  }
   return tensors_from_output_payload(owner, facts);
 }
 
@@ -285,14 +282,15 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
     throw std::runtime_error("failed to parse caps: " + caps_);
   }
 
+  const guint queue_depth = static_cast<guint>(max_inflight_);
   g_object_set(G_OBJECT(appsrc_), "caps", caps, "is-live", TRUE, "do-timestamp", TRUE, "block",
-               TRUE, "format", GST_FORMAT_TIME, nullptr);
+               TRUE, "format", GST_FORMAT_TIME, "max-buffers", queue_depth, "max-bytes",
+               static_cast<guint64>(0), "max-time", static_cast<guint64>(0), nullptr);
   gst_caps_unref(caps);
 
   const std::size_t auto_buffer = std::max(facts_.packed_input_bytes, facts_.packed_output_bytes);
   const guint64 buffer_size =
       static_cast<guint64>(std::max<std::size_t>(auto_buffer, 512U * 1024U));
-  const guint queue_depth = static_cast<guint>(max_inflight_);
   g_object_set(G_OBJECT(pciehost_), "buffersize", buffer_size, "card-number", card_id_, "queue",
                pcie_queue_, "queuedepth", queue_depth, nullptr);
 
