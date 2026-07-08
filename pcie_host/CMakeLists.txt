@@ -27,6 +27,7 @@ include(CMakePackageConfigHelpers)
 
 option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
 option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware tests" OFF)
+option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host C++ examples" OFF)
 option(SIMAPCIE_BUILD_PYTHON "Build PCIe host Python bindings via nanobind" OFF)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
@@ -53,8 +54,10 @@ pkg_check_modules(GST REQUIRED IMPORTED_TARGET
 )
 
 set(SIMA_NEAT_PCIE_HOST_SOURCES
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/SimaPCIeHost.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/Model.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieChannel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorPayload.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPcieTensorSetMeta.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ModelOptionsJsonWriter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/PcieModelFactsReader.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/RemoteRuntime.cpp
@@ -190,6 +193,11 @@ if (SIMAPCIE_BUILD_TESTS)
     ${GST_INCLUDE_DIRS}
   )
 
+  add_executable(unit_pcie_host_tensor_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_tensor_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_tensor_test PRIVATE sima_neat_pcie_host)
+
   add_executable(unit_pcie_host_lifecycle_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_lifecycle_test.cpp
   )
@@ -203,12 +211,17 @@ if (SIMAPCIE_BUILD_TESTS)
 
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
+  add_test(NAME unit_pcie_host_tensor_test COMMAND unit_pcie_host_tensor_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
 endif()
 
 if (SIMAPCIE_BUILD_HARDWARE_TESTS)
   add_subdirectory(tests/hardware)
+endif()
+
+if (SIMAPCIE_BUILD_EXAMPLES)
+  add_subdirectory(examples)
 endif()
 
 if (SIMAPCIE_BUILD_PYTHON)
@@ -247,6 +260,6 @@ set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_DEPENDS
   "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev"
 )
 set(CPACK_DEBIAN_DEVELOPMENT_DESCRIPTION
-  "Headers, static library, and CMake package files for SimaPCIeHost.")
+  "Headers, static library, and CMake package files for the NEAT PCIe host API.")
 
 include(CPack)

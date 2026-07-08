@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import pypciehost as pcie
+import pyneatpcie as pcie
 
 
 def _env(name: str, default: str = "") -> str:
@@ -224,9 +224,9 @@ def _run_async_push_pull(push_once, pull_once, iterations: int):
 
 def test_metadata_yolov8():
   model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
-  host = pcie.SimaPCIeHost()
+  runtime = pcie.Model(str(model))
 
-  info = host.load_metadata(str(model))
+  info = runtime.info()
 
   assert [tensor.name for tensor in info.inputs] == ["images"]
   assert info.inputs[0].shape == [640, 640, 3]
@@ -243,19 +243,21 @@ def test_metadata_yolov8():
 
 def test_tensor_run_yolov8():
   model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
-  host = pcie.SimaPCIeHost(_connection())
+  runtime = None
   sync_iterations = _sync_iterations()
   async_iterations = _test_iterations()
 
   try:
-    info = host.init_pipeline(str(model), pcie.ModelOptions(), _readiness_timeout_ms())
+    runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())
+    runtime.build(_readiness_timeout_ms())
+    info = runtime.info()
     inputs = _make_inputs(info)
 
     def push_once():
-      assert host.push(inputs)
+      assert runtime.push(inputs)
 
     def pull_once():
-      outputs = host.pull(_pull_timeout_ms())
+      outputs = runtime.pull(_pull_timeout_ms())
 
       assert outputs is not None
       _assert_outputs_match_metadata(outputs, info.outputs)
@@ -263,7 +265,8 @@ def test_tensor_run_yolov8():
     _run_sync_push_pull(push_once, pull_once, sync_iterations)
     _run_async_push_pull(push_once, pull_once, async_iterations)
   finally:
-    host.stop()
+    if runtime is not None:
+      runtime.close()
 
 
 def test_tensor_parallel_queues_yolov8():
@@ -274,16 +277,18 @@ def test_tensor_parallel_queues_yolov8():
   assert iterations > 0
 
   def run_queue(queue: int):
-    host = pcie.SimaPCIeHost(_connection_for_queue(queue))
+    runtime = None
     try:
-      info = host.init_pipeline(str(model), pcie.ModelOptions(), _readiness_timeout_ms())
+      runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection_for_queue(queue))
+      runtime.build(_readiness_timeout_ms())
+      info = runtime.info()
       inputs = _make_inputs(info)
 
       def push_once():
-        assert host.push(inputs)
+        assert runtime.push(inputs)
 
       def pull_once():
-        outputs = host.pull(_pull_timeout_ms())
+        outputs = runtime.pull(_pull_timeout_ms())
         assert outputs is not None
         _assert_outputs_match_metadata(outputs, info.outputs)
 
@@ -291,7 +296,8 @@ def test_tensor_parallel_queues_yolov8():
       _run_async_push_pull(push_once, pull_once, iterations)
       return queue
     finally:
-      host.stop()
+      if runtime is not None:
+        runtime.close()
 
   with ThreadPoolExecutor(max_workers=len(queues)) as executor:
     futures = [executor.submit(run_queue, queue) for queue in queues]
@@ -304,13 +310,15 @@ def test_image_run_yolov8():
   model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
   image_path = _require_file_env("SIMAPCIE_TEST_IMAGE")
   image = _load_bgr_image(image_path)
-  host = pcie.SimaPCIeHost(_connection())
   sync_iterations = _sync_iterations()
   async_iterations = _test_iterations()
 
+  runtime = None
   try:
     options = _image_options(image)
-    info = host.init_pipeline(str(model), options, _readiness_timeout_ms())
+    runtime = pcie.Model(str(model), options, _connection())
+    runtime.build(_readiness_timeout_ms())
+    info = runtime.info()
     image_tensor = pcie.Tensor.from_numpy(
         image,
         image_format=pcie.PixelFormat.BGR,
@@ -318,10 +326,10 @@ def test_image_run_yolov8():
     )
 
     def push_once():
-      assert host.push(image_tensor)
+      assert runtime.push(image_tensor)
 
     def pull_once():
-      outputs = host.pull(_pull_timeout_ms())
+      outputs = runtime.pull(_pull_timeout_ms())
 
       assert outputs is not None
       _assert_outputs_match_metadata(outputs, info.outputs)
@@ -329,7 +337,8 @@ def test_image_run_yolov8():
     _run_sync_push_pull(push_once, pull_once, sync_iterations)
     _run_async_push_pull(push_once, pull_once, async_iterations)
   finally:
-    host.stop()
+    if runtime is not None:
+      runtime.close()
 
 
 def _parse_bbox_payload(outputs: list[pcie.Tensor], image_width: int, image_height: int, top_k: int):
@@ -363,7 +372,6 @@ def test_image_boxdecode_run_yolov8():
   if not image_path.is_file():
     pytest.skip("SIMAPCIE_BOXDECODE_IMAGE/SIMAPCIE_TEST_IMAGE is not set to an existing file")
   image = _load_bgr_image(image_path)
-  host = pcie.SimaPCIeHost(_connection())
 
   score_threshold = float(_env("SIMAPCIE_BOXDECODE_SCORE_THRESHOLD", "0.25"))
   top_k = _env_int("SIMAPCIE_BOXDECODE_TOP_K", 100)
@@ -371,6 +379,7 @@ def test_image_boxdecode_run_yolov8():
   sync_iterations = _sync_iterations()
   async_iterations = _test_iterations()
 
+  runtime = None
   try:
     options = _image_options(image)
     options.decode_type = pcie.BoxDecodeType.YoloV8
@@ -378,7 +387,8 @@ def test_image_boxdecode_run_yolov8():
     options.nms_iou_threshold = float(_env("SIMAPCIE_BOXDECODE_NMS_IOU_THRESHOLD", "0.45"))
     options.top_k = top_k
 
-    host.init_pipeline(str(model), options, _readiness_timeout_ms())
+    runtime = pcie.Model(str(model), options, _connection())
+    runtime.build(_readiness_timeout_ms())
 
     image_tensor = pcie.Tensor.from_numpy(
         image,
@@ -387,10 +397,10 @@ def test_image_boxdecode_run_yolov8():
     )
 
     def push_once():
-      assert host.push(image_tensor)
+      assert runtime.push(image_tensor)
 
     def pull_once():
-      outputs = host.pull(_pull_timeout_ms())
+      outputs = runtime.pull(_pull_timeout_ms())
 
       assert outputs is not None
       records = _parse_bbox_payload(outputs, image.shape[1], image.shape[0], top_k)
@@ -402,4 +412,5 @@ def test_image_boxdecode_run_yolov8():
     _run_sync_push_pull(push_once, pull_once, sync_iterations)
     _run_async_push_pull(push_once, pull_once, async_iterations)
   finally:
-    host.stop()
+    if runtime is not None:
+      runtime.close()

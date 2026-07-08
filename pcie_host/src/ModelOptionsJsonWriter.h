@@ -1,6 +1,6 @@
 #pragma once
 
-#include "simaai/neat/pcie/SimaPCIeHost.h"
+#include "simaai/neat/pcie/Model.h"
 
 #include <optional>
 #include <string>

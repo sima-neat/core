@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a minimal wheel from the staged pypciehost package."""
+"""Build a minimal wheel from the staged pyneatpcie package."""
 
 from __future__ import annotations
 
@@ -50,11 +50,11 @@ def iter_payload_files(package_root: Path) -> list[Path]:
 
 
 def write_wheel(stage_dir: Path, output_dir: Path, version: str) -> Path:
-  package_root = stage_dir / "pypciehost"
+  package_root = stage_dir / "pyneatpcie"
   if not package_root.is_dir():
     raise SystemExit(f"missing staged package: {package_root}")
 
-  dist_name = normalize_distribution("pypciehost")
+  dist_name = normalize_distribution("pyneatpcie")
   dist_info = f"{dist_name}-{version}.dist-info"
   tag = f"{wheel_python_tag()}-{wheel_abi_tag()}-{wheel_platform_tag()}"
   wheel_name = f"{dist_name}-{version}-{tag}.whl"
@@ -68,7 +68,7 @@ def write_wheel(stage_dir: Path, output_dir: Path, version: str) -> Path:
 
   metadata = (
       "Metadata-Version: 2.1\n"
-      "Name: pypciehost\n"
+      "Name: pyneatpcie\n"
       f"Version: {version}\n"
       "Summary: Python bindings for the SiMa NEAT PCIe host co-processor API\n"
       "Requires-Python: >=3.8\n"
@@ -76,7 +76,7 @@ def write_wheel(stage_dir: Path, output_dir: Path, version: str) -> Path:
   ).encode("utf-8")
   wheel = (
       "Wheel-Version: 1.0\n"
-      "Generator: pypciehost build_wheel.py\n"
+      "Generator: pyneatpcie build_wheel.py\n"
       "Root-Is-Purelib: false\n"
       f"Tag: {tag}\n"
   ).encode("utf-8")

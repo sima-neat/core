@@ -9,6 +9,7 @@ BUILD_DIR="build"
 BUILD_TYPE="Release"
 BUILD_TESTS="OFF"
 BUILD_PYTHON="OFF"
+BUILD_EXAMPLES="OFF"
 CLEAN_BUILD="OFF"
 MAKE_DEB="ON"
 INSTALL_DEPS_ONLY="OFF"
@@ -36,6 +37,7 @@ Options:
   --all               Build tests, Python bindings, and DEB packages
   --clean             Remove build directory before configure
   --with-tests        Build unit and hardware tests
+  --with-examples     Build PCIe host C++ examples
   --python            Build Python bindings and package a Python wheel
   --no-deb            Skip DEB package generation
   --install-deps-only Install PCIe host build dependencies, then exit
@@ -112,6 +114,7 @@ while [[ $# -gt 0 ]]; do
     --all)
       BUILD_TESTS="ON"
       BUILD_PYTHON="ON"
+      BUILD_EXAMPLES="ON"
       MAKE_DEB="ON"
       shift
       ;;
@@ -121,6 +124,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-tests)
       BUILD_TESTS="ON"
+      shift
+      ;;
+    --with-examples)
+      BUILD_EXAMPLES="ON"
       shift
       ;;
     --python)
@@ -402,7 +409,7 @@ ensure_artifact_downloaded() {
 
 generate_package_metadata() {
   mkdir -p "${PACKAGE_DIR}"
-  rm -f "${PACKAGE_DIR}/metadata.json" "${PACKAGE_DIR}/metadata-pypciehost.json"
+  rm -f "${PACKAGE_DIR}/metadata.json" "${PACKAGE_DIR}/metadata-pyneatpcie.json"
 
   local git_commit="${GITHUB_SHA:-}"
   if [[ -z "${git_commit}" ]] &&
@@ -461,7 +468,7 @@ runtime_debs = sorted(
     if not path.name.startswith("sima-pcie-host-dev_"))
 dev_debs = sorted(package_dir.glob(f"sima-pcie-host-dev_*_{deb_arch}.deb"))
 extras_tars = sorted(package_dir.glob(f"sima-pcie-host-*-Linux-{deb_arch}-extras.tar.gz"))
-wheels = sorted(package_dir.glob("pypciehost-*.whl"))
+wheels = sorted(package_dir.glob("pyneatpcie-*.whl"))
 installer = package_dir / "install_pciehost.sh"
 
 full_paths = runtime_debs + dev_debs + extras_tars + wheels
@@ -487,8 +494,8 @@ if runtime_debs and full_paths:
     post_message = "[bold]sima-pcie-host installed successfully.[/bold]\n"
     if wheels:
         post_message = (
-            "[bold]sima-pcie-host and pypciehost installed successfully.[/bold]\n"
-            "Activate pypciehost with: source ~/pypciehost/bin/activate\n"
+            "[bold]sima-pcie-host and pyneatpcie installed successfully.[/bold]\n"
+            "Activate pyneatpcie with: source ~/pyneatpcie/bin/activate\n"
         )
 
     metadata = {
@@ -533,18 +540,18 @@ if runtime_debs and full_paths:
 
     if len(wheels) == 1:
         wheel = wheels[0].name
-        pypciehost_metadata = dict(metadata)
-        pypciehost_metadata.update({
-            "name": f"gh:sima-neat/pypciehost/{deb_arch}",
-            "description": f"pypciehost wheel for SiMa.ai NEAT PCIe host ({deb_arch})",
+        pyneatpcie_metadata = dict(metadata)
+        pyneatpcie_metadata.update({
+            "name": f"gh:sima-neat/pyneatpcie/{deb_arch}",
+            "description": f"pyneatpcie wheel for SiMa.ai NEAT PCIe host ({deb_arch})",
             "resources": [wheel],
             "resources-checksum": {wheel: resource_checksums[wheel]},
             "installation": {
                 "script": ":",
                 "post-message": (
-                    "[bold]pypciehost wheel downloaded.[/bold]\n"
+                    "[bold]pyneatpcie wheel downloaded.[/bold]\n"
                     f"Install it with: python3 -m pip install ./{wheel}\n"
-                    "pypciehost requires the matching sima-pcie-host runtime package. "
+                    "pyneatpcie requires the matching sima-pcie-host runtime package. "
                     f"If it is not installed yet, run: sima-cli neat install core/pciehost/{deb_arch}\n"
                 ),
             },
@@ -559,8 +566,8 @@ if runtime_debs and full_paths:
                 "install": "1MB",
             },
         })
-        (package_dir / "metadata-pypciehost.json").write_text(
-            json.dumps(pypciehost_metadata, indent=2) + "\n", encoding="utf-8")
+        (package_dir / "metadata-pyneatpcie.json").write_text(
+            json.dumps(pyneatpcie_metadata, indent=2) + "\n", encoding="utf-8")
 PY
 }
 
@@ -589,6 +596,7 @@ echo "========================================"
 echo "Build type      : ${BUILD_TYPE}"
 echo "Build tests     : ${BUILD_TESTS}"
 echo "Build Python    : ${BUILD_PYTHON}"
+echo "Build examples  : ${BUILD_EXAMPLES}"
 echo "Generate DEB    : ${MAKE_DEB}"
 echo "Clean build     : ${CLEAN_BUILD}"
 echo "Build dir       : ${BUILD_DIR}"
@@ -641,6 +649,7 @@ cmake -S . -B "${BUILD_DIR}" \
   -DCMAKE_INSTALL_LIBDIR="lib/${HOST_MULTIARCH}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \
+  -DSIMAPCIE_BUILD_EXAMPLES="${BUILD_EXAMPLES}" \
   -DSIMAPCIE_BUILD_PYTHON="${BUILD_PYTHON}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
   -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
@@ -680,8 +689,8 @@ if [[ "${BUILD_PYTHON}" == "ON" ]]; then
   echo
   echo "Building PCIe host Python wheel..."
   python_stage="${BUILD_DIR_ABS}/python/stage"
-  rm -f "${PACKAGE_DIR}"/pypciehost-"${PACKAGE_VERSION}"-*.whl \
-    "${PACKAGE_DIR}"/pypciehost-"${PACKAGE_VERSION}"-*.whl.sha256 \
+  rm -f "${PACKAGE_DIR}"/pyneatpcie-"${PACKAGE_VERSION}"-*.whl \
+    "${PACKAGE_DIR}"/pyneatpcie-"${PACKAGE_VERSION}"-*.whl.sha256 \
     "${PACKAGE_DIR}"/simapciehost-"${PACKAGE_VERSION}"-*.whl \
     "${PACKAGE_DIR}"/simapciehost-"${PACKAGE_VERSION}"-*.whl.sha256
   rm -rf "${python_stage}"
@@ -704,6 +713,6 @@ echo " Build completed successfully"
 echo "========================================"
 ls -lh "${PACKAGE_DIR}"/*.deb 2>/dev/null || true
 ls -lh "${PACKAGE_DIR}"/*-extras.tar.gz "${PACKAGE_DIR}"/*-extras.tar.gz.sha256 2>/dev/null || true
-ls -lh "${PACKAGE_DIR}"/pypciehost-*.whl 2>/dev/null || true
+ls -lh "${PACKAGE_DIR}"/pyneatpcie-*.whl 2>/dev/null || true
 ls -lh "${PACKAGE_DIR}"/metadata*.json 2>/dev/null || true
 ls -lh "${INSTALLER_STAGE}" 2>/dev/null || true

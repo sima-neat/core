@@ -1,4 +1,4 @@
-#include "simaai/neat/pcie/SimaPCIeHost.h"
+#include "simaai/neat/pcie/Model.h"
 
 #include "HostPcieChannel.h"
 #include "ModelOptionsJsonWriter.h"
@@ -25,20 +25,6 @@ namespace {
 
 constexpr auto kPostReadyStabilizationDelay = std::chrono::seconds(5);
 
-PipelineState state_from_remote(const std::string& state) {
-  if (state == "starting")
-    return PipelineState::Starting;
-  if (state == "ready")
-    return PipelineState::Ready;
-  if (state == "failed")
-    return PipelineState::Failed;
-  if (state == "stopping")
-    return PipelineState::Stopping;
-  if (state == "exited")
-    return PipelineState::Exited;
-  return PipelineState::Uninitialized;
-}
-
 std::string write_temp_model_options(const std::string& contents) {
   std::string tmpl = (fs::temp_directory_path() / "sima-neat-pcie-options-XXXXXX.json").string();
   std::vector<char> chars(tmpl.begin(), tmpl.end());
@@ -62,46 +48,55 @@ std::string write_temp_model_options(const std::string& contents) {
 
 } // namespace
 
-class SimaPCIeHost::Impl {
+class Model::Impl {
 public:
-  explicit Impl(ConnectionOptions connection)
-      : connection_(std::move(connection)), remote_(connection_) {}
+  Impl(std::string model_path, ModelOptions options, ConnectionOptions connection)
+      : model_path_(std::move(model_path)), options_(std::move(options)),
+        connection_(std::move(connection)), remote_(connection_) {
+    validate_queue(connection_.queue);
+    validate_max_inflight(connection_.max_inflight);
+    (void)internal::write_model_options_json(options_);
+    facts_ = internal::read_model_facts(model_path_);
+    model_info_ = internal::to_public_model_info(facts_);
+  }
 
   ~Impl() noexcept {
     try {
-      stop();
+      close();
     } catch (...) {
     }
   }
 
-  ModelInfo load_metadata(const std::string& model_path, const ModelOptions& options) {
+  ModelInfo info() const {
     std::lock_guard<std::mutex> lock(mu_);
-    if (state_ == PipelineState::Ready || channel_.is_running()) {
-      throw std::runtime_error("cannot load metadata while PCIe pipeline is running");
-    }
-    (void)internal::write_model_options_json(options);
-    facts_ = internal::read_model_facts(model_path);
-    model_info_ = internal::to_public_model_info(facts_);
     return model_info_;
   }
 
-  ModelInfo init_pipeline(const std::string& model_path, const ModelOptions& options,
-                          const int readiness_timeout_ms) {
+  std::vector<TensorInfo> input_specs() const {
     std::lock_guard<std::mutex> lock(mu_);
-    validate_queue(connection_.queue);
-    validate_max_inflight(connection_.max_inflight);
+    return model_info_.inputs;
+  }
+
+  std::vector<TensorInfo> output_specs() const {
+    std::lock_guard<std::mutex> lock(mu_);
+    return model_info_.outputs;
+  }
+
+  void build(const int readiness_timeout_ms) {
+    std::lock_guard<std::mutex> lock(mu_);
     if (readiness_timeout_ms <= 0) {
       throw std::invalid_argument("readiness_timeout_ms must be positive");
     }
-    if (state_ == PipelineState::Ready || channel_.is_running()) {
-      stop_locked();
+    if (state_ == PipelineState::Ready && channel_.is_running()) {
+      return;
+    }
+    if (channel_.is_running() || state_ == PipelineState::Ready ||
+        state_ == PipelineState::Starting) {
+      close_locked();
     }
 
-    auto model_options = internal::write_model_options_json(options);
-
-    facts_ = internal::read_model_facts(model_path);
-    model_info_ = internal::to_public_model_info(facts_);
-    const std::string remote_model_path = remote_.upload_file(model_path);
+    auto model_options = internal::write_model_options_json(options_);
+    const std::string remote_model_path = remote_.upload_file(model_path_);
 
     std::optional<std::string> remote_options_path;
     std::string local_options_path;
@@ -133,29 +128,16 @@ public:
       }
       throw;
     }
-    return model_info_;
   }
 
-  void stop() {
+  bool running() const {
     std::lock_guard<std::mutex> lock(mu_);
-    stop_locked();
+    return state_ == PipelineState::Ready && channel_.is_running();
   }
 
-  Status status() const {
+  void close() {
     std::lock_guard<std::mutex> lock(mu_);
-    Status out;
-    out.state = state_;
-    out.queue = connection_.queue;
-    if (state_ == PipelineState::Ready || state_ == PipelineState::Starting ||
-        state_ == PipelineState::Failed || state_ == PipelineState::Stopping) {
-      const auto remote_status = remote_.read_status(connection_.queue);
-      out.message = remote_status.message;
-      out.error_code = remote_status.error_code;
-      if (!remote_status.state.empty()) {
-        out.state = state_from_remote(remote_status.state);
-      }
-    }
-    return out;
+    close_locked();
   }
 
   bool push(const Tensor& tensor) {
@@ -204,8 +186,8 @@ private:
   }
 
   void ensure_ready() const {
-    if (state_ != PipelineState::Ready) {
-      throw std::runtime_error("PCIe host is not ready");
+    if (state_ != PipelineState::Ready || !channel_.is_running()) {
+      throw std::runtime_error("PCIe model is not built; call model.build() before run/push/pull");
     }
   }
 
@@ -222,7 +204,7 @@ private:
     return std::move(*result);
   }
 
-  void stop_locked() {
+  void close_locked() {
     channel_.stop();
     if (state_ == PipelineState::Ready || state_ == PipelineState::Starting ||
         state_ == PipelineState::Failed || state_ == PipelineState::Stopping) {
@@ -232,6 +214,8 @@ private:
     }
   }
 
+  std::string model_path_;
+  ModelOptions options_;
   ConnectionOptions connection_;
   internal::RemoteRuntime remote_;
   internal::HostPcieChannel channel_;
@@ -242,45 +226,53 @@ private:
   ModelInfo model_info_;
 };
 
-SimaPCIeHost::SimaPCIeHost(ConnectionOptions connection)
-    : impl_(std::make_unique<Impl>(std::move(connection))) {}
+Model::Model(std::string model_path, ModelOptions options, ConnectionOptions connection)
+    : impl_(std::make_unique<Impl>(std::move(model_path), std::move(options),
+                                   std::move(connection))) {}
 
-SimaPCIeHost::~SimaPCIeHost() noexcept = default;
+Model::~Model() noexcept = default;
 
-ModelInfo SimaPCIeHost::load_metadata(const std::string& model_path, const ModelOptions& options) {
-  return impl_->load_metadata(model_path, options);
+ModelInfo Model::info() const {
+  return impl_->info();
 }
 
-ModelInfo SimaPCIeHost::init_pipeline(const std::string& model_path, const ModelOptions& options,
-                                      const int readiness_timeout_ms) {
-  return impl_->init_pipeline(model_path, options, readiness_timeout_ms);
+std::vector<TensorInfo> Model::input_specs() const {
+  return impl_->input_specs();
 }
 
-void SimaPCIeHost::stop() {
-  impl_->stop();
+std::vector<TensorInfo> Model::output_specs() const {
+  return impl_->output_specs();
 }
 
-Status SimaPCIeHost::status() const {
-  return impl_->status();
+void Model::build(const int readiness_timeout_ms) {
+  impl_->build(readiness_timeout_ms);
 }
 
-bool SimaPCIeHost::push(const Tensor& tensor) {
+bool Model::running() const {
+  return impl_->running();
+}
+
+void Model::close() {
+  impl_->close();
+}
+
+bool Model::push(const Tensor& tensor) {
   return impl_->push(tensor);
 }
 
-bool SimaPCIeHost::push(const TensorList& tensors) {
+bool Model::push(const TensorList& tensors) {
   return impl_->push(tensors);
 }
 
-std::optional<TensorList> SimaPCIeHost::pull(const int timeout_ms) {
+std::optional<TensorList> Model::pull(const int timeout_ms) {
   return impl_->pull(timeout_ms);
 }
 
-TensorList SimaPCIeHost::run(const Tensor& tensor, const int timeout_ms) {
+TensorList Model::run(const Tensor& tensor, const int timeout_ms) {
   return impl_->run(tensor, timeout_ms);
 }
 
-TensorList SimaPCIeHost::run(const TensorList& tensors, const int timeout_ms) {
+TensorList Model::run(const TensorList& tensors, const int timeout_ms) {
   return impl_->run(tensors, timeout_ms);
 }
 

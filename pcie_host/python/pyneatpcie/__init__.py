@@ -53,13 +53,13 @@ _configure_runtime_environment()
 if _os.name == "posix":
   _old_dl_flags = _sys.getdlopenflags()
   _sys.setdlopenflags(_os.RTLD_NOW | _os.RTLD_GLOBAL)
-  from . import _pypciehost_core as _core
+  from . import _pyneatpcie_core as _core
   _sys.setdlopenflags(_old_dl_flags)
   del _old_dl_flags
 else:
-  from . import _pypciehost_core as _core
+  from . import _pyneatpcie_core as _core
 
-from ._pypciehost_core import *
+from ._pyneatpcie_core import *
 
 __version__ = _core.__version__
 

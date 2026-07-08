@@ -1,4 +1,4 @@
-#include <simaai/neat/pcie/SimaPCIeHost.h>
+#include <simaai/neat/pcie/Model.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -100,8 +100,8 @@ int main(int argc, char** argv) {
 
     std::cout << "model=" << args.model << "\n\n";
 
-    pcie::SimaPCIeHost host;
-    print_model_info("tensor route", host.load_metadata(args.model));
+    pcie::Model model(args.model);
+    print_model_info("tensor route", model.info());
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "ERROR: " << e.what() << "\n";

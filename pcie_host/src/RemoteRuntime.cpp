@@ -206,9 +206,7 @@ void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   }
   if (!connection_.card_gst_debug.empty()) {
     ss << "GST_DEBUG=" << SshRunner::shell_escape(connection_.card_gst_debug) << " ";
-    if (connection_.card_gst_debug_no_color) {
-      ss << "GST_DEBUG_NO_COLOR=1 ";
-    }
+    ss << "GST_DEBUG_NO_COLOR=1 ";
     const std::string debug_file = connection_.card_gst_debug_file.empty()
                                        ? default_card_gst_debug_file(queue)
                                        : connection_.card_gst_debug_file;

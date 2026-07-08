@@ -23,15 +23,15 @@ Public headers install under:
 Main type:
 
 ```cpp
-#include <simaai/neat/pcie/SimaPCIeHost.h>
+#include <simaai/neat/pcie/Model.h>
 
-simaai::neat::pcie::SimaPCIeHost host;
+simaai::neat::pcie::Model model("model.tar.gz");
 ```
 
 The API uses PCIe-host-owned `ModelOptions`, `Tensor`, and `TensorList` types.
 Applications that are already built only need the `sima-pcie-host` runtime
 package; applications compiling against this API use `sima-pcie-host-dev`.
-SimaPCIeHost serializes only the restricted WP9 model-options schema before
+`pcie::Model` serializes only the restricted WP9 model-options schema before
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
 
@@ -69,7 +69,7 @@ pcie-setup.sh --password '<bootstrap-password>'
 ```
 
 Password/`sshpass` is only a bootstrap path for installing the key. Runtime
-SimaPCIeHost APIs use passwordless SSH. If `~/.ssh/sima_neat_pcie_ed25519` exists,
+PCIe model APIs use passwordless SSH. If `~/.ssh/sima_neat_pcie_ed25519` exists,
 the PCIe host automatically passes it to `ssh`/`scp`; otherwise it falls back to
 the user's normal SSH configuration.
 
@@ -83,9 +83,10 @@ struct ConnectionOptions {
   int card_id = 0;            // PCIe card/plugin index; default host is 10.0.<card_id>.2.
   std::string user = "sima";
   int queue = 0;              // PCIe queue, 0..5.
+  int max_inflight = 0;
+  std::string card_env;
   std::string card_gst_debug; // Optional card-side GST_DEBUG spec for pcie-pipeline-builder.
   std::string card_gst_debug_file;
-  bool card_gst_debug_no_color = true;
 };
 ```
 
@@ -108,7 +109,7 @@ The normal production launch path is unchanged when `card_gst_debug` is empty.
 
 ### ModelInfo
 
-Returned by `load_metadata()` and `init_pipeline()`.
+Returned by `Model::info()`.
 
 ```cpp
 struct TensorInfo {
@@ -135,41 +136,61 @@ Single `Tensor` overloads are convenience wrappers. Image input is represented
 as a `Tensor` with `image_format` and optional plane metadata set, not as a
 separate PCIe-specific payload type.
 
-### Status
+Customer input construction follows the same simple shape as core:
 
 ```cpp
-enum class PipelineState {
-  Uninitialized,
-  Starting,
-  Ready,
-  Failed,
-  Stopping,
-  Exited,
-};
+// Images: easiest path. Continuous cv::Mat data is wrapped; non-contiguous Mat
+// input is cloned so the PCIe payload remains valid.
+cv::Mat bgr = cv::imread("image.jpg");
+pcie::TensorList image_output = host.run(bgr);
 
-struct Status {
-  PipelineState state = PipelineState::Uninitialized;
-  int queue = -1;
-  std::string message;
-  std::string error_code;
-};
+// Normal tensors: safe owning path. Move the vector to avoid the caller-side copy.
+std::vector<float> input(640 * 640 * 3);
+pcie::Tensor tensor =
+    pcie::Tensor::from_vector(std::move(input), {640, 640, 3}, "images");
+pcie::TensorList tensor_output = host.run(tensor);
+
+// Performance tensors: zero-copy view of caller-owned memory. The shared owner
+// keeps the backing allocation alive until PCIe/GStreamer releases the buffer.
+auto storage = std::make_shared<std::vector<float>>(640 * 640 * 3);
+pcie::Tensor fast_tensor = pcie::Tensor::from_external(
+    storage->data(), storage->size(), storage, {640, 640, 3}, "images");
+pcie::TensorList fast_output = host.run(fast_tensor);
 ```
 
-### SimaPCIeHost Methods
+For multi-input models, prefer one packed backing allocation and one tensor view
+per logical input:
 
 ```cpp
-class SimaPCIeHost {
+auto packed = std::make_shared<std::vector<float>>(input0_count + input1_count);
+pcie::Tensor input0 =
+    pcie::Tensor::from_external(packed->data(), packed->size(), packed, shape0, "input_0");
+pcie::Tensor input1 = pcie::Tensor::from_external(
+    packed->data(), packed->size(), packed, shape1, "input_1",
+    static_cast<std::int64_t>(input0_count * sizeof(float)));
+host.push({input0, input1});
+```
+
+Python mirrors core: `Tensor.from_numpy(array)` defaults to zero-copy for
+C-contiguous NumPy arrays, and `Tensor.from_numpy(array, copy=True)` makes an
+owned copy when isolation is preferred.
+
+### Model Methods
+
+```cpp
+class Model {
 public:
-  explicit SimaPCIeHost(ConnectionOptions connection = {});
+  Model(std::string model_path,
+        ModelOptions options = {},
+        ConnectionOptions connection = {});
 
-  ModelInfo load_metadata(const std::string& model_path,
-                          const ModelOptions& options = {});
-  ModelInfo init_pipeline(const std::string& model_path,
-                          const ModelOptions& options = {},
-                          int readiness_timeout_ms = 180000);
+  ModelInfo info() const;
+  std::vector<TensorInfo> input_specs() const;
+  std::vector<TensorInfo> output_specs() const;
 
-  void stop();
-  Status status() const;
+  void build(int readiness_timeout_ms = 180000);
+  bool running() const;
+  void close();
 
   bool push(const Tensor& tensor);
   bool push(const TensorList& tensors);
@@ -179,23 +200,23 @@ public:
 };
 ```
 
-`load_metadata(...)` parses the local model archive, validates representable
-options, updates cached model information, and does not touch the card.
-Metadata uses the logical full-model tensor contract, commonly `FP32` when
-quant/cast and dequant/postcast stages are present. `init_pipeline(...)` does
-the same metadata resolution plus model upload, card runtime startup, readiness
-wait, and local host channel setup.
+The constructor parses the local model archive, validates representable options,
+and caches model information. It does not touch the card. Metadata uses the
+logical full-model tensor contract, commonly `FP32` when quant/cast and
+dequant/postcast stages are present. `build(...)` performs model upload, card
+runtime startup, readiness wait, and local host channel setup.
 
 `run(...)` is the simplest synchronous API and is equivalent to `push(...)`
-followed by `pull()`. For pipelined use, call `push(...)` and `pull()` directly.
-The host channel receives asynchronously from `appsink` and stores results in an
-internal queue.
+followed by `pull()`. `run(...)`, `push(...)`, and `pull()` require a successful
+`build()` first and fail clearly if the model has not been built. For pipelined
+use, call `push(...)` and `pull()` directly. The host channel receives
+asynchronously from `appsink` and stores results in an internal queue.
 
-During bring-up, `init_pipeline()` keeps an internal five-second stabilization delay
+During bring-up, `build()` keeps an internal five-second stabilization delay
 after the card status reaches `ready`, matching the old PipelineSession host
 behavior. This is not exposed as a public option.
 
-`stop()` sends `SIGTERM` to the card-side builder and waits briefly for a clean
+`close()` sends `SIGTERM` to the card-side builder and waits briefly for a clean
 exit. It does not send `SIGKILL`; if the remote process ignores `SIGTERM`, the
 PID file remains and the queue stays visibly busy for diagnosis.
 
@@ -205,14 +226,15 @@ PID file remains and the queue stays visibly busy for diagnosis.
 namespace pcie = simaai::neat::pcie;
 
 pcie::ConnectionOptions conn;
-conn.card_host = "10.0.0.2";
+conn.card_id = 0;
 conn.queue = 0;
 
-pcie::SimaPCIeHost host(conn);
-pcie::ModelInfo model_info = host.init_pipeline("model.tar.gz");
+pcie::Model model("model.tar.gz", {}, conn);
+pcie::ModelInfo model_info = model.info();
 pcie::Tensor input = make_input_tensor_somehow(model_info.inputs.front());
-pcie::TensorList output = host.run(input);
-host.stop();
+model.build();
+pcie::TensorList output = model.run(input);
+model.close();
 ```
 
 ### Minimal Image Example
@@ -223,12 +245,12 @@ namespace pcie = simaai::neat::pcie;
 pcie::ModelOptions options;
 options.preprocess.kind = pcie::InputKind::Image;
 
-pcie::SimaPCIeHost host;
-host.init_pipeline("model.tar.gz", options);
+pcie::Model model("model.tar.gz", options);
+model.build();
 
 pcie::Tensor image = make_rgb_image_tensor_somehow(rgb, 1920, 1080);
-pcie::TensorList output = host.run(image, 5000);
-host.stop();
+pcie::TensorList output = model.run(image, 5000);
+model.close();
 ```
 
 ## Build
@@ -278,7 +300,7 @@ dist/install_pciehost.sh
 
 The installer looks for the PCIe host debs in the same directory as the script.
 It runs `pcie-setup.sh` at the end. Setup is interactive by default
-and can prompt while provisioning passwordless SSH for `init_pipeline()`. Pass
+and can prompt while provisioning passwordless SSH for `Model::build()`. Pass
 extra setup arguments when discovery is not available:
 
 ```bash

@@ -7,23 +7,23 @@ source "${SCRIPT_DIR}/common.sh"
 sanitize_path
 
 load_state
-python_venv="${SIMAPCIE_PYTHON_VENV:-${HOME}/pypciehost}"
+python_venv="${SIMAPCIE_PYTHON_VENV:-${HOME}/pyneatpcie}"
 python_bin="${SIMAPCIE_PYTHON_BIN:-${python_venv}/bin/python}"
 pytest_dir="${WORKSPACE}/pcie_host/python/tests"
 
 if [[ ! -x "${python_bin}" ]]; then
-  echo "ERROR: expected pypciehost Python at ${python_bin}" >&2
-  echo "       The PCIe host package should install pypciehost via install_pciehost.sh --python." >&2
+  echo "ERROR: expected pyneatpcie Python at ${python_bin}" >&2
+  echo "       The PCIe host package should install pyneatpcie via install_pciehost.sh --python." >&2
   exit 1
 fi
 if [[ ! -d "${pytest_dir}" ]]; then
-  echo "ERROR: pypciehost pytest directory not found: ${pytest_dir}" >&2
+  echo "ERROR: pyneatpcie pytest directory not found: ${pytest_dir}" >&2
   exit 1
 fi
 
 "${python_bin}" - <<'PY'
-import pypciehost
-print(f"pypciehost={pypciehost.__version__}")
+import pyneatpcie
+print(f"pyneatpcie={pyneatpcie.__version__}")
 PY
 
 "${python_bin}" -m pip install pytest pillow numpy

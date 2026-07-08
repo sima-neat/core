@@ -1,4 +1,6 @@
-#include <simaai/neat/pcie/SimaPCIeHost.h>
+#include <simaai/neat/pcie/Model.h>
+
+#include "SignalCloseGuard.h"
 
 #include <opencv2/imgcodecs.hpp>
 
@@ -141,24 +143,6 @@ Args parse_args(int argc, char** argv) {
   return args;
 }
 
-std::string pipeline_state_name(const pcie::PipelineState state) {
-  switch (state) {
-  case pcie::PipelineState::Uninitialized:
-    return "Uninitialized";
-  case pcie::PipelineState::Starting:
-    return "Starting";
-  case pcie::PipelineState::Ready:
-    return "Ready";
-  case pcie::PipelineState::Failed:
-    return "Failed";
-  case pcie::PipelineState::Stopping:
-    return "Stopping";
-  case pcie::PipelineState::Exited:
-    return "Exited";
-  }
-  return "Unknown";
-}
-
 std::string shape_string(const std::vector<std::int64_t>& shape) {
   std::string out = "[";
   for (std::size_t i = 0; i < shape.size(); ++i) {
@@ -278,18 +262,6 @@ void print_outputs(const pcie::TensorList& outputs) {
   }
 }
 
-void print_status(const char* label, const pcie::Status& status) {
-  std::cout << label << ": state=" << pipeline_state_name(status.state)
-            << " queue=" << status.queue;
-  if (!status.message.empty()) {
-    std::cout << " message=\"" << status.message << "\"";
-  }
-  if (!status.error_code.empty()) {
-    std::cout << " error_code=\"" << status.error_code << "\"";
-  }
-  std::cout << "\n";
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -311,7 +283,7 @@ int main(int argc, char** argv) {
 
     if (args.opencv_overload) {
 #if !defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-      throw std::runtime_error("installed SimaPCIeHost headers do not provide the OpenCV overload; "
+      throw std::runtime_error("installed pcie::Model headers do not provide the OpenCV overload; "
                                "rebuild/reinstall sima-pcie-host-dev and rebuild this test");
 #endif
     }
@@ -343,9 +315,6 @@ int main(int argc, char** argv) {
     cv::Mat bgr = load_bgr_image(args.image);
     print_mat(bgr);
 
-    pcie::SimaPCIeHost host(conn);
-    print_status("initial status", host.status());
-
     std::cout << "preprocess resize\n";
     std::cout << "  enabled=true mode=letterbox target=core-inferred\n";
 
@@ -356,15 +325,19 @@ int main(int argc, char** argv) {
     model_options.preprocess.resize.enable = pcie::AutoFlag::On;
     model_options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
 
+    pcie::Model model(args.model, model_options, conn);
+    pcie::test::SignalCloseGuard signal_guard(model);
+    std::cout << "initial running=" << (model.running() ? "true" : "false") << "\n";
+
     std::cout << "loading image metadata and starting card/host pipelines...\n";
     const auto started = std::chrono::steady_clock::now();
-    const pcie::ModelInfo info =
-        host.init_pipeline(args.model, model_options, args.readiness_timeout_ms);
+    model.build(args.readiness_timeout_ms);
+    const pcie::ModelInfo info = model.info();
     const auto init_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                              std::chrono::steady_clock::now() - started)
                              .count();
-    std::cout << "init_pipeline completed in " << init_ms << " ms\n";
-    print_status("ready status", host.status());
+    std::cout << "build completed in " << init_ms << " ms\n";
+    std::cout << "ready running=" << (model.running() ? "true" : "false") << "\n";
     print_model_info(info);
 
     pcie::Tensor image;
@@ -385,7 +358,7 @@ int main(int argc, char** argv) {
         if (log_iteration) {
           std::cout << "push image with OpenCV overload...\n";
         }
-        if (!host.push(bgr)) {
+        if (!model.push(bgr)) {
           throw std::runtime_error("sync push returned false at iteration " +
                                    std::to_string(iteration));
         }
@@ -394,7 +367,7 @@ int main(int argc, char** argv) {
         if (log_iteration) {
           std::cout << "push image tensor...\n";
         }
-        if (!host.push(image)) {
+        if (!model.push(image)) {
           throw std::runtime_error("sync push returned false at iteration " +
                                    std::to_string(iteration));
         }
@@ -403,7 +376,7 @@ int main(int argc, char** argv) {
       if (log_iteration) {
         std::cout << "pull outputs with timeout_ms=" << args.pull_timeout_ms << "...\n";
       }
-      const auto result = host.pull(args.pull_timeout_ms);
+      const auto result = model.pull(args.pull_timeout_ms);
       if (!result.has_value()) {
         throw std::runtime_error("sync pull timed out without a result at iteration " +
                                  std::to_string(iteration));
@@ -421,12 +394,12 @@ int main(int argc, char** argv) {
         }
         if (args.opencv_overload) {
 #if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-          if (!host.push(bgr)) {
+          if (!model.push(bgr)) {
             throw std::runtime_error("async push returned false at iteration " +
                                      std::to_string(iteration));
           }
 #endif
-        } else if (!host.push(image)) {
+        } else if (!model.push(image)) {
           throw std::runtime_error("async push returned false at iteration " +
                                    std::to_string(iteration));
         }
@@ -437,7 +410,7 @@ int main(int argc, char** argv) {
         if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
           std::cout << "async consumer " << iteration << "/" << args.iterations << "\n";
         }
-        const auto result = host.pull(args.pull_timeout_ms);
+        const auto result = model.pull(args.pull_timeout_ms);
         if (!result.has_value()) {
           throw std::runtime_error("async pull timed out without a result at iteration " +
                                    std::to_string(iteration));
@@ -448,8 +421,8 @@ int main(int argc, char** argv) {
     consumer.get();
 
     std::cout << "stopping...\n";
-    host.stop();
-    print_status("final status", host.status());
+    model.close();
+    std::cout << "final running=" << (model.running() ? "true" : "false") << "\n";
     std::cout << "done\n";
     return 0;
   } catch (const std::exception& e) {

@@ -4,7 +4,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
-#include <simaai/neat/pcie/SimaPCIeHost.h>
+#include <simaai/neat/pcie/Model.h>
 
 #include <Python.h>
 
@@ -21,6 +21,23 @@ using namespace nb::literals;
 namespace pcie = simaai::neat::pcie;
 
 namespace {
+
+struct PythonObjectHolder {
+  explicit PythonObjectHolder(PyObject* object) : object(object) {
+    Py_XINCREF(object);
+  }
+
+  ~PythonObjectHolder() {
+    if (!object) {
+      return;
+    }
+    PyGILState_STATE state = PyGILState_Ensure();
+    Py_DECREF(object);
+    PyGILState_Release(state);
+  }
+
+  PyObject* object = nullptr;
+};
 
 std::size_t dtype_bytes(const pcie::TensorDType dtype) {
   switch (dtype) {
@@ -153,8 +170,8 @@ pcie::Tensor tensor_from_owned_bytes(std::vector<std::uint8_t> data, pcie::Tenso
   return tensor;
 }
 
-pcie::Tensor tensor_from_numpy(nb::object array, const pcie::PixelFormat image_format,
-                               const std::string& route_name) {
+pcie::Tensor tensor_from_numpy_copy(nb::object array, const pcie::PixelFormat image_format,
+                                    const std::string& route_name) {
   nb::module_ np = nb::module_::import_("numpy");
   nb::object contiguous = np.attr("ascontiguousarray")(array);
   const auto dtype_name = nb::cast<std::string>(nb::str(contiguous.attr("dtype").attr("name")));
@@ -182,6 +199,62 @@ pcie::Tensor tensor_from_numpy(nb::object array, const pcie::PixelFormat image_f
   PyBuffer_Release(&view);
 
   return tensor_from_owned_bytes(std::move(data), dtype, shape, strides, image_format, route_name);
+}
+
+pcie::Tensor tensor_from_numpy_zero_copy(nb::object array, const pcie::PixelFormat image_format,
+                                         const std::string& route_name) {
+  nb::module_ np = nb::module_::import_("numpy");
+  nb::object view_array = np.attr("asarray")(array);
+  if (!nb::cast<bool>(view_array.attr("flags").attr("c_contiguous"))) {
+    throw std::runtime_error("Tensor.from_numpy(copy=False) requires a C-contiguous NumPy array");
+  }
+
+  const auto dtype_name = nb::cast<std::string>(nb::str(view_array.attr("dtype").attr("name")));
+  const pcie::TensorDType dtype = dtype_from_numpy_name(dtype_name);
+  const std::vector<std::int64_t> shape = tuple_to_i64_vector(view_array.attr("shape"));
+  const std::vector<std::int64_t> strides = tuple_to_i64_vector(view_array.attr("strides"));
+
+  Py_buffer view{};
+  if (PyObject_GetBuffer(view_array.ptr(), &view, PyBUF_SIMPLE) != 0) {
+    throw nb::python_error();
+  }
+
+  try {
+    if (view.len < 0) {
+      throw std::runtime_error("NumPy buffer reported a negative byte length");
+    }
+    auto owner = std::make_shared<PythonObjectHolder>(view_array.ptr());
+    pcie::Tensor tensor;
+    tensor.dtype = dtype;
+    tensor.layout = infer_layout(shape);
+    tensor.shape = shape;
+    tensor.strides_bytes =
+        strides.empty() ? contiguous_strides(shape, dtype_bytes(dtype)) : strides;
+    tensor.owner = std::move(owner);
+    tensor.data = view.buf;
+    tensor.size_bytes = static_cast<std::size_t>(view.len);
+    tensor.byte_offset = 0;
+    tensor.image_format = image_format;
+    if (image_format != pcie::PixelFormat::Unknown) {
+      tensor.image = pcie::ImageSpec{image_format, ""};
+    }
+    tensor.route.name = route_name;
+    tensor.read_only = true;
+    PyBuffer_Release(&view);
+    return tensor;
+  } catch (...) {
+    PyBuffer_Release(&view);
+    throw;
+  }
+}
+
+pcie::Tensor tensor_from_numpy(nb::object array, const bool copy,
+                               const pcie::PixelFormat image_format,
+                               const std::string& route_name) {
+  if (copy) {
+    return tensor_from_numpy_copy(std::move(array), image_format, route_name);
+  }
+  return tensor_from_numpy_zero_copy(std::move(array), image_format, route_name);
 }
 
 nb::bytes tensor_to_bytes(const pcie::Tensor& tensor) {
@@ -256,13 +329,13 @@ tensor_list_from_python(nb::handle object,
         tensors.push_back(nb::cast<pcie::Tensor>(item));
       } else {
         tensors.push_back(
-            tensor_from_numpy(nb::borrow<nb::object>(item), image_format, route_name));
+            tensor_from_numpy(nb::borrow<nb::object>(item), false, image_format, route_name));
       }
     }
     return tensors;
   }
 
-  return {tensor_from_numpy(nb::borrow<nb::object>(object), image_format, route_name)};
+  return {tensor_from_numpy(nb::borrow<nb::object>(object), false, image_format, route_name)};
 }
 
 nb::object optional_tensors_to_python(std::optional<pcie::TensorList> tensors) {
@@ -282,11 +355,11 @@ nb::list tensors_to_numpy_list(const pcie::TensorList& tensors) {
 
 } // namespace
 
-NB_MODULE(_pypciehost_core, m) {
+NB_MODULE(_pyneatpcie_core, m) {
   m.doc() = "Python bindings for the SiMa NEAT PCIe host co-processor API";
 
-#if defined(PYPCIEHOST_VERSION)
-  m.attr("__version__") = PYPCIEHOST_VERSION;
+#if defined(PYNEATPCIE_VERSION)
+  m.attr("__version__") = PYNEATPCIE_VERSION;
 #else
   m.attr("__version__") = "0.0.0";
 #endif
@@ -374,7 +447,6 @@ NB_MODULE(_pypciehost_core, m) {
       .def_rw("card_env", &pcie::ConnectionOptions::card_env)
       .def_rw("card_gst_debug", &pcie::ConnectionOptions::card_gst_debug)
       .def_rw("card_gst_debug_file", &pcie::ConnectionOptions::card_gst_debug_file)
-      .def_rw("card_gst_debug_no_color", &pcie::ConnectionOptions::card_gst_debug_no_color)
       .def(
           "__init__",
           [](pcie::ConnectionOptions* self, std::string card_host, int card_id, std::string user,
@@ -457,7 +529,7 @@ NB_MODULE(_pypciehost_core, m) {
       .def_static("from_bytes", &tensor_from_bytes, "payload"_a, "dtype"_a, "shape"_a,
                   "strides_bytes"_a = std::vector<std::int64_t>{},
                   "image_format"_a = pcie::PixelFormat::Unknown, "route_name"_a = "")
-      .def_static("from_numpy", &tensor_from_numpy, "array"_a,
+      .def_static("from_numpy", &tensor_from_numpy, "array"_a, "copy"_a = false,
                   "image_format"_a = pcie::PixelFormat::Unknown, "route_name"_a = "")
       .def("to_bytes", &tensor_to_bytes)
       .def("to_numpy", &tensor_to_numpy);
@@ -476,83 +548,89 @@ NB_MODULE(_pypciehost_core, m) {
       .def_rw("has_preprocess", &pcie::ModelInfo::has_preprocess)
       .def_rw("has_boxdecode", &pcie::ModelInfo::has_boxdecode);
 
-  nb::class_<pcie::Status>(m, "Status")
-      .def(nb::init<>())
-      .def_rw("state", &pcie::Status::state)
-      .def_rw("queue", &pcie::Status::queue)
-      .def_rw("message", &pcie::Status::message)
-      .def_rw("error_code", &pcie::Status::error_code);
-
-  nb::class_<pcie::SimaPCIeHost>(m, "SimaPCIeHost")
-      .def(nb::init<pcie::ConnectionOptions>(), "connection"_a = pcie::ConnectionOptions{})
-      .def("load_metadata", &pcie::SimaPCIeHost::load_metadata, "model_path"_a,
-           "options"_a = pcie::ModelOptions{})
+  nb::class_<pcie::Model>(m, "Model")
+      .def(nb::init<std::string, pcie::ModelOptions, pcie::ConnectionOptions>(), "model_path"_a,
+           "options"_a = pcie::ModelOptions{}, "connection"_a = pcie::ConnectionOptions{})
+      .def("info", &pcie::Model::info)
+      .def("input_specs", &pcie::Model::input_specs)
+      .def("output_specs", &pcie::Model::output_specs)
       .def(
-          "init_pipeline",
-          [](pcie::SimaPCIeHost& host, const std::string& model_path,
-             const pcie::ModelOptions& options, const int readiness_timeout_ms) {
+          "build",
+          [](pcie::Model& model, const int readiness_timeout_ms) {
             nb::gil_scoped_release release;
-            return host.init_pipeline(model_path, options, readiness_timeout_ms);
+            model.build(readiness_timeout_ms);
           },
-          "model_path"_a, "options"_a = pcie::ModelOptions{}, "readiness_timeout_ms"_a = 180000)
-      .def("status", &pcie::SimaPCIeHost::status)
-      .def("stop", &pcie::SimaPCIeHost::stop)
+          "readiness_timeout_ms"_a = 180000)
+      .def("running", &pcie::Model::running)
+      .def("close", &pcie::Model::close)
+      .def(
+          "__enter__",
+          [](pcie::Model& model) -> pcie::Model& {
+            return model;
+          },
+          nb::rv_policy::reference_internal)
+      .def(
+          "__exit__",
+          [](pcie::Model& model, nb::handle, nb::handle, nb::handle) {
+            model.close();
+            return false;
+          })
       .def(
           "push",
-          [](pcie::SimaPCIeHost& host, nb::object tensors) {
+          [](pcie::Model& model, nb::object tensors) {
             pcie::TensorList list = tensor_list_from_python(tensors);
             nb::gil_scoped_release release;
-            return host.push(list);
+            return model.push(list);
           },
           "tensors"_a)
       .def(
           "push_numpy",
-          [](pcie::SimaPCIeHost& host, nb::object arrays) {
+          [](pcie::Model& model, nb::object arrays) {
             pcie::TensorList list = tensor_list_from_python(arrays);
             nb::gil_scoped_release release;
-            return host.push(list);
+            return model.push(list);
           },
           "arrays"_a)
       .def(
           "pull",
-          [](pcie::SimaPCIeHost& host, const int timeout_ms) {
+          [](pcie::Model& model, const int timeout_ms) {
             std::optional<pcie::TensorList> result;
             {
               nb::gil_scoped_release release;
-              result = host.pull(timeout_ms);
+              result = model.pull(timeout_ms);
             }
             return optional_tensors_to_python(std::move(result));
           },
           "timeout_ms"_a = -1)
       .def(
           "run",
-          [](pcie::SimaPCIeHost& host, nb::object tensors, const int timeout_ms) {
+          [](pcie::Model& model, nb::object tensors, const int timeout_ms) {
             pcie::TensorList list = tensor_list_from_python(tensors);
             nb::gil_scoped_release release;
-            return host.run(list, timeout_ms);
+            return model.run(list, timeout_ms);
           },
           "tensors"_a, "timeout_ms"_a = -1)
       .def(
           "run_numpy",
-          [](pcie::SimaPCIeHost& host, nb::object arrays, const int timeout_ms) {
+          [](pcie::Model& model, nb::object arrays, const int timeout_ms) {
             pcie::TensorList list = tensor_list_from_python(arrays);
             pcie::TensorList result;
             {
               nb::gil_scoped_release release;
-              result = host.run(list, timeout_ms);
+              result = model.run(list, timeout_ms);
             }
             return tensors_to_numpy_list(result);
           },
           "arrays"_a, "timeout_ms"_a = -1)
       .def(
           "run_image",
-          [](pcie::SimaPCIeHost& host, nb::object image, const int timeout_ms,
+          [](pcie::Model& model, nb::object image, const int timeout_ms,
              const pcie::PixelFormat format) {
             pcie::TensorList list = tensor_list_from_python(image, format, "input_image");
             pcie::TensorList result;
             {
               nb::gil_scoped_release release;
-              result = host.run(list, timeout_ms);
+              result = model.run(list, timeout_ms);
             }
             return result;
           },

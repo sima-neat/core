@@ -1,17 +1,16 @@
 #pragma once
 
+#include "HostPcieTensorPayload.h"
 #include "PcieModelFactsReader.h"
-#include "simaai/neat/pcie/SimaPCIeHost.h"
+#include "simaai/neat/pcie/Model.h"
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <vector>
 
 #include <gst/gst.h>
 
@@ -40,8 +39,7 @@ private:
   GstFlowReturn on_new_sample(GstElement* sink);
 
   void start_with_caps(const std::string& caps);
-  bool push_bytes(const std::vector<std::uint8_t>& payload, const TensorList& tensors);
-  std::uint64_t next_sequence();
+  bool push_prepared_payload(PreparedPayload&& payload);
 
   GstElement* pipeline_ = nullptr;
   GstElement* appsrc_ = nullptr;
@@ -51,13 +49,11 @@ private:
 
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};
-  std::atomic<std::uint64_t> sequence_{0};
-  std::mutex pending_mutex_;
-  std::deque<std::uint64_t> pending_sequences_;
 
   mutable std::mutex receive_mutex_;
   std::condition_variable receive_cv_;
   std::deque<TensorList> received_results_;
+  std::optional<std::string> receive_error_;
 
   PcieModelFacts facts_;
   int pcie_queue_ = 0;

@@ -27,12 +27,12 @@ if (NOT nanobind_FOUND)
   FetchContent_MakeAvailable(nanobind)
 endif()
 
-nanobind_add_module(_pypciehost_core
+nanobind_add_module(_pyneatpcie_core
   ${CMAKE_CURRENT_SOURCE_DIR}/src/module.cpp
 )
 
-target_link_libraries(_pypciehost_core PRIVATE sima_neat_pcie_host)
-target_include_directories(_pypciehost_core PRIVATE
+target_link_libraries(_pyneatpcie_core PRIVATE sima_neat_pcie_host)
+target_include_directories(_pyneatpcie_core PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
@@ -41,13 +41,13 @@ set(SIMAPCIE_PYTHON_RPATH_DIRS
   "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/sima-pcie-host/gst-plugins"
   "/usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/gstreamer-1.0"
 )
-set_target_properties(_pypciehost_core PROPERTIES
+set_target_properties(_pyneatpcie_core PROPERTIES
   BUILD_RPATH "${SIMAPCIE_PYTHON_RPATH_DIRS}"
   INSTALL_RPATH "${SIMAPCIE_PYTHON_RPATH_DIRS}"
 )
 
-target_compile_definitions(_pypciehost_core PRIVATE
-  PYPCIEHOST_VERSION="${PROJECT_VERSION}"
+target_compile_definitions(_pyneatpcie_core PRIVATE
+  PYNEATPCIE_VERSION="${PROJECT_VERSION}"
 )
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -57,22 +57,22 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   if (TARGET nanobind)
     target_compile_options(nanobind PRIVATE -Wno-pedantic -Wno-error=pedantic)
   endif()
-  target_compile_options(_pypciehost_core PRIVATE -Wno-pedantic -Wno-error=pedantic)
+  target_compile_options(_pyneatpcie_core PRIVATE -Wno-pedantic -Wno-error=pedantic)
 endif()
 
 if (DEFINED SIMAPCIEHOST_EXT_SUFFIX AND NOT SIMAPCIEHOST_EXT_SUFFIX STREQUAL "")
-  set_target_properties(_pypciehost_core PROPERTIES SUFFIX "${SIMAPCIEHOST_EXT_SUFFIX}")
+  set_target_properties(_pyneatpcie_core PROPERTIES SUFFIX "${SIMAPCIEHOST_EXT_SUFFIX}")
 endif()
 
 install(
-  TARGETS _pypciehost_core
-  LIBRARY DESTINATION pypciehost
+  TARGETS _pyneatpcie_core
+  LIBRARY DESTINATION pyneatpcie
   COMPONENT PcieHostPython
 )
 
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pypciehost/
-  DESTINATION pypciehost
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pyneatpcie/
+  DESTINATION pyneatpcie
   COMPONENT PcieHostPython
   FILES_MATCHING
   PATTERN "__pycache__" EXCLUDE

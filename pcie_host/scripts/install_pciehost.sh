@@ -13,9 +13,9 @@ Options:
   --deb <path>             Install this runtime DEB instead of auto-detecting it
   --dev-deb <path>         Install this development DEB instead of auto-detecting it
   --search-dir <dir>       Directory to search for DEBs (default: this script's directory)
-  --python                 Install pypciehost wheel into a Python venv
-  --python-wheel <path>    Install this pypciehost wheel instead of auto-detecting it
-  --python-venv <dir>      Python venv path (default: ~/pypciehost)
+  --python                 Install pyneatpcie wheel into a Python venv
+  --python-wheel <path>    Install this pyneatpcie wheel instead of auto-detecting it
+  --python-venv <dir>      Python venv path (default: ~/pyneatpcie)
   --runtime-only           Do not install sima-pcie-host-dev
   --skip-setup             Do not run pcie-setup.sh after package install
   --setup-args <s>         Extra arguments passed to pcie-setup.sh
@@ -273,7 +273,7 @@ fi
 if [[ "${INSTALL_PYTHON}" == "ON" && -z "${PYTHON_WHEEL_PATH}" ]]; then
   for dir in "${search_dirs[@]}"; do
     [[ -d "${dir}" ]] || continue
-    PYTHON_WHEEL_PATH="$(latest_matching_file "${dir}" "pypciehost-*.whl")"
+    PYTHON_WHEEL_PATH="$(latest_matching_file "${dir}" "pyneatpcie-*.whl")"
     [[ -n "${PYTHON_WHEEL_PATH}" ]] && break
   done
 fi
@@ -289,16 +289,16 @@ if [[ "${RUNTIME_ONLY}" != "ON" && -n "${DEV_DEB_PATH}" && ! -f "${DEV_DEB_PATH}
 fi
 if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
   if [[ -z "${PYTHON_WHEEL_PATH}" || ! -f "${PYTHON_WHEEL_PATH}" ]]; then
-    echo "ERROR: no pypciehost wheel found." >&2
+    echo "ERROR: no pyneatpcie wheel found." >&2
     echo "       Search dirs: ${search_dirs[*]}" >&2
     exit 1
   fi
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "ERROR: python3 is required to install pypciehost." >&2
+    echo "ERROR: python3 is required to install pyneatpcie." >&2
     exit 1
   fi
   if [[ -z "${PYTHON_VENV}" ]]; then
-    PYTHON_VENV="${HOME}/pypciehost"
+    PYTHON_VENV="${HOME}/pyneatpcie"
   fi
 fi
 
