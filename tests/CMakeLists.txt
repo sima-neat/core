@@ -264,6 +264,7 @@ set(UNIT_TESTS
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
   unit_header_neat_compile_surface_test
+  unit_realtime_link_options_test
   unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test
   unit_groups_test

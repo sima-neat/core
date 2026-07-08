@@ -222,9 +222,13 @@ def test_graph_link_options_surface():
   opt.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
   opt.queue_depth = 7
   opt.stream_id = "camera0"
+  opt.max_inflight_per_stream = 4
+  opt.max_inflight_total = 16
   assert opt.policy == pyneat.GraphLinkPolicy.RealtimeLatestByStream
   assert opt.queue_depth == 7
   assert opt.stream_id == "camera0"
+  assert opt.max_inflight_per_stream == 4
+  assert opt.max_inflight_total == 16
 
   source = pyneat.Graph()
   source.custom_with_role(

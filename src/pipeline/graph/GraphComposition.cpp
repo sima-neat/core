@@ -160,6 +160,12 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
         edge.link_options.queue_depth =
             std::max(edge.link_options.queue_depth, link_options.queue_depth);
         link_options.queue_depth = edge.link_options.queue_depth;
+        edge.link_options.max_inflight_per_stream = std::max(
+            edge.link_options.max_inflight_per_stream, link_options.max_inflight_per_stream);
+        link_options.max_inflight_per_stream = edge.link_options.max_inflight_per_stream;
+        edge.link_options.max_inflight_total =
+            std::max(edge.link_options.max_inflight_total, link_options.max_inflight_total);
+        link_options.max_inflight_total = edge.link_options.max_inflight_total;
         if (edge.stream_id.empty()) {
           edge.stream_id = edge.link_options.stream_id.empty()
                                ? automatic_realtime_stream_id(edge.from, edge.to, edge.to_port)
@@ -221,6 +227,12 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
           edge.link_options.queue_depth =
               std::max(edge.link_options.queue_depth, link_options.queue_depth);
           link_options.queue_depth = edge.link_options.queue_depth;
+          edge.link_options.max_inflight_per_stream = std::max(
+              edge.link_options.max_inflight_per_stream, link_options.max_inflight_per_stream);
+          link_options.max_inflight_per_stream = edge.link_options.max_inflight_per_stream;
+          edge.link_options.max_inflight_total =
+              std::max(edge.link_options.max_inflight_total, link_options.max_inflight_total);
+          link_options.max_inflight_total = edge.link_options.max_inflight_total;
           if (edge.stream_id.empty()) {
             edge.stream_id =
                 edge.link_options.stream_id.empty()

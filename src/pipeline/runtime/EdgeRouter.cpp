@@ -3,14 +3,16 @@
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 
-#include <algorithm>
-#include <cstdint>
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <cstdio>
+#include <cstring>
+#include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -109,32 +111,58 @@ int realtime_credit_probe_every() {
   return value;
 }
 
-int realtime_credit_max_inflight_per_stream() {
+constexpr int kDefaultRawCreditPerStream = 4;
+constexpr int kDefaultRawCreditTotalCap = 8;
+
+void validate_realtime_credit_option(const char* name, int value) {
+  if (value == 0 || value < -1) {
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+                             " must be -1 or a positive value");
+  }
+}
+
+int realtime_credit_max_inflight_per_stream(const GraphLinkOptions& options) {
+  validate_realtime_credit_option("max_inflight_per_stream", options.max_inflight_per_stream);
+  if (options.max_inflight_per_stream > 0) {
+    return options.max_inflight_per_stream;
+  }
   static const int value = [] {
     int parsed = 0;
     if (pipeline_internal::env_int("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", &parsed)) {
       return std::max(0, parsed);
     }
-    return std::max(0, pipeline_internal::env_int("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM", 1));
+    return std::max(0, pipeline_internal::env_int("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM",
+                                                  kDefaultRawCreditPerStream));
   }();
   return value;
 }
 
-int realtime_credit_max_inflight_global(int link_queue_depth) {
+int safe_total_credit_limit(int per_stream, std::size_t stream_count) {
+  if (per_stream <= 0 || stream_count == 0U) {
+    return 0;
+  }
+  if (stream_count > static_cast<std::size_t>(std::numeric_limits<int>::max() / per_stream)) {
+    return std::numeric_limits<int>::max();
+  }
+  return per_stream * static_cast<int>(stream_count);
+}
+
+int realtime_credit_max_inflight_total(const GraphLinkOptions& options, int per_stream,
+                                       std::size_t stream_count) {
+  validate_realtime_credit_option("max_inflight_total", options.max_inflight_total);
+  if (options.max_inflight_total > 0) {
+    return options.max_inflight_total;
+  }
   int parsed = 0;
   if (pipeline_internal::env_int("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL", &parsed)) {
     return std::max(0, parsed);
   }
   /*
-   * RealtimeLatestByStream may use a deep fairness queue (for example 16) at
-   * the graph edge, but decoder-backed raw frames are scarce CVU/EV74 buffers.
-   * Letting the full graph queue depth enter a model/preproc pipeline can hold
-   * too many decoder buffers behind a small hardware pipeline and create long
-   * stalls.  Use the link queue depth as an upper bound, but default the raw
-   * global admission window to the typical hardware pipeline depth.
+   * The total cap is a resource guard for all streams on this realtime link.
+   * Derive it from the per-stream cap so 4-stream and 16-stream fan-in graphs
+   * scale without a hidden fixed global bottleneck.
    */
-  constexpr int kDefaultRawGlobalCreditWindow = 4;
-  return std::max(0, std::min(link_queue_depth, kDefaultRawGlobalCreditWindow));
+  return std::min(safe_total_credit_limit(per_stream, stream_count), kDefaultRawCreditTotalCap);
 }
 
 int realtime_link_log_every() {
@@ -315,12 +343,9 @@ RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOpt
                                        std::string stream_id)
     : downstream_(downstream), options_(options),
       credit_namespace_(pipeline_internal::next_realtime_frame_credit_namespace()),
-      credit_limit_per_stream_(realtime_credit_max_inflight_per_stream()),
-      credit_limit_global_(realtime_credit_max_inflight_global(options_.queue_depth)) {
-  if (credit_limit_global_ > 0) {
-    global_credit_lane_ = pipeline_internal::make_realtime_frame_credit_lane(
-        credit_limit_global_, [this] { cv_.notify_one(); });
-  }
+      credit_limit_per_stream_(realtime_credit_max_inflight_per_stream(options_)),
+      credit_limit_global_(0) {
+  add_edge_stream_id(downstream_.edge_index, stream_id);
   log_realtime_credit_probe_basic("construct", downstream_, downstream_.edge_index, stream_id,
                                   static_cast<std::size_t>(options_.queue_depth));
   if (realtime_link_diag_enabled()) {
@@ -343,7 +368,6 @@ RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOpt
                  std::getenv("SIMA_GRAPH_DIAG_ON_STOP") ? std::getenv("SIMA_GRAPH_DIAG_ON_STOP")
                                                         : "<unset>");
   }
-  add_edge_stream_id(downstream_.edge_index, stream_id);
 }
 
 RealtimeLatestLink::~RealtimeLatestLink() {
@@ -438,11 +462,15 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
 }
 
 void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::string& stream_id) {
-  if (edge_index == invalid_edge_index() || stream_id.empty()) {
+  if (edge_index == invalid_edge_index()) {
     return;
   }
   std::lock_guard<std::mutex> lock(mu_);
-  stream_id_by_edge_[edge_index] = stream_id;
+  edge_indices_.insert(edge_index);
+  if (!stream_id.empty()) {
+    stream_id_by_edge_[edge_index] = stream_id;
+  }
+  configure_global_credit_limit_locked_();
 }
 
 void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error) {
@@ -559,6 +587,24 @@ RealtimeLatestLink::credit_lane_for_key_locked_(const std::string& key) {
                                                                  [this] { cv_.notify_one(); });
   credit_lanes_.emplace(key, lane);
   return lane;
+}
+
+void RealtimeLatestLink::configure_global_credit_limit_locked_() {
+  const std::size_t stream_count = std::max<std::size_t>(1U, edge_indices_.size());
+  credit_limit_global_ =
+      realtime_credit_max_inflight_total(options_, credit_limit_per_stream_, stream_count);
+  if (credit_limit_global_ <= 0) {
+    global_credit_lane_.reset();
+    return;
+  }
+  if (!global_credit_lane_) {
+    global_credit_lane_ = pipeline_internal::make_realtime_frame_credit_lane(
+        credit_limit_global_, [this] { cv_.notify_one(); });
+    return;
+  }
+  if (global_credit_lane_->gate) {
+    global_credit_lane_->gate->configure(credit_limit_global_);
+  }
 }
 
 void RealtimeLatestLink::run_() {

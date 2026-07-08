@@ -124,6 +124,7 @@ private:
 
   std::string key_for_(const simaai::neat::Sample& sample, std::size_t edge_index) const;
   pipeline_internal::RealtimeFrameCreditLanePtr credit_lane_for_key_locked_(const std::string& key);
+  void configure_global_credit_limit_locked_();
   void run_();
 
   DownstreamTarget downstream_;
@@ -136,6 +137,7 @@ private:
   std::unordered_map<std::string, Pending> pending_;
   std::unordered_map<std::string, pipeline_internal::RealtimeFrameCreditLanePtr> credit_lanes_;
   pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
+  std::unordered_set<std::size_t> edge_indices_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
   std::deque<std::string> ready_;
   std::uint64_t credit_namespace_ = 0;
