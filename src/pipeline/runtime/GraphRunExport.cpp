@@ -757,6 +757,12 @@ json public_view_to_json(const runtime::ExecutionGraphPlan& plan) {
     if (edge.link_options.policy != GraphLinkPolicy::Default) {
       e["link_policy"] = "realtime_latest_by_stream";
       e["link_queue_depth"] = edge.link_options.queue_depth;
+      if (edge.link_options.max_inflight_per_stream != -1) {
+        e["link_max_inflight_per_stream"] = edge.link_options.max_inflight_per_stream;
+      }
+      if (edge.link_options.max_inflight_total != -1) {
+        e["link_max_inflight_total"] = edge.link_options.max_inflight_total;
+      }
       if (!edge.stream_id.empty()) {
         e["link_stream_id"] = edge.stream_id;
       }
@@ -854,6 +860,12 @@ json graph_topology_to_json(const runtime::RunCore& core) {
     if (edge.link_options.policy != GraphLinkPolicy::Default) {
       e["link_policy"] = "realtime_latest_by_stream";
       e["link_queue_depth"] = edge.link_options.queue_depth;
+      if (edge.link_options.max_inflight_per_stream != -1) {
+        e["link_max_inflight_per_stream"] = edge.link_options.max_inflight_per_stream;
+      }
+      if (edge.link_options.max_inflight_total != -1) {
+        e["link_max_inflight_total"] = edge.link_options.max_inflight_total;
+      }
       if (!edge.stream_id.empty()) {
         e["link_stream_id"] = edge.stream_id;
       }
@@ -933,6 +945,8 @@ json graph_topology_to_json(const runtime::RunCore& core) {
       links.push_back({{"index", i},
                        {"policy", "realtime_latest_by_stream"},
                        {"queue_depth", link->options().queue_depth},
+                       {"max_inflight_per_stream", link->options().max_inflight_per_stream},
+                       {"max_inflight_total", link->options().max_inflight_total},
                        {"target_kind", static_cast<int>(target.kind)},
                        {"target_index", target.index},
                        {"target_port", port_name(plan, target.port)},

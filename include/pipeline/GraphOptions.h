@@ -66,6 +66,12 @@ struct GraphLinkOptions {
   /// New runtime code copies this value into internal edge metadata during composition; leave it
   /// empty for automatic per-edge identity.
   std::string stream_id;
+  /// Only applies to RealtimeLatestByStream links carrying raw decoder-backed samples.
+  /// -1 keeps env/default behavior; positive values set the per-stream raw-frame inflight cap.
+  int max_inflight_per_stream = -1;
+  /// Only applies to RealtimeLatestByStream links carrying raw decoder-backed samples.
+  /// -1 keeps env/default behavior; positive values set the total cap across streams.
+  int max_inflight_total = -1;
 };
 
 /**
