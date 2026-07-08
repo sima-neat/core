@@ -36,7 +36,7 @@ LEARNING_FLOW_ORDER = [
     19, 20,                 # Beginner GenAI patterns
     21,                     # GenAI serving
     9, 6, 11, 7,            # Core I/O and pre/postprocessing
-    8, 10, 12, 13, 18,      # Pipelines, diagnostics, custom graphs, live input
+    8, 10, 12, 13, 18, 23,  # Pipelines, diagnostics, custom graphs, live input
     14, 15, 16, 17,         # Advanced: hybrid graphs, multi-stream, perf, production
     22,                     # Advanced GenAI composition
 ]
@@ -117,7 +117,7 @@ class TutorialModule:
     run_section: str
     in_practice: str
     cpp_rel: str
-    py_rel: str
+    py_rel: str = ""
     walkthrough_lead: str = ""
     walkthrough_steps: List[WalkStep] = field(default_factory=list)
 
@@ -819,8 +819,8 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     py = module_dir / f"{slug}.py"
     if not py.exists():
         py = next(module_dir.glob("*.py"), None)
-    if not cpp or not py:
-        raise FileNotFoundError(f"Missing C++/Python source pair in: {module_dir}")
+    if not cpp:
+        raise FileNotFoundError(f"Missing C++ source in: {module_dir}")
 
     text = readme_path.read_text(encoding="utf-8")
 
@@ -842,12 +842,12 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     process_steps = _parse_numbered(process_section)
 
     cpp_rel = cpp.resolve().relative_to(repo_root.resolve()).as_posix()
-    py_rel = py.resolve().relative_to(repo_root.resolve()).as_posix()
+    py_rel = py.resolve().relative_to(repo_root.resolve()).as_posix() if py else ""
 
     walkthrough_lead, walkthrough_steps = _build_walk_steps(
         text,
         cpp.read_text(encoding="utf-8"),
-        py.read_text(encoding="utf-8"),
+        py.read_text(encoding="utf-8") if py else "",
         name,
     )
 
@@ -875,10 +875,8 @@ def _full_code_codetabs(module: TutorialModule) -> List[str]:
     highlight preserved). Used by the legacy `## Code` section and by the
     walkthrough's collapsed "Full source" block."""
     cpp_src = pathlib.Path(module.cpp_rel).read_text(encoding="utf-8").rstrip()
-    py_src = pathlib.Path(module.py_rel).read_text(encoding="utf-8").rstrip()
     cpp_code, cpp_hl = _render_code_with_core_logic(cpp_src)
-    py_code, py_hl = _render_code_with_core_logic(py_src)
-    return [
+    out = [
         "<CodeTabs>",
         '<CodeTab label="C++" lang="cpp">',
         "",
@@ -887,15 +885,23 @@ def _full_code_codetabs(module: TutorialModule) -> List[str]:
         "```",
         "",
         "</CodeTab>",
-        '<CodeTab label="Python" lang="python">',
-        "",
-        _code_fence("python", module.py_rel, py_hl),
-        py_code,
-        "```",
-        "",
-        "</CodeTab>",
-        "</CodeTabs>",
     ]
+    if module.py_rel:
+        py_src = pathlib.Path(module.py_rel).read_text(encoding="utf-8").rstrip()
+        py_code, py_hl = _render_code_with_core_logic(py_src)
+        out.extend(
+            [
+                '<CodeTab label="Python" lang="python">',
+                "",
+                _code_fence("python", module.py_rel, py_hl),
+                py_code,
+                "```",
+                "",
+                "</CodeTab>",
+            ]
+        )
+    out.append("</CodeTabs>")
+    return out
 
 
 def _step_codetabs(module: TutorialModule, step: WalkStep) -> List[str]:
@@ -1068,7 +1074,9 @@ def render_walkthrough_body(module: TutorialModule) -> List[str]:
             "## Full source",
             "",
             "<details>",
-            "<summary>Show the complete C++ and Python programs</summary>",
+            "<summary>Show the complete source program"
+            + ("s" if module.py_rel else "")
+            + "</summary>",
             "",
         ]
     )
@@ -1130,11 +1138,12 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
             "## Source",
             "",
             f"- [C++]({repo_link_prefix}/{module.cpp_rel})",
-            f"- [Python]({repo_link_prefix}/{module.py_rel})",
             f"- [README]({repo_link_prefix}/tutorials/{module.folder}/README.md)",
             "",
         ]
     )
+    if module.py_rel:
+        lines.insert(-2, f"- [Python]({repo_link_prefix}/{module.py_rel})")
 
     return "\n".join(lines)
 
@@ -1195,7 +1204,7 @@ def _render_tutorial_path_block(groups: Dict[str, List[TutorialModule]]) -> List
         '<div class="overview-link-columns">',
         '  <section class="overview-link-panel overview-link-panel-start">',
         "    <h2>Choose a Tutorial Path</h2>",
-        "    <p>Use the cards in each section in order. Each tutorial includes concept-first guidance with matching C++ and Python implementation.</p>",
+        "    <p>Use the cards in each section in order. Each tutorial includes concept-first guidance with source code in the supported language surface.</p>",
         '    <ul class="overview-link-list">',
     ]
     difficulty_copy = {
@@ -1249,7 +1258,7 @@ def render_difficulty_index(difficulty: str, slug: str, modules: List[TutorialMo
         "",
         f"# {difficulty} Tutorials",
         "",
-        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
+        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and source code in the supported language surface.</p>',
         "",
     ]
     lines.extend(_render_tutorial_card_grid(modules))

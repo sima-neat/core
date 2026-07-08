@@ -448,11 +448,19 @@ static void compare_scores(const std::vector<float>& a, const std::vector<float>
             << " at=" << max_idx << " mse=" << mse << "\n";
 }
 
-static simaai::neat::Sample run_image_decode_to_appsink(const std::string& image_path, int w, int h,
-                                                        int fps, bool print_pipeline) {
+struct DecodedImageSample {
+  simaai::neat::Run producer;
+  simaai::neat::Sample sample;
+};
+
+static DecodedImageSample run_image_decode_to_appsink(const std::string& image_path, int w, int h,
+                                                      int fps, bool print_pipeline) {
   simaai::neat::nodes::groups::ImageInputGroupOptions opt;
   opt.path = image_path;
-  opt.imagefreeze_num_buffers = env_int("SIMA_JPEG_IMAGEFREEZE_BUFFERS", 120);
+  // This fixture validates the still-image -> decoded-frame -> model path.  Keep it one-shot by
+  // default so it does not double as a decoder burst stress test; set SIMA_JPEG_IMAGEFREEZE_BUFFERS
+  // explicitly when debugging burst/restart behavior.
+  opt.imagefreeze_num_buffers = env_int("SIMA_JPEG_IMAGEFREEZE_BUFFERS", 1);
   if (opt.imagefreeze_num_buffers > 0) {
     std::cout << "[jpeg_decode] imagefreeze buffers=" << opt.imagefreeze_num_buffers << "\n";
   }
@@ -483,26 +491,39 @@ static simaai::neat::Sample run_image_decode_to_appsink(const std::string& image
   }
 
   simaai::neat::RunOptions run_opt;
-  // Keep the decoder output device-backed.  The follow-on model graph starts
-  // with a CVU preproc route, so copying the decoded NV12 frame into CPU-owned
-  // memory makes the subsequent push invalid unless the slow compatibility
-  // CPU->EV74 copy path is enabled.
-  run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+  // Accuracy is the contract under test here.  The high-throughput app tests cover the
+  // framework-level live holder-loan path; this JPEG fixture intentionally defaults to owned
+  // output so the classification check is not coupled to cross-Run decoder cache coherency.
+  // Set SIMA_RESNET50_JPEG_ZERO_COPY=1 for debugging the zero-copy transfer path explicitly.
+  const bool jpeg_zero_copy = env_bool("SIMA_RESNET50_JPEG_ZERO_COPY", false);
+  run_opt.output_memory =
+      jpeg_zero_copy ? simaai::neat::OutputMemory::ZeroCopy : simaai::neat::OutputMemory::Owned;
+  run_opt.advanced.prepare_output_cpu_visible = jpeg_zero_copy;
   simaai::neat::Run runner = p.build(run_opt);
   const int per_try_ms = env_int("SIMA_JPEG_PULL_TIMEOUT_MS", 1000);
   const int tries = env_int("SIMA_JPEG_PULL_TRIES", 30);
   std::cout << "[jpeg_decode] pull timeout=" << (per_try_ms * tries) << " ms\n";
   auto out = pull_sample_with_retry(runner, "jpeg_decode", per_try_ms, tries);
   log_sample_caps(out, "jpeg_decode");
-  return out;
+  return DecodedImageSample{std::move(runner), std::move(out)};
 }
 
 static simaai::neat::Tensor run_image_group_infer(const simaai::neat::Model& model,
                                                   const std::string& image_path, int w, int h,
                                                   int fps, bool print_pipeline) {
   auto decoded = run_image_decode_to_appsink(image_path, w, h, fps, print_pipeline);
-  auto decoded_tensor = require_tensor(decoded, "jpeg_decode");
+  auto decoded_tensor = require_tensor(decoded.sample, "jpeg_decode");
   std::cout << "[jpeg_decode] got tensor: " << decoded_tensor.debug_string() << "\n";
+  if (env_bool("SIMA_RESNET50_JPEG_ZERO_COPY_TOUCH", false)) {
+    auto map = decoded_tensor.map(simaai::neat::MapMode::Read);
+    const auto* ptr = static_cast<const std::uint8_t*>(map.data);
+    std::uint64_t sum = 0;
+    for (std::size_t i = 0; ptr && i < std::min<std::size_t>(map.size_bytes, 4096U); ++i) {
+      sum += ptr[i];
+    }
+    std::cout << "[jpeg_decode] zero-copy touch bytes=" << map.size_bytes << " sum4k=" << sum
+              << "\n";
+  }
 
   simaai::neat::Graph p;
   simaai::neat::Model::RouteOptions route_opt;
@@ -516,8 +537,12 @@ static simaai::neat::Tensor run_image_group_infer(const simaai::neat::Model& mod
 
   simaai::neat::RunOptions run_opt;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
-  simaai::neat::Run runner = p.build(simaai::neat::Sample{decoded}, run_opt);
-  const bool pushed = runner.push(simaai::neat::Sample{decoded});
+  run_opt.startup_preflight = false;
+  if (!env_bool("SIMA_RESNET50_JPEG_ZERO_COPY", false)) {
+    setenv("SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY", "1", 0);
+  }
+  simaai::neat::Run runner = p.build(simaai::neat::Sample{decoded.sample}, run_opt);
+  const bool pushed = runner.push(simaai::neat::Sample{decoded.sample});
   require(pushed, "jpeg_model: push decoded tensor failed");
   auto out = pull_sample_with_retry(runner, "jpeg_model", 1000, 20, true);
   log_sample_caps(out, "jpeg_model");

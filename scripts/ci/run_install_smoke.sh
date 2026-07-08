@@ -11,8 +11,14 @@ CONSUMER_BUILD_DIR="${CONSUMER_BUILD_DIR:-build-install-smoke-consumer}"
 echo "[install-smoke] configuring project..."
 cmake -S . -B "${BUILD_DIR}"
 
-echo "[install-smoke] building core target..."
-cmake --build "${BUILD_DIR}" --target sima_neat -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+echo "[install-smoke] validating development package dependencies..."
+if ! grep -q "simaai-memory-lib-dev" "${BUILD_DIR}/CPackConfig.cmake"; then
+  echo "sima-neat-dev must depend on simaai-memory-lib-dev so downstream C++ apps can link SimaNeat::sima_neat on a DevKit." >&2
+  exit 1
+fi
+
+echo "[install-smoke] building core and development targets..."
+cmake --build "${BUILD_DIR}" --target sima_neat sima_neat_static -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
 
 echo "[install-smoke] installing to ${INSTALL_PREFIX}..."
 cmake --install "${BUILD_DIR}" --prefix "${INSTALL_PREFIX}" --component core

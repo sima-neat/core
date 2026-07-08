@@ -171,13 +171,13 @@ add_tutorial(tutorial_018_consume_rtsp_stream
 add_test(
   NAME tutorial_018_consume_rtsp_stream
   COMMAND /bin/sh -c [=[
-url="${SIMANEAT_APPS_TEST_RTSP_URL:-}"
+url="${SIMANEAT_TEST_RTSP_H264_URL:-}"
 if [ -z "${url}" ]; then
-  urls="${SIMANEAT_APPS_TEST_RTSP_URLS:-}"
+  urls="${SIMANEAT_TEST_RTSP_H264_URLS:-}"
   url="${urls%%[ ,;]*}"
 fi
 if [ -z "${url}" ]; then
-  echo "Skipping tutorial_018_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
+  echo "Skipping tutorial_018_consume_rtsp_stream: set SIMANEAT_TEST_RTSP_H264_URL or SIMANEAT_TEST_RTSP_H264_URLS"
   exit 77
 fi
 out="$("$1" --url "${url}" --frames 10)"
@@ -221,6 +221,12 @@ add_tutorial(tutorial_022_compose_genai_into_graph
   022_compose_genai_into_graph/compose_genai_into_graph.cpp
   NO_TEST
   LABELS genai graph
+)
+
+add_tutorial(tutorial_023_run_mipi_camera_model
+  023_run_mipi_camera_model/run_mipi_camera_model.cpp
+  NO_TEST
+  LABELS asset mipi camera
 )
 
 install(

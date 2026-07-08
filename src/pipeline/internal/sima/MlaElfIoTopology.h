@@ -14,6 +14,8 @@ namespace simaai::neat::pipeline_internal::sima {
 // Populated by parsing the ELF section name table for symbols of the form:
 //   data.ifm.persistent.input_NN/<stage>/placeholder_N_0.b0
 //   data.ofm.persistent.output_NN/<stage>/<op>.b0
+//   data.ifm.persistent.qmla_ifm_N.b0
+//   data.ofm.persistent.afe_mla_output_N.b0
 //   data.ifm.b0           (legacy monolithic IFM)
 //   data.ofm.b0           (legacy monolithic OFM)
 //
@@ -23,7 +25,8 @@ namespace simaai::neat::pipeline_internal::sima {
 //     in the MPK fall here. .elf has data.ifm.b0 / data.ofm.b0 only.
 //   - "multi-IFM/multi-OFM": per-tensor placeholders. Runtime must deliver
 //     each input as a distinct physical segment; firmware reads each from
-//     its own base address. .elf carries data.ifm.persistent.input_NN slots.
+//     its own base address. .elf carries data.ifm.persistent.input_NN or
+//     data.ifm.persistent.qmla_ifm_N slots.
 //
 // The two strategies are mutually exclusive within a single ELF.
 struct MlaElfIoTopology {
@@ -34,6 +37,8 @@ struct MlaElfIoTopology {
   // Full section names for IFM placeholders, ordered by input index. Empty if
   // monolithic. Example entry:
   //   "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0"
+  // or:
+  //   "data.ifm.persistent.qmla_ifm_0.b0"
   std::vector<std::string> ifm_symbol_names;
   // Full section names for OFM placeholders, ordered by output index. Empty if
   // monolithic.

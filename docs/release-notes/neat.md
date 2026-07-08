@@ -7,6 +7,10 @@ sidebar_position: 3
 
 Release notes for the SiMa.ai Neat Library.
 
+## Unreleased
+
+- Added C++ and Python `CameraInput` documentation and tutorial coverage for MIPI/libcamera source-owned graphs, including adaptive SiMaAI memory handoff before CVU/MLA model routes.
+
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |

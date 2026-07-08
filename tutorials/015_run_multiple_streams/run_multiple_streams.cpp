@@ -5,6 +5,7 @@
 
 #include "neat.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -91,7 +92,15 @@ int main(int argc, char** argv) {
 
     std::cout << graph.describe() << "\n";
 
-    simaai::neat::Run run = graph.build();
+    const int expected = streams * frames;
+    simaai::neat::RunOptions run_options;
+    // This tutorial intentionally pushes the whole deterministic batch before
+    // pulling joined bundles. Size the bounded graph queues for that batch so
+    // the example demonstrates Combine(ByFrame) rather than producer
+    // backpressure. Production live-stream code should usually pull
+    // concurrently instead of growing queues this way.
+    run_options.queue_depth = std::max(run_options.queue_depth, expected);
+    simaai::neat::Run run = graph.build(run_options);
     // END STEP
 
     // STEP push-streams
@@ -109,7 +118,6 @@ int main(int argc, char** argv) {
     // END STEP
 
     // STEP pull-bundles
-    const int expected = streams * frames;
     int received = 0;
     int first_fields = -1;
     for (int i = 0; i < expected; ++i) {

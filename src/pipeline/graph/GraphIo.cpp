@@ -511,6 +511,21 @@ bool bool_field(const JsonValue::JsonObject& obj, const char* key, bool fallback
   return value && value->type == JsonValue::Type::Bool ? value->b : fallback;
 }
 
+void warn_deprecated_use_simaai_pool_json_once() {
+  static std::once_flag warned;
+  std::call_once(warned, []() {
+    std::fprintf(stderr, "[WARN] Graph JSON field 'use_simaai_pool' is deprecated. "
+                         "Use 'memory_policy' instead.\n");
+  });
+}
+
+InputMemoryPolicy effective_input_memory_policy(const InputOptions& opt) {
+  if (!opt.use_simaai_pool && opt.memory_policy == InputMemoryPolicy::Auto) {
+    return InputMemoryPolicy::SystemMemory;
+  }
+  return opt.memory_policy;
+}
+
 std::vector<int> int_array_field(const JsonValue::JsonObject& obj, const char* key) {
   std::vector<int> out;
   const JsonValue* value = object_field(obj, key);
@@ -575,7 +590,7 @@ void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
       << "\"do_timestamp\":" << (opt.do_timestamp ? "true" : "false") << ","
       << "\"block\":" << (opt.block ? "true" : "false") << ","
       << "\"stream_type\":" << opt.stream_type << "," << "\"max_bytes\":" << opt.max_bytes << ","
-      << "\"use_simaai_pool\":" << (opt.use_simaai_pool ? "true" : "false") << ","
+      << "\"memory_policy\":" << static_cast<int>(effective_input_memory_policy(opt)) << ","
       << "\"pool_min_buffers\":" << opt.pool_min_buffers << ","
       << "\"pool_max_buffers\":" << opt.pool_max_buffers << "," << "\"buffer_name\":\""
       << json_escape(opt.buffer_name) << "\"}";
@@ -604,7 +619,19 @@ InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
   opt.block = bool_field(obj, "block", opt.block);
   opt.stream_type = int_field(obj, "stream_type", opt.stream_type);
   opt.max_bytes = static_cast<std::uint64_t>(int_field(obj, "max_bytes", 0));
-  opt.use_simaai_pool = bool_field(obj, "use_simaai_pool", opt.use_simaai_pool);
+  const JsonValue* memory_policy_value = object_field(obj, "memory_policy");
+  if (const JsonValue* deprecated_pool = object_field(obj, "use_simaai_pool")) {
+    warn_deprecated_use_simaai_pool_json_once();
+    if (deprecated_pool->type == JsonValue::Type::Bool) {
+      opt.use_simaai_pool = deprecated_pool->b;
+      if (!opt.use_simaai_pool && !memory_policy_value) {
+        opt.memory_policy = InputMemoryPolicy::SystemMemory;
+      }
+    }
+  }
+  if (memory_policy_value && memory_policy_value->type == JsonValue::Type::Number) {
+    opt.memory_policy = static_cast<InputMemoryPolicy>(static_cast<int>(memory_policy_value->num));
+  }
   opt.pool_min_buffers = int_field(obj, "pool_min_buffers", opt.pool_min_buffers);
   opt.pool_max_buffers = int_field(obj, "pool_max_buffers", opt.pool_max_buffers);
   opt.buffer_name = string_field(obj, "buffer_name", opt.buffer_name);
@@ -1342,9 +1369,9 @@ void Graph::save(const std::string& path) const {
       if (edge.link_options.policy != GraphLinkPolicy::Default) {
         oss << ",\"link_policy\":\"" << link_policy_name(edge.link_options.policy) << "\","
             << "\"link_queue_depth\":" << edge.link_options.queue_depth;
-        if (!edge.link_options.stream_id.empty()) {
-          oss << ",\"link_stream_id\":\"" << json_escape(edge.link_options.stream_id) << "\"";
-        }
+      }
+      if (!edge.stream_id.empty()) {
+        oss << ",\"link_stream_id\":\"" << json_escape(edge.stream_id) << "\"";
       }
       oss << "}";
     }
@@ -1561,11 +1588,12 @@ Graph Graph::load(const std::string& path) {
       if (link_policy == "realtime_latest_by_stream") {
         edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
         edge.link_options.queue_depth = int_field(eobj, "link_queue_depth", 16);
-        edge.link_options.stream_id = string_field(eobj, "link_stream_id", "");
       } else if (!link_policy.empty() && link_policy != "default") {
         throw_io_error(error_codes::kIoParse, "Graph::load", path,
                        "unsupported edge link_policy '" + link_policy + "'");
       }
+      edge.stream_id = string_field(eobj, "link_stream_id", "");
+      edge.link_options.stream_id = edge.stream_id;
       if (edge.kind == CompositionEdgeKind::PublicEndpoint) {
         edge.endpoint = EndpointEdgeMeta{
             .from_endpoint = string_field(eobj, "from_endpoint"),

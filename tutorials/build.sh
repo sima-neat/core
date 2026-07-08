@@ -179,6 +179,117 @@ EOF
   return 1
 }
 
+simaaimem_library_roots() {
+  local -a roots=()
+  local prefix
+  local simaneat_dir="${SIMANEAT_DIR%/}"
+
+  if [[ -n "${SYSROOT:-}" ]]; then
+    roots+=(
+      "${SYSROOT}/usr/lib"
+      "${SYSROOT}/usr/lib/aarch64-linux-gnu"
+      "${SYSROOT}/usr/local/lib"
+      "${SYSROOT}/usr/local/lib/aarch64-linux-gnu"
+      "${SYSROOT}/lib"
+      "${SYSROOT}/lib/aarch64-linux-gnu"
+    )
+  fi
+
+  case "${simaneat_dir}" in
+    */usr/lib/aarch64-linux-gnu/cmake/SimaNeat)
+      prefix="${simaneat_dir%/lib/aarch64-linux-gnu/cmake/SimaNeat}"
+      roots+=("${prefix}/lib" "${prefix}/lib/aarch64-linux-gnu")
+      ;;
+    */usr/lib/cmake/SimaNeat)
+      prefix="${simaneat_dir%/lib/cmake/SimaNeat}"
+      roots+=("${prefix}/lib" "${prefix}/lib/aarch64-linux-gnu")
+      ;;
+  esac
+
+  roots+=(
+    "/usr/lib"
+    "/usr/lib/aarch64-linux-gnu"
+    "/usr/local/lib"
+    "/usr/local/lib/aarch64-linux-gnu"
+    "/lib"
+    "/lib/aarch64-linux-gnu"
+    "/opt/toolchain/aarch64/modalix/usr/lib"
+    "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu"
+    "/opt/toolchain/aarch64/modalix/usr/local/lib"
+    "/opt/toolchain/aarch64/modalix/usr/local/lib/aarch64-linux-gnu"
+  )
+
+  local seen=";"
+  local root
+  for root in "${roots[@]}"; do
+    [[ -d "${root}" ]] || continue
+    case "${seen}" in
+      *";${root};"*) continue ;;
+    esac
+    seen+="${root};"
+    printf '%s\n' "${root}"
+  done
+}
+
+configure_simaaimem_link_fallback() {
+  if [[ "${SIMANEAT_DISABLE_SIMAAIMEM_SHIM:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  local -a lib_roots=()
+  mapfile -t lib_roots < <(simaaimem_library_roots)
+  if [[ "${#lib_roots[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  local root
+  for root in "${lib_roots[@]}"; do
+    if [[ -e "${root}/libsimaaimem.so" ]]; then
+      return 0
+    fi
+  done
+
+  local versioned_lib=""
+  for root in "${lib_roots[@]}"; do
+    while IFS= read -r candidate; do
+      if [[ -e "${candidate}" ]]; then
+        versioned_lib="${candidate}"
+        break 2
+      fi
+    done < <(find "${root}" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null | sort | grep '/libsimaaimem\.so\.' || true)
+  done
+
+  if [[ -z "${versioned_lib}" ]]; then
+    return 0
+  fi
+
+  local shim_dir="${BUILD_DIR}/link-shims"
+  mkdir -p "${shim_dir}"
+  ln -sfn "${versioned_lib}" "${shim_dir}/libsimaaimem.so"
+  local linker_flags="${CMAKE_EXE_LINKER_FLAGS:-}"
+  linker_flags="${linker_flags:+${linker_flags} }-L${shim_dir}"
+  cmake_args+=("-DCMAKE_EXE_LINKER_FLAGS=${linker_flags}")
+
+  cat >&2 <<EOF
+build.sh: using compatibility fallback for libsimaaimem.so.
+
+Found runtime library:
+  ${versioned_lib}
+
+The unversioned linker library libsimaaimem.so was not found in the active
+SDK/DevKit library paths, so build.sh created a build-local linker shim:
+  ${shim_dir}/libsimaaimem.so
+
+This keeps tutorials buildable in older installed environments. The preferred
+fix is to install or update the package that provides the development linker
+symlink:
+  sudo apt-get update && sudo apt-get install -y simaai-memory-lib-dev
+
+Set SIMANEAT_DISABLE_SIMAAIMEM_SHIM=1 to disable this fallback.
+
+EOF
+}
+
 usage() {
   cat <<EOF
 Usage: tutorials/build.sh [options]
@@ -330,65 +441,6 @@ discover_cmake_prefix_paths() {
   done
 }
 
-discover_simaaimem_link_shim() {
-  local -a search_dirs=()
-  local prefix
-
-  if [[ -n "${SYSROOT:-}" ]]; then
-    search_dirs+=(
-      "${SYSROOT}/usr/lib/aarch64-linux-gnu"
-      "${SYSROOT}/usr/lib"
-      "${SYSROOT}/lib/aarch64-linux-gnu"
-      "${SYSROOT}/lib"
-    )
-  fi
-
-  for prefix in "${cmake_prefix_paths[@]:-}"; do
-    search_dirs+=(
-      "${prefix}/lib/aarch64-linux-gnu"
-      "${prefix}/lib"
-    )
-  done
-
-  search_dirs+=(
-    "/usr/lib/aarch64-linux-gnu"
-    "/usr/lib"
-    "/lib/aarch64-linux-gnu"
-    "/lib"
-    "/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu"
-    "/opt/toolchain/aarch64/modalix/usr/lib"
-  )
-
-  local seen=";"
-  local dir
-  for dir in "${search_dirs[@]}"; do
-    [[ -d "${dir}" ]] || continue
-    case "${seen}" in
-      *";${dir};"*) continue ;;
-    esac
-    seen+="${dir};"
-
-    if [[ -e "${dir}/libsimaaimem.so" ]]; then
-      return 0
-    fi
-  done
-
-  for dir in "${search_dirs[@]}"; do
-    [[ -d "${dir}" ]] || continue
-
-    local candidate
-    for candidate in "${dir}"/libsimaaimem.so.*; do
-      [[ -e "${candidate}" ]] || continue
-
-      local shim_dir="${BUILD_DIR}/link-shims"
-      mkdir -p "${shim_dir}"
-      ln -sfn "${candidate}" "${shim_dir}/libsimaaimem.so"
-      printf '%s\n' "${shim_dir}"
-      return 0
-    done
-  done
-}
-
 manifest_path() {
   local -a candidates=(
     "${REPO_ROOT}/deps/manifest.json"
@@ -427,21 +479,6 @@ platform_version() {
   echo "${version}"
 }
 
-target_readmes() {
-  if [[ "${TARGET}" == "all" ]]; then
-    find "${TUTORIALS_DIR}" -maxdepth 2 -name README.md -print
-    return 0
-  fi
-
-  local target_dir="${TARGET#tutorial_}"
-  local readme="${TUTORIALS_DIR}/${target_dir}/README.md"
-  if [[ ! -f "${readme}" ]]; then
-    echo "build.sh: cannot find README.md for target '${TARGET}' at ${readme}" >&2
-    return 1
-  fi
-  echo "${readme}"
-}
-
 model_download_path() {
   local model="$1"
   local model_base="${model##*/}"
@@ -469,27 +506,68 @@ model_download_path() {
 }
 
 download_models() {
-  local readme_output
-  readme_output="$(target_readmes)"
-
-  local -a readmes=()
-  mapfile -t readmes < <(printf '%s\n' "${readme_output}" | sort)
+  local cmake_file="${TUTORIALS_DIR}/CMakeLists.txt"
+  if [[ ! -f "${cmake_file}" ]]; then
+    echo "build.sh: cannot find tutorials CMakeLists.txt at ${cmake_file}" >&2
+    return 1
+  fi
 
   local -a models=()
-  local readme model
-  for readme in "${readmes[@]}"; do
-    model="$(
-      sed -n 's/^|[[:space:]]*Model[[:space:]]*|[[:space:]]*\([^|[:space:]][^|]*[^|[:space:]]\)[[:space:]]*|.*/\1/p' "${readme}" \
-        | head -n1
-    )"
-    if [[ -z "${model}" || "${model}" == "None" || "${model}" == "none" || "${model}" == "N/A" ]]; then
-      continue
-    fi
-    models+=("${model}")
-  done
+  local matched_target="OFF"
+  local model
+  while IFS= read -r model; do
+    case "${model}" in
+      __matched_target__)
+        matched_target="ON"
+        ;;
+      ?*)
+        models+=("${model}")
+        ;;
+    esac
+  done < <(
+    awk -v target="${TARGET}" '
+      function emit(block, fields, count, i, target_name) {
+        gsub(/[()]/, " ", block)
+        gsub(/[[:space:]]+/, " ", block)
+        count = split(block, fields, " ")
+        target_name = fields[2]
+        if (target != "all" && target_name != target) {
+          return
+        }
+
+        print "__matched_target__"
+        for (i = 1; i <= count; ++i) {
+          if (fields[i] == "MODEL" && (i + 1) <= count) {
+            print fields[i + 1]
+          }
+        }
+      }
+      /^[[:space:]]*add_tutorial\(/ {
+        in_block = 1
+        block = $0
+        next
+      }
+      in_block {
+        block = block " " $0
+        if ($0 ~ /^[[:space:]]*\)[[:space:]]*$/) {
+          emit(block)
+          in_block = 0
+        }
+      }
+    ' "${cmake_file}"
+  )
+
+  if [[ "${TARGET}" != "all" && "${matched_target}" != "ON" ]]; then
+    echo "build.sh: cannot find tutorial target '${TARGET}' in ${cmake_file}" >&2
+    return 1
+  fi
+
+  if [[ "${TARGET}" == "all" || "${TARGET}" == tutorial_019_* || "${TARGET}" == tutorial_020_* || "${TARGET}" == tutorial_021_* || "${TARGET}" == tutorial_022_* ]]; then
+    echo "Skipping GenAI tutorial model downloads: GenAI tutorials use LLiMa model directories and are not downloaded through Model Zoo. Use llima pull explicitly before running them."
+  fi
 
   if [[ "${#models[@]}" -eq 0 ]]; then
-    echo "No tutorial models to download."
+    echo "No Model Zoo tutorial models to download."
     return 0
   fi
 
@@ -574,12 +652,7 @@ if [[ "${#cmake_prefix_paths[@]}" -gt 0 ]]; then
   echo "Using CMAKE_PREFIX_PATH=${cmake_prefix_path}"
 fi
 
-if simaaimem_shim_dir="$(discover_simaaimem_link_shim)" && [[ -n "${simaaimem_shim_dir}" ]]; then
-  linker_flags="${CMAKE_EXE_LINKER_FLAGS:-}"
-  linker_flags="${linker_flags:+${linker_flags} }-L${simaaimem_shim_dir}"
-  cmake_args+=("-DCMAKE_EXE_LINKER_FLAGS=${linker_flags}")
-  echo "Using tutorial link shim for libsimaaimem: ${simaaimem_shim_dir}"
-fi
+configure_simaaimem_link_fallback
 
 cmake "${cmake_args[@]}"
 

@@ -51,6 +51,14 @@ Without zero-copy, that's seven copies. With the buffer triple and segments, it'
 
 The framework's planner is responsible for picking segments such that consecutive stages can share. When two adjacent stages have incompatible segment requirements, the planner inserts a `Transfer` `ConversionKind` and records it in any active `ConversionTraceCollector`. Watch for these — they're the only places real bytes move at runtime.
 
+## Camera sources and adaptive memory
+
+Live camera frames enter through the platform camera stack, so their memory type depends on the installed kernel, driver, and `libcamerasrc` path. `CameraInput` asks for device/SiMaAI zero-copy memory first. When the camera stack already provides it, Neat passes the buffer through and normalizes the metadata used by downstream CVU/MLA stages.
+
+When the camera stack only provides OS/libcamera buffers and `allow_cpu_fallback` is enabled, Neat inserts a private camera memory bridge. The bridge copies each frame into a pooled SiMaAI buffer, stamps the expected metadata, and hands that buffer to model-managed CVU preprocessing. That copy is the compatibility bridge; resize, color conversion, normalization, quantization, and tessellation should still run on CVU/EV74.
+
+Do not add a public `OsToSima`, `videoconvert`, or `videoscale` stage just to make MIPI camera input work. Use [`CameraInput`](/reference/nodes/camera-input) and let the source path own the memory adaptation.
+
 ## Related types
 
 - [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer) — the buffer-triple container.

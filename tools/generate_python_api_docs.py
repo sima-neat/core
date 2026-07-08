@@ -125,10 +125,16 @@ def extract_class_blocks(module_cpp: Path) -> dict[str, str]:
         return {}
     text = read_text(module_cpp)
     matches = list(MODULE_CLASS_RE.finditer(text))
+    # Class binding chains can be followed by module-level definitions before the
+    # next class. Stop at either the next class or the next submodule boundary so
+    # helpers like `pyneat.graphs.branch(...)` do not show up as class methods.
+    boundary_starts = sorted(
+        [m.start() for m in matches] + [m.start() for m in MODULE_DEF_RE.finditer(text)]
+    )
     blocks: dict[str, str] = {}
-    for idx, match in enumerate(matches):
+    for match in matches:
         start = match.start()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        end = next((pos for pos in boundary_starts if pos > start), len(text))
         blocks[match.group("name")] = text[start:end]
     return blocks
 

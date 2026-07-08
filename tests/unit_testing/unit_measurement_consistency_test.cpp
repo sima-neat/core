@@ -44,7 +44,7 @@ simaai::neat::Run make_single_flight_run(const simaai::neat::Tensor& seed) {
   InputOptions src_opt;
   src_opt.payload_type = PayloadType::Image;
   src_opt.format = FormatTag::RGB;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   src_opt.max_width = 640;
   src_opt.max_height = 480;
   src_opt.max_depth = 3;

@@ -1245,7 +1245,6 @@ static void dump_node_debug_options(const std::vector<std::shared_ptr<Node>>& no
          << " media_type=" << resolve_input_media_type(opt) << " format=" << opt.format
          << " w=" << opt.width << " h=" << opt.height << " d=" << opt.depth << " fps=" << opt.fps_n
          << "/" << opt.fps_d << " buffer_name=" << opt.buffer_name
-         << " use_simaai_pool=" << (opt.use_simaai_pool ? "true" : "false")
          << " pool_min=" << opt.pool_min_buffers << " pool_max=" << opt.pool_max_buffers;
       std::fprintf(stderr, "%s\n", os.str().c_str());
     }
@@ -2533,12 +2532,16 @@ static std::string clamp_queue_buffers(std::string pipeline, int max_buffers) {
       const PropPresence buf = clamp_int_prop(seg, "max-size-buffers=", max_buffers, true);
       const PropPresence bytes = clamp_int_prop(seg, "max-size-bytes=", 0, false);
       const PropPresence time = clamp_int_prop(seg, "max-size-time=", 0, false);
+      const bool force_leaky_downstream =
+          env_bool("SIMA_QUEUE_LEAKY_DOWNSTREAM", false) && starts_with_token(trimmed, "queue");
       if (needs_default(buf))
         gst_props::set_prop(seg, "max-size-buffers=", std::to_string(max_buffers));
       if (needs_default(bytes))
         gst_props::set_prop(seg, "max-size-bytes=", "0");
       if (needs_default(time))
         gst_props::set_prop(seg, "max-size-time=", "0");
+      if (force_leaky_downstream)
+        gst_props::set_prop(seg, "leaky=", "downstream");
     }
     segments.push_back(trim_copy(seg));
     if (bang == std::string::npos)

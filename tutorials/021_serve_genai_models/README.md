@@ -39,7 +39,7 @@ The response should include the served names registered in this tutorial: `llm`,
 ## Run
 
 
-First, download the LLM, VLM, and ASR models from Hugging Face using the LLiMa CLI:
+On the Modalix DevKit, download the LLM, VLM, and ASR models from Hugging Face using the LLiMa CLI:
 
 ```bash
 llima pull Qwen3-4B-Instruct-2507-GPTQ-a16w4
@@ -47,7 +47,7 @@ llima pull Qwen3-VL-4B-Instruct-GPTQ-a16w4
 llima pull whisper-small-a16w8
 ```
 
-Start the server on Modalix with all three deployed model directories:
+Start the server on Modalix with all three DevKit-local model directories:
 
 **Python:**
 ```bash
@@ -83,7 +83,7 @@ curl http://<modalix-ip>:9998/v1/models
 ```
 
 Then call the endpoints from a client. Replace `<modalix-ip>` with the IP address or hostname of your Modalix device.
-The request clients below use Python `requests`, stream the response, and print server-side TTFT/TPS when reported.
+The request clients below use Python `requests`, stream the response, and print server-side TTFT plus average, minimum, and maximum per-token TPS when reported.
 
 ### Text request to the LLM
 
@@ -118,6 +118,8 @@ python3 share/sima-neat/tutorials/021_serve_genai_models/request_audio_transcrip
 ## In Practice
 
 Use the server when a network boundary is useful. Use direct `GenAIModel`, `VisionLanguageModel`, and `ASRModel` calls for lower-overhead application code inside the same process.
+
+Run one `GenAIServer` process with multiple served model names for normal applications. Multiple server processes can bind different ports if the DevKit has enough memory, but they load their own model instances and still share the same MLA hardware gatekeeper, so they should not be treated as a way to multiply hardware throughput.
 
 The `/v1/models` endpoint is the quickest smoke check: if it returns the served names, the server is reachable and the model registry is populated.
 

@@ -1,5 +1,7 @@
 #include "nodes/io/Input.h"
 
+#include "pipeline/internal/CapsStringUtil.h"
+
 #include <sstream>
 #include <string>
 #include <utility>
@@ -18,6 +20,13 @@ const char* stream_type_string(int stream_type) {
   default:
     return "stream";
   }
+}
+
+InputMemoryPolicy effective_memory_policy(const InputOptions& opt) {
+  if (!opt.use_simaai_pool && opt.memory_policy == InputMemoryPolicy::Auto) {
+    return InputMemoryPolicy::SystemMemory;
+  }
+  return opt.memory_policy;
 }
 
 std::string build_caps_string(const InputOptions& opt) {
@@ -104,17 +113,28 @@ std::vector<std::string> Input::element_names(int /*node_index*/) const {
 
 OutputSpec Input::output_spec(const OutputSpec& input) const {
   OutputSpec out;
-  const std::string resolved_media = resolve_input_media_type(opt_);
+  const std::string caps_media = pipeline_internal::caps_media_type(opt_.caps_override);
+  const PayloadType caps_payload =
+      opt_.caps_override.empty()
+          ? PayloadType::Auto
+          : pipeline_internal::payload_type_from_caps_string(opt_.caps_override);
+  const std::string resolved_media =
+      !caps_media.empty() ? caps_media : resolve_input_media_type(opt_);
   out.payload_type = opt_.payload_type != PayloadType::Auto
                          ? opt_.payload_type
-                         : (input.payload_type != PayloadType::Auto
-                                ? input.payload_type
-                                : payload_type_from_media_type(input.media_type));
+                         : (caps_payload != PayloadType::Auto
+                                ? caps_payload
+                                : (input.payload_type != PayloadType::Auto
+                                       ? input.payload_type
+                                       : payload_type_from_media_type(input.media_type)));
   out.media_type = !resolved_media.empty()
                        ? resolved_media
                        : (input.media_type.empty() ? std::string("video/x-raw") : input.media_type);
   if (out.payload_type == PayloadType::Auto) {
     out.payload_type = payload_type_from_media_type(out.media_type);
+    if (out.payload_type == PayloadType::Auto) {
+      out.payload_type = caps_payload;
+    }
   }
   out.format = !opt_.format.empty() ? opt_.format.str() : input.format;
   out.width = opt_.width > 0 ? opt_.width : input.width;
@@ -151,7 +171,16 @@ OutputSpec Input::output_spec(const OutputSpec& input) const {
     }
   }
 
-  out.memory = opt_.use_simaai_pool ? "SimaAI" : "SystemMemory";
+  switch (effective_memory_policy(opt_)) {
+  case InputMemoryPolicy::Ev74:
+  case InputMemoryPolicy::Dms0:
+  case InputMemoryPolicy::Auto:
+    out.memory = "SimaAI";
+    break;
+  case InputMemoryPolicy::SystemMemory:
+    out.memory = "SystemMemory";
+    break;
+  }
   out.byte_size = expected_byte_size(out);
   return out;
 }

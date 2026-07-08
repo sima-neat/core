@@ -22,17 +22,21 @@ std::string run_api_case(const char* id, const std::string& msg) {
 }
 
 simaai::neat::Run make_async_rgb_run_with_copy_input(const simaai::neat::Tensor& seed,
-                                                     int queue_depth = 1) {
+                                                     int queue_depth = 1,
+                                                     bool disabled_preprocess_meta = false) {
   using namespace simaai::neat;
 
   Graph graph;
   InputOptions src_opt;
   src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::RGB;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
+  if (disabled_preprocess_meta) {
+    src_opt.preprocess_meta = PreprocessMetaTemplate{};
+  }
   graph.add(nodes::Input(src_opt));
   graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
 
@@ -233,6 +237,39 @@ RUN_TEST(
             run_api_case("holder_stale_after_stop", "Run::try_push_holder should fail after stop"));
       }
 
+      // A present-but-disabled preprocess metadata template is an explicit no-op. Holder-only
+      // forwarding must not treat it as a failed metadata attach.
+      {
+        Run disabled_meta_run = make_async_rgb_run_with_copy_input(seed, 1, true);
+        require(disabled_meta_run.push(TensorList{seed}),
+                run_api_case("disabled_preprocess_meta_seed_push",
+                             "Run::push(TensorList) should seed disabled-meta holder path"));
+        auto first_samples = disabled_meta_run.pull_samples(1000);
+        require(first_samples.size() == 1,
+                run_api_case("disabled_preprocess_meta_seed_pull",
+                             "Run::pull_samples should return one sample"));
+        const TensorList first_tensors = tensors_from_sample(first_samples.front(), true);
+        require(!first_tensors.empty() && first_tensors.front().storage != nullptr &&
+                    first_tensors.front().storage->holder != nullptr,
+                run_api_case("disabled_preprocess_meta_holder",
+                             "disabled-meta seed path should produce a holder-backed tensor"));
+
+        try {
+          require(disabled_meta_run.try_push_holder(first_tensors.front().storage->holder),
+                  run_api_case("disabled_preprocess_meta_try_push_holder",
+                               "disabled preprocess metadata template should be a holder no-op"));
+        } catch (const std::exception& e) {
+          throw std::runtime_error(
+              run_api_case("disabled_preprocess_meta_try_push_holder_throw",
+                           std::string("unexpected throw for disabled template: ") + e.what()));
+        }
+        auto holder_out = disabled_meta_run.pull(1000);
+        require(holder_out.has_value() && !tensors_from_sample(*holder_out, true).empty(),
+                run_api_case("disabled_preprocess_meta_try_push_holder_output",
+                             "disabled-meta holder push should produce output"));
+        disabled_meta_run.stop();
+      }
+
       // Sample(holder) path on its own run to avoid holder-state coupling.
       {
         Run holder_sample_run = make_async_rgb_run_with_copy_input(seed, 1);
@@ -309,7 +346,7 @@ RUN_TEST(
         InputOptions src_opt;
         src_opt.payload_type = simaai::neat::PayloadType::Image;
         src_opt.format = simaai::neat::FormatTag::RGB;
-        src_opt.use_simaai_pool = false;
+        src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
         src_opt.max_width = 96;
         src_opt.max_height = 96;
         src_opt.max_depth = 3;
@@ -345,7 +382,7 @@ RUN_TEST(
         InputOptions src_opt;
         src_opt.payload_type = simaai::neat::PayloadType::Image;
         src_opt.format = simaai::neat::FormatTag::RGB;
-        src_opt.use_simaai_pool = false;
+        src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
         src_opt.max_width = 96;
         src_opt.max_height = 96;
         src_opt.max_depth = 3;

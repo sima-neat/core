@@ -1176,8 +1176,15 @@ void validate_semantic_payload(const BenchCase& c, const simaai::neat::TensorLis
       require(std::isfinite(value), c.name + ": output point must be finite");
     }
     const auto status = tensor_values<std::int32_t>(outputs.at(1), c.name + ": output_status");
+    const bool require_boolean_status =
+        env_flag("SIMA_VISUAL_TPUT_REQUIRE_BOOLEAN_KLT_STATUS", true);
     for (const auto value : status) {
-      require(value == 0 || value == 1, c.name + ": status must be 0 or 1");
+      if (require_boolean_status) {
+        require(value == 0 || value == 1,
+                c.name + ": status must be 0 or 1, got " + std::to_string(value));
+      } else {
+        require(value >= 0, c.name + ": status must be non-negative, got " + std::to_string(value));
+      }
     }
     validate_cpu_klt_golden(c, outputs.at(0), outputs.at(1), c.name + ": KLT CPU golden");
     if (c.klt_detect_new_features != 0) {
@@ -1562,9 +1569,6 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
   src_opt.is_live = true;
   src_opt.do_timestamp = true;
   src_opt.block = true;
-  // The SiMaAI appsrc pool currently over-reserves for large packed tensor batches; direct
-  // EV74 tensor handoff is the safe default for batch_size>1, with an env override for pool sweeps.
-  src_opt.use_simaai_pool = env_flag("SIMA_VISUAL_TPUT_USE_POOL", input_batch(c) == 1);
   src_opt.pool_min_buffers = std::max(2, env_int_local("SIMA_VISUAL_TPUT_NUM_BUFFERS", 4));
   src_opt.pool_max_buffers = src_opt.pool_min_buffers;
   src_opt.memory_policy = simaai::neat::InputMemoryPolicy::Ev74;

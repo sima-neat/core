@@ -1,0 +1,160 @@
+---
+title: CameraInput Node
+description: Configure the MIPI/libcamera CameraInput source node for source-owned Neat graphs.
+sidebar_position: 2
+---
+
+# CameraInput Node
+
+`CameraInput` is a source node for MIPI cameras exposed through libcamera and GStreamer `libcamerasrc`. Use it at the head of a source-owned graph when frames should come from the DevKit camera stack instead of from `run.push(...)`.
+
+For a task guide, see [Use a MIPI Camera](/develop-apps/advanced-concepts/mipi-camera-input).
+
+## Prerequisites
+
+Before you use `CameraInput`, bring up the camera outside Neat:
+
+- attach the camera while the Modalix DevKit is powered off;
+- select a `.dtbo` overlay that matches the carrier board, camera vendor, sensor, and port;
+- confirm libcamera lists the camera;
+- confirm `libcamerasrc` can stream the exact `format,width,height,framerate` you plan to request.
+
+`camera_name` is the libcamera camera name. Leave it unset for the default camera, or copy the name from `cam -l` when the board exposes more than one camera.
+
+## Quick start
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace neat = simaai::neat;
+
+neat::CameraInputOptions opt;
+opt.width = 1920;
+opt.height = 1080;
+opt.framerate_num = 30;
+opt.framerate_den = 1;
+opt.format = "NV12";
+opt.buffer_name = "camera0";
+opt.allow_cpu_fallback = true;
+
+neat::Graph graph;
+graph.add(neat::nodes::CameraInput(opt));
+graph.add(neat::nodes::Output("frames"));
+
+neat::Run run = graph.build();
+std::optional<neat::Sample> frame = run.pull(/*timeout_ms=*/5000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+opt = pyneat.CameraInputOptions()
+opt.width = 1920
+opt.height = 1080
+opt.framerate_num = 30
+opt.framerate_den = 1
+opt.format = "NV12"
+opt.buffer_name = "camera0"
+opt.allow_cpu_fallback = True
+
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.camera_input(opt))
+graph.add(pyneat.nodes.output("frames"))
+
+run = graph.build()
+frame = run.pull(timeout_ms=5000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Because `CameraInput` owns the source, build the graph without a public `Input` node unless your application really has another app-pushed input.
+
+## API surface
+
+```cpp
+namespace simaai::neat {
+struct CameraInputOptions;
+class CameraInput;
+}
+
+namespace simaai::neat::nodes {
+std::shared_ptr<simaai::neat::Node> CameraInput(
+    simaai::neat::CameraInputOptions opt = {});
+}
+```
+
+Python:
+
+```python
+opt = pyneat.CameraInputOptions()
+node = pyneat.nodes.camera_input(opt)
+```
+
+## Options
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `camera_name` | unset | Optional libcamera camera name, usually copied from `cam -l`. Leave unset to let libcamera choose the default camera. |
+| `width` | `1920` | Requested frame width in pixels. Must be supported by the camera mode and overlay. |
+| `height` | `1080` | Requested frame height in pixels. |
+| `framerate_num` | `30` | Framerate numerator. |
+| `framerate_den` | `1` | Framerate denominator. `0` is normalized to `1`. |
+| `format` | `"NV12"` | Requested `video/x-raw` format. `NV12` is the recommended model-preproc path. |
+| `buffer_name` | `"camera"` | Logical buffer name used in downstream metadata and model route naming. |
+| `insert_queue` | `true` | Insert a small live-source queue after `libcamerasrc`. |
+| `leaky_queue` | `true` | Make the queue leaky downstream so live graphs prefer recent frames over stale backlog. |
+| `queue_depth` | `2` | Maximum queued buffers when `insert_queue` is true. |
+| `allow_cpu_fallback` | `false` | If `false`, require camera/device zero-copy support. If `true`, use Neat's private adaptive bridge into SiMaAI memory. |
+
+## Input and output contract
+
+| Contract item | Behavior |
+| --- | --- |
+| Input role | Source node. The graph pulls frames from the camera; the app does not push samples into this node. |
+| Output media type | `video/x-raw`. |
+| Output format | The requested `format`, usually `NV12`. |
+| Memory contract | Prefers device/SiMaAI zero-copy. With fallback enabled, OS/libcamera buffers are adapted into SiMaAI memory for downstream CVU/MLA stages. |
+| Caps certainty | Static hint based on the requested options. Runtime caps negotiation still depends on the camera stack. |
+
+## Zero-copy and fallback
+
+`allow_cpu_fallback = false` requests strict camera/device zero-copy. The build fails if the installed `libcamerasrc` does not expose the SiMaAI zero-copy properties Neat needs.
+
+`allow_cpu_fallback = true` inserts Neat's private adaptive camera memory bridge. The bridge passes through SiMaAI/EV74 buffers when upstream already provides them. Otherwise, it copies the camera frame into a pooled SiMaAI buffer and attaches the metadata downstream stages expect.
+
+The fallback name means the bridge can accept OS/libcamera buffers. It does not mean you should move resize, color conversion, or normalization to the CPU. Keep those operations in model-managed CVU preprocessing whenever the route supports it.
+
+Do not add an `OsToSima` node yourself for `CameraInput`. The adaptation belongs to the camera source path.
+
+## Common graph shapes
+
+Pull camera frames directly:
+
+```text
+CameraInput -> Output
+```
+
+Run a camera through a model:
+
+```text
+CameraInput -> model.graph({include_input=false, include_output=true})
+```
+
+For model pipelines, configure preprocessing through `Model::Options::preprocess` or `pyneat.ModelOptions.preprocess` so resize, color conversion, normalization, quantization, and tessellation stay in the model-managed CVU route.
+
+## Failure modes
+
+| Error | Likely cause |
+| --- | --- |
+| `build.parse_launch` | `libcamerasrc` or `neatcamerabridge` is missing from the runtime plugin set. |
+| `misconfig.caps` / `not-negotiated` | The camera does not support the requested format, resolution, or framerate. |
+| Strict zero-copy error | `allow_cpu_fallback` is false and the camera source does not expose SiMaAI zero-copy properties. |
+| Pull timeout | The camera did not deliver frames, the graph is backpressured, or the camera stack stopped streaming. |
+| Green, purple, or heavily tinted frames | The frame format or model preprocess color conversion is wrong, or the tint already exists in the camera ISP/libcamera output. Validate an `NV12` capture outside Neat first. |

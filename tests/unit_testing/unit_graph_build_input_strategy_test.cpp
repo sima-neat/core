@@ -3,14 +3,19 @@
 #endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/Preproc.h"
 #include "pipeline/Graph.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <opencv2/core.hpp>
 
 #include <cstdlib>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -45,13 +50,35 @@ simaai::neat::Graph make_rgb_graph() {
   InputOptions src_opt;
   src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::RGB;
-  src_opt.use_simaai_pool = false;
+  src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
   graph.add(nodes::Input(src_opt));
   graph.add(nodes::Output(OutputOptions::EveryFrame(64)));
   return graph;
+}
+
+simaai::neat::PreprocOptions make_downstream_preproc_options() {
+  simaai::neat::PreprocOptions opt;
+  opt.set_input_shape({48, 64, 3});
+  opt.set_output_shape({48, 64, 3});
+  opt.set_slice_shape({16, 64, 3});
+  opt.input_img_type = "RGB";
+  opt.output_img_type = "RGB";
+  opt.output_dtype = "EVXX_INT8";
+  opt.scaled_width = 64;
+  opt.scaled_height = 48;
+  opt.normalize = false;
+  opt.aspect_ratio = false;
+  opt.tessellate = true;
+  opt.single_output_handoff = true;
+  opt.next_cpu = "APU";
+  opt.upstream_name = "input";
+  opt.num_buffers = 4;
+  opt.q_scale = 0.25;
+  opt.q_zp = 0;
+  return opt;
 }
 
 simaai::neat::Sample tensor_to_sample(const simaai::neat::Tensor& tensor) {
@@ -141,5 +168,28 @@ RUN_TEST(
         require_tensor_sample_outputs(run_sample.run(Sample{sample_seed}, 1000),
                                       "async build sample");
         run_sample.stop();
+      }
+
+      // Legacy pool opt-out must remain SystemMemory even when downstream auto inference would
+      // otherwise choose a device-visible memory policy.
+      {
+        InputOptions legacy_opt;
+        legacy_opt.payload_type = PayloadType::Image;
+        legacy_opt.format = FormatTag::RGB;
+        legacy_opt.use_simaai_pool = false;
+
+        const ScopedEnvVar no_preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "0");
+
+        Graph graph;
+        graph.add(nodes::Input(legacy_opt));
+        graph.add(nodes::Preproc(make_downstream_preproc_options()));
+        graph.add(nodes::Output(OutputOptions::EveryFrame(64)));
+
+        Run run = graph.build(std::vector<cv::Mat>{mat_seed}, run_opt);
+        const auto core = run_internal::core(run);
+        require(core != nullptr, "legacy pool opt-out: missing run core");
+        require(!core->pipeline.stream_opt.require_device_visible_input,
+                "legacy pool opt-out should not be rewritten to device-visible input");
+        run.stop();
       }
     }));

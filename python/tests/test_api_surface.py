@@ -1,5 +1,6 @@
 
 import importlib
+import warnings
 
 import numpy as np
 import pytest
@@ -124,6 +125,20 @@ METADATA_SENDER_OPTION_FIELDS = (
     "host",
     "channel",
     "metadata_port_base",
+)
+
+CAMERA_INPUT_OPTION_FIELDS = (
+    "camera_name",
+    "width",
+    "height",
+    "framerate_num",
+    "framerate_den",
+    "format",
+    "buffer_name",
+    "insert_queue",
+    "leaky_queue",
+    "queue_depth",
+    "allow_cpu_fallback",
 )
 
 
@@ -427,6 +442,41 @@ def test_output_stage_option_structs_expose_expected_fields():
     assert not hasattr(pyneat, removed_name)
 
 
+def test_camera_input_surface_is_exposed():
+  assert hasattr(pyneat, "CameraInputOptions")
+  assert hasattr(pyneat.nodes, "camera_input")
+
+  opt = pyneat.CameraInputOptions()
+  for field in CAMERA_INPUT_OPTION_FIELDS:
+    assert hasattr(opt, field), field
+
+  opt.camera_name = "imx477 5-001a"
+  opt.width = 1280
+  opt.height = 720
+  opt.framerate_num = 60
+  opt.framerate_den = 1
+  opt.format = "NV12"
+  opt.buffer_name = "camera0"
+  opt.queue_depth = 4
+  opt.allow_cpu_fallback = True
+
+  assert opt.camera_name == "imx477 5-001a"
+  assert opt.width == 1280
+  assert opt.height == 720
+  assert opt.framerate_num == 60
+  assert opt.format == "NV12"
+  assert opt.buffer_name == "camera0"
+  assert opt.queue_depth == 4
+  assert opt.allow_cpu_fallback is True
+  opt.camera_name = None
+  assert opt.camera_name is None
+
+  node = pyneat.nodes.camera_input(opt)
+  assert isinstance(node, pyneat.Node)
+  assert node.kind() == "CameraInput"
+  assert node.input_role() == pyneat.InputRole.Source
+
+
 def test_input_stage_option_struct_constructors_accept_expected_args():
   model_path = _strict_resnet50_model_path()
   assert model_path.exists(), f"missing fixture: {model_path}"
@@ -667,6 +717,7 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert hasattr(pyneat.nodes, "rtsp_input")
   assert hasattr(pyneat.nodes, "h264_depacketize")
   assert hasattr(pyneat.nodes, "h264_decode")
+  assert hasattr(pyneat.nodes, "sima_decode")
 
   _assert_not_type_error(lambda: pyneat.nodes.queue())
   _assert_not_type_error(lambda: pyneat.nodes.rtsp_input("rtsp://127.0.0.1:8554/src"))
@@ -690,20 +741,255 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
           enforce_h264_caps=True,
       )
   )
-  _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
-  _assert_not_type_error(
-      lambda: pyneat.nodes.h264_decode(
-          sima_allocator_type=2,
-          out_format="NV12",
-          decoder_name="",
-          raw_output=True,
-          next_element="",
-          dec_width=-1,
-          dec_height=-1,
-          dec_fps=-1,
-          num_buffers=7,
-      )
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
+    _assert_not_type_error(
+        lambda: pyneat.nodes.h264_decode(
+            sima_allocator_type=2,
+            out_format="NV12",
+            decoder_name="",
+            raw_output=True,
+            next_element="",
+            dec_width=-1,
+            dec_height=-1,
+            dec_fps=-1,
+            num_buffers=7,
+        )
+    )
+  assert any(
+      issubclass(warning.category, DeprecationWarning)
+      and "pyneat.nodes.h264_decode is deprecated" in str(warning.message)
+      for warning in caught
   )
+  native_decode = pyneat.SimaDecodeOptions()
+  assert native_decode.type == pyneat.SimaDecodeType.H264
+  assert native_decode.out_format == pyneat.Format.NV12
+  assert native_decode.raw_output is True
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode())
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.JPEG
+  native_decode.raw_output = False
+  native_decode.dec_width = 640
+  native_decode.dec_height = 480
+  native_decode.dec_fps = 30
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.MJPEG
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+
+
+def test_jpeg_framing_nodes_are_exposed():
+  http = pyneat.HttpSourceOptions()
+  assert http.location == ""
+  assert http.timeout_seconds == 15
+  assert http.retries == 3
+  assert http.is_live is False
+  assert http.do_timestamp is False
+  assert http.ssl_strict is True
+  http.location = "http://example.local/mjpeg"
+  http.is_live = True
+  http.do_timestamp = True
+  http.user_agent = "NeatTest"
+  http.ssl_strict = False
+  _assert_not_type_error(lambda: pyneat.nodes.http_source(http))
+
+  demux = pyneat.MultipartJpegDemuxOptions()
+  assert demux.boundary == ""
+  assert demux.single_stream is False
+  demux.boundary = "frame"
+  demux.single_stream = True
+  _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux())
+  _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux(demux))
+
+  fixup = pyneat.EncodedCapsFixupOptions()
+  assert fixup.media_type == ""
+  assert fixup.fallback_fps == -1
+  assert fixup.use_rtsp_sdp_fps is False
+  fixup.media_type = "image/jpeg"
+  fixup.fallback_fps = 30
+  _assert_not_type_error(lambda: pyneat.nodes.encoded_caps_fixup(fixup))
+
+  parser = pyneat.JpegParseOptions()
+  assert parser.disable_passthrough is True
+  parser.disable_passthrough = False
+  _assert_not_type_error(lambda: pyneat.nodes.jpeg_parse())
+  _assert_not_type_error(lambda: pyneat.nodes.jpeg_parse(parser))
+
+
+def test_rtsp_encoded_and_decoded_groups_are_exposed():
+  assert pyneat.RtspCodec.H264.name == "H264"
+  assert pyneat.RtspCodec.MJPEG.name == "MJPEG"
+  _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize())
+  _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize(26))
+
+  encoded = pyneat.RtspEncodedInputOptions()
+  assert encoded.url == ""
+  assert encoded.codec == pyneat.RtspCodec.H264
+  assert encoded.latency_ms == 200
+  assert encoded.tcp is True
+  assert encoded.drop_on_latency is False
+  assert encoded.buffer_mode == ""
+  assert encoded.insert_queue is True
+  assert encoded.sync_mode is False
+  assert encoded.h264_payload_type == 96
+  assert encoded.mjpeg_payload_type == 26
+  assert encoded.auto_caps_from_stream is True
+  assert encoded.source_fps == -1
+
+  encoded.url = "rtsp://example.local/mjpeg"
+  encoded.codec = pyneat.RtspCodec.MJPEG
+  encoded.source_fps = 120
+  group = pyneat.groups.rtsp_encoded_input(encoded)
+  assert isinstance(group, pyneat.Graph)
+  backend = group.describe_backend().lower()
+  assert "rtspsrc" in backend
+  assert "rtpjpegdepay" in backend
+  assert "jpegparse" in backend
+  assert "encoded_capsfix" in backend
+  assert "rtph264depay" not in backend
+
+  encoded_spec = pyneat.groups.rtsp_encoded_output_spec(encoded)
+  assert encoded_spec.payload_type == pyneat.PayloadType.Encoded
+  assert encoded_spec.media_type == "image/jpeg"
+  assert encoded_spec.format == "JPEG"
+
+  decoded = pyneat.RtspDecodedInputOptions()
+  assert decoded.codec == pyneat.RtspCodec.H264
+  assert decoded.drop_on_latency is False
+  assert decoded.buffer_mode == ""
+  assert decoded.payload_type == 96
+  assert decoded.mjpeg_payload_type == 26
+  assert decoded.dec_width == -1
+  assert decoded.dec_height == -1
+  assert decoded.dec_fps == -1
+  assert decoded.num_buffers == -1
+  assert decoded.source_fps == -1
+  assert decoded.use_videorate is False
+  assert decoded.video_rate_fps == -1
+  assert decoded.output_caps.memory == pyneat.CapsMemory.Any
+
+  decoded.url = "rtsp://example.local/mjpeg"
+  decoded.codec = pyneat.RtspCodec.MJPEG
+  decoded.dec_width = 640
+  decoded.dec_height = 480
+  decoded.source_fps = 30
+  decoded.use_videorate = True
+  decoded.video_rate_fps = 15
+  decoded.output_caps.width = 640
+  decoded.output_caps.height = 480
+  decoded.output_caps.fps = 15
+  decoded_group = pyneat.groups.rtsp_decoded_input(decoded)
+  assert isinstance(decoded_group, pyneat.Graph)
+  try:
+    decoded_backend = decoded_group.describe_backend().lower()
+  except RuntimeError as exc:
+    message = str(exc).lower()
+    if (
+        "required gstreamer element not found: neatdecoder" not in message
+        and "required neat factory is missing" not in message
+    ):
+      raise
+    pytest.skip("native decoder backend is not available in this environment")
+  assert "rtpjpegdepay" in decoded_backend
+  assert "jpegparse" in decoded_backend
+  assert "neatdecoder" in decoded_backend
+  assert "dec-type=mjpeg" in decoded_backend
+  assert "dec-fps=30" in decoded_backend
+  assert "videorate" in decoded_backend
+  assert "framerate=15/1" in decoded_backend
+
+  decoded_spec = pyneat.groups.rtsp_decoded_output_spec(decoded)
+  assert decoded_spec.media_type == "video/x-raw"
+  assert decoded_spec.format == "NV12"
+  assert decoded_spec.width == 640
+  assert decoded_spec.height == 480
+  assert decoded_spec.memory == "SimaAI"
+
+
+def test_http_mjpeg_decoded_input_group_is_exposed():
+  opt = pyneat.HttpMjpegDecodedInputOptions()
+  assert opt.url == ""
+  assert opt.timeout_seconds == 15
+  assert opt.retries == 3
+  assert opt.is_live is True
+  assert opt.do_timestamp is True
+  assert opt.ssl_strict is True
+  assert opt.multipart_boundary == ""
+  assert opt.multipart_single_stream is False
+  assert opt.insert_queue is True
+  assert opt.sync_mode is False
+  assert opt.sima_allocator_type == 2
+  assert opt.out_format == pyneat.Format.NV12
+  assert opt.decoder_raw_output is True
+  assert opt.dec_width == -1
+  assert opt.dec_height == -1
+  assert opt.dec_fps == -1
+  assert opt.num_buffers == -1
+  assert opt.source_fps == -1
+  assert opt.use_videorate is False
+  assert opt.video_rate_fps == -1
+  assert opt.output_caps.memory == pyneat.CapsMemory.Any
+
+  opt.url = "http://example.local/mjpeg"
+  opt.timeout_seconds = 9
+  opt.retries = -1
+  opt.user_agent = "NeatTest"
+  opt.ssl_strict = False
+  opt.multipart_boundary = "frame"
+  opt.multipart_single_stream = True
+  opt.decoder_name = "mjpeg_decoder"
+  opt.dec_width = 640
+  opt.dec_height = 480
+  opt.source_fps = 30
+  opt.use_videorate = True
+  opt.video_rate_fps = 15
+  opt.output_caps.enable = True
+  opt.output_caps.fps = 15
+  opt.num_buffers = 8
+  group = pyneat.groups.http_mjpeg_decoded_input(opt)
+  assert isinstance(group, pyneat.Graph)
+  try:
+    backend = group.describe_backend().lower()
+  except RuntimeError as exc:
+    if "required gstreamer element not found: neatdecoder" not in str(exc).lower():
+      raise
+    pytest.skip("neatdecoder is not available in this environment")
+  assert "souphttpsrc" in backend
+  assert "ssl-strict=false" in backend
+  assert "multipartdemux" in backend
+  assert "jpegparse" in backend
+  assert "neatdecoder" in backend
+  assert "dec-type=mjpeg" in backend
+  assert "dec-fps=30" in backend
+  assert "videorate" in backend
+  assert "framerate=15/1" in backend
+
+  spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert spec.format == "NV12"
+  assert spec.fps_num == 15
+
+  opt.output_caps.enable = False
+  opt.output_caps.width = 320
+  opt.output_caps.height = 240
+  opt.output_caps.fps = 15
+  opt.use_videorate = False
+  opt.video_rate_fps = -1
+  disabled_caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert disabled_caps_spec.width == 640
+  assert disabled_caps_spec.height == 480
+  assert disabled_caps_spec.fps_num == 30
+  assert disabled_caps_spec.memory == "SimaAI"
+
+  opt.output_caps.enable = True
+  caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert caps_spec.width == 320
+  assert caps_spec.height == 240
+  assert caps_spec.fps_num == 15
+  assert caps_spec.memory == "SimaAI"
+
+  opt.output_caps.memory = pyneat.CapsMemory.SystemMemory
+  system_caps_spec = pyneat.groups.http_mjpeg_decoded_output_spec(opt)
+  assert system_caps_spec.memory == "SystemMemory"
 
 
 def test_mla_group_helper_present_and_accepts_model():
@@ -1187,7 +1473,7 @@ def test_graph_video_push_uses_input_format_without_image_semantic():
   opt = pyneat.InputOptions()
   opt.payload_type = pyneat.PayloadType.Image
   opt.format = pyneat.Format.RGB
-  opt.use_simaai_pool = False
+  opt.memory_policy = pyneat.InputMemoryPolicy.SystemMemory
   graph.add(pyneat.nodes.input(opt))
   graph.add(pyneat.nodes.output())
 
@@ -1201,6 +1487,15 @@ def test_graph_video_push_uses_input_format_without_image_semantic():
   finally:
     run.close_input()
     run.close()
+
+
+def test_input_options_use_simaai_pool_is_deprecated_compatibility_property():
+  opt = pyneat.InputOptions()
+  with warnings.catch_warnings(record=True) as caught:
+    warnings.simplefilter("always")
+    opt.use_simaai_pool = False
+  assert opt.use_simaai_pool is False
+  assert any("use_simaai_pool is deprecated" in str(w.message) for w in caught)
 
 
 def test_graph_error_in_python_exposes_structured_fields():

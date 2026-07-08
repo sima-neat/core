@@ -16,7 +16,7 @@ def image_data_url(path: Path) -> str:
 
 def print_stream(response: requests.Response) -> None:
     ttft = None
-    tps = None
+    tps_samples = []
 
     for line in response.iter_lines(decode_unicode=True):
         if not line or not line.startswith("data:"):
@@ -34,7 +34,8 @@ def print_stream(response: requests.Response) -> None:
             raise RuntimeError(error)
 
         ttft = event.get("ttft", ttft)
-        tps = event.get("tps", tps)
+        if "tps" in event:
+            tps_samples.append(float(event["tps"]))
 
         choice = event.get("choices", [{}])[0]
         content = choice.get("delta", {}).get("content", "")
@@ -44,8 +45,12 @@ def print_stream(response: requests.Response) -> None:
     print()
     if ttft is not None:
         print(f"server ttft: {ttft:.4f}s")
-    if tps is not None:
-        print(f"server tps: {tps:.2f} tokens/s")
+    if tps_samples:
+        avg_tps = sum(tps_samples) / len(tps_samples)
+        print(
+            f"server tps: avg={avg_tps:.2f} min={min(tps_samples):.2f} "
+            f"max={max(tps_samples):.2f} tokens/s"
+        )
 
 
 def main() -> int:
@@ -55,7 +60,7 @@ def main() -> int:
     parser.add_argument("--server-ip", default="127.0.0.1")
     parser.add_argument("--server-port", type=int, default=9998)
     parser.add_argument("--model", default="vlm", help="Served VLM model name")
-    parser.add_argument("--max-tokens", type=int, default=96)
+    parser.add_argument("--max-tokens", type=int, default=None)
     args = parser.parse_args()
 
     prompt = " ".join(args.prompt) if args.prompt else "What is the main subject of this image?"
@@ -71,9 +76,10 @@ def main() -> int:
                 ],
             }
         ],
-        "max_tokens": args.max_tokens,
         "stream": True,
     }
+    if args.max_tokens is not None:
+        payload["max_tokens"] = args.max_tokens
 
     print(f"model: {args.model}")
     response = requests.post(url, json=payload, stream=True, timeout=120)

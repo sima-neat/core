@@ -215,6 +215,16 @@ jobs:
             sima-cli packages build --help >/dev/null
             cd /workspace
             ./build.sh ${CORE_BUILD_ARGS}
+            if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
+              (
+                cd dist
+                NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON ./install_neat_framework.sh --local
+              )
+              rm -rf /tmp/sima-neat-doc-examples-sdk
+              tests/docs/build_docs_examples.sh \
+                --environment sdk \
+                --build-root /tmp/sima-neat-doc-examples-sdk
+            fi
           '
 
       post_build_command: |
@@ -433,6 +443,12 @@ jobs:
         run: |
           ./scripts/fix_devkit_runtime.sh
 
+      - name: Build docs C++ examples from DevKit-installed package
+        run: |
+          tests/docs/build_docs_examples.sh \
+            --environment devkit \
+            --build-root "${RUNNER_TEMP:-/tmp}/sima-neat-doc-examples-devkit"
+
       - name: Discover installed CTest directories
         run: |
           EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
@@ -481,6 +497,15 @@ jobs:
       - name: Run E2E Tests
         env:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
+          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
+          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
+          SIMANEAT_TEST_RTSP_H264_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H264_FPS }}
+          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
+          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
+          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
+          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
+          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
+          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
         run: |
@@ -507,8 +532,8 @@ jobs:
           else
             ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
-              --label-exclude "perf" \
-              -E "${SKIP_REGEX}" \
+              --label-exclude "perf|llima" \
+              -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
               --output-on-failure \
@@ -529,6 +554,8 @@ jobs:
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
+            --label-exclude "llima|disabled" \
+            -E "^(modelzoo_bulk_models_test)$" \
             --output-on-failure \
             --no-tests=error
 
@@ -554,8 +581,8 @@ jobs:
 
       - name: Run Tutorial Tests
         env:
-          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
-          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
+          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
+          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
         run: |
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
           TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/build.sh"
@@ -584,8 +611,8 @@ jobs:
 
       - name: Run Python pytest from installed extras
         env:
-          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
-          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
+          SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
+          SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
         run: |
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then

@@ -55,7 +55,7 @@ void run_preproc_build_repro(simaai::neat::RunMode mode, bool tessellate) {
   src_opt.is_live = true;
   src_opt.do_timestamp = true;
   src_opt.block = false;
-  src_opt.use_simaai_pool = env_bool("SIMA_PREPROC_USE_POOL", true);
+  src_opt.memory_policy = InputMemoryPolicy::Ev74;
   src_opt.pool_min_buffers = env_int("SIMA_PREPROC_NUM_BUFFERS", 4);
   src_opt.pool_max_buffers = src_opt.pool_min_buffers;
   src_opt.buffer_name = "decoder";

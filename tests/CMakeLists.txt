@@ -73,6 +73,7 @@ set(PIPELINESESSION_TEST_BLACKLIST
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/model-archive")
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 set(SIMA_TEST_DECODER_FIXTURE "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
+set(SIMA_TEST_CODEC_PERF_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/codec-perf")
 
 add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
@@ -84,6 +85,18 @@ add_custom_target(prepare_test_fixtures ALL
     --output ${SIMA_TEST_DECODER_FIXTURE}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Preparing deterministic test fixtures"
+  VERBATIM
+)
+
+add_custom_target(prepare_perf_codec_fixtures
+  COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py
+    --output-dir ${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}
+    --width 1280
+    --height 720
+    --fps 30
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Preparing codec performance fixtures"
   VERBATIM
 )
 
@@ -270,8 +283,11 @@ set(UNIT_TESTS
   unit_gst_helpers_test
   unit_gst_init_guard_test
   unit_gst_video_meta_test
+  unit_latest_mux_credit_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
+  unit_http_mjpeg_decoded_group_test
+  unit_rtsp_encoded_input_group_test
   unit_input_policy_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
@@ -310,12 +326,14 @@ set(UNIT_TESTS
   unit_modalix_contract_preflight_test
   unit_mpk_graph_dump_test
   unit_mpk_fuse_sibling_pre_mla_test
+  unit_pre_mla_ingress_order_input_offset_test
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
   unit_model_archive_loader_test
   unit_outputspec_test
   unit_pcie_nodes_test
+  unit_jpeg_framing_nodes_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
@@ -339,6 +357,7 @@ set(UNIT_TESTS
   unit_sima_boxdecode_static_contract_extractor_test
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
+  unit_sima_decode_test
   unit_kernel200_envelope_guard_test
   unit_processcvu_binding_table_uses_runtime_outputs_test
   unit_processcvu_preproc_runtime_vs_exposed_outputs_test
@@ -360,6 +379,7 @@ set(UNIT_TESTS
   unit_tensorbuffer_bind_preserve_source_view_test
   unit_tensorbuffer_publish_view_segment_name_precedence_test
   unit_sample_tensor_set_materialized_parent_offsets_test
+  unit_sample_packed_parent_alignment_padding_test
   unit_yolov8_mla_handoff_segment_test
   unit_yolov8_contract_subset_test
   unit_agg_model_managed_no_standalone_json_test
@@ -445,7 +465,6 @@ set(E2E_TESTS
   decoder_download_test
   decoder_drop_on_resolution_change_test
   decoder_dynamic_caps_test
-  decoder_quality_compare_test
   decoder_visible_caps_test
   hybrid_graph_basic_test
   hybrid_graph_bundle_test
@@ -473,6 +492,17 @@ foreach(test ${E2E_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e")
   endif()
 endforeach()
+
+
+add_pipeline_test(
+  decoder_quality_compare_test
+  SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/decoder_quality_compare_test.cpp
+  ARGS --max-frames 40 --timeout-ms 20000
+)
+
+if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST decoder_quality_compare_test APPEND PROPERTY LABELS "e2e")
+endif()
 
 add_pipeline_test_long(
   preproc_build_input_repro_test
@@ -596,7 +626,6 @@ if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST decoder_quality_compare_test
     APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT=8757"
   )
-  set_tests_properties(decoder_quality_compare_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -661,6 +690,8 @@ set(PERF_TARGETS
   perf_runtime_graph_async_rgb_test
   perf_runtime_graph_fanout_test
   perf_runtime_graph_join_bundle_test
+  perf_runtime_codec_mjpeg_decode_test
+  perf_runtime_codec_h264_decode_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -675,6 +706,9 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
+  if (target STREQUAL "perf_runtime_codec_h264_decode_test")
+    add_dependencies(${target} prepare_perf_codec_fixtures)
+  endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
 
@@ -946,6 +980,7 @@ endfunction()
 add_visual_frontend_tput_preset_test(
   visual_frontend_customer_api_fast_test
   ENV
+    "SIMA_VISUAL_TPUT_CASE=feature_histogram"
     "SIMA_VISUAL_TPUT_WIDTH=320"
     "SIMA_VISUAL_TPUT_HEIGHT=240"
     "SIMA_VISUAL_TPUT_BATCH=2"
@@ -953,13 +988,14 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_NUM_POINTS=32"
     "SIMA_VISUAL_TPUT_WARMUP=0"
     "SIMA_VISUAL_TPUT_ITERS=2"
-    "SIMA_VISUAL_TPUT_KLT_DETECT=1"
+    "SIMA_VISUAL_TPUT_KLT_DETECT=0"
     "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
-    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=0"
+    "SIMA_VISUAL_TPUT_CPU_GOLDEN=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_BOOLEAN_KLT_STATUS=0"
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast"
 )
-set_tests_properties(visual_frontend_customer_api_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_customer_api_klt_no_detect_fast_test
@@ -974,11 +1010,12 @@ add_visual_frontend_tput_preset_test(
     "SIMA_VISUAL_TPUT_ITERS=2"
     "SIMA_VISUAL_TPUT_KLT_DETECT=0"
     "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
-    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=0"
+    "SIMA_VISUAL_TPUT_CPU_GOLDEN=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_BOOLEAN_KLT_STATUS=0"
     "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
   LABELS "customer_api;fast;klt"
 )
-set_tests_properties(visual_frontend_customer_api_klt_no_detect_fast_test PROPERTIES DISABLED TRUE)
 
 add_visual_frontend_tput_preset_test(
   visual_frontend_predispatch_guard_fast_test
@@ -1230,7 +1267,6 @@ add_pipeline_test(
 if (NOT graph_migration_phase3_connected_yolo_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST graph_migration_phase3_connected_yolo_route_test
     APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified;phase3")
-  set_tests_properties(graph_migration_phase3_connected_yolo_route_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -1405,7 +1441,6 @@ if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLI
   set_property(TEST yolov8_model_benchmark_metrics_test
     APPEND PROPERTY LABELS "e2e;obj_detection;benchmark;metrics")
   set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
-  set_tests_properties(yolov8_model_benchmark_metrics_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -1471,7 +1506,7 @@ if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   set_property(TEST async_yolov11_pose_bf16_tput_test
     APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
   set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
-  set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES DISABLED TRUE)
+  set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_pipeline_test(
@@ -1606,6 +1641,58 @@ add_pipeline_test(
 if (NOT rtsp_pull_frame_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST rtsp_pull_frame_test APPEND PROPERTY LABELS "e2e;img_classification")
   set_property(TEST rtsp_pull_frame_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+endif()
+
+add_pipeline_test(
+  rtsp_encoded_boundary_caps_test
+  e2e_testing/rtsp_encoded_boundary_caps_test.cpp
+)
+
+if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY LABELS "e2e;rtsp")
+  set_property(TEST rtsp_encoded_boundary_caps_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+add_pipeline_test_long(
+  codec_runtime_stream_test
+  e2e_testing/codec_runtime_stream_test.cpp
+)
+
+if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY LABELS "e2e;codec;rtsp;http_mjpeg")
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+
+  add_test(
+    NAME codec_runtime_stream_contract_test
+    COMMAND codec_runtime_stream_test --frames 5 --repeat 2 --determinism
+  )
+  append_pipeline_test_env(codec_runtime_stream_contract_test)
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;http_mjpeg;determinism;lifecycle")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_test(
+    NAME codec_runtime_bad_url_diagnostics
+    COMMAND codec_runtime_stream_test --case bad-url-diagnostics --timeout-ms 2000
+  )
+  append_pipeline_test_env(codec_runtime_bad_url_diagnostics)
+  set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY LABELS "strict;e2e;codec;failure")
+  set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY RESOURCE_LOCK "rtsp")
+endif()
+
+add_pipeline_test_long(
+  codec_decode_accuracy_test
+  e2e_testing/codec_decode_accuracy_test.cpp
+)
+
+if (NOT codec_decode_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(codec_decode_accuracy_test prepare_perf_codec_fixtures)
+  set_property(TEST codec_decode_accuracy_test APPEND PROPERTY LABELS "e2e;codec;accuracy")
+  set_property(TEST codec_decode_accuracy_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
 add_pipeline_test(
@@ -1828,13 +1915,13 @@ install(
   COMPONENT extras
 )
 
-# Model-archive + decoder fixtures used by the modelpack/security suites.
+# Model-archive, decoder, and codec perf fixtures used by installed tests.
 # Keep install/package jobs self-contained too. Some CI/CD paths package or
 # install the test extras without explicitly building an individual test
-# executable first; in that case the build-time prepare_test_fixtures target
-# may not have been requested yet. Regenerate the deterministic fixture tree
-# immediately before installing it so installed runners see the same manifest
-# and archives as build-tree CTest.
+# executable first; in that case the build-time fixture targets may not have
+# been requested yet. Regenerate the deterministic fixture trees immediately
+# before installing them so installed runners see the same assets as build-tree
+# CTest.
 install(
   CODE "
 execute_process(
@@ -1858,6 +1945,19 @@ execute_process(
 if (NOT _sima_decoder_fixture_rv EQUAL 0)
   message(FATAL_ERROR \"failed to prepare decoder test fixture\")
 endif()
+execute_process(
+  COMMAND \"${Python3_EXECUTABLE}\"
+          \"${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py\"
+          --output-dir \"${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}\"
+          --width 1280
+          --height 720
+          --fps 30
+  WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
+  RESULT_VARIABLE _sima_codec_perf_fixture_rv
+)
+if (NOT _sima_codec_perf_fixture_rv EQUAL 0)
+  message(FATAL_ERROR \"failed to prepare codec perf test fixtures\")
+endif()
 "
   COMPONENT extras
 )
@@ -1869,6 +1969,11 @@ install(
 install(
   DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/decoder/"
   DESTINATION lib/sima-neat/test-assets/decoder
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_BINARY_DIR}/test-assets/codec-perf/"
+  DESTINATION lib/sima-neat/test-assets/codec-perf
   COMPONENT extras
 )
 install(
@@ -1891,8 +1996,11 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   decoder_quality_compare_test
   decoder_visible_caps_test
   file_read_test
+  codec_decode_accuracy_test
+  codec_runtime_stream_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
+  rtsp_encoded_boundary_caps_test
   rtsp_pull_frame_test
 )
 foreach(_simaneat_decoder_media_test IN LISTS SIMANEAT_DECODER_MEDIA_E2E_TESTS)

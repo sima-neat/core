@@ -65,13 +65,13 @@ struct PreprocessMetaTemplate {
 /**
  * @brief Where ingress buffers should be allocated when the application pushes samples.
  *
- * `Auto` defers to legacy / session-level selection; the explicit values force a
- * specific memory target.
+ * `Auto` lets Core infer or choose the default allocation target; the explicit
+ * values force a specific memory target.
  *
  * @ingroup nodes_io
  */
 enum class InputMemoryPolicy {
-  Auto = 0,     ///< Defer to legacy / session-level target selection.
+  Auto = 0,     ///< Let Core infer or choose the default allocation target.
   Ev74,         ///< Allocate in EV74-visible memory.
   Dms0,         ///< Allocate in DMS0 memory.
   SystemMemory, ///< Allocate in plain system memory.
@@ -105,11 +105,17 @@ struct InputOptions {
   int stream_type = 0;         ///< `GST_APP_STREAM_TYPE_STREAM` by default.
   std::uint64_t max_bytes = 0; ///< `appsrc` `max-bytes` back-pressure threshold. `0` = unlimited.
 
-  bool use_simaai_pool = true; ///< Allocate from the SiMa-aware buffer pool.
-  int pool_min_buffers = 1;    ///< Minimum buffers held by the pool.
-  int pool_max_buffers = 2;    ///< Maximum buffers held by the pool.
+  /// @deprecated Accepted for source compatibility. Use `memory_policy` instead:
+  /// `false` maps to `InputMemoryPolicy::SystemMemory`; default SiMa allocation
+  /// behavior maps to `InputMemoryPolicy::Auto`; explicit targets use
+  /// `InputMemoryPolicy::Ev74` or `InputMemoryPolicy::Dms0`.
+  /// Older Graph JSON using this field is still accepted. New saved Graph JSON
+  /// writes `memory_policy`.
+  bool use_simaai_pool = true;
+  int pool_min_buffers = 1; ///< Minimum buffers held by the pool.
+  int pool_max_buffers = 2; ///< Maximum buffers held by the pool.
   /// Ingress allocation target policy used by appsrc input buffer allocation.
-  /// `Auto` keeps legacy target selection unless caller/model/session overrides.
+  /// `Auto` lets graph lowering infer from downstream nodes where possible.
   InputMemoryPolicy memory_policy = InputMemoryPolicy::Auto;
 
   /// Optional `GstSimaMeta` buffer name override. Leave empty to avoid forcing a legacy default.

@@ -129,11 +129,20 @@ std::vector<simaai::neat::Segment> extract_runtime_segments_from_buffer(GstBuffe
   if (memory_count == 1U) {
     GstMemory* memory = gst_buffer_peek_memory(buffer, 0U);
     if (buffer_memory_uses_segment_allocator(memory)) {
+      const gsize buffer_size = gst_buffer_get_size(buffer);
       const gsize segment_count = gst_simaai_memory_get_segment_count(memory);
       segments.reserve(static_cast<std::size_t>(segment_count));
       for (gsize i = 0; i < segment_count; ++i) {
         const gchar* raw_name = gst_simaai_memory_get_segment_name_at(memory, i);
-        const gsize raw_size = gst_simaai_memory_get_segment_size_at(memory, i);
+        gsize raw_size = gst_simaai_memory_get_segment_size_at(memory, i);
+        if (segment_count == 1U && buffer_size > 0U && raw_size > buffer_size) {
+          /*
+           * Packed CMA pools expose a single parent simaai_memory_t while GstMemory/GstBuffer
+           * carries the logical frame view.  Runtime segment metadata must describe the view that
+           * will be transported across a graph boundary, not the whole packed parent allocation.
+           */
+          raw_size = buffer_size;
+        }
         std::string name = raw_name ? std::string(raw_name) : std::string();
         if (name.empty()) {
           name = "memory" + std::to_string(static_cast<std::size_t>(i));

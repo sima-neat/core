@@ -60,6 +60,13 @@ bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const Sam
 bool attach_video_meta(GstBuffer** buffer, const SampleSpec& spec, std::string* err);
 bool apply_tensor_size(GstBuffer** buffer, const SampleSpec& spec, std::string* err);
 
+// Ensure a buffer can accept metadata writes without copying the payload.  Borrowed
+// GstSample-backed buffers are often not writable even though their payload can be shared; in
+// that case this replaces *buffer with a shallow GstBuffer view that references the same memory
+// and parent buffer, while giving callers a writable metadata envelope.
+bool ensure_writable_for_meta(GstBuffer** buffer, const SampleSpec& spec, const char* tag,
+                              std::string* err);
+
 bool wrap_cpu_dense_zero_copy(const simaai::neat::Tensor& tensor, GstBuffer** out,
                               std::string* err);
 

@@ -8,6 +8,7 @@
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
 #include "pipeline/Run.h"
+#include "pipeline/internal/HolderLoanGate.h"
 
 #include <atomic>
 #include <chrono>
@@ -90,6 +91,7 @@ struct GraphRuntimeOptions {
 inline GraphRuntimeOptions
 graph_runtime_options_from_run_options(const RunOptions& opt, const VerboseOptions& verbose = {}) {
   GraphRuntimeOptions out;
+  out.edge_queue = opt.queue_depth > 0 ? static_cast<std::size_t>(opt.queue_depth) : 0U;
   out.verbose = verbose;
   out.pipeline = opt;
   out.power_monitor = opt.power_monitor;
@@ -159,6 +161,7 @@ struct RunCore {
   PullStatus pull_named_output(std::string_view output_name, int timeout_ms, Sample& out,
                                PullError* err = nullptr);
   std::optional<Sample> pull_optional(int timeout_ms = -1);
+  bool attach_public_output_loan(Sample& sample, std::string* err = nullptr);
 
   RunStats stats() const;
   InputStreamStats input_stats() const;
@@ -184,6 +187,14 @@ struct RunCore {
                                   std::chrono::steady_clock::time_point at);
   void graph_sanitize_pipeline_input(std::size_t index, Sample& sample);
   void graph_restore_stream_id_if_needed(std::size_t index, Sample& sample);
+  std::optional<RuntimeSinkQueueMsg> graph_pull_msg(simaai::neat::graph::NodeId node_id,
+                                                    int timeout_ms);
+  std::optional<RuntimeSinkQueueMsg>
+  graph_pull_msg_with_restore_reservation(simaai::neat::graph::NodeId node_id, int timeout_ms);
+  bool graph_restore_sink_front(simaai::neat::graph::NodeId node_id, RuntimeSinkQueueMsg&& msg);
+  bool graph_restore_reserved_sink_front(simaai::neat::graph::NodeId node_id,
+                                         RuntimeSinkQueueMsg&& msg);
+  bool graph_release_sink_restore_reservation(simaai::neat::graph::NodeId node_id);
   std::optional<Sample> graph_pull(simaai::neat::graph::NodeId node_id, int timeout_ms);
 
   RunOptions opt;
@@ -202,6 +213,7 @@ struct RunCore {
   std::unique_ptr<ExecutionGraphPlan> graph_export_plan_;
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
+  pipeline_internal::HolderLoanGatePtr holder_loan_gate;
   std::shared_ptr<simaai::neat::graph::GraphRunStats> graph_stats;
 
   std::uint64_t latency_count = 0;
