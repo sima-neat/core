@@ -69,6 +69,22 @@ bool graph_sched_log_first_stream() {
   return cached == 1;
 }
 
+void enforce_graphrun_public_sample_push_transferable(const Sample& sample, const char* where) {
+  if (env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false)) {
+    return;
+  }
+  if (!simaai::neat::pipeline_internal::sample_has_device_gstsample_producer_lifetime(
+          sample, /*require_expired=*/false)) {
+    return;
+  }
+  std::string reason;
+  if (!simaai::neat::pipeline_internal::sample_has_transferable_zero_copy_loan(sample, &reason)) {
+    throw std::runtime_error(
+        simaai::neat::pipeline_internal::cross_run_zero_copy_sample_error(where) +
+        (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+  }
+}
+
 bool graph_is_sched_label(const std::string& label) {
   if (label.empty())
     return false;
@@ -419,6 +435,7 @@ bool GraphRun::push_state(const std::shared_ptr<State>& state, NodeId node_id, P
                          "already stopped)\n");
     return false;
   }
+  enforce_graphrun_public_sample_push_transferable(sample, "GraphRun::push");
   state->core->inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
   const auto entry_at = std::chrono::steady_clock::now();
   const bool ok = state->core->graph_push(node_id, port, has_port, sample,
@@ -534,23 +551,63 @@ bool GraphRun::Input::push(const Sample& samples) const {
 
 std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stats) const {
   auto state = state_.lock();
-  if (!state)
+  if (!state || !state->core)
     return std::nullopt;
   GraphRunStats* record_stats = stats;
-  if (!record_stats && state->core && state->core->graph_stats) {
+  if (!record_stats && state->core->graph_stats) {
     record_stats = state->core->graph_stats.get();
   }
-  auto result = GraphRun::pull_state(state, node_, timeout_ms);
-  if (result.has_value() && graph_debug_enabled()) {
-    std::fprintf(stderr, "[GRAPH] output_pull node=%zu\n", static_cast<std::size_t>(node_));
-    graph_debug_sample("output_pull", *result);
-  }
-  if (result.has_value()) {
+
+  const bool has_deadline = timeout_ms > 0;
+  const auto deadline =
+      has_deadline ? (std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms))
+                   : std::chrono::steady_clock::time_point{};
+
+  while (true) {
+    int wait_ms = timeout_ms;
+    if (has_deadline) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline)
+        return std::nullopt;
+      wait_ms = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count());
+    }
+
+    auto queued = state->core->graph_pull_msg_with_restore_reservation(node_, wait_ms);
+    if (!queued.has_value())
+      return std::nullopt;
+
+    Sample result = std::move(queued->sample);
+    std::string loan_error;
+    if (!state->core->attach_public_output_loan(result, &loan_error)) {
+      queued->sample = std::move(result);
+      (void)state->core->graph_restore_reserved_sink_front(node_, std::move(*queued));
+      if (timeout_ms == 0)
+        return std::nullopt;
+      if (has_deadline) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+          return std::nullopt;
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+        std::this_thread::sleep_for(std::min(std::chrono::milliseconds(50), remaining));
+      } else {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      }
+      continue;
+    }
+
+    (void)state->core->graph_release_sink_restore_reservation(node_);
+
+    if (graph_debug_enabled()) {
+      std::fprintf(stderr, "[GRAPH] output_pull node=%zu\n", static_cast<std::size_t>(node_));
+      graph_debug_sample("output_pull", result);
+    }
+
     const auto now = std::chrono::steady_clock::now();
-    if (state->core) {
-      state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), *result,
-                                              now);
-      state->core->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+    state->core->record_graph_sample_output("graph_output.n" + std::to_string(node_), result, now);
+    state->core->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+    {
       std::lock_guard<std::mutex> timing_lock(state->core->latency_mu);
       if (!state->core->pull_timing_init) {
         state->core->first_pull_at = now;
@@ -572,12 +629,12 @@ std::optional<Sample> GraphRun::Output::pull(int timeout_ms, GraphRunStats* stat
     if (node_ < state->execution().node_labels.size()) {
       label = state->execution().node_labels[node_].c_str();
     }
-    graph_log_output_rate(node_, *result, label);
+    graph_log_output_rate(node_, result, label);
     if (record_stats) {
-      record_stats->record(node_, *result);
+      record_stats->record(node_, result);
     }
+    return result;
   }
-  return result;
 }
 
 Sample GraphRun::Output::pull_or_throw(int timeout_ms, GraphRunStats* stats) const {

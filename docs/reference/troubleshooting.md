@@ -156,7 +156,89 @@ An RTSP pull timed out — the URL is wrong or the stream isn't delivering frame
 Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/consume-rtsp-stream).
 :::
 
-### 12. Graph throughput is low, or live frames get dropped
+### 12. `CameraInput strict zero-copy requires a libcamerasrc with simaai-zero-copy`
+
+:::info Cause
+`CameraInputOptions::allow_cpu_fallback` is false, so Neat requires a camera source that exposes SiMaAI/device zero-copy support. The installed `libcamerasrc` does not advertise the properties Neat needs for that strict path.
+:::
+
+:::tip Fix
+Use adaptive mode unless you have confirmed the zero-copy camera stack is installed:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::CameraInputOptions camera;
+camera.allow_cpu_fallback = true;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+camera = pyneat.CameraInputOptions()
+camera.allow_cpu_fallback = True
+```
+
+</CodeTab>
+</CodeTabs>
+
+Adaptive mode still hands downstream CVU/MLA stages SiMaAI memory. It only copies at the camera bridge when the upstream camera buffer is not already usable by EV74.
+:::
+
+### 13. `misconfig.caps … libcamerasrc … not-negotiated (-4)`
+
+:::info Cause
+The requested camera caps do not match a mode the camera stack can produce, or the board overlay/driver did not expose the camera correctly.
+:::
+
+:::tip Fix
+Validate the same format, resolution, and frame rate outside Neat:
+
+<ShellCommand prompt="devkit">
+gst-launch-1.0 -e libcamerasrc ! \
+  'video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1' ! \
+  identity eos-after=30 ! fakesink
+</ShellCommand>
+
+If that fails, fix the overlay, cable, sensor driver, or camera mode first. Use the [Modalix DevKit MIPI camera interface guide](https://developer.sima.ai/hardware/getting-started/standalone-mode/mipi-camera-interfaces) to confirm the `.dtbo` and libcamera validation path. If it passes, compare the caps with your `CameraInputOptions`.
+:::
+
+### 14. Camera frames look green, purple, or heavily tinted
+
+:::info Cause
+The frame is being interpreted with the wrong pixel format or color conversion. The most common mistake is treating `NV12` camera frames as RGB/BGR bytes. If the same tint appears before Neat, the issue is likely camera ISP tuning or the libcamera pipeline.
+:::
+
+:::tip Fix
+Keep the camera caps and model preprocess format aligned:
+
+- request `camera.format = "NV12"` for the recommended model path;
+- set `preprocess.color_convert.input_format = PreprocessColorFormat::NV12`;
+- avoid CPU `videoconvert`/`videoscale` in the production model path;
+- run a short `gst-launch-1.0 libcamerasrc ... ! videoconvert ! jpegenc` smoke test only to decide whether the tint exists before Neat.
+:::
+
+### 15. `frame=N output_timeout` from the MIPI camera tutorial
+
+:::info Cause
+No output sample reached the app before the tutorial's pull timeout. In a camera-to-model graph, that can mean the camera did not deliver frames, caps negotiation failed, the model route is still starting, or a downstream stage such as BoxDecode did not emit an output.
+:::
+
+:::tip Fix
+First validate the camera-only path. Then rerun the tutorial with a longer timeout and backend printing:
+
+<ShellCommand prompt="devkit">
+python3 share/sima-neat/tutorials/023_run_mipi_camera_model/run_mipi_camera_model.py \
+  --model /path/to/model.tar.gz --frames 2 --decode none \
+  --pull-timeout-ms 15000 --print-backend
+</ShellCommand>
+
+The production path should include `libcamerasrc`, `neatcamerabridge` when fallback is enabled, `neatprocesscvu`, `neatprocessmla`, and `appsink`. For BoxDecode routes, also confirm the `--decode` token and thresholds match the model archive.
+:::
+
+### 16. Graph throughput is low, or live frames get dropped
 
 :::info Cause
 The graph is backpressured. Common causes are a pull loop that cannot keep up, output samples held too long, per-frame logging in the hot path, a queue policy that does not match the source, or a live stream with no explicit drop/freshness policy.
@@ -175,7 +257,7 @@ Use a reusable `Run`, then make the runtime policy explicit:
 For multistream graphs, preserve `stream_id` and `frame_id` and check per-stream output counts. Aggregate FPS can hide one starving stream. See [Run a Graph → Tune throughput without lying to yourself](/develop-apps/development-workflow/pipeline#tune-throughput-without-lying-to-yourself).
 :::
 
-### 13. `unknown input/output name`, `no unambiguous default input`, or `no unambiguous default output`
+### 17. `unknown input/output name`, `no unambiguous default input`, or `no unambiguous default output`
 
 :::info Cause
 The graph has named endpoints and the app pushed or pulled the wrong name, or used unnamed `push(...)` / `pull(...)` on a graph with more than one possible endpoint.
@@ -200,7 +282,7 @@ sample = run.pull("detections", timeout_ms=2000)
 `Graph("name")` is a diagnostic label. It does not create an endpoint. Endpoints come from `nodes.input("name")` and `nodes.output("name")`.
 :::
 
-### 14. `pull(...)` returns no output before the timeout
+### 18. `pull(...)` returns no output before the timeout
 
 :::info Cause
 No sample reached the requested output before the timeout. The graph might still be running, the output name might be wrong, the input may be backpressured, the graph may be closed, or a runtime error may have occurred.
@@ -231,7 +313,7 @@ case simaai::neat::PullStatus::Error:
 Also check `run.last_error()`, endpoint names, input dtype/layout/format, and whether your app is continuously pulling from every output branch.
 :::
 
-### 15. Old snippets fail with `push_timeout_ms`, `pull_or_throw`, root-level `input_max_*`, or `boxdecode_original_*`
+### 19. Old snippets fail with `push_timeout_ms`, `pull_or_throw`, root-level `input_max_*`, or `boxdecode_original_*`
 
 :::info Cause
 The snippet was written against an older option surface or a private/internal path. Current app code should use the public `ModelOptions`, `RunOptions`, and `Run` APIs.
@@ -250,7 +332,7 @@ If the page you copied from still shows the old spelling, treat it as stale docs
 
 ## Tensors & Python interop
 
-### 16. `… expects a TensorList; pass [tensor] instead of a single Tensor`
+### 20. `… expects a TensorList; pass [tensor] instead of a single Tensor`
 
 :::info Cause
 A bare `Tensor` (or `Sample`) was passed to `run` / `push` / `build`; the API requires an explicit list — this is deliberate, not a bug.
@@ -260,7 +342,7 @@ A bare `Tensor` (or `Sample`) was passed to `run` / `push` / `build`; the API re
 Wrap it: `model.run([tensor])`, `run.push([tensor])`, `graph.build([tensor])`.
 :::
 
-### 17. `image-mode Tensor input requires explicit image format metadata`
+### 21. `image-mode Tensor input requires explicit image format metadata`
 
 :::info Cause
 An image-input model received a tensor with no pixel format, so Neat can't interpret the byte layout.
@@ -270,7 +352,7 @@ An image-input model received a tensor with no pixel format, so Neat can't inter
 Build the tensor with an explicit format: `pyneat.Tensor.from_numpy(arr, image_format=pyneat.PixelFormat.RGB)`.
 :::
 
-### 18. `byte_format tensors cannot also specify image_format`
+### 22. `byte_format tensors cannot also specify image_format`
 
 :::info Cause
 A tensor was constructed with both `byte_format=` (opaque bytes) and `image_format=` (pixels) — they're mutually exclusive.

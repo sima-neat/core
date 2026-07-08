@@ -479,21 +479,6 @@ platform_version() {
   echo "${version}"
 }
 
-target_readmes() {
-  if [[ "${TARGET}" == "all" ]]; then
-    find "${TUTORIALS_DIR}" -maxdepth 2 -name README.md -print
-    return 0
-  fi
-
-  local target_dir="${TARGET#tutorial_}"
-  local readme="${TUTORIALS_DIR}/${target_dir}/README.md"
-  if [[ ! -f "${readme}" ]]; then
-    echo "build.sh: cannot find README.md for target '${TARGET}' at ${readme}" >&2
-    return 1
-  fi
-  echo "${readme}"
-}
-
 model_download_path() {
   local model="$1"
   local model_base="${model##*/}"
@@ -521,27 +506,68 @@ model_download_path() {
 }
 
 download_models() {
-  local readme_output
-  readme_output="$(target_readmes)"
-
-  local -a readmes=()
-  mapfile -t readmes < <(printf '%s\n' "${readme_output}" | sort)
+  local cmake_file="${TUTORIALS_DIR}/CMakeLists.txt"
+  if [[ ! -f "${cmake_file}" ]]; then
+    echo "build.sh: cannot find tutorials CMakeLists.txt at ${cmake_file}" >&2
+    return 1
+  fi
 
   local -a models=()
-  local readme model
-  for readme in "${readmes[@]}"; do
-    model="$(
-      sed -n 's/^|[[:space:]]*Model[[:space:]]*|[[:space:]]*\([^|[:space:]][^|]*[^|[:space:]]\)[[:space:]]*|.*/\1/p' "${readme}" \
-        | head -n1
-    )"
-    if [[ -z "${model}" || "${model}" == "None" || "${model}" == "none" || "${model}" == "N/A" ]]; then
-      continue
-    fi
-    models+=("${model}")
-  done
+  local matched_target="OFF"
+  local model
+  while IFS= read -r model; do
+    case "${model}" in
+      __matched_target__)
+        matched_target="ON"
+        ;;
+      ?*)
+        models+=("${model}")
+        ;;
+    esac
+  done < <(
+    awk -v target="${TARGET}" '
+      function emit(block, fields, count, i, target_name) {
+        gsub(/[()]/, " ", block)
+        gsub(/[[:space:]]+/, " ", block)
+        count = split(block, fields, " ")
+        target_name = fields[2]
+        if (target != "all" && target_name != target) {
+          return
+        }
+
+        print "__matched_target__"
+        for (i = 1; i <= count; ++i) {
+          if (fields[i] == "MODEL" && (i + 1) <= count) {
+            print fields[i + 1]
+          }
+        }
+      }
+      /^[[:space:]]*add_tutorial\(/ {
+        in_block = 1
+        block = $0
+        next
+      }
+      in_block {
+        block = block " " $0
+        if ($0 ~ /^[[:space:]]*\)[[:space:]]*$/) {
+          emit(block)
+          in_block = 0
+        }
+      }
+    ' "${cmake_file}"
+  )
+
+  if [[ "${TARGET}" != "all" && "${matched_target}" != "ON" ]]; then
+    echo "build.sh: cannot find tutorial target '${TARGET}' in ${cmake_file}" >&2
+    return 1
+  fi
+
+  if [[ "${TARGET}" == "all" || "${TARGET}" == tutorial_019_* || "${TARGET}" == tutorial_020_* || "${TARGET}" == tutorial_021_* || "${TARGET}" == tutorial_022_* ]]; then
+    echo "Skipping GenAI tutorial model downloads: GenAI tutorials use LLiMa model directories and are not downloaded through Model Zoo. Use llima pull explicitly before running them."
+  fi
 
   if [[ "${#models[@]}" -eq 0 ]]; then
-    echo "No tutorial models to download."
+    echo "No Model Zoo tutorial models to download."
     return 0
   fi
 

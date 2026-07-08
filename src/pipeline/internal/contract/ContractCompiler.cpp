@@ -69,6 +69,14 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
   CompiledPipelineContracts compiled;
   compiled.fully_renderable = true;
   const CompiledNodeContract* immediate_upstream = nullptr;
+  const bool use_node_indices = !input.node_indices.empty();
+  if (use_node_indices && input.node_indices.size() != nodes.size()) {
+    compiled.fully_renderable = false;
+    if (diagnostics) {
+      diagnostics->errors.push_back("contract compiler: node_indices size does not match nodes");
+    }
+    return compiled;
+  }
 
   for (std::size_t node_index = 0; node_index < nodes.size(); ++node_index) {
     const auto& node = nodes[node_index];
@@ -87,7 +95,8 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     CompiledNodeContract stage;
     stage.node_kind = node->kind();
     ContractCompileInput stage_input = input;
-    stage_input.node_index = static_cast<int>(node_index);
+    stage_input.node_index =
+        use_node_indices ? input.node_indices[node_index] : static_cast<int>(node_index);
     stage_input.immediate_upstream = immediate_upstream;
 
     const auto* provider = dynamic_cast<const NodeContractProvider*>(node.get());

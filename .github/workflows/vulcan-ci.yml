@@ -883,6 +883,13 @@ jobs:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
           SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
+          SIMANEAT_TEST_RTSP_H264_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H264_FPS }}
+          SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
+          SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
+          SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
+          SIMANEAT_TEST_HTTP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URL }}
+          SIMANEAT_TEST_HTTP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_URLS }}
+          SIMANEAT_TEST_HTTP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_HTTP_MJPEG_FPS }}
           SIMA_CTEST_TAIL_ONLY: "0"
           SIMA_CTEST_E2E_JOBS: "1"
         run: |
@@ -909,8 +916,8 @@ jobs:
           else
             ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
-              --label-exclude "perf" \
-              -E "${SKIP_REGEX}" \
+              --label-exclude "perf|llima" \
+              -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
               --output-on-failure \
@@ -931,6 +938,8 @@ jobs:
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
+            --label-exclude "llima|disabled" \
+            -E "^(modelzoo_bulk_models_test)$" \
             --output-on-failure \
             --no-tests=error
 

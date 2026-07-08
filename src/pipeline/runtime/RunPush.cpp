@@ -5,6 +5,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 
 #include <algorithm>
@@ -30,6 +31,22 @@ bool push_return_debug_enabled() {
 
 bool run_push_timing_enabled() {
   return pipeline_internal::env_bool("SIMA_RUN_PUSH_TIMING", false);
+}
+
+bool allow_public_cross_run_gstsample_push() {
+  return pipeline_internal::env_bool("SIMA_ALLOW_CROSS_RUN_GSTSAMPLE_PUSH", false);
+}
+
+void enforce_public_sample_push_transferable(const Sample& msg, const char* where) {
+  if (!allow_public_cross_run_gstsample_push() &&
+      pipeline_internal::sample_has_device_gstsample_producer_lifetime(msg,
+                                                                       /*require_expired=*/false)) {
+    std::string reason;
+    if (!pipeline_internal::sample_has_transferable_zero_copy_loan(msg, &reason)) {
+      throw std::runtime_error(pipeline_internal::cross_run_zero_copy_sample_error(where) +
+                               (reason.empty() ? std::string{} : " Reason: " + reason + "."));
+    }
+  }
 }
 
 int run_push_timing_limit() {
@@ -240,6 +257,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                                     std::string_view endpoint_name, const Sample& msgs,
                                     bool block) {
   for (const auto& msg : msgs) {
+    enforce_public_sample_push_transferable(msg, "Run::push");
     Sample stamped = stamp_public_graph_ingress_sample(core, msg);
     if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
       std::fprintf(stderr,
@@ -296,6 +314,13 @@ struct InputQueueAdmission {
   const char* reason = "";
 };
 
+void release_realtime_credits_for_dropped_input(const InputItem& item, const char* mode) {
+  if (item.kind != QueuedInputKind::Message) {
+    return;
+  }
+  pipeline_internal::release_realtime_frame_credits_for_sample(item.msg, mode);
+}
+
 InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
                                              runtime::PipelineSegmentRuntime& segment,
                                              std::unique_lock<std::mutex>& lock, bool block) {
@@ -325,6 +350,8 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
     }
   } else if (core.opt.overflow_policy == OverflowPolicy::KeepLatest) {
     if (run_internal::queue_full(segment.in_queue, max)) {
+      release_realtime_credits_for_dropped_input(segment.in_queue.front(),
+                                                 "async-input-drop-oldest");
       segment.in_queue.pop_front();
       core.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
     }
@@ -587,9 +614,11 @@ bool Run::push_message_impl(const Sample& msg, bool block) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: stream is closed"));
   }
+  enforce_public_sample_push_transferable(msg, "Run::push");
   return push_message_to_core(*core_, msg, block);
 }
 bool Run::push_sample_impl(const Sample& msg, bool block) {
+  enforce_public_sample_push_transferable(msg, "Run::push");
   if (core_ && core_->push_sample_policy == runtime::PushSamplePolicy::PreserveSample) {
     return push_message_impl(msg, block);
   }

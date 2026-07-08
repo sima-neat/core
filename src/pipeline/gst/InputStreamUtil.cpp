@@ -728,6 +728,11 @@ bool sample_uses_joined_tensor_envelope_transport(const Sample& sample) {
   return running_offset > 0U;
 }
 
+bool sample_is_single_tensor_set_tensor_payload(const Sample& sample) {
+  return sample.kind == SampleKind::TensorSet && sample.tensors.size() == 1U &&
+         sample.fields.empty() && sample_payload_type(sample) == PayloadType::Tensor;
+}
+
 SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const char* where) {
   const std::string tag = where ? where : "SampleSpec";
   const TensorList tensors = tensors_from_sample(sample, false);
@@ -1537,6 +1542,17 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
       spec.height = h;
       spec.depth = -1;
       spec.required_bytes_actual = max_end;
+      if (input.storage && input.storage->kind == StorageKind::GstSample &&
+          input.storage->size_bytes > spec.required_bytes_actual) {
+        /*
+         * GstVideoMeta describes visible rows through per-plane shape/stride/offset, but decoder
+         * buffers can include padded plane tails (for example 720p NV12 commonly uses a 768-line
+         * physical luma plane).  Preserve the GstBuffer's logical transport span so re-wrapping a
+         * zero-copy decoded frame across Branch/Combine does not shrink the view and force
+         * downstream preproc to rediscover the physical frame stride from a packed parent buffer.
+         */
+        spec.required_bytes_actual = input.storage->size_bytes;
+      }
     } else {
       if (input.is_composite()) {
         throw std::invalid_argument(tag + ": packed video must not use planes");
@@ -1930,7 +1946,8 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
   }
 
   if (sample_has_tensor_list(sample)) {
-    if (sample.tensors.size() > 1U || sample_uses_single_tensor_envelope_transport(sample) ||
+    if (sample.tensors.size() > 1U || sample_is_single_tensor_set_tensor_payload(sample) ||
+        sample_uses_single_tensor_envelope_transport(sample) ||
         sample_uses_joined_tensor_envelope_transport(sample)) {
       return tensor_envelope_spec_from_sample_or_throw(sample, "SampleSpec");
     }
@@ -2535,8 +2552,17 @@ bool update_simaai_meta_fields(GstBuffer* buffer, const std::optional<int64_t>& 
                       nullptr);
   }
   if (stream_id_override.has_value()) {
-    gst_structure_set(s, "stream-id", G_TYPE_STRING, stream_id_override->c_str(), nullptr);
-    gst_structure_set(s, "orig-stream-id", G_TYPE_STRING, stream_id_override->c_str(), nullptr);
+    if (!stream_id_override->empty()) {
+      gst_structure_set(s, "stream-id", G_TYPE_STRING, stream_id_override->c_str(), nullptr);
+      gst_structure_set(s, "orig-stream-id", G_TYPE_STRING, stream_id_override->c_str(), nullptr);
+    } else {
+      const gchar* existing_stream_id = gst_structure_get_string(s, "stream-id");
+      const gchar* existing_orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
+      if (existing_stream_id && *existing_stream_id &&
+          (!existing_orig_stream_id || !*existing_orig_stream_id)) {
+        gst_structure_set(s, "orig-stream-id", G_TYPE_STRING, existing_stream_id, nullptr);
+      }
+    }
   }
   if (buffer_name_override.has_value()) {
     gst_structure_set(s, "buffer-name", G_TYPE_STRING, buffer_name_override->c_str(), nullptr);
@@ -2756,18 +2782,32 @@ void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out) {
 
 bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta) {
 #if SIMA_HAS_SIMAAI_POOL
+  const bool trace = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
   if (!buffer)
     return false;
   if (const auto perm_error = validate_axis_perm_vector_local(meta.axis_perm, "preproc_axis_perm");
       perm_error.has_value()) {
+    if (trace) {
+      std::fprintf(stderr, "[PREPROC_META_TRACE] write failed: %s\n", perm_error->c_str());
+    }
     return false;
   }
   if (const auto roi_error = validate_preprocess_roi_list_local(meta); roi_error.has_value()) {
+    if (trace) {
+      std::fprintf(stderr, "[PREPROC_META_TRACE] write failed: %s\n", roi_error->c_str());
+    }
     return false;
   }
   GstCustomMeta* custom = nullptr;
   GstStructure* s = nullptr;
   if (!ensure_custom_meta_structure_mutable(buffer, "GstSimaMeta", &custom, &s)) {
+    if (trace) {
+      std::fprintf(stderr,
+                   "[PREPROC_META_TRACE] write failed: GstSimaMeta is not mutable "
+                   "buffer=%p writable=%d has_meta=%d\n",
+                   static_cast<void*>(buffer), gst_buffer_is_writable(buffer) ? 1 : 0,
+                   gst_buffer_get_custom_meta(buffer, "GstSimaMeta") ? 1 : 0);
+    }
     return false;
   }
   gst_structure_set(
@@ -2790,9 +2830,15 @@ bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta
       meta.affine_offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE, meta.affine_offset_y,
       nullptr);
   if (!gst_structure_set_int_vector_field_local(s, "preproc_axis_perm", meta.axis_perm)) {
+    if (trace) {
+      std::fprintf(stderr, "[PREPROC_META_TRACE] write failed: axis_perm vector write failed\n");
+    }
     return false;
   }
   if (!write_preprocess_roi_list_fields_local(s, meta)) {
+    if (trace) {
+      std::fprintf(stderr, "[PREPROC_META_TRACE] write failed: ROI field write failed\n");
+    }
     return false;
   }
   return true;
@@ -3255,12 +3301,35 @@ GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt
   const gint64 frame_id = frame_id_override.has_value()
                               ? static_cast<gint64>(*frame_id_override)
                               : static_cast<gint64>(next_input_frame_id());
-  const std::string stream_id = stream_id_override.value.value_or("0");
   gst_structure_set(s, "buffer-id", G_TYPE_INT64, phys_addr, "buffer-name", G_TYPE_STRING,
                     name.c_str(), "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0), "frame-id",
-                    G_TYPE_INT64, frame_id, "orig-input-seq", G_TYPE_INT64, frame_id, "stream-id",
-                    G_TYPE_STRING, stream_id.c_str(), "timestamp", G_TYPE_UINT64,
-                    static_cast<guint64>(0), nullptr);
+                    G_TYPE_INT64, frame_id, "orig-input-seq", G_TYPE_INT64, frame_id, "timestamp",
+                    G_TYPE_UINT64, static_cast<guint64>(0), nullptr);
+  if (stream_id_override.value.has_value()) {
+    if (!stream_id_override.value->empty()) {
+      gst_structure_set(s, "stream-id", G_TYPE_STRING, stream_id_override.value->c_str(),
+                        "orig-stream-id", G_TYPE_STRING, stream_id_override.value->c_str(),
+                        nullptr);
+    } else {
+      const gchar* existing_stream_id = gst_structure_get_string(s, "stream-id");
+      const gchar* existing_orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
+      if (existing_stream_id && *existing_stream_id &&
+          (!existing_orig_stream_id || !*existing_orig_stream_id)) {
+        gst_structure_set(s, "orig-stream-id", G_TYPE_STRING, existing_stream_id, nullptr);
+      }
+    }
+  } else {
+    const gchar* existing_stream_id = gst_structure_get_string(s, "stream-id");
+    const gchar* existing_orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
+    if (existing_stream_id && *existing_stream_id) {
+      if (!existing_orig_stream_id || !*existing_orig_stream_id) {
+        gst_structure_set(s, "orig-stream-id", G_TYPE_STRING, existing_stream_id, nullptr);
+      }
+    } else {
+      gst_structure_set(s, "stream-id", G_TYPE_STRING, "0", "orig-stream-id", G_TYPE_STRING, "0",
+                        nullptr);
+    }
+  }
   dump_sima_meta(buffer, label);
   return buffer;
 #else

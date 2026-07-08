@@ -8,10 +8,10 @@
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264Depacketize.h"
-#include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "gst/GstHelpers.h"
 #include "model/Model.h"
@@ -459,7 +459,9 @@ int main(int argc, char** argv) {
     }
 
     int num_streams = 2;
-    int iterations = 200;
+    // Keep the default as a bounded throughput smoke: the RTSP side uses software H.264 servers
+    // and can be the limiting factor on shared DevKits.  Larger sweeps can still pass --iters.
+    int iterations = 100;
     int fps = kRtspFps;
     int port = kRtspPort;
     int rtsp_servers = 2;
@@ -637,10 +639,13 @@ int main(int argc, char** argv) {
       def.stream_id = sid;
       def.meta_defaults.stream_id = sid;
       def.cap = std::move(cap_group);
-      def.dec = simaai::neat::nodes::H264Decode(/*sima_allocator_type=*/2,
-                                                /*out_format=*/"NV12",
-                                                /*decoder_name=*/"decoder",
-                                                /*raw_output=*/true);
+      simaai::neat::SimaDecodeOptions dec;
+      dec.type = simaai::neat::SimaDecodeType::H264;
+      dec.sima_allocator_type = 2;
+      dec.out_format = simaai::neat::FormatTag::NV12;
+      dec.decoder_name = "decoder";
+      dec.raw_output = true;
+      def.dec = simaai::neat::nodes::SimaDecode(dec);
       if (model_instances == 2) {
         def.sched_idx = (i < num_streams / 2) ? 0 : 1;
       } else if (model_instances > 2) {

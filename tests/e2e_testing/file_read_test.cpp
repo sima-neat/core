@@ -1,6 +1,7 @@
 #include "pipeline/Graph.h"
 #include "gst/GstInit.h"
 #include "gst/GstHelpers.h"
+#include "nodes/sima/SimaDecode.h"
 
 #include "cli_utils.h"
 #include "test_utils.h"
@@ -182,8 +183,13 @@ static int run_image_once(const std::string& image_path, int out_w_in, int out_h
   frt_dbg_log("added H264EncodeSima");
   p.add(H264Parse(/*config_interval=*/1));
   frt_dbg_log("added H264Parse");
-  p.add(H264Decode(/*sima_allocator_type=*/2, /*out_format=*/"NV12"));
-  frt_dbg_log("added H264Decode");
+  simaai::neat::SimaDecodeOptions image_dec;
+  image_dec.type = simaai::neat::SimaDecodeType::H264;
+  image_dec.sima_allocator_type = 2;
+  image_dec.out_format = simaai::neat::FormatTag::NV12;
+  image_dec.raw_output = false;
+  p.add(SimaDecode(image_dec));
+  frt_dbg_log("added SimaDecode");
 
   // Make sure appsink pull isn't blocked by upstream scheduling
   p.add(Queue());
@@ -260,7 +266,12 @@ static int run_video_frames(const std::string& video_path, int nframes) {
   p.add(VideoTrackSelect(0));
   p.add(Queue());
   p.add(H264ParseAu());
-  p.add(H264Decode(2, "NV12"));
+  simaai::neat::SimaDecodeOptions video_dec;
+  video_dec.type = simaai::neat::SimaDecodeType::H264;
+  video_dec.sima_allocator_type = 2;
+  video_dec.out_format = simaai::neat::FormatTag::NV12;
+  video_dec.raw_output = false;
+  p.add(SimaDecode(video_dec));
   p.add(Queue());
   p.add(Output());
   frt_dbg_log("video pipeline built");

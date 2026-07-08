@@ -162,7 +162,8 @@ public:
                                  const std::string& name_suffix) const;
   void set_model_managed_stage_facts(
       std::optional<bool> processcvu_preproc_single_output_handoff,
-      std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags);
+      std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags,
+      std::vector<ExecutionStageKind> model_managed_post_kinds = {});
 
 private:
   struct Config {
@@ -205,6 +206,7 @@ private:
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<bool> processcvu_preproc_single_output_handoff_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;
+  std::vector<ExecutionStageKind> model_managed_post_kinds_;
 };
 
 } // namespace simaai::neat::internal

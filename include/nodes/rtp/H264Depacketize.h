@@ -18,9 +18,10 @@ namespace simaai::neat {
 /**
  * @brief Depayloads RTP-encapsulated H.264 into a raw H.264 byte stream.
  *
- * Place between an RTP source and a decoder. When `enforce_h264_caps` is true and
- * any of `h264_fps` / `h264_width` / `h264_height` is set, the Node enforces those
- * values on the depayloaded caps; otherwise it negotiates dynamically.
+ * Place between an RTP source and a decoder. When `enforce_h264_caps` is true,
+ * the Node enforces `h264_fps`, `h264_width`, and `h264_height` only when all
+ * three are provided. If none are provided, caps negotiate dynamically. Partial
+ * explicit caps are rejected because they create ambiguous H.264 boundaries.
  *
  * @ingroup nodes_rtp
  */
@@ -37,7 +38,7 @@ public:
   }
   /// Whether the Node negotiates static or dynamic caps.
   NodeCapsBehavior caps_behavior() const override {
-    if (enforce_h264_caps_ && (h264_fps_ > 0 || h264_width_ > 0 || h264_height_ > 0)) {
+    if (enforce_h264_caps_ && h264_fps_ > 0 && h264_width_ > 0 && h264_height_ > 0) {
       return NodeCapsBehavior::Static;
     }
     return NodeCapsBehavior::Dynamic;

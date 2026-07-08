@@ -13,7 +13,8 @@ H264Packetize::H264Packetize(PayloadType pt, ConfigInterval config_interval)
 
 std::string H264Packetize::backend_fragment(int /*node_index*/) const {
   std::ostringstream ss;
-  ss << "rtph264pay name=pay0 pt=" << pt_ << " config-interval=" << config_interval_;
+  ss << "rtph264pay name=pay0 pt=" << pt_ << " config-interval=" << config_interval_
+     << " timestamp-offset=0";
   return ss.str();
 }
 

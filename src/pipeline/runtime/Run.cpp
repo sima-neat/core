@@ -5,6 +5,7 @@
 #include "pipeline/RunExport.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -77,6 +79,55 @@ std::vector<std::string> tail_lines(const std::string& path, size_t max_lines) {
     buf.push_back(line);
   }
   return std::vector<std::string>(buf.begin(), buf.end());
+}
+
+void release_realtime_output_credits(const Sample& sample, const char* mode) {
+  pipeline_internal::release_realtime_frame_credits_for_sample(sample, mode);
+}
+
+void drop_one_keep_latest_output(std::deque<Sample>& queue, const Sample& incoming) {
+  if (queue.empty()) {
+    return;
+  }
+
+  const auto release_drop_credit = [](const Sample& sample) {
+    release_realtime_output_credits(sample, "async-output-drop");
+  };
+
+  if (!incoming.stream_id.empty()) {
+    const auto same_stream = std::find_if(queue.begin(), queue.end(), [&](const Sample& queued) {
+      return queued.stream_id == incoming.stream_id;
+    });
+    if (same_stream != queue.end()) {
+      release_drop_credit(*same_stream);
+      queue.erase(same_stream);
+      return;
+    }
+
+    std::unordered_map<std::string, std::size_t> queued_by_stream;
+    for (const Sample& queued : queue) {
+      if (!queued.stream_id.empty()) {
+        ++queued_by_stream[queued.stream_id];
+      }
+    }
+
+    const auto duplicate_stream =
+        std::find_if(queue.begin(), queue.end(), [&](const Sample& queued) {
+          if (queued.stream_id.empty()) {
+            return false;
+          }
+          const auto it = queued_by_stream.find(queued.stream_id);
+          return it != queued_by_stream.end() && it->second > 1;
+        });
+    if (duplicate_stream != queue.end()) {
+      release_drop_credit(*duplicate_stream);
+      queue.erase(duplicate_stream);
+      return;
+    }
+  }
+
+  release_drop_credit(queue.front());
+  queue.pop_front();
 }
 
 bool contains_case_insensitive(const std::string& haystack, const std::string& needle) {
@@ -207,6 +258,10 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   st->pipeline.zero_copy_fallback_enabled = stream_opt.public_output_contract &&
                                             (opt.preset == RunPreset::Balanced) &&
                                             !stream_opt.copy_output;
+  if (stream_opt.holder_loan_credits > 0) {
+    st->holder_loan_gate =
+        std::make_shared<pipeline_internal::HolderLoanGate>(stream_opt.holder_loan_credits);
+  }
   st->diag_enabled = env_bool("SIMA_ASYNC_TPUT_DIAG", false);
   if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
       pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
@@ -223,6 +278,15 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   }
 
   auto on_output = [st](Sample out) {
+    const auto realtime_credits = pipeline_internal::realtime_frame_credits_for_sample(out);
+    bool realtime_credits_released = false;
+    const auto release_incoming_realtime_credits = [&](const char* mode) {
+      if (realtime_credits_released) {
+        return;
+      }
+      pipeline_internal::release_realtime_frame_credits(realtime_credits, mode);
+      realtime_credits_released = true;
+    };
     if (st->stop_requested.load()) {
       if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
@@ -236,6 +300,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
             "[PIPELINE] on_output_drop kind=%s frame_id=%lld stream_id=%s reason=stop_requested\n",
             kind, static_cast<long long>(out.frame_id), out.stream_id.c_str());
       }
+      release_incoming_realtime_credits("async-output-stop");
       return;
     }
 
@@ -305,6 +370,7 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       const bool copy_output = st->pipeline.copy_output_latched.load(std::memory_order_relaxed);
       if (copy_output && has_zero_copy_output) {
         force_copy_sample_if_zero_copy(out);
+        release_incoming_realtime_credits("async-output-copy");
       }
       if (max > 0) {
         OverflowPolicy output_drop = st->opt.overflow_policy;
@@ -332,17 +398,20 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                            "reason=queue_full\n",
                            kind, static_cast<long long>(out.frame_id), out.stream_id.c_str());
             }
+            release_incoming_realtime_credits("async-output-drop-incoming");
             return;
           }
           // Drop oldest to make room for the new output.
           if (!st->pipeline.out_queue.empty()) {
-            st->pipeline.out_queue.pop_front();
+            drop_one_keep_latest_output(st->pipeline.out_queue, out);
             st->outputs_dropped.fetch_add(1, std::memory_order_relaxed);
           }
         }
       }
-      if (st->stop_requested.load())
+      if (st->stop_requested.load()) {
+        release_incoming_realtime_credits("async-output-stop");
         return;
+      }
       st->pipeline.out_queue.push_back(std::move(out));
       st->outputs_ready.fetch_add(1, std::memory_order_relaxed);
       if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||

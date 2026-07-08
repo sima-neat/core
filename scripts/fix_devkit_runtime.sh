@@ -24,6 +24,20 @@ run_step() {
   return $rc
 }
 
+run_optional_service_step() {
+  local label="$1"
+  local action="$2"
+  local unit="$3"
+  run_step "$label" systemctl "$action" "$unit"
+  local rc=$?
+  if [[ "$rc" -eq 5 ]]; then
+    printf "[recovery] %s skipped: systemd unit %s is not installed on this devkit image\n" \
+      "$label" "$unit"
+    return 0
+  fi
+  return $rc
+}
+
 staged_ev74_firmware_sha() {
   [[ -f "${EV74_FIRMWARE_SHA_FILE}" ]] || return 1
   tr -d '[:space:]' < "${EV74_FIRMWARE_SHA_FILE}"
@@ -150,9 +164,10 @@ empty_coprocessing() {
 }
 
 stop_runtime_services() {
-  run_step "stop simaai-pipeline-manager.service" systemctl stop simaai-pipeline-manager.service
-  run_step "stop rctd.service" systemctl stop rctd.service
-  run_step "stop simaai-appcomplex.service" systemctl stop simaai-appcomplex.service
+  run_optional_service_step \
+    "stop simaai-pipeline-manager.service" stop simaai-pipeline-manager.service
+  run_optional_service_step "stop rctd.service" stop rctd.service
+  run_optional_service_step "stop simaai-appcomplex.service" stop simaai-appcomplex.service
   run_step "terminate stale runtime processes" pkill -TERM -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
   sleep 1
   run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
@@ -171,6 +186,7 @@ run_step "remoteproc1 start" sh -c 'echo start > /sys/class/remoteproc/remotepro
 run_step "remoteproc0 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
 run_step "remoteproc status" sh -c 'for rp in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do echo "$rp: $(cat $rp/name) state=$(cat $rp/state)"; done'
 run_step "init_mla_memory" /usr/bin/init_mla_memory.sh
-run_step "restart simaai-appcomplex.service" systemctl restart simaai-appcomplex.service
-run_step "restart simaai-pipeline-manager.service" systemctl restart simaai-pipeline-manager.service
-run_step "restart rctd.service" systemctl restart rctd.service
+run_optional_service_step "restart simaai-appcomplex.service" restart simaai-appcomplex.service
+run_optional_service_step \
+  "restart simaai-pipeline-manager.service" restart simaai-pipeline-manager.service
+run_optional_service_step "restart rctd.service" restart rctd.service

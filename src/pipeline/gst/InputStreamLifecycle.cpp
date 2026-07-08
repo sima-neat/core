@@ -24,6 +24,11 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
   state->max_input_bytes_guard = opt.max_input_bytes;
   state->diag = std::move(diag);
   state->guard = std::move(guard);
+  state->lifetime_token = std::make_shared<int>(0);
+  if (opt.holder_loan_credits > 0) {
+    state->holder_loan_gate =
+        std::make_shared<pipeline_internal::HolderLoanGate>(opt.holder_loan_credits);
+  }
   state->timing_enabled = opt.enable_timings;
   state->current_key = spec.caps_key;
   state->last_spec = spec;
@@ -408,7 +413,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
       if (st->pipeline && !st->teardown_started.exchange(true)) {
         GstElement* pipeline = st->pipeline;
         st->pipeline = nullptr;
-        pipeline_internal::stop_and_unref_no_flush(pipeline);
+        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.prefer_synchronous_teardown);
       }
     }
     st->worker_done.store(true);
@@ -583,7 +588,7 @@ void InputStream::stop() {
     if (state_->pipeline && !state_->teardown_started.exchange(true)) {
       GstElement* pipeline = state_->pipeline;
       state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
     }
   }
   if (state_->worker.joinable()) {
@@ -642,6 +647,7 @@ void InputStream::close() {
     std::fprintf(stderr, "[STOP] InputStream::close begin\n");
   }
   stop();
+  state_->lifetime_token.reset();
   if (state_->pending_buffer) {
     release_input_buffer(state_->pending_buffer, "InputStream::close:pending_buffer");
     state_->pending_buffer = nullptr;
@@ -671,7 +677,7 @@ void InputStream::close() {
     if (!state_->teardown_started.exchange(true)) {
       GstElement* pipeline = state_->pipeline;
       state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
     } else {
       state_->pipeline = nullptr;
     }

@@ -144,6 +144,33 @@ void test_multi_ifm_topology() {
   std::filesystem::remove(path);
 }
 
+void test_qmla_flat_topology() {
+  const auto path = write_minimal_elf("qmla_flat", {
+                                                       "code.r0.c0",
+                                                       "data.ifm.persistent.qmla_ifm_0.b0",
+                                                       "data.ifm.persistent.qmla_ifm_1.b0",
+                                                       "data.ifm.persistent.qmla_ifm_2.b0",
+                                                       "data.ofm.persistent.afe_mla_output_0.b0",
+                                                       "data.ofm.persistent.afe_mla_output_1.b0",
+                                                   });
+  simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
+  const bool ok = simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
+  check(ok, "qmla_flat: parser returned ok");
+  check(topology.valid, "qmla_flat: topology.valid");
+  check(!topology.monolithic_ifm, "qmla_flat: !monolithic_ifm");
+  check(!topology.monolithic_ofm, "qmla_flat: !monolithic_ofm");
+  check(topology.ifm_symbol_names.size() == 3U, "qmla_flat: 3 IFM slots");
+  check(topology.ofm_symbol_names.size() == 2U, "qmla_flat: 2 OFM slots");
+  check(topology.ifm_symbol_names[0] == "data.ifm.persistent.qmla_ifm_0.b0", "qmla_flat: ifm[0]");
+  check(topology.ifm_symbol_names[2] == "data.ifm.persistent.qmla_ifm_2.b0", "qmla_flat: ifm[2]");
+  check(topology.ofm_symbol_names[1] == "data.ofm.persistent.afe_mla_output_1.b0",
+        "qmla_flat: ofm[1]");
+  check(
+      simaai::neat::pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(topology),
+      "qmla_flat: requires_distinct_ifm_segments == true");
+  std::filesystem::remove(path);
+}
+
 void test_monolithic_topology() {
   const auto path = write_minimal_elf("monolithic", {
                                                         "code.r0.c0",
@@ -190,6 +217,7 @@ void test_missing_file_fails_cleanly() {
 
 int main() {
   test_multi_ifm_topology();
+  test_qmla_flat_topology();
   test_monolithic_topology();
   test_unknown_topology_fails_cleanly();
   test_missing_file_fails_cleanly();

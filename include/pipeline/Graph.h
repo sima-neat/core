@@ -38,6 +38,7 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/SimaDecode.h"
 
 #include <atomic>
 #include <cstdint>
@@ -400,6 +401,7 @@ private:
     std::string to_port;
     std::optional<EndpointEdgeMeta> endpoint;
     GraphLinkOptions link_options;
+    std::string stream_id;
   };
   struct GroupMeta;
   struct NamedFragment;

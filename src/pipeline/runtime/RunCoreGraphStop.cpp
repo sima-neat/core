@@ -1,12 +1,15 @@
 #include "RunCore.h"
 
+#include "pipeline/internal/DecoderAdmissionClient.h"
 #include "pipeline/internal/EnvUtil.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -28,6 +31,149 @@ void graph_sched_summary(const std::vector<std::string>* labels);
 } // namespace simaai::neat::graph
 
 namespace simaai::neat::runtime {
+namespace {
+
+double avg_ms(std::uint64_t total_ns, std::uint64_t count) {
+  if (count == 0) {
+    return 0.0;
+  }
+  return static_cast<double>(total_ns) / static_cast<double>(count) / 1000000.0;
+}
+
+double ns_to_ms(std::uint64_t ns) {
+  return static_cast<double>(ns) / 1000000.0;
+}
+
+unsigned long long ull(std::uint64_t value) {
+  return static_cast<unsigned long long>(value);
+}
+
+bool decoder_cma_debug_enabled() {
+  return pipeline_internal::env_bool("SIMA_DECODER_CMA_DEBUG", false) ||
+         pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+void log_decoder_cma_snapshot(const char* event) {
+  if (!decoder_cma_debug_enabled()) {
+    return;
+  }
+  std::ifstream in("/proc/meminfo");
+  if (!in.is_open()) {
+    std::fprintf(stderr, "[DECCMA] event=%s read_failed=1\n", event ? event : "snapshot");
+    return;
+  }
+  long mem_free_kb = -1;
+  long mem_available_kb = -1;
+  long cma_total_kb = -1;
+  long cma_free_kb = -1;
+  std::string key;
+  long value = 0;
+  std::string unit;
+  while (in >> key >> value >> unit) {
+    if (key == "MemFree:") {
+      mem_free_kb = value;
+    } else if (key == "MemAvailable:") {
+      mem_available_kb = value;
+    } else if (key == "CmaTotal:") {
+      cma_total_kb = value;
+    } else if (key == "CmaFree:") {
+      cma_free_kb = value;
+    }
+  }
+  std::fprintf(stderr,
+               "[DECCMA] event=%s mem_free_kb=%ld mem_available_kb=%ld cma_total_kb=%ld "
+               "cma_free_kb=%ld cma_used_kb=%ld\n",
+               event ? event : "snapshot", mem_free_kb, mem_available_kb, cma_total_kb, cma_free_kb,
+               (cma_total_kb >= 0 && cma_free_kb >= 0) ? (cma_total_kb - cma_free_kb) : -1);
+}
+
+void dump_realtime_link_diag(const ExecutionGraphRuntime& execution) {
+  for (std::size_t i = 0; i < execution.realtime_links.size(); ++i) {
+    const auto& link = execution.realtime_links[i];
+    if (!link) {
+      continue;
+    }
+    const RealtimeLatestLink::Stats stats = link->stats();
+    const DownstreamTarget& downstream = link->downstream();
+    const std::string stream_ids = link->debug_stream_ids();
+    const std::uint64_t dispatched = stats.scheduled + stats.dispatch_failed;
+    std::fprintf(stderr,
+                 "[GRAPH] realtime_link index=%zu downstream_kind=%d downstream_index=%zu "
+                 "edge=%zu streams=%s offered=%llu scheduled=%llu overwritten=%llu "
+                 "dispatch_failed=%llu "
+                 "ready=%zu avg_ready_wait_ms=%.3f max_ready_wait_ms=%.3f "
+                 "avg_dispatch_ms=%.3f max_dispatch_ms=%.3f no_credit_skips=%llu "
+                 "credit_inflight=%zu credit_limit=%zu credit_registered=%llu "
+                 "credit_released=%llu/%llu credit_missing_key=%llu\n",
+                 i, static_cast<int>(downstream.kind), downstream.index, downstream.edge_index,
+                 stream_ids.empty() ? "<none>" : stream_ids.c_str(), ull(stats.offered),
+                 ull(stats.scheduled), ull(stats.overwritten), ull(stats.dispatch_failed),
+                 stats.ready, avg_ms(stats.ready_wait_ns, dispatched),
+                 ns_to_ms(stats.ready_wait_max_ns), avg_ms(stats.dispatch_ns, dispatched),
+                 ns_to_ms(stats.dispatch_max_ns), ull(stats.no_credit_skips), stats.credit_inflight,
+                 stats.credit_limit, ull(stats.credit_registered),
+                 ull(stats.credit_released_by_output), ull(stats.credit_released_without_output),
+                 ull(stats.credit_missing_key));
+  }
+}
+
+void dump_transport_diag(const ExecutionGraphRuntime& execution) {
+  for (const auto& pipe : execution.pipelines) {
+    if (!pipe) {
+      continue;
+    }
+    const auto& telemetry = pipe->transport.telemetry;
+    if (pipe->transport.input_queue) {
+      const auto q = pipe->transport.input_queue->stats();
+      std::fprintf(stderr,
+                   "[GRAPH] transport_queue seg=%zu push=%llu pop=%llu push_timeout=%llu "
+                   "pop_timeout=%llu high_water=%zu size=%zu capacity=%zu timing=%d "
+                   "avg_queue_residence_ms=%.3f max_queue_residence_ms=%.3f "
+                   "avg_push_wait_ms=%.3f max_push_wait_ms=%.3f\n",
+                   static_cast<std::size_t>(pipe->seg.id), ull(q.push_count), ull(q.pop_count),
+                   ull(q.push_timeout_count), ull(q.pop_timeout_count), q.high_watermark,
+                   q.current_size, q.capacity, static_cast<int>(q.timing_enabled),
+                   avg_ms(q.residence_ns, q.residence_count), ns_to_ms(q.max_residence_ns),
+                   avg_ms(q.push_wait_ns, q.push_count + q.push_timeout_count),
+                   ns_to_ms(q.max_push_wait_ns));
+    }
+    const auto print_counter = [&](const char* name, std::uint64_t calls, std::uint64_t miss,
+                                   std::uint64_t total_ns, std::uint64_t max_ns) {
+      if (calls == 0 && miss == 0 && total_ns == 0 && max_ns == 0) {
+        return;
+      }
+      std::fprintf(stderr,
+                   "[GRAPH] transport_timing seg=%zu name=%s calls=%llu miss=%llu avg_ms=%.3f "
+                   "max_ms=%.3f\n",
+                   static_cast<std::size_t>(pipe->seg.id), name, ull(calls), ull(miss),
+                   avg_ms(total_ns, calls + miss), ns_to_ms(max_ns));
+    };
+    print_counter("router_input_push",
+                  telemetry.router_input_push_calls.load(std::memory_order_relaxed), 0,
+                  telemetry.router_input_push_ns.load(std::memory_order_relaxed),
+                  telemetry.router_input_push_max_ns.load(std::memory_order_relaxed));
+    print_counter("push_thread_pop",
+                  telemetry.push_thread_pop_calls.load(std::memory_order_relaxed),
+                  telemetry.push_thread_pop_miss.load(std::memory_order_relaxed),
+                  telemetry.push_thread_pop_wait_ns.load(std::memory_order_relaxed),
+                  telemetry.push_thread_pop_wait_max_ns.load(std::memory_order_relaxed));
+    print_counter("push_thread_push_samples",
+                  telemetry.push_thread_push_samples_calls.load(std::memory_order_relaxed), 0,
+                  telemetry.push_thread_push_samples_ns.load(std::memory_order_relaxed),
+                  telemetry.push_thread_push_samples_max_ns.load(std::memory_order_relaxed));
+    print_counter("pull_thread_pull",
+                  telemetry.pull_thread_pull_calls.load(std::memory_order_relaxed),
+                  telemetry.pull_thread_pull_miss.load(std::memory_order_relaxed),
+                  telemetry.pull_thread_pull_ns.load(std::memory_order_relaxed),
+                  telemetry.pull_thread_pull_max_ns.load(std::memory_order_relaxed));
+    print_counter("pull_thread_route",
+                  telemetry.pull_thread_route_calls.load(std::memory_order_relaxed), 0,
+                  telemetry.pull_thread_route_ns.load(std::memory_order_relaxed),
+                  telemetry.pull_thread_route_max_ns.load(std::memory_order_relaxed));
+  }
+}
+
+} // namespace
 
 void RunCore::stop_graph() {
   if (!graph_execution_) {
@@ -74,6 +220,30 @@ void RunCore::stop_graph() {
     }
   }
 
+  if (execution.decoder_admission_active) {
+    log_decoder_cma_snapshot("before_admission_release");
+    std::string release_error;
+    const bool released = pipeline_internal::release_decoder_graph(
+        execution.decoder_admission_group_uuid, &release_error);
+    if (!released && (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false) ||
+                      simaai::neat::graph::graph_debug_enabled())) {
+      std::fprintf(stderr, "[GRAPH] decoder_admission_release_failed group=%s err=%s\n",
+                   pipeline_internal::decoder_admission_uuid_to_string(
+                       execution.decoder_admission_group_uuid)
+                       .c_str(),
+                   release_error.empty() ? "<unknown>" : release_error.c_str());
+    } else if (released && (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false) ||
+                            simaai::neat::graph::graph_debug_enabled())) {
+      std::fprintf(stderr, "[GRAPH] decoder_admission_released group=%s\n",
+                   pipeline_internal::decoder_admission_uuid_to_string(
+                       execution.decoder_admission_group_uuid)
+                       .c_str());
+    }
+    execution.decoder_admission_active = false;
+    log_decoder_cma_snapshot(released ? "after_admission_release"
+                                      : "after_admission_release_failed");
+  }
+
   graph_signal_stop();
 
   if (simaai::neat::graph::graph_output_rate_enabled() &&
@@ -82,6 +252,10 @@ void RunCore::stop_graph() {
   }
   if (simaai::neat::graph::graph_sched_debug_enabled() && !graph_sched_reported.exchange(true)) {
     simaai::neat::graph::graph_sched_summary(&execution.node_labels);
+  }
+  if (pipeline_internal::env_bool("SIMA_GRAPH_DIAG_ON_STOP", false)) {
+    dump_realtime_link_diag(execution);
+    dump_transport_diag(execution);
   }
   if (pipeline_internal::env_bool("SIMA_GRAPH_TEARDOWN_DEBUG", false) ||
       simaai::neat::graph::graph_debug_enabled()) {

@@ -43,7 +43,7 @@
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">for _ in range(args.iters):</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">  run.try_push(tensor)</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">  run.try_push([tensor])</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Read measurement</text>

@@ -89,6 +89,10 @@ struct InputStreamOptions {
   bool copy_output = true;
   bool copy_input = false;
   bool prepare_output_cpu_visible = false;
+  int holder_loan_credits = 0;
+  bool holder_loan_credits_auto = false;
+  int holder_loan_sample_window = 1;
+  int holder_loan_per_sample_arity = 1;
   // When true, CPU-backed Tensor inputs are rejected before the slow
   // InputStream memcpy fallback.  Device-first routes should receive tensors
   // constructed in the required memory placement; set
@@ -99,6 +103,17 @@ struct InputStreamOptions {
   // transport appsinks, where downstream edge/view contracts must be preserved
   // instead of being rewritten as public terminal outputs.
   bool public_output_contract = true;
+  // Same-graph pipeline-to-pipeline pushes are still owned by the live graph
+  // runtime, so they do not need a public cross-Run loan attached by Run::pull.
+  // Public/cross-Run ingress keeps this false and must carry a transferable loan.
+  bool allow_graph_internal_zero_copy_input = false;
+  // Source/live pipelines can continue producing buffers while a deferred
+  // no-flush teardown is waiting on the background reaper.  Prefer a bounded
+  // synchronous state transition to NULL for those pipelines so Run::close()
+  // does not return while camera/RTSP/source streaming threads still touch
+  // downstream plugin/runtime state.  Push/appsrc pipelines keep the legacy
+  // deferred no-flush default unless this flag is set explicitly.
+  bool prefer_synchronous_teardown = false;
   DynamicCapability dynamic_capability = DynamicCapability::StaticOnly;
   ShapePolicy shape_policy = ShapePolicy::BoundedDynamic;
   ResolvedShapeLimits shape_limits{};

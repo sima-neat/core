@@ -32,23 +32,31 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/SimaDecode.h"
 #include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
+#include "nodes/groups/HttpMjpegDecodedInput.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
+#include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
+#include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/common/Caps.h"
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/FileInput.h"
 #include "nodes/common/ImageDecode.h"
 #include "nodes/common/JpegDecode.h"
+#include "nodes/common/JpegParse.h"
+#include "nodes/common/MultipartJpegDemux.h"
 #include "nodes/common/VideoScale.h"
 #include "nodes/common/ImageFreeze.h"
 #include "nodes/common/VideoRate.h"
 #include "nodes/common/VideoTrackSelect.h"
+#include "nodes/io/HttpSource.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/sima/SimaRender.h"
 #include "nodes/sima/SimaArgMax.h"
@@ -58,6 +66,7 @@
 #include "nodes/sima/Detess.h"
 #include "nodes/sima/DetessCast.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/PCIeSink.h"
 #include "pipeline/Run.h"
@@ -408,6 +417,14 @@ void warn_deprecated_use_simaai_pool_python_once() {
       throw nb::python_error();
     }
   });
+}
+
+void warn_deprecated_h264_decode_python() {
+  const char* msg = "pyneat.nodes.h264_decode is deprecated; use pyneat.nodes.sima_decode with "
+                    "SimaDecodeOptions.type = SimaDecodeType.H264";
+  if (PyErr_WarnEx(PyExc_DeprecationWarning, msg, 1) < 0) {
+    throw nb::python_error();
+  }
 }
 
 std::size_t int64_to_size_or_throw(int64_t value, const char* what) {
@@ -3165,10 +3182,109 @@ NB_MODULE(_pyneat_core, m) {
       .def_static("every_frame", &simaai::neat::OutputOptions::EveryFrame, "max_buffers"_a = 30)
       .def_static("clocked", &simaai::neat::OutputOptions::Clocked, "max_buffers"_a = 1);
 
+  nb::class_<simaai::neat::CameraInputOptions>(m, "CameraInputOptions")
+      .def(nb::init<>())
+      .def_prop_rw(
+          "camera_name",
+          [](const simaai::neat::CameraInputOptions& opt) -> nb::object {
+            if (!opt.camera_name.has_value()) {
+              return nb::none();
+            }
+            return nb::str(opt.camera_name->c_str(), opt.camera_name->size());
+          },
+          [](simaai::neat::CameraInputOptions& opt, nb::handle camera_name) {
+            if (camera_name.is_none()) {
+              opt.camera_name = std::nullopt;
+              return;
+            }
+            opt.camera_name = nb::cast<std::string>(camera_name);
+          },
+          nb::for_setter(nb::arg("camera_name").none()))
+      .def_rw("width", &simaai::neat::CameraInputOptions::width)
+      .def_rw("height", &simaai::neat::CameraInputOptions::height)
+      .def_rw("framerate_num", &simaai::neat::CameraInputOptions::framerate_num)
+      .def_rw("framerate_den", &simaai::neat::CameraInputOptions::framerate_den)
+      .def_rw("format", &simaai::neat::CameraInputOptions::format)
+      .def_rw("buffer_name", &simaai::neat::CameraInputOptions::buffer_name)
+      .def_rw("insert_queue", &simaai::neat::CameraInputOptions::insert_queue)
+      .def_rw("leaky_queue", &simaai::neat::CameraInputOptions::leaky_queue)
+      .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
+      .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
+
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");
   graphs_mod.def("branch", &simaai::neat::graphs::Branch, "input"_a, "outputs"_a);
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
                  "policy"_a = simaai::neat::CombinePolicy::ByFrame);
+
+  nb::class_<simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps>(
+      m, "HttpMjpegDecodedInputOutputCaps")
+      .def(nb::init<>())
+      .def_rw("enable",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::enable)
+      .def_prop_rw(
+          "format",
+          format_enum_getter(
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::format),
+          format_enum_setter(
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::format))
+      .def_rw("width",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::width)
+      .def_rw("height",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::height)
+      .def_rw("fps", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::fps)
+      .def_rw("memory",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps::memory);
+
+  nb::class_<simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions>(
+      m, "HttpMjpegDecodedInputOptions")
+      .def(nb::init<>())
+      .def_rw("url", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::url)
+      .def_rw("timeout_seconds",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::timeout_seconds)
+      .def_rw("retries", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::retries)
+      .def_rw("is_live", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::is_live)
+      .def_rw("do_timestamp",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::do_timestamp)
+      .def_rw("user_agent", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::user_agent)
+      .def_rw("multipart_boundary",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::multipart_boundary)
+      .def_rw("multipart_single_stream",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::multipart_single_stream)
+      .def_rw("insert_queue",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::insert_queue)
+      .def_rw("sync_mode", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::sync_mode)
+      .def_rw("sima_allocator_type",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::sima_allocator_type)
+      .def_prop_rw("out_format",
+                   format_enum_getter(
+                       &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::out_format),
+                   format_enum_setter(
+                       &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::out_format))
+      .def_rw("decoder_name",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::decoder_name)
+      .def_rw("decoder_raw_output",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::decoder_raw_output)
+      .def_rw("decoder_next_element",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::decoder_next_element)
+      .def_rw("dec_width", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::dec_width)
+      .def_rw("dec_height", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::dec_height)
+      .def_rw("dec_fps", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::dec_fps)
+      .def_rw("num_buffers",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::num_buffers)
+      .def_rw("use_videoconvert",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videoconvert)
+      .def_rw("use_videoscale",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videoscale)
+      .def_rw("output_caps",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::output_caps)
+      .def_rw("extra_fragment",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::extra_fragment)
+      .def_rw("ssl_strict", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::ssl_strict)
+      .def_rw("source_fps", &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::source_fps)
+      .def_rw("use_videorate",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videorate)
+      .def_rw("video_rate_fps",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::video_rate_fps);
 
   nb::class_<simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps>(
       m, "ImageInputGroupOutputCaps")
@@ -3267,6 +3383,40 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("extra_fragment",
               &simaai::neat::nodes::groups::VideoInputGroupOptions::extra_fragment);
 
+  nb::enum_<simaai::neat::nodes::groups::RtspCodec>(m, "RtspCodec")
+      .value("H264", simaai::neat::nodes::groups::RtspCodec::H264)
+      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG);
+
+  nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
+      .def(nb::init<>())
+      .def_rw("url", &simaai::neat::nodes::groups::RtspEncodedInputOptions::url)
+      .def_rw("codec", &simaai::neat::nodes::groups::RtspEncodedInputOptions::codec)
+      .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspEncodedInputOptions::latency_ms)
+      .def_rw("tcp", &simaai::neat::nodes::groups::RtspEncodedInputOptions::tcp)
+      .def_rw("drop_on_latency",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::drop_on_latency)
+      .def_rw("buffer_mode", &simaai::neat::nodes::groups::RtspEncodedInputOptions::buffer_mode)
+      .def_rw("insert_queue", &simaai::neat::nodes::groups::RtspEncodedInputOptions::insert_queue)
+      .def_rw("sync_mode", &simaai::neat::nodes::groups::RtspEncodedInputOptions::sync_mode)
+      .def_rw("h264_payload_type",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_payload_type)
+      .def_rw("mjpeg_payload_type",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::mjpeg_payload_type)
+      .def_rw("h264_parse_config_interval",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_parse_config_interval)
+      .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_fps)
+      .def_rw("h264_width", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_width)
+      .def_rw("h264_height", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_height)
+      .def_rw("auto_caps_from_stream",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::auto_caps_from_stream)
+      .def_rw("fallback_h264_fps",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_fps)
+      .def_rw("fallback_h264_width",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_width)
+      .def_rw("fallback_h264_height",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::fallback_h264_height)
+      .def_rw("source_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::source_fps);
+
   nb::class_<simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps>(
       m, "RtspDecodedInputOutputCaps")
       .def(nb::init<>())
@@ -3286,7 +3436,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("url", &simaai::neat::nodes::groups::RtspDecodedInputOptions::url)
       .def_rw("latency_ms", &simaai::neat::nodes::groups::RtspDecodedInputOptions::latency_ms)
       .def_rw("tcp", &simaai::neat::nodes::groups::RtspDecodedInputOptions::tcp)
+      .def_rw("drop_on_latency",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::drop_on_latency)
+      .def_rw("buffer_mode", &simaai::neat::nodes::groups::RtspDecodedInputOptions::buffer_mode)
       .def_rw("payload_type", &simaai::neat::nodes::groups::RtspDecodedInputOptions::payload_type)
+      .def_rw("mjpeg_payload_type",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::mjpeg_payload_type)
       .def_rw("h264_parse_config_interval",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::h264_parse_config_interval)
       .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::h264_fps)
@@ -3313,13 +3468,22 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_raw_output)
       .def_rw("decoder_next_element",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_next_element)
+      .def_rw("dec_width", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_width)
+      .def_rw("dec_height", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_height)
+      .def_rw("dec_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::dec_fps)
+      .def_rw("num_buffers", &simaai::neat::nodes::groups::RtspDecodedInputOptions::num_buffers)
       .def_rw("use_videoconvert",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoconvert)
       .def_rw("use_videoscale",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videoscale)
       .def_rw("output_caps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::output_caps)
       .def_rw("extra_fragment",
-              &simaai::neat::nodes::groups::RtspDecodedInputOptions::extra_fragment);
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::extra_fragment)
+      .def_rw("codec", &simaai::neat::nodes::groups::RtspDecodedInputOptions::codec)
+      .def_rw("source_fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::source_fps)
+      .def_rw("use_videorate", &simaai::neat::nodes::groups::RtspDecodedInputOptions::use_videorate)
+      .def_rw("video_rate_fps",
+              &simaai::neat::nodes::groups::RtspDecodedInputOptions::video_rate_fps);
 
   nb::class_<simaai::neat::nodes::groups::UdpH264OutputGroupOptions>(m, "UdpH264OutputGroupOptions")
       .def(nb::init<>())
@@ -3543,6 +3707,44 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
       .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
       .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+  nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
+      .value("H264", simaai::neat::SimaDecodeType::H264)
+      .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
+      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG);
+  nb::class_<simaai::neat::SimaDecodeOptions>(m, "SimaDecodeOptions")
+      .def(nb::init<>())
+      .def_rw("type", &simaai::neat::SimaDecodeOptions::type)
+      .def_rw("sima_allocator_type", &simaai::neat::SimaDecodeOptions::sima_allocator_type)
+      .def_prop_rw("out_format", format_enum_getter(&simaai::neat::SimaDecodeOptions::out_format),
+                   format_enum_setter(&simaai::neat::SimaDecodeOptions::out_format))
+      .def_rw("decoder_name", &simaai::neat::SimaDecodeOptions::decoder_name)
+      .def_rw("raw_output", &simaai::neat::SimaDecodeOptions::raw_output)
+      .def_rw("next_element", &simaai::neat::SimaDecodeOptions::next_element)
+      .def_rw("dec_width", &simaai::neat::SimaDecodeOptions::dec_width)
+      .def_rw("dec_height", &simaai::neat::SimaDecodeOptions::dec_height)
+      .def_rw("dec_fps", &simaai::neat::SimaDecodeOptions::dec_fps)
+      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers);
+  nb::class_<simaai::neat::HttpSourceOptions>(m, "HttpSourceOptions")
+      .def(nb::init<>())
+      .def_rw("location", &simaai::neat::HttpSourceOptions::location)
+      .def_rw("timeout_seconds", &simaai::neat::HttpSourceOptions::timeout_seconds)
+      .def_rw("retries", &simaai::neat::HttpSourceOptions::retries)
+      .def_rw("is_live", &simaai::neat::HttpSourceOptions::is_live)
+      .def_rw("do_timestamp", &simaai::neat::HttpSourceOptions::do_timestamp)
+      .def_rw("user_agent", &simaai::neat::HttpSourceOptions::user_agent)
+      .def_rw("ssl_strict", &simaai::neat::HttpSourceOptions::ssl_strict);
+  nb::class_<simaai::neat::MultipartJpegDemuxOptions>(m, "MultipartJpegDemuxOptions")
+      .def(nb::init<>())
+      .def_rw("boundary", &simaai::neat::MultipartJpegDemuxOptions::boundary)
+      .def_rw("single_stream", &simaai::neat::MultipartJpegDemuxOptions::single_stream);
+  nb::class_<simaai::neat::EncodedCapsFixupOptions>(m, "EncodedCapsFixupOptions")
+      .def(nb::init<>())
+      .def_rw("media_type", &simaai::neat::EncodedCapsFixupOptions::media_type)
+      .def_rw("fallback_fps", &simaai::neat::EncodedCapsFixupOptions::fallback_fps)
+      .def_rw("use_rtsp_sdp_fps", &simaai::neat::EncodedCapsFixupOptions::use_rtsp_sdp_fps);
+  nb::class_<simaai::neat::JpegParseOptions>(m, "JpegParseOptions")
+      .def(nb::init<>())
+      .def_rw("disable_passthrough", &simaai::neat::JpegParseOptions::disable_passthrough);
 
   // Phase 4 (plan slice): CVU dtype-bridge atoms (cast/cast_tess/dequant/detess/detess_cast).
   // Advanced/expert nodes — the planner normally inserts them; the standalone forms exist for
@@ -3642,6 +3844,8 @@ NB_MODULE(_pyneat_core, m) {
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(std::string, simaai::neat::InputOptions)>(
           &simaai::neat::nodes::Input),
       "name"_a, "options"_a = simaai::neat::InputOptions{});
+  nodes_mod.def("camera_input", &simaai::neat::nodes::CameraInput,
+                "options"_a = simaai::neat::CameraInputOptions{});
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),
@@ -3684,9 +3888,15 @@ NB_MODULE(_pyneat_core, m) {
                 "height"_a = -1, "fps"_a = -1, "memory"_a = simaai::neat::CapsMemory::Any);
   nodes_mod.def("caps_nv12_sys_mem", &simaai::neat::nodes::CapsNV12SysMem, "width"_a, "height"_a,
                 "fps"_a);
+  nodes_mod.def("http_source", &simaai::neat::nodes::HttpSource, "options"_a);
   nodes_mod.def("file_input", &simaai::neat::nodes::FileInput, "path"_a);
   nodes_mod.def("image_decode", &simaai::neat::nodes::ImageDecode);
   nodes_mod.def("jpeg_decode", &simaai::neat::nodes::JpegDecode);
+  nodes_mod.def("multipart_jpeg_demux", &simaai::neat::nodes::MultipartJpegDemux,
+                "options"_a = simaai::neat::MultipartJpegDemuxOptions{});
+  nodes_mod.def("encoded_caps_fixup", &simaai::neat::nodes::EncodedCapsFixup, "options"_a);
+  nodes_mod.def("jpeg_parse", &simaai::neat::nodes::JpegParse,
+                "options"_a = simaai::neat::JpegParseOptions{});
   nodes_mod.def("video_scale", &simaai::neat::nodes::VideoScale);
   nodes_mod.def("video_rate", &simaai::neat::nodes::VideoRate);
   nodes_mod.def("image_freeze", &simaai::neat::nodes::ImageFreeze, "num_buffers"_a = -1);
@@ -3724,6 +3934,8 @@ NB_MODULE(_pyneat_core, m) {
   // RTP/H264 + PCIe transport nodes.
   nodes_mod.def("h264_caps_fixup", &simaai::neat::nodes::H264CapsFixup, "fallback_fps"_a = 30,
                 "fallback_width"_a = 1280, "fallback_height"_a = 720);
+  nodes_mod.def("rtp_jpeg_depacketize", &simaai::neat::nodes::RTPJpegDepacketize,
+                "payload_type"_a = 26);
   nodes_mod.def("h264_encode_sw", &simaai::neat::nodes::H264EncodeSW, "bitrate_kbps"_a = 4000);
   nodes_mod.def("pcie_src", &simaai::neat::nodes::PCIeSrc,
                 "options"_a = simaai::neat::PCIeSrcOptions{});
@@ -3733,6 +3945,9 @@ NB_MODULE(_pyneat_core, m) {
   nb::module_ groups_mod = m.def_submodule("groups", "Reusable Graph fragment helpers");
   groups_mod.def("image_input", &simaai::neat::nodes::groups::ImageInputGroup, "options"_a);
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
+  groups_mod.def("http_mjpeg_decoded_input", &simaai::neat::nodes::groups::HttpMjpegDecodedInput,
+                 "options"_a);
+  groups_mod.def("rtsp_encoded_input", &simaai::neat::nodes::groups::RtspEncodedInput, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
@@ -3742,6 +3957,10 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("video_input_output_spec", &simaai::neat::nodes::groups::VideoInputGroupOutputSpec,
                  "options"_a);
+  groups_mod.def("http_mjpeg_decoded_output_spec",
+                 &simaai::neat::nodes::groups::HttpMjpegDecodedInputOutputSpec, "options"_a);
+  groups_mod.def("rtsp_encoded_output_spec",
+                 &simaai::neat::nodes::groups::RtspEncodedInputOutputSpec, "options"_a);
   groups_mod.def("rtsp_decoded_output_spec",
                  &simaai::neat::nodes::groups::RtspDecodedInputOutputSpec, "options"_a);
 
@@ -4591,10 +4810,20 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::UdpOutputOptions{});
   nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
                 "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
-  nodes_mod.def("h264_decode", &simaai::neat::nodes::H264Decode, "sima_allocator_type"_a = 2,
-                "out_format"_a = "NV12", "decoder_name"_a = "", "raw_output"_a = false,
-                "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1, "dec_fps"_a = -1,
-                "num_buffers"_a = -1);
+  nodes_mod.def(
+      "h264_decode",
+      [](int sima_allocator_type, std::string out_format, std::string decoder_name, bool raw_output,
+         std::string next_element, int dec_width, int dec_height, int dec_fps, int num_buffers) {
+        warn_deprecated_h264_decode_python();
+        return simaai::neat::nodes::H264Decode(
+            sima_allocator_type, std::move(out_format), std::move(decoder_name), raw_output,
+            std::move(next_element), dec_width, dec_height, dec_fps, num_buffers);
+      },
+      "sima_allocator_type"_a = 2, "out_format"_a = "NV12", "decoder_name"_a = "",
+      "raw_output"_a = false, "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1,
+      "dec_fps"_a = -1, "num_buffers"_a = -1);
+  nodes_mod.def("sima_decode", &simaai::neat::nodes::SimaDecode,
+                "options"_a = simaai::neat::SimaDecodeOptions{});
   nodes_mod.def(
       "h264_parse",
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::H264ParseOptions)>(

@@ -2,8 +2,8 @@
 #include "pipeline/EncodedSampleUtil.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264Parse.h"
+#include "nodes/sima/SimaDecode.h"
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
@@ -49,7 +49,12 @@ int main() {
     simaai::neat::Graph p;
     p.add(simaai::neat::nodes::Input(src_opt));
     p.add(simaai::neat::nodes::H264ParseAu(/*config_interval=*/1));
-    p.add(simaai::neat::nodes::H264Decode(/*sima_allocator_type=*/2, /*out_format=*/"NV12"));
+    simaai::neat::SimaDecodeOptions dec;
+    dec.type = simaai::neat::SimaDecodeType::H264;
+    dec.sima_allocator_type = 2;
+    dec.out_format = simaai::neat::FormatTag::NV12;
+    dec.raw_output = false;
+    p.add(simaai::neat::nodes::SimaDecode(dec));
     p.add(simaai::neat::nodes::Output());
 
     simaai::neat::Sample sample =

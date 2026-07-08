@@ -2,10 +2,12 @@
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 
 #include <cstdint>
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <ios>
-#include <regex>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -78,16 +80,77 @@ std::string section_name_at(const std::vector<char>& shstrtab, std::uint32_t nam
 
 // Match patterns for I/O section symbols. Anchored regexes; ordered scan keeps
 // the implementation stable against future suffix additions.
-const std::regex& ifm_persistent_pattern() {
-  static const std::regex re(R"(^data\.ifm\.persistent\.input_(\d+)/.+$)");
-  return re;
-}
-const std::regex& ofm_persistent_pattern() {
-  static const std::regex re(R"(^data\.ofm\.persistent\.output_(\d+)/.+$)");
-  return re;
-}
+//
+// Older compiler drops used nested placeholder names:
+//   data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0
+//   data.ofm.persistent.output_00/MLA_0/sigmoid_64.b0
+//
+// QMLA/public-IO artifacts produced by newer compiler drops use flat section
+// names:
+//   data.ifm.persistent.qmla_ifm_0.b0
+//   data.ofm.persistent.afe_mla_output_0.b0
+//
+// Treat both forms as the same physical topology signal.  The index capture is
+// deliberately the only semantic dependency; the full section name is preserved
+// for downstream diagnostics / binding names.
 constexpr const char* kMonolithicIfmName = "data.ifm.b0";
 constexpr const char* kMonolithicOfmName = "data.ofm.b0";
+
+bool parse_uint_at(const std::string& name, std::size_t pos, std::size_t* value,
+                   std::size_t* end_pos) {
+  if (!value || pos >= name.size() || !std::isdigit(static_cast<unsigned char>(name[pos]))) {
+    return false;
+  }
+  std::size_t out = 0U;
+  std::size_t cur = pos;
+  while (cur < name.size() && std::isdigit(static_cast<unsigned char>(name[cur]))) {
+    const unsigned digit = static_cast<unsigned>(name[cur] - '0');
+    if (out > ((std::numeric_limits<std::size_t>::max() - digit) / 10U)) {
+      return false;
+    }
+    out = out * 10U + digit;
+    ++cur;
+  }
+  *value = out;
+  if (end_pos) {
+    *end_pos = cur;
+  }
+  return true;
+}
+
+bool parse_section_index_after_prefix(const std::string& name, const std::string& prefix,
+                                      bool require_slash_after_index, std::size_t* index) {
+  if (name.rfind(prefix, 0U) != 0U) {
+    return false;
+  }
+  std::size_t end = 0U;
+  if (!parse_uint_at(name, prefix.size(), index, &end)) {
+    return false;
+  }
+  if (require_slash_after_index) {
+    return end < name.size() && name[end] == '/';
+  }
+  return end + 2U <= name.size() && name[end] == '.' && name[end + 1U] == 'b';
+}
+
+std::optional<std::size_t> parse_ifm_section_index(const std::string& name) {
+  std::size_t index = 0U;
+  if (parse_section_index_after_prefix(name, "data.ifm.persistent.input_", true, &index) ||
+      parse_section_index_after_prefix(name, "data.ifm.persistent.qmla_ifm_", false, &index)) {
+    return index;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t> parse_ofm_section_index(const std::string& name) {
+  std::size_t index = 0U;
+  if (parse_section_index_after_prefix(name, "data.ofm.persistent.output_", true, &index) ||
+      parse_section_index_after_prefix(name, "data.ofm.persistent.afe_mla_output_", false,
+                                       &index)) {
+    return index;
+  }
+  return std::nullopt;
+}
 
 // Insert `name` at slot `index` in `dst`, growing the vector as needed. If
 // `dst` already has a value at that index, prefer the existing one (keeps the
@@ -181,16 +244,13 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       ++recognized;
       continue;
     }
-    std::smatch m;
-    if (std::regex_match(name, m, ifm_persistent_pattern())) {
-      const std::size_t index = static_cast<std::size_t>(std::stoul(m[1].str()));
-      place_at_index(&out->ifm_symbol_names, index, name);
+    if (const auto index = parse_ifm_section_index(name); index.has_value()) {
+      place_at_index(&out->ifm_symbol_names, *index, name);
       ++recognized;
       continue;
     }
-    if (std::regex_match(name, m, ofm_persistent_pattern())) {
-      const std::size_t index = static_cast<std::size_t>(std::stoul(m[1].str()));
-      place_at_index(&out->ofm_symbol_names, index, name);
+    if (const auto index = parse_ofm_section_index(name); index.has_value()) {
+      place_at_index(&out->ofm_symbol_names, *index, name);
       ++recognized;
       continue;
     }

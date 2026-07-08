@@ -17,6 +17,7 @@ NEW_FACTORIES = (
     "caps_raw",
     "format_filter",
     "caps_nv12_sys_mem",
+    "camera_input",
     "file_input",
     "image_decode",
     "jpeg_decode",
@@ -50,6 +51,7 @@ def test_caps_and_media_nodes_construct():
       pyneat.nodes.caps_raw("RGB"),
       pyneat.nodes.format_filter(format="NV12"),
       pyneat.nodes.caps_nv12_sys_mem(1920, 1080, 30),
+      pyneat.nodes.camera_input(),
       pyneat.nodes.file_input("input.mp4"),
       pyneat.nodes.image_decode(),
       pyneat.nodes.jpeg_decode(),
@@ -62,6 +64,45 @@ def test_caps_and_media_nodes_construct():
   ]
   for node in built:
     assert isinstance(node, pyneat.Node)
+
+
+def test_camera_input_options_roundtrip():
+  opt = pyneat.CameraInputOptions()
+  assert opt.width == 1920
+  assert opt.height == 1080
+  assert opt.framerate_num == 30
+  assert opt.framerate_den == 1
+  assert opt.format == "NV12"
+  assert opt.buffer_name == "camera"
+  assert opt.insert_queue is True
+  assert opt.leaky_queue is True
+  assert opt.queue_depth == 2
+  assert opt.allow_cpu_fallback is False
+
+  opt.camera_name = "imx477 5-001a"
+  opt.width = 1280
+  opt.height = 720
+  opt.framerate_num = 60
+  opt.framerate_den = 1
+  opt.format = "NV12"
+  opt.buffer_name = "camera0"
+  opt.insert_queue = False
+  opt.leaky_queue = False
+  opt.queue_depth = 4
+  opt.allow_cpu_fallback = True
+
+  assert opt.camera_name == "imx477 5-001a"
+  assert opt.width == 1280
+  assert opt.height == 720
+  assert opt.framerate_num == 60
+  assert opt.buffer_name == "camera0"
+  assert opt.insert_queue is False
+  assert opt.leaky_queue is False
+  assert opt.queue_depth == 4
+  assert opt.allow_cpu_fallback is True
+  opt.camera_name = None
+  assert opt.camera_name is None
+  assert isinstance(pyneat.nodes.camera_input(opt), pyneat.Node)
 
 
 def test_format_filter_accepts_memory_enum():

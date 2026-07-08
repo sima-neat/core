@@ -223,6 +223,12 @@ add_tutorial(tutorial_022_compose_genai_into_graph
   LABELS genai graph
 )
 
+add_tutorial(tutorial_023_run_mipi_camera_model
+  023_run_mipi_camera_model/run_mipi_camera_model.cpp
+  NO_TEST
+  LABELS asset mipi camera
+)
+
 install(
   TARGETS ${PIPELINESESSION_TUTORIAL_TARGETS}
   RUNTIME DESTINATION lib/sima-neat/tutorials
