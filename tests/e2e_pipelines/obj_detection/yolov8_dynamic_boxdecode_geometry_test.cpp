@@ -101,6 +101,35 @@ void validate_raw_boxes(const std::vector<uint8_t>& bytes, const cv::Mat& image,
   require(valid_boxes > 0, label + ": expected at least one decoded box above threshold");
 }
 
+simaai::neat::Sample make_bgr_ev74_sample(const cv::Mat& frame) {
+  return simaai::neat::Sample::from_image(frame, simaai::neat::ImageSpec::PixelFormat::BGR,
+                                          simaai::neat::TensorMemory::EV74);
+}
+
+simaai::neat::Graph make_dynamic_boxdecode_graph(const simaai::neat::Model& model,
+                                                 const DynamicGeometryConfig& cfg) {
+  simaai::neat::Graph graph;
+  graph.add(simaai::neat::nodes::Input());
+  graph.add(simaai::neat::nodes::groups::Preprocess(model));
+  graph.add(simaai::neat::nodes::groups::Infer(model));
+  graph.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
+                                               cfg.boxdecode_score_threshold, cfg.nms_iou_threshold,
+                                               cfg.topk));
+  graph.add(simaai::neat::nodes::Output());
+  return graph;
+}
+
+void validate_boxdecode_output(const simaai::neat::Sample& outs, int output_index,
+                               const cv::Mat& frame, const DynamicGeometryConfig& cfg,
+                               const std::string& label) {
+  require(!outs.empty(), label + ": expected at least one output sample");
+
+  std::vector<uint8_t> payload;
+  std::string err;
+  require(objdet::extract_bbox_payload(outs.front(), output_index, payload, err), err);
+  validate_raw_boxes(payload, frame, cfg, label);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -128,48 +157,70 @@ int main(int argc, char** argv) {
     model_opt.upstream_name = "decoder";
     auto model = simaai::neat::Model(tar_gz, model_opt);
 
-    simaai::neat::Graph graph;
-    graph.add(simaai::neat::nodes::Input());
-    graph.add(simaai::neat::nodes::groups::Preprocess(model));
-    graph.add(simaai::neat::nodes::groups::Infer(model));
-    graph.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
-                                                 cfg.boxdecode_score_threshold,
-                                                 cfg.nms_iou_threshold, cfg.topk));
-    graph.add(simaai::neat::nodes::Output());
+    int sync_outputs = 0;
+    std::string sync_pipeline;
+    {
+      simaai::neat::Graph graph = make_dynamic_boxdecode_graph(model, cfg);
+      sima_yolov8_test::step_log("dynamic-sync: before build");
+      auto run =
+          graph.build_seeded_internal(make_bgr_ev74_sample(original), simaai::neat::RunMode::Sync);
+      sima_yolov8_test::step_log("dynamic-sync: after build");
 
-    sima_yolov8_test::step_log("dynamic: before build");
-    auto run = graph.build_seeded_internal(
-        simaai::neat::Sample{simaai::neat::Sample::from_image(
-            original, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
-        simaai::neat::RunMode::Sync);
-    sima_yolov8_test::step_log("dynamic: after build");
+      const auto run_frame = [&](const cv::Mat& frame, const std::string& label) {
+        const std::string before_label = "dynamic-sync: before run " + label;
+        sima_yolov8_test::step_log(before_label.c_str());
+        simaai::neat::Sample outs = run.run(make_bgr_ev74_sample(frame), cfg.timeout_ms);
+        const std::string after_label = "dynamic-sync: after run " + label;
+        sima_yolov8_test::step_log(after_label.c_str());
 
-    int outputs = 0;
-    const auto run_frame = [&](const cv::Mat& frame, const std::string& label) {
-      const std::string before_label = "dynamic: before run " + label;
-      sima_yolov8_test::step_log(before_label.c_str());
-      simaai::neat::Sample outs = run.run(
-          simaai::neat::Sample{simaai::neat::Sample::from_image(
-              frame, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
-          cfg.timeout_ms);
-      require(!outs.empty(), label + ": expected at least one output sample");
-      const std::string after_label = "dynamic: after run " + label;
-      sima_yolov8_test::step_log(after_label.c_str());
+        validate_boxdecode_output(outs, sync_outputs, frame, cfg, "sync-" + label);
+        ++sync_outputs;
+      };
 
-      std::vector<uint8_t> payload;
-      std::string err;
-      require(objdet::extract_bbox_payload(outs.front(), outputs, payload, err), err);
-      validate_raw_boxes(payload, frame, cfg, label);
-      ++outputs;
-    };
+      run_frame(original, "original");
+      run_frame(half, "half");
+      run_frame(original, "original-again");
+      sync_pipeline = graph.last_pipeline();
+      run.close_input();
+      run.close();
+    }
 
-    run_frame(original, "original");
-    run_frame(half, "half");
-    run_frame(original, "original-again");
+    int async_outputs = 0;
+    std::string async_pipeline;
+    {
+      simaai::neat::Graph graph = make_dynamic_boxdecode_graph(model, cfg);
+      simaai::neat::RunOptions run_opt;
+      run_opt.preset = simaai::neat::RunPreset::Realtime;
 
-    std::cout << "DYNAMIC_BOXDECODE outputs=" << outputs << " original=" << original.cols << "x"
+      sima_yolov8_test::step_log("dynamic-async: before build");
+      auto run = graph.build(make_bgr_ev74_sample(original), run_opt);
+      sima_yolov8_test::step_log("dynamic-async: after build");
+
+      const auto push_pull_frame = [&](const cv::Mat& frame, const std::string& label) {
+        const std::string before_label = "dynamic-async: before push " + label;
+        sima_yolov8_test::step_log(before_label.c_str());
+        require(run.push(make_bgr_ev74_sample(frame)), "async-" + label + ": push failed");
+        simaai::neat::Sample outs = run.pull_samples(cfg.timeout_ms);
+        const std::string after_label = "dynamic-async: after pull " + label;
+        sima_yolov8_test::step_log(after_label.c_str());
+
+        validate_boxdecode_output(outs, async_outputs, frame, cfg, "async-" + label);
+        ++async_outputs;
+      };
+
+      push_pull_frame(original, "original");
+      push_pull_frame(half, "half");
+      push_pull_frame(original, "original-again");
+      async_pipeline = graph.last_pipeline();
+      run.close_input();
+      run.close();
+    }
+
+    std::cout << "DYNAMIC_BOXDECODE sync_outputs=" << sync_outputs
+              << " async_outputs=" << async_outputs << " original=" << original.cols << "x"
               << original.rows << " half=" << half.cols << "x" << half.rows << " ok=1\n";
-    std::cout << "DYNAMIC_BOXDECODE diagnostics\n" << graph.last_pipeline() << "\n";
+    std::cout << "DYNAMIC_BOXDECODE sync diagnostics\n" << sync_pipeline << "\n";
+    std::cout << "DYNAMIC_BOXDECODE async diagnostics\n" << async_pipeline << "\n";
     return 0;
   } catch (const SkipTest& e) {
     std::cout << "[SKIP] " << e.what() << "\n";
