@@ -70,6 +70,76 @@ nameserver 8.8.8.8
 nameserver 127.0.0.1
 ```
 
+## Troubleshoot Insight video with Colima UDP forwarding
+
+If Insight opens in the browser but live video does not appear, UDP packets may
+not be reaching the SDK container. On macOS with Colima, this can happen when
+Colima uses SSH port forwarding. Docker can still show the expected UDP port
+mappings, but Colima's host-to-VM forwarding path may not deliver UDP traffic
+into the container.
+
+The SDK normally publishes these UDP ranges:
+
+- `9000-9079/udp` for video
+- `9100-9179/udp` for metadata
+- `40000-40199/udp` for WebRTC
+
+If the SDK container is running and those UDP mappings are present, check the
+Colima port forwarder. SSH forwarding is TCP-only, while gRPC forwarding supports
+TCP and UDP.
+
+Reconfigure Colima to use gRPC forwarding:
+
+```bash
+colima stop
+colima start --edit
+```
+
+In the editor, change:
+
+```yaml
+portForwarder: ssh
+```
+
+to:
+
+```yaml
+portForwarder: grpc
+```
+
+Then restart the SDK:
+
+```bash
+sima-cli sdk stop
+sima-cli sdk start
+sima-cli sdk neat
+```
+
+Verify Docker still publishes the UDP ports:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+```
+
+Confirm the SDK container lists `9000-9079/udp`, `9100-9179/udp`, and the WebRTC
+UDP range.
+
+While sending video, check whether Insight sees incoming packets from inside the
+SDK:
+
+```bash
+curl -k 'https://127.0.0.1:9900/api/ingest/stats?all=1&verbose=1'
+```
+
+Look for `packets_received` increasing on the expected channel. Make sure the
+sender targets the Mac host IP and the correct UDP port, not the SDK container
+IP. Channel 0 uses UDP `9000`, channel 1 uses UDP `9001`, and so on.
+
+If UDP still does not reach Insight after switching Colima to gRPC forwarding,
+test with Docker Desktop or a Linux host. In that case, the SDK and Docker port
+mappings are likely correct, and the remaining suspicious layer is Colima's
+macOS UDP forwarding path.
+
 ## Next step
 
 Return to [Neat SDK](/getting-started/dev-environment/) and continue with install/setup.

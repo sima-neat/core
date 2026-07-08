@@ -52,7 +52,9 @@ commands. See [Two Step SDK Installation](/reference/two-step-sdk-installation/)
 :::
 
 To change SDK settings after installation, see
-[Configure SDK](/getting-started/dev-environment/configure-sdk/).
+[Configure SDK](/getting-started/dev-environment/configure-sdk/). For restricted
+network environments, see
+[Offline Installation](/getting-started/dev-environment/offline-installation/).
 
 ## Access the SDK
 
@@ -84,13 +86,23 @@ information, see [Insight](/tools/insight/).
 
 ### Use VS Code
 
-Connect VS Code to the SDK container with
-[Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers),
-then run `sima-cli login` once inside the container so the SDK can retrieve
-assets such as prebuilt models.
+Starting with SDK 2.1.2.3, you can access VS Code from a browser through the
+SDK Code UI. At the end of SDK installation, `sima-cli` prints the Code UI URL
+as `codeUI`, for example:
 
-Install the Codex or Claude Code extension in VS Code and ask what skills are
-available.
+<ShellCommand prompt="user-host-machine">
+codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
+</ShellCommand>
+
+Open that URL in your browser to work inside the SDK workspace. SDK 2.1.2.3 and
+later preinstall the Codex and Claude Code extensions in the browser Code UI.
+
+Native VS Code is another option if you prefer it instead of the browser. Connect
+VS Code to the SDK container with
+[Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers).
+
+Run `sima-cli login` once inside the SDK container so the SDK can retrieve assets
+such as prebuilt models.
 
 ## Upgrade
 
