@@ -40,6 +40,7 @@ using simaai::neat::AutoFlag;
 using simaai::neat::BoxDecodeType;
 using simaai::neat::BoxDecodeTypeOption;
 using simaai::neat::Graph;
+using simaai::neat::GraphOptions;
 using simaai::neat::InputKind;
 using simaai::neat::Model;
 using simaai::neat::NormalizePreset;
@@ -50,6 +51,7 @@ using simaai::neat::ResizeMode;
 
 constexpr int kStartupReadinessSeconds = 15;
 constexpr const char* kProgramName = "pcie-pipeline-builder";
+constexpr const char* kPcieSourceBufferName = "n0_pciesrc";
 constexpr const char* kSrcReadyMessage = "neat-pcie-src-pads-active";
 constexpr const char* kSinkReadyMessage = "neat-pcie-sink-started";
 
@@ -501,8 +503,15 @@ Mode apply_model_options_json(const nlohmann::json& root, Model::Options* opt) {
 }
 
 void apply_route_owned_options(const Mode mode, Model::Options* opt) {
-  opt->upstream_name = "n0_pciesrc";
   opt->preprocess.kind = (mode == Mode::Tensor) ? InputKind::Tensor : InputKind::Image;
+}
+
+std::string pcie_graph_suffix(const int queue) {
+  return "_q" + std::to_string(queue);
+}
+
+std::string pcie_source_element_name(const int queue) {
+  return std::string(kPcieSourceBufferName) + pcie_graph_suffix(queue);
 }
 
 ResolvedOptions resolve_options(const CliOptions& opt) {
@@ -721,9 +730,12 @@ void install_signal_handlers() {
 Graph compose_graph(const CliOptions& opt, const ResolvedOptions& resolved,
                     const std::filesystem::path& model_path, std::unique_ptr<Model>* model_owner) {
   Model::Options model_options = resolved.model_options;
+  model_options.upstream_name = pcie_source_element_name(opt.queue);
   auto model = std::make_unique<Model>(model_path.string(), model_options);
 
-  Graph graph("pcie-pipeline");
+  GraphOptions graph_options;
+  graph_options.element_name_suffix = pcie_graph_suffix(opt.queue);
+  Graph graph("pcie-pipeline", graph_options);
   PCIeSrcOptions src_options;
   src_options.queue = opt.queue;
   graph.add(simaai::neat::nodes::PCIeSrc(src_options));
