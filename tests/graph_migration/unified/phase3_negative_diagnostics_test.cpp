@@ -218,6 +218,36 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
+    simaai::neat::GraphLinkOptions inner;
+    inner.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    inner.max_inflight_per_stream = 16;
+    inner.max_inflight_total = 16;
+
+    simaai::neat::GraphLinkOptions outer = inner;
+    outer.max_inflight_per_stream = 4;
+    outer.max_inflight_total = 4;
+
+    auto source = live_camera_source_fragment("compiler_merge_outer_override_camera");
+    auto sink = linked_passthrough_fragment("image", "classes", inner);
+    simaai::neat::Graph app;
+    app.connect(source, sink, outer);
+
+    const auto plan = simaai::neat::runtime::compile_public_graph(app, simaai::neat::RunOptions{});
+    bool saw_realtime_override = false;
+    for (const auto& edge : plan.edges) {
+      if (edge.link_options.policy != simaai::neat::GraphLinkPolicy::RealtimeLatestByStream) {
+        continue;
+      }
+      require(edge.link_options.max_inflight_per_stream == 4,
+              "compiler boundary merge should let outer per-stream cap override inner cap");
+      require(edge.link_options.max_inflight_total == 4,
+              "compiler boundary merge should let outer total cap override inner cap");
+      saw_realtime_override = true;
+    }
+    require(saw_realtime_override, "compiler boundary merge test should produce a realtime edge");
+  }
+
+  {
     auto mixed = mixed_live_and_finite_source_fragment();
     auto sink = push_passthrough_fragment("finite", "classes");
     simaai::neat::Graph app;
