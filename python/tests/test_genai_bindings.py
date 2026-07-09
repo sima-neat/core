@@ -1,4 +1,7 @@
+import base64
 import os
+import socket
+import time
 from pathlib import Path
 
 import numpy as np
@@ -10,12 +13,17 @@ _MODEL_ENV = "SIMA_TEST_LLIMA_TEXT_MODEL"
 _LEGACY_MODEL_ENV = "SIMA_NEAT_GENAI_TEST_MODEL"
 _VLM_MODEL_ENV = "SIMA_TEST_LLIMA_VLM_MODEL"
 _ASR_MODEL_ENV = "SIMA_TEST_LLIMA_ASR_MODEL"
-_VLM_REPO_ID = "simaai/Qwen3-VL-2B-Instruct-GPTQ-a16w4"
+_LLIMA_MODELS_PATH_ENV = "LLIMA_MODELS_PATH"
+_DEFAULT_LLIMA_MODELS_PATH = Path("/media/nvme/llima/models")
+_DEFAULT_TEXT_MODEL = "Qwen2.5-0.5B-Instruct-GPTQ-a16w4"
+_DEFAULT_VLM_MODEL = "LFM2.5-VL-450M-a16w4"
+_DEFAULT_ASR_MODEL = "whisper-small-a16w8"
 _VLM_PROMPT = "Describe this image in a short phrase."
-_EXPECTED_VLM_TEXT = "A skier soars through the air above a snowy slope, with spectators watching below."
+_EXPECTED_VLM_TEXT = "Skier in the air."
 _PROMPT = "What is the capital of Germany?"
 _EXPECTED_TEXT = "The capital of Germany is Berlin."
 _EXPECTED_ASR_TEXT = "tell me a joke please"
+_GENAI_UNAVAILABLE = "NEAT GenAI/LLiMa support is not available in this build"
 
 
 def _trim_text(text):
@@ -36,39 +44,58 @@ def _normalize_transcript(text):
   return "".join(out)
 
 
-def _text_model_dir():
-  value = os.environ.get(_MODEL_ENV, "").strip()
-  if not value:
-    value = os.environ.get(_LEGACY_MODEL_ENV, "").strip()
-  if not value:
-    pytest.skip(f"set {_MODEL_ENV} to a LLiMa text model directory")
+def _llima_models_path():
+  value = os.environ.get(_LLIMA_MODELS_PATH_ENV, "").strip()
+  return Path(value) if value else _DEFAULT_LLIMA_MODELS_PATH
 
-  model_dir = Path(value)
-  if not (model_dir / "devkit" / "vlm_config.json").is_file():
-    pytest.skip(f"{model_dir} is not a LLiMa VLM model directory")
+
+def _model_name(env_name, default_name, legacy_env_name=None):
+  value = os.environ.get(env_name, "").strip()
+  if not value and legacy_env_name is not None:
+    value = os.environ.get(legacy_env_name, "").strip()
+  if not value:
+    value = default_name
+  if Path(value).is_absolute() or "/" in value or ".." in value:
+    pytest.skip(
+        f"{env_name} must be a model directory name under {_LLIMA_MODELS_PATH_ENV}, "
+        f"not a path or Hugging Face repo id: {value}"
+    )
+  return value
+
+
+def _model_dir(env_name, default_name, config_rel, label, legacy_env_name=None):
+  model_dir = _llima_models_path() / _model_name(env_name, default_name, legacy_env_name)
+  if not (model_dir / config_rel).is_file():
+    pytest.skip(f"{model_dir} is not a {label} model directory")
   return str(model_dir)
+
+
+def _text_model_dir():
+  return _model_dir(
+      _MODEL_ENV,
+      _DEFAULT_TEXT_MODEL,
+      Path("devkit/vlm_config.json"),
+      "LLiMa text",
+      _LEGACY_MODEL_ENV,
+  )
 
 
 def _vlm_model_dir():
-  value = os.environ.get(_VLM_MODEL_ENV, "").strip()
-  if not value:
-    pytest.skip(f"set {_VLM_MODEL_ENV} to a LLiMa VLM model directory")
-
-  model_dir = Path(value)
-  if not (model_dir / "devkit" / "vlm_config.json").is_file():
-    pytest.skip(f"{model_dir} is not a LLiMa VLM model directory")
-  return str(model_dir)
+  return _model_dir(
+      _VLM_MODEL_ENV,
+      _DEFAULT_VLM_MODEL,
+      Path("devkit/vlm_config.json"),
+      "LLiMa VLM",
+  )
 
 
 def _asr_model_dir():
-  value = os.environ.get(_ASR_MODEL_ENV, "").strip()
-  if not value:
-    pytest.skip(f"set {_ASR_MODEL_ENV} to a LLiMa Whisper model directory")
-
-  model_dir = Path(value)
-  if not (model_dir / "devkit" / "whisper_config.json").is_file():
-    pytest.skip(f"{model_dir} is not a LLiMa Whisper model directory")
-  return str(model_dir)
+  return _model_dir(
+      _ASR_MODEL_ENV,
+      _DEFAULT_ASR_MODEL,
+      Path("devkit/whisper_config.json"),
+      "LLiMa ASR",
+  )
 
 
 def _candidate_roots():
@@ -102,6 +129,50 @@ def _audio_fixture_path():
     if candidate.is_file():
       return candidate
   pytest.skip(f"missing audio fixture: {rel}")
+
+
+def _free_local_port():
+  with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    return sock.getsockname()[1]
+
+
+def _server_url(port, path):
+  return f"http://127.0.0.1:{port}{path}"
+
+
+def _requests():
+  return pytest.importorskip("requests")
+
+
+def _wait_for_server(port):
+  http = _requests()
+  deadline = time.monotonic() + 30
+  while time.monotonic() < deadline:
+    try:
+      response = http.get(_server_url(port, "/v1/models"), timeout=5)
+      if response.status_code == 200:
+        return
+    except http.RequestException:
+      time.sleep(0.1)
+  raise AssertionError(f"GenAIServer did not become ready on port {port}")
+
+
+def _image_data_url(path):
+  encoded = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+  return f"data:image/jpeg;base64,{encoded}"
+
+
+def _json_response(response):
+  http = _requests()
+  try:
+    response.raise_for_status()
+  except http.HTTPError as exc:
+    raise AssertionError(
+        f"{response.request.method} {response.request.path_url} returned "
+        f"HTTP {response.status_code}: {response.text}"
+    ) from exc
+  return response.json()
 
 
 def _people_rgb_image():
@@ -311,6 +382,21 @@ def test_genai_top_level_and_namespace_aliases_exist():
   server_options.port = 9999
   assert server_options.host == "127.0.0.1"
   assert server_options.port == 9999
+
+
+def test_genai_server_constructor_is_llima_backed():
+  options = pyneat.GenAIServerOptions()
+  options.host = "127.0.0.1"
+  options.port = 0
+
+  try:
+    server = pyneat.GenAIServer(options)
+  except RuntimeError as exc:
+    if _GENAI_UNAVAILABLE in str(exc):
+      pytest.fail("pyneat GenAIServer is backed by unavailable LLiMa stubs")
+    raise
+  else:
+    server.stop()
 
 
 def test_genai_direct_text_generation_and_streaming():
@@ -569,16 +655,19 @@ def test_genai_vision_language_graph_node_generation_and_errors():
     finally:
       sync_run.stop()
 
-    cached_options = pyneat.genai.VisionLanguageOptions()
-    cached_options.max_new_tokens = 48
-    cached_options.streaming = True
-    cached_options.encode_images_on_input = True
-    cached_graph = pyneat.genai.graphs.vision_language(
-        model, cached_options, "vision_language_unsupported_cached"
+    cached_encode_options = pyneat.genai.VisionLanguageOptions()
+    cached_encode_options.max_new_tokens = 48
+    cached_encode_options.streaming = True
+    cached_encode_options.encode_images_on_input = True
+    cached_encode_graph = pyneat.genai.graphs.vision_language(
+        model, cached_encode_options, "vision_language_cached_encode"
     )
-    cached_run = cached_graph.build()
+    cached_run = cached_encode_graph.build()
     try:
       assert cached_run.push("image", [_make_image_sample(image)])
+      encoded = _pull_public_encoded(cached_run)
+      assert _bundle_field_text(encoded, "mode") == "cached"
+      assert cached_run.push("prompt", [pyneat.make_text_sample("prompt", _VLM_PROMPT)])
       _, _, error, _ = _pull_public_language_outputs(cached_run, stop_on_error=True)
       assert error
       assert "cached reuse is not supported" in error
@@ -685,3 +774,86 @@ def test_genai_speech_transcriber_graph_node_generation_and_errors():
   except Exception as exc:
     _skip_if_dispatcher_unavailable(exc)
     raise
+
+
+def test_genai_server_http_text_image_and_audio_requests():
+  http = _requests()
+  port = _free_local_port()
+  options = pyneat.GenAIServerOptions()
+  options.host = "127.0.0.1"
+  options.port = port
+
+  server = None
+  try:
+    server = pyneat.GenAIServer(options)
+    server.add_model(_text_model_dir(), "llm")
+    server.add_model(_vlm_model_dir(), "vlm")
+    server.add_model(_asr_model_dir(), "asr")
+    server.start()
+    _wait_for_server(port)
+
+    models = _json_response(http.get(_server_url(port, "/v1/models"), timeout=30))
+    served_names = {item["id"] for item in models["data"]}
+    assert {"llm", "vlm", "asr"}.issubset(served_names)
+
+    text_body = _json_response(
+        http.post(
+            _server_url(port, "/v1/chat/completions"),
+            json={
+                "model": "llm",
+                "messages": [{"role": "user", "content": _PROMPT}],
+                "max_tokens": 24,
+                "stream": False,
+            },
+            timeout=180,
+        )
+    )
+    text = text_body["choices"][0]["message"]["content"]
+    print(f"GENAI_PY_SERVER_TEXT text={text}")
+    assert _trim_text(text) == _EXPECTED_TEXT
+
+    vlm_body = _json_response(
+        http.post(
+            _server_url(port, "/v1/chat/completions"),
+            json={
+                "model": "vlm",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": _VLM_PROMPT},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": _image_data_url(_people_image_path())},
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 48,
+                "stream": False,
+            },
+            timeout=180,
+        )
+    )
+    vlm_text = vlm_body["choices"][0]["message"]["content"]
+    print(f"GENAI_PY_SERVER_VLM text={vlm_text}")
+    assert _trim_text(vlm_text) == _EXPECTED_VLM_TEXT
+
+    with _audio_fixture_path().open("rb") as audio:
+      asr_body = _json_response(
+          http.post(
+              _server_url(port, "/v1/audio/transcriptions"),
+              data={"model": "asr", "language": "en"},
+              files={"file": (_audio_fixture_path().name, audio, "audio/wav")},
+              timeout=180,
+          )
+      )
+    asr_text = asr_body["text"]
+    print(f"GENAI_PY_SERVER_ASR text={asr_text}")
+    assert _normalize_transcript(asr_text) == _EXPECTED_ASR_TEXT
+  except Exception as exc:
+    _skip_if_dispatcher_unavailable(exc)
+    raise
+  finally:
+    if server is not None:
+      server.stop()

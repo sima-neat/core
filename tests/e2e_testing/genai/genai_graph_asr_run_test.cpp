@@ -1,5 +1,6 @@
 #include "genai/ASRModel.h"
 #include "genai/GraphFragments.h"
+#include "genai_test_utils.h"
 #include "pipeline/Graph.h"
 #include "pipeline/Run.h"
 #include "test_utils.h"
@@ -19,7 +20,11 @@
 #include <vector>
 
 // Exercises graph ASR transcription from audio_path and PCM audio samples
-// against a real LLiMa Whisper model when SIMA_TEST_LLIMA_ASR_MODEL is set.
+// against a real LLiMa ASR model.
+// Model fixture:
+//   export LLIMA_MODELS_PATH=/media/nvme/llima/models
+//   export SIMA_TEST_LLIMA_ASR_MODEL=whisper-small-a16w8
+//   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 
 namespace {
@@ -47,35 +52,10 @@ bool command_exists(const char* command) {
   return std::system(cmd.c_str()) == 0;
 }
 
-std::string trim_env_value(const char* value) {
-  if (value == nullptr) {
-    return {};
-  }
-  std::string out(value);
-  const auto first = out.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    return {};
-  }
-  const auto last = out.find_last_not_of(" \t\r\n");
-  return out.substr(first, last - first + 1);
-}
-
-bool has_llima_whisper_config(const fs::path& model_dir) {
-  std::error_code ec;
-  return fs::is_regular_file(model_dir / "devkit" / "whisper_config.json", ec) && !ec;
-}
-
 fs::path resolve_model_dir() {
-  const std::string env_model_dir = trim_env_value(std::getenv(kModelEnv));
-  if (env_model_dir.empty()) {
-    skip_long_test_exception(std::string(kModelEnv) + " is not set");
-  }
-  fs::path model_dir(env_model_dir);
-  if (!has_llima_whisper_config(model_dir)) {
-    skip_long_test_exception(std::string(kModelEnv) +
-                             " does not point to a LLiMa Whisper model directory");
-  }
-  return model_dir;
+  return simaai::neat::test::resolve_genai_model_dir(
+      kModelEnv, simaai::neat::test::kDefaultAsrModelName, "LLiMa ASR",
+      "devkit/whisper_config.json");
 }
 
 fs::path audio_fixture(const char* repo_root_arg) {
