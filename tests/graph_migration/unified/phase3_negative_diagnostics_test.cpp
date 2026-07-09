@@ -248,6 +248,20 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
+    auto left = live_camera_source_fragment("camera");
+    auto right = live_camera_source_fragment("camera");
+    auto sink = push_passthrough_fragment("image", "classes");
+    simaai::neat::Graph app;
+    app.connect(left, sink);
+    app.connect(right, sink);
+    const auto report = app.validate();
+    require(!report.error_code.empty(),
+            "duplicate CameraInput buffer_name should fail connected graph validation");
+    require_contains(report.repro_note, "duplicate source buffer_name",
+                     "duplicate CameraInput buffer_name diagnostic");
+  }
+
+  {
     auto mixed = mixed_live_and_finite_source_fragment();
     auto sink = push_passthrough_fragment("finite", "classes");
     simaai::neat::Graph app;

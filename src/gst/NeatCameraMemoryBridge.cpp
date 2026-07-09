@@ -1,16 +1,24 @@
 #include "gst/NeatCameraMemoryBridge.h"
 
 #include "pipeline/internal/SimaaiGstCompat.h"
+#include "pipeline/internal/SimaMemApi.h"
 
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace {
+
+#if SIMA_HAS_SIMAAI_POOL
+extern "C" void gst_neat_segment_memory_init_once(void);
+extern "C" GstAllocator* gst_neat_memory_get_segment_allocator(void);
+#endif
 
 constexpr guint kDefaultNumBuffers = 4;
 constexpr guint kMaxNumBuffers = 128;
@@ -100,12 +108,11 @@ bool ensure_pool(GstNeatCameraMemoryBridge* self, gsize required_size) {
     return true;
 
   release_pool(self);
-  gst_simaai_segment_memory_init_once();
-
-  GstAllocator* allocator = gst_simaai_memory_get_segment_allocator();
+  gst_neat_segment_memory_init_once();
+  GstAllocator* allocator = gst_neat_memory_get_segment_allocator();
   if (!allocator) {
     GST_ELEMENT_ERROR(self, RESOURCE, FAILED, ("SiMaAI segment allocator unavailable"),
-                      ("gst_simaai_memory_get_segment_allocator returned NULL"));
+                      ("gst_neat_memory_get_segment_allocator returned NULL"));
     return false;
   }
 
@@ -155,7 +162,21 @@ bool memory_is_ev74_simaai(const GstMemory* memory) {
   return memory_phys(memory) != 0;
 }
 
-bool buffer_is_ev74_simaai(GstBuffer* buffer) {
+const gchar* memory_allocator_name(const GstMemory* memory) {
+  if (!memory || !memory->allocator || !memory->allocator->mem_type)
+    return "";
+  return memory->allocator->mem_type;
+}
+
+bool memory_is_neat_simaai_segment(const GstMemory* memory) {
+  return g_strcmp0(memory_allocator_name(memory), "NeatSimaaiSegmentMemory") == 0;
+}
+
+bool memory_is_ev74_neat_simaai(const GstMemory* memory) {
+  return memory_is_ev74_simaai(memory) && memory_is_neat_simaai_segment(memory);
+}
+
+bool buffer_is_ev74_neat_simaai(GstBuffer* buffer) {
   if (!buffer)
     return false;
   const guint n = gst_buffer_n_memory(buffer);
@@ -163,10 +184,223 @@ bool buffer_is_ev74_simaai(GstBuffer* buffer) {
     return false;
   for (guint i = 0; i < n; ++i) {
     GstMemory* mem = gst_buffer_peek_memory(buffer, i);
-    if (!memory_is_ev74_simaai(mem))
+    if (!memory_is_ev74_neat_simaai(mem))
       return false;
   }
   return true;
+}
+
+bool buffer_is_single_ev74_neat_simaai(GstBuffer* buffer) {
+  return buffer && gst_buffer_n_memory(buffer) == 1 && buffer_is_ev74_neat_simaai(buffer);
+}
+
+bool flush_buffer_segment_for_device(GstNeatCameraMemoryBridge* self, GstBuffer* buffer) {
+#if SIMA_HAS_SIMAAI_POOL
+  if (!self || !buffer)
+    return false;
+  GstMemory* memory = gst_buffer_peek_memory(buffer, 0);
+  if (!memory)
+    return false;
+
+  void* segment = gst_simaai_memory_get_segment(memory, bridge_buffer_name(self));
+  if (!segment)
+    segment = gst_simaai_memory_get_segment(memory, nullptr);
+  if (!segment)
+    return false;
+
+  auto& api = simaai::neat::pipeline_internal::sima_mem_api();
+  if (!api.flush)
+    return false;
+  api.flush(reinterpret_cast<simaai::neat::pipeline_internal::simaai_memory_t*>(segment));
+  return true;
+#else
+  (void)self;
+  (void)buffer;
+  return true;
+#endif
+}
+
+struct Nv12TightRepackLayout {
+  guint width = 0;
+  guint height = 0;
+  gsize y_offset = 0;
+  gsize uv_offset = 0;
+  gint y_stride = 0;
+  gint uv_stride = 0;
+  gsize tight_size = 0;
+};
+
+bool range_in_buffer(gsize offset, gsize bytes, gsize total) {
+  return offset <= total && bytes <= total - offset;
+}
+
+std::optional<Nv12TightRepackLayout> nv12_tight_repack_layout(GstBuffer* input) {
+  if (!input || gst_buffer_n_memory(input) <= 1)
+    return std::nullopt;
+
+  GstVideoMeta* vmeta = gst_buffer_get_video_meta(input);
+  if (!vmeta || vmeta->format != GST_VIDEO_FORMAT_NV12 || vmeta->n_planes < 2 ||
+      vmeta->width == 0 || vmeta->height == 0)
+    return std::nullopt;
+
+  Nv12TightRepackLayout layout;
+  layout.width = vmeta->width;
+  layout.height = vmeta->height;
+  layout.y_offset = vmeta->offset[0];
+  layout.uv_offset = vmeta->offset[1];
+  layout.y_stride = vmeta->stride[0];
+  layout.uv_stride = vmeta->stride[1];
+
+  if (layout.y_stride < static_cast<gint>(layout.width) ||
+      layout.uv_stride < static_cast<gint>(layout.width))
+    return std::nullopt;
+
+  const gsize y_bytes =
+      static_cast<gsize>(layout.width) * static_cast<gsize>(layout.height);
+  const gsize uv_rows = (static_cast<gsize>(layout.height) + 1U) / 2U;
+  const gsize uv_bytes = static_cast<gsize>(layout.width) * uv_rows;
+  layout.tight_size = y_bytes + uv_bytes;
+
+  const gsize input_size = gst_buffer_get_size(input);
+  const gsize y_last_row =
+      static_cast<gsize>(layout.y_stride) * static_cast<gsize>(layout.height - 1U);
+  const gsize uv_last_row =
+      static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
+  if (!range_in_buffer(layout.y_offset + y_last_row, layout.width, input_size) ||
+      !range_in_buffer(layout.uv_offset + uv_last_row, layout.width, input_size))
+    return std::nullopt;
+
+  return layout;
+}
+
+void copy_nv12_rows(const guint8* src_y,
+                    const guint8* src_uv,
+                    guint8* dst,
+                    const Nv12TightRepackLayout& layout) {
+  const gsize width = static_cast<gsize>(layout.width);
+  const gsize height = static_cast<gsize>(layout.height);
+  const gsize uv_rows = (height + 1U) / 2U;
+  guint8* dst_y = dst;
+  guint8* dst_uv = dst + (width * height);
+
+  for (gsize row = 0; row < height; ++row) {
+    std::memcpy(dst_y + row * width,
+                src_y + row * static_cast<gsize>(layout.y_stride),
+                width);
+  }
+  for (gsize row = 0; row < uv_rows; ++row) {
+    std::memcpy(dst_uv + row * width,
+                src_uv + row * static_cast<gsize>(layout.uv_stride),
+                width);
+  }
+}
+
+bool copy_nv12_tight_from_plane_memories(GstBuffer* input,
+                                         const GstMapInfo& outmap,
+                                         const Nv12TightRepackLayout& layout) {
+  if (!input || gst_buffer_n_memory(input) < 2)
+    return false;
+
+  GstMemory* y_memory = gst_buffer_peek_memory(input, 0);
+  GstMemory* uv_memory = gst_buffer_peek_memory(input, 1);
+  if (!y_memory || !uv_memory)
+    return false;
+
+  gsize y_memory_offset = 0;
+  const gsize y_memory_size = gst_memory_get_sizes(y_memory, &y_memory_offset, nullptr);
+  (void)y_memory_offset;
+  // For multi-memory camera buffers some producers express plane offsets
+  // relative to each GstMemory instead of the merged GstBuffer map.  In that
+  // representation the UV plane starts near offset zero in memory #1.  If the
+  // UV offset points past memory #0, keep using the merged-buffer path below.
+  if (layout.uv_offset >= y_memory_size)
+    return false;
+
+  GstMapInfo y_map{};
+  GstMapInfo uv_map{};
+  if (!gst_memory_map(y_memory, &y_map, GST_MAP_READ))
+    return false;
+  if (!gst_memory_map(uv_memory, &uv_map, GST_MAP_READ)) {
+    gst_memory_unmap(y_memory, &y_map);
+    return false;
+  }
+
+  const gsize width = static_cast<gsize>(layout.width);
+  const gsize height = static_cast<gsize>(layout.height);
+  const gsize uv_rows = (height + 1U) / 2U;
+  const gsize y_last_row =
+      static_cast<gsize>(layout.y_stride) * static_cast<gsize>(layout.height - 1U);
+  const gsize uv_last_row =
+      static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
+  const bool in_range =
+      range_in_buffer(layout.y_offset + y_last_row, width, y_map.size) &&
+      range_in_buffer(layout.uv_offset + uv_last_row, width, uv_map.size);
+  if (in_range) {
+    copy_nv12_rows(y_map.data + layout.y_offset, uv_map.data + layout.uv_offset, outmap.data,
+                   layout);
+  }
+
+  gst_memory_unmap(uv_memory, &uv_map);
+  gst_memory_unmap(y_memory, &y_map);
+  return in_range;
+}
+
+bool copy_nv12_tight(GstBuffer* input,
+                     const GstMapInfo& outmap,
+                     const Nv12TightRepackLayout& layout) {
+  if (outmap.size < layout.tight_size)
+    return false;
+
+  if (copy_nv12_tight_from_plane_memories(input, outmap, layout))
+    return true;
+
+  GstMapInfo inmap{};
+  if (!gst_buffer_map(input, &inmap, GST_MAP_READ))
+    return false;
+  if (inmap.size < layout.tight_size) {
+    gst_buffer_unmap(input, &inmap);
+    return false;
+  }
+
+  const gsize width = static_cast<gsize>(layout.width);
+  const gsize height = static_cast<gsize>(layout.height);
+  const gsize uv_rows = (height + 1U) / 2U;
+  const guint8* src_y = inmap.data + layout.y_offset;
+  const guint8* src_uv = inmap.data + layout.uv_offset;
+  const gsize y_last_row =
+      static_cast<gsize>(layout.y_stride) * static_cast<gsize>(layout.height - 1U);
+  const gsize uv_last_row =
+      static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
+  const bool in_range =
+      range_in_buffer(layout.y_offset + y_last_row, width, inmap.size) &&
+      range_in_buffer(layout.uv_offset + uv_last_row, width, inmap.size);
+  if (in_range)
+    copy_nv12_rows(src_y, src_uv, outmap.data, layout);
+  gst_buffer_unmap(input, &inmap);
+  if (!in_range)
+    return false;
+  return true;
+}
+
+void normalize_nv12_video_meta(GstBuffer* buffer, const Nv12TightRepackLayout& layout) {
+  while (GstVideoMeta* old_meta = gst_buffer_get_video_meta(buffer)) {
+    gst_buffer_remove_meta(buffer, reinterpret_cast<GstMeta*>(old_meta));
+  }
+
+  gsize offsets[GST_VIDEO_MAX_PLANES] = {};
+  gint strides[GST_VIDEO_MAX_PLANES] = {};
+  offsets[0] = 0;
+  offsets[1] = static_cast<gsize>(layout.width) * static_cast<gsize>(layout.height);
+  strides[0] = static_cast<gint>(layout.width);
+  strides[1] = static_cast<gint>(layout.width);
+  gst_buffer_add_video_meta_full(buffer,
+                                 GST_VIDEO_FRAME_FLAG_NONE,
+                                 GST_VIDEO_FORMAT_NV12,
+                                 layout.width,
+                                 layout.height,
+                                 2,
+                                 offsets,
+                                 strides);
 }
 
 guint64 first_buffer_phys(GstBuffer* buffer) {
@@ -321,7 +555,10 @@ gsize required_copy_size(GstNeatCameraMemoryBridge* self, GstBuffer* input) {
 }
 
 GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input) {
-  const gsize required = required_copy_size(self, input);
+  const std::optional<Nv12TightRepackLayout> nv12_layout =
+      (self && self->configured_buffer_size == 0) ? nv12_tight_repack_layout(input)
+                                                  : std::nullopt;
+  const gsize required = nv12_layout ? nv12_layout->tight_size : required_copy_size(self, input);
   if (required == 0) {
     GST_ELEMENT_ERROR(self, STREAM, FORMAT, ("Camera bridge cannot infer input buffer size"),
                       ("set buffer-size on %s", GST_ELEMENT_NAME(self)));
@@ -344,26 +581,10 @@ GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input
                                                        GST_BUFFER_COPY_META),
                        0, -1);
 
-  GstMapInfo inmap{};
   GstMapInfo outmap{};
-  if (!gst_buffer_map(input, &inmap, GST_MAP_READ)) {
-    GST_ELEMENT_ERROR(self, STREAM, FAILED, ("Failed to map camera input buffer for read"),
-                      ("gst_buffer_map READ failed"));
-    gst_buffer_unref(out);
-    return nullptr;
-  }
-  if (inmap.size < required) {
-    GST_ELEMENT_ERROR(
-        self, STREAM, FORMAT, ("Camera input buffer smaller than required bridge size"),
-        ("input=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, inmap.size, required));
-    gst_buffer_unmap(input, &inmap);
-    gst_buffer_unref(out);
-    return nullptr;
-  }
   if (!gst_buffer_map(out, &outmap, GST_MAP_WRITE)) {
     GST_ELEMENT_ERROR(self, STREAM, FAILED, ("Failed to map EV74 camera output buffer for write"),
                       ("gst_buffer_map WRITE failed"));
-    gst_buffer_unmap(input, &inmap);
     gst_buffer_unref(out);
     return nullptr;
   }
@@ -372,16 +593,62 @@ GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input
         self, STREAM, FORMAT, ("EV74 camera output buffer is too small"),
         ("output=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, outmap.size, required));
     gst_buffer_unmap(out, &outmap);
-    gst_buffer_unmap(input, &inmap);
     gst_buffer_unref(out);
     return nullptr;
   }
 
-  std::memcpy(outmap.data, inmap.data, required);
+  if (nv12_layout) {
+    if (!copy_nv12_tight(input, outmap, *nv12_layout)) {
+      GST_ELEMENT_ERROR(self, STREAM, FORMAT,
+                        ("Failed to repack multi-plane NV12 camera buffer"),
+                        ("output=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, outmap.size,
+                         required));
+      gst_buffer_unmap(out, &outmap);
+      gst_buffer_unref(out);
+      return nullptr;
+    }
+  } else {
+    GstMapInfo inmap{};
+    if (!gst_buffer_map(input, &inmap, GST_MAP_READ)) {
+      GST_ELEMENT_ERROR(self, STREAM, FAILED, ("Failed to map camera input buffer for read"),
+                        ("gst_buffer_map READ failed"));
+      gst_buffer_unmap(out, &outmap);
+      gst_buffer_unref(out);
+      return nullptr;
+    }
+    if (inmap.size < required) {
+      GST_ELEMENT_ERROR(
+          self, STREAM, FORMAT, ("Camera input buffer smaller than required bridge size"),
+          ("input=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, inmap.size, required));
+      gst_buffer_unmap(input, &inmap);
+      gst_buffer_unmap(out, &outmap);
+      gst_buffer_unref(out);
+      return nullptr;
+    }
+    std::memcpy(outmap.data, inmap.data, required);
+    gst_buffer_unmap(input, &inmap);
+  }
   gst_buffer_unmap(out, &outmap);
-  gst_buffer_unmap(input, &inmap);
 
   gst_buffer_resize(out, 0, required);
+  if (nv12_layout) {
+    normalize_nv12_video_meta(out, *nv12_layout);
+    if (debug_enabled(self)) {
+      GST_INFO_OBJECT(self,
+                      "repacked multi-memory NV12 camera buffer to tight EV74 span "
+                      "%ux%u y_stride=%d uv_stride=%d uv_offset=%" G_GSIZE_FORMAT
+                      " size=%" G_GSIZE_FORMAT,
+                      nv12_layout->width, nv12_layout->height, nv12_layout->y_stride,
+                      nv12_layout->uv_stride, nv12_layout->uv_offset, required);
+    }
+  }
+  if (!flush_buffer_segment_for_device(self, out)) {
+    GST_ELEMENT_ERROR(self, STREAM, FAILED,
+                      ("Failed to flush copied EV74 camera buffer for device visibility"),
+                      ("buffer=%p name=%s", static_cast<void*>(out), bridge_buffer_name(self)));
+    gst_buffer_unref(out);
+    return nullptr;
+  }
   const guint64 phys = first_buffer_phys(out);
   if (phys == 0) {
     GST_ELEMENT_ERROR(self, STREAM, FAILED, ("Copied EV74 buffer has no SiMaAI physical address"),
@@ -403,11 +670,18 @@ GstFlowReturn bridge_chain(GstPad* /*pad*/, GstObject* parent, GstBuffer* input)
     return GST_FLOW_ERROR;
 
   GstBuffer* out = nullptr;
-  if (buffer_is_ev74_simaai(input)) {
+  if (buffer_is_single_ev74_neat_simaai(input)) {
     out = stamp_passthrough_buffer(self, input);
     if (!out)
       return GST_FLOW_ERROR;
     return gst_pad_push(self->srcpad, out);
+  }
+
+  if (buffer_is_ev74_neat_simaai(input) && debug_enabled(self)) {
+    GST_INFO_OBJECT(self,
+                    "copying multi-memory EV74 camera buffer into one packed EV74 buffer "
+                    "(memories=%u); current preproc ABI consumes one input_image span",
+                    gst_buffer_n_memory(input));
   }
 
   if (!self->copy_allowed) {

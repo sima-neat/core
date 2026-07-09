@@ -168,6 +168,7 @@ def test_graph_only_public_surface():
   assert hasattr(pyneat, "graphs")
   assert hasattr(pyneat.graphs, "branch")
   assert hasattr(pyneat.graphs, "combine")
+  assert hasattr(pyneat.CombinePolicy, "RoundRobin")
 
   for removed_name in (
       "graph",
@@ -195,6 +196,12 @@ def test_graph_pythonic_add_and_describe():
   text = graph.describe_backend()
   assert isinstance(text, str)
   assert text
+
+
+def test_graph_combine_round_robin_surface():
+  graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.RoundRobin)
+  assert isinstance(graph, pyneat.Graph)
+  assert "combine=RoundRobin" in graph.describe()
 
 
 def test_graph_pythonic_add_graph_and_connect_alias():

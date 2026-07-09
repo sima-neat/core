@@ -7178,7 +7178,9 @@ InputOptions Model::input_appsrc_options(bool tensor_mode) const {
   require_single_ingress_api(ingress_contracts, "Model::input_appsrc_options");
   const auto opts = input_appsrc_options_list(tensor_mode);
   if (!opts.empty()) {
-    return opts.front();
+    InputOptions opt = opts.front();
+    opt.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
+    return opt;
   }
   // Route contract takes precedence over caller hint: adapter-only pre routes
   // (quant/tess/quanttess ingress) require tensor appsrc for valid caps.
@@ -7186,6 +7188,7 @@ InputOptions Model::input_appsrc_options(bool tensor_mode) const {
   const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
   InputOptions opt = impl_->pack.input_appsrc_options(effective_tensor_mode);
   apply_model_ingress_memory_policy(opt, impl_->preprocess_plan);
+  opt.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
   return opt;
 }
 
@@ -7194,6 +7197,7 @@ std::vector<InputOptions> Model::input_appsrc_options_list(bool tensor_mode) con
   const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
   InputOptions base = impl_->pack.input_appsrc_options(effective_tensor_mode);
   apply_model_ingress_memory_policy(base, impl_->preprocess_plan);
+  base.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
 
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);

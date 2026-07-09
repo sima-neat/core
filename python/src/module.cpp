@@ -3172,7 +3172,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::CombinePolicy>(m, "CombinePolicy")
       .value("None_", simaai::neat::CombinePolicy::None)
       .value("ByFrame", simaai::neat::CombinePolicy::ByFrame)
-      .value("ByPts", simaai::neat::CombinePolicy::ByPts);
+      .value("ByPts", simaai::neat::CombinePolicy::ByPts)
+      .value("RoundRobin", simaai::neat::CombinePolicy::RoundRobin);
 
   nb::class_<simaai::neat::OutputOptions>(m, "OutputOptions")
       .def(nb::init<>())

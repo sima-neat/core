@@ -40,6 +40,8 @@
 #include <utility>
 #include <vector>
 
+#include <gst/video/video.h>
+
 namespace simaai::neat {
 
 // Source-mode build product. Holds RAII handles for the materialised (and paused)
@@ -402,6 +404,16 @@ RawVideoCapsInfo source_meta_current_raw_video_caps(GstPad* pad) {
   return out;
 }
 
+RawVideoCapsInfo source_meta_buffer_raw_video_size(GstBuffer* buffer) {
+  RawVideoCapsInfo out;
+  GstVideoMeta* meta = buffer ? gst_buffer_get_video_meta(buffer) : nullptr;
+  if (!meta)
+    return out;
+  out.width = static_cast<int>(meta->width);
+  out.height = static_cast<int>(meta->height);
+  return out;
+}
+
 void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
                                                  SourceSimaMetaProbeCtx* ctx) {
   if (!buffer || !ctx || !ctx->opt.preprocess_meta.has_value())
@@ -409,8 +421,9 @@ void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
   if (has_simaai_preprocess_meta(buffer))
     return;
 
-  int width = ctx->opt.width;
-  int height = ctx->opt.height;
+  const RawVideoCapsInfo video_meta = source_meta_buffer_raw_video_size(buffer);
+  int width = video_meta.width;
+  int height = video_meta.height;
   if (width <= 0 || height <= 0) {
     const RawVideoCapsInfo caps = source_meta_current_raw_video_caps(pad);
     if (width <= 0)
@@ -418,6 +431,10 @@ void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
     if (height <= 0)
       height = caps.height;
   }
+  if (width <= 0)
+    width = ctx->opt.width;
+  if (height <= 0)
+    height = ctx->opt.height;
   if (width <= 0 || height <= 0)
     return;
 
