@@ -3,6 +3,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -40,6 +41,20 @@ simaai::neat::Graph push_passthrough_fragment(const std::string& input_name,
   g.add(simaai::neat::nodes::Input(input_name));
   g.add(simaai::neat::nodes::Output(output_name));
   g.connect(input_name, output_name);
+  return g;
+}
+
+simaai::neat::Graph linked_passthrough_fragment(const std::string& input_name,
+                                                const std::string& output_name,
+                                                const simaai::neat::GraphLinkOptions& link) {
+  simaai::neat::Graph in;
+  in.add(simaai::neat::nodes::Input(input_name));
+
+  simaai::neat::Graph out;
+  out.add(simaai::neat::nodes::Output(output_name));
+
+  simaai::neat::Graph g;
+  g.connect(in, out, link);
   return g;
 }
 
@@ -127,6 +142,109 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
     simaai::neat::Graph app;
     app.connect(left, sink);
     app.connect(right, sink);
+  }
+
+  {
+    simaai::neat::GraphLinkOptions valid_realtime;
+    valid_realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    valid_realtime.max_inflight_per_stream = 4;
+    valid_realtime.max_inflight_total = 16;
+
+    simaai::neat::GraphLinkOptions invalid_realtime = valid_realtime;
+    invalid_realtime.max_inflight_per_stream = 0;
+
+    auto left = live_camera_source_fragment("valid_realtime_camera");
+    auto right = live_camera_source_fragment("invalid_realtime_camera");
+    auto sink = push_passthrough_fragment("image", "classes");
+    simaai::neat::Graph app;
+    app.connect(left, sink, valid_realtime);
+    require_throws_contains([&] { app.connect(right, sink, invalid_realtime); },
+                            "max_inflight_per_stream",
+                            "fan-in merge should reject invalid per-stream inflight cap");
+  }
+
+  {
+    simaai::neat::GraphLinkOptions valid_realtime;
+    valid_realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    valid_realtime.max_inflight_per_stream = 4;
+    valid_realtime.max_inflight_total = 16;
+
+    simaai::neat::GraphLinkOptions invalid_realtime = valid_realtime;
+    invalid_realtime.max_inflight_total = -2;
+
+    auto left = live_camera_source_fragment("valid_realtime_total_camera");
+    auto right = live_camera_source_fragment("invalid_realtime_total_camera");
+    auto sink = push_passthrough_fragment("image", "classes");
+    simaai::neat::Graph app;
+    app.connect(left, sink, valid_realtime);
+    require_throws_contains([&] { app.connect(right, sink, invalid_realtime); },
+                            "max_inflight_total",
+                            "fan-in merge should reject invalid total inflight cap");
+  }
+
+  {
+    simaai::neat::GraphLinkOptions valid_inner;
+    valid_inner.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    valid_inner.max_inflight_per_stream = 4;
+
+    simaai::neat::GraphLinkOptions invalid_outer = valid_inner;
+    invalid_outer.max_inflight_per_stream = 0;
+
+    auto source = live_camera_source_fragment("compiler_merge_invalid_realtime_camera");
+    auto sink = linked_passthrough_fragment("image", "classes", valid_inner);
+    simaai::neat::Graph app;
+    app.connect(source, sink, invalid_outer);
+    require_throws_contains(
+        [&] { (void)simaai::neat::runtime::compile_public_graph(app, simaai::neat::RunOptions{}); },
+        "max_inflight_per_stream",
+        "compiler boundary merge should reject invalid per-stream inflight cap");
+  }
+
+  {
+    simaai::neat::GraphLinkOptions valid_inner;
+    valid_inner.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    valid_inner.max_inflight_total = 16;
+
+    simaai::neat::GraphLinkOptions invalid_outer = valid_inner;
+    invalid_outer.max_inflight_total = -2;
+
+    auto source = live_camera_source_fragment("compiler_merge_invalid_total_camera");
+    auto sink = linked_passthrough_fragment("image", "classes", valid_inner);
+    simaai::neat::Graph app;
+    app.connect(source, sink, invalid_outer);
+    require_throws_contains(
+        [&] { (void)simaai::neat::runtime::compile_public_graph(app, simaai::neat::RunOptions{}); },
+        "max_inflight_total", "compiler boundary merge should reject invalid total inflight cap");
+  }
+
+  {
+    simaai::neat::GraphLinkOptions inner;
+    inner.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    inner.max_inflight_per_stream = 16;
+    inner.max_inflight_total = 16;
+
+    simaai::neat::GraphLinkOptions outer = inner;
+    outer.max_inflight_per_stream = 4;
+    outer.max_inflight_total = 4;
+
+    auto source = live_camera_source_fragment("compiler_merge_outer_override_camera");
+    auto sink = linked_passthrough_fragment("image", "classes", inner);
+    simaai::neat::Graph app;
+    app.connect(source, sink, outer);
+
+    const auto plan = simaai::neat::runtime::compile_public_graph(app, simaai::neat::RunOptions{});
+    bool saw_realtime_override = false;
+    for (const auto& edge : plan.edges) {
+      if (edge.link_options.policy != simaai::neat::GraphLinkPolicy::RealtimeLatestByStream) {
+        continue;
+      }
+      require(edge.link_options.max_inflight_per_stream == 4,
+              "compiler boundary merge should let outer per-stream cap override inner cap");
+      require(edge.link_options.max_inflight_total == 4,
+              "compiler boundary merge should let outer total cap override inner cap");
+      saw_realtime_override = true;
+    }
+    require(saw_realtime_override, "compiler boundary merge test should produce a realtime edge");
   }
 
   {

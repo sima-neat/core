@@ -212,7 +212,35 @@ bool default_link(const GraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
+void validate_realtime_inflight_option(const char* name, int value) {
+  if (value == 0 || value < -1) {
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+                             " must be -1 or a positive value");
+  }
+}
+
+void validate_non_default_link_options(const GraphLinkOptions& opt) {
+  if (default_link(opt)) {
+    return;
+  }
+  validate_realtime_inflight_option("max_inflight_per_stream", opt.max_inflight_per_stream);
+  validate_realtime_inflight_option("max_inflight_total", opt.max_inflight_total);
+}
+
+int merge_inflight_cap(int existing, int incoming) {
+  if (existing == -1) {
+    return incoming;
+  }
+  if (incoming == -1) {
+    return existing;
+  }
+  return std::min(existing, incoming);
+}
+
 GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
+  validate_non_default_link_options(a);
+  validate_non_default_link_options(b);
+
   if (default_link(a)) {
     return b;
   }
@@ -225,6 +253,9 @@ GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& 
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
   }
+  a.max_inflight_per_stream =
+      merge_inflight_cap(a.max_inflight_per_stream, b.max_inflight_per_stream);
+  a.max_inflight_total = merge_inflight_cap(a.max_inflight_total, b.max_inflight_total);
   if (!b.stream_id.empty()) {
     a.stream_id = b.stream_id;
   }
