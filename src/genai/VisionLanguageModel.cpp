@@ -6,13 +6,13 @@
 #include <sima_lmm/language_model.hpp>
 #include <sima_lmm/mla_model.hpp>
 #include <sima_lmm/text_streamer.hpp>
+#include <sima_lmm/tool_call_parser.hpp>
 #include <sima_lmm/utils.hpp>
 #include <sima_lmm/vlm_config.hpp>
 #include <sima_lmm/vlm_helper.hpp>
 #include <sima_lmm/vision_model.hpp>
 
 #include <atomic>
-#include <cctype>
 #include <condition_variable>
 #include <exception>
 #include <fstream>
@@ -20,11 +20,11 @@
 #include <map>
 #include <mutex>
 #include <queue>
-#include <regex>
 #include <stdexcept>
-#include <string_view>
 #include <thread>
 #include <utility>
+#include <variant>
+#include <vector>
 
 namespace simaai::neat::genai {
 namespace {
@@ -101,184 +101,6 @@ std::string load_bos_token(const std::filesystem::path& model_root) {
   } catch (const nlohmann::json::exception& e) {
     throw std::runtime_error("Unable to parse LLiMa tokenizer config " + config_path.string() +
                              ": " + e.what());
-  }
-}
-
-Json build_tool_call_entry(const nlohmann::json& parsed, int& id_counter) {
-  if (!parsed.contains("name") || !parsed.at("name").is_string()) {
-    return nullptr;
-  }
-
-  auto extract_args = [](const nlohmann::json& value) -> Json {
-    if (value.is_object()) {
-      return value;
-    }
-    if (value.is_string()) {
-      try {
-        return nlohmann::json::parse(value.get<std::string>());
-      } catch (const nlohmann::json::exception&) {
-      }
-    }
-    return Json::object();
-  };
-
-  Json args = Json::object();
-  if (parsed.contains("arguments")) {
-    args = extract_args(parsed.at("arguments"));
-  } else if (parsed.contains("parameters")) {
-    args = extract_args(parsed.at("parameters"));
-  }
-
-  const std::string id = parsed.contains("id") && parsed.at("id").is_string()
-                             ? parsed.at("id").get<std::string>()
-                             : "call_" + std::to_string(id_counter++);
-
-  return Json{{"id", id},
-              {"type", "function"},
-              {"function", {{"name", parsed.at("name")}, {"arguments", args.dump()}}}};
-}
-
-std::size_t find_matching_brace(std::string_view text, std::size_t start) {
-  int depth = 0;
-  for (std::size_t i = start; i < text.size(); ++i) {
-    if (text[i] == '{') {
-      ++depth;
-    } else if (text[i] == '}' && --depth == 0) {
-      return i;
-    }
-  }
-  return std::string_view::npos;
-}
-
-std::string gemma4_bare_to_json(const std::string& text) {
-  static const std::regex unquoted_key(R"((\w+)\s*:)");
-  static const std::regex unquoted_val(R"(:\s*([^{}\[\]",\s][^{}\[\]",]*))");
-  std::string out = std::regex_replace(text, unquoted_key, "\"$1\":");
-  return std::regex_replace(out, unquoted_val, ":\"$1\"");
-}
-
-Json parse_plain_json_tool_calls(std::string_view text, int& id_counter) {
-  Json out = Json::array();
-  std::size_t pos = 0;
-  while (pos < text.size()) {
-    while (pos < text.size() &&
-           (std::isspace(static_cast<unsigned char>(text[pos])) != 0 || text[pos] == ';')) {
-      ++pos;
-    }
-    if (pos == text.size()) {
-      break;
-    }
-    if (text[pos] != '{') {
-      return nullptr;
-    }
-    const auto close = find_matching_brace(text, pos);
-    if (close == std::string_view::npos) {
-      return nullptr;
-    }
-    const auto parsed = nlohmann::json::parse(std::string(text.substr(pos, close - pos + 1)));
-    auto entry = build_tool_call_entry(parsed, id_counter);
-    if (entry.is_null()) {
-      return nullptr;
-    }
-    out.push_back(std::move(entry));
-    pos = close + 1;
-  }
-  return out.empty() ? nullptr : out;
-}
-
-Json try_parse_tool_calls(std::string_view text) {
-  int id_counter = 0;
-  try {
-    if (text.starts_with("call:")) {
-      Json out = Json::array();
-      std::size_t pos = 0;
-      while (pos < text.size() && text.substr(pos).starts_with("call:")) {
-        pos += 5;
-        const auto brace = text.find('{', pos);
-        if (brace == std::string_view::npos) {
-          return nullptr;
-        }
-        const std::string_view name = text.substr(pos, brace - pos);
-        const auto close = find_matching_brace(text, brace);
-        if (close == std::string_view::npos) {
-          return nullptr;
-        }
-        const std::string args =
-            gemma4_bare_to_json(std::string(text.substr(brace, close - brace + 1)));
-        auto entry =
-            build_tool_call_entry({{"name", std::string(name)}, {"arguments", args}}, id_counter);
-        if (entry.is_null()) {
-          return nullptr;
-        }
-        out.push_back(std::move(entry));
-        pos = close + 1;
-      }
-      return out;
-    }
-
-    const std::string mistral_prefix = "[TOOL_CALLS] ";
-    const auto mistral_pos = text.find(mistral_prefix);
-    if (mistral_pos != std::string::npos) {
-      const auto parsed =
-          nlohmann::json::parse(std::string(text.substr(mistral_pos + mistral_prefix.size())));
-      if (!parsed.is_array()) {
-        return nullptr;
-      }
-      Json out = Json::array();
-      for (const auto& item : parsed) {
-        auto entry = build_tool_call_entry(item, id_counter);
-        if (entry.is_null()) {
-          return nullptr;
-        }
-        out.push_back(std::move(entry));
-      }
-      return out;
-    }
-
-    if (text.starts_with('[')) {
-      const auto parsed = nlohmann::json::parse(std::string(text));
-      if (parsed.is_array()) {
-        Json out = Json::array();
-        for (const auto& item : parsed) {
-          auto entry = build_tool_call_entry(item, id_counter);
-          if (entry.is_null()) {
-            return nullptr;
-          }
-          out.push_back(std::move(entry));
-        }
-        return out;
-      }
-    }
-
-    if (text.find("<tool_call>") != std::string::npos) {
-      Json out = Json::array();
-      std::size_t search_pos = 0;
-      while (true) {
-        auto tag_start = text.find("<tool_call>", search_pos);
-        auto tag_end = text.find("</tool_call>", search_pos);
-        if (tag_start == std::string::npos || tag_end == std::string::npos) {
-          break;
-        }
-        constexpr std::size_t open_tag_len = 11;
-        constexpr std::size_t close_tag_len = 12;
-        tag_start += open_tag_len;
-        auto parsed =
-            nlohmann::json::parse(std::string(text.substr(tag_start, tag_end - tag_start)));
-        auto entry = build_tool_call_entry(parsed, id_counter);
-        if (entry.is_null()) {
-          return nullptr;
-        }
-        out.push_back(std::move(entry));
-        search_pos = tag_end + close_tag_len;
-      }
-      if (!out.empty()) {
-        return out;
-      }
-    }
-
-    return parse_plain_json_tool_calls(text, id_counter);
-  } catch (const nlohmann::json::exception&) {
-    return nullptr;
   }
 }
 
@@ -539,7 +361,10 @@ struct VisionLanguageModel::Impl {
 
     result.metrics.generated_tokens = static_cast<std::uint32_t>(output_token_ids->size());
     result.text = vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
-    result.tool_calls = try_parse_tool_calls(result.text);
+    auto tool_calls = simaai::llima::try_parse_tool_calls(result.text);
+    if (!tool_calls.is_null()) {
+      result.tool_calls = tool_calls;
+    }
     result.finish_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
     return result;
   }
@@ -792,13 +617,32 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
             [&producer](const std::string& metric, double value) {
               producer.record_metric(metric, value);
             });
-        const bool buffer_for_tools = !request.tools.empty();
-        std::string buffered_text;
+        const bool parse_tools = !request.tools.empty();
+        simaai::llima::ToolCallStreamParser tool_parser;
+        bool emitted_tool_calls = false;
+        auto handle_tool_parser_events =
+            [&producer, &emitted_tool_calls](
+                std::vector<simaai::llima::ToolCallStreamParser::Event> events) {
+              for (auto& event : events) {
+                TokenSample sample;
+                sample.metrics = producer.current_metrics();
+                if (std::holds_alternative<simaai::llima::ToolCallStreamParser::Content>(event)) {
+                  sample.text =
+                      std::move(std::get<simaai::llima::ToolCallStreamParser::Content>(event).text);
+                } else {
+                  sample.tool_calls =
+                      std::move(std::get<simaai::llima::ToolCallStreamParser::ToolCalls>(event)
+                                    .calls);
+                  emitted_tool_calls = true;
+                }
+                producer.push(std::move(sample));
+              }
+            };
         model->text_streamer->set_text_callback(
-            [&producer, buffer_for_tools, &buffered_text](const std::string& text, bool stream_end,
-                                                          bool) {
-              if (buffer_for_tools) {
-                buffered_text += text;
+            [&producer, parse_tools, &tool_parser,
+             &handle_tool_parser_events](const std::string& text, bool stream_end, bool) {
+              if (parse_tools) {
+                handle_tool_parser_events(tool_parser.add(text, stream_end));
                 return;
               }
               producer.record_text(text, stream_end);
@@ -806,19 +650,10 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
 
         auto output_token_ids = model->generate_tokens(request);
         std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
-        if (buffer_for_tools && output_token_ids.has_value()) {
-          auto tool_calls = try_parse_tool_calls(buffered_text);
-          if (!tool_calls.empty()) {
-            TokenSample sample;
-            sample.tool_calls = std::move(tool_calls);
-            sample.metrics = producer.current_metrics();
-            producer.push(std::move(sample));
+        if (parse_tools && output_token_ids.has_value()) {
+          handle_tool_parser_events(tool_parser.add("", true));
+          if (emitted_tool_calls) {
             finish_reason = "tool_calls";
-          } else if (!buffered_text.empty()) {
-            TokenSample sample;
-            sample.text = std::move(buffered_text);
-            sample.metrics = producer.current_metrics();
-            producer.push(std::move(sample));
           }
         }
         const auto generated_tokens =
