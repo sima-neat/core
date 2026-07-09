@@ -652,6 +652,11 @@ bool wrap_holder_buffer_for_zero_copy_loan_transfer(GstBuffer** buffer, const Sa
     throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
                              ": failed to wrap zero-copy holder buffer for transfer");
   }
+  if (!gst_buffer_add_parent_buffer_meta(transfer, *buffer)) {
+    gst_buffer_unref(transfer);
+    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                             ": failed to retain zero-copy holder parent buffer");
+  }
 
   bool attached = false;
   if (sample_has_loans) {
