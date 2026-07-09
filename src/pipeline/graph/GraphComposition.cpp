@@ -73,6 +73,33 @@ bool vertex_is_live_source_context(const auto& graph, std::size_t vertex) {
   return has_live_source;
 }
 
+void validate_realtime_inflight_option(const char* name, int value) {
+  if (value == 0 || value < -1) {
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+                             " must be -1 or a positive value");
+  }
+}
+
+void validate_realtime_inflight_options(const GraphLinkOptions& options) {
+  validate_realtime_inflight_option("max_inflight_per_stream", options.max_inflight_per_stream);
+  validate_realtime_inflight_option("max_inflight_total", options.max_inflight_total);
+}
+
+void merge_realtime_link_options(GraphLinkOptions& existing, GraphLinkOptions& incoming) {
+  validate_realtime_inflight_options(existing);
+  validate_realtime_inflight_options(incoming);
+
+  existing.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  incoming.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  existing.queue_depth = std::max(existing.queue_depth, incoming.queue_depth);
+  incoming.queue_depth = existing.queue_depth;
+  existing.max_inflight_per_stream =
+      std::max(existing.max_inflight_per_stream, incoming.max_inflight_per_stream);
+  incoming.max_inflight_per_stream = existing.max_inflight_per_stream;
+  existing.max_inflight_total = std::max(existing.max_inflight_total, incoming.max_inflight_total);
+  incoming.max_inflight_total = existing.max_inflight_total;
+}
+
 } // namespace
 
 Graph::CompositionGraph::VertexId Graph::CompositionGraph::append_vertex(NodePtr node) {
@@ -155,17 +182,7 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
                                        vertex_is_live_source_context(*this, edge.from) &&
                                        vertex_is_live_source_context(*this, from);
       if (existing_realtime || incoming_realtime || default_live_fan_in) {
-        edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
-        link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
-        edge.link_options.queue_depth =
-            std::max(edge.link_options.queue_depth, link_options.queue_depth);
-        link_options.queue_depth = edge.link_options.queue_depth;
-        edge.link_options.max_inflight_per_stream = std::max(
-            edge.link_options.max_inflight_per_stream, link_options.max_inflight_per_stream);
-        link_options.max_inflight_per_stream = edge.link_options.max_inflight_per_stream;
-        edge.link_options.max_inflight_total =
-            std::max(edge.link_options.max_inflight_total, link_options.max_inflight_total);
-        link_options.max_inflight_total = edge.link_options.max_inflight_total;
+        merge_realtime_link_options(edge.link_options, link_options);
         if (edge.stream_id.empty()) {
           edge.stream_id = edge.link_options.stream_id.empty()
                                ? automatic_realtime_stream_id(edge.from, edge.to, edge.to_port)
@@ -222,17 +239,7 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
            * and schedules into the consumer through RealtimeLatestLink instead
            * of asking users to insert app-local mutex/funnel code.
            */
-          edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
-          link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
-          edge.link_options.queue_depth =
-              std::max(edge.link_options.queue_depth, link_options.queue_depth);
-          link_options.queue_depth = edge.link_options.queue_depth;
-          edge.link_options.max_inflight_per_stream = std::max(
-              edge.link_options.max_inflight_per_stream, link_options.max_inflight_per_stream);
-          link_options.max_inflight_per_stream = edge.link_options.max_inflight_per_stream;
-          edge.link_options.max_inflight_total =
-              std::max(edge.link_options.max_inflight_total, link_options.max_inflight_total);
-          link_options.max_inflight_total = edge.link_options.max_inflight_total;
+          merge_realtime_link_options(edge.link_options, link_options);
           if (edge.stream_id.empty()) {
             edge.stream_id =
                 edge.link_options.stream_id.empty()
