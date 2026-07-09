@@ -586,11 +586,13 @@ RealtimeLatestLink::credit_lane_for_key_locked_(const std::string& key) {
   auto lane = pipeline_internal::make_realtime_frame_credit_lane(credit_limit_per_stream_,
                                                                  [this] { cv_.notify_one(); });
   credit_lanes_.emplace(key, lane);
+  configure_global_credit_limit_locked_();
   return lane;
 }
 
 void RealtimeLatestLink::configure_global_credit_limit_locked_() {
-  const std::size_t stream_count = std::max<std::size_t>(1U, edge_indices_.size());
+  const std::size_t stream_count =
+      std::max<std::size_t>(1U, std::max(edge_indices_.size(), credit_lanes_.size()));
   credit_limit_global_ =
       realtime_credit_max_inflight_total(options_, credit_limit_per_stream_, stream_count);
   if (credit_limit_global_ <= 0) {
