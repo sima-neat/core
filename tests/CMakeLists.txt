@@ -230,6 +230,7 @@ endfunction()
 # Unit tests (1:1 cpp mapping)
 # ------------------------------------------------------------------------------
 set(UNIT_TESTS
+  unit_000_devkit_package_inventory_test
   unit_builder_test
   unit_caps_bridge_test
   unit_contract_compiler_boxdecode_test
@@ -408,6 +409,10 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+if (TARGET unit_000_devkit_package_inventory_test)
+  set_tests_properties(unit_000_devkit_package_inventory_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
 
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
