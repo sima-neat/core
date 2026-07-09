@@ -130,6 +130,44 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
+    simaai::neat::GraphLinkOptions valid_realtime;
+    valid_realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    valid_realtime.max_inflight_per_stream = 4;
+    valid_realtime.max_inflight_total = 16;
+
+    simaai::neat::GraphLinkOptions invalid_realtime = valid_realtime;
+    invalid_realtime.max_inflight_per_stream = 0;
+
+    auto left = live_camera_source_fragment("valid_realtime_camera");
+    auto right = live_camera_source_fragment("invalid_realtime_camera");
+    auto sink = push_passthrough_fragment("image", "classes");
+    simaai::neat::Graph app;
+    app.connect(left, sink, valid_realtime);
+    require_throws_contains([&] { app.connect(right, sink, invalid_realtime); },
+                            "max_inflight_per_stream",
+                            "fan-in merge should reject invalid per-stream inflight cap");
+  }
+
+  {
+    simaai::neat::GraphLinkOptions valid_realtime;
+    valid_realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+    valid_realtime.max_inflight_per_stream = 4;
+    valid_realtime.max_inflight_total = 16;
+
+    simaai::neat::GraphLinkOptions invalid_realtime = valid_realtime;
+    invalid_realtime.max_inflight_total = -2;
+
+    auto left = live_camera_source_fragment("valid_realtime_total_camera");
+    auto right = live_camera_source_fragment("invalid_realtime_total_camera");
+    auto sink = push_passthrough_fragment("image", "classes");
+    simaai::neat::Graph app;
+    app.connect(left, sink, valid_realtime);
+    require_throws_contains([&] { app.connect(right, sink, invalid_realtime); },
+                            "max_inflight_total",
+                            "fan-in merge should reject invalid total inflight cap");
+  }
+
+  {
     auto mixed = mixed_live_and_finite_source_fragment();
     auto sink = push_passthrough_fragment("finite", "classes");
     simaai::neat::Graph app;
