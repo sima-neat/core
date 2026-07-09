@@ -110,6 +110,7 @@ def _candidate_roots():
     append_unique(base)
     for parent in base.parents:
       append_unique(parent)
+      append_unique(parent / "test-assets")
   return roots
 
 

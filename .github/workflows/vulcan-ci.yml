@@ -429,6 +429,9 @@ jobs:
               -e "s|/[^\"[:space:]]*/tutorials/run_with_modelzoo\\.sh|${TUTORIALS_SHARE_ROOT}/run_with_modelzoo.sh|g" \
               -e "s|/[^\"[:space:]]*/tutorials/build\\.sh|${TUTORIALS_SHARE_ROOT}/build.sh|g" \
               "${f}"
+            sed -E -i \
+              -e "s#(add_test\\((genai_vlm_run_test|genai_graph_vlm_run_test|genai_asr_run_test|genai_graph_asr_run_test|genai_server_http_test)[[:space:]]+\"[^\"]+\"[[:space:]]+)\"[^\"]+\"#\\1\"${TEST_ASSETS_ROOT}\"#g" \
+              "${f}"
           done
           if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
             echo "Unresolved build-tree paths after CTest rebasing:" >&2
