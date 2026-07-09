@@ -195,6 +195,15 @@ void verify_per_stream_cap_blocks_after_two_raw_frames() {
   verify_raw_frame_cap_blocks_after(options, 1, 2, "explicit per-stream raw-frame cap");
 }
 
+void verify_multiplexed_stream_ids_scale_default_total_cap() {
+  simaai::neat::GraphLinkOptions options;
+  options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+  options.max_inflight_per_stream = 4;
+  verify_raw_frame_cap_blocks_after(options, 4, 8,
+                                    "multiplexed stream-id default global raw-frame cap",
+                                    /*use_explicit_link_stream_ids=*/false);
+}
+
 } // namespace
 
 int main() {
@@ -217,6 +226,7 @@ int main() {
     verify_raw_frame_cap_blocks_after(explicit_total_options, 4, 10,
                                       "explicit global raw-frame cap above default");
     verify_per_stream_cap_blocks_after_two_raw_frames();
+    verify_multiplexed_stream_ids_scale_default_total_cap();
 
     simaai::neat::GraphLinkOptions zero_options;
     zero_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
