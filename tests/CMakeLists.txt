@@ -320,6 +320,7 @@ set(UNIT_TESTS
   unit_resnet50_mla_handoff_segment_test
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
+  unit_detess_transport_bytes_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
   unit_model_stage_fragments_test
