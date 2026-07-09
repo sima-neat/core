@@ -99,8 +99,8 @@ void require_installed_packages(const std::vector<PackageExpectation>& packages)
   std::ostringstream message;
   message << "expected package(s) to remain installed after NEAT install:";
   for (const auto& package : missing) {
-    message << "\n  [" << package.group << "] " << package.name << " status="
-            << installed_status(package.name);
+    message << "\n  [" << package.group << "] " << package.name
+            << " status=" << installed_status(package.name);
   }
   throw std::runtime_error(message.str());
 }
@@ -116,27 +116,20 @@ void require_neat_variant(const std::string& package) {
 int main() {
   try {
     if (!is_modalix_devkit() || !command_succeeds("command -v dpkg-query >/dev/null 2>&1")) {
-      std::cout << "[SKIP] unit_000_devkit_package_inventory_test requires a Modalix DevKit with dpkg\n";
+      std::cout
+          << "[SKIP] unit_000_devkit_package_inventory_test requires a Modalix DevKit with dpkg\n";
       return 77;
     }
 
     const std::vector<PackageExpectation> neat_packages = {
-        {"sima-neat", "neat"},
-        {"sima-neat-dev", "neat"},
-        {"neat-common", "neat"},
-        {"neat-appcomplex", "neat"},
-        {"neat-runtime", "neat"},
-        {"neat-gst-plugins", "neat"},
-        {"neat-ev74-firmware", "neat"},
-        {"neat-internals-dev", "neat"},
-        {"sima-lmm-core", "neat"},
-        {"sima-lmm-dev", "neat"},
-        {"sima-lmm-cli", "neat"},
-        {"libcamera", "neat"},
-        {"libcamera-dev", "neat"},
-        {"libcamera-tools", "neat"},
-        {"simaai-memory-lib", "neat"},
-        {"simaai-memory-lib-dev", "neat"},
+        {"sima-neat", "neat"},          {"sima-neat-dev", "neat"},
+        {"neat-common", "neat"},        {"neat-appcomplex", "neat"},
+        {"neat-runtime", "neat"},       {"neat-gst-plugins", "neat"},
+        {"neat-ev74-firmware", "neat"}, {"neat-internals-dev", "neat"},
+        {"sima-lmm-core", "neat"},      {"sima-lmm-dev", "neat"},
+        {"sima-lmm-cli", "neat"},       {"libcamera", "neat"},
+        {"libcamera-dev", "neat"},      {"libcamera-tools", "neat"},
+        {"simaai-memory-lib", "neat"},  {"simaai-memory-lib-dev", "neat"},
     };
 
     const std::vector<PackageExpectation> native_sima_packages = {
