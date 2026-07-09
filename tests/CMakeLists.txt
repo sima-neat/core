@@ -1571,6 +1571,21 @@ if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST sync_yolov8_test_detessdequant APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
+add_pipeline_test(
+  seedless_yolov8_preproc_input_max_smoke_test
+  e2e_pipelines/obj_detection/seedless_yolov8_preproc_input_max_smoke_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT seedless_yolov8_preproc_input_max_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST seedless_yolov8_preproc_input_max_smoke_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;smoke")
+  set_tests_properties(seedless_yolov8_preproc_input_max_smoke_test PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 120)
+endif()
+
 add_pipeline_test_long(
   preproc_roi_batch_functional_test
   e2e_pipelines/obj_detection/preproc_roi_batch_functional_test.cpp
@@ -1991,6 +2006,7 @@ foreach(test
     unit_neatencoder_keepalive_test
     unit_modelpack_mla_handoff_segment_test
     unit_yolov8_mla_handoff_segment_test
+    seedless_yolov8_preproc_input_max_smoke_test
     graph_migration_phase3_lazy_dynamic_spec_test
     graph_migration_phase3_yolov8_bgr_bf16_preproc_test
     graph_migration_phase3_connected_yolo_route_test

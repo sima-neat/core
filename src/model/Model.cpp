@@ -5080,8 +5080,34 @@ int resolve_preproc_input_height(const internal::PreprocessPlannerResult& plan,
 int resolve_preproc_input_depth(const internal::PreprocessPlannerResult& plan,
                                 const InputInfo* input, const std::string& input_format);
 
+bool is_model_managed_image_preproc(const internal::PreprocessPlannerResult& plan) {
+  return plan.resolved_plan.enabled && plan.resolved_plan.resolved_kind == InputKind::Image;
+}
+
+int default_dynamic_image_capacity_width() {
+  return 1920;
+}
+
+int default_dynamic_image_capacity_height() {
+  return 1080;
+}
+
 int resolve_preproc_max_input_width(const internal::PreprocessPlannerResult& plan,
                                     const InputInfo* input) {
+  if (is_model_managed_image_preproc(plan)) {
+    const auto& effective = plan.resolved_plan.effective;
+    if (effective.input_max_width > 0) {
+      return effective.input_max_width;
+    }
+    if (input && input->width > 0) {
+      return input->width;
+    }
+    if (plan.modelpack_max_width > 0 &&
+        (effective.resize.width <= 0 || plan.modelpack_max_width > effective.resize.width)) {
+      return plan.modelpack_max_width;
+    }
+    return default_dynamic_image_capacity_width();
+  }
   if (plan.modelpack_max_width > 0) {
     return plan.modelpack_max_width;
   }
@@ -5093,6 +5119,20 @@ int resolve_preproc_max_input_width(const internal::PreprocessPlannerResult& pla
 
 int resolve_preproc_max_input_height(const internal::PreprocessPlannerResult& plan,
                                      const InputInfo* input) {
+  if (is_model_managed_image_preproc(plan)) {
+    const auto& effective = plan.resolved_plan.effective;
+    if (effective.input_max_height > 0) {
+      return effective.input_max_height;
+    }
+    if (input && input->height > 0) {
+      return input->height;
+    }
+    if (plan.modelpack_max_height > 0 &&
+        (effective.resize.height <= 0 || plan.modelpack_max_height > effective.resize.height)) {
+      return plan.modelpack_max_height;
+    }
+    return default_dynamic_image_capacity_height();
+  }
   if (plan.modelpack_max_height > 0) {
     return plan.modelpack_max_height;
   }
@@ -5104,6 +5144,19 @@ int resolve_preproc_max_input_height(const internal::PreprocessPlannerResult& pl
 
 int resolve_preproc_max_input_depth(const internal::PreprocessPlannerResult& plan,
                                     const InputInfo* input, const std::string& input_format) {
+  if (is_model_managed_image_preproc(plan)) {
+    const auto& effective = plan.resolved_plan.effective;
+    if (effective.input_max_depth > 0) {
+      return effective.input_max_depth;
+    }
+    if (input && input->depth > 0) {
+      return input->depth;
+    }
+    if (plan.modelpack_max_depth > 0) {
+      return plan.modelpack_max_depth;
+    }
+    return pipeline_internal::default_depth_for_image_format(input_format, 3);
+  }
   if (plan.modelpack_max_depth > 0) {
     return plan.modelpack_max_depth;
   }
@@ -5216,13 +5269,18 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   }
 #endif
   {
-    // input_shape is the actual source geometry when known. If only an input
-    // capacity envelope is known, keep the plugin config buildable by using
-    // that envelope as the initial dynamic shape; Graph::build(seed) or
-    // upstream caps rebinding must replace it with actual runtime geometry.
-    std::vector<int> input_shape = {actual_input_height > 0 ? actual_input_height
-                                                            : max_input_height,
-                                    actual_input_width > 0 ? actual_input_width : max_input_width};
+    // Model-managed preproc uses this shape to size the static processcvu
+    // envelope. Runtime caps/sample metadata still rebind the actual frame.
+    const bool dynamic_image_preproc =
+        effective.kind == InputKind::Image && effective.resize.enable == AutoFlag::On &&
+        max_input_height > 0 && max_input_width > 0 &&
+        ((actual_input_height > 0 && max_input_height > actual_input_height) ||
+         (actual_input_width > 0 && max_input_width > actual_input_width));
+    std::vector<int> input_shape = {
+        dynamic_image_preproc ? max_input_height
+                              : (actual_input_height > 0 ? actual_input_height : max_input_height),
+        dynamic_image_preproc ? max_input_width
+                              : (actual_input_width > 0 ? actual_input_width : max_input_width)};
     if (input_depth > 0) {
       input_shape.push_back(input_depth);
     } else if (max_input_depth > 0) {
