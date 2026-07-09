@@ -84,8 +84,7 @@ simaai::neat::genai::GenerationRequest make_tool_call_request() {
 
 fs::path resolve_model_dir() {
   return simaai::neat::test::resolve_genai_model_dir(
-      kModelEnv, simaai::neat::test::kDefaultTextModelName, "LLiMa text",
-      "devkit/vlm_config.json");
+      kModelEnv, simaai::neat::test::kDefaultTextModelName, "LLiMa text", "devkit/vlm_config.json");
 }
 
 } // namespace

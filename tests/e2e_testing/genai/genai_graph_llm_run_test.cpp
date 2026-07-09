@@ -38,8 +38,7 @@ std::string trim_text(std::string value) {
 
 fs::path resolve_model_dir() {
   return simaai::neat::test::resolve_genai_model_dir(
-      kModelEnv, simaai::neat::test::kDefaultTextModelName, "LLiMa text",
-      "devkit/vlm_config.json");
+      kModelEnv, simaai::neat::test::kDefaultTextModelName, "LLiMa text", "devkit/vlm_config.json");
 }
 
 simaai::neat::Sample make_text_input(std::string text, int64_t frame_id = 1) {

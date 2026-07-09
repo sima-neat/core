@@ -16,8 +16,7 @@ RUN_TEST("unit_genai_server_linkage_test", ([] {
              const std::string message = e.what();
              if (message.find("NEAT GenAI/LLiMa support is not available in this build") !=
                  std::string::npos) {
-               throw std::runtime_error(
-                   "C++ GenAIServer is backed by unavailable LLiMa stubs");
+               throw std::runtime_error("C++ GenAIServer is backed by unavailable LLiMa stubs");
              }
              throw;
            }

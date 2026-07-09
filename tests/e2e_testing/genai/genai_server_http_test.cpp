@@ -130,7 +130,9 @@ int choose_free_port() {
 class ServerGuard {
 public:
   explicit ServerGuard(simaai::neat::genai::GenAIServer& server_in) : server(server_in) {}
-  ~ServerGuard() { server.stop(); }
+  ~ServerGuard() {
+    server.stop();
+  }
 
   ServerGuard(const ServerGuard&) = delete;
   ServerGuard& operator=(const ServerGuard&) = delete;
@@ -187,13 +189,14 @@ void request_text_completion(int port) {
   auto client = make_client(port);
   const Json request = {
       {"model", "llm"},
-      {"messages", Json::array({{{"role", "user"}, {"content", "What is the capital of Germany?"}}})},
+      {"messages",
+       Json::array({{{"role", "user"}, {"content", "What is the capital of Germany?"}}})},
       {"max_tokens", 24},
       {"stream", false},
   };
-  const Json body = parse_response(
-      client.Post("/v1/chat/completions", request.dump(), "application/json"),
-      "POST /v1/chat/completions text");
+  const Json body =
+      parse_response(client.Post("/v1/chat/completions", request.dump(), "application/json"),
+                     "POST /v1/chat/completions text");
   const std::string text = body.at("choices").at(0).at("message").at("content").get<std::string>();
   std::cout << "GENAI_SERVER_TEXT text=" << text << "\n";
   require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
@@ -205,18 +208,17 @@ void request_image_completion(int port, const fs::path& image_path) {
   const Json request = {
       {"model", "vlm"},
       {"messages",
-       Json::array({{{"role", "user"},
-                     {"content",
-                      Json::array({{{"type", "text"},
-                                    {"text", "Describe this image in a short phrase."}},
-                                   {{"type", "image_url"},
-                                    {"image_url", {{"url", data_uri}}}}})}}})},
+       Json::array(
+           {{{"role", "user"},
+             {"content",
+              Json::array({{{"type", "text"}, {"text", "Describe this image in a short phrase."}},
+                           {{"type", "image_url"}, {"image_url", {{"url", data_uri}}}}})}}})},
       {"max_tokens", 48},
       {"stream", false},
   };
-  const Json body = parse_response(
-      client.Post("/v1/chat/completions", request.dump(), "application/json"),
-      "POST /v1/chat/completions image");
+  const Json body =
+      parse_response(client.Post("/v1/chat/completions", request.dump(), "application/json"),
+                     "POST /v1/chat/completions image");
   const std::string text = body.at("choices").at(0).at("message").at("content").get<std::string>();
   std::cout << "GENAI_SERVER_VLM text=" << text << "\n";
   require(trim_text(text) == kExpectedVlmText, "server image chat returned unexpected text");

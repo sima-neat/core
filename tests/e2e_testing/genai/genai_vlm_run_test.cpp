@@ -39,8 +39,7 @@ std::string trim_text(std::string value) {
 
 fs::path resolve_model_dir() {
   return simaai::neat::test::resolve_genai_model_dir(
-      kModelEnv, simaai::neat::test::kDefaultVlmModelName, "LLiMa VLM",
-      "devkit/vlm_config.json");
+      kModelEnv, simaai::neat::test::kDefaultVlmModelName, "LLiMa VLM", "devkit/vlm_config.json");
 }
 
 fs::path resolve_image_path(const fs::path& repo_root) {

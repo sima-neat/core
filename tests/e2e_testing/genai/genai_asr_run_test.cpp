@@ -51,9 +51,9 @@ bool command_exists(const char* command) {
 }
 
 fs::path resolve_model_dir() {
-  return simaai::neat::test::resolve_genai_model_dir(
-      kModelEnv, simaai::neat::test::kDefaultAsrModelName, "LLiMa ASR",
-      "devkit/whisper_config.json");
+  return simaai::neat::test::resolve_genai_model_dir(kModelEnv,
+                                                     simaai::neat::test::kDefaultAsrModelName,
+                                                     "LLiMa ASR", "devkit/whisper_config.json");
 }
 
 fs::path audio_fixture(const char* repo_root_arg) {

@@ -42,8 +42,7 @@ std::string trim_text(std::string value) {
 
 fs::path resolve_model_dir() {
   return simaai::neat::test::resolve_genai_model_dir(
-      kModelEnv, simaai::neat::test::kDefaultVlmModelName, "LLiMa VLM",
-      "devkit/vlm_config.json");
+      kModelEnv, simaai::neat::test::kDefaultVlmModelName, "LLiMa VLM", "devkit/vlm_config.json");
 }
 
 fs::path resolve_image_path(const fs::path& repo_root) {
@@ -267,8 +266,8 @@ int main(int argc, char** argv) {
     require_vlm_outputs(pull_until_done_or_error(direct_sync_run), "GENAI_GRAPH_VLM_DIRECT_SYNC",
                         false);
 
-    require(cached_encode_run.push(
-                "image", make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 8)),
+    require(cached_encode_run.push("image",
+                                   make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 8)),
             "Run::push cached encode image failed");
     encoded = pull_encoded(cached_encode_run);
     require(bundle_field_text(encoded, "mode") == "cached", "cached image should emit cached mode");
