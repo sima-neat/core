@@ -212,7 +212,25 @@ bool default_link(const GraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
+void validate_realtime_inflight_option(const char* name, int value) {
+  if (value == 0 || value < -1) {
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+                             " must be -1 or a positive value");
+  }
+}
+
+void validate_non_default_link_options(const GraphLinkOptions& opt) {
+  if (default_link(opt)) {
+    return;
+  }
+  validate_realtime_inflight_option("max_inflight_per_stream", opt.max_inflight_per_stream);
+  validate_realtime_inflight_option("max_inflight_total", opt.max_inflight_total);
+}
+
 GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
+  validate_non_default_link_options(a);
+  validate_non_default_link_options(b);
+
   if (default_link(a)) {
     return b;
   }
