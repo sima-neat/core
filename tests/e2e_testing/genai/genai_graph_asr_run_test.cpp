@@ -1,10 +1,10 @@
 #include "genai/ASRModel.h"
 #include "genai/GraphFragments.h"
+#include "genai_test_utils.h"
 #include "pipeline/Graph.h"
 #include "pipeline/Run.h"
 #include "test_utils.h"
 
-#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <cctype>
@@ -12,14 +12,16 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <system_error>
-#include <unistd.h>
 #include <vector>
 
 // Exercises graph ASR transcription from audio_path and PCM audio samples
-// against a real LLiMa Whisper model when SIMA_TEST_LLIMA_ASR_MODEL is set.
+// against a real LLiMa ASR model.
+// Model fixture:
+//   export LLIMA_MODELS_PATH=/media/nvme/llima/models
+//   export SIMA_TEST_LLIMA_ASR_MODEL=whisper-small-a16w8
+//   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 
 namespace {
@@ -27,55 +29,10 @@ namespace {
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_ASR_MODEL";
 constexpr const char* kExpectedTranscript = "tell me a joke please";
 
-std::string shell_quote(const fs::path& path) {
-  std::string out = "'";
-  for (char c : path.string()) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out += c;
-    }
-  }
-  out += "'";
-  return out;
-}
-
-bool command_exists(const char* command) {
-  std::string cmd = "command -v ";
-  cmd += command;
-  cmd += " >/dev/null 2>&1";
-  return std::system(cmd.c_str()) == 0;
-}
-
-std::string trim_env_value(const char* value) {
-  if (value == nullptr) {
-    return {};
-  }
-  std::string out(value);
-  const auto first = out.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    return {};
-  }
-  const auto last = out.find_last_not_of(" \t\r\n");
-  return out.substr(first, last - first + 1);
-}
-
-bool has_llima_whisper_config(const fs::path& model_dir) {
-  std::error_code ec;
-  return fs::is_regular_file(model_dir / "devkit" / "whisper_config.json", ec) && !ec;
-}
-
 fs::path resolve_model_dir() {
-  const std::string env_model_dir = trim_env_value(std::getenv(kModelEnv));
-  if (env_model_dir.empty()) {
-    skip_long_test_exception(std::string(kModelEnv) + " is not set");
-  }
-  fs::path model_dir(env_model_dir);
-  if (!has_llima_whisper_config(model_dir)) {
-    skip_long_test_exception(std::string(kModelEnv) +
-                             " does not point to a LLiMa Whisper model directory");
-  }
-  return model_dir;
+  return simaai::neat::test::resolve_genai_model_dir(kModelEnv,
+                                                     simaai::neat::test::kDefaultAsrModelName,
+                                                     "LLiMa ASR", "devkit/whisper_config.json");
 }
 
 fs::path audio_fixture(const char* repo_root_arg) {
@@ -87,29 +44,23 @@ fs::path audio_fixture(const char* repo_root_arg) {
   return path;
 }
 
-std::vector<float> decode_fixture_to_pcm(const fs::path& wav_path) {
-  if (!command_exists("ffmpeg")) {
-    skip_long_test_exception("missing ffmpeg command for ASR PCM fixture conversion");
+fs::path pcm_fixture(const char* repo_root_arg) {
+  fs::path path = fs::path(repo_root_arg) / "tests/assets/genai/audio_16k_mono_f32le.raw";
+  std::error_code ec;
+  if (!fs::is_regular_file(path, ec)) {
+    throw std::runtime_error("missing ASR PCM fixture: " + path.string());
   }
-  const fs::path raw_path =
-      fs::temp_directory_path() /
-      ("neat-genai-graph-asr-pcm-" + std::to_string(static_cast<long long>(::getpid())) + ".raw");
-  std::ostringstream cmd;
-  cmd << "ffmpeg -v error -y -i " << shell_quote(wav_path) << " -ac 1 -ar 16000 -f f32le "
-      << shell_quote(raw_path);
-  if (std::system(cmd.str().c_str()) != 0) {
-    skip_long_test_exception("ffmpeg failed to convert ASR fixture to PCM");
-  }
+  return path;
+}
 
-  std::ifstream in(raw_path, std::ios::binary);
+std::vector<float> read_pcm_fixture(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
   if (!in) {
-    throw std::runtime_error("failed to read converted ASR PCM fixture");
+    throw std::runtime_error("failed to read ASR PCM fixture: " + path.string());
   }
   std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  std::error_code ec;
-  fs::remove(raw_path, ec);
   if (bytes.empty() || bytes.size() % sizeof(float) != 0U) {
-    throw std::runtime_error("converted ASR PCM fixture has invalid size");
+    throw std::runtime_error("ASR PCM fixture has invalid size: " + path.string());
   }
 
   std::vector<float> pcm(bytes.size() / sizeof(float));
@@ -231,10 +182,12 @@ int main(int argc, char** argv) {
     }
     const fs::path model_dir = resolve_model_dir();
     const fs::path audio_path = audio_fixture(argv[1]);
-    const std::vector<float> pcm = decode_fixture_to_pcm(audio_path);
+    const fs::path pcm_path = pcm_fixture(argv[1]);
+    const std::vector<float> pcm = read_pcm_fixture(pcm_path);
 
     std::cout << "GENAI_GRAPH_ASR model_dir=" << model_dir << "\n";
     std::cout << "GENAI_GRAPH_ASR audio=" << audio_path << "\n";
+    std::cout << "GENAI_GRAPH_ASR pcm=" << pcm_path << "\n";
 
     auto model = std::make_shared<simaai::neat::genai::ASRModel>(model_dir);
     require(model->accepts_audio(), "ASR model should accept audio");
