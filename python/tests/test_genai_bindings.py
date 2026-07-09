@@ -132,6 +132,28 @@ def _audio_fixture_path():
   pytest.skip(f"missing audio fixture: {rel}")
 
 
+def _audio_pcm_fixture_path():
+  rel = Path("tests/assets/genai/audio_16k_mono_f32le.raw")
+  for root in _candidate_roots():
+    candidate = root / rel
+    if candidate.is_file():
+      return candidate
+  pytest.skip(f"missing raw PCM audio fixture: {rel}")
+
+
+def _audio_pcm_tensor():
+  pcm = np.fromfile(_audio_pcm_fixture_path(), dtype=np.float32)
+  if pcm.size == 0:
+    pytest.fail(f"empty raw PCM audio fixture: {_audio_pcm_fixture_path()}")
+  tensor = pyneat.Tensor.from_numpy(pcm, copy=True, memory=pyneat.TensorMemory.CPU)
+  audio = pyneat.AudioSpec()
+  audio.sample_rate = 16000
+  audio.channels = 1
+  audio.interleaved = True
+  tensor.semantic.audio = audio
+  return tensor
+
+
 def _free_local_port():
   with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.bind(("127.0.0.1", 0))
@@ -624,6 +646,23 @@ def test_genai_vision_language_graph_node_generation_and_errors():
       _assert_finish_reason(_bundle_field_text(done, "finish_reason"))
       assert int(_bundle_field_text(done, "generated_tokens")) > 0
 
+      assert streaming_run.push(
+          "image", [_make_image_sample(image, pyneat.TensorMemory.EV74)]
+      )
+      encoded = _pull_public_encoded(streaming_run)
+      assert _bundle_field_text(encoded, "mode") == "direct"
+      assert streaming_run.push(
+          "prompt", [pyneat.make_text_sample("prompt", _VLM_PROMPT)]
+      )
+      text, done, error, token_samples = _pull_public_language_outputs(streaming_run)
+      assert error is None
+      assert done is not None
+      assert token_samples > 0
+      print(f"GENAI_PY_GRAPH_VLM_EV74_DIRECT_STREAM text={text}")
+      assert _trim_text(text) == _EXPECTED_VLM_TEXT
+      _assert_finish_reason(_bundle_field_text(done, "finish_reason"))
+      assert int(_bundle_field_text(done, "generated_tokens")) > 0
+
       invalid = pyneat.make_text_sample("image", "not-an-image")
       assert streaming_run.push("image", [invalid])
       _, _, error, _ = _pull_public_language_outputs(streaming_run, stop_on_error=True)
@@ -669,9 +708,14 @@ def test_genai_vision_language_graph_node_generation_and_errors():
       encoded = _pull_public_encoded(cached_run)
       assert _bundle_field_text(encoded, "mode") == "cached"
       assert cached_run.push("prompt", [pyneat.make_text_sample("prompt", _VLM_PROMPT)])
-      _, _, error, _ = _pull_public_language_outputs(cached_run, stop_on_error=True)
-      assert error
-      assert "cached reuse is not supported" in error
+      text, done, error, token_samples = _pull_public_language_outputs(cached_run)
+      assert error is None
+      assert done is not None
+      assert token_samples > 0
+      print(f"GENAI_PY_GRAPH_VLM_CACHED text={text}")
+      assert _trim_text(text) == _EXPECTED_VLM_TEXT
+      _assert_finish_reason(_bundle_field_text(done, "finish_reason"))
+      assert int(_bundle_field_text(done, "generated_tokens")) > 0
     finally:
       cached_run.stop()
 
@@ -704,6 +748,15 @@ def test_genai_direct_asr_generation_and_streaming():
     assert result.finish_reason == "stop"
     print(f"GENAI_PY_ASR text={result.text}")
 
+    pcm_request = pyneat.GenerationRequest()
+    pcm_request.audio = _audio_pcm_tensor()
+    pcm_request.language = "en"
+    pcm_result = model.run(pcm_request)
+    assert _trim_text(pcm_result.text)
+    assert _normalize_transcript(pcm_result.text) == _EXPECTED_ASR_TEXT
+    assert pcm_result.finish_reason == "stop"
+    print(f"GENAI_PY_ASR_PCM text={pcm_result.text}")
+
     stream_text = ""
     saw_final = False
     for sample in model.stream(request):
@@ -724,6 +777,8 @@ def test_genai_direct_asr_generation_and_streaming():
     assert generic.accepts_audio()
     generic_result = generic.run(request)
     assert _normalize_transcript(generic_result.text) == _EXPECTED_ASR_TEXT
+    generic_pcm_result = generic.run(pcm_request)
+    assert _normalize_transcript(generic_pcm_result.text) == _EXPECTED_ASR_TEXT
 
     generic_stream_text = ""
     generic_saw_final = False
@@ -766,12 +821,46 @@ def test_genai_speech_transcriber_graph_node_generation_and_errors():
       assert _bundle_field_text(done, "language") == "en"
       print(f"GENAI_PY_GRAPH_ASR text={text}")
 
+      assert run.push("audio", [pyneat.make_tensor_sample("audio", _audio_pcm_tensor())])
+      pcm_text, pcm_done, pcm_error, pcm_token_samples = _pull_public_language_outputs(run)
+      assert pcm_error is None
+      assert pcm_done is not None
+      assert pcm_token_samples >= 1
+      assert _trim_text(pcm_text)
+      assert _normalize_transcript(pcm_text) == _EXPECTED_ASR_TEXT
+      assert _bundle_field_text(pcm_done, "finish_reason") == "stop"
+      assert _bundle_field_text(pcm_done, "language") == "en"
+      print(f"GENAI_PY_GRAPH_ASR_PCM text={pcm_text}")
+
       invalid = pyneat.make_text_sample("audio", "not-audio")
       assert run.push("audio", [invalid])
       _, _, error, _ = _pull_public_language_outputs(run, stop_on_error=True)
       assert error
     finally:
       run.stop()
+
+    sync_options = pyneat.genai.SpeechTranscriberOptions()
+    sync_options.language = "en"
+    sync_options.streaming = False
+    sync_graph = pyneat.genai.graphs.speech_transcriber(
+        model, sync_options, "speech_transcriber_sync"
+    )
+    sync_run = sync_graph.build()
+    try:
+      assert sync_run.push(
+          "audio_path",
+          [pyneat.make_text_sample("audio_path", str(_audio_fixture_path()))],
+      )
+      text, done, error, token_samples = _pull_public_language_outputs(sync_run)
+      assert error is None
+      assert done is not None
+      assert token_samples == 1
+      assert _trim_text(text)
+      assert _normalize_transcript(text) == _EXPECTED_ASR_TEXT
+      assert _bundle_field_text(done, "finish_reason") == "stop"
+      print(f"GENAI_PY_GRAPH_ASR_SYNC text={text}")
+    finally:
+      sync_run.stop()
   except Exception as exc:
     _skip_if_dispatcher_unavailable(exc)
     raise

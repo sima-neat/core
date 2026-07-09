@@ -274,14 +274,12 @@ int main(int argc, char** argv) {
 
     require(cached_encode_run.push("prompt", make_text_input("prompt", kPrompt, 9)),
             "Run::push cached prompt failed");
-    GraphOutputs error_outputs = pull_until_done_or_error(cached_encode_run);
-    require(error_outputs.saw_error, "cached prompt should emit error");
-    require(error_outputs.error.find("cached reuse is not supported") != std::string::npos,
-            "cached prompt error should explain cached reuse support");
+    require_vlm_outputs(pull_until_done_or_error(cached_encode_run), "GENAI_GRAPH_VLM_CACHED",
+                        true);
 
     require(direct_streaming_run.push("image", make_invalid_image_input()),
             "Run::push invalid image failed");
-    error_outputs = pull_until_done_or_error(direct_streaming_run);
+    GraphOutputs error_outputs = pull_until_done_or_error(direct_streaming_run);
     require(error_outputs.saw_error, "invalid image should emit error");
     require(!error_outputs.error.empty(), "invalid image error should be non-empty");
 

@@ -1936,6 +1936,11 @@ install(
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
   COMPONENT extras
 )
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_16k_mono_f32le.raw"
+  DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
 
 # Model-archive, decoder, and codec perf fixtures used by installed tests.
 # Keep install/package jobs self-contained too. Some CI/CD paths package or

@@ -3,17 +3,14 @@
 #include "genai_test_utils.h"
 #include "test_utils.h"
 
-#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <string>
 #include <system_error>
-#include <unistd.h>
 #include <vector>
 
 // Exercises direct ASRModel file and PCM transcription against a real LLiMa ASR
@@ -30,26 +27,6 @@ constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_ASR_MODEL";
 constexpr const char* kExpectedTranscript = "tell me a joke please";
 constexpr const char* kExpectedSilenceTranscript = "you";
 
-std::string shell_quote(const fs::path& path) {
-  std::string out = "'";
-  for (char c : path.string()) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out += c;
-    }
-  }
-  out += "'";
-  return out;
-}
-
-bool command_exists(const char* command) {
-  std::string cmd = "command -v ";
-  cmd += command;
-  cmd += " >/dev/null 2>&1";
-  return std::system(cmd.c_str()) == 0;
-}
-
 fs::path resolve_model_dir() {
   return simaai::neat::test::resolve_genai_model_dir(kModelEnv,
                                                      simaai::neat::test::kDefaultAsrModelName,
@@ -65,29 +42,23 @@ fs::path audio_fixture(const char* repo_root_arg) {
   return path;
 }
 
-std::vector<float> decode_fixture_to_pcm(const fs::path& wav_path) {
-  if (!command_exists("ffmpeg")) {
-    skip_long_test_exception("missing ffmpeg command for ASR PCM fixture conversion");
+fs::path pcm_fixture(const char* repo_root_arg) {
+  fs::path path = fs::path(repo_root_arg) / "tests/assets/genai/audio_16k_mono_f32le.raw";
+  std::error_code ec;
+  if (!fs::is_regular_file(path, ec)) {
+    throw std::runtime_error("missing ASR PCM fixture: " + path.string());
   }
-  const fs::path raw_path =
-      fs::temp_directory_path() /
-      ("neat-genai-asr-pcm-" + std::to_string(static_cast<long long>(::getpid())) + ".raw");
-  std::ostringstream cmd;
-  cmd << "ffmpeg -v error -y -i " << shell_quote(wav_path) << " -ac 1 -ar 16000 -f f32le "
-      << shell_quote(raw_path);
-  if (std::system(cmd.str().c_str()) != 0) {
-    skip_long_test_exception("ffmpeg failed to convert ASR fixture to PCM");
-  }
+  return path;
+}
 
-  std::ifstream in(raw_path, std::ios::binary);
+std::vector<float> read_pcm_fixture(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
   if (!in) {
-    throw std::runtime_error("failed to read converted ASR PCM fixture");
+    throw std::runtime_error("failed to read ASR PCM fixture: " + path.string());
   }
   std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  std::error_code ec;
-  fs::remove(raw_path, ec);
   if (bytes.empty() || bytes.size() % sizeof(float) != 0U) {
-    throw std::runtime_error("converted ASR PCM fixture has invalid size");
+    throw std::runtime_error("ASR PCM fixture has invalid size: " + path.string());
   }
 
   std::vector<float> pcm(bytes.size() / sizeof(float));
@@ -166,9 +137,11 @@ int main(int argc, char** argv) {
     }
     const fs::path model_dir = resolve_model_dir();
     const fs::path audio_path = audio_fixture(argv[1]);
+    const fs::path pcm_path = pcm_fixture(argv[1]);
 
     std::cout << "GENAI_ASR model_dir=" << model_dir << "\n";
     std::cout << "GENAI_ASR audio=" << audio_path << "\n";
+    std::cout << "GENAI_ASR pcm=" << pcm_path << "\n";
 
     simaai::neat::genai::ASRModel model(model_dir);
     require(model.accepts_audio(), "ASR model should accept audio");
@@ -182,7 +155,7 @@ int main(int argc, char** argv) {
     require(file_result.finish_reason == "stop", "ASR file finish_reason should be stop");
 
     simaai::neat::genai::GenerationRequest pcm_request;
-    pcm_request.audio = make_pcm_tensor(decode_fixture_to_pcm(audio_path));
+    pcm_request.audio = make_pcm_tensor(read_pcm_fixture(pcm_path));
     const auto pcm_result = model.run(pcm_request);
     std::cout << "GENAI_ASR_PCM text=\n" << pcm_result.text << "\n";
     require(normalize_transcript(pcm_result.text) == kExpectedTranscript,
