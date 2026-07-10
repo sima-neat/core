@@ -20,6 +20,7 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
 std::string model_id_from_path(const std::filesystem::path& path);
 std::vector<ChatMessage> build_text_messages(const GenerationRequest& request);
 void validate_text_generation_request(const GenerationRequest& request);
+bool tool_calls_enabled(const GenerationRequest& request);
 void validate_asr_generation_request(const GenerationRequest& request);
 void ensure_llima_runtime_connected();
 

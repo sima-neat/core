@@ -89,4 +89,25 @@ RUN_TEST("unit_genai_prompt_builder_test", ([] {
            require_throws_contains(
                [&] { internal::validate_text_generation_request(two_cached_insertions); },
                "one cached image");
+
+           GenerationRequest automatic_tools;
+           automatic_tools.prompt = std::string{"weather"};
+           automatic_tools.tools = {{{"type", "function"},
+                                     {"function", {{"name", "get_weather"}}}}};
+           automatic_tools.tool_choice = "auto";
+           internal::validate_text_generation_request(automatic_tools);
+           require(internal::tool_calls_enabled(automatic_tools),
+                   "auto tool choice should enable tool calls");
+
+           GenerationRequest disabled_tools = automatic_tools;
+           disabled_tools.tool_choice = "none";
+           internal::validate_text_generation_request(disabled_tools);
+           require(!internal::tool_calls_enabled(disabled_tools),
+                   "none tool choice should disable tool calls");
+
+           GenerationRequest unsupported_tool_choice = automatic_tools;
+           unsupported_tool_choice.tool_choice = "required";
+           require_throws_contains(
+               [&] { internal::validate_text_generation_request(unsupported_tool_choice); },
+               "only tool_choice 'auto' or 'none'");
          }));

@@ -258,7 +258,6 @@ set(UNIT_TESTS
   unit_genai_audio_types_test
   unit_genai_header_compile_surface_test
   unit_genai_text_tensor_test
-  unit_genai_tool_call_parser_test
   unit_node_metadata_sender_test
   unit_video_sender_test
   unit_env_util_profile_test
@@ -394,6 +393,10 @@ set(UNIT_TESTS
   unit_visual_frontend_node_api_test
   unit_plugin_failure_messages_test
 )
+
+if (SimaLMM_FOUND)
+  list(APPEND UNIT_TESTS unit_genai_tool_call_parser_test)
+endif()
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
   list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)

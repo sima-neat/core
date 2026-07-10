@@ -104,6 +104,21 @@ std::string load_bos_token(const std::filesystem::path& model_root) {
   }
 }
 
+std::vector<std::string> tool_names_from_definitions(const Json& tools) {
+  std::vector<std::string> names;
+  if (!tools.is_array()) {
+    return names;
+  }
+
+  for (const auto& tool : tools) {
+    if (tool.is_object() && tool.contains("function") && tool.at("function").is_object() &&
+        tool.at("function").contains("name") && tool.at("function").at("name").is_string()) {
+      names.push_back(tool.at("function").at("name").get<std::string>());
+    }
+  }
+  return names;
+}
+
 std::unique_ptr<simaai::llima::ImageProcessor>
 make_image_processor(const simaai::llima::VlmConfig& cfg, const std::filesystem::path& devkit_dir) {
   const auto p1 = devkit_dir / "preprocessor_config.json";
@@ -361,9 +376,12 @@ struct VisionLanguageModel::Impl {
 
     result.metrics.generated_tokens = static_cast<std::uint32_t>(output_token_ids->size());
     result.text = vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
-    auto tool_calls = simaai::llima::try_parse_tool_calls(result.text);
-    if (!tool_calls.is_null()) {
-      result.tool_calls = tool_calls;
+    if (internal::tool_calls_enabled(request)) {
+      auto tool_calls = simaai::llima::try_parse_tool_calls(
+          result.text, tool_names_from_definitions(request.tools));
+      if (!tool_calls.is_null()) {
+        result.tool_calls = std::move(tool_calls);
+      }
     }
     result.finish_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
     return result;
@@ -397,7 +415,7 @@ struct VisionLanguageModel::Impl {
 
     simaai::llima::Chat chat(*vlm_helper);
     chat.set_messages(built.messages);
-    if (!request.tools.empty()) {
+    if (internal::tool_calls_enabled(request)) {
       chat.set_tools(request.tools);
     }
     auto preprocessed = vlm_helper->preprocess(chat);
@@ -617,8 +635,9 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
             [&producer](const std::string& metric, double value) {
               producer.record_metric(metric, value);
             });
-        const bool parse_tools = !request.tools.empty();
-        simaai::llima::ToolCallStreamParser tool_parser;
+        const bool parse_tools = internal::tool_calls_enabled(request);
+        simaai::llima::ToolCallStreamParser tool_parser(
+            tool_names_from_definitions(request.tools));
         bool emitted_tool_calls = false;
         auto handle_tool_parser_events =
             [&producer, &emitted_tool_calls](

@@ -4,6 +4,11 @@
 
 namespace simaai::neat::genai::internal {
 
+bool tool_calls_enabled(const GenerationRequest& request) {
+  return !request.tools.empty() &&
+         !(request.tool_choice.is_string() && request.tool_choice == "none");
+}
+
 std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
   validate_text_generation_request(request);
 
@@ -42,6 +47,20 @@ void validate_text_generation_request(const GenerationRequest& request) {
   if (request.audio.has_value() || request.audio_file.has_value()) {
     throw std::runtime_error(
         "GenerationRequest audio fields are not valid for VisionLanguageModel");
+  }
+  if (!request.tools.is_array()) {
+    throw std::runtime_error("GenerationRequest::tools must be an array");
+  }
+  if (!request.tool_choice.is_null()) {
+    if (!request.tool_choice.is_string()) {
+      throw std::runtime_error(
+          "GenerationRequest supports only tool_choice 'auto' or 'none'");
+    }
+    const auto choice = request.tool_choice.get<std::string>();
+    if (choice != "auto" && choice != "none") {
+      throw std::runtime_error(
+          "GenerationRequest supports only tool_choice 'auto' or 'none'");
+    }
   }
 
   std::size_t cached_image_uses = request.use_cached_images ? 1U : 0U;
