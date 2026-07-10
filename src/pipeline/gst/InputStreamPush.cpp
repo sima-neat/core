@@ -626,6 +626,14 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
   return true;
 }
 
+GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
+  if (!holder) {
+    return nullptr;
+  }
+  auto* sample = static_cast<GstSample*>(holder.get());
+  return (sample && GST_IS_SAMPLE(sample)) ? sample : nullptr;
+}
+
 bool wrap_holder_buffer_for_zero_copy_loan_transfer(GstBuffer** buffer, const Sample* sample,
                                                     const std::shared_ptr<void>& holder,
                                                     const char* where) {
@@ -652,6 +660,17 @@ bool wrap_holder_buffer_for_zero_copy_loan_transfer(GstBuffer** buffer, const Sa
     throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
                              ": failed to wrap zero-copy holder buffer for transfer");
   }
+  GstBuffer* parent = *buffer;
+  if (GstSample* holder_sample = holder_as_gstsample(holder)) {
+    if (GstBuffer* holder_buffer = gst_sample_get_buffer(holder_sample)) {
+      parent = holder_buffer;
+    }
+  }
+  if (!gst_buffer_add_parent_buffer_meta(transfer, parent)) {
+    gst_buffer_unref(transfer);
+    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                             ": failed to retain zero-copy holder parent buffer");
+  }
 
   bool attached = false;
   if (sample_has_loans) {
@@ -671,14 +690,6 @@ bool wrap_holder_buffer_for_zero_copy_loan_transfer(GstBuffer** buffer, const Sa
   release_input_buffer(*buffer, "InputStream::zero_copy_transfer:loan_source_unref");
   *buffer = transfer;
   return true;
-}
-
-GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
-  if (!holder) {
-    return nullptr;
-  }
-  auto* sample = static_cast<GstSample*>(holder.get());
-  return (sample && GST_IS_SAMPLE(sample)) ? sample : nullptr;
 }
 
 bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, GstBuffer* buffer,
