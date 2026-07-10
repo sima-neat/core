@@ -380,10 +380,10 @@ struct VisionLanguageModel::Impl {
     }
 
     result.metrics.generated_tokens = static_cast<std::uint32_t>(output_token_ids->size());
-    result.text = parse_tools
-        ? simaai::llima::decode_tool_call_output(
-              *vlm_helper->get_tokenizer(), output_token_ids.value(), preserved_tool_call_tokens)
-        : vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
+    result.text = parse_tools ? simaai::llima::decode_tool_call_output(*vlm_helper->get_tokenizer(),
+                                                                       output_token_ids.value(),
+                                                                       preserved_tool_call_tokens)
+                              : vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
     if (parse_tools) {
       auto tool_calls = simaai::llima::try_parse_tool_calls(
           tool_call_format, result.text, tool_names_from_definitions(request.tools));
@@ -567,8 +567,7 @@ struct VisionLanguageModel::Impl {
   std::string bos_token;
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
   std::unique_ptr<simaai::llima::TextStreamer> text_streamer;
-  simaai::llima::ToolCallFormat tool_call_format =
-      simaai::llima::ToolCallFormat::GenericJson;
+  simaai::llima::ToolCallFormat tool_call_format = simaai::llima::ToolCallFormat::GenericJson;
   simaai::llima::PreservedToolCallTokens preserved_tool_call_tokens;
   std::unique_ptr<simaai::llima::LanguageModel> language_model;
   std::unique_ptr<simaai::llima::ImageProcessor> image_processor;
@@ -649,12 +648,12 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
               producer.record_metric(metric, value);
             });
         const bool parse_tools = internal::tool_calls_enabled(request);
-        simaai::llima::ToolCallStreamParser tool_parser(
-            model->tool_call_format, tool_names_from_definitions(request.tools));
+        simaai::llima::ToolCallStreamParser tool_parser(model->tool_call_format,
+                                                        tool_names_from_definitions(request.tools));
         bool emitted_tool_calls = false;
         auto handle_tool_parser_events =
-            [&producer, &emitted_tool_calls](
-                std::vector<simaai::llima::ToolCallStreamParser::Event> events) {
+            [&producer,
+             &emitted_tool_calls](std::vector<simaai::llima::ToolCallStreamParser::Event> events) {
               for (auto& event : events) {
                 TokenSample sample;
                 sample.metrics = producer.current_metrics();
@@ -662,9 +661,8 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
                   sample.text =
                       std::move(std::get<simaai::llima::ToolCallStreamParser::Content>(event).text);
                 } else {
-                  sample.tool_calls =
-                      std::move(std::get<simaai::llima::ToolCallStreamParser::ToolCalls>(event)
-                                    .calls);
+                  sample.tool_calls = std::move(
+                      std::get<simaai::llima::ToolCallStreamParser::ToolCalls>(event).calls);
                   emitted_tool_calls = true;
                 }
                 producer.push(std::move(sample));
