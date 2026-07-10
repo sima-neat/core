@@ -71,6 +71,7 @@ struct CreditEntry {
   RealtimeFrameCreditLanePtr lane;
   std::vector<RealtimeFrameCreditLanePtr> companion_lanes;
   std::uint64_t sequence = 0;
+  std::uint64_t ref_count = 1;
   std::atomic<bool> released{false};
   std::vector<CreditAliasKey> aliases;
 };
@@ -149,13 +150,8 @@ void erase_primary_keys_for_entry_locked(const std::shared_ptr<CreditEntry>& ent
   }
 }
 
-void release_credit_entry(const std::shared_ptr<CreditEntry>& entry, bool by_output) {
+void release_credit_lanes(const std::shared_ptr<CreditEntry>& entry, bool by_output) {
   if (!entry) {
-    return;
-  }
-  bool expected = false;
-  if (!entry->released.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
-                                               std::memory_order_relaxed)) {
     return;
   }
   auto release_lane = [by_output](const RealtimeFrameCreditLanePtr& lane) {
@@ -178,11 +174,48 @@ void release_credit_entry(const std::shared_ptr<CreditEntry>& entry, bool by_out
   }
 }
 
+bool consume_credit_ref_locked(const std::shared_ptr<CreditEntry>& entry) {
+  if (!entry || entry->released.load(std::memory_order_acquire)) {
+    return false;
+  }
+  if (entry->ref_count > 1U) {
+    --entry->ref_count;
+    return false;
+  }
+  entry->ref_count = 0;
+  entry->released.store(true, std::memory_order_release);
+  erase_aliases_for_entry_locked(entry);
+  erase_primary_keys_for_entry_locked(entry);
+  return true;
+}
+
+void force_release_credit_entry(const std::shared_ptr<CreditEntry>& entry, bool by_output) {
+  if (!entry) {
+    return;
+  }
+  bool should_release = false;
+  {
+    std::lock_guard<std::mutex> lock(credit_registry_mutex());
+    bool expected = false;
+    should_release = entry->released.compare_exchange_strong(
+        expected, true, std::memory_order_acq_rel, std::memory_order_relaxed);
+    if (should_release) {
+      entry->ref_count = 0;
+      erase_aliases_for_entry_locked(entry);
+      erase_primary_keys_for_entry_locked(entry);
+    }
+  }
+  if (should_release) {
+    release_credit_lanes(entry, by_output);
+  }
+}
+
 bool release_credit_for_exact_key(const CreditKey& key, const char* mode, bool by_output) {
   if (key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
     return false;
   }
   std::shared_ptr<CreditEntry> entry;
+  bool final_release = false;
   {
     std::lock_guard<std::mutex> lock(credit_registry_mutex());
     auto& registry = credit_registry();
@@ -191,16 +224,19 @@ bool release_credit_for_exact_key(const CreditKey& key, const char* mode, bool b
       return false;
     }
     entry = it->second;
-    erase_aliases_for_entry_locked(entry);
-    registry.erase(it);
+    final_release = consume_credit_ref_locked(entry);
   }
   if (credit_debug_enabled()) {
     std::fprintf(stderr,
-                 "[graph][credit] release ns=%llu stream=%s frame=%lld mode=%s by_output=%d\n",
+                 "[graph][credit] release ns=%llu stream=%s frame=%lld mode=%s by_output=%d "
+                 "final=%d\n",
                  static_cast<unsigned long long>(key.namespace_id), key.stream_id.c_str(),
-                 static_cast<long long>(key.frame_id), mode ? mode : "key", by_output ? 1 : 0);
+                 static_cast<long long>(key.frame_id), mode ? mode : "key", by_output ? 1 : 0,
+                 final_release ? 1 : 0);
   }
-  release_credit_entry(entry, by_output);
+  if (final_release) {
+    release_credit_lanes(entry, by_output);
+  }
   return true;
 }
 
@@ -232,9 +268,13 @@ bool release_credit_for_unqualified_key(const CreditKey& key, const char* mode, 
       }
     }
     if (found) {
-      erase_aliases_for_entry_locked(entry);
-      registry.erase(selected);
+      found = entry != nullptr;
     }
+  }
+  bool final_release = false;
+  if (found) {
+    std::lock_guard<std::mutex> lock(credit_registry_mutex());
+    final_release = consume_credit_ref_locked(entry);
   }
   if (!found) {
     return false;
@@ -242,12 +282,14 @@ bool release_credit_for_unqualified_key(const CreditKey& key, const char* mode, 
   if (credit_debug_enabled()) {
     std::fprintf(stderr,
                  "[graph][credit] release ns=%llu stream=%s frame=%lld mode=%s "
-                 "by_output=%d unqualified=%d ambiguous=%d\n",
+                 "by_output=%d unqualified=%d ambiguous=%d final=%d\n",
                  static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
                  static_cast<long long>(selected.frame_id), mode ? mode : "key", by_output ? 1 : 0,
-                 1, ambiguous ? 1 : 0);
+                 1, ambiguous ? 1 : 0, final_release ? 1 : 0);
   }
-  release_credit_entry(entry, by_output);
+  if (final_release) {
+    release_credit_lanes(entry, by_output);
+  }
   return true;
 }
 
@@ -256,7 +298,10 @@ bool find_credit_entry_for_credit_locked(const RealtimeFrameCredit& credit,
                                          CreditKey* out_key) {
   auto& registry = credit_registry();
   const CreditKey requested{credit.namespace_id, credit.stream_id, credit.frame_id};
-  if (requested.namespace_id != 0 && !requested.stream_id.empty() && requested.frame_id >= 0) {
+  if (requested.namespace_id != 0) {
+    if (requested.stream_id.empty() || requested.frame_id < 0) {
+      return false;
+    }
     auto it = registry.find(requested);
     if (it != registry.end()) {
       if (out_entry) {
@@ -267,6 +312,7 @@ bool find_credit_entry_for_credit_locked(const RealtimeFrameCredit& credit,
       }
       return true;
     }
+    return false;
   }
   if (requested.stream_id.empty() || requested.frame_id < 0) {
     return false;
@@ -344,9 +390,13 @@ bool release_credit_for_alias_key(const CreditAliasKey& key, const char* mode, b
       }
     }
     if (found) {
-      erase_aliases_for_entry_locked(entry);
-      erase_primary_keys_for_entry_locked(entry);
+      found = entry != nullptr;
     }
+  }
+  bool final_release = false;
+  if (found) {
+    std::lock_guard<std::mutex> lock(credit_registry_mutex());
+    final_release = consume_credit_ref_locked(entry);
   }
   if (!found) {
     return false;
@@ -354,12 +404,14 @@ bool release_credit_for_alias_key(const CreditAliasKey& key, const char* mode, b
   if (credit_debug_enabled()) {
     std::fprintf(stderr,
                  "[graph][credit] release-alias ns=%llu stream=%s %s=%lld mode=%s "
-                 "by_output=%d ambiguous=%d\n",
+                 "by_output=%d ambiguous=%d final=%d\n",
                  static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
                  credit_seq_kind_name(selected.kind), static_cast<long long>(selected.seq),
-                 mode ? mode : "key", by_output ? 1 : 0, ambiguous ? 1 : 0);
+                 mode ? mode : "key", by_output ? 1 : 0, ambiguous ? 1 : 0, final_release ? 1 : 0);
   }
-  release_credit_entry(entry, by_output);
+  if (final_release) {
+    release_credit_lanes(entry, by_output);
+  }
   return true;
 }
 
@@ -426,7 +478,7 @@ bool register_realtime_frame_credit(
   }
   lane->registered.fetch_add(1, std::memory_order_relaxed);
   if (replaced) {
-    release_credit_entry(replaced, /*by_output=*/false);
+    force_release_credit_entry(replaced, /*by_output=*/false);
   }
   if (credit_debug_enabled()) {
     std::fprintf(
@@ -537,6 +589,39 @@ bool alias_registered_realtime_frame_credits(const std::vector<RealtimeFrameCred
   return aliased_any;
 }
 
+bool retain_registered_realtime_frame_credits(const std::vector<RealtimeFrameCredit>& credits,
+                                              std::size_t extra_refs, const char* mode) {
+  if (credits.empty() || extra_refs == 0U) {
+    return false;
+  }
+  bool retained_any = false;
+  std::lock_guard<std::mutex> lock(credit_registry_mutex());
+  auto& registry = credit_registry();
+  for (const auto& credit : credits) {
+    if (!credit.graph_private || credit.namespace_id == 0 || credit.stream_id.empty() ||
+        credit.frame_id < 0) {
+      continue;
+    }
+    const CreditKey key{credit.namespace_id, credit.stream_id, credit.frame_id};
+    auto it = registry.find(key);
+    if (it == registry.end() || !it->second ||
+        it->second->released.load(std::memory_order_acquire)) {
+      continue;
+    }
+    it->second->ref_count += static_cast<std::uint64_t>(extra_refs);
+    retained_any = true;
+    if (credit_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[graph][credit] retain ns=%llu stream=%s frame=%lld extra=%zu refs=%llu "
+                   "mode=%s\n",
+                   static_cast<unsigned long long>(credit.namespace_id), credit.stream_id.c_str(),
+                   static_cast<long long>(credit.frame_id), extra_refs,
+                   static_cast<unsigned long long>(it->second->ref_count), mode ? mode : "retain");
+    }
+  }
+  return retained_any;
+}
+
 bool release_registered_realtime_frame_credit(const RealtimeFrameCredit& credit, const char* mode,
                                               bool by_output) {
   const CreditKey key{credit.namespace_id, credit.stream_id, credit.frame_id};
@@ -583,7 +668,10 @@ void release_all_registered_realtime_frame_credits(std::uint64_t namespace_id, c
     for (auto it = registry.begin(); it != registry.end();) {
       if (it->first.namespace_id == namespace_id) {
         keys.push_back(it->first);
-        entries.push_back(it->second);
+        if (it->second && !it->second->released.exchange(true, std::memory_order_acq_rel)) {
+          it->second->ref_count = 0;
+          entries.push_back(it->second);
+        }
         erase_aliases_for_entry_locked(it->second);
         it = registry.erase(it);
       } else {
@@ -606,7 +694,7 @@ void release_all_registered_realtime_frame_credits(std::uint64_t namespace_id, c
     }
   }
   for (const auto& entry : entries) {
-    release_credit_entry(entry, /*by_output=*/false);
+    release_credit_lanes(entry, /*by_output=*/false);
   }
 }
 

@@ -2176,8 +2176,7 @@ PY
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
         wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
         wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
-        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF"
-        wheel_cmake_args+=" -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE"
+        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=ON"
       fi
       # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
       # (notably ninja), which are not executable on the host container.

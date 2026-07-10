@@ -1,5 +1,6 @@
 #include "genai/VisionLanguageModel.h"
 #include "genai/GraphFragments.h"
+#include "genai_test_utils.h"
 #include "pipeline/Graph.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorCore.h"
@@ -17,32 +18,14 @@
 // Exercises the GenAI Language graph node end-to-end against a real LLiMa text
 // model, including prompt, done metadata, and error output.
 // Model fixture:
-//   hf download simaai/Qwen2.5-0.5B-Instruct-GPTQ-a16w4 --local-dir <model-dir>
-//   export SIMA_TEST_LLIMA_TEXT_MODEL=<model-dir>
+//   export LLIMA_MODELS_PATH=/media/nvme/llima/models
+//   export SIMA_TEST_LLIMA_TEXT_MODEL=Qwen2.5-0.5B-Instruct-GPTQ-a16w4
+//   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 
 namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_TEXT_MODEL";
-
-bool has_llima_vlm_config(const fs::path& model_dir) {
-  std::error_code ec;
-  return fs::is_regular_file(model_dir / "devkit" / "vlm_config.json", ec) && !ec;
-}
-
-std::string trim_env_value(const char* value) {
-  if (value == nullptr) {
-    return {};
-  }
-
-  std::string out(value);
-  const auto first = out.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    return {};
-  }
-  const auto last = out.find_last_not_of(" \t\r\n");
-  return out.substr(first, last - first + 1);
-}
 
 std::string trim_text(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -54,21 +37,8 @@ std::string trim_text(std::string value) {
 }
 
 fs::path resolve_model_dir() {
-  const std::string env_model_dir = trim_env_value(std::getenv(kModelEnv));
-  if (env_model_dir.empty()) {
-    skip_long_test_exception("set " + std::string(kModelEnv) +
-                             " to an existing LLiMa text model directory");
-  }
-
-  fs::path model_dir(env_model_dir);
-  if (has_llima_vlm_config(model_dir)) {
-    return model_dir;
-  }
-
-  skip_long_test_exception(
-      std::string(kModelEnv) +
-      " does not point to a LLiMa text model directory: " + model_dir.string());
-  return {};
+  return simaai::neat::test::resolve_genai_model_dir(
+      kModelEnv, simaai::neat::test::kDefaultTextModelName, "LLiMa text", "devkit/vlm_config.json");
 }
 
 simaai::neat::Sample make_text_input(std::string text, int64_t frame_id = 1) {

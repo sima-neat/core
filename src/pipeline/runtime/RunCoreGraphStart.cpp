@@ -96,6 +96,63 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
   }
 }
 
+bool same_realtime_frame_credit(const pipeline_internal::RealtimeFrameCredit& lhs,
+                                const pipeline_internal::RealtimeFrameCredit& rhs) {
+  if (lhs.namespace_id != 0 || rhs.namespace_id != 0) {
+    return lhs.namespace_id == rhs.namespace_id && lhs.stream_id == rhs.stream_id &&
+           lhs.frame_id == rhs.frame_id;
+  }
+  if (lhs.frame_id >= 0 || rhs.frame_id >= 0) {
+    return lhs.stream_id == rhs.stream_id && lhs.frame_id == rhs.frame_id;
+  }
+  if (lhs.input_seq >= 0 || rhs.input_seq >= 0) {
+    return lhs.stream_id == rhs.stream_id && lhs.input_seq == rhs.input_seq;
+  }
+  if (lhs.orig_input_seq >= 0 || rhs.orig_input_seq >= 0) {
+    return lhs.stream_id == rhs.stream_id && lhs.orig_input_seq == rhs.orig_input_seq;
+  }
+  return false;
+}
+
+bool contains_realtime_frame_credit(
+    const std::vector<pipeline_internal::RealtimeFrameCredit>& credits,
+    const pipeline_internal::RealtimeFrameCredit& needle) {
+  return std::any_of(credits.begin(), credits.end(), [&](const auto& candidate) {
+    return same_realtime_frame_credit(candidate, needle);
+  });
+}
+
+void append_realtime_frame_credits(std::vector<pipeline_internal::RealtimeFrameCredit>* out,
+                                   const std::vector<pipeline_internal::RealtimeFrameCredit>& in) {
+  if (!out || in.empty()) {
+    return;
+  }
+  for (const auto& credit : in) {
+    if (!contains_realtime_frame_credit(*out, credit)) {
+      out->push_back(credit);
+    }
+  }
+}
+
+void release_unforwarded_stage_input_credits(
+    const std::vector<pipeline_internal::RealtimeFrameCredit>& input_credits,
+    const std::vector<pipeline_internal::RealtimeFrameCredit>& forwarded_credits,
+    const char* mode) {
+  if (input_credits.empty()) {
+    return;
+  }
+  std::vector<pipeline_internal::RealtimeFrameCredit> unforwarded;
+  for (const auto& credit : input_credits) {
+    if (!contains_realtime_frame_credit(forwarded_credits, credit) &&
+        !contains_realtime_frame_credit(unforwarded, credit)) {
+      unforwarded.push_back(credit);
+    }
+  }
+  if (!unforwarded.empty()) {
+    pipeline_internal::release_realtime_frame_credits_without_output(unforwarded, mode);
+  }
+}
+
 std::uint64_t edge_port_key(NodeId id, PortId port) {
   return (static_cast<std::uint64_t>(id) << 32) | static_cast<std::uint64_t>(port);
 }
@@ -1282,7 +1339,10 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("stage_on_input", msg.sample);
         }
+        const auto input_realtime_credits =
+            pipeline_internal::realtime_frame_credits_for_sample(msg.sample);
         std::vector<StageOutMsg> outputs;
+        st.emitter.begin_input_credit_tracking();
         try {
           const auto exec_start = std::chrono::steady_clock::now();
           st.exec->on_input(std::move(msg), outputs);
@@ -1290,9 +1350,21 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           atomic_add_max(st.telemetry.on_input_ns, st.telemetry.on_input_max_ns,
                          elapsed_ns_since(exec_start));
         } catch (const std::exception& e) {
+          const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
+          release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
+                                                  "stage-on-input-exception");
           core->graph_request_stop(e.what());
           break;
         }
+        std::vector<pipeline_internal::RealtimeFrameCredit> forwarded_realtime_credits =
+            st.emitter.end_input_credit_tracking();
+        for (const auto& out_msg : outputs) {
+          append_realtime_frame_credits(
+              &forwarded_realtime_credits,
+              pipeline_internal::realtime_frame_credits_for_sample(out_msg.sample));
+        }
+        release_unforwarded_stage_input_credits(input_realtime_credits, forwarded_realtime_credits,
+                                                "stage-input-consumed");
 
         for (auto& out_msg : outputs) {
           const auto route_start = std::chrono::steady_clock::now();
@@ -1699,6 +1771,9 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
         }
         core->graph_request_stop("GraphRun: pipeline push failed");
         return;
+      }
+      if (!pipe.transport.has_output) {
+        release_input_realtime_credits("pipeline-input-sink-only-pushed");
       }
     }
   });

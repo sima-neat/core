@@ -8,6 +8,7 @@
 #include "graph/nodes/StageNode.h"
 #include "graph/runtime/BlockingQueue.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/PipelineSegmentRuntime.h"
 #include "pipeline/runtime/TraceMessageEvents.h"
@@ -161,12 +162,39 @@ struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
   std::function<bool()> stop_requested_fn;
 
   bool emit(simaai::neat::graph::StageOutMsg msg) override {
-    return emit_fn ? emit_fn(std::move(msg)) : false;
+    const auto credits = pipeline_internal::realtime_frame_credits_for_sample(msg.sample);
+    const bool ok = emit_fn ? emit_fn(std::move(msg)) : false;
+    if (ok && !credits.empty()) {
+      std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+      if (track_emitted_credits_) {
+        emitted_credits_.insert(emitted_credits_.end(), credits.begin(), credits.end());
+      }
+    }
+    return ok;
   }
 
   bool stop_requested() const override {
     return stop_requested_fn ? stop_requested_fn() : true;
   }
+
+  void begin_input_credit_tracking() {
+    std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+    emitted_credits_.clear();
+    track_emitted_credits_ = true;
+  }
+
+  std::vector<pipeline_internal::RealtimeFrameCredit> end_input_credit_tracking() {
+    std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+    track_emitted_credits_ = false;
+    std::vector<pipeline_internal::RealtimeFrameCredit> out;
+    out.swap(emitted_credits_);
+    return out;
+  }
+
+private:
+  std::mutex emitted_credit_mu_;
+  bool track_emitted_credits_ = false;
+  std::vector<pipeline_internal::RealtimeFrameCredit> emitted_credits_;
 };
 
 struct StageRuntime {

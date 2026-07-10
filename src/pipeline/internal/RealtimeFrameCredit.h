@@ -7,6 +7,7 @@
 #include "pipeline/internal/HolderLoanGate.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -52,6 +53,10 @@ bool register_realtime_frame_credit(
     const std::vector<RealtimeFrameCreditLanePtr>& companion_lanes = {});
 bool alias_registered_realtime_frame_credits(const std::vector<RealtimeFrameCredit>& credits,
                                              const Sample& sample, const char* mode);
+bool retain_registered_realtime_frame_credits(const std::vector<RealtimeFrameCredit>& credits,
+                                              std::size_t extra_refs, const char* mode);
+bool retain_realtime_frame_credits(const std::vector<RealtimeFrameCredit>& credits,
+                                   std::size_t extra_refs, const char* mode);
 bool release_registered_realtime_frame_credit(const RealtimeFrameCredit& credit, const char* mode,
                                               bool by_output);
 void release_all_registered_realtime_frame_credits(std::uint64_t namespace_id, const char* mode);

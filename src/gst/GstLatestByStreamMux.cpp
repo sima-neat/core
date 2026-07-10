@@ -167,6 +167,7 @@ struct LoanEntry {
   GstLatestByStreamMux* mux = nullptr; // strong GObject ref while registered
   std::shared_ptr<StreamLoanState> state;
   std::uint64_t sequence = 0;
+  std::uint64_t ref_count = 1;
   std::atomic<bool> released{false};
 };
 
@@ -309,13 +310,8 @@ bool read_latest_mux_loan_key(GstBuffer* buffer, LoanKey* key) {
   return true;
 }
 
-void release_loan_entry(const std::shared_ptr<LoanEntry>& entry, bool by_output) {
+void release_loan_entry_resources(const std::shared_ptr<LoanEntry>& entry, bool by_output) {
   if (!entry) {
-    return;
-  }
-  bool expected = false;
-  if (!entry->released.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
-                                               std::memory_order_relaxed)) {
     return;
   }
   if (entry->state && entry->state->gate) {
@@ -333,6 +329,47 @@ void release_loan_entry(const std::shared_ptr<LoanEntry>& entry, bool by_output)
     gst_object_unref(GST_OBJECT(entry->mux));
     entry->mux = nullptr;
   }
+}
+
+void release_loan_entry(const std::shared_ptr<LoanEntry>& entry, bool by_output) {
+  if (!entry) {
+    return;
+  }
+  bool expected = false;
+  if (!entry->released.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                               std::memory_order_relaxed)) {
+    return;
+  }
+  entry->ref_count = 0;
+  release_loan_entry_resources(entry, by_output);
+}
+
+void erase_loan_keys_for_entry_locked(const std::shared_ptr<LoanEntry>& entry) {
+  if (!entry) {
+    return;
+  }
+  auto& registry = loan_registry();
+  for (auto it = registry.begin(); it != registry.end();) {
+    if (it->second == entry) {
+      it = registry.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+bool consume_loan_ref_locked(const std::shared_ptr<LoanEntry>& entry) {
+  if (!entry || entry->released.load(std::memory_order_acquire)) {
+    return false;
+  }
+  if (entry->ref_count > 1U) {
+    --entry->ref_count;
+    return false;
+  }
+  entry->ref_count = 0;
+  entry->released.store(true, std::memory_order_release);
+  erase_loan_keys_for_entry_locked(entry);
+  return true;
 }
 
 void release_all_loans_for_mux(GstLatestByStreamMux* self) {
@@ -362,6 +399,7 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode) {
     return false;
   }
   std::shared_ptr<LoanEntry> entry;
+  bool final_release = false;
   {
     std::lock_guard<std::mutex> lock(loan_registry_mutex());
     auto& registry = loan_registry();
@@ -370,11 +408,44 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode) {
       return false;
     }
     entry = it->second;
-    registry.erase(it);
+    final_release = consume_loan_ref_locked(entry);
   }
   if (loan_debug_enabled()) {
     std::fprintf(stderr,
                  "[latestmux][loan] release ns=%llu stream=%s frame=%lld input_seq=%lld "
+                 "orig_input_seq=%lld mode=%s final=%d\n",
+                 static_cast<unsigned long long>(key.namespace_id), key.stream_id.c_str(),
+                 static_cast<long long>(key.frame_id), static_cast<long long>(key.input_seq),
+                 static_cast<long long>(key.orig_input_seq), mode ? mode : "key",
+                 final_release ? 1 : 0);
+  }
+  if (final_release) {
+    release_loan_entry_resources(entry, /*by_output=*/true);
+  }
+  return true;
+}
+
+bool force_release_loan_for_key_impl(const LoanKey& key, const char* mode) {
+  if (key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
+    return false;
+  }
+  std::shared_ptr<LoanEntry> entry;
+  {
+    std::lock_guard<std::mutex> lock(loan_registry_mutex());
+    auto& registry = loan_registry();
+    auto it = registry.find(key);
+    if (it == registry.end()) {
+      return false;
+    }
+    entry = it->second;
+    if (entry) {
+      entry->ref_count = 0;
+    }
+    erase_loan_keys_for_entry_locked(entry);
+  }
+  if (loan_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[latestmux][loan] force-release ns=%llu stream=%s frame=%lld input_seq=%lld "
                  "orig_input_seq=%lld mode=%s\n",
                  static_cast<unsigned long long>(key.namespace_id), key.stream_id.c_str(),
                  static_cast<long long>(key.frame_id), static_cast<long long>(key.input_seq),
@@ -392,7 +463,7 @@ GQuark latest_mux_buffer_loan_release_quark() {
 void release_loan_qdata(gpointer data) {
   std::unique_ptr<LoanKey> key(static_cast<LoanKey*>(data));
   if (key) {
-    (void)release_loan_for_key_impl(*key, "buffer-finalize");
+    (void)force_release_loan_for_key_impl(*key, "buffer-finalize");
   }
 }
 
@@ -1412,6 +1483,7 @@ bool release_loan_for_key(const LoanKey& key, const char* mode) {
   LoanKey selected;
   bool found = false;
   bool ambiguous = false;
+  bool final_release = false;
   const auto seq_matches = [](const LoanKey& candidate, const LoanKey& query) {
     if (query.input_seq >= 0 &&
         (candidate.input_seq == query.input_seq || candidate.orig_input_seq == query.input_seq)) {
@@ -1447,7 +1519,7 @@ bool release_loan_for_key(const LoanKey& key, const char* mode) {
       pick([&](const LoanKey& candidate) { return candidate.frame_id == key.frame_id; });
     }
     if (found && !ambiguous) {
-      registry.erase(selected);
+      final_release = consume_loan_ref_locked(entry);
     }
   }
   if (!found || ambiguous) {
@@ -1462,12 +1534,42 @@ bool release_loan_for_key(const LoanKey& key, const char* mode) {
     std::fprintf(stderr,
                  "[latestmux][loan] release ns=%llu stream=%s frame=%lld input_seq=%lld "
                  "orig_input_seq=%lld mode=%s "
-                 "(unqualified)\n",
+                 "(unqualified) final=%d\n",
                  static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
                  static_cast<long long>(selected.frame_id), static_cast<long long>(key.input_seq),
-                 static_cast<long long>(key.orig_input_seq), mode ? mode : "key");
+                 static_cast<long long>(key.orig_input_seq), mode ? mode : "key",
+                 final_release ? 1 : 0);
   }
-  release_loan_entry(entry, /*by_output=*/true);
+  if (final_release) {
+    release_loan_entry_resources(entry, /*by_output=*/true);
+  }
+  return true;
+}
+
+bool retain_loan_for_key(const LoanKey& key, std::size_t extra_refs, const char* mode) {
+  if (extra_refs == 0U || key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
+    return false;
+  }
+  std::uint64_t refs = 0;
+  {
+    std::lock_guard<std::mutex> lock(loan_registry_mutex());
+    auto& registry = loan_registry();
+    auto it = registry.find(key);
+    if (it == registry.end() || !it->second ||
+        it->second->released.load(std::memory_order_acquire)) {
+      return false;
+    }
+    it->second->ref_count += static_cast<std::uint64_t>(extra_refs);
+    refs = it->second->ref_count;
+  }
+  if (loan_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[latestmux][loan] retain ns=%llu stream=%s frame=%lld extra=%zu refs=%llu "
+                 "mode=%s\n",
+                 static_cast<unsigned long long>(key.namespace_id), key.stream_id.c_str(),
+                 static_cast<long long>(key.frame_id), extra_refs,
+                 static_cast<unsigned long long>(refs), mode ? mode : "retain");
+  }
   return true;
 }
 
@@ -1479,6 +1581,7 @@ bool release_oldest_loan_for_stream(const std::string& stream_id) {
   LoanKey selected;
   bool found = false;
   bool ambiguous_namespace = false;
+  bool final_release = false;
   std::uint64_t namespace_id = 0;
   std::uint64_t best_sequence = std::numeric_limits<std::uint64_t>::max();
   {
@@ -1502,7 +1605,7 @@ bool release_oldest_loan_for_stream(const std::string& stream_id) {
       }
     }
     if (found && !ambiguous_namespace) {
-      registry.erase(selected);
+      final_release = consume_loan_ref_locked(entry);
     }
   }
   if (!found || ambiguous_namespace) {
@@ -1516,11 +1619,14 @@ bool release_oldest_loan_for_stream(const std::string& stream_id) {
   }
   if (loan_debug_enabled()) {
     std::fprintf(stderr,
-                 "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=stream-fifo\n",
+                 "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=stream-fifo "
+                 "final=%d\n",
                  static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
-                 static_cast<long long>(selected.frame_id));
+                 static_cast<long long>(selected.frame_id), final_release ? 1 : 0);
   }
-  release_loan_entry(entry, /*by_output=*/true);
+  if (final_release) {
+    release_loan_entry_resources(entry, /*by_output=*/true);
+  }
   return true;
 }
 
@@ -1587,7 +1693,8 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
           return existing.namespace_id == credit.namespace_id &&
                  existing.frame_id == credit.frame_id && existing.stream_id == credit.stream_id &&
                  existing.input_seq == credit.input_seq &&
-                 existing.orig_input_seq == credit.orig_input_seq;
+                 existing.orig_input_seq == credit.orig_input_seq &&
+                 existing.graph_private == credit.graph_private;
         });
     if (found == credits.end()) {
       credits.push_back(credit);
@@ -1630,7 +1737,7 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
     }
     return found_stamped_key;
   };
-  (void)collect_stamped_keys(collect_stamped_keys, sample);
+  const bool has_stamped_latest_mux_key = collect_stamped_keys(collect_stamped_keys, sample);
   auto add_fallback_key = [&](const Sample& s) {
     add_credit(RealtimeFrameCredit{0, s.stream_id, s.frame_id, s.input_seq, s.orig_input_seq});
   };
@@ -1640,8 +1747,29 @@ std::vector<RealtimeFrameCredit> realtime_frame_credits_for_sample(const Sample&
       self(self, field);
     }
   };
-  walk(walk, sample);
+  if (!has_stamped_latest_mux_key) {
+    walk(walk, sample);
+  }
   return credits;
+}
+
+bool retain_realtime_frame_credits(const std::vector<RealtimeFrameCredit>& credits,
+                                   std::size_t extra_refs, const char* mode) {
+  bool retained_any = retain_registered_realtime_frame_credits(credits, extra_refs, mode);
+  if (credits.empty() || extra_refs == 0U) {
+    return retained_any;
+  }
+  for (const auto& credit : credits) {
+    if (credit.graph_private || credit.namespace_id == 0) {
+      continue;
+    }
+    retained_any =
+        retain_loan_for_key(LoanKey{credit.namespace_id, credit.stream_id, credit.frame_id,
+                                    credit.input_seq, credit.orig_input_seq},
+                            extra_refs, mode) ||
+        retained_any;
+  }
+  return retained_any;
 }
 
 void release_realtime_frame_credits_impl(const std::vector<RealtimeFrameCredit>& credits,
@@ -1654,15 +1782,13 @@ void release_realtime_frame_credits_impl(const std::vector<RealtimeFrameCredit>&
     if (credit.namespace_id != 0) {
       /*
        * Non-zero keys collected from GstSimaMeta are latest-by-stream mux loan
-       * keys, not C++ realtime-credit registry namespaces.  Keep those
-       * namespace domains separate: release the Gst loan exactly, then release
-       * the C++ admission credit by its public stream/frame key.
+       * keys, not C++ realtime-credit registry namespaces. Keep those domains
+       * separate: the graph credit, when present, is carried as an exact
+       * graph-private sidecar credit and was handled above.
        */
       (void)release_loan_for_key(LoanKey{credit.namespace_id, credit.stream_id, credit.frame_id,
                                          credit.input_seq, credit.orig_input_seq},
                                  mode);
-      (void)release_registered_realtime_frame_credit(
-          RealtimeFrameCredit{0, credit.stream_id, credit.frame_id}, mode, by_output);
       continue;
     }
     if (release_registered_realtime_frame_credit(credit, mode, by_output)) {

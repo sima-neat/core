@@ -113,10 +113,12 @@ Configure GitHub repository settings:
   - `profile.json` defines the fixed Modalix environment contract.
   - one scenario file per scenario ID (`<scenario_id>.json`).
 - Required scenarios:
-  - `runtime_graph_sync_rgb`
-  - `runtime_graph_async_rgb`
+  - `runtime_session_sync_rgb`
+  - `runtime_session_async_rgb`
   - `runtime_graph_fanout`
   - `runtime_graph_join_bundle`
+  - `runtime_codec_mjpeg_decode`
+  - `runtime_codec_h264_decode`
 - Every perf run publishes per-scenario result files in `build-perf-gate/perf_results/`.
 - Each result must include:
   - `scenario_id`

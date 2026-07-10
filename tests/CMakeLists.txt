@@ -73,6 +73,7 @@ set(PIPELINESESSION_TEST_BLACKLIST
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/model-archive")
 set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 set(SIMA_TEST_DECODER_FIXTURE "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
+set(SIMA_TEST_CODEC_PERF_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/codec-perf")
 
 add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
@@ -84,6 +85,18 @@ add_custom_target(prepare_test_fixtures ALL
     --output ${SIMA_TEST_DECODER_FIXTURE}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Preparing deterministic test fixtures"
+  VERBATIM
+)
+
+add_custom_target(prepare_perf_codec_fixtures
+  COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py
+    --output-dir ${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}
+    --width 1280
+    --height 720
+    --fps 30
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Preparing codec performance fixtures"
   VERBATIM
 )
 
@@ -216,6 +229,25 @@ endfunction()
 # ------------------------------------------------------------------------------
 # Unit tests (1:1 cpp mapping)
 # ------------------------------------------------------------------------------
+add_executable(
+  unit_000_devkit_package_inventory_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_000_devkit_package_inventory_test.cpp
+)
+target_link_libraries(unit_000_devkit_package_inventory_test
+  PRIVATE sima_neat sima_neat_internal_headers
+)
+target_include_directories(unit_000_devkit_package_inventory_test
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
+add_test(NAME unit_000_devkit_package_inventory_test COMMAND unit_000_devkit_package_inventory_test)
+simaneat_append_ctest_env(unit_000_devkit_package_inventory_test)
+set_tests_properties(unit_000_devkit_package_inventory_test PROPERTIES SKIP_RETURN_CODE 77)
+set_property(TEST unit_000_devkit_package_inventory_test APPEND PROPERTY
+  LABELS "unit;devkit-package-inventory")
+
 set(UNIT_TESTS
   unit_builder_test
   unit_caps_bridge_test
@@ -314,6 +346,7 @@ set(UNIT_TESTS
   unit_modalix_contract_preflight_test
   unit_mpk_graph_dump_test
   unit_mpk_fuse_sibling_pre_mla_test
+  unit_pre_mla_ingress_order_input_offset_test
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
@@ -366,6 +399,7 @@ set(UNIT_TESTS
   unit_tensorbuffer_bind_preserve_source_view_test
   unit_tensorbuffer_publish_view_segment_name_precedence_test
   unit_sample_tensor_set_materialized_parent_offsets_test
+  unit_sample_packed_parent_alignment_padding_test
   unit_yolov8_mla_handoff_segment_test
   unit_yolov8_contract_subset_test
   unit_agg_model_managed_no_standalone_json_test
@@ -381,6 +415,9 @@ set(UNIT_TESTS
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
   list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)
+endif()
+if (SimaLMM_FOUND)
+  list(APPEND UNIT_TESTS unit_genai_server_linkage_test)
 endif()
 
 foreach(test ${UNIT_TESTS})
@@ -536,74 +573,82 @@ if (NOT metadata_sender_udp_integration_test IN_LIST PIPELINESESSION_TEST_BLACKL
   set_property(TEST metadata_sender_udp_integration_test APPEND PROPERTY LABELS "e2e;metadata")
 endif()
 
-add_pipeline_test_long(
-  genai_llm_run_test
-  e2e_testing/genai_llm_run_test.cpp
-)
+if (SimaLMM_FOUND)
+  add_pipeline_test_long(
+    genai_llm_run_test
+    e2e_testing/genai/genai_llm_run_test.cpp
+  )
 
-if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
-  set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_llm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
+    set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_vlm_run_test
-  SOURCES e2e_testing/genai_vlm_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_vlm_run_test
+    SOURCES e2e_testing/genai/genai_vlm_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
-  set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_vlm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
+    set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_graph_llm_run_test
-  e2e_testing/genai_graph_llm_run_test.cpp
-)
+  add_pipeline_test_long(
+    genai_graph_llm_run_test
+    e2e_testing/genai/genai_graph_llm_run_test.cpp
+  )
 
-if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
-  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_graph_llm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
+    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_graph_vlm_run_test
-  SOURCES e2e_testing/genai_graph_vlm_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_graph_vlm_run_test
+    SOURCES e2e_testing/genai/genai_graph_vlm_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
-  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_graph_vlm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
+    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_asr_run_test
-  SOURCES e2e_testing/genai_asr_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_asr_run_test
+    SOURCES e2e_testing/genai/genai_asr_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
-  set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_asr_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
+    set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_graph_asr_run_test
-  SOURCES e2e_testing/genai_graph_asr_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_graph_asr_run_test
+    SOURCES e2e_testing/genai/genai_graph_asr_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
-  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_graph_asr_run_test PROPERTIES DISABLED TRUE)
+  if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
+    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
+
+  add_pipeline_test_long(
+    genai_server_http_test
+    SOURCES e2e_testing/genai/genai_server_http_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
+  target_link_libraries(genai_server_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+
+  if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
+    set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -676,6 +721,8 @@ set(PERF_TARGETS
   perf_runtime_graph_async_rgb_test
   perf_runtime_graph_fanout_test
   perf_runtime_graph_join_bundle_test
+  perf_runtime_codec_mjpeg_decode_test
+  perf_runtime_codec_h264_decode_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -690,6 +737,9 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
+  if (target STREQUAL "perf_runtime_codec_h264_decode_test")
+    add_dependencies(${target} prepare_perf_codec_fixtures)
+  endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
 
@@ -1661,6 +1711,47 @@ if (NOT rtsp_encoded_boundary_caps_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(rtsp_encoded_boundary_caps_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+add_pipeline_test_long(
+  codec_runtime_stream_test
+  e2e_testing/codec_runtime_stream_test.cpp
+)
+
+if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY LABELS "e2e;codec;rtsp;http_mjpeg")
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_stream_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+
+  add_test(
+    NAME codec_runtime_stream_contract_test
+    COMMAND codec_runtime_stream_test --frames 5 --repeat 2 --determinism
+  )
+  append_pipeline_test_env(codec_runtime_stream_contract_test)
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;http_mjpeg;determinism;lifecycle")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_test(
+    NAME codec_runtime_bad_url_diagnostics
+    COMMAND codec_runtime_stream_test --case bad-url-diagnostics --timeout-ms 2000
+  )
+  append_pipeline_test_env(codec_runtime_bad_url_diagnostics)
+  set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY LABELS "strict;e2e;codec;failure")
+  set_property(TEST codec_runtime_bad_url_diagnostics APPEND PROPERTY RESOURCE_LOCK "rtsp")
+endif()
+
+add_pipeline_test_long(
+  codec_decode_accuracy_test
+  e2e_testing/codec_decode_accuracy_test.cpp
+)
+
+if (NOT codec_decode_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(codec_decode_accuracy_test prepare_perf_codec_fixtures)
+  set_property(TEST codec_decode_accuracy_test APPEND PROPERTY LABELS "e2e;codec;accuracy")
+  set_property(TEST codec_decode_accuracy_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
 add_pipeline_test(
   hybrid_graph_rtsp_resnet50_tput_test
   e2e_pipelines/img_classification/hybrid_graph_rtsp_resnet50_tput_test.cpp
@@ -1880,14 +1971,29 @@ install(
   DESTINATION share/sima-neat/test-assets
   COMPONENT extras
 )
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/images/people.jpg"
+  DESTINATION share/sima-neat/test-assets/tests/images
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio.wav"
+  DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_16k_mono_f32le.raw"
+  DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
 
-# Model-archive + decoder fixtures used by the modelpack/security suites.
+# Model-archive, decoder, and codec perf fixtures used by installed tests.
 # Keep install/package jobs self-contained too. Some CI/CD paths package or
 # install the test extras without explicitly building an individual test
-# executable first; in that case the build-time prepare_test_fixtures target
-# may not have been requested yet. Regenerate the deterministic fixture tree
-# immediately before installing it so installed runners see the same manifest
-# and archives as build-tree CTest.
+# executable first; in that case the build-time fixture targets may not have
+# been requested yet. Regenerate the deterministic fixture trees immediately
+# before installing them so installed runners see the same assets as build-tree
+# CTest.
 install(
   CODE "
 execute_process(
@@ -1911,6 +2017,19 @@ execute_process(
 if (NOT _sima_decoder_fixture_rv EQUAL 0)
   message(FATAL_ERROR \"failed to prepare decoder test fixture\")
 endif()
+execute_process(
+  COMMAND \"${Python3_EXECUTABLE}\"
+          \"${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/make_codec_perf_fixtures.py\"
+          --output-dir \"${SIMA_TEST_CODEC_PERF_FIXTURE_ROOT}\"
+          --width 1280
+          --height 720
+          --fps 30
+  WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
+  RESULT_VARIABLE _sima_codec_perf_fixture_rv
+)
+if (NOT _sima_codec_perf_fixture_rv EQUAL 0)
+  message(FATAL_ERROR \"failed to prepare codec perf test fixtures\")
+endif()
 "
   COMPONENT extras
 )
@@ -1925,6 +2044,11 @@ install(
   COMPONENT extras
 )
 install(
+  DIRECTORY "${CMAKE_BINARY_DIR}/test-assets/codec-perf/"
+  DESTINATION lib/sima-neat/test-assets/codec-perf
+  COMPONENT extras
+)
+install(
   FILES "${CMAKE_SOURCE_DIR}/tools/visualize_graph_run.py"
   DESTINATION lib/sima-neat/tools
   COMPONENT extras
@@ -1936,6 +2060,16 @@ install(
   RENAME runtime_manifest.json
 )
 
+install(
+  FILES "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_genai_models.sh"
+  DESTINATION share/sima-neat/tests/tools
+  PERMISSIONS
+    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE
+    WORLD_READ WORLD_EXECUTE
+  COMPONENT extras
+)
+
 # Keep decoder/media E2E tests bounded. These paths can hang in GStreamer
 # teardown when the codec stack is unhealthy.
 set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
@@ -1944,6 +2078,8 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   decoder_quality_compare_test
   decoder_visible_caps_test
   file_read_test
+  codec_decode_accuracy_test
+  codec_runtime_stream_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test
