@@ -229,6 +229,25 @@ endfunction()
 # ------------------------------------------------------------------------------
 # Unit tests (1:1 cpp mapping)
 # ------------------------------------------------------------------------------
+add_executable(
+  unit_000_devkit_package_inventory_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_000_devkit_package_inventory_test.cpp
+)
+target_link_libraries(unit_000_devkit_package_inventory_test
+  PRIVATE sima_neat sima_neat_internal_headers
+)
+target_include_directories(unit_000_devkit_package_inventory_test
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
+add_test(NAME unit_000_devkit_package_inventory_test COMMAND unit_000_devkit_package_inventory_test)
+simaneat_append_ctest_env(unit_000_devkit_package_inventory_test)
+set_tests_properties(unit_000_devkit_package_inventory_test PROPERTIES SKIP_RETURN_CODE 77)
+set_property(TEST unit_000_devkit_package_inventory_test APPEND PROPERTY
+  LABELS "unit;devkit-package-inventory")
+
 set(UNIT_TESTS
   unit_builder_test
   unit_caps_bridge_test
