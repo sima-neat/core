@@ -8227,8 +8227,11 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
           "Model::Options.num_classes; observed [" +
           boxdecode_tensor_order_summary_local(*contract) + "].");
     }
-    finalized.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
-    finalized.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+    // Grouped DFL describes tensor arrangement, not score domain.  Preserve
+    // the domain inferred from semantic names/quantization (class_prob versus
+    // class_logit) instead of forcing every grouped YOLO route through a
+    // second sigmoid.
+    pipeline_internal::sima::stagesemantics::resolve_grouped_yolo_dfl_score_domain(&finalized);
   }
 
   return pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(finalized);

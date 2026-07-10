@@ -24,6 +24,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -133,17 +134,21 @@ void validate_raw_boxes(const std::vector<uint8_t>& bytes, const cv::Mat& image,
   const int tolerance_px = 4;
   const uint8_t* base = bytes.data() + sizeof(header);
   int valid_boxes = 0;
+  float previous_score = std::numeric_limits<float>::infinity();
   for (uint32_t i = 0; i < header; ++i) {
     RawBox box{};
     std::memcpy(&box, base + i * sizeof(RawBox), sizeof(box));
 
     require(std::isfinite(box.score), label + ": bbox score is not finite");
+    require(box.score <= previous_score,
+            label + ": bbox output is not globally confidence-descending");
+    previous_score = box.score;
     if (box.score < cfg.min_score)
       continue;
 
     const int64_t x2 = static_cast<int64_t>(box.x) + static_cast<int64_t>(box.w);
     const int64_t y2 = static_cast<int64_t>(box.y) + static_cast<int64_t>(box.h);
-    require(box.w >= 0 && box.h >= 0, label + ": bbox has negative extent");
+    require(box.w > 0 && box.h > 0, label + ": bbox must have positive extent");
     require(box.x >= -tolerance_px && box.y >= -tolerance_px,
             label + ": bbox origin is outside the current frame");
     require(x2 <= static_cast<int64_t>(image.cols + tolerance_px) &&

@@ -580,6 +580,40 @@ void populate_boxdecode_node_contract_common(
 
 } // namespace
 
+void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract) {
+  if (!contract) {
+    throw std::invalid_argument("YOLO BoxDecode score-domain resolution requires a contract");
+  }
+
+  switch (contract->decode_type_option) {
+  case BoxDecodeTypeOption::GroupedByRoleProbability:
+    contract->score_activation = BoxDecodeScoreActivation::Identity;
+    return;
+  case BoxDecodeTypeOption::GroupedByRoleLogit:
+    contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
+    return;
+  case BoxDecodeTypeOption::Auto:
+  case BoxDecodeTypeOption::GroupedByRole:
+    break;
+  default:
+    throw std::runtime_error(
+        "YOLO BoxDecode grouped DFL outputs require a grouped-by-role decode_type_option");
+  }
+
+  switch (contract->score_activation) {
+  case BoxDecodeScoreActivation::Identity:
+    contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
+    return;
+  case BoxDecodeScoreActivation::Sigmoid:
+    contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+    return;
+  case BoxDecodeScoreActivation::Unknown:
+    throw std::runtime_error(
+        "YOLO BoxDecode grouped DFL score domain is ambiguous; declare class_prob/class_logit "
+        "tensor semantics or set an explicit probability/logit decode_type_option");
+  }
+}
+
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
     const std::optional<ModelBoxdecodeSemantics>& model_semantics,
