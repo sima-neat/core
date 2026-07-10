@@ -348,6 +348,10 @@ struct VisionLanguageModel::Impl {
         vlm_helper->get_tokenizer(),
         [this](const std::string& metric, double value) { record_metric(metric, value); },
         [](const std::string&, bool, bool) {});
+    tool_call_format = simaai::llima::tool_call_format_for_model(cfg.model_type);
+    preserved_tool_call_tokens = simaai::llima::resolve_tool_call_special_tokens(
+        tool_call_format, *vlm_helper->get_tokenizer());
+    text_streamer->set_preserved_token_ids(preserved_tool_call_tokens);
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
         vlm_helper->get_pad_token_id(), *text_streamer, true);
@@ -365,6 +369,7 @@ struct VisionLanguageModel::Impl {
     reset_metrics();
     configure_run_callbacks();
 
+    const bool parse_tools = internal::tool_calls_enabled(request);
     auto output_token_ids = generate_tokens(request);
 
     GenerationResult result;
@@ -375,12 +380,16 @@ struct VisionLanguageModel::Impl {
     }
 
     result.metrics.generated_tokens = static_cast<std::uint32_t>(output_token_ids->size());
-    result.text = vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
-    if (internal::tool_calls_enabled(request)) {
+    result.text = parse_tools
+        ? simaai::llima::decode_tool_call_output(
+              *vlm_helper->get_tokenizer(), output_token_ids.value(), preserved_tool_call_tokens)
+        : vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
+    if (parse_tools) {
       auto tool_calls = simaai::llima::try_parse_tool_calls(
-          result.text, tool_names_from_definitions(request.tools));
+          tool_call_format, result.text, tool_names_from_definitions(request.tools));
       if (!tool_calls.is_null()) {
         result.tool_calls = std::move(tool_calls);
+        result.text.clear();
       }
     }
     result.finish_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
@@ -388,6 +397,7 @@ struct VisionLanguageModel::Impl {
   }
 
   std::optional<std::vector<uint32_t>> generate_tokens(const GenerationRequest& request) {
+    text_streamer->set_tool_call_enabled(internal::tool_calls_enabled(request));
     simaai::llima::ChronoTimer timer_ttft{true};
     auto prepared = prepare_input(request);
     auto vision_ofm_maps = language_model->create_input_buffers(prepared.input_token_ids);
@@ -557,6 +567,9 @@ struct VisionLanguageModel::Impl {
   std::string bos_token;
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
   std::unique_ptr<simaai::llima::TextStreamer> text_streamer;
+  simaai::llima::ToolCallFormat tool_call_format =
+      simaai::llima::ToolCallFormat::GenericJson;
+  simaai::llima::PreservedToolCallTokens preserved_tool_call_tokens;
   std::unique_ptr<simaai::llima::LanguageModel> language_model;
   std::unique_ptr<simaai::llima::ImageProcessor> image_processor;
   std::unique_ptr<simaai::llima::VisionModel> vision_model;
@@ -637,7 +650,7 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
             });
         const bool parse_tools = internal::tool_calls_enabled(request);
         simaai::llima::ToolCallStreamParser tool_parser(
-            tool_names_from_definitions(request.tools));
+            model->tool_call_format, tool_names_from_definitions(request.tools));
         bool emitted_tool_calls = false;
         auto handle_tool_parser_events =
             [&producer, &emitted_tool_calls](
@@ -666,7 +679,6 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
               }
               producer.record_text(text, stream_end);
             });
-
         auto output_token_ids = model->generate_tokens(request);
         std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
         if (parse_tools && output_token_ids.has_value()) {
