@@ -202,8 +202,9 @@ int main() {
       gst_sample_unref(gst_sample);
       holder_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
       holder_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
-      holder_sample.input_seq = 0;
-      holder_sample.orig_input_seq = 0;
+      // Differ from the pooled buffer metadata so the push path must create a writable clone.
+      holder_sample.input_seq = 1;
+      holder_sample.orig_input_seq = 1;
 
       auto gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
       std::string loan_error;
@@ -250,6 +251,14 @@ int main() {
       require(gate->inflight() == 1,
               "downstream transfer buffer should retain the input holder loan");
       GstBuffer* transfer_buffer = gst_sample_get_buffer(pulled);
+      GstCustomMeta* transfer_meta = gst_buffer_get_custom_meta(transfer_buffer, "GstSimaMeta");
+      GstStructure* transfer_structure =
+          transfer_meta ? gst_custom_meta_get_structure(transfer_meta) : nullptr;
+      gint64 transfer_input_seq = -1;
+      require(transfer_structure &&
+                  gst_structure_get_int64(transfer_structure, "input-seq", &transfer_input_seq) &&
+                  transfer_input_seq == 1,
+              "zero-copy transfer should contain the updated metadata from the writable clone");
       GstParentBufferMeta* parent_meta = gst_buffer_get_parent_buffer_meta(transfer_buffer);
       require(parent_meta != nullptr && parent_meta->buffer == expected_parent,
               "zero-copy transfer should retain the original pooled buffer as its parent");
