@@ -113,6 +113,75 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
+    simaai::neat::runtime::ExecutionGraphPlan plan;
+    plan.port_names.push_back("small");
+    plan.port_names.push_back("large");
+    simaai::neat::runtime::PipelineSegmentPlan segment;
+    segment.id = 8;
+    segment.input_edges = {0};
+    simaai::neat::runtime::FragmentBoundaryHints hints;
+    hints.ingress_endpoint_names.push_back("small");
+    hints.ingress_endpoint_names.push_back("large");
+    simaai::neat::InputOptions small;
+    small.max_width = 640;
+    small.max_height = 480;
+    small.max_depth = 3;
+    simaai::neat::InputOptions large = small;
+    large.max_width = 1920;
+    large.max_height = 1080;
+    hints.ingress_inputs.push_back(small);
+    hints.ingress_inputs.push_back(large);
+    segment.boundary_hints = std::move(hints);
+    plan.pipeline_segments.push_back(std::move(segment));
+
+    simaai::neat::runtime::EdgePlan edge;
+    edge.to_port = 1;
+    edge.spec.width = 1280;
+    edge.spec.height = 720;
+    edge.spec.depth = 3;
+    edge.spec_complete = true;
+    plan.edges.push_back(std::move(edge));
+
+    simaai::neat::runtime::validate_static_connected_input_capacities(plan);
+  }
+
+  {
+    simaai::neat::runtime::ExecutionGraphPlan plan;
+    plan.port_names.push_back("large");
+    plan.port_names.push_back("small");
+    simaai::neat::runtime::PipelineSegmentPlan segment;
+    segment.id = 9;
+    segment.input_edges = {0};
+    simaai::neat::runtime::FragmentBoundaryHints hints;
+    hints.ingress_endpoint_names.push_back("large");
+    hints.ingress_endpoint_names.push_back("small");
+    simaai::neat::InputOptions large;
+    large.max_width = 1920;
+    large.max_height = 1080;
+    large.max_depth = 3;
+    simaai::neat::InputOptions small = large;
+    small.max_width = 640;
+    small.max_height = 480;
+    hints.ingress_inputs.push_back(large);
+    hints.ingress_inputs.push_back(small);
+    segment.boundary_hints = std::move(hints);
+    plan.pipeline_segments.push_back(std::move(segment));
+
+    simaai::neat::runtime::EdgePlan edge;
+    edge.to_port = 1;
+    edge.spec.width = 800;
+    edge.spec.height = 480;
+    edge.spec.depth = 3;
+    edge.spec_complete = true;
+    plan.edges.push_back(std::move(edge));
+
+    require_throws_contains(
+        [&] { simaai::neat::runtime::validate_static_connected_input_capacities(plan); },
+        "input width 800 exceeds configured capacity 640",
+        "each connected source shape should use its matching ingress capacity");
+  }
+
+  {
     simaai::neat::Graph empty;
     auto sink = output_fragment();
     simaai::neat::Graph app;

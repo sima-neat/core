@@ -1987,9 +1987,31 @@ void apply_public_fragment_metadata(
   }
 }
 
-const InputOptions* ingress_options_for_segment(const PipelineSegmentPlan& segment) {
+const InputOptions* ingress_options_for_segment_edge(const ExecutionGraphPlan& plan,
+                                                     const PipelineSegmentPlan& segment,
+                                                     std::size_t edge_index,
+                                                     std::size_t ingress_index) {
   if (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty()) {
-    return &segment.boundary_hints->ingress_inputs.front();
+    const auto& hints = *segment.boundary_hints;
+    if (edge_index < plan.edges.size()) {
+      const graph::PortId to_port = plan.edges[edge_index].to_port;
+      if (to_port != graph::kInvalidPort && to_port < plan.port_names.size()) {
+        const std::string& port_name = plan.port_names[to_port];
+        const auto match = std::find(hints.ingress_endpoint_names.begin(),
+                                     hints.ingress_endpoint_names.end(), port_name);
+        if (match != hints.ingress_endpoint_names.end()) {
+          const std::size_t matched_index =
+              static_cast<std::size_t>(match - hints.ingress_endpoint_names.begin());
+          if (matched_index < hints.ingress_inputs.size()) {
+            return &hints.ingress_inputs[matched_index];
+          }
+        }
+      }
+    }
+    if (ingress_index < hints.ingress_inputs.size()) {
+      return &hints.ingress_inputs[ingress_index];
+    }
+    return nullptr;
   }
   for (const auto& node : segment.nodes) {
     if (const auto* input = dynamic_cast<const simaai::neat::Input*>(node.get())) {
@@ -2033,32 +2055,39 @@ void collect_static_ingress_specs(const ExecutionGraphPlan& plan, std::size_t ed
 
 void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& plan) {
   for (const auto& segment : plan.pipeline_segments) {
-    const InputOptions* options = ingress_options_for_segment(segment);
-    if (!options || segment.input_edges.empty()) {
+    if (segment.input_edges.empty()) {
       continue;
     }
 
-    std::unordered_set<std::size_t> visited;
-    std::vector<const OutputSpec*> specs;
-    for (std::size_t edge_index : segment.input_edges) {
-      collect_static_ingress_specs(plan, edge_index, &visited, &specs);
-    }
-
-    const auto validate = [&](const char* dimension, int actual, int configured_max) {
+    const auto validate = [&](const char* dimension, int actual, int configured_max,
+                              std::size_t ingress_index) {
       const int capacity = configured_max > 0 ? configured_max : -1;
       if (actual <= 0 || capacity <= 0 || actual <= capacity) {
         return;
       }
-      const std::string where = "compile_public_graph: segment " + std::to_string(segment.id);
+      const std::string where = "compile_public_graph: segment " + std::to_string(segment.id) +
+                                " ingress " + std::to_string(ingress_index);
       throw std::invalid_argument(
           pipeline_internal::shape_limit_exceeded_message(where, dimension, actual, capacity) +
           ". Fix: " + pipeline_internal::shape_limit_fix_hint(dimension, actual));
     };
 
-    for (const OutputSpec* spec : specs) {
-      validate("width", spec->width, options->max_width);
-      validate("height", spec->height, options->max_height);
-      validate("depth", spec->depth, options->max_depth);
+    for (std::size_t ingress_index = 0; ingress_index < segment.input_edges.size();
+         ++ingress_index) {
+      const std::size_t edge_index = segment.input_edges[ingress_index];
+      const InputOptions* options =
+          ingress_options_for_segment_edge(plan, segment, edge_index, ingress_index);
+      if (!options) {
+        continue;
+      }
+      std::unordered_set<std::size_t> visited;
+      std::vector<const OutputSpec*> specs;
+      collect_static_ingress_specs(plan, edge_index, &visited, &specs);
+      for (const OutputSpec* spec : specs) {
+        validate("width", spec->width, options->max_width, ingress_index);
+        validate("height", spec->height, options->max_height, ingress_index);
+        validate("depth", spec->depth, options->max_depth, ingress_index);
+      }
     }
   }
 }
