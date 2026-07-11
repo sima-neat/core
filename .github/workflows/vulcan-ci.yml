@@ -433,9 +433,9 @@ jobs:
               -e "s#(add_test\\((genai_vlm_run_test|genai_graph_vlm_run_test|genai_asr_run_test|genai_graph_asr_run_test|genai_server_http_test)[[:space:]]+\"[^\"]+\"[[:space:]]+)\"[^\"]+\"#\\1\"${TEST_ASSETS_ROOT}\"#g" \
               "${f}"
           done
-          if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+          if grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
             echo "Unresolved build-tree paths after CTest rebasing:" >&2
-            rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
+            grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
             echo "CTEST path rebasing incomplete; stale absolute paths remain." >&2
             exit 1
           fi
