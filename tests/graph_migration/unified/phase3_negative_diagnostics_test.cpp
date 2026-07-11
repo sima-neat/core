@@ -362,6 +362,15 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
+    simaai::neat::Graph app;
+    app.connect(simaai::neat::nodes::CameraInput(), simaai::neat::nodes::Output("left_preview"));
+    app.connect(simaai::neat::nodes::CameraInput(), simaai::neat::nodes::Output("right_preview"));
+    const auto report = app.validate();
+    require(report.error_code.empty(),
+            "independent CameraInput paths may share the public default buffer_name");
+  }
+
+  {
     auto mixed = mixed_live_and_finite_source_fragment();
     auto sink = push_passthrough_fragment("finite", "classes");
     simaai::neat::Graph app;

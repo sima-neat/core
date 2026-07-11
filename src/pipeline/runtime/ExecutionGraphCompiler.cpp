@@ -1449,9 +1449,14 @@ std::string normalized_edge_stream_id(const NormalizedCompositionEdge& edge) {
   return edge.link_options.stream_id;
 }
 
+template <typename Edges>
 void validate_unique_source_buffer_names(
-    std::span<const std::shared_ptr<simaai::neat::Node>> vertices) {
-  std::unordered_map<std::string, std::string> owner_by_buffer_name;
+    std::span<const std::shared_ptr<simaai::neat::Node>> vertices, const Edges& edges) {
+  struct SourceIdentity {
+    std::size_t vertex = 0;
+    std::string label;
+  };
+  std::unordered_map<std::string, std::vector<SourceIdentity>> sources_by_buffer_name;
   for (std::size_t i = 0; i < vertices.size(); ++i) {
     const auto& node = vertices[i];
     if (!node || node->input_role() != InputRole::Source) {
@@ -1465,13 +1470,55 @@ void validate_unique_source_buffer_names(
     if (label.empty()) {
       label = node->kind() + "@" + std::to_string(i);
     }
-    auto [it, inserted] = owner_by_buffer_name.emplace(buffer_name, label);
-    if (!inserted) {
-      throw std::runtime_error(
-          "compile_public_graph: duplicate source buffer_name '" + buffer_name + "' for '" +
-          it->second + "' and '" + label +
-          "'. Multi-source graphs must stamp a unique buffer_name before Branch/FanOut so "
-          "downstream CVU/MLA/preprocess metadata is unambiguous.");
+    sources_by_buffer_name[buffer_name].push_back(SourceIdentity{.vertex = i, .label = label});
+  }
+
+  std::vector<std::vector<std::size_t>> outgoing(vertices.size());
+  for (const auto& edge : edges) {
+    if (edge.from < outgoing.size() && edge.to < outgoing.size()) {
+      outgoing[edge.from].push_back(edge.to);
+    }
+  }
+  const auto reachable_from = [&](std::size_t source) {
+    std::vector<bool> reachable(vertices.size(), false);
+    std::vector<std::size_t> pending{source};
+    while (!pending.empty()) {
+      const std::size_t current = pending.back();
+      pending.pop_back();
+      for (const std::size_t next : outgoing[current]) {
+        if (!reachable[next]) {
+          reachable[next] = true;
+          pending.push_back(next);
+        }
+      }
+    }
+    return reachable;
+  };
+
+  for (const auto& [buffer_name, sources] : sources_by_buffer_name) {
+    std::vector<std::vector<bool>> reachable;
+    reachable.reserve(sources.size());
+    for (const auto& source : sources) {
+      reachable.push_back(reachable_from(source.vertex));
+    }
+    for (std::size_t left = 0; left < sources.size(); ++left) {
+      for (std::size_t right = left + 1U; right < sources.size(); ++right) {
+        bool converges = false;
+        for (std::size_t vertex = 0; vertex < vertices.size(); ++vertex) {
+          if (reachable[left][vertex] && reachable[right][vertex]) {
+            converges = true;
+            break;
+          }
+        }
+        if (!converges) {
+          continue;
+        }
+        throw std::runtime_error(
+            "compile_public_graph: duplicate source buffer_name '" + buffer_name + "' for '" +
+            sources[left].label + "' and '" + sources[right].label +
+            "' on converging graph paths. Multi-source graphs must stamp a unique buffer_name "
+            "before Branch/FanOut so downstream CVU/MLA/preprocess metadata is unambiguous.");
+      }
     }
   }
 }
@@ -2172,7 +2219,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   const auto total_start = pipeline_internal::build_timing_now();
   const auto view = public_graph.composition_view_for_internal_compile();
   (void)view.groups;
-  validate_unique_source_buffer_names(view.vertices);
+  validate_unique_source_buffer_names(view.vertices, view.edges);
 
   ExecutionGraphPlan empty_plan;
   empty_plan.linear_compat = true;
