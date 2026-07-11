@@ -168,15 +168,17 @@ const gchar* memory_allocator_name(const GstMemory* memory) {
   return memory->allocator->mem_type;
 }
 
-bool memory_is_neat_simaai_segment(const GstMemory* memory) {
-  return g_strcmp0(memory_allocator_name(memory), "NeatSimaaiSegmentMemory") == 0;
+bool memory_is_simaai_segment(const GstMemory* memory) {
+  const gchar* allocator_name = memory_allocator_name(memory);
+  return g_strcmp0(allocator_name, "SimaaiSegmentMemory") == 0 ||
+         g_strcmp0(allocator_name, "NeatSimaaiSegmentMemory") == 0;
 }
 
-bool memory_is_ev74_neat_simaai(const GstMemory* memory) {
-  return memory_is_ev74_simaai(memory) && memory_is_neat_simaai_segment(memory);
+bool memory_is_ev74_simaai_segment(const GstMemory* memory) {
+  return memory_is_ev74_simaai(memory) && memory_is_simaai_segment(memory);
 }
 
-bool buffer_is_ev74_neat_simaai(GstBuffer* buffer) {
+bool buffer_is_ev74_simaai_segment(GstBuffer* buffer) {
   if (!buffer)
     return false;
   const guint n = gst_buffer_n_memory(buffer);
@@ -184,14 +186,14 @@ bool buffer_is_ev74_neat_simaai(GstBuffer* buffer) {
     return false;
   for (guint i = 0; i < n; ++i) {
     GstMemory* mem = gst_buffer_peek_memory(buffer, i);
-    if (!memory_is_ev74_neat_simaai(mem))
+    if (!memory_is_ev74_simaai_segment(mem))
       return false;
   }
   return true;
 }
 
-bool buffer_is_single_ev74_neat_simaai(GstBuffer* buffer) {
-  return buffer && gst_buffer_n_memory(buffer) == 1 && buffer_is_ev74_neat_simaai(buffer);
+bool buffer_is_single_ev74_simaai_segment(GstBuffer* buffer) {
+  return buffer && gst_buffer_n_memory(buffer) == 1 && buffer_is_ev74_simaai_segment(buffer);
 }
 
 bool flush_buffer_segment_for_device(GstNeatCameraMemoryBridge* self, GstBuffer* buffer) {
@@ -648,14 +650,14 @@ GstFlowReturn bridge_chain(GstPad* /*pad*/, GstObject* parent, GstBuffer* input)
     return GST_FLOW_ERROR;
 
   GstBuffer* out = nullptr;
-  if (buffer_is_single_ev74_neat_simaai(input)) {
+  if (buffer_is_single_ev74_simaai_segment(input)) {
     out = stamp_passthrough_buffer(self, input);
     if (!out)
       return GST_FLOW_ERROR;
     return gst_pad_push(self->srcpad, out);
   }
 
-  if (buffer_is_ev74_neat_simaai(input) && debug_enabled(self)) {
+  if (buffer_is_ev74_simaai_segment(input) && debug_enabled(self)) {
     GST_INFO_OBJECT(self,
                     "copying multi-memory EV74 camera buffer into one packed EV74 buffer "
                     "(memories=%u); current preproc ABI consumes one input_image span",

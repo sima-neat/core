@@ -1586,8 +1586,9 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
         }
         core->graph_restore_stream_id_if_needed(i, sample);
-        pipeline_internal::release_realtime_frame_credits_for_sample(sample,
-                                                                     "graph-pipeline-output");
+        // A pipeline output is an internal forwarding boundary, not final consumption. Keep
+        // realtime and holder credits attached until a terminal pull, drop, or closed sink owns
+        // the corresponding release.
         simaai::neat::graph::log_first_decoded_once(sample, pipe.seg.id);
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("pipeline_pull", sample);
