@@ -7326,7 +7326,8 @@ bool Model::Runner::push(const simaai::neat::Sample& inputs) {
 }
 
 simaai::neat::Sample Model::Runner::pull(int timeout_ms) {
-  return run_.pull_samples(timeout_ms);
+  auto output = run_.pull(timeout_ms);
+  return output.has_value() ? std::move(*output) : simaai::neat::Sample{};
 }
 
 #if defined(SIMA_WITH_OPENCV)
