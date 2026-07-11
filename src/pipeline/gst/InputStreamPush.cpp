@@ -557,11 +557,28 @@ bool complete_tight_video_spec_for_buffer(SampleSpec* spec, std::size_t buffer_b
   return true;
 }
 
-bool complete_video_spec_from_meta(SampleSpec* spec, const GstVideoMeta* meta,
-                                   std::size_t buffer_bytes) {
-  if (!spec || !meta || spec->kind != SampleMediaKind::RawVideo || meta->n_planes == 0U ||
-      meta->n_planes > GST_VIDEO_MAX_PLANES) {
+bool complete_video_spec_from_meta(SampleSpec* spec, GstBuffer* buffer, const GstVideoMeta* meta) {
+  if (!spec || !buffer || !meta || spec->kind != SampleMediaKind::RawVideo ||
+      meta->n_planes == 0U || meta->n_planes > GST_VIDEO_MAX_PLANES) {
     return false;
+  }
+  const std::size_t buffer_bytes = static_cast<std::size_t>(gst_buffer_get_size(buffer));
+  const guint memory_count = gst_buffer_n_memory(buffer);
+  bool offsets_are_per_memory = false;
+  if (memory_count >= meta->n_planes) {
+    std::size_t merged_memory_offset = 0U;
+    for (guint i = 0; i < meta->n_planes; ++i) {
+      if (i > 0U && static_cast<std::size_t>(meta->offset[i]) < merged_memory_offset) {
+        offsets_are_per_memory = true;
+        break;
+      }
+      GstMemory* memory = gst_buffer_peek_memory(buffer, i);
+      if (!memory) {
+        break;
+      }
+      merged_memory_offset +=
+          static_cast<std::size_t>(gst_memory_get_sizes(memory, nullptr, nullptr));
+    }
   }
   spec->width = static_cast<int>(meta->width);
   spec->height = static_cast<int>(meta->height);
@@ -572,9 +589,21 @@ bool complete_video_spec_from_meta(SampleSpec* spec, const GstVideoMeta* meta,
   spec->planes.reserve(meta->n_planes);
   for (guint i = 0; i < meta->n_planes; ++i) {
     const std::size_t begin = static_cast<std::size_t>(meta->offset[i]);
+    std::size_t plane_span = buffer_bytes;
+    if (offsets_are_per_memory) {
+      GstMemory* memory = gst_buffer_peek_memory(buffer, i);
+      if (!memory) {
+        spec->planes.clear();
+        return false;
+      }
+      plane_span = static_cast<std::size_t>(gst_memory_get_sizes(memory, nullptr, nullptr));
+    }
     const std::size_t end =
-        i + 1U < meta->n_planes ? static_cast<std::size_t>(meta->offset[i + 1U]) : buffer_bytes;
-    if (end < begin || end > buffer_bytes || meta->stride[i] <= 0) {
+        offsets_are_per_memory
+            ? plane_span
+            : (i + 1U < meta->n_planes ? static_cast<std::size_t>(meta->offset[i + 1U])
+                                       : buffer_bytes);
+    if (end < begin || end > plane_span || meta->stride[i] <= 0) {
       spec->planes.clear();
       return false;
     }
@@ -1106,8 +1135,7 @@ bool push_holder_transport(
   if (metadata_spec && metadata_spec->kind == SampleMediaKind::RawVideo) {
     if (const GstVideoMeta* video_meta = gst_buffer_get_video_meta(buf)) {
       completed_video_spec = *metadata_spec;
-      if (complete_video_spec_from_meta(&*completed_video_spec, video_meta,
-                                        static_cast<std::size_t>(gst_buffer_get_size(buf)))) {
+      if (complete_video_spec_from_meta(&*completed_video_spec, buf, video_meta)) {
         metadata_spec = &*completed_video_spec;
       }
     }

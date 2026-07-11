@@ -38,8 +38,13 @@ def main() -> None:
         ("sima-neat", "sima-lmm-core"),
         ("sima-neat-dev", "sima-lmm-dev"),
     ):
-        if consumer not in dependencies or dependency not in versions:
+        if consumer not in dependencies:
             continue
+        if dependency not in versions:
+            raise SystemExit(
+                f"Incomplete package bundle: {consumer} is staged but its local dependency "
+                f"{dependency} is missing"
+            )
         local_version = versions[dependency]
         relations = re.findall(
             rf"(?:^|,\s*){re.escape(dependency)}\s*"
