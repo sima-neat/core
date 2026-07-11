@@ -437,9 +437,9 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::string key = std::to_string(from) + ":" + std::to_string(to) + ":" +
                             std::to_string(static_cast<int>(kind)) + ":" + from_port + ":" +
-                            to_port + ":" + std::to_string(static_cast<int>(link_options.policy)) +
-                            ":" + stream_id + ":" +
-                            std::to_string(static_cast<int>(combine_policy));
+                            to_port + ":" + from_endpoint + ":" + to_endpoint + ":" +
+                            std::to_string(static_cast<int>(link_options.policy)) + ":" +
+                            stream_id + ":" + std::to_string(static_cast<int>(combine_policy));
     if (!emitted_edges.insert(key).second) {
       return;
     }

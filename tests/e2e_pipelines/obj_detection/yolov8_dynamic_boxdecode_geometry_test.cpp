@@ -306,8 +306,7 @@ int main(int argc, char** argv) {
     }
     return 0;
   } catch (const SkipTest& e) {
-    std::cerr << "[ERR] prerequisite unavailable: " << e.what() << "\n";
-    return 1;
+    return skip_long_test(e.what());
   } catch (const std::exception& e) {
     std::cerr << "[ERR] " << e.what() << "\n";
     return 1;

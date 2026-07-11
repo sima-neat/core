@@ -293,6 +293,34 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
   }
 
   {
+    // Logical endpoint names are part of edge identity even when both paths share the same
+    // FanOut source node, target node, physical ports, and link options.
+    simaai::neat::Graph source("shared_source");
+    source.add(simaai::neat::nodes::Custom(
+        "videotestsrc num-buffers=1 ! video/x-raw,format=NV12,width=16,height=16,framerate=1/1",
+        simaai::neat::InputRole::Source));
+    source.add(simaai::neat::nodes::CapsRaw("NV12", 16, 16, 1, simaai::neat::CapsMemory::Any));
+    simaai::neat::Graph branch = simaai::neat::graphs::Branch("source", {"left_out", "right_out"});
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"left_in", "right_in"}, "combined",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    simaai::neat::Graph sink("combined");
+    sink.add(simaai::neat::nodes::Input("combined"));
+    sink.add(simaai::neat::nodes::Output("out"));
+
+    simaai::neat::Graph app("same_runtime_node_endpoint_round_robin");
+    app.connect(rr, sink);
+    app.connect(source, branch);
+    app.connect("left_out", "left_in");
+    app.connect("right_out", "right_in");
+
+    const std::string backend = app.describe_backend(false);
+    require_contains(backend, "StreamScheduler",
+                     "Endpoint-distinct edges should retain RoundRobin fan-in");
+    require_contains(backend, ":left_in", "RoundRobin should retain the left logical endpoint");
+    require_contains(backend, ":right_in", "RoundRobin should retain the right logical endpoint");
+  }
+
+  {
     simaai::neat::Graph join = simaai::neat::graphs::Combine({"left", "right"}, "combined",
                                                              simaai::neat::CombinePolicy::ByFrame);
     simaai::neat::Run run = join.build();
