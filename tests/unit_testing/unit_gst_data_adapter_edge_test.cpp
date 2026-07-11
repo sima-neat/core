@@ -100,4 +100,45 @@ RUN_TEST(
               "derive_field_spec should succeed for valid tensor field");
       require(!field_spec.caps_string.empty(),
               "derive_field_spec should produce non-empty caps_string");
+
+      {
+        GstBuffer* source = gst_buffer_new_allocate(nullptr, 24U, nullptr);
+        require(source != nullptr, "failed to allocate preprocess metadata source buffer");
+        PreprocessRuntimeMeta preprocess;
+        preprocess.original_width = 1920;
+        preprocess.original_height = 1080;
+        preprocess.resized_width = 640;
+        preprocess.resized_height = 360;
+        preprocess.pad_top = 140;
+        preprocess.pad_bottom = 140;
+        preprocess.roi_list_enabled = true;
+        preprocess.roi_capacity = 4;
+        preprocess.roi_valid_count = 2;
+        require(write_simaai_preprocess_meta(source, preprocess),
+                "failed to attach source preprocess metadata");
+
+        GstBuffer* retained_source = gst_buffer_ref(source);
+        GstBuffer* writable_view = source;
+        SampleSpec view_spec;
+        view_spec.kind = SampleMediaKind::Tensor;
+        view_spec.required_bytes_actual = 24U;
+        std::string writable_error;
+        require(ensure_writable_for_meta(&writable_view, view_spec, "preprocess preservation test",
+                                         &writable_error),
+                writable_error.empty() ? "failed to create writable metadata view"
+                                       : writable_error.c_str());
+        require(writable_view != retained_source,
+                "shared source should produce a distinct writable metadata view");
+        const auto copied = read_simaai_preprocess_meta(writable_view);
+        require(copied.has_value(), "writable view lost preprocess metadata");
+        require(copied->original_width == 1920 && copied->original_height == 1080,
+                "writable view lost original preprocess geometry");
+        require(copied->pad_top == 140 && copied->pad_bottom == 140,
+                "writable view lost preprocess padding");
+        require(copied->roi_list_enabled && copied->roi_capacity == 4 &&
+                    copied->roi_valid_count == 2,
+                "writable view lost preprocess ROI metadata");
+        gst_buffer_unref(writable_view);
+        gst_buffer_unref(retained_source);
+      }
     }));
