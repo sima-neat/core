@@ -483,16 +483,20 @@ bool stamp_sima_meta(GstNeatCameraMemoryBridge* self, GstBuffer* buffer, guint64
   const std::string buffer_name =
       (passthrough && old.has_buffer_name) ? old.buffer_name : bridge_buffer_name(self);
   const gint64 buffer_offset = (passthrough && old.has_buffer_offset) ? old.buffer_offset : 0;
-  const std::string stream_id = old.has_stream_id ? old.stream_id : std::string("0");
   const guint64 timestamp = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))
                                 ? static_cast<guint64>(GST_BUFFER_PTS(buffer))
                                 : static_cast<guint64>(0);
   gst_structure_set(s, "buffer-id", G_TYPE_INT64, buffer_id, "buffer-name", G_TYPE_STRING,
-                    buffer_name.c_str(), "buffer-offset", G_TYPE_INT64, buffer_offset, "stream-id",
-                    G_TYPE_STRING, stream_id.c_str(), "frame-id", G_TYPE_INT64, frame_id,
-                    "orig-input-seq", G_TYPE_INT64, frame_id, "timestamp", G_TYPE_UINT64, timestamp,
-                    "origin_stage_id", G_TYPE_STRING, buffer_name.c_str(), "origin_output_slot",
-                    G_TYPE_INT, 0, nullptr);
+                    buffer_name.c_str(), "buffer-offset", G_TYPE_INT64, buffer_offset, "frame-id",
+                    G_TYPE_INT64, frame_id, "orig-input-seq", G_TYPE_INT64, frame_id, "timestamp",
+                    G_TYPE_UINT64, timestamp, "origin_stage_id", G_TYPE_STRING, buffer_name.c_str(),
+                    "origin_output_slot", G_TYPE_INT, 0, nullptr);
+  // Preserve a camera-provided identity, but do not invent a shared "0" identity. An empty source
+  // identity is intentionally stamped by the graph edge/port fallback, which is unique per
+  // CameraInput in multi-camera graphs.
+  if (old.has_stream_id) {
+    gst_structure_set(s, "stream-id", G_TYPE_STRING, old.stream_id.c_str(), nullptr);
+  }
   if (old.has_pcie_buffer_id) {
     gst_structure_set(s, "pcie-buffer-id", G_TYPE_INT64, old.pcie_buffer_id, nullptr);
   }
