@@ -1,7 +1,7 @@
 {
   "internals": {
-    "branch": "develop",
-    "spec": "5dc565c093f4"
+    "branch": "codex/internals-libcamera-source",
+    "spec": "55ad0d3a1c21"
   },
   "llima": {
     "policy": "snap"
