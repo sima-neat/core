@@ -884,20 +884,34 @@ bool wrap_holder_buffer_for_zero_copy_loan_transfer(GstBuffer** buffer, const Sa
                              ": failed to retain zero-copy holder parent buffer");
   }
 
+  GstBuffer* loan_lifetime_parent = gst_buffer_new();
+  if (!loan_lifetime_parent) {
+    gst_buffer_unref(transfer);
+    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                             ": failed to allocate loan lifetime parent buffer");
+  }
   bool attached = false;
   if (sample_has_loans) {
-    pipeline_internal::attach_zero_copy_loans_to_gst_buffer(transfer, *sample);
+    pipeline_internal::attach_zero_copy_loans_to_gst_buffer(loan_lifetime_parent, *sample);
     attached = true;
   }
   if (holder_has_loans) {
-    attached =
-        pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(transfer, holder) ||
-        attached;
+    attached = pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(
+                   loan_lifetime_parent, holder) ||
+               attached;
   }
   if (!attached) {
+    gst_buffer_unref(loan_lifetime_parent);
     gst_buffer_unref(transfer);
     return false;
   }
+  if (!gst_buffer_add_parent_buffer_meta(transfer, loan_lifetime_parent)) {
+    gst_buffer_unref(loan_lifetime_parent);
+    gst_buffer_unref(transfer);
+    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                             ": failed to retain zero-copy loan lifetime parent");
+  }
+  gst_buffer_unref(loan_lifetime_parent);
 
   release_input_buffer(*buffer, "InputStream::zero_copy_transfer:loan_source_unref");
   *buffer = transfer;

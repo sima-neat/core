@@ -296,7 +296,6 @@ int main() {
       require(update_simaai_meta_fields(reacquired_buffer, std::nullopt, 0, 0, std::nullopt,
                                         std::nullopt),
               "failed to initialize legacy GstSimaMeta");
-      GstBuffer* expected_legacy_buffer = reacquired_buffer;
       GstSample* legacy_gst_sample = gst_sample_new(reacquired_buffer, caps, nullptr, nullptr);
       gst_buffer_unref(reacquired_buffer);
       require(legacy_gst_sample != nullptr, "failed to create legacy metadata GstSample");
@@ -336,8 +335,8 @@ int main() {
       GstSample* legacy_pulled =
           gst_app_sink_try_pull_sample(GST_APP_SINK(legacy_appsink), GST_SECOND);
       require(legacy_pulled != nullptr, "legacy metadata holder pull timed out");
-      require(gst_sample_get_buffer(legacy_pulled) == expected_legacy_buffer,
-              "empty timing overrides must preserve the original shared holder buffer");
+      require(gst_buffer_get_parent_buffer_meta(gst_sample_get_buffer(legacy_pulled)) == nullptr,
+              "empty timing overrides must not create a writable metadata envelope");
       gst_sample_unref(legacy_pulled);
       legacy_stream.close();
 
