@@ -1,11 +1,17 @@
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/Graph.h"
 #include "pipeline/TensorAdapters.h"
+#include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/InputStream.h"
+#include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/SampleUtil.h"
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "test_utils.h"
 
+#include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
 
 #include <chrono>
@@ -159,16 +165,147 @@ int main() {
     }
 
     {
+      GstCaps* caps = gst_caps_from_string(h264_caps.c_str());
+      require(caps != nullptr, "failed to parse pooled encoded caps");
+
+      GstBufferPool* pool = gst_buffer_pool_new();
+      require(pool != nullptr, "failed to create encoded source buffer pool");
+      GstStructure* config = gst_buffer_pool_get_config(pool);
+      gst_buffer_pool_config_set_params(config, caps, 4U, 1U, 1U);
+      require(gst_buffer_pool_set_config(pool, config),
+              "failed to configure encoded source buffer pool");
+      require(gst_buffer_pool_set_active(pool, TRUE),
+              "failed to activate encoded source buffer pool");
+
+      GstBuffer* source_buffer = nullptr;
+      require(gst_buffer_pool_acquire_buffer(pool, &source_buffer, nullptr) == GST_FLOW_OK,
+              "failed to acquire encoded source buffer");
+      GstBuffer* expected_parent = source_buffer;
+      GstMapInfo map{};
+      require(gst_buffer_map(source_buffer, &map, GST_MAP_WRITE),
+              "failed to map encoded source buffer");
+      const uint8_t payload[] = {0x00, 0x00, 0x01, 0x67};
+      std::memcpy(map.data, payload, sizeof(payload));
+      gst_buffer_unmap(source_buffer, &map);
+      require(gst_buffer_add_custom_meta(source_buffer, "GstSimaMeta") != nullptr,
+              "failed to attach source GstSimaMeta");
+      require(
+          update_simaai_meta_fields(source_buffer, std::nullopt, 0, 0, std::nullopt, std::nullopt),
+          "failed to initialize source GstSimaMeta");
+      require(write_sample_timing_to_gst_buffer(source_buffer, SampleTimingOverrides{}),
+              "failed to initialize source timing metadata");
+
+      GstSample* gst_sample = gst_sample_new(source_buffer, caps, nullptr, nullptr);
+      gst_buffer_unref(source_buffer);
+      require(gst_sample != nullptr, "failed to create pooled encoded GstSample");
+      Sample holder_sample = sample_from_gst_encoded(gst_sample, h264_caps);
+      gst_sample_unref(gst_sample);
+      holder_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
+      holder_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
+      // Differ from the pooled buffer metadata so the push path must create a writable clone.
+      holder_sample.input_seq = 1;
+      holder_sample.orig_input_seq = 1;
+
+      auto gate = std::make_shared<pipeline_internal::HolderLoanGate>(1);
+      std::string loan_error;
+      require(pipeline_internal::attach_zero_copy_loan_to_sample(holder_sample, gate, &loan_error),
+              loan_error.empty() ? "failed to attach zero-copy holder loan" : loan_error.c_str());
+      require(gate->inflight() == 1, "device-backed fixture should acquire one holder loan");
+
+      InputOptions src_opt;
+      src_opt.payload_type = PayloadType::Encoded;
+      src_opt.format = FormatTag::H264;
+      src_opt.caps_override = h264_caps;
+      src_opt.memory_policy = InputMemoryPolicy::Ev74;
+      src_opt.block = true;
+
+      GstElement* pipeline = gst_pipeline_new("zero-copy-parent-lifetime");
+      GstElement* appsrc = gst_element_factory_make("appsrc", "mysrc");
+      GstElement* appsink = gst_element_factory_make("appsink", "mysink");
+      require(pipeline != nullptr && appsrc != nullptr && appsink != nullptr,
+              "failed to create holder transfer test pipeline");
+      g_object_set(appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, "block", TRUE, nullptr);
+      g_object_set(appsink, "sync", FALSE, "max-buffers", 1U, "drop", FALSE, "enable-last-sample",
+                   FALSE, nullptr);
+      gst_app_src_set_caps(GST_APP_SRC(appsrc), caps);
+      gst_bin_add_many(GST_BIN(pipeline), appsrc, appsink, nullptr);
+      require(gst_element_link(appsrc, appsink), "failed to link holder transfer test pipeline");
+      appsrc = gst_bin_get_by_name(GST_BIN(pipeline), "mysrc");
+      appsink = gst_bin_get_by_name(GST_BIN(pipeline), "mysink");
+      require(appsrc != nullptr && appsink != nullptr,
+              "failed to retain holder transfer test elements");
+      require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+              "failed to start holder transfer test pipeline");
+
+      InputStreamOptions stream_opt;
+      stream_opt.copy_input = false;
+      stream_opt.require_device_visible_input = true;
+      InputStream stream =
+          InputStream::create(pipeline, appsrc, appsink, derive_sample_spec_or_throw(holder_sample),
+                              src_opt, stream_opt, {}, nullptr);
+      require(stream.try_push_message(holder_sample), "pooled holder-backed encoded push failed");
+      holder_sample = Sample{};
+
+      GstSample* pulled = gst_app_sink_try_pull_sample(GST_APP_SINK(appsink), GST_SECOND);
+      require(pulled != nullptr, "pooled holder-backed encoded pull timed out");
+      require(gate->inflight() == 1,
+              "downstream transfer buffer should retain the input holder loan");
+      GstBuffer* transfer_buffer = gst_sample_get_buffer(pulled);
+      GstCustomMeta* transfer_meta = gst_buffer_get_custom_meta(transfer_buffer, "GstSimaMeta");
+      GstStructure* transfer_structure =
+          transfer_meta ? gst_custom_meta_get_structure(transfer_meta) : nullptr;
+      gint64 transfer_input_seq = -1;
+      require(transfer_structure &&
+                  gst_structure_get_int64(transfer_structure, "input-seq", &transfer_input_seq) &&
+                  transfer_input_seq == 1,
+              "zero-copy transfer should contain the updated metadata from the writable clone");
+      GstParentBufferMeta* parent_meta = gst_buffer_get_parent_buffer_meta(transfer_buffer);
+      require(parent_meta != nullptr && parent_meta->buffer == expected_parent,
+              "zero-copy transfer should retain the original pooled buffer as its parent");
+
+      GstBufferPoolAcquireParams acquire_params{};
+      acquire_params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
+      GstBuffer* blocked_buffer = nullptr;
+      const GstFlowReturn blocked_flow =
+          gst_buffer_pool_acquire_buffer(pool, &blocked_buffer, &acquire_params);
+      if (blocked_buffer) {
+        gst_buffer_unref(blocked_buffer);
+      }
+      require(blocked_flow != GST_FLOW_OK,
+              "source buffer pool must not reacquire a buffer retained by a zero-copy transfer");
+
+      gst_sample_unref(pulled);
+      stream.close();
+      GstBuffer* reacquired_buffer = nullptr;
+      GstFlowReturn reacquire_flow = GST_FLOW_EOS;
+      for (int attempt = 0; attempt < 100 && reacquire_flow != GST_FLOW_OK; ++attempt) {
+        reacquire_flow = gst_buffer_pool_acquire_buffer(pool, &reacquired_buffer, &acquire_params);
+        if (reacquire_flow != GST_FLOW_OK) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+      }
+      require(reacquire_flow == GST_FLOW_OK,
+              "source buffer should return to its pool after transfer release");
+      require(gate->inflight() == 0,
+              "input holder loan should release with the downstream transfer buffer");
+      gst_buffer_unref(reacquired_buffer);
+      require(gst_buffer_pool_set_active(pool, FALSE),
+              "failed to deactivate encoded source buffer pool");
+      gst_object_unref(pool);
+      gst_caps_unref(caps);
+    }
+
+    {
       Sample holder_sample = sample_from_gst_encoded(h264_gst.get(), h264_caps);
       require_encoded_holder_sample(holder_sample, EncodedSpec::Codec::H264,
                                     "holder-backed encoded input");
 
       Graph p;
       InputOptions src_opt;
-      src_opt.payload_type = simaai::neat::PayloadType::Encoded;
-      src_opt.format = simaai::neat::FormatTag::H264;
+      src_opt.payload_type = PayloadType::Encoded;
+      src_opt.format = FormatTag::H264;
       src_opt.caps_override = h264_caps;
-      src_opt.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
+      src_opt.memory_policy = InputMemoryPolicy::SystemMemory;
       p.add(nodes::Input(src_opt));
       p.custom("fakesink name=encoded_holder_sink sync=false");
 
