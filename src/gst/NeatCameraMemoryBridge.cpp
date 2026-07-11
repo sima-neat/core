@@ -255,8 +255,7 @@ std::optional<Nv12TightRepackLayout> nv12_tight_repack_layout(GstBuffer* input) 
       layout.uv_stride < static_cast<gint>(layout.width))
     return std::nullopt;
 
-  const gsize y_bytes =
-      static_cast<gsize>(layout.width) * static_cast<gsize>(layout.height);
+  const gsize y_bytes = static_cast<gsize>(layout.width) * static_cast<gsize>(layout.height);
   const gsize uv_rows = (static_cast<gsize>(layout.height) + 1U) / 2U;
   const gsize uv_bytes = static_cast<gsize>(layout.width) * uv_rows;
   layout.tight_size = y_bytes + uv_bytes;
@@ -264,8 +263,7 @@ std::optional<Nv12TightRepackLayout> nv12_tight_repack_layout(GstBuffer* input) 
   const gsize input_size = gst_buffer_get_size(input);
   const gsize y_last_row =
       static_cast<gsize>(layout.y_stride) * static_cast<gsize>(layout.height - 1U);
-  const gsize uv_last_row =
-      static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
+  const gsize uv_last_row = static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
   if (!range_in_buffer(layout.y_offset + y_last_row, layout.width, input_size) ||
       !range_in_buffer(layout.uv_offset + uv_last_row, layout.width, input_size))
     return std::nullopt;
@@ -273,9 +271,7 @@ std::optional<Nv12TightRepackLayout> nv12_tight_repack_layout(GstBuffer* input) 
   return layout;
 }
 
-void copy_nv12_rows(const guint8* src_y,
-                    const guint8* src_uv,
-                    guint8* dst,
+void copy_nv12_rows(const guint8* src_y, const guint8* src_uv, guint8* dst,
                     const Nv12TightRepackLayout& layout) {
   const gsize width = static_cast<gsize>(layout.width);
   const gsize height = static_cast<gsize>(layout.height);
@@ -284,19 +280,14 @@ void copy_nv12_rows(const guint8* src_y,
   guint8* dst_uv = dst + (width * height);
 
   for (gsize row = 0; row < height; ++row) {
-    std::memcpy(dst_y + row * width,
-                src_y + row * static_cast<gsize>(layout.y_stride),
-                width);
+    std::memcpy(dst_y + row * width, src_y + row * static_cast<gsize>(layout.y_stride), width);
   }
   for (gsize row = 0; row < uv_rows; ++row) {
-    std::memcpy(dst_uv + row * width,
-                src_uv + row * static_cast<gsize>(layout.uv_stride),
-                width);
+    std::memcpy(dst_uv + row * width, src_uv + row * static_cast<gsize>(layout.uv_stride), width);
   }
 }
 
-bool copy_nv12_tight_from_plane_memories(GstBuffer* input,
-                                         const GstMapInfo& outmap,
+bool copy_nv12_tight_from_plane_memories(GstBuffer* input, const GstMapInfo& outmap,
                                          const Nv12TightRepackLayout& layout) {
   if (!input || gst_buffer_n_memory(input) < 2)
     return false;
@@ -330,11 +321,9 @@ bool copy_nv12_tight_from_plane_memories(GstBuffer* input,
   const gsize uv_rows = (height + 1U) / 2U;
   const gsize y_last_row =
       static_cast<gsize>(layout.y_stride) * static_cast<gsize>(layout.height - 1U);
-  const gsize uv_last_row =
-      static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
-  const bool in_range =
-      range_in_buffer(layout.y_offset + y_last_row, width, y_map.size) &&
-      range_in_buffer(layout.uv_offset + uv_last_row, width, uv_map.size);
+  const gsize uv_last_row = static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
+  const bool in_range = range_in_buffer(layout.y_offset + y_last_row, width, y_map.size) &&
+                        range_in_buffer(layout.uv_offset + uv_last_row, width, uv_map.size);
   if (in_range) {
     copy_nv12_rows(y_map.data + layout.y_offset, uv_map.data + layout.uv_offset, outmap.data,
                    layout);
@@ -345,8 +334,7 @@ bool copy_nv12_tight_from_plane_memories(GstBuffer* input,
   return in_range;
 }
 
-bool copy_nv12_tight(GstBuffer* input,
-                     const GstMapInfo& outmap,
+bool copy_nv12_tight(GstBuffer* input, const GstMapInfo& outmap,
                      const Nv12TightRepackLayout& layout) {
   if (outmap.size < layout.tight_size)
     return false;
@@ -369,11 +357,9 @@ bool copy_nv12_tight(GstBuffer* input,
   const guint8* src_uv = inmap.data + layout.uv_offset;
   const gsize y_last_row =
       static_cast<gsize>(layout.y_stride) * static_cast<gsize>(layout.height - 1U);
-  const gsize uv_last_row =
-      static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
-  const bool in_range =
-      range_in_buffer(layout.y_offset + y_last_row, width, inmap.size) &&
-      range_in_buffer(layout.uv_offset + uv_last_row, width, inmap.size);
+  const gsize uv_last_row = static_cast<gsize>(layout.uv_stride) * static_cast<gsize>(uv_rows - 1U);
+  const bool in_range = range_in_buffer(layout.y_offset + y_last_row, width, inmap.size) &&
+                        range_in_buffer(layout.uv_offset + uv_last_row, width, inmap.size);
   if (in_range)
     copy_nv12_rows(src_y, src_uv, outmap.data, layout);
   gst_buffer_unmap(input, &inmap);
@@ -393,14 +379,8 @@ void normalize_nv12_video_meta(GstBuffer* buffer, const Nv12TightRepackLayout& l
   offsets[1] = static_cast<gsize>(layout.width) * static_cast<gsize>(layout.height);
   strides[0] = static_cast<gint>(layout.width);
   strides[1] = static_cast<gint>(layout.width);
-  gst_buffer_add_video_meta_full(buffer,
-                                 GST_VIDEO_FRAME_FLAG_NONE,
-                                 GST_VIDEO_FORMAT_NV12,
-                                 layout.width,
-                                 layout.height,
-                                 2,
-                                 offsets,
-                                 strides);
+  gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_FORMAT_NV12,
+                                 layout.width, layout.height, 2, offsets, strides);
 }
 
 guint64 first_buffer_phys(GstBuffer* buffer) {
@@ -556,8 +536,7 @@ gsize required_copy_size(GstNeatCameraMemoryBridge* self, GstBuffer* input) {
 
 GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input) {
   const std::optional<Nv12TightRepackLayout> nv12_layout =
-      (self && self->configured_buffer_size == 0) ? nv12_tight_repack_layout(input)
-                                                  : std::nullopt;
+      (self && self->configured_buffer_size == 0) ? nv12_tight_repack_layout(input) : std::nullopt;
   const gsize required = nv12_layout ? nv12_layout->tight_size : required_copy_size(self, input);
   if (required == 0) {
     GST_ELEMENT_ERROR(self, STREAM, FORMAT, ("Camera bridge cannot infer input buffer size"),
@@ -599,10 +578,9 @@ GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input
 
   if (nv12_layout) {
     if (!copy_nv12_tight(input, outmap, *nv12_layout)) {
-      GST_ELEMENT_ERROR(self, STREAM, FORMAT,
-                        ("Failed to repack multi-plane NV12 camera buffer"),
-                        ("output=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, outmap.size,
-                         required));
+      GST_ELEMENT_ERROR(
+          self, STREAM, FORMAT, ("Failed to repack multi-plane NV12 camera buffer"),
+          ("output=%" G_GSIZE_FORMAT " required=%" G_GSIZE_FORMAT, outmap.size, required));
       gst_buffer_unmap(out, &outmap);
       gst_buffer_unref(out);
       return nullptr;

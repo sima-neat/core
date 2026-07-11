@@ -3726,7 +3726,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_width", &simaai::neat::SimaDecodeOptions::dec_width)
       .def_rw("dec_height", &simaai::neat::SimaDecodeOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::SimaDecodeOptions::dec_fps)
-      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers);
+      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers)
+      .def_rw("input_buffers", &simaai::neat::SimaDecodeOptions::input_buffers)
+      .def_rw("decoder_tuning", &simaai::neat::SimaDecodeOptions::decoder_tuning)
+      .def_rw("memory_opt", &simaai::neat::SimaDecodeOptions::memory_opt);
   nb::class_<simaai::neat::HttpSourceOptions>(m, "HttpSourceOptions")
       .def(nb::init<>())
       .def_rw("location", &simaai::neat::HttpSourceOptions::location)

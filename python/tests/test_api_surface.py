@@ -777,6 +777,9 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert native_decode.type == pyneat.SimaDecodeType.H264
   assert native_decode.out_format == pyneat.Format.NV12
   assert native_decode.raw_output is True
+  assert native_decode.input_buffers == -1
+  assert native_decode.decoder_tuning == ""
+  assert native_decode.memory_opt is False
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode())
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.JPEG
@@ -784,6 +787,13 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   native_decode.dec_width = 640
   native_decode.dec_height = 480
   native_decode.dec_fps = 30
+  native_decode.num_buffers = 4
+  native_decode.input_buffers = 4
+  native_decode.decoder_tuning = "throughput-low-latency"
+  native_decode.memory_opt = True
+  assert native_decode.input_buffers == 4
+  assert native_decode.decoder_tuning == "throughput-low-latency"
+  assert native_decode.memory_opt is True
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.MJPEG
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))

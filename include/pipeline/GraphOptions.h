@@ -318,7 +318,11 @@ struct PreparedRunnerOptions {
  * @ingroup pipeline
  */
 struct AdvancedExecutionOptions {
-  std::optional<std::string> preprocess_target;         ///< -> processcvu.pre_run_target.
+  /// Backend for model-managed process-CVU pre stages. Unsupported explicit placement is an
+  /// error; for example, native Preproc is EV74-only.
+  std::optional<std::string> preprocess_target; ///< -> processcvu.pre_run_target.
+  /// Backend for model-managed process-CVU post adapters. This does not relocate BoxDecode,
+  /// which executes on A65.
   std::optional<std::string> postprocess_target;        ///< -> processcvu.post_run_target.
   std::optional<bool> preprocess_async;                 ///< -> processcvu.async.
   std::optional<bool> inference_async;                  ///< -> processmla.async.

@@ -82,6 +82,37 @@ simaai::neat::Graph mixed_live_and_finite_source_fragment() {
 
 RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   {
+    simaai::neat::runtime::ExecutionGraphPlan plan;
+    simaai::neat::runtime::PipelineSegmentPlan segment;
+    segment.id = 7;
+    segment.input_edges = {0};
+    simaai::neat::runtime::FragmentBoundaryHints hints;
+    simaai::neat::InputOptions options;
+    options.max_width = 1920;
+    options.max_height = 1080;
+    options.max_depth = 3;
+    hints.ingress_inputs.push_back(options);
+    segment.boundary_hints = std::move(hints);
+    plan.pipeline_segments.push_back(std::move(segment));
+
+    simaai::neat::runtime::EdgePlan edge;
+    edge.spec.width = 2048;
+    edge.spec.height = 1080;
+    edge.spec.depth = 3;
+    edge.spec_complete = true;
+    plan.edges.push_back(std::move(edge));
+
+    require_throws_contains(
+        [&] { simaai::neat::runtime::validate_static_connected_input_capacities(plan); },
+        "input width 2048 exceeds configured capacity 1920",
+        "known connected source shape should fail at compile preflight");
+    require_throws_contains(
+        [&] { simaai::neat::runtime::validate_static_connected_input_capacities(plan); },
+        "Model::Options::preprocess.input_max_width",
+        "connected shape preflight should provide the public model fix");
+  }
+
+  {
     simaai::neat::Graph empty;
     auto sink = output_fragment();
     simaai::neat::Graph app;

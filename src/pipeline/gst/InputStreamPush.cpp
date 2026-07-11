@@ -1,5 +1,6 @@
 #include "InputStreamInternal.h"
 #include "gst/SimaTensorSetMetaAbi.h"
+#include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/SampleUtil.h"
 
 namespace simaai::neat {
@@ -299,9 +300,10 @@ void validate_spec_with_limits(const InputStream::State& st, const SampleSpec& s
   auto fail_if_over = [&](const char* field, int value, int max_val) {
     if (value <= 0 || max_val <= 0 || value <= max_val)
       return;
-    std::ostringstream oss;
-    oss << tag << ": " << field << " exceeds effective max (" << value << " > " << max_val << ")";
-    throw std::invalid_argument(oss.str());
+    const std::string dimension = field ? field : "dimension";
+    throw std::invalid_argument(
+        pipeline_internal::shape_limit_exceeded_message(tag, dimension, value, max_val) +
+        ". Fix: " + pipeline_internal::shape_limit_fix_hint(dimension, value));
   };
 
   fail_if_over("width", spec.width, max_w);
@@ -521,6 +523,103 @@ SampleSpec sample_spec_from_cap_key(const CapKey& key) {
   return spec;
 }
 
+bool complete_tight_video_spec_for_buffer(SampleSpec* spec, std::size_t buffer_bytes) {
+  if (!spec || spec->kind != SampleMediaKind::RawVideo || spec->width <= 0 || spec->height <= 0 ||
+      spec->format.empty() || !spec->planes.empty()) {
+    return false;
+  }
+  const GstVideoFormat format = gst_video_format_from_string(spec->format.c_str());
+  if (format == GST_VIDEO_FORMAT_UNKNOWN) {
+    return false;
+  }
+  GstVideoInfo info;
+  gst_video_info_init(&info);
+  if (!gst_video_info_set_format(&info, format, static_cast<guint>(spec->width),
+                                 static_cast<guint>(spec->height)) ||
+      GST_VIDEO_INFO_SIZE(&info) != buffer_bytes) {
+    // Without GstVideoMeta, a non-canonical allocation may have padded or
+    // multi-plane strides that cannot be reconstructed safely from caps.
+    return false;
+  }
+
+  const guint planes = GST_VIDEO_INFO_N_PLANES(&info);
+  spec->planes.reserve(planes);
+  for (guint i = 0; i < planes; ++i) {
+    PlaneInfo plane;
+    plane.offset_bytes = static_cast<int64_t>(GST_VIDEO_INFO_PLANE_OFFSET(&info, i));
+    plane.stride_bytes = static_cast<int64_t>(GST_VIDEO_INFO_PLANE_STRIDE(&info, i));
+    const std::size_t begin = static_cast<std::size_t>(plane.offset_bytes);
+    const std::size_t end =
+        i + 1U < planes ? static_cast<std::size_t>(GST_VIDEO_INFO_PLANE_OFFSET(&info, i + 1U))
+                        : buffer_bytes;
+    plane.size_bytes = end >= begin ? end - begin : 0U;
+    if (i == 0U) {
+      plane.width = spec->width;
+      plane.height = spec->height;
+      plane.role = (format == GST_VIDEO_FORMAT_NV12 || format == GST_VIDEO_FORMAT_I420)
+                       ? PlaneRole::Y
+                       : PlaneRole::Unknown;
+    } else if (format == GST_VIDEO_FORMAT_NV12) {
+      plane.width = spec->width;
+      plane.height = spec->height / 2;
+      plane.role = PlaneRole::UV;
+    } else {
+      plane.width = spec->width / 2;
+      plane.height = spec->height / 2;
+      plane.role = i == 1U ? PlaneRole::U : PlaneRole::V;
+    }
+    spec->planes.push_back(plane);
+  }
+  spec->required_bytes_actual = buffer_bytes;
+  return true;
+}
+
+bool complete_video_spec_from_meta(SampleSpec* spec, const GstVideoMeta* meta,
+                                   std::size_t buffer_bytes) {
+  if (!spec || !meta || spec->kind != SampleMediaKind::RawVideo || meta->n_planes == 0U ||
+      meta->n_planes > GST_VIDEO_MAX_PLANES) {
+    return false;
+  }
+  spec->width = static_cast<int>(meta->width);
+  spec->height = static_cast<int>(meta->height);
+  if (const gchar* format = gst_video_format_to_string(meta->format)) {
+    spec->format = format;
+  }
+  spec->planes.clear();
+  spec->planes.reserve(meta->n_planes);
+  for (guint i = 0; i < meta->n_planes; ++i) {
+    const std::size_t begin = static_cast<std::size_t>(meta->offset[i]);
+    const std::size_t end =
+        i + 1U < meta->n_planes ? static_cast<std::size_t>(meta->offset[i + 1U]) : buffer_bytes;
+    if (end < begin || end > buffer_bytes || meta->stride[i] <= 0) {
+      spec->planes.clear();
+      return false;
+    }
+    PlaneInfo plane;
+    plane.offset_bytes = static_cast<int64_t>(begin);
+    plane.stride_bytes = static_cast<int64_t>(meta->stride[i]);
+    plane.size_bytes = end - begin;
+    if (i == 0U) {
+      plane.width = spec->width;
+      plane.height = spec->height;
+      plane.role = (meta->format == GST_VIDEO_FORMAT_NV12 || meta->format == GST_VIDEO_FORMAT_I420)
+                       ? PlaneRole::Y
+                       : PlaneRole::Unknown;
+    } else if (meta->format == GST_VIDEO_FORMAT_NV12) {
+      plane.width = spec->width;
+      plane.height = spec->height / 2;
+      plane.role = PlaneRole::UV;
+    } else {
+      plane.width = spec->width / 2;
+      plane.height = spec->height / 2;
+      plane.role = i == 1U ? PlaneRole::U : PlaneRole::V;
+    }
+    spec->planes.push_back(plane);
+  }
+  spec->required_bytes_actual = buffer_bytes;
+  return true;
+}
+
 bool sima_meta_fields_need_update(GstBuffer* buffer,
                                   const std::optional<int64_t>& frame_id_override,
                                   const std::optional<int64_t>& input_seq_override,
@@ -580,7 +679,8 @@ void apply_holder_spec_and_meta_or_throw(
     const std::optional<int64_t>& orig_input_seq_override,
     const SampleTimingOverrides& timing_override, const InputOptions& src_opt,
     InputBufferPoolGuard& guard, const char* where,
-    const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta = std::nullopt) {
+    const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta = std::nullopt,
+    const TensorList* tensor_set_meta_tensors = nullptr) {
   GstBuffer* const original = buffer ? *buffer : nullptr;
   const bool source_has_preproc_meta = has_simaai_preprocess_meta(original);
 
@@ -588,6 +688,15 @@ void apply_holder_spec_and_meta_or_throw(
     apply_video_meta_or_throw(buffer, spec, where);
   } else if (spec.kind == SampleMediaKind::Tensor) {
     apply_tensor_size_or_throw(buffer, spec, where);
+    if (tensor_set_meta_tensors && !tensor_set_meta_tensors->empty() &&
+        !gst_buffer_get_custom_meta(*buffer, SIMA_TENSOR_SET_META_NAME)) {
+      ensure_holder_metadata_writable_or_throw(buffer, &spec, where, "attach tensor-set metadata");
+      pipeline_internal::attach_tensor_set_meta_from_tensors(*buffer, *tensor_set_meta_tensors);
+      if (!gst_buffer_get_custom_meta(*buffer, SIMA_TENSOR_SET_META_NAME)) {
+        throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
+                                 ": failed to attach canonical tensor-set metadata");
+      }
+    }
   }
 
   if (original && *buffer && *buffer != original && source_has_preproc_meta) {
@@ -620,7 +729,10 @@ void apply_holder_spec_and_meta_or_throw(
   write_holder_timing_if_needed_or_throw(buffer, &spec, timing_override, need_timing_meta_update,
                                          where);
   ensure_raw_preprocess_meta_for_spec(buffer, spec, src_opt, where);
-  if (!has_simaai_preprocess_meta(*buffer) && tensor_preprocess_meta.has_value()) {
+  const bool must_apply_tensor_preprocess_meta =
+      tensor_preprocess_meta.has_value() &&
+      (!has_simaai_preprocess_meta(*buffer) || tensor_preprocess_meta->has_roi_list());
+  if (must_apply_tensor_preprocess_meta) {
     ensure_holder_metadata_writable_or_throw(buffer, &spec, where, "write preprocess metadata");
     if (!write_simaai_preprocess_meta(*buffer, *tensor_preprocess_meta)) {
       throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
@@ -980,16 +1092,16 @@ void write_holder_timing_if_needed_or_throw(GstBuffer** buffer, const SampleSpec
   }
 }
 
-bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& holder,
-                           const char* where, bool record_timings,
-                           const std::optional<int64_t>& frame_id_override,
-                           const std::optional<int64_t>& input_seq_override,
-                           const std::optional<int64_t>& orig_input_seq_override,
-                           const std::optional<std::string>& stream_id_override,
-                           const std::optional<std::string>& buffer_name_override,
-                           const SampleTimingOverrides& timing_override,
-                           const Sample* fail_msg = nullptr,
-                           const SampleSpec* fail_spec = nullptr) {
+bool push_holder_transport(
+    InputStream::State& st, const std::shared_ptr<void>& holder, const char* where,
+    bool record_timings, const std::optional<int64_t>& frame_id_override,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const std::optional<std::string>& stream_id_override,
+    const std::optional<std::string>& buffer_name_override,
+    const SampleTimingOverrides& timing_override, const Sample* fail_msg = nullptr,
+    const SampleSpec* fail_spec = nullptr,
+    const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta = std::nullopt) {
   GstBuffer* buf = pipeline_internal::buffer_from_tensor_holder(holder);
   if (!buf) {
     throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
@@ -997,10 +1109,39 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   }
   BufferUnrefGuard holder_guard(&buf, "InputStream::push_holder_transport:buffer_unref");
   std::optional<SampleSpec> current_spec;
+  std::optional<SampleSpec> completed_video_spec;
   const SampleSpec* metadata_spec = fail_spec;
   if (!metadata_spec && st.current_key.has_value()) {
     current_spec = sample_spec_from_cap_key(*st.current_key);
     metadata_spec = &*current_spec;
+  }
+  if (metadata_spec && metadata_spec->kind == SampleMediaKind::RawVideo) {
+    if (const GstVideoMeta* video_meta = gst_buffer_get_video_meta(buf)) {
+      completed_video_spec = *metadata_spec;
+      if (complete_video_spec_from_meta(&*completed_video_spec, video_meta,
+                                        static_cast<std::size_t>(gst_buffer_get_size(buf)))) {
+        metadata_spec = &*completed_video_spec;
+      }
+    }
+  }
+  if (metadata_spec && metadata_spec->kind == SampleMediaKind::RawVideo &&
+      !gst_buffer_get_video_meta(buf) && metadata_spec->planes.empty()) {
+    completed_video_spec = *metadata_spec;
+    const std::size_t holder_bytes = static_cast<std::size_t>(gst_buffer_get_size(buf));
+    const bool completed =
+        complete_tight_video_spec_for_buffer(&*completed_video_spec, holder_bytes);
+    if (completed) {
+      metadata_spec = &*completed_video_spec;
+    }
+    if (holder_debug_enabled() || pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false)) {
+      std::fprintf(stderr,
+                   "[HOLDER] synthesize_video_meta format=%s dims=%dx%d bytes=%zu completed=%d "
+                   "planes=%zu required=%zu\n",
+                   completed_video_spec->format.c_str(), completed_video_spec->width,
+                   completed_video_spec->height, holder_bytes, completed ? 1 : 0,
+                   completed_video_spec->planes.size(),
+                   completed_video_spec->required_bytes_actual);
+    }
   }
   const bool preproc_trace = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
   if (preproc_trace) {
@@ -1037,6 +1178,17 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   if (metadata_spec) {
     ensure_raw_preprocess_meta_for_spec(&buf, *metadata_spec, st.src_opt, where);
   }
+  if (metadata_spec && metadata_spec->kind == SampleMediaKind::Tensor && fail_msg &&
+      sample_has_tensor_list(*fail_msg) && !fail_msg->tensors.empty() &&
+      !gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME)) {
+    ensure_holder_metadata_writable_or_throw(&buf, metadata_spec, where,
+                                             "attach tensor-set metadata");
+    pipeline_internal::attach_tensor_set_meta_from_tensors(buf, fail_msg->tensors);
+    if (!gst_buffer_get_custom_meta(buf, SIMA_TENSOR_SET_META_NAME)) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                               ": failed to attach canonical tensor-set metadata");
+    }
+  }
   if (preproc_trace) {
     GstCustomMeta* meta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
     GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
@@ -1060,6 +1212,21 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
       fallback_spec.kind = SampleMediaKind::RawVideo;
       ensure_raw_preprocess_meta_for_spec(&buf, fallback_spec, st.src_opt, where);
     }
+  }
+  const bool must_apply_tensor_preprocess_meta =
+      tensor_preprocess_meta.has_value() &&
+      (!has_simaai_preprocess_meta(buf) || tensor_preprocess_meta->has_roi_list());
+  if (must_apply_tensor_preprocess_meta) {
+    ensure_holder_metadata_writable_or_throw(&buf, metadata_spec, where,
+                                             "write preprocess metadata");
+    if (!write_simaai_preprocess_meta(buf, *tensor_preprocess_meta)) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                               ": failed to apply tensor preprocess metadata");
+    }
+  }
+  if (metadata_spec && metadata_spec->kind == SampleMediaKind::RawVideo &&
+      !gst_buffer_get_video_meta(buf) && !metadata_spec->planes.empty()) {
+    apply_video_meta_or_throw(&buf, *metadata_spec, where);
   }
   if (std::getenv("SIMA_JPEG_ZC_TRACE")) {
     GstVideoMeta* vmeta = gst_buffer_get_video_meta(buf);
@@ -1339,7 +1506,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, timing_override, st.src_opt,
                                           st.pool_guard, "InputStream::try_push_message(holder)",
-                                          tensor_preprocess_meta);
+                                          tensor_preprocess_meta, &msg.tensors);
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;
@@ -1373,7 +1540,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, timing_override, st.src_opt,
                                           st.pool_guard, "InputStream::try_push_message(holder)",
-                                          tensor_preprocess_meta);
+                                          tensor_preprocess_meta, &msg.tensors);
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;
@@ -1711,10 +1878,13 @@ bool InputStream::try_push_message(const Sample& msg) {
       }
       throw std::runtime_error(detail);
     }
-    const bool ok = push_holder_transport(
-        *st, holder, "InputStream::try_push_message(holder_envelope)",
-        /*record_timings=*/st->timing_enabled, meta.frame_id, seq.input_seq, seq.orig_input_seq,
-        meta.stream_id, meta.stream_label, timing_override, &transport_msg, &spec);
+    const std::optional<PreprocessRuntimeMeta> envelope_preprocess_meta =
+        input_tensor ? input_tensor->semantic.preprocess : std::nullopt;
+    const bool ok =
+        push_holder_transport(*st, holder, "InputStream::try_push_message(holder_envelope)",
+                              /*record_timings=*/st->timing_enabled, meta.frame_id, seq.input_seq,
+                              seq.orig_input_seq, meta.stream_id, meta.stream_label,
+                              timing_override, &transport_msg, &spec, envelope_preprocess_meta);
     if (inputstream_top_timing) {
       const auto inputstream_end = std::chrono::steady_clock::now();
       const auto pre_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(

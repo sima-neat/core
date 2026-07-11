@@ -16,6 +16,27 @@ RUN_TEST(
 
       gst_init_once();
 
+      {
+        SampleSpec spec;
+        spec.kind = SampleMediaKind::Tensor;
+        spec.media_type = "application/vnd.simaai.tensor";
+        spec.format = "EVXX_FLOAT32";
+        spec.dtype = TensorDType::Float32;
+        spec.shape = {2, 3, 4};
+        const std::string caps = caps_string_from_spec(spec);
+        require_contains(caps, "rank=3", "tensor caps should contain rank");
+        require_contains(caps, "dim0=2", "tensor caps should contain dim fields");
+        require_contains(caps, "shape=(string)\"2,3,4\"",
+                         "tensor caps should contain canonical shape");
+
+        spec.tensor_envelope_transport = true;
+        const std::string envelope_caps = caps_string_from_spec(spec);
+        require_contains(envelope_caps, "representation=(string)tensor-set",
+                         "tensor envelope caps should identify tensor-set representation");
+        require_contains(envelope_caps, "storage=(string)tensorbuffer",
+                         "tensor envelope caps should identify tensorbuffer storage");
+      }
+
       const Tensor rgb = make_color_tensor(4, 2, ImageSpec::PixelFormat::RGB, 0x12);
       require(tensor_bytes_tight(rgb) == 24, "tensor_bytes_tight should match RGB dense bytes");
 

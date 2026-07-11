@@ -15,6 +15,7 @@
 #include "pipeline/internal/CapsStringUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/InputPolicy.h"
 
 #include <algorithm>
 #include <functional>
@@ -1986,7 +1987,87 @@ void apply_public_fragment_metadata(
   }
 }
 
+const InputOptions* ingress_options_for_segment(const PipelineSegmentPlan& segment) {
+  if (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty()) {
+    return &segment.boundary_hints->ingress_inputs.front();
+  }
+  for (const auto& node : segment.nodes) {
+    if (const auto* input = dynamic_cast<const simaai::neat::Input*>(node.get())) {
+      return &input->options();
+    }
+  }
+  return nullptr;
+}
+
+bool is_shape_passthrough_stage(const ExecutionGraphPlan& plan, graph::NodeId node_id) {
+  for (const auto& stage : plan.stage_nodes) {
+    if (stage.node_id != node_id || !stage.node) {
+      continue;
+    }
+    const std::string kind = stage.node->kind();
+    return kind == "FanOut" || kind == "StreamScheduler";
+  }
+  return false;
+}
+
+void collect_static_ingress_specs(const ExecutionGraphPlan& plan, std::size_t edge_index,
+                                  std::unordered_set<std::size_t>* visited,
+                                  std::vector<const OutputSpec*>* specs) {
+  if (!visited || !specs || edge_index >= plan.edges.size() ||
+      !visited->insert(edge_index).second) {
+    return;
+  }
+  const EdgePlan& edge = plan.edges[edge_index];
+  if (is_shape_passthrough_stage(plan, edge.from)) {
+    for (std::size_t i = 0; i < plan.edges.size(); ++i) {
+      if (plan.edges[i].to == edge.from) {
+        collect_static_ingress_specs(plan, i, visited, specs);
+      }
+    }
+    return;
+  }
+  if (edge.spec.width > 0 || edge.spec.height > 0 || edge.spec.depth > 0) {
+    specs->push_back(&edge.spec);
+  }
+}
+
+void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& plan) {
+  for (const auto& segment : plan.pipeline_segments) {
+    const InputOptions* options = ingress_options_for_segment(segment);
+    if (!options || segment.input_edges.empty()) {
+      continue;
+    }
+
+    std::unordered_set<std::size_t> visited;
+    std::vector<const OutputSpec*> specs;
+    for (std::size_t edge_index : segment.input_edges) {
+      collect_static_ingress_specs(plan, edge_index, &visited, &specs);
+    }
+
+    const auto validate = [&](const char* dimension, int actual, int configured_max) {
+      const int capacity = configured_max > 0 ? configured_max : -1;
+      if (actual <= 0 || capacity <= 0 || actual <= capacity) {
+        return;
+      }
+      const std::string where = "compile_public_graph: segment " + std::to_string(segment.id);
+      throw std::invalid_argument(
+          pipeline_internal::shape_limit_exceeded_message(where, dimension, actual, capacity) +
+          ". Fix: " + pipeline_internal::shape_limit_fix_hint(dimension, actual));
+    };
+
+    for (const OutputSpec* spec : specs) {
+      validate("width", spec->width, options->max_width);
+      validate("height", spec->height, options->max_height);
+      validate("depth", spec->depth, options->max_depth);
+    }
+  }
+}
+
 } // namespace
+
+void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan) {
+  validate_static_connected_input_capacities_impl(plan);
+}
 
 ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
                                                       const graph::CompiledGraph& compiled,
@@ -2123,6 +2204,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_lowered_link_policies(lowering.lowered_edges, &plan);
     apply_normalized_link_policies(normalized, lowering.runtime_node_for_vertex, &plan);
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
+    validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
     // Prefer the C++ graph-runtime RealtimeLatestLink path for live fan-in.
     // The legacy fused ingress collapses live source branches into one
