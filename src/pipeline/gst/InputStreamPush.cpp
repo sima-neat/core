@@ -684,9 +684,7 @@ void apply_holder_spec_and_meta_or_throw(
   GstBuffer* const original = buffer ? *buffer : nullptr;
   const bool source_has_preproc_meta = has_simaai_preprocess_meta(original);
 
-  if (spec.kind == SampleMediaKind::RawVideo) {
-    apply_video_meta_or_throw(buffer, spec, where);
-  } else if (spec.kind == SampleMediaKind::Tensor) {
+  if (spec.kind == SampleMediaKind::Tensor) {
     apply_tensor_size_or_throw(buffer, spec, where);
     if (tensor_set_meta_tensors && !tensor_set_meta_tensors->empty() &&
         !gst_buffer_get_custom_meta(*buffer, SIMA_TENSOR_SET_META_NAME)) {
@@ -749,6 +747,12 @@ void apply_holder_spec_and_meta_or_throw(
                                  ": failed to apply preprocess metadata");
       }
     }
+  }
+  if (spec.kind == SampleMediaKind::RawVideo) {
+    // Metadata writes above may replace a shared holder with a zero-copy writable view. Apply
+    // GstVideoMeta only after the final replacement so plane offsets/strides stay on the buffer
+    // that is actually queued or pushed.
+    apply_video_meta_or_throw(buffer, spec, where);
   }
 }
 

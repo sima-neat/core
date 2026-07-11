@@ -1,5 +1,10 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
+
 #include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/TensorUtil.h"
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
 
@@ -9,8 +14,9 @@
 #include <gst/video/video.h>
 
 #include <chrono>
-#include <iostream>
 #include <cstring>
+#include <iostream>
+#include <optional>
 #include <thread>
 
 namespace {
@@ -54,6 +60,23 @@ simaai::neat::Tensor make_i420_tensor(int w, int h) {
 
   t.planes = {y, u, v};
   return t;
+}
+
+simaai::neat::Tensor make_shared_nv12_holder_without_meta(int w, int h) {
+  simaai::neat::Tensor tensor = make_nv12_tensor(w, h);
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, tensor.storage->size_bytes, nullptr);
+  require(buffer != nullptr, "failed to allocate shared NV12 holder buffer");
+  GstCaps* caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width",
+                                      G_TYPE_INT, w, "height", G_TYPE_INT, h, nullptr);
+  require(caps != nullptr, "failed to allocate shared NV12 holder caps");
+  GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(buffer);
+  require(sample != nullptr, "failed to allocate shared NV12 holder sample");
+  tensor.storage = simaai::neat::pipeline_internal::make_gst_sample_storage(sample);
+  gst_sample_unref(sample);
+  require(tensor.storage != nullptr, "failed to wrap shared NV12 holder storage");
+  return tensor;
 }
 
 } // namespace
@@ -146,6 +169,57 @@ int main() {
       require(meta->offset[2] == y_size + u_size, "V plane offset mismatch");
       require(meta->stride[2] == w / 2, "V plane stride mismatch");
       require(gst_buffer_get_size(buf) == total_bytes, "buffer size mismatch");
+    }
+
+    {
+      simaai::neat::Tensor input = make_shared_nv12_holder_without_meta(w, h);
+      GstBuffer* input_buffer =
+          simaai::neat::pipeline_internal::buffer_from_tensor_holder(input.storage->holder);
+      require(input_buffer != nullptr, "shared input holder missing GstBuffer");
+      require(gst_buffer_get_video_meta(input_buffer) == nullptr,
+              "shared input holder should start without GstVideoMeta");
+      GstMemory* input_memory = gst_buffer_peek_memory(input_buffer, 0);
+      require(input_memory != nullptr, "shared input holder missing GstMemory");
+
+      Graph graph;
+      InputOptions src_opt;
+      src_opt.payload_type = PayloadType::Image;
+      src_opt.format = FormatTag::NV12;
+      src_opt.memory_policy = InputMemoryPolicy::SystemMemory;
+      src_opt.max_width = w;
+      src_opt.max_height = h;
+      src_opt.max_depth = 3;
+      graph.add(nodes::Input(src_opt));
+      graph.add(nodes::Output(OutputOptions::EveryFrame(4)));
+
+      RunOptions run_opt;
+      run_opt.output_memory = OutputMemory::ZeroCopy;
+      run_opt.advanced.copy_input = false;
+      Run run = graph.build(TensorList{input}, run_opt);
+      Sample sample = sample_from_tensors(TensorList{input});
+      sample.stream_id = "shared-nv12";
+      sample.frame_id = 17;
+      require(run.push(sample), "shared NV12 holder push failed");
+      const std::optional<Sample> output = run.pull(1000);
+      require(output.has_value(), "shared NV12 holder output missing");
+      const TensorList output_tensors = tensors_from_sample(*output, true);
+      require(output_tensors.size() == 1U && output_tensors.front().storage != nullptr &&
+                  output_tensors.front().storage->holder != nullptr,
+              "shared NV12 holder output storage missing");
+      GstBuffer* output_buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(
+          output_tensors.front().storage->holder);
+      require(output_buffer != nullptr, "shared NV12 output holder missing GstBuffer");
+      require(gst_buffer_peek_memory(output_buffer, 0) == input_memory,
+              "metadata envelope should preserve shared holder payload memory");
+      GstVideoMeta* meta = gst_buffer_get_video_meta(output_buffer);
+      require(meta != nullptr, "writable shared-holder envelope lost GstVideoMeta");
+      require(meta->format == GST_VIDEO_FORMAT_NV12, "shared-holder video format mismatch");
+      require(meta->width == static_cast<guint>(w), "shared-holder video width mismatch");
+      require(meta->height == static_cast<guint>(h), "shared-holder video height mismatch");
+      require(meta->n_planes == 2, "shared-holder NV12 plane count mismatch");
+      gst_buffer_unref(output_buffer);
+      gst_buffer_unref(input_buffer);
+      run.close();
     }
 
     std::cout << "[OK] unit_gst_video_meta_test passed\n";
