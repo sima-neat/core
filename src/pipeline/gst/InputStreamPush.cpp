@@ -1019,6 +1019,8 @@ bool sima_meta_fields_need_update(GstBuffer* buffer,
   }
   if (buffer_name_override.has_value() && string_mismatch("buffer-name", *buffer_name_override))
     return true;
+  if (timing_override.empty())
+    return false;
   if (timing_override.pts_ns.has_value() && uint64_mismatch("timestamp", *timing_override.pts_ns))
     return true;
   if (boolean_mismatch("sample-frame-id-valid", timing_override.frame_id.has_value()))
@@ -1108,6 +1110,9 @@ void update_holder_sima_meta_if_needed_or_throw(
 void write_holder_timing_if_needed_or_throw(GstBuffer** buffer, const SampleSpec* spec,
                                             const SampleTimingOverrides& timing_override,
                                             bool force_meta_timing_update, const char* where) {
+  if (timing_override.empty()) {
+    return;
+  }
   if (!force_meta_timing_update &&
       !gst_buffer_timing_fields_need_update(buffer ? *buffer : nullptr, timing_override)) {
     return;

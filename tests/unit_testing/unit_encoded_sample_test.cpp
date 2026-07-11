@@ -288,6 +288,69 @@ int main() {
               "source buffer should return to its pool after transfer release");
       require(gate->inflight() == 0,
               "input holder loan should release with the downstream transfer buffer");
+
+      GstCustomMeta* legacy_meta = gst_buffer_add_custom_meta(reacquired_buffer, "GstSimaMeta");
+      GstStructure* legacy_structure =
+          legacy_meta ? gst_custom_meta_get_structure(legacy_meta) : nullptr;
+      require(legacy_structure != nullptr, "failed to attach legacy GstSimaMeta");
+      require(update_simaai_meta_fields(reacquired_buffer, std::nullopt, 0, 0, std::nullopt,
+                                        std::nullopt),
+              "failed to initialize legacy GstSimaMeta");
+      GstBuffer* expected_legacy_buffer = reacquired_buffer;
+      GstSample* legacy_gst_sample = gst_sample_new(reacquired_buffer, caps, nullptr, nullptr);
+      gst_buffer_unref(reacquired_buffer);
+      require(legacy_gst_sample != nullptr, "failed to create legacy metadata GstSample");
+      Sample legacy_holder_sample = sample_from_gst_encoded(legacy_gst_sample, h264_caps);
+      gst_sample_unref(legacy_gst_sample);
+      legacy_holder_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
+      legacy_holder_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
+      require(sample_timing_overrides_from_sample(legacy_holder_sample).empty(),
+              "legacy holder fixture must not carry a timing override");
+
+      GstElement* legacy_pipeline = gst_pipeline_new("legacy-meta-zero-copy");
+      GstElement* legacy_appsrc = gst_element_factory_make("appsrc", "legacy-src");
+      GstElement* legacy_appsink = gst_element_factory_make("appsink", "legacy-sink");
+      require(legacy_pipeline != nullptr && legacy_appsrc != nullptr && legacy_appsink != nullptr,
+              "failed to create legacy metadata holder pipeline");
+      g_object_set(legacy_appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, "block", TRUE,
+                   nullptr);
+      g_object_set(legacy_appsink, "sync", FALSE, "max-buffers", 1U, "drop", FALSE,
+                   "enable-last-sample", FALSE, nullptr);
+      gst_app_src_set_caps(GST_APP_SRC(legacy_appsrc), caps);
+      gst_bin_add_many(GST_BIN(legacy_pipeline), legacy_appsrc, legacy_appsink, nullptr);
+      require(gst_element_link(legacy_appsrc, legacy_appsink),
+              "failed to link legacy metadata holder pipeline");
+      legacy_appsrc = gst_bin_get_by_name(GST_BIN(legacy_pipeline), "legacy-src");
+      legacy_appsink = gst_bin_get_by_name(GST_BIN(legacy_pipeline), "legacy-sink");
+      require(legacy_appsrc != nullptr && legacy_appsink != nullptr,
+              "failed to retain legacy metadata holder elements");
+      require(gst_element_set_state(legacy_pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+              "failed to start legacy metadata holder pipeline");
+      InputStream legacy_stream = InputStream::create(
+          legacy_pipeline, legacy_appsrc, legacy_appsink,
+          derive_sample_spec_or_throw(legacy_holder_sample), src_opt, stream_opt, {}, nullptr);
+      require(legacy_stream.try_push_message(legacy_holder_sample),
+              "legacy metadata holder push should not require a writable envelope");
+      legacy_holder_sample = Sample{};
+
+      GstSample* legacy_pulled =
+          gst_app_sink_try_pull_sample(GST_APP_SINK(legacy_appsink), GST_SECOND);
+      require(legacy_pulled != nullptr, "legacy metadata holder pull timed out");
+      require(gst_sample_get_buffer(legacy_pulled) == expected_legacy_buffer,
+              "empty timing overrides must preserve the original shared holder buffer");
+      gst_sample_unref(legacy_pulled);
+      legacy_stream.close();
+
+      reacquired_buffer = nullptr;
+      reacquire_flow = GST_FLOW_EOS;
+      for (int attempt = 0; attempt < 100 && reacquire_flow != GST_FLOW_OK; ++attempt) {
+        reacquire_flow = gst_buffer_pool_acquire_buffer(pool, &reacquired_buffer, &acquire_params);
+        if (reacquire_flow != GST_FLOW_OK) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+      }
+      require(reacquire_flow == GST_FLOW_OK,
+              "legacy metadata source buffer should return to its pool after transfer release");
       gst_buffer_unref(reacquired_buffer);
       require(gst_buffer_pool_set_active(pool, FALSE),
               "failed to deactivate encoded source buffer pool");
