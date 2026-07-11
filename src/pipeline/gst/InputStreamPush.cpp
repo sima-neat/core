@@ -506,23 +506,6 @@ void validate_holder_video_meta_or_throw(const InputStream::State& st, GstBuffer
   }
 }
 
-SampleSpec sample_spec_from_cap_key(const CapKey& key) {
-  SampleSpec spec;
-  spec.kind = key.kind;
-  spec.media_type = key.media_type;
-  spec.format = key.format;
-  spec.dtype = key.dtype;
-  spec.layout = key.layout;
-  spec.shape = key.shape;
-  spec.width = key.width;
-  spec.height = key.height;
-  spec.fps_n = key.fps_n;
-  spec.fps_d = key.fps_d;
-  spec.caps_key = key;
-  spec.caps_string = caps_string_from_spec(spec);
-  return spec;
-}
-
 bool complete_tight_video_spec_for_buffer(SampleSpec* spec, std::size_t buffer_bytes) {
   if (!spec || spec->kind != SampleMediaKind::RawVideo || spec->width <= 0 || spec->height <= 0 ||
       spec->format.empty() || !spec->planes.empty()) {
@@ -1112,12 +1095,13 @@ bool push_holder_transport(
                              ": missing GstBuffer");
   }
   BufferUnrefGuard holder_guard(&buf, "InputStream::push_holder_transport:buffer_unref");
-  std::optional<SampleSpec> current_spec;
   std::optional<SampleSpec> completed_video_spec;
   const SampleSpec* metadata_spec = fail_spec;
-  if (!metadata_spec && st.current_key.has_value()) {
-    current_spec = sample_spec_from_cap_key(*st.current_key);
-    metadata_spec = &*current_spec;
+  if (!metadata_spec && st.last_spec.has_value()) {
+    metadata_spec = &*st.last_spec;
+  }
+  if (!metadata_spec && st.current_tensor_spec.has_value()) {
+    metadata_spec = &*st.current_tensor_spec;
   }
   if (metadata_spec && metadata_spec->kind == SampleMediaKind::RawVideo) {
     if (const GstVideoMeta* video_meta = gst_buffer_get_video_meta(buf)) {
@@ -1208,14 +1192,10 @@ bool push_holder_transport(
                  has_input_seq ? 1 : 0, static_cast<long long>(input_seq),
                  has_orig_input_seq ? 1 : 0, static_cast<long long>(orig_input_seq));
   }
-  if (!has_simaai_preprocess_meta(buf) && st.current_key.has_value()) {
-    const CapKey& key = *st.current_key;
-    if (key.width > 0 && key.height > 0 && st.src_opt.preprocess_meta.has_value() &&
-        st.src_opt.preprocess_meta->enabled) {
-      SampleSpec fallback_spec = sample_spec_from_cap_key(key);
-      fallback_spec.kind = SampleMediaKind::RawVideo;
-      ensure_raw_preprocess_meta_for_spec(&buf, fallback_spec, st.src_opt, where);
-    }
+  if (!has_simaai_preprocess_meta(buf) && metadata_spec &&
+      metadata_spec->kind == SampleMediaKind::RawVideo && st.src_opt.preprocess_meta.has_value() &&
+      st.src_opt.preprocess_meta->enabled) {
+    ensure_raw_preprocess_meta_for_spec(&buf, *metadata_spec, st.src_opt, where);
   }
   const bool must_apply_tensor_preprocess_meta =
       tensor_preprocess_meta.has_value() &&

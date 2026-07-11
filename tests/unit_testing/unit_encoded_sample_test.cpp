@@ -175,6 +175,8 @@ int main() {
       RunOptions run_opt;
       Run run = p.build(Sample{holder_sample}, run_opt);
       require(run.push(Sample{holder_sample}), "holder-backed encoded Sample push failed");
+      require(run.try_push_holder(holder_sample.tensors.front().storage->holder),
+              "holder-only encoded push should reuse the saved full encoded spec");
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
       require(run.last_error().empty(), "unexpected error after holder-backed encoded push");
     }

@@ -35,6 +35,27 @@ RUN_TEST(
                          "tensor envelope caps should identify tensor-set representation");
         require_contains(envelope_caps, "storage=(string)tensorbuffer",
                          "tensor envelope caps should identify tensorbuffer storage");
+
+        SampleSpec plain_spec = spec;
+        plain_spec.tensor_envelope_transport = false;
+        plain_spec.caps_key = capkey_from_spec(plain_spec);
+        spec.caps_key = capkey_from_spec(spec);
+        require(plain_spec.caps_key != spec.caps_key,
+                "plain and envelope tensor caps must use distinct cache keys");
+        GstCaps* plain_gst_caps = caps_from_spec(plain_spec);
+        GstCaps* envelope_gst_caps = caps_from_spec(spec);
+        require(
+            !gst_structure_has_field(gst_caps_get_structure(plain_gst_caps, 0), "representation"),
+            "plain tensor caps must not inherit envelope representation");
+        const GstStructure* envelope_structure = gst_caps_get_structure(envelope_gst_caps, 0);
+        require(g_strcmp0(gst_structure_get_string(envelope_structure, "representation"),
+                          "tensor-set") == 0,
+                "envelope tensor caps lost tensor-set representation");
+        require(
+            g_strcmp0(gst_structure_get_string(envelope_structure, "storage"), "tensorbuffer") == 0,
+            "envelope tensor caps lost tensorbuffer storage");
+        gst_caps_unref(plain_gst_caps);
+        gst_caps_unref(envelope_gst_caps);
       }
 
       const Tensor rgb = make_color_tensor(4, 2, ImageSpec::PixelFormat::RGB, 0x12);

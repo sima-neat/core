@@ -1276,6 +1276,7 @@ CapKey capkey_from_spec(const SampleSpec& spec) {
     key.dtype = spec.dtype;
     key.layout = spec.layout;
     key.shape = spec.shape;
+    key.tensor_envelope_transport = spec.tensor_envelope_transport;
   } else if (spec.kind == SampleMediaKind::Encoded) {
     key.caps_hash = hash_string(spec.caps_string);
   }
@@ -1354,7 +1355,7 @@ std::string CapKey::to_string() const {
         oss << ",";
       oss << shape[i];
     }
-    oss << "]}";
+    oss << "],envelope=" << (tensor_envelope_transport ? 1 : 0) << "}";
     break;
   case SampleMediaKind::Encoded:
     oss << "encoded{caps_hash=" << caps_hash << "}";
@@ -1380,6 +1381,7 @@ std::size_t CapKeyHash::operator()(const CapKey& key) const {
     for (const auto& dim : key.shape) {
       seed = hash_combine(seed, std::hash<std::int64_t>{}(dim));
     }
+    seed = hash_combine(seed, std::hash<bool>{}(key.tensor_envelope_transport));
     break;
   case SampleMediaKind::Encoded:
     seed = hash_combine(seed, key.caps_hash);
