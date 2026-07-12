@@ -3547,6 +3547,20 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("channel", &simaai::neat::MetadataSenderOptions::channel)
       .def_rw("metadata_port_base", &simaai::neat::MetadataSenderOptions::metadata_port_base);
 
+  nb::class_<simaai::neat::MetadataSenderSendOptions>(m, "MetadataSenderSendOptions")
+      .def(nb::init<>())
+      .def_rw("nonblocking", &simaai::neat::MetadataSenderSendOptions::nonblocking);
+
+  nb::class_<simaai::neat::MetadataSenderStats>(m, "MetadataSenderStats")
+      .def_ro("send_attempts", &simaai::neat::MetadataSenderStats::send_attempts)
+      .def_ro("datagrams_sent", &simaai::neat::MetadataSenderStats::datagrams_sent)
+      .def_ro("send_failures", &simaai::neat::MetadataSenderStats::send_failures)
+      .def_ro("would_block", &simaai::neat::MetadataSenderStats::would_block)
+      .def_ro("no_buffer_space", &simaai::neat::MetadataSenderStats::no_buffer_space)
+      .def_ro("last_send_duration_ns", &simaai::neat::MetadataSenderStats::last_send_duration_ns)
+      .def_ro("max_send_duration_ns", &simaai::neat::MetadataSenderStats::max_send_duration_ns)
+      .def_ro("last_errno", &simaai::neat::MetadataSenderStats::last_errno);
+
   nb::class_<simaai::neat::MetadataSender>(m, "MetadataSender")
       .def(
           "__init__",
@@ -3559,9 +3573,23 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "options"_a)
+      .def(
+          "__init__",
+          [](simaai::neat::MetadataSender* self, const simaai::neat::MetadataSenderOptions& opt,
+             const simaai::neat::MetadataSenderSendOptions& send_opt) {
+            std::string err;
+            new (self) simaai::neat::MetadataSender(opt, send_opt, &err);
+            if (!self->ok()) {
+              self->~MetadataSender();
+              throw std::runtime_error(err.empty() ? "MetadataSender init failed" : err);
+            }
+          },
+          "options"_a, "send_options"_a)
       .def("ok", &simaai::neat::MetadataSender::ok)
       .def("host", &simaai::neat::MetadataSender::host)
       .def("metadata_port", &simaai::neat::MetadataSender::metadata_port)
+      .def("nonblocking", &simaai::neat::MetadataSender::nonblocking)
+      .def("stats", &simaai::neat::MetadataSender::stats)
       .def(
           "send_raw_json",
           [](const simaai::neat::MetadataSender& self, const std::string& payload) {

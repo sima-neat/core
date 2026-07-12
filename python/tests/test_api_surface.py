@@ -407,6 +407,7 @@ def test_output_stage_option_structs_expose_expected_fields():
   video_encoder = pyneat.VideoSenderEncoderOptions()
   video_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30)
   metadata_sender = pyneat.MetadataSenderOptions()
+  metadata_send = pyneat.MetadataSenderSendOptions()
 
   for field in UDP_OUTPUT_OPTION_FIELDS:
     assert hasattr(udp, field), field
@@ -429,6 +430,7 @@ def test_output_stage_option_structs_expose_expected_fields():
 
   for field in METADATA_SENDER_OPTION_FIELDS:
     assert hasattr(metadata_sender, field), field
+  assert hasattr(metadata_send, "nonblocking")
 
   assert hasattr(pyneat, "H264ParseAlignment")
   assert hasattr(pyneat, "H264ParseStreamFormat")
@@ -436,6 +438,8 @@ def test_output_stage_option_structs_expose_expected_fields():
   assert hasattr(pyneat, "VideoSenderEncoderOptions")
   assert hasattr(pyneat, "VideoSenderOptions")
   assert hasattr(pyneat, "MetadataSenderOptions")
+  assert hasattr(pyneat, "MetadataSenderSendOptions")
+  assert hasattr(pyneat, "MetadataSenderStats")
   assert hasattr(pyneat, "MetadataSender")
   assert hasattr(pyneat.groups, "video_sender")
 
@@ -517,6 +521,7 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30))
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
   _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
+  _assert_not_type_error(lambda: pyneat.MetadataSenderSendOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions()))
 
 

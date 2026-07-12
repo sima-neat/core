@@ -2,7 +2,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -16,6 +18,14 @@ namespace simaai::neat {
 namespace {
 
 using json = nlohmann::json;
+
+void update_max(std::atomic<uint64_t>& maximum, uint64_t value) {
+  uint64_t current = maximum.load(std::memory_order_relaxed);
+  while (current < value &&
+         !maximum.compare_exchange_weak(current, value, std::memory_order_relaxed,
+                                        std::memory_order_relaxed)) {
+  }
+}
 
 bool resolve_udp_addr(const std::string& host, int port, sockaddr_storage& out, socklen_t& out_len,
                       std::string& err) {
@@ -109,13 +119,27 @@ struct MetadataSender::Impl {
   socklen_t addr_len = 0;
   std::string host;
   int metadata_port = 0;
+  bool nonblocking = false;
   bool ok = false;
+  std::atomic<uint64_t> send_attempts{0};
+  std::atomic<uint64_t> datagrams_sent{0};
+  std::atomic<uint64_t> send_failures{0};
+  std::atomic<uint64_t> would_block{0};
+  std::atomic<uint64_t> no_buffer_space{0};
+  std::atomic<uint64_t> last_send_duration_ns{0};
+  std::atomic<uint64_t> max_send_duration_ns{0};
+  std::atomic<int> last_errno{0};
 };
 
-MetadataSender::MetadataSender(const MetadataSenderOptions& opt, std::string* err) {
+MetadataSender::MetadataSender(const MetadataSenderOptions& opt, std::string* err)
+    : MetadataSender(opt, MetadataSenderSendOptions{}, err) {}
+
+MetadataSender::MetadataSender(const MetadataSenderOptions& opt,
+                               const MetadataSenderSendOptions& send_opt, std::string* err) {
   impl_ = std::make_unique<Impl>();
   impl_->host = opt.host.empty() ? "127.0.0.1" : opt.host;
   impl_->metadata_port = opt.metadata_port_base + opt.channel;
+  impl_->nonblocking = send_opt.nonblocking;
 
   std::string addr_err;
   if (!resolve_udp_addr(impl_->host, impl_->metadata_port, impl_->addr, impl_->addr_len,
@@ -153,24 +177,65 @@ int MetadataSender::metadata_port() const {
   return impl_ ? impl_->metadata_port : -1;
 }
 
+bool MetadataSender::nonblocking() const {
+  return impl_ && impl_->nonblocking;
+}
+
+MetadataSenderStats MetadataSender::stats() const {
+  MetadataSenderStats out;
+  if (!impl_) {
+    return out;
+  }
+  out.send_attempts = impl_->send_attempts.load(std::memory_order_relaxed);
+  out.datagrams_sent = impl_->datagrams_sent.load(std::memory_order_relaxed);
+  out.send_failures = impl_->send_failures.load(std::memory_order_relaxed);
+  out.would_block = impl_->would_block.load(std::memory_order_relaxed);
+  out.no_buffer_space = impl_->no_buffer_space.load(std::memory_order_relaxed);
+  out.last_send_duration_ns = impl_->last_send_duration_ns.load(std::memory_order_relaxed);
+  out.max_send_duration_ns = impl_->max_send_duration_ns.load(std::memory_order_relaxed);
+  out.last_errno = impl_->last_errno.load(std::memory_order_relaxed);
+  return out;
+}
+
 bool MetadataSender::send_raw_json(const std::string& payload, std::string* err) const {
   if (!ok()) {
     if (err)
       *err = "MetadataSender not initialized";
     return false;
   }
-  const ssize_t sent = ::sendto(impl_->fd, payload.data(), payload.size(), 0,
+  impl_->send_attempts.fetch_add(1, std::memory_order_relaxed);
+  const auto send_start = std::chrono::steady_clock::now();
+  const int flags = impl_->nonblocking ? MSG_DONTWAIT : 0;
+  const ssize_t sent = ::sendto(impl_->fd, payload.data(), payload.size(), flags,
                                 reinterpret_cast<const sockaddr*>(&impl_->addr), impl_->addr_len);
+  const int send_errno = sent < 0 ? errno : 0;
+  const auto duration_ns =
+      static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - send_start)
+                                .count());
+  impl_->last_send_duration_ns.store(duration_ns, std::memory_order_relaxed);
+  update_max(impl_->max_send_duration_ns, duration_ns);
   if (sent < 0) {
+    impl_->send_failures.fetch_add(1, std::memory_order_relaxed);
+    impl_->last_errno.store(send_errno, std::memory_order_relaxed);
+    if (send_errno == EAGAIN || send_errno == EWOULDBLOCK) {
+      impl_->would_block.fetch_add(1, std::memory_order_relaxed);
+    } else if (send_errno == ENOBUFS) {
+      impl_->no_buffer_space.fetch_add(1, std::memory_order_relaxed);
+    }
     if (err)
-      *err = std::string("sendto failed: ") + std::strerror(errno);
+      *err = std::string("sendto failed: ") + std::strerror(send_errno);
     return false;
   }
   if (static_cast<size_t>(sent) != payload.size()) {
+    impl_->send_failures.fetch_add(1, std::memory_order_relaxed);
+    impl_->last_errno.store(EIO, std::memory_order_relaxed);
     if (err)
       *err = "sendto sent a partial datagram";
     return false;
   }
+  impl_->datagrams_sent.fetch_add(1, std::memory_order_relaxed);
+  impl_->last_errno.store(0, std::memory_order_relaxed);
   return true;
 }
 

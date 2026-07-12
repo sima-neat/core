@@ -67,6 +67,36 @@ sender.send_raw_json(
     &err);
 ```
 
+## Keep Real-Time Dispatch Nonblocking
+
+UDP normally uses a blocking socket. A locally congested send buffer can
+therefore delay the thread calling `send_raw_json(...)`. If that thread also
+dispatches video or inference work, opt in to nonblocking sends:
+
+```cpp
+simaai::neat::MetadataSenderSendOptions send_opt;
+send_opt.nonblocking = true;
+simaai::neat::MetadataSender sender(opt, send_opt, &err);
+```
+
+Nonblocking mode applies `MSG_DONTWAIT` to each datagram. When the kernel cannot
+accept a datagram immediately, the send returns `false` instead of waiting. The
+caller should treat that metadata packet as dropped and continue its real-time
+work; UDP delivery is not guaranteed in either mode.
+
+Use `stats()` to distinguish congestion from other failures and to detect slow
+blocking calls:
+
+```cpp
+const auto stats = sender.stats();
+std::cerr << "sent=" << stats.datagrams_sent
+          << " would_block=" << stats.would_block
+          << " enobufs=" << stats.no_buffer_space
+          << " max_send_ns=" << stats.max_send_duration_ns << '\n';
+```
+
+The default remains blocking for compatibility.
+
 ## Python
 
 ```python
@@ -77,8 +107,10 @@ opt = pyneat.MetadataSenderOptions()
 opt.host = "127.0.0.1"
 opt.channel = 0
 opt.metadata_port_base = 9100
+send_opt = pyneat.MetadataSenderSendOptions()
+send_opt.nonblocking = True
 
-sender = pyneat.MetadataSender(opt)
+sender = pyneat.MetadataSender(opt, send_opt)
 
 sender.send_metadata(
     "object-detection",
@@ -97,4 +129,7 @@ sender.send_metadata(
     12345,
     "frame-7",
 )
+
+stats = sender.stats()
+print(stats.datagrams_sent, stats.would_block, stats.max_send_duration_ns)
 ```
