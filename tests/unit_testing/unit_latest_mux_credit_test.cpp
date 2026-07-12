@@ -1,6 +1,8 @@
 #include "gst/GstInit.h"
 #include "gst/GstLatestByStreamMux.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/LatestByStreamFrameTap.h"
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
@@ -87,6 +89,29 @@ GstBuffer* make_mux_input_buffer(std::int64_t frame_id) {
   gst_structure_set(structure, "frame-id", G_TYPE_INT64, static_cast<gint64>(frame_id), nullptr);
   GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(frame_id) * GST_MSECOND;
   GST_BUFFER_DURATION(buffer) = GST_MSECOND;
+  return buffer;
+}
+
+GstBuffer* make_mux_input_buffer_with_timing(std::int64_t frame_id, GstClockTime pts,
+                                             GstClockTime dts, GstClockTime duration) {
+  GstBuffer* buffer = make_mux_input_buffer(frame_id);
+  GST_BUFFER_PTS(buffer) = pts;
+  GST_BUFFER_DTS(buffer) = dts;
+  GST_BUFFER_DURATION(buffer) = duration;
+  return buffer;
+}
+
+GstBuffer* make_encoded_tap_buffer(const std::vector<std::uint8_t>& bytes, GstClockTime pts,
+                                   GstClockTime dts, GstClockTime duration) {
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, bytes.size(), nullptr);
+  require(buffer != nullptr, "failed to allocate encoded-tap buffer");
+  GstMapInfo map = GST_MAP_INFO_INIT;
+  require(gst_buffer_map(buffer, &map, GST_MAP_WRITE) == TRUE, "failed to map encoded-tap buffer");
+  std::copy(bytes.begin(), bytes.end(), map.data);
+  gst_buffer_unmap(buffer, &map);
+  GST_BUFFER_PTS(buffer) = pts;
+  GST_BUFFER_DTS(buffer) = dts;
+  GST_BUFFER_DURATION(buffer) = duration;
   return buffer;
 }
 
@@ -206,6 +231,156 @@ void release_terminal_loan(const LatestMuxPipeline& fixture, const char* stream_
           terminal, fixture.mux_namespace);
   gst_buffer_unref(terminal);
   require(released, "namespace-qualified terminal output should release the mux loan");
+}
+
+void test_encoded_frame_tap_owns_au_and_timing() {
+  constexpr GstClockTime kPts = 9001001;
+  constexpr GstClockTime kDts = 8001001;
+  constexpr GstClockTime kDuration = 50000000;
+  const std::vector<std::uint8_t> expected = {0x00, 0x00, 0x00, 0x01, 0x65, 0x12, 0x34};
+  GstCaps* caps =
+      gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
+  require(caps != nullptr, "failed to allocate encoded-tap caps");
+  GstBuffer* source = make_encoded_tap_buffer(expected, kPts, kDts, kDuration);
+
+  std::size_t callback_count = 0;
+  simaai::neat::Sample captured;
+  simaai::neat::set_latest_by_stream_encoded_frame_callback([&](simaai::neat::Sample sample) {
+    ++callback_count;
+    captured = std::move(sample);
+  });
+  simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(source, caps,
+                                                                                      "stream17");
+  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
+
+  GstMapInfo overwrite = GST_MAP_INFO_INIT;
+  require(gst_buffer_map(source, &overwrite, GST_MAP_WRITE) == TRUE,
+          "failed to remap encoded-tap source buffer");
+  std::fill(overwrite.data, overwrite.data + overwrite.size, 0xEE);
+  gst_buffer_unmap(source, &overwrite);
+  gst_buffer_unref(source);
+  gst_caps_unref(caps);
+
+  require(callback_count == 1U, "encoded tap should deliver exactly one callback");
+  require(captured.stream_id == "stream17", "encoded tap should preserve stream identity");
+  require(captured.pts_ns == static_cast<std::int64_t>(kPts), "encoded tap should preserve PTS");
+  require(captured.dts_ns == static_cast<std::int64_t>(kDts), "encoded tap should preserve DTS");
+  require(captured.duration_ns == static_cast<std::int64_t>(kDuration),
+          "encoded tap should preserve duration");
+  require(captured.caps_string.find("video/x-h264") != std::string::npos,
+          "encoded tap should preserve caps");
+  require(captured.tensors.size() == 1U && captured.tensors.front().storage,
+          "encoded tap should return one owned payload tensor");
+  const simaai::neat::Mapping payload = captured.tensors.front().map_read();
+  require(payload.data != nullptr && payload.size_bytes == expected.size(),
+          "encoded tap payload has the wrong size");
+  const auto* payload_bytes = static_cast<const std::uint8_t*>(payload.data);
+  require(std::equal(expected.begin(), expected.end(), payload_bytes),
+          "encoded tap payload must outlive and not alias the source GstBuffer");
+}
+
+void test_clear_encoded_frame_tap_waits_for_inflight_callback() {
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool callback_entered = false;
+  bool release_callback = false;
+  std::atomic<std::size_t> callback_count{0};
+
+  simaai::neat::set_latest_by_stream_encoded_frame_callback([&](simaai::neat::Sample) {
+    callback_count.fetch_add(1, std::memory_order_relaxed);
+    std::unique_lock<std::mutex> lock(mutex);
+    callback_entered = true;
+    condition.notify_all();
+    condition.wait(lock, [&] { return release_callback; });
+  });
+
+  std::thread dispatch_thread([&] {
+    GstCaps* caps =
+        gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
+    GstBuffer* buffer = make_encoded_tap_buffer({0x00, 0x00, 0x01, 0x65}, 101, 99, 33);
+    simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
+        buffer, caps, "stream0");
+    gst_buffer_unref(buffer);
+    gst_caps_unref(caps);
+  });
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    require(condition.wait_for(lock, std::chrono::seconds(2), [&] { return callback_entered; }),
+            "encoded tap callback did not enter");
+  }
+
+  std::thread release_thread([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      release_callback = true;
+    }
+    condition.notify_all();
+  });
+  const auto clear_start = std::chrono::steady_clock::now();
+  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
+  const auto clear_elapsed = std::chrono::steady_clock::now() - clear_start;
+  dispatch_thread.join();
+  release_thread.join();
+
+  require(clear_elapsed >= std::chrono::milliseconds(50),
+          "clear must wait until every admitted encoded callback has returned");
+
+  GstCaps* caps =
+      gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
+  GstBuffer* buffer = make_encoded_tap_buffer({0x00, 0x00, 0x01, 0x41}, 201, 199, 33);
+  simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(buffer, caps,
+                                                                                      "stream0");
+  gst_buffer_unref(buffer);
+  gst_caps_unref(caps);
+  require(callback_count.load(std::memory_order_relaxed) == 1U,
+          "clear must prevent callbacks from being admitted afterward");
+}
+
+void test_terminal_release_restores_original_pts() {
+  constexpr const char* kStreamId = "timing-stream";
+  constexpr GstClockTime kPts = 123456789;
+  constexpr GstClockTime kDts = 120000000;
+  constexpr GstClockTime kDuration = 50000000;
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-timing-restore-pipeline", kStreamId);
+
+  GstBuffer* input = make_mux_input_buffer_with_timing(21, kPts, kDts, kDuration);
+  require(gst_app_src_push_buffer(GST_APP_SRC(fixture.appsrc), input) == GST_FLOW_OK,
+          "failed to push latest-mux timing fixture");
+  GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(output != nullptr, "latest-mux should emit the timing fixture");
+  gst_sample_unref(output);
+
+  GstBuffer* terminal = make_terminal_identity_buffer(kStreamId, 21);
+  GST_BUFFER_PTS(terminal) = 999;
+  GST_BUFFER_DTS(terminal) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_DURATION(terminal) = 1;
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              terminal, fixture.mux_namespace),
+          "terminal completion should resolve the timing fixture loan");
+  require(GST_BUFFER_PTS(terminal) == kPts,
+          "terminal completion should restore the decoder input PTS");
+  require(GST_BUFFER_DTS(terminal) == kDts,
+          "terminal completion should restore the decoder input DTS");
+  require(GST_BUFFER_DURATION(terminal) == kDuration,
+          "terminal completion should restore the decoder input duration");
+  simaai::neat::Sample restored;
+  simaai::neat::restore_sample_timing_from_gst_buffer(terminal, &restored);
+  require(restored.pts_ns == static_cast<std::int64_t>(kPts),
+          "restored Sample should carry the original PTS");
+  require(restored.dts_ns == static_cast<std::int64_t>(kDts),
+          "restored Sample should carry the original DTS");
+  require(restored.duration_ns == static_cast<std::int64_t>(kDuration),
+          "restored Sample should carry the original duration");
+  gst_buffer_unref(terminal);
+
+  push_mux_input(fixture.appsrc, 22);
+  GstSample* next = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(next != nullptr, "timing restoration should also release mux admission credit");
+  release_terminal_loan(fixture, kStreamId, 22);
+  gst_sample_unref(next);
+  stop_latest_mux_pipeline(&fixture);
 }
 
 void test_output_buffer_finalize_does_not_release_terminal_credit() {
@@ -462,6 +637,9 @@ int main() {
     ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", "0", 1);
     ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL", "1", 1);
 
+    test_encoded_frame_tap_owns_au_and_timing();
+    test_clear_encoded_frame_tap_waits_for_inflight_callback();
+    test_terminal_release_restores_original_pts();
     test_output_buffer_finalize_does_not_release_terminal_credit();
     test_teardown_releases_unresolved_terminal_credit();
     test_pending_buffer_unref_is_reentrant();
