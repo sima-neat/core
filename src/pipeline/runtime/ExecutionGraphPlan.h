@@ -274,6 +274,9 @@ struct RuntimeCompileOptions {
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& graph, const RunOptions& opt,
                                         std::optional<Sample> seed = std::nullopt);
 
+// Reject statically known connected-source shapes that exceed a downstream ingress capacity.
+void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan);
+
 ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
                                                       const graph::CompiledGraph& compiled,
                                                       const RuntimeCompileOptions& opt);

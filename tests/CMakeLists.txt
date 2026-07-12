@@ -1487,6 +1487,32 @@ if (NOT sync_yolov8_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  yolov8_dynamic_boxdecode_geometry_sync_test
+  e2e_pipelines/obj_detection/yolov8_dynamic_boxdecode_geometry_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR} --mode sync
+)
+
+if (NOT yolov8_dynamic_boxdecode_geometry_sync_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_dynamic_boxdecode_geometry_sync_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;dynamic;sync")
+endif()
+
+add_pipeline_test(
+  yolov8_dynamic_boxdecode_geometry_async_test
+  e2e_pipelines/obj_detection/yolov8_dynamic_boxdecode_geometry_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR} --mode async
+)
+
+if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_dynamic_boxdecode_geometry_async_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;dynamic;async")
+endif()
+
+add_pipeline_test(
   sync_yolov8_test_detessdequant
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
   e2e_pipelines/e2e_utils.cpp

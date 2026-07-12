@@ -56,8 +56,9 @@ inline void require_unique_endpoint_name(std::unordered_set<std::string>* used,
  *
  * The returned object is a normal public `Graph` containing one `Input(input)`, one
  * `Output(name)` per requested output, and endpoint `connect(input, output)` edges. At build time
- * the compiler lowers this to the appropriate internal branch/fan-out runtime machinery while
- * preserving the public endpoint names for `Run::pull(name)`, diagnostics, and visualization.
+ * the compiler lowers connected branches to the internal shallow `FanOut` runtime machinery,
+ * rather than inserting appsrc/appsink boundaries, while preserving the public endpoint names for
+ * `Run::pull(name)`, diagnostics, and visualization.
  */
 inline Graph Branch(std::string input, std::vector<std::string> outputs) {
   if (outputs.empty()) {
@@ -94,10 +95,13 @@ inline Graph Branch(std::string input, std::vector<std::string> outputs) {
  *
  * - `CombinePolicy::ByFrame`: exact `Sample::frame_id` match.
  * - `CombinePolicy::ByPts`: exact `Sample::pts_ns` / Presentation Timestamp match.
+ * - `CombinePolicy::RoundRobin`: forward original samples fairly, one at a time, without creating
+ *   bundles.
  * - `CombinePolicy::None`: fail closed if multiple producers reach the output.
  *
  * The helper only constructs public Graph topology. The compiler is responsible for lowering the
- * multi-producer output to the internal combine stage for `ByFrame` / `ByPts`.
+ * multi-producer output to the internal combine stage for `ByFrame` / `ByPts` or the internal
+ * stream scheduler for `RoundRobin`.
  */
 inline Graph Combine(std::vector<std::string> inputs, std::string output,
                      CombinePolicy policy = CombinePolicy::ByFrame) {

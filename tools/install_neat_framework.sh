@@ -57,6 +57,10 @@ set -euo pipefail
 #   both packages are from the same minor-version family.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
+# - NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL: ON/OFF (default: OFF) allow the
+#   destructive remove-and-retry path after apt rejects the local package set.
+#   Keep OFF for normal installs so an incompatible bundle cannot remove the
+#   board's currently working runtime and transitive platform packages.
 # - NEAT_INSTALLER_APT_UPDATE: AUTO/ON/OFF (default: AUTO) controls whether the
 #   board installer refreshes APT metadata before installing local DEBs. AUTO
 #   refreshes only when /var/lib/apt/lists has no package index files.
@@ -74,6 +78,7 @@ NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
 NEAT_INSTALLER_RELAX_SIMA_LMM_DEP="${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
+NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OFF}"
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
@@ -805,6 +810,10 @@ refresh_apt_metadata_for_board_install() {
   return 0
 }
 
+deb_package_is_installed() {
+  dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii '
+}
+
 remove_installed_local_deb_packages() {
   if ! command -v dpkg-deb >/dev/null 2>&1; then
     return 0
@@ -864,6 +873,9 @@ maybe_relax_simaai_memory_dep() {
 
   local installed_memory_version
   installed_memory_version="$(dpkg-query -W -f='${Version}' simaai-memory-lib 2>/dev/null || true)"
+  if [[ -z "${installed_memory_version}" ]]; then
+    installed_memory_version="$(local_deb_version_for_package simaai-memory-lib || true)"
+  fi
   if [[ -z "${installed_memory_version}" ]]; then
     out_array+=("${deb}")
     return 0
@@ -1335,7 +1347,39 @@ install_debs_on_board() {
   if ! apt_package_database_is_healthy; then
     log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
   fi
-  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+
+  # Restore native palette packages before the local transaction. Otherwise,
+  # apt may "repair" a board left by an older partial install by removing
+  # simaai-palette-modalix instead of restoring its exact simaai-gst-plugins
+  # dependency. --no-remove turns any similar future regression into a failed,
+  # non-destructive install instead of silently deleting platform packages.
+  local -a preserved_native_packages=(simaai-gst-plugins simaai-palette-modalix)
+  local repair_native_packages=0
+  local package
+  for package in "${preserved_native_packages[@]}"; do
+    if ! deb_package_is_installed "${package}"; then
+      repair_native_packages=1
+    fi
+  done
+  if [[ "${repair_native_packages}" -eq 1 ]]; then
+    for package in "${preserved_native_packages[@]}"; do
+      if ! apt-cache show "${package}" >/dev/null 2>&1; then
+        echo "Required native Modalix package is unavailable from apt: ${package}" >&2
+        exit 1
+      fi
+    done
+    log "Restoring native Modalix packages before the NEAT transaction: ${preserved_native_packages[*]}"
+    if ! run_sudo apt-get install -y --fix-broken --no-remove "${preserved_native_packages[@]}"; then
+      echo "Failed to restore native Modalix packages before the NEAT install." >&2
+      exit 1
+    fi
+  fi
+
+  local -a apt_install_args=(
+    apt-get install -y --fix-broken --allow-downgrades --reinstall --no-remove
+    -o Dpkg::Options::=--force-overwrite
+  )
+  if run_sudo "${apt_install_args[@]}" "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
     repair_global_sima_neat_lib_links
     verify_global_sima_neat_lib_links
@@ -1346,9 +1390,15 @@ install_debs_on_board() {
     return 0
   fi
 
-  log "apt-get install failed; removing installed NEAT packages represented by the local DEB set and retrying apt."
+  if [[ "${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL}" != "ON" ]]; then
+    echo "apt-get rejected the local package set; refusing to remove the installed runtime because NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL}." >&2
+    echo "Fix the bundled package versions/dependencies, or explicitly set NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON during a recoverable maintenance operation." >&2
+    exit 1
+  fi
+
+  log "apt-get install failed; NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON, removing installed NEAT packages represented by the local DEB set and retrying apt."
   remove_installed_local_deb_packages
-  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+  if run_sudo "${apt_install_args[@]}" "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
     repair_global_sima_neat_lib_links
     verify_global_sima_neat_lib_links

@@ -105,10 +105,10 @@ void require_installed_packages(const std::vector<PackageExpectation>& packages)
   throw std::runtime_error(message.str());
 }
 
-void require_neat_variant(const std::string& package) {
+void require_package_version(const std::string& package, const std::string& expected) {
   const std::string version = package_version(package);
-  require(version.find("+neat") != std::string::npos,
-          package + " should be installed from the NEAT-compatible package set, got " + version);
+  require(version == expected,
+          package + " should preserve platform package version " + expected + ", got " + version);
 }
 
 } // namespace
@@ -153,11 +153,11 @@ int main() {
     require_installed_packages(neat_packages);
     require_installed_packages(native_sima_packages);
 
-    require_neat_variant("libcamera");
-    require_neat_variant("libcamera-tools");
-    require_neat_variant("libcamera-dev");
-    require_neat_variant("simaai-memory-lib");
-    require_neat_variant("simaai-memory-lib-dev");
+    require_package_version("libcamera", "2.1.1");
+    require_package_version("libcamera-tools", "2.1.1");
+    require_package_version("libcamera-dev", "2.1.1");
+    require_package_version("simaai-memory-lib", "2.1.1");
+    require_package_version("simaai-memory-lib-dev", "2.1.1");
 
     require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
             "simaai-ota command should remain available through simaai-palette-modalix");

@@ -31,6 +31,11 @@ struct BoxDecodeCompiledContractOptions {
   std::vector<std::string> required_preprocess_meta_fields;
 };
 
+/// Resolve a grouped DFL tensor layout without conflating layout with the
+/// class-score domain. Explicit probability/logit options win; otherwise the
+/// already inferred score activation selects the matching grouped option.
+void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract);
+
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
     const std::optional<ModelBoxdecodeSemantics>& model_semantics,

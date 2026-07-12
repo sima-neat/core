@@ -711,9 +711,8 @@ void RealtimeLatestLink::run_() {
         credit_applicable_selected = credit_applicable;
         pending.has_sample = false;
         pending.queued = false;
-        const bool stream_credit_acquired =
+        credit_acquired =
             credit_applicable && credit_lane && credit_lane->gate && credit_lane->gate->enabled();
-        credit_acquired = stream_credit_acquired || global_credit_acquired;
         selected = true;
         break;
       }
@@ -727,22 +726,19 @@ void RealtimeLatestLink::run_() {
       atomic_add_max(ready_wait_ns_, ready_wait_max_ns_, elapsed_ns_since(ready_at));
     }
 
-    if (credit_acquired) {
+    const bool any_credit_acquired = credit_acquired || global_credit_acquired;
+    if (any_credit_acquired) {
       const bool credit_key_available = !sample.stream_id.empty() && sample.frame_id >= 0;
-      const auto primary_credit_lane =
-          (credit_lane && credit_lane->gate && credit_lane->gate->enabled()) ? credit_lane
-                                                                             : global_credit_lane;
       if (credit_key_available) {
         credit = pipeline_internal::RealtimeFrameCredit{credit_namespace_, sample.stream_id,
                                                         sample.frame_id};
+        const auto& primary_lane = credit_acquired ? credit_lane : global_credit_lane;
         std::vector<pipeline_internal::RealtimeFrameCreditLanePtr> companions;
-        if (global_credit_acquired && global_credit_lane &&
-            global_credit_lane != primary_credit_lane) {
+        if (credit_acquired && global_credit_acquired && global_credit_lane) {
           companions.push_back(global_credit_lane);
         }
         credit_registered = pipeline_internal::register_realtime_frame_credit(
-            credit.namespace_id, credit.stream_id, credit.frame_id, primary_credit_lane,
-            companions);
+            credit.namespace_id, credit.stream_id, credit.frame_id, primary_lane, companions);
         if (credit_registered) {
           pipeline_internal::attach_realtime_frame_credit_to_sample(sample, credit);
           if (!pipeline_internal::sample_has_attached_realtime_frame_credit(sample)) {
@@ -771,16 +767,18 @@ void RealtimeLatestLink::run_() {
                                     credit_applicable_selected);
         }
         if (!credit_released_after_register) {
-          if (primary_credit_lane) {
+          if (credit_acquired && credit_lane) {
             if (!credit_key_available) {
-              primary_credit_lane->missing_key.fetch_add(1, std::memory_order_relaxed);
+              credit_lane->missing_key.fetch_add(1, std::memory_order_relaxed);
             }
-            if (primary_credit_lane->gate) {
-              primary_credit_lane->gate->release();
+            if (credit_lane->gate) {
+              credit_lane->gate->release();
             }
           }
-          if (global_credit_acquired && global_credit_lane && global_credit_lane->gate &&
-              global_credit_lane != primary_credit_lane) {
+          if (global_credit_acquired && global_credit_lane && global_credit_lane->gate) {
+            if (!credit_key_available) {
+              global_credit_lane->missing_key.fetch_add(1, std::memory_order_relaxed);
+            }
             global_credit_lane->gate->release();
           }
         }

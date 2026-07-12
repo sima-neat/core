@@ -564,6 +564,8 @@ const char* combine_policy_name(CombinePolicy policy) {
     return "ByFrame";
   case CombinePolicy::ByPts:
     return "ByPts";
+  case CombinePolicy::RoundRobin:
+    return "RoundRobin";
   }
   return "None";
 }
@@ -574,6 +576,9 @@ CombinePolicy parse_combine_policy(const std::string& value) {
   }
   if (value == "ByPts") {
     return CombinePolicy::ByPts;
+  }
+  if (value == "RoundRobin") {
+    return CombinePolicy::RoundRobin;
   }
   return CombinePolicy::None;
 }
@@ -1226,6 +1231,9 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
             break;
           case CombinePolicy::ByPts:
             oss << "ByPts";
+            break;
+          case CombinePolicy::RoundRobin:
+            oss << "RoundRobin";
             break;
           case CombinePolicy::None:
             oss << "None";

@@ -15,6 +15,16 @@ void StreamScheduler::set_ports(const StagePorts& ports) {
   if (only != kInvalidPort) {
     out_port_ = only;
   }
+  fallback_stream_id_by_port_.clear();
+  for (const auto& input : opt_.inputs) {
+    if (input.empty()) {
+      continue;
+    }
+    const PortId port = ports.in_port(input);
+    if (port != kInvalidPort) {
+      fallback_stream_id_by_port_[port] = input;
+    }
+  }
 }
 
 void StreamScheduler::ensure_stream_(const std::string& stream_id) {
@@ -56,9 +66,27 @@ bool StreamScheduler::emit_one_(std::vector<StageOutMsg>& out) {
   return false;
 }
 
+std::string StreamScheduler::fallback_stream_id_for_port_(PortId port) const {
+  const auto it = fallback_stream_id_by_port_.find(port);
+  if (it != fallback_stream_id_by_port_.end()) {
+    return it->second;
+  }
+  return {};
+}
+
 void StreamScheduler::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out) {
   Sample sample = std::move(msg.sample);
-  std::string stream_id = sample.stream_id.empty() ? "stream0" : sample.stream_id;
+  const std::string fallback_stream_id = fallback_stream_id_for_port_(msg.in_port);
+  std::string stream_id = sample.stream_id.empty() ? fallback_stream_id : sample.stream_id;
+  if (stream_id.empty()) {
+    stream_id = "stream0";
+  }
+  if (sample.stream_id.empty() && !fallback_stream_id.empty()) {
+    sample.stream_id = fallback_stream_id;
+    if (sample.stream_label.empty()) {
+      sample.stream_label = fallback_stream_id;
+    }
+  }
 
   auto& q = queues_[stream_id];
   const bool has_limit = opt_.per_stream_queue > 0;
@@ -88,8 +116,15 @@ std::shared_ptr<simaai::neat::graph::Node> StreamSchedulerNode(StreamSchedulerOp
     return std::make_unique<StreamScheduler>(opt);
   };
 
-  std::vector<PortDesc> inputs = {
-      PortDesc{.name = std::move(input), .spec = OutputSpec{}, .max_in_edges = 0}};
+  std::vector<PortDesc> inputs;
+  if (!opt.inputs.empty()) {
+    inputs.reserve(opt.inputs.size());
+    for (const auto& name : opt.inputs) {
+      inputs.push_back(PortDesc{.name = name, .spec = OutputSpec{}, .max_in_edges = 0});
+    }
+  } else {
+    inputs = {PortDesc{.name = std::move(input), .spec = OutputSpec{}, .max_in_edges = 0}};
+  }
   std::vector<PortDesc> outputs = {PortDesc{.name = std::move(output), .spec = OutputSpec{}}};
 
   StageNode::OutputSpecFn out_fn = [](const std::vector<OutputSpec>& in, PortId) {

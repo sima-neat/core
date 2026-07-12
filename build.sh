@@ -2406,6 +2406,12 @@ stage_package_artifacts_to_dist() {
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
+
+  # The Core package declares an explicit LLiMa ABI range. Fail before
+  # publishing/installing a bundle when the copied LLiMa DEBs do not satisfy
+  # that range (for example Core 0.2.x combined with LLiMa 0.3.x).
+  python3 "${REPO_ROOT}/tools/validate_neat_package_bundle.py" "${REPO_ROOT}/dist"
+
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
     chmod +x "dist/install_neat_framework.sh"
