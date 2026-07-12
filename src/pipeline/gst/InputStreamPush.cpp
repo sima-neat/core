@@ -948,17 +948,24 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
   const bool has_parent = gst_buffer_get_parent_buffer_meta(*buffer) != nullptr;
   const bool needs_loan_envelope =
       !has_parent && (sample_has_loans || holder_has_loans) && holder_buffer == *buffer;
+  const bool needs_parent_envelope =
+      has_parent && holder_buffer == *buffer && !gst_buffer_is_writable(*buffer);
 
-  if (!needs_loan_envelope && !has_parent && (!holder_buffer || holder_buffer == *buffer)) {
+  if (!needs_loan_envelope && !needs_parent_envelope && !has_parent &&
+      (!holder_buffer || holder_buffer == *buffer)) {
     return false;
   }
 
   std::vector<GstBuffer*> parents;
-  if (needs_loan_envelope) {
-    parents.push_back(gst_buffer_ref(holder_buffer ? holder_buffer : *buffer));
+  if (needs_loan_envelope || needs_parent_envelope) {
+    if (needs_loan_envelope) {
+      parents.push_back(gst_buffer_ref(holder_buffer ? holder_buffer : *buffer));
+    }
     GstBuffer* transfer = gst_buffer_new();
     if (!transfer) {
-      gst_buffer_unref(parents.front());
+      for (GstBuffer* parent : parents) {
+        gst_buffer_unref(parent);
+      }
       throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
                                ": failed to allocate zero-copy transfer buffer");
     }
@@ -967,7 +974,9 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
                                         GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
     if (!gst_buffer_copy_into(transfer, *buffer, copy_flags, 0, -1)) {
       gst_buffer_unref(transfer);
-      gst_buffer_unref(parents.front());
+      for (GstBuffer* parent : parents) {
+        gst_buffer_unref(parent);
+      }
       throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
                                ": failed to wrap zero-copy holder buffer for transfer");
     }
@@ -997,7 +1006,7 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
                                ": failed to replace pooled parent lifetime metadata");
     }
   }
-  if (holder_buffer && holder_buffer != *buffer &&
+  if (!needs_parent_envelope && holder_buffer && holder_buffer != *buffer &&
       std::find(parents.begin(), parents.end(), holder_buffer) == parents.end()) {
     parents.push_back(gst_buffer_ref(holder_buffer));
   }

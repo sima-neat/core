@@ -314,10 +314,17 @@ int main() {
       GstStructure* legacy_structure =
           legacy_meta ? gst_custom_meta_get_structure(legacy_meta) : nullptr;
       require(legacy_structure != nullptr, "failed to attach legacy GstSimaMeta");
-      require(update_simaai_meta_fields(reacquired_buffer, std::nullopt, 0, 0, std::nullopt,
+      require(update_simaai_meta_fields(reacquired_buffer, std::nullopt, 2, 2, std::nullopt,
                                         std::nullopt),
               "failed to initialize legacy GstSimaMeta");
-      GstSample* legacy_gst_sample = gst_sample_new(reacquired_buffer, caps, nullptr, nullptr);
+      GstBuffer* legacy_view = gst_buffer_new();
+      require(legacy_view != nullptr, "failed to allocate legacy zero-copy view");
+      require(gst_buffer_copy_into(legacy_view, reacquired_buffer, copy_flags, 0, -1),
+              "failed to create legacy zero-copy view");
+      require(gst_buffer_add_parent_buffer_meta(legacy_view, reacquired_buffer) != nullptr,
+              "failed to retain legacy pooled parent");
+      GstSample* legacy_gst_sample = gst_sample_new(legacy_view, caps, nullptr, nullptr);
+      gst_buffer_unref(legacy_view);
       gst_buffer_unref(reacquired_buffer);
       require(legacy_gst_sample != nullptr, "failed to create legacy metadata GstSample");
       Sample legacy_holder_sample = sample_from_gst_encoded(legacy_gst_sample, h264_caps);
