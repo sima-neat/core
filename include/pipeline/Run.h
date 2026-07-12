@@ -111,14 +111,6 @@ enum class OutputMemory {
 struct RunAdvancedOptions {
   bool copy_input =
       false; ///< Force a copy of every pushed input (useful when the source buffer is short-lived).
-  /**
-   * @brief Fuse realtime source branches and their latest-by-stream fan-in into one pipeline.
-   *
-   * This avoids appsink/appsrc transport between decoded live sources and a shared consumer,
-   * which is useful for high-channel-count decoder graphs with strict device-memory limits.
-   * It only applies when the public graph contains `RealtimeLatestByStream` source links.
-   */
-  bool fuse_realtime_source_branches = false;
   std::size_t max_input_bytes = 0; ///< Reject pushes larger than this many bytes (0 = no cap).
   int sync_num_buffers_override =
       -1; ///< Override the appsrc `num-buffers` for sync-mode runs (-1 = auto).

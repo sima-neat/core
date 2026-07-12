@@ -107,6 +107,10 @@ struct FusedRealtimeIngressBranch {
   std::size_t edge_index = static_cast<std::size_t>(-1);
   graph::NodeId source_node = graph::kInvalidNode;
   std::string stream_id;
+  /// Exact public options from the source-to-consumer realtime link.  Fused
+  /// lowering must retain these because there is no graph-runtime scheduler
+  /// left outside the monolithic GStreamer pipeline to enforce them.
+  GraphLinkOptions link_options;
   std::vector<std::shared_ptr<Node>> nodes;
   OutputSpec output_spec;
   bool output_complete = false;
@@ -272,7 +276,8 @@ struct RuntimeCompileOptions {
 };
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& graph, const RunOptions& opt,
-                                        std::optional<Sample> seed = std::nullopt);
+                                        std::optional<Sample> seed,
+                                        bool fuse_realtime_source_branches);
 
 // Reject statically known connected-source shapes that exceed a downstream ingress capacity.
 void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan);

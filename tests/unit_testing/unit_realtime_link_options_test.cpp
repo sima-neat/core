@@ -209,8 +209,6 @@ void verify_multiplexed_stream_ids_scale_default_total_cap() {
 int main() {
   try {
     simaai::neat::gst_init_once();
-    ::unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM");
-    ::unsetenv("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM");
     ::unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
 
     simaai::neat::GraphLinkOptions default_options;

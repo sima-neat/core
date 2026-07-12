@@ -167,7 +167,8 @@ struct LatestMuxPipeline {
   std::uint64_t mux_namespace = 0;
 };
 
-LatestMuxPipeline make_latest_mux_pipeline(const char* pipeline_name, const char* stream_id) {
+LatestMuxPipeline make_latest_mux_pipeline(const char* pipeline_name, const char* stream_id,
+                                           int stream_inflight_limit = 1) {
   LatestMuxPipeline fixture;
   fixture.pipeline = gst_pipeline_new(pipeline_name);
   fixture.appsrc = gst_element_factory_make("appsrc", nullptr);
@@ -178,7 +179,9 @@ LatestMuxPipeline make_latest_mux_pipeline(const char* pipeline_name, const char
           "failed to construct queued latest-mux test pipeline");
 
   g_object_set(fixture.appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
-  g_object_set(fixture.mux, "stream-ids", stream_id, nullptr);
+  const std::string inflight_limit = std::to_string(stream_inflight_limit);
+  g_object_set(fixture.mux, "stream-ids", stream_id, "stream-inflight-limits",
+               inflight_limit.c_str(), nullptr);
   g_object_set(fixture.queue, "max-size-buffers", 1U, "max-size-bytes", 0U, "max-size-time",
                static_cast<guint64>(0), "leaky", 0, nullptr);
   g_object_set(fixture.appsink, "sync", FALSE, "max-buffers", 4U, "drop", FALSE,
@@ -249,8 +252,9 @@ void test_encoded_frame_tap_owns_au_and_timing() {
     ++callback_count;
     captured = std::move(sample);
   });
-  simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(source, caps,
-                                                                                      "stream17");
+  require(simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
+              source, caps, "stream17"),
+          "valid encoded tap dispatch should succeed");
   simaai::neat::clear_latest_by_stream_encoded_frame_callback();
 
   GstMapInfo overwrite = GST_MAP_INFO_INIT;
@@ -337,6 +341,71 @@ void test_clear_encoded_frame_tap_waits_for_inflight_callback() {
           "clear must prevent callbacks from being admitted afterward");
 }
 
+void test_encoded_frame_tap_copy_failure_posts_pipeline_error() {
+  GstElement* pipeline = gst_pipeline_new("encoded-tap-failure-pipeline");
+  GstElement* appsrc = gst_element_factory_make("appsrc", "encoded-tap-failure-source");
+  GstElement* capsfilter = gst_element_factory_make("capsfilter", "encoded-tap-failure-caps");
+  GstElement* fakesink = gst_element_factory_make("fakesink", "encoded-tap-failure-sink");
+  require(pipeline && appsrc && capsfilter && fakesink,
+          "failed to construct encoded-tap failure pipeline");
+
+  GstCaps* caps =
+      gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
+  require(caps != nullptr, "failed to allocate encoded-tap failure caps");
+  gst_app_src_set_caps(GST_APP_SRC(appsrc), caps);
+  g_object_set(capsfilter, "caps", caps, nullptr);
+  g_object_set(appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
+  g_object_set(fakesink, "sync", FALSE, nullptr);
+  gst_bin_add_many(GST_BIN(pipeline), appsrc, capsfilter, fakesink, nullptr);
+  require(gst_element_link_many(appsrc, capsfilter, fakesink, nullptr) == TRUE,
+          "failed to link encoded-tap failure pipeline");
+
+  std::atomic<std::size_t> callback_count{0};
+  simaai::neat::set_latest_by_stream_encoded_frame_callback(
+      [&](simaai::neat::Sample) { callback_count.fetch_add(1, std::memory_order_relaxed); });
+  GstPad* tap_pad = gst_element_get_static_pad(capsfilter, "src");
+  require(tap_pad != nullptr, "failed to get encoded-tap failure pad");
+  require(simaai::neat::pipeline_internal::attach_latest_by_stream_encoded_frame_tap_probe(
+              tap_pad, "failure-stream") != 0,
+          "failed to attach production encoded-tap probe");
+  gst_object_unref(tap_pad);
+
+  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          "failed to start encoded-tap failure pipeline");
+  // An empty AU exercises the same exception-contained copy failure path used
+  // for GstBuffer map failures and allocation failures, without relying on a
+  // platform allocator's interpretation of GST_MEMORY_FLAG_NOT_MAPPABLE.
+  GstBuffer* buffer = gst_buffer_new();
+  require(buffer != nullptr, "failed to allocate encoded-tap failure buffer");
+  GST_BUFFER_PTS(buffer) = 1;
+  GST_BUFFER_DURATION(buffer) = GST_MSECOND;
+  (void)gst_app_src_push_buffer(GST_APP_SRC(appsrc), buffer);
+
+  GstBus* bus = gst_element_get_bus(pipeline);
+  GstMessage* message = gst_bus_timed_pop_filtered(bus, 2 * GST_SECOND, GST_MESSAGE_ERROR);
+  require(message != nullptr,
+          "an encoded-AU copy/map failure must post a fatal pipeline error, not silently drop");
+  GError* gst_error = nullptr;
+  gchar* debug = nullptr;
+  gst_message_parse_error(message, &gst_error, &debug);
+  require(gst_error != nullptr &&
+              std::string(gst_error->message).find("Encoded-frame tap failed") != std::string::npos,
+          "encoded-tap failure should carry an actionable bus error");
+  if (gst_error) {
+    g_error_free(gst_error);
+  }
+  g_free(debug);
+  gst_message_unref(message);
+  gst_object_unref(bus);
+  require(callback_count.load(std::memory_order_relaxed) == 0U,
+          "invalid encoded AU must not invoke the subscriber with partial data");
+
+  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
+  (void)gst_element_set_state(pipeline, GST_STATE_NULL);
+  gst_caps_unref(caps);
+  gst_object_unref(pipeline);
+}
+
 void test_terminal_release_restores_original_pts() {
   constexpr const char* kStreamId = "timing-stream";
   constexpr GstClockTime kPts = 123456789;
@@ -380,6 +449,33 @@ void test_terminal_release_restores_original_pts() {
   require(next != nullptr, "timing restoration should also release mux admission credit");
   release_terminal_loan(fixture, kStreamId, 22);
   gst_sample_unref(next);
+  stop_latest_mux_pipeline(&fixture);
+}
+
+void test_public_per_stream_limit_reaches_mux_gate() {
+  constexpr const char* kStreamId = "limit-two-stream";
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-explicit-limit-pipeline", kStreamId, 2);
+
+  push_mux_input(fixture.appsrc, 1);
+  GstSample* first = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(first != nullptr, "explicit limit=2 should admit the first frame");
+  push_mux_input(fixture.appsrc, 2);
+  GstSample* second = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(second != nullptr, "explicit limit=2 should admit a second outstanding frame");
+
+  push_mux_input(fixture.appsrc, 3);
+  GstSample* blocked = pull_mux_output(fixture.appsink, 100 * GST_MSECOND);
+  require(blocked == nullptr, "explicit limit=2 must hold a third frame until terminal completion");
+  release_terminal_loan(fixture, kStreamId, 1);
+  GstSample* third = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(third != nullptr, "terminal completion must reopen the explicit per-stream gate");
+
+  release_terminal_loan(fixture, kStreamId, 2);
+  release_terminal_loan(fixture, kStreamId, 3);
+  gst_sample_unref(third);
+  gst_sample_unref(second);
+  gst_sample_unref(first);
   stop_latest_mux_pipeline(&fixture);
 }
 
@@ -528,7 +624,7 @@ void test_namespace_bounded_terminal_loan_fallback() {
           "failed to construct latest-mux credit fallback pipeline");
 
   g_object_set(appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
-  g_object_set(mux, "stream-ids", "sole-stream", nullptr);
+  g_object_set(mux, "stream-ids", "sole-stream", "stream-inflight-limits", "1", nullptr);
   g_object_set(appsink, "sync", FALSE, "max-buffers", 4U, "drop", FALSE, "enable-last-sample",
                FALSE, nullptr);
   GstCaps* caps =
@@ -633,13 +729,12 @@ void test_namespace_bounded_terminal_loan_fallback() {
 int main() {
   try {
     simaai::neat::gst_init_once();
-    ::setenv("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM", "1", 1);
-    ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", "0", 1);
-    ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL", "1", 1);
 
     test_encoded_frame_tap_owns_au_and_timing();
     test_clear_encoded_frame_tap_waits_for_inflight_callback();
+    test_encoded_frame_tap_copy_failure_posts_pipeline_error();
     test_terminal_release_restores_original_pts();
+    test_public_per_stream_limit_reaches_mux_gate();
     test_output_buffer_finalize_does_not_release_terminal_credit();
     test_teardown_releases_unresolved_terminal_credit();
     test_pending_buffer_unref_is_reentrant();
@@ -757,22 +852,24 @@ int main() {
         unrelated_ns, "unit-stamped-with-sidecar-cleanup");
 
     {
-      simaai::neat::GraphLinkOptions global_only_options;
-      global_only_options.queue_depth = 1;
-      simaai::neat::runtime::DownstreamTarget global_only_target{
+      simaai::neat::GraphLinkOptions bounded_options;
+      bounded_options.queue_depth = 1;
+      bounded_options.max_inflight_per_stream = 1;
+      bounded_options.max_inflight_total = 1;
+      simaai::neat::runtime::DownstreamTarget bounded_target{
           simaai::neat::runtime::DownstreamTarget::Kind::PipelineInput,
           0U,
           simaai::neat::graph::kInvalidPort,
           0U,
       };
-      simaai::neat::runtime::RealtimeLatestLink global_only_link(
-          global_only_target, global_only_options, "global-only-stream");
-      std::mutex global_only_mu;
-      std::condition_variable global_only_cv;
-      std::vector<std::int64_t> global_only_frames;
-      int global_only_attached = 0;
-      std::string global_only_error;
-      global_only_link.start(
+      simaai::neat::runtime::RealtimeLatestLink bounded_link(bounded_target, bounded_options,
+                                                             "bounded-stream");
+      std::mutex bounded_mu;
+      std::condition_variable bounded_cv;
+      std::vector<std::int64_t> bounded_frames;
+      int bounded_attached = 0;
+      std::string bounded_error;
+      bounded_link.start(
           [&](const simaai::neat::runtime::DownstreamTarget&, simaai::neat::Sample&& sample,
               std::size_t) {
             const auto sample_credits =
@@ -781,59 +878,59 @@ int main() {
                 std::find_if(sample_credits.begin(), sample_credits.end(), [](const auto& item) {
                   return item.graph_private;
                 }) != sample_credits.end();
-            simaai::neat::pipeline_internal::release_realtime_frame_credits(
-                sample_credits, "unit-global-only-output");
+            simaai::neat::pipeline_internal::release_realtime_frame_credits(sample_credits,
+                                                                            "unit-bounded-output");
             {
-              std::lock_guard<std::mutex> lock(global_only_mu);
-              global_only_frames.push_back(sample.frame_id);
+              std::lock_guard<std::mutex> lock(bounded_mu);
+              bounded_frames.push_back(sample.frame_id);
               if (has_graph_private_credit) {
-                ++global_only_attached;
+                ++bounded_attached;
               }
             }
-            global_only_cv.notify_all();
+            bounded_cv.notify_all();
             return true;
           },
           [] { return false; },
           [&](const std::string& msg) {
-            std::lock_guard<std::mutex> lock(global_only_mu);
-            global_only_error = msg;
-            global_only_cv.notify_all();
+            std::lock_guard<std::mutex> lock(bounded_mu);
+            bounded_error = msg;
+            bounded_cv.notify_all();
           });
 
-      simaai::neat::Sample global_first = make_gst_sample_backed_sample(std::nullopt);
-      global_first.stream_id = "global-only-stream";
-      global_first.frame_id = 501;
-      require(global_only_link.offer(std::move(global_first), 0U),
-              "global-only realtime credit link should accept the first frame");
+      simaai::neat::Sample bounded_first = make_gst_sample_backed_sample(std::nullopt);
+      bounded_first.stream_id = "bounded-stream";
+      bounded_first.frame_id = 501;
+      require(bounded_link.offer(std::move(bounded_first), 0U),
+              "bounded realtime credit link should accept the first frame");
       {
-        std::unique_lock<std::mutex> lock(global_only_mu);
-        require(global_only_cv.wait_for(lock, std::chrono::seconds(1),
-                                        [&] { return global_only_frames.size() == 1U; }),
-                "global-only first frame should dispatch promptly");
+        std::unique_lock<std::mutex> lock(bounded_mu);
+        require(bounded_cv.wait_for(lock, std::chrono::seconds(1),
+                                    [&] { return bounded_frames.size() == 1U; }),
+                "bounded first frame should dispatch promptly");
       }
 
-      simaai::neat::Sample global_second = make_gst_sample_backed_sample(std::nullopt);
-      global_second.stream_id = "global-only-stream";
-      global_second.frame_id = 502;
-      require(global_only_link.offer(std::move(global_second), 0U),
-              "global-only realtime credit link should accept the second frame");
+      simaai::neat::Sample bounded_second = make_gst_sample_backed_sample(std::nullopt);
+      bounded_second.stream_id = "bounded-stream";
+      bounded_second.frame_id = 502;
+      require(bounded_link.offer(std::move(bounded_second), 0U),
+              "bounded realtime credit link should accept the second frame");
       {
-        std::unique_lock<std::mutex> lock(global_only_mu);
-        require(global_only_cv.wait_for(lock, std::chrono::seconds(1),
-                                        [&] { return global_only_frames.size() == 2U; }),
-                "global-only second frame should dispatch after the first output releases credit");
-        require(global_only_error.empty(), "global-only realtime link should not report an error");
+        std::unique_lock<std::mutex> lock(bounded_mu);
+        require(bounded_cv.wait_for(lock, std::chrono::seconds(1),
+                                    [&] { return bounded_frames.size() == 2U; }),
+                "bounded second frame should dispatch after the first output releases credit");
+        require(bounded_error.empty(), "bounded realtime link should not report an error");
       }
-      global_only_link.close();
-      const auto global_only_stats = global_only_link.stats();
-      require(global_only_attached == 2,
-              "global-only admission must attach releasable graph credits to dispatched samples");
-      require(global_only_stats.credit_registered == 2U,
-              "global-only lane should register both dispatched frame credits");
-      require(global_only_stats.credit_released_by_output == 2U,
-              "global-only lane should release credits through output pulls");
-      require(global_only_stats.credit_inflight == 0U,
-              "global-only lane must not leak an acquired global credit");
+      bounded_link.close();
+      const auto bounded_stats = bounded_link.stats();
+      require(bounded_attached == 2,
+              "bounded admission must attach releasable graph credits to dispatched samples");
+      require(bounded_stats.credit_registered == 2U,
+              "bounded lane should register both dispatched frame credits");
+      require(bounded_stats.credit_released_by_output == 4U,
+              "public per-stream and total lanes should both release through output pulls");
+      require(bounded_stats.credit_inflight == 0U,
+              "bounded lane must not leak an acquired global credit");
     }
 
     int wake_count = 0;

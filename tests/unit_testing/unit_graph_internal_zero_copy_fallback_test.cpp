@@ -569,9 +569,10 @@ RUN_TEST(
           simaai::neat::graph::kInvalidPort,
           0U,
       };
-      ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", "1", 1);
+      simaai::neat::GraphLinkOptions realtime_credit_options;
+      realtime_credit_options.max_inflight_per_stream = 1;
       simaai::neat::runtime::RealtimeLatestLink realtime_link(
-          realtime_target, simaai::neat::GraphLinkOptions{}, "credit_stream");
+          realtime_target, realtime_credit_options, "credit_stream");
       std::mutex realtime_mu;
       std::condition_variable realtime_cv;
       std::vector<std::int64_t> dispatched_frames;

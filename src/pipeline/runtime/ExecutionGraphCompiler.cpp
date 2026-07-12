@@ -1760,6 +1760,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       branch.source_node = edge.from;
       branch.stream_id =
           edge.stream_id.empty() ? ("stream" + std::to_string(ordinal)) : edge.stream_id;
+      branch.link_options = edge.link_options;
       branch.nodes = source.nodes;
       branch.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
       branch.output_complete = edge.spec_complete || source.output_complete;
@@ -2215,7 +2216,8 @@ ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
 }
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
-                                        const RunOptions& opt, std::optional<Sample> seed) {
+                                        const RunOptions& opt, std::optional<Sample> seed,
+                                        bool fuse_realtime_source_branches) {
   const auto total_start = pipeline_internal::build_timing_now();
   const auto view = public_graph.composition_view_for_internal_compile();
   (void)view.groups;
@@ -2282,11 +2284,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
     validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
-    // High-channel-count live graphs can explicitly keep source branches and
-    // their latest-by-stream fan-in inside one GStreamer pipeline. Preserve the
-    // environment variable as a compatibility fallback for older applications.
-    if (opt.advanced.fuse_realtime_source_branches ||
-        pipeline_internal::env_bool("SIMA_GRAPH_LEGACY_FUSED_REALTIME_INGRESS", false)) {
+    if (fuse_realtime_source_branches) {
       fuse_realtime_fan_in_segments(lowering.graph, &plan);
     }
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,

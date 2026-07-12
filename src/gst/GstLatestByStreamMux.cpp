@@ -5,7 +5,7 @@
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/HolderLoanGate.h"
-#include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorUtil.h"
 
@@ -47,28 +47,6 @@ using GstLatestByStreamMuxClass = struct _GstLatestByStreamMuxClass;
 #define GST_LATEST_BY_STREAM_MUX(obj)                                                              \
   (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_LATEST_BY_STREAM_MUX, GstLatestByStreamMux))
 
-int configured_max_inflight_per_stream() {
-  static const int value = []() {
-    const gchar* env = g_getenv("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM");
-    if (!env || !*env) {
-      return 1;
-    }
-    char* end = nullptr;
-    const long parsed = std::strtol(env, &end, 10);
-    if (end == env) {
-      return 1;
-    }
-    if (parsed <= 0) {
-      return 0;
-    }
-    if (parsed > std::numeric_limits<int>::max()) {
-      return std::numeric_limits<int>::max();
-    }
-    return static_cast<int>(parsed);
-  }();
-  return value;
-}
-
 bool loan_debug_enabled() {
   const gchar* env = g_getenv("SIMA_LATEST_MUX_LOAN_DEBUG");
   return env && *env && g_strcmp0(env, "0") != 0 && g_ascii_strcasecmp(env, "false") != 0;
@@ -90,8 +68,8 @@ struct StreamLoanState {
   std::atomic<std::uint64_t> missing_key{0};
 };
 
-std::shared_ptr<StreamLoanState> make_stream_loan_state() {
-  return std::make_shared<StreamLoanState>(configured_max_inflight_per_stream());
+std::shared_ptr<StreamLoanState> make_stream_loan_state(int credit_limit) {
+  return std::make_shared<StreamLoanState>(credit_limit);
 }
 
 struct PendingSlot {
@@ -106,11 +84,12 @@ struct PendingSlot {
   std::atomic<std::uint64_t> received{0};
   std::atomic<std::uint64_t> replaced{0};
   std::atomic<std::uint64_t> no_credit_skips{0};
-  std::shared_ptr<StreamLoanState> loan_state = make_stream_loan_state();
+  std::shared_ptr<StreamLoanState> loan_state;
 };
 
 using SlotVector = std::vector<PendingSlot*>;
 using StringVector = std::vector<std::string>;
+using IntVector = std::vector<int>;
 
 struct _GstLatestByStreamMux {
   GstElement parent;
@@ -120,6 +99,7 @@ struct _GstLatestByStreamMux {
   GCond cond;
   SlotVector slots;
   StringVector stream_ids;
+  IntVector stream_inflight_limits;
   guint next_pad_index = 0;
   guint rr_index = 0;
   bool started = false;
@@ -210,7 +190,7 @@ std::atomic<std::uint64_t>& mux_namespace_counter() {
 struct EncodedFrameTapState {
   std::mutex mutex;
   std::condition_variable idle;
-  simaai::neat::LatestByStreamEncodedFrameCallback callback;
+  std::shared_ptr<simaai::neat::LatestByStreamEncodedFrameCallback> callback;
   std::size_t inflight = 0;
 };
 
@@ -219,22 +199,57 @@ EncodedFrameTapState& encoded_frame_tap_state() {
   return state;
 }
 
-void copy_and_dispatch_encoded_frame(GstBuffer* buffer, GstCaps* caps, const char* stream_id) {
-  if (!buffer || !caps) {
+void set_encoded_tap_error(std::string* error, const char* message) noexcept {
+  if (!error) {
     return;
   }
+  try {
+    *error = message ? message : "unknown encoded-frame tap failure";
+  } catch (...) {
+    // The primary failure may itself be allocation exhaustion. Do not let
+    // best-effort diagnostic text escape a GStreamer C callback.
+  }
+}
 
-  simaai::neat::LatestByStreamEncodedFrameCallback callback;
+struct EncodedFrameInflightGuard {
+  EncodedFrameTapState* state = nullptr;
+
+  ~EncodedFrameInflightGuard() {
+    if (!state) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->inflight > 0) {
+      --state->inflight;
+    }
+    if (state->inflight == 0) {
+      state->idle.notify_all();
+    }
+  }
+};
+
+bool copy_and_dispatch_encoded_frame(GstBuffer* buffer, GstCaps* caps, const char* stream_id,
+                                     std::string* error) {
+  if (!buffer || !caps) {
+    set_encoded_tap_error(error, !buffer ? "encoded H.264 buffer is null"
+                                         : "encoded H.264 caps are unavailable");
+    return false;
+  }
+
   auto& state = encoded_frame_tap_state();
+  EncodedFrameInflightGuard inflight_guard;
+  std::shared_ptr<simaai::neat::LatestByStreamEncodedFrameCallback> callback;
   {
     std::lock_guard<std::mutex> lock(state.mutex);
     if (!state.callback) {
-      return;
+      return true;
     }
     callback = state.callback;
     ++state.inflight;
+    inflight_guard.state = &state;
   }
 
+  bool ok = false;
   try {
     GstMapInfo map = GST_MAP_INFO_INIT;
     if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
@@ -274,22 +289,49 @@ void copy_and_dispatch_encoded_frame(GstBuffer* buffer, GstCaps* caps, const cha
     if (stream_id && *stream_id) {
       sample.stream_id = stream_id;
     }
-    callback(std::move(sample));
+    (*callback)(std::move(sample));
+    ok = true;
   } catch (const std::exception& ex) {
     std::fprintf(stderr, "[latestmux][encoded-tap] frame copy failed: %s\n", ex.what());
+    set_encoded_tap_error(error, ex.what());
   } catch (...) {
     std::fprintf(stderr, "[latestmux][encoded-tap] frame copy failed: unknown exception\n");
+    set_encoded_tap_error(error, "unknown encoded-frame tap exception");
+  }
+  return ok;
+}
+
+GstPadProbeReturn encoded_frame_tap_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+    return GST_PAD_PROBE_OK;
+  }
+  auto* stream_id = static_cast<std::string*>(user_data);
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  GstCaps* caps = pad ? gst_pad_get_current_caps(pad) : nullptr;
+  std::string error;
+  const bool delivered = copy_and_dispatch_encoded_frame(
+      buffer, caps, stream_id ? stream_id->c_str() : nullptr, &error);
+  if (caps) {
+    gst_caps_unref(caps);
+  }
+  if (delivered) {
+    return GST_PAD_PROBE_OK;
   }
 
-  {
-    std::lock_guard<std::mutex> lock(state.mutex);
-    if (state.inflight > 0) {
-      --state.inflight;
-    }
-    if (state.inflight == 0) {
-      state.idle.notify_all();
-    }
+  // Losing one encoded access unit makes the application's published video
+  // diverge from the frames sent to inference. Surface a fatal pipeline error
+  // rather than logging and continuing with a silently corrupted stream.
+  GstElement* parent = pad ? gst_pad_get_parent_element(pad) : nullptr;
+  if (parent) {
+    const char* id = stream_id && !stream_id->empty() ? stream_id->c_str() : "unknown";
+    GST_ELEMENT_ERROR(parent, RESOURCE, FAILED, ("Encoded-frame tap failed for stream '%s'", id),
+                      ("%s", error.empty() ? "unknown encoded-frame tap failure" : error.c_str()));
+    gst_object_unref(parent);
+  } else {
+    std::fprintf(stderr, "[latestmux][encoded-tap] fatal failure without parent element: %s\n",
+                 error.c_str());
   }
+  return GST_PAD_PROBE_DROP;
 }
 
 bool ensure_sima_meta_structure_mutable(GstBuffer* buffer, GstStructure** structure_out) {
@@ -644,6 +686,7 @@ G_DEFINE_TYPE_WITH_CODE(GstLatestByStreamMux, gst_latest_by_stream_mux, GST_TYPE
 enum {
   PROP_0,
   PROP_STREAM_IDS,
+  PROP_STREAM_INFLIGHT_LIMITS,
 };
 
 static GstStaticPadTemplate sink_template =
@@ -962,9 +1005,8 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
 gpointer worker_main(gpointer data) {
   auto* self = GST_LATEST_BY_STREAM_MUX(data);
   if (stats_enabled()) {
-    std::fprintf(stderr, "[latestmux][stats] worker-start every=%llu max_inflight=%d\n",
-                 static_cast<unsigned long long>(stats_interval()),
-                 configured_max_inflight_per_stream());
+    std::fprintf(stderr, "[latestmux][stats] worker-start every=%llu\n",
+                 static_cast<unsigned long long>(stats_interval()));
     std::fflush(stderr);
   }
   while (true) {
@@ -1271,9 +1313,13 @@ GstPad* request_new_pad(GstElement* element, GstPadTemplate* templ, const gchar*
     }
   }
 
+  int stream_inflight_limit = simaai::neat::pipeline_internal::kDefaultRealtimeMaxInflightPerStream;
   g_mutex_lock(&self->lock);
   const guint index = have_requested_index ? requested_index : self->next_pad_index;
   self->next_pad_index = std::max(self->next_pad_index, index + 1U);
+  if (index < self->stream_inflight_limits.size()) {
+    stream_inflight_limit = self->stream_inflight_limits[index];
+  }
   g_mutex_unlock(&self->lock);
 
   gchar* name = nullptr;
@@ -1292,6 +1338,7 @@ GstPad* request_new_pad(GstElement* element, GstPadTemplate* templ, const gchar*
   auto* slot = new PendingSlot();
   slot->pad = pad;
   slot->index = index;
+  slot->loan_state = make_stream_loan_state(stream_inflight_limit);
   gst_pad_set_element_private(pad, slot);
   gst_pad_set_chain_function(pad, GST_DEBUG_FUNCPTR(sink_chain));
   gst_pad_set_event_function(pad, GST_DEBUG_FUNCPTR(sink_event));
@@ -1548,6 +1595,8 @@ void finalize(GObject* object) {
   }
   self->slots.clear();
   self->stream_ids.clear();
+  self->stream_inflight_limits.clear();
+  self->stream_inflight_limits.~IntVector();
   self->stream_ids.~StringVector();
   self->slots.~SlotVector();
   g_cond_clear(&self->cond);
@@ -1589,11 +1638,66 @@ std::string join_stream_ids(GstLatestByStreamMux* self) {
   return out;
 }
 
+void parse_stream_inflight_limits(GstLatestByStreamMux* self, const gchar* csv) {
+  if (!self) {
+    return;
+  }
+  std::vector<int> parsed;
+  if (csv && *csv) {
+    gchar** parts = g_strsplit(csv, ",", -1);
+    for (gchar** it = parts; it && *it; ++it) {
+      gchar* stripped = g_strstrip(*it);
+      char* end = nullptr;
+      const long value = stripped ? std::strtol(stripped, &end, 10) : 0;
+      if (!stripped || end == stripped || *end != '\0' || value < 0 ||
+          value > std::numeric_limits<int>::max()) {
+        g_strfreev(parts);
+        GST_ERROR_OBJECT(self,
+                         "stream-inflight-limits must be a comma-separated list of non-negative "
+                         "integers");
+        return;
+      }
+      parsed.push_back(static_cast<int>(value));
+    }
+    g_strfreev(parts);
+  }
+  g_mutex_lock(&self->lock);
+  // Properties are construction-time configuration. Refuse to mutate gates
+  // after request pads exist; replacing a gate with live loans would strand
+  // terminal completion credits.
+  if (!self->slots.empty()) {
+    g_mutex_unlock(&self->lock);
+    GST_ERROR_OBJECT(self, "stream-inflight-limits cannot change after request pads exist");
+    return;
+  }
+  self->stream_inflight_limits = std::move(parsed);
+  g_mutex_unlock(&self->lock);
+}
+
+std::string join_stream_inflight_limits(GstLatestByStreamMux* self) {
+  if (!self) {
+    return {};
+  }
+  std::string out;
+  g_mutex_lock(&self->lock);
+  for (std::size_t i = 0; i < self->stream_inflight_limits.size(); ++i) {
+    if (i) {
+      out += ',';
+    }
+    out += std::to_string(self->stream_inflight_limits[i]);
+  }
+  g_mutex_unlock(&self->lock);
+  return out;
+}
+
 void set_property(GObject* object, guint prop_id, const GValue* value, GParamSpec* pspec) {
   auto* self = GST_LATEST_BY_STREAM_MUX(object);
   switch (prop_id) {
   case PROP_STREAM_IDS:
     parse_stream_ids(self, g_value_get_string(value));
+    break;
+  case PROP_STREAM_INFLIGHT_LIMITS:
+    parse_stream_inflight_limits(self, g_value_get_string(value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -1606,6 +1710,11 @@ void get_property(GObject* object, guint prop_id, GValue* value, GParamSpec* psp
   switch (prop_id) {
   case PROP_STREAM_IDS: {
     const std::string joined = join_stream_ids(self);
+    g_value_set_string(value, joined.c_str());
+    break;
+  }
+  case PROP_STREAM_INFLIGHT_LIMITS: {
+    const std::string joined = join_stream_inflight_limits(self);
     g_value_set_string(value, joined.c_str());
     break;
   }
@@ -1636,11 +1745,19 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
       g_param_spec_string("stream-ids", "Stream IDs",
                           "Comma-separated stream ids, indexed by request pad number", "",
                           static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_STREAM_INFLIGHT_LIMITS,
+      g_param_spec_string(
+          "stream-inflight-limits", "Per-stream inflight limits",
+          "Comma-separated terminal-loan limits (0 disables; omitted entries default to 4), "
+          "indexed by request pad number",
+          "", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 }
 
 void gst_latest_by_stream_mux_init(GstLatestByStreamMux* self) {
   new (&self->slots) SlotVector();
   new (&self->stream_ids) StringVector();
+  new (&self->stream_inflight_limits) IntVector();
   do {
     self->loan_namespace = mux_namespace_counter().fetch_add(1, std::memory_order_relaxed);
   } while (self->loan_namespace == 0);
@@ -1656,19 +1773,23 @@ void gst_latest_by_stream_mux_init(GstLatestByStreamMux* self) {
 namespace simaai::neat {
 
 void set_latest_by_stream_encoded_frame_callback(LatestByStreamEncodedFrameCallback callback) {
+  std::shared_ptr<LatestByStreamEncodedFrameCallback> replacement;
+  if (callback) {
+    replacement = std::make_shared<LatestByStreamEncodedFrameCallback>(std::move(callback));
+  }
   auto& state = encoded_frame_tap_state();
   std::unique_lock<std::mutex> lock(state.mutex);
   // Stop admitting work to the previous subscriber before waiting. Otherwise
   // continuously active RTSP threads can keep inflight nonzero indefinitely.
-  state.callback = {};
+  state.callback.reset();
   state.idle.wait(lock, [&] { return state.inflight == 0; });
-  state.callback = std::move(callback);
+  state.callback = std::move(replacement);
 }
 
 void clear_latest_by_stream_encoded_frame_callback() {
   auto& state = encoded_frame_tap_state();
   std::unique_lock<std::mutex> lock(state.mutex);
-  state.callback = {};
+  state.callback.reset();
   state.idle.wait(lock, [&] { return state.inflight == 0; });
 }
 
@@ -1691,9 +1812,23 @@ std::uint64_t latest_by_stream_mux_namespace(GstElement* element) {
 
 namespace pipeline_internal {
 
-void dispatch_latest_by_stream_encoded_frame_for_buffer(GstBuffer* buffer, GstCaps* caps,
-                                                        const char* stream_id) {
-  copy_and_dispatch_encoded_frame(buffer, caps, stream_id);
+bool dispatch_latest_by_stream_encoded_frame_for_buffer(GstBuffer* buffer, GstCaps* caps,
+                                                        const char* stream_id, std::string* error) {
+  return copy_and_dispatch_encoded_frame(buffer, caps, stream_id, error);
+}
+
+unsigned long attach_latest_by_stream_encoded_frame_tap_probe(GstPad* pad, std::string stream_id) {
+  if (!pad) {
+    return 0;
+  }
+  auto* owned_stream_id = new std::string(std::move(stream_id));
+  const gulong probe_id = gst_pad_add_probe(
+      pad, GST_PAD_PROBE_TYPE_BUFFER, encoded_frame_tap_probe, owned_stream_id,
+      +[](gpointer data) { delete static_cast<std::string*>(data); });
+  if (probe_id == 0) {
+    delete owned_stream_id;
+  }
+  return static_cast<unsigned long>(probe_id);
 }
 
 bool latest_by_stream_encoded_frame_callback_enabled() {
@@ -1906,9 +2041,6 @@ void release_latest_by_stream_mux_loan(const std::string& stream_id, std::int64_
 }
 
 bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer, std::uint64_t namespace_hint) {
-  if (configured_max_inflight_per_stream() <= 0) {
-    return false;
-  }
   (void)restore_cached_timing_on_buffer(buffer, namespace_hint);
   LoanKey key;
   if (read_latest_mux_loan_key(buffer, &key)) {

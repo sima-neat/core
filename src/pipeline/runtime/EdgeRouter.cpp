@@ -1,5 +1,6 @@
 #include "EdgeRouter.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 
@@ -111,7 +112,6 @@ int realtime_credit_probe_every() {
   return value;
 }
 
-constexpr int kDefaultRawCreditPerStream = 4;
 constexpr int kDefaultRawCreditTotalCap = 8;
 
 void validate_realtime_credit_option(const char* name, int value) {
@@ -123,18 +123,7 @@ void validate_realtime_credit_option(const char* name, int value) {
 
 int realtime_credit_max_inflight_per_stream(const GraphLinkOptions& options) {
   validate_realtime_credit_option("max_inflight_per_stream", options.max_inflight_per_stream);
-  if (options.max_inflight_per_stream > 0) {
-    return options.max_inflight_per_stream;
-  }
-  static const int value = [] {
-    int parsed = 0;
-    if (pipeline_internal::env_int("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", &parsed)) {
-      return std::max(0, parsed);
-    }
-    return std::max(0, pipeline_internal::env_int("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM",
-                                                  kDefaultRawCreditPerStream));
-  }();
-  return value;
+  return pipeline_internal::resolved_realtime_max_inflight_per_stream(options);
 }
 
 int safe_total_credit_limit(int per_stream, std::size_t stream_count) {

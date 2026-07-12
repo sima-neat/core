@@ -137,6 +137,17 @@ std::string stream_ids_csv() {
   return csv;
 }
 
+std::string stream_inflight_limits_csv(int limit) {
+  std::string csv;
+  for (std::size_t i = 0; i < kSlotCount; ++i) {
+    if (!csv.empty()) {
+      csv.push_back(',');
+    }
+    csv += std::to_string(limit);
+  }
+  return csv;
+}
+
 void wait_for_observation(FairnessProbeState* state, std::uint64_t before) {
   std::unique_lock<std::mutex> lock(state->mutex);
   require(state->cv.wait_for(lock, std::chrono::seconds(3),
@@ -149,9 +160,6 @@ void wait_for_observation(FairnessProbeState* state, std::uint64_t before) {
 
 int main() {
   try {
-    // This test isolates scheduling from completion credit. It must be set
-    // before the first request pad constructs its per-stream loan gate.
-    ::setenv("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM", "0", 1);
     simaai::neat::gst_init_once();
 
     GstElement* pipeline = gst_pipeline_new("latest-mux-fairness-pipeline");
@@ -159,7 +167,10 @@ int main() {
     GstElement* sink = gst_element_factory_make("fakesink", "latest-mux-fairness-sink");
     require(pipeline && mux && sink, "failed to construct latest-mux fairness pipeline");
     const std::string ids = stream_ids_csv();
-    g_object_set(mux, "stream-ids", ids.c_str(), nullptr);
+    const std::string limits = stream_inflight_limits_csv(0);
+    // This test isolates scheduling from completion credit through the mux's
+    // construction-time property instead of a process-global private switch.
+    g_object_set(mux, "stream-ids", ids.c_str(), "stream-inflight-limits", limits.c_str(), nullptr);
     g_object_set(sink, "sync", FALSE, "async", FALSE, nullptr);
     gst_bin_add_many(GST_BIN(pipeline), mux, sink, nullptr);
     require(gst_element_link(mux, sink) == TRUE, "failed to link latest-mux to fakesink");

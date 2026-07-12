@@ -68,6 +68,18 @@ struct InputRouteProcessor;
 class Graph;
 class Model;
 
+/**
+ * @brief Explicit opt-in tag for a fused realtime source fan-in build.
+ *
+ * Pass `fuse_realtime_source_branches` as the first argument to the source-mode
+ * `Graph::build` overload. A distinct overload keeps the released
+ * `RunAdvancedOptions` object layout and existing build behavior ABI-safe.
+ */
+struct FuseRealtimeSourceBranchesTag {
+  explicit constexpr FuseRealtimeSourceBranchesTag() = default;
+};
+inline constexpr FuseRealtimeSourceBranchesTag fuse_realtime_source_branches{};
+
 #ifdef SIMA_NEAT_INTERNAL
 namespace runtime {
 struct ExecutionGraphPlan;
@@ -75,7 +87,8 @@ struct FragmentBoundaryHints;
 struct FragmentPlan;
 struct Provenance;
 ExecutionGraphPlan compile_public_graph(const Graph& graph, const RunOptions& opt,
-                                        std::optional<Sample> seed);
+                                        std::optional<Sample> seed = std::nullopt,
+                                        bool fuse_realtime_source_branches = false);
 } // namespace runtime
 #endif
 
@@ -369,6 +382,15 @@ public:
    * `build(inputs, ...)` so caps can be derived from the actual input.
    */
   Run build(const RunOptions& opt = {});
+  /**
+   * @brief Build eligible live source branches and their latest-by-stream fan-in
+   * in one GStreamer pipeline.
+   *
+   * This avoids an appsink/appsrc device-memory handoff for high-channel-count
+   * live graphs. Only links using `RealtimeLatestByStream` are eligible; all
+   * other topology and validation rules are unchanged.
+   */
+  Run build(FuseRealtimeSourceBranchesTag, const RunOptions& opt = {});
 
   /// Returns the GStreamer launch string from the most recent `build()` call.
   const std::string& last_pipeline() const {
@@ -430,14 +452,15 @@ private:
 
 #ifdef SIMA_NEAT_INTERNAL
   CompositionView composition_view_for_internal_compile() const;
-  friend runtime::ExecutionGraphPlan runtime::compile_public_graph(const Graph& graph,
-                                                                   const RunOptions& opt,
-                                                                   std::optional<Sample> seed);
+  friend runtime::ExecutionGraphPlan
+  runtime::compile_public_graph(const Graph& graph, const RunOptions& opt,
+                                std::optional<Sample> seed, bool fuse_realtime_source_branches);
 #endif
 
   /// Drop the built pipeline (if any) and any cached runner. Tears down GStreamer
   /// resources via RAII; safe to call when there is no built state. Never throws.
   void invalidate_built_() noexcept;
+  Run build_source_internal_(const RunOptions& opt, bool fuse_realtime_source_branches);
 
   /// Shared "build a source-mode pipeline to PAUSED" body for `build(RunOptions)`
   /// and `build_cached_source()`. Validates, materializes, compiles, attaches all

@@ -20,6 +20,7 @@
 #include "pipeline/GraphReport.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
@@ -972,6 +973,18 @@ std::string fused_stream_ids_csv(const runtime::FusedRealtimeIngress& ingress) {
   return csv;
 }
 
+std::string fused_stream_inflight_limits_csv(const runtime::FusedRealtimeIngress& ingress) {
+  std::string csv;
+  for (std::size_t i = 0; i < ingress.branches.size(); ++i) {
+    if (i) {
+      csv += ',';
+    }
+    csv += std::to_string(pipeline_internal::resolved_realtime_max_inflight_per_stream(
+        ingress.branches[i].link_options));
+  }
+  return csv;
+}
+
 NameTransform fused_branch_name_transform(const NameTransform& base, std::size_t branch_index) {
   NameTransform out = base;
   // Fused realtime ingress puts several copies of the same source/decode
@@ -1751,24 +1764,6 @@ void attach_fused_realtime_stage_counters(GstElement* pipeline,
 
 std::optional<std::size_t> parse_fused_branch_index_from_name(const std::string& name);
 
-GstPadProbeReturn fused_encoded_frame_tap_probe(GstPad* pad, GstPadProbeInfo* info,
-                                                gpointer user_data) {
-  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
-    return GST_PAD_PROBE_OK;
-  }
-  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
-  GstCaps* caps = pad ? gst_pad_get_current_caps(pad) : nullptr;
-  if (buffer && caps) {
-    const auto* stream_id = static_cast<const std::string*>(user_data);
-    pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
-        buffer, caps, stream_id ? stream_id->c_str() : nullptr);
-  }
-  if (caps) {
-    gst_caps_unref(caps);
-  }
-  return GST_PAD_PROBE_OK;
-}
-
 void attach_fused_encoded_frame_tap_probes(GstElement* pipeline,
                                            const runtime::FusedRealtimeIngress& ingress) {
   if (!pipeline || !pipeline_internal::latest_by_stream_encoded_frame_callback_enabled()) {
@@ -1793,16 +1788,12 @@ void attach_fused_encoded_frame_tap_probes(GstElement* pipeline,
     if (factory_name == "capsfilter" && name.find("_h264_caps") != std::string::npos) {
       const auto branch_index = parse_fused_branch_index_from_name(name);
       if (branch_index.has_value() && *branch_index < ingress.branches.size()) {
-        auto* stream_id = new std::string(ingress.branches[*branch_index].stream_id.empty()
-                                              ? ("stream" + std::to_string(*branch_index))
-                                              : ingress.branches[*branch_index].stream_id);
+        const std::string stream_id = ingress.branches[*branch_index].stream_id.empty()
+                                          ? ("stream" + std::to_string(*branch_index))
+                                          : ingress.branches[*branch_index].stream_id;
         if (GstPad* src = gst_element_get_static_pad(element, "src")) {
-          gst_pad_add_probe(
-              src, GST_PAD_PROBE_TYPE_BUFFER, fused_encoded_frame_tap_probe, stream_id,
-              +[](gpointer data) { delete static_cast<std::string*>(data); });
+          (void)pipeline_internal::attach_latest_by_stream_encoded_frame_tap_probe(src, stream_id);
           gst_object_unref(src);
-        } else {
-          delete stream_id;
         }
       }
     }
@@ -2416,13 +2407,16 @@ BuildResult build_fused_realtime_source_pipeline(
   mux_report.index = -1;
   mux_report.kind = "RealtimeLatestMux";
   const std::string stream_ids = fused_stream_ids_csv(ingress);
+  const std::string stream_inflight_limits = fused_stream_inflight_limits_csv(ingress);
   mux_report.backend_fragment =
-      "neatlatestbystreammux name=" + mux_name + " stream-ids=" + gst_double_quote(stream_ids);
+      "neatlatestbystreammux name=" + mux_name + " stream-ids=" + gst_double_quote(stream_ids) +
+      " stream-inflight-limits=" + gst_double_quote(stream_inflight_limits);
   mux_report.elements.push_back(mux_name);
   br.diag->node_reports.push_back(mux_report);
 
   std::ostringstream ss;
-  ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids);
+  ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids)
+     << " stream-inflight-limits=" << gst_double_quote(stream_inflight_limits);
   std::ostringstream consumer_pipeline;
   int actual_index = 0;
   bool first_consumer = true;
@@ -2488,6 +2482,24 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
   return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
                                               branch_actual_indices, NameTransform{}, "mysink",
                                               options)
+      .pipeline_string;
+}
+
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
+    const std::vector<GraphLinkOptions>& link_options) {
+  runtime::FusedRealtimeIngress ingress;
+  for (std::size_t i = 0; i < link_options.size(); ++i) {
+    runtime::FusedRealtimeIngressBranch branch;
+    branch.stream_id = "stream" + std::to_string(i);
+    branch.link_options = link_options[i];
+    ingress.branches.push_back(std::move(branch));
+  }
+  const std::vector<std::vector<std::shared_ptr<Node>>> branch_nodes(link_options.size());
+  const std::vector<std::vector<int>> branch_actual_indices(link_options.size());
+  return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
+                                              branch_actual_indices, NameTransform{},
+                                              "neat_test_output", options)
       .pipeline_string;
 }
 
@@ -2784,6 +2796,14 @@ void Graph::run() {
 }
 
 Run Graph::build(const RunOptions& opt) {
+  return build_source_internal_(opt, false);
+}
+
+Run Graph::build(FuseRealtimeSourceBranchesTag, const RunOptions& opt) {
+  return build_source_internal_(opt, true);
+}
+
+Run Graph::build_source_internal_(const RunOptions& opt, bool fuse_realtime_source_branches) {
   const pipeline_internal::ScopedBuildTiming timing("Graph::build", "kind=no_input");
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);
@@ -2791,7 +2811,8 @@ Run Graph::build(const RunOptions& opt) {
   gst_init_once();
 
   progress.step("Building graph...");
-  runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
+  runtime::ExecutionGraphPlan plan =
+      runtime::compile_public_graph(*this, opt, std::nullopt, fuse_realtime_source_branches);
   if (plan.linear_compat) {
     progress.detail(std::string("mode=async nodes=") +
                     std::to_string(linear_nodes_snapshot("Graph::build").size()));

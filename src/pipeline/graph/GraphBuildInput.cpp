@@ -2305,8 +2305,6 @@ bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b)
          a.overflow_policy == b.overflow_policy && a.output_memory == b.output_memory &&
          a.input_timeout_ms == b.input_timeout_ms && a.startup_preflight == b.startup_preflight &&
          a.advanced.copy_input == b.advanced.copy_input &&
-         a.advanced.fuse_realtime_source_branches ==
-             b.advanced.fuse_realtime_source_branches &&
          a.advanced.max_input_bytes == b.advanced.max_input_bytes &&
          a.advanced.sync_num_buffers_override == b.advanced.sync_num_buffers_override &&
          a.advanced.prepare_output_cpu_visible == b.advanced.prepare_output_cpu_visible &&

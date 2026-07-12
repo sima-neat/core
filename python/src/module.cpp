@@ -2348,8 +2348,6 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<RunAdvancedOptions>(m, "RunAdvancedOptions")
       .def(nb::init<>())
       .def_rw("copy_input", &RunAdvancedOptions::copy_input)
-      .def_rw("fuse_realtime_source_branches",
-              &RunAdvancedOptions::fuse_realtime_source_branches)
       .def_rw("max_input_bytes", &RunAdvancedOptions::max_input_bytes)
       .def_rw("sync_num_buffers_override", &RunAdvancedOptions::sync_num_buffers_override)
       .def_rw("prepare_output_cpu_visible", &RunAdvancedOptions::prepare_output_cpu_visible);
@@ -3057,6 +3055,12 @@ NB_MODULE(_pyneat_core, m) {
           "image_format"_a = nb::none())
       .def("build_source", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "build_fused_realtime_source",
+          [](Graph& self, const RunOptions& options) {
+            return self.build(simaai::neat::fuse_realtime_source_branches, options);
+          },
+          "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def("build", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def(

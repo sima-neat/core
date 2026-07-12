@@ -11,6 +11,7 @@
 
 namespace simaai::neat {
 struct GraphOptions;
+struct GraphLinkOptions;
 class Node;
 struct InputOptions;
 } // namespace simaai::neat
@@ -26,5 +27,8 @@ int parse_sdp_fps_for_rtp_payload_for_test(const char* sdp_text, int payload_typ
                                            const char* encoding_name);
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options);
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
+    const std::vector<GraphLinkOptions>& link_options);
 
 } // namespace simaai::neat::session_test
