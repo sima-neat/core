@@ -390,7 +390,10 @@ struct GraphOptions {
 
   /// Depth for internally inserted async queue2 elements. 0 keeps the legacy
   /// default/diagnostic environment fallback; positive values are used as-is
-  /// and are the preferred production control.
+  /// and are the preferred production control. For fused realtime source fan-in,
+  /// 0 preserves the single-chain consumer path and a positive value inserts
+  /// bounded, non-leaky queues before CVU, MLA, and decode stages (never before
+  /// the terminal Output).
   int async_queue_depth = 0;
 
   /// Preferred jargon-free execution surface. Folded into the legacy fields above by

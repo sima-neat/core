@@ -1900,7 +1900,7 @@ bool should_insert_boundaries_for_mode(const char* mode_key, bool def_val) {
   return env_bool(mode_key, def_val);
 }
 
-static int async_queue2_depth(int requested_depth = 0) {
+int session_build_async_queue2_depth(int requested_depth) {
   if (requested_depth > 0) {
     return std::min(requested_depth, 1024);
   }
@@ -1917,8 +1917,8 @@ static int async_queue2_depth(int requested_depth = 0) {
   }();
   return cached_env_or_default;
 }
-static std::string async_queue2_fragment(int requested_depth = 0) {
-  const int depth = async_queue2_depth(requested_depth);
+std::string session_build_async_queue2_fragment(int requested_depth) {
+  const int depth = session_build_async_queue2_depth(requested_depth);
   return "queue max-size-buffers=" + std::to_string(depth) + " max-size-bytes=0 max-size-time=0";
 }
 
@@ -2911,7 +2911,8 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
   br.name_transform = name_transform;
   br.diag->queue2_enabled = insert_queue2;
   const int requested_queue_depth = sess_opt ? sess_opt->async_queue_depth : 0;
-  br.diag->queue2_depth = insert_queue2 ? async_queue2_depth(requested_queue_depth) : 0;
+  br.diag->queue2_depth =
+      insert_queue2 ? session_build_async_queue2_depth(requested_queue_depth) : 0;
 
   pipeline_internal::PipelineBuildContext build_ctx(name_transform);
   dump_node_debug_options(nodes, name_transform);
@@ -2934,7 +2935,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
         want_queue2 = false;
       }
       if (want_queue2) {
-        ss << " ! " << async_queue2_fragment(requested_queue_depth) << " ! ";
+        ss << " ! " << session_build_async_queue2_fragment(requested_queue_depth) << " ! ";
       } else {
         ss << " ! ";
       }

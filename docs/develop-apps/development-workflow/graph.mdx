@@ -512,6 +512,8 @@ app.connect(camera_fragment, detector_fragment, link)
 
 Use the default link policy when every frame must be preserved and backpressure is the correct behavior. Use realtime latest-by-stream when a live graph should stay fresh instead of collecting old frames. Set `queue_depth` only when you have a reason to bound pending samples on that link differently from the default.
 
+When `RunOptions::advanced.fuse_realtime_source_branches` keeps a live fan-in and its model consumer in one GStreamer pipeline, set `GraphOptions::async_queue_depth` on the top-level graph to overlap model stages. A positive value inserts bounded, non-leaky global queues before the CVU, MLA, and decode stages, but not before the terminal output. The per-stream admission limit remains controlled separately by `GraphLinkOptions::max_inflight_per_stream`, so it can stay at `1` for freshness. Leave `async_queue_depth` at `0` to preserve the single-chain fused path.
+
 `GraphLinkOptions` has these realtime-link fields:
 
 | Field | Use it when |

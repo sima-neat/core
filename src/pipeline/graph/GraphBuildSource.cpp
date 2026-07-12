@@ -38,6 +38,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -2273,6 +2274,128 @@ void attach_fused_realtime_branch_counters(GstElement* pipeline, std::size_t bra
   std::fflush(stderr);
 }
 
+std::vector<std::string> split_fused_consumer_segments(const std::string& fragment) {
+  std::vector<std::string> segments;
+  bool in_single_quote = false;
+  bool in_double_quote = false;
+  bool escaped = false;
+  std::size_t start = 0;
+  for (std::size_t i = 0; i < fragment.size(); ++i) {
+    const char c = fragment[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c == '\\' && (in_single_quote || in_double_quote)) {
+      escaped = true;
+      continue;
+    }
+    if (c == '\'' && !in_double_quote) {
+      in_single_quote = !in_single_quote;
+      continue;
+    }
+    if (c == '"' && !in_single_quote) {
+      in_double_quote = !in_double_quote;
+      continue;
+    }
+    if (c != '!' || in_single_quote || in_double_quote) {
+      continue;
+    }
+    const std::string segment = trim_copy(fragment.substr(start, i - start));
+    if (!segment.empty()) {
+      segments.push_back(segment);
+    }
+    start = i + 1U;
+  }
+  const std::string tail = trim_copy(fragment.substr(start));
+  if (!tail.empty()) {
+    segments.push_back(tail);
+  }
+  return segments;
+}
+
+std::string fused_consumer_segment_factory(const std::string& segment) {
+  const std::size_t start = segment.find_first_not_of(" \t\r\n");
+  if (start == std::string::npos) {
+    return {};
+  }
+  const std::size_t end = segment.find_first_of(" \t\r\n", start);
+  return lower_copy(
+      segment.substr(start, end == std::string::npos ? std::string::npos : end - start));
+}
+
+bool is_fused_consumer_stage_factory(const std::string& factory) {
+  return factory == "neatprocesscvu" || factory == "neatprocessmla" ||
+         factory == "neatobjectdecode" || factory == "neatboxdecode";
+}
+
+bool is_fused_consumer_decode_factory(const std::string& factory) {
+  return factory == "neatobjectdecode" || factory == "neatboxdecode";
+}
+
+enum class FusedConsumerQueuePlacement {
+  AllStages,
+  PostMlaOnly,
+};
+
+FusedConsumerQueuePlacement fused_consumer_queue_placement() {
+  // Diagnostic A/B only. Queue depth remains a public GraphOptions control and
+  // production defaults to the same all-stage topology as the generic builder.
+  const std::string value =
+      lower_copy(trim_copy(env_str("SIMA_FUSED_REALTIME_CONSUMER_QUEUE_PLACEMENT", "all")));
+  if (value.empty() || value == "all" || value == "generic") {
+    return FusedConsumerQueuePlacement::AllStages;
+  }
+  if (value == "post-mla" || value == "post_mla" || value == "mla-to-decode") {
+    return FusedConsumerQueuePlacement::PostMlaOnly;
+  }
+  throw std::invalid_argument(
+      "SIMA_FUSED_REALTIME_CONSUMER_QUEUE_PLACEMENT must be 'all' or 'post-mla'");
+}
+
+std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth) {
+  if (requested_depth < 0 || requested_depth > 1024) {
+    throw std::invalid_argument(
+        "GraphOptions::async_queue_depth must be in [0, 1024] for fused realtime ingress");
+  }
+  if (requested_depth == 0 || fragment.empty()) {
+    return fragment;
+  }
+
+  const auto segments = split_fused_consumer_segments(fragment);
+  std::vector<std::string> rendered;
+  rendered.reserve(segments.size() + 3U);
+  const std::string queue = session_build_async_queue2_fragment(requested_depth);
+  const FusedConsumerQueuePlacement placement = fused_consumer_queue_placement();
+  bool saw_mla = false;
+
+  for (const auto& segment : segments) {
+    const std::string factory = fused_consumer_segment_factory(segment);
+    const bool insert_all = placement == FusedConsumerQueuePlacement::AllStages &&
+                            is_fused_consumer_stage_factory(factory);
+    const bool insert_post_mla = placement == FusedConsumerQueuePlacement::PostMlaOnly && saw_mla &&
+                                 is_fused_consumer_decode_factory(factory);
+    if (insert_all || insert_post_mla) {
+      rendered.push_back(queue);
+    }
+    rendered.push_back(segment);
+    if (factory == "neatprocessmla") {
+      saw_mla = true;
+    } else if (is_fused_consumer_decode_factory(factory)) {
+      saw_mla = false;
+    }
+  }
+
+  std::ostringstream out;
+  for (std::size_t i = 0; i < rendered.size(); ++i) {
+    if (i != 0U) {
+      out << " ! ";
+    }
+    out << rendered[i];
+  }
+  return out.str();
+}
+
 BuildResult build_fused_realtime_source_pipeline(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes,
@@ -2283,6 +2406,9 @@ BuildResult build_fused_realtime_source_pipeline(
   br.diag = std::make_shared<DiagCtx>();
   br.appsink_name = apply_name_transform(name_transform, appsink_name);
   br.name_transform = name_transform;
+  br.diag->queue2_enabled = sess_opt.async_queue_depth > 0;
+  br.diag->queue2_depth =
+      br.diag->queue2_enabled ? session_build_async_queue2_depth(sess_opt.async_queue_depth) : 0;
 
   const std::string mux_name = apply_name_transform(name_transform, "neat_live_mux");
   br.diag->node_reports.reserve(consumer_nodes.size() + 1U);
@@ -2297,10 +2423,18 @@ BuildResult build_fused_realtime_source_pipeline(
 
   std::ostringstream ss;
   ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids);
+  std::ostringstream consumer_pipeline;
   int actual_index = 0;
+  bool first_consumer = true;
   for (const auto& node : consumer_nodes) {
-    append_fused_node_fragment(&br, &ss, node, actual_index++, name_transform, &sess_opt,
-                               /*prepend_link=*/true);
+    append_fused_node_fragment(&br, &consumer_pipeline, node, actual_index++, name_transform,
+                               &sess_opt, /*prepend_link=*/!first_consumer);
+    first_consumer = false;
+  }
+  const std::string rendered_consumer =
+      insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth);
+  if (!rendered_consumer.empty()) {
+    ss << " ! " << rendered_consumer;
   }
 
   for (std::size_t branch_index = 0; branch_index < branch_nodes.size(); ++branch_index) {
