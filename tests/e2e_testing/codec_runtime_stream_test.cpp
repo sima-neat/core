@@ -625,17 +625,51 @@ std::vector<std::string> run_encoded_boundary(const TestCase& test_case, const s
 std::vector<std::string> run_decoded_source(const TestCase& test_case, const std::string& url,
                                             int source_fps, int frames, int timeout_ms) {
   std::vector<std::string> signatures;
-  Graph graph = make_source_graph(test_case, url, source_fps);
-  Run run = graph.build(make_run_options(OutputMemory::Owned));
-  int pulled = 0;
-  while (pulled < frames) {
-    Sample sample = pull_or_throw(run, "source", timeout_ms, test_case.name + ": source pull");
+  Graph source_graph = make_source_graph(test_case, url, source_fps);
+  Run source_run = source_graph.build(make_run_options(OutputMemory::ZeroCopy));
+  Sample first_sample =
+      pull_or_throw(source_run, "source", timeout_ms, test_case.name + ": source pull");
+  require_sample_contract(test_case, first_sample);
+
+  InputOptions input_options;
+  input_options.payload_type = simaai::neat::sample_payload_type(first_sample);
+  input_options.caps_override = first_sample.caps_string;
+  input_options.is_live = true;
+  input_options.block = true;
+  input_options.pool_max_buffers = 8;
+
+  Graph boundary_graph(test_case.name + "-zero-copy-boundary");
+  boundary_graph.add(simaai::neat::nodes::Input("decoded", input_options));
+  boundary_graph.add(simaai::neat::nodes::Output("decoded", OutputOptions::EveryFrame(8)));
+  Run boundary_run =
+      boundary_graph.build(Sample{first_sample}, make_run_options(OutputMemory::ZeroCopy));
+
+  int source_pull = 1;
+  int boundary_push = 0;
+  int boundary_pull = 0;
+  auto push_and_pull = [&](const Sample& sample) {
+    require(boundary_run.push("decoded", sample), test_case.name + ": boundary push failed");
+    ++boundary_push;
+    Sample out =
+        pull_or_throw(boundary_run, "decoded", timeout_ms, test_case.name + ": boundary pull");
+    ++boundary_pull;
+    require_sample_contract(test_case, out);
+    signatures.push_back(sample_contract_signature(test_case, out));
+  };
+
+  push_and_pull(first_sample);
+  while (source_pull < frames) {
+    Sample sample =
+        pull_or_throw(source_run, "source", timeout_ms, test_case.name + ": source pull");
     require_sample_contract(test_case, sample);
-    signatures.push_back(sample_contract_signature(test_case, sample));
-    ++pulled;
+    ++source_pull;
+    push_and_pull(sample);
   }
-  run.close();
-  std::cout << "[OK] " << test_case.name << " frames=" << pulled << "\n";
+
+  boundary_run.close();
+  source_run.close();
+  std::cout << "[OK] " << test_case.name << " frames=" << frames << " source_pull=" << source_pull
+            << " boundary_push=" << boundary_push << " boundary_pull=" << boundary_pull << "\n";
   return signatures;
 }
 
