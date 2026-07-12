@@ -634,61 +634,6 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode,
   return true;
 }
 
-bool force_release_loan_for_key_impl(const LoanKey& key, const char* mode) {
-  if (key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
-    return false;
-  }
-  std::shared_ptr<LoanEntry> entry;
-  {
-    std::lock_guard<std::mutex> lock(loan_registry_mutex());
-    auto& registry = loan_registry();
-    auto it = registry.find(key);
-    if (it == registry.end()) {
-      return false;
-    }
-    entry = it->second;
-    if (entry) {
-      entry->ref_count = 0;
-    }
-    erase_loan_keys_for_entry_locked(entry);
-  }
-  if (loan_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[latestmux][loan] force-release ns=%llu stream=%s frame=%lld input_seq=%lld "
-                 "orig_input_seq=%lld mode=%s\n",
-                 static_cast<unsigned long long>(key.namespace_id), key.stream_id.c_str(),
-                 static_cast<long long>(key.frame_id), static_cast<long long>(key.input_seq),
-                 static_cast<long long>(key.orig_input_seq), mode ? mode : "key");
-  }
-  release_loan_entry(entry, /*by_output=*/true);
-  return true;
-}
-
-GQuark latest_mux_buffer_loan_release_quark() {
-  static GQuark q = g_quark_from_static_string("sima-latest-mux-buffer-loan-release-v1");
-  return q;
-}
-
-void release_loan_qdata(gpointer data) {
-  std::unique_ptr<LoanKey> key(static_cast<LoanKey*>(data));
-  if (key) {
-    (void)force_release_loan_for_key_impl(*key, "buffer-finalize");
-  }
-}
-
-bool attach_buffer_loan_release(GstBuffer* buffer, const LoanKey& key) {
-  if (!buffer || key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
-    return false;
-  }
-  auto* owned_key = new (std::nothrow) LoanKey(key);
-  if (!owned_key) {
-    return false;
-  }
-  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(buffer), latest_mux_buffer_loan_release_quark(),
-                            owned_key, release_loan_qdata);
-  return true;
-}
-
 GType gst_latest_by_stream_mux_get_type();
 
 G_DEFINE_TYPE_WITH_CODE(GstLatestByStreamMux, gst_latest_by_stream_mux, GST_TYPE_ELEMENT,
@@ -857,12 +802,22 @@ void release_acquired_loan_without_output(const std::shared_ptr<StreamLoanState>
   state->released_without_output.fetch_add(1, std::memory_order_relaxed);
 }
 
-void clear_pending(PendingSlot* slot) {
-  if (!slot || !slot->pending) {
-    return;
+GstBuffer* detach_pending_locked(PendingSlot* slot) {
+  // The caller holds the owning mux lock. Final unref is intentionally left to
+  // the caller after unlocking because GstMiniObject destroy callbacks may
+  // re-enter the mux.
+  if (!slot) {
+    return nullptr;
   }
-  gst_buffer_unref(slot->pending);
-  slot->pending = nullptr;
+  return std::exchange(slot->pending, nullptr);
+}
+
+void unref_buffers(const std::vector<GstBuffer*>& buffers) {
+  for (GstBuffer* buffer : buffers) {
+    if (buffer) {
+      gst_buffer_unref(buffer);
+    }
+  }
 }
 
 void clear_slot_caps(PendingSlot* slot) {
@@ -1081,15 +1036,14 @@ gpointer worker_main(gpointer data) {
         if (read_stream_frame_key(buffer, &stream_id, &frame_id, &input_seq, &orig_input_seq)) {
           const LoanKey loan_key{self->loan_namespace, stream_id, frame_id, input_seq,
                                  orig_input_seq};
-          if (stamp_latest_mux_loan_key(buffer, loan_key) &&
-              attach_buffer_loan_release(buffer, loan_key)) {
+          if (stamp_latest_mux_loan_key(buffer, loan_key)) {
             register_loan_for_key(self, loan_state, loan_key, buffer);
             loan_registered = true;
           } else {
             release_acquired_loan_without_output(loan_state);
             if (loan_debug_enabled()) {
               std::fprintf(stderr,
-                           "[latestmux][loan] failed to arm loan release stream=%s frame=%lld; "
+                           "[latestmux][loan] failed to stamp loan key stream=%s frame=%lld; "
                            "released credit\n",
                            stream_id.c_str(), static_cast<long long>(frame_id));
             }
@@ -1145,6 +1099,7 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
 
   stamp_stream_meta(self, &buffer, slot);
 
+  GstBuffer* replaced = nullptr;
   g_mutex_lock(&self->lock);
   if (self->flushing || self->stopping) {
     g_mutex_unlock(&self->lock);
@@ -1164,10 +1119,12 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
                  stream_id ? stream_id : "unknown");
     std::fflush(stderr);
   }
-  clear_pending(slot);
-  slot->pending = buffer; // take ownership from chain
+  replaced = std::exchange(slot->pending, buffer); // take ownership from chain
   g_cond_signal(&self->cond);
   g_mutex_unlock(&self->lock);
+  if (replaced) {
+    gst_buffer_unref(replaced);
+  }
   return GST_FLOW_OK;
 }
 
@@ -1236,11 +1193,15 @@ gboolean sink_event(GstPad* pad, GstObject* parent, GstEvent* event) {
     }
     break;
   }
-  case GST_EVENT_FLUSH_START:
+  case GST_EVENT_FLUSH_START: {
+    std::vector<GstBuffer*> detached;
     g_mutex_lock(&self->lock);
     self->flushing = true;
+    detached.reserve(self->slots.size());
     for (PendingSlot* s : self->slots) {
-      clear_pending(s);
+      if (GstBuffer* buffer = detach_pending_locked(s)) {
+        detached.push_back(buffer);
+      }
       clear_slot_caps(s);
     }
     if (self->current_caps) {
@@ -1252,8 +1213,10 @@ gboolean sink_event(GstPad* pad, GstObject* parent, GstEvent* event) {
     gst_segment_init(&self->pending_segment, GST_FORMAT_TIME);
     g_cond_broadcast(&self->cond);
     g_mutex_unlock(&self->lock);
+    unref_buffers(detached);
     release_all_loans_for_mux(self);
     return gst_pad_push_event(self->srcpad, event) == TRUE;
+  }
   case GST_EVENT_FLUSH_STOP:
     g_mutex_lock(&self->lock);
     self->flushing = false;
@@ -1351,15 +1314,19 @@ void release_pad(GstElement* element, GstPad* pad) {
   }
   auto* slot = static_cast<PendingSlot*>(gst_pad_get_element_private(pad));
 
+  GstBuffer* detached = nullptr;
   g_mutex_lock(&self->lock);
   auto it = std::find(self->slots.begin(), self->slots.end(), slot);
   if (it != self->slots.end()) {
     self->slots.erase(it);
   }
-  clear_pending(slot);
+  detached = detach_pending_locked(slot);
   clear_slot_caps(slot);
   g_cond_broadcast(&self->cond);
   g_mutex_unlock(&self->lock);
+  if (detached) {
+    gst_buffer_unref(detached);
+  }
 
   gst_pad_set_element_private(pad, nullptr);
   gst_element_remove_pad(element, pad);
@@ -1473,7 +1440,8 @@ void print_slot_stats_once(GstLatestByStreamMux* self, const char* reason) {
 GstStateChangeReturn change_state(GstElement* element, GstStateChange transition) {
   auto* self = GST_LATEST_BY_STREAM_MUX(element);
   switch (transition) {
-  case GST_STATE_CHANGE_READY_TO_PAUSED:
+  case GST_STATE_CHANGE_READY_TO_PAUSED: {
+    std::vector<GstBuffer*> detached;
     g_mutex_lock(&self->lock);
     self->stopping = false;
     self->flushing = false;
@@ -1483,12 +1451,15 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     self->stats_reported = false;
     self->stats_pushes = 0;
     gst_segment_init(&self->pending_segment, GST_FORMAT_TIME);
+    detached.reserve(self->slots.size());
     for (PendingSlot* slot : self->slots) {
       if (slot) {
         slot->eos = false;
         slot->emitted = 0;
         reset_slot_stats(slot);
-        clear_pending(slot);
+        if (GstBuffer* buffer = detach_pending_locked(slot)) {
+          detached.push_back(buffer);
+        }
         clear_slot_caps(slot);
       }
     }
@@ -1500,7 +1471,9 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
       self->worker = g_thread_new("neatlatestmux", worker_main, self);
     }
     g_mutex_unlock(&self->lock);
+    unref_buffers(detached);
     break;
+  }
   default:
     break;
   }
@@ -1509,11 +1482,15 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
       GST_ELEMENT_CLASS(gst_latest_by_stream_mux_parent_class)->change_state(element, transition);
 
   switch (transition) {
-  case GST_STATE_CHANGE_PAUSED_TO_READY:
+  case GST_STATE_CHANGE_PAUSED_TO_READY: {
+    std::vector<GstBuffer*> detached;
     g_mutex_lock(&self->lock);
     self->stopping = true;
+    detached.reserve(self->slots.size());
     for (PendingSlot* slot : self->slots) {
-      clear_pending(slot);
+      if (GstBuffer* buffer = detach_pending_locked(slot)) {
+        detached.push_back(buffer);
+      }
       clear_slot_caps(slot);
     }
     if (self->current_caps) {
@@ -1525,6 +1502,7 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     gst_segment_init(&self->pending_segment, GST_FORMAT_TIME);
     g_cond_broadcast(&self->cond);
     g_mutex_unlock(&self->lock);
+    unref_buffers(detached);
     release_all_loans_for_mux(self);
     if (self->worker) {
       g_thread_join(self->worker);
@@ -1532,6 +1510,7 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     }
     print_slot_stats_once(self, "paused-to-ready");
     break;
+  }
   default:
     break;
   }
@@ -1540,14 +1519,19 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
 
 void finalize(GObject* object) {
   auto* self = GST_LATEST_BY_STREAM_MUX(object);
+  std::vector<GstBuffer*> detached;
   g_mutex_lock(&self->lock);
   self->stopping = true;
+  detached.reserve(self->slots.size());
   for (PendingSlot* slot : self->slots) {
-    clear_pending(slot);
+    if (GstBuffer* buffer = detach_pending_locked(slot)) {
+      detached.push_back(buffer);
+    }
     clear_slot_caps(slot);
   }
   g_cond_broadcast(&self->cond);
   g_mutex_unlock(&self->lock);
+  unref_buffers(detached);
   release_all_loans_for_mux(self);
   if (self->worker) {
     g_thread_join(self->worker);
@@ -1559,7 +1543,6 @@ void finalize(GObject* object) {
     self->current_caps = nullptr;
   }
   for (PendingSlot* slot : self->slots) {
-    clear_pending(slot);
     clear_slot_caps(slot);
     delete slot;
   }
