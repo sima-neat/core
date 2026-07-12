@@ -1023,6 +1023,30 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
                              ": failed to retain deferred pool parent proxy");
   }
   gst_buffer_unref(proxy);
+
+  if (sample_has_loans || holder_has_loans) {
+    GstBuffer* loan_parent = gst_buffer_new();
+    if (!loan_parent) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                               ": failed to allocate loan lifetime parent");
+    }
+    bool attached = false;
+    if (sample_has_loans) {
+      pipeline_internal::attach_zero_copy_loans_to_gst_buffer(loan_parent, *sample);
+      attached = true;
+    }
+    if (holder_has_loans) {
+      attached = pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(loan_parent,
+                                                                                     holder) ||
+                 attached;
+    }
+    if (attached && !gst_buffer_add_parent_buffer_meta(*buffer, loan_parent)) {
+      gst_buffer_unref(loan_parent);
+      throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                               ": failed to retain loan lifetime parent");
+    }
+    gst_buffer_unref(loan_parent);
+  }
   return true;
 }
 
