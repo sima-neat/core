@@ -896,7 +896,7 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
       trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
     }
     pipeline_internal::release_realtime_frame_credits(realtime_credits, "graph-sink-drop");
-    if (!stop_requested(callbacks)) {
+    if (options.request_stop_on_backpressure && !stop_requested(callbacks)) {
       std::ostringstream msg;
       msg << "GraphRun: sink backpressure timeout (node=" << static_cast<std::size_t>(sink_node)
           << ", edge_queue=" << options.edge_queue
@@ -1056,7 +1056,7 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       if (dispatch_options.drop_pipeline_input_when_full) {
         return true;
       }
-      if (!stop_requested(callbacks)) {
+      if (options.request_stop_on_backpressure && !stop_requested(callbacks)) {
         std::ostringstream msg;
         msg << "GraphRun: pipeline input backpressure timeout (seg="
             << static_cast<std::size_t>(runtime_->pipelines[target.index]->seg.id)

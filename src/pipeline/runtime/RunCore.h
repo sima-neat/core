@@ -84,6 +84,7 @@ struct GraphRuntimeOptions {
     return EdgeRouterOptions{
         .edge_queue = edge_queue,
         .push_timeout_ms = push_timeout_ms,
+        .request_stop_on_backpressure = true,
     };
   }
 };
