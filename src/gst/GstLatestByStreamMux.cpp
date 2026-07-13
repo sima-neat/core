@@ -81,6 +81,11 @@ struct PendingSlot {
   bool have_segment = false;
   guint64 next_frame_id = 0;
   guint64 emitted = 0;
+  // Monotonic age of the current empty -> pending transition. Replacement by
+  // a newer frame keeps this ticket, so a hot producer cannot lose its place
+  // while still preserving latest-only storage.
+  guint64 ready_ticket = 0;
+  bool has_ready_ticket = false;
   std::atomic<std::uint64_t> received{0};
   std::atomic<std::uint64_t> replaced{0};
   std::atomic<std::uint64_t> no_credit_skips{0};
@@ -102,6 +107,7 @@ struct _GstLatestByStreamMux {
   IntVector stream_inflight_limits;
   guint next_pad_index = 0;
   guint rr_index = 0;
+  guint64 next_ready_ticket = 1;
   bool started = false;
   bool stopping = false;
   bool flushing = false;
@@ -852,6 +858,8 @@ GstBuffer* detach_pending_locked(PendingSlot* slot) {
   if (!slot) {
     return nullptr;
   }
+  slot->ready_ticket = 0;
+  slot->has_ready_ticket = false;
   return std::exchange(slot->pending, nullptr);
 }
 
@@ -963,34 +971,58 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
     return nullptr;
   }
   const guint n = static_cast<guint>(self->slots.size());
+  PendingSlot* selected = nullptr;
+  guint selected_idx = 0;
   for (guint offset = 0; offset < n; ++offset) {
     const guint idx = (self->rr_index + offset) % n;
     PendingSlot* slot = self->slots[idx];
-    if (!slot || !slot->pending) {
+    if (!slot || !slot->pending || !slot->has_ready_ticket) {
       continue;
     }
 
     if (slot->loan_state && slot->loan_state->gate && slot->loan_state->gate->enabled()) {
-      if (!slot->loan_state->gate->try_acquire()) {
+      const auto& gate = slot->loan_state->gate;
+      if (gate->inflight() >= gate->credit_limit()) {
         slot->no_credit_skips.fetch_add(1, std::memory_order_relaxed);
         continue;
       }
-      if (loan_acquired) {
-        *loan_acquired = true;
-      }
     }
 
-    // Strict first-eligible round robin bounds every continuously ready
-    // stream's wait by one pass over the slots. Comparing lifetime emission
-    // totals here looked fair in steady state, but staggered stream startup let
-    // newer streams monopolize a saturated consumer while they tried to catch
-    // up, indefinitely starving earlier streams whose totals were already
-    // higher.
-    self->rr_index = (idx + 1U) % n;
-    ++slot->emitted;
-    return slot;
+    // Oldest-ready selection prevents a producer whose arrival phase happens
+    // to sit just behind the RR cursor from repeatedly losing service. A slot
+    // blocked on terminal credit retains one ticket, so it is selected
+    // promptly once eligible but never receives an unbounded historical
+    // catch-up burst. Scan from the RR cursor for deterministic tie-breaking;
+    // tickets are unique during a playing epoch in normal operation.
+    if (!selected || slot->ready_ticket < selected->ready_ticket) {
+      selected = slot;
+      selected_idx = idx;
+    }
   }
-  return nullptr;
+
+  if (!selected) {
+    return nullptr;
+  }
+
+  if (selected->loan_state && selected->loan_state->gate && selected->loan_state->gate->enabled()) {
+    // Only this mux worker acquires this per-stream gate.  The availability
+    // check above therefore cannot become false (terminal threads only
+    // release credit), but keep the acquisition defensive in case that
+    // ownership contract changes.
+    if (!selected->loan_state->gate->try_acquire()) {
+      selected->no_credit_skips.fetch_add(1, std::memory_order_relaxed);
+      return nullptr;
+    }
+    if (loan_acquired) {
+      *loan_acquired = true;
+    }
+  }
+
+  self->rr_index = (selected_idx + 1U) % n;
+  selected->ready_ticket = 0;
+  selected->has_ready_ticket = false;
+  ++selected->emitted;
+  return selected;
 }
 
 GstFlowReturn push_buffer(GstLatestByStreamMux* self, GstBuffer* buffer) {
@@ -1149,6 +1181,10 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
     return GST_FLOW_FLUSHING;
   }
   const std::uint64_t received_before = slot->received.fetch_add(1, std::memory_order_relaxed);
+  if (!slot->pending) {
+    slot->ready_ticket = self->next_ready_ticket++;
+    slot->has_ready_ticket = true;
+  }
   if (slot->pending) {
     slot->replaced.fetch_add(1, std::memory_order_relaxed);
   }
@@ -1401,6 +1437,7 @@ struct SlotStatsSnapshot {
   guint64 received = 0;
   guint64 replaced = 0;
   guint64 emitted = 0;
+  guint64 ready_ticket = 0;
   guint64 no_credit_skips = 0;
   bool pending = false;
   bool eos = false;
@@ -1441,6 +1478,7 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
     row.received = slot->received.load(std::memory_order_relaxed);
     row.replaced = slot->replaced.load(std::memory_order_relaxed);
     row.emitted = slot->emitted;
+    row.ready_ticket = slot->ready_ticket;
     row.no_credit_skips = slot->no_credit_skips.load(std::memory_order_relaxed);
     row.pending = slot->pending != nullptr;
     row.eos = slot->eos;
@@ -1466,12 +1504,13 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
     std::fprintf(
         stderr,
         "[latestmux][stats] slot=%u stream=%s chain=%llu replaced=%llu emitted=%llu "
-        "pending=%d eos=%d no_credit_skips=%llu loans_registered=%llu "
+        "ready_ticket=%llu pending=%d eos=%d no_credit_skips=%llu loans_registered=%llu "
         "loans_released_output=%llu loans_released_without_output=%llu missing_key=%llu "
         "loan_inflight=%d loan_limit=%d\n",
         row.index, row.stream_id.c_str(), static_cast<unsigned long long>(row.received),
         static_cast<unsigned long long>(row.replaced), static_cast<unsigned long long>(row.emitted),
-        row.pending ? 1 : 0, row.eos ? 1 : 0, static_cast<unsigned long long>(row.no_credit_skips),
+        static_cast<unsigned long long>(row.ready_ticket), row.pending ? 1 : 0, row.eos ? 1 : 0,
+        static_cast<unsigned long long>(row.no_credit_skips),
         static_cast<unsigned long long>(row.loans_registered),
         static_cast<unsigned long long>(row.loans_released_by_output),
         static_cast<unsigned long long>(row.loans_released_without_output),
@@ -1497,6 +1536,8 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     self->have_pending_segment = false;
     self->stats_reported = false;
     self->stats_pushes = 0;
+    self->rr_index = 0;
+    self->next_ready_ticket = 1;
     gst_segment_init(&self->pending_segment, GST_FORMAT_TIME);
     detached.reserve(self->slots.size());
     for (PendingSlot* slot : self->slots) {
