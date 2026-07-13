@@ -17,6 +17,30 @@ Use `MetadataSender` when an external viewer, recorder, or service accepts UTF-8
 - Default send mode: nonblocking (`MSG_DONTWAIT`)
 - Payload encoding: UTF-8 JSON text
 - Required top-level fields: `type`, `data`
+- Maximum logical payload: 65,507 bytes
+
+`MetadataSender` keeps each UDP payload at or below 1200 bytes. JSON payloads
+up to 1200 bytes remain one unchanged datagram. Larger payloads are split into
+chunks with this 12-byte binary header:
+
+| Byte | Size | Value |
+| --- | --- | --- |
+| 0 | 1 | Magic byte `0x4e` |
+| 1 | 1 | Protocol version `0x01` |
+| 2 | 8 | Message ID as an unsigned 64-bit big-endian integer |
+| 10 | 1 | Zero-based chunk index |
+| 11 | 1 | Total chunk count |
+
+Each chunk carries up to 1188 JSON bytes. A receiver reassembles chunks with
+the same sender address and message ID in chunk-index order before parsing the
+JSON. UDP delivery remains best effort: the sender does not retry a failed
+chunk, and `send_raw_json(...)` or `send_metadata(...)` returns `false` after
+the first local send failure.
+
+Receivers should accept both unchanged JSON datagrams and versioned chunks.
+Update Insight to a release with chunk reassembly before or together with this
+Neat Library version. Older Insight versions continue to receive payloads up
+to 1200 bytes, but cannot decode larger chunked payloads.
 
 For Insight, pair metadata channel `N` with the video UDP stream on `9000 + N`.
 If Insight or another receiver runs behind container port remapping, pass the mapped host and port explicitly from the app.
