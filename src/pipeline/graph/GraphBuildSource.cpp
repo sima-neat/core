@@ -2887,7 +2887,7 @@ Run Graph::build(const RunOptions& opt) {
   return build_source_internal_(opt, false);
 }
 
-Run Graph::build(FuseRealtimeSourceBranchesTag, const RunOptions& opt) {
+Run Graph::build_fused_realtime_sources(const RunOptions& opt) {
   return build_source_internal_(opt, true);
 }
 

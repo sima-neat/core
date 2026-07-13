@@ -109,11 +109,10 @@ void merge_realtime_link_options(GraphLinkOptions& existing, GraphLinkOptions& i
   incoming.policy = merged_policy;
   existing.queue_depth = std::max(existing.queue_depth, incoming.queue_depth);
   incoming.queue_depth = existing.queue_depth;
-  existing.max_inflight_per_stream =
-      std::max(existing.max_inflight_per_stream, incoming.max_inflight_per_stream);
-  incoming.max_inflight_per_stream = existing.max_inflight_per_stream;
-  existing.max_inflight_total = std::max(existing.max_inflight_total, incoming.max_inflight_total);
-  incoming.max_inflight_total = existing.max_inflight_total;
+  // These are admission promises made by each producer edge. Keep them intact
+  // while normalizing shared fan-in behavior: fused lowering configures the
+  // per-stream gates independently and applies the strictest explicit total
+  // cap across the mux.
 }
 
 } // namespace

@@ -1217,7 +1217,7 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
     if (e.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream) {
       throw std::runtime_error(
-          "RealtimeEveryFrameByStream requires Graph::build(fuse_realtime_source_branches, ...) "
+          "RealtimeEveryFrameByStream requires Graph::build_fused_realtime_sources(...) "
           "and an eligible multi-source fused decoder graph");
     }
     if (e.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream) {

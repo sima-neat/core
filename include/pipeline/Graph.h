@@ -68,18 +68,6 @@ struct InputRouteProcessor;
 class Graph;
 class Model;
 
-/**
- * @brief Explicit opt-in tag for a fused realtime source fan-in build.
- *
- * Pass `fuse_realtime_source_branches` as the first argument to the source-mode
- * `Graph::build` overload. A distinct overload keeps the released
- * `RunAdvancedOptions` object layout and existing build behavior ABI-safe.
- */
-struct FuseRealtimeSourceBranchesTag {
-  explicit constexpr FuseRealtimeSourceBranchesTag() = default;
-};
-inline constexpr FuseRealtimeSourceBranchesTag fuse_realtime_source_branches{};
-
 #ifdef SIMA_NEAT_INTERNAL
 namespace runtime {
 struct ExecutionGraphPlan;
@@ -391,7 +379,7 @@ public:
    * `RealtimeEveryFrameByStream` are eligible; all other topology and
    * validation rules are unchanged.
    */
-  Run build(FuseRealtimeSourceBranchesTag, const RunOptions& opt = {});
+  Run build_fused_realtime_sources(const RunOptions& opt = {});
 
   /// Returns the GStreamer launch string from the most recent `build()` call.
   const std::string& last_pipeline() const {

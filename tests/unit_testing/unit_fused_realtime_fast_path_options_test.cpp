@@ -274,8 +274,8 @@ RUN_TEST(
         link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
         link.queue_depth = 1;
         link.stream_id = "fused_queue_stream" + std::to_string(stream);
-        link.max_inflight_per_stream = 1;
-        link.max_inflight_total = 2;
+        link.max_inflight_per_stream = stream == 0 ? 1 : 8;
+        link.max_inflight_total = stream == 0 ? 2 : 8;
         composed_app.connect(source, composed_detector, link);
       }
       simaai::neat::RunOptions composed_run_options;
@@ -304,27 +304,46 @@ RUN_TEST(
       const auto& first_fused_edge = composed_plan.edges.at(
           fused_segment->fused_realtime_ingress->branches.front().edge_index);
       std::vector<simaai::neat::GraphLinkOptions> fused_link_options;
+      std::string rendered_per_stream_limits;
+      bool found_stream0 = false;
+      bool found_stream1 = false;
       for (const auto& branch : fused_segment->fused_realtime_ingress->branches) {
         const auto& fused_edge = composed_plan.edges.at(branch.edge_index);
         require(fused_edge.to == first_fused_edge.to &&
                     fused_edge.to_port == first_fused_edge.to_port,
                 "positive fused topology must be a true same-destination-port fan-in");
-        require(branch.link_options.max_inflight_per_stream == 1,
-                "fused ingress must preserve each public per-link admission limit");
-        require(branch.link_options.max_inflight_total == 2,
-                "fused ingress must preserve the public total admission limit");
+        if (branch.stream_id == "fused_queue_stream0") {
+          require(branch.link_options.max_inflight_per_stream == 1 &&
+                      branch.link_options.max_inflight_total == 2,
+                  "stream 0 must retain its stricter per-stream and total admission caps");
+          found_stream0 = true;
+        } else if (branch.stream_id == "fused_queue_stream1") {
+          require(branch.link_options.max_inflight_per_stream == 8 &&
+                      branch.link_options.max_inflight_total == 8,
+                  "stream 1 must retain its independent per-stream and total admission caps");
+          found_stream1 = true;
+        } else {
+          require(false, "fused ingress must retain each public stream id");
+        }
         require(branch.link_options.policy ==
                     simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream,
                 "fused ingress must preserve the every-frame backpressure policy");
+        if (!rendered_per_stream_limits.empty()) {
+          rendered_per_stream_limits += ',';
+        }
+        rendered_per_stream_limits += std::to_string(branch.link_options.max_inflight_per_stream);
         fused_link_options.push_back(branch.link_options);
       }
+      require(found_stream0 && found_stream1,
+              "fan-in normalization must preserve both heterogeneous link contracts");
       const std::string composed_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               fused_segment->nodes, fused_segment->route_options, fused_link_options);
-      require_contains(composed_pipeline, "stream-inflight-limits=\"1,1\"",
+      require_contains(composed_pipeline,
+                       "stream-inflight-limits=\"" + rendered_per_stream_limits + "\"",
                        "fused mux must receive public per-link admission limits");
       require_contains(composed_pipeline, "max-inflight-total=2",
-                       "fused mux must receive the public mux-wide admission limit");
+                       "fused mux must apply the strictest public mux-wide admission limit");
       require_contains(composed_pipeline, "block-when-pending=true",
                        "every-frame public links must enable bounded mux backpressure");
       const std::string composed_queue =

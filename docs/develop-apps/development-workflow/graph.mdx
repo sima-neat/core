@@ -525,7 +525,7 @@ Use `RealtimeEveryFrameByStream` when a fused decoder source must preserve burst
 For a high-channel-count live graph, explicitly select the fused source build so eligible private source branches stay with their fan-in and model consumer in one GStreamer pipeline:
 
 ```cpp
-auto run = app.build(simaai::neat::fuse_realtime_source_branches, run_options);
+auto run = app.build_fused_realtime_sources(run_options);
 ```
 
 ```python

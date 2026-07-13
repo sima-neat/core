@@ -3059,7 +3059,7 @@ NB_MODULE(_pyneat_core, m) {
       .def(
           "build_fused_realtime_source",
           [](Graph& self, const RunOptions& options) {
-            return self.build(simaai::neat::fuse_realtime_source_branches, options);
+            return self.build_fused_realtime_sources(options);
           },
           "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def("build", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),

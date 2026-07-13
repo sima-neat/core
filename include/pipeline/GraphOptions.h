@@ -52,7 +52,7 @@ namespace simaai::neat {
  * streams fairly into the downstream graph. `RealtimeEveryFrameByStream` is the opt-in fused
  * decoder-source variant: it retains one pending frame per stream and blocks only that producer
  * until the mux consumes it, preserving bursty input without another EV-memory queue. Build these
- * links with `fuse_realtime_source_branches`.
+ * links with `Graph::build_fused_realtime_sources()`.
  */
 enum class GraphLinkPolicy {
   Default = 0,

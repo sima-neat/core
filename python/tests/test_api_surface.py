@@ -159,6 +159,7 @@ def _assert_not_type_error(call):
 
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
+  assert hasattr(pyneat.Graph, "build_fused_realtime_source")
   assert hasattr(pyneat, "GraphOptions")
   assert hasattr(pyneat, "GraphLinkOptions")
   assert hasattr(pyneat, "GraphLinkPolicy")
