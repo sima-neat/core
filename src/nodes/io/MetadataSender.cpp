@@ -218,13 +218,23 @@ bool MetadataSender::send_raw_json(const std::string& payload, std::string* err)
   if (sent < 0) {
     impl_->send_failures.fetch_add(1, std::memory_order_relaxed);
     impl_->last_errno.store(send_errno, std::memory_order_relaxed);
-    if (send_errno == EAGAIN || send_errno == EWOULDBLOCK) {
+    const bool would_block = send_errno == EAGAIN || send_errno == EWOULDBLOCK;
+    const bool no_buffer_space = send_errno == ENOBUFS;
+    if (would_block) {
       impl_->would_block.fetch_add(1, std::memory_order_relaxed);
-    } else if (send_errno == ENOBUFS) {
+    } else if (no_buffer_space) {
       impl_->no_buffer_space.fetch_add(1, std::memory_order_relaxed);
     }
-    if (err)
-      *err = std::string("sendto failed: ") + std::strerror(send_errno);
+    if (err) {
+      if (impl_->nonblocking && (would_block || no_buffer_space)) {
+        // Congestion is the expected drop path for a nonblocking real-time
+        // sender.  Keep diagnostics in stats(), but leave the error empty so
+        // language bindings can return False instead of raising.
+        err->clear();
+      } else {
+        *err = std::string("sendto failed: ") + std::strerror(send_errno);
+      }
+    }
     return false;
   }
   if (static_cast<size_t>(sent) != payload.size()) {

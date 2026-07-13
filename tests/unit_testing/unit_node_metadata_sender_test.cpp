@@ -65,7 +65,7 @@ int probe_send_mode_in_child(bool nonblocking) {
     return 10;
   }
 
-  std::string send_err;
+  std::string send_err = "stale error";
   if (sender.send_raw_json("{}", &send_err)) {
     return 11;
   }
@@ -79,6 +79,9 @@ int probe_send_mode_in_child(bool nonblocking) {
   }
   if (stats.would_block != (nonblocking ? 1U : 0U) || stats.no_buffer_space != 0) {
     return 14;
+  }
+  if (send_err.empty() != nonblocking) {
+    return 15;
   }
   return 0;
 }
@@ -97,18 +100,20 @@ void require_send_mode_flag(bool nonblocking) {
                                         std::to_string(WEXITSTATUS(status)));
 }
 
-int probe_enobufs_diagnostic_in_child() {
+int probe_enobufs_diagnostic_in_child(bool nonblocking) {
   simaai::neat::MetadataSenderOptions opt;
   opt.host = "127.0.0.1";
   opt.metadata_port_base = 9199;
+  simaai::neat::MetadataSenderSendOptions send_opt;
+  send_opt.nonblocking = nonblocking;
 
   std::string init_err;
-  simaai::neat::MetadataSender sender(opt, &init_err);
+  simaai::neat::MetadataSender sender(opt, send_opt, &init_err);
   if (!sender.ok() || !install_sendto_error_probe(ENOBUFS)) {
     return 20;
   }
 
-  std::string send_err;
+  std::string send_err = "stale error";
   if (sender.send_raw_json("{}", &send_err)) {
     return 21;
   }
@@ -117,14 +122,17 @@ int probe_enobufs_diagnostic_in_child() {
       stats.last_errno != ENOBUFS || stats.no_buffer_space != 1 || stats.would_block != 0) {
     return 22;
   }
+  if (send_err.empty() != nonblocking) {
+    return 23;
+  }
   return 0;
 }
 
-void require_enobufs_diagnostic() {
+void require_enobufs_diagnostic(bool nonblocking) {
   const pid_t pid = ::fork();
   require(pid >= 0, "fork failed for MetadataSender ENOBUFS probe");
   if (pid == 0) {
-    ::_exit(probe_enobufs_diagnostic_in_child());
+    ::_exit(probe_enobufs_diagnostic_in_child(nonblocking));
   }
 
   int status = 0;
@@ -224,5 +232,6 @@ RUN_TEST(
 
       require_send_mode_flag(false);
       require_send_mode_flag(true);
-      require_enobufs_diagnostic();
+      require_enobufs_diagnostic(false);
+      require_enobufs_diagnostic(true);
     }));

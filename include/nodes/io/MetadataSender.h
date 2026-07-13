@@ -24,6 +24,8 @@ struct MetadataSenderSendOptions {
    * The default preserves the historical blocking socket behavior. Enable
    * this for real-time paths where dropping metadata during local socket
    * congestion is preferable to stalling video or inference dispatch.
+   * `EAGAIN`/`EWOULDBLOCK` and `ENOBUFS` then return `false` without an error
+   * string; inspect `MetadataSenderStats` for drop diagnostics.
    */
   bool nonblocking = false;
 };
