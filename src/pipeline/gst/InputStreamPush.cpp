@@ -115,6 +115,11 @@ bool buffers_share_memory(GstBuffer* lhs, GstBuffer* rhs) {
   return false;
 }
 
+bool is_deferred_pool_buffer_proxy(GstBuffer* buffer) {
+  return buffer && gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer),
+                                             deferred_pool_buffer_parents_quark()) != nullptr;
+}
+
 void retain_parent_lifetime_roots(GstBuffer* buffer, std::vector<GstBuffer*>& retained,
                                   std::vector<GstBuffer*>& visited) {
   if (!buffer || std::find(visited.begin(), visited.end(), buffer) != visited.end()) {
@@ -122,7 +127,7 @@ void retain_parent_lifetime_roots(GstBuffer* buffer, std::vector<GstBuffer*>& re
   }
   visited.push_back(buffer);
 
-  std::vector<GstBuffer*> shared_memory_parents;
+  std::vector<GstBuffer*> lifetime_parents;
   std::vector<GstBuffer*> other_parents;
   gpointer state = nullptr;
   while (GstMeta* raw_meta =
@@ -131,18 +136,20 @@ void retain_parent_lifetime_roots(GstBuffer* buffer, std::vector<GstBuffer*>& re
     if (!meta->buffer) {
       continue;
     }
-    (buffers_share_memory(buffer, meta->buffer) ? shared_memory_parents : other_parents)
+    (buffers_share_memory(buffer, meta->buffer) || is_deferred_pool_buffer_proxy(meta->buffer)
+         ? lifetime_parents
+         : other_parents)
         .push_back(meta->buffer);
   }
 
-  if (shared_memory_parents.empty()) {
+  if (lifetime_parents.empty()) {
     if (std::find(retained.begin(), retained.end(), buffer) == retained.end()) {
       retained.push_back(gst_buffer_ref(buffer));
     }
     return;
   }
 
-  for (GstBuffer* parent : shared_memory_parents) {
+  for (GstBuffer* parent : lifetime_parents) {
     retain_parent_lifetime_roots(parent, retained, visited);
   }
   for (GstBuffer* parent : other_parents) {
