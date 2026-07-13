@@ -100,6 +100,31 @@ add_custom_target(prepare_perf_codec_fixtures
   VERBATIM
 )
 
+# Keep installer package-recovery behavior in the normal CTest/DevKit gate.
+# Copy both files below the build tests root so the Vulcan extras path rebasing
+# also makes this test self-contained on the ARM64 runner.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_install_neat_framework_native_restore.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
+  COPYONLY
+)
+configure_file(
+  "${CMAKE_SOURCE_DIR}/tools/install_neat_framework.sh"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
+  COPYONLY
+)
+add_test(
+  NAME unit_install_neat_framework_native_restore_test
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
+          --installer "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
+)
+set_tests_properties(
+  unit_install_neat_framework_native_restore_test
+  PROPERTIES LABELS "unit;installer;regression"
+)
+
 # ------------------------------------------------------------------------------
 # Python test source compilation
 # ------------------------------------------------------------------------------
