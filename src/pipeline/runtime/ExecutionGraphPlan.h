@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::graph {
@@ -291,5 +292,12 @@ ExecutionGraphPlan compile_runtime_graph(const graph::Graph& graph,
 
 ExecutionGraphPlan compile_graph_run_plan(const graph::Graph& graph,
                                           const graph::GraphRunOptions& opt);
+
+namespace session_test {
+
+bool fused_realtime_destinations_share_port_for_test(
+    const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations);
+
+} // namespace session_test
 
 } // namespace simaai::neat::runtime

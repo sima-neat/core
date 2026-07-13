@@ -1704,6 +1704,27 @@ bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segmen
   return segment.output_edges.size() == 1U;
 }
 
+bool fused_realtime_input_edges_share_destination(const ExecutionGraphPlan& plan,
+                                                  const std::vector<std::size_t>& input_edges) {
+  if (input_edges.empty()) {
+    return false;
+  }
+  std::optional<std::pair<graph::NodeId, graph::PortId>> destination;
+  for (const std::size_t edge_index : input_edges) {
+    if (edge_index >= plan.edges.size()) {
+      return false;
+    }
+    const auto& edge = plan.edges[edge_index];
+    const auto current = std::pair{edge.to, edge.to_port};
+    if (!destination.has_value()) {
+      destination = current;
+    } else if (*destination != current) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan* plan) {
   if (!plan || plan->pipeline_segments.empty() || plan->edges.empty()) {
     return;
@@ -1721,6 +1742,12 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     auto& target = plan->pipeline_segments[target_index];
     if (target.input_edges.size() <= 1U || target.boundary.source_like ||
         target.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    // One neatlatestbystreammux has one linear src pad. It can replace true
+    // fan-in to a single consumer ingress, but not a multi-input segment whose
+    // edges intentionally address distinct ports/endpoints.
+    if (!fused_realtime_input_edges_share_destination(*plan, target.input_edges)) {
       continue;
     }
 
@@ -2147,6 +2174,26 @@ void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& p
 }
 
 } // namespace
+
+namespace session_test {
+
+bool fused_realtime_destinations_share_port_for_test(
+    const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations) {
+  ExecutionGraphPlan plan;
+  std::vector<std::size_t> input_edges;
+  plan.edges.reserve(destinations.size());
+  input_edges.reserve(destinations.size());
+  for (const auto& [node, port] : destinations) {
+    EdgePlan edge;
+    edge.to = node;
+    edge.to_port = port;
+    input_edges.push_back(plan.edges.size());
+    plan.edges.push_back(std::move(edge));
+  }
+  return fused_realtime_input_edges_share_destination(plan, input_edges);
+}
+
+} // namespace session_test
 
 void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan) {
   validate_static_connected_input_capacities_impl(plan);

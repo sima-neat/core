@@ -252,6 +252,18 @@ RUN_TEST(
                    .has_value(),
               "an uncorrelated decoder output must retain its own timestamps instead of guessing");
 
+      using simaai::neat::graph::NodeId;
+      using simaai::neat::graph::PortId;
+      require(simaai::neat::runtime::session_test::fused_realtime_destinations_share_port_for_test(
+                  {{NodeId{10U}, PortId{20U}}, {NodeId{10U}, PortId{20U}}}),
+              "same-port realtime fan-in must remain eligible for fused lowering");
+      require(!simaai::neat::runtime::session_test::fused_realtime_destinations_share_port_for_test(
+                  {{NodeId{10U}, PortId{20U}}, {NodeId{10U}, PortId{21U}}}),
+              "distinct consumer ports must remain on the non-fused runtime path");
+      require(!simaai::neat::runtime::session_test::fused_realtime_destinations_share_port_for_test(
+                  {{NodeId{10U}, PortId{20U}}, {NodeId{11U}, PortId{20U}}}),
+              "distinct consumer nodes must not be collapsed merely because port ids match");
+
       simaai::neat::GraphOptions outer_options;
       outer_options.async_queue_depth = 3;
       simaai::neat::Graph composed_app("composed_fused_queue_app", outer_options);
@@ -289,8 +301,14 @@ RUN_TEST(
               "fused segment must preserve outer GraphOptions::async_queue_depth");
       require(fused_segment->fused_realtime_ingress->branches.size() == 2U,
               "fused segment must preserve both source links");
+      const auto& first_fused_edge = composed_plan.edges.at(
+          fused_segment->fused_realtime_ingress->branches.front().edge_index);
       std::vector<simaai::neat::GraphLinkOptions> fused_link_options;
       for (const auto& branch : fused_segment->fused_realtime_ingress->branches) {
+        const auto& fused_edge = composed_plan.edges.at(branch.edge_index);
+        require(fused_edge.to == first_fused_edge.to &&
+                    fused_edge.to_port == first_fused_edge.to_port,
+                "positive fused topology must be a true same-destination-port fan-in");
         require(branch.link_options.max_inflight_per_stream == 1,
                 "fused ingress must preserve each public per-link admission limit");
         require(branch.link_options.max_inflight_total == 2,
