@@ -85,12 +85,28 @@ void validate_realtime_inflight_options(const GraphLinkOptions& options) {
   validate_realtime_inflight_option("max_inflight_total", options.max_inflight_total);
 }
 
+bool is_realtime_stream_policy(GraphLinkPolicy policy) {
+  return policy == GraphLinkPolicy::RealtimeLatestByStream ||
+         policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+}
+
 void merge_realtime_link_options(GraphLinkOptions& existing, GraphLinkOptions& incoming) {
   validate_realtime_inflight_options(existing);
   validate_realtime_inflight_options(incoming);
 
-  existing.policy = GraphLinkPolicy::RealtimeLatestByStream;
-  incoming.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  if (existing.policy != GraphLinkPolicy::Default && incoming.policy != GraphLinkPolicy::Default &&
+      existing.policy != incoming.policy) {
+    throw std::runtime_error("Graph::connect: cannot mix RealtimeLatestByStream and "
+                             "RealtimeEveryFrameByStream producers on one fan-in");
+  }
+
+  const GraphLinkPolicy merged_policy =
+      existing.policy == GraphLinkPolicy::RealtimeEveryFrameByStream ||
+              incoming.policy == GraphLinkPolicy::RealtimeEveryFrameByStream
+          ? GraphLinkPolicy::RealtimeEveryFrameByStream
+          : GraphLinkPolicy::RealtimeLatestByStream;
+  existing.policy = merged_policy;
+  incoming.policy = merged_policy;
   existing.queue_depth = std::max(existing.queue_depth, incoming.queue_depth);
   incoming.queue_depth = existing.queue_depth;
   existing.max_inflight_per_stream =
@@ -174,9 +190,8 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
       continue;
     }
     if (edge.to == to && edge.to_port == to_port) {
-      const bool existing_realtime =
-          edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-      const bool incoming_realtime = link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+      const bool existing_realtime = is_realtime_stream_policy(edge.link_options.policy);
+      const bool incoming_realtime = is_realtime_stream_policy(link_options.policy);
       const bool default_live_fan_in = edge.link_options.policy == GraphLinkPolicy::Default &&
                                        link_options.policy == GraphLinkPolicy::Default &&
                                        vertex_is_live_source_context(*this, edge.from) &&
@@ -223,10 +238,8 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
         continue;
       }
       if (edge.to == to && edge.endpoint->to_endpoint == to_endpoint) {
-        const bool existing_realtime =
-            edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-        const bool incoming_realtime =
-            link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+        const bool existing_realtime = is_realtime_stream_policy(edge.link_options.policy);
+        const bool incoming_realtime = is_realtime_stream_policy(link_options.policy);
         const bool default_live_fan_in = edge.link_options.policy == GraphLinkPolicy::Default &&
                                          link_options.policy == GraphLinkPolicy::Default &&
                                          vertex_is_live_source_context(*this, edge.from) &&

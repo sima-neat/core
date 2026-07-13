@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -167,7 +168,6 @@ RUN_TEST(
       ScopedUnsetEnv mla_kill_switch("SIMA_PROCESSMLA_SAFE_ASYNC");
       ScopedUnsetEnv legacy_queue_enable("SIMA_ENABLE_ASYNC_QUEUE2");
       ScopedUnsetEnv legacy_queue_depth("SIMA_ASYNC_QUEUE2_DEPTH");
-      ScopedUnsetEnv queue_placement("SIMA_FUSED_REALTIME_CONSUMER_QUEUE_PLACEMENT");
 
       simaai::neat::GraphOptions options;
       options.processcvu.async = true;
@@ -209,6 +209,21 @@ RUN_TEST(
       require(pipeline.find("leaky=") == std::string::npos,
               "fused consumer-stage queues must be non-leaky so terminal loan release "
               "cannot be skipped");
+      require(pipeline.find("block-when-pending") == std::string::npos,
+              "default latest links must not opt into producer backpressure");
+      simaai::neat::GraphLinkOptions latest_ingress;
+      latest_ingress.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+      const std::string latest_ingress_queue =
+          simaai::neat::session_test::render_fused_realtime_ingress_queue_for_test(latest_ingress);
+      require_contains(latest_ingress_queue, "leaky=downstream",
+                       "default latest ingress must retain its non-blocking leaky queue");
+      simaai::neat::GraphLinkOptions every_frame_ingress;
+      every_frame_ingress.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
+      const std::string every_frame_ingress_queue =
+          simaai::neat::session_test::render_fused_realtime_ingress_queue_for_test(
+              every_frame_ingress);
+      require(every_frame_ingress_queue.find("leaky=") == std::string::npos,
+              "every-frame ingress queue must backpressure instead of dropping upstream");
 
       simaai::neat::GraphOptions no_consumer_queues = options;
       no_consumer_queues.async_queue_depth = 0;
@@ -225,7 +240,7 @@ RUN_TEST(
       for (int stream = 0; stream < 2; ++stream) {
         auto source = make_live_source_graph(stream);
         simaai::neat::GraphLinkOptions link;
-        link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
         link.queue_depth = 1;
         link.stream_id = "fused_queue_stream" + std::to_string(stream);
         link.max_inflight_per_stream = 1;
@@ -258,6 +273,9 @@ RUN_TEST(
       for (const auto& branch : fused_segment->fused_realtime_ingress->branches) {
         require(branch.link_options.max_inflight_per_stream == 1,
                 "fused ingress must preserve each public per-link admission limit");
+        require(branch.link_options.policy ==
+                    simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream,
+                "fused ingress must preserve the every-frame backpressure policy");
         fused_link_options.push_back(branch.link_options);
       }
       const std::string composed_pipeline =
@@ -265,12 +283,30 @@ RUN_TEST(
               fused_segment->nodes, fused_segment->route_options, fused_link_options);
       require_contains(composed_pipeline, "stream-inflight-limits=\"1,1\"",
                        "fused mux must receive public per-link admission limits");
+      require_contains(composed_pipeline, "block-when-pending=true",
+                       "every-frame public links must enable bounded mux backpressure");
       const std::string composed_queue =
           "queue max-size-buffers=3 max-size-bytes=0 max-size-time=0";
       require(count_occurrences(composed_pipeline, composed_queue) == 3U,
               "actual composed fused graph must render the three selected stage queues");
       require(composed_pipeline.find(composed_queue + " ! appsink") == std::string::npos,
               "actual composed fused graph must not queue before its terminal Output");
+
+      simaai::neat::Graph mixed_policy_app("mixed_realtime_policy_app", outer_options);
+      auto mixed_detector = make_composed_consumer_graph();
+      simaai::neat::GraphLinkOptions latest_link;
+      latest_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+      mixed_policy_app.connect(make_live_source_graph(200), mixed_detector, latest_link);
+      simaai::neat::GraphLinkOptions every_frame_link;
+      every_frame_link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
+      bool rejected_mixed_policy = false;
+      try {
+        mixed_policy_app.connect(make_live_source_graph(201), mixed_detector, every_frame_link);
+      } catch (const std::runtime_error&) {
+        rejected_mixed_policy = true;
+      }
+      require(rejected_mixed_policy,
+              "one fan-in must reject mixed latest and every-frame producer policies");
 
       simaai::neat::Graph single_source_app("single_source_not_fused", outer_options);
       auto single_source = make_live_source_graph(99);
@@ -285,29 +321,6 @@ RUN_TEST(
         require(!segment.fused_realtime_ingress.has_value(),
                 "explicit fused build must leave ineligible one-source topology unchanged");
       }
-
-      setenv("SIMA_FUSED_REALTIME_CONSUMER_QUEUE_PLACEMENT", "post-mla", 1);
-      simaai::neat::GraphOptions post_mla_only = options;
-      post_mla_only.async_queue_depth = 1;
-      const std::string post_mla_pipeline =
-          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
-              make_consumer_nodes(), post_mla_only);
-      unsetenv("SIMA_FUSED_REALTIME_CONSUMER_QUEUE_PLACEMENT");
-      const std::string depth_one_queue =
-          "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0";
-      require(count_occurrences(post_mla_pipeline, depth_one_queue) == 1U,
-              "post-MLA diagnostic placement must insert exactly one queue");
-      require_contains(post_mla_pipeline,
-                       "defer-output-invalidate=true ! " + depth_one_queue + " ! neatboxdecode",
-                       "post-MLA diagnostic queue must decouple MLA from decode");
-      require(post_mla_pipeline.find("stream-inflight-limits=\"4\" ! " + depth_one_queue) ==
-                  std::string::npos,
-              "post-MLA placement must not insert a mux-to-CVU queue");
-      require(post_mla_pipeline.find(depth_one_queue + " ! neatprocessmla") == std::string::npos,
-              "post-MLA placement must not insert a CVU-to-MLA queue");
-      require_contains(post_mla_pipeline,
-                       "neatboxdecode name=n0_boxdecode ! appsink name=n0_output",
-                       "post-MLA placement must not queue before terminal Output");
 
       simaai::neat::GraphOptions synchronous;
       synchronous.processcvu.async = false;

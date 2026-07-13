@@ -387,8 +387,9 @@ public:
    * in one GStreamer pipeline.
    *
    * This avoids an appsink/appsrc device-memory handoff for high-channel-count
-   * live graphs. Only links using `RealtimeLatestByStream` are eligible; all
-   * other topology and validation rules are unchanged.
+   * live graphs. Links using `RealtimeLatestByStream` or
+   * `RealtimeEveryFrameByStream` are eligible; all other topology and
+   * validation rules are unchanged.
    */
   Run build(FuseRealtimeSourceBranchesTag, const RunOptions& opt = {});
 

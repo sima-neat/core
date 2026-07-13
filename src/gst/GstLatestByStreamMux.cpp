@@ -79,6 +79,8 @@ struct PendingSlot {
   GstCaps* caps = nullptr;      // latest caps seen on this stream
   bool eos = false;
   bool have_segment = false;
+  bool releasing = false;
+  guint active_chains = 0;
   guint64 next_frame_id = 0;
   guint64 emitted = 0;
   // Monotonic age of the current empty -> pending transition. Replacement by
@@ -88,6 +90,7 @@ struct PendingSlot {
   bool has_ready_ticket = false;
   std::atomic<std::uint64_t> received{0};
   std::atomic<std::uint64_t> replaced{0};
+  std::atomic<std::uint64_t> blocked_waits{0};
   std::atomic<std::uint64_t> no_credit_skips{0};
   std::shared_ptr<StreamLoanState> loan_state;
 };
@@ -108,6 +111,7 @@ struct _GstLatestByStreamMux {
   guint next_pad_index = 0;
   guint rr_index = 0;
   guint64 next_ready_ticket = 1;
+  bool block_when_pending = false;
   bool started = false;
   bool stopping = false;
   bool flushing = false;
@@ -693,6 +697,7 @@ enum {
   PROP_0,
   PROP_STREAM_IDS,
   PROP_STREAM_INFLIGHT_LIMITS,
+  PROP_BLOCK_WHEN_PENDING,
 };
 
 static GstStaticPadTemplate sink_template =
@@ -1058,6 +1063,10 @@ gpointer worker_main(gpointer data) {
       if (slot && slot->pending) {
         buffer = slot->pending;
         slot->pending = nullptr;
+        // A blocking producer waits only until its sole pending slot is
+        // consumed. Wake it before the synchronous downstream push so it can
+        // install the next frame while this one is being processed.
+        g_cond_broadcast(&self->cond);
         loan_state = slot->loan_state;
         if (slot->caps) {
           caps = gst_caps_ref(slot->caps);
@@ -1171,11 +1180,41 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
     return GST_FLOW_ERROR;
   }
 
+  g_mutex_lock(&self->lock);
+  if (slot->releasing || self->flushing || self->stopping) {
+    g_mutex_unlock(&self->lock);
+    gst_buffer_unref(buffer);
+    return GST_FLOW_FLUSHING;
+  }
+  ++slot->active_chains;
+  g_mutex_unlock(&self->lock);
+  struct ChainGuard {
+    GstLatestByStreamMux* mux;
+    PendingSlot* slot;
+    ~ChainGuard() {
+      g_mutex_lock(&mux->lock);
+      if (slot->active_chains > 0) {
+        --slot->active_chains;
+      }
+      g_cond_broadcast(&mux->cond);
+      g_mutex_unlock(&mux->lock);
+    }
+  } chain_guard{self, slot};
+
   stamp_stream_meta(self, &buffer, slot);
 
   GstBuffer* replaced = nullptr;
   g_mutex_lock(&self->lock);
-  if (self->flushing || self->stopping) {
+  bool counted_block = false;
+  while (self->block_when_pending && slot->pending && !slot->releasing && !self->flushing &&
+         !self->stopping) {
+    if (!counted_block) {
+      slot->blocked_waits.fetch_add(1, std::memory_order_relaxed);
+      counted_block = true;
+    }
+    g_cond_wait(&self->cond, &self->lock);
+  }
+  if (slot->releasing || self->flushing || self->stopping) {
     g_mutex_unlock(&self->lock);
     gst_buffer_unref(buffer);
     return GST_FLOW_FLUSHING;
@@ -1399,6 +1438,9 @@ void release_pad(GstElement* element, GstPad* pad) {
 
   GstBuffer* detached = nullptr;
   g_mutex_lock(&self->lock);
+  if (slot) {
+    slot->releasing = true;
+  }
   auto it = std::find(self->slots.begin(), self->slots.end(), slot);
   if (it != self->slots.end()) {
     self->slots.erase(it);
@@ -1406,6 +1448,9 @@ void release_pad(GstElement* element, GstPad* pad) {
   detached = detach_pending_locked(slot);
   clear_slot_caps(slot);
   g_cond_broadcast(&self->cond);
+  while (slot && slot->active_chains > 0) {
+    g_cond_wait(&self->cond, &self->lock);
+  }
   g_mutex_unlock(&self->lock);
   if (detached) {
     gst_buffer_unref(detached);
@@ -1422,6 +1467,7 @@ void reset_slot_stats(PendingSlot* slot) {
   }
   slot->received.store(0, std::memory_order_relaxed);
   slot->replaced.store(0, std::memory_order_relaxed);
+  slot->blocked_waits.store(0, std::memory_order_relaxed);
   slot->no_credit_skips.store(0, std::memory_order_relaxed);
   if (slot->loan_state) {
     slot->loan_state->registered.store(0, std::memory_order_relaxed);
@@ -1436,6 +1482,7 @@ struct SlotStatsSnapshot {
   std::string stream_id;
   guint64 received = 0;
   guint64 replaced = 0;
+  guint64 blocked_waits = 0;
   guint64 emitted = 0;
   guint64 ready_ticket = 0;
   guint64 no_credit_skips = 0;
@@ -1477,6 +1524,7 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
     }
     row.received = slot->received.load(std::memory_order_relaxed);
     row.replaced = slot->replaced.load(std::memory_order_relaxed);
+    row.blocked_waits = slot->blocked_waits.load(std::memory_order_relaxed);
     row.emitted = slot->emitted;
     row.ready_ticket = slot->ready_ticket;
     row.no_credit_skips = slot->no_credit_skips.load(std::memory_order_relaxed);
@@ -1504,12 +1552,14 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
     std::fprintf(
         stderr,
         "[latestmux][stats] slot=%u stream=%s chain=%llu replaced=%llu emitted=%llu "
-        "ready_ticket=%llu pending=%d eos=%d no_credit_skips=%llu loans_registered=%llu "
+        "ready_ticket=%llu pending=%d eos=%d blocked_waits=%llu no_credit_skips=%llu "
+        "loans_registered=%llu "
         "loans_released_output=%llu loans_released_without_output=%llu missing_key=%llu "
         "loan_inflight=%d loan_limit=%d\n",
         row.index, row.stream_id.c_str(), static_cast<unsigned long long>(row.received),
         static_cast<unsigned long long>(row.replaced), static_cast<unsigned long long>(row.emitted),
         static_cast<unsigned long long>(row.ready_ticket), row.pending ? 1 : 0, row.eos ? 1 : 0,
+        static_cast<unsigned long long>(row.blocked_waits),
         static_cast<unsigned long long>(row.no_credit_skips),
         static_cast<unsigned long long>(row.loans_registered),
         static_cast<unsigned long long>(row.loans_released_by_output),
@@ -1562,15 +1612,11 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     unref_buffers(detached);
     break;
   }
-  default:
-    break;
-  }
-
-  GstStateChangeReturn ret =
-      GST_ELEMENT_CLASS(gst_latest_by_stream_mux_parent_class)->change_state(element, transition);
-
-  switch (transition) {
   case GST_STATE_CHANGE_PAUSED_TO_READY: {
+    // Wake producer chain functions before the parent transition deactivates
+    // pads. In blocking mode a producer may be asleep on our condition while
+    // holding its pad's stream lock; waiting until after the parent state
+    // change can deadlock teardown.
     std::vector<GstBuffer*> detached;
     g_mutex_lock(&self->lock);
     self->stopping = true;
@@ -1591,11 +1637,25 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     g_cond_broadcast(&self->cond);
     g_mutex_unlock(&self->lock);
     unref_buffers(detached);
-    release_all_loans_for_mux(self);
+    break;
+  }
+  default:
+    break;
+  }
+
+  GstStateChangeReturn ret =
+      GST_ELEMENT_CLASS(gst_latest_by_stream_mux_parent_class)->change_state(element, transition);
+
+  switch (transition) {
+  case GST_STATE_CHANGE_PAUSED_TO_READY: {
     if (self->worker) {
       g_thread_join(self->worker);
       self->worker = nullptr;
     }
+    // The worker may have acquired and registered its final loan while its
+    // downstream push was completing. Join before the registry scan so no
+    // post-scan entry can retain mux credit or a strong element reference.
+    release_all_loans_for_mux(self);
     print_slot_stats_once(self, "paused-to-ready");
     break;
   }
@@ -1740,6 +1800,17 @@ void set_property(GObject* object, guint prop_id, const GValue* value, GParamSpe
   case PROP_STREAM_INFLIGHT_LIMITS:
     parse_stream_inflight_limits(self, g_value_get_string(value));
     break;
+  case PROP_BLOCK_WHEN_PENDING: {
+    g_mutex_lock(&self->lock);
+    if (!self->slots.empty()) {
+      g_mutex_unlock(&self->lock);
+      GST_ERROR_OBJECT(self, "block-when-pending cannot change after request pads exist");
+      break;
+    }
+    self->block_when_pending = g_value_get_boolean(value) == TRUE;
+    g_mutex_unlock(&self->lock);
+    break;
+  }
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -1759,6 +1830,11 @@ void get_property(GObject* object, guint prop_id, GValue* value, GParamSpec* psp
     g_value_set_string(value, joined.c_str());
     break;
   }
+  case PROP_BLOCK_WHEN_PENDING:
+    g_mutex_lock(&self->lock);
+    g_value_set_boolean(value, self->block_when_pending ? TRUE : FALSE);
+    g_mutex_unlock(&self->lock);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -1775,9 +1851,10 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
   element_class->request_new_pad = request_new_pad;
   element_class->release_pad = release_pad;
   element_class->change_state = change_state;
-  gst_element_class_set_static_metadata(element_class, "Neat latest-by-stream mux", "Generic",
-                                        "Keeps one latest buffer per live stream and pushes fairly",
-                                        "SiMa.ai");
+  gst_element_class_set_static_metadata(
+      element_class, "Neat realtime per-stream mux", "Generic",
+      "Keeps one buffer per live stream and selects latest-only or bounded every-frame delivery",
+      "SiMa.ai");
   gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&sink_template));
   gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&src_template));
 
@@ -1793,6 +1870,13 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
           "Comma-separated terminal-loan limits (0 disables; omitted entries default to 4), "
           "indexed by request pad number",
           "", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_BLOCK_WHEN_PENDING,
+      g_param_spec_boolean(
+          "block-when-pending", "Block when pending",
+          "Block each input producer while its one pending slot is occupied instead of replacing "
+          "that slot with the latest buffer",
+          FALSE, static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 }
 
 void gst_latest_by_stream_mux_init(GstLatestByStreamMux* self) {

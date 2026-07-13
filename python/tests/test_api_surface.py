@@ -236,6 +236,8 @@ def test_graph_link_options_surface():
   assert opt.stream_id == "camera0"
   assert opt.max_inflight_per_stream == 4
   assert opt.max_inflight_total == 16
+  opt.policy = pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
+  assert opt.policy == pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
 
   source = pyneat.Graph()
   source.custom_with_role(

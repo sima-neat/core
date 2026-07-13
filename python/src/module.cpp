@@ -2318,7 +2318,8 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<GraphLinkPolicy>(m, "GraphLinkPolicy")
       .value("Default", GraphLinkPolicy::Default)
-      .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream);
+      .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream)
+      .value("RealtimeEveryFrameByStream", GraphLinkPolicy::RealtimeEveryFrameByStream);
 
   nb::class_<GraphLinkOptions>(m, "GraphLinkOptions")
       .def(nb::init<>())

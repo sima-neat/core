@@ -186,6 +186,25 @@ RUN_TEST(
                        io_case("realtime_link_max_inflight_total_roundtrip",
                                "realtime total raw-frame inflight limit should survive load/save"));
 
+      Graph every_frame_app("graph_io_every_frame_link_policy");
+      GraphLinkOptions every_frame_link = realtime_link;
+      every_frame_link.policy = GraphLinkPolicy::RealtimeEveryFrameByStream;
+      every_frame_app.connect(stream_source, stream_sink, every_frame_link);
+      const std::string every_frame_path = tmp_json_path("graph_io_every_frame_link_policy.json");
+      every_frame_app.save(every_frame_path);
+      require_contains(read_text(every_frame_path),
+                       "\"link_policy\":\"realtime_every_frame_by_stream\"",
+                       io_case("every_frame_link_policy_saved",
+                               "every-frame realtime policy should be serialized"));
+      const Graph loaded_every_frame_app = Graph::load(every_frame_path);
+      const std::string every_frame_roundtrip_path =
+          tmp_json_path("graph_io_every_frame_link_policy_roundtrip.json");
+      loaded_every_frame_app.save(every_frame_roundtrip_path);
+      require_contains(read_text(every_frame_roundtrip_path),
+                       "\"link_policy\":\"realtime_every_frame_by_stream\"",
+                       io_case("every_frame_link_policy_roundtrip",
+                               "every-frame realtime policy should survive load/save"));
+
       const std::string missing_file = tmp_json_path("graph_io_missing_input.json");
       {
         std::error_code ec;

@@ -985,6 +985,21 @@ std::string fused_stream_inflight_limits_csv(const runtime::FusedRealtimeIngress
   return csv;
 }
 
+bool fused_block_when_pending(const runtime::FusedRealtimeIngress& ingress) {
+  return std::any_of(ingress.branches.begin(), ingress.branches.end(), [](const auto& branch) {
+    return branch.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+  });
+}
+
+std::string fused_ingress_queue_fragment(int depth, bool block_when_pending) {
+  std::ostringstream out;
+  out << "queue max-size-buffers=" << std::max(1, depth) << " max-size-bytes=0 max-size-time=0";
+  if (!block_when_pending) {
+    out << " leaky=downstream";
+  }
+  return out.str();
+}
+
 NameTransform fused_branch_name_transform(const NameTransform& base, std::size_t branch_index) {
   NameTransform out = base;
   // Fused realtime ingress puts several copies of the same source/decode
@@ -2320,30 +2335,6 @@ bool is_fused_consumer_stage_factory(const std::string& factory) {
          factory == "neatobjectdecode" || factory == "neatboxdecode";
 }
 
-bool is_fused_consumer_decode_factory(const std::string& factory) {
-  return factory == "neatobjectdecode" || factory == "neatboxdecode";
-}
-
-enum class FusedConsumerQueuePlacement {
-  AllStages,
-  PostMlaOnly,
-};
-
-FusedConsumerQueuePlacement fused_consumer_queue_placement() {
-  // Diagnostic A/B only. Queue depth remains a public GraphOptions control and
-  // production defaults to the same all-stage topology as the generic builder.
-  const std::string value =
-      lower_copy(trim_copy(env_str("SIMA_FUSED_REALTIME_CONSUMER_QUEUE_PLACEMENT", "all")));
-  if (value.empty() || value == "all" || value == "generic") {
-    return FusedConsumerQueuePlacement::AllStages;
-  }
-  if (value == "post-mla" || value == "post_mla" || value == "mla-to-decode") {
-    return FusedConsumerQueuePlacement::PostMlaOnly;
-  }
-  throw std::invalid_argument(
-      "SIMA_FUSED_REALTIME_CONSUMER_QUEUE_PLACEMENT must be 'all' or 'post-mla'");
-}
-
 std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth) {
   if (requested_depth < 0 || requested_depth > 1024) {
     throw std::invalid_argument(
@@ -2357,24 +2348,12 @@ std::string insert_fused_consumer_stage_queues(std::string fragment, int request
   std::vector<std::string> rendered;
   rendered.reserve(segments.size() + 3U);
   const std::string queue = session_build_async_queue2_fragment(requested_depth);
-  const FusedConsumerQueuePlacement placement = fused_consumer_queue_placement();
-  bool saw_mla = false;
-
   for (const auto& segment : segments) {
     const std::string factory = fused_consumer_segment_factory(segment);
-    const bool insert_all = placement == FusedConsumerQueuePlacement::AllStages &&
-                            is_fused_consumer_stage_factory(factory);
-    const bool insert_post_mla = placement == FusedConsumerQueuePlacement::PostMlaOnly && saw_mla &&
-                                 is_fused_consumer_decode_factory(factory);
-    if (insert_all || insert_post_mla) {
+    if (is_fused_consumer_stage_factory(factory)) {
       rendered.push_back(queue);
     }
     rendered.push_back(segment);
-    if (factory == "neatprocessmla") {
-      saw_mla = true;
-    } else if (is_fused_consumer_decode_factory(factory)) {
-      saw_mla = false;
-    }
   }
 
   std::ostringstream out;
@@ -2405,18 +2384,23 @@ BuildResult build_fused_realtime_source_pipeline(
   br.diag->node_reports.reserve(consumer_nodes.size() + 1U);
   NodeReport mux_report;
   mux_report.index = -1;
-  mux_report.kind = "RealtimeLatestMux";
   const std::string stream_ids = fused_stream_ids_csv(ingress);
   const std::string stream_inflight_limits = fused_stream_inflight_limits_csv(ingress);
+  const bool block_when_pending = fused_block_when_pending(ingress);
+  mux_report.kind = block_when_pending ? "RealtimeEveryFrameMux" : "RealtimeLatestMux";
   mux_report.backend_fragment =
       "neatlatestbystreammux name=" + mux_name + " stream-ids=" + gst_double_quote(stream_ids) +
-      " stream-inflight-limits=" + gst_double_quote(stream_inflight_limits);
+      " stream-inflight-limits=" + gst_double_quote(stream_inflight_limits) +
+      (block_when_pending ? " block-when-pending=true" : "");
   mux_report.elements.push_back(mux_name);
   br.diag->node_reports.push_back(mux_report);
 
   std::ostringstream ss;
   ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids)
      << " stream-inflight-limits=" << gst_double_quote(stream_inflight_limits);
+  if (block_when_pending) {
+    ss << " block-when-pending=true";
+  }
   std::ostringstream consumer_pipeline;
   int actual_index = 0;
   bool first_consumer = true;
@@ -2440,27 +2424,13 @@ BuildResult build_fused_realtime_source_pipeline(
         fused_branch_name_transform(name_transform, branch_index);
     ss << ' ';
     bool first = true;
-    bool saw_branch_queue = false;
-    const bool queue_pre_leaky_downstream =
-        env_bool("SIMA_FUSED_REALTIME_QUEUE_PRE_LEAKY_DOWNSTREAM", false);
     for (std::size_t node_index = 0; node_index < nodes.size(); ++node_index) {
       const auto& node = nodes[node_index];
-      const bool is_queue = node && node->kind() == "Queue";
-      const bool force_pre_queue_leaky =
-          queue_pre_leaky_downstream && is_queue && !saw_branch_queue;
       append_fused_node_fragment(&br, &ss, node, branch_actual_indices[branch_index][node_index],
-                                 branch_transform, &sess_opt, /*prepend_link=*/!first,
-                                 force_pre_queue_leaky ? " leaky=downstream" : nullptr);
-      if (is_queue) {
-        saw_branch_queue = true;
-      }
+                                 branch_transform, &sess_opt, /*prepend_link=*/!first);
       first = false;
     }
-    if (!env_bool("SIMA_FUSED_REALTIME_BYPASS_INGRESS_QUEUE", false)) {
-      const int queue_depth = std::max(1, env_int("SIMA_FUSED_REALTIME_INGRESS_QUEUE_DEPTH", 1));
-      ss << " ! queue max-size-buffers=" << queue_depth
-         << " max-size-bytes=0 max-size-time=0 leaky=downstream";
-    }
+    ss << " ! " << fused_ingress_queue_fragment(1, block_when_pending);
     ss << " ! " << mux_name << ".sink_" << branch_index;
   }
 
@@ -2470,6 +2440,11 @@ BuildResult build_fused_realtime_source_pipeline(
 }
 
 namespace session_test {
+
+std::string render_fused_realtime_ingress_queue_for_test(const GraphLinkOptions& link_options) {
+  return fused_ingress_queue_fragment(1, link_options.policy ==
+                                             GraphLinkPolicy::RealtimeEveryFrameByStream);
+}
 
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options) {

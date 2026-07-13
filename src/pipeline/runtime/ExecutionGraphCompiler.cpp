@@ -208,7 +208,8 @@ struct PublicGraphLowering {
 };
 
 bool realtime_latest_link(const GraphLinkOptions& opt) {
-  return opt.policy == GraphLinkPolicy::RealtimeLatestByStream;
+  return opt.policy == GraphLinkPolicy::RealtimeLatestByStream ||
+         opt.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
 }
 
 bool default_link(const GraphLinkOptions& opt) {
@@ -251,7 +252,12 @@ GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& 
     return a;
   }
   if (a.policy != b.policy) {
-    throw std::runtime_error("compile_public_graph: conflicting Graph link policies");
+    const bool compatible_realtime = realtime_latest_link(a) && realtime_latest_link(b);
+    if (!compatible_realtime) {
+      throw std::runtime_error("compile_public_graph: conflicting Graph link policies");
+    }
+    throw std::runtime_error("compile_public_graph: cannot mix RealtimeLatestByStream and "
+                             "RealtimeEveryFrameByStream on one runtime path");
   }
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
@@ -1727,7 +1733,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         break;
       }
       const auto& edge = plan->edges[edge_index];
-      if (edge.link_options.policy != GraphLinkPolicy::RealtimeLatestByStream) {
+      if (!realtime_latest_link(edge.link_options)) {
         all_realtime = false;
         break;
       }

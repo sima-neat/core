@@ -30,5 +30,6 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
     const std::vector<GraphLinkOptions>& link_options);
+std::string render_fused_realtime_ingress_queue_for_test(const GraphLinkOptions& link_options);
 
 } // namespace simaai::neat::session_test

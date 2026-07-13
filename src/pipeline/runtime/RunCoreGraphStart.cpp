@@ -67,6 +67,11 @@ using simaai::neat::graph::StageOutMsg;
 using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
 
+bool realtime_by_stream_policy(GraphLinkPolicy policy) {
+  return policy == GraphLinkPolicy::RealtimeLatestByStream ||
+         policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+}
+
 std::string gst_double_quote(std::string value) {
   std::string out;
   out.reserve(value.size() + 2U);
@@ -1083,7 +1088,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
           continue;
         }
         const auto& link = execution.plan.edges[edge_index].link_options;
-        if (link.policy == GraphLinkPolicy::RealtimeLatestByStream) {
+        if (realtime_by_stream_policy(link.policy)) {
           realtime_input = true;
         }
       }
@@ -1210,6 +1215,11 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
       continue;
     }
 
+    if (e.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream) {
+      throw std::runtime_error(
+          "RealtimeEveryFrameByStream requires Graph::build(fuse_realtime_source_branches, ...) "
+          "and an eligible multi-source fused decoder graph");
+    }
     if (e.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream) {
       const std::string key = target_key(*downstream);
       auto it = realtime_link_by_target.find(key);
