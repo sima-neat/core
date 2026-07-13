@@ -44,7 +44,8 @@ To change SDK settings after installation, such as workspace location or DevKit
 pairing, see
 [Configure SDK](/getting-started/dev-environment/configure-sdk/).
 
-To install Model Compiler after SDK setup, see
+Model Compiler is offered during SDK setup. To install it later, pin a specific
+version, or use a standalone host, see
 [Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
 
 For hosts that cannot download packages directly, see
