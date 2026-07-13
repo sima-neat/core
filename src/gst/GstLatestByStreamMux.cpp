@@ -2452,9 +2452,8 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
       // to name a newer live loan. Replacing chains guarantee order within one
       // source stream, not across all source streams, so their authoritative
       // contract is the per-stream FIFO regardless of those scalar values.
-      const int identity_rank = terminal_replacing_only
-                                    ? 0
-                                    : (sequence_matches ? 2 : (frame_matches ? 1 : -1));
+      const int identity_rank =
+          terminal_replacing_only ? 0 : (sequence_matches ? 2 : (frame_matches ? 1 : -1));
       if (identity_rank < 0) {
         continue;
       }

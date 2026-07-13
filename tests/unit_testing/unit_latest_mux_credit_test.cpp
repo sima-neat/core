@@ -735,9 +735,8 @@ void test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate
   };
 
   const auto oldest_for_stream = [&](std::size_t stream_index) {
-    return std::find_if(outstanding.begin(), outstanding.end(), [&](const Outstanding& item) {
-      return item.stream_index == stream_index;
-    });
+    return std::find_if(outstanding.begin(), outstanding.end(),
+                        [&](const Outstanding& item) { return item.stream_index == stream_index; });
   };
   const auto release_stream = [&](std::size_t stream_index, GstBuffer* terminal,
                                   const char* reason) {
@@ -768,68 +767,66 @@ void test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate
   // cross-stream order that the namespace-wide FIFO incorrectly reassigned.
   constexpr std::size_t kFirstCompletedStream = 3;
   release_stream(kFirstCompletedStream,
-                 make_terminal_stale_private_key_buffer(
-                     stream_ids[kFirstCompletedStream].c_str(), 910000, mux_namespace,
-                     stream_ids[0].c_str(), 1),
+                 make_terminal_stale_private_key_buffer(stream_ids[kFirstCompletedStream].c_str(),
+                                                        910000, mux_namespace,
+                                                        stream_ids[0].c_str(), 1),
                  "cross-stream completion must release stream 3, not namespace head stream 0");
   push_and_pull(kFirstCompletedStream, next_sequence[kFirstCompletedStream]++);
 
   for (int i = 0; i < kIterations; ++i) {
-    const std::size_t stream_index =
-        (static_cast<std::size_t>(i) * 3U + 1U) % kStreamCount;
+    const std::size_t stream_index = (static_cast<std::size_t>(i) * 3U + 1U) % kStreamCount;
     const std::size_t other_stream = (stream_index + 1U) % kStreamCount;
     const auto selected = oldest_for_stream(stream_index);
     require(selected != outstanding.end(), "loop stream should have an outstanding loan");
-    const auto newest = std::find_if(outstanding.rbegin(), outstanding.rend(),
-                                     [&](const Outstanding& item) {
-                                       return item.stream_index == stream_index;
-                                     });
+    const auto newest =
+        std::find_if(outstanding.rbegin(), outstanding.rend(),
+                     [&](const Outstanding& item) { return item.stream_index == stream_index; });
     require(newest != outstanding.rend(), "loop stream should have a newest loan");
 
     GstBuffer* terminal = nullptr;
     switch (i % 4) {
-      case 0:
-        // Even a public sequence naming a newer live loan must not jump ahead
-        // of the oldest result in this stream.
-        terminal = make_terminal_sequence_buffer(stream_ids[stream_index].c_str(), newest->sequence,
-                                                 newest->sequence, newest->sequence);
-        break;
-      case 1: {
-        // A recycled private key can name a live loan in another stream. The
-        // current public stream remains the routing authority.
-        const auto other = oldest_for_stream(other_stream);
-        require(other != outstanding.end(), "collision stream should have an outstanding loan");
-        terminal = make_terminal_stale_private_key_buffer(
-            stream_ids[stream_index].c_str(), 900000 + i, mux_namespace,
-            stream_ids[other_stream].c_str(), other->sequence);
-        break;
-      }
-      case 2: {
-        // A stage label in stream-id/buffer-name exposes orig-stream-id as the
-        // effective source identity.
-        terminal = make_terminal_stale_private_key_buffer(
-            stream_ids[stream_index].c_str(), 900000 + i, mux_namespace,
-            "stale-private-stream", 800000 + i);
-        GstStructure* structure =
-            gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-        require(structure != nullptr, "failed to create stage-label terminal metadata");
-        gst_structure_set(structure, "stream-id", G_TYPE_STRING, "boxdecode-output", "buffer-name",
-                          G_TYPE_STRING, "boxdecode-output", nullptr);
-        break;
-      }
-      default: {
-        // When stream-id is an actual source identity it wins over a recycled
-        // orig-stream-id scalar.
-        terminal = make_terminal_stale_private_key_buffer(
-            stream_ids[stream_index].c_str(), 900000 + i, mux_namespace,
-            "stale-private-stream", 800000 + i);
-        GstStructure* structure =
-            gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-        require(structure != nullptr, "failed to create stale-orig terminal metadata");
-        gst_structure_set(structure, "orig-stream-id", G_TYPE_STRING, "stale-original-stream",
-                          nullptr);
-        break;
-      }
+    case 0:
+      // Even a public sequence naming a newer live loan must not jump ahead
+      // of the oldest result in this stream.
+      terminal = make_terminal_sequence_buffer(stream_ids[stream_index].c_str(), newest->sequence,
+                                               newest->sequence, newest->sequence);
+      break;
+    case 1: {
+      // A recycled private key can name a live loan in another stream. The
+      // current public stream remains the routing authority.
+      const auto other = oldest_for_stream(other_stream);
+      require(other != outstanding.end(), "collision stream should have an outstanding loan");
+      terminal = make_terminal_stale_private_key_buffer(
+          stream_ids[stream_index].c_str(), 900000 + i, mux_namespace,
+          stream_ids[other_stream].c_str(), other->sequence);
+      break;
+    }
+    case 2: {
+      // A stage label in stream-id/buffer-name exposes orig-stream-id as the
+      // effective source identity.
+      terminal =
+          make_terminal_stale_private_key_buffer(stream_ids[stream_index].c_str(), 900000 + i,
+                                                 mux_namespace, "stale-private-stream", 800000 + i);
+      GstStructure* structure =
+          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
+      require(structure != nullptr, "failed to create stage-label terminal metadata");
+      gst_structure_set(structure, "stream-id", G_TYPE_STRING, "boxdecode-output", "buffer-name",
+                        G_TYPE_STRING, "boxdecode-output", nullptr);
+      break;
+    }
+    default: {
+      // When stream-id is an actual source identity it wins over a recycled
+      // orig-stream-id scalar.
+      terminal =
+          make_terminal_stale_private_key_buffer(stream_ids[stream_index].c_str(), 900000 + i,
+                                                 mux_namespace, "stale-private-stream", 800000 + i);
+      GstStructure* structure =
+          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
+      require(structure != nullptr, "failed to create stale-orig terminal metadata");
+      gst_structure_set(structure, "orig-stream-id", G_TYPE_STRING, "stale-original-stream",
+                        nullptr);
+      break;
+    }
     }
 
     release_stream(stream_index, terminal,
