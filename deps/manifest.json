@@ -1,7 +1,7 @@
 {
   "internals": {
     "branch": "codex/app16-internals-develop-candidate",
-    "spec": "7822d43b394f"
+    "spec": "6d6e78d51290"
   },
   "llima": {
     "policy": "snap"
