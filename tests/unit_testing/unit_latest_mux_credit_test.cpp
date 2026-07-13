@@ -1,4 +1,5 @@
 #include "gst/GstInit.h"
+#include "gst/GstLatestByStreamMux.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -6,6 +7,8 @@
 
 #include "test_utils.h"
 
+#include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
 
 #include <algorithm>
@@ -72,13 +75,180 @@ simaai::neat::Sample make_gst_sample_backed_sample(std::optional<MuxLoanKey> key
   return sample;
 }
 
+GstBuffer* make_mux_input_buffer(std::int64_t frame_id) {
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 16U, nullptr);
+  require(buffer != nullptr, "failed to allocate latest-mux input buffer");
+  GstCustomMeta* meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+  require(meta != nullptr, "failed to attach latest-mux input metadata");
+  GstStructure* structure = gst_custom_meta_get_structure(meta);
+  require(structure != nullptr, "failed to access latest-mux input metadata");
+  gst_structure_set(structure, "frame-id", G_TYPE_INT64, static_cast<gint64>(frame_id), nullptr);
+  GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(frame_id) * GST_MSECOND;
+  GST_BUFFER_DURATION(buffer) = GST_MSECOND;
+  return buffer;
+}
+
+GstBuffer* make_terminal_identity_buffer(const char* stream_id,
+                                         std::optional<std::int64_t> frame_id) {
+  GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 16U, nullptr);
+  require(buffer != nullptr, "failed to allocate terminal identity buffer");
+  GstCustomMeta* meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+  require(meta != nullptr, "failed to attach terminal identity metadata");
+  GstStructure* structure = gst_custom_meta_get_structure(meta);
+  require(structure != nullptr, "failed to access terminal identity metadata");
+  gst_structure_set(structure, "stream-id", G_TYPE_STRING, stream_id, "orig-stream-id",
+                    G_TYPE_STRING, stream_id, nullptr);
+  if (frame_id.has_value()) {
+    gst_structure_set(structure, "frame-id", G_TYPE_INT64, static_cast<gint64>(*frame_id), nullptr);
+  }
+  return buffer;
+}
+
+GstBuffer* make_terminal_stale_private_key_buffer(const char* public_stream_id,
+                                                  std::int64_t public_frame_id,
+                                                  std::uint64_t mux_namespace,
+                                                  const char* stale_private_stream_id,
+                                                  std::int64_t stale_private_frame_id) {
+  GstBuffer* buffer = make_terminal_identity_buffer(public_stream_id, public_frame_id);
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  GstStructure* structure = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  require(structure != nullptr, "failed to access stale private-key terminal metadata");
+  gst_structure_set(structure, kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanNamespaceField,
+                    G_TYPE_UINT64, static_cast<guint64>(mux_namespace), kLoanStreamIdField,
+                    G_TYPE_STRING, stale_private_stream_id, kLoanFrameIdField, G_TYPE_INT64,
+                    static_cast<gint64>(stale_private_frame_id), nullptr);
+  return buffer;
+}
+
+void push_mux_input(GstElement* appsrc, std::int64_t frame_id) {
+  require(gst_app_src_push_buffer(GST_APP_SRC(appsrc), make_mux_input_buffer(frame_id)) ==
+              GST_FLOW_OK,
+          "latest-mux appsrc push failed");
+}
+
+GstSample* pull_mux_output(GstElement* appsink, GstClockTime timeout) {
+  return gst_app_sink_try_pull_sample(GST_APP_SINK(appsink), timeout);
+}
+
+void test_namespace_bounded_terminal_loan_fallback() {
+  GstElement* pipeline = gst_pipeline_new("latest-mux-credit-fallback-pipeline");
+  GstElement* appsrc = gst_element_factory_make("appsrc", "latest-mux-credit-source");
+  GstElement* mux = gst_element_factory_make("neatlatestbystreammux", "latest-mux-credit-mux");
+  GstElement* appsink = gst_element_factory_make("appsink", "latest-mux-credit-sink");
+  require(pipeline && appsrc && mux && appsink,
+          "failed to construct latest-mux credit fallback pipeline");
+
+  g_object_set(appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
+  g_object_set(mux, "stream-ids", "sole-stream", nullptr);
+  g_object_set(appsink, "sync", FALSE, "max-buffers", 4U, "drop", FALSE, "enable-last-sample",
+               FALSE, nullptr);
+  GstCaps* caps =
+      gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "GRAY8", "width", G_TYPE_INT, 4,
+                          "height", G_TYPE_INT, 4, "framerate", GST_TYPE_FRACTION, 1, 1, nullptr);
+  require(caps != nullptr, "failed to allocate latest-mux input caps");
+  gst_app_src_set_caps(GST_APP_SRC(appsrc), caps);
+  gst_caps_unref(caps);
+
+  gst_bin_add_many(GST_BIN(pipeline), appsrc, mux, appsink, nullptr);
+  GstPad* mux_sink = gst_element_request_pad_simple(mux, "sink_0");
+  GstPad* appsrc_src = gst_element_get_static_pad(appsrc, "src");
+  require(mux_sink && appsrc_src && gst_pad_link(appsrc_src, mux_sink) == GST_PAD_LINK_OK,
+          "failed to link appsrc to latest-mux request pad");
+  gst_object_unref(appsrc_src);
+  require(gst_element_link(mux, appsink) == TRUE, "failed to link latest-mux to appsink");
+
+  const std::uint64_t mux_namespace = simaai::neat::latest_by_stream_mux_namespace(mux);
+  require(mux_namespace != 0U, "latest-mux should expose a nonzero loan namespace");
+  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          "failed to start latest-mux credit fallback pipeline");
+
+  push_mux_input(appsrc, 101);
+  GstSample* first = pull_mux_output(appsink, GST_SECOND);
+  require(first != nullptr, "latest-mux should emit the first admitted frame");
+
+  // Simulate a terminal model result that preserved stream identity but
+  // replaced frame/input identity and no longer carries the private mux key.
+  // Without the exact mux namespace this must not guess across mux instances.
+  GstBuffer* mismatched = make_terminal_identity_buffer("sole-stream", 9999);
+  require(
+      !simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(mismatched),
+      "unqualified mismatched output must not release a mux loan");
+
+  push_mux_input(appsrc, 102);
+  GstSample* blocked = pull_mux_output(appsink, 100 * GST_MSECOND);
+  require(blocked == nullptr,
+          "max-inflight=1 should hold the next stream frame before terminal release");
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              mismatched, mux_namespace),
+          "namespace-qualified terminal output should release the sole stream loan even when "
+          "frame identity changed");
+  gst_buffer_unref(mismatched);
+
+  GstSample* second = pull_mux_output(appsink, GST_SECOND);
+  require(second != nullptr,
+          "sole-loan fallback should wake the mux and admit the pending stream frame");
+
+  // Identity may be absent altogether after a transform. The stream plus the
+  // exact mux namespace is still sufficient when only one loan can be live.
+  GstBuffer* stream_only = make_terminal_identity_buffer("sole-stream", std::nullopt);
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              stream_only, mux_namespace),
+          "namespace-qualified stream-only output should release the sole stream loan");
+  gst_buffer_unref(stream_only);
+
+  push_mux_input(appsrc, 103);
+  GstSample* third = pull_mux_output(appsink, GST_SECOND);
+  require(third != nullptr,
+          "stream-only sole-loan fallback should keep the stream making progress");
+
+  // A recycled transform output can retain a syntactically valid private key
+  // for a completed frame. Exact-key lookup then misses; the terminal mux
+  // namespace plus the stream must still release the sole current loan.
+  GstBuffer* stale_private = make_terminal_stale_private_key_buffer(
+      "sole-stream", 103, mux_namespace, "stale-private-stream", 99999);
+  require(
+      !simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(stale_private),
+      "unqualified stale private key must not guess a namespace-bounded stream loan");
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              stale_private, mux_namespace),
+          "namespace-qualified stale private key should use the current public stream and release "
+          "its sole loan");
+  gst_buffer_unref(stale_private);
+
+  push_mux_input(appsrc, 104);
+  GstSample* fourth = pull_mux_output(appsink, GST_SECOND);
+  require(fourth != nullptr,
+          "stale-private-key fallback should wake the mux and admit the next stream frame");
+  GstBuffer* final_terminal = make_terminal_identity_buffer("sole-stream", 104);
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              final_terminal, mux_namespace),
+          "exact terminal output should release the final test loan");
+  gst_buffer_unref(final_terminal);
+
+  // Keep earlier outputs alive until after their fallback releases. This proves
+  // progress came from terminal completion rather than GstBuffer qdata cleanup.
+  gst_sample_unref(fourth);
+  gst_sample_unref(third);
+  gst_sample_unref(second);
+  gst_sample_unref(first);
+  (void)gst_app_src_end_of_stream(GST_APP_SRC(appsrc));
+  require(gst_element_set_state(pipeline, GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
+          "failed to stop latest-mux credit fallback pipeline");
+  gst_element_release_request_pad(mux, mux_sink);
+  gst_object_unref(mux_sink);
+  gst_object_unref(pipeline);
+}
+
 } // namespace
 
 int main() {
   try {
     simaai::neat::gst_init_once();
+    ::setenv("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM", "1", 1);
     ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", "0", 1);
     ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL", "1", 1);
+
+    test_namespace_bounded_terminal_loan_fallback();
 
     const simaai::neat::Sample namespaced =
         make_gst_sample_backed_sample(MuxLoanKey{1234, "mux-stream", 42});

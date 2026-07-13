@@ -8,6 +8,7 @@
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
+#include "gst/GstLatestByStreamMux.h"
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
@@ -31,6 +32,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -921,8 +923,8 @@ fused_materialize_nodes(const std::vector<std::shared_ptr<Node>>& nodes) {
 
 void append_fused_node_fragment(BuildResult* br, std::ostringstream* pipeline,
                                 const std::shared_ptr<Node>& node, int actual_index,
-                                const NameTransform& name_transform, bool prepend_link,
-                                const char* extra_fragment_props = nullptr) {
+                                const NameTransform& name_transform, const GraphOptions* sess_opt,
+                                bool prepend_link, const char* extra_fragment_props = nullptr) {
   if (!br || !br->diag || !pipeline || !node) {
     return;
   }
@@ -934,7 +936,7 @@ void append_fused_node_fragment(BuildResult* br, std::ostringstream* pipeline,
   nr.index = actual_index;
   nr.kind = node->kind();
   nr.user_label = node->user_label();
-  nr.backend_fragment = frag.fragment;
+  nr.backend_fragment = session_build_apply_fast_path_options_to_fragment(frag.fragment, sess_opt);
   if (extra_fragment_props && *extra_fragment_props) {
     nr.backend_fragment += extra_fragment_props;
   }
@@ -1746,6 +1748,175 @@ void attach_fused_realtime_stage_counters(GstElement* pipeline,
   std::fflush(stderr);
 }
 
+std::optional<std::size_t> parse_fused_branch_index_from_name(const std::string& name);
+
+GstPadProbeReturn fused_encoded_frame_tap_probe(GstPad* pad, GstPadProbeInfo* info,
+                                                gpointer user_data) {
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+    return GST_PAD_PROBE_OK;
+  }
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  GstCaps* caps = pad ? gst_pad_get_current_caps(pad) : nullptr;
+  if (buffer && caps) {
+    const auto* stream_id = static_cast<const std::string*>(user_data);
+    pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
+        buffer, caps, stream_id ? stream_id->c_str() : nullptr);
+  }
+  if (caps) {
+    gst_caps_unref(caps);
+  }
+  return GST_PAD_PROBE_OK;
+}
+
+void attach_fused_encoded_frame_tap_probes(GstElement* pipeline,
+                                           const runtime::FusedRealtimeIngress& ingress) {
+  if (!pipeline || !pipeline_internal::latest_by_stream_encoded_frame_callback_enabled()) {
+    return;
+  }
+  GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
+  if (!it) {
+    return;
+  }
+  GValue item = G_VALUE_INIT;
+  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+    GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+    const char* name_c = element ? GST_ELEMENT_NAME(element) : nullptr;
+    const std::string name = name_c ? name_c : "";
+    GstElementFactory* factory = element ? gst_element_get_factory(element) : nullptr;
+    const char* factory_c =
+        factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
+    const std::string factory_name = factory_c ? factory_c : "";
+    // H264Depacketize always ends in an AU-aligned byte-stream capsfilter named
+    // *_h264_caps. Probe its src pad so the exact bytes entering the decoder
+    // can also be published without an additional RTSP session or encoder.
+    if (factory_name == "capsfilter" && name.find("_h264_caps") != std::string::npos) {
+      const auto branch_index = parse_fused_branch_index_from_name(name);
+      if (branch_index.has_value() && *branch_index < ingress.branches.size()) {
+        auto* stream_id = new std::string(ingress.branches[*branch_index].stream_id.empty()
+                                              ? ("stream" + std::to_string(*branch_index))
+                                              : ingress.branches[*branch_index].stream_id);
+        if (GstPad* src = gst_element_get_static_pad(element, "src")) {
+          gst_pad_add_probe(
+              src, GST_PAD_PROBE_TYPE_BUFFER, fused_encoded_frame_tap_probe, stream_id,
+              +[](gpointer data) { delete static_cast<std::string*>(data); });
+          gst_object_unref(src);
+        } else {
+          delete stream_id;
+        }
+      }
+    }
+    g_value_reset(&item);
+  }
+  g_value_unset(&item);
+  gst_iterator_free(it);
+}
+
+struct FusedDecoderTimingBranch {
+  std::mutex mutex;
+  std::deque<SampleTimingOverrides> pending;
+};
+
+struct FusedDecoderTimingProbeCtx {
+  std::shared_ptr<FusedDecoderTimingBranch> branch;
+  bool decoder_output = false;
+};
+
+GstPadProbeReturn fused_decoder_timing_probe(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+    return GST_PAD_PROBE_OK;
+  }
+  auto* ctx = static_cast<FusedDecoderTimingProbeCtx*>(user_data);
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!ctx || !ctx->branch || !buffer) {
+    return GST_PAD_PROBE_OK;
+  }
+  if (!ctx->decoder_output) {
+    SampleTimingOverrides timing;
+    if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))) {
+      timing.pts_ns = static_cast<std::uint64_t>(GST_BUFFER_PTS(buffer));
+    }
+    if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))) {
+      timing.dts_ns = static_cast<std::uint64_t>(GST_BUFFER_DTS(buffer));
+    }
+    if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))) {
+      timing.duration_ns = static_cast<std::uint64_t>(GST_BUFFER_DURATION(buffer));
+    }
+    std::lock_guard<std::mutex> lock(ctx->branch->mutex);
+    ctx->branch->pending.push_back(std::move(timing));
+    if (ctx->branch->pending.size() > 64U) {
+      ctx->branch->pending.pop_front();
+    }
+    return GST_PAD_PROBE_OK;
+  }
+
+  SampleTimingOverrides timing;
+  {
+    std::lock_guard<std::mutex> lock(ctx->branch->mutex);
+    if (ctx->branch->pending.empty()) {
+      return GST_PAD_PROBE_OK;
+    }
+    timing = std::move(ctx->branch->pending.front());
+    ctx->branch->pending.pop_front();
+  }
+  if (timing.pts_ns.has_value()) {
+    GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(*timing.pts_ns);
+  }
+  if (timing.dts_ns.has_value()) {
+    GST_BUFFER_DTS(buffer) = static_cast<GstClockTime>(*timing.dts_ns);
+  }
+  if (timing.duration_ns.has_value()) {
+    GST_BUFFER_DURATION(buffer) = static_cast<GstClockTime>(*timing.duration_ns);
+  }
+  (void)write_sample_timing_to_gst_buffer(buffer, timing);
+  return GST_PAD_PROBE_OK;
+}
+
+void attach_fused_decoder_timing_probes(GstElement* pipeline,
+                                        const runtime::FusedRealtimeIngress& ingress) {
+  if (!pipeline || ingress.branches.empty()) {
+    return;
+  }
+  std::vector<std::shared_ptr<FusedDecoderTimingBranch>> timing;
+  timing.reserve(ingress.branches.size());
+  for (std::size_t i = 0; i < ingress.branches.size(); ++i) {
+    timing.push_back(std::make_shared<FusedDecoderTimingBranch>());
+  }
+
+  GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
+  if (!it) {
+    return;
+  }
+  GValue item = G_VALUE_INIT;
+  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+    GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+    const char* name_c = element ? GST_ELEMENT_NAME(element) : nullptr;
+    const std::string name = name_c ? name_c : "";
+    GstElementFactory* factory = element ? gst_element_get_factory(element) : nullptr;
+    const char* factory_c =
+        factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
+    const std::string factory_name = factory_c ? factory_c : "";
+    const auto branch_index = parse_fused_branch_index_from_name(name);
+    if (branch_index.has_value() && *branch_index < timing.size()) {
+      const bool encoded_au =
+          factory_name == "capsfilter" && name.find("_h264_caps") != std::string::npos;
+      const bool decoder_output = factory_name == "neatdecoder";
+      if (encoded_au || decoder_output) {
+        GstPad* pad = gst_element_get_static_pad(element, "src");
+        if (pad) {
+          auto* ctx = new FusedDecoderTimingProbeCtx{timing[*branch_index], decoder_output};
+          gst_pad_add_probe(
+              pad, GST_PAD_PROBE_TYPE_BUFFER, fused_decoder_timing_probe, ctx,
+              +[](gpointer data) { delete static_cast<FusedDecoderTimingProbeCtx*>(data); });
+          gst_object_unref(pad);
+        }
+      }
+    }
+    g_value_reset(&item);
+  }
+  g_value_unset(&item);
+  gst_iterator_free(it);
+}
+
 enum class FusedBranchCounterStage {
   RtpCaps,
   H264Caps,
@@ -2107,7 +2278,7 @@ BuildResult build_fused_realtime_source_pipeline(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes,
     const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
     const std::vector<std::vector<int>>& branch_actual_indices, const NameTransform& name_transform,
-    const std::string& appsink_name) {
+    const std::string& appsink_name, const GraphOptions& sess_opt) {
   BuildResult br;
   br.diag = std::make_shared<DiagCtx>();
   br.appsink_name = apply_name_transform(name_transform, appsink_name);
@@ -2128,7 +2299,7 @@ BuildResult build_fused_realtime_source_pipeline(
   ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids);
   int actual_index = 0;
   for (const auto& node : consumer_nodes) {
-    append_fused_node_fragment(&br, &ss, node, actual_index++, name_transform,
+    append_fused_node_fragment(&br, &ss, node, actual_index++, name_transform, &sess_opt,
                                /*prepend_link=*/true);
   }
 
@@ -2149,9 +2320,9 @@ BuildResult build_fused_realtime_source_pipeline(
       const bool is_queue = node && node->kind() == "Queue";
       const bool force_pre_queue_leaky =
           queue_pre_leaky_downstream && is_queue && !saw_branch_queue;
-      append_fused_node_fragment(
-          &br, &ss, node, branch_actual_indices[branch_index][node_index], branch_transform,
-          /*prepend_link=*/!first, force_pre_queue_leaky ? " leaky=downstream" : nullptr);
+      append_fused_node_fragment(&br, &ss, node, branch_actual_indices[branch_index][node_index],
+                                 branch_transform, &sess_opt, /*prepend_link=*/!first,
+                                 force_pre_queue_leaky ? " leaky=downstream" : nullptr);
       if (is_queue) {
         saw_branch_queue = true;
       }
@@ -2169,6 +2340,24 @@ BuildResult build_fused_realtime_source_pipeline(
   br.pipeline_string = br.diag->pipeline_string;
   return br;
 }
+
+namespace session_test {
+
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options) {
+  runtime::FusedRealtimeIngress ingress;
+  runtime::FusedRealtimeIngressBranch branch;
+  branch.stream_id = "stream0";
+  ingress.branches.push_back(std::move(branch));
+  const std::vector<std::vector<std::shared_ptr<Node>>> branch_nodes(1);
+  const std::vector<std::vector<int>> branch_actual_indices(1);
+  return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
+                                              branch_actual_indices, NameTransform{}, "mysink",
+                                              options)
+      .pipeline_string;
+}
+
+} // namespace session_test
 
 SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
@@ -2235,9 +2424,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     }
     branch_actual_indices.push_back(std::move(indices));
   }
-  BuildResult br =
-      build_fused_realtime_source_pipeline(ingress, build_consumer_nodes, build_branch_nodes,
-                                           branch_actual_indices, name_transform, "mysink");
+  BuildResult br = build_fused_realtime_source_pipeline(ingress, build_consumer_nodes,
+                                                        build_branch_nodes, branch_actual_indices,
+                                                        name_transform, "mysink", sess_opt);
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);
@@ -2266,6 +2455,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   attach_element_flow_probes(pipeline.get(), br.diag);
   attach_fused_realtime_branch_counters(pipeline.get(), ingress.branches.size());
   attach_fused_realtime_stage_counters(pipeline.get(), ingress);
+  attach_fused_decoder_timing_probes(pipeline.get(), ingress);
+  attach_fused_encoded_frame_tap_probes(pipeline.get(), ingress);
 
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     std::vector<std::shared_ptr<Node>> logical = build_branch_nodes[branch_index];
@@ -2314,6 +2505,64 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
           "Add Output() as the last consumer node.", last_pipeline);
     }
     sink.reset(raw_sink);
+    const std::string mux_name = apply_name_transform(name_transform, "neat_live_mux");
+    GstElement* raw_mux = gst_bin_get_by_name(GST_BIN(pipeline.get()), mux_name.c_str());
+    const std::uint64_t mux_namespace = latest_by_stream_mux_namespace(raw_mux);
+    if (raw_mux) {
+      gst_object_unref(raw_mux);
+    }
+    if (mux_namespace == 0) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build(fused)") + ": latest-by-stream mux '" +
+              mux_name + "' has no loan namespace.\nPipeline:\n" + last_pipeline,
+          "Keep the fused latest-by-stream mux in the source pipeline.", last_pipeline);
+    }
+    // A fused mux loan covers work from mux emission through the terminal
+    // consumer pipeline. Release it as soon as the result reaches GstAppSink's
+    // sink pad, before GstAppSink can retain it as preroll or discard it under
+    // its own bounded-queue policy. Waiting for Run::pull() is insufficient:
+    // samples consumed internally by GstAppSink never reach that path, and
+    // decoder buffer pools can recycle GstBuffers without finalizing them.
+    if (GstPad* terminal_pad = gst_element_get_static_pad(raw_sink, "sink")) {
+      const gulong probe_id = gst_pad_add_probe(
+          terminal_pad, GST_PAD_PROBE_TYPE_BUFFER,
+          +[](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+            GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+            const auto* mux_namespace = static_cast<const std::uint64_t*>(user_data);
+            if (!buffer || !mux_namespace || *mux_namespace == 0) {
+              return GST_PAD_PROBE_OK;
+            }
+
+            // The release helper restores the selected decoder timing on the
+            // terminal result before GstAppSink sees it. Pad probes may be
+            // handed a shared GstBuffer, so take GStreamer's copy-on-write
+            // path only when needed and replace the probe data with the
+            // writable buffer before mutating timestamps or custom metadata.
+            if (!gst_buffer_is_writable(buffer)) {
+              GstBuffer* writable = gst_buffer_make_writable(gst_buffer_ref(buffer));
+              if (!writable) {
+                return GST_PAD_PROBE_OK;
+              }
+              gst_buffer_unref(buffer);
+              buffer = writable;
+              GST_PAD_PROBE_INFO_DATA(info) = buffer;
+            }
+            (void)pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(buffer,
+                                                                                  *mux_namespace);
+            return GST_PAD_PROBE_OK;
+          },
+          new std::uint64_t(mux_namespace),
+          +[](gpointer data) { delete static_cast<std::uint64_t*>(data); });
+      if (pipeline_internal::env_bool("SIMA_LATEST_MUX_LOAN_DEBUG", false)) {
+        std::fprintf(stderr,
+                     "[latestmux][loan] terminal appsink release probe attached id=%lu sink=%s "
+                     "namespace=%llu\n",
+                     static_cast<unsigned long>(probe_id), appsink_name.c_str(),
+                     static_cast<unsigned long long>(mux_namespace));
+      }
+      gst_object_unref(terminal_pad);
+    }
     session_build_configure_appsink_for_input_stream(sink.get(), stream_opt);
     session_build_configure_appsink_allocation_preference(sink.get(), build_consumer_nodes);
   }

@@ -2348,6 +2348,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<RunAdvancedOptions>(m, "RunAdvancedOptions")
       .def(nb::init<>())
       .def_rw("copy_input", &RunAdvancedOptions::copy_input)
+      .def_rw("fuse_realtime_source_branches",
+              &RunAdvancedOptions::fuse_realtime_source_branches)
       .def_rw("max_input_bytes", &RunAdvancedOptions::max_input_bytes)
       .def_rw("sync_num_buffers_override", &RunAdvancedOptions::sync_num_buffers_override)
       .def_rw("prepare_output_cpu_visible", &RunAdvancedOptions::prepare_output_cpu_visible);

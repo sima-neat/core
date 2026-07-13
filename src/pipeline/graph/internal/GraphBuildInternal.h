@@ -36,6 +36,8 @@ void session_build_dump_pipeline_string_force(const std::shared_ptr<DiagCtx>& di
 RunOptions session_build_apply_run_defaults(const RunOptions& opt, const GraphOptions& sess_opt);
 RunOptions session_build_resolve_build_opt(RunMode mode, const RunOptions& opt);
 bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& opt);
+std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
+                                                              const GraphOptions* sess_opt);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,

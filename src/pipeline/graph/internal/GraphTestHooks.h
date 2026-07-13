@@ -6,9 +6,11 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace simaai::neat {
+struct GraphOptions;
 class Node;
 struct InputOptions;
 } // namespace simaai::neat
@@ -22,5 +24,7 @@ bool apply_auto_memory_policy_from_downstream_for_test(
     InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& nodes);
 int parse_sdp_fps_for_rtp_payload_for_test(const char* sdp_text, int payload_type,
                                            const char* encoding_name);
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options);
 
 } // namespace simaai::neat::session_test

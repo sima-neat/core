@@ -292,6 +292,7 @@ set(UNIT_TESTS
   unit_graph_stamp_frame_id_test
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
+  unit_fused_realtime_fast_path_options_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
@@ -304,6 +305,7 @@ set(UNIT_TESTS
   unit_gst_init_guard_test
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
+  unit_latest_mux_fairness_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
   unit_http_mjpeg_decoded_group_test

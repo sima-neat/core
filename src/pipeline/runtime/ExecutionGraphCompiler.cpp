@@ -2282,10 +2282,11 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
     validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
-    // Prefer the C++ graph-runtime RealtimeLatestLink path for live fan-in.
-    // The legacy fused ingress collapses live source branches into one
-    // monolithic GStreamer pipeline and is kept only as an explicit rollback.
-    if (pipeline_internal::env_bool("SIMA_GRAPH_LEGACY_FUSED_REALTIME_INGRESS", false)) {
+    // High-channel-count live graphs can explicitly keep source branches and
+    // their latest-by-stream fan-in inside one GStreamer pipeline. Preserve the
+    // environment variable as a compatibility fallback for older applications.
+    if (opt.advanced.fuse_realtime_source_branches ||
+        pipeline_internal::env_bool("SIMA_GRAPH_LEGACY_FUSED_REALTIME_INGRESS", false)) {
       fuse_realtime_fan_in_segments(lowering.graph, &plan);
     }
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,
