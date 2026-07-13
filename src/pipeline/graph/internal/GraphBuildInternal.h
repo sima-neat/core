@@ -44,6 +44,9 @@ InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunM
 void session_build_finalize_public_zero_copy_holder_loan_credits(InputStreamOptions& stream_opt);
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
                                                   const std::vector<std::shared_ptr<Node>>& nodes);
+void session_build_maybe_enable_rtsp_appsink_drop(
+    InputStreamOptions& stream_opt, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes);
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes);
 std::optional<OutputTensorOverride> build_public_terminal_output_override_with_fallback(

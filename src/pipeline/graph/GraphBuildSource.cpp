@@ -2802,7 +2802,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
   stream_opt.public_output_contract = public_output_contract;
   stream_opt.prefer_synchronous_teardown = true;
-  session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes);
+  session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes,
+                                               build_branch_nodes);
 
   const NameTransform name_transform = make_name_transform(sess_opt);
   std::vector<NameTransform> branch_name_transforms;

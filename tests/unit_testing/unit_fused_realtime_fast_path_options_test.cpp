@@ -8,8 +8,10 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/RTSPInput.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "test_main.h"
@@ -203,8 +205,31 @@ RUN_TEST(
       ScopedUnsetEnv legacy_queue_enable("SIMA_ENABLE_ASYNC_QUEUE2");
       ScopedUnsetEnv legacy_queue_depth("SIMA_ASYNC_QUEUE2_DEPTH");
       ScopedUnsetEnv global_inflight_override("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
+      ScopedUnsetEnv rtsp_backpressure_override("SIMA_RTSP_ALLOW_BACKPRESSURE");
 
       simaai::neat::gst_init_once();
+
+      // Fused sources keep producers in per-stream branch node lists. Ensure
+      // an RTSP producer there still applies the live-source appsink policy to
+      // the shared terminal consumer.
+      simaai::neat::InputStreamOptions fused_rtsp_stream_options;
+      std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> fused_rtsp_branches = {
+          {simaai::neat::nodes::RTSPInput("rtsp://example.test/live")}};
+      simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(
+          fused_rtsp_stream_options, make_consumer_nodes(), fused_rtsp_branches);
+      require(fused_rtsp_stream_options.appsink_drop,
+              "an RTSP node in a fused source branch must make the terminal appsink drop");
+      require(fused_rtsp_stream_options.appsink_max_buffers == 4,
+              "fused RTSP appsink dropping must preserve a configured queue depth");
+
+      simaai::neat::InputStreamOptions non_rtsp_stream_options;
+      std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> non_rtsp_branches = {
+          {simaai::neat::nodes::CameraInput(simaai::neat::CameraInputOptions{})}};
+      simaai::neat::session_build_maybe_enable_rtsp_appsink_drop(
+          non_rtsp_stream_options, make_consumer_nodes(), non_rtsp_branches);
+      require(!non_rtsp_stream_options.appsink_drop,
+              "fused non-RTSP branches must preserve the configured appsink policy");
+
       // Model a shared probe buffer with one external observer reference and
       // one streaming reference in the probe data slot. COW replacement must
       // consume only the slot reference: the observer keeps the original alive
