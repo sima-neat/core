@@ -21,14 +21,19 @@ def test_metadata_sender_loopback():
     channel.channel = 2
     channel.metadata_port_base = metadata_port - 2
     send_options = pyneat.MetadataSenderSendOptions()
-    send_options.nonblocking = True
+    assert send_options.nonblocking is True
 
-    sender = pyneat.MetadataSender(channel, send_options)
+    sender = pyneat.MetadataSender(channel)
 
     assert sender.ok() is True
     assert sender.host() == "127.0.0.1"
     assert sender.metadata_port() == metadata_port
     assert sender.nonblocking() is True
+
+    blocking_options = pyneat.MetadataSenderSendOptions()
+    blocking_options.nonblocking = False
+    blocking_sender = pyneat.MetadataSender(channel, blocking_options)
+    assert blocking_sender.nonblocking() is False
 
     assert sender.send_raw_json('{"type":"raw","data":{"ok":true}}') is True
     received, _ = rx.recvfrom(4096)

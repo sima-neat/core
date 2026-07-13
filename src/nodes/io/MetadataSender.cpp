@@ -119,7 +119,7 @@ struct MetadataSender::Impl {
   socklen_t addr_len = 0;
   std::string host;
   int metadata_port = 0;
-  bool nonblocking = false;
+  bool nonblocking = true;
   bool ok = false;
   std::atomic<uint64_t> send_attempts{0};
   std::atomic<uint64_t> datagrams_sent{0};

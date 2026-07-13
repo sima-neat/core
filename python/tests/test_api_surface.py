@@ -434,6 +434,7 @@ def test_output_stage_option_structs_expose_expected_fields():
   for field in METADATA_SENDER_OPTION_FIELDS:
     assert hasattr(metadata_sender, field), field
   assert hasattr(metadata_send, "nonblocking")
+  assert metadata_send.nonblocking is True
 
   assert hasattr(pyneat, "H264ParseAlignment")
   assert hasattr(pyneat, "H264ParseStreamFormat")

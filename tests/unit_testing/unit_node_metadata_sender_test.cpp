@@ -86,6 +86,48 @@ int probe_send_mode_in_child(bool nonblocking) {
   return 0;
 }
 
+int probe_default_send_mode_in_child() {
+  simaai::neat::MetadataSenderOptions opt;
+  opt.host = "127.0.0.1";
+  opt.metadata_port_base = 9199;
+
+  std::string init_err;
+  simaai::neat::MetadataSender sender(opt, &init_err);
+  if (!sender.ok() || !sender.nonblocking() || !install_sendto_flag_probe()) {
+    return 30;
+  }
+
+  std::string send_err = "stale error";
+  if (sender.send_raw_json("{}", &send_err)) {
+    return 31;
+  }
+  const auto stats = sender.stats();
+  if (stats.send_attempts != 1 || stats.datagrams_sent != 0 || stats.send_failures != 1 ||
+      stats.last_errno != EAGAIN || stats.would_block != 1 || stats.no_buffer_space != 0) {
+    return 32;
+  }
+  if (!send_err.empty()) {
+    return 33;
+  }
+  return 0;
+}
+
+void require_default_send_mode_flag() {
+  const pid_t pid = ::fork();
+  require(pid >= 0, "fork failed for MetadataSender default send-mode probe");
+  if (pid == 0) {
+    ::_exit(probe_default_send_mode_in_child());
+  }
+
+  int status = 0;
+  require(::waitpid(pid, &status, 0) == pid,
+          "waitpid failed for MetadataSender default send-mode probe");
+  require(WIFEXITED(status), "MetadataSender default send-mode probe terminated abnormally");
+  require(WEXITSTATUS(status) == 0,
+          "MetadataSender default send-mode probe failed with child status " +
+              std::to_string(WEXITSTATUS(status)));
+}
+
 void require_send_mode_flag(bool nonblocking) {
   const pid_t pid = ::fork();
   require(pid >= 0, "fork failed for MetadataSender send-mode probe");
@@ -155,10 +197,10 @@ RUN_TEST(
       opt.channel = 0;
       opt.metadata_port_base = rx.port();
       simaai::neat::MetadataSenderSendOptions send_opt;
-      send_opt.nonblocking = true;
+      require(send_opt.nonblocking, "MetadataSenderSendOptions must default to nonblocking sends");
 
       std::string init_err;
-      simaai::neat::MetadataSender sender(opt, send_opt, &init_err);
+      simaai::neat::MetadataSender sender(opt, &init_err);
       require(sender.ok(), "MetadataSender initialization failed: " + init_err);
       require(sender.metadata_port() == rx.port(), "MetadataSender metadata_port mismatch");
       require(sender.nonblocking(), "MetadataSender nonblocking option mismatch");
@@ -230,8 +272,9 @@ RUN_TEST(
       require(bad_stats.send_attempts == 0,
               "uninitialized MetadataSender must not count a kernel send attempt");
 
-      require_send_mode_flag(false);
+      require_default_send_mode_flag();
       require_send_mode_flag(true);
+      require_send_mode_flag(false);
       require_enobufs_diagnostic(false);
       require_enobufs_diagnostic(true);
     }));

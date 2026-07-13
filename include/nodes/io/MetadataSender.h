@@ -21,13 +21,13 @@ struct MetadataSenderSendOptions {
   /**
    * Send each datagram with `MSG_DONTWAIT`.
    *
-   * The default preserves the historical blocking socket behavior. Enable
-   * this for real-time paths where dropping metadata during local socket
-   * congestion is preferable to stalling video or inference dispatch.
+   * This is enabled by default so local socket congestion cannot stall video
+   * or inference dispatch. Set it to `false` only when the caller explicitly
+   * prefers blocking delivery attempts over real-time progress.
    * `EAGAIN`/`EWOULDBLOCK` and `ENOBUFS` then return `false` without an error
    * string; inspect `MetadataSenderStats` for drop diagnostics.
    */
-  bool nonblocking = false;
+  bool nonblocking = true;
 };
 
 /** @brief Point-in-time diagnostics for one metadata sender. */
