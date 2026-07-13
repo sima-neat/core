@@ -388,6 +388,31 @@ int main() {
       require(gst_buffer_peek_memory(legacy_transfer_buffer, 0) == expected_memory,
               "no-loan transfer should preserve the original pooled memory");
 
+      Sample replay_sample = sample_from_gst_encoded(legacy_pulled, h264_caps);
+      replay_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
+      replay_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
+      replay_sample.input_seq = 4;
+      replay_sample.orig_input_seq = 4;
+      gst_sample_unref(legacy_pulled);
+      require(legacy_stream.try_push_message(replay_sample),
+              "replayed transfer should create another writable metadata view");
+      replay_sample = Sample{};
+
+      legacy_pulled = gst_app_sink_try_pull_sample(GST_APP_SINK(legacy_appsink), GST_SECOND);
+      require(legacy_pulled != nullptr, "replayed metadata holder pull timed out");
+      legacy_transfer_buffer = gst_sample_get_buffer(legacy_pulled);
+      legacy_transfer_meta = gst_buffer_get_custom_meta(legacy_transfer_buffer, "GstSimaMeta");
+      legacy_transfer_structure =
+          legacy_transfer_meta ? gst_custom_meta_get_structure(legacy_transfer_meta) : nullptr;
+      legacy_transfer_input_seq = -1;
+      require(legacy_transfer_structure &&
+                  gst_structure_get_int64(legacy_transfer_structure, "input-seq",
+                                          &legacy_transfer_input_seq) &&
+                  legacy_transfer_input_seq == 4,
+              "replayed writable view should contain the updated input sequence");
+      require(gst_buffer_peek_memory(legacy_transfer_buffer, 0) == expected_memory,
+              "replayed transfer should preserve the original pooled memory");
+
       blocked_buffer = nullptr;
       const GstFlowReturn legacy_blocked_flow =
           gst_buffer_pool_acquire_buffer(pool, &blocked_buffer, &acquire_params);
