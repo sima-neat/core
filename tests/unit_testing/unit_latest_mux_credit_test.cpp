@@ -527,7 +527,7 @@ void test_terminal_release_restores_original_pts() {
   stop_latest_mux_pipeline(&fixture);
 }
 
-void test_replacing_chain_uses_namespace_fifo_timing() {
+void test_replacing_chain_uses_per_stream_fifo_timing() {
   constexpr const char* kStreamId = "replacing-terminal-stream";
   LatestMuxPipeline fixture = make_latest_mux_pipeline("latest-mux-replacing-terminal-pipeline",
                                                        kStreamId, /*stream_inflight_limit=*/4,
@@ -573,20 +573,20 @@ void test_replacing_chain_uses_namespace_fifo_timing() {
   };
 
   // Public frame/sequence fields are not freshness tokens on replacement
-  // buffers. Even though they name frame 104, the ordered namespace contract
+  // buffers. Even though they name frame 104, the ordered per-stream contract
   // must complete frame 101.
   release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 104, 104),
-                          100 * GST_MSECOND, "recycled public identity should use namespace FIFO");
+                          100 * GST_MSECOND, "recycled public identity should use stream FIFO");
   GstSample* fifth = pull_mux_output(fixture.appsink, GST_SECOND);
   require(fifth != nullptr, "one terminal completion should admit the pending fifth frame");
   gst_sample_unref(fifth);
 
-  // Every replacement metadata shape uses the same enforced
-  // ordered/non-dropping namespace completion order.
+  // Every replacement metadata shape uses the same enforced ordered completion
+  // order within this stream.
   release_and_require_pts(make_terminal_identity_buffer(kStreamId, std::nullopt), 200 * GST_MSECOND,
                           "stream-only terminal should use the bounded FIFO fallback");
   release_and_require_pts(make_terminal_sequence_buffer(kStreamId, std::nullopt, 103, 103),
-                          300 * GST_MSECOND, "sequence-only identity should use namespace FIFO");
+                          300 * GST_MSECOND, "sequence-only identity should use stream FIFO");
   release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 102, 102),
                           400 * GST_MSECOND,
                           "stale public sequence should not select a completed frame");
@@ -682,8 +682,9 @@ void test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate
   };
 
   // Fill the shared total gate with duplicate per-stream frame/input sequences.
-  // Registration is serialized by pulling each mux output before the next push,
-  // so this deque also records the exact namespace-wide completion order.
+  // Registration is serialized by pulling each mux output before the next push;
+  // the deque therefore records both global registration order and each
+  // stream's own completion order.
   for (int i = 0; i < kTotalLimit; ++i) {
     const std::size_t stream_index = static_cast<std::size_t>(i) % kStreamCount;
     const std::int64_t sequence = next_sequence[stream_index]++;
@@ -733,145 +734,114 @@ void test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate
             "terminal completion restored canonical identity from the wrong replacing loan");
   };
 
-  {
-    // Per-source sequences overlap by design. A recycled current stream-id can
-    // therefore combine with the current sequence and accidentally name a
-    // different live stream. The replacing-chain fallback must honor global
-    // completion order rather than swapping the two channels' identity/PTS.
-    const Outstanding expected = outstanding.front();
-    const auto collision = std::find_if(std::next(outstanding.begin()), outstanding.end(),
-                                        [&](const Outstanding& candidate) {
-                                          return candidate.stream_index != expected.stream_index &&
-                                                 candidate.sequence == expected.sequence;
-                                        });
-    require(collision != outstanding.end(),
-            "multi-stream fixture should contain a live duplicate sequence collision");
-    GstBuffer* terminal =
-        make_terminal_stale_private_key_buffer(stream_ids[expected.stream_index].c_str(), 910000,
-                                               mux_namespace, "stale-private-stream", 810000);
-    GstStructure* structure =
-        gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-    require(structure != nullptr, "failed to create valid-other-stream collision metadata");
-    gst_structure_set(structure, "stream-id", G_TYPE_STRING,
-                      stream_ids[collision->stream_index].c_str(), "input-seq", G_TYPE_INT64,
-                      static_cast<gint64>(expected.sequence), "orig-input-seq", G_TYPE_INT64,
-                      static_cast<gint64>(expected.sequence), nullptr);
+  const auto oldest_for_stream = [&](std::size_t stream_index) {
+    return std::find_if(outstanding.begin(), outstanding.end(), [&](const Outstanding& item) {
+      return item.stream_index == stream_index;
+    });
+  };
+  const auto release_stream = [&](std::size_t stream_index, GstBuffer* terminal,
+                                  const char* reason) {
+    const auto selected = oldest_for_stream(stream_index);
+    require(selected != outstanding.end(), "selected stream should have an outstanding loan");
+    const Outstanding expected = *selected;
     GST_BUFFER_PTS(terminal) = 999 * GST_MSECOND;
     require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
                 terminal, mux_namespace),
-            "valid stale stream/sequence collision should release the globally oldest loan");
+            reason);
     require_canonical_terminal(terminal, expected);
     gst_buffer_unref(terminal);
-    outstanding.pop_front();
-    push_and_pull(expected.stream_index, next_sequence[expected.stream_index]++);
-  }
+    outstanding.erase(selected);
+  };
+
+  // A replacement without a public stream identity is ambiguous. It must not
+  // consume an arbitrary namespace-wide loan.
+  GstBuffer* missing_identity = gst_buffer_new_allocate(nullptr, 16U, nullptr);
+  require(missing_identity != nullptr, "failed to allocate missing-identity terminal buffer");
+  require(!simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              missing_identity, mux_namespace),
+          "missing stream identity must not release a replacing loan");
+  gst_buffer_unref(missing_identity);
+  require(outstanding.size() == static_cast<std::size_t>(kTotalLimit),
+          "ambiguous terminal completion must leave the total gate unchanged");
+
+  // Complete stream 3 before the globally oldest stream 0. This is the async
+  // cross-stream order that the namespace-wide FIFO incorrectly reassigned.
+  constexpr std::size_t kFirstCompletedStream = 3;
+  release_stream(kFirstCompletedStream,
+                 make_terminal_stale_private_key_buffer(
+                     stream_ids[kFirstCompletedStream].c_str(), 910000, mux_namespace,
+                     stream_ids[0].c_str(), 1),
+                 "cross-stream completion must release stream 3, not namespace head stream 0");
+  push_and_pull(kFirstCompletedStream, next_sequence[kFirstCompletedStream]++);
 
   for (int i = 0; i < kIterations; ++i) {
-    std::size_t selected_index = 0;
+    const std::size_t stream_index =
+        (static_cast<std::size_t>(i) * 3U + 1U) % kStreamCount;
+    const std::size_t other_stream = (stream_index + 1U) % kStreamCount;
+    const auto selected = oldest_for_stream(stream_index);
+    require(selected != outstanding.end(), "loop stream should have an outstanding loan");
+    const auto newest = std::find_if(outstanding.rbegin(), outstanding.rend(),
+                                     [&](const Outstanding& item) {
+                                       return item.stream_index == stream_index;
+                                     });
+    require(newest != outstanding.rend(), "loop stream should have a newest loan");
+
     GstBuffer* terminal = nullptr;
-    const int variant = i % 6;
-    if (variant == 0) {
-      // Even a current stream-id + sequence pair can be a coincidental mix of
-      // recycled scalars. Point it at a non-oldest live loan and require FIFO.
-      const auto& target = outstanding.back();
-      terminal = make_terminal_stale_private_key_buffer(
-          "stale-original-stream", 900000 + i, mux_namespace, "stale-private-stream", 800000 + i);
-      GstStructure* structure =
-          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-      require(structure != nullptr, "failed to create current-stream terminal metadata");
-      gst_structure_set(structure, "stream-id", G_TYPE_STRING,
-                        stream_ids[target.stream_index].c_str(), "input-seq", G_TYPE_INT64,
-                        static_cast<gint64>(target.sequence), "orig-input-seq", G_TYPE_INT64,
-                        static_cast<gint64>(target.sequence), nullptr);
-    } else if (variant == 1) {
-      // A pooled terminal buffer can retain a complete private key which
-      // exactly names another live, non-oldest loan. The renderer's global
-      // ordered/non-dropping contract is authoritative, so even this
-      // syntactically perfect collision must not jump the namespace FIFO.
-      const auto& target = outstanding.back();
-      terminal = make_terminal_stale_private_key_buffer(
-          "stale-public-stream", 900000 + i, mux_namespace, stream_ids[target.stream_index].c_str(),
-          target.sequence);
-      GstStructure* structure =
-          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-      require(structure != nullptr, "failed to create live-private collision metadata");
-      gst_structure_set(structure, "input-seq", G_TYPE_INT64, static_cast<gint64>(700000 + i),
-                        "orig-input-seq", G_TYPE_INT64, static_cast<gint64>(700000 + i),
-                        "neat-latest-mux-loan-input-seq", G_TYPE_INT64,
-                        static_cast<gint64>(target.sequence), "neat-latest-mux-loan-orig-input-seq",
-                        G_TYPE_INT64, static_cast<gint64>(target.sequence), nullptr);
-    } else if (variant == 2) {
-      // InputStreamPull treats a current stream-id equal to buffer-name as a
-      // stage label and exposes orig-stream-id, but neither public scalar is a
-      // freshness token. Point both at a non-oldest loan and still require FIFO.
-      const auto& target = outstanding.back();
-      terminal = make_terminal_stale_private_key_buffer(stream_ids[target.stream_index].c_str(),
-                                                        900000 + i, mux_namespace,
-                                                        "stale-private-stream", 800000 + i);
-      GstStructure* structure =
-          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-      require(structure != nullptr, "failed to create stage-label terminal metadata");
-      gst_structure_set(structure, "stream-id", G_TYPE_STRING, "boxdecode-output", "buffer-name",
-                        G_TYPE_STRING, "boxdecode-output", "input-seq", G_TYPE_INT64,
-                        static_cast<gint64>(target.sequence), "orig-input-seq", G_TYPE_INT64,
-                        static_cast<gint64>(target.sequence), nullptr);
-    } else if (variant == 3) {
-      // The current stream scalar is stale while orig-stream-id looks correct.
-      // Do not trust the older orig field: the ordered namespace fallback must
-      // consume the globally oldest loan and rewrite both fields canonically.
-      const auto& oldest = outstanding.front();
-      terminal = make_terminal_stale_private_key_buffer(stream_ids[oldest.stream_index].c_str(),
-                                                        900000 + i, mux_namespace,
-                                                        "stale-private-stream", 800000 + i);
-      GstStructure* structure =
-          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-      require(structure != nullptr, "failed to create stale-current terminal metadata");
-      gst_structure_set(structure, "stream-id", G_TYPE_STRING, "stale-current-stream", "input-seq",
-                        G_TYPE_INT64, static_cast<gint64>(oldest.sequence), "orig-input-seq",
-                        G_TYPE_INT64, static_cast<gint64>(oldest.sequence), nullptr);
-    } else if (variant == 4) {
-      // Both stream identities/private fields are stale, and this duplicate
-      // per-stream sequence may name loans in other streams. It must not be
-      // treated as namespace-global identity.
-      const auto duplicate_sequence = outstanding.back().sequence;
-      terminal = make_terminal_stale_private_key_buffer(
-          "stale-public-stream", 900000 + i, mux_namespace, "stale-private-stream", 800000 + i);
-      GstStructure* structure =
-          gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
-      require(structure != nullptr, "failed to create fully stale terminal metadata");
-      gst_structure_set(structure, "input-seq", G_TYPE_INT64,
-                        static_cast<gint64>(duplicate_sequence), "orig-input-seq", G_TYPE_INT64,
-                        static_cast<gint64>(duplicate_sequence), nullptr);
-    } else {
-      // No GstSimaMeta at all: one ordered terminal output still completes one
-      // exact-namespace loan and must synthesize canonical metadata.
-      terminal = gst_buffer_new_allocate(nullptr, 16U, nullptr);
-      require(terminal != nullptr, "failed to allocate missing-metadata terminal buffer");
+    switch (i % 4) {
+      case 0:
+        // Even a public sequence naming a newer live loan must not jump ahead
+        // of the oldest result in this stream.
+        terminal = make_terminal_sequence_buffer(stream_ids[stream_index].c_str(), newest->sequence,
+                                                 newest->sequence, newest->sequence);
+        break;
+      case 1: {
+        // A recycled private key can name a live loan in another stream. The
+        // current public stream remains the routing authority.
+        const auto other = oldest_for_stream(other_stream);
+        require(other != outstanding.end(), "collision stream should have an outstanding loan");
+        terminal = make_terminal_stale_private_key_buffer(
+            stream_ids[stream_index].c_str(), 900000 + i, mux_namespace,
+            stream_ids[other_stream].c_str(), other->sequence);
+        break;
+      }
+      case 2: {
+        // A stage label in stream-id/buffer-name exposes orig-stream-id as the
+        // effective source identity.
+        terminal = make_terminal_stale_private_key_buffer(
+            stream_ids[stream_index].c_str(), 900000 + i, mux_namespace,
+            "stale-private-stream", 800000 + i);
+        GstStructure* structure =
+            gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
+        require(structure != nullptr, "failed to create stage-label terminal metadata");
+        gst_structure_set(structure, "stream-id", G_TYPE_STRING, "boxdecode-output", "buffer-name",
+                          G_TYPE_STRING, "boxdecode-output", nullptr);
+        break;
+      }
+      default: {
+        // When stream-id is an actual source identity it wins over a recycled
+        // orig-stream-id scalar.
+        terminal = make_terminal_stale_private_key_buffer(
+            stream_ids[stream_index].c_str(), 900000 + i, mux_namespace,
+            "stale-private-stream", 800000 + i);
+        GstStructure* structure =
+            gst_custom_meta_get_structure(gst_buffer_get_custom_meta(terminal, "GstSimaMeta"));
+        require(structure != nullptr, "failed to create stale-orig terminal metadata");
+        gst_structure_set(structure, "orig-stream-id", G_TYPE_STRING, "stale-original-stream",
+                          nullptr);
+        break;
+      }
     }
 
-    GST_BUFFER_PTS(terminal) = 999 * GST_MSECOND;
-    const Outstanding expected = outstanding[selected_index];
-    require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
-                terminal, mux_namespace),
-            "stale/missing terminal metadata must release one replacing loan");
-    require_canonical_terminal(terminal, expected);
-    gst_buffer_unref(terminal);
-    outstanding.erase(outstanding.begin() + static_cast<std::ptrdiff_t>(selected_index));
-
-    const std::size_t stream_index = static_cast<std::size_t>(i) % kStreamCount;
+    release_stream(stream_index, terminal,
+                   "stale terminal metadata must release the oldest loan in its public stream");
     push_and_pull(stream_index, next_sequence[stream_index]++);
   }
 
   while (!outstanding.empty()) {
-    GstBuffer* terminal = gst_buffer_new_allocate(nullptr, 16U, nullptr);
-    require(terminal != nullptr, "failed to allocate final missing-metadata terminal buffer");
-    const Outstanding expected = outstanding.front();
-    require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
-                terminal, mux_namespace),
-            "final ordered completion should release its replacing loan");
-    require_canonical_terminal(terminal, expected);
-    gst_buffer_unref(terminal);
-    outstanding.pop_front();
+    const std::size_t stream_index = outstanding.front().stream_index;
+    release_stream(stream_index,
+                   make_terminal_identity_buffer(stream_ids[stream_index].c_str(), std::nullopt),
+                   "final per-stream completion should release its replacing loan");
   }
 
   for (GstElement* appsrc : appsrcs) {
@@ -1502,7 +1472,7 @@ int main() {
     test_clear_encoded_frame_tap_waits_for_inflight_callback();
     test_encoded_frame_tap_copy_failure_posts_pipeline_error();
     test_terminal_release_restores_original_pts();
-    test_replacing_chain_uses_namespace_fifo_timing();
+    test_replacing_chain_uses_per_stream_fifo_timing();
     test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate();
     test_keyed_release_cannot_restore_finalized_timing();
     test_public_per_stream_limit_reaches_mux_gate();
