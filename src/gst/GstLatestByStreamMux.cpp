@@ -634,6 +634,48 @@ void restore_loan_timing_on_buffer(const std::shared_ptr<LoanEntry>& entry, GstB
   (void)simaai::neat::write_sample_timing_to_gst_buffer(buffer, entry->timing);
 }
 
+void restore_loan_identity_and_timing_on_buffer(const std::shared_ptr<LoanEntry>& entry,
+                                                const LoanKey& key, GstBuffer* buffer) {
+  if (!entry || !buffer) {
+    return;
+  }
+
+  restore_loan_timing_on_buffer(entry, buffer);
+
+  // Replacement-stage output pools may recycle scalar GstSimaMeta fields from
+  // an older stream even though the current result is valid.  Once terminal
+  // matching has selected the authoritative registry entry, rewrite both the
+  // public routing fields and the private (now-completed) mux key from that
+  // entry.  This keeps the Sample observed by GstAppSink consistent with the
+  // loan whose timing was restored and leaves the canonical private fields as
+  // diagnostics while marking the already-consumed key invalid downstream.
+  GstStructure* s = nullptr;
+  if (!ensure_sima_meta_structure_mutable(buffer, &s) || !s) {
+    return;
+  }
+  gst_structure_set(s, "stream-id", G_TYPE_STRING, key.stream_id.c_str(), "orig-stream-id",
+                    G_TYPE_STRING, key.stream_id.c_str(), "frame-id", G_TYPE_INT64,
+                    static_cast<gint64>(key.frame_id), kLoanValidField, G_TYPE_BOOLEAN, FALSE,
+                    kLoanNamespaceField, G_TYPE_UINT64, static_cast<guint64>(key.namespace_id),
+                    kLoanStreamIdField, G_TYPE_STRING, key.stream_id.c_str(), kLoanFrameIdField,
+                    G_TYPE_INT64, static_cast<gint64>(key.frame_id), nullptr);
+  if (key.input_seq >= 0) {
+    gst_structure_set(s, "input-seq", G_TYPE_INT64, static_cast<gint64>(key.input_seq),
+                      "neat-latest-mux-loan-input-seq", G_TYPE_INT64,
+                      static_cast<gint64>(key.input_seq), nullptr);
+  } else {
+    gst_structure_remove_fields(s, "input-seq", "neat-latest-mux-loan-input-seq", nullptr);
+  }
+  if (key.orig_input_seq >= 0) {
+    gst_structure_set(s, "orig-input-seq", G_TYPE_INT64, static_cast<gint64>(key.orig_input_seq),
+                      "neat-latest-mux-loan-orig-input-seq", G_TYPE_INT64,
+                      static_cast<gint64>(key.orig_input_seq), nullptr);
+  } else {
+    gst_structure_remove_fields(s, "orig-input-seq", "neat-latest-mux-loan-orig-input-seq",
+                                nullptr);
+  }
+}
+
 bool read_stream_key(GstBuffer* buffer, std::string* stream_id);
 bool read_stream_frame_key(GstBuffer* buffer, std::string* stream_id, std::int64_t* frame_id,
                            std::int64_t* input_seq, std::int64_t* orig_input_seq);
@@ -873,7 +915,7 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode,
       return false;
     }
     sequence = entry->sequence;
-    restore_loan_timing_on_buffer(entry, terminal_buffer);
+    restore_loan_identity_and_timing_on_buffer(entry, key, terminal_buffer);
     final_release = consume_loan_ref_locked(entry);
   }
   if (final_release) {
@@ -2350,11 +2392,63 @@ bool retain_loan_for_key(const LoanKey& key, std::size_t extra_refs, const char*
   return true;
 }
 
+bool release_replacing_loan_for_terminal(std::uint64_t namespace_hint, GstBuffer* terminal_buffer) {
+  if (namespace_hint == 0 || !terminal_buffer) {
+    return false;
+  }
+
+  std::shared_ptr<LoanEntry> entry;
+  LoanKey selected;
+  bool found = false;
+  bool final_release = false;
+  {
+    std::lock_guard<std::mutex> lock(loan_registry_mutex());
+    auto& registry = loan_registry();
+
+    // Registration is serialized by the mux's single source worker and the
+    // fused replacing renderer permits disabling lifetime guards only for a
+    // globally ordered, non-dropping consumer chain.  Terminal completion must
+    // therefore consume that same namespace-wide order.  Do not consult any
+    // scalar metadata on the replacement buffer: output pools can recycle both
+    // public fields and a syntactically complete private key, and that stale key
+    // can coincidentally name a different live loan in this namespace.
+    std::uint64_t oldest_sequence = std::numeric_limits<std::uint64_t>::max();
+    for (const auto& item : registry) {
+      if (item.first.namespace_id != namespace_hint || !item.second ||
+          !item.second->terminal_replacing || item.second->sequence >= oldest_sequence) {
+        continue;
+      }
+      selected = item.first;
+      entry = item.second;
+      oldest_sequence = item.second->sequence;
+      found = true;
+    }
+
+    if (found) {
+      restore_loan_identity_and_timing_on_buffer(entry, selected, terminal_buffer);
+      final_release = consume_loan_ref_locked(entry);
+    }
+  }
+
+  if (!found) {
+    return false;
+  }
+  if (loan_debug_enabled()) {
+    std::fprintf(
+        stderr, "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=%s final=%d\n",
+        static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
+        static_cast<long long>(selected.frame_id), "namespace-fifo", final_release ? 1 : 0);
+  }
+  if (final_release) {
+    release_loan_entry_resources(entry, /*by_output=*/true);
+  }
+  return true;
+}
+
 bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t frame_id,
                                     std::int64_t input_seq, std::int64_t orig_input_seq,
                                     std::uint64_t namespace_hint,
-                                    GstBuffer* terminal_buffer = nullptr,
-                                    bool terminal_replacing_only = false) {
+                                    GstBuffer* terminal_buffer = nullptr) {
   if (stream_id.empty()) {
     return false;
   }
@@ -2380,7 +2474,7 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
         continue;
       }
 
-      if (!terminal_replacing_only && namespace_hint != 0 && item.second != sole_entry) {
+      if (namespace_hint != 0 && item.second != sole_entry) {
         // A namespace-qualified terminal probe is an exact mux boundary. Keep
         // a count for the legacy sole-loan fallback used by guard-enabled,
         // identity-preserving chains.
@@ -2393,10 +2487,6 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
         }
       }
 
-      if (terminal_replacing_only && !item.second->terminal_replacing) {
-        continue;
-      }
-
       // Transforms commonly rewrite frame-id but preserve input-seq. Never let
       // a coincidental/stale frame-id beat the stronger sequence identity.
       const bool sequence_matches =
@@ -2407,12 +2497,6 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
       const bool frame_matches =
           !has_sequence_identity && frame_id >= 0 && key.frame_id == frame_id;
       int identity_rank = sequence_matches ? 2 : (frame_matches ? 1 : -1);
-      if (terminal_replacing_only && identity_rank < 0) {
-        // The fused replacing-stage contract is ordered and non-dropping, so
-        // absence of preserved identity has one safe bounded fallback: oldest
-        // outstanding loan in this exact namespace+stream.
-        identity_rank = 0;
-      }
       if (identity_rank < 0) {
         continue;
       }
@@ -2431,8 +2515,7 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
         found = true;
       }
     }
-    if (!terminal_replacing_only && !found && namespace_hint != 0 && distinct_candidates == 1U &&
-        sole_entry) {
+    if (!found && namespace_hint != 0 && distinct_candidates == 1U && sole_entry) {
       selected = sole_key;
       entry = sole_entry;
       found = true;
@@ -2453,14 +2536,11 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
     return false;
   }
   if (loan_debug_enabled()) {
-    std::fprintf(
-        stderr, "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=%s final=%d\n",
-        static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
-        static_cast<long long>(selected.frame_id),
-        terminal_replacing_only
-            ? (best_identity_rank > 0 ? "stream-terminal-identity" : "stream-terminal-fifo")
-            : (sole_fallback ? "stream-sole-fallback" : "stream-identity"),
-        final_release ? 1 : 0);
+    std::fprintf(stderr,
+                 "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=%s final=%d\n",
+                 static_cast<unsigned long long>(selected.namespace_id), selected.stream_id.c_str(),
+                 static_cast<long long>(selected.frame_id),
+                 sole_fallback ? "stream-sole-fallback" : "stream-identity", final_release ? 1 : 0);
   }
   if (final_release) {
     release_loan_entry_resources(entry, /*by_output=*/true);
@@ -2473,11 +2553,39 @@ void release_latest_by_stream_mux_loan(const std::string& stream_id, std::int64_
 }
 
 bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer, std::uint64_t namespace_hint) {
+  std::string current_stream_id;
+  std::string original_stream_id;
+  std::string buffer_name;
   std::string public_stream_id;
   std::int64_t public_frame_id = -1;
   std::int64_t public_input_seq = -1;
   std::int64_t public_orig_input_seq = -1;
-  const bool have_public_stream = read_stream_key(buffer, &public_stream_id);
+  if (buffer) {
+    GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+    GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+    if (s) {
+      if (const char* stream = gst_structure_get_string(s, "stream-id"); stream && *stream) {
+        current_stream_id = stream;
+      }
+      if (const char* stream = gst_structure_get_string(s, "orig-stream-id"); stream && *stream) {
+        original_stream_id = stream;
+      }
+      if (const char* name = gst_structure_get_string(s, "buffer-name"); name && *name) {
+        buffer_name = name;
+      }
+    }
+  }
+  // Match the same effective stream identity that InputStreamPull will expose:
+  // replacing plugins commonly refresh stream-id while a pooled
+  // orig-stream-id scalar remains from an older result.
+  public_stream_id =
+      (current_stream_id.empty() || (!buffer_name.empty() && current_stream_id == buffer_name))
+          ? original_stream_id
+          : current_stream_id;
+  if (public_stream_id.empty()) {
+    public_stream_id = current_stream_id;
+  }
+  const bool have_public_stream = !public_stream_id.empty();
   if (have_public_stream) {
     std::string identity_stream;
     (void)read_stream_frame_key(buffer, &identity_stream, &public_frame_id, &public_input_seq,
@@ -2499,20 +2607,18 @@ bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer, std::uint64
   }
 
   // Buffer-replacing fused stages intentionally disable lifecycle guards and
-  // promise ordered, non-dropping completion. Their public stream identity is
-  // stable, while frame/input identities may be rewritten by each hardware
-  // stage. Select by preserved input sequence when available, otherwise use
-  // the bounded stream FIFO, and restore it in the same registry transaction
-  // before consulting any recycled private fields.
-  if (namespace_hint != 0 && have_public_stream &&
-      release_oldest_loan_for_stream(public_stream_id, public_frame_id, public_input_seq,
-                                     public_orig_input_seq, namespace_hint, buffer,
-                                     /*terminal_replacing_only=*/true)) {
+  // promise globally ordered, non-dropping completion. Public and private
+  // scalar fields can all be recycled and can even name a different live loan,
+  // so complete the oldest loan in this exact mux namespace unconditionally.
+  // The selected entry restores canonical routing and timing before GstAppSink
+  // observes the result.
+  if (release_replacing_loan_for_terminal(namespace_hint, buffer)) {
     return true;
   }
 
   LoanKey key;
-  if (read_latest_mux_loan_key(buffer, &key)) {
+  const bool have_private_key = read_latest_mux_loan_key(buffer, &key);
+  if (have_private_key) {
     const bool public_has_sequence = public_input_seq >= 0 || public_orig_input_seq >= 0;
     const bool public_sequence_matches =
         (public_input_seq >= 0 &&
