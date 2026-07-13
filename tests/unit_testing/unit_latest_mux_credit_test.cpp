@@ -456,6 +456,35 @@ void test_terminal_release_restores_original_pts() {
   stop_latest_mux_pipeline(&fixture);
 }
 
+void test_keyed_release_erases_cached_timing() {
+  constexpr const char* kStreamId = "keyed-timing-stream";
+  constexpr GstClockTime kOriginalPts = 123 * GST_MSECOND;
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-keyed-timing-pipeline", kStreamId);
+
+  require(gst_app_src_push_buffer(GST_APP_SRC(fixture.appsrc),
+                                  make_mux_input_buffer_with_timing(31, kOriginalPts,
+                                                                    GST_CLOCK_TIME_NONE,
+                                                                    GST_MSECOND)) == GST_FLOW_OK,
+          "failed to push keyed timing fixture");
+  GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(output != nullptr, "keyed timing fixture should reach the mux output");
+
+  simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan(kStreamId, 31);
+
+  GstBuffer* stale_probe = make_terminal_identity_buffer(kStreamId, 31);
+  constexpr GstClockTime kSentinelPts = 999 * GST_MSECOND;
+  GST_BUFFER_PTS(stale_probe) = kSentinelPts;
+  require(!simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              stale_probe, fixture.mux_namespace),
+          "a finalized keyed loan must no longer be registered");
+  require(GST_BUFFER_PTS(stale_probe) == kSentinelPts,
+          "keyed final release must erase cached timing instead of restoring stale PTS later");
+  gst_buffer_unref(stale_probe);
+  gst_sample_unref(output);
+  stop_latest_mux_pipeline(&fixture);
+}
+
 void test_public_per_stream_limit_reaches_mux_gate() {
   constexpr const char* kStreamId = "limit-two-stream";
   LatestMuxPipeline fixture =
@@ -552,6 +581,146 @@ void test_drop_before_terminal_releases_lifetime_credit() {
               gst_sample_get_buffer(next), fixture.mux_namespace),
           "next terminal frame should retain a valid lifecycle guard");
   gst_sample_unref(next);
+  stop_latest_mux_pipeline(&fixture);
+}
+
+void test_fanout_terminal_and_drop_release_retained_credit() {
+  constexpr const char* kStreamId = "fanout-drop-stream";
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-fanout-drop-pipeline", kStreamId);
+
+  const auto retain_one_fanout_ref = [&](std::int64_t frame_id) {
+    const std::vector<simaai::neat::pipeline_internal::RealtimeFrameCredit> credits{
+        {fixture.mux_namespace, kStreamId, frame_id}};
+    require(simaai::neat::pipeline_internal::retain_realtime_frame_credits(
+                credits, 1U, "unit-latest-mux-fanout"),
+            "fan-out fixture must retain one logical mux-loan reference");
+  };
+
+  // One branch completes at the terminal while its copied sibling is dropped.
+  // The first completion must not disarm the shared guard before the last
+  // carrier accounts for the remaining retained reference.
+  push_mux_input(fixture.appsrc, 1);
+  GstSample* first = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(first != nullptr, "fan-out fixture should emit the first frame");
+  GstBuffer* dropped_sibling = gst_buffer_copy_deep(gst_sample_get_buffer(first));
+  require(dropped_sibling != nullptr, "failed to copy a dropped fan-out carrier");
+  retain_one_fanout_ref(1);
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(first), fixture.mux_namespace),
+          "one fan-out branch should complete at the terminal");
+  gst_sample_unref(first);
+  gst_buffer_unref(dropped_sibling);
+
+  push_mux_input(fixture.appsrc, 2);
+  GstSample* after_mixed_outcome = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(after_mixed_outcome != nullptr,
+          "one terminal plus one dropped carrier must return limit-one credit");
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(after_mixed_outcome), fixture.mux_namespace),
+          "post-drop progress frame should release normally");
+  gst_sample_unref(after_mixed_outcome);
+
+  // When every retained branch drops before the terminal, destruction of the
+  // last physical meta carrier must finalize all logical refs, not just
+  // decrement one of them. Model that at the dropper sink so no appsink/preroll
+  // reference can make the lifetime assertion implementation-dependent.
+  struct AllDropProbeContext {
+    std::uint64_t mux_namespace = 0;
+    const char* stream_id = nullptr;
+    std::int64_t frame_id = -1;
+    std::atomic<bool> ran{false};
+    std::atomic<bool> copied{false};
+    std::atomic<bool> retained{false};
+  } drop_context{fixture.mux_namespace, kStreamId, 3};
+  GstPad* dropper_sink = gst_element_get_static_pad(fixture.dropper, "sink");
+  require(dropper_sink != nullptr, "failed to get fan-out dropper sink pad");
+  const gulong drop_probe = gst_pad_add_probe(
+      dropper_sink, GST_PAD_PROBE_TYPE_BUFFER,
+      +[](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+        auto* context = static_cast<AllDropProbeContext*>(user_data);
+        GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+        GstBuffer* sibling = buffer ? gst_buffer_copy_deep(buffer) : nullptr;
+        context->copied.store(sibling != nullptr, std::memory_order_release);
+        const std::vector<simaai::neat::pipeline_internal::RealtimeFrameCredit> credits{
+            {context->mux_namespace, context->stream_id, context->frame_id}};
+        context->retained.store(simaai::neat::pipeline_internal::retain_realtime_frame_credits(
+                                    credits, 1U, "unit-latest-mux-all-drop"),
+                                std::memory_order_release);
+        if (sibling) {
+          gst_buffer_unref(sibling);
+        }
+        context->ran.store(true, std::memory_order_release);
+        return GST_PAD_PROBE_REMOVE;
+      },
+      &drop_context, nullptr);
+  require(drop_probe != 0, "failed to attach all-drop fan-out probe");
+  g_object_set(fixture.dropper, "drop-probability", 1.0, nullptr);
+  push_mux_input(fixture.appsrc, 3);
+  GstSample* all_drop = pull_mux_output(fixture.appsink, 100 * GST_MSECOND);
+  require(all_drop == nullptr, "all-drop fan-out frame must not reach appsink");
+  require(drop_context.ran.load(std::memory_order_acquire) &&
+              drop_context.copied.load(std::memory_order_acquire) &&
+              drop_context.retained.load(std::memory_order_acquire),
+          "all-drop probe must copy a carrier and retain its logical fan-out reference");
+  gst_object_unref(dropper_sink);
+
+  g_object_set(fixture.dropper, "drop-probability", 0.0, nullptr);
+  push_mux_input(fixture.appsrc, 4);
+  GstSample* after_all_drop = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(after_all_drop != nullptr,
+          "last-carrier destruction must release every retained logical reference");
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(after_all_drop), fixture.mux_namespace),
+          "all-drop progress frame should release normally");
+  gst_sample_unref(after_all_drop);
+
+  // Exercise both orderings of the non-final terminal/drop race. Carrier
+  // retirement is serialized by the shared guard, so whichever branch retires
+  // last must force the remaining retained ref and wake the limit-one mux.
+  for (std::int64_t iteration = 0; iteration < 8; ++iteration) {
+    const std::int64_t raced_frame = 100 + iteration * 2;
+    push_mux_input(fixture.appsrc, raced_frame);
+    GstSample* raced_terminal = pull_mux_output(fixture.appsink, GST_SECOND);
+    require(raced_terminal != nullptr, "race fixture should emit its retained frame");
+    GstBuffer* raced_drop = gst_buffer_copy_deep(gst_sample_get_buffer(raced_terminal));
+    require(raced_drop != nullptr, "race fixture should copy a dropped sibling carrier");
+    retain_one_fanout_ref(raced_frame);
+
+    std::atomic<bool> start{false};
+    std::atomic<bool> terminal_released{false};
+    std::thread terminal_thread([&] {
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      terminal_released.store(
+          simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(raced_terminal), fixture.mux_namespace),
+          std::memory_order_release);
+    });
+    std::thread drop_thread([&] {
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      gst_buffer_unref(raced_drop);
+    });
+    start.store(true, std::memory_order_release);
+    terminal_thread.join();
+    drop_thread.join();
+    require(terminal_released.load(std::memory_order_acquire),
+            "raced terminal branch should consume one retained reference");
+    gst_sample_unref(raced_terminal);
+
+    const std::int64_t progress_frame = raced_frame + 1;
+    push_mux_input(fixture.appsrc, progress_frame);
+    GstSample* raced_progress = pull_mux_output(fixture.appsink, GST_SECOND);
+    require(raced_progress != nullptr,
+            "concurrent terminal/drop retirement must return limit-one credit");
+    require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+                gst_sample_get_buffer(raced_progress), fixture.mux_namespace),
+            "race progress frame should release normally");
+    gst_sample_unref(raced_progress);
+  }
   stop_latest_mux_pipeline(&fixture);
 }
 
@@ -781,9 +950,11 @@ int main() {
     test_clear_encoded_frame_tap_waits_for_inflight_callback();
     test_encoded_frame_tap_copy_failure_posts_pipeline_error();
     test_terminal_release_restores_original_pts();
+    test_keyed_release_erases_cached_timing();
     test_public_per_stream_limit_reaches_mux_gate();
     test_output_buffer_finalize_does_not_release_terminal_credit();
     test_drop_before_terminal_releases_lifetime_credit();
+    test_fanout_terminal_and_drop_release_retained_credit();
     test_teardown_releases_unresolved_terminal_credit();
     test_pending_buffer_unref_is_reentrant();
     test_namespace_bounded_terminal_loan_fallback();

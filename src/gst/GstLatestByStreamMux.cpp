@@ -215,13 +215,15 @@ struct LoanKeyHash {
 struct LoanDropGuard {
   LoanKey key;
   std::uint64_t sequence = 0;
-  std::atomic<std::uint64_t> carriers{1};
-  std::atomic<bool> armed{true};
+  std::mutex mutex;
+  std::uint64_t carriers = 1;
+  bool armed = true;
 };
 
 struct GstLatestMuxLoanGuardMeta {
   GstMeta meta;
   std::shared_ptr<LoanDropGuard> guard;
+  bool retired = false;
 };
 
 struct LoanEntry {
@@ -591,6 +593,24 @@ bool consume_loan_ref_locked(const std::shared_ptr<LoanEntry>& entry) {
   return true;
 }
 
+bool consume_all_loan_refs_locked(const std::shared_ptr<LoanEntry>& entry) {
+  if (!entry || entry->released.load(std::memory_order_acquire)) {
+    return false;
+  }
+  entry->ref_count = 0;
+  entry->released.store(true, std::memory_order_release);
+  erase_loan_keys_for_entry_locked(entry);
+  auto& cache = timing_cache();
+  for (auto it = cache.begin(); it != cache.end();) {
+    if (it->second.sequence == entry->sequence) {
+      it = cache.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  return true;
+}
+
 void release_all_loans_for_mux(GstLatestByStreamMux* self) {
   if (!self) {
     return;
@@ -724,7 +744,10 @@ bool release_dropped_loan_for_key_impl(const LoanKey& key, std::uint64_t sequenc
 
 GType latest_mux_loan_guard_meta_api_get_type() {
   static const GType type = [] {
-    static const gchar* tags[] = {"memory-reference", nullptr};
+    // This lifecycle marker is independent of the source buffer's memory.
+    // Tagging it as a memory reference makes deep buffer copies omit it, which
+    // would release decoder credit before a copied model output completes.
+    static const gchar* tags[] = {nullptr};
     return gst_meta_api_type_register("GstLatestMuxLoanGuardMetaAPI", tags);
   }();
   return type;
@@ -733,20 +756,50 @@ GType latest_mux_loan_guard_meta_api_get_type() {
 gboolean latest_mux_loan_guard_meta_init(GstMeta* meta, gpointer, GstBuffer*) {
   auto* guard_meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(meta);
   new (&guard_meta->guard) std::shared_ptr<LoanDropGuard>();
+  guard_meta->retired = false;
   return TRUE;
 }
 
-void latest_mux_loan_guard_meta_free(GstMeta* meta, GstBuffer*) {
-  auto* guard_meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(meta);
-  std::shared_ptr<LoanDropGuard> guard = std::move(guard_meta->guard);
-  guard_meta->guard.~shared_ptr();
-  if (!guard) {
+void retire_loan_guard_meta_carrier(GstLatestMuxLoanGuardMeta* meta, const char* mode) {
+  if (!meta || !meta->guard) {
     return;
   }
-  const std::uint64_t previous = guard->carriers.fetch_sub(1, std::memory_order_acq_rel);
-  if (previous == 1U && guard->armed.exchange(false, std::memory_order_acq_rel)) {
-    (void)release_dropped_loan_for_key_impl(guard->key, guard->sequence, "buffer-lifetime-drop");
+  const std::shared_ptr<LoanDropGuard> guard = meta->guard;
+  bool release_remaining = false;
+  std::uint64_t previous = 0;
+  bool armed = false;
+  {
+    std::lock_guard<std::mutex> lock(guard->mutex);
+    if (meta->retired) {
+      return;
+    }
+    meta->retired = true;
+    previous = guard->carriers;
+    if (guard->carriers > 0) {
+      --guard->carriers;
+    }
+    if (guard->carriers == 0 && guard->armed) {
+      guard->armed = false;
+      release_remaining = true;
+    }
+    armed = guard->armed;
   }
+  if (loan_debug_enabled()) {
+    std::fprintf(stderr, "[latestmux][loan] guard-%s frame=%lld carriers=%llu->%llu armed=%d\n",
+                 mode ? mode : "retire", static_cast<long long>(guard->key.frame_id),
+                 static_cast<unsigned long long>(previous),
+                 static_cast<unsigned long long>(previous > 0 ? previous - 1 : 0), armed ? 1 : 0);
+  }
+  if (release_remaining) {
+    (void)release_dropped_loan_for_key_impl(guard->key, guard->sequence,
+                                            mode ? mode : "buffer-lifetime-drop");
+  }
+}
+
+void latest_mux_loan_guard_meta_free(GstMeta* raw_meta, GstBuffer*) {
+  auto* meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(raw_meta);
+  retire_loan_guard_meta_carrier(meta, "buffer-lifetime-drop");
+  meta->guard.~shared_ptr();
 }
 
 const GstMetaInfo* latest_mux_loan_guard_meta_get_info();
@@ -757,13 +810,24 @@ gboolean latest_mux_loan_guard_meta_transform(GstBuffer* destination, GstMeta* m
   if (!destination || !source->guard) {
     return FALSE;
   }
+  const std::shared_ptr<LoanDropGuard> guard = source->guard;
+  std::lock_guard<std::mutex> lock(guard->mutex);
+  if (source->retired || !guard->armed) {
+    return FALSE;
+  }
   auto* copy = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(
       gst_buffer_add_meta(destination, latest_mux_loan_guard_meta_get_info(), nullptr));
   if (!copy) {
     return FALSE;
   }
-  copy->guard = source->guard;
-  source->guard->carriers.fetch_add(1, std::memory_order_relaxed);
+  copy->guard = guard;
+  const std::uint64_t previous = guard->carriers++;
+  if (loan_debug_enabled()) {
+    std::fprintf(stderr, "[latestmux][loan] guard-copy frame=%lld carriers=%llu->%llu\n",
+                 static_cast<long long>(guard->key.frame_id),
+                 static_cast<unsigned long long>(previous),
+                 static_cast<unsigned long long>(previous + 1));
+  }
   return TRUE;
 }
 
@@ -804,8 +868,22 @@ bool attach_loan_drop_guard(GstBuffer* buffer, const LoanKey& key, std::uint64_t
 void disarm_loan_drop_guard(GstBuffer* buffer, const LoanKey& key, std::uint64_t sequence) {
   const auto guard = loan_drop_guard_for_buffer(buffer);
   if (guard && guard->sequence == sequence && guard->key == key) {
-    guard->armed.store(false, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(guard->mutex);
+    guard->armed = false;
   }
+}
+
+void retire_terminal_loan_guard_carrier(GstBuffer* buffer, const LoanKey& key,
+                                        std::uint64_t sequence) {
+  if (!buffer) {
+    return;
+  }
+  auto* meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(
+      gst_buffer_get_meta(buffer, latest_mux_loan_guard_meta_api_get_type()));
+  if (!meta || !meta->guard || meta->guard->sequence != sequence || !(meta->guard->key == key)) {
+    return;
+  }
+  retire_loan_guard_meta_carrier(meta, "terminal");
 }
 
 bool release_dropped_loan_for_key_impl(const LoanKey& key, std::uint64_t sequence,
@@ -822,10 +900,10 @@ bool release_dropped_loan_for_key_impl(const LoanKey& key, std::uint64_t sequenc
       return false;
     }
     entry = it->second;
-    final_release = consume_loan_ref_locked(entry);
-    if (final_release) {
-      timing_cache().erase(key);
-    }
+    // No buffer carrying this loan remains, so no retained fan-out branch can
+    // still reach a terminal completion. Finalize every logical reference in
+    // one sequence-checked registry transaction.
+    final_release = consume_all_loan_refs_locked(entry);
   }
   if (loan_debug_enabled()) {
     std::fprintf(stderr,
@@ -848,6 +926,7 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode,
   }
   std::shared_ptr<LoanEntry> entry;
   bool final_release = false;
+  std::uint64_t sequence = 0;
   {
     std::lock_guard<std::mutex> lock(loan_registry_mutex());
     auto& registry = loan_registry();
@@ -856,9 +935,21 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode,
       return false;
     }
     entry = it->second;
-    disarm_loan_drop_guard(terminal_buffer, key, entry->sequence);
+    sequence = entry->sequence;
     restore_loan_timing_on_buffer(entry, terminal_buffer);
     final_release = consume_loan_ref_locked(entry);
+    if (final_release) {
+      timing_cache().erase(key);
+    }
+  }
+  if (final_release) {
+    disarm_loan_drop_guard(terminal_buffer, key, sequence);
+  } else {
+    // This terminal has accounted for one logical fan-out reference. Remove
+    // its physical carrier without disarming the guard shared by other copied
+    // buffers, so a sibling dropped before the terminal can still release the
+    // remaining retained references when its carrier is destroyed.
+    retire_terminal_loan_guard_carrier(terminal_buffer, key, sequence);
   }
   if (loan_debug_enabled()) {
     std::fprintf(stderr,
@@ -2242,6 +2333,9 @@ bool release_loan_for_key(const LoanKey& key, const char* mode) {
     }
     if (found && !ambiguous) {
       final_release = consume_loan_ref_locked(entry);
+      if (final_release) {
+        timing_cache().erase(selected);
+      }
     }
   }
   if (!found || ambiguous) {
