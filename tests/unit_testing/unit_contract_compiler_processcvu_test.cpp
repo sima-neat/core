@@ -5,6 +5,7 @@
 #include "nodes/sima/VisualFrontend.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
+#include "pipeline/internal/sima/ProcessCvuRunTargetPolicy.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemanticsInternal.h"
@@ -580,6 +581,38 @@ RUN_TEST(
     "unit_contract_compiler_processcvu_test", ([] {
       using namespace simaai::neat;
       using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
+
+      {
+        pipeline_internal::sima::ProcessCvuStagePayload preproc;
+        preproc.graph_family_enum = pipeline_internal::sima::ProcessCvuGraphFamily::Preproc;
+
+        ContractCompileInput unsupported;
+        unsupported.processcvu.pre_run_target = "A65";
+        bool rejected = false;
+        try {
+          (void)pipeline_internal::sima::resolve_processcvu_backend_decision(preproc, unsupported,
+                                                                             "preproc");
+        } catch (const std::invalid_argument& ex) {
+          rejected = std::string(ex.what()).find("Supported target(s): EV74") != std::string::npos;
+        }
+        require(rejected,
+                "an explicit A65 request for EV74-only preproc must fail instead of falling back");
+
+        ContractCompileInput supported;
+        supported.processcvu.pre_run_target = "EV74";
+        const auto decision = pipeline_internal::sima::resolve_processcvu_backend_decision(
+            preproc, supported, "preproc");
+        require(decision.effective_run_target == "EV74",
+                "an explicit EV74 request for preproc should remain supported");
+
+        pipeline_internal::sima::ProcessCvuStagePayload dual_backend;
+        dual_backend.graph_family_enum = pipeline_internal::sima::ProcessCvuGraphFamily::Quant;
+        const auto a65_decision = pipeline_internal::sima::resolve_processcvu_backend_decision(
+            dual_backend, unsupported, "pre_quant");
+        require(
+            a65_decision.effective_run_target == "A65",
+            "strict placement must preserve explicit targets for genuinely dual-backend stages");
+      }
 
       {
         GriderFastOptions fast_opt;

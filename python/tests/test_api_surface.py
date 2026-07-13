@@ -168,6 +168,7 @@ def test_graph_only_public_surface():
   assert hasattr(pyneat, "graphs")
   assert hasattr(pyneat.graphs, "branch")
   assert hasattr(pyneat.graphs, "combine")
+  assert hasattr(pyneat.CombinePolicy, "RoundRobin")
 
   for removed_name in (
       "graph",
@@ -197,6 +198,12 @@ def test_graph_pythonic_add_and_describe():
   assert text
 
 
+def test_graph_combine_round_robin_surface():
+  graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.RoundRobin)
+  assert isinstance(graph, pyneat.Graph)
+  assert "combine=RoundRobin" in graph.describe()
+
+
 def test_graph_pythonic_add_graph_and_connect_alias():
   source = pyneat.Graph()
   source.custom_with_role(
@@ -222,9 +229,13 @@ def test_graph_link_options_surface():
   opt.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
   opt.queue_depth = 7
   opt.stream_id = "camera0"
+  opt.max_inflight_per_stream = 4
+  opt.max_inflight_total = 16
   assert opt.policy == pyneat.GraphLinkPolicy.RealtimeLatestByStream
   assert opt.queue_depth == 7
   assert opt.stream_id == "camera0"
+  assert opt.max_inflight_per_stream == 4
+  assert opt.max_inflight_total == 16
 
   source = pyneat.Graph()
   source.custom_with_role(
@@ -766,6 +777,9 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert native_decode.type == pyneat.SimaDecodeType.H264
   assert native_decode.out_format == pyneat.Format.NV12
   assert native_decode.raw_output is True
+  assert native_decode.input_buffers == -1
+  assert native_decode.decoder_tuning == ""
+  assert native_decode.memory_opt is False
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode())
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.JPEG
@@ -773,6 +787,13 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   native_decode.dec_width = 640
   native_decode.dec_height = 480
   native_decode.dec_fps = 30
+  native_decode.num_buffers = 4
+  native_decode.input_buffers = 4
+  native_decode.decoder_tuning = "throughput-low-latency"
+  native_decode.memory_opt = True
+  assert native_decode.input_buffers == 4
+  assert native_decode.decoder_tuning == "throughput-low-latency"
+  assert native_decode.memory_opt is True
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.MJPEG
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))

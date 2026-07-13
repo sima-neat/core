@@ -55,7 +55,7 @@ SIMANEAT_TIDY_HAS_SIMALMM=OFF
 
 is_genai_source() {
   case "$1" in
-    include/genai/*|src/genai/*|tests/*/genai_*.cpp|tests/*/unit_genai_*.cpp)
+    include/genai/*|src/genai/*|tests/*/unit_genai_*.cpp|tests/*/genai/*.cpp)
       return 0
       ;;
     *)

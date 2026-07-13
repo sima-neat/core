@@ -1,5 +1,6 @@
 #include "graph_migration/common/phase3_graph_test_utils.h"
 #include "graphs/Fragments.h"
+#include "nodes/common/Caps.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "test_main.h"
@@ -121,6 +122,202 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
     require_bundle_fields(*out, "Combine ByPts");
     require(out->pts_ns == 123456, "Combine ByPts should preserve pts_ns");
     run.close();
+  }
+
+  {
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"left", "right"}, "combined",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    simaai::neat::Run run = rr.build();
+    simaai::neat::Sample left = sample_with_frame(201, "", 0x71);
+    simaai::neat::Sample right = sample_with_frame(202, "", 0x72);
+    require(run.push("left", simaai::neat::Sample{std::move(left)}),
+            "Combine RoundRobin left push failed: " + run.last_error());
+    require(run.push("right", simaai::neat::Sample{std::move(right)}),
+            "Combine RoundRobin right push failed: " + run.last_error());
+
+    auto first = run.pull("combined", 5000);
+    require(first.has_value(), "Combine RoundRobin first pull timed out: " + run.last_error());
+    auto second = run.pull("combined", 5000);
+    require(second.has_value(), "Combine RoundRobin second pull timed out: " + run.last_error());
+    require(first->kind != simaai::neat::SampleKind::Bundle,
+            "Combine RoundRobin should forward original samples, not bundles");
+    require(second->kind != simaai::neat::SampleKind::Bundle,
+            "Combine RoundRobin should forward original samples, not bundles");
+    require(first->stream_id == "left", "Combine RoundRobin should stamp the left stream id");
+    require(second->stream_id == "right", "Combine RoundRobin should stamp the right stream id");
+    require(first->frame_id == 201, "Combine RoundRobin should preserve first frame_id");
+    require(second->frame_id == 202, "Combine RoundRobin should preserve second frame_id");
+    run.close();
+  }
+
+  {
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"left", "right"}, "combined",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    simaai::neat::Run run = rr.build();
+    require(run.push("left", simaai::neat::Sample{sample_with_frame(221, "cam-left", 0x77)}),
+            "Combine RoundRobin left original stream push failed: " + run.last_error());
+    require(run.push("right", simaai::neat::Sample{sample_with_frame(222, "cam-right", 0x78)}),
+            "Combine RoundRobin right original stream push failed: " + run.last_error());
+
+    auto first = run.pull("combined", 5000);
+    require(first.has_value(),
+            "Combine RoundRobin original-stream first pull timed out: " + run.last_error());
+    auto second = run.pull("combined", 5000);
+    require(second.has_value(),
+            "Combine RoundRobin original-stream second pull timed out: " + run.last_error());
+    require(first->stream_id == "cam-left",
+            "Combine RoundRobin should preserve a non-empty original left stream_id");
+    require(second->stream_id == "cam-right",
+            "Combine RoundRobin should preserve a non-empty original right stream_id");
+    run.close();
+  }
+
+  {
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"left", "right"}, "combined",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    simaai::neat::Run run = rr.build();
+    simaai::neat::Sample left = sample_with_frame(-1, "", 0x75);
+    simaai::neat::Sample right = sample_with_frame(-1, "", 0x76);
+    left.pts_ns = -1;
+    right.pts_ns = -1;
+    require(run.push("left", simaai::neat::Sample{std::move(left)}),
+            "Combine RoundRobin left no-key push failed: " + run.last_error());
+    require(run.push("right", simaai::neat::Sample{std::move(right)}),
+            "Combine RoundRobin right no-key push failed: " + run.last_error());
+
+    auto first = run.pull("combined", 5000);
+    require(first.has_value(),
+            "Combine RoundRobin no-key first pull timed out: " + run.last_error());
+    auto second = run.pull("combined", 5000);
+    require(second.has_value(),
+            "Combine RoundRobin no-key second pull timed out: " + run.last_error());
+    require(first->kind != simaai::neat::SampleKind::Bundle,
+            "Combine RoundRobin no-key should not materialize bundles");
+    require(second->kind != simaai::neat::SampleKind::Bundle,
+            "Combine RoundRobin no-key should not materialize bundles");
+    require(first->stream_id == "left", "Combine RoundRobin no-key should stamp left stream id");
+    require(second->stream_id == "right", "Combine RoundRobin no-key should stamp right stream id");
+    require(first->frame_id < 0 && first->pts_ns < 0,
+            "Combine RoundRobin no-key should not require frame_id/pts on first sample");
+    require(second->frame_id < 0 && second->pts_ns < 0,
+            "Combine RoundRobin no-key should not require frame_id/pts on second sample");
+    run.close();
+  }
+
+  {
+    simaai::neat::Graph source_left("left");
+    source_left.add(simaai::neat::nodes::Input("left"));
+    simaai::neat::Graph source_right("right");
+    source_right.add(simaai::neat::nodes::Input("right"));
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"left", "right"}, "combined",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    simaai::neat::Graph sink("combined");
+    sink.add(simaai::neat::nodes::Input("combined"));
+    sink.add(simaai::neat::nodes::Output("out"));
+
+    simaai::neat::Graph app("connected_round_robin");
+    app.connect(source_left, rr);
+    app.connect(source_right, rr);
+    app.connect(rr, sink);
+
+    const std::string backend = app.describe_backend(false);
+    require_contains(backend, "StreamScheduler",
+                     "Connected RoundRobin should lower through StreamScheduler");
+    require(backend.find("JoinBundle") == std::string::npos,
+            "Connected RoundRobin must not lower through JoinBundle");
+
+    simaai::neat::Run run = app.build();
+    require(run.push("left", simaai::neat::Sample{sample_with_frame(211, "", 0x73)}),
+            "Connected RoundRobin left push failed: " + run.last_error());
+    require(run.push("right", simaai::neat::Sample{sample_with_frame(212, "", 0x74)}),
+            "Connected RoundRobin right push failed: " + run.last_error());
+    auto first = run.pull("out", 5000);
+    require(first.has_value(), "Connected RoundRobin first pull timed out: " + run.last_error());
+    auto second = run.pull("out", 5000);
+    require(second.has_value(), "Connected RoundRobin second pull timed out: " + run.last_error());
+    require(first->stream_id == "left", "Connected RoundRobin should preserve left routing");
+    require(second->stream_id == "right", "Connected RoundRobin should preserve right routing");
+    require(first->kind != simaai::neat::SampleKind::Bundle,
+            "Connected RoundRobin should not materialize bundles");
+    require(second->kind != simaai::neat::SampleKind::Bundle,
+            "Connected RoundRobin should not materialize bundles");
+    run.close();
+  }
+
+  {
+    // Regression: a source/branch/round-robin chain must use the logical Branch/Combine endpoint
+    // names after public boundary elision.  Otherwise physically identical source tails such as
+    // CapsRaw collapse to duplicate fan-in names ("capsraw", "capsraw", ...).
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"stream0", "stream1"}, "detector",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    simaai::neat::Graph detector_sink("detector");
+    detector_sink.add(simaai::neat::nodes::Input("detector"));
+    detector_sink.add(simaai::neat::nodes::Output("detections"));
+
+    simaai::neat::Graph app("branched_source_round_robin");
+    for (int i = 0; i < 2; ++i) {
+      const std::string stream = "stream" + std::to_string(i);
+      const std::string preview = "preview" + std::to_string(i);
+      simaai::neat::Graph source("source_graph_" + std::to_string(i));
+      source.add(
+          simaai::neat::nodes::Custom("videotestsrc is-live=true num-buffers=1 ! "
+                                      "video/x-raw,format=NV12,width=16,height=16,framerate=1/1",
+                                      simaai::neat::InputRole::Source));
+      source.add(simaai::neat::nodes::CapsRaw("NV12", 16, 16, 1, simaai::neat::CapsMemory::Any));
+
+      simaai::neat::Graph branch =
+          simaai::neat::graphs::Branch("source" + std::to_string(i), {stream, preview});
+
+      simaai::neat::Graph preview_sink(preview);
+      preview_sink.add(simaai::neat::nodes::Input(preview));
+      preview_sink.add(simaai::neat::nodes::Output(preview + "_out"));
+
+      simaai::neat::GraphLinkOptions link;
+      link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+      link.queue_depth = 1;
+      link.stream_id = stream;
+
+      app.connect(source, branch, link);
+      app.connect(branch, rr, link);
+      app.connect(branch, preview_sink, link);
+    }
+    app.connect(rr, detector_sink);
+
+    const std::string backend = app.describe_backend(false);
+    require_contains(backend, "StreamScheduler",
+                     "Branched source RoundRobin should lower through StreamScheduler");
+    require_contains(backend, ":stream0",
+                     "Branched source RoundRobin should keep stream0 scheduler input");
+    require_contains(backend, ":stream1",
+                     "Branched source RoundRobin should keep stream1 scheduler input");
+  }
+
+  {
+    // Logical endpoint names are part of edge identity even when both paths share the same
+    // FanOut source node, target node, physical ports, and link options.
+    simaai::neat::Graph source("shared_source");
+    source.add(simaai::neat::nodes::Custom(
+        "videotestsrc num-buffers=1 ! video/x-raw,format=NV12,width=16,height=16,framerate=1/1",
+        simaai::neat::InputRole::Source));
+    source.add(simaai::neat::nodes::CapsRaw("NV12", 16, 16, 1, simaai::neat::CapsMemory::Any));
+    simaai::neat::Graph branch = simaai::neat::graphs::Branch("source", {"left_out", "right_out"});
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"left_in", "right_in"}, "combined",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    simaai::neat::Graph sink("combined");
+    sink.add(simaai::neat::nodes::Input("combined"));
+    sink.add(simaai::neat::nodes::Output("out"));
+
+    simaai::neat::Graph app("same_runtime_node_endpoint_round_robin");
+    app.connect(rr, sink);
+    app.connect(source, branch);
+    app.connect("left_out", "left_in");
+    app.connect("right_out", "right_in");
+
+    const std::string backend = app.describe_backend(false);
+    require_contains(backend, "StreamScheduler",
+                     "Endpoint-distinct edges should retain RoundRobin fan-in");
+    require_contains(backend, ":left_in", "RoundRobin should retain the left logical endpoint");
+    require_contains(backend, ":right_in", "RoundRobin should retain the right logical endpoint");
   }
 
   {

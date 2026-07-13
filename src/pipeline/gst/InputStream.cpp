@@ -666,7 +666,7 @@ BuiltBuffer build_buffer_with_fill(
       msg << where << ": input exceeds allocated buffer size" << " (required=" << required_bytes
           << ", allocated=" << st.alloc_bytes << "). "
           << "Fix: increase RunAdvancedOptions::max_input_bytes or "
-          << "Model::Options::input_max_* limits.";
+          << "Model::Options::preprocess.input_max_* limits.";
       throw std::runtime_error(msg.str());
     }
     gst_buffer_resize(buf, 0, required_bytes);
@@ -695,6 +695,18 @@ BuiltBuffer build_buffer_with_fill(
   if (record_timings)
     t_copy_end = std::chrono::steady_clock::now();
 
+  buf = attach_simaai_meta_inplace(buf, st.src_opt, st.pool_guard, where, frame_id_override,
+                                   stream_id_override, buffer_name_override);
+  if (!buf) {
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":attach_meta_fail").c_str());
+    }
+    throw std::runtime_error(std::string(where) + ": failed to attach GstSimaMeta");
+  }
+  // Attach the common metadata envelope before applying payload-specific
+  // metadata. attach_simaai_meta_inplace() may create a writable buffer view;
+  // applying GstVideoMeta/preprocess metadata first would leave those metas on
+  // the old buffer when the writable envelope is created.
   if (prepare) {
     try {
       prepare(&buf);
@@ -704,15 +716,6 @@ BuiltBuffer build_buffer_with_fill(
       }
       throw;
     }
-  }
-
-  buf = attach_simaai_meta_inplace(buf, st.src_opt, st.pool_guard, where, frame_id_override,
-                                   stream_id_override, buffer_name_override);
-  if (!buf) {
-    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
-      release_input_buffer(buf, (std::string(tag) + ":attach_meta_fail").c_str());
-    }
-    throw std::runtime_error(std::string(where) + ": failed to attach GstSimaMeta");
   }
   update_simaai_meta_fields(buf, frame_id_override, input_seq_override, orig_input_seq_override,
                             stream_id_override, buffer_name_override, timing_override.pts_ns);
@@ -779,7 +782,7 @@ void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* wh
     msg << tag << ": input exceeds max_input_bytes" << " (required=" << bytes
         << ", max_input_bytes=" << st.max_input_bytes_guard
         << "). Fix: increase RunAdvancedOptions::max_input_bytes or raise "
-        << "Model::Options::input_max_width/input_max_height/input_max_depth.";
+        << "Model::Options::preprocess.input_max_width/input_max_height/input_max_depth.";
     throw std::runtime_error(msg.str());
   }
 

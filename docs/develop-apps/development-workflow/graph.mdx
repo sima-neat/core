@@ -487,6 +487,8 @@ For live multistream fan-in, `RealtimeLatestByStream` keeps the latest sample pe
 ```cpp
 simaai::neat::GraphLinkOptions link;
 link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+link.queue_depth = 4;
+link.max_inflight_per_stream = 4;
 link.stream_id = "camera-0";
 
 app.connect(camera_fragment, detector_fragment, link);
@@ -498,6 +500,8 @@ app.connect(camera_fragment, detector_fragment, link);
 ```python
 link = pyneat.GraphLinkOptions()
 link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+link.queue_depth = 4
+link.max_inflight_per_stream = 4
 link.stream_id = "camera-0"
 
 app.connect(camera_fragment, detector_fragment, link)
@@ -506,15 +510,17 @@ app.connect(camera_fragment, detector_fragment, link)
 </CodeTab>
 </CodeTabs>
 
-Use the default link policy when every frame must be preserved and backpressure is the correct behavior. Use realtime latest-by-stream when a live graph should stay fresh instead of collecting old frames. Set `queue_depth` only when you have a reason to bound that link differently from the default.
+Use the default link policy when every frame must be preserved and backpressure is the correct behavior. Use realtime latest-by-stream when a live graph should stay fresh instead of collecting old frames. Set `queue_depth` only when you have a reason to bound pending samples on that link differently from the default.
 
-`GraphLinkOptions` has three fields most app authors care about:
+`GraphLinkOptions` has these realtime-link fields:
 
 | Field | Use it when |
 | --- | --- |
 | `policy` | The link needs a freshness or fairness policy instead of default backpressure. |
-| `queue_depth` | The link needs an explicit buffer bound. Leave the default until measurement shows the link is the bottleneck. |
+| `queue_depth` | The link needs an explicit pending-sample bound. Leave the default until measurement shows the link is the bottleneck. |
 | `stream_id` | The upstream fragment does not stamp `Sample::stream_id`, but this link represents one stable stream. |
+| `max_inflight_per_stream` | A realtime latest-by-stream link carries raw decoder-backed samples and needs more admitted downstream frames per stream. The field default is `-1`; without an env override, Core uses `4`. |
+| `max_inflight_total` | A realtime latest-by-stream link needs a hard global cap across streams. The field default is `-1`; without an env override, Core derives `min(max_inflight_per_stream * stream_count, 8)`. |
 
 
 ## Scale from one stream to many

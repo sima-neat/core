@@ -66,6 +66,12 @@ struct GraphLinkOptions {
   /// New runtime code copies this value into internal edge metadata during composition; leave it
   /// empty for automatic per-edge identity.
   std::string stream_id;
+  /// Only applies to RealtimeLatestByStream links carrying raw decoder-backed samples.
+  /// -1 keeps env/default behavior; positive values set the per-stream raw-frame inflight cap.
+  int max_inflight_per_stream = -1;
+  /// Only applies to RealtimeLatestByStream links carrying raw decoder-backed samples.
+  /// -1 keeps env/default behavior; positive values set the total cap across streams.
+  int max_inflight_total = -1;
 };
 
 /**
@@ -312,7 +318,11 @@ struct PreparedRunnerOptions {
  * @ingroup pipeline
  */
 struct AdvancedExecutionOptions {
-  std::optional<std::string> preprocess_target;         ///< -> processcvu.pre_run_target.
+  /// Backend for model-managed process-CVU pre stages. Unsupported explicit placement is an
+  /// error; for example, native Preproc is EV74-only.
+  std::optional<std::string> preprocess_target; ///< -> processcvu.pre_run_target.
+  /// Backend for model-managed process-CVU post adapters. This does not relocate BoxDecode,
+  /// which executes on A65.
   std::optional<std::string> postprocess_target;        ///< -> processcvu.post_run_target.
   std::optional<bool> preprocess_async;                 ///< -> processcvu.async.
   std::optional<bool> inference_async;                  ///< -> processmla.async.

@@ -39,6 +39,11 @@ enum class CombinePolicy {
   /// Combine one sample from each declared input when their media presentation timestamp
   /// (`Sample::pts_ns`, Presentation Timestamp) values match. There is no fallback to frame IDs.
   ByPts,
+
+  /// Fairly forward samples from multiple producers one at a time, preserving each original
+  /// sample rather than bundling. This is the live-stream fan-in policy for sharing one downstream
+  /// path across multiple already-independent streams.
+  RoundRobin,
 };
 
 /**

@@ -229,6 +229,25 @@ endfunction()
 # ------------------------------------------------------------------------------
 # Unit tests (1:1 cpp mapping)
 # ------------------------------------------------------------------------------
+add_executable(
+  unit_000_devkit_package_inventory_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_000_devkit_package_inventory_test.cpp
+)
+target_link_libraries(unit_000_devkit_package_inventory_test
+  PRIVATE sima_neat sima_neat_internal_headers
+)
+target_include_directories(unit_000_devkit_package_inventory_test
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
+add_test(NAME unit_000_devkit_package_inventory_test COMMAND unit_000_devkit_package_inventory_test)
+simaneat_append_ctest_env(unit_000_devkit_package_inventory_test)
+set_tests_properties(unit_000_devkit_package_inventory_test PROPERTIES SKIP_RETURN_CODE 77)
+set_property(TEST unit_000_devkit_package_inventory_test APPEND PROPERTY
+  LABELS "unit;devkit-package-inventory")
+
 set(UNIT_TESTS
   unit_builder_test
   unit_caps_bridge_test
@@ -277,6 +296,7 @@ set(UNIT_TESTS
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
   unit_header_neat_compile_surface_test
+  unit_realtime_link_options_test
   unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test
   unit_groups_test
@@ -395,6 +415,9 @@ set(UNIT_TESTS
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
   list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)
+endif()
+if (SimaLMM_FOUND)
+  list(APPEND UNIT_TESTS unit_genai_server_linkage_test)
 endif()
 
 foreach(test ${UNIT_TESTS})
@@ -550,74 +573,82 @@ if (NOT metadata_sender_udp_integration_test IN_LIST PIPELINESESSION_TEST_BLACKL
   set_property(TEST metadata_sender_udp_integration_test APPEND PROPERTY LABELS "e2e;metadata")
 endif()
 
-add_pipeline_test_long(
-  genai_llm_run_test
-  e2e_testing/genai_llm_run_test.cpp
-)
+if (SimaLMM_FOUND)
+  add_pipeline_test_long(
+    genai_llm_run_test
+    e2e_testing/genai/genai_llm_run_test.cpp
+  )
 
-if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
-  set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_llm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
+    set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_vlm_run_test
-  SOURCES e2e_testing/genai_vlm_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_vlm_run_test
+    SOURCES e2e_testing/genai/genai_vlm_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
-  set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_vlm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
+    set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_graph_llm_run_test
-  e2e_testing/genai_graph_llm_run_test.cpp
-)
+  add_pipeline_test_long(
+    genai_graph_llm_run_test
+    e2e_testing/genai/genai_graph_llm_run_test.cpp
+  )
 
-if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
-  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_graph_llm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
+    set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_graph_vlm_run_test
-  SOURCES e2e_testing/genai_graph_vlm_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_graph_vlm_run_test
+    SOURCES e2e_testing/genai/genai_graph_vlm_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
-  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_graph_vlm_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
+    set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_asr_run_test
-  SOURCES e2e_testing/genai_asr_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_asr_run_test
+    SOURCES e2e_testing/genai/genai_asr_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
-  set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_asr_run_test PROPERTIES DISABLED TRUE)
-endif()
+  if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
+    set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 
-add_pipeline_test_long(
-  genai_graph_asr_run_test
-  SOURCES e2e_testing/genai_graph_asr_run_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
+  add_pipeline_test_long(
+    genai_graph_asr_run_test
+    SOURCES e2e_testing/genai/genai_graph_asr_run_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
 
-if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
-  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
-  set_tests_properties(genai_graph_asr_run_test PROPERTIES DISABLED TRUE)
+  if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
+    set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
+
+  add_pipeline_test_long(
+    genai_server_http_test
+    SOURCES e2e_testing/genai/genai_server_http_test.cpp
+    ARGS ${CMAKE_SOURCE_DIR}
+  )
+  target_link_libraries(genai_server_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+
+  if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
+    set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -1456,6 +1487,32 @@ if (NOT sync_yolov8_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  yolov8_dynamic_boxdecode_geometry_sync_test
+  e2e_pipelines/obj_detection/yolov8_dynamic_boxdecode_geometry_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR} --mode sync
+)
+
+if (NOT yolov8_dynamic_boxdecode_geometry_sync_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_dynamic_boxdecode_geometry_sync_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;dynamic;sync")
+endif()
+
+add_pipeline_test(
+  yolov8_dynamic_boxdecode_geometry_async_test
+  e2e_pipelines/obj_detection/yolov8_dynamic_boxdecode_geometry_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR} --mode async
+)
+
+if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_dynamic_boxdecode_geometry_async_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;dynamic;async")
+endif()
+
+add_pipeline_test(
   sync_yolov8_test_detessdequant
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
   e2e_pipelines/e2e_utils.cpp
@@ -1914,6 +1971,21 @@ install(
   DESTINATION share/sima-neat/test-assets
   COMPONENT extras
 )
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/images/people.jpg"
+  DESTINATION share/sima-neat/test-assets/tests/images
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio.wav"
+  DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_16k_mono_f32le.raw"
+  DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
 
 # Model-archive, decoder, and codec perf fixtures used by installed tests.
 # Keep install/package jobs self-contained too. Some CI/CD paths package or
@@ -1986,6 +2058,16 @@ install(
   DESTINATION lib/sima-neat/test-fixtures
   COMPONENT extras
   RENAME runtime_manifest.json
+)
+
+install(
+  FILES "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_genai_models.sh"
+  DESTINATION share/sima-neat/tests/tools
+  PERMISSIONS
+    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE
+    WORLD_READ WORLD_EXECUTE
+  COMPONENT extras
 )
 
 # Keep decoder/media E2E tests bounded. These paths can hang in GStreamer

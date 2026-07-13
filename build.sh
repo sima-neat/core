@@ -2176,8 +2176,7 @@ PY
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
         wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
         wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
-        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF"
-        wheel_cmake_args+=" -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE"
+        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=ON"
       fi
       # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
       # (notably ninja), which are not executable on the host container.
@@ -2407,6 +2406,12 @@ stage_package_artifacts_to_dist() {
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
+
+  # The Core package declares an explicit LLiMa ABI range. Fail before
+  # publishing/installing a bundle when the copied LLiMa DEBs do not satisfy
+  # that range (for example Core 0.2.x combined with LLiMa 0.3.x).
+  python3 "${REPO_ROOT}/tools/validate_neat_package_bundle.py" "${REPO_ROOT}/dist"
+
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
     chmod +x "dist/install_neat_framework.sh"

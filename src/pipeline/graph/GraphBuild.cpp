@@ -2187,15 +2187,27 @@ SampleSpec infer_input_spec(const InputOptions& opt, const Sample& sample, const
 
     if (!spec.tensor_envelope_transport && limits.max_width > 0 && actual_dims.width > 0 &&
         actual_dims.width > limits.max_width) {
-      throw std::invalid_argument(std::string(tag) + ": width exceeds effective max");
+      throw_session_error_simple(
+          error_codes::kInputShape,
+          pipeline_internal::shape_limit_exceeded_message(tag, "width", actual_dims.width,
+                                                          limits.max_width),
+          pipeline_internal::shape_limit_fix_hint("width", actual_dims.width));
     }
     if (!spec.tensor_envelope_transport && limits.max_height > 0 && actual_dims.height > 0 &&
         actual_dims.height > limits.max_height) {
-      throw std::invalid_argument(std::string(tag) + ": height exceeds effective max");
+      throw_session_error_simple(
+          error_codes::kInputShape,
+          pipeline_internal::shape_limit_exceeded_message(tag, "height", actual_dims.height,
+                                                          limits.max_height),
+          pipeline_internal::shape_limit_fix_hint("height", actual_dims.height));
     }
     if (!spec.tensor_envelope_transport && limits.max_depth > 0 && actual_dims.depth > 0 &&
         actual_dims.depth > limits.max_depth) {
-      throw std::invalid_argument(std::string(tag) + ": depth exceeds effective max");
+      throw_session_error_simple(
+          error_codes::kInputShape,
+          pipeline_internal::shape_limit_exceeded_message(tag, "depth", actual_dims.depth,
+                                                          limits.max_depth),
+          pipeline_internal::shape_limit_fix_hint("depth", actual_dims.depth));
     }
 
     if (spec.kind == SampleMediaKind::RawVideo) {

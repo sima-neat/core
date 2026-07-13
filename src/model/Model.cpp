@@ -7186,7 +7186,9 @@ InputOptions Model::input_appsrc_options(bool tensor_mode) const {
   require_single_ingress_api(ingress_contracts, "Model::input_appsrc_options");
   const auto opts = input_appsrc_options_list(tensor_mode);
   if (!opts.empty()) {
-    return opts.front();
+    InputOptions opt = opts.front();
+    opt.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
+    return opt;
   }
   // Route contract takes precedence over caller hint: adapter-only pre routes
   // (quant/tess/quanttess ingress) require tensor appsrc for valid caps.
@@ -7194,6 +7196,7 @@ InputOptions Model::input_appsrc_options(bool tensor_mode) const {
   const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
   InputOptions opt = impl_->pack.input_appsrc_options(effective_tensor_mode);
   apply_model_ingress_memory_policy(opt, impl_->preprocess_plan);
+  opt.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
   return opt;
 }
 
@@ -7202,6 +7205,7 @@ std::vector<InputOptions> Model::input_appsrc_options_list(bool tensor_mode) con
   const bool effective_tensor_mode = tensor_mode || route_requires_tensor;
   InputOptions base = impl_->pack.input_appsrc_options(effective_tensor_mode);
   apply_model_ingress_memory_policy(base, impl_->preprocess_plan);
+  base.preprocess_meta = make_preprocess_meta_template(impl_->preprocess_plan);
 
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
@@ -7330,7 +7334,8 @@ bool Model::Runner::push(const simaai::neat::Sample& inputs) {
 }
 
 simaai::neat::Sample Model::Runner::pull(int timeout_ms) {
-  return run_.pull_samples(timeout_ms);
+  auto output = run_.pull(timeout_ms);
+  return output.has_value() ? std::move(*output) : simaai::neat::Sample{};
 }
 
 #if defined(SIMA_WITH_OPENCV)
@@ -8231,8 +8236,11 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
           "Model::Options.num_classes; observed [" +
           boxdecode_tensor_order_summary_local(*contract) + "].");
     }
-    finalized.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
-    finalized.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+    // Grouped DFL describes tensor arrangement, not score domain.  Preserve
+    // the domain inferred from semantic names/quantization (class_prob versus
+    // class_logit) instead of forcing every grouped YOLO route through a
+    // second sigmoid.
+    pipeline_internal::sima::stagesemantics::resolve_grouped_yolo_dfl_score_domain(&finalized);
   }
 
   return pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(finalized);
