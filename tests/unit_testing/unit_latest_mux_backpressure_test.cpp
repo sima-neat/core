@@ -138,9 +138,11 @@ void init_fixture(Fixture* fixture, const char* name, bool block_when_pending,
   f.mux = gst_element_factory_make("neatlatestbystreammux", nullptr);
   f.sink = gst_element_factory_make("fakesink", nullptr);
   require(f.pipeline && f.mux && f.sink, "failed to create latest-mux backpressure fixture");
-  g_object_set(f.mux, "stream-ids", "stream0,stream1", "stream-inflight-limits", inflight_limits,
-               "max-inflight-total", max_inflight_total, "block-when-pending",
-               block_when_pending ? TRUE : FALSE, nullptr);
+  g_object_set(f.mux, "stream-ids", "stream0,stream1", "max-inflight-total", max_inflight_total,
+               "block-when-pending", block_when_pending ? TRUE : FALSE, nullptr);
+  if (inflight_limits) {
+    g_object_set(f.mux, "stream-inflight-limits", inflight_limits, nullptr);
+  }
   g_object_set(f.sink, "sync", FALSE, "async", FALSE, nullptr);
   gst_bin_add_many(GST_BIN(f.pipeline), f.mux, f.sink, nullptr);
   require(gst_element_link(f.mux, f.sink) == TRUE,
@@ -239,6 +241,20 @@ void test_default_mode_keeps_latest() {
     require(f.probe.outputs.size() == 1U && f.probe.outputs[0].stream_id == "stream0" &&
                 f.probe.outputs[0].frame_id == 2,
             "default latest mode must replace the pending frame without blocking");
+  }
+  stop_fixture(&f);
+}
+
+void test_unconfigured_direct_mux_does_not_take_terminal_loans() {
+  Fixture f;
+  init_fixture(&f, "latest-mux-direct-no-loans", false, nullptr);
+  constexpr std::size_t kFrames = 12U;
+  for (std::size_t i = 0; i < kFrames; ++i) {
+    const std::size_t stream = i % f.pads.size();
+    require(gst_pad_chain(f.pads[stream], make_buffer(static_cast<std::int64_t>(i + 1U))) ==
+                GST_FLOW_OK,
+            "unconfigured direct mux rejected input");
+    wait_for_outputs(&f, i + 1U);
   }
   stop_fixture(&f);
 }
@@ -536,6 +552,7 @@ int main() {
   try {
     simaai::neat::gst_init_once();
     test_default_mode_keeps_latest();
+    test_unconfigured_direct_mux_does_not_take_terminal_loans();
     test_blocking_mode_preserves_burst();
     test_credit_release_unblocks_pending_producer();
     test_total_credit_caps_all_streams();

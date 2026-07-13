@@ -1441,7 +1441,12 @@ GstPad* request_new_pad(GstElement* element, GstPadTemplate* templ, const gchar*
     }
   }
 
-  int stream_inflight_limit = simaai::neat::pipeline_internal::kDefaultRealtimeMaxInflightPerStream;
+  // Terminal loans require a completion boundary that calls the public
+  // release helper. The fused graph renderer always supplies an explicit
+  // per-stream list; standalone element users that omit it must remain
+  // ordinary GStreamer pipelines rather than silently stalling after four
+  // buffers with no release probe.
+  int stream_inflight_limit = 0;
   HolderLoanGatePtr total_loan_gate;
   g_mutex_lock(&self->lock);
   const guint index = have_requested_index ? requested_index : self->next_pad_index;
@@ -1942,7 +1947,7 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
       gobject_class, PROP_STREAM_INFLIGHT_LIMITS,
       g_param_spec_string(
           "stream-inflight-limits", "Per-stream inflight limits",
-          "Comma-separated terminal-loan limits (0 disables; omitted entries default to 4), "
+          "Comma-separated terminal-loan limits (0 disables; omitted entries default to 0), "
           "indexed by request pad number",
           "", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property(
