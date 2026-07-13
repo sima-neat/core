@@ -1051,9 +1051,9 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
                                ": failed to replace pooled parent lifetime metadata");
     }
   }
-  if (!needs_parent_envelope && holder_buffer && holder_buffer != *buffer &&
-      std::find(parents.begin(), parents.end(), holder_buffer) == parents.end()) {
-    parents.push_back(gst_buffer_ref(holder_buffer));
+  if (!needs_parent_envelope && holder_buffer && holder_buffer != *buffer) {
+    std::vector<GstBuffer*> visited;
+    retain_parent_lifetime_roots(holder_buffer, parents, visited);
   }
   if (parents.empty()) {
     return needs_loan_envelope;

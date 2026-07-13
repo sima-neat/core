@@ -338,8 +338,8 @@ int main() {
       gst_sample_unref(legacy_gst_sample);
       legacy_holder_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
       legacy_holder_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
-      legacy_holder_sample.input_seq = 2;
-      legacy_holder_sample.orig_input_seq = 2;
+      legacy_holder_sample.input_seq = 3;
+      legacy_holder_sample.orig_input_seq = 3;
       require(sample_timing_overrides_from_sample(legacy_holder_sample).empty(),
               "legacy holder fixture must not carry a timing override");
 
@@ -366,7 +366,7 @@ int main() {
           legacy_pipeline, legacy_appsrc, legacy_appsink,
           derive_sample_spec_or_throw(legacy_holder_sample), src_opt, stream_opt, {}, nullptr);
       require(legacy_stream.try_push_message(legacy_holder_sample),
-              "legacy metadata holder push should not require a writable envelope");
+              "legacy metadata holder push should create a writable metadata view");
       legacy_holder_sample = Sample{};
 
       GstSample* legacy_pulled =
@@ -375,6 +375,16 @@ int main() {
       GstBuffer* legacy_transfer_buffer = gst_sample_get_buffer(legacy_pulled);
       require(legacy_transfer_buffer != expected_parent,
               "metadata update should use a zero-copy transfer envelope");
+      GstCustomMeta* legacy_transfer_meta =
+          gst_buffer_get_custom_meta(legacy_transfer_buffer, "GstSimaMeta");
+      GstStructure* legacy_transfer_structure =
+          legacy_transfer_meta ? gst_custom_meta_get_structure(legacy_transfer_meta) : nullptr;
+      gint64 legacy_transfer_input_seq = -1;
+      require(legacy_transfer_structure &&
+                  gst_structure_get_int64(legacy_transfer_structure, "input-seq",
+                                          &legacy_transfer_input_seq) &&
+                  legacy_transfer_input_seq == 3,
+              "writable metadata view should contain the updated input sequence");
       require(gst_buffer_peek_memory(legacy_transfer_buffer, 0) == expected_memory,
               "no-loan transfer should preserve the original pooled memory");
 
