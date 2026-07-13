@@ -18,6 +18,145 @@ struct MessageMetaOverrides {
   std::optional<std::string> stream_label;
 };
 
+class DeferredPoolBufferReleaser {
+public:
+  DeferredPoolBufferReleaser() : worker_([this] { run(); }) {}
+
+  ~DeferredPoolBufferReleaser() {
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      stopping_ = true;
+    }
+    cv_.notify_one();
+    worker_.join();
+    for (GstBuffer* buffer : pending_) {
+      gst_buffer_unref(buffer);
+    }
+  }
+
+  void enqueue(std::vector<GstBuffer*> buffers) {
+    if (buffers.empty()) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      pending_.insert(pending_.end(), buffers.begin(), buffers.end());
+    }
+    cv_.notify_one();
+  }
+
+private:
+  void run() {
+    std::unique_lock<std::mutex> lock(mu_);
+    while (!stopping_) {
+      cv_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
+      while (!stopping_ && !pending_.empty()) {
+        std::vector<GstBuffer*> buffers;
+        buffers.swap(pending_);
+        lock.unlock();
+
+        std::vector<GstBuffer*> retry;
+        retry.reserve(buffers.size());
+        for (GstBuffer* buffer : buffers) {
+          // Some supported GStreamer releases finalize parent metadata before
+          // releasing shared memory. Return pooled parents only after every
+          // downstream memory reference is gone.
+          if (gst_buffer_is_all_memory_writable(buffer)) {
+            gst_buffer_unref(buffer);
+          } else {
+            retry.push_back(buffer);
+          }
+        }
+
+        lock.lock();
+        pending_.insert(pending_.end(), retry.begin(), retry.end());
+        if (!pending_.empty()) {
+          cv_.wait_for(lock, std::chrono::milliseconds(1));
+        }
+      }
+    }
+  }
+
+  std::mutex mu_;
+  std::condition_variable cv_;
+  std::vector<GstBuffer*> pending_;
+  bool stopping_ = false;
+  std::thread worker_;
+};
+
+DeferredPoolBufferReleaser& deferred_pool_buffer_releaser() {
+  static DeferredPoolBufferReleaser releaser;
+  return releaser;
+}
+
+struct DeferredPoolBufferParents {
+  std::vector<GstBuffer*> buffers;
+};
+
+GQuark deferred_pool_buffer_parents_quark() {
+  static GQuark quark = g_quark_from_static_string("simaai-neat-deferred-pool-buffer-parents");
+  return quark;
+}
+
+void enqueue_deferred_pool_buffer_parents(gpointer data) {
+  std::unique_ptr<DeferredPoolBufferParents> parents(static_cast<DeferredPoolBufferParents*>(data));
+  deferred_pool_buffer_releaser().enqueue(std::move(parents->buffers));
+}
+
+bool buffers_share_memory(GstBuffer* lhs, GstBuffer* rhs) {
+  for (guint i = 0; i < gst_buffer_n_memory(lhs); ++i) {
+    GstMemory* lhs_memory = gst_buffer_peek_memory(lhs, i);
+    for (guint j = 0; j < gst_buffer_n_memory(rhs); ++j) {
+      if (lhs_memory == gst_buffer_peek_memory(rhs, j)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool is_deferred_pool_buffer_proxy(GstBuffer* buffer) {
+  return buffer && gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer),
+                                             deferred_pool_buffer_parents_quark()) != nullptr;
+}
+
+void retain_parent_lifetime_roots(GstBuffer* buffer, std::vector<GstBuffer*>& retained,
+                                  std::vector<GstBuffer*>& visited) {
+  if (!buffer || std::find(visited.begin(), visited.end(), buffer) != visited.end()) {
+    return;
+  }
+  visited.push_back(buffer);
+
+  std::vector<GstBuffer*> lifetime_parents;
+  std::vector<GstBuffer*> other_parents;
+  gpointer state = nullptr;
+  while (GstMeta* raw_meta =
+             gst_buffer_iterate_meta_filtered(buffer, &state, GST_PARENT_BUFFER_META_API_TYPE)) {
+    auto* meta = reinterpret_cast<GstParentBufferMeta*>(raw_meta);
+    if (!meta->buffer) {
+      continue;
+    }
+    (buffers_share_memory(buffer, meta->buffer) || is_deferred_pool_buffer_proxy(meta->buffer)
+         ? lifetime_parents
+         : other_parents)
+        .push_back(meta->buffer);
+  }
+
+  if (lifetime_parents.empty()) {
+    if (std::find(retained.begin(), retained.end(), buffer) == retained.end()) {
+      retained.push_back(gst_buffer_ref(buffer));
+    }
+    return;
+  }
+
+  for (GstBuffer* parent : lifetime_parents) {
+    retain_parent_lifetime_roots(parent, retained, visited);
+  }
+  for (GstBuffer* parent : other_parents) {
+    retain_parent_lifetime_roots(parent, retained, visited);
+  }
+}
+
 SeqOverrides next_seq_overrides(InputStream::State& st) {
   SeqOverrides out;
   out.input_seq = std::optional<int64_t>(st.next_input_seq.fetch_add(1, std::memory_order_relaxed));
@@ -846,75 +985,129 @@ GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
   return (sample && GST_IS_SAMPLE(sample)) ? sample : nullptr;
 }
 
-bool wrap_holder_buffer_for_zero_copy_loan_transfer(GstBuffer** buffer, const Sample* sample,
-                                                    const std::shared_ptr<void>& holder,
-                                                    const char* where) {
+bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Sample* sample,
+                                                  const std::shared_ptr<void>& holder,
+                                                  const char* where) {
   if (!buffer || !*buffer) {
     return false;
+  }
+
+  GstBuffer* holder_buffer = nullptr;
+  if (GstSample* holder_sample = holder_as_gstsample(holder)) {
+    holder_buffer = gst_sample_get_buffer(holder_sample);
   }
   const bool sample_has_loans =
       sample != nullptr && pipeline_internal::sample_has_zero_copy_loans(*sample);
   const bool holder_has_loans = pipeline_internal::holder_has_zero_copy_loans(holder);
-  if (!sample_has_loans && !holder_has_loans) {
+  const bool has_parent = gst_buffer_get_parent_buffer_meta(*buffer) != nullptr;
+  const bool needs_loan_envelope =
+      !has_parent && (sample_has_loans || holder_has_loans) && holder_buffer == *buffer;
+  const bool needs_parent_envelope =
+      has_parent && holder_buffer == *buffer && !gst_buffer_is_writable(*buffer);
+
+  if (!needs_loan_envelope && !needs_parent_envelope && !has_parent &&
+      (!holder_buffer || holder_buffer == *buffer)) {
     return false;
   }
 
-  GstBuffer* transfer = gst_buffer_new();
-  if (!transfer) {
-    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
-                             ": failed to allocate zero-copy loan transfer buffer");
+  std::vector<GstBuffer*> parents;
+  if (needs_loan_envelope || needs_parent_envelope) {
+    if (needs_loan_envelope) {
+      parents.push_back(gst_buffer_ref(holder_buffer ? holder_buffer : *buffer));
+    }
+    GstBuffer* transfer = gst_buffer_new();
+    if (!transfer) {
+      for (GstBuffer* parent : parents) {
+        gst_buffer_unref(parent);
+      }
+      throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                               ": failed to allocate zero-copy transfer buffer");
+    }
+    const GstBufferCopyFlags copy_flags =
+        static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                                        GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
+    if (!gst_buffer_copy_into(transfer, *buffer, copy_flags, 0, -1)) {
+      gst_buffer_unref(transfer);
+      for (GstBuffer* parent : parents) {
+        gst_buffer_unref(parent);
+      }
+      throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                               ": failed to wrap zero-copy holder buffer for transfer");
+    }
+    release_input_buffer(*buffer, "InputStream::zero_copy_transfer:source_unref");
+    *buffer = transfer;
   }
-  const GstBufferCopyFlags copy_flags =
-      static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
-                                      GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
-  if (!gst_buffer_copy_into(transfer, *buffer, copy_flags, 0, -1)) {
-    gst_buffer_unref(transfer);
+
+  if (!gst_buffer_is_writable(*buffer)) {
+    for (GstBuffer* parent : parents) {
+      gst_buffer_unref(parent);
+    }
     throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
-                             ": failed to wrap zero-copy holder buffer for transfer");
+                             ": transfer buffer is not writable");
   }
-  GstBuffer* parent = *buffer;
-  if (GstSample* holder_sample = holder_as_gstsample(holder)) {
-    if (GstBuffer* holder_buffer = gst_sample_get_buffer(holder_sample)) {
-      parent = holder_buffer;
+
+  while (GstParentBufferMeta* meta = gst_buffer_get_parent_buffer_meta(*buffer)) {
+    GstBuffer* parent = meta->buffer;
+    std::vector<GstBuffer*> visited;
+    retain_parent_lifetime_roots(parent, parents, visited);
+    if (!gst_buffer_remove_meta(*buffer, &meta->parent)) {
+      for (GstBuffer* retained : parents) {
+        gst_buffer_unref(retained);
+      }
+      throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                               ": failed to replace pooled parent lifetime metadata");
     }
   }
-  if (!gst_buffer_add_parent_buffer_meta(transfer, parent)) {
-    gst_buffer_unref(transfer);
-    throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
-                             ": failed to retain zero-copy holder parent buffer");
+  if (!needs_parent_envelope && holder_buffer && holder_buffer != *buffer) {
+    std::vector<GstBuffer*> visited;
+    retain_parent_lifetime_roots(holder_buffer, parents, visited);
+  }
+  if (parents.empty()) {
+    return needs_loan_envelope;
   }
 
-  GstBuffer* loan_lifetime_parent = gst_buffer_new();
-  if (!loan_lifetime_parent) {
-    gst_buffer_unref(transfer);
+  GstBuffer* proxy = gst_buffer_new();
+  if (!proxy) {
+    for (GstBuffer* parent : parents) {
+      gst_buffer_unref(parent);
+    }
     throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
-                             ": failed to allocate loan lifetime parent buffer");
+                             ": failed to allocate deferred parent proxy");
   }
-  bool attached = false;
-  if (sample_has_loans) {
-    pipeline_internal::attach_zero_copy_loans_to_gst_buffer(loan_lifetime_parent, *sample);
-    attached = true;
-  }
-  if (holder_has_loans) {
-    attached = pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(
-                   loan_lifetime_parent, holder) ||
-               attached;
-  }
-  if (!attached) {
-    gst_buffer_unref(loan_lifetime_parent);
-    gst_buffer_unref(transfer);
-    return false;
-  }
-  if (!gst_buffer_add_parent_buffer_meta(transfer, loan_lifetime_parent)) {
-    gst_buffer_unref(loan_lifetime_parent);
-    gst_buffer_unref(transfer);
+  auto deferred_parents = std::make_unique<DeferredPoolBufferParents>();
+  deferred_parents->buffers = std::move(parents);
+  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(proxy), deferred_pool_buffer_parents_quark(),
+                            deferred_parents.release(), enqueue_deferred_pool_buffer_parents);
+  if (!gst_buffer_add_parent_buffer_meta(*buffer, proxy)) {
+    gst_buffer_unref(proxy);
     throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
-                             ": failed to retain zero-copy loan lifetime parent");
+                             ": failed to retain deferred pool parent proxy");
   }
-  gst_buffer_unref(loan_lifetime_parent);
+  gst_buffer_unref(proxy);
 
-  release_input_buffer(*buffer, "InputStream::zero_copy_transfer:loan_source_unref");
-  *buffer = transfer;
+  if (sample_has_loans || holder_has_loans) {
+    GstBuffer* loan_parent = gst_buffer_new();
+    if (!loan_parent) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                               ": failed to allocate loan lifetime parent");
+    }
+    bool attached = false;
+    if (sample_has_loans) {
+      pipeline_internal::attach_zero_copy_loans_to_gst_buffer(loan_parent, *sample);
+      attached = true;
+    }
+    if (holder_has_loans) {
+      attached = pipeline_internal::attach_zero_copy_loans_from_holder_to_gst_buffer(loan_parent,
+                                                                                     holder) ||
+                 attached;
+    }
+    if (attached && !gst_buffer_add_parent_buffer_meta(*buffer, loan_parent)) {
+      gst_buffer_unref(loan_parent);
+      throw std::runtime_error(std::string(where ? where : "InputStream::zero_copy_transfer") +
+                               ": failed to retain loan lifetime parent");
+    }
+    gst_buffer_unref(loan_parent);
+  }
   return true;
 }
 
@@ -1296,7 +1489,7 @@ bool push_holder_transport(
   }
   dump_buffer_memories(buf, where ? where : "InputStream::push_holder_transport");
   validate_holder_video_meta_or_throw(st, buf);
-  (void)wrap_holder_buffer_for_zero_copy_loan_transfer(
+  (void)prepare_holder_buffer_for_zero_copy_transfer(
       &buf, fail_msg, holder, where ? where : "InputStream::push_holder_transport");
 
   if (GstSample* sample = holder_as_gstsample(holder)) {
@@ -1555,7 +1748,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
       holder_buf = nullptr;
     }
     if (holder_buf) {
-      (void)wrap_holder_buffer_for_zero_copy_loan_transfer(
+      (void)prepare_holder_buffer_for_zero_copy_transfer(
           &holder_buf, &msg, input.storage ? input.storage->holder : std::shared_ptr<void>{},
           "InputStream::try_push_message(holder)");
       BuiltBuffer pending;
@@ -1619,7 +1812,7 @@ HolderFastPathResult try_push_message_holder_fastpath(
         dump_sima_meta_full(holder_buf, "JPEG_ZC_TRACE_FASTPATH");
         dump_buffer_memories(holder_buf, "JPEG_ZC_TRACE_FASTPATH");
       }
-      (void)wrap_holder_buffer_for_zero_copy_loan_transfer(
+      (void)prepare_holder_buffer_for_zero_copy_transfer(
           &holder_buf, &msg, input.storage ? input.storage->holder : std::shared_ptr<void>{},
           "InputStream::try_push_message(holder)");
       holder_guard.release();

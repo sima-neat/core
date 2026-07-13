@@ -1369,7 +1369,8 @@ install_debs_on_board() {
       fi
     done
     log "Restoring native Modalix packages before the NEAT transaction: ${preserved_native_packages[*]}"
-    if ! run_sudo apt-get install -y --fix-broken --no-remove "${preserved_native_packages[@]}"; then
+    if ! run_sudo apt-get install -y --fix-broken --no-remove \
+      -o Dpkg::Options::=--force-overwrite "${preserved_native_packages[@]}"; then
       echo "Failed to restore native Modalix packages before the NEAT install." >&2
       exit 1
     fi

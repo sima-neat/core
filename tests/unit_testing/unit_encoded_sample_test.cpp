@@ -181,6 +181,8 @@ int main() {
       require(gst_buffer_pool_acquire_buffer(pool, &source_buffer, nullptr) == GST_FLOW_OK,
               "failed to acquire encoded source buffer");
       GstBuffer* expected_parent = source_buffer;
+      GstMemory* expected_memory = gst_buffer_peek_memory(source_buffer, 0);
+      require(expected_memory != nullptr, "pooled encoded buffer should carry memory");
       GstMapInfo map{};
       require(gst_buffer_map(source_buffer, &map, GST_MAP_WRITE),
               "failed to map encoded source buffer");
@@ -259,9 +261,8 @@ int main() {
                   gst_structure_get_int64(transfer_structure, "input-seq", &transfer_input_seq) &&
                   transfer_input_seq == 1,
               "zero-copy transfer should contain the updated metadata from the writable clone");
-      GstParentBufferMeta* parent_meta = gst_buffer_get_parent_buffer_meta(transfer_buffer);
-      require(parent_meta != nullptr && parent_meta->buffer == expected_parent,
-              "zero-copy transfer should retain the original pooled buffer as its parent");
+      require(gst_buffer_peek_memory(transfer_buffer, 0) == expected_memory,
+              "zero-copy transfer should preserve the original pooled memory");
 
       GstBufferPoolAcquireParams acquire_params{};
       acquire_params.flags = GST_BUFFER_POOL_ACQUIRE_FLAG_DONTWAIT;
@@ -274,8 +275,26 @@ int main() {
       require(blocked_flow != GST_FLOW_OK,
               "source buffer pool must not reacquire a buffer retained by a zero-copy transfer");
 
+      GstBuffer* downstream_copy = gst_buffer_new();
+      require(downstream_copy != nullptr, "failed to allocate downstream zero-copy view");
+      const GstBufferCopyFlags copy_flags =
+          static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS |
+                                          GST_BUFFER_COPY_META | GST_BUFFER_COPY_MEMORY);
+      require(gst_buffer_copy_into(downstream_copy, transfer_buffer, copy_flags, 0, -1),
+              "failed to copy downstream zero-copy view");
       gst_sample_unref(pulled);
       stream.close();
+
+      blocked_buffer = nullptr;
+      const GstFlowReturn copied_view_blocked_flow =
+          gst_buffer_pool_acquire_buffer(pool, &blocked_buffer, &acquire_params);
+      if (blocked_buffer) {
+        gst_buffer_unref(blocked_buffer);
+      }
+      require(copied_view_blocked_flow != GST_FLOW_OK,
+              "source pool must remain blocked while a downstream zero-copy view is alive");
+      gst_buffer_unref(downstream_copy);
+
       GstBuffer* reacquired_buffer = nullptr;
       GstFlowReturn reacquire_flow = GST_FLOW_EOS;
       for (int attempt = 0; attempt < 100 && reacquire_flow != GST_FLOW_OK; ++attempt) {
@@ -286,6 +305,8 @@ int main() {
       }
       require(reacquire_flow == GST_FLOW_OK,
               "source buffer should return to its pool after transfer release");
+      require(reacquired_buffer == expected_parent,
+              "source pool should recycle the original buffer after transfer release");
       require(gate->inflight() == 0,
               "input holder loan should release with the downstream transfer buffer");
 
@@ -293,16 +314,32 @@ int main() {
       GstStructure* legacy_structure =
           legacy_meta ? gst_custom_meta_get_structure(legacy_meta) : nullptr;
       require(legacy_structure != nullptr, "failed to attach legacy GstSimaMeta");
-      require(update_simaai_meta_fields(reacquired_buffer, std::nullopt, 0, 0, std::nullopt,
+      require(update_simaai_meta_fields(reacquired_buffer, std::nullopt, 2, 2, std::nullopt,
                                         std::nullopt),
               "failed to initialize legacy GstSimaMeta");
-      GstSample* legacy_gst_sample = gst_sample_new(reacquired_buffer, caps, nullptr, nullptr);
+      GstBuffer* legacy_view = gst_buffer_new();
+      require(legacy_view != nullptr, "failed to allocate legacy zero-copy view");
+      require(gst_buffer_copy_into(legacy_view, reacquired_buffer, copy_flags, 0, -1),
+              "failed to create legacy zero-copy view");
+      require(gst_buffer_add_parent_buffer_meta(legacy_view, reacquired_buffer) != nullptr,
+              "failed to retain legacy pooled parent");
+      GstBuffer* nested_view = gst_buffer_new();
+      require(nested_view != nullptr, "failed to allocate nested zero-copy view");
+      require(gst_buffer_copy_into(nested_view, legacy_view, copy_flags, 0, -1),
+              "failed to create nested zero-copy view");
+      require(gst_buffer_add_parent_buffer_meta(nested_view, legacy_view) != nullptr,
+              "failed to retain intermediate zero-copy view");
+      GstSample* legacy_gst_sample = gst_sample_new(nested_view, caps, nullptr, nullptr);
+      gst_buffer_unref(nested_view);
+      gst_buffer_unref(legacy_view);
       gst_buffer_unref(reacquired_buffer);
       require(legacy_gst_sample != nullptr, "failed to create legacy metadata GstSample");
       Sample legacy_holder_sample = sample_from_gst_encoded(legacy_gst_sample, h264_caps);
       gst_sample_unref(legacy_gst_sample);
       legacy_holder_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
       legacy_holder_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
+      legacy_holder_sample.input_seq = 3;
+      legacy_holder_sample.orig_input_seq = 3;
       require(sample_timing_overrides_from_sample(legacy_holder_sample).empty(),
               "legacy holder fixture must not carry a timing override");
 
@@ -329,14 +366,61 @@ int main() {
           legacy_pipeline, legacy_appsrc, legacy_appsink,
           derive_sample_spec_or_throw(legacy_holder_sample), src_opt, stream_opt, {}, nullptr);
       require(legacy_stream.try_push_message(legacy_holder_sample),
-              "legacy metadata holder push should not require a writable envelope");
+              "legacy metadata holder push should create a writable metadata view");
       legacy_holder_sample = Sample{};
 
       GstSample* legacy_pulled =
           gst_app_sink_try_pull_sample(GST_APP_SINK(legacy_appsink), GST_SECOND);
       require(legacy_pulled != nullptr, "legacy metadata holder pull timed out");
-      require(gst_buffer_get_parent_buffer_meta(gst_sample_get_buffer(legacy_pulled)) == nullptr,
-              "empty timing overrides must not create a writable metadata envelope");
+      GstBuffer* legacy_transfer_buffer = gst_sample_get_buffer(legacy_pulled);
+      require(legacy_transfer_buffer != expected_parent,
+              "metadata update should use a zero-copy transfer envelope");
+      GstCustomMeta* legacy_transfer_meta =
+          gst_buffer_get_custom_meta(legacy_transfer_buffer, "GstSimaMeta");
+      GstStructure* legacy_transfer_structure =
+          legacy_transfer_meta ? gst_custom_meta_get_structure(legacy_transfer_meta) : nullptr;
+      gint64 legacy_transfer_input_seq = -1;
+      require(legacy_transfer_structure &&
+                  gst_structure_get_int64(legacy_transfer_structure, "input-seq",
+                                          &legacy_transfer_input_seq) &&
+                  legacy_transfer_input_seq == 3,
+              "writable metadata view should contain the updated input sequence");
+      require(gst_buffer_peek_memory(legacy_transfer_buffer, 0) == expected_memory,
+              "no-loan transfer should preserve the original pooled memory");
+
+      Sample replay_sample = sample_from_gst_encoded(legacy_pulled, h264_caps);
+      replay_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
+      replay_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
+      replay_sample.input_seq = 4;
+      replay_sample.orig_input_seq = 4;
+      gst_sample_unref(legacy_pulled);
+      require(legacy_stream.try_push_message(replay_sample),
+              "replayed transfer should create another writable metadata view");
+      replay_sample = Sample{};
+
+      legacy_pulled = gst_app_sink_try_pull_sample(GST_APP_SINK(legacy_appsink), GST_SECOND);
+      require(legacy_pulled != nullptr, "replayed metadata holder pull timed out");
+      legacy_transfer_buffer = gst_sample_get_buffer(legacy_pulled);
+      legacy_transfer_meta = gst_buffer_get_custom_meta(legacy_transfer_buffer, "GstSimaMeta");
+      legacy_transfer_structure =
+          legacy_transfer_meta ? gst_custom_meta_get_structure(legacy_transfer_meta) : nullptr;
+      legacy_transfer_input_seq = -1;
+      require(legacy_transfer_structure &&
+                  gst_structure_get_int64(legacy_transfer_structure, "input-seq",
+                                          &legacy_transfer_input_seq) &&
+                  legacy_transfer_input_seq == 4,
+              "replayed writable view should contain the updated input sequence");
+      require(gst_buffer_peek_memory(legacy_transfer_buffer, 0) == expected_memory,
+              "replayed transfer should preserve the original pooled memory");
+
+      blocked_buffer = nullptr;
+      const GstFlowReturn legacy_blocked_flow =
+          gst_buffer_pool_acquire_buffer(pool, &blocked_buffer, &acquire_params);
+      if (blocked_buffer) {
+        gst_buffer_unref(blocked_buffer);
+      }
+      require(legacy_blocked_flow != GST_FLOW_OK,
+              "source pool must not reacquire a no-loan holder retained downstream");
       gst_sample_unref(legacy_pulled);
       legacy_stream.close();
 
@@ -349,7 +433,9 @@ int main() {
         }
       }
       require(reacquire_flow == GST_FLOW_OK,
-              "legacy metadata source buffer should return to its pool after transfer release");
+              "nested metadata source buffer should return to its pool after transfer release");
+      require(reacquired_buffer == expected_parent,
+              "nested metadata source pool should recycle the original buffer");
       gst_buffer_unref(reacquired_buffer);
       require(gst_buffer_pool_set_active(pool, FALSE),
               "failed to deactivate encoded source buffer pool");
