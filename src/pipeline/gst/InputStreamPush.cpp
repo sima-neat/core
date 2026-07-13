@@ -103,6 +103,53 @@ void enqueue_deferred_pool_buffer_parents(gpointer data) {
   deferred_pool_buffer_releaser().enqueue(std::move(parents->buffers));
 }
 
+bool buffers_share_memory(GstBuffer* lhs, GstBuffer* rhs) {
+  for (guint i = 0; i < gst_buffer_n_memory(lhs); ++i) {
+    GstMemory* lhs_memory = gst_buffer_peek_memory(lhs, i);
+    for (guint j = 0; j < gst_buffer_n_memory(rhs); ++j) {
+      if (lhs_memory == gst_buffer_peek_memory(rhs, j)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void retain_parent_lifetime_roots(GstBuffer* buffer, std::vector<GstBuffer*>& retained,
+                                  std::vector<GstBuffer*>& visited) {
+  if (!buffer || std::find(visited.begin(), visited.end(), buffer) != visited.end()) {
+    return;
+  }
+  visited.push_back(buffer);
+
+  std::vector<GstBuffer*> shared_memory_parents;
+  std::vector<GstBuffer*> other_parents;
+  gpointer state = nullptr;
+  while (GstMeta* raw_meta =
+             gst_buffer_iterate_meta_filtered(buffer, &state, GST_PARENT_BUFFER_META_API_TYPE)) {
+    auto* meta = reinterpret_cast<GstParentBufferMeta*>(raw_meta);
+    if (!meta->buffer) {
+      continue;
+    }
+    (buffers_share_memory(buffer, meta->buffer) ? shared_memory_parents : other_parents)
+        .push_back(meta->buffer);
+  }
+
+  if (shared_memory_parents.empty()) {
+    if (std::find(retained.begin(), retained.end(), buffer) == retained.end()) {
+      retained.push_back(gst_buffer_ref(buffer));
+    }
+    return;
+  }
+
+  for (GstBuffer* parent : shared_memory_parents) {
+    retain_parent_lifetime_roots(parent, retained, visited);
+  }
+  for (GstBuffer* parent : other_parents) {
+    retain_parent_lifetime_roots(parent, retained, visited);
+  }
+}
+
 SeqOverrides next_seq_overrides(InputStream::State& st) {
   SeqOverrides out;
   out.input_seq = std::optional<int64_t>(st.next_input_seq.fetch_add(1, std::memory_order_relaxed));
@@ -994,10 +1041,8 @@ bool prepare_holder_buffer_for_zero_copy_transfer(GstBuffer** buffer, const Samp
 
   while (GstParentBufferMeta* meta = gst_buffer_get_parent_buffer_meta(*buffer)) {
     GstBuffer* parent = meta->buffer;
-    const bool seen = std::find(parents.begin(), parents.end(), parent) != parents.end();
-    if (!seen) {
-      parents.push_back(gst_buffer_ref(parent));
-    }
+    std::vector<GstBuffer*> visited;
+    retain_parent_lifetime_roots(parent, parents, visited);
     if (!gst_buffer_remove_meta(*buffer, &meta->parent)) {
       for (GstBuffer* retained : parents) {
         gst_buffer_unref(retained);

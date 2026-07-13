@@ -1733,6 +1733,25 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_test(
+    NAME codec_runtime_nested_zero_copy_boundary_test
+    COMMAND codec_runtime_stream_test
+            --case rtsp-h264-decoded
+            --frames 5
+            --repeat 2
+            --determinism
+            --nested-boundary
+  )
+  append_pipeline_test_env(codec_runtime_nested_zero_copy_boundary_test)
+  set_property(
+    TEST codec_runtime_nested_zero_copy_boundary_test
+    APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;determinism;lifecycle"
+  )
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(codec_runtime_nested_zero_copy_boundary_test PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_test(
     NAME codec_runtime_bad_url_diagnostics
     COMMAND codec_runtime_stream_test --case bad-url-diagnostics --timeout-ms 2000
   )
