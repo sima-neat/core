@@ -14,6 +14,7 @@ Use `MetadataSender` when an external viewer, recorder, or service accepts UTF-8
 - Default host: `127.0.0.1`
 - Default metadata port base: `9100`
 - Channel port rule: `metadata_port_base + channel`
+- Default send mode: nonblocking (`MSG_DONTWAIT`)
 - Payload encoding: UTF-8 JSON text
 - Required top-level fields: `type`, `data`
 
@@ -67,6 +68,40 @@ sender.send_raw_json(
     &err);
 ```
 
+## Real-Time Dispatch Is Nonblocking by Default
+
+`MetadataSender` applies `MSG_DONTWAIT` to each datagram by default so a locally
+congested send buffer cannot delay a thread that also dispatches video or
+inference work. When the kernel cannot accept a datagram immediately, the send
+returns `false` instead of waiting. Treat that metadata packet as dropped and
+continue real-time work; UDP delivery is not guaranteed.
+
+The default constructor and the default send options are equivalent:
+
+```cpp
+simaai::neat::MetadataSenderSendOptions send_opt;
+simaai::neat::MetadataSender sender(opt, send_opt, &err);
+```
+
+Callers that explicitly prefer blocking delivery attempts can opt in:
+
+```cpp
+simaai::neat::MetadataSenderSendOptions send_opt;
+send_opt.nonblocking = false;
+simaai::neat::MetadataSender sender(opt, send_opt, &err);
+```
+
+Use `stats()` to distinguish congestion from other failures and, in explicit
+blocking mode, to detect slow calls:
+
+```cpp
+const auto stats = sender.stats();
+std::cerr << "sent=" << stats.datagrams_sent
+          << " would_block=" << stats.would_block
+          << " enobufs=" << stats.no_buffer_space
+          << " max_send_ns=" << stats.max_send_duration_ns << '\n';
+```
+
 ## Python
 
 ```python
@@ -97,4 +132,10 @@ sender.send_metadata(
     12345,
     "frame-7",
 )
+
+stats = sender.stats()
+print(stats.datagrams_sent, stats.would_block, stats.max_send_duration_ns)
 ```
+
+As in C++, explicitly set `send_opt.nonblocking = False` and pass it as the
+second constructor argument only when blocking behavior is required.

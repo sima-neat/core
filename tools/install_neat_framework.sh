@@ -814,6 +814,145 @@ deb_package_is_installed() {
   dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii '
 }
 
+deb_package_is_present() {
+  dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^i'
+}
+
+deb_package_installed_version() {
+  dpkg-query -W -f='${Version}' "$1" 2>/dev/null
+}
+
+apt_candidate_version() {
+  local package="$1"
+  LC_ALL=C apt-cache policy "${package}" 2>/dev/null |
+    awk '/^[[:space:]]*Candidate:/ { print $2; exit }'
+}
+
+apt_exact_dependency_version() {
+  local package="$1"
+  local package_version="$2"
+  local dependency="$3"
+  local control
+  control="$(LC_ALL=C apt-cache show "${package}=${package_version}" 2>/dev/null)" || return 1
+  [[ -n "${control}" ]] || return 1
+
+  python3 -c '
+import re
+import sys
+
+dependency = sys.argv[1]
+paragraph = sys.stdin.read().split("\n\n", 1)[0]
+unfolded = re.sub(r"\n[ \t]+", " ", paragraph)
+match = re.search(
+    rf"(?:^|,)\s*{re.escape(dependency)}(?:\:[^\s(,|]+)?\s*"
+    rf"\(\s*=\s*([^\s)]+)\s*\)",
+    next((line[9:] for line in unfolded.splitlines() if line.startswith("Depends: ")), ""),
+)
+if match is None:
+    raise SystemExit(1)
+print(match.group(1))
+' "${dependency}" <<<"${control}"
+}
+
+local_deb_for_exact_package() {
+  local package="$1"
+  local version="$2"
+  local deb deb_package deb_version
+  for deb in "${DEBS[@]:-}"; do
+    [[ -f "${deb}" ]] || continue
+    deb_package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    [[ "${deb_package}" == "${package}" ]] || continue
+    deb_version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
+    if [[ "${deb_version}" == "${version}" ]]; then
+      printf '%s\n' "${deb}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+exact_package_install_spec() {
+  local package="$1"
+  local version="$2"
+  local local_deb apt_control
+  local_deb="$(local_deb_for_exact_package "${package}" "${version}" || true)"
+  if [[ -n "${local_deb}" ]]; then
+    printf '%s\n' "${local_deb}"
+    return 0
+  fi
+
+  apt_control="$(LC_ALL=C apt-cache show "${package}=${version}" 2>/dev/null)" || true
+  if [[ -n "${apt_control}" ]]; then
+    printf '%s=%s\n' "${package}" "${version}"
+    return 0
+  fi
+
+  echo "Required canonical Modalix package is unavailable locally and from apt: ${package}=${version}" >&2
+  return 1
+}
+
+native_modalix_repair_is_required() {
+  local package version
+  for package in simaai-gst-plugins simaai-palette-modalix; do
+    if ! deb_package_is_installed "${package}"; then
+      return 0
+    fi
+  done
+
+  # Old CI runs briefly published private same-name packages. They cannot
+  # satisfy palette dependencies such as libcamera (= 2.1.1), even when they
+  # self-Provide that version. Repair them before installing the local stack.
+  for package in \
+    libcamera libcamera-dev libcamera-tools \
+    simaai-memory-lib simaai-memory-lib-dev; do
+    version="$(deb_package_installed_version "${package}" || true)"
+    if [[ "${version}" == *+neat* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+native_modalix_restore_specs() {
+  local out_array_name="$1"
+  local -n out_array="${out_array_name}"
+  local palette_version package version spec
+
+  palette_version="$(apt_candidate_version simaai-palette-modalix)"
+  if [[ -z "${palette_version}" || "${palette_version}" == "(none)" ]]; then
+    echo "Required native Modalix package has no apt candidate: simaai-palette-modalix" >&2
+    return 1
+  fi
+
+  out_array=()
+  for package in libcamera libcamera-tools simaai-memory-lib; do
+    version="$(apt_exact_dependency_version \
+      simaai-palette-modalix "${palette_version}" "${package}")" || {
+      echo "simaai-palette-modalix=${palette_version} has no exact dependency on ${package}" >&2
+      return 1
+    }
+    spec="$(exact_package_install_spec "${package}" "${version}")" || return 1
+    out_array+=("${spec}")
+
+    case "${package}" in
+      libcamera)
+        if deb_package_is_present libcamera-dev; then
+          spec="$(exact_package_install_spec libcamera-dev "${version}")" || return 1
+          out_array+=("${spec}")
+        fi
+        ;;
+      simaai-memory-lib)
+        if deb_package_is_present simaai-memory-lib-dev; then
+          spec="$(exact_package_install_spec simaai-memory-lib-dev "${version}")" || return 1
+          out_array+=("${spec}")
+        fi
+        ;;
+    esac
+  done
+
+  out_array+=(simaai-gst-plugins "simaai-palette-modalix=${palette_version}")
+}
+
 remove_installed_local_deb_packages() {
   if ! command -v dpkg-deb >/dev/null 2>&1; then
     return 0
@@ -1348,39 +1487,41 @@ install_debs_on_board() {
     log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
   fi
 
-  # Restore native palette packages before the local transaction. Otherwise,
-  # apt may "repair" a board left by an older partial install by removing
-  # simaai-palette-modalix instead of restoring its exact simaai-gst-plugins
-  # dependency. --no-remove turns any similar future regression into a failed,
+  # Resolve native palette repairs up front, but install them atomically with
+  # the local NEAT DEBs.  An older neat-gst-plugins may itself depend on a
+  # private libcamera version, so a separate native-first downgrade would make
+  # apt remove that package before the canonical replacement is visible.
+  # --no-remove turns any incomplete future transaction into a failed,
   # non-destructive install instead of silently deleting platform packages.
-  local -a preserved_native_packages=(simaai-gst-plugins simaai-palette-modalix)
-  local repair_native_packages=0
-  local package
-  for package in "${preserved_native_packages[@]}"; do
-    if ! deb_package_is_installed "${package}"; then
-      repair_native_packages=1
-    fi
-  done
-  if [[ "${repair_native_packages}" -eq 1 ]]; then
-    for package in "${preserved_native_packages[@]}"; do
-      if ! apt-cache show "${package}" >/dev/null 2>&1; then
-        echo "Required native Modalix package is unavailable from apt: ${package}" >&2
-        exit 1
-      fi
-    done
-    log "Restoring native Modalix packages before the NEAT transaction: ${preserved_native_packages[*]}"
-    if ! run_sudo apt-get install -y --fix-broken --no-remove \
-      -o Dpkg::Options::=--force-overwrite "${preserved_native_packages[@]}"; then
-      echo "Failed to restore native Modalix packages before the NEAT install." >&2
+  local -a native_restore_specs=()
+  if native_modalix_repair_is_required; then
+    if ! native_modalix_restore_specs native_restore_specs; then
+      echo "Failed to resolve the canonical native Modalix package transaction." >&2
       exit 1
     fi
+    log "Adding native Modalix packages and exact palette dependencies to the atomic NEAT transaction:"
+    printf '  %s\n' "${native_restore_specs[@]}"
   fi
+
+  # Avoid passing the same local canonical DEB twice when it is both part of
+  # the artifact manifest and selected as an exact palette dependency.
+  local -a board_install_specs=()
+  local -A seen_install_specs=()
+  local spec
+  for spec in "${DEBS[@]}" "${native_restore_specs[@]}"; do
+    [[ -n "${spec}" ]] || continue
+    if [[ -n "${seen_install_specs[${spec}]+x}" ]]; then
+      continue
+    fi
+    seen_install_specs["${spec}"]=1
+    board_install_specs+=("${spec}")
+  done
 
   local -a apt_install_args=(
     apt-get install -y --fix-broken --allow-downgrades --reinstall --no-remove
     -o Dpkg::Options::=--force-overwrite
   )
-  if run_sudo "${apt_install_args[@]}" "${DEBS[@]}"; then
+  if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     repair_stale_global_dispatcher_lib
     repair_global_sima_neat_lib_links
     verify_global_sima_neat_lib_links
@@ -1399,7 +1540,7 @@ install_debs_on_board() {
 
   log "apt-get install failed; NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON, removing installed NEAT packages represented by the local DEB set and retrying apt."
   remove_installed_local_deb_packages
-  if run_sudo "${apt_install_args[@]}" "${DEBS[@]}"; then
+  if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     repair_stale_global_dispatcher_lib
     repair_global_sima_neat_lib_links
     verify_global_sima_neat_lib_links
@@ -1417,6 +1558,10 @@ install_debs_on_board() {
     log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
   fi
 
+  if [[ "${#native_restore_specs[@]}" -gt 0 ]]; then
+    echo "Direct dpkg fallback cannot safely complete the required native Modalix repair transaction." >&2
+    exit 1
+  fi
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
   repair_stale_global_dispatcher_lib
   repair_global_sima_neat_lib_links
@@ -1508,6 +1653,10 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
 
   log_green "Paired DevKit sync completed: ${ssh_target}"
 }
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
 
 parse_args "$@"
 

@@ -75,29 +75,45 @@ bool vertex_is_live_source_context(const auto& graph, std::size_t vertex) {
 
 void validate_realtime_inflight_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+    throw std::runtime_error(std::string("RealtimeGraphLinkOptions::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-void validate_realtime_inflight_options(const GraphLinkOptions& options) {
+void validate_realtime_inflight_options(const RealtimeGraphLinkOptions& options) {
   validate_realtime_inflight_option("max_inflight_per_stream", options.max_inflight_per_stream);
   validate_realtime_inflight_option("max_inflight_total", options.max_inflight_total);
 }
 
-void merge_realtime_link_options(GraphLinkOptions& existing, GraphLinkOptions& incoming) {
+bool is_realtime_stream_policy(GraphLinkPolicy policy) {
+  return policy == GraphLinkPolicy::RealtimeLatestByStream ||
+         policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+}
+
+void merge_realtime_link_options(RealtimeGraphLinkOptions& existing,
+                                 RealtimeGraphLinkOptions& incoming) {
   validate_realtime_inflight_options(existing);
   validate_realtime_inflight_options(incoming);
 
-  existing.policy = GraphLinkPolicy::RealtimeLatestByStream;
-  incoming.policy = GraphLinkPolicy::RealtimeLatestByStream;
+  if (existing.policy != GraphLinkPolicy::Default && incoming.policy != GraphLinkPolicy::Default &&
+      existing.policy != incoming.policy) {
+    throw std::runtime_error("Graph::connect: cannot mix RealtimeLatestByStream and "
+                             "RealtimeEveryFrameByStream producers on one fan-in");
+  }
+
+  const GraphLinkPolicy merged_policy =
+      existing.policy == GraphLinkPolicy::RealtimeEveryFrameByStream ||
+              incoming.policy == GraphLinkPolicy::RealtimeEveryFrameByStream
+          ? GraphLinkPolicy::RealtimeEveryFrameByStream
+          : GraphLinkPolicy::RealtimeLatestByStream;
+  existing.policy = merged_policy;
+  incoming.policy = merged_policy;
   existing.queue_depth = std::max(existing.queue_depth, incoming.queue_depth);
   incoming.queue_depth = existing.queue_depth;
-  existing.max_inflight_per_stream =
-      std::max(existing.max_inflight_per_stream, incoming.max_inflight_per_stream);
-  incoming.max_inflight_per_stream = existing.max_inflight_per_stream;
-  existing.max_inflight_total = std::max(existing.max_inflight_total, incoming.max_inflight_total);
-  incoming.max_inflight_total = existing.max_inflight_total;
+  // These are admission promises made by each producer edge. Keep them intact
+  // while normalizing shared fan-in behavior. Fused lowering configures each
+  // branch independently; the non-fused shared link resolves the strictest
+  // contract across all of its producer edges.
 }
 
 } // namespace
@@ -158,7 +174,7 @@ void Graph::CompositionGraph::recompute_unique_tail() noexcept {
 
 void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
                                                    std::string from_port, std::string to_port,
-                                                   GraphLinkOptions link_options) {
+                                                   RealtimeGraphLinkOptions link_options) {
   if (from >= vertices.size() || to >= vertices.size()) {
     throw std::runtime_error("Graph::connect: internal vertex id out of range");
   }
@@ -174,9 +190,8 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
       continue;
     }
     if (edge.to == to && edge.to_port == to_port) {
-      const bool existing_realtime =
-          edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-      const bool incoming_realtime = link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+      const bool existing_realtime = is_realtime_stream_policy(edge.link_options.policy);
+      const bool incoming_realtime = is_realtime_stream_policy(link_options.policy);
       const bool default_live_fan_in = edge.link_options.policy == GraphLinkPolicy::Default &&
                                        link_options.policy == GraphLinkPolicy::Default &&
                                        vertex_is_live_source_context(*this, edge.from) &&
@@ -206,7 +221,7 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
 
 void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
                                                std::string from_endpoint, std::string to_endpoint,
-                                               GraphLinkOptions link_options) {
+                                               RealtimeGraphLinkOptions link_options) {
   if (from >= vertices.size() || to >= vertices.size()) {
     throw std::runtime_error("Graph::connect: internal vertex id out of range");
   }
@@ -223,10 +238,8 @@ void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
         continue;
       }
       if (edge.to == to && edge.endpoint->to_endpoint == to_endpoint) {
-        const bool existing_realtime =
-            edge.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
-        const bool incoming_realtime =
-            link_options.policy == GraphLinkPolicy::RealtimeLatestByStream;
+        const bool existing_realtime = is_realtime_stream_policy(edge.link_options.policy);
+        const bool incoming_realtime = is_realtime_stream_policy(link_options.policy);
         const bool default_live_fan_in = edge.link_options.policy == GraphLinkPolicy::Default &&
                                          link_options.policy == GraphLinkPolicy::Default &&
                                          vertex_is_live_source_context(*this, edge.from) &&

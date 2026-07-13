@@ -215,6 +215,7 @@ runtime::EdgeRouterOptions graph_router_options_for_push(const runtime::RunCore&
   runtime::EdgeRouterOptions options = core.graph_options.router_options();
   if (!block) {
     options.push_timeout_ms = 0;
+    options.request_stop_on_backpressure = false;
   }
   return options;
 }

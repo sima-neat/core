@@ -216,6 +216,24 @@ int main() {
                 "Graph::build(TensorList, RunOptions) is the reusable runner shorthand");
   static_assert(!has_graph_build_input_runmode<Graph>::value,
                 "Graph::build(TensorList, RunMode, RunOptions) should not be public");
+  static_assert(
+      std::is_same_v<decltype(std::declval<Graph&>().build_fused_realtime_sources()), Run>,
+      "named fused source build must accept omitted RunOptions without changing build overloads");
+  static_assert(std::is_same_v<decltype(std::declval<Graph&>().build_fused_realtime_sources(
+                                   std::declval<const simaai::neat::RunOptions&>())),
+                               Run>,
+                "named fused source build must accept explicit RunOptions");
+  static_assert(std::is_same_v<decltype(std::declval<Graph&>().connect_realtime(
+                                   std::declval<const Graph&>(), std::declval<const Graph&>(),
+                                   std::declval<const simaai::neat::RealtimeGraphLinkOptions&>())),
+                               Graph&>,
+                "bounded realtime links must use the distinct ABI-safe connect entry point");
+  static_assert(
+      std::is_same_v<decltype(std::declval<Graph&>().connect(
+                         std::declval<const Graph&>(), std::declval<const Graph&>(),
+                         std::declval<simaai::neat::RealtimeGraphLinkOptions&>())),
+                     Graph&>,
+      "the constrained connect convenience must accept the extended realtime options type");
 
   static_assert(!has_enable_metrics_field<simaai::neat::RunOptions>::value,
                 "RunOptions::enable_metrics should not be public");

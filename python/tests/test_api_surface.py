@@ -159,6 +159,7 @@ def _assert_not_type_error(call):
 
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
+  assert hasattr(pyneat.Graph, "build_fused_realtime_source")
   assert hasattr(pyneat, "GraphOptions")
   assert hasattr(pyneat, "GraphLinkOptions")
   assert hasattr(pyneat, "GraphLinkPolicy")
@@ -236,6 +237,8 @@ def test_graph_link_options_surface():
   assert opt.stream_id == "camera0"
   assert opt.max_inflight_per_stream == 4
   assert opt.max_inflight_total == 16
+  opt.policy = pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
+  assert opt.policy == pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
 
   source = pyneat.Graph()
   source.custom_with_role(
@@ -407,6 +410,7 @@ def test_output_stage_option_structs_expose_expected_fields():
   video_encoder = pyneat.VideoSenderEncoderOptions()
   video_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30)
   metadata_sender = pyneat.MetadataSenderOptions()
+  metadata_send = pyneat.MetadataSenderSendOptions()
 
   for field in UDP_OUTPUT_OPTION_FIELDS:
     assert hasattr(udp, field), field
@@ -429,6 +433,8 @@ def test_output_stage_option_structs_expose_expected_fields():
 
   for field in METADATA_SENDER_OPTION_FIELDS:
     assert hasattr(metadata_sender, field), field
+  assert hasattr(metadata_send, "nonblocking")
+  assert metadata_send.nonblocking is True
 
   assert hasattr(pyneat, "H264ParseAlignment")
   assert hasattr(pyneat, "H264ParseStreamFormat")
@@ -436,6 +442,8 @@ def test_output_stage_option_structs_expose_expected_fields():
   assert hasattr(pyneat, "VideoSenderEncoderOptions")
   assert hasattr(pyneat, "VideoSenderOptions")
   assert hasattr(pyneat, "MetadataSenderOptions")
+  assert hasattr(pyneat, "MetadataSenderSendOptions")
+  assert hasattr(pyneat, "MetadataSenderStats")
   assert hasattr(pyneat, "MetadataSender")
   assert hasattr(pyneat.groups, "video_sender")
 
@@ -517,6 +525,7 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30))
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
   _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
+  _assert_not_type_error(lambda: pyneat.MetadataSenderSendOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions()))
 
 
