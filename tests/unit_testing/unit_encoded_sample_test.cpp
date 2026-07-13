@@ -323,7 +323,14 @@ int main() {
               "failed to create legacy zero-copy view");
       require(gst_buffer_add_parent_buffer_meta(legacy_view, reacquired_buffer) != nullptr,
               "failed to retain legacy pooled parent");
-      GstSample* legacy_gst_sample = gst_sample_new(legacy_view, caps, nullptr, nullptr);
+      GstBuffer* nested_view = gst_buffer_new();
+      require(nested_view != nullptr, "failed to allocate nested zero-copy view");
+      require(gst_buffer_copy_into(nested_view, legacy_view, copy_flags, 0, -1),
+              "failed to create nested zero-copy view");
+      require(gst_buffer_add_parent_buffer_meta(nested_view, legacy_view) != nullptr,
+              "failed to retain intermediate zero-copy view");
+      GstSample* legacy_gst_sample = gst_sample_new(nested_view, caps, nullptr, nullptr);
+      gst_buffer_unref(nested_view);
       gst_buffer_unref(legacy_view);
       gst_buffer_unref(reacquired_buffer);
       require(legacy_gst_sample != nullptr, "failed to create legacy metadata GstSample");
@@ -391,9 +398,9 @@ int main() {
         }
       }
       require(reacquire_flow == GST_FLOW_OK,
-              "legacy metadata source buffer should return to its pool after transfer release");
+              "nested metadata source buffer should return to its pool after transfer release");
       require(reacquired_buffer == expected_parent,
-              "legacy metadata source pool should recycle the original buffer");
+              "nested metadata source pool should recycle the original buffer");
       gst_buffer_unref(reacquired_buffer);
       require(gst_buffer_pool_set_active(pool, FALSE),
               "failed to deactivate encoded source buffer pool");
