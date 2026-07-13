@@ -237,6 +237,21 @@ RUN_TEST(
       require(no_queue_pipeline.find("queue max-size-buffers=") == std::string::npos,
               "async_queue_depth=0 must preserve the fused single-chain behavior");
 
+      const auto reordered_timing =
+          simaai::neat::session_test::find_fused_decoder_timing_match_for_test({100U, 200U, 300U},
+                                                                               300U);
+      require(reordered_timing.has_value() && *reordered_timing == 2U,
+              "decoder timing restoration must match a reordered output by PTS, not FIFO age");
+      const auto dropped_au_timing =
+          simaai::neat::session_test::find_fused_decoder_timing_match_for_test({100U, 200U, 300U},
+                                                                               200U);
+      require(dropped_au_timing.has_value() && *dropped_au_timing == 1U,
+              "a dropped encoded AU must not shift timing onto the next decoder output");
+      require(!simaai::neat::session_test::find_fused_decoder_timing_match_for_test(
+                   {100U, 200U, 300U}, 400U)
+                   .has_value(),
+              "an uncorrelated decoder output must retain its own timestamps instead of guessing");
+
       simaai::neat::GraphOptions outer_options;
       outer_options.async_queue_depth = 3;
       simaai::neat::Graph composed_app("composed_fused_queue_app", outer_options);

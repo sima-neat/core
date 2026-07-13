@@ -31,6 +31,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <cstdint>
 #include <deque>
@@ -1860,6 +1861,33 @@ struct FusedDecoderTimingProbeCtx {
   bool decoder_output = false;
 };
 
+std::optional<std::size_t>
+find_fused_decoder_timing_match(const std::deque<SampleTimingOverrides>& pending,
+                                std::optional<std::uint64_t> output_pts,
+                                std::optional<std::uint64_t> output_dts) {
+  const auto find_timestamp = [&](const auto& select,
+                                  std::uint64_t value) -> std::optional<std::size_t> {
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+      const auto timestamp = select(pending[i]);
+      if (timestamp.has_value() && *timestamp == value) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  };
+  if (output_pts.has_value()) {
+    if (const auto match = find_timestamp(
+            [](const SampleTimingOverrides& timing) { return timing.pts_ns; }, *output_pts)) {
+      return match;
+    }
+  }
+  if (output_dts.has_value()) {
+    return find_timestamp([](const SampleTimingOverrides& timing) { return timing.dts_ns; },
+                          *output_dts);
+  }
+  return std::nullopt;
+}
+
 GstPadProbeReturn fused_decoder_timing_probe(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
   if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
     return GST_PAD_PROBE_OK;
@@ -1888,14 +1916,31 @@ GstPadProbeReturn fused_decoder_timing_probe(GstPad*, GstPadProbeInfo* info, gpo
     return GST_PAD_PROBE_OK;
   }
 
+  std::optional<std::uint64_t> output_pts;
+  std::optional<std::uint64_t> output_dts;
+  if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))) {
+    output_pts = static_cast<std::uint64_t>(GST_BUFFER_PTS(buffer));
+  }
+  if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))) {
+    output_dts = static_cast<std::uint64_t>(GST_BUFFER_DTS(buffer));
+  }
+
   SampleTimingOverrides timing;
   {
     std::lock_guard<std::mutex> lock(ctx->branch->mutex);
-    if (ctx->branch->pending.empty()) {
+    // GstVideoDecoder preserves the input AU presentation timestamp on the
+    // corresponding decoded frame, including when frames are reordered. Use
+    // that identity (or DTS when PTS is unavailable) instead of queue age: an
+    // AU may be dropped without producing a raw frame, and FIFO consumption
+    // would then shift every subsequent timing record onto the wrong output.
+    const auto match =
+        find_fused_decoder_timing_match(ctx->branch->pending, output_pts, output_dts);
+    if (!match.has_value()) {
       return GST_PAD_PROBE_OK;
     }
-    timing = std::move(ctx->branch->pending.front());
-    ctx->branch->pending.pop_front();
+    auto it = ctx->branch->pending.begin() + static_cast<std::ptrdiff_t>(*match);
+    timing = std::move(*it);
+    ctx->branch->pending.erase(it);
   }
   if (timing.pts_ns.has_value()) {
     GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(*timing.pts_ns);
@@ -2476,6 +2521,18 @@ BuildResult build_fused_realtime_source_pipeline(
 }
 
 namespace session_test {
+
+std::optional<std::size_t>
+find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pending_pts,
+                                         std::optional<std::uint64_t> output_pts) {
+  std::deque<SampleTimingOverrides> pending;
+  for (const std::uint64_t pts : pending_pts) {
+    SampleTimingOverrides timing;
+    timing.pts_ns = pts;
+    pending.push_back(std::move(timing));
+  }
+  return find_fused_decoder_timing_match(pending, output_pts, std::nullopt);
+}
 
 std::string render_fused_realtime_ingress_queue_for_test(const GraphLinkOptions& link_options) {
   return fused_ingress_queue_fragment(1, link_options.policy ==
