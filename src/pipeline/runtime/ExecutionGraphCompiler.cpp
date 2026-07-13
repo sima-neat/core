@@ -173,7 +173,7 @@ struct NormalizedCompositionEdge {
   std::string to_port;
   std::string from_endpoint;
   std::string to_endpoint;
-  GraphLinkOptions link_options;
+  RealtimeGraphLinkOptions link_options;
   std::string stream_id;
   CombinePolicy combine_policy = CombinePolicy::None;
 };
@@ -196,7 +196,7 @@ struct LoweredExplicitEdge {
   graph::NodeId to = graph::kInvalidNode;
   std::string from_port;
   std::string to_port;
-  GraphLinkOptions link_options;
+  RealtimeGraphLinkOptions link_options;
   std::string stream_id;
 };
 
@@ -207,23 +207,23 @@ struct PublicGraphLowering {
   std::vector<LoweredExplicitEdge> lowered_edges;
 };
 
-bool realtime_latest_link(const GraphLinkOptions& opt) {
+bool realtime_latest_link(const RealtimeGraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::RealtimeLatestByStream ||
          opt.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
 }
 
-bool default_link(const GraphLinkOptions& opt) {
+bool default_link(const RealtimeGraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
 void validate_realtime_inflight_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+    throw std::runtime_error(std::string("RealtimeGraphLinkOptions::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-void validate_non_default_link_options(const GraphLinkOptions& opt) {
+void validate_non_default_link_options(const RealtimeGraphLinkOptions& opt) {
   if (default_link(opt)) {
     return;
   }
@@ -241,7 +241,8 @@ int merge_inflight_cap(int existing, int incoming) {
   return std::min(existing, incoming);
 }
 
-GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
+RealtimeGraphLinkOptions merge_link_options(RealtimeGraphLinkOptions a,
+                                            const RealtimeGraphLinkOptions& b) {
   validate_non_default_link_options(a);
   validate_non_default_link_options(b);
 
@@ -433,7 +434,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   std::unordered_set<std::string> emitted_edges;
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
-                            std::string to_endpoint, GraphLinkOptions link_options,
+                            std::string to_endpoint, RealtimeGraphLinkOptions link_options,
                             std::string stream_id, CombinePolicy combine_policy) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
@@ -462,11 +463,11 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     GraphLinkOptions, std::string, CombinePolicy, std::vector<bool>&)>
+                     RealtimeGraphLinkOptions, std::string, CombinePolicy, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
-                    GraphLinkOptions link_options, std::string stream_id,
+                    RealtimeGraphLinkOptions link_options, std::string stream_id,
                     CombinePolicy combine_policy, std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
     link_options = merge_link_options(link_options, edge.link_options);
@@ -1530,7 +1531,8 @@ void validate_unique_source_buffer_names(
 }
 
 void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId from,
-                                        graph::NodeId to, const GraphLinkOptions& link_options,
+                                        graph::NodeId to,
+                                        const RealtimeGraphLinkOptions& link_options,
                                         const std::string& stream_id) {
   const bool propagate_policy = !default_link(link_options);
   const bool propagate_stream_id = !stream_id.empty();
@@ -1556,7 +1558,7 @@ void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId 
     if (edge_index >= plan->edges.size()) {
       continue;
     }
-    GraphLinkOptions& dst = plan->edges[edge_index].link_options;
+    RealtimeGraphLinkOptions& dst = plan->edges[edge_index].link_options;
     if (propagate_policy) {
       dst = merge_link_options(dst, link_options);
     }

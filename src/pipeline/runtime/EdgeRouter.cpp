@@ -114,12 +114,12 @@ int realtime_credit_probe_every() {
 
 void validate_realtime_credit_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+    throw std::runtime_error(std::string("RealtimeGraphLinkOptions::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-int realtime_credit_max_inflight_per_stream(const GraphLinkOptions& options) {
+int realtime_credit_max_inflight_per_stream(const RealtimeGraphLinkOptions& options) {
   validate_realtime_credit_option("max_inflight_per_stream", options.max_inflight_per_stream);
   return pipeline_internal::resolved_realtime_max_inflight_per_stream(options);
 }
@@ -134,7 +134,7 @@ int safe_total_credit_limit(int per_stream, std::size_t stream_count) {
   return per_stream * static_cast<int>(stream_count);
 }
 
-int realtime_credit_max_inflight_total(const GraphLinkOptions& options, int per_stream,
+int realtime_credit_max_inflight_total(const RealtimeGraphLinkOptions& options, int per_stream,
                                        std::size_t stream_count) {
   validate_realtime_credit_option("max_inflight_total", options.max_inflight_total);
   if (options.max_inflight_total > 0) {
@@ -327,8 +327,8 @@ void apply_link_stream_id(const ExecutionGraphRuntime& runtime, std::size_t edge
 
 } // namespace
 
-RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options,
-                                       std::string stream_id)
+RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream,
+                                       RealtimeGraphLinkOptions options, std::string stream_id)
     : downstream_(downstream), options_(options),
       credit_namespace_(pipeline_internal::next_realtime_frame_credit_namespace()),
       credit_limit_per_stream_(0), credit_limit_global_(0) {
@@ -465,7 +465,7 @@ void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::s
 }
 
 void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
-                                            const GraphLinkOptions& options) {
+                                            const RealtimeGraphLinkOptions& options) {
   if (edge_index == invalid_edge_index()) {
     return;
   }

@@ -70,6 +70,22 @@ struct GraphLinkOptions {
   /// New runtime code copies this value into internal edge metadata during composition; leave it
   /// empty for automatic per-edge identity.
   std::string stream_id;
+};
+
+/**
+ * @brief Realtime admission options for a bounded live Graph connection.
+ *
+ * This is intentionally a separate type from `GraphLinkOptions`.  `GraphLinkOptions` is passed
+ * by reference across the public shared-library boundary and its released three-member layout is
+ * ABI-stable.  Appending admission fields to that type would make a newer library read beyond an
+ * object constructed by an older caller.  Use `Graph::connect_realtime()` when setting either
+ * admission limit; ordinary `Graph::connect()` remains source- and binary-compatible and uses the
+ * defaults below.
+ */
+struct RealtimeGraphLinkOptions : GraphLinkOptions {
+  RealtimeGraphLinkOptions() = default;
+  RealtimeGraphLinkOptions(const GraphLinkOptions& options) : GraphLinkOptions(options) {}
+
   /// Only applies to realtime-by-stream links carrying raw decoder-backed samples.
   /// -1 uses the framework default (4); positive values set the per-stream raw-frame inflight cap.
   int max_inflight_per_stream = -1;

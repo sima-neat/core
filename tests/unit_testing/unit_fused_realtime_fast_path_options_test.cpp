@@ -26,6 +26,35 @@
 
 namespace {
 
+// GraphLinkOptions is passed by reference across the public shared-library boundary.  Keep the
+// exact v0.2.x aggregate layout so a new library never reads beyond an object constructed by an
+// already-deployed caller.  Realtime admission limits live in the separately named derived type.
+struct ReleasedGraphLinkOptionsLayout {
+  simaai::neat::GraphLinkPolicy policy = simaai::neat::GraphLinkPolicy::Default;
+  int queue_depth = 16;
+  std::string stream_id;
+};
+
+template <typename GraphType>
+concept AcceptsReleasedBraceConnect = requires(
+    GraphType& graph, const GraphType& from, const GraphType& to) { graph.connect(from, to, {}); };
+
+static_assert(std::is_standard_layout_v<simaai::neat::GraphLinkOptions>);
+static_assert(std::is_aggregate_v<simaai::neat::GraphLinkOptions>);
+static_assert(sizeof(simaai::neat::GraphLinkOptions) == sizeof(ReleasedGraphLinkOptionsLayout));
+static_assert(alignof(simaai::neat::GraphLinkOptions) == alignof(ReleasedGraphLinkOptionsLayout));
+static_assert(offsetof(simaai::neat::GraphLinkOptions, policy) ==
+              offsetof(ReleasedGraphLinkOptionsLayout, policy));
+static_assert(offsetof(simaai::neat::GraphLinkOptions, queue_depth) ==
+              offsetof(ReleasedGraphLinkOptionsLayout, queue_depth));
+static_assert(offsetof(simaai::neat::GraphLinkOptions, stream_id) ==
+              offsetof(ReleasedGraphLinkOptionsLayout, stream_id));
+static_assert(
+    std::is_base_of_v<simaai::neat::GraphLinkOptions, simaai::neat::RealtimeGraphLinkOptions>);
+static_assert(sizeof(simaai::neat::RealtimeGraphLinkOptions) >
+              sizeof(simaai::neat::GraphLinkOptions));
+static_assert(AcceptsReleasedBraceConnect<simaai::neat::Graph>);
+
 // RunAdvancedOptions is passed across the public shared-library boundary. Keep
 // its released layout pinned: inserting a new bool into the padding after
 // copy_input would preserve offsets while making a new library interpret
@@ -268,13 +297,13 @@ RUN_TEST(
       require_contains(identity_drop_pipeline, "drop-probability=1.0",
                        "identity-preserving fused chains may retain guard-backed drop handling");
 
-      simaai::neat::GraphLinkOptions latest_ingress;
+      simaai::neat::RealtimeGraphLinkOptions latest_ingress;
       latest_ingress.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       const std::string latest_ingress_queue =
           simaai::neat::session_test::render_fused_realtime_ingress_queue_for_test(latest_ingress);
       require_contains(latest_ingress_queue, "leaky=downstream",
                        "default latest ingress must retain its non-blocking leaky queue");
-      simaai::neat::GraphLinkOptions every_frame_ingress;
+      simaai::neat::RealtimeGraphLinkOptions every_frame_ingress;
       every_frame_ingress.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
       const std::string every_frame_ingress_queue =
           simaai::neat::session_test::render_fused_realtime_ingress_queue_for_test(
@@ -323,7 +352,7 @@ RUN_TEST(
       auto composed_detector = make_composed_consumer_graph();
       for (int stream = 0; stream < 2; ++stream) {
         auto source = make_live_source_graph(stream);
-        simaai::neat::GraphLinkOptions link;
+        simaai::neat::RealtimeGraphLinkOptions link;
         link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
         link.queue_depth = 1;
         link.stream_id = "fused_queue_stream" + std::to_string(stream);
@@ -356,7 +385,7 @@ RUN_TEST(
               "fused segment must preserve both source links");
       const auto& first_fused_edge = composed_plan.edges.at(
           fused_segment->fused_realtime_ingress->branches.front().edge_index);
-      std::vector<simaai::neat::GraphLinkOptions> fused_link_options;
+      std::vector<simaai::neat::RealtimeGraphLinkOptions> fused_link_options;
       std::string rendered_per_stream_limits;
       bool found_stream0 = false;
       bool found_stream1 = false;
@@ -416,12 +445,51 @@ RUN_TEST(
       require_contains(no_output_pipeline, "max-inflight-total=0",
                        "a fused graph without terminal Output must disable its total loan gate");
 
+      // Exercise the released three-member object through the unchanged public connect symbol.
+      // The new library must synthesize default admission values instead of reading a tail that an
+      // old caller did not allocate.
+      simaai::neat::Graph released_options_app("released_graph_link_options", outer_options);
+      auto released_options_detector = make_composed_consumer_graph();
+      for (int stream = 0; stream < 2; ++stream) {
+        simaai::neat::GraphLinkOptions released_link{
+            simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream,
+            1,
+            "released_stream" + std::to_string(stream),
+        };
+        released_options_app.connect(make_live_source_graph(300 + stream),
+                                     released_options_detector, released_link);
+      }
+      const auto released_options_plan = simaai::neat::runtime::compile_public_graph(
+          released_options_app, composed_run_options, std::nullopt, true);
+      const simaai::neat::runtime::PipelineSegmentPlan* released_options_segment = nullptr;
+      for (const auto& segment : released_options_plan.pipeline_segments) {
+        if (segment.fused_realtime_ingress.has_value()) {
+          released_options_segment = &segment;
+          break;
+        }
+      }
+      require(released_options_segment != nullptr,
+              "released GraphLinkOptions path must remain eligible for explicit fusion");
+      std::vector<simaai::neat::RealtimeGraphLinkOptions> released_options_links;
+      for (const auto& branch : released_options_segment->fused_realtime_ingress->branches) {
+        require(branch.link_options.max_inflight_per_stream == -1 &&
+                    branch.link_options.max_inflight_total == -1,
+                "released GraphLinkOptions must acquire safe default admission values");
+        released_options_links.push_back(branch.link_options);
+      }
+      const std::string released_options_pipeline =
+          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              released_options_segment->nodes, released_options_segment->route_options,
+              released_options_links);
+      require_contains(released_options_pipeline, "stream-inflight-limits=\"4,4\"",
+                       "released GraphLinkOptions must resolve the framework per-stream default");
+
       simaai::neat::Graph mixed_policy_app("mixed_realtime_policy_app", outer_options);
       auto mixed_detector = make_composed_consumer_graph();
-      simaai::neat::GraphLinkOptions latest_link;
+      simaai::neat::RealtimeGraphLinkOptions latest_link;
       latest_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       mixed_policy_app.connect(make_live_source_graph(200), mixed_detector, latest_link);
-      simaai::neat::GraphLinkOptions every_frame_link;
+      simaai::neat::RealtimeGraphLinkOptions every_frame_link;
       every_frame_link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
       bool rejected_mixed_policy = false;
       try {
@@ -435,7 +503,7 @@ RUN_TEST(
       simaai::neat::Graph single_source_app("single_source_not_fused", outer_options);
       auto single_source = make_live_source_graph(99);
       auto single_detector = make_composed_consumer_graph();
-      simaai::neat::GraphLinkOptions single_link;
+      simaai::neat::RealtimeGraphLinkOptions single_link;
       single_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       single_link.max_inflight_per_stream = 1;
       single_source_app.connect(single_source, single_detector, single_link);

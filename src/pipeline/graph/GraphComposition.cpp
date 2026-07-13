@@ -75,12 +75,12 @@ bool vertex_is_live_source_context(const auto& graph, std::size_t vertex) {
 
 void validate_realtime_inflight_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+    throw std::runtime_error(std::string("RealtimeGraphLinkOptions::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-void validate_realtime_inflight_options(const GraphLinkOptions& options) {
+void validate_realtime_inflight_options(const RealtimeGraphLinkOptions& options) {
   validate_realtime_inflight_option("max_inflight_per_stream", options.max_inflight_per_stream);
   validate_realtime_inflight_option("max_inflight_total", options.max_inflight_total);
 }
@@ -90,7 +90,8 @@ bool is_realtime_stream_policy(GraphLinkPolicy policy) {
          policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
 }
 
-void merge_realtime_link_options(GraphLinkOptions& existing, GraphLinkOptions& incoming) {
+void merge_realtime_link_options(RealtimeGraphLinkOptions& existing,
+                                 RealtimeGraphLinkOptions& incoming) {
   validate_realtime_inflight_options(existing);
   validate_realtime_inflight_options(incoming);
 
@@ -173,7 +174,7 @@ void Graph::CompositionGraph::recompute_unique_tail() noexcept {
 
 void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
                                                    std::string from_port, std::string to_port,
-                                                   GraphLinkOptions link_options) {
+                                                   RealtimeGraphLinkOptions link_options) {
   if (from >= vertices.size() || to >= vertices.size()) {
     throw std::runtime_error("Graph::connect: internal vertex id out of range");
   }
@@ -220,7 +221,7 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
 
 void Graph::CompositionGraph::connect_endpoint(VertexId from, VertexId to,
                                                std::string from_endpoint, std::string to_endpoint,
-                                               GraphLinkOptions link_options) {
+                                               RealtimeGraphLinkOptions link_options) {
   if (from >= vertices.size() || to >= vertices.size()) {
     throw std::runtime_error("Graph::connect: internal vertex id out of range");
   }

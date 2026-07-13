@@ -48,6 +48,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -220,6 +221,22 @@ public:
   Graph& connect(std::string_view from_endpoint, std::string_view to_endpoint);
   Graph& connect(const Graph& from, const Graph& to);
   Graph& connect(const Graph& from, const Graph& to, const GraphLinkOptions& options);
+  /**
+   * @brief Connect reusable fragments with explicit realtime raw-frame admission limits.
+   *
+   * This named entry point keeps the released `connect(..., GraphLinkOptions)` ABI intact while
+   * allowing bounded realtime links to carry `RealtimeGraphLinkOptions`.
+   */
+  Graph& connect_realtime(const Graph& from, const Graph& to,
+                          const RealtimeGraphLinkOptions& options);
+  /// Preserve the familiar `connect(from, to, options)` spelling for the new realtime options
+  /// type without adding a non-template overload that would make `connect(from, to, {})`
+  /// ambiguous with the released `GraphLinkOptions` overload.
+  template <typename Options>
+    requires std::is_same_v<std::remove_cvref_t<Options>, RealtimeGraphLinkOptions>
+  Graph& connect(const Graph& from, const Graph& to, Options&& options) {
+    return connect_realtime(from, to, options);
+  }
   Graph& connect(std::shared_ptr<Node> from, std::shared_ptr<Node> to);
   Graph& connect(const Graph& from, std::shared_ptr<Node> to);
   Graph& connect(std::shared_ptr<Node> from, const Graph& to);
@@ -411,7 +428,7 @@ private:
     std::string from_port;
     std::string to_port;
     std::optional<EndpointEdgeMeta> endpoint;
-    GraphLinkOptions link_options;
+    RealtimeGraphLinkOptions link_options;
     std::string stream_id;
   };
   struct GroupMeta;

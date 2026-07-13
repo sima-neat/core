@@ -170,6 +170,49 @@ GstBuffer* make_terminal_stale_private_key_buffer(const char* public_stream_id,
   return buffer;
 }
 
+void require_canonical_terminal_loan(GstBuffer* terminal, const std::string& expected_stream,
+                                     std::int64_t expected_frame_id,
+                                     std::uint64_t expected_namespace, GstClockTime expected_pts,
+                                     GstClockTime expected_dts, GstClockTime expected_duration) {
+  require(terminal && GST_BUFFER_PTS(terminal) == expected_pts &&
+              GST_BUFFER_DTS(terminal) == expected_dts &&
+              GST_BUFFER_DURATION(terminal) == expected_duration,
+          "stream fallback should restore canonical loan timing");
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(terminal, "GstSimaMeta");
+  GstStructure* structure = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  require(structure != nullptr, "stream fallback should restore canonical terminal metadata");
+  const char* stream_id = gst_structure_get_string(structure, "stream-id");
+  const char* orig_stream_id = gst_structure_get_string(structure, "orig-stream-id");
+  const char* private_stream_id = gst_structure_get_string(structure, kLoanStreamIdField);
+  gint64 frame_id = -1;
+  gint64 input_seq = -1;
+  gint64 orig_input_seq = -1;
+  gint64 private_frame_id = -1;
+  gint64 private_input_seq = -1;
+  gint64 private_orig_input_seq = -1;
+  guint64 private_namespace = 0;
+  gboolean private_valid = TRUE;
+  require(
+      stream_id && std::string(stream_id) == expected_stream && orig_stream_id &&
+          std::string(orig_stream_id) == expected_stream && private_stream_id &&
+          std::string(private_stream_id) == expected_stream &&
+          gst_structure_get_int64(structure, "frame-id", &frame_id) == TRUE &&
+          gst_structure_get_int64(structure, "input-seq", &input_seq) == TRUE &&
+          gst_structure_get_int64(structure, "orig-input-seq", &orig_input_seq) == TRUE &&
+          gst_structure_get_int64(structure, kLoanFrameIdField, &private_frame_id) == TRUE &&
+          gst_structure_get_int64(structure, "neat-latest-mux-loan-input-seq",
+                                  &private_input_seq) == TRUE &&
+          gst_structure_get_int64(structure, "neat-latest-mux-loan-orig-input-seq",
+                                  &private_orig_input_seq) == TRUE &&
+          gst_structure_get_uint64(structure, kLoanNamespaceField, &private_namespace) == TRUE &&
+          gst_structure_get_boolean(structure, kLoanValidField, &private_valid) == TRUE &&
+          frame_id == expected_frame_id && input_seq == expected_frame_id &&
+          orig_input_seq == expected_frame_id && private_frame_id == expected_frame_id &&
+          private_input_seq == expected_frame_id && private_orig_input_seq == expected_frame_id &&
+          private_namespace == expected_namespace && private_valid == FALSE,
+      "stream fallback should replace stale public/private identity with the selected loan");
+}
+
 void push_mux_input(GstElement* appsrc, std::int64_t frame_id) {
   require(gst_app_src_push_buffer(GST_APP_SRC(appsrc), make_mux_input_buffer(frame_id)) ==
               GST_FLOW_OK,
@@ -1305,6 +1348,12 @@ void test_namespace_bounded_terminal_loan_fallback() {
   require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
           "failed to start latest-mux credit fallback pipeline");
 
+  const auto require_canonical_terminal = [&](GstBuffer* terminal, std::int64_t frame_id) {
+    require_canonical_terminal_loan(terminal, "sole-stream", frame_id, mux_namespace,
+                                    static_cast<GstClockTime>(frame_id) * GST_MSECOND,
+                                    GST_CLOCK_TIME_NONE, GST_MSECOND);
+  };
+
   push_mux_input(appsrc, 101);
   GstSample* first = pull_mux_output(appsink, GST_SECOND);
   require(first != nullptr, "latest-mux should emit the first admitted frame");
@@ -1325,6 +1374,7 @@ void test_namespace_bounded_terminal_loan_fallback() {
               mismatched, mux_namespace),
           "namespace-qualified terminal output should release the sole stream loan even when "
           "frame identity changed");
+  require_canonical_terminal(mismatched, 101);
   gst_buffer_unref(mismatched);
 
   GstSample* second = pull_mux_output(appsink, GST_SECOND);
@@ -1337,6 +1387,7 @@ void test_namespace_bounded_terminal_loan_fallback() {
   require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
               stream_only, mux_namespace),
           "namespace-qualified stream-only output should release the sole stream loan");
+  require_canonical_terminal(stream_only, 102);
   gst_buffer_unref(stream_only);
 
   push_mux_input(appsrc, 103);
@@ -1356,16 +1407,20 @@ void test_namespace_bounded_terminal_loan_fallback() {
               stale_private, mux_namespace),
           "namespace-qualified stale private key should use the current public stream and release "
           "its sole loan");
+  require_canonical_terminal(stale_private, 103);
   gst_buffer_unref(stale_private);
 
   push_mux_input(appsrc, 104);
   GstSample* fourth = pull_mux_output(appsink, GST_SECOND);
   require(fourth != nullptr,
           "stale-private-key fallback should wake the mux and admit the next stream frame");
-  GstBuffer* final_terminal = make_terminal_identity_buffer("sole-stream", 104);
+  // Sequence matching is stronger than a stale frame-id and must rewrite the
+  // recycled public identity to the selected registry entry as well.
+  GstBuffer* final_terminal = make_terminal_sequence_buffer("sole-stream", 9999, 104, 104);
   require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
               final_terminal, mux_namespace),
-          "exact terminal output should release the final test loan");
+          "sequence terminal output should release the final test loan");
+  require_canonical_terminal(final_terminal, 104);
   gst_buffer_unref(final_terminal);
 
   // Keep earlier outputs alive until after their fallback releases. This proves
@@ -1380,6 +1435,61 @@ void test_namespace_bounded_terminal_loan_fallback() {
   gst_element_release_request_pad(mux, mux_sink);
   gst_object_unref(mux_sink);
   gst_object_unref(pipeline);
+}
+
+void test_sequence_fallback_selects_between_live_loans() {
+  constexpr const char* kStreamId = "sequence-fallback-stream";
+  constexpr GstClockTime kFirstPts = 1201 * GST_MSECOND;
+  constexpr GstClockTime kFirstDts = 1191 * GST_MSECOND;
+  constexpr GstClockTime kSecondPts = 2202 * GST_MSECOND;
+  constexpr GstClockTime kSecondDts = 2192 * GST_MSECOND;
+  constexpr GstClockTime kDuration = 7 * GST_MSECOND;
+
+  LatestMuxPipeline fixture = make_latest_mux_pipeline("latest-mux-sequence-fallback-pipeline",
+                                                       kStreamId, /*stream_inflight_limit=*/2);
+  require(gst_app_src_push_buffer(GST_APP_SRC(fixture.appsrc),
+                                  make_mux_input_buffer_with_timing(201, kFirstPts, kFirstDts,
+                                                                    kDuration)) == GST_FLOW_OK,
+          "failed to push first sequence-fallback input");
+  GstSample* first = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(first != nullptr, "sequence-fallback mux should emit the first live loan");
+
+  require(gst_app_src_push_buffer(GST_APP_SRC(fixture.appsrc),
+                                  make_mux_input_buffer_with_timing(202, kSecondPts, kSecondDts,
+                                                                    kDuration)) == GST_FLOW_OK,
+          "failed to push second sequence-fallback input");
+  GstSample* second = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(second != nullptr, "inflight-limit=2 should keep two same-stream loans live");
+
+  // With two candidates, the namespace-bounded sole-loan fallback is
+  // ineligible. The preserved input sequence must select the second loan even
+  // though a recycled public frame-id and timing name neither live frame.
+  GstBuffer* second_terminal = make_terminal_sequence_buffer(kStreamId, 9999, 202, 202);
+  GST_BUFFER_PTS(second_terminal) = 999 * GST_MSECOND;
+  GST_BUFFER_DTS(second_terminal) = 998 * GST_MSECOND;
+  GST_BUFFER_DURATION(second_terminal) = 99 * GST_MSECOND;
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              second_terminal, fixture.mux_namespace),
+          "input-seq should select the second of two live stream loans");
+  require_canonical_terminal_loan(second_terminal, kStreamId, 202, fixture.mux_namespace,
+                                  kSecondPts, kSecondDts, kDuration);
+  gst_buffer_unref(second_terminal);
+
+  // The first loan must still be independently live and selectable after the
+  // out-of-order sequence completion above.
+  GstBuffer* first_terminal = make_terminal_sequence_buffer(kStreamId, 8888, 201, 201);
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              first_terminal, fixture.mux_namespace),
+          "sequence fallback should leave the non-selected first loan live");
+  require_canonical_terminal_loan(first_terminal, kStreamId, 201, fixture.mux_namespace, kFirstPts,
+                                  kFirstDts, kDuration);
+  gst_buffer_unref(first_terminal);
+
+  // Keeping both source samples alive until both terminal completions proves
+  // that buffer-finalize guards did not provide the observed credit release.
+  gst_sample_unref(second);
+  gst_sample_unref(first);
+  stop_latest_mux_pipeline(&fixture);
 }
 
 } // namespace
@@ -1403,6 +1513,7 @@ int main() {
     test_teardown_releases_unresolved_terminal_credit();
     test_pending_buffer_unref_is_reentrant();
     test_namespace_bounded_terminal_loan_fallback();
+    test_sequence_fallback_selects_between_live_loans();
 
     const simaai::neat::Sample namespaced =
         make_gst_sample_backed_sample(MuxLoanKey{1234, "mux-stream", 42});
@@ -1516,7 +1627,7 @@ int main() {
         unrelated_ns, "unit-stamped-with-sidecar-cleanup");
 
     {
-      simaai::neat::GraphLinkOptions bounded_options;
+      simaai::neat::RealtimeGraphLinkOptions bounded_options;
       bounded_options.queue_depth = 1;
       bounded_options.max_inflight_per_stream = 1;
       bounded_options.max_inflight_total = 1;
@@ -1751,7 +1862,7 @@ int main() {
     simaai::neat::Sample replacement_sample = make_gst_sample_backed_sample(std::nullopt);
     replacement_sample.stream_id = "pending-stream";
     replacement_sample.frame_id = 2;
-    simaai::neat::GraphLinkOptions pending_options;
+    simaai::neat::RealtimeGraphLinkOptions pending_options;
     pending_options.queue_depth = 1;
     simaai::neat::runtime::DownstreamTarget pending_target;
     simaai::neat::runtime::RealtimeLatestLink pending_link(pending_target, pending_options,

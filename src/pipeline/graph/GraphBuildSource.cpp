@@ -2671,7 +2671,8 @@ find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pendi
   return find_fused_decoder_timing_match(pending, output_pts, std::nullopt);
 }
 
-std::string render_fused_realtime_ingress_queue_for_test(const GraphLinkOptions& link_options) {
+std::string
+render_fused_realtime_ingress_queue_for_test(const RealtimeGraphLinkOptions& link_options) {
   return fused_ingress_queue_fragment(1, link_options.policy ==
                                              GraphLinkPolicy::RealtimeEveryFrameByStream);
 }
@@ -2692,7 +2693,7 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
 
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
-    const std::vector<GraphLinkOptions>& link_options) {
+    const std::vector<RealtimeGraphLinkOptions>& link_options) {
   runtime::FusedRealtimeIngress ingress;
   for (std::size_t i = 0; i < link_options.size(); ++i) {
     runtime::FusedRealtimeIngressBranch branch;
@@ -2711,7 +2712,7 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
 
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
-    const std::vector<GraphLinkOptions>& link_options, bool enable_terminal_loans) {
+    const std::vector<RealtimeGraphLinkOptions>& link_options, bool enable_terminal_loans) {
   runtime::FusedRealtimeIngress ingress;
   for (std::size_t i = 0; i < link_options.size(); ++i) {
     runtime::FusedRealtimeIngressBranch branch;

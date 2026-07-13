@@ -2522,7 +2522,11 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
       sole_fallback = true;
     }
     if (found && !ambiguous_namespace) {
-      restore_loan_timing_on_buffer(entry, terminal_buffer);
+      // The registry entry is authoritative after either sequence/frame
+      // matching or the namespace-bounded sole-loan fallback.  Terminal
+      // buffers can come from recycled output pools, so restore their routing
+      // identity as well as timing before exposing them to the application.
+      restore_loan_identity_and_timing_on_buffer(entry, selected, terminal_buffer);
       final_release = consume_loan_ref_locked(entry);
     }
   }
