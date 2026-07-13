@@ -161,6 +161,7 @@ struct LatestMuxPipeline {
   GstElement* pipeline = nullptr;
   GstElement* appsrc = nullptr;
   GstElement* mux = nullptr;
+  GstElement* dropper = nullptr;
   GstElement* queue = nullptr;
   GstElement* appsink = nullptr;
   GstPad* mux_sink = nullptr;
@@ -173,9 +174,11 @@ LatestMuxPipeline make_latest_mux_pipeline(const char* pipeline_name, const char
   fixture.pipeline = gst_pipeline_new(pipeline_name);
   fixture.appsrc = gst_element_factory_make("appsrc", nullptr);
   fixture.mux = gst_element_factory_make("neatlatestbystreammux", nullptr);
+  fixture.dropper = gst_element_factory_make("identity", nullptr);
   fixture.queue = gst_element_factory_make("queue", nullptr);
   fixture.appsink = gst_element_factory_make("appsink", nullptr);
-  require(fixture.pipeline && fixture.appsrc && fixture.mux && fixture.queue && fixture.appsink,
+  require(fixture.pipeline && fixture.appsrc && fixture.mux && fixture.dropper && fixture.queue &&
+              fixture.appsink,
           "failed to construct queued latest-mux test pipeline");
 
   g_object_set(fixture.appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
@@ -194,15 +197,16 @@ LatestMuxPipeline make_latest_mux_pipeline(const char* pipeline_name, const char
   gst_app_src_set_caps(GST_APP_SRC(fixture.appsrc), caps);
   gst_caps_unref(caps);
 
-  gst_bin_add_many(GST_BIN(fixture.pipeline), fixture.appsrc, fixture.mux, fixture.queue,
-                   fixture.appsink, nullptr);
+  gst_bin_add_many(GST_BIN(fixture.pipeline), fixture.appsrc, fixture.mux, fixture.dropper,
+                   fixture.queue, fixture.appsink, nullptr);
   fixture.mux_sink = gst_element_request_pad_simple(fixture.mux, "sink_0");
   GstPad* appsrc_src = gst_element_get_static_pad(fixture.appsrc, "src");
   require(fixture.mux_sink && appsrc_src &&
               gst_pad_link(appsrc_src, fixture.mux_sink) == GST_PAD_LINK_OK,
           "failed to link appsrc to queued latest-mux request pad");
   gst_object_unref(appsrc_src);
-  require(gst_element_link_many(fixture.mux, fixture.queue, fixture.appsink, nullptr) == TRUE,
+  require(gst_element_link_many(fixture.mux, fixture.dropper, fixture.queue, fixture.appsink,
+                                nullptr) == TRUE,
           "failed to link queued latest-mux output path");
 
   fixture.mux_namespace = simaai::neat::latest_by_stream_mux_namespace(fixture.mux);
@@ -419,7 +423,6 @@ void test_terminal_release_restores_original_pts() {
           "failed to push latest-mux timing fixture");
   GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
   require(output != nullptr, "latest-mux should emit the timing fixture");
-  gst_sample_unref(output);
 
   GstBuffer* terminal = make_terminal_identity_buffer(kStreamId, 21);
   GST_BUFFER_PTS(terminal) = 999;
@@ -443,6 +446,7 @@ void test_terminal_release_restores_original_pts() {
   require(restored.duration_ns == static_cast<std::int64_t>(kDuration),
           "restored Sample should carry the original duration");
   gst_buffer_unref(terminal);
+  gst_sample_unref(output);
 
   push_mux_input(fixture.appsrc, 22);
   GstSample* next = pull_mux_output(fixture.appsink, GST_SECOND);
@@ -488,8 +492,11 @@ void test_output_buffer_finalize_does_not_release_terminal_credit() {
   GstSample* first = pull_mux_output(fixture.appsink, GST_SECOND);
   require(first != nullptr, "latest-mux should emit the first lifecycle frame");
 
-  // The decoded input buffer is recyclable before terminal model completion.
-  // Dropping its final ref must not return the stream's max-inflight credit.
+  // A normal model transform copies the lifecycle meta to its output before
+  // releasing the decoded input. The propagated carrier keeps terminal credit
+  // charged even though the original decoder-backed buffer is recyclable.
+  GstBuffer* terminal = gst_buffer_copy_deep(gst_sample_get_buffer(first));
+  require(terminal != nullptr, "failed to copy the lifecycle carrier to a terminal buffer");
   gst_sample_unref(first);
   push_mux_input(fixture.appsrc, 2);
   GstSample* early_second = pull_mux_output(fixture.appsink, 100 * GST_MSECOND);
@@ -500,11 +507,51 @@ void test_output_buffer_finalize_does_not_release_terminal_credit() {
   require(!emitted_before_terminal,
           "finalizing the decoded output buffer must not release terminal-bound mux credit");
 
-  release_terminal_loan(fixture, kStreamId, 1);
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              terminal, fixture.mux_namespace),
+          "terminal completion should consume the propagated lifecycle guard");
+  gst_buffer_unref(terminal);
   GstSample* second = pull_mux_output(fixture.appsink, GST_SECOND);
   require(second != nullptr, "terminal completion should admit the pending lifecycle frame");
   release_terminal_loan(fixture, kStreamId, 2);
   gst_sample_unref(second);
+  stop_latest_mux_pipeline(&fixture);
+}
+
+void test_drop_before_terminal_releases_lifetime_credit() {
+  constexpr const char* kStreamId = "drop-before-terminal-stream";
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-drop-before-terminal-pipeline", kStreamId);
+  g_object_set(fixture.dropper, "drop-probability", 1.0, nullptr);
+
+  // A limit-one mux used to stop after the first buffer when a downstream
+  // element discarded it before the terminal appsink probe. Each destroyed
+  // lifecycle carrier must now return exactly that frame's credit.
+  for (std::int64_t frame_id = 1; frame_id <= 8; ++frame_id) {
+    push_mux_input(fixture.appsrc, frame_id);
+    GstSample* dropped = pull_mux_output(fixture.appsink, 50 * GST_MSECOND);
+    require(dropped == nullptr, "drop fixture must discard every pre-terminal frame");
+  }
+
+  g_object_set(fixture.dropper, "drop-probability", 0.0, nullptr);
+  push_mux_input(fixture.appsrc, 9);
+  GstSample* terminal = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(terminal != nullptr,
+          "pre-terminal drops beyond the inflight limit must not stall mux admission");
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(terminal), fixture.mux_namespace),
+          "terminal frame should release through the normal terminal probe path");
+  gst_sample_unref(terminal);
+
+  // Finalizing a terminal buffer after its probe must not release twice and
+  // corrupt the limit-one gate; the next frame still has exactly one credit.
+  push_mux_input(fixture.appsrc, 10);
+  GstSample* next = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(next != nullptr, "terminal release plus buffer finalization must not double-release");
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(next), fixture.mux_namespace),
+          "next terminal frame should retain a valid lifecycle guard");
+  gst_sample_unref(next);
   stop_latest_mux_pipeline(&fixture);
 }
 
@@ -516,10 +563,10 @@ void test_teardown_releases_unresolved_terminal_credit() {
   push_mux_input(fixture.appsrc, 7);
   GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
   require(output != nullptr, "latest-mux should emit the unresolved teardown frame");
-  gst_sample_unref(output);
 
   const std::uint64_t mux_namespace = fixture.mux_namespace;
   stop_latest_mux_pipeline(&fixture);
+  gst_sample_unref(output);
 
   GstBuffer* late_terminal = make_terminal_identity_buffer(kStreamId, 7);
   const bool remained_registered =
@@ -551,7 +598,6 @@ void test_pending_buffer_unref_is_reentrant() {
   push_mux_input(fixture.appsrc, 11);
   GstSample* first = pull_mux_output(fixture.appsink, GST_SECOND);
   require(first != nullptr, "latest-mux should emit the first reentrant-unref frame");
-  gst_sample_unref(first);
 
   // Use a fresh single-owner buffer so this lock-safety regression does not
   // depend on appsink's implementation-specific retention of output refs.
@@ -608,6 +654,7 @@ void test_pending_buffer_unref_is_reentrant() {
           "pending-buffer finalization must not release terminal-bound mux credit");
 
   release_terminal_loan(fixture, kStreamId, 11);
+  gst_sample_unref(first);
   GstSample* second = pull_mux_output(fixture.appsink, GST_SECOND);
   require(second != nullptr, "terminal completion should admit the replacement frame");
   release_terminal_loan(fixture, kStreamId, 13);
@@ -736,6 +783,7 @@ int main() {
     test_terminal_release_restores_original_pts();
     test_public_per_stream_limit_reaches_mux_gate();
     test_output_buffer_finalize_does_not_release_terminal_credit();
+    test_drop_before_terminal_releases_lifetime_credit();
     test_teardown_releases_unresolved_terminal_credit();
     test_pending_buffer_unref_is_reentrant();
     test_namespace_bounded_terminal_loan_fallback();

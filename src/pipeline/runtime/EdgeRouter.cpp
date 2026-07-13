@@ -331,8 +331,11 @@ RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOpt
                                        std::string stream_id)
     : downstream_(downstream), options_(options),
       credit_namespace_(pipeline_internal::next_realtime_frame_credit_namespace()),
-      credit_limit_per_stream_(realtime_credit_max_inflight_per_stream(options_)),
-      credit_limit_global_(0) {
+      credit_limit_per_stream_(0), credit_limit_global_(0) {
+  if (downstream_.edge_index != invalid_edge_index()) {
+    link_options_by_edge_.emplace(downstream_.edge_index, options);
+  }
+  recompute_admission_options_locked_();
   add_edge_stream_id(downstream_.edge_index, stream_id);
   log_realtime_credit_probe_basic("construct", downstream_, downstream_.edge_index, stream_id,
                                   static_cast<std::size_t>(options_.queue_depth));
@@ -461,6 +464,21 @@ void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::s
   configure_global_credit_limit_locked_();
 }
 
+void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
+                                            const GraphLinkOptions& options) {
+  if (edge_index == invalid_edge_index()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(mu_);
+  edge_indices_.insert(edge_index);
+  if (!stream_id.empty()) {
+    stream_id_by_edge_[edge_index] = stream_id;
+  }
+  link_options_by_edge_[edge_index] = options;
+  recompute_admission_options_locked_();
+  configure_global_credit_limit_locked_();
+}
+
 void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error) {
   dispatch_ = std::move(dispatch);
   stop_ = std::move(stop);
@@ -578,11 +596,46 @@ RealtimeLatestLink::credit_lane_for_key_locked_(const std::string& key) {
   return lane;
 }
 
+void RealtimeLatestLink::recompute_admission_options_locked_() {
+  int strictest_per_stream = std::numeric_limits<int>::max();
+  int strictest_explicit_total = std::numeric_limits<int>::max();
+  for (const auto& [edge_index, options] : link_options_by_edge_) {
+    (void)edge_index;
+    strictest_per_stream =
+        std::min(strictest_per_stream, realtime_credit_max_inflight_per_stream(options));
+    validate_realtime_credit_option("max_inflight_total", options.max_inflight_total);
+    if (options.max_inflight_total > 0) {
+      strictest_explicit_total = std::min(strictest_explicit_total, options.max_inflight_total);
+    }
+  }
+
+  credit_limit_per_stream_ =
+      strictest_per_stream == std::numeric_limits<int>::max() ? 0 : strictest_per_stream;
+  options_.max_inflight_per_stream = credit_limit_per_stream_;
+  options_.max_inflight_total =
+      strictest_explicit_total == std::numeric_limits<int>::max() ? -1 : strictest_explicit_total;
+
+  for (auto& [key, lane] : credit_lanes_) {
+    (void)key;
+    if (lane && lane->gate) {
+      lane->gate->configure(credit_limit_per_stream_);
+    }
+  }
+}
+
 void RealtimeLatestLink::configure_global_credit_limit_locked_() {
   const std::size_t stream_count =
       std::max<std::size_t>(1U, std::max(edge_indices_.size(), credit_lanes_.size()));
-  credit_limit_global_ =
-      realtime_credit_max_inflight_total(options_, credit_limit_per_stream_, stream_count);
+  int strictest_total = 0;
+  for (const auto& [edge_index, options] : link_options_by_edge_) {
+    (void)edge_index;
+    const int candidate =
+        realtime_credit_max_inflight_total(options, credit_limit_per_stream_, stream_count);
+    if (candidate > 0) {
+      strictest_total = strictest_total > 0 ? std::min(strictest_total, candidate) : candidate;
+    }
+  }
+  credit_limit_global_ = strictest_total;
   if (credit_limit_global_ <= 0) {
     global_credit_lane_.reset();
     return;

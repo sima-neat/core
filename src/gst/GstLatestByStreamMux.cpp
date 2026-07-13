@@ -212,6 +212,18 @@ struct LoanKeyHash {
   }
 };
 
+struct LoanDropGuard {
+  LoanKey key;
+  std::uint64_t sequence = 0;
+  std::atomic<std::uint64_t> carriers{1};
+  std::atomic<bool> armed{true};
+};
+
+struct GstLatestMuxLoanGuardMeta {
+  GstMeta meta;
+  std::shared_ptr<LoanDropGuard> guard;
+};
+
 struct LoanEntry {
   GstLatestByStreamMux* mux = nullptr; // strong GObject ref while registered
   std::shared_ptr<StreamLoanState> state;
@@ -707,6 +719,128 @@ bool restore_cached_timing_on_buffer(GstBuffer* buffer, std::uint64_t namespace_
   return true;
 }
 
+bool release_dropped_loan_for_key_impl(const LoanKey& key, std::uint64_t sequence,
+                                       const char* mode);
+
+GType latest_mux_loan_guard_meta_api_get_type() {
+  static const GType type = [] {
+    static const gchar* tags[] = {"memory-reference", nullptr};
+    return gst_meta_api_type_register("GstLatestMuxLoanGuardMetaAPI", tags);
+  }();
+  return type;
+}
+
+gboolean latest_mux_loan_guard_meta_init(GstMeta* meta, gpointer, GstBuffer*) {
+  auto* guard_meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(meta);
+  new (&guard_meta->guard) std::shared_ptr<LoanDropGuard>();
+  return TRUE;
+}
+
+void latest_mux_loan_guard_meta_free(GstMeta* meta, GstBuffer*) {
+  auto* guard_meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(meta);
+  std::shared_ptr<LoanDropGuard> guard = std::move(guard_meta->guard);
+  guard_meta->guard.~shared_ptr();
+  if (!guard) {
+    return;
+  }
+  const std::uint64_t previous = guard->carriers.fetch_sub(1, std::memory_order_acq_rel);
+  if (previous == 1U && guard->armed.exchange(false, std::memory_order_acq_rel)) {
+    (void)release_dropped_loan_for_key_impl(guard->key, guard->sequence, "buffer-lifetime-drop");
+  }
+}
+
+const GstMetaInfo* latest_mux_loan_guard_meta_get_info();
+
+gboolean latest_mux_loan_guard_meta_transform(GstBuffer* destination, GstMeta* meta, GstBuffer*,
+                                              GQuark, gpointer) {
+  auto* source = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(meta);
+  if (!destination || !source->guard) {
+    return FALSE;
+  }
+  auto* copy = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(
+      gst_buffer_add_meta(destination, latest_mux_loan_guard_meta_get_info(), nullptr));
+  if (!copy) {
+    return FALSE;
+  }
+  copy->guard = source->guard;
+  source->guard->carriers.fetch_add(1, std::memory_order_relaxed);
+  return TRUE;
+}
+
+const GstMetaInfo* latest_mux_loan_guard_meta_get_info() {
+  static const GstMetaInfo* info =
+      gst_meta_register(latest_mux_loan_guard_meta_api_get_type(), "GstLatestMuxLoanGuardMeta",
+                        sizeof(GstLatestMuxLoanGuardMeta), latest_mux_loan_guard_meta_init,
+                        latest_mux_loan_guard_meta_free, latest_mux_loan_guard_meta_transform);
+  return info;
+}
+
+std::shared_ptr<LoanDropGuard> loan_drop_guard_for_buffer(GstBuffer* buffer) {
+  if (!buffer) {
+    return {};
+  }
+  auto* meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(
+      gst_buffer_get_meta(buffer, latest_mux_loan_guard_meta_api_get_type()));
+  return meta ? meta->guard : std::shared_ptr<LoanDropGuard>{};
+}
+
+bool attach_loan_drop_guard(GstBuffer* buffer, const LoanKey& key, std::uint64_t sequence) {
+  if (!buffer || sequence == 0 || key.namespace_id == 0 || key.stream_id.empty() ||
+      key.frame_id < 0 || loan_drop_guard_for_buffer(buffer)) {
+    return false;
+  }
+  auto guard = std::make_shared<LoanDropGuard>();
+  guard->key = key;
+  guard->sequence = sequence;
+  auto* meta = reinterpret_cast<GstLatestMuxLoanGuardMeta*>(
+      gst_buffer_add_meta(buffer, latest_mux_loan_guard_meta_get_info(), nullptr));
+  if (!meta) {
+    return false;
+  }
+  meta->guard = std::move(guard);
+  return true;
+}
+
+void disarm_loan_drop_guard(GstBuffer* buffer, const LoanKey& key, std::uint64_t sequence) {
+  const auto guard = loan_drop_guard_for_buffer(buffer);
+  if (guard && guard->sequence == sequence && guard->key == key) {
+    guard->armed.store(false, std::memory_order_release);
+  }
+}
+
+bool release_dropped_loan_for_key_impl(const LoanKey& key, std::uint64_t sequence,
+                                       const char* mode) {
+  if (sequence == 0 || key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
+    return false;
+  }
+  std::shared_ptr<LoanEntry> entry;
+  bool final_release = false;
+  {
+    std::lock_guard<std::mutex> lock(loan_registry_mutex());
+    const auto it = loan_registry().find(key);
+    if (it == loan_registry().end() || !it->second || it->second->sequence != sequence) {
+      return false;
+    }
+    entry = it->second;
+    final_release = consume_loan_ref_locked(entry);
+    if (final_release) {
+      timing_cache().erase(key);
+    }
+  }
+  if (loan_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[latestmux][loan] drop-release ns=%llu stream=%s frame=%lld sequence=%llu "
+                 "mode=%s final=%d\n",
+                 static_cast<unsigned long long>(key.namespace_id), key.stream_id.c_str(),
+                 static_cast<long long>(key.frame_id), static_cast<unsigned long long>(sequence),
+                 mode ? mode : "buffer-drop", final_release ? 1 : 0);
+  }
+  if (final_release) {
+    release_loan_entry_resources(entry, /*by_output=*/false);
+  }
+  return true;
+}
+
 bool release_loan_for_key_impl(const LoanKey& key, const char* mode,
                                GstBuffer* terminal_buffer = nullptr) {
   if (key.namespace_id == 0 || key.stream_id.empty() || key.frame_id < 0) {
@@ -722,6 +856,7 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode,
       return false;
     }
     entry = it->second;
+    disarm_loan_drop_guard(terminal_buffer, key, entry->sequence);
     restore_loan_timing_on_buffer(entry, terminal_buffer);
     final_release = consume_loan_ref_locked(entry);
   }
@@ -850,12 +985,12 @@ bool read_stream_key(GstBuffer* buffer, std::string* stream_id) {
   return true;
 }
 
-void register_loan_for_key(GstLatestByStreamMux* self,
-                           const std::shared_ptr<StreamLoanState>& state, const LoanKey& key,
-                           GstBuffer* buffer) {
+std::uint64_t register_loan_for_key(GstLatestByStreamMux* self,
+                                    const std::shared_ptr<StreamLoanState>& state,
+                                    const LoanKey& key, GstBuffer* buffer) {
   if (!self || !loan_state_enabled(state) || key.namespace_id == 0 || key.stream_id.empty() ||
       key.frame_id < 0) {
-    return;
+    return 0;
   }
 
   auto entry = std::make_shared<LoanEntry>();
@@ -902,6 +1037,7 @@ void register_loan_for_key(GstLatestByStreamMux* self,
                  state->gate ? state->gate->inflight() : 0,
                  state->gate ? state->gate->credit_limit() : 0);
   }
+  return entry->sequence;
 }
 
 void release_acquired_loan_without_output(const std::shared_ptr<StreamLoanState>& state) {
@@ -1173,8 +1309,15 @@ gpointer worker_main(gpointer data) {
           const LoanKey loan_key{self->loan_namespace, stream_id, frame_id, input_seq,
                                  orig_input_seq};
           if (stamp_latest_mux_loan_key(buffer, loan_key)) {
-            register_loan_for_key(self, loan_state, loan_key, buffer);
-            loan_registered = true;
+            const std::uint64_t sequence =
+                register_loan_for_key(self, loan_state, loan_key, buffer);
+            if (sequence != 0 && attach_loan_drop_guard(buffer, loan_key, sequence)) {
+              loan_registered = true;
+            } else if (sequence != 0) {
+              (void)release_dropped_loan_for_key_impl(loan_key, sequence, "guard-attach-failure");
+            } else {
+              release_acquired_loan_without_output(loan_state);
+            }
           } else {
             release_acquired_loan_without_output(loan_state);
             if (loan_debug_enabled()) {
@@ -2256,6 +2399,11 @@ void release_latest_by_stream_mux_loan(const std::string& stream_id, std::int64_
 
 bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer, std::uint64_t namespace_hint) {
   (void)restore_cached_timing_on_buffer(buffer, namespace_hint);
+  if (const auto guard = loan_drop_guard_for_buffer(buffer);
+      guard && (namespace_hint == 0 || guard->key.namespace_id == namespace_hint) &&
+      release_loan_for_key_impl(guard->key, "lifetime-meta", buffer)) {
+    return true;
+  }
   LoanKey key;
   if (read_latest_mux_loan_key(buffer, &key)) {
     if ((namespace_hint == 0 || key.namespace_id == namespace_hint) &&

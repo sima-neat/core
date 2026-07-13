@@ -110,9 +110,9 @@ void merge_realtime_link_options(GraphLinkOptions& existing, GraphLinkOptions& i
   existing.queue_depth = std::max(existing.queue_depth, incoming.queue_depth);
   incoming.queue_depth = existing.queue_depth;
   // These are admission promises made by each producer edge. Keep them intact
-  // while normalizing shared fan-in behavior: fused lowering configures the
-  // per-stream gates independently and applies the strictest explicit total
-  // cap across the mux.
+  // while normalizing shared fan-in behavior. Fused lowering configures each
+  // branch independently; the non-fused shared link resolves the strictest
+  // contract across all of its producer edges.
 }
 
 } // namespace

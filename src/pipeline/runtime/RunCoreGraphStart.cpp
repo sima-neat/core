@@ -1231,7 +1231,7 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         it = realtime_link_by_target.find(key);
       } else if (it->second < execution.realtime_links.size() &&
                  execution.realtime_links[it->second]) {
-        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id);
+        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id, e.link_options);
       }
       outs.push_back(DownstreamTarget{DownstreamTarget::Kind::RealtimeLatestLink, it->second,
                                       e.to_port, eidx});
