@@ -5,6 +5,8 @@
 
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
+#include <gst/gst.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -37,6 +39,7 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<RealtimeGraphLinkOptions>& link_options, bool enable_terminal_loans);
 std::string
 render_fused_realtime_ingress_queue_for_test(const RealtimeGraphLinkOptions& link_options);
+GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info);
 std::optional<std::size_t>
 find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pending_pts,
                                          std::optional<std::uint64_t> output_pts);

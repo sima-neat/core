@@ -1025,6 +1025,24 @@ int fused_max_inflight_total(const runtime::FusedRealtimeIngress& ingress,
   return pipeline_internal::default_realtime_max_inflight_total(total_capacity);
 }
 
+GstBuffer* make_fused_terminal_probe_buffer_writable(GstPadProbeInfo* info) {
+  if (!info || (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+    return nullptr;
+  }
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!buffer || gst_buffer_is_writable(buffer)) {
+    return buffer;
+  }
+
+  // Transfer the probe data slot's streaming reference directly through
+  // GStreamer's copy-on-write operation and replace the slot immediately.
+  // gst_buffer_make_writable() consumes exactly that reference, so no
+  // separate unref of the probe's original pointer is valid here.
+  GstBuffer* writable = gst_buffer_make_writable(buffer);
+  GST_PAD_PROBE_INFO_DATA(info) = writable;
+  return writable;
+}
+
 bool fused_block_when_pending(const runtime::FusedRealtimeIngress& ingress) {
   return std::any_of(ingress.branches.begin(), ingress.branches.end(), [](const auto& branch) {
     return branch.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
@@ -2683,6 +2701,10 @@ render_fused_realtime_ingress_queue_for_test(const RealtimeGraphLinkOptions& lin
                                              GraphLinkPolicy::RealtimeEveryFrameByStream);
 }
 
+GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info) {
+  return make_fused_terminal_probe_buffer_writable(info);
+}
+
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options) {
   runtime::FusedRealtimeIngress ingress;
@@ -2931,14 +2953,9 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
             // handed a shared GstBuffer, so take GStreamer's copy-on-write
             // path only when needed and replace the probe data with the
             // writable buffer before mutating timestamps or custom metadata.
-            if (!gst_buffer_is_writable(buffer)) {
-              GstBuffer* writable = gst_buffer_make_writable(gst_buffer_ref(buffer));
-              if (!writable) {
-                return GST_PAD_PROBE_OK;
-              }
-              gst_buffer_unref(buffer);
-              buffer = writable;
-              GST_PAD_PROBE_INFO_DATA(info) = buffer;
+            buffer = make_fused_terminal_probe_buffer_writable(info);
+            if (!buffer) {
+              return GST_PAD_PROBE_OK;
             }
             (void)pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(buffer,
                                                                                   *mux_namespace);

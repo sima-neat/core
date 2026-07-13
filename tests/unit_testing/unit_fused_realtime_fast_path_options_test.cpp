@@ -3,6 +3,7 @@
 #endif
 
 #include "builder/Node.h"
+#include "gst/GstInit.h"
 #include "graphs/Fragments.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/CameraInput.h"
@@ -189,6 +190,10 @@ std::size_t count_occurrences(const std::string& value, const std::string& token
   return count;
 }
 
+void mark_mini_object_finalized(gpointer data, GstMiniObject*) {
+  *static_cast<bool*>(data) = true;
+}
+
 } // namespace
 
 RUN_TEST(
@@ -198,6 +203,39 @@ RUN_TEST(
       ScopedUnsetEnv legacy_queue_enable("SIMA_ENABLE_ASYNC_QUEUE2");
       ScopedUnsetEnv legacy_queue_depth("SIMA_ASYNC_QUEUE2_DEPTH");
       ScopedUnsetEnv global_inflight_override("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
+
+      simaai::neat::gst_init_once();
+      // Model a shared probe buffer with one external observer reference and
+      // one streaming reference in the probe data slot. COW replacement must
+      // consume only the slot reference: the observer keeps the original alive
+      // and no displaced streaming reference leaks.
+      GstBuffer* original_probe_buffer = gst_buffer_new_allocate(nullptr, 16, nullptr);
+      require(original_probe_buffer != nullptr, "failed to allocate terminal probe buffer");
+      bool original_finalized = false;
+      gst_mini_object_weak_ref(GST_MINI_OBJECT_CAST(original_probe_buffer),
+                               mark_mini_object_finalized, &original_finalized);
+      GstPadProbeInfo terminal_probe_info{};
+      terminal_probe_info.type = GST_PAD_PROBE_TYPE_BUFFER;
+      terminal_probe_info.data = gst_buffer_ref(original_probe_buffer);
+      require(!gst_buffer_is_writable(original_probe_buffer),
+              "external and probe-slot references must force copy-on-write");
+
+      GstBuffer* writable_probe_buffer =
+          simaai::neat::session_test::make_fused_terminal_probe_buffer_writable_for_test(
+              &terminal_probe_info);
+      require(writable_probe_buffer != nullptr &&
+                  writable_probe_buffer == GST_PAD_PROBE_INFO_BUFFER(&terminal_probe_info),
+              "terminal probe helper must install its writable result in the probe data slot");
+      require(writable_probe_buffer != original_probe_buffer &&
+                  gst_buffer_is_writable(writable_probe_buffer),
+              "a shared terminal buffer must be replaced by a distinct writable buffer");
+      require(!original_finalized && GST_MINI_OBJECT_REFCOUNT_VALUE(original_probe_buffer) == 1,
+              "terminal COW must retain the external original without leaking the displaced "
+              "probe-slot reference");
+      gst_buffer_unref(original_probe_buffer);
+      require(original_finalized,
+              "the original terminal buffer must finalize after its observer releases it");
+      gst_buffer_unref(writable_probe_buffer);
 
       simaai::neat::GraphOptions options;
       options.processcvu.async = true;
