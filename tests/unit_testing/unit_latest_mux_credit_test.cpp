@@ -86,7 +86,9 @@ GstBuffer* make_mux_input_buffer(std::int64_t frame_id) {
   require(meta != nullptr, "failed to attach latest-mux input metadata");
   GstStructure* structure = gst_custom_meta_get_structure(meta);
   require(structure != nullptr, "failed to access latest-mux input metadata");
-  gst_structure_set(structure, "frame-id", G_TYPE_INT64, static_cast<gint64>(frame_id), nullptr);
+  gst_structure_set(structure, "frame-id", G_TYPE_INT64, static_cast<gint64>(frame_id), "input-seq",
+                    G_TYPE_INT64, static_cast<gint64>(frame_id), "orig-input-seq", G_TYPE_INT64,
+                    static_cast<gint64>(frame_id), nullptr);
   GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(frame_id) * GST_MSECOND;
   GST_BUFFER_DURATION(buffer) = GST_MSECOND;
   return buffer;
@@ -131,6 +133,25 @@ GstBuffer* make_terminal_identity_buffer(const char* stream_id,
   return buffer;
 }
 
+GstBuffer*
+make_terminal_sequence_buffer(const char* stream_id, std::optional<std::int64_t> frame_id,
+                              std::optional<std::int64_t> input_seq,
+                              std::optional<std::int64_t> orig_input_seq = std::nullopt) {
+  GstBuffer* buffer = make_terminal_identity_buffer(stream_id, frame_id);
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  GstStructure* structure = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  require(structure != nullptr, "failed to access terminal sequence metadata");
+  if (input_seq.has_value()) {
+    gst_structure_set(structure, "input-seq", G_TYPE_INT64, static_cast<gint64>(*input_seq),
+                      nullptr);
+  }
+  if (orig_input_seq.has_value()) {
+    gst_structure_set(structure, "orig-input-seq", G_TYPE_INT64,
+                      static_cast<gint64>(*orig_input_seq), nullptr);
+  }
+  return buffer;
+}
+
 GstBuffer* make_terminal_stale_private_key_buffer(const char* public_stream_id,
                                                   std::int64_t public_frame_id,
                                                   std::uint64_t mux_namespace,
@@ -169,7 +190,8 @@ struct LatestMuxPipeline {
 };
 
 LatestMuxPipeline make_latest_mux_pipeline(const char* pipeline_name, const char* stream_id,
-                                           int stream_inflight_limit = 1) {
+                                           int stream_inflight_limit = 1,
+                                           bool lifetime_guard_enabled = true) {
   LatestMuxPipeline fixture;
   fixture.pipeline = gst_pipeline_new(pipeline_name);
   fixture.appsrc = gst_element_factory_make("appsrc", nullptr);
@@ -185,6 +207,9 @@ LatestMuxPipeline make_latest_mux_pipeline(const char* pipeline_name, const char
   const std::string inflight_limit = std::to_string(stream_inflight_limit);
   g_object_set(fixture.mux, "stream-ids", stream_id, "stream-inflight-limits",
                inflight_limit.c_str(), nullptr);
+  require(simaai::neat::pipeline_internal::set_latest_by_stream_mux_lifetime_guard_enabled(
+              fixture.mux, lifetime_guard_enabled),
+          "failed to configure latest-mux lifetime guard before start");
   g_object_set(fixture.queue, "max-size-buffers", 1U, "max-size-bytes", 0U, "max-size-time",
                static_cast<guint64>(0), "leaky", 0, nullptr);
   g_object_set(fixture.appsink, "sync", FALSE, "max-buffers", 4U, "drop", FALSE,
@@ -456,7 +481,78 @@ void test_terminal_release_restores_original_pts() {
   stop_latest_mux_pipeline(&fixture);
 }
 
-void test_keyed_release_erases_cached_timing() {
+void test_replacing_chain_uses_sequence_then_stream_fifo_timing() {
+  constexpr const char* kStreamId = "replacing-terminal-stream";
+  LatestMuxPipeline fixture = make_latest_mux_pipeline("latest-mux-replacing-terminal-pipeline",
+                                                       kStreamId, /*stream_inflight_limit=*/4,
+                                                       /*lifetime_guard_enabled=*/false);
+
+  const std::vector<std::pair<std::int64_t, GstClockTime>> inputs{
+      {101, 100 * GST_MSECOND},
+      {102, 200 * GST_MSECOND},
+      {103, 300 * GST_MSECOND},
+      {104, 400 * GST_MSECOND},
+  };
+  for (const auto& [frame_id, pts] : inputs) {
+    require(gst_app_src_push_buffer(GST_APP_SRC(fixture.appsrc),
+                                    make_mux_input_buffer_with_timing(
+                                        frame_id, pts, GST_CLOCK_TIME_NONE, 50 * GST_MSECOND)) ==
+                GST_FLOW_OK,
+            "failed to push replacing-chain timing input");
+    GstSample* decoded = pull_mux_output(fixture.appsink, GST_SECOND);
+    require(decoded != nullptr, "replacing-chain mux should admit the bounded input");
+    // Models CVU/MLA consuming the decoded buffer and emitting a different
+    // GstBuffer which does not carry arbitrary lifecycle GstMeta.
+    gst_sample_unref(decoded);
+  }
+
+  require(gst_app_src_push_buffer(
+              GST_APP_SRC(fixture.appsrc),
+              make_mux_input_buffer_with_timing(105, 500 * GST_MSECOND, GST_CLOCK_TIME_NONE,
+                                                50 * GST_MSECOND)) == GST_FLOW_OK,
+          "failed to push replacing-chain pending input");
+  GstSample* blocked = pull_mux_output(fixture.appsink, 100 * GST_MSECOND);
+  require(blocked == nullptr,
+          "destroying replaced decoded inputs must not release terminal admission early");
+
+  const auto release_and_require_pts = [&](GstBuffer* terminal, GstClockTime expected_pts,
+                                           const char* reason) {
+    GST_BUFFER_PTS(terminal) = 999 * GST_MSECOND;
+    require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+                terminal, fixture.mux_namespace),
+            reason);
+    require(GST_BUFFER_PTS(terminal) == expected_pts,
+            "terminal selection restored timing from the wrong outstanding stream loan");
+    gst_buffer_unref(terminal);
+  };
+
+  // A rewritten frame-id collides with the oldest loan, but the preserved
+  // sequence names frame 104 and must take precedence.
+  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 104, 104),
+                          400 * GST_MSECOND,
+                          "preserved input sequence should select its exact terminal loan");
+  GstSample* fifth = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(fifth != nullptr, "one terminal completion should admit the pending fifth frame");
+  gst_sample_unref(fifth);
+
+  // With no stable frame/sequence identity, the enforced ordered/non-dropping
+  // replacing-chain contract selects the oldest loan in this exact stream.
+  release_and_require_pts(make_terminal_identity_buffer(kStreamId, std::nullopt), 100 * GST_MSECOND,
+                          "stream-only terminal should use the bounded FIFO fallback");
+  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, std::nullopt, 103, 103),
+                          300 * GST_MSECOND,
+                          "sequence-only identity should select frame 103 without FIFO guessing");
+  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 102, 102),
+                          200 * GST_MSECOND,
+                          "remaining preserved sequence should select frame 102");
+  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 9999, 105, 105),
+                          500 * GST_MSECOND,
+                          "pending frame should retain its exact sequence timing");
+
+  stop_latest_mux_pipeline(&fixture);
+}
+
+void test_keyed_release_cannot_restore_finalized_timing() {
   constexpr const char* kStreamId = "keyed-timing-stream";
   constexpr GstClockTime kOriginalPts = 123 * GST_MSECOND;
   LatestMuxPipeline fixture =
@@ -479,7 +575,7 @@ void test_keyed_release_erases_cached_timing() {
               stale_probe, fixture.mux_namespace),
           "a finalized keyed loan must no longer be registered");
   require(GST_BUFFER_PTS(stale_probe) == kSentinelPts,
-          "keyed final release must erase cached timing instead of restoring stale PTS later");
+          "keyed final release must not restore finalized timing on a later terminal buffer");
   gst_buffer_unref(stale_probe);
   gst_sample_unref(output);
   stop_latest_mux_pipeline(&fixture);
@@ -536,9 +632,18 @@ void test_output_buffer_finalize_does_not_release_terminal_credit() {
   require(!emitted_before_terminal,
           "finalizing the decoded output buffer must not release terminal-bound mux credit");
 
+  require(!simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              terminal, fixture.mux_namespace + 1U),
+          "a wrong namespace hint must reject the lifecycle carrier without claiming it");
+  GstCustomMeta* terminal_meta = gst_buffer_get_custom_meta(terminal, "GstSimaMeta");
+  GstStructure* terminal_structure =
+      terminal_meta ? gst_custom_meta_get_structure(terminal_meta) : nullptr;
+  require(terminal_structure != nullptr, "propagated terminal carrier should retain GstSimaMeta");
+  gst_structure_set(terminal_structure, "stream-id", G_TYPE_STRING, "rewritten-stream",
+                    "orig-stream-id", G_TYPE_STRING, "rewritten-stream", nullptr);
   require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
               terminal, fixture.mux_namespace),
-          "terminal completion should consume the propagated lifecycle guard");
+          "the immutable guard must survive rejected scope and rewritten public metadata");
   gst_buffer_unref(terminal);
   GstSample* second = pull_mux_output(fixture.appsink, GST_SECOND);
   require(second != nullptr, "terminal completion should admit the pending lifecycle frame");
@@ -591,7 +696,7 @@ void test_fanout_terminal_and_drop_release_retained_credit() {
 
   const auto retain_one_fanout_ref = [&](std::int64_t frame_id) {
     const std::vector<simaai::neat::pipeline_internal::RealtimeFrameCredit> credits{
-        {fixture.mux_namespace, kStreamId, frame_id}};
+        {fixture.mux_namespace, kStreamId, frame_id, frame_id, frame_id}};
     require(simaai::neat::pipeline_internal::retain_realtime_frame_credits(
                 credits, 1U, "unit-latest-mux-fanout"),
             "fan-out fixture must retain one logical mux-loan reference");
@@ -609,6 +714,9 @@ void test_fanout_terminal_and_drop_release_retained_credit() {
   require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
               gst_sample_get_buffer(first), fixture.mux_namespace),
           "one fan-out branch should complete at the terminal");
+  require(!simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(first), fixture.mux_namespace),
+          "one physical terminal carrier must not consume the retained sibling reference twice");
   gst_sample_unref(first);
   gst_buffer_unref(dropped_sibling);
 
@@ -643,7 +751,8 @@ void test_fanout_terminal_and_drop_release_retained_credit() {
         GstBuffer* sibling = buffer ? gst_buffer_copy_deep(buffer) : nullptr;
         context->copied.store(sibling != nullptr, std::memory_order_release);
         const std::vector<simaai::neat::pipeline_internal::RealtimeFrameCredit> credits{
-            {context->mux_namespace, context->stream_id, context->frame_id}};
+            {context->mux_namespace, context->stream_id, context->frame_id, context->frame_id,
+             context->frame_id}};
         context->retained.store(simaai::neat::pipeline_internal::retain_realtime_frame_credits(
                                     credits, 1U, "unit-latest-mux-all-drop"),
                                 std::memory_order_release);
@@ -721,6 +830,48 @@ void test_fanout_terminal_and_drop_release_retained_credit() {
             "race progress frame should release normally");
     gst_sample_unref(raced_progress);
   }
+  stop_latest_mux_pipeline(&fixture);
+}
+
+void test_stale_guard_sequence_cannot_release_reused_key() {
+  constexpr const char* kStreamId = "stale-guard-stream";
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-stale-guard-pipeline", kStreamId);
+
+  push_mux_input(fixture.appsrc, 42);
+  GstSample* first = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(first != nullptr, "stale-guard fixture should emit its first frame");
+  GstBuffer* stale_carrier = gst_buffer_copy_deep(gst_sample_get_buffer(first));
+  require(stale_carrier != nullptr, "failed to retain stale lifecycle carrier");
+  // Finalize the first registration without touching either lifecycle carrier.
+  // This deliberately leaves the old guard armed so the stale terminal below
+  // reaches the registry sequence check rather than failing only because the
+  // old guard was already disarmed.
+  simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan(kStreamId, 42);
+  gst_sample_unref(first);
+
+  // Reuse the same public/private key under a new registry sequence while an
+  // old copied carrier still exists.
+  push_mux_input(fixture.appsrc, 42);
+  GstSample* replacement = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(replacement != nullptr, "same key should register again after first completion");
+  require(!simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              stale_carrier, fixture.mux_namespace),
+          "stale guard sequence must not release a newer loan with the same scalar key");
+  gst_buffer_unref(stale_carrier);
+
+  push_mux_input(fixture.appsrc, 43);
+  GstSample* blocked = pull_mux_output(fixture.appsink, 100 * GST_MSECOND);
+  require(blocked == nullptr, "new same-key loan must remain charged after stale guard rejection");
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              gst_sample_get_buffer(replacement), fixture.mux_namespace),
+          "current same-key guard should release its own registration");
+  gst_sample_unref(replacement);
+
+  GstSample* progress = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(progress != nullptr, "current guard completion should admit the pending frame");
+  release_terminal_loan(fixture, kStreamId, 43);
+  gst_sample_unref(progress);
   stop_latest_mux_pipeline(&fixture);
 }
 
@@ -950,11 +1101,13 @@ int main() {
     test_clear_encoded_frame_tap_waits_for_inflight_callback();
     test_encoded_frame_tap_copy_failure_posts_pipeline_error();
     test_terminal_release_restores_original_pts();
-    test_keyed_release_erases_cached_timing();
+    test_replacing_chain_uses_sequence_then_stream_fifo_timing();
+    test_keyed_release_cannot_restore_finalized_timing();
     test_public_per_stream_limit_reaches_mux_gate();
     test_output_buffer_finalize_does_not_release_terminal_credit();
     test_drop_before_terminal_releases_lifetime_credit();
     test_fanout_terminal_and_drop_release_retained_credit();
+    test_stale_guard_sequence_cannot_release_reused_key();
     test_teardown_releases_unresolved_terminal_credit();
     test_pending_buffer_unref_is_reentrant();
     test_namespace_bounded_terminal_loan_fallback();

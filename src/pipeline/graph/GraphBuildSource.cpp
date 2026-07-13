@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <map>
@@ -2412,6 +2413,134 @@ bool is_fused_consumer_stage_factory(const std::string& factory) {
          factory == "neatobjectdecode" || factory == "neatboxdecode";
 }
 
+bool fused_consumer_fragment_replaces_buffers(const std::string& fragment) {
+  for (const auto& segment : split_fused_consumer_segments(fragment)) {
+    if (is_fused_consumer_stage_factory(fused_consumer_segment_factory(segment))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::optional<std::string> fused_consumer_segment_property_value(const std::string& segment,
+                                                                 const std::string& property) {
+  const std::string lower = lower_copy(segment);
+  const auto is_space = [](char value) {
+    return std::isspace(static_cast<unsigned char>(value)) != 0;
+  };
+  bool in_single_quote = false;
+  bool in_double_quote = false;
+  std::optional<std::string> effective_value;
+  for (std::size_t i = 0; i < lower.size(); ++i) {
+    const char c = lower[i];
+    if (c == '\'' && !in_double_quote) {
+      in_single_quote = !in_single_quote;
+      continue;
+    }
+    if (c == '"' && !in_single_quote) {
+      in_double_quote = !in_double_quote;
+      continue;
+    }
+    if (in_single_quote || in_double_quote || (i != 0U && !is_space(lower[i - 1U])) ||
+        lower.compare(i, property.size(), property) != 0) {
+      continue;
+    }
+    std::size_t cursor = i + property.size();
+    if (cursor < lower.size() && lower[cursor] != '=' && !is_space(lower[cursor])) {
+      continue;
+    }
+    while (cursor < lower.size() && is_space(lower[cursor])) {
+      ++cursor;
+    }
+    if (cursor >= lower.size() || lower[cursor] != '=') {
+      continue;
+    }
+    ++cursor;
+    while (cursor < lower.size() && is_space(lower[cursor])) {
+      ++cursor;
+    }
+    // gst-launch accepts optional type annotations such as
+    // leaky=(GstQueueLeaky)downstream (and whitespace after the annotation).
+    if (cursor < lower.size() && lower[cursor] == '(') {
+      const std::size_t close = lower.find(')', cursor + 1U);
+      if (close == std::string::npos) {
+        effective_value = std::string{};
+        break;
+      }
+      cursor = close + 1U;
+      while (cursor < lower.size() && is_space(lower[cursor])) {
+        ++cursor;
+      }
+    }
+    if (cursor >= lower.size()) {
+      effective_value = std::string{};
+      break;
+    }
+    if (lower[cursor] == '\'' || lower[cursor] == '"') {
+      const char quote = lower[cursor++];
+      const std::size_t close = lower.find(quote, cursor);
+      effective_value =
+          lower.substr(cursor, close == std::string::npos ? std::string::npos : close - cursor);
+      if (close == std::string::npos) {
+        break;
+      }
+      i = close;
+      continue;
+    }
+    std::size_t end = cursor;
+    while (end < lower.size() && !is_space(lower[end])) {
+      ++end;
+    }
+    effective_value = lower.substr(cursor, end - cursor);
+    i = end;
+  }
+  return effective_value;
+}
+
+bool fused_consumer_property_is_zero(const std::string& value) {
+  if (value.empty()) {
+    return false;
+  }
+  char* end = nullptr;
+  const double parsed = std::strtod(value.c_str(), &end);
+  return end != value.c_str() && end && *end == '\0' && parsed == 0.0;
+}
+
+bool fused_consumer_fragment_may_drop(const std::string& fragment) {
+  for (const auto& segment : split_fused_consumer_segments(fragment)) {
+    const std::string factory = fused_consumer_segment_factory(segment);
+    if (factory == "videorate") {
+      return true;
+    }
+    if (factory == "queue") {
+      if (const auto leaky = fused_consumer_segment_property_value(segment, "leaky"); leaky) {
+        // GstQueueLeaky's non-dropping value is 0 / "no". Unknown values are
+        // rejected conservatively because this check is the ownership proof
+        // that permits disabling source-buffer lifetime guards.
+        if (*leaky != "0" && *leaky != "no" && *leaky != "none") {
+          return true;
+        }
+      }
+    } else if (factory == "identity") {
+      if (const auto probability =
+              fused_consumer_segment_property_value(segment, "drop-probability");
+          probability && !fused_consumer_property_is_zero(*probability)) {
+        return true;
+      }
+      if (const auto flags = fused_consumer_segment_property_value(segment, "drop-buffer-flags");
+          flags && *flags != "0" && *flags != "none") {
+        return true;
+      }
+    } else if (factory == "valve") {
+      if (const auto drop = fused_consumer_segment_property_value(segment, "drop");
+          drop && *drop != "0" && *drop != "false" && *drop != "no") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth) {
   if (requested_depth < 0 || requested_depth > 1024) {
     throw std::invalid_argument(
@@ -2492,6 +2621,14 @@ BuildResult build_fused_realtime_source_pipeline(
   }
   const std::string rendered_consumer =
       insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth);
+  br.fused_consumer_replaces_buffers = fused_consumer_fragment_replaces_buffers(rendered_consumer);
+  if (enable_terminal_loans && br.fused_consumer_replaces_buffers &&
+      fused_consumer_fragment_may_drop(rendered_consumer)) {
+    throw std::invalid_argument(
+        "fused realtime terminal-loan consumers that replace buffers must not contain "
+        "pre-terminal dropping elements (videorate, leaky queue, valve drop, or identity "
+        "drop-probability); keep the chain ordered/non-dropping or use the non-fused graph path");
+  }
   if (!rendered_consumer.empty()) {
     ss << " ! " << rendered_consumer;
   }
@@ -2742,14 +2879,28 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const std::string mux_name = apply_name_transform(name_transform, "neat_live_mux");
     GstElement* raw_mux = gst_bin_get_by_name(GST_BIN(pipeline.get()), mux_name.c_str());
     const std::uint64_t mux_namespace = latest_by_stream_mux_namespace(raw_mux);
+    // Fused CVU/MLA/decode stages allocate replacement GstBuffers and do not
+    // invoke arbitrary GstMeta transform callbacks.  A lifetime guard on the
+    // decoded input would therefore mistake successful stage consumption for a
+    // downstream drop and finalize its admission/timing loan before the derived
+    // terminal buffer arrives.  The ordered/non-dropping contract
+    // checked while rendering makes the explicit appsink completion probe below
+    // authoritative for such chains.  Identity-preserving chains retain the
+    // guard, including its pre-terminal drop protection.
+    const bool lifetime_guard_configured =
+        raw_mux &&
+        (!br.fused_consumer_replaces_buffers ||
+         pipeline_internal::set_latest_by_stream_mux_lifetime_guard_enabled(raw_mux,
+                                                                            /*enabled=*/false));
     if (raw_mux) {
       gst_object_unref(raw_mux);
     }
-    if (mux_namespace == 0) {
+    if (mux_namespace == 0 || !lifetime_guard_configured) {
       session_build_throw_session_error_simple(
           error_codes::kPipelineShape,
           std::string(where ? where : "Graph::build(fused)") + ": latest-by-stream mux '" +
-              mux_name + "' has no loan namespace.\nPipeline:\n" + last_pipeline,
+              mux_name + "' could not configure terminal loan ownership.\nPipeline:\n" +
+              last_pipeline,
           "Keep the fused latest-by-stream mux in the source pipeline.", last_pipeline);
     }
     // A fused mux loan covers work from mux emission through the terminal

@@ -215,6 +215,59 @@ RUN_TEST(
               "cannot be skipped");
       require(pipeline.find("block-when-pending") == std::string::npos,
               "default latest links must not opt into producer backpressure");
+
+      const auto require_replacing_drop_rejected = [&](const std::string& fragment,
+                                                       const char* reason) {
+        std::vector<std::shared_ptr<simaai::neat::Node>> dropping_nodes;
+        dropping_nodes.push_back(std::make_shared<FragmentNode>(
+            "DroppingModelRoute", "neatprocesscvu", "drop_preproc", fragment));
+        bool rejected = false;
+        try {
+          (void)simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              dropping_nodes, options);
+        } catch (const std::invalid_argument&) {
+          rejected = true;
+        }
+        require(rejected, reason);
+      };
+      require_replacing_drop_rejected(
+          " ! queue name=explicit_leaky max-size-buffers=1 leaky=2 ! appsink "
+          "name=drop_output",
+          "buffer-replacing fused consumers must reject numeric leaky queues before terminal");
+      require_replacing_drop_rejected(
+          " ! queue name=spaced_leaky max-size-buffers=1 leaky = downstream ! appsink "
+          "name=spaced_drop_output",
+          "buffer-replacing fused consumers must reject spaced enum leaky assignments");
+      require_replacing_drop_rejected(
+          " ! queue name=reassigned_leaky leaky=0 leaky=2 ! appsink "
+          "name=reassigned_drop_output",
+          "buffer-replacing fused consumers must honor the last repeated property assignment");
+      require_replacing_drop_rejected(
+          " ! valve name=spaced_valve drop = true ! appsink name=valve_output",
+          "buffer-replacing fused consumers must reject spaced valve-drop assignments");
+      require_replacing_drop_rejected(
+          " ! videorate name=explicit_rate ! appsink name=rate_output",
+          "buffer-replacing fused consumers must reject pre-terminal videorate drops");
+      std::vector<std::shared_ptr<simaai::neat::Node>> zero_drop_nodes;
+      zero_drop_nodes.push_back(std::make_shared<FragmentNode>(
+          "NonDroppingModelRoute", "neatprocesscvu", "zero_drop_preproc",
+          " ! identity drop-probability = 0.0 ! queue leaky = 0 ! appsink "
+          "name=zero_drop_output"));
+      const std::string zero_drop_pipeline =
+          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              zero_drop_nodes, options);
+      require_contains(zero_drop_pipeline, "drop-probability = 0.0",
+                       "explicit non-dropping values must remain valid in replacing chains");
+      std::vector<std::shared_ptr<simaai::neat::Node>> identity_drop_nodes;
+      identity_drop_nodes.push_back(std::make_shared<FragmentNode>(
+          "IdentityDropRoute", "identity", "identity_drop",
+          " drop-probability=1.0 ! appsink name=identity_drop_output"));
+      const std::string identity_drop_pipeline =
+          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              identity_drop_nodes, options);
+      require_contains(identity_drop_pipeline, "drop-probability=1.0",
+                       "identity-preserving fused chains may retain guard-backed drop handling");
+
       simaai::neat::GraphLinkOptions latest_ingress;
       latest_ingress.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       const std::string latest_ingress_queue =

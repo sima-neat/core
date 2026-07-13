@@ -18,6 +18,11 @@ namespace pipeline_internal {
 void release_latest_by_stream_mux_loan(const std::string& stream_id, std::int64_t frame_id);
 bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer,
                                                   std::uint64_t namespace_hint = 0);
+// Buffer-finalize guards are only valid while downstream preserves the same
+// GstBuffer (or copies this mux's lifecycle meta).  Fused hardware stages
+// replace buffers without invoking arbitrary GstMeta transforms, so their
+// terminal probe is the authoritative completion signal instead.
+bool set_latest_by_stream_mux_lifetime_guard_enabled(GstElement* element, bool enabled);
 bool dispatch_latest_by_stream_encoded_frame_for_buffer(GstBuffer* buffer, GstCaps* caps,
                                                         const char* stream_id,
                                                         std::string* error = nullptr);
