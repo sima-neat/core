@@ -1351,8 +1351,8 @@ install_debs_on_board() {
   # Restore native palette packages before the local transaction. Otherwise,
   # apt may "repair" a board left by an older partial install by removing
   # simaai-palette-modalix instead of restoring its exact simaai-gst-plugins
-  # dependency. --no-remove turns any similar future regression into a failed,
-  # non-destructive install instead of silently deleting platform packages.
+  # dependency. This repair remains --no-remove; the following NEAT install is
+  # allowed to perform its declared Conflicts/Replaces handoff.
   local -a preserved_native_packages=(simaai-gst-plugins simaai-palette-modalix)
   local repair_native_packages=0
   local package
@@ -1376,7 +1376,7 @@ install_debs_on_board() {
   fi
 
   local -a apt_install_args=(
-    apt-get install -y --fix-broken --allow-downgrades --reinstall --no-remove
+    apt-get install -y --fix-broken --allow-downgrades --reinstall
     -o Dpkg::Options::=--force-overwrite
   )
   if run_sudo "${apt_install_args[@]}" "${DEBS[@]}"; then
