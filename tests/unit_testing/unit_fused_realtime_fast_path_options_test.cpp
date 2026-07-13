@@ -197,6 +197,7 @@ RUN_TEST(
       ScopedUnsetEnv mla_kill_switch("SIMA_PROCESSMLA_SAFE_ASYNC");
       ScopedUnsetEnv legacy_queue_enable("SIMA_ENABLE_ASYNC_QUEUE2");
       ScopedUnsetEnv legacy_queue_depth("SIMA_ASYNC_QUEUE2_DEPTH");
+      ScopedUnsetEnv global_inflight_override("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
 
       simaai::neat::GraphOptions options;
       options.processcvu.async = true;
@@ -244,6 +245,22 @@ RUN_TEST(
               "cannot be skipped");
       require(pipeline.find("block-when-pending") == std::string::npos,
               "default latest links must not opt into producer backpressure");
+
+      setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL", "3", 1);
+      const std::string env_limited_pipeline =
+          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              make_consumer_nodes(), options);
+      require_contains(env_limited_pipeline, "max-inflight-total=3",
+                       "fused default admission must honor the realtime global env override");
+
+      simaai::neat::RealtimeGraphLinkOptions explicit_total_link;
+      explicit_total_link.max_inflight_total = 2;
+      const std::string explicit_total_pipeline =
+          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              make_consumer_nodes(), options, {explicit_total_link});
+      require_contains(explicit_total_pipeline, "max-inflight-total=2",
+                       "an explicit fused total cap must take precedence over the env override");
+      unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
 
       const auto require_replacing_drop_rejected = [&](const std::string& fragment,
                                                        const char* reason) {

@@ -1014,9 +1014,15 @@ int fused_max_inflight_total(const runtime::FusedRealtimeIngress& ingress,
                            : branch.link_options.max_inflight_total;
     }
   }
-  return explicit_limit > 0
-             ? explicit_limit
-             : pipeline_internal::default_realtime_max_inflight_total(total_capacity);
+  if (explicit_limit > 0) {
+    return explicit_limit;
+  }
+
+  int env_limit = 0;
+  if (pipeline_internal::env_int("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL", &env_limit)) {
+    return std::max(0, env_limit);
+  }
+  return pipeline_internal::default_realtime_max_inflight_total(total_capacity);
 }
 
 bool fused_block_when_pending(const runtime::FusedRealtimeIngress& ingress) {
