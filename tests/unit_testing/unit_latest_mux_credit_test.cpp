@@ -909,6 +909,45 @@ void test_public_per_stream_limit_reaches_mux_gate() {
   stop_latest_mux_pipeline(&fixture);
 }
 
+void test_eos_waits_for_credit_blocked_tail_frame() {
+  constexpr const char* kStreamId = "eos-credit-tail-stream";
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-eos-credit-tail-pipeline", kStreamId);
+
+  push_mux_input(fixture.appsrc, 1);
+  GstSample* first = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(first != nullptr, "EOS drain test should admit the first frame");
+
+  // Hold the only terminal loan, enqueue the final frame, and then close the
+  // input.  The mux has observed EOS but must not forward it while the final
+  // pending slot is still waiting for credit.
+  push_mux_input(fixture.appsrc, 2);
+  require(gst_app_src_end_of_stream(GST_APP_SRC(fixture.appsrc)) == GST_FLOW_OK,
+          "EOS drain test failed to close appsrc");
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  require(gst_app_sink_is_eos(GST_APP_SINK(fixture.appsink)) == FALSE,
+          "aggregate EOS must not overtake a credit-blocked tail frame");
+  require(pull_mux_output(fixture.appsink, 10 * GST_MSECOND) == nullptr,
+          "credit-blocked tail frame must remain pending before terminal release");
+
+  release_terminal_loan(fixture, kStreamId, 1);
+  GstSample* tail = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(tail != nullptr, "terminal release must emit the pending tail before EOS");
+
+  const auto eos_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (gst_app_sink_is_eos(GST_APP_SINK(fixture.appsink)) == FALSE &&
+         std::chrono::steady_clock::now() < eos_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  require(gst_app_sink_is_eos(GST_APP_SINK(fixture.appsink)) == TRUE,
+          "mux must forward EOS after its pending tail has been emitted");
+
+  release_terminal_loan(fixture, kStreamId, 2);
+  gst_sample_unref(tail);
+  gst_sample_unref(first);
+  stop_latest_mux_pipeline(&fixture);
+}
+
 void test_output_buffer_finalize_does_not_release_terminal_credit() {
   constexpr const char* kStreamId = "lifecycle-stream";
   LatestMuxPipeline fixture =
@@ -1473,6 +1512,7 @@ int main() {
     test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate();
     test_keyed_release_cannot_restore_finalized_timing();
     test_public_per_stream_limit_reaches_mux_gate();
+    test_eos_waits_for_credit_blocked_tail_frame();
     test_output_buffer_finalize_does_not_release_terminal_credit();
     test_drop_before_terminal_releases_lifetime_credit();
     test_fanout_terminal_and_drop_release_retained_credit();

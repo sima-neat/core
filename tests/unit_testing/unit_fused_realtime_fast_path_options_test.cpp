@@ -416,6 +416,13 @@ RUN_TEST(
 
       using simaai::neat::graph::NodeId;
       using simaai::neat::graph::PortId;
+      require(simaai::neat::runtime::session_test::fused_realtime_source_segment_eligible_for_test(
+                  false),
+              "an unfused private live source must remain eligible for fused lowering");
+      require(!simaai::neat::runtime::session_test::fused_realtime_source_segment_eligible_for_test(
+                  true),
+              "recursive fused fan-in must stay on the explicit transport path until nested "
+              "source branches can be preserved");
       require(simaai::neat::runtime::session_test::fused_realtime_destinations_share_port_for_test(
                   {{NodeId{10U}, PortId{20U}}, {NodeId{10U}, PortId{20U}}}),
               "same-port realtime fan-in must remain eligible for fused lowering");

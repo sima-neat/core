@@ -43,10 +43,10 @@ struct CameraInputOptions {
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
 
-  // False: request strict camera/device zero-copy and fail if unavailable.
-  // True: insert Neat's private adaptive bridge; EV74 SiMaAI buffers pass through,
-  // otherwise the bridge copies into EV74 SiMaAI memory.
-  bool allow_cpu_fallback = false;
+  // True (default): insert Neat's private adaptive bridge; EV74 SiMaAI buffers
+  // pass through, otherwise the bridge copies into EV74 SiMaAI memory.
+  // False: require strict camera/device zero-copy and fail if unavailable.
+  bool allow_cpu_fallback = true;
 };
 
 class CameraInput final : public Node, public OutputSpecProvider {

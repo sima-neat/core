@@ -1224,12 +1224,15 @@ void stamp_stream_meta(GstLatestByStreamMux* self, GstBuffer** inout, const Pend
   *inout = buffer;
 }
 
-bool all_slots_eos_locked(const GstLatestByStreamMux* self) {
+bool all_slots_drained_eos_locked(const GstLatestByStreamMux* self) {
   if (!self || self->slots.empty()) {
     return false;
   }
   for (const PendingSlot* slot : self->slots) {
-    if (slot && !slot->eos) {
+    // EOS is serialized after the final chain call on each sink pad, but the
+    // mux may still own that pad's last buffer while terminal credit is
+    // exhausted.  Do not let the aggregate EOS overtake such a tail frame.
+    if (slot && (!slot->eos || slot->pending)) {
       return false;
     }
   }
@@ -1338,7 +1341,7 @@ gpointer worker_main(gpointer data) {
         }
         break;
       }
-      if (all_slots_eos_locked(self)) {
+      if (all_slots_drained_eos_locked(self)) {
         push_eos = true;
         self->stopping = true;
         break;

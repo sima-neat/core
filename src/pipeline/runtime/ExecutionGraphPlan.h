@@ -295,6 +295,8 @@ ExecutionGraphPlan compile_graph_run_plan(const graph::Graph& graph,
 
 namespace session_test {
 
+bool fused_realtime_source_segment_eligible_for_test(bool already_fused);
+
 bool fused_realtime_destinations_share_port_for_test(
     const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations);
 

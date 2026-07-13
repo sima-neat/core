@@ -1690,7 +1690,12 @@ bool segment_has_output_edge(const PipelineSegmentPlan& segment, std::size_t edg
 
 bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segment,
                                                std::size_t edge_index) {
-  if (segment.consumed_by_fused_realtime_ingress || segment.nodes.empty()) {
+  // A previously fused consumer is source-like and inputless, but its nested
+  // source branches live in fused_realtime_ingress rather than nodes.  Until
+  // recursive fusion explicitly flattens/preserves those branches, treating
+  // that segment as a leaf source would silently discard the original ingress.
+  if (segment.consumed_by_fused_realtime_ingress || segment.nodes.empty() ||
+      segment.fused_realtime_ingress.has_value()) {
     return false;
   }
   if (!segment.boundary.source_like || !segment.input_edges.empty()) {
@@ -2178,6 +2183,17 @@ void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& p
 } // namespace
 
 namespace session_test {
+
+bool fused_realtime_source_segment_eligible_for_test(bool already_fused) {
+  PipelineSegmentPlan segment;
+  segment.nodes.push_back(nullptr);
+  segment.boundary.source_like = true;
+  segment.output_edges.push_back(7U);
+  if (already_fused) {
+    segment.fused_realtime_ingress.emplace();
+  }
+  return segment_is_private_live_source_for_fusion(segment, 7U);
+}
 
 bool fused_realtime_destinations_share_port_for_test(
     const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations) {
