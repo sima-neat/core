@@ -57,19 +57,71 @@ bool loan_meta_debug_enabled() {
   return env && *env && g_strcmp0(env, "0") != 0 && g_ascii_strcasecmp(env, "false") != 0;
 }
 
-struct StreamLoanState {
-  explicit StreamLoanState(int credit_limit)
-      : gate(std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(credit_limit)) {}
+using HolderLoanGatePtr = simaai::neat::pipeline_internal::HolderLoanGatePtr;
 
-  simaai::neat::pipeline_internal::HolderLoanGatePtr gate;
+struct StreamLoanState {
+  StreamLoanState(int credit_limit, HolderLoanGatePtr total_credit_gate)
+      : gate(std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(credit_limit)),
+        total_gate(std::move(total_credit_gate)) {}
+
+  HolderLoanGatePtr gate;
+  HolderLoanGatePtr total_gate;
   std::atomic<std::uint64_t> registered{0};
   std::atomic<std::uint64_t> released_by_output{0};
   std::atomic<std::uint64_t> released_without_output{0};
   std::atomic<std::uint64_t> missing_key{0};
 };
 
-std::shared_ptr<StreamLoanState> make_stream_loan_state(int credit_limit) {
-  return std::make_shared<StreamLoanState>(credit_limit);
+std::shared_ptr<StreamLoanState> make_stream_loan_state(int credit_limit,
+                                                        HolderLoanGatePtr total_credit_gate) {
+  return std::make_shared<StreamLoanState>(credit_limit, std::move(total_credit_gate));
+}
+
+bool loan_gate_enabled(const HolderLoanGatePtr& gate) {
+  return gate && gate->enabled();
+}
+
+bool loan_state_enabled(const std::shared_ptr<StreamLoanState>& state) {
+  return state && (loan_gate_enabled(state->gate) || loan_gate_enabled(state->total_gate));
+}
+
+bool loan_state_has_credit(const std::shared_ptr<StreamLoanState>& state) {
+  if (!loan_state_enabled(state)) {
+    return true;
+  }
+  const auto available = [](const HolderLoanGatePtr& gate) {
+    return !loan_gate_enabled(gate) || gate->inflight() < gate->credit_limit();
+  };
+  return available(state->total_gate) && available(state->gate);
+}
+
+bool try_acquire_loan_state(const std::shared_ptr<StreamLoanState>& state) {
+  if (!loan_state_enabled(state)) {
+    return false;
+  }
+  const bool acquire_total = loan_gate_enabled(state->total_gate);
+  if (acquire_total && !state->total_gate->try_acquire()) {
+    return false;
+  }
+  if (loan_gate_enabled(state->gate) && !state->gate->try_acquire()) {
+    if (acquire_total) {
+      state->total_gate->release();
+    }
+    return false;
+  }
+  return true;
+}
+
+void release_loan_state(const std::shared_ptr<StreamLoanState>& state) {
+  if (!state) {
+    return;
+  }
+  if (loan_gate_enabled(state->gate)) {
+    state->gate->release();
+  }
+  if (loan_gate_enabled(state->total_gate)) {
+    state->total_gate->release();
+  }
 }
 
 struct PendingSlot {
@@ -108,6 +160,8 @@ struct _GstLatestByStreamMux {
   SlotVector slots;
   StringVector stream_ids;
   IntVector stream_inflight_limits;
+  HolderLoanGatePtr total_loan_gate;
+  int max_inflight_total = 0;
   guint next_pad_index = 0;
   guint rr_index = 0;
   guint64 next_ready_ticket = 1;
@@ -467,8 +521,8 @@ void release_loan_entry_resources(const std::shared_ptr<LoanEntry>& entry, bool 
   if (!entry) {
     return;
   }
-  if (entry->state && entry->state->gate) {
-    entry->state->gate->release();
+  if (loan_state_enabled(entry->state)) {
+    release_loan_state(entry->state);
     if (by_output) {
       entry->state->released_by_output.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -697,6 +751,7 @@ enum {
   PROP_0,
   PROP_STREAM_IDS,
   PROP_STREAM_INFLIGHT_LIMITS,
+  PROP_MAX_INFLIGHT_TOTAL,
   PROP_BLOCK_WHEN_PENDING,
 };
 
@@ -798,8 +853,8 @@ bool read_stream_key(GstBuffer* buffer, std::string* stream_id) {
 void register_loan_for_key(GstLatestByStreamMux* self,
                            const std::shared_ptr<StreamLoanState>& state, const LoanKey& key,
                            GstBuffer* buffer) {
-  if (!self || !state || !state->gate || !state->gate->enabled() || key.namespace_id == 0 ||
-      key.stream_id.empty() || key.frame_id < 0) {
+  if (!self || !loan_state_enabled(state) || key.namespace_id == 0 || key.stream_id.empty() ||
+      key.frame_id < 0) {
     return;
   }
 
@@ -843,16 +898,17 @@ void register_loan_for_key(GstLatestByStreamMux* self,
                  "orig_input_seq=%lld inflight=%d limit=%d\n",
                  static_cast<unsigned long long>(self->loan_namespace), key.stream_id.c_str(),
                  static_cast<long long>(key.frame_id), static_cast<long long>(key.input_seq),
-                 static_cast<long long>(key.orig_input_seq), state->gate->inflight(),
-                 state->gate->credit_limit());
+                 static_cast<long long>(key.orig_input_seq),
+                 state->gate ? state->gate->inflight() : 0,
+                 state->gate ? state->gate->credit_limit() : 0);
   }
 }
 
 void release_acquired_loan_without_output(const std::shared_ptr<StreamLoanState>& state) {
-  if (!state || !state->gate || !state->gate->enabled()) {
+  if (!loan_state_enabled(state)) {
     return;
   }
-  state->gate->release();
+  release_loan_state(state);
   state->released_without_output.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -985,12 +1041,9 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
       continue;
     }
 
-    if (slot->loan_state && slot->loan_state->gate && slot->loan_state->gate->enabled()) {
-      const auto& gate = slot->loan_state->gate;
-      if (gate->inflight() >= gate->credit_limit()) {
-        slot->no_credit_skips.fetch_add(1, std::memory_order_relaxed);
-        continue;
-      }
+    if (!loan_state_has_credit(slot->loan_state)) {
+      slot->no_credit_skips.fetch_add(1, std::memory_order_relaxed);
+      continue;
     }
 
     // Oldest-ready selection prevents a producer whose arrival phase happens
@@ -1009,12 +1062,12 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
     return nullptr;
   }
 
-  if (selected->loan_state && selected->loan_state->gate && selected->loan_state->gate->enabled()) {
-    // Only this mux worker acquires this per-stream gate.  The availability
-    // check above therefore cannot become false (terminal threads only
-    // release credit), but keep the acquisition defensive in case that
-    // ownership contract changes.
-    if (!selected->loan_state->gate->try_acquire()) {
+  if (loan_state_enabled(selected->loan_state)) {
+    // Only this mux worker acquires the shared total gate and each per-stream
+    // gate. The availability check above therefore cannot become false
+    // (terminal threads only release credit), but keep acquisition defensive
+    // in case that ownership contract changes.
+    if (!try_acquire_loan_state(selected->loan_state)) {
       selected->no_credit_skips.fetch_add(1, std::memory_order_relaxed);
       return nullptr;
     }
@@ -1389,12 +1442,14 @@ GstPad* request_new_pad(GstElement* element, GstPadTemplate* templ, const gchar*
   }
 
   int stream_inflight_limit = simaai::neat::pipeline_internal::kDefaultRealtimeMaxInflightPerStream;
+  HolderLoanGatePtr total_loan_gate;
   g_mutex_lock(&self->lock);
   const guint index = have_requested_index ? requested_index : self->next_pad_index;
   self->next_pad_index = std::max(self->next_pad_index, index + 1U);
   if (index < self->stream_inflight_limits.size()) {
     stream_inflight_limit = self->stream_inflight_limits[index];
   }
+  total_loan_gate = self->total_loan_gate;
   g_mutex_unlock(&self->lock);
 
   gchar* name = nullptr;
@@ -1413,7 +1468,7 @@ GstPad* request_new_pad(GstElement* element, GstPadTemplate* templ, const gchar*
   auto* slot = new PendingSlot();
   slot->pad = pad;
   slot->index = index;
-  slot->loan_state = make_stream_loan_state(stream_inflight_limit);
+  slot->loan_state = make_stream_loan_state(stream_inflight_limit, std::move(total_loan_gate));
   gst_pad_set_element_private(pad, slot);
   gst_pad_set_chain_function(pad, GST_DEBUG_FUNCPTR(sink_chain));
   gst_pad_set_event_function(pad, GST_DEBUG_FUNCPTR(sink_event));
@@ -1697,6 +1752,8 @@ void finalize(GObject* object) {
   self->slots.clear();
   self->stream_ids.clear();
   self->stream_inflight_limits.clear();
+  self->total_loan_gate.reset();
+  self->total_loan_gate.~HolderLoanGatePtr();
   self->stream_inflight_limits.~IntVector();
   self->stream_ids.~StringVector();
   self->slots.~SlotVector();
@@ -1800,6 +1857,19 @@ void set_property(GObject* object, guint prop_id, const GValue* value, GParamSpe
   case PROP_STREAM_INFLIGHT_LIMITS:
     parse_stream_inflight_limits(self, g_value_get_string(value));
     break;
+  case PROP_MAX_INFLIGHT_TOTAL: {
+    g_mutex_lock(&self->lock);
+    if (!self->slots.empty()) {
+      g_mutex_unlock(&self->lock);
+      GST_ERROR_OBJECT(self, "max-inflight-total cannot change after request pads exist");
+      break;
+    }
+    self->max_inflight_total = g_value_get_int(value);
+    self->total_loan_gate =
+        std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(self->max_inflight_total);
+    g_mutex_unlock(&self->lock);
+    break;
+  }
   case PROP_BLOCK_WHEN_PENDING: {
     g_mutex_lock(&self->lock);
     if (!self->slots.empty()) {
@@ -1830,6 +1900,11 @@ void get_property(GObject* object, guint prop_id, GValue* value, GParamSpec* psp
     g_value_set_string(value, joined.c_str());
     break;
   }
+  case PROP_MAX_INFLIGHT_TOTAL:
+    g_mutex_lock(&self->lock);
+    g_value_set_int(value, self->max_inflight_total);
+    g_mutex_unlock(&self->lock);
+    break;
   case PROP_BLOCK_WHEN_PENDING:
     g_mutex_lock(&self->lock);
     g_value_set_boolean(value, self->block_when_pending ? TRUE : FALSE);
@@ -1871,6 +1946,12 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
           "indexed by request pad number",
           "", static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property(
+      gobject_class, PROP_MAX_INFLIGHT_TOTAL,
+      g_param_spec_int("max-inflight-total", "Total inflight limit",
+                       "Mux-wide terminal-loan limit across all streams (0 disables)", 0,
+                       std::numeric_limits<int>::max(), 0,
+                       static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
       gobject_class, PROP_BLOCK_WHEN_PENDING,
       g_param_spec_boolean(
           "block-when-pending", "Block when pending",
@@ -1883,6 +1964,9 @@ void gst_latest_by_stream_mux_init(GstLatestByStreamMux* self) {
   new (&self->slots) SlotVector();
   new (&self->stream_ids) StringVector();
   new (&self->stream_inflight_limits) IntVector();
+  new (&self->total_loan_gate)
+      HolderLoanGatePtr(std::make_shared<simaai::neat::pipeline_internal::HolderLoanGate>(0));
+  self->max_inflight_total = 0;
   do {
     self->loan_namespace = mux_namespace_counter().fetch_add(1, std::memory_order_relaxed);
   } while (self->loan_namespace == 0);

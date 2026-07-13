@@ -112,8 +112,6 @@ int realtime_credit_probe_every() {
   return value;
 }
 
-constexpr int kDefaultRawCreditTotalCap = 8;
-
 void validate_realtime_credit_option(const char* name, int value) {
   if (value == 0 || value < -1) {
     throw std::runtime_error(std::string("GraphLinkOptions::") + name +
@@ -151,7 +149,8 @@ int realtime_credit_max_inflight_total(const GraphLinkOptions& options, int per_
    * Derive it from the per-stream cap so 4-stream and 16-stream fan-in graphs
    * scale without a hidden fixed global bottleneck.
    */
-  return std::min(safe_total_credit_limit(per_stream, stream_count), kDefaultRawCreditTotalCap);
+  return pipeline_internal::default_realtime_max_inflight_total(
+      safe_total_credit_limit(per_stream, stream_count));
 }
 
 int realtime_link_log_every() {

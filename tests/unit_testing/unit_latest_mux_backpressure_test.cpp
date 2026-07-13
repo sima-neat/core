@@ -60,7 +60,9 @@ struct ProbeState {
   std::uint64_t mux_namespace = 0;
   bool auto_release_loans = false;
   bool hold_next_loan = false;
+  bool hold_all_loans = false;
   GstBuffer* held_loan = nullptr;
+  std::vector<GstBuffer*> held_loans;
   std::chrono::milliseconds output_delay{0};
   bool callback_failed = false;
 };
@@ -92,6 +94,9 @@ GstPadProbeReturn output_probe(GstPad*, GstPadProbeInfo* info, gpointer user_dat
       return GST_PAD_PROBE_OK;
     }
     state->outputs.push_back(output);
+    if (state->hold_all_loans) {
+      state->held_loans.push_back(gst_buffer_ref(buffer));
+    }
     if (state->auto_release_loans) {
       if (state->hold_next_loan) {
         state->hold_next_loan = false;
@@ -126,7 +131,7 @@ struct Fixture {
 };
 
 void init_fixture(Fixture* fixture, const char* name, bool block_when_pending,
-                  const char* inflight_limits = "0,0") {
+                  const char* inflight_limits = "0,0", int max_inflight_total = 0) {
   require(fixture != nullptr, "latest-mux backpressure fixture pointer is null");
   Fixture& f = *fixture;
   f.pipeline = gst_pipeline_new(name);
@@ -134,7 +139,8 @@ void init_fixture(Fixture* fixture, const char* name, bool block_when_pending,
   f.sink = gst_element_factory_make("fakesink", nullptr);
   require(f.pipeline && f.mux && f.sink, "failed to create latest-mux backpressure fixture");
   g_object_set(f.mux, "stream-ids", "stream0,stream1", "stream-inflight-limits", inflight_limits,
-               "block-when-pending", block_when_pending ? TRUE : FALSE, nullptr);
+               "max-inflight-total", max_inflight_total, "block-when-pending",
+               block_when_pending ? TRUE : FALSE, nullptr);
   g_object_set(f.sink, "sync", FALSE, "async", FALSE, nullptr);
   gst_bin_add_many(GST_BIN(f.pipeline), f.mux, f.sink, nullptr);
   require(gst_element_link(f.mux, f.sink) == TRUE,
@@ -169,6 +175,14 @@ void stop_fixture(Fixture* f) {
   }
   require(gst_element_set_state(f->pipeline, GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
           "failed to stop latest-mux backpressure fixture");
+  std::vector<GstBuffer*> held_loans;
+  {
+    std::lock_guard<std::mutex> lock(f->probe.mutex);
+    held_loans.swap(f->probe.held_loans);
+  }
+  for (GstBuffer* buffer : held_loans) {
+    gst_buffer_unref(buffer);
+  }
   for (GstPad*& pad : f->pads) {
     if (!pad) {
       continue;
@@ -316,6 +330,45 @@ void test_credit_release_unblocks_pending_producer() {
   }
   third.join();
   require(third_flow == GST_FLOW_OK, "credit-unblocked producer should return GST_FLOW_OK");
+  wait_for_outputs(&f, 3U);
+  stop_fixture(&f);
+}
+
+void test_total_credit_caps_all_streams() {
+  Fixture f;
+  init_fixture(&f, "latest-mux-total-credit", true, "2,2", 2);
+  {
+    std::lock_guard<std::mutex> lock(f.probe.mutex);
+    f.probe.hold_all_loans = true;
+  }
+
+  require(gst_pad_chain(f.pads[0], make_buffer(61)) == GST_FLOW_OK,
+          "total-credit fixture rejected stream0 frame");
+  wait_for_outputs(&f, 1U);
+  require(gst_pad_chain(f.pads[1], make_buffer(71)) == GST_FLOW_OK,
+          "total-credit fixture rejected stream1 frame");
+  wait_for_outputs(&f, 2U);
+  require(gst_pad_chain(f.pads[0], make_buffer(62)) == GST_FLOW_OK,
+          "total-credit fixture rejected pending frame");
+  {
+    std::unique_lock<std::mutex> lock(f.probe.mutex);
+    require(!f.probe.cv.wait_for(lock, std::chrono::milliseconds(150),
+                                 [&] { return f.probe.outputs.size() >= 3U; }),
+            "mux-wide max-inflight-total=2 must hold a third loan even when its stream has "
+            "credit");
+  }
+
+  GstBuffer* terminal = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(f.probe.mutex);
+    require(!f.probe.held_loans.empty(), "total-credit fixture did not retain a loan");
+    terminal = f.probe.held_loans.front();
+    f.probe.held_loans.erase(f.probe.held_loans.begin());
+  }
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              terminal, f.probe.mux_namespace),
+          "terminal completion did not return mux-wide credit");
+  gst_buffer_unref(terminal);
   wait_for_outputs(&f, 3U);
   stop_fixture(&f);
 }
@@ -485,6 +538,7 @@ int main() {
     test_default_mode_keeps_latest();
     test_blocking_mode_preserves_burst();
     test_credit_release_unblocks_pending_producer();
+    test_total_credit_caps_all_streams();
     test_flush_start_wakes_blocked_producer();
     test_multistream_every_frame_order_and_eos();
     test_state_stop_wakes_blocked_producer();

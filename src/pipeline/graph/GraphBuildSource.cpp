@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -973,16 +974,47 @@ std::string fused_stream_ids_csv(const runtime::FusedRealtimeIngress& ingress) {
   return csv;
 }
 
-std::string fused_stream_inflight_limits_csv(const runtime::FusedRealtimeIngress& ingress) {
+std::string fused_stream_inflight_limits_csv(const runtime::FusedRealtimeIngress& ingress,
+                                             bool enable_terminal_loans) {
   std::string csv;
   for (std::size_t i = 0; i < ingress.branches.size(); ++i) {
     if (i) {
       csv += ',';
     }
-    csv += std::to_string(pipeline_internal::resolved_realtime_max_inflight_per_stream(
-        ingress.branches[i].link_options));
+    const int limit = enable_terminal_loans
+                          ? pipeline_internal::resolved_realtime_max_inflight_per_stream(
+                                ingress.branches[i].link_options)
+                          : 0;
+    csv += std::to_string(limit);
   }
   return csv;
+}
+
+int fused_max_inflight_total(const runtime::FusedRealtimeIngress& ingress,
+                             bool enable_terminal_loans) {
+  if (!enable_terminal_loans || ingress.branches.empty()) {
+    return 0;
+  }
+
+  int total_capacity = 0;
+  int explicit_limit = -1;
+  for (const auto& branch : ingress.branches) {
+    const int per_stream =
+        pipeline_internal::resolved_realtime_max_inflight_per_stream(branch.link_options);
+    if (total_capacity > std::numeric_limits<int>::max() - per_stream) {
+      total_capacity = std::numeric_limits<int>::max();
+    } else {
+      total_capacity += per_stream;
+    }
+    if (branch.link_options.max_inflight_total > 0) {
+      explicit_limit = explicit_limit > 0
+                           ? std::min(explicit_limit, branch.link_options.max_inflight_total)
+                           : branch.link_options.max_inflight_total;
+    }
+  }
+  return explicit_limit > 0
+             ? explicit_limit
+             : pipeline_internal::default_realtime_max_inflight_total(total_capacity);
 }
 
 bool fused_block_when_pending(const runtime::FusedRealtimeIngress& ingress) {
@@ -2371,7 +2403,7 @@ BuildResult build_fused_realtime_source_pipeline(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes,
     const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
     const std::vector<std::vector<int>>& branch_actual_indices, const NameTransform& name_transform,
-    const std::string& appsink_name, const GraphOptions& sess_opt) {
+    const std::string& appsink_name, const GraphOptions& sess_opt, bool enable_terminal_loans) {
   BuildResult br;
   br.diag = std::make_shared<DiagCtx>();
   br.appsink_name = apply_name_transform(name_transform, appsink_name);
@@ -2385,19 +2417,23 @@ BuildResult build_fused_realtime_source_pipeline(
   NodeReport mux_report;
   mux_report.index = -1;
   const std::string stream_ids = fused_stream_ids_csv(ingress);
-  const std::string stream_inflight_limits = fused_stream_inflight_limits_csv(ingress);
+  const std::string stream_inflight_limits =
+      fused_stream_inflight_limits_csv(ingress, enable_terminal_loans);
+  const int max_inflight_total = fused_max_inflight_total(ingress, enable_terminal_loans);
   const bool block_when_pending = fused_block_when_pending(ingress);
   mux_report.kind = block_when_pending ? "RealtimeEveryFrameMux" : "RealtimeLatestMux";
   mux_report.backend_fragment =
       "neatlatestbystreammux name=" + mux_name + " stream-ids=" + gst_double_quote(stream_ids) +
       " stream-inflight-limits=" + gst_double_quote(stream_inflight_limits) +
+      " max-inflight-total=" + std::to_string(max_inflight_total) +
       (block_when_pending ? " block-when-pending=true" : "");
   mux_report.elements.push_back(mux_name);
   br.diag->node_reports.push_back(mux_report);
 
   std::ostringstream ss;
   ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids)
-     << " stream-inflight-limits=" << gst_double_quote(stream_inflight_limits);
+     << " stream-inflight-limits=" << gst_double_quote(stream_inflight_limits)
+     << " max-inflight-total=" << max_inflight_total;
   if (block_when_pending) {
     ss << " block-when-pending=true";
   }
@@ -2456,7 +2492,7 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
   const std::vector<std::vector<int>> branch_actual_indices(1);
   return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
                                               branch_actual_indices, NameTransform{}, "mysink",
-                                              options)
+                                              options, /*enable_terminal_loans=*/true)
       .pipeline_string;
 }
 
@@ -2474,7 +2510,26 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
   const std::vector<std::vector<int>> branch_actual_indices(link_options.size());
   return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
                                               branch_actual_indices, NameTransform{},
-                                              "neat_test_output", options)
+                                              "neat_test_output", options,
+                                              /*enable_terminal_loans=*/true)
+      .pipeline_string;
+}
+
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
+    const std::vector<GraphLinkOptions>& link_options, bool enable_terminal_loans) {
+  runtime::FusedRealtimeIngress ingress;
+  for (std::size_t i = 0; i < link_options.size(); ++i) {
+    runtime::FusedRealtimeIngressBranch branch;
+    branch.stream_id = "stream" + std::to_string(i);
+    branch.link_options = link_options[i];
+    ingress.branches.push_back(std::move(branch));
+  }
+  const std::vector<std::vector<std::shared_ptr<Node>>> branch_nodes(link_options.size());
+  const std::vector<std::vector<int>> branch_actual_indices(link_options.size());
+  return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
+                                              branch_actual_indices, NameTransform{},
+                                              "neat_test_output", options, enable_terminal_loans)
       .pipeline_string;
 }
 
@@ -2547,7 +2602,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   }
   BuildResult br = build_fused_realtime_source_pipeline(ingress, build_consumer_nodes,
                                                         build_branch_nodes, branch_actual_indices,
-                                                        name_transform, "mysink", sess_opt);
+                                                        name_transform, "mysink", sess_opt,
+                                                        /*enable_terminal_loans=*/has_sink);
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);

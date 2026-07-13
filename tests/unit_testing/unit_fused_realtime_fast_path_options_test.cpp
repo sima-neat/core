@@ -183,6 +183,8 @@ RUN_TEST(
                        "test must exercise the fused realtime renderer");
       require_contains(pipeline, "stream-inflight-limits=\"4\"",
                        "unset per-stream admission must resolve to the public default");
+      require_contains(pipeline, "max-inflight-total=4",
+                       "single-stream fused admission must preserve the default total guard");
       require_contains(pipeline, "neatprocesscvu name=n0_preproc async=true num-buffers=4",
                        "fused ProcessCVU must receive the public async option");
       require_contains(pipeline, "neatprocessmla name=n0_mla async=true num-buffers=7",
@@ -198,7 +200,9 @@ RUN_TEST(
       require(count_occurrences(pipeline, queue) == 3U,
               "fused async depth must insert exactly mux-to-CVU, CVU-to-MLA, and "
               "MLA-to-decode queues");
-      require_contains(pipeline, "stream-inflight-limits=\"4\" ! " + queue + " ! neatprocesscvu",
+      require_contains(pipeline,
+                       "stream-inflight-limits=\"4\" max-inflight-total=4 ! " + queue +
+                           " ! neatprocesscvu",
                        "first fused queue must decouple the mux from ProcessCVU");
       require_contains(pipeline, "num-buffers=4 ! " + queue + " ! neatprocessmla",
                        "second fused queue must decouple ProcessCVU from ProcessMLA");
@@ -244,6 +248,7 @@ RUN_TEST(
         link.queue_depth = 1;
         link.stream_id = "fused_queue_stream" + std::to_string(stream);
         link.max_inflight_per_stream = 1;
+        link.max_inflight_total = 2;
         composed_app.connect(source, composed_detector, link);
       }
       simaai::neat::RunOptions composed_run_options;
@@ -273,6 +278,8 @@ RUN_TEST(
       for (const auto& branch : fused_segment->fused_realtime_ingress->branches) {
         require(branch.link_options.max_inflight_per_stream == 1,
                 "fused ingress must preserve each public per-link admission limit");
+        require(branch.link_options.max_inflight_total == 2,
+                "fused ingress must preserve the public total admission limit");
         require(branch.link_options.policy ==
                     simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream,
                 "fused ingress must preserve the every-frame backpressure policy");
@@ -283,6 +290,8 @@ RUN_TEST(
               fused_segment->nodes, fused_segment->route_options, fused_link_options);
       require_contains(composed_pipeline, "stream-inflight-limits=\"1,1\"",
                        "fused mux must receive public per-link admission limits");
+      require_contains(composed_pipeline, "max-inflight-total=2",
+                       "fused mux must receive the public mux-wide admission limit");
       require_contains(composed_pipeline, "block-when-pending=true",
                        "every-frame public links must enable bounded mux backpressure");
       const std::string composed_queue =
@@ -291,6 +300,16 @@ RUN_TEST(
               "actual composed fused graph must render the three selected stage queues");
       require(composed_pipeline.find(composed_queue + " ! appsink") == std::string::npos,
               "actual composed fused graph must not queue before its terminal Output");
+
+      const std::string no_output_pipeline =
+          simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+              fused_segment->nodes, fused_segment->route_options, fused_link_options,
+              /*enable_terminal_loans=*/false);
+      require_contains(no_output_pipeline, "stream-inflight-limits=\"0,0\"",
+                       "a fused graph without terminal Output must not take unreleasable "
+                       "per-stream loans");
+      require_contains(no_output_pipeline, "max-inflight-total=0",
+                       "a fused graph without terminal Output must disable its total loan gate");
 
       simaai::neat::Graph mixed_policy_app("mixed_realtime_policy_app", outer_options);
       auto mixed_detector = make_composed_consumer_graph();
