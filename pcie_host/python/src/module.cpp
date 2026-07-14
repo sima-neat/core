@@ -574,7 +574,8 @@ NB_MODULE(_pyneatpcie_core, m) {
           [](pcie::Model& model, nb::handle, nb::handle, nb::handle) {
             model.close();
             return false;
-          })
+          },
+          "exc_type"_a.none(), "exc_value"_a.none(), "traceback"_a.none())
       .def(
           "push",
           [](pcie::Model& model, nb::object tensors) {
