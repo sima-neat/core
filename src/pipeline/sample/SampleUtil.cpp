@@ -161,6 +161,24 @@ void mark_tensor_producer_lifetime(const Tensor& tensor, const std::shared_ptr<v
 
 bool tensor_has_device_gstsample_holder_local(const Tensor& tensor);
 
+bool holder_uses_simaai_segment_memory(const std::shared_ptr<void>& holder) {
+  auto* sample = static_cast<GstSample*>(holder.get());
+  GstBuffer* buffer = sample ? gst_sample_get_buffer(sample) : nullptr;
+  if (!buffer) {
+    return false;
+  }
+  const guint memory_count = gst_buffer_n_memory(buffer);
+  for (guint i = 0; i < memory_count; ++i) {
+    GstMemory* memory = gst_buffer_peek_memory(buffer, i);
+    const char* memory_type = memory && memory->allocator ? memory->allocator->mem_type : nullptr;
+    if (memory_type && (std::strcmp(memory_type, "SimaaiSegmentMemory") == 0 ||
+                        std::strcmp(memory_type, "NeatSimaaiSegmentMemory") == 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool tensor_has_device_gstsample_producer_lifetime_local(const Tensor& tensor,
                                                          bool require_expired) {
   if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
@@ -182,7 +200,8 @@ bool tensor_has_device_gstsample_holder_local(const Tensor& tensor) {
   }
   return tensor.device.type != simaai::neat::DeviceType::CPU ||
          tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
-         tensor.storage->sima_mem_target_flags != 0 || !tensor.storage->sima_segments.empty();
+         tensor.storage->sima_mem_target_flags != 0 ||
+         holder_uses_simaai_segment_memory(tensor.storage->holder);
 }
 
 struct ZeroCopyLoanToken {

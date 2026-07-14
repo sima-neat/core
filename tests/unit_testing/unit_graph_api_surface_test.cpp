@@ -168,6 +168,26 @@ template <typename T>
 struct has_postprocess_graph<T, std::void_t<decltype(std::declval<const T&>().postprocess_graph())>>
     : std::true_type {};
 
+template <typename T>
+concept accepts_brace_build = requires(T& graph) { graph.build({}); };
+
+template <typename T>
+concept accepts_run_options_brace_build =
+    requires(T& graph) { graph.build({simaai::neat::RunOptions{}}); };
+
+template <typename T>
+concept accepts_brace_connect =
+    requires(T& graph, const T& from, const T& to) { graph.connect(from, to, {}); };
+
+template <typename T>
+concept has_connect_realtime = requires(T& graph, const T& from, const T& to,
+                                        const simaai::neat::RealtimeMuxByStream& options) {
+  graph.connect_realtime(from, to, options);
+};
+
+template <typename T>
+concept has_fused_realtime_build = requires(T& graph) { graph.build_fused_realtime_sources(); };
+
 int main() {
   using simaai::neat::Graph;
   using simaai::neat::Run;
@@ -216,22 +236,18 @@ int main() {
                 "Graph::build(TensorList, RunOptions) is the reusable runner shorthand");
   static_assert(!has_graph_build_input_runmode<Graph>::value,
                 "Graph::build(TensorList, RunMode, RunOptions) should not be public");
-  static_assert(
-      std::is_same_v<decltype(std::declval<Graph&>().build_fused_realtime_sources()), Run>,
-      "named fused source build must accept omitted RunOptions without changing build overloads");
-  static_assert(std::is_same_v<decltype(std::declval<Graph&>().build_fused_realtime_sources(
-                                   std::declval<const simaai::neat::RunOptions&>())),
-                               Run>,
-                "named fused source build must accept explicit RunOptions");
-  static_assert(std::is_same_v<decltype(std::declval<Graph&>().connect_realtime(
-                                   std::declval<const Graph&>(), std::declval<const Graph&>(),
-                                   std::declval<const simaai::neat::RealtimeGraphLinkOptions&>())),
-                               Graph&>,
-                "bounded realtime links must use the distinct ABI-safe connect entry point");
+  static_assert(accepts_brace_build<Graph>, "Graph::build({}) must remain unambiguous");
+  static_assert(accepts_run_options_brace_build<Graph>,
+                "Graph::build({RunOptions{}}) must retain its released meaning");
+  static_assert(accepts_brace_connect<Graph>, "Graph::connect(from, to, {}) must remain valid");
+  static_assert(!has_fused_realtime_build<Graph>,
+                "fusion is an internal lowering selected by ordinary Graph::build()");
+  static_assert(!has_connect_realtime<Graph>,
+                "bounded realtime links must use ordinary Graph::connect()");
   static_assert(
       std::is_same_v<decltype(std::declval<Graph&>().connect(
                          std::declval<const Graph&>(), std::declval<const Graph&>(),
-                         std::declval<simaai::neat::RealtimeGraphLinkOptions&>())),
+                         std::declval<simaai::neat::RealtimeMuxByStream&>())),
                      Graph&>,
       "the constrained connect convenience must accept the extended realtime options type");
 

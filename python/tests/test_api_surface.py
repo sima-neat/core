@@ -159,9 +159,11 @@ def _assert_not_type_error(call):
 
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
-  assert hasattr(pyneat.Graph, "build_fused_realtime_source")
+  assert not hasattr(pyneat.Graph, "build_fused_realtime_source")
+  assert not hasattr(pyneat.Graph, "connect_realtime")
   assert hasattr(pyneat, "GraphOptions")
   assert hasattr(pyneat, "GraphLinkOptions")
+  assert hasattr(pyneat, "RealtimeMuxByStream")
   assert hasattr(pyneat, "GraphLinkPolicy")
   assert hasattr(pyneat, "GraphReport")
   assert hasattr(pyneat, "NeatError")
@@ -225,16 +227,22 @@ def test_graph_pythonic_add_graph_and_connect_alias():
 
 
 def test_graph_link_options_surface():
-  opt = pyneat.GraphLinkOptions()
-  assert opt.policy == pyneat.GraphLinkPolicy.Default
-  opt.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
-  opt.queue_depth = 7
-  opt.stream_id = "camera0"
-  opt.max_inflight_per_stream = 4
-  opt.max_inflight_total = 16
+  released = pyneat.GraphLinkOptions()
+  assert released.policy == pyneat.GraphLinkPolicy.Default
+  released.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+  released.queue_depth = 7
+  released.stream_id = "camera0"
+  assert released.queue_depth == 7
+  assert released.stream_id == "camera0"
+  assert not hasattr(released, "max_inflight_per_stream")
+  assert not hasattr(released, "max_inflight_total")
+
+  opt = pyneat.RealtimeMuxByStream(released)
   assert opt.policy == pyneat.GraphLinkPolicy.RealtimeLatestByStream
   assert opt.queue_depth == 7
   assert opt.stream_id == "camera0"
+  opt.max_inflight_per_stream = 4
+  opt.max_inflight_total = 16
   assert opt.max_inflight_per_stream == 4
   assert opt.max_inflight_total == 16
   opt.policy = pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
@@ -249,8 +257,10 @@ def test_graph_link_options_surface():
   sink = pyneat.Graph()
   sink.add(pyneat.nodes.output())
 
-  connected = pyneat.Graph()
-  assert connected.connect(source, sink, opt) is connected
+  released_connected = pyneat.Graph()
+  assert released_connected.connect(source, sink, released) is released_connected
+  realtime_connected = pyneat.Graph()
+  assert realtime_connected.connect(source, sink, opt) is realtime_connected
 
 
 def test_named_graph_endpoint_api_surface():

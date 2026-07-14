@@ -5,17 +5,20 @@
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <netinet/in.h>
 #include <string>
+#include <thread>
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -277,4 +280,39 @@ RUN_TEST(
       require_send_mode_flag(false);
       require_enobufs_diagnostic(false);
       require_enobufs_diagnostic(true);
+
+      // Multiple dispatch threads may share one sender. Counter increments must
+      // not be lost, while readers are allowed to observe a non-transactional
+      // point-in-time combination of fields.
+      constexpr int kThreads = 4;
+      constexpr int kSendsPerThread = 100;
+      std::atomic<bool> keep_reading{true};
+      std::thread stats_reader([&] {
+        while (keep_reading.load(std::memory_order_relaxed)) {
+          (void)sender.stats();
+          std::this_thread::yield();
+        }
+      });
+      std::vector<std::thread> senders;
+      senders.reserve(kThreads);
+      for (int thread_index = 0; thread_index < kThreads; ++thread_index) {
+        senders.emplace_back([&] {
+          for (int send_index = 0; send_index < kSendsPerThread; ++send_index) {
+            (void)sender.send_raw_json("{}");
+          }
+        });
+      }
+      for (auto& dispatch_thread : senders) {
+        dispatch_thread.join();
+      }
+      keep_reading.store(false, std::memory_order_relaxed);
+      stats_reader.join();
+
+      const auto concurrent_stats = sender.stats();
+      require(concurrent_stats.send_attempts ==
+                  2 + static_cast<uint64_t>(kThreads * kSendsPerThread),
+              "MetadataSender concurrent send-attempt increments were lost");
+      require(concurrent_stats.datagrams_sent + concurrent_stats.send_failures ==
+                  concurrent_stats.send_attempts,
+              "MetadataSender final concurrent counters must account for every attempt");
     }));

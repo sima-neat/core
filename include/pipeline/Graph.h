@@ -41,8 +41,10 @@
 #include "nodes/sima/SimaDecode.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <span>
@@ -76,8 +78,7 @@ struct FragmentBoundaryHints;
 struct FragmentPlan;
 struct Provenance;
 ExecutionGraphPlan compile_public_graph(const Graph& graph, const RunOptions& opt,
-                                        std::optional<Sample> seed = std::nullopt,
-                                        bool fuse_realtime_source_branches = false);
+                                        std::optional<Sample> seed = std::nullopt);
 } // namespace runtime
 #endif
 
@@ -221,21 +222,13 @@ public:
   Graph& connect(std::string_view from_endpoint, std::string_view to_endpoint);
   Graph& connect(const Graph& from, const Graph& to);
   Graph& connect(const Graph& from, const Graph& to, const GraphLinkOptions& options);
-  /**
-   * @brief Connect reusable fragments with explicit realtime raw-frame admission limits.
-   *
-   * This named entry point keeps the released `connect(..., GraphLinkOptions)` ABI intact while
-   * allowing bounded realtime links to carry `RealtimeGraphLinkOptions`.
-   */
-  Graph& connect_realtime(const Graph& from, const Graph& to,
-                          const RealtimeGraphLinkOptions& options);
   /// Preserve the familiar `connect(from, to, options)` spelling for the new realtime options
   /// type without adding a non-template overload that would make `connect(from, to, {})`
   /// ambiguous with the released `GraphLinkOptions` overload.
   template <typename Options>
-    requires std::is_same_v<std::remove_cvref_t<Options>, RealtimeGraphLinkOptions>
+    requires std::is_same_v<std::remove_cvref_t<Options>, RealtimeMuxByStream>
   Graph& connect(const Graph& from, const Graph& to, Options&& options) {
-    return connect_realtime(from, to, options);
+    return connect_with_link_options_(from, to, options);
   }
   Graph& connect(std::shared_ptr<Node> from, std::shared_ptr<Node> to);
   Graph& connect(const Graph& from, std::shared_ptr<Node> to);
@@ -388,15 +381,15 @@ public:
    */
   Run build(const RunOptions& opt = {});
   /**
-   * @brief Build eligible live source branches and their latest-by-stream fan-in
-   * in one GStreamer pipeline.
+   * @brief Preserve the established `build({})` default-options idiom.
    *
-   * This avoids an appsink/appsrc device-memory handoff for high-channel-count
-   * live graphs. Links using `RealtimeLatestByStream` or
-   * `RealtimeEveryFrameByStream` are eligible; all other topology and
-   * validation rules are unchanged.
+   * The seeded `build(...)` overloads also accept an empty braced value, so
+   * `build({})` is otherwise ambiguous. This exact empty-list compatibility
+   * shim forwards to the established RunOptions overload.
    */
-  Run build_fused_realtime_sources(const RunOptions& opt = {});
+  Run build(std::initializer_list<std::nullptr_t>) {
+    return build(RunOptions{});
+  }
 
   /// Returns the GStreamer launch string from the most recent `build()` call.
   const std::string& last_pipeline() const {
@@ -428,7 +421,7 @@ private:
     std::string from_port;
     std::string to_port;
     std::optional<EndpointEdgeMeta> endpoint;
-    RealtimeGraphLinkOptions link_options;
+    RealtimeMuxByStream link_options;
     std::string stream_id;
   };
   struct GroupMeta;
@@ -458,15 +451,17 @@ private:
 
 #ifdef SIMA_NEAT_INTERNAL
   CompositionView composition_view_for_internal_compile() const;
-  friend runtime::ExecutionGraphPlan
-  runtime::compile_public_graph(const Graph& graph, const RunOptions& opt,
-                                std::optional<Sample> seed, bool fuse_realtime_source_branches);
+  friend runtime::ExecutionGraphPlan runtime::compile_public_graph(const Graph& graph,
+                                                                   const RunOptions& opt,
+                                                                   std::optional<Sample> seed);
 #endif
 
   /// Drop the built pipeline (if any) and any cached runner. Tears down GStreamer
   /// resources via RAII; safe to call when there is no built state. Never throws.
   void invalidate_built_() noexcept;
-  Run build_source_internal_(const RunOptions& opt, bool fuse_realtime_source_branches);
+  Graph& connect_with_link_options_(const Graph& from, const Graph& to,
+                                    const RealtimeMuxByStream& options);
+  Run build_source_internal_(const RunOptions& opt);
 
   /// Shared "build a source-mode pipeline to PAUSED" body for `build(RunOptions)`
   /// and `build_cached_source()`. Validates, materializes, compiles, attaches all

@@ -113,6 +113,11 @@ int main() {
             "H264 GstSample codec mismatch");
     require(h264_tensor.storage != nullptr && h264_tensor.storage->kind == StorageKind::GstSample,
             "H264 GstSample should keep GstSample storage");
+    Sample h264_holder = sample_from_gst_encoded(h264_gst.get(), h264_caps);
+    require(!h264_holder.tensors.front().storage->sima_segments.empty(),
+            "system-memory GstSample fixture should retain physical memory views");
+    require(!pipeline_internal::sample_has_device_gstsample_holder(h264_holder),
+            "system-memory encoded GstSample must not consume device-output loan credits");
 
     GstSamplePtr jpeg_gst = make_gst_encoded_sample(jpeg_caps, {0xFF, 0xD8, 0xFF, 0xD9});
     Tensor jpeg_tensor = from_gst_sample(jpeg_gst.get());

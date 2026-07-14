@@ -1,7 +1,7 @@
 #include "gst/GstInit.h"
 #include "gst/GstLatestByStreamMux.h"
 #include "pipeline/GraphOptions.h"
-#include "pipeline/LatestByStreamFrameTap.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -311,174 +311,94 @@ void release_terminal_loan(const LatestMuxPipeline& fixture, const char* stream_
   require(released, "namespace-qualified terminal output should release the mux loan");
 }
 
-void test_encoded_frame_tap_owns_au_and_timing() {
+void test_graph_scoped_encoded_output_retains_au_and_timing_zero_copy() {
   constexpr GstClockTime kPts = 9001001;
   constexpr GstClockTime kDts = 8001001;
   constexpr GstClockTime kDuration = 50000000;
   const std::vector<std::uint8_t> expected = {0x00, 0x00, 0x00, 0x01, 0x65, 0x12, 0x34};
   GstCaps* caps =
       gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-  require(caps != nullptr, "failed to allocate encoded-tap caps");
+  require(caps != nullptr, "failed to allocate encoded Output caps");
   GstBuffer* source = make_encoded_tap_buffer(expected, kPts, kDts, kDuration);
+  GST_BUFFER_FLAG_SET(source, GST_BUFFER_FLAG_DELTA_UNIT);
 
-  std::size_t callback_count = 0;
-  simaai::neat::Sample captured;
-  simaai::neat::set_latest_by_stream_encoded_frame_callback([&](simaai::neat::Sample sample) {
-    ++callback_count;
-    captured = std::move(sample);
-  });
-  require(simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
-              source, caps, "stream17"),
-          "valid encoded tap dispatch should succeed");
-  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
+  simaai::neat::Sample captured =
+      simaai::neat::session_test::make_fused_encoded_output_sample_for_test(source, caps,
+                                                                            "stream17");
+  require(captured.stream_id == "stream17", "encoded Output should preserve stream identity");
+  require(captured.pts_ns == static_cast<std::int64_t>(kPts), "encoded Output should preserve PTS");
+  require(captured.dts_ns == static_cast<std::int64_t>(kDts), "encoded Output should preserve DTS");
+  require(captured.duration_ns == static_cast<std::int64_t>(kDuration),
+          "encoded Output should preserve duration");
+  require(captured.caps_string.find("video/x-h264") != std::string::npos,
+          "encoded Output should preserve caps");
+  require(captured.tensors.size() == 1U && captured.tensors.front().storage,
+          "encoded Output should retain one payload tensor");
+  require(captured.tensors.front().storage->kind == simaai::neat::StorageKind::GstSample,
+          "encoded Output must retain the GstSample instead of copying the AU");
 
-  GstMapInfo overwrite = GST_MAP_INFO_INIT;
-  require(gst_buffer_map(source, &overwrite, GST_MAP_WRITE) == TRUE,
-          "failed to remap encoded-tap source buffer");
-  std::fill(overwrite.data, overwrite.data + overwrite.size, 0xEE);
-  gst_buffer_unmap(source, &overwrite);
+  GstSample* retained_sample =
+      static_cast<GstSample*>(captured.tensors.front().storage->holder.get());
+  require(retained_sample != nullptr, "encoded Output storage must retain a GstSample holder");
+  GstBuffer* retained_buffer = gst_sample_get_buffer(retained_sample);
+  require(retained_buffer == source, "encoded Output must reference the exact decoder input AU");
+  require(GST_BUFFER_FLAG_IS_SET(retained_buffer, GST_BUFFER_FLAG_DELTA_UNIT),
+          "encoded Output must preserve GstBuffer flags");
+
+  // The graph Output owns a reference. Releasing the streaming thread's source
+  // and caps references must not invalidate the pulled Sample.
   gst_buffer_unref(source);
   gst_caps_unref(caps);
-
-  require(callback_count == 1U, "encoded tap should deliver exactly one callback");
-  require(captured.stream_id == "stream17", "encoded tap should preserve stream identity");
-  require(captured.pts_ns == static_cast<std::int64_t>(kPts), "encoded tap should preserve PTS");
-  require(captured.dts_ns == static_cast<std::int64_t>(kDts), "encoded tap should preserve DTS");
-  require(captured.duration_ns == static_cast<std::int64_t>(kDuration),
-          "encoded tap should preserve duration");
-  require(captured.caps_string.find("video/x-h264") != std::string::npos,
-          "encoded tap should preserve caps");
-  require(captured.tensors.size() == 1U && captured.tensors.front().storage,
-          "encoded tap should return one owned payload tensor");
   const simaai::neat::Mapping payload = captured.tensors.front().map_read();
   require(payload.data != nullptr && payload.size_bytes == expected.size(),
-          "encoded tap payload has the wrong size");
+          "encoded Output payload has the wrong size after source release");
   const auto* payload_bytes = static_cast<const std::uint8_t*>(payload.data);
   require(std::equal(expected.begin(), expected.end(), payload_bytes),
-          "encoded tap payload must outlive and not alias the source GstBuffer");
+          "encoded Output AU must remain alive until the pulled Sample is released");
 }
 
-void test_clear_encoded_frame_tap_waits_for_inflight_callback() {
-  std::mutex mutex;
-  std::condition_variable condition;
-  bool callback_entered = false;
-  bool release_callback = false;
-  std::atomic<std::size_t> callback_count{0};
+void test_graph_scoped_encoded_output_queue_overflow_policy() {
+  simaai::neat::runtime::GraphSinkQueue every_frame_queue(1);
+  simaai::neat::OutputOptions every_frame = simaai::neat::OutputOptions::EveryFrame(1);
+  simaai::neat::Sample first;
+  first.frame_id = 1;
+  simaai::neat::Sample second;
+  second.frame_id = 2;
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(every_frame_queue, every_frame,
+                                                              std::move(first)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+          "EveryFrame encoded Output should admit its first AU");
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(every_frame_queue, every_frame,
+                                                              std::move(second)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Overflow,
+          "EveryFrame encoded Output must report overflow instead of blocking or dropping");
+  simaai::neat::runtime::RuntimeSinkQueueMsg retained;
+  require(every_frame_queue.pop(retained, 0) && retained.sample.frame_id == 1,
+          "EveryFrame overflow must preserve the already queued AU");
 
-  simaai::neat::set_latest_by_stream_encoded_frame_callback([&](simaai::neat::Sample) {
-    callback_count.fetch_add(1, std::memory_order_relaxed);
-    std::unique_lock<std::mutex> lock(mutex);
-    callback_entered = true;
-    condition.notify_all();
-    condition.wait(lock, [&] { return release_callback; });
-  });
+  simaai::neat::runtime::GraphSinkQueue latest_queue(1);
+  simaai::neat::OutputOptions latest = simaai::neat::OutputOptions::Latest();
+  simaai::neat::Sample stale;
+  stale.frame_id = 10;
+  simaai::neat::Sample newest;
+  newest.frame_id = 11;
+  require(
+      simaai::neat::runtime::enqueue_fused_encoded_output(latest_queue, latest, std::move(stale)) ==
+          simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+      "Latest encoded Output should admit its first AU");
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(latest_queue, latest,
+                                                              std::move(newest)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::ReplacedOldest,
+          "Latest encoded Output should replace its oldest AU without blocking");
+  require(latest_queue.pop(retained, 0) && retained.sample.frame_id == 11,
+          "Latest overflow must retain the newest AU");
 
-  std::thread dispatch_thread([&] {
-    GstCaps* caps =
-        gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-    GstBuffer* buffer = make_encoded_tap_buffer({0x00, 0x00, 0x01, 0x65}, 101, 99, 33);
-    simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
-        buffer, caps, "stream0");
-    gst_buffer_unref(buffer);
-    gst_caps_unref(caps);
-  });
-  {
-    std::unique_lock<std::mutex> lock(mutex);
-    require(condition.wait_for(lock, std::chrono::seconds(2), [&] { return callback_entered; }),
-            "encoded tap callback did not enter");
-  }
-
-  std::thread release_thread([&] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      release_callback = true;
-    }
-    condition.notify_all();
-  });
-  const auto clear_start = std::chrono::steady_clock::now();
-  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
-  const auto clear_elapsed = std::chrono::steady_clock::now() - clear_start;
-  dispatch_thread.join();
-  release_thread.join();
-
-  require(clear_elapsed >= std::chrono::milliseconds(50),
-          "clear must wait until every admitted encoded callback has returned");
-
-  GstCaps* caps =
-      gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-  GstBuffer* buffer = make_encoded_tap_buffer({0x00, 0x00, 0x01, 0x41}, 201, 199, 33);
-  simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(buffer, caps,
-                                                                                      "stream0");
-  gst_buffer_unref(buffer);
-  gst_caps_unref(caps);
-  require(callback_count.load(std::memory_order_relaxed) == 1U,
-          "clear must prevent callbacks from being admitted afterward");
-}
-
-void test_encoded_frame_tap_copy_failure_posts_pipeline_error() {
-  GstElement* pipeline = gst_pipeline_new("encoded-tap-failure-pipeline");
-  GstElement* appsrc = gst_element_factory_make("appsrc", "encoded-tap-failure-source");
-  GstElement* capsfilter = gst_element_factory_make("capsfilter", "encoded-tap-failure-caps");
-  GstElement* fakesink = gst_element_factory_make("fakesink", "encoded-tap-failure-sink");
-  require(pipeline && appsrc && capsfilter && fakesink,
-          "failed to construct encoded-tap failure pipeline");
-
-  GstCaps* caps =
-      gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-  require(caps != nullptr, "failed to allocate encoded-tap failure caps");
-  gst_app_src_set_caps(GST_APP_SRC(appsrc), caps);
-  g_object_set(capsfilter, "caps", caps, nullptr);
-  g_object_set(appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
-  g_object_set(fakesink, "sync", FALSE, nullptr);
-  gst_bin_add_many(GST_BIN(pipeline), appsrc, capsfilter, fakesink, nullptr);
-  require(gst_element_link_many(appsrc, capsfilter, fakesink, nullptr) == TRUE,
-          "failed to link encoded-tap failure pipeline");
-
-  std::atomic<std::size_t> callback_count{0};
-  simaai::neat::set_latest_by_stream_encoded_frame_callback(
-      [&](simaai::neat::Sample) { callback_count.fetch_add(1, std::memory_order_relaxed); });
-  GstPad* tap_pad = gst_element_get_static_pad(capsfilter, "src");
-  require(tap_pad != nullptr, "failed to get encoded-tap failure pad");
-  require(simaai::neat::pipeline_internal::attach_latest_by_stream_encoded_frame_tap_probe(
-              tap_pad, "failure-stream") != 0,
-          "failed to attach production encoded-tap probe");
-  gst_object_unref(tap_pad);
-
-  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
-          "failed to start encoded-tap failure pipeline");
-  // An empty AU exercises the same exception-contained copy failure path used
-  // for GstBuffer map failures and allocation failures, without relying on a
-  // platform allocator's interpretation of GST_MEMORY_FLAG_NOT_MAPPABLE.
-  GstBuffer* buffer = gst_buffer_new();
-  require(buffer != nullptr, "failed to allocate encoded-tap failure buffer");
-  GST_BUFFER_PTS(buffer) = 1;
-  GST_BUFFER_DURATION(buffer) = GST_MSECOND;
-  (void)gst_app_src_push_buffer(GST_APP_SRC(appsrc), buffer);
-
-  GstBus* bus = gst_element_get_bus(pipeline);
-  GstMessage* message = gst_bus_timed_pop_filtered(bus, 2 * GST_SECOND, GST_MESSAGE_ERROR);
-  require(message != nullptr,
-          "an encoded-AU copy/map failure must post a fatal pipeline error, not silently drop");
-  GError* gst_error = nullptr;
-  gchar* debug = nullptr;
-  gst_message_parse_error(message, &gst_error, &debug);
-  require(gst_error != nullptr &&
-              std::string(gst_error->message).find("Encoded-frame tap failed") != std::string::npos,
-          "encoded-tap failure should carry an actionable bus error");
-  if (gst_error) {
-    g_error_free(gst_error);
-  }
-  g_free(debug);
-  gst_message_unref(message);
-  gst_object_unref(bus);
-  require(callback_count.load(std::memory_order_relaxed) == 0U,
-          "invalid encoded AU must not invoke the subscriber with partial data");
-
-  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
-  (void)gst_element_set_state(pipeline, GST_STATE_NULL);
-  gst_caps_unref(caps);
-  gst_object_unref(pipeline);
+  latest_queue.close();
+  simaai::neat::Sample closed;
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(latest_queue, latest,
+                                                              std::move(closed)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Closed,
+          "encoded Output enqueue should distinguish a closed graph sink");
 }
 
 void test_terminal_release_restores_original_pts() {
@@ -1504,9 +1424,8 @@ int main() {
   try {
     simaai::neat::gst_init_once();
 
-    test_encoded_frame_tap_owns_au_and_timing();
-    test_clear_encoded_frame_tap_waits_for_inflight_callback();
-    test_encoded_frame_tap_copy_failure_posts_pipeline_error();
+    test_graph_scoped_encoded_output_retains_au_and_timing_zero_copy();
+    test_graph_scoped_encoded_output_queue_overflow_policy();
     test_terminal_release_restores_original_pts();
     test_replacing_chain_uses_per_stream_fifo_timing();
     test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate();
@@ -1634,7 +1553,7 @@ int main() {
         unrelated_ns, "unit-stamped-with-sidecar-cleanup");
 
     {
-      simaai::neat::RealtimeGraphLinkOptions bounded_options;
+      simaai::neat::RealtimeMuxByStream bounded_options;
       bounded_options.queue_depth = 1;
       bounded_options.max_inflight_per_stream = 1;
       bounded_options.max_inflight_total = 1;
@@ -1869,7 +1788,7 @@ int main() {
     simaai::neat::Sample replacement_sample = make_gst_sample_backed_sample(std::nullopt);
     replacement_sample.stream_id = "pending-stream";
     replacement_sample.frame_id = 2;
-    simaai::neat::RealtimeGraphLinkOptions pending_options;
+    simaai::neat::RealtimeMuxByStream pending_options;
     pending_options.queue_depth = 1;
     simaai::neat::runtime::DownstreamTarget pending_target;
     simaai::neat::runtime::RealtimeLatestLink pending_link(pending_target, pending_options,
