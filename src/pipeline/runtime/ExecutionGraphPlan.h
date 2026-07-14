@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::graph {
@@ -107,6 +108,10 @@ struct FusedRealtimeIngressBranch {
   std::size_t edge_index = static_cast<std::size_t>(-1);
   graph::NodeId source_node = graph::kInvalidNode;
   std::string stream_id;
+  /// Exact public options from the source-to-consumer realtime link.  Fused
+  /// lowering must retain these because there is no graph-runtime scheduler
+  /// left outside the monolithic GStreamer pipeline to enforce them.
+  RealtimeGraphLinkOptions link_options;
   std::vector<std::shared_ptr<Node>> nodes;
   OutputSpec output_spec;
   bool output_complete = false;
@@ -213,7 +218,7 @@ struct EdgePlan {
   graph::PortId to_port = graph::kInvalidPort;
   OutputSpec spec;
   bool spec_complete = false;
-  GraphLinkOptions link_options;
+  RealtimeGraphLinkOptions link_options;
   std::string stream_id;
   bool consumed_by_fused_realtime_ingress = false;
 };
@@ -239,7 +244,7 @@ struct PublicGraphEdgePlan {
   graph::NodeId runtime_from = graph::kInvalidNode;
   graph::NodeId runtime_to = graph::kInvalidNode;
   std::vector<std::size_t> runtime_edge_indices;
-  GraphLinkOptions link_options;
+  RealtimeGraphLinkOptions link_options;
   std::string stream_id;
 };
 
@@ -272,7 +277,11 @@ struct RuntimeCompileOptions {
 };
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& graph, const RunOptions& opt,
-                                        std::optional<Sample> seed = std::nullopt);
+                                        std::optional<Sample> seed,
+                                        bool fuse_realtime_source_branches);
+
+// Reject statically known connected-source shapes that exceed a downstream ingress capacity.
+void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan);
 
 ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
                                                       const graph::CompiledGraph& compiled,
@@ -283,5 +292,14 @@ ExecutionGraphPlan compile_runtime_graph(const graph::Graph& graph,
 
 ExecutionGraphPlan compile_graph_run_plan(const graph::Graph& graph,
                                           const graph::GraphRunOptions& opt);
+
+namespace session_test {
+
+bool fused_realtime_source_segment_eligible_for_test(bool already_fused);
+
+bool fused_realtime_destinations_share_port_for_test(
+    const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations);
+
+} // namespace session_test
 
 } // namespace simaai::neat::runtime

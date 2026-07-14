@@ -814,19 +814,17 @@ int limit_for_axis(const InputStreamOptions::ResolvedShapeLimits& limits, char a
   }
 }
 
-void validate_dim_with_effective_max(const std::string& tag, const char* field, int value,
+void validate_dim_with_effective_max(const std::string& tag, int value,
                                      const InputStreamOptions::ResolvedShapeLimits& limits,
-                                     char axis, const char* fix_hint) {
+                                     char axis) {
   const int limit = limit_for_axis(limits, axis);
   if (value <= 0 || limit <= 0 || value <= limit)
     return;
 
-  std::ostringstream oss;
-  oss << tag << ": " << field << " exceeds effective max (" << value << " > " << limit << ")";
-  if (fix_hint && *fix_hint) {
-    oss << ". Fix: " << fix_hint;
-  }
-  throw std::invalid_argument(oss.str());
+  const char* dimension = axis == 'w' ? "width" : (axis == 'h' ? "height" : "depth");
+  throw std::invalid_argument(
+      pipeline_internal::shape_limit_exceeded_message(tag, dimension, value, limit) +
+      ". Fix: " + pipeline_internal::shape_limit_fix_hint(dimension, value));
 }
 
 std::string fmt_from_tensor_image(const simaai::neat::Tensor& input) {
@@ -1278,6 +1276,7 @@ CapKey capkey_from_spec(const SampleSpec& spec) {
     key.dtype = spec.dtype;
     key.layout = spec.layout;
     key.shape = spec.shape;
+    key.tensor_envelope_transport = spec.tensor_envelope_transport;
   } else if (spec.kind == SampleMediaKind::Encoded) {
     key.caps_hash = hash_string(spec.caps_string);
   }
@@ -1316,9 +1315,20 @@ std::string caps_string_from_spec(const SampleSpec& spec) {
     const std::string caps_format = caps_format_value_from_spec(spec);
     std::ostringstream oss;
     oss << "application/vnd.simaai.tensor,format=" << caps_format;
+    if (spec.tensor_envelope_transport) {
+      oss << ",representation=(string)tensor-set,storage=(string)tensorbuffer";
+    }
     oss << ",rank=" << tensor_shape.size();
     for (size_t i = 0; i < tensor_shape.size(); ++i) {
       oss << ",dim" << i << "=" << tensor_shape[i];
+    }
+    const std::string shape_csv = tensor_shape_csv_local(tensor_shape);
+    if (!shape_csv.empty()) {
+      // Keep the legacy rank/dimN fields and the canonical shape field in
+      // lockstep.  ProcessCVU's fixed sink caps carry both representations;
+      // omitting shape here makes otherwise identical fixed caps fail
+      // GStreamer's accept-caps check.
+      oss << ",shape=(string)\"" << shape_csv << "\"";
     }
     const std::string dtype = dtype_caps_value_from_spec(spec);
     if (!dtype.empty()) {
@@ -1345,7 +1355,7 @@ std::string CapKey::to_string() const {
         oss << ",";
       oss << shape[i];
     }
-    oss << "]}";
+    oss << "],envelope=" << (tensor_envelope_transport ? 1 : 0) << "}";
     break;
   case SampleMediaKind::Encoded:
     oss << "encoded{caps_hash=" << caps_hash << "}";
@@ -1371,6 +1381,7 @@ std::size_t CapKeyHash::operator()(const CapKey& key) const {
     for (const auto& dim : key.shape) {
       seed = hash_combine(seed, std::hash<std::int64_t>{}(dim));
     }
+    seed = hash_combine(seed, std::hash<bool>{}(key.tensor_envelope_transport));
     break;
   case SampleMediaKind::Encoded:
     seed = hash_combine(seed, key.caps_hash);
@@ -1622,16 +1633,10 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
 
     const auto limits = pipeline_internal::resolve_shape_limits(
         pipeline_internal::normalize_shape_bounds(opt), spec);
-    validate_dim_with_effective_max(
-        tag, "width", spec.width, limits, 'w',
-        "resize input or increase max_width/width (Model::Options::input_max_width).");
-    validate_dim_with_effective_max(
-        tag, "height", spec.height, limits, 'h',
-        "resize input or increase max_height/height (Model::Options::input_max_height).");
+    validate_dim_with_effective_max(tag, spec.width, limits, 'w');
+    validate_dim_with_effective_max(tag, spec.height, limits, 'h');
     if (spec.depth > 0) {
-      validate_dim_with_effective_max(
-          tag, "depth", spec.depth, limits, 'd',
-          "reduce channels or increase max_depth/depth (Model::Options::input_max_depth).");
+      validate_dim_with_effective_max(tag, spec.depth, limits, 'd');
     }
     if (input.storage && input.storage->size_bytes > 0) {
       const size_t end = static_cast<size_t>(input.byte_offset) + spec.required_bytes_actual;
@@ -1690,15 +1695,9 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
     shape_seed.shape = normalized_shape;
     const auto limits = pipeline_internal::resolve_shape_limits(
         pipeline_internal::normalize_shape_bounds(opt), shape_seed);
-    validate_dim_with_effective_max(
-        tag, "tensor width", compat.width, limits, 'w',
-        "resize input or increase max_width/width (Model::Options::input_max_width).");
-    validate_dim_with_effective_max(
-        tag, "tensor height", compat.height, limits, 'h',
-        "resize input or increase max_height/height (Model::Options::input_max_height).");
-    validate_dim_with_effective_max(
-        tag, "tensor depth", compat.depth, limits, 'd',
-        "reduce channels or increase max_depth/depth (Model::Options::input_max_depth).");
+    validate_dim_with_effective_max(tag, compat.width, limits, 'w');
+    validate_dim_with_effective_max(tag, compat.height, limits, 'h');
+    validate_dim_with_effective_max(tag, compat.depth, limits, 'd');
 
     std::string fmt = upper_copy(opt.format);
     const std::string dtype_fmt = upper_copy(fmt_from_dtype(input.dtype));
@@ -2143,6 +2142,10 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
     }
     GstStructure* st = gst_caps_get_structure(caps, 0);
     gst_structure_set(st, "format", G_TYPE_STRING, caps_format.c_str(), nullptr);
+    if (spec.tensor_envelope_transport) {
+      gst_structure_set(st, "representation", G_TYPE_STRING, "tensor-set", "storage", G_TYPE_STRING,
+                        "tensorbuffer", nullptr);
+    }
     gst_structure_set(st, "rank", G_TYPE_INT, static_cast<int>(tensor_shape.size()), nullptr);
     for (size_t i = 0; i < tensor_shape.size(); ++i) {
       const std::string key = "dim" + std::to_string(i);

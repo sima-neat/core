@@ -10,6 +10,10 @@ Release notes for the SiMa.ai Neat Library.
 ## Unreleased
 
 - Added C++ and Python `CameraInput` documentation and tutorial coverage for MIPI/libcamera source-owned graphs, including adaptive SiMaAI memory handoff before CVU/MLA model routes.
+- `MetadataSender` now keeps UDP payloads within 1200 bytes by chunking larger
+  JSON messages. Update Insight to a version with metadata chunk reassembly
+  before or together with this Neat Library version; older Insight versions
+  continue to support unchanged JSON payloads up to 1200 bytes.
 
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |

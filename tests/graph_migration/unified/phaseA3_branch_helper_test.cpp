@@ -77,6 +77,10 @@ RUN_TEST("graph_migration_phaseA3_branch_helper_test", [] {
     auto model_sample = run.pull("model", 5000);
     require(model_sample.has_value(), "Branch helper model pull timed out");
     require(model_sample->stream_id == "branch-helper", "Branch helper model stream_id mismatch");
+    require(preview_sample->tensor.has_value() && model_sample->tensor.has_value(),
+            "Branch helper outputs should preserve tensor samples");
+    require(preview_sample->tensor->storage == model_sample->tensor->storage,
+            "Branch helper should shallow-tee tensor storage instead of deep-copying payloads");
     run.close();
   }
 
@@ -89,7 +93,7 @@ RUN_TEST("graph_migration_phaseA3_branch_helper_test", [] {
     simaai::neat::Graph app;
     app.connect(source, branch);
 
-    simaai::neat::GraphLinkOptions realtime;
+    simaai::neat::RealtimeGraphLinkOptions realtime;
     realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     realtime.queue_depth = 1;
     realtime.stream_id = "stream0";

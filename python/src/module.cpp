@@ -113,7 +113,6 @@ using simaai::neat::Device;
 using simaai::neat::DeviceType;
 using simaai::neat::Graph;
 using simaai::neat::GraphElementMetrics;
-using simaai::neat::GraphLinkOptions;
 using simaai::neat::GraphLinkPolicy;
 using simaai::neat::GraphNodeMetrics;
 using simaai::neat::GraphOptions;
@@ -146,6 +145,7 @@ using simaai::neat::PowerRailSummary;
 using simaai::neat::PowerSummary;
 using simaai::neat::PullError;
 using simaai::neat::PullStatus;
+using simaai::neat::RealtimeGraphLinkOptions;
 using simaai::neat::Run;
 using simaai::neat::RunAdvancedOptions;
 using simaai::neat::RunAutoExportOptions;
@@ -319,10 +319,10 @@ std::string sample_to_text_for_python(const Sample& sample) {
 // Python they are surfaced as the `Format` enum directly: reads return the underlying
 // FormatTag, writes accept a FormatTag only. Passing a plain string raises TypeError —
 // callers select a value from pyneat.Format (e.g. pyneat.Format.NV12).
-template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::* member) {
   return [member](const C& self) { return (self.*member).tag; };
 }
-template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::* member) {
   return [member](C& self, simaai::neat::FormatTag value) { self.*member = value; };
 }
 
@@ -2318,13 +2318,31 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<GraphLinkPolicy>(m, "GraphLinkPolicy")
       .value("Default", GraphLinkPolicy::Default)
-      .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream);
+      .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream)
+      .value("RealtimeEveryFrameByStream", GraphLinkPolicy::RealtimeEveryFrameByStream);
 
-  nb::class_<GraphLinkOptions>(m, "GraphLinkOptions")
+  // Python objects are extension-owned, so keep the existing Python property surface while the
+  // released three-member C++ GraphLinkOptions stays ABI-stable.
+  nb::class_<RealtimeGraphLinkOptions>(m, "GraphLinkOptions")
       .def(nb::init<>())
-      .def_rw("policy", &GraphLinkOptions::policy)
-      .def_rw("queue_depth", &GraphLinkOptions::queue_depth)
-      .def_rw("stream_id", &GraphLinkOptions::stream_id);
+      .def_prop_rw(
+          "policy", [](const RealtimeGraphLinkOptions& options) { return options.policy; },
+          [](RealtimeGraphLinkOptions& options, GraphLinkPolicy policy) {
+            options.policy = policy;
+          })
+      .def_prop_rw(
+          "queue_depth",
+          [](const RealtimeGraphLinkOptions& options) { return options.queue_depth; },
+          [](RealtimeGraphLinkOptions& options, int queue_depth) {
+            options.queue_depth = queue_depth;
+          })
+      .def_prop_rw(
+          "stream_id", [](const RealtimeGraphLinkOptions& options) { return options.stream_id; },
+          [](RealtimeGraphLinkOptions& options, std::string stream_id) {
+            options.stream_id = std::move(stream_id);
+          })
+      .def_rw("max_inflight_per_stream", &RealtimeGraphLinkOptions::max_inflight_per_stream)
+      .def_rw("max_inflight_total", &RealtimeGraphLinkOptions::max_inflight_total);
 
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())
@@ -2963,7 +2981,9 @@ NB_MODULE(_pyneat_core, m) {
       .def(
           "connect",
           [](Graph& self, const Graph& from, const Graph& to,
-             const GraphLinkOptions& options) -> Graph& { return self.connect(from, to, options); },
+             const RealtimeGraphLinkOptions& options) -> Graph& {
+            return self.connect_realtime(from, to, options);
+          },
           "from_graph"_a, "to_graph"_a, "options"_a, nb::rv_policy::reference_internal)
       .def(
           "connect",
@@ -3053,6 +3073,12 @@ NB_MODULE(_pyneat_core, m) {
           "image_format"_a = nb::none())
       .def("build_source", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "build_fused_realtime_source",
+          [](Graph& self, const RunOptions& options) {
+            return self.build_fused_realtime_sources(options);
+          },
+          "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def("build", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def(
@@ -3170,7 +3196,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::CombinePolicy>(m, "CombinePolicy")
       .value("None_", simaai::neat::CombinePolicy::None)
       .value("ByFrame", simaai::neat::CombinePolicy::ByFrame)
-      .value("ByPts", simaai::neat::CombinePolicy::ByPts);
+      .value("ByPts", simaai::neat::CombinePolicy::ByPts)
+      .value("RoundRobin", simaai::neat::CombinePolicy::RoundRobin);
 
   nb::class_<simaai::neat::OutputOptions>(m, "OutputOptions")
       .def(nb::init<>())
@@ -3542,6 +3569,20 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("channel", &simaai::neat::MetadataSenderOptions::channel)
       .def_rw("metadata_port_base", &simaai::neat::MetadataSenderOptions::metadata_port_base);
 
+  nb::class_<simaai::neat::MetadataSenderSendOptions>(m, "MetadataSenderSendOptions")
+      .def(nb::init<>())
+      .def_rw("nonblocking", &simaai::neat::MetadataSenderSendOptions::nonblocking);
+
+  nb::class_<simaai::neat::MetadataSenderStats>(m, "MetadataSenderStats")
+      .def_ro("send_attempts", &simaai::neat::MetadataSenderStats::send_attempts)
+      .def_ro("datagrams_sent", &simaai::neat::MetadataSenderStats::datagrams_sent)
+      .def_ro("send_failures", &simaai::neat::MetadataSenderStats::send_failures)
+      .def_ro("would_block", &simaai::neat::MetadataSenderStats::would_block)
+      .def_ro("no_buffer_space", &simaai::neat::MetadataSenderStats::no_buffer_space)
+      .def_ro("last_send_duration_ns", &simaai::neat::MetadataSenderStats::last_send_duration_ns)
+      .def_ro("max_send_duration_ns", &simaai::neat::MetadataSenderStats::max_send_duration_ns)
+      .def_ro("last_errno", &simaai::neat::MetadataSenderStats::last_errno);
+
   nb::class_<simaai::neat::MetadataSender>(m, "MetadataSender")
       .def(
           "__init__",
@@ -3554,9 +3595,23 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "options"_a)
+      .def(
+          "__init__",
+          [](simaai::neat::MetadataSender* self, const simaai::neat::MetadataSenderOptions& opt,
+             const simaai::neat::MetadataSenderSendOptions& send_opt) {
+            std::string err;
+            new (self) simaai::neat::MetadataSender(opt, send_opt, &err);
+            if (!self->ok()) {
+              self->~MetadataSender();
+              throw std::runtime_error(err.empty() ? "MetadataSender init failed" : err);
+            }
+          },
+          "options"_a, "send_options"_a)
       .def("ok", &simaai::neat::MetadataSender::ok)
       .def("host", &simaai::neat::MetadataSender::host)
       .def("metadata_port", &simaai::neat::MetadataSender::metadata_port)
+      .def("nonblocking", &simaai::neat::MetadataSender::nonblocking)
+      .def("stats", &simaai::neat::MetadataSender::stats)
       .def(
           "send_raw_json",
           [](const simaai::neat::MetadataSender& self, const std::string& payload) {
@@ -3723,7 +3778,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_width", &simaai::neat::SimaDecodeOptions::dec_width)
       .def_rw("dec_height", &simaai::neat::SimaDecodeOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::SimaDecodeOptions::dec_fps)
-      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers);
+      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers)
+      .def_rw("input_buffers", &simaai::neat::SimaDecodeOptions::input_buffers)
+      .def_rw("decoder_tuning", &simaai::neat::SimaDecodeOptions::decoder_tuning)
+      .def_rw("memory_opt", &simaai::neat::SimaDecodeOptions::memory_opt);
   nb::class_<simaai::neat::HttpSourceOptions>(m, "HttpSourceOptions")
       .def(nb::init<>())
       .def_rw("location", &simaai::neat::HttpSourceOptions::location)

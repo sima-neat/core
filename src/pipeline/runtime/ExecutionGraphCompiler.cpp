@@ -7,6 +7,7 @@
 #include "graph/nodes/JoinBundle.h"
 #include "graph/nodes/PipelineNode.h"
 #include "graph/nodes/StageNode.h"
+#include "graph/nodes/StreamScheduler.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
@@ -14,6 +15,7 @@
 #include "pipeline/internal/CapsStringUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/InputPolicy.h"
 
 #include <algorithm>
 #include <functional>
@@ -171,8 +173,9 @@ struct NormalizedCompositionEdge {
   std::string to_port;
   std::string from_endpoint;
   std::string to_endpoint;
-  GraphLinkOptions link_options;
+  RealtimeGraphLinkOptions link_options;
   std::string stream_id;
+  CombinePolicy combine_policy = CombinePolicy::None;
 };
 
 struct NormalizedPublicView {
@@ -193,7 +196,7 @@ struct LoweredExplicitEdge {
   graph::NodeId to = graph::kInvalidNode;
   std::string from_port;
   std::string to_port;
-  GraphLinkOptions link_options;
+  RealtimeGraphLinkOptions link_options;
   std::string stream_id;
 };
 
@@ -204,15 +207,45 @@ struct PublicGraphLowering {
   std::vector<LoweredExplicitEdge> lowered_edges;
 };
 
-bool realtime_latest_link(const GraphLinkOptions& opt) {
-  return opt.policy == GraphLinkPolicy::RealtimeLatestByStream;
+bool realtime_latest_link(const RealtimeGraphLinkOptions& opt) {
+  return opt.policy == GraphLinkPolicy::RealtimeLatestByStream ||
+         opt.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
 }
 
-bool default_link(const GraphLinkOptions& opt) {
+bool default_link(const RealtimeGraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
-GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
+void validate_realtime_inflight_option(const char* name, int value) {
+  if (value == 0 || value < -1) {
+    throw std::runtime_error(std::string("RealtimeGraphLinkOptions::") + name +
+                             " must be -1 or a positive value");
+  }
+}
+
+void validate_non_default_link_options(const RealtimeGraphLinkOptions& opt) {
+  if (default_link(opt)) {
+    return;
+  }
+  validate_realtime_inflight_option("max_inflight_per_stream", opt.max_inflight_per_stream);
+  validate_realtime_inflight_option("max_inflight_total", opt.max_inflight_total);
+}
+
+int merge_inflight_cap(int existing, int incoming) {
+  if (existing == -1) {
+    return incoming;
+  }
+  if (incoming == -1) {
+    return existing;
+  }
+  return std::min(existing, incoming);
+}
+
+RealtimeGraphLinkOptions merge_link_options(RealtimeGraphLinkOptions a,
+                                            const RealtimeGraphLinkOptions& b) {
+  validate_non_default_link_options(a);
+  validate_non_default_link_options(b);
+
   if (default_link(a)) {
     return b;
   }
@@ -220,11 +253,19 @@ GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& 
     return a;
   }
   if (a.policy != b.policy) {
-    throw std::runtime_error("compile_public_graph: conflicting Graph link policies");
+    const bool compatible_realtime = realtime_latest_link(a) && realtime_latest_link(b);
+    if (!compatible_realtime) {
+      throw std::runtime_error("compile_public_graph: conflicting Graph link policies");
+    }
+    throw std::runtime_error("compile_public_graph: cannot mix RealtimeLatestByStream and "
+                             "RealtimeEveryFrameByStream on one runtime path");
   }
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
   }
+  a.max_inflight_per_stream =
+      merge_inflight_cap(a.max_inflight_per_stream, b.max_inflight_per_stream);
+  a.max_inflight_total = merge_inflight_cap(a.max_inflight_total, b.max_inflight_total);
   if (!b.stream_id.empty()) {
     a.stream_id = b.stream_id;
   }
@@ -245,6 +286,10 @@ simaai::neat::graph::nodes::JoinKeyPolicy join_key_policy_for(CombinePolicy poli
   case CombinePolicy::ByFrame:
   case CombinePolicy::None:
     return simaai::neat::graph::nodes::JoinKeyPolicy::StreamFrame;
+  case CombinePolicy::RoundRobin:
+    throw std::runtime_error(
+        "compile_public_graph: CombinePolicy::RoundRobin is lowered through StreamScheduler, "
+        "not JoinBundle");
   }
   return simaai::neat::graph::nodes::JoinKeyPolicy::StreamFrame;
 }
@@ -389,8 +434,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   std::unordered_set<std::string> emitted_edges;
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
-                            std::string to_endpoint, GraphLinkOptions link_options,
-                            std::string stream_id) {
+                            std::string to_endpoint, RealtimeGraphLinkOptions link_options,
+                            std::string stream_id, CombinePolicy combine_policy) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
     }
@@ -399,8 +444,9 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::string key = std::to_string(from) + ":" + std::to_string(to) + ":" +
                             std::to_string(static_cast<int>(kind)) + ":" + from_port + ":" +
-                            to_port + ":" + std::to_string(static_cast<int>(link_options.policy)) +
-                            ":" + stream_id;
+                            to_port + ":" + from_endpoint + ":" + to_endpoint + ":" +
+                            std::to_string(static_cast<int>(link_options.policy)) + ":" +
+                            stream_id + ":" + std::to_string(static_cast<int>(combine_policy));
     if (!emitted_edges.insert(key).second) {
       return;
     }
@@ -412,16 +458,17 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
                                                   .from_endpoint = std::move(from_endpoint),
                                                   .to_endpoint = std::move(to_endpoint),
                                                   .link_options = link_options,
-                                                  .stream_id = std::move(stream_id)});
+                                                  .stream_id = std::move(stream_id),
+                                                  .combine_policy = combine_policy});
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     GraphLinkOptions, std::string, std::vector<bool>&)>
+                     RealtimeGraphLinkOptions, std::string, CombinePolicy, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
-                    GraphLinkOptions link_options, std::string stream_id,
-                    std::vector<bool>& visiting) {
+                    RealtimeGraphLinkOptions link_options, std::string stream_id,
+                    CombinePolicy combine_policy, std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
     link_options = merge_link_options(link_options, edge.link_options);
     if (!edge.stream_id.empty()) {
@@ -437,7 +484,12 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
       from_port = edge.from_port;
     }
     if (edge.endpoint.has_value()) {
-      if (from_endpoint.empty()) {
+      // When an explicit public boundary is elided, the logical source endpoint for the
+      // downstream edge becomes the boundary edge we are crossing (for example a Branch output or
+      // Combine input), not the physical producer that originally entered the boundary chain.  If
+      // we keep the oldest upstream endpoint, multi-source live graphs whose sources all end in
+      // the same node kind (for example CapsRaw) collapse to duplicate fan-in names.
+      if ((bypassed_boundary && combine_policy == CombinePolicy::None) || from_endpoint.empty()) {
         from_endpoint = edge.endpoint->from_endpoint;
       }
       if (!edge.endpoint->to_endpoint.empty()) {
@@ -446,6 +498,17 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
 
     const std::size_t to_original = edge.to;
+    if (elide[to_original]) {
+      const CombinePolicy boundary_policy = output_combine_policy(view.vertices[to_original]);
+      if (boundary_policy != CombinePolicy::None) {
+        if (combine_policy != CombinePolicy::None && combine_policy != boundary_policy) {
+          throw std::runtime_error(
+              "compile_public_graph: conflicting CombinePolicy while lowering connected "
+              "boundary");
+        }
+        combine_policy = boundary_policy;
+      }
+    }
     if (!elide[to_original]) {
       const std::size_t to_norm = out.vertex_for_original[to_original];
       NormalizedCompositionEdgeKind kind =
@@ -467,8 +530,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
         to_port.clear();
       }
       add_edge(start_norm, to_norm, kind, std::move(from_port), std::move(to_port),
-               std::move(from_endpoint), std::move(to_endpoint), link_options,
-               std::move(stream_id));
+               std::move(from_endpoint), std::move(to_endpoint), link_options, std::move(stream_id),
+               combine_policy);
       return;
     }
 
@@ -484,7 +547,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     for (const std::size_t next_edge : outgoing[to_original]) {
       follow_edge(start_norm, next_edge, from_port, from_endpoint, to_endpoint, true, link_options,
-                  stream_id, visiting);
+                  stream_id, combine_policy, visiting);
     }
     visiting[to_original] = false;
   };
@@ -496,7 +559,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::size_t from_norm = out.vertex_for_original[edge.from];
     std::vector<bool> visiting(n, false);
-    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, {}, {}, visiting);
+    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, {}, {}, CombinePolicy::None,
+                visiting);
   }
 
   // Pipeline-quality pass: if public composition produced a simple one-to-one connection,
@@ -743,23 +807,34 @@ build_runtime_graph_from_connected_public_view(const View& view,
   }
 
   std::vector<LoweredExplicitEdge> lowered_edges;
-  std::unordered_map<std::size_t, std::vector<std::size_t>> public_endpoint_inputs_by_target;
+  std::unordered_map<std::size_t, std::vector<std::size_t>> combine_inputs_by_target;
   for (std::size_t i = 0; i < view.edges.size(); ++i) {
     const auto& edge = view.edges[i];
-    if (is_public_endpoint_edge(edge)) {
-      public_endpoint_inputs_by_target[edge.to].push_back(i);
+    if (is_public_endpoint_edge(edge) || edge.combine_policy != CombinePolicy::None) {
+      combine_inputs_by_target[edge.to].push_back(i);
     }
   }
 
   std::unordered_set<std::size_t> combine_handled_edges;
-  for (const auto& [target_vertex, incoming_edges] : public_endpoint_inputs_by_target) {
+  for (const auto& [target_vertex, incoming_edges] : combine_inputs_by_target) {
     if (incoming_edges.size() <= 1U) {
       continue;
     }
     if (target_vertex >= view.vertices.size()) {
       throw std::runtime_error("compile_public_graph: public endpoint target out of range");
     }
-    const CombinePolicy policy = output_combine_policy(view.vertices[target_vertex]);
+    CombinePolicy policy = output_combine_policy(view.vertices[target_vertex]);
+    for (const std::size_t edge_index : incoming_edges) {
+      const CombinePolicy edge_policy = view.edges[edge_index].combine_policy;
+      if (edge_policy == CombinePolicy::None) {
+        continue;
+      }
+      if (policy != CombinePolicy::None && policy != edge_policy) {
+        throw std::runtime_error(
+            "compile_public_graph: conflicting CombinePolicy on public endpoint fan-in");
+      }
+      policy = edge_policy;
+    }
     const FragmentBoundaryHints* target_hints =
         boundary_hints_for_normalized_target(view, target_vertex);
     const bool model_ingress_combine = policy == CombinePolicy::None && target_hints != nullptr &&
@@ -769,13 +844,13 @@ build_runtime_graph_from_connected_public_view(const View& view,
         std::all_of(incoming_edges.begin(), incoming_edges.end(), [&](std::size_t edge_index) {
           return realtime_latest_link(view.edges[edge_index].link_options);
         });
-    if (realtime_fan_in && !model_ingress_combine) {
+    if (policy == CombinePolicy::None && realtime_fan_in && !model_ingress_combine) {
       continue;
     }
     if (policy == CombinePolicy::None && !model_ingress_combine) {
       throw std::runtime_error(
           "compile_public_graph: public endpoint has multiple producers; set an explicit "
-          "CombinePolicy::ByFrame or CombinePolicy::ByPts");
+          "CombinePolicy::ByFrame, CombinePolicy::ByPts, or CombinePolicy::RoundRobin");
     }
 
     std::vector<std::size_t> ordered_incoming_edges;
@@ -826,6 +901,46 @@ build_runtime_graph_from_connected_public_view(const View& view,
         ordered_incoming_edges.push_back(incoming_edges[i]);
         input_names.push_back(std::move(name));
       }
+    }
+
+    if (policy == CombinePolicy::RoundRobin && !model_ingress_combine) {
+      simaai::neat::graph::nodes::StreamSchedulerOptions scheduler_opt;
+      scheduler_opt.max_batch = 1;
+      scheduler_opt.inputs = input_names;
+      const graph::NodeId scheduler_node =
+          out.graph.add(simaai::neat::graph::nodes::StreamSchedulerNode(
+              scheduler_opt, "combine_rr_" + std::to_string(target_vertex), "in", "out"));
+
+      for (std::size_t i = 0; i < ordered_incoming_edges.size(); ++i) {
+        const auto& edge = view.edges[ordered_incoming_edges[i]];
+        const graph::NodeId from = runtime_node_for_vertex[edge.from];
+        if (from == graph::kInvalidNode) {
+          throw std::runtime_error(
+              "compile_public_graph: round-robin combine edge references unmapped source");
+        }
+        std::string stream_id = normalized_edge_stream_id(edge);
+        lowered_edges.push_back(LoweredExplicitEdge{
+            .from = from,
+            .to = scheduler_node,
+            .from_port = edge.from_port.empty() ? "out" : edge.from_port,
+            .to_port = input_names[i],
+            .link_options = edge.link_options,
+            .stream_id = std::move(stream_id),
+        });
+        combine_handled_edges.insert(ordered_incoming_edges[i]);
+      }
+
+      const graph::NodeId to = runtime_node_for_vertex[target_vertex];
+      if (to == graph::kInvalidNode) {
+        throw std::runtime_error("compile_public_graph: round-robin combine target is unmapped");
+      }
+      lowered_edges.push_back(LoweredExplicitEdge{
+          .from = scheduler_node,
+          .to = to,
+          .from_port = "out",
+          .to_port = "in",
+      });
+      continue;
     }
 
     simaai::neat::graph::nodes::JoinBundleOptions join_opt;
@@ -883,7 +998,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
         !realtime_latest_link(edge.link_options)) {
       throw std::runtime_error(
           "compile_public_graph: public endpoint has multiple producers; set an explicit "
-          "CombinePolicy::ByFrame or CombinePolicy::ByPts");
+          "CombinePolicy::ByFrame, CombinePolicy::ByPts, or CombinePolicy::RoundRobin");
     }
     const graph::NodeId from = runtime_node_for_vertex[edge.from];
     const graph::NodeId to = runtime_node_for_vertex[edge.to];
@@ -1341,8 +1456,83 @@ std::string normalized_edge_stream_id(const NormalizedCompositionEdge& edge) {
   return edge.link_options.stream_id;
 }
 
+template <typename Edges>
+void validate_unique_source_buffer_names(
+    std::span<const std::shared_ptr<simaai::neat::Node>> vertices, const Edges& edges) {
+  struct SourceIdentity {
+    std::size_t vertex = 0;
+    std::string label;
+  };
+  std::unordered_map<std::string, std::vector<SourceIdentity>> sources_by_buffer_name;
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const auto& node = vertices[i];
+    if (!node || node->input_role() != InputRole::Source) {
+      continue;
+    }
+    const std::string buffer_name = node->buffer_name_hint(static_cast<int>(i));
+    if (buffer_name.empty()) {
+      continue;
+    }
+    std::string label = node->user_label();
+    if (label.empty()) {
+      label = node->kind() + "@" + std::to_string(i);
+    }
+    sources_by_buffer_name[buffer_name].push_back(SourceIdentity{.vertex = i, .label = label});
+  }
+
+  std::vector<std::vector<std::size_t>> outgoing(vertices.size());
+  for (const auto& edge : edges) {
+    if (edge.from < outgoing.size() && edge.to < outgoing.size()) {
+      outgoing[edge.from].push_back(edge.to);
+    }
+  }
+  const auto reachable_from = [&](std::size_t source) {
+    std::vector<bool> reachable(vertices.size(), false);
+    std::vector<std::size_t> pending{source};
+    while (!pending.empty()) {
+      const std::size_t current = pending.back();
+      pending.pop_back();
+      for (const std::size_t next : outgoing[current]) {
+        if (!reachable[next]) {
+          reachable[next] = true;
+          pending.push_back(next);
+        }
+      }
+    }
+    return reachable;
+  };
+
+  for (const auto& [buffer_name, sources] : sources_by_buffer_name) {
+    std::vector<std::vector<bool>> reachable;
+    reachable.reserve(sources.size());
+    for (const auto& source : sources) {
+      reachable.push_back(reachable_from(source.vertex));
+    }
+    for (std::size_t left = 0; left < sources.size(); ++left) {
+      for (std::size_t right = left + 1U; right < sources.size(); ++right) {
+        bool converges = false;
+        for (std::size_t vertex = 0; vertex < vertices.size(); ++vertex) {
+          if (reachable[left][vertex] && reachable[right][vertex]) {
+            converges = true;
+            break;
+          }
+        }
+        if (!converges) {
+          continue;
+        }
+        throw std::runtime_error(
+            "compile_public_graph: duplicate source buffer_name '" + buffer_name + "' for '" +
+            sources[left].label + "' and '" + sources[right].label +
+            "' on converging graph paths. Multi-source graphs must stamp a unique buffer_name "
+            "before Branch/FanOut so downstream CVU/MLA/preprocess metadata is unambiguous.");
+      }
+    }
+  }
+}
+
 void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId from,
-                                        graph::NodeId to, const GraphLinkOptions& link_options,
+                                        graph::NodeId to,
+                                        const RealtimeGraphLinkOptions& link_options,
                                         const std::string& stream_id) {
   const bool propagate_policy = !default_link(link_options);
   const bool propagate_stream_id = !stream_id.empty();
@@ -1368,7 +1558,7 @@ void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId 
     if (edge_index >= plan->edges.size()) {
       continue;
     }
-    GraphLinkOptions& dst = plan->edges[edge_index].link_options;
+    RealtimeGraphLinkOptions& dst = plan->edges[edge_index].link_options;
     if (propagate_policy) {
       dst = merge_link_options(dst, link_options);
     }
@@ -1398,6 +1588,9 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
     return;
   }
   for (const auto& edge : view.edges) {
+    if (edge.combine_policy != CombinePolicy::None) {
+      continue;
+    }
     const std::string stream_id = normalized_edge_stream_id(edge);
     if (edge.from >= runtime_node_for_vertex.size() || edge.to >= runtime_node_for_vertex.size()) {
       continue;
@@ -1497,7 +1690,12 @@ bool segment_has_output_edge(const PipelineSegmentPlan& segment, std::size_t edg
 
 bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segment,
                                                std::size_t edge_index) {
-  if (segment.consumed_by_fused_realtime_ingress || segment.nodes.empty()) {
+  // A previously fused consumer is source-like and inputless, but its nested
+  // source branches live in fused_realtime_ingress rather than nodes.  Until
+  // recursive fusion explicitly flattens/preserves those branches, treating
+  // that segment as a leaf source would silently discard the original ingress.
+  if (segment.consumed_by_fused_realtime_ingress || segment.nodes.empty() ||
+      segment.fused_realtime_ingress.has_value()) {
     return false;
   }
   if (!segment.boundary.source_like || !segment.input_edges.empty()) {
@@ -1511,6 +1709,27 @@ bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segmen
   // source fan-out should continue through explicit graph transport until it has its
   // own no-copy route plan.
   return segment.output_edges.size() == 1U;
+}
+
+bool fused_realtime_input_edges_share_destination(const ExecutionGraphPlan& plan,
+                                                  const std::vector<std::size_t>& input_edges) {
+  if (input_edges.empty()) {
+    return false;
+  }
+  std::optional<std::pair<graph::NodeId, graph::PortId>> destination;
+  for (const std::size_t edge_index : input_edges) {
+    if (edge_index >= plan.edges.size()) {
+      return false;
+    }
+    const auto& edge = plan.edges[edge_index];
+    const auto current = std::pair{edge.to, edge.to_port};
+    if (!destination.has_value()) {
+      destination = current;
+    } else if (*destination != current) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan* plan) {
@@ -1532,6 +1751,12 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         target.fused_realtime_ingress.has_value()) {
       continue;
     }
+    // One neatlatestbystreammux has one linear src pad. It can replace true
+    // fan-in to a single consumer ingress, but not a multi-input segment whose
+    // edges intentionally address distinct ports/endpoints.
+    if (!fused_realtime_input_edges_share_destination(*plan, target.input_edges)) {
+      continue;
+    }
 
     bool all_realtime = true;
     std::vector<std::size_t> source_segment_indices;
@@ -1542,7 +1767,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         break;
       }
       const auto& edge = plan->edges[edge_index];
-      if (edge.link_options.policy != GraphLinkPolicy::RealtimeLatestByStream) {
+      if (!realtime_latest_link(edge.link_options)) {
         all_realtime = false;
         break;
       }
@@ -1575,6 +1800,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       branch.source_node = edge.from;
       branch.stream_id =
           edge.stream_id.empty() ? ("stream" + std::to_string(ordinal)) : edge.stream_id;
+      branch.link_options = edge.link_options;
       branch.nodes = source.nodes;
       branch.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
       branch.output_complete = edge.spec_complete || source.output_complete;
@@ -1849,7 +2075,147 @@ void apply_public_fragment_metadata(
   }
 }
 
+const InputOptions* ingress_options_for_segment_edge(const ExecutionGraphPlan& plan,
+                                                     const PipelineSegmentPlan& segment,
+                                                     std::size_t edge_index,
+                                                     std::size_t ingress_index) {
+  if (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty()) {
+    const auto& hints = *segment.boundary_hints;
+    if (edge_index < plan.edges.size()) {
+      const graph::PortId to_port = plan.edges[edge_index].to_port;
+      if (to_port != graph::kInvalidPort && to_port < plan.port_names.size()) {
+        const std::string& port_name = plan.port_names[to_port];
+        const auto match = std::find(hints.ingress_endpoint_names.begin(),
+                                     hints.ingress_endpoint_names.end(), port_name);
+        if (match != hints.ingress_endpoint_names.end()) {
+          const std::size_t matched_index =
+              static_cast<std::size_t>(match - hints.ingress_endpoint_names.begin());
+          if (matched_index < hints.ingress_inputs.size()) {
+            return &hints.ingress_inputs[matched_index];
+          }
+        }
+      }
+    }
+    if (ingress_index < hints.ingress_inputs.size()) {
+      return &hints.ingress_inputs[ingress_index];
+    }
+    return nullptr;
+  }
+  for (const auto& node : segment.nodes) {
+    if (const auto* input = dynamic_cast<const simaai::neat::Input*>(node.get())) {
+      return &input->options();
+    }
+  }
+  return nullptr;
+}
+
+bool is_shape_passthrough_stage(const ExecutionGraphPlan& plan, graph::NodeId node_id) {
+  for (const auto& stage : plan.stage_nodes) {
+    if (stage.node_id != node_id || !stage.node) {
+      continue;
+    }
+    const std::string kind = stage.node->kind();
+    return kind == "FanOut" || kind == "StreamScheduler";
+  }
+  return false;
+}
+
+void collect_static_ingress_specs(const ExecutionGraphPlan& plan, std::size_t edge_index,
+                                  std::unordered_set<std::size_t>* visited,
+                                  std::vector<const OutputSpec*>* specs) {
+  if (!visited || !specs || edge_index >= plan.edges.size() ||
+      !visited->insert(edge_index).second) {
+    return;
+  }
+  const EdgePlan& edge = plan.edges[edge_index];
+  if (is_shape_passthrough_stage(plan, edge.from)) {
+    for (std::size_t i = 0; i < plan.edges.size(); ++i) {
+      if (plan.edges[i].to == edge.from) {
+        collect_static_ingress_specs(plan, i, visited, specs);
+      }
+    }
+    return;
+  }
+  if (edge.spec.width > 0 || edge.spec.height > 0 || edge.spec.depth > 0) {
+    specs->push_back(&edge.spec);
+  }
+}
+
+void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& plan) {
+  for (const auto& segment : plan.pipeline_segments) {
+    if (segment.input_edges.empty()) {
+      continue;
+    }
+
+    const auto validate = [&](const char* dimension, int actual, int configured_max,
+                              std::size_t ingress_index) {
+      const int capacity = configured_max > 0 ? configured_max : -1;
+      if (actual <= 0 || capacity <= 0 || actual <= capacity) {
+        return;
+      }
+      const std::string where = "compile_public_graph: segment " + std::to_string(segment.id) +
+                                " ingress " + std::to_string(ingress_index);
+      throw std::invalid_argument(
+          pipeline_internal::shape_limit_exceeded_message(where, dimension, actual, capacity) +
+          ". Fix: " + pipeline_internal::shape_limit_fix_hint(dimension, actual));
+    };
+
+    for (std::size_t ingress_index = 0; ingress_index < segment.input_edges.size();
+         ++ingress_index) {
+      const std::size_t edge_index = segment.input_edges[ingress_index];
+      const InputOptions* options =
+          ingress_options_for_segment_edge(plan, segment, edge_index, ingress_index);
+      if (!options) {
+        continue;
+      }
+      std::unordered_set<std::size_t> visited;
+      std::vector<const OutputSpec*> specs;
+      collect_static_ingress_specs(plan, edge_index, &visited, &specs);
+      for (const OutputSpec* spec : specs) {
+        validate("width", spec->width, options->max_width, ingress_index);
+        validate("height", spec->height, options->max_height, ingress_index);
+        validate("depth", spec->depth, options->max_depth, ingress_index);
+      }
+    }
+  }
+}
+
 } // namespace
+
+namespace session_test {
+
+bool fused_realtime_source_segment_eligible_for_test(bool already_fused) {
+  PipelineSegmentPlan segment;
+  segment.nodes.push_back(nullptr);
+  segment.boundary.source_like = true;
+  segment.output_edges.push_back(7U);
+  if (already_fused) {
+    segment.fused_realtime_ingress.emplace();
+  }
+  return segment_is_private_live_source_for_fusion(segment, 7U);
+}
+
+bool fused_realtime_destinations_share_port_for_test(
+    const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations) {
+  ExecutionGraphPlan plan;
+  std::vector<std::size_t> input_edges;
+  plan.edges.reserve(destinations.size());
+  input_edges.reserve(destinations.size());
+  for (const auto& [node, port] : destinations) {
+    EdgePlan edge;
+    edge.to = node;
+    edge.to_port = port;
+    input_edges.push_back(plan.edges.size());
+    plan.edges.push_back(std::move(edge));
+  }
+  return fused_realtime_input_edges_share_destination(plan, input_edges);
+}
+
+} // namespace session_test
+
+void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan) {
+  validate_static_connected_input_capacities_impl(plan);
+}
 
 ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
                                                       const graph::CompiledGraph& compiled,
@@ -1921,10 +2287,12 @@ ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
 }
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
-                                        const RunOptions& opt, std::optional<Sample> seed) {
+                                        const RunOptions& opt, std::optional<Sample> seed,
+                                        bool fuse_realtime_source_branches) {
   const auto total_start = pipeline_internal::build_timing_now();
   const auto view = public_graph.composition_view_for_internal_compile();
   (void)view.groups;
+  validate_unique_source_buffer_names(view.vertices, view.edges);
 
   ExecutionGraphPlan empty_plan;
   empty_plan.linear_compat = true;
@@ -1985,11 +2353,9 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_lowered_link_policies(lowering.lowered_edges, &plan);
     apply_normalized_link_policies(normalized, lowering.runtime_node_for_vertex, &plan);
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
+    validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
-    // Prefer the C++ graph-runtime RealtimeLatestLink path for live fan-in.
-    // The legacy fused ingress collapses live source branches into one
-    // monolithic GStreamer pipeline and is kept only as an explicit rollback.
-    if (pipeline_internal::env_bool("SIMA_GRAPH_LEGACY_FUSED_REALTIME_INGRESS", false)) {
+    if (fuse_realtime_source_branches) {
       fuse_realtime_fan_in_segments(lowering.graph, &plan);
     }
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,

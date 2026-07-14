@@ -49,11 +49,15 @@ namespace simaai::neat {
  * `RealtimeLatestByStream` automatically so users do not need app-local fan-in mutex code.
  * `RealtimeLatestByStream` keeps producers non-blocking, retains only the latest frame per
  * `Sample::stream_id` (or per source edge when the stream id is empty), and schedules ready
- * streams fairly into the downstream graph.
+ * streams fairly into the downstream graph. `RealtimeEveryFrameByStream` is the opt-in fused
+ * decoder-source variant: it retains one pending frame per stream and blocks only that producer
+ * until the mux consumes it, preserving bursty input without another EV-memory queue. Build these
+ * links with `Graph::build_fused_realtime_sources()`.
  */
 enum class GraphLinkPolicy {
   Default = 0,
   RealtimeLatestByStream,
+  RealtimeEveryFrameByStream,
 };
 
 /**
@@ -66,6 +70,28 @@ struct GraphLinkOptions {
   /// New runtime code copies this value into internal edge metadata during composition; leave it
   /// empty for automatic per-edge identity.
   std::string stream_id;
+};
+
+/**
+ * @brief Realtime admission options for a bounded live Graph connection.
+ *
+ * This is intentionally a separate type from `GraphLinkOptions`.  `GraphLinkOptions` is passed
+ * by reference across the public shared-library boundary and its released three-member layout is
+ * ABI-stable.  Appending admission fields to that type would make a newer library read beyond an
+ * object constructed by an older caller.  Use `Graph::connect_realtime()` when setting either
+ * admission limit; ordinary `Graph::connect()` remains source- and binary-compatible and uses the
+ * defaults below.
+ */
+struct RealtimeGraphLinkOptions : GraphLinkOptions {
+  RealtimeGraphLinkOptions() = default;
+  RealtimeGraphLinkOptions(const GraphLinkOptions& options) : GraphLinkOptions(options) {}
+
+  /// Only applies to realtime-by-stream links carrying raw decoder-backed samples.
+  /// -1 uses the framework default (4); positive values set the per-stream raw-frame inflight cap.
+  int max_inflight_per_stream = -1;
+  /// Only applies to realtime-by-stream links carrying raw decoder-backed samples.
+  /// -1 keeps env/default behavior; positive values set the total cap across streams.
+  int max_inflight_total = -1;
 };
 
 /**
@@ -312,7 +338,11 @@ struct PreparedRunnerOptions {
  * @ingroup pipeline
  */
 struct AdvancedExecutionOptions {
-  std::optional<std::string> preprocess_target;         ///< -> processcvu.pre_run_target.
+  /// Backend for model-managed process-CVU pre stages. Unsupported explicit placement is an
+  /// error; for example, native Preproc is EV74-only.
+  std::optional<std::string> preprocess_target; ///< -> processcvu.pre_run_target.
+  /// Backend for model-managed process-CVU post adapters. This does not relocate BoxDecode,
+  /// which executes on A65.
   std::optional<std::string> postprocess_target;        ///< -> processcvu.post_run_target.
   std::optional<bool> preprocess_async;                 ///< -> processcvu.async.
   std::optional<bool> inference_async;                  ///< -> processmla.async.
@@ -380,7 +410,10 @@ struct GraphOptions {
 
   /// Depth for internally inserted async queue2 elements. 0 keeps the legacy
   /// default/diagnostic environment fallback; positive values are used as-is
-  /// and are the preferred production control.
+  /// and are the preferred production control. For fused realtime source fan-in,
+  /// 0 preserves the single-chain consumer path and a positive value inserts
+  /// bounded, non-leaky queues before CVU, MLA, and decode stages (never before
+  /// the terminal Output).
   int async_queue_depth = 0;
 
   /// Preferred jargon-free execution surface. Folded into the legacy fields above by

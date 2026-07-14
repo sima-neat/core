@@ -567,7 +567,7 @@ bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
   auto& stage = *execution.stages[pick];
   RuntimeStageQueueMsg next{.in_port = port, .sample = std::move(sample), .edge_index = edge_index};
   const bool ok = stage.inbox.push(std::move(next), options.push_timeout_ms);
-  if (!ok && !graph_stop_requested()) {
+  if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
     std::ostringstream msg;
     msg << "GraphRun: stage inbox backpressure timeout (node="
         << static_cast<std::size_t>(group.node_id) << ", edge_queue=" << options.edge_queue
@@ -650,7 +650,7 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
     Sample copy = sample;
     const bool ok = pipe.transport.input_queue->push(
         RuntimePipelineQueueMsg{std::move(copy), invalid_edge_index()}, options.push_timeout_ms);
-    if (!ok && !graph_stop_requested()) {
+    if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
       std::ostringstream msg;
       msg << "GraphRun::push timed out waiting for pipeline input queue (seg="
           << static_cast<std::size_t>(pipe.seg.id) << ", edge_queue=" << options.edge_queue

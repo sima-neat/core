@@ -340,7 +340,18 @@ jobs:
           SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-12)"
           PACKAGE_SPEC="core@${REF_NAME}:${SHORT_SHA}"
           echo "Installing ${PACKAGE_SPEC} from Vulcan env ${VULCAN_ENV}"
-          sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all
+          for attempt in 1 2 3 4; do
+            if sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all; then
+              break
+            fi
+            if [[ "${attempt}" -eq 4 ]]; then
+              echo "Artifact installation failed after ${attempt} attempts." >&2
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "Artifact installation attempt ${attempt} failed; retrying in ${delay}s." >&2
+            sleep "${delay}"
+          done
 
       - name: Locate installed extras content
         run: |
@@ -433,9 +444,9 @@ jobs:
               -e "s#(add_test\\((genai_vlm_run_test|genai_graph_vlm_run_test|genai_asr_run_test|genai_graph_asr_run_test|genai_server_http_test)[[:space:]]+\"[^\"]+\"[[:space:]]+)\"[^\"]+\"#\\1\"${TEST_ASSETS_ROOT}\"#g" \
               "${f}"
           done
-          if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+          if grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
             echo "Unresolved build-tree paths after CTest rebasing:" >&2
-            rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
+            grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
             echo "CTEST path rebasing incomplete; stale absolute paths remain." >&2
             exit 1
           fi

@@ -67,6 +67,11 @@ using simaai::neat::graph::StageOutMsg;
 using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
 
+bool realtime_by_stream_policy(GraphLinkPolicy policy) {
+  return policy == GraphLinkPolicy::RealtimeLatestByStream ||
+         policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+}
+
 std::string gst_double_quote(std::string value) {
   std::string out;
   out.reserve(value.size() + 2U);
@@ -1083,7 +1088,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
           continue;
         }
         const auto& link = execution.plan.edges[edge_index].link_options;
-        if (link.policy == GraphLinkPolicy::RealtimeLatestByStream) {
+        if (realtime_by_stream_policy(link.policy)) {
           realtime_input = true;
         }
       }
@@ -1210,6 +1215,11 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
       continue;
     }
 
+    if (e.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream) {
+      throw std::runtime_error(
+          "RealtimeEveryFrameByStream requires Graph::build_fused_realtime_sources(...) "
+          "and an eligible multi-source fused decoder graph");
+    }
     if (e.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream) {
       const std::string key = target_key(*downstream);
       auto it = realtime_link_by_target.find(key);
@@ -1221,7 +1231,7 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         it = realtime_link_by_target.find(key);
       } else if (it->second < execution.realtime_links.size() &&
                  execution.realtime_links[it->second]) {
-        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id);
+        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id, e.link_options);
       }
       outs.push_back(DownstreamTarget{DownstreamTarget::Kind::RealtimeLatestLink, it->second,
                                       e.to_port, eidx});
@@ -1586,11 +1596,9 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
         }
         core->graph_restore_stream_id_if_needed(i, sample);
-        /*
-         * Do not release realtime/mux credits at this intermediate pull boundary.
-         * The routed Sample can still be queued by a downstream realtime link, stage,
-         * or graph sink, so terminal/drop paths own the release.
-         */
+        // A pipeline output is an internal forwarding boundary, not final consumption. Keep
+        // realtime and holder credits attached until a terminal pull, drop, or closed sink owns
+        // the corresponding release.
         simaai::neat::graph::log_first_decoded_once(sample, pipe.seg.id);
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("pipeline_pull", sample);

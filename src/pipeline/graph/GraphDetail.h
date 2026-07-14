@@ -191,9 +191,9 @@ struct Graph::CompositionGraph {
   VertexId append_runtime_vertex(RuntimeNodePtr node);
   void recompute_unique_tail() noexcept;
   void connect_runtime_port(VertexId from, VertexId to, std::string from_port, std::string to_port,
-                            GraphLinkOptions link_options = {});
+                            RealtimeGraphLinkOptions link_options = {});
   void connect_endpoint(VertexId from, VertexId to, std::string from_endpoint,
-                        std::string to_endpoint, GraphLinkOptions link_options = {});
+                        std::string to_endpoint, RealtimeGraphLinkOptions link_options = {});
   std::pair<VertexId, VertexId> append_node(NodePtr node);
   bool is_linear() const noexcept;
   std::vector<NodePtr> linear_nodes_or_throw(const char* where) const;
@@ -307,6 +307,9 @@ struct BuildResult {
   std::shared_ptr<CompiledPipelineContracts> compiled_contracts;
   std::optional<pipeline_internal::sima::SimaPluginStaticManifest> rendered_manifest;
   std::vector<std::string> model_source_paths;
+  // Fused-only ownership contract: true when the consumer creates replacement
+  // GstBuffers rather than forwarding/copying arbitrary lifecycle GstMeta.
+  bool fused_consumer_replaces_buffers = false;
   // Compile + render diagnostics from session_build_compile_contracts. Carried
   // forward so the wrapper throws in parse_pipeline_or_throw can include the
   // specific failure messages (which `render_manifest_from_compiled_contracts`

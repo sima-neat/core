@@ -65,7 +65,9 @@ RUN_TEST("unit_preprocess_roi_batch_pack_test", ([] {
            meta.roi_source_width = 3;
            meta.roi_source_height = 2;
            meta.roi_source_stride_bytes = 9;
-           meta.rois = {{0, 0, 0, 3, 2}, {1, 0, 0, 3, 2}};
+           // ROI output capacity is independent of source-image batch size:
+           // three ROI outputs may legally reference two packed source frames.
+           meta.rois = {{0, 0, 0, 3, 2}, {1, 0, 0, 3, 2}, {0, 1, 0, 2, 2}};
 
            simaai::neat::Tensor packed =
                simaai::neat::stages::internal::make_cpu_packed_preproc_source_batch_for_stage(
@@ -80,6 +82,8 @@ RUN_TEST("unit_preprocess_roi_batch_pack_test", ([] {
                    "packed tensor missing preprocess metadata");
            require(packed.semantic.preprocess->roi_input_batch_size == 2,
                    "packed tensor preprocess batch size mismatch");
+           require(packed.semantic.preprocess->rois.size() == 3U,
+                   "packed tensor should preserve independent ROI output capacity");
 
            simaai::neat::Mapping mapping = packed.storage->map(simaai::neat::MapMode::Read);
            require(mapping.data != nullptr, "packed tensor map failed");

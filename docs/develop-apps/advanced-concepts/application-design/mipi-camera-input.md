@@ -227,10 +227,10 @@ Leave `decode_type` unset and keep `mla_only = true` when you want raw MLA tenso
 
 | Mode | Use when | Behavior |
 | --- | --- | --- |
-| Strict zero-copy | Your `libcamerasrc` exposes SiMaAI camera zero-copy properties. | Neat requests device/SiMaAI camera buffers and fails if the source cannot provide them. |
-| Adaptive fallback | You want the graph to run on current camera stacks. | Neat accepts OS/libcamera buffers, copies them into pooled SiMaAI memory for CVU/MLA handoff, and passes through SiMaAI buffers when the source already provides them. |
+| Strict zero-copy | Your `libcamerasrc` exposes SiMaAI camera zero-copy properties and the memory library supports DMA-BUF export. | Neat requests device/SiMaAI camera buffers and fails if the source cannot provide them. |
+| Adaptive fallback (default) | You want the graph to run on current camera stacks. | Neat accepts OS/libcamera buffers, copies them into pooled SiMaAI memory for CVU/MLA handoff, and passes through SiMaAI buffers when the source already provides them. |
 
-For current Modalix DevKit images, set `camera.allow_cpu_fallback = true` unless you have confirmed that your `libcamerasrc` exposes SiMaAI zero-copy properties. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
+Current Modalix DevKit images use adaptive fallback by default. Set `camera.allow_cpu_fallback = false` only after confirming both that `libcamerasrc` exposes the SiMaAI zero-copy properties and that the installed memory library supports DMA-BUF export. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
 
 ## Keep preprocessing on CVU/EV74
 

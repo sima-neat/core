@@ -90,33 +90,37 @@ RUN_TEST("graph_migration_phase3_lifecycle_backpressure_test", [] {
     auto app = slow_input_output_graph();
     simaai::neat::Run run = app.build(opt);
     bool saw_reject = false;
-    bool saw_fail_closed_backpressure = false;
-    try {
-      for (int i = 0; i < 512; ++i) {
-        const bool ok = run.try_push(
-            simaai::neat::Sample{graph_phase3_test::make_tensor_sample(i, "backpressure")});
-        if (!ok) {
-          saw_reject = true;
-          break;
-        }
+    for (int i = 0; i < 512; ++i) {
+      const bool ok = run.try_push(
+          simaai::neat::Sample{graph_phase3_test::make_tensor_sample(i, "backpressure")});
+      if (!ok) {
+        saw_reject = true;
+        break;
       }
-      const auto stats_after_burst = simaai::neat::run_internal::input_stats(run);
-      saw_fail_closed_backpressure =
-          saw_reject || stats_after_burst.dropped_frames > 0 || stats_after_burst.push_failures > 0;
-      require(saw_fail_closed_backpressure,
-              "rapid non-blocking push burst at queue_depth=1 should reject, fail, record a "
-              "drop, or raise an explained backpressure timeout");
-      auto out = run.pull(5000);
-      require(out.has_value(), "backpressure run should still produce at least one sample");
-    } catch (const std::exception& e) {
-      const std::string msg = e.what();
-      require_contains(msg, "backpressure", "backpressure timeout diagnostic");
-      require_contains(msg, "not draining outputs as fast as inputs are pushed",
-                       "backpressure timeout descriptor");
-      saw_fail_closed_backpressure = true;
     }
-    require(saw_fail_closed_backpressure,
-            "rapid non-blocking push burst at queue_depth=1 should fail closed on backpressure");
+    const auto stats_after_burst = simaai::neat::run_internal::input_stats(run);
+    require(saw_reject || stats_after_burst.dropped_frames > 0 ||
+                stats_after_burst.push_failures > 0,
+            "rapid non-blocking push burst at queue_depth=1 should reject or record a drop");
+    require(run.running(), "try_push backpressure must leave the connected Run active");
+    require(run.last_error().empty(), "try_push backpressure must not latch a connected-Run error");
+
+    bool recovered = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < deadline) {
+      // Drain opportunistically when the slow branch has produced output, but
+      // do not make output timing part of this admission-lifecycle contract.
+      simaai::neat::Sample drained;
+      simaai::neat::PullError drain_err;
+      (void)run.pull(10, drained, &drain_err);
+      if (run.try_push(
+              simaai::neat::Sample{graph_phase3_test::make_tensor_sample(1000, "recovered")})) {
+        recovered = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    require(recovered, "connected Run should accept input after transient try_push backpressure");
     run.stop();
   }
 });

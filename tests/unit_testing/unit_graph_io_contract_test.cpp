@@ -121,7 +121,7 @@ RUN_TEST(
       stream_sink.add(nodes::Output("classes"));
 
       Graph stream_app("graph_io_default_link_stream_id");
-      GraphLinkOptions stream_link;
+      RealtimeGraphLinkOptions stream_link;
       stream_link.stream_id = "persisted-stream-0";
       stream_app.connect(stream_source, stream_sink, stream_link);
 
@@ -146,6 +146,64 @@ RUN_TEST(
       require(stream_link_roundtrip_json.find("\"link_policy\"") == std::string::npos,
               io_case("default_link_policy_roundtrip_omitted",
                       "default-link stream id roundtrip should keep default policy implicit"));
+
+      Graph realtime_app("graph_io_realtime_link_options");
+      RealtimeGraphLinkOptions realtime_link;
+      realtime_link.policy = GraphLinkPolicy::RealtimeLatestByStream;
+      realtime_link.queue_depth = 4;
+      realtime_link.max_inflight_per_stream = 4;
+      realtime_link.max_inflight_total = 16;
+      realtime_link.stream_id = "persisted-realtime-stream";
+      realtime_app.connect(stream_source, stream_sink, realtime_link);
+
+      const std::string realtime_link_path = tmp_json_path("graph_io_realtime_link_options.json");
+      realtime_app.save(realtime_link_path);
+      const std::string realtime_link_json = read_text(realtime_link_path);
+      require_contains(
+          realtime_link_json, "\"link_policy\":\"realtime_latest_by_stream\"",
+          io_case("realtime_link_policy_saved", "realtime link policy should be serialized"));
+      require_contains(realtime_link_json, "\"link_queue_depth\":4",
+                       io_case("realtime_link_queue_depth_saved",
+                               "realtime link queue depth should be serialized"));
+      require_contains(
+          realtime_link_json, "\"link_max_inflight_per_stream\":4",
+          io_case("realtime_link_max_inflight_saved",
+                  "realtime per-stream raw-frame inflight limit should be serialized"));
+      require_contains(realtime_link_json, "\"link_max_inflight_total\":16",
+                       io_case("realtime_link_max_inflight_total_saved",
+                               "realtime total raw-frame inflight limit should be serialized"));
+
+      const Graph loaded_realtime_app = Graph::load(realtime_link_path);
+      const std::string realtime_roundtrip_path =
+          tmp_json_path("graph_io_realtime_link_options_roundtrip.json");
+      loaded_realtime_app.save(realtime_roundtrip_path);
+      const std::string realtime_roundtrip_json = read_text(realtime_roundtrip_path);
+      require_contains(
+          realtime_roundtrip_json, "\"link_max_inflight_per_stream\":4",
+          io_case("realtime_link_max_inflight_roundtrip",
+                  "realtime per-stream raw-frame inflight limit should survive load/save"));
+      require_contains(realtime_roundtrip_json, "\"link_max_inflight_total\":16",
+                       io_case("realtime_link_max_inflight_total_roundtrip",
+                               "realtime total raw-frame inflight limit should survive load/save"));
+
+      Graph every_frame_app("graph_io_every_frame_link_policy");
+      RealtimeGraphLinkOptions every_frame_link = realtime_link;
+      every_frame_link.policy = GraphLinkPolicy::RealtimeEveryFrameByStream;
+      every_frame_app.connect(stream_source, stream_sink, every_frame_link);
+      const std::string every_frame_path = tmp_json_path("graph_io_every_frame_link_policy.json");
+      every_frame_app.save(every_frame_path);
+      require_contains(read_text(every_frame_path),
+                       "\"link_policy\":\"realtime_every_frame_by_stream\"",
+                       io_case("every_frame_link_policy_saved",
+                               "every-frame realtime policy should be serialized"));
+      const Graph loaded_every_frame_app = Graph::load(every_frame_path);
+      const std::string every_frame_roundtrip_path =
+          tmp_json_path("graph_io_every_frame_link_policy_roundtrip.json");
+      loaded_every_frame_app.save(every_frame_roundtrip_path);
+      require_contains(read_text(every_frame_roundtrip_path),
+                       "\"link_policy\":\"realtime_every_frame_by_stream\"",
+                       io_case("every_frame_link_policy_roundtrip",
+                               "every-frame realtime policy should survive load/save"));
 
       const std::string missing_file = tmp_json_path("graph_io_missing_input.json");
       {

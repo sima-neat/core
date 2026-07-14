@@ -111,7 +111,7 @@ node = pyneat.nodes.camera_input(opt)
 | `insert_queue` | `true` | Insert a small live-source queue after `libcamerasrc`. |
 | `leaky_queue` | `true` | Make the queue leaky downstream so live graphs prefer recent frames over stale backlog. |
 | `queue_depth` | `2` | Maximum queued buffers when `insert_queue` is true. |
-| `allow_cpu_fallback` | `false` | If `false`, require camera/device zero-copy support. If `true`, use Neat's private adaptive bridge into SiMaAI memory. |
+| `allow_cpu_fallback` | `true` | If `true`, use Neat's private adaptive bridge into SiMaAI memory. If `false`, require camera/device zero-copy support. |
 
 ## Input and output contract
 
@@ -125,7 +125,7 @@ node = pyneat.nodes.camera_input(opt)
 
 ## Zero-copy and fallback
 
-`allow_cpu_fallback = false` requests strict camera/device zero-copy. The build fails if the installed `libcamerasrc` does not expose the SiMaAI zero-copy properties Neat needs.
+`allow_cpu_fallback = false` requests strict camera/device zero-copy. The build fails unless the installed `libcamerasrc` exposes the required SiMaAI zero-copy properties and the memory library can export the camera allocation as a DMA-BUF.
 
 `allow_cpu_fallback = true` inserts Neat's private adaptive camera memory bridge. The bridge passes through SiMaAI/EV74 buffers when upstream already provides them. Otherwise, it copies the camera frame into a pooled SiMaAI buffer and attaches the metadata downstream stages expect.
 

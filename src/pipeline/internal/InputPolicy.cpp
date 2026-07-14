@@ -180,6 +180,30 @@ validate_shape_limits(const InputStreamOptions::ResolvedShapeLimits& limits) {
   return std::nullopt;
 }
 
+std::string shape_limit_exceeded_message(const std::string& where, const std::string& dimension,
+                                         int actual, int limit) {
+  std::string message;
+  if (!where.empty()) {
+    message = where + ": ";
+  }
+  message += "input " + dimension + " " + std::to_string(actual) + " exceeds configured capacity " +
+             std::to_string(limit);
+  return message;
+}
+
+std::string shape_limit_fix_hint(const std::string& dimension, int required_minimum) {
+  std::string option;
+  if (dimension == "width") {
+    option = "max_width / Model::Options::preprocess.input_max_width";
+  } else if (dimension == "height") {
+    option = "max_height / Model::Options::preprocess.input_max_height";
+  } else {
+    option = "max_depth / Model::Options::preprocess.input_max_depth";
+  }
+  return "Increase " + option + " to at least " + std::to_string(required_minimum) +
+         ", or provide a smaller input.";
+}
+
 int default_depth_for_image_format(const std::string& fmt, int fallback) {
   const std::string up = upper_copy(fmt);
   if (up == "GRAY" || up == "GRAY8")

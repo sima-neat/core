@@ -8,6 +8,7 @@
 
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
+#include "gst/GstLatestByStreamMux.h"
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
@@ -19,6 +20,7 @@
 #include "pipeline/GraphReport.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
@@ -29,16 +31,23 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
+#include <deque>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <gst/video/video.h>
 
 namespace simaai::neat {
 
@@ -402,6 +411,16 @@ RawVideoCapsInfo source_meta_current_raw_video_caps(GstPad* pad) {
   return out;
 }
 
+RawVideoCapsInfo source_meta_buffer_raw_video_size(GstBuffer* buffer) {
+  RawVideoCapsInfo out;
+  GstVideoMeta* meta = buffer ? gst_buffer_get_video_meta(buffer) : nullptr;
+  if (!meta)
+    return out;
+  out.width = static_cast<int>(meta->width);
+  out.height = static_cast<int>(meta->height);
+  return out;
+}
+
 void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
                                                  SourceSimaMetaProbeCtx* ctx) {
   if (!buffer || !ctx || !ctx->opt.preprocess_meta.has_value())
@@ -409,8 +428,9 @@ void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
   if (has_simaai_preprocess_meta(buffer))
     return;
 
-  int width = ctx->opt.width;
-  int height = ctx->opt.height;
+  const RawVideoCapsInfo video_meta = source_meta_buffer_raw_video_size(buffer);
+  int width = video_meta.width;
+  int height = video_meta.height;
   if (width <= 0 || height <= 0) {
     const RawVideoCapsInfo caps = source_meta_current_raw_video_caps(pad);
     if (width <= 0)
@@ -418,6 +438,10 @@ void source_meta_maybe_apply_preprocess_template(GstPad* pad, GstBuffer* buffer,
     if (height <= 0)
       height = caps.height;
   }
+  if (width <= 0)
+    width = ctx->opt.width;
+  if (height <= 0)
+    height = ctx->opt.height;
   if (width <= 0 || height <= 0)
     return;
 
@@ -904,8 +928,8 @@ fused_materialize_nodes(const std::vector<std::shared_ptr<Node>>& nodes) {
 
 void append_fused_node_fragment(BuildResult* br, std::ostringstream* pipeline,
                                 const std::shared_ptr<Node>& node, int actual_index,
-                                const NameTransform& name_transform, bool prepend_link,
-                                const char* extra_fragment_props = nullptr) {
+                                const NameTransform& name_transform, const GraphOptions* sess_opt,
+                                bool prepend_link, const char* extra_fragment_props = nullptr) {
   if (!br || !br->diag || !pipeline || !node) {
     return;
   }
@@ -917,7 +941,7 @@ void append_fused_node_fragment(BuildResult* br, std::ostringstream* pipeline,
   nr.index = actual_index;
   nr.kind = node->kind();
   nr.user_label = node->user_label();
-  nr.backend_fragment = frag.fragment;
+  nr.backend_fragment = session_build_apply_fast_path_options_to_fragment(frag.fragment, sess_opt);
   if (extra_fragment_props && *extra_fragment_props) {
     nr.backend_fragment += extra_fragment_props;
   }
@@ -950,6 +974,88 @@ std::string fused_stream_ids_csv(const runtime::FusedRealtimeIngress& ingress) {
     csv += ingress.branches[i].stream_id.empty() ? fallback : ingress.branches[i].stream_id;
   }
   return csv;
+}
+
+std::string fused_stream_inflight_limits_csv(const runtime::FusedRealtimeIngress& ingress,
+                                             bool enable_terminal_loans) {
+  std::string csv;
+  for (std::size_t i = 0; i < ingress.branches.size(); ++i) {
+    if (i) {
+      csv += ',';
+    }
+    const int limit = enable_terminal_loans
+                          ? pipeline_internal::resolved_realtime_max_inflight_per_stream(
+                                ingress.branches[i].link_options)
+                          : 0;
+    csv += std::to_string(limit);
+  }
+  return csv;
+}
+
+int fused_max_inflight_total(const runtime::FusedRealtimeIngress& ingress,
+                             bool enable_terminal_loans) {
+  if (!enable_terminal_loans || ingress.branches.empty()) {
+    return 0;
+  }
+
+  int total_capacity = 0;
+  int explicit_limit = -1;
+  for (const auto& branch : ingress.branches) {
+    const int per_stream =
+        pipeline_internal::resolved_realtime_max_inflight_per_stream(branch.link_options);
+    if (total_capacity > std::numeric_limits<int>::max() - per_stream) {
+      total_capacity = std::numeric_limits<int>::max();
+    } else {
+      total_capacity += per_stream;
+    }
+    if (branch.link_options.max_inflight_total > 0) {
+      explicit_limit = explicit_limit > 0
+                           ? std::min(explicit_limit, branch.link_options.max_inflight_total)
+                           : branch.link_options.max_inflight_total;
+    }
+  }
+  if (explicit_limit > 0) {
+    return explicit_limit;
+  }
+
+  int env_limit = 0;
+  if (pipeline_internal::env_int("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL", &env_limit)) {
+    return std::max(0, env_limit);
+  }
+  return pipeline_internal::default_realtime_max_inflight_total(total_capacity);
+}
+
+GstBuffer* make_fused_terminal_probe_buffer_writable(GstPadProbeInfo* info) {
+  if (!info || (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+    return nullptr;
+  }
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!buffer || gst_buffer_is_writable(buffer)) {
+    return buffer;
+  }
+
+  // Transfer the probe data slot's streaming reference directly through
+  // GStreamer's copy-on-write operation and replace the slot immediately.
+  // gst_buffer_make_writable() consumes exactly that reference, so no
+  // separate unref of the probe's original pointer is valid here.
+  GstBuffer* writable = gst_buffer_make_writable(buffer);
+  GST_PAD_PROBE_INFO_DATA(info) = writable;
+  return writable;
+}
+
+bool fused_block_when_pending(const runtime::FusedRealtimeIngress& ingress) {
+  return std::any_of(ingress.branches.begin(), ingress.branches.end(), [](const auto& branch) {
+    return branch.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+  });
+}
+
+std::string fused_ingress_queue_fragment(int depth, bool block_when_pending) {
+  std::ostringstream out;
+  out << "queue max-size-buffers=" << std::max(1, depth) << " max-size-bytes=0 max-size-time=0";
+  if (!block_when_pending) {
+    out << " leaky=downstream";
+  }
+  return out.str();
 }
 
 NameTransform fused_branch_name_transform(const NameTransform& base, std::size_t branch_index) {
@@ -1729,6 +1835,197 @@ void attach_fused_realtime_stage_counters(GstElement* pipeline,
   std::fflush(stderr);
 }
 
+std::optional<std::size_t> parse_fused_branch_index_from_name(const std::string& name);
+
+void attach_fused_encoded_frame_tap_probes(GstElement* pipeline,
+                                           const runtime::FusedRealtimeIngress& ingress) {
+  if (!pipeline || !pipeline_internal::latest_by_stream_encoded_frame_callback_enabled()) {
+    return;
+  }
+  GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
+  if (!it) {
+    return;
+  }
+  GValue item = G_VALUE_INIT;
+  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+    GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+    const char* name_c = element ? GST_ELEMENT_NAME(element) : nullptr;
+    const std::string name = name_c ? name_c : "";
+    GstElementFactory* factory = element ? gst_element_get_factory(element) : nullptr;
+    const char* factory_c =
+        factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
+    const std::string factory_name = factory_c ? factory_c : "";
+    // H264Depacketize always ends in an AU-aligned byte-stream capsfilter named
+    // *_h264_caps. Probe its src pad so the exact bytes entering the decoder
+    // can also be published without an additional RTSP session or encoder.
+    if (factory_name == "capsfilter" && name.find("_h264_caps") != std::string::npos) {
+      const auto branch_index = parse_fused_branch_index_from_name(name);
+      if (branch_index.has_value() && *branch_index < ingress.branches.size()) {
+        const std::string stream_id = ingress.branches[*branch_index].stream_id.empty()
+                                          ? ("stream" + std::to_string(*branch_index))
+                                          : ingress.branches[*branch_index].stream_id;
+        if (GstPad* src = gst_element_get_static_pad(element, "src")) {
+          (void)pipeline_internal::attach_latest_by_stream_encoded_frame_tap_probe(src, stream_id);
+          gst_object_unref(src);
+        }
+      }
+    }
+    g_value_reset(&item);
+  }
+  g_value_unset(&item);
+  gst_iterator_free(it);
+}
+
+struct FusedDecoderTimingBranch {
+  std::mutex mutex;
+  std::deque<SampleTimingOverrides> pending;
+};
+
+struct FusedDecoderTimingProbeCtx {
+  std::shared_ptr<FusedDecoderTimingBranch> branch;
+  bool decoder_output = false;
+};
+
+std::optional<std::size_t>
+find_fused_decoder_timing_match(const std::deque<SampleTimingOverrides>& pending,
+                                std::optional<std::uint64_t> output_pts,
+                                std::optional<std::uint64_t> output_dts) {
+  const auto find_timestamp = [&](const auto& select,
+                                  std::uint64_t value) -> std::optional<std::size_t> {
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+      const auto timestamp = select(pending[i]);
+      if (timestamp.has_value() && *timestamp == value) {
+        return i;
+      }
+    }
+    return std::nullopt;
+  };
+  if (output_pts.has_value()) {
+    if (const auto match = find_timestamp(
+            [](const SampleTimingOverrides& timing) { return timing.pts_ns; }, *output_pts)) {
+      return match;
+    }
+  }
+  if (output_dts.has_value()) {
+    return find_timestamp([](const SampleTimingOverrides& timing) { return timing.dts_ns; },
+                          *output_dts);
+  }
+  return std::nullopt;
+}
+
+GstPadProbeReturn fused_decoder_timing_probe(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+    return GST_PAD_PROBE_OK;
+  }
+  auto* ctx = static_cast<FusedDecoderTimingProbeCtx*>(user_data);
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  if (!ctx || !ctx->branch || !buffer) {
+    return GST_PAD_PROBE_OK;
+  }
+  if (!ctx->decoder_output) {
+    SampleTimingOverrides timing;
+    if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))) {
+      timing.pts_ns = static_cast<std::uint64_t>(GST_BUFFER_PTS(buffer));
+    }
+    if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))) {
+      timing.dts_ns = static_cast<std::uint64_t>(GST_BUFFER_DTS(buffer));
+    }
+    if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))) {
+      timing.duration_ns = static_cast<std::uint64_t>(GST_BUFFER_DURATION(buffer));
+    }
+    std::lock_guard<std::mutex> lock(ctx->branch->mutex);
+    ctx->branch->pending.push_back(std::move(timing));
+    if (ctx->branch->pending.size() > 64U) {
+      ctx->branch->pending.pop_front();
+    }
+    return GST_PAD_PROBE_OK;
+  }
+
+  std::optional<std::uint64_t> output_pts;
+  std::optional<std::uint64_t> output_dts;
+  if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))) {
+    output_pts = static_cast<std::uint64_t>(GST_BUFFER_PTS(buffer));
+  }
+  if (GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))) {
+    output_dts = static_cast<std::uint64_t>(GST_BUFFER_DTS(buffer));
+  }
+
+  SampleTimingOverrides timing;
+  {
+    std::lock_guard<std::mutex> lock(ctx->branch->mutex);
+    // GstVideoDecoder preserves the input AU presentation timestamp on the
+    // corresponding decoded frame, including when frames are reordered. Use
+    // that identity (or DTS when PTS is unavailable) instead of queue age: an
+    // AU may be dropped without producing a raw frame, and FIFO consumption
+    // would then shift every subsequent timing record onto the wrong output.
+    const auto match =
+        find_fused_decoder_timing_match(ctx->branch->pending, output_pts, output_dts);
+    if (!match.has_value()) {
+      return GST_PAD_PROBE_OK;
+    }
+    auto it = ctx->branch->pending.begin() + static_cast<std::ptrdiff_t>(*match);
+    timing = std::move(*it);
+    ctx->branch->pending.erase(it);
+  }
+  if (timing.pts_ns.has_value()) {
+    GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(*timing.pts_ns);
+  }
+  if (timing.dts_ns.has_value()) {
+    GST_BUFFER_DTS(buffer) = static_cast<GstClockTime>(*timing.dts_ns);
+  }
+  if (timing.duration_ns.has_value()) {
+    GST_BUFFER_DURATION(buffer) = static_cast<GstClockTime>(*timing.duration_ns);
+  }
+  (void)write_sample_timing_to_gst_buffer(buffer, timing);
+  return GST_PAD_PROBE_OK;
+}
+
+void attach_fused_decoder_timing_probes(GstElement* pipeline,
+                                        const runtime::FusedRealtimeIngress& ingress) {
+  if (!pipeline || ingress.branches.empty()) {
+    return;
+  }
+  std::vector<std::shared_ptr<FusedDecoderTimingBranch>> timing;
+  timing.reserve(ingress.branches.size());
+  for (std::size_t i = 0; i < ingress.branches.size(); ++i) {
+    timing.push_back(std::make_shared<FusedDecoderTimingBranch>());
+  }
+
+  GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
+  if (!it) {
+    return;
+  }
+  GValue item = G_VALUE_INIT;
+  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+    GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+    const char* name_c = element ? GST_ELEMENT_NAME(element) : nullptr;
+    const std::string name = name_c ? name_c : "";
+    GstElementFactory* factory = element ? gst_element_get_factory(element) : nullptr;
+    const char* factory_c =
+        factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
+    const std::string factory_name = factory_c ? factory_c : "";
+    const auto branch_index = parse_fused_branch_index_from_name(name);
+    if (branch_index.has_value() && *branch_index < timing.size()) {
+      const bool encoded_au =
+          factory_name == "capsfilter" && name.find("_h264_caps") != std::string::npos;
+      const bool decoder_output = factory_name == "neatdecoder";
+      if (encoded_au || decoder_output) {
+        GstPad* pad = gst_element_get_static_pad(element, "src");
+        if (pad) {
+          auto* ctx = new FusedDecoderTimingProbeCtx{timing[*branch_index], decoder_output};
+          gst_pad_add_probe(
+              pad, GST_PAD_PROBE_TYPE_BUFFER, fused_decoder_timing_probe, ctx,
+              +[](gpointer data) { delete static_cast<FusedDecoderTimingProbeCtx*>(data); });
+          gst_object_unref(pad);
+        }
+      }
+    }
+    g_value_reset(&item);
+  }
+  g_value_unset(&item);
+  gst_iterator_free(it);
+}
+
 enum class FusedBranchCounterStage {
   RtpCaps,
   H264Caps,
@@ -2085,34 +2382,279 @@ void attach_fused_realtime_branch_counters(GstElement* pipeline, std::size_t bra
   std::fflush(stderr);
 }
 
+std::vector<std::string> split_fused_consumer_segments(const std::string& fragment) {
+  std::vector<std::string> segments;
+  bool in_single_quote = false;
+  bool in_double_quote = false;
+  bool escaped = false;
+  std::size_t start = 0;
+  for (std::size_t i = 0; i < fragment.size(); ++i) {
+    const char c = fragment[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (c == '\\' && (in_single_quote || in_double_quote)) {
+      escaped = true;
+      continue;
+    }
+    if (c == '\'' && !in_double_quote) {
+      in_single_quote = !in_single_quote;
+      continue;
+    }
+    if (c == '"' && !in_single_quote) {
+      in_double_quote = !in_double_quote;
+      continue;
+    }
+    if (c != '!' || in_single_quote || in_double_quote) {
+      continue;
+    }
+    const std::string segment = trim_copy(fragment.substr(start, i - start));
+    if (!segment.empty()) {
+      segments.push_back(segment);
+    }
+    start = i + 1U;
+  }
+  const std::string tail = trim_copy(fragment.substr(start));
+  if (!tail.empty()) {
+    segments.push_back(tail);
+  }
+  return segments;
+}
+
+std::string fused_consumer_segment_factory(const std::string& segment) {
+  const std::size_t start = segment.find_first_not_of(" \t\r\n");
+  if (start == std::string::npos) {
+    return {};
+  }
+  const std::size_t end = segment.find_first_of(" \t\r\n", start);
+  return lower_copy(
+      segment.substr(start, end == std::string::npos ? std::string::npos : end - start));
+}
+
+bool is_fused_consumer_stage_factory(const std::string& factory) {
+  return factory == "neatprocesscvu" || factory == "neatprocessmla" ||
+         factory == "neatobjectdecode" || factory == "neatboxdecode";
+}
+
+bool fused_consumer_fragment_replaces_buffers(const std::string& fragment) {
+  for (const auto& segment : split_fused_consumer_segments(fragment)) {
+    if (is_fused_consumer_stage_factory(fused_consumer_segment_factory(segment))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::optional<std::string> fused_consumer_segment_property_value(const std::string& segment,
+                                                                 const std::string& property) {
+  const std::string lower = lower_copy(segment);
+  const auto is_space = [](char value) {
+    return std::isspace(static_cast<unsigned char>(value)) != 0;
+  };
+  bool in_single_quote = false;
+  bool in_double_quote = false;
+  std::optional<std::string> effective_value;
+  for (std::size_t i = 0; i < lower.size(); ++i) {
+    const char c = lower[i];
+    if (c == '\'' && !in_double_quote) {
+      in_single_quote = !in_single_quote;
+      continue;
+    }
+    if (c == '"' && !in_single_quote) {
+      in_double_quote = !in_double_quote;
+      continue;
+    }
+    if (in_single_quote || in_double_quote || (i != 0U && !is_space(lower[i - 1U])) ||
+        lower.compare(i, property.size(), property) != 0) {
+      continue;
+    }
+    std::size_t cursor = i + property.size();
+    if (cursor < lower.size() && lower[cursor] != '=' && !is_space(lower[cursor])) {
+      continue;
+    }
+    while (cursor < lower.size() && is_space(lower[cursor])) {
+      ++cursor;
+    }
+    if (cursor >= lower.size() || lower[cursor] != '=') {
+      continue;
+    }
+    ++cursor;
+    while (cursor < lower.size() && is_space(lower[cursor])) {
+      ++cursor;
+    }
+    // gst-launch accepts optional type annotations such as
+    // leaky=(GstQueueLeaky)downstream (and whitespace after the annotation).
+    if (cursor < lower.size() && lower[cursor] == '(') {
+      const std::size_t close = lower.find(')', cursor + 1U);
+      if (close == std::string::npos) {
+        effective_value = std::string{};
+        break;
+      }
+      cursor = close + 1U;
+      while (cursor < lower.size() && is_space(lower[cursor])) {
+        ++cursor;
+      }
+    }
+    if (cursor >= lower.size()) {
+      effective_value = std::string{};
+      break;
+    }
+    if (lower[cursor] == '\'' || lower[cursor] == '"') {
+      const char quote = lower[cursor++];
+      const std::size_t close = lower.find(quote, cursor);
+      effective_value =
+          lower.substr(cursor, close == std::string::npos ? std::string::npos : close - cursor);
+      if (close == std::string::npos) {
+        break;
+      }
+      i = close;
+      continue;
+    }
+    std::size_t end = cursor;
+    while (end < lower.size() && !is_space(lower[end])) {
+      ++end;
+    }
+    effective_value = lower.substr(cursor, end - cursor);
+    i = end;
+  }
+  return effective_value;
+}
+
+bool fused_consumer_property_is_zero(const std::string& value) {
+  if (value.empty()) {
+    return false;
+  }
+  char* end = nullptr;
+  const double parsed = std::strtod(value.c_str(), &end);
+  return end != value.c_str() && end && *end == '\0' && parsed == 0.0;
+}
+
+bool fused_consumer_fragment_may_drop(const std::string& fragment) {
+  for (const auto& segment : split_fused_consumer_segments(fragment)) {
+    const std::string factory = fused_consumer_segment_factory(segment);
+    if (factory == "videorate") {
+      return true;
+    }
+    if (factory == "queue") {
+      if (const auto leaky = fused_consumer_segment_property_value(segment, "leaky"); leaky) {
+        // GstQueueLeaky's non-dropping value is 0 / "no". Unknown values are
+        // rejected conservatively because this check is the ownership proof
+        // that permits disabling source-buffer lifetime guards.
+        if (*leaky != "0" && *leaky != "no" && *leaky != "none") {
+          return true;
+        }
+      }
+    } else if (factory == "identity") {
+      if (const auto probability =
+              fused_consumer_segment_property_value(segment, "drop-probability");
+          probability && !fused_consumer_property_is_zero(*probability)) {
+        return true;
+      }
+      if (const auto flags = fused_consumer_segment_property_value(segment, "drop-buffer-flags");
+          flags && *flags != "0" && *flags != "none") {
+        return true;
+      }
+    } else if (factory == "valve") {
+      if (const auto drop = fused_consumer_segment_property_value(segment, "drop");
+          drop && *drop != "0" && *drop != "false" && *drop != "no") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth) {
+  if (requested_depth < 0 || requested_depth > 1024) {
+    throw std::invalid_argument(
+        "GraphOptions::async_queue_depth must be in [0, 1024] for fused realtime ingress");
+  }
+  if (requested_depth == 0 || fragment.empty()) {
+    return fragment;
+  }
+
+  const auto segments = split_fused_consumer_segments(fragment);
+  std::vector<std::string> rendered;
+  rendered.reserve(segments.size() + 3U);
+  const std::string queue = session_build_async_queue2_fragment(requested_depth);
+  for (const auto& segment : segments) {
+    const std::string factory = fused_consumer_segment_factory(segment);
+    if (is_fused_consumer_stage_factory(factory)) {
+      rendered.push_back(queue);
+    }
+    rendered.push_back(segment);
+  }
+
+  std::ostringstream out;
+  for (std::size_t i = 0; i < rendered.size(); ++i) {
+    if (i != 0U) {
+      out << " ! ";
+    }
+    out << rendered[i];
+  }
+  return out.str();
+}
+
 BuildResult build_fused_realtime_source_pipeline(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes,
     const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes,
     const std::vector<std::vector<int>>& branch_actual_indices, const NameTransform& name_transform,
-    const std::string& appsink_name) {
+    const std::string& appsink_name, const GraphOptions& sess_opt, bool enable_terminal_loans) {
   BuildResult br;
   br.diag = std::make_shared<DiagCtx>();
   br.appsink_name = apply_name_transform(name_transform, appsink_name);
   br.name_transform = name_transform;
+  br.diag->queue2_enabled = sess_opt.async_queue_depth > 0;
+  br.diag->queue2_depth =
+      br.diag->queue2_enabled ? session_build_async_queue2_depth(sess_opt.async_queue_depth) : 0;
 
   const std::string mux_name = apply_name_transform(name_transform, "neat_live_mux");
   br.diag->node_reports.reserve(consumer_nodes.size() + 1U);
   NodeReport mux_report;
   mux_report.index = -1;
-  mux_report.kind = "RealtimeLatestMux";
   const std::string stream_ids = fused_stream_ids_csv(ingress);
+  const std::string stream_inflight_limits =
+      fused_stream_inflight_limits_csv(ingress, enable_terminal_loans);
+  const int max_inflight_total = fused_max_inflight_total(ingress, enable_terminal_loans);
+  const bool block_when_pending = fused_block_when_pending(ingress);
+  mux_report.kind = block_when_pending ? "RealtimeEveryFrameMux" : "RealtimeLatestMux";
   mux_report.backend_fragment =
-      "neatlatestbystreammux name=" + mux_name + " stream-ids=" + gst_double_quote(stream_ids);
+      "neatlatestbystreammux name=" + mux_name + " stream-ids=" + gst_double_quote(stream_ids) +
+      " stream-inflight-limits=" + gst_double_quote(stream_inflight_limits) +
+      " max-inflight-total=" + std::to_string(max_inflight_total) +
+      (block_when_pending ? " block-when-pending=true" : "");
   mux_report.elements.push_back(mux_name);
   br.diag->node_reports.push_back(mux_report);
 
   std::ostringstream ss;
-  ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids);
+  ss << "neatlatestbystreammux name=" << mux_name << " stream-ids=" << gst_double_quote(stream_ids)
+     << " stream-inflight-limits=" << gst_double_quote(stream_inflight_limits)
+     << " max-inflight-total=" << max_inflight_total;
+  if (block_when_pending) {
+    ss << " block-when-pending=true";
+  }
+  std::ostringstream consumer_pipeline;
   int actual_index = 0;
+  bool first_consumer = true;
   for (const auto& node : consumer_nodes) {
-    append_fused_node_fragment(&br, &ss, node, actual_index++, name_transform,
-                               /*prepend_link=*/true);
+    append_fused_node_fragment(&br, &consumer_pipeline, node, actual_index++, name_transform,
+                               &sess_opt, /*prepend_link=*/!first_consumer);
+    first_consumer = false;
+  }
+  const std::string rendered_consumer =
+      insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth);
+  br.fused_consumer_replaces_buffers = fused_consumer_fragment_replaces_buffers(rendered_consumer);
+  if (enable_terminal_loans && br.fused_consumer_replaces_buffers &&
+      fused_consumer_fragment_may_drop(rendered_consumer)) {
+    throw std::invalid_argument(
+        "fused realtime terminal-loan consumers that replace buffers must not contain "
+        "pre-terminal dropping elements (videorate, leaky queue, valve drop, or identity "
+        "drop-probability); keep the chain ordered/non-dropping or use the non-fused graph path");
+  }
+  if (!rendered_consumer.empty()) {
+    ss << " ! " << rendered_consumer;
   }
 
   for (std::size_t branch_index = 0; branch_index < branch_nodes.size(); ++branch_index) {
@@ -2124,27 +2666,13 @@ BuildResult build_fused_realtime_source_pipeline(
         fused_branch_name_transform(name_transform, branch_index);
     ss << ' ';
     bool first = true;
-    bool saw_branch_queue = false;
-    const bool queue_pre_leaky_downstream =
-        env_bool("SIMA_FUSED_REALTIME_QUEUE_PRE_LEAKY_DOWNSTREAM", false);
     for (std::size_t node_index = 0; node_index < nodes.size(); ++node_index) {
       const auto& node = nodes[node_index];
-      const bool is_queue = node && node->kind() == "Queue";
-      const bool force_pre_queue_leaky =
-          queue_pre_leaky_downstream && is_queue && !saw_branch_queue;
-      append_fused_node_fragment(
-          &br, &ss, node, branch_actual_indices[branch_index][node_index], branch_transform,
-          /*prepend_link=*/!first, force_pre_queue_leaky ? " leaky=downstream" : nullptr);
-      if (is_queue) {
-        saw_branch_queue = true;
-      }
+      append_fused_node_fragment(&br, &ss, node, branch_actual_indices[branch_index][node_index],
+                                 branch_transform, &sess_opt, /*prepend_link=*/!first);
       first = false;
     }
-    if (!env_bool("SIMA_FUSED_REALTIME_BYPASS_INGRESS_QUEUE", false)) {
-      const int queue_depth = std::max(1, env_int("SIMA_FUSED_REALTIME_INGRESS_QUEUE_DEPTH", 1));
-      ss << " ! queue max-size-buffers=" << queue_depth
-         << " max-size-bytes=0 max-size-time=0 leaky=downstream";
-    }
+    ss << " ! " << fused_ingress_queue_fragment(1, block_when_pending);
     ss << " ! " << mux_name << ".sink_" << branch_index;
   }
 
@@ -2152,6 +2680,83 @@ BuildResult build_fused_realtime_source_pipeline(
   br.pipeline_string = br.diag->pipeline_string;
   return br;
 }
+
+namespace session_test {
+
+std::optional<std::size_t>
+find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pending_pts,
+                                         std::optional<std::uint64_t> output_pts) {
+  std::deque<SampleTimingOverrides> pending;
+  for (const std::uint64_t pts : pending_pts) {
+    SampleTimingOverrides timing;
+    timing.pts_ns = pts;
+    pending.push_back(std::move(timing));
+  }
+  return find_fused_decoder_timing_match(pending, output_pts, std::nullopt);
+}
+
+std::string
+render_fused_realtime_ingress_queue_for_test(const RealtimeGraphLinkOptions& link_options) {
+  return fused_ingress_queue_fragment(1, link_options.policy ==
+                                             GraphLinkPolicy::RealtimeEveryFrameByStream);
+}
+
+GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info) {
+  return make_fused_terminal_probe_buffer_writable(info);
+}
+
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options) {
+  runtime::FusedRealtimeIngress ingress;
+  runtime::FusedRealtimeIngressBranch branch;
+  branch.stream_id = "stream0";
+  ingress.branches.push_back(std::move(branch));
+  const std::vector<std::vector<std::shared_ptr<Node>>> branch_nodes(1);
+  const std::vector<std::vector<int>> branch_actual_indices(1);
+  return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
+                                              branch_actual_indices, NameTransform{}, "mysink",
+                                              options, /*enable_terminal_loans=*/true)
+      .pipeline_string;
+}
+
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
+    const std::vector<RealtimeGraphLinkOptions>& link_options) {
+  runtime::FusedRealtimeIngress ingress;
+  for (std::size_t i = 0; i < link_options.size(); ++i) {
+    runtime::FusedRealtimeIngressBranch branch;
+    branch.stream_id = "stream" + std::to_string(i);
+    branch.link_options = link_options[i];
+    ingress.branches.push_back(std::move(branch));
+  }
+  const std::vector<std::vector<std::shared_ptr<Node>>> branch_nodes(link_options.size());
+  const std::vector<std::vector<int>> branch_actual_indices(link_options.size());
+  return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
+                                              branch_actual_indices, NameTransform{},
+                                              "neat_test_output", options,
+                                              /*enable_terminal_loans=*/true)
+      .pipeline_string;
+}
+
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
+    const std::vector<RealtimeGraphLinkOptions>& link_options, bool enable_terminal_loans) {
+  runtime::FusedRealtimeIngress ingress;
+  for (std::size_t i = 0; i < link_options.size(); ++i) {
+    runtime::FusedRealtimeIngressBranch branch;
+    branch.stream_id = "stream" + std::to_string(i);
+    branch.link_options = link_options[i];
+    ingress.branches.push_back(std::move(branch));
+  }
+  const std::vector<std::vector<std::shared_ptr<Node>>> branch_nodes(link_options.size());
+  const std::vector<std::vector<int>> branch_actual_indices(link_options.size());
+  return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
+                                              branch_actual_indices, NameTransform{},
+                                              "neat_test_output", options, enable_terminal_loans)
+      .pipeline_string;
+}
+
+} // namespace session_test
 
 SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
@@ -2197,7 +2802,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
   stream_opt.public_output_contract = public_output_contract;
   stream_opt.prefer_synchronous_teardown = true;
-  session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes);
+  session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes,
+                                               build_branch_nodes);
 
   const NameTransform name_transform = make_name_transform(sess_opt);
   std::vector<NameTransform> branch_name_transforms;
@@ -2218,9 +2824,10 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     }
     branch_actual_indices.push_back(std::move(indices));
   }
-  BuildResult br =
-      build_fused_realtime_source_pipeline(ingress, build_consumer_nodes, build_branch_nodes,
-                                           branch_actual_indices, name_transform, "mysink");
+  BuildResult br = build_fused_realtime_source_pipeline(ingress, build_consumer_nodes,
+                                                        build_branch_nodes, branch_actual_indices,
+                                                        name_transform, "mysink", sess_opt,
+                                                        /*enable_terminal_loans=*/has_sink);
   maybe_compile_fused_realtime_contracts(&br, build_consumer_nodes, build_branch_nodes,
                                          branch_actual_indices, sess_opt, where,
                                          fused_ingress_spec);
@@ -2249,6 +2856,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   attach_element_flow_probes(pipeline.get(), br.diag);
   attach_fused_realtime_branch_counters(pipeline.get(), ingress.branches.size());
   attach_fused_realtime_stage_counters(pipeline.get(), ingress);
+  attach_fused_decoder_timing_probes(pipeline.get(), ingress);
+  attach_fused_encoded_frame_tap_probes(pipeline.get(), ingress);
 
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     std::vector<std::shared_ptr<Node>> logical = build_branch_nodes[branch_index];
@@ -2297,6 +2906,73 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
           "Add Output() as the last consumer node.", last_pipeline);
     }
     sink.reset(raw_sink);
+    const std::string mux_name = apply_name_transform(name_transform, "neat_live_mux");
+    GstElement* raw_mux = gst_bin_get_by_name(GST_BIN(pipeline.get()), mux_name.c_str());
+    const std::uint64_t mux_namespace = latest_by_stream_mux_namespace(raw_mux);
+    // Fused CVU/MLA/decode stages allocate replacement GstBuffers and do not
+    // invoke arbitrary GstMeta transform callbacks.  A lifetime guard on the
+    // decoded input would therefore mistake successful stage consumption for a
+    // downstream drop and finalize its admission/timing loan before the derived
+    // terminal buffer arrives.  The ordered/non-dropping contract
+    // checked while rendering makes the explicit appsink completion probe below
+    // authoritative for such chains.  Identity-preserving chains retain the
+    // guard, including its pre-terminal drop protection.
+    const bool lifetime_guard_configured =
+        raw_mux &&
+        (!br.fused_consumer_replaces_buffers ||
+         pipeline_internal::set_latest_by_stream_mux_lifetime_guard_enabled(raw_mux,
+                                                                            /*enabled=*/false));
+    if (raw_mux) {
+      gst_object_unref(raw_mux);
+    }
+    if (mux_namespace == 0 || !lifetime_guard_configured) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build(fused)") + ": latest-by-stream mux '" +
+              mux_name + "' could not configure terminal loan ownership.\nPipeline:\n" +
+              last_pipeline,
+          "Keep the fused latest-by-stream mux in the source pipeline.", last_pipeline);
+    }
+    // A fused mux loan covers work from mux emission through the terminal
+    // consumer pipeline. Release it as soon as the result reaches GstAppSink's
+    // sink pad, before GstAppSink can retain it as preroll or discard it under
+    // its own bounded-queue policy. Waiting for Run::pull() is insufficient:
+    // samples consumed internally by GstAppSink never reach that path, and
+    // decoder buffer pools can recycle GstBuffers without finalizing them.
+    if (GstPad* terminal_pad = gst_element_get_static_pad(raw_sink, "sink")) {
+      const gulong probe_id = gst_pad_add_probe(
+          terminal_pad, GST_PAD_PROBE_TYPE_BUFFER,
+          +[](GstPad*, GstPadProbeInfo* info, gpointer user_data) -> GstPadProbeReturn {
+            GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+            const auto* mux_namespace = static_cast<const std::uint64_t*>(user_data);
+            if (!buffer || !mux_namespace || *mux_namespace == 0) {
+              return GST_PAD_PROBE_OK;
+            }
+
+            // The release helper restores the selected decoder timing on the
+            // terminal result before GstAppSink sees it. Pad probes may be
+            // handed a shared GstBuffer, so take GStreamer's copy-on-write
+            // path only when needed and replace the probe data with the
+            // writable buffer before mutating timestamps or custom metadata.
+            buffer = make_fused_terminal_probe_buffer_writable(info);
+            if (!buffer) {
+              return GST_PAD_PROBE_OK;
+            }
+            (void)pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(buffer,
+                                                                                  *mux_namespace);
+            return GST_PAD_PROBE_OK;
+          },
+          new std::uint64_t(mux_namespace),
+          +[](gpointer data) { delete static_cast<std::uint64_t*>(data); });
+      if (pipeline_internal::env_bool("SIMA_LATEST_MUX_LOAN_DEBUG", false)) {
+        std::fprintf(stderr,
+                     "[latestmux][loan] terminal appsink release probe attached id=%lu sink=%s "
+                     "namespace=%llu\n",
+                     static_cast<unsigned long>(probe_id), appsink_name.c_str(),
+                     static_cast<unsigned long long>(mux_namespace));
+      }
+      gst_object_unref(terminal_pad);
+    }
     session_build_configure_appsink_for_input_stream(sink.get(), stream_opt);
     session_build_configure_appsink_allocation_preference(sink.get(), build_consumer_nodes);
   }
@@ -2384,6 +3060,14 @@ void Graph::run() {
 }
 
 Run Graph::build(const RunOptions& opt) {
+  return build_source_internal_(opt, false);
+}
+
+Run Graph::build_fused_realtime_sources(const RunOptions& opt) {
+  return build_source_internal_(opt, true);
+}
+
+Run Graph::build_source_internal_(const RunOptions& opt, bool fuse_realtime_source_branches) {
   const pipeline_internal::ScopedBuildTiming timing("Graph::build", "kind=no_input");
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);
@@ -2391,7 +3075,8 @@ Run Graph::build(const RunOptions& opt) {
   gst_init_once();
 
   progress.step("Building graph...");
-  runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
+  runtime::ExecutionGraphPlan plan =
+      runtime::compile_public_graph(*this, opt, std::nullopt, fuse_realtime_source_branches);
   if (plan.linear_compat) {
     progress.detail(std::string("mode=async nodes=") +
                     std::to_string(linear_nodes_snapshot("Graph::build").size()));
