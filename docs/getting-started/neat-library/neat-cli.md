@@ -64,5 +64,7 @@ neat update
 
 ## Next Step
 
-Continue with [Hello Neat!](/develop-apps/hello-neat/minimal) to run your first
-Neat inference.
+Continue to [Compile a Model](/compile-a-model/) to prepare a model for Modalix —
+this runs in the SDK and needs no DevKit. To run a full application on hardware,
+see [Hello Neat!](/develop-apps/hello-neat/minimal/), which requires a paired
+DevKit.

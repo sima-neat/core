@@ -18,6 +18,8 @@ This page keeps the first run intentionally small: create a tiny app, confirm th
 To run commands on the DevKit directly from inside the SDK (for example, `dk build/sima_neat_hello` or `dk hello_neat.py`), set up DevKit pairing first.
 
 **Required setup:** [DevKit Sync](/getting-started/dev-environment/devkit-sync/)
+
+No DevKit yet? Start with [Compile a Model](/compile-a-model/), which runs entirely in the SDK.
 :::
 
 ## Minimal application
