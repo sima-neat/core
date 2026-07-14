@@ -262,6 +262,24 @@ void print_outputs(const pcie::TensorList& outputs) {
   }
 }
 
+void validate_nonzero_outputs(const pcie::TensorList& outputs) {
+  if (outputs.empty()) {
+    throw std::runtime_error("image inference produced no output tensors");
+  }
+  for (const auto& output : outputs) {
+    if (!output.data || output.size_bytes == 0) {
+      throw std::runtime_error("image inference produced an empty output tensor: " +
+                               output.route.name);
+    }
+    const auto* bytes = static_cast<const std::uint8_t*>(output.data);
+    if (std::none_of(bytes, bytes + output.size_bytes,
+                     [](const std::uint8_t value) { return value != 0; })) {
+      throw std::runtime_error("image inference produced an all-zero output tensor: " +
+                               output.route.name);
+    }
+  }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -381,6 +399,7 @@ int main(int argc, char** argv) {
         throw std::runtime_error("sync pull timed out without a result at iteration " +
                                  std::to_string(iteration));
       }
+      validate_nonzero_outputs(*result);
       if (log_iteration) {
         print_outputs(*result);
       }
@@ -415,6 +434,7 @@ int main(int argc, char** argv) {
           throw std::runtime_error("async pull timed out without a result at iteration " +
                                    std::to_string(iteration));
         }
+        validate_nonzero_outputs(*result);
       }
     });
     producer.get();

@@ -24,7 +24,8 @@ public:
   HostPcieChannel(const HostPcieChannel&) = delete;
   HostPcieChannel& operator=(const HostPcieChannel&) = delete;
 
-  void configure(const PcieModelFacts& facts, int queue, int card_id, int max_inflight);
+  void configure(const PcieModelFacts& facts, int queue, int card_id, int max_inflight,
+                 bool expects_bbox_output);
   void stop();
   bool is_running() const;
 
@@ -59,6 +60,7 @@ private:
   int pcie_queue_ = 0;
   int card_id_ = 0;
   int max_inflight_ = 0;
+  bool expects_bbox_output_ = false;
   std::string caps_;
 };
 

@@ -186,8 +186,9 @@ TensorList bbox_tensor_from_output_payload(const std::shared_ptr<MappedSample>& 
 }
 
 TensorList tensors_from_output_sample(const std::shared_ptr<MappedSample>& owner,
-                                      const PcieModelFacts& facts) {
-  if (owner && sample_has_bbox_caps(owner->sample)) {
+                                      const PcieModelFacts& facts,
+                                      const bool expects_bbox_output) {
+  if (expects_bbox_output || (owner && sample_has_bbox_caps(owner->sample))) {
     return bbox_tensor_from_output_payload(owner);
   }
   return tensors_from_output_payload(owner, facts);
@@ -209,7 +210,7 @@ HostPcieChannel::~HostPcieChannel() {
 }
 
 void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, const int card_id,
-                                const int max_inflight) {
+                                const int max_inflight, const bool expects_bbox_output) {
   if (running_.load()) {
     throw std::runtime_error("cannot configure HostPcieChannel while running");
   }
@@ -220,6 +221,7 @@ void HostPcieChannel::configure(const PcieModelFacts& facts, const int queue, co
   pcie_queue_ = queue;
   card_id_ = card_id;
   max_inflight_ = max_inflight;
+  expects_bbox_output_ = expects_bbox_output;
   stop_requested_.store(false);
 }
 
@@ -440,7 +442,7 @@ GstFlowReturn HostPcieChannel::on_new_sample(GstElement* sink) {
     owner->map = map;
     owner->mapped = true;
 
-    TensorList result = tensors_from_output_sample(owner, facts_);
+    TensorList result = tensors_from_output_sample(owner, facts_, expects_bbox_output_);
 
     {
       std::lock_guard<std::mutex> lock(receive_mutex_);

@@ -27,6 +27,7 @@ int main() {
       pcie::ModelOptions opt;
       const auto json = pcie_internal::write_model_options_json(opt);
       require(!json.json.has_value(), "default tensor route must not emit JSON");
+      require(!json.has_boxdecode, "default tensor route must not expect BBOX output");
     }
 
     {
@@ -59,6 +60,7 @@ int main() {
       opt.score_threshold = 0.25f;
       const auto json = pcie_internal::write_model_options_json(opt);
       require(json.json.has_value(), "boxdecode route must emit JSON");
+      require(json.has_boxdecode, "boxdecode route must expect BBOX output");
       require(contains(*json.json, "\"input_format\": \"nv12\""), "NV12 input missing");
       require(contains(*json.json, "\"output_format\": \"rgb\""), "RGB output missing");
       require(contains(*json.json, "\"decode_type\": \"yolov8\""), "decode type missing");

@@ -213,6 +213,7 @@ ModelOptionsJson write_model_options_json(const ModelOptions& options) {
   root["schema"] = 1;
   root["preprocess"] = preprocess_json(options);
   ModelOptionsJson out;
+  out.has_boxdecode = wants_boxdecode;
   if (wants_boxdecode) {
     root["boxdecode"] = boxdecode_json(options);
   }

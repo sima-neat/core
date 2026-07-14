@@ -114,7 +114,8 @@ public:
       (void)remote_.wait_ready(connection_.queue, readiness_timeout_ms);
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id,
-                         connection_.max_inflight);
+                         connection_.max_inflight,
+                         model_options.has_boxdecode || facts_.has_boxdecode);
       state_ = PipelineState::Ready;
     } catch (...) {
       state_ = PipelineState::Failed;
