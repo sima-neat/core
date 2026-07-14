@@ -182,8 +182,7 @@ RUN_TEST(
                 run_api_case("active_backpressure_nonfatal_running",
                              "Run::try_push backpressure must leave the Run active"));
         bool recovered_after_backpressure = false;
-        const auto recovery_deadline =
-            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        const auto recovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (std::chrono::steady_clock::now() < recovery_deadline) {
           Sample drained;
           PullError drain_err;
@@ -197,9 +196,8 @@ RUN_TEST(
         require(recovered_after_backpressure,
                 run_api_case("active_backpressure_recovery",
                              "Run should accept input after transient try_push backpressure"));
-        require(run.last_error().empty(),
-                run_api_case("active_backpressure_recovery_error",
-                             "recovered Run should remain error-free"));
+        require(run.last_error().empty(), run_api_case("active_backpressure_recovery_error",
+                                                       "recovered Run should remain error-free"));
 
         run.close_input();
         require(!run.try_push(TensorList{seed}),
