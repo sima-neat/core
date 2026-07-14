@@ -519,13 +519,16 @@ void InputStream::stop() {
       std::fprintf(stderr, "[STOP] InputStream::stop flush state=%p pipeline=%p\n",
                    static_cast<void*>(state_.get()), static_cast<void*>(pipeline_ref));
     }
+    // A queue can still have a buffer in flight when teardown begins.  Keep
+    // the pipeline flushing until the NULL state transition: FLUSH_STOP would
+    // reset downstream segments and allow that stale buffer to reach an RTP
+    // payloader/depayloader with an undefined segment.
     const int flush_timeout_ms = inputstream_stop_flush_timeout_ms();
     if (flush_timeout_ms <= 0) {
       GstCallGuard guard(*state_);
       gst_element_send_event(pipeline_ref, gst_event_new_flush_start());
-      gst_element_send_event(pipeline_ref, gst_event_new_flush_stop(TRUE));
       if (inputstream_debug_enabled() || graph_debug_enabled()) {
-        std::fprintf(stderr, "[INPUTSTREAM] stop: flush_start/stop sent\n");
+        std::fprintf(stderr, "[INPUTSTREAM] stop: flush_start sent\n");
       }
     } else {
       auto done = std::make_shared<std::atomic<bool>>(false);
@@ -534,7 +537,6 @@ void InputStream::stop() {
       std::thread flush_thread([flush_pipeline, st, done]() {
         GstCallGuard guard(*st);
         gst_element_send_event(flush_pipeline, gst_event_new_flush_start());
-        gst_element_send_event(flush_pipeline, gst_event_new_flush_stop(TRUE));
         gst_object_unref(flush_pipeline);
         done->store(true, std::memory_order_relaxed);
       });
