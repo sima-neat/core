@@ -1,7 +1,7 @@
 ---
 title: DevKit Sync
 description: Share an SDK workspace with a Modalix DevKit and run commands on hardware
-sidebar_position: 5
+sidebar_position: 3
 ---
 
 :::tip Reference only

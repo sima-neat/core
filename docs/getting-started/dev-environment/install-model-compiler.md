@@ -1,7 +1,7 @@
 ---
 title: Install Model Compiler
 description: Install Model Compiler in the Neat SDK or on a supported standalone host
-sidebar_position: 3
+sidebar_position: 5
 ---
 
 :::tip Start here only when installing Model Compiler separately
