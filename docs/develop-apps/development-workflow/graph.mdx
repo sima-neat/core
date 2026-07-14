@@ -97,7 +97,7 @@ Use [`GraphOptions`](/reference/{lsa}/structs/simaai-neat-graphoptions) for grap
 | Run several graphs in one process | `element_name_prefix` / `element_name_suffix` | Avoid generated element-name collisions and make diagnostics readable. |
 | Control graph diagnostics | `VerboseOptions` | Start with production output. Turn up debug output only when collecting evidence. |
 | Choose output queue behavior | `OutputOptions::Latest()`, `EveryFrame(...)`, or `Clocked(...)` | Pick freshness, completeness, or clocked delivery. |
-| Connect live graph fragments | `RealtimeMuxByStream` with a realtime-by-stream policy | Use `RealtimeLatestByStream` for freshness or `RealtimeEveryFrameByStream` for bounded per-stream backpressure. |
+| Connect live graph fragments | `GraphLinkOptions` with `RealtimeLatestByStream` | Keep each stream fresh while bounding decoded-frame admission. |
 | Bound callback work | `callback_timeout_ms` | Use with C++ callback-style output consumption so a slow callback does not hide as a graph problem. |
 | Tune advanced execution | `advanced_execution` | Use only after the default graph has a measured baseline. |
 
@@ -477,19 +477,20 @@ If more than one input or output is available, an unnamed `push(...)` or `pull()
 
 ## Connect live fragments
 
-Use [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) when the connection between fragments needs a runtime policy. Use `RealtimeMuxByStream` when the link also needs explicit raw-frame admission limits. The separate type preserves the released `GraphLinkOptions` binary layout.
+Use [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions) when a connection needs a runtime policy or explicit raw-frame admission limits.
 
-For live multistream fan-in, `RealtimeLatestByStream` keeps the latest sample per `Sample::stream_id` and schedules ready streams fairly downstream. `RealtimeEveryFrameByStream` instead keeps one pending sample per stream and blocks only the producer for that stream until the mux consumes it. The every-frame mode reuses the existing depth-one ingress queue; it does not add another raw-frame queue. If a source does not stamp `stream_id`, you can stamp a stable id on the link.
+For live multistream fan-in, `RealtimeLatestByStream` keeps the latest sample per `Sample::stream_id` and schedules ready streams fairly downstream. If a source does not stamp `stream_id`, stamp a stable ID on the link. Live fan-in with the default policy is promoted to latest-by-stream automatically.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::RealtimeMuxByStream link;
+simaai::neat::GraphLinkOptions link;
 link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
 link.queue_depth = 4;
-link.max_inflight_per_stream = 4;
 link.stream_id = "camera-0";
+link.max_inflight_per_stream = 4;
+link.max_inflight_total = 8;
 
 app.connect(camera_fragment, detector_fragment, link);
 ```
@@ -498,11 +499,12 @@ app.connect(camera_fragment, detector_fragment, link);
 <CodeTab label="Python" lang="python">
 
 ```python
-link = pyneat.RealtimeMuxByStream()
+link = pyneat.GraphLinkOptions()
 link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
 link.queue_depth = 4
-link.max_inflight_per_stream = 4
 link.stream_id = "camera-0"
+link.max_inflight_per_stream = 4
+link.max_inflight_total = 8
 
 app.connect(camera_fragment, detector_fragment, link)
 ```
@@ -510,17 +512,7 @@ app.connect(camera_fragment, detector_fragment, link)
 </CodeTab>
 </CodeTabs>
 
-To preserve every decoded frame with the same fused C++ mux, select the every-frame policy instead:
-
-```cpp
-link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
-```
-
-```python
-link.policy = pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
-```
-
-Use `RealtimeEveryFrameByStream` when a fused decoder source must preserve bursty frames with bounded backpressure. Use `RealtimeLatestByStream` when a live graph should stay fresh instead of collecting old frames. Live fan-in using the default policy is automatically promoted to latest-by-stream, so select every-frame explicitly when preservation is required. Set `queue_depth` only when you have a reason to bound pending samples on that link differently from the default.
+`RealtimeLatestByStream` always retains one pending sample per stream. `queue_depth` remains in `GraphLinkOptions` for source compatibility and is reserved for this policy; changing it does not increase that one-slot bound.
 
 Build a high-channel-count live graph through the ordinary `build()` API:
 
@@ -532,19 +524,27 @@ auto run = app.build(run_options);
 run = app.build(run_options)
 ```
 
-Fusion is an internal compiler decision, not a build mode. Ordinary `build()` keeps eligible private source branches, their realtime mux, and the model consumer in one GStreamer pipeline, avoiding an appsink/appsrc device-memory handoff. Ineligible latest-by-stream topology uses the ordinary segmented runtime. An every-frame link whose topology cannot be fused is rejected with an actionable diagnostic because silently falling back would change its backpressure contract.
+Fusion is an internal compiler decision, not a build mode. Ordinary `build()` keeps eligible private source branches, their realtime mux, and the model consumer in one GStreamer pipeline, avoiding an appsink/appsrc device-memory handoff. Ineligible latest-by-stream topology uses the ordinary segmented runtime.
 
-Set `GraphOptions::async_queue_depth` on the top-level graph to overlap model stages. A positive value inserts bounded, non-leaky global queues before the CVU, MLA, and decode stages, but not before the terminal output. `RealtimeMuxByStream::max_inflight_per_stream` is carried through to the fused mux for each link, so it can stay at `1` for freshness without a private environment switch. Leave `async_queue_depth` at `0` to preserve the single-chain consumer path.
+Set `graph_options.advanced_execution.internal_queue_depth` on the top-level graph to overlap model stages. A positive value inserts bounded, non-leaky global queues before the CVU, MLA, and decode stages, but not before the terminal output. `GraphLinkOptions::max_inflight_per_stream` is carried through to the fused mux for each link, so it can stay at `1` for freshness without a private environment switch. Leave `internal_queue_depth` unset or set it to `0` to preserve the single-chain consumer path.
 
-`GraphLinkOptions` provides the first three fields below. `RealtimeMuxByStream` derives from it and adds the two admission fields. C++ accepts both types through `connect(...)`; no separate realtime connection method is needed. `pyneat.GraphLinkOptions` mirrors the released three fields; `pyneat.RealtimeMuxByStream` adds the two admission fields and is still passed to ordinary `connect(...)`.
+Both C++ and Python expose these fields on `GraphLinkOptions`, which is passed to ordinary `connect(...)`. No separate realtime connection method or build mode is needed.
 
 | Field | Use it when |
 | --- | --- |
-| `policy` | The link needs latest-frame freshness or bounded every-frame delivery per stream. |
-| `queue_depth` | The link needs an explicit pending-sample bound. Leave the default until measurement shows the link is the bottleneck. |
+| `policy` | The link needs latest-frame freshness per stream. |
+| `queue_depth` | Compatibility field. `RealtimeLatestByStream` reserves it and always retains one pending sample per stream. |
 | `stream_id` | The upstream fragment does not stamp `Sample::stream_id`, but this link represents one stable stream. |
 | `max_inflight_per_stream` | A realtime-by-stream link carries raw decoder-backed samples and needs an explicit downstream admission cap per stream. The field default is `-1`; Core uses `4`. Fused source lowering applies the resolved value to the corresponding mux stream. |
 | `max_inflight_total` | A realtime-by-stream link needs a hard global cap across streams. The field default is `-1`; without an env override, Core derives `min(max_inflight_per_stream * stream_count, 8)`. |
+
+:::caution Rebuild C++ applications after upgrading
+
+The admission fields are members of `GraphLinkOptions`, so this version changes its C++ binary layout. Rebuild C++ applications and plugins against the matching Core package instead of mixing old binaries with the new library.
+
+When migrating from an earlier preview, replace `RealtimeMuxByStream` with `GraphLinkOptions`, replace `RealtimeEveryFrameByStream` with `RealtimeLatestByStream`, and use ordinary `connect()` and `build()`. Rebuild and save any graph that contains the removed `realtime_every_frame_by_stream` policy.
+
+:::
 
 
 ## Scale from one stream to many

@@ -50,7 +50,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -222,14 +221,6 @@ public:
   Graph& connect(std::string_view from_endpoint, std::string_view to_endpoint);
   Graph& connect(const Graph& from, const Graph& to);
   Graph& connect(const Graph& from, const Graph& to, const GraphLinkOptions& options);
-  /// Preserve the familiar `connect(from, to, options)` spelling for the new realtime options
-  /// type without adding a non-template overload that would make `connect(from, to, {})`
-  /// ambiguous with the released `GraphLinkOptions` overload.
-  template <typename Options>
-    requires std::is_same_v<std::remove_cvref_t<Options>, RealtimeMuxByStream>
-  Graph& connect(const Graph& from, const Graph& to, Options&& options) {
-    return connect_with_link_options_(from, to, options);
-  }
   Graph& connect(std::shared_ptr<Node> from, std::shared_ptr<Node> to);
   Graph& connect(const Graph& from, std::shared_ptr<Node> to);
   Graph& connect(std::shared_ptr<Node> from, const Graph& to);
@@ -421,7 +412,7 @@ private:
     std::string from_port;
     std::string to_port;
     std::optional<EndpointEdgeMeta> endpoint;
-    RealtimeMuxByStream link_options;
+    GraphLinkOptions link_options;
     std::string stream_id;
   };
   struct GroupMeta;
@@ -459,8 +450,6 @@ private:
   /// Drop the built pipeline (if any) and any cached runner. Tears down GStreamer
   /// resources via RAII; safe to call when there is no built state. Never throws.
   void invalidate_built_() noexcept;
-  Graph& connect_with_link_options_(const Graph& from, const Graph& to,
-                                    const RealtimeMuxByStream& options);
   Run build_source_internal_(const RunOptions& opt);
 
   /// Shared "build a source-mode pipeline to PAUSED" body for `build(RunOptions)`

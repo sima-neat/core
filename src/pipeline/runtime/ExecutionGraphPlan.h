@@ -113,7 +113,7 @@ struct FusedRealtimeIngressBranch {
   /// Exact public options from the source-to-consumer realtime link.  Fused
   /// lowering must retain these because there is no graph-runtime scheduler
   /// left outside the monolithic GStreamer pipeline to enforce them.
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::vector<std::shared_ptr<Node>> nodes;
   /**
    * Optional graph-owned encoded output tapped before this branch's decoder.
@@ -128,11 +128,14 @@ struct FusedRealtimeIngressBranch {
   std::optional<EncodedOutput> encoded_output;
   /**
    * Optional encoded H.264 sink branch tapped before the hardware decoder.
-   * These nodes are rendered behind a bounded leaky tee branch in the fused
-   * source pipeline (for example H264Packetize -> UdpOutput). The normalized
-   * RTSP source parser is shared by the video and decoder paths.
+   * These nodes are rendered behind a tee branch in the fused source pipeline
+   * (for example H264Packetize -> UdpOutput). The normalized RTSP source
+   * parser is shared by the video and decoder paths. The original public link
+   * options select lossless backpressure for Default or latest replacement
+   * for RealtimeLatestByStream.
    */
   std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+  GraphLinkOptions encoded_sink_link_options;
   /**
    * Node offset immediately after the original encoded source segment. The
    * tee must stay at this public fan-out boundary; decoder-fragment nodes that
@@ -147,13 +150,20 @@ struct FusedRealtimeIngress {
   std::vector<FusedRealtimeIngressBranch> branches;
 };
 
+enum class FusedEncodedOutputDispatchResult {
+  Delivered,
+  Stopping,
+  Failed,
+};
+
 /**
  * Graph-scoped dispatcher for optional encoded outputs materialized inside a
- * fused realtime ingress pipeline. The dispatcher must never block the live
- * RTSP streaming thread.
+ * fused realtime ingress pipeline. OutputOptions retain their public queue
+ * contract: EveryFrame may backpressure the producing RTSP thread, while a
+ * dropping Output remains non-blocking.
  */
-using FusedEncodedOutputDispatch =
-    std::function<bool(const FusedRealtimeIngressBranch::EncodedOutput&, Sample&&, std::string*)>;
+using FusedEncodedOutputDispatch = std::function<FusedEncodedOutputDispatchResult(
+    const FusedRealtimeIngressBranch::EncodedOutput&, Sample&&, std::string*)>;
 
 struct MaterializedNodeAttribution {
   enum class Role {
@@ -253,7 +263,7 @@ struct EdgePlan {
   graph::PortId to_port = graph::kInvalidPort;
   OutputSpec spec;
   bool spec_complete = false;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
   bool consumed_by_fused_realtime_ingress = false;
 };
@@ -279,7 +289,7 @@ struct PublicGraphEdgePlan {
   graph::NodeId runtime_from = graph::kInvalidNode;
   graph::NodeId runtime_to = graph::kInvalidNode;
   std::vector<std::size_t> runtime_edge_indices;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
 };
 
@@ -333,6 +343,9 @@ bool fused_realtime_source_segment_eligible_for_test(bool already_fused);
 
 bool fused_realtime_destinations_share_port_for_test(
     const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations);
+
+std::optional<std::vector<std::string>>
+resolve_unique_fused_stream_ids_for_test(const std::vector<std::string>& configured_stream_ids);
 
 } // namespace session_test
 

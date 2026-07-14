@@ -139,7 +139,6 @@ struct PendingSlot {
   bool has_ready_ticket = false;
   std::atomic<std::uint64_t> received{0};
   std::atomic<std::uint64_t> replaced{0};
-  std::atomic<std::uint64_t> blocked_waits{0};
   std::atomic<std::uint64_t> no_credit_skips{0};
   std::shared_ptr<StreamLoanState> loan_state;
 };
@@ -162,7 +161,6 @@ struct _GstLatestByStreamMux {
   guint next_pad_index = 0;
   guint rr_index = 0;
   guint64 next_ready_ticket = 1;
-  bool block_when_pending = false;
   bool lifetime_guard_enabled;
   bool started = false;
   bool stopping = false;
@@ -804,7 +802,6 @@ enum {
   PROP_STREAM_IDS,
   PROP_STREAM_INFLIGHT_LIMITS,
   PROP_MAX_INFLIGHT_TOTAL,
-  PROP_BLOCK_WHEN_PENDING,
 };
 
 static GstStaticPadTemplate sink_template =
@@ -1181,9 +1178,8 @@ gpointer worker_main(gpointer data) {
       if (slot && slot->pending) {
         buffer = slot->pending;
         slot->pending = nullptr;
-        // A blocking producer waits only until its sole pending slot is
-        // consumed. Wake it before the synchronous downstream push so it can
-        // install the next frame while this one is being processed.
+        // Publish the empty-slot transition before the synchronous downstream
+        // push so state and pad teardown waiters can observe the ownership move.
         g_cond_broadcast(&self->cond);
         loan_state = slot->loan_state;
         if (slot->caps) {
@@ -1335,15 +1331,6 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
 
   GstBuffer* replaced = nullptr;
   g_mutex_lock(&self->lock);
-  bool counted_block = false;
-  while (self->block_when_pending && slot->pending && !slot->releasing && !self->flushing &&
-         !self->stopping) {
-    if (!counted_block) {
-      slot->blocked_waits.fetch_add(1, std::memory_order_relaxed);
-      counted_block = true;
-    }
-    g_cond_wait(&self->cond, &self->lock);
-  }
   if (slot->releasing || self->flushing || self->stopping) {
     g_mutex_unlock(&self->lock);
     gst_buffer_unref(buffer);
@@ -1604,7 +1591,6 @@ void reset_slot_stats(PendingSlot* slot) {
   }
   slot->received.store(0, std::memory_order_relaxed);
   slot->replaced.store(0, std::memory_order_relaxed);
-  slot->blocked_waits.store(0, std::memory_order_relaxed);
   slot->no_credit_skips.store(0, std::memory_order_relaxed);
   if (slot->loan_state) {
     slot->loan_state->registered.store(0, std::memory_order_relaxed);
@@ -1619,7 +1605,6 @@ struct SlotStatsSnapshot {
   std::string stream_id;
   guint64 received = 0;
   guint64 replaced = 0;
-  guint64 blocked_waits = 0;
   guint64 emitted = 0;
   guint64 ready_ticket = 0;
   guint64 no_credit_skips = 0;
@@ -1661,7 +1646,6 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
     }
     row.received = slot->received.load(std::memory_order_relaxed);
     row.replaced = slot->replaced.load(std::memory_order_relaxed);
-    row.blocked_waits = slot->blocked_waits.load(std::memory_order_relaxed);
     row.emitted = slot->emitted;
     row.ready_ticket = slot->ready_ticket;
     row.no_credit_skips = slot->no_credit_skips.load(std::memory_order_relaxed);
@@ -1689,14 +1673,13 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
     std::fprintf(
         stderr,
         "[latestmux][stats] slot=%u stream=%s chain=%llu replaced=%llu emitted=%llu "
-        "ready_ticket=%llu pending=%d eos=%d blocked_waits=%llu no_credit_skips=%llu "
+        "ready_ticket=%llu pending=%d eos=%d no_credit_skips=%llu "
         "loans_registered=%llu "
         "loans_released_output=%llu loans_released_without_output=%llu missing_key=%llu "
         "loan_inflight=%d loan_limit=%d\n",
         row.index, row.stream_id.c_str(), static_cast<unsigned long long>(row.received),
         static_cast<unsigned long long>(row.replaced), static_cast<unsigned long long>(row.emitted),
         static_cast<unsigned long long>(row.ready_ticket), row.pending ? 1 : 0, row.eos ? 1 : 0,
-        static_cast<unsigned long long>(row.blocked_waits),
         static_cast<unsigned long long>(row.no_credit_skips),
         static_cast<unsigned long long>(row.loans_registered),
         static_cast<unsigned long long>(row.loans_released_by_output),
@@ -1750,10 +1733,8 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     break;
   }
   case GST_STATE_CHANGE_PAUSED_TO_READY: {
-    // Wake producer chain functions before the parent transition deactivates
-    // pads. In blocking mode a producer may be asleep on our condition while
-    // holding its pad's stream lock; waiting until after the parent state
-    // change can deadlock teardown.
+    // Mark the mux as stopping and wake its worker before the parent transition
+    // deactivates pads.
     std::vector<GstBuffer*> detached;
     g_mutex_lock(&self->lock);
     self->stopping = true;
@@ -1952,17 +1933,6 @@ void set_property(GObject* object, guint prop_id, const GValue* value, GParamSpe
     g_mutex_unlock(&self->lock);
     break;
   }
-  case PROP_BLOCK_WHEN_PENDING: {
-    g_mutex_lock(&self->lock);
-    if (!self->slots.empty()) {
-      g_mutex_unlock(&self->lock);
-      GST_ERROR_OBJECT(self, "block-when-pending cannot change after request pads exist");
-      break;
-    }
-    self->block_when_pending = g_value_get_boolean(value) == TRUE;
-    g_mutex_unlock(&self->lock);
-    break;
-  }
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -1987,11 +1957,6 @@ void get_property(GObject* object, guint prop_id, GValue* value, GParamSpec* psp
     g_value_set_int(value, self->max_inflight_total);
     g_mutex_unlock(&self->lock);
     break;
-  case PROP_BLOCK_WHEN_PENDING:
-    g_mutex_lock(&self->lock);
-    g_value_set_boolean(value, self->block_when_pending ? TRUE : FALSE);
-    g_mutex_unlock(&self->lock);
-    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -2010,8 +1975,7 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
   element_class->change_state = change_state;
   gst_element_class_set_static_metadata(
       element_class, "Neat realtime per-stream mux", "Generic",
-      "Keeps one buffer per live stream and selects latest-only or bounded every-frame delivery",
-      "SiMa.ai");
+      "Keeps the latest buffer for each live stream and schedules ready streams fairly", "SiMa.ai");
   gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&sink_template));
   gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&src_template));
 
@@ -2033,13 +1997,6 @@ void gst_latest_by_stream_mux_class_init(GstLatestByStreamMuxClass* klass) {
                        "Mux-wide terminal-loan limit across all streams (0 disables)", 0,
                        std::numeric_limits<int>::max(), 0,
                        static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-  g_object_class_install_property(
-      gobject_class, PROP_BLOCK_WHEN_PENDING,
-      g_param_spec_boolean(
-          "block-when-pending", "Block when pending",
-          "Block each input producer while its one pending slot is occupied instead of replacing "
-          "that slot with the latest buffer",
-          FALSE, static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 }
 
 void gst_latest_by_stream_mux_init(GstLatestByStreamMux* self) {

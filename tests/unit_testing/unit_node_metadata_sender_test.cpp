@@ -351,6 +351,7 @@ RUN_TEST(
       // point-in-time combination of fields.
       constexpr int kThreads = 4;
       constexpr int kSendsPerThread = 100;
+      const uint64_t attempts_before_concurrency_test = sender.stats().send_attempts;
       std::atomic<bool> keep_reading{true};
       std::thread stats_reader([&] {
         while (keep_reading.load(std::memory_order_relaxed)) {
@@ -375,7 +376,8 @@ RUN_TEST(
 
       const auto concurrent_stats = sender.stats();
       require(concurrent_stats.send_attempts ==
-                  2 + static_cast<uint64_t>(kThreads * kSendsPerThread),
+                  attempts_before_concurrency_test +
+                      static_cast<uint64_t>(kThreads * kSendsPerThread),
               "MetadataSender concurrent send-attempt increments were lost");
       require(concurrent_stats.datagrams_sent + concurrent_stats.send_failures ==
                   concurrent_stats.send_attempts,

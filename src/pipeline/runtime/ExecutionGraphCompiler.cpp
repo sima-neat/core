@@ -22,6 +22,8 @@
 #include "pipeline/internal/InputPolicy.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -210,7 +212,7 @@ struct NormalizedCompositionEdge {
   std::string to_port;
   std::string from_endpoint;
   std::string to_endpoint;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
   CombinePolicy combine_policy = CombinePolicy::None;
 };
@@ -233,7 +235,7 @@ struct LoweredExplicitEdge {
   graph::NodeId to = graph::kInvalidNode;
   std::string from_port;
   std::string to_port;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
 };
 
@@ -244,23 +246,22 @@ struct PublicGraphLowering {
   std::vector<LoweredExplicitEdge> lowered_edges;
 };
 
-bool realtime_latest_link(const RealtimeMuxByStream& opt) {
-  return opt.policy == GraphLinkPolicy::RealtimeLatestByStream ||
-         opt.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+bool realtime_latest_link(const GraphLinkOptions& opt) {
+  return opt.policy == GraphLinkPolicy::RealtimeLatestByStream;
 }
 
-bool default_link(const RealtimeMuxByStream& opt) {
+bool default_link(const GraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
 void validate_realtime_inflight_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("RealtimeMuxByStream::") + name +
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-void validate_non_default_link_options(const RealtimeMuxByStream& opt) {
+void validate_non_default_link_options(const GraphLinkOptions& opt) {
   if (default_link(opt)) {
     return;
   }
@@ -278,7 +279,7 @@ int merge_inflight_cap(int existing, int incoming) {
   return std::min(existing, incoming);
 }
 
-RealtimeMuxByStream merge_link_options(RealtimeMuxByStream a, const RealtimeMuxByStream& b) {
+GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
   validate_non_default_link_options(a);
   validate_non_default_link_options(b);
 
@@ -289,12 +290,7 @@ RealtimeMuxByStream merge_link_options(RealtimeMuxByStream a, const RealtimeMuxB
     return a;
   }
   if (a.policy != b.policy) {
-    const bool compatible_realtime = realtime_latest_link(a) && realtime_latest_link(b);
-    if (!compatible_realtime) {
-      throw std::runtime_error("compile_public_graph: conflicting Graph link policies");
-    }
-    throw std::runtime_error("compile_public_graph: cannot mix RealtimeLatestByStream and "
-                             "RealtimeEveryFrameByStream on one runtime path");
+    throw std::runtime_error("compile_public_graph: conflicting Graph link policies");
   }
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
@@ -470,7 +466,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   std::unordered_set<std::string> emitted_edges;
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
-                            std::string to_endpoint, RealtimeMuxByStream link_options,
+                            std::string to_endpoint, GraphLinkOptions link_options,
                             std::string stream_id, CombinePolicy combine_policy) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
@@ -499,11 +495,11 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     RealtimeMuxByStream, std::string, CombinePolicy, std::vector<bool>&)>
+                     GraphLinkOptions, std::string, CombinePolicy, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
-                    RealtimeMuxByStream link_options, std::string stream_id,
+                    GraphLinkOptions link_options, std::string stream_id,
                     CombinePolicy combine_policy, std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
     link_options = merge_link_options(link_options, edge.link_options);
@@ -1567,7 +1563,7 @@ void validate_unique_source_buffer_names(
 }
 
 void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId from,
-                                        graph::NodeId to, const RealtimeMuxByStream& link_options,
+                                        graph::NodeId to, const GraphLinkOptions& link_options,
                                         const std::string& stream_id) {
   const bool propagate_policy = !default_link(link_options);
   const bool propagate_stream_id = !stream_id.empty();
@@ -1593,7 +1589,7 @@ void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId 
     if (edge_index >= plan->edges.size()) {
       continue;
     }
-    RealtimeMuxByStream& dst = plan->edges[edge_index].link_options;
+    GraphLinkOptions& dst = plan->edges[edge_index].link_options;
     if (propagate_policy) {
       dst = merge_link_options(dst, link_options);
     }
@@ -1723,6 +1719,34 @@ bool segment_has_output_edge(const PipelineSegmentPlan& segment, std::size_t edg
          segment.output_edges.end();
 }
 
+bool fused_stream_id_is_csv_safe(const std::string& stream_id) {
+  if (stream_id.empty()) {
+    return true;
+  }
+  const auto is_space = [](char value) {
+    return std::isspace(static_cast<unsigned char>(value)) != 0;
+  };
+  return stream_id.find(',') == std::string::npos && !is_space(stream_id.front()) &&
+         !is_space(stream_id.back());
+}
+
+std::optional<std::vector<std::string>>
+resolve_unique_fused_stream_ids(std::span<const std::string> configured_stream_ids) {
+  std::vector<std::string> effective;
+  effective.reserve(configured_stream_ids.size());
+  std::unordered_set<std::string> unique;
+  for (std::size_t ordinal = 0; ordinal < configured_stream_ids.size(); ++ordinal) {
+    std::string stream_id = configured_stream_ids[ordinal].empty()
+                                ? ("stream" + std::to_string(ordinal))
+                                : configured_stream_ids[ordinal];
+    if (!unique.insert(stream_id).second) {
+      return std::nullopt;
+    }
+    effective.push_back(std::move(stream_id));
+  }
+  return effective;
+}
+
 bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segment,
                                                std::size_t edge_index) {
   // A previously fused consumer is source-like and inputless, but its nested
@@ -1755,6 +1779,7 @@ struct EncodedOutputFusionMatch {
   std::vector<std::shared_ptr<Node>> branch_nodes;
   FusedRealtimeIngressBranch::EncodedOutput encoded_output;
   std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+  GraphLinkOptions encoded_sink_link_options;
   std::size_t encoded_split_node_index = 0;
 };
 
@@ -1879,10 +1904,9 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
   }
   const std::size_t output_index = output_it->second;
   const auto& output = plan.pipeline_segments[output_index];
-  if (output.consumed_by_fused_realtime_ingress || output.input_edges.empty() ||
-      std::find(output.input_edges.begin(), output.input_edges.end(), fanout_to_output_edge) ==
-          output.input_edges.end() ||
-      !output.output_edges.empty() || output.node_ids.empty()) {
+  if (output.consumed_by_fused_realtime_ingress || output.input_edges.size() != 1U ||
+      output.input_edges.front() != fanout_to_output_edge || !output.output_edges.empty() ||
+      output.node_ids.empty()) {
     return std::nullopt;
   }
   const auto* output_node =
@@ -1891,6 +1915,20 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
           : nullptr;
   if (!output_node && !is_encoded_video_sender_segment(output)) {
     return std::nullopt;
+  }
+
+  const auto& encoded_output_edge = plan.edges[fanout_to_output_edge];
+  if (output_node) {
+    const auto& options = output_node->options();
+    // A fused pad probe can preserve ordinary, unclocked Output buffering,
+    // but it cannot faithfully reproduce clock synchronization, public
+    // combine policies, or the per-stream scheduler on a realtime link.
+    // Keep those topologies on the segmented path instead of silently
+    // changing their public semantics.
+    if (!default_link(encoded_output_edge.link_options) || options.sync ||
+        options.combine_policy != CombinePolicy::None) {
+      return std::nullopt;
+    }
   }
 
   EncodedOutputFusionMatch match;
@@ -1907,11 +1945,11 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
   if (output_node) {
     match.encoded_output.sink_node = output.node_ids.back();
     match.encoded_output.options = output_node->options();
-    const auto& encoded_output_edge = plan.edges[fanout_to_output_edge];
     match.encoded_output.stream_id = !encoded_output_edge.stream_id.empty()
                                          ? encoded_output_edge.stream_id
                                          : encoded_output_edge.link_options.stream_id;
   } else {
+    match.encoded_sink_link_options = encoded_output_edge.link_options;
     if (encoded_video_sender_parser_is_redundant(output)) {
       // RtspEncodedInput already terminates in parsed, AU-aligned byte-stream
       // H.264. The standard VideoSender parser uses the same config interval
@@ -1948,6 +1986,40 @@ bool fused_realtime_input_edges_share_destination(const ExecutionGraphPlan& plan
   return true;
 }
 
+bool fused_output_specs_are_compatible(const OutputSpec& lhs, const OutputSpec& rhs) {
+  const auto strings_compatible = [](const std::string& a, const std::string& b,
+                                     bool ignore_unknown = false) {
+    const auto known = [ignore_unknown](const std::string& value) {
+      return !value.empty() && (!ignore_unknown || value != "Unknown");
+    };
+    return !known(a) || !known(b) || a == b;
+  };
+  const auto positive_ints_compatible = [](int a, int b) { return a <= 0 || b <= 0 || a == b; };
+
+  if (lhs.payload_type != PayloadType::Auto && rhs.payload_type != PayloadType::Auto &&
+      lhs.payload_type != rhs.payload_type) {
+    return false;
+  }
+  if (!strings_compatible(lhs.media_type, rhs.media_type) ||
+      !strings_compatible(lhs.format, rhs.format) || !strings_compatible(lhs.dtype, rhs.dtype) ||
+      !strings_compatible(lhs.layout, rhs.layout) ||
+      !strings_compatible(lhs.memory, rhs.memory, /*ignore_unknown=*/true) ||
+      !positive_ints_compatible(lhs.width, rhs.width) ||
+      !positive_ints_compatible(lhs.height, rhs.height) ||
+      !positive_ints_compatible(lhs.depth, rhs.depth)) {
+    return false;
+  }
+
+  if (lhs.fps_num > 0 && lhs.fps_den > 0 && rhs.fps_num > 0 && rhs.fps_den > 0) {
+    const auto lhs_rate = static_cast<std::int64_t>(lhs.fps_num) * rhs.fps_den;
+    const auto rhs_rate = static_cast<std::int64_t>(rhs.fps_num) * lhs.fps_den;
+    if (lhs_rate != rhs_rate) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan* plan) {
   if (!plan || plan->pipeline_segments.empty() || plan->edges.empty()) {
     return;
@@ -1968,6 +2040,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     std::vector<std::shared_ptr<Node>> nodes;
     std::optional<FusedRealtimeIngressBranch::EncodedOutput> encoded_output;
     std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+    GraphLinkOptions encoded_sink_link_options;
     std::optional<std::size_t> encoded_split_node_index;
     OutputSpec output_spec;
     bool output_complete = false;
@@ -1997,6 +2070,13 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       }
       const auto& edge = plan->edges[edge_index];
       if (!realtime_latest_link(edge.link_options)) {
+        all_realtime = false;
+        break;
+      }
+      // The fused mux transports stream ids through one CSV property. Commas
+      // and edge whitespace would split or normalize an otherwise valid public
+      // id, so retain exact semantics through the segmented runtime instead.
+      if (!fused_stream_id_is_csv_safe(edge.stream_id)) {
         all_realtime = false;
         break;
       }
@@ -2033,6 +2113,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
           candidate.encoded_output = encoded_match->encoded_output;
         }
         candidate.encoded_sink_nodes = encoded_match->encoded_sink_nodes;
+        candidate.encoded_sink_link_options = encoded_match->encoded_sink_link_options;
         candidate.encoded_split_node_index = encoded_match->encoded_split_node_index;
         candidate.output_spec = edge.spec_complete ? edge.spec : decoder.output_spec;
         candidate.output_complete = edge.spec_complete || decoder.output_complete;
@@ -2040,6 +2121,40 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       candidates.push_back(std::move(candidate));
     }
     if (!all_realtime || candidates.size() != target.input_edges.size()) {
+      continue;
+    }
+
+    // The fused mux addresses branches by stream id.  Unlike the segmented
+    // runtime, it cannot preserve two producer edges that intentionally share
+    // an id: its id-to-pad lookup would collapse them onto one branch.  Resolve
+    // the same ordinal fallbacks used by the renderer before mutating the plan
+    // and decline fusion on any collision (including an explicit "streamN"
+    // colliding with another edge's fallback).
+    std::vector<std::string> configured_stream_ids;
+    configured_stream_ids.reserve(target.input_edges.size());
+    for (const std::size_t edge_index : target.input_edges) {
+      configured_stream_ids.push_back(plan->edges[edge_index].stream_id);
+    }
+    auto effective_stream_ids = resolve_unique_fused_stream_ids(configured_stream_ids);
+    if (!effective_stream_ids.has_value()) {
+      continue;
+    }
+
+    // One fused mux has one negotiated src-pad contract. If known branch
+    // fields disagree, leave the graph segmented so each source retains its
+    // own caps negotiation rather than committing fusion and failing later
+    // during pipeline materialization.
+    bool compatible_caps = true;
+    for (std::size_t lhs = 0; compatible_caps && lhs < candidates.size(); ++lhs) {
+      for (std::size_t rhs = lhs + 1; rhs < candidates.size(); ++rhs) {
+        if (!fused_output_specs_are_compatible(candidates[lhs].output_spec,
+                                               candidates[rhs].output_spec)) {
+          compatible_caps = false;
+          break;
+        }
+      }
+    }
+    if (!compatible_caps) {
       continue;
     }
 
@@ -2053,12 +2168,12 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       FusedRealtimeIngressBranch branch;
       branch.edge_index = edge_index;
       branch.source_node = edge.from;
-      branch.stream_id =
-          edge.stream_id.empty() ? ("stream" + std::to_string(ordinal)) : edge.stream_id;
+      branch.stream_id = (*effective_stream_ids)[ordinal];
       branch.link_options = edge.link_options;
       branch.nodes = std::move(candidate.nodes);
       branch.encoded_output = std::move(candidate.encoded_output);
       branch.encoded_sink_nodes = std::move(candidate.encoded_sink_nodes);
+      branch.encoded_sink_link_options = candidate.encoded_sink_link_options;
       branch.encoded_split_node_index = candidate.encoded_split_node_index;
       if (branch.encoded_output.has_value() && branch.encoded_output->stream_id.empty()) {
         branch.encoded_output->stream_id = branch.stream_id;
@@ -2478,6 +2593,11 @@ bool fused_realtime_destinations_share_port_for_test(
     plan.edges.push_back(std::move(edge));
   }
   return fused_realtime_input_edges_share_destination(plan, input_edges);
+}
+
+std::optional<std::vector<std::string>>
+resolve_unique_fused_stream_ids_for_test(const std::vector<std::string>& configured_stream_ids) {
+  return resolve_unique_fused_stream_ids(configured_stream_ids);
 }
 
 } // namespace session_test

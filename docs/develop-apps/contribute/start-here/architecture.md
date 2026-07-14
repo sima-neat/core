@@ -446,19 +446,17 @@ one-shot flows (`Graph::run(...)`).
 ### Realtime fan-in lowering
 
 Applications describe realtime edges with ordinary `Graph::connect(...)` and
-materialize them with ordinary `Graph::build(...)`. `RealtimeMuxByStream`
-extends the released three-field `GraphLinkOptions` without changing that
-type's binary layout when an application needs explicit raw-frame admission
-limits.
+materialize them with ordinary `Graph::build(...)`. `GraphLinkOptions` carries
+the latest-by-stream policy, stream identity, a reserved queue-depth field, and
+optional raw-frame admission limits. Latest-by-stream lowering always keeps one
+pending sample per stream.
 
 The execution-graph compiler, not the application, decides whether live
 multi-source fan-in can be fused into one GStreamer pipeline. Eligible private,
 inputless source branches are lowered with their by-stream mux and consumer so
 decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
-latest-by-stream topology remains segmented. Ineligible every-frame topology is
-rejected because segmented fallback would change its producer-backpressure
-contract. Nested already-fused source segments remain ineligible until their
-branches can be preserved recursively.
+latest-by-stream topology remains segmented. Nested already-fused source
+segments remain ineligible until their branches can be preserved recursively.
 
 ### Parsing & launch
 

@@ -2239,12 +2239,27 @@ run_install_sanity_check() {
 
   local -a core_real_libs=()
   local -a core_soname_links=()
+  local expected_abi=""
+  expected_abi="$(sed -n 's/^set(SimaNeat_ABI_VERSION "\([0-9][0-9]*\)")$/\1/p' \
+    "${BUILD_DIR}/SimaNeatConfig.cmake")"
+  if [[ ! "${expected_abi}" =~ ^[1-9][0-9]*$ ]]; then
+    echo
+    echo "ERROR: unable to read a valid public ABI from ${BUILD_DIR}/SimaNeatConfig.cmake."
+    echo "Refusing to package a library without an explicit ABI contract."
+    exit 1
+  fi
   mapfile -t core_real_libs < <(find "${core_install_dir}/lib" -maxdepth 1 -type f -name 'libsima_neat.so.*' | sort)
   mapfile -t core_soname_links < <(find "${core_install_dir}/lib" -maxdepth 1 -type l -name 'libsima_neat.so.*' | sort)
   if [[ "${#core_real_libs[@]}" -lt 1 ]]; then
     echo
     echo "ERROR: versioned libsima_neat shared object missing from core install tree."
     echo "Refusing to package an incomplete core .deb."
+    exit 1
+  fi
+  if [[ ! -L "${core_install_dir}/lib/libsima_neat.so.${expected_abi}" ]]; then
+    echo
+    echo "ERROR: expected ABI ${expected_abi} SONAME link missing from core install tree."
+    echo "Refusing to package a core .deb with a stale or missing public-library ABI."
     exit 1
   fi
   if [[ "${#core_soname_links[@]}" -lt 1 ]]; then
@@ -2269,6 +2284,14 @@ run_install_sanity_check() {
     echo
     echo "ERROR: dev install tree is missing headers, CMake config, libsima_neat.so linker symlink, or libsima_neat.a."
     echo "Refusing to package an incomplete dev .deb."
+    exit 1
+  fi
+  local dev_link_target=""
+  dev_link_target="$(readlink "${dev_install_dir}/lib/libsima_neat.so")"
+  if [[ "$(basename "${dev_link_target}")" != "libsima_neat.so.${expected_abi}" ]]; then
+    echo
+    echo "ERROR: dev linker symlink targets '${dev_link_target}', expected ABI ${expected_abi}."
+    echo "Refusing to package mismatched core and development packages."
     exit 1
   fi
 }

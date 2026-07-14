@@ -443,13 +443,13 @@ RUN_TEST(
         auto source = live_source("redundant_cam" + std::to_string(stream));
         auto one_output_branch = simaai::neat::graphs::Branch("source", {"detector_frame"});
 
-        simaai::neat::RealtimeMuxByStream decoded_link;
+        simaai::neat::GraphLinkOptions decoded_link;
         decoded_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
         decoded_link.queue_depth = 1;
         decoded_link.stream_id = "redundant_stream" + std::to_string(stream);
         redundant_branch_fan_in_app.connect(source, one_output_branch, decoded_link);
 
-        simaai::neat::RealtimeMuxByStream detector_link;
+        simaai::neat::GraphLinkOptions detector_link;
         detector_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
         detector_link.queue_depth = 16;
         detector_link.stream_id = "redundant_stream" + std::to_string(stream);
@@ -477,7 +477,7 @@ RUN_TEST(
       require(saw_redundant_stream0 && saw_redundant_stream1,
               "one-output Branch elision must preserve per-stream realtime identities");
 
-      simaai::neat::RealtimeMuxByStream stream_link;
+      simaai::neat::GraphLinkOptions stream_link;
       stream_link.stream_id = "compat_stream";
 
       simaai::neat::Graph default_stream_one_to_one_app("default_link_stream_id_one_to_one");
@@ -569,7 +569,7 @@ RUN_TEST(
           simaai::neat::graph::kInvalidPort,
           0U,
       };
-      simaai::neat::RealtimeMuxByStream realtime_credit_options;
+      simaai::neat::GraphLinkOptions realtime_credit_options;
       realtime_credit_options.max_inflight_per_stream = 1;
       simaai::neat::runtime::RealtimeLatestLink realtime_link(
           realtime_target, realtime_credit_options, "credit_stream");

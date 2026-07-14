@@ -61,8 +61,6 @@ const char* graph_link_policy_name(GraphLinkPolicy policy) {
     return "default";
   case GraphLinkPolicy::RealtimeLatestByStream:
     return "realtime_latest_by_stream";
-  case GraphLinkPolicy::RealtimeEveryFrameByStream:
-    return "realtime_every_frame_by_stream";
   }
   return "default";
 }
@@ -769,15 +767,15 @@ json public_view_to_json(const runtime::ExecutionGraphPlan& plan) {
     if (edge.link_options.policy != GraphLinkPolicy::Default) {
       e["link_policy"] = graph_link_policy_name(edge.link_options.policy);
       e["link_queue_depth"] = edge.link_options.queue_depth;
-      if (edge.link_options.max_inflight_per_stream != -1) {
-        e["link_max_inflight_per_stream"] = edge.link_options.max_inflight_per_stream;
-      }
-      if (edge.link_options.max_inflight_total != -1) {
-        e["link_max_inflight_total"] = edge.link_options.max_inflight_total;
-      }
-      if (!edge.stream_id.empty()) {
-        e["link_stream_id"] = edge.stream_id;
-      }
+    }
+    if (edge.link_options.max_inflight_per_stream != -1) {
+      e["link_max_inflight_per_stream"] = edge.link_options.max_inflight_per_stream;
+    }
+    if (edge.link_options.max_inflight_total != -1) {
+      e["link_max_inflight_total"] = edge.link_options.max_inflight_total;
+    }
+    if (!edge.stream_id.empty()) {
+      e["link_stream_id"] = edge.stream_id;
     }
     json runtime_edges = json::array();
     for (const std::size_t runtime_edge : edge.runtime_edge_indices) {
@@ -872,15 +870,15 @@ json graph_topology_to_json(const runtime::RunCore& core) {
     if (edge.link_options.policy != GraphLinkPolicy::Default) {
       e["link_policy"] = graph_link_policy_name(edge.link_options.policy);
       e["link_queue_depth"] = edge.link_options.queue_depth;
-      if (edge.link_options.max_inflight_per_stream != -1) {
-        e["link_max_inflight_per_stream"] = edge.link_options.max_inflight_per_stream;
-      }
-      if (edge.link_options.max_inflight_total != -1) {
-        e["link_max_inflight_total"] = edge.link_options.max_inflight_total;
-      }
-      if (!edge.stream_id.empty()) {
-        e["link_stream_id"] = edge.stream_id;
-      }
+    }
+    if (edge.link_options.max_inflight_per_stream != -1) {
+      e["link_max_inflight_per_stream"] = edge.link_options.max_inflight_per_stream;
+    }
+    if (edge.link_options.max_inflight_total != -1) {
+      e["link_max_inflight_total"] = edge.link_options.max_inflight_total;
+    }
+    if (!edge.stream_id.empty()) {
+      e["link_stream_id"] = edge.stream_id;
     }
     edges.push_back(std::move(e));
   }

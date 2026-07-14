@@ -51,6 +51,27 @@ bool public_view_has_node_block(const nlohmann::json& arr, const std::string& en
   return false;
 }
 
+bool edge_array_has_link_contract(const nlohmann::json& arr, const std::string& stream_id,
+                                  int max_inflight_per_stream, int max_inflight_total) {
+  for (const auto& item : arr) {
+    if (item.value("link_stream_id", "") == stream_id &&
+        item.value("link_max_inflight_per_stream", -1) == max_inflight_per_stream &&
+        item.value("link_max_inflight_total", -1) == max_inflight_total) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool edge_array_has_stream_id(const nlohmann::json& arr, const std::string& stream_id) {
+  for (const auto& item : arr) {
+    if (item.value("link_stream_id", "") == stream_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 } // namespace
 
 RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
@@ -62,7 +83,11 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
   output.add(nodes::Output("classes"));
 
   Graph app("exportable");
-  app.connect(input, output);
+  GraphLinkOptions link;
+  link.stream_id = "export-stream";
+  link.max_inflight_per_stream = 3;
+  link.max_inflight_total = 5;
+  app.connect(input, output, link);
 
   Run run = app.build();
   require(run.push("image", TensorList{graph_phase3_test::make_rgb_tensor(16, 16, 0x42)}),
@@ -102,8 +127,13 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
           "export should annotate public Output as an appsink sink");
   require(public_view_has_edge(json.at("graph").at("public_view").at("edges"), "image", "classes"),
           "export should include public endpoint edge image -> classes");
+  require(edge_array_has_link_contract(json.at("graph").at("public_view").at("edges"),
+                                       "export-stream", 3, 5),
+          "public export should preserve default-policy stream identity and explicit caps");
   require(json.at("graph").at("lowered_view").at("nodes").size() >= 1U,
           "export should include lowered runtime nodes");
+  require(edge_array_has_stream_id(json.at("graph").at("edges"), "export-stream"),
+          "lowered export should preserve default-policy stream identity");
   require(json.at("run").at("stats").at("outputs_pulled").get<std::uint64_t>() >= 1U,
           "export should include run output counters");
   require(json.at("run").contains("graph_metrics"), "export should include graph metrics block");

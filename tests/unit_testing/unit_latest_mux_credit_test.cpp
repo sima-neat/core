@@ -401,13 +401,62 @@ void test_graph_scoped_encoded_output_queue_overflow_policy() {
                                                               std::move(first)) ==
               simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
           "EveryFrame encoded Output should admit its first AU");
-  require(simaai::neat::runtime::enqueue_fused_encoded_output(every_frame_queue, every_frame,
-                                                              std::move(second)) ==
-              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Overflow,
-          "EveryFrame encoded Output must report overflow instead of blocking or dropping");
+  std::atomic<bool> producer_started{false};
+  std::atomic<bool> producer_finished{false};
+  simaai::neat::runtime::FusedEncodedOutputEnqueueResult second_result =
+      simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Overflow;
+  std::thread blocked_producer([&] {
+    producer_started.store(true, std::memory_order_release);
+    second_result = simaai::neat::runtime::enqueue_fused_encoded_output(
+        every_frame_queue, every_frame, std::move(second));
+    producer_finished.store(true, std::memory_order_release);
+  });
+  while (!producer_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const bool second_push_backpressured = !producer_finished.load(std::memory_order_acquire);
   simaai::neat::runtime::RuntimeSinkQueueMsg retained;
-  require(every_frame_queue.pop(retained, 0) && retained.sample.frame_id == 1,
-          "EveryFrame overflow must preserve the already queued AU");
+  const bool first_preserved = every_frame_queue.pop(retained, 0) && retained.sample.frame_id == 1;
+  blocked_producer.join();
+  require(first_preserved, "EveryFrame backpressure must preserve the already queued AU");
+  require(second_push_backpressured,
+          "EveryFrame encoded Output must backpressure instead of failing or dropping");
+  require(second_result == simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+          "EveryFrame encoded Output must enqueue after Run::pull() makes room");
+  require(every_frame_queue.pop(retained, 0) && retained.sample.frame_id == 2,
+          "EveryFrame encoded Output must preserve the delayed AU");
+
+  simaai::neat::runtime::GraphSinkQueue closing_every_frame_queue(1);
+  simaai::neat::Sample queued_before_close;
+  queued_before_close.frame_id = 3;
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(
+              closing_every_frame_queue, every_frame, std::move(queued_before_close)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+          "close-wakeup fixture must fill the EveryFrame queue");
+  std::atomic<bool> closing_producer_started{false};
+  std::atomic<bool> closing_producer_finished{false};
+  simaai::neat::runtime::FusedEncodedOutputEnqueueResult close_result =
+      simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Overflow;
+  std::thread closing_producer([&] {
+    simaai::neat::Sample blocked_until_close;
+    blocked_until_close.frame_id = 4;
+    closing_producer_started.store(true, std::memory_order_release);
+    close_result = simaai::neat::runtime::enqueue_fused_encoded_output(
+        closing_every_frame_queue, every_frame, std::move(blocked_until_close));
+    closing_producer_finished.store(true, std::memory_order_release);
+  });
+  while (!closing_producer_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const bool close_push_was_blocked = !closing_producer_finished.load(std::memory_order_acquire);
+  closing_every_frame_queue.close();
+  closing_producer.join();
+  require(close_push_was_blocked,
+          "EveryFrame close-wakeup fixture must begin from real backpressure");
+  require(close_result == simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Closed,
+          "closing an EveryFrame queue must promptly wake its blocked producer");
 
   simaai::neat::runtime::GraphSinkQueue latest_queue(1);
   simaai::neat::OutputOptions latest = simaai::neat::OutputOptions::Latest();
@@ -432,6 +481,44 @@ void test_graph_scoped_encoded_output_queue_overflow_policy() {
                                                               std::move(closed)) ==
               simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Closed,
           "encoded Output enqueue should distinguish a closed graph sink");
+
+  constexpr int kProducerCount = 8;
+  constexpr int kFramesPerProducer = 2000;
+  simaai::neat::runtime::GraphSinkQueue concurrent_latest_queue(1);
+  std::atomic<int> ready{0};
+  std::atomic<bool> start{false};
+  std::atomic<int> failures{0};
+  std::vector<std::thread> producers;
+  producers.reserve(kProducerCount);
+  for (int producer = 0; producer < kProducerCount; ++producer) {
+    producers.emplace_back([&, producer] {
+      ready.fetch_add(1, std::memory_order_release);
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      for (int frame = 0; frame < kFramesPerProducer; ++frame) {
+        simaai::neat::Sample sample;
+        sample.frame_id = producer * kFramesPerProducer + frame;
+        const auto result = simaai::neat::runtime::enqueue_fused_encoded_output(
+            concurrent_latest_queue, latest, std::move(sample));
+        if (result != simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued &&
+            result != simaai::neat::runtime::FusedEncodedOutputEnqueueResult::ReplacedOldest) {
+          failures.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+    });
+  }
+  while (ready.load(std::memory_order_acquire) != kProducerCount) {
+    std::this_thread::yield();
+  }
+  start.store(true, std::memory_order_release);
+  for (auto& producer : producers) {
+    producer.join();
+  }
+  require(failures.load(std::memory_order_relaxed) == 0,
+          "concurrent Latest encoded producers must never observe a transient overflow");
+  require(concurrent_latest_queue.size() == 1U,
+          "concurrent Latest encoded producers must retain exactly one newest AU");
 }
 
 void test_terminal_release_restores_original_pts() {
@@ -1587,7 +1674,7 @@ int main() {
         unrelated_ns, "unit-stamped-with-sidecar-cleanup");
 
     {
-      simaai::neat::RealtimeMuxByStream bounded_options;
+      simaai::neat::GraphLinkOptions bounded_options;
       bounded_options.queue_depth = 1;
       bounded_options.max_inflight_per_stream = 1;
       bounded_options.max_inflight_total = 1;
@@ -1822,7 +1909,7 @@ int main() {
     simaai::neat::Sample replacement_sample = make_gst_sample_backed_sample(std::nullopt);
     replacement_sample.stream_id = "pending-stream";
     replacement_sample.frame_id = 2;
-    simaai::neat::RealtimeMuxByStream pending_options;
+    simaai::neat::GraphLinkOptions pending_options;
     pending_options.queue_depth = 1;
     simaai::neat::runtime::DownstreamTarget pending_target;
     simaai::neat::runtime::RealtimeLatestLink pending_link(pending_target, pending_options,

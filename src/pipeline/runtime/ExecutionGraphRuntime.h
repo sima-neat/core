@@ -53,8 +53,6 @@ struct RuntimeSinkQueueMsg {
   std::size_t edge_index = invalid_edge_index();
 };
 
-using GraphSinkQueue = simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg>;
-
 enum class FusedEncodedOutputEnqueueResult {
   Enqueued,
   ReplacedOldest,
@@ -62,18 +60,39 @@ enum class FusedEncodedOutputEnqueueResult {
   Closed,
 };
 
-/** Non-blocking queue policy used by graph-scoped encoded Outputs. */
+class GraphSinkQueue final
+    : public simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg> {
+public:
+  using BlockingQueue::BlockingQueue;
+
+private:
+  friend FusedEncodedOutputEnqueueResult
+  enqueue_fused_encoded_output(GraphSinkQueue&, const OutputOptions&, Sample&&);
+  std::mutex latest_enqueue_mu_;
+};
+
+/** Queue policy used by graph-scoped encoded Outputs. */
 inline FusedEncodedOutputEnqueueResult
 enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
   RuntimeSinkQueueMsg message{.sample = std::move(sample), .edge_index = invalid_edge_index()};
+  if (!options.drop) {
+    // Match Output/Appsink EveryFrame semantics: a bounded full queue applies
+    // backpressure until Run::pull() makes room (or graph teardown closes it).
+    if (queue.push(std::move(message))) {
+      return FusedEncodedOutputEnqueueResult::Enqueued;
+    }
+    return FusedEncodedOutputEnqueueResult::Closed;
+  }
+
+  // Multiple fused live sources may publish concurrently to one named Latest
+  // output. Serialize only the replace sequence; the queue itself remains
+  // independently safe for its consumer and for ordinary single-step pushes.
+  std::lock_guard<std::mutex> enqueue_lock(queue.latest_enqueue_mu_);
   if (queue.try_push(std::move(message))) {
     return FusedEncodedOutputEnqueueResult::Enqueued;
   }
-  if (queue.stats().closed) {
+  if (queue.closed()) {
     return FusedEncodedOutputEnqueueResult::Closed;
-  }
-  if (!options.drop) {
-    return FusedEncodedOutputEnqueueResult::Overflow;
   }
 
   RuntimeSinkQueueMsg discarded;
@@ -81,8 +100,8 @@ enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options
   if (queue.try_push(std::move(message))) {
     return FusedEncodedOutputEnqueueResult::ReplacedOldest;
   }
-  return queue.stats().closed ? FusedEncodedOutputEnqueueResult::Closed
-                              : FusedEncodedOutputEnqueueResult::Overflow;
+  return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                        : FusedEncodedOutputEnqueueResult::Overflow;
 }
 
 struct DownstreamTarget {
@@ -125,8 +144,7 @@ public:
     std::size_t ready = 0;
   };
 
-  RealtimeLatestLink(DownstreamTarget downstream, RealtimeMuxByStream options,
-                     std::string stream_id);
+  RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options, std::string stream_id);
   RealtimeLatestLink(const RealtimeLatestLink&) = delete;
   RealtimeLatestLink& operator=(const RealtimeLatestLink&) = delete;
   ~RealtimeLatestLink();
@@ -134,7 +152,7 @@ public:
   bool offer(simaai::neat::Sample&& sample, std::size_t edge_index);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
-                          const RealtimeMuxByStream& options);
+                          const GraphLinkOptions& options);
   void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
   void close();
   void join();
@@ -143,7 +161,7 @@ public:
   const DownstreamTarget& downstream() const noexcept {
     return downstream_;
   }
-  const RealtimeMuxByStream& options() const noexcept {
+  const GraphLinkOptions& options() const noexcept {
     return options_;
   }
 
@@ -163,7 +181,7 @@ private:
   void run_();
 
   DownstreamTarget downstream_;
-  RealtimeMuxByStream options_;
+  GraphLinkOptions options_;
   DispatchFn dispatch_;
   StopFn stop_;
   ErrorFn error_;
@@ -174,7 +192,7 @@ private:
   pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
   std::unordered_set<std::size_t> edge_indices_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
-  std::unordered_map<std::size_t, RealtimeMuxByStream> link_options_by_edge_;
+  std::unordered_map<std::size_t, GraphLinkOptions> link_options_by_edge_;
   std::deque<std::string> ready_;
   std::uint64_t credit_namespace_ = 0;
   int credit_limit_per_stream_ = 0;

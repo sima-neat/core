@@ -69,8 +69,7 @@ using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
 
 bool realtime_by_stream_policy(GraphLinkPolicy policy) {
-  return policy == GraphLinkPolicy::RealtimeLatestByStream ||
-         policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+  return policy == GraphLinkPolicy::RealtimeLatestByStream;
 }
 
 std::string gst_double_quote(std::string value) {
@@ -1238,12 +1237,6 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
       continue;
     }
 
-    if (e.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream) {
-      throw std::runtime_error(
-          "RealtimeEveryFrameByStream requires an eligible multi-source realtime fan-in; "
-          "Graph::build() could not fuse this topology without changing its every-frame "
-          "backpressure contract");
-    }
     if (e.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream) {
       const std::string key = target_key(*downstream);
       auto it = realtime_link_by_target.find(key);
@@ -1493,7 +1486,7 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
             if (error) {
               *error = "graph stopped before encoded Output dispatch";
             }
-            return false;
+            return FusedEncodedOutputDispatchResult::Stopping;
           }
           auto& execution = locked->graph_execution();
           const auto sink = execution.sinks.find(output.sink_node);
@@ -1502,29 +1495,31 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
               *error = "encoded Output sink is unavailable";
             }
             locked->graph_request_stop("fused encoded Output sink is unavailable");
-            return false;
+            return FusedEncodedOutputDispatchResult::Failed;
           }
 
-          // Never block the RTSP streaming thread. A Latest output replaces its
-          // oldest queued AU; an EveryFrame output treats overflow as fatal so
-          // video and inference cannot silently diverge.
+          // Preserve OutputOptions exactly: Latest replaces its oldest queued
+          // AU without blocking, while EveryFrame applies backpressure until
+          // Run::pull() makes room. Closing the queue wakes blocked producers.
           const auto enqueue =
               enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
           if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
               enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest) {
-            return true;
+            return FusedEncodedOutputDispatchResult::Delivered;
+          }
+          if (enqueue == FusedEncodedOutputEnqueueResult::Closed) {
+            if (error) {
+              *error = "encoded Output queue closed during graph stop";
+            }
+            return FusedEncodedOutputDispatchResult::Stopping;
           }
 
-          const std::string reason =
-              enqueue == FusedEncodedOutputEnqueueResult::Closed
-                  ? "encoded Output queue is closed"
-                  : "encoded Output queue overflowed; pull encoded outputs faster or increase "
-                    "OutputOptions::max_buffers";
+          const std::string reason = "encoded Output queue overflowed unexpectedly";
           if (error) {
             *error = reason;
           }
           locked->graph_request_stop(reason);
-          return false;
+          return FusedEncodedOutputDispatchResult::Failed;
         };
     rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
     rt.transport.built.store(true, std::memory_order_release);

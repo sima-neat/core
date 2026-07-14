@@ -1357,8 +1357,6 @@ void Graph::save(const std::string& path) const {
         return "default";
       case GraphLinkPolicy::RealtimeLatestByStream:
         return "realtime_latest_by_stream";
-      case GraphLinkPolicy::RealtimeEveryFrameByStream:
-        return "realtime_every_frame_by_stream";
       }
       return "default";
     };
@@ -1603,9 +1601,6 @@ Graph Graph::load(const std::string& path) {
       const std::string link_policy = string_field(eobj, "link_policy", "default");
       if (link_policy == "realtime_latest_by_stream") {
         edge.link_options.policy = GraphLinkPolicy::RealtimeLatestByStream;
-        edge.link_options.queue_depth = int_field(eobj, "link_queue_depth", 16);
-      } else if (link_policy == "realtime_every_frame_by_stream") {
-        edge.link_options.policy = GraphLinkPolicy::RealtimeEveryFrameByStream;
         edge.link_options.queue_depth = int_field(eobj, "link_queue_depth", 16);
       } else if (!link_policy.empty() && link_policy != "default") {
         throw_io_error(error_codes::kIoParse, "Graph::load", path,
