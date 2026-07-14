@@ -41,10 +41,13 @@ int main(int argc, char** argv) {
 
     // STEP configure-decode
     simaai::neat::Model::Options opt;
+    opt.preprocess.kind = simaai::neat::InputKind::Image;
+    opt.preprocess.enable = simaai::neat::AutoFlag::On;
     opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
     opt.preprocess.input_max_width = bgr.cols;
     opt.preprocess.input_max_height = bgr.rows;
     opt.preprocess.input_max_depth = bgr.channels();
+    opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
     opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
     // END STEP
 
@@ -83,6 +86,14 @@ int main(int argc, char** argv) {
     // END CORE LOGIC
 
     std::cout << "boxes=" << decoded.boxes.size() << "\n";
+    for (std::size_t i = 0; i < decoded.boxes.size(); ++i) {
+      const auto& detection = decoded.boxes[i];
+      std::cout << "box[" << i << "] class=" << detection.class_id
+                << " score=" << detection.score << " xyxy=[" << detection.x1 << ","
+                << detection.y1 << "," << detection.x2 << "," << detection.y2 << "]\n";
+    }
+    if (decoded.boxes.empty())
+      throw std::runtime_error("image produced no detections above threshold");
     std::cout << "[OK] 007_read_detection_boxes\n";
     return 0;
   } catch (const std::exception& e) {

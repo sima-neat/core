@@ -5,7 +5,7 @@ The output tensor is a rank-1 uint8 buffer: a uint32 count header followed by
 N 24-byte RawBox records (int32 x, y, w, h; float32 score; int32 class_id).
 
 Usage:
-  python3 read_detection_boxes.py --model /path/to/yolo_v8s.tar.gz [--width 640] [--height 640]
+  python3 read_detection_boxes.py --model /path/to/yolo_v8s.tar.gz --image /path/to.jpg
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 try:
+  import cv2
   import pyneat
 except ImportError:
   sys.exit(
@@ -22,29 +23,32 @@ except ImportError:
       "Run: source ~/pyneat/bin/activate"
   )
 
-import numpy as np
-
-
 def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
   ap.add_argument("--model", type=Path, required=True)
-  ap.add_argument("--width", type=int, default=640)
-  ap.add_argument("--height", type=int, default=640)
+  ap.add_argument("--image", type=Path, required=True)
   args = ap.parse_args(argv[1:])
+
+  bgr = cv2.imread(str(args.image), cv2.IMREAD_COLOR)
+  if bgr is None:
+    raise RuntimeError(f"failed to load image: {args.image}")
+  height, width, channels = bgr.shape
 
   # STEP configure-decode
   opt = pyneat.ModelOptions()
   opt.preprocess.kind = pyneat.InputKind.Image
-  opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
-  opt.preprocess.input_max_width = args.width
-  opt.preprocess.input_max_height = args.height
-  opt.preprocess.input_max_depth = 3
+  opt.preprocess.enable = pyneat.AutoFlag.On
+  opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
+  opt.preprocess.input_max_width = width
+  opt.preprocess.input_max_height = height
+  opt.preprocess.input_max_depth = channels
+  opt.preprocess.normalize.enable = pyneat.AutoFlag.On
   opt.decode_type = pyneat.BoxDecodeType.YoloV8
   opt.score_threshold = 0.55
   opt.nms_iou_threshold = 0.50
   opt.top_k = 100
-  opt.boxdecode_original_width = args.width
-  opt.boxdecode_original_height = args.height
+  opt.boxdecode_original_width = width
+  opt.boxdecode_original_height = height
   # END STEP
 
   # CORE LOGIC
@@ -53,9 +57,8 @@ def main(argv: list[str]) -> int:
   # END STEP
 
   # STEP run-decode
-  rgb = np.full((args.height, args.width, 3), 80, dtype=np.uint8)
-  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
-  outputs = model.run([tensor], timeout_ms=2000)
+  tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
+  outputs = model.run([tensor], timeout_ms=30000)
   if not outputs:
     raise RuntimeError("model produced no outputs")
   # END STEP
@@ -72,8 +75,19 @@ def main(argv: list[str]) -> int:
     buf = bytes(first.to_numpy(copy=False))
     detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
     print(f"detections={detections}")
+    for index in range(detections):
+      offset = 4 + index * 24
+      if offset + 24 > len(buf):
+        raise RuntimeError("truncated BBOX output")
+      x, y, w, h, score, class_id = struct.unpack_from("<iiiifi", buf, offset)
+      print(
+        f"box[{index}] class={class_id} score={score:.6f} "
+        f"xyxy=[{x},{y},{x + w},{y + h}]"
+      )
+    if detections == 0:
+      raise RuntimeError("image produced no detections above threshold")
   else:
-    print(f"raw_output_heads={len(outputs)}  # BoxDecode not wired by this runtime")
+    raise RuntimeError(f"BoxDecode not wired by this runtime; raw_output_heads={len(outputs)}")
   # END STEP
   return 0
 

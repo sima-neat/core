@@ -270,7 +270,7 @@ Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root*
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/007_read_detection_boxes/read_detection_boxes.py \
-  --model /tmp/yolo_v8s.tar.gz --width 640 --height 640
+  --model /tmp/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
 **C++ (prebuilt):**
@@ -286,14 +286,15 @@ python3 share/sima-neat/tutorials/007_read_detection_boxes/read_detection_boxes.
   --model /tmp/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
-Expected output (the box count depends on the frame; a synthetic frame yields zero):
+Expected output (the box count and values depend on the frame):
 
 ```text
-boxes=0
+boxes=2
+box[0] class=0 score=0.91 xyxy=[...]
 [OK] 007_read_detection_boxes
 ```
 
-(The Python build prints `detections=...`, or `raw_output_heads=...` if the runtime does not wire BoxDecode into `model.run`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+Both versions fail when the image produces no detections above the configured threshold. To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/007_read_detection_boxes/read_detection_boxes.cpp`
