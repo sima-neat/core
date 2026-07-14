@@ -12,9 +12,11 @@
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/Preproc.h"
 
+#include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
@@ -23,7 +25,6 @@
 #include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
-#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
@@ -938,6 +939,20 @@ void append_fused_node_fragment(BuildResult* br, std::ostringstream* pipeline,
     (*pipeline) << " ! ";
   }
   NodeFragment frag = make_node_fragment(node, actual_index, name_transform);
+  // GraphNaming intentionally preserves GStreamer's conventional RTSP-server
+  // payloader names (pay0, pay1, ...).  A fused ingress is a single ordinary
+  // gst_parse_launch() pipeline, however, and may contain one RTP packetizer
+  // per source.  Those elements must have unique names inside that pipeline;
+  // they are not exported as RTSP media factory payloaders.
+  if (node->kind() == "H264Packetize" && name_transform_enabled(name_transform)) {
+    const std::string unique_payloader_name = "neat_fused_pay_" + std::to_string(actual_index);
+    frag.fragment = rewrite_fragment_names(frag.fragment, {{"pay0", unique_payloader_name}});
+    for (auto& element_name : frag.element_names) {
+      if (element_name == "pay0") {
+        element_name = unique_payloader_name;
+      }
+    }
+  }
   NodeReport nr;
   nr.index = actual_index;
   nr.kind = node->kind();
@@ -1841,27 +1856,162 @@ std::optional<std::size_t> parse_fused_branch_index_from_name(const std::string&
 struct FusedEncodedOutputProbeContext {
   runtime::FusedRealtimeIngressBranch::EncodedOutput output;
   runtime::FusedEncodedOutputDispatch dispatch;
+  bool copy_output = false;
 };
 
 Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
-                                        const std::string& stream_id) {
+                                        const std::string& stream_id, bool copy_output) {
   if (!buffer) {
     throw std::runtime_error("encoded H.264 buffer is null");
   }
   if (!caps) {
     throw std::runtime_error("encoded H.264 caps are unavailable");
   }
+
+  if (copy_output) {
+    GstMapInfo map = GST_MAP_INFO_INIT;
+    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+      throw std::runtime_error("failed to map encoded H.264 buffer");
+    }
+    std::vector<std::uint8_t> bytes;
+    try {
+      bytes.assign(map.data, map.data + map.size);
+    } catch (...) {
+      gst_buffer_unmap(buffer, &map);
+      throw;
+    }
+    gst_buffer_unmap(buffer, &map);
+    if (bytes.empty()) {
+      throw std::runtime_error("encoded H.264 buffer is empty");
+    }
+
+    gchar* caps_text = gst_caps_to_string(caps);
+    if (!caps_text || !*caps_text) {
+      if (caps_text) {
+        g_free(caps_text);
+      }
+      throw std::runtime_error("encoded H.264 caps are empty");
+    }
+    const std::string caps_string(caps_text);
+    g_free(caps_text);
+    const std::int64_t pts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))
+                                 ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer))
+                                 : -1;
+    const std::int64_t dts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))
+                                 ? static_cast<std::int64_t>(GST_BUFFER_DTS(buffer))
+                                 : -1;
+    const std::int64_t duration = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))
+                                      ? static_cast<std::int64_t>(GST_BUFFER_DURATION(buffer))
+                                      : -1;
+    Sample sample = make_encoded_sample(std::move(bytes), caps_string, pts, dts, duration);
+    const GstStructure* structure = gst_caps_get_structure(caps, 0);
+    const char* media_type = structure ? gst_structure_get_name(structure) : nullptr;
+    sample.media_type = media_type ? media_type : "";
+    sample.stream_id = stream_id;
+    return sample;
+  }
+
   GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
   if (!gst_sample) {
     throw std::runtime_error("failed to create encoded H.264 sample");
   }
   try {
-    Sample sample = sample_from_gst_envelope(gst_sample, "fused encoded Output",
-                                             /*copy_output=*/false, nullptr);
-    gst_sample_unref(gst_sample);
-    if (!stream_id.empty()) {
-      sample.stream_id = stream_id;
+    // Encoded parser output is ordinary CPU-readable GstMemory. Avoid the
+    // general raw/tensor envelope path here: it performs device-memory and
+    // segment discovery that is useful for accelerator buffers but needlessly
+    // expensive on every AU across 24/48 live streams. Keep the exact
+    // GstSample reference so payload bytes and buffer flags remain zero-copy.
+    auto holder = std::shared_ptr<void>(gst_sample_ref(gst_sample), [](void* value) {
+      gst_sample_unref(static_cast<GstSample*>(value));
+    });
+    struct EncodedMapState {
+      std::mutex mutex;
+      GstMapInfo info{};
+      bool mapped = false;
+    };
+    auto map_state = std::make_shared<EncodedMapState>();
+
+    auto storage = std::make_shared<Storage>();
+    storage->kind = StorageKind::GstSample;
+    storage->device = {DeviceType::CPU, 0};
+    storage->size_bytes = gst_buffer_get_size(buffer);
+    storage->holder = holder;
+    storage->map_fn = [holder, map_state](MapMode mode) {
+      if (mode != MapMode::Read) {
+        return Mapping{};
+      }
+      GstSample* retained = static_cast<GstSample*>(holder.get());
+      GstBuffer* retained_buffer = retained ? gst_sample_get_buffer(retained) : nullptr;
+      if (!retained_buffer) {
+        return Mapping{};
+      }
+      std::lock_guard<std::mutex> lock(map_state->mutex);
+      if (map_state->mapped || !gst_buffer_map(retained_buffer, &map_state->info, GST_MAP_READ)) {
+        return Mapping{};
+      }
+      map_state->mapped = true;
+      GstBuffer* buffer_ref = gst_buffer_ref(retained_buffer);
+      Mapping mapping;
+      mapping.data = map_state->info.data;
+      mapping.size_bytes = map_state->info.size;
+      mapping.keepalive = holder;
+      mapping.unmap = [buffer_ref, map_state]() {
+        std::lock_guard<std::mutex> unmap_lock(map_state->mutex);
+        if (map_state->mapped) {
+          gst_buffer_unmap(buffer_ref, &map_state->info);
+          map_state->mapped = false;
+        }
+        gst_buffer_unref(buffer_ref);
+      };
+      return mapping;
+    };
+
+    gchar* caps_text = gst_caps_to_string(caps);
+    if (!caps_text || !*caps_text) {
+      if (caps_text) {
+        g_free(caps_text);
+      }
+      throw std::runtime_error("encoded Output caps are empty");
     }
+    const std::string caps_string(caps_text);
+    g_free(caps_text);
+    const EncodedSpec::Codec codec = caps_to_codec(caps_string);
+    if (codec == EncodedSpec::Codec::UNKNOWN) {
+      throw std::runtime_error("encoded Output caps do not identify a supported codec");
+    }
+
+    Tensor tensor;
+    tensor.storage = std::move(storage);
+    tensor.dtype = TensorDType::UInt8;
+    tensor.device = {DeviceType::CPU, 0};
+    tensor.read_only = true;
+    tensor.layout = TensorLayout::Unknown;
+    tensor.shape = {static_cast<std::int64_t>(gst_buffer_get_size(buffer))};
+    tensor.strides_bytes = {1};
+    tensor.semantic.encoded = EncodedSpec{};
+    tensor.semantic.encoded->codec = codec;
+
+    Sample sample;
+    sample.kind = SampleKind::TensorSet;
+    sample.owned = false;
+    sample.tensors = TensorList{std::move(tensor)};
+    sample.caps_string = caps_string;
+    sample.payload_type = PayloadType::Encoded;
+    const GstStructure* structure = gst_caps_get_structure(caps, 0);
+    const char* media_type = structure ? gst_structure_get_name(structure) : nullptr;
+    sample.media_type = media_type ? media_type : "";
+    sample.payload_tag = codec == EncodedSpec::Codec::H264 ? "H264" : "H265";
+    sample.pts_ns = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))
+                        ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer))
+                        : -1;
+    sample.dts_ns = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))
+                        ? static_cast<std::int64_t>(GST_BUFFER_DTS(buffer))
+                        : -1;
+    sample.duration_ns = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))
+                             ? static_cast<std::int64_t>(GST_BUFFER_DURATION(buffer))
+                             : -1;
+    sample.stream_id = stream_id;
+    gst_sample_unref(gst_sample);
     return sample;
   } catch (...) {
     gst_sample_unref(gst_sample);
@@ -1883,7 +2033,8 @@ GstPadProbeReturn fused_encoded_output_probe(GstPad* pad, GstPadProbeInfo* info,
     if (!context || !context->dispatch) {
       throw std::runtime_error("encoded output dispatcher is unavailable");
     }
-    Sample sample = make_fused_encoded_output_sample(buffer, caps, context->output.stream_id);
+    Sample sample = make_fused_encoded_output_sample(buffer, caps, context->output.stream_id,
+                                                     context->copy_output);
     delivered = context->dispatch(context->output, std::move(sample), &error);
   } catch (const std::exception& ex) {
     error = ex.what();
@@ -1914,7 +2065,8 @@ GstPadProbeReturn fused_encoded_output_probe(GstPad* pad, GstPadProbeInfo* info,
 
 void attach_fused_encoded_output_probes(GstElement* pipeline,
                                         const runtime::FusedRealtimeIngress& ingress,
-                                        const runtime::FusedEncodedOutputDispatch& dispatch) {
+                                        const runtime::FusedEncodedOutputDispatch& dispatch,
+                                        bool copy_output) {
   if (!pipeline || !dispatch) {
     return;
   }
@@ -1940,7 +2092,8 @@ void attach_fused_encoded_output_probes(GstElement* pipeline,
         const auto& branch = ingress.branches[*branch_index];
         if (branch.encoded_output.has_value()) {
           if (GstPad* src = gst_element_get_static_pad(element, "src")) {
-            auto* context = new FusedEncodedOutputProbeContext{*branch.encoded_output, dispatch};
+            auto* context =
+                new FusedEncodedOutputProbeContext{*branch.encoded_output, dispatch, copy_output};
             const gulong probe = gst_pad_add_probe(
                 src, GST_PAD_PROBE_TYPE_BUFFER, fused_encoded_output_probe, context,
                 +[](gpointer data) { delete static_cast<FusedEncodedOutputProbeContext*>(data); });
@@ -2744,6 +2897,10 @@ BuildResult build_fused_realtime_source_pipeline(
     ss << " ! " << rendered_consumer;
   }
 
+  int encoded_actual_index = static_cast<int>(consumer_nodes.size());
+  for (const auto& nodes : branch_nodes) {
+    encoded_actual_index += static_cast<int>(nodes.size());
+  }
   for (std::size_t branch_index = 0; branch_index < branch_nodes.size(); ++branch_index) {
     const auto& nodes = branch_nodes[branch_index];
     if (nodes.empty()) {
@@ -2751,13 +2908,67 @@ BuildResult build_fused_realtime_source_pipeline(
     }
     const NameTransform branch_transform =
         fused_branch_name_transform(name_transform, branch_index);
+    const auto decoder = std::find_if(nodes.begin(), nodes.end(), [](const auto& node) {
+      return node && node->kind() == "SimaDecode";
+    });
+    const bool has_encoded_sink = branch_index < ingress.branches.size() &&
+                                  !ingress.branches[branch_index].encoded_sink_nodes.empty();
+    std::size_t encoded_split = 0U;
+    if (has_encoded_sink) {
+      encoded_split = ingress.branches[branch_index].encoded_split_node_index.value_or(
+          decoder == nodes.end() ? nodes.size()
+                                 : static_cast<std::size_t>(std::distance(nodes.begin(), decoder)));
+    }
+    const bool decoder_after_split =
+        has_encoded_sink && encoded_split <= nodes.size() &&
+        std::any_of(nodes.begin() + static_cast<std::ptrdiff_t>(encoded_split), nodes.end(),
+                    [](const auto& node) { return node && node->kind() == "SimaDecode"; });
+    if (has_encoded_sink && (encoded_split > nodes.size() || !decoder_after_split)) {
+      throw std::invalid_argument(
+          "fused encoded sink branch requires a valid source boundary before H.264 SimaDecode");
+    }
+
     ss << ' ';
     bool first = true;
-    for (std::size_t node_index = 0; node_index < nodes.size(); ++node_index) {
+    const std::size_t prefix_end = has_encoded_sink ? encoded_split : nodes.size();
+    for (std::size_t node_index = 0; node_index < prefix_end; ++node_index) {
       const auto& node = nodes[node_index];
       append_fused_node_fragment(&br, &ss, node, branch_actual_indices[branch_index][node_index],
                                  branch_transform, &sess_opt, /*prepend_link=*/!first);
       first = false;
+    }
+    if (has_encoded_sink) {
+      const std::string tee_name = apply_name_transform(branch_transform, "neat_encoded_tee");
+      ss << " ! tee name=" << tee_name;
+
+      // Insight must never backpressure RTSP decode/inference. Keep one
+      // reference-counted encoded AU and drop whole old AUs if UDP delivery
+      // falls behind; this queue contains no decoded EV memory.
+      ss << ' ' << tee_name << ". ! queue max-size-buffers=1 max-size-bytes=0 "
+         << "max-size-time=0 leaky=downstream";
+      for (const auto& node : ingress.branches[branch_index].encoded_sink_nodes) {
+        append_fused_node_fragment(&br, &ss, node, encoded_actual_index++, branch_transform,
+                                   &sess_opt, /*prepend_link=*/true);
+      }
+
+      // The decoder branch is lossless. If the encoded prefix already ends in
+      // the framework's Queue, its worker is the tee's decoder-side task
+      // boundary while the egress branch has its own queue. Otherwise add one
+      // compressed-AU queue so a decoder cannot run on the RTSP source thread.
+      // Recognize the concrete Queue type rather than kind()=="Queue": custom
+      // Nodes may use that label without providing the same scheduling contract.
+      const bool prefix_ends_in_typed_queue =
+          encoded_split > 0U &&
+          dynamic_cast<const simaai::neat::Queue*>(nodes[encoded_split - 1U].get()) != nullptr;
+      ss << ' ' << tee_name << ".";
+      if (!prefix_ends_in_typed_queue) {
+        ss << " ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0";
+      }
+      for (std::size_t node_index = encoded_split; node_index < nodes.size(); ++node_index) {
+        append_fused_node_fragment(&br, &ss, nodes[node_index],
+                                   branch_actual_indices[branch_index][node_index],
+                                   branch_transform, &sess_opt, /*prepend_link=*/true);
+      }
     }
     ss << " ! " << fused_ingress_queue_fragment(1, block_when_pending);
     ss << " ! " << mux_name << ".sink_" << branch_index;
@@ -2771,8 +2982,8 @@ BuildResult build_fused_realtime_source_pipeline(
 namespace session_test {
 
 Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
-                                                 const std::string& stream_id) {
-  return make_fused_encoded_output_sample(buffer, caps, stream_id);
+                                                 const std::string& stream_id, bool copy_output) {
+  return make_fused_encoded_output_sample(buffer, caps, stream_id, copy_output);
 }
 
 std::optional<std::size_t>
@@ -2844,6 +3055,33 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
   return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
                                               branch_actual_indices, NameTransform{},
                                               "neat_test_output", options, enable_terminal_loans)
+      .pipeline_string;
+}
+
+std::string
+render_fused_realtime_pipeline_for_test(const runtime::FusedRealtimeIngress& ingress,
+                                        const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+                                        const GraphOptions& options) {
+  std::vector<std::vector<std::shared_ptr<Node>>> branch_nodes;
+  std::vector<std::vector<int>> branch_actual_indices;
+  branch_nodes.reserve(ingress.branches.size());
+  branch_actual_indices.reserve(ingress.branches.size());
+
+  int next_actual_index = static_cast<int>(consumer_nodes.size());
+  for (const auto& branch : ingress.branches) {
+    branch_nodes.push_back(branch.nodes);
+    std::vector<int> indices;
+    indices.reserve(branch.nodes.size());
+    for (std::size_t i = 0; i < branch.nodes.size(); ++i) {
+      indices.push_back(next_actual_index++);
+    }
+    branch_actual_indices.push_back(std::move(indices));
+  }
+
+  return build_fused_realtime_source_pipeline(ingress, consumer_nodes, branch_nodes,
+                                              branch_actual_indices, make_name_transform(options),
+                                              "neat_test_output", options,
+                                              /*enable_terminal_loans=*/true)
       .pipeline_string;
 }
 
@@ -2949,7 +3187,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   attach_fused_realtime_branch_counters(pipeline.get(), ingress.branches.size());
   attach_fused_realtime_stage_counters(pipeline.get(), ingress);
   attach_fused_decoder_timing_probes(pipeline.get(), ingress);
-  attach_fused_encoded_output_probes(pipeline.get(), ingress, encoded_output_dispatch);
+  attach_fused_encoded_output_probes(pipeline.get(), ingress, encoded_output_dispatch,
+                                     stream_opt.copy_output);
 
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     std::vector<std::shared_ptr<Node>> logical = build_branch_nodes[branch_index];

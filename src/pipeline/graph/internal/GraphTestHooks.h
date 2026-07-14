@@ -19,6 +19,9 @@ struct RealtimeMuxByStream;
 class Node;
 struct Sample;
 struct InputOptions;
+namespace runtime {
+struct FusedRealtimeIngress;
+} // namespace runtime
 } // namespace simaai::neat
 
 namespace simaai::neat::session_test {
@@ -38,10 +41,15 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
     const std::vector<RealtimeMuxByStream>& link_options, bool enable_terminal_loans);
+std::string
+render_fused_realtime_pipeline_for_test(const runtime::FusedRealtimeIngress& ingress,
+                                        const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+                                        const GraphOptions& options);
 std::string render_fused_realtime_ingress_queue_for_test(const RealtimeMuxByStream& link_options);
 GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info);
 Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
-                                                 const std::string& stream_id);
+                                                 const std::string& stream_id,
+                                                 bool copy_output = false);
 std::optional<std::size_t>
 find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pending_pts,
                                          std::optional<std::uint64_t> output_pts);

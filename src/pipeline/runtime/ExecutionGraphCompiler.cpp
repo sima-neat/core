@@ -11,6 +11,8 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/H264Parse.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
@@ -98,7 +100,16 @@ void resolve_default_endpoints(const graph::Graph& graph, ExecutionGraphPlan* pl
   std::unordered_set<graph::NodeId> pipeline_nodes;
 
   for (const auto& seg : plan->pipeline_segments) {
+    // Keep consumed fused-ingress nodes out of the generic graph-sink fallback
+    // below.  They still belong to pipeline segments in the compiled plan even
+    // though the fused target renders them in its monolithic source pipeline.
+    // In particular, a consumed UdpOutput from an encoded VideoSender branch
+    // must not become a phantom pull endpoint merely because its original
+    // segment no longer starts independently.
     pipeline_nodes.insert(seg.node_ids.begin(), seg.node_ids.end());
+    if (seg.consumed_by_fused_realtime_ingress) {
+      continue;
+    }
     if (seg.node_ids.empty()) {
       continue;
     }
@@ -117,6 +128,30 @@ void resolve_default_endpoints(const graph::Graph& graph, ExecutionGraphPlan* pl
           .node = seg.node_ids.back(),
           .port = graph::kInvalidPort,
           .segment = seg.id,
+      });
+    }
+  }
+
+  // A public encoded Output absorbed into fused ingress is the one intentional
+  // exception: it remains a graph-owned pull endpoint even though its original
+  // Output-only segment is consumed.  Add it explicitly rather than treating
+  // every terminal node from every consumed segment as a GraphSink.
+  std::unordered_set<graph::NodeId> fused_encoded_outputs;
+  for (const auto& seg : plan->pipeline_segments) {
+    if (seg.consumed_by_fused_realtime_ingress || !seg.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    for (const auto& branch : seg.fused_realtime_ingress->branches) {
+      if (!branch.encoded_output.has_value() ||
+          branch.encoded_output->sink_node == graph::kInvalidNode ||
+          !fused_encoded_outputs.insert(branch.encoded_output->sink_node).second) {
+        continue;
+      }
+      outputs.push_back(Endpoint{
+          .kind = Endpoint::Kind::GraphSink,
+          .node = branch.encoded_output->sink_node,
+          .port = graph::kInvalidPort,
+          .segment = static_cast<std::size_t>(-1),
       });
     }
   }
@@ -1719,7 +1754,37 @@ struct EncodedOutputFusionMatch {
   std::vector<std::size_t> consumed_edges;
   std::vector<std::shared_ptr<Node>> branch_nodes;
   FusedRealtimeIngressBranch::EncodedOutput encoded_output;
+  std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+  std::size_t encoded_split_node_index = 0;
 };
+
+bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
+  if (segment.nodes.size() != 3U) {
+    return false;
+  }
+  return segment.nodes[0] && segment.nodes[0]->kind() == "H264Parse" && segment.nodes[1] &&
+         segment.nodes[1]->kind() == "H264Packetize" && segment.nodes[2] &&
+         segment.nodes[2]->kind() == "UdpOutput";
+}
+
+bool encoded_video_sender_parser_is_redundant(const PipelineSegmentPlan& segment) {
+  if (!is_encoded_video_sender_segment(segment)) {
+    return false;
+  }
+  const auto* parser = dynamic_cast<const simaai::neat::H264Parse*>(segment.nodes[0].get());
+  const auto* packetizer = dynamic_cast<const simaai::neat::H264Packetize*>(segment.nodes[1].get());
+  if (!parser || !packetizer) {
+    return false;
+  }
+  const auto& parser_options = parser->options();
+  // H264Depacketize already guarantees parsed, byte-stream, AU-aligned input.
+  // The standard VideoSender configures the parser and packetizer with the
+  // same SPS/PPS interval, so the packetizer fully subsumes this parser. Keep
+  // a custom parser when it enforces caps or has distinct header-insertion
+  // semantics rather than optimizing away customer-visible behavior.
+  return !parser_options.enforce_caps &&
+         parser_options.config_interval == packetizer->config_interval();
+}
 
 std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
     const ExecutionGraphPlan& plan,
@@ -1814,13 +1879,17 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
   }
   const std::size_t output_index = output_it->second;
   const auto& output = plan.pipeline_segments[output_index];
-  if (output.consumed_by_fused_realtime_ingress || output.input_edges.size() != 1U ||
-      output.input_edges.front() != fanout_to_output_edge || !output.output_edges.empty() ||
-      output.nodes.size() != 1U || output.node_ids.empty()) {
+  if (output.consumed_by_fused_realtime_ingress || output.input_edges.empty() ||
+      std::find(output.input_edges.begin(), output.input_edges.end(), fanout_to_output_edge) ==
+          output.input_edges.end() ||
+      !output.output_edges.empty() || output.node_ids.empty()) {
     return std::nullopt;
   }
-  const auto* output_node = dynamic_cast<const simaai::neat::Output*>(output.nodes.front().get());
-  if (!output_node) {
+  const auto* output_node =
+      output.nodes.size() == 1U
+          ? dynamic_cast<const simaai::neat::Output*>(output.nodes.front().get())
+          : nullptr;
+  if (!output_node && !is_encoded_video_sender_segment(output)) {
     return std::nullopt;
   }
 
@@ -1833,10 +1902,28 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
                           target_edge_index};
   match.branch_nodes.reserve(source.nodes.size() + decoder.nodes.size());
   match.branch_nodes.insert(match.branch_nodes.end(), source.nodes.begin(), source.nodes.end());
+  match.encoded_split_node_index = match.branch_nodes.size();
   match.branch_nodes.insert(match.branch_nodes.end(), decoder.nodes.begin(), decoder.nodes.end());
-  match.encoded_output.sink_node = output.node_ids.back();
-  match.encoded_output.options = output_node->options();
-  match.encoded_output.stream_id = target_edge.stream_id;
+  if (output_node) {
+    match.encoded_output.sink_node = output.node_ids.back();
+    match.encoded_output.options = output_node->options();
+    const auto& encoded_output_edge = plan.edges[fanout_to_output_edge];
+    match.encoded_output.stream_id = !encoded_output_edge.stream_id.empty()
+                                         ? encoded_output_edge.stream_id
+                                         : encoded_output_edge.link_options.stream_id;
+  } else {
+    if (encoded_video_sender_parser_is_redundant(output)) {
+      // RtspEncodedInput already terminates in parsed, AU-aligned byte-stream
+      // H.264. The standard VideoSender parser uses the same config interval
+      // as its payloader, so lower that exact preset to packetizer + UDP only.
+      match.encoded_sink_nodes.assign(output.nodes.begin() + 1, output.nodes.end());
+    } else {
+      // Preserve a custom H264Parse exactly. Automatic fusion is an execution
+      // lowering and must not silently remove caps enforcement or a distinct
+      // SPS/PPS insertion policy from an otherwise eligible customer graph.
+      match.encoded_sink_nodes = output.nodes;
+    }
+  }
   return match;
 }
 
@@ -1880,6 +1967,8 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     std::optional<std::size_t> consumed_stage;
     std::vector<std::shared_ptr<Node>> nodes;
     std::optional<FusedRealtimeIngressBranch::EncodedOutput> encoded_output;
+    std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+    std::optional<std::size_t> encoded_split_node_index;
     OutputSpec output_spec;
     bool output_complete = false;
   };
@@ -1940,7 +2029,11 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         candidate.consumed_edges = encoded_match->consumed_edges;
         candidate.consumed_stage = encoded_match->fanout_stage;
         candidate.nodes = encoded_match->branch_nodes;
-        candidate.encoded_output = encoded_match->encoded_output;
+        if (encoded_match->encoded_output.sink_node != graph::kInvalidNode) {
+          candidate.encoded_output = encoded_match->encoded_output;
+        }
+        candidate.encoded_sink_nodes = encoded_match->encoded_sink_nodes;
+        candidate.encoded_split_node_index = encoded_match->encoded_split_node_index;
         candidate.output_spec = edge.spec_complete ? edge.spec : decoder.output_spec;
         candidate.output_complete = edge.spec_complete || decoder.output_complete;
       }
@@ -1965,6 +2058,8 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       branch.link_options = edge.link_options;
       branch.nodes = std::move(candidate.nodes);
       branch.encoded_output = std::move(candidate.encoded_output);
+      branch.encoded_sink_nodes = std::move(candidate.encoded_sink_nodes);
+      branch.encoded_split_node_index = candidate.encoded_split_node_index;
       if (branch.encoded_output.has_value() && branch.encoded_output->stream_id.empty()) {
         branch.encoded_output->stream_id = branch.stream_id;
       }

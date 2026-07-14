@@ -6,11 +6,16 @@
 #include "gst/GstInit.h"
 #include "graphs/Fragments.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
+#include "nodes/io/UdpOutput.h"
 #include "nodes/groups/RtspEncodedInput.h"
+#include "nodes/groups/VideoSender.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/H264Parse.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
@@ -437,6 +442,32 @@ RUN_TEST(
 
       simaai::neat::GraphOptions outer_options;
       outer_options.async_queue_depth = 3;
+
+      // Customers do not need a fusion build mode, a realtime-specific
+      // connect method, or a feature switch for the common live fan-in case.
+      // Two ordinary live-source connect() calls are promoted to the default
+      // latest-by-stream policy and ordinary build() compilation fuses them.
+      simaai::neat::Graph default_live_app("default_live_fan_in", outer_options);
+      auto default_live_detector = make_composed_consumer_graph();
+      default_live_app.connect(make_live_source_graph(400), default_live_detector);
+      default_live_app.connect(make_live_source_graph(401), default_live_detector);
+      const auto default_live_plan =
+          simaai::neat::runtime::compile_public_graph(default_live_app, simaai::neat::RunOptions{});
+      const auto default_live_fused = std::find_if(
+          default_live_plan.pipeline_segments.begin(), default_live_plan.pipeline_segments.end(),
+          [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); });
+      require(default_live_fused != default_live_plan.pipeline_segments.end() &&
+                  default_live_fused->fused_realtime_ingress->branches.size() == 2U,
+              "ordinary connect()/build() live fan-in must select fused lowering automatically");
+      for (const auto& branch : default_live_fused->fused_realtime_ingress->branches) {
+        require(branch.link_options.policy ==
+                        simaai::neat::GraphLinkPolicy::RealtimeLatestByStream &&
+                    branch.link_options.max_inflight_per_stream == -1 &&
+                    branch.link_options.max_inflight_total == -1,
+                "automatic live fan-in must use safe framework admission defaults without "
+                "customer setup");
+      }
+
       simaai::neat::Graph composed_app("composed_fused_queue_app", outer_options);
       auto composed_detector = make_composed_consumer_graph();
       for (int stream = 0; stream < 2; ++stream) {
@@ -572,6 +603,9 @@ RUN_TEST(
       // preserving the encoded named Outputs as graph-scoped, ref-counted taps.
       simaai::neat::Graph encoded_fanout_app("encoded_output_fused_app", outer_options);
       auto encoded_fanout_detector = make_composed_consumer_graph();
+      simaai::neat::Graph shared_encoded_output("shared_encoded_branch");
+      shared_encoded_output.add(simaai::neat::nodes::Output(
+          "encoded_h264", simaai::neat::OutputOptions::EveryFrame(/*max_buffers=*/120)));
       for (int stream = 0; stream < 2; ++stream) {
         simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
         source_options.url = "rtsp://example.test/stream" + std::to_string(stream);
@@ -589,13 +623,7 @@ RUN_TEST(
         // must normalize it away rather than materializing a decoded-frame
         // appsink/appsrc pair.
         decoder.add(simaai::neat::nodes::Output("detector_frame"));
-        simaai::neat::Graph encoded_output("encoded_branch" + std::to_string(stream));
-        encoded_output.add(simaai::neat::nodes::Output(
-            "encoded" + std::to_string(stream),
-            simaai::neat::OutputOptions::EveryFrame(/*max_buffers=*/60)));
-
         encoded_fanout_app.connect(source, decoder);
-        encoded_fanout_app.connect(source, encoded_output);
         simaai::neat::RealtimeMuxByStream realtime;
         realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
         realtime.queue_depth = 1;
@@ -603,6 +631,12 @@ RUN_TEST(
         realtime.max_inflight_per_stream = 1;
         realtime.max_inflight_total = 2;
         encoded_fanout_app.connect(decoder, encoded_fanout_detector, realtime);
+
+        simaai::neat::RealtimeMuxByStream encoded_realtime;
+        encoded_realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
+        encoded_realtime.queue_depth = 1;
+        encoded_realtime.stream_id = "encoded_output_stream" + std::to_string(stream);
+        encoded_fanout_app.connect(source, shared_encoded_output, encoded_realtime);
       }
       const auto encoded_fanout_plan =
           simaai::neat::runtime::compile_public_graph(encoded_fanout_app, composed_run_options);
@@ -625,8 +659,8 @@ RUN_TEST(
       for (const auto& segment : encoded_fanout_plan.pipeline_segments) {
         consumed_segments += segment.consumed_by_fused_realtime_ingress ? 1U : 0U;
       }
-      require(consumed_segments == 6U,
-              "each encoded stream must absorb its source, decoder, and Output segment");
+      require(consumed_segments == 5U,
+              "encoded streams must absorb both sources/decoders and their shared Output");
       std::size_t consumed_fanouts = 0;
       for (const auto& stage : encoded_fanout_plan.stage_nodes) {
         consumed_fanouts += stage.consumed_by_fused_realtime_ingress ? 1U : 0U;
@@ -639,16 +673,20 @@ RUN_TEST(
         const auto& branch = encoded_fused_segment->fused_realtime_ingress->branches[stream];
         require(branch.encoded_output.has_value(),
                 "fused encoded branch must retain its graph-owned Output plan");
-        require(branch.encoded_output->options.max_buffers == 60 &&
+        require(branch.encoded_output->options.max_buffers == 120 &&
                     !branch.encoded_output->options.drop,
                 "fused encoded Output must preserve EveryFrame queue options");
         require(branch.stream_id.rfind("encoded_stream", 0) == 0,
                 "fused encoded branch must preserve its configured stream id");
-        const std::string output_name = "encoded" + branch.stream_id.substr(14);
-        const auto named = encoded_fanout_plan.named_outputs.find(output_name);
+        const std::string stream_suffix =
+            branch.stream_id.substr(std::string("encoded_stream").size());
+        require(branch.encoded_output->stream_id == "encoded_output_stream" + stream_suffix,
+                "fused encoded Output must preserve the source-to-Output edge stream id (got '" +
+                    branch.encoded_output->stream_id + "')");
+        const auto named = encoded_fanout_plan.named_outputs.find("encoded_h264");
         require(named != encoded_fanout_plan.named_outputs.end() &&
                     named->second.node == branch.encoded_output->sink_node,
-                "fused encoded Output must remain pullable by its public name");
+                "shared fused encoded Output must remain pullable by its public name");
         require(std::any_of(branch.nodes.begin(), branch.nodes.end(),
                             [](const auto& node) {
                               return dynamic_cast<const simaai::neat::H264Depacketize*>(
@@ -661,6 +699,224 @@ RUN_TEST(
                                      nullptr;
                             }),
                 "fused encoded branch must retain hardware decode");
+      }
+
+      // The durable App16 topology connects the encoded producer directly to
+      // VideoSender. Automatic fusion must render that sink behind an encoded
+      // tee rather than materializing an appsink/appsrc transport or CPU copy.
+      simaai::neat::Graph direct_video_app("direct_encoded_video_fused_app", outer_options);
+      auto direct_video_detector = make_composed_consumer_graph();
+      for (int stream = 0; stream < 2; ++stream) {
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/direct" + std::to_string(stream);
+        source_options.insert_queue = false;
+        source_options.auto_caps_from_stream = false;
+        source_options.h264_fps = 20;
+        source_options.h264_width = 1280;
+        source_options.h264_height = 720;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+
+        simaai::neat::Graph decoder("direct_decoder" + std::to_string(stream));
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        decoder.add(simaai::neat::nodes::Output("direct_detector_frame"));
+
+        simaai::neat::RealtimeMuxByStream realtime;
+        realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        realtime.queue_depth = 1;
+        realtime.stream_id = "direct_stream" + std::to_string(stream);
+        realtime.max_inflight_per_stream = 1;
+        realtime.max_inflight_total = 2;
+        direct_video_app.connect(source, decoder);
+        direct_video_app.connect(decoder, direct_video_detector, realtime);
+
+        auto video_options =
+            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
+        video_options.host = "127.0.0.1";
+        video_options.channel = stream;
+        auto video_sender = simaai::neat::nodes::groups::VideoSender(video_options);
+        video_sender.set_name("direct_video_sender_" + std::to_string(stream));
+        direct_video_app.connect(source, video_sender);
+      }
+      const auto direct_video_plan =
+          simaai::neat::runtime::compile_public_graph(direct_video_app, composed_run_options);
+      const simaai::neat::runtime::PipelineSegmentPlan* direct_video_fused = nullptr;
+      for (const auto& segment : direct_video_plan.pipeline_segments) {
+        if (segment.fused_realtime_ingress.has_value()) {
+          require(direct_video_fused == nullptr,
+                  "direct encoded VideoSender topology must create one fused consumer");
+          direct_video_fused = &segment;
+        }
+      }
+      require(direct_video_fused != nullptr &&
+                  direct_video_fused->fused_realtime_ingress->branches.size() == 2U,
+              "direct encoded VideoSender topology must fuse both streams");
+      const auto direct_detections = direct_video_plan.named_outputs.find("detections");
+      require(direct_detections != direct_video_plan.named_outputs.end(),
+              "direct VideoSender fusion must preserve the detector Output");
+      require(direct_video_plan.output_endpoints.size() == 1U &&
+                  direct_video_plan.default_output.has_value() &&
+                  direct_video_plan.default_output->node == direct_detections->second.node,
+              "consumed VideoSender UDP sinks must not become phantom pull endpoints");
+      for (const auto& branch : direct_video_fused->fused_realtime_ingress->branches) {
+        require(!branch.encoded_output.has_value(),
+                "direct VideoSender fusion must not synthesize a public encoded Output");
+        require(branch.encoded_sink_nodes.size() == 2U &&
+                    branch.encoded_sink_nodes[0]->kind() == "H264Packetize" &&
+                    branch.encoded_sink_nodes[1]->kind() == "UdpOutput",
+                "direct VideoSender fusion must reuse the source parser and retain the "
+                "packetizer and sink");
+        require(branch.encoded_split_node_index.has_value() &&
+                    *branch.encoded_split_node_index < branch.nodes.size() &&
+                    branch.nodes[*branch.encoded_split_node_index]->kind() == "SimaDecode",
+                "standard direct VideoSender fusion must tee at the source/decoder boundary");
+      }
+      std::size_t direct_consumed_segments = 0;
+      for (const auto& segment : direct_video_plan.pipeline_segments) {
+        direct_consumed_segments += segment.consumed_by_fused_realtime_ingress ? 1U : 0U;
+      }
+      require(direct_consumed_segments == 6U,
+              "each direct video stream must absorb its source, decoder, and sender segment");
+
+      const std::string direct_video_pipeline =
+          simaai::neat::session_test::render_fused_realtime_pipeline_for_test(
+              *direct_video_fused->fused_realtime_ingress, direct_video_fused->nodes,
+              direct_video_fused->route_options);
+      const std::string lossless_decoder_queue =
+          " ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! neatdecoder";
+      const std::string leaky_video_queue =
+          "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! "
+          "rtph264pay";
+      require(count_occurrences(direct_video_pipeline, lossless_decoder_queue) == 2U,
+              "a queue-less encoded prefix must retain one lossless decoder queue per stream");
+      require(count_occurrences(direct_video_pipeline, leaky_video_queue) == 2U,
+              "each encoded VideoSender branch must retain its leaky one-AU video queue");
+
+      // RtspEncodedInput normally ends its encoded prefix in the framework's
+      // typed Queue. That queue already provides the tee task boundary, so a
+      // second lossless queue on every decoder branch only adds scheduler and
+      // buffering overhead at 24/48 streams.
+      auto typed_queue_ingress = *direct_video_fused->fused_realtime_ingress;
+      for (auto& branch : typed_queue_ingress.branches) {
+        const std::size_t split = *branch.encoded_split_node_index;
+        branch.nodes.insert(branch.nodes.begin() + static_cast<std::ptrdiff_t>(split),
+                            simaai::neat::nodes::Queue());
+        branch.encoded_split_node_index = split + 1U;
+        require(dynamic_cast<const simaai::neat::Queue*>(branch.nodes[split].get()) != nullptr,
+                "the optimized prefix test must use the framework's typed Queue");
+      }
+      const std::string typed_queue_pipeline =
+          simaai::neat::session_test::render_fused_realtime_pipeline_for_test(
+              typed_queue_ingress, direct_video_fused->nodes, direct_video_fused->route_options);
+      require(count_occurrences(typed_queue_pipeline, lossless_decoder_queue) == 0U,
+              "a typed prefix Queue must suppress the redundant lossless decoder queue");
+      require(count_occurrences(typed_queue_pipeline, ". ! neatdecoder") == 2U,
+              "each typed-Queue prefix tee must feed its decoder directly");
+      require(count_occurrences(typed_queue_pipeline, leaky_video_queue) == 2U,
+              "suppressing the decoder queue must not remove the leaky video queue");
+
+      // A custom Node is allowed to use the label \"Queue\". Do not infer its
+      // scheduling or loss behavior from kind() alone.
+      auto custom_queue_ingress = *direct_video_fused->fused_realtime_ingress;
+      for (auto& branch : custom_queue_ingress.branches) {
+        const std::size_t split = *branch.encoded_split_node_index;
+        branch.nodes.insert(branch.nodes.begin() + static_cast<std::ptrdiff_t>(split),
+                            std::make_shared<FragmentNode>("Queue", "queue", "customer_queue"));
+        branch.encoded_split_node_index = split + 1U;
+      }
+      const std::string custom_queue_pipeline =
+          simaai::neat::session_test::render_fused_realtime_pipeline_for_test(
+              custom_queue_ingress, direct_video_fused->nodes, direct_video_fused->route_options);
+      require(count_occurrences(custom_queue_pipeline, lossless_decoder_queue) == 2U,
+              "a kind-only custom Queue must retain the lossless decoder queue fallback");
+      require(count_occurrences(direct_video_pipeline, "rtph264pay name=neat_fused_pay_") == 2U,
+              "each fused direct VideoSender branch must render its own RTP packetizer name");
+      require(direct_video_pipeline.find("rtph264pay name=pay0") == std::string::npos,
+              "fused direct VideoSender branches must not retain the fixed pay0 name");
+      const std::size_t first_pay = direct_video_pipeline.find("name=neat_fused_pay_");
+      const std::size_t second_pay = direct_video_pipeline.find(
+          "name=neat_fused_pay_", first_pay + std::string("name=neat_fused_pay_").size());
+      const std::size_t first_pay_end = direct_video_pipeline.find(' ', first_pay);
+      const std::size_t second_pay_end = direct_video_pipeline.find(' ', second_pay);
+      require(first_pay != std::string::npos && second_pay != std::string::npos &&
+                  direct_video_pipeline.substr(first_pay, first_pay_end - first_pay) !=
+                      direct_video_pipeline.substr(second_pay, second_pay_end - second_pay),
+              "fused direct VideoSender RTP packetizer names must be unique");
+      GError* direct_video_parse_error = nullptr;
+      GstElement* direct_video_parsed =
+          gst_parse_launch(direct_video_pipeline.c_str(), &direct_video_parse_error);
+      const std::string direct_video_parse_message =
+          direct_video_parse_error && direct_video_parse_error->message
+              ? direct_video_parse_error->message
+              : std::string{};
+      if (direct_video_parse_error) {
+        g_error_free(direct_video_parse_error);
+      }
+      if (direct_video_parsed) {
+        gst_object_unref(direct_video_parsed);
+      }
+      require(direct_video_parsed != nullptr && direct_video_parse_message.empty(),
+              "the full fused direct VideoSender pipeline must parse without element-name "
+              "collisions: " +
+                  direct_video_parse_message);
+
+      // Kind-based recognition must not optimize away a customer-configured
+      // parser whose caps/header behavior differs from the VideoSender preset.
+      simaai::neat::Graph custom_video_app("custom_encoded_video_fused_app", outer_options);
+      auto custom_video_detector = make_composed_consumer_graph();
+      for (int stream = 0; stream < 2; ++stream) {
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/custom" + std::to_string(stream);
+        source_options.insert_queue = false;
+        source_options.auto_caps_from_stream = false;
+        source_options.h264_fps = 20;
+        source_options.h264_width = 1280;
+        source_options.h264_height = 720;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+
+        simaai::neat::Graph decoder("custom_decoder" + std::to_string(stream));
+        simaai::neat::H264ParseOptions decoder_parser_options;
+        decoder_parser_options.config_interval = -1;
+        decoder.add(simaai::neat::nodes::H264Parse(decoder_parser_options));
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        decoder.add(simaai::neat::nodes::Output("custom_detector_frame"));
+        simaai::neat::RealtimeMuxByStream realtime;
+        realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        realtime.stream_id = "custom_stream" + std::to_string(stream);
+        custom_video_app.connect(source, decoder);
+        custom_video_app.connect(decoder, custom_video_detector, realtime);
+
+        simaai::neat::H264ParseOptions parser_options;
+        parser_options.config_interval = 1;
+        parser_options.enforce_caps = true;
+        parser_options.alignment = simaai::neat::H264ParseOptions::Alignment::AU;
+        parser_options.stream_format = simaai::neat::H264ParseOptions::StreamFormat::ByteStream;
+        simaai::neat::Graph custom_sender("custom_sender" + std::to_string(stream));
+        custom_sender.add(simaai::neat::nodes::H264Parse(parser_options));
+        custom_sender.add(
+            simaai::neat::nodes::H264Packetize(simaai::neat::H264Packetize::PayloadType(96),
+                                               simaai::neat::H264Packetize::ConfigInterval(5)));
+        simaai::neat::UdpOutputOptions udp_options;
+        udp_options.port = 9200 + stream;
+        custom_sender.add(simaai::neat::nodes::UdpOutput(udp_options));
+        custom_video_app.connect(source, custom_sender);
+      }
+      const auto custom_video_plan =
+          simaai::neat::runtime::compile_public_graph(custom_video_app, composed_run_options);
+      const auto custom_video_fused = std::find_if(
+          custom_video_plan.pipeline_segments.begin(), custom_video_plan.pipeline_segments.end(),
+          [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); });
+      require(custom_video_fused != custom_video_plan.pipeline_segments.end(),
+              "custom encoded VideoSender-shaped topology must remain eligible for fusion");
+      for (const auto& branch : custom_video_fused->fused_realtime_ingress->branches) {
+        require(branch.encoded_sink_nodes.size() == 3U &&
+                    branch.encoded_sink_nodes.front()->kind() == "H264Parse",
+                "fusion must preserve a custom encoded parser with distinct semantics");
+        require(branch.encoded_split_node_index.has_value() &&
+                    *branch.encoded_split_node_index + 1U < branch.nodes.size() &&
+                    branch.nodes[*branch.encoded_split_node_index]->kind() == "H264Parse" &&
+                    branch.nodes[*branch.encoded_split_node_index + 1U]->kind() == "SimaDecode",
+                "fusion must tee before decoder-fragment preprocessing rather than moving the "
+                "public fan-out boundary to SimaDecode");
       }
 
       simaai::neat::Graph mixed_policy_app("mixed_realtime_policy_app", outer_options);

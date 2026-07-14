@@ -126,6 +126,19 @@ struct FusedRealtimeIngressBranch {
     std::string stream_id;
   };
   std::optional<EncodedOutput> encoded_output;
+  /**
+   * Optional encoded H.264 sink branch tapped before the hardware decoder.
+   * These nodes are rendered behind a bounded leaky tee branch in the fused
+   * source pipeline (for example H264Packetize -> UdpOutput). The normalized
+   * RTSP source parser is shared by the video and decoder paths.
+   */
+  std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+  /**
+   * Node offset immediately after the original encoded source segment. The
+   * tee must stay at this public fan-out boundary; decoder-fragment nodes that
+   * happen to precede SimaDecode are private to the decoder branch.
+   */
+  std::optional<std::size_t> encoded_split_node_index;
   OutputSpec output_spec;
   bool output_complete = false;
 };

@@ -357,6 +357,39 @@ void test_graph_scoped_encoded_output_retains_au_and_timing_zero_copy() {
           "encoded Output AU must remain alive until the pulled Sample is released");
 }
 
+void test_graph_scoped_encoded_output_owned_copy_releases_source() {
+  constexpr GstClockTime kPts = 7001001;
+  constexpr GstClockTime kDts = 6001001;
+  constexpr GstClockTime kDuration = 100000000;
+  const std::vector<std::uint8_t> expected = {0x00, 0x00, 0x00, 0x01, 0x41, 0x56, 0x78};
+  GstCaps* caps =
+      gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
+  require(caps != nullptr, "failed to allocate owned encoded Output caps");
+  GstBuffer* source = make_encoded_tap_buffer(expected, kPts, kDts, kDuration);
+
+  simaai::neat::Sample captured =
+      simaai::neat::session_test::make_fused_encoded_output_sample_for_test(
+          source, caps, "stream23", /*copy_output=*/true);
+  require(captured.owned, "owned encoded Output should report app-owned storage");
+  require(captured.stream_id == "stream23", "owned encoded Output should preserve stream identity");
+  require(captured.pts_ns == static_cast<std::int64_t>(kPts) &&
+              captured.dts_ns == static_cast<std::int64_t>(kDts) &&
+              captured.duration_ns == static_cast<std::int64_t>(kDuration),
+          "owned encoded Output should preserve timing");
+  require(captured.tensors.size() == 1U && captured.tensors.front().storage &&
+              captured.tensors.front().storage->kind == simaai::neat::StorageKind::CpuExternal,
+          "owned encoded Output must copy into CPU storage, not retain a GstSample");
+
+  gst_buffer_unref(source);
+  gst_caps_unref(caps);
+  const simaai::neat::Mapping payload = captured.tensors.front().map_read();
+  require(payload.data != nullptr && payload.size_bytes == expected.size(),
+          "owned encoded Output payload has the wrong size after source release");
+  const auto* payload_bytes = static_cast<const std::uint8_t*>(payload.data);
+  require(std::equal(expected.begin(), expected.end(), payload_bytes),
+          "owned encoded Output must remain valid independently of its source buffer");
+}
+
 void test_graph_scoped_encoded_output_queue_overflow_policy() {
   simaai::neat::runtime::GraphSinkQueue every_frame_queue(1);
   simaai::neat::OutputOptions every_frame = simaai::neat::OutputOptions::EveryFrame(1);
@@ -1425,6 +1458,7 @@ int main() {
     simaai::neat::gst_init_once();
 
     test_graph_scoped_encoded_output_retains_au_and_timing_zero_copy();
+    test_graph_scoped_encoded_output_owned_copy_releases_source();
     test_graph_scoped_encoded_output_queue_overflow_policy();
     test_terminal_release_restores_original_pts();
     test_replacing_chain_uses_per_stream_fifo_timing();

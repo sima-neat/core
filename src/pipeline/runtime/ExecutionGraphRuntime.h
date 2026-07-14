@@ -66,7 +66,7 @@ enum class FusedEncodedOutputEnqueueResult {
 inline FusedEncodedOutputEnqueueResult
 enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
   RuntimeSinkQueueMsg message{.sample = std::move(sample), .edge_index = invalid_edge_index()};
-  if (queue.try_push(message)) {
+  if (queue.try_push(std::move(message))) {
     return FusedEncodedOutputEnqueueResult::Enqueued;
   }
   if (queue.stats().closed) {

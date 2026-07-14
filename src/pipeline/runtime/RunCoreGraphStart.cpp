@@ -33,6 +33,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -1175,8 +1176,12 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   std::vector<bool> has_out(runtime_node_count(execution.plan), false);
   std::unordered_map<std::string, std::size_t> realtime_link_by_target;
+  std::unordered_set<NodeId> consumed_fused_nodes;
   std::unordered_map<NodeId, OutputOptions> fused_encoded_output_options;
   for (const auto& segment : execution.plan.pipeline_segments) {
+    if (segment.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(segment.node_ids.begin(), segment.node_ids.end());
+    }
     if (!segment.fused_realtime_ingress.has_value()) {
       continue;
     }
@@ -1186,6 +1191,11 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         fused_encoded_output_options.emplace(branch.encoded_output->sink_node,
                                              branch.encoded_output->options);
       }
+    }
+  }
+  for (const auto& stage : execution.plan.stage_nodes) {
+    if (stage.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(stage.node_id);
     }
   }
 
@@ -1257,8 +1267,16 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   for (NodeId id = 0; id < has_out.size(); ++id) {
     if (!has_out[id]) {
-      std::size_t capacity = core->graph_options.edge_queue;
       const auto encoded = fused_encoded_output_options.find(id);
+      // Source/decoder/fan-out/VideoSender nodes absorbed into fused ingress
+      // are executed inside the target pipeline and are not graph sinks.  The
+      // only consumed node that still owns a sink queue is an explicit encoded
+      // Output, whose queue is fed by the graph-scoped fused dispatcher.
+      if (consumed_fused_nodes.find(id) != consumed_fused_nodes.end() &&
+          encoded == fused_encoded_output_options.end()) {
+        continue;
+      }
+      std::size_t capacity = core->graph_options.edge_queue;
       if (encoded != fused_encoded_output_options.end()) {
         capacity = encoded->second.max_buffers <= 0
                        ? 0U
