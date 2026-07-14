@@ -74,9 +74,9 @@ permissions.
 
 | Host OS | CPU | RAM | Free disk | Admin / sudo |
 | --- | --- | --- | --- | --- |
-| Ubuntu 22.04 / 24.04 (`x86_64` or `aarch64`) | 4 cores min | 16 GB min | 100 GB | `sudo` for SDK install (`sima-cli`, Docker, SDK image), NFS install/config, and shared-network/firewall setup |
+| Ubuntu 22.04 / 24.04 (`x86_64` or `arm64`) | 4 cores min | 16 GB min | 100 GB | `sudo` for SDK install (`sima-cli`, Docker, SDK image), NFS install/config, and shared-network/firewall setup |
 | Windows 11 via WSL (`x86_64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install in WSL (Docker, `sima-cli`), WSL networking, and NFS firewall rules |
-| macOS 15.5+ Apple Silicon (`aarch64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install (Homebrew, Colima, `sima-cli`), Full Disk Access (`nfsd`), and Internet Sharing |
+| macOS 15.5+ Apple Silicon (`arm64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install (Homebrew, Colima, `sima-cli`), Full Disk Access (`nfsd`), and Internet Sharing |
 
 :::note GenAI model compilation needs more
 Compiling GenAI models with LLiMa is far heavier than the base SDK: 128 GB RAM
@@ -88,10 +88,25 @@ See [GenAI setup](/genai-llima/setup/) for the full requirements.
 
 | Platform | Arch | SDK | Model Compiler |
 | --- | --- | --- | --- |
-| Ubuntu 22.04 and 24.04 through Docker Engine | x86_64 | Yes | Yes |
-| Windows 11 through WSL and Docker Engine | x86_64 | Yes | Yes |
-| Ubuntu 22.04 and 24.04 through Docker Engine | aarch64 | Yes | Yes with 2.1.2 or above |
-| macOS 15.5 or above through Colima | aarch64 | Yes | Yes with 2.1.2 or above, must install within the Neat SDK |
+| Ubuntu 22.04 and 24.04 through Docker Engine | `x86_64` | Yes | Yes |
+| Windows 11 through WSL and Docker Engine | `x86_64` | Yes | Yes |
+| Ubuntu 22.04 and 24.04 through Docker Engine | `arm64` | Yes | Model Compiler 2.1.2 and later |
+| macOS 15.5 or above through Colima | `arm64` | Yes | Model Compiler 2.1.2 and later; install it inside the Neat SDK |
+
+:::note Architecture names
+`arm64` and `aarch64` are the same 64-bit Arm architecture — macOS reports it as
+`arm64`, Linux reports it as `aarch64`. Likewise, `x86_64` and `amd64` are the same
+architecture. Run `uname -m` on your host (or inside the SDK) to see which one you
+have. The Model Compiler install commands use `arm64` and `amd64` — see
+[Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
+:::
+
+:::note Installing a specific version
+Standard installation pulls the current supported defaults. The `release-2.1`
+channel used on the [Install the Environment](/getting-started/dev-environment/install-the-environment/)
+page always tracks the latest 2.1 patch release. To pin an exact SDK, Neat Library,
+or Model Compiler version, see the [Compatibility Guide](/getting-started/compatibility/).
+:::
 
 ## Tools in the SDK
 
