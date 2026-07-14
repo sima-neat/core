@@ -2448,7 +2448,7 @@ stage_package_artifacts_to_dist() {
   fi
 }
 
-write_dist_platform_version_manifest_field() {
+write_dist_package_contract_manifest_fields() {
   if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
     return 0
   fi
@@ -2466,8 +2466,11 @@ target_path = Path(sys.argv[2])
 
 source = json.loads(source_path.read_text(encoding="utf-8"))
 platform_version = str(source.get("platform-version", "")).strip()
+abi_version = str(source.get("abi-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty platform-version in {source_path}")
+if not abi_version.isdigit() or int(abi_version) < 1:
+    raise SystemExit(f"Missing or invalid abi-version in {source_path}")
 
 if target_path.exists():
     target = json.loads(target_path.read_text(encoding="utf-8"))
@@ -2477,10 +2480,11 @@ if not isinstance(target, dict):
     raise SystemExit(f"{target_path} must contain a JSON object")
 
 target["platform-version"] = platform_version
+target["abi-version"] = abi_version
 target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 
-  echo "Updated dist/manifest.json platform-version from ${NEAT_DEPS_MANIFEST}"
+  echo "Updated dist/manifest.json platform-version and abi-version from ${NEAT_DEPS_MANIFEST}"
 }
 
 append_dist_manifest_matches() {
@@ -2952,7 +2956,7 @@ main() {
   build_deb_if_requested
   build_extras_archive_if_requested
   stage_package_artifacts_to_dist
-  write_dist_platform_version_manifest_field
+  write_dist_package_contract_manifest_fields
   write_install_manifest
   generate_package_metadata_if_requested
   print_artifact_summary

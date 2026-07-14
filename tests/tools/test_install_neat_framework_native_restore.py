@@ -195,6 +195,171 @@ native_modalix_restore_specs specs
         )
 
 
+class SimaNeatLinkRepairTest(unittest.TestCase):
+    def test_abi3_package_manifest_drives_links_and_quarantines_unowned_abi2(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+touch "${tmp}/libsima_neat.so.2.1.2"
+ln -s libsima_neat.so.2.1.2 "${tmp}/libsima_neat.so.3"
+ln -s libsima_neat.so.3 "${tmp}/libsima_neat.so"
+ln -s libsima_neat.so.2.1.2 "${tmp}/libsima_neat.so.2"
+soname_inode="$(stat -c '%i' "${tmp}/libsima_neat.so.3")"
+
+sima_neat_global_lib_dir() { printf '%s\n' "${tmp}"; }
+dpkg-query() {
+  case "$1" in
+    -L)
+      printf '%s\n' \
+        "${tmp}/libsima_neat.so.2.1.2" \
+        "${tmp}/libsima_neat.so.3"
+      ;;
+    -S)
+      case "$2" in
+        "${tmp}/libsima_neat.so.2.1.2"|"${tmp}/libsima_neat.so.3"|"${tmp}/libsima_neat.so")
+          printf 'sima-neat: %s\n' "$2"
+          ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.3'; }
+run_sudo() { "$@"; }
+
+repair_global_sima_neat_lib_links
+verify_global_sima_neat_lib_links
+[[ "$(stat -c '%i' "${tmp}/libsima_neat.so.3")" == "${soname_inode}" ]]
+[[ "$(readlink "${tmp}/libsima_neat.so")" == 'libsima_neat.so.3' ]]
+[[ ! -e "${tmp}/libsima_neat.so.2" && ! -L "${tmp}/libsima_neat.so.2" ]]
+compgen -G "${tmp}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
+printf 'ABI3_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ABI3_OK", result.stdout)
+        self.assertIn("Quarantining stale unowned libsima_neat path", result.stdout)
+        self.assertNotIn("Repairing " + "/usr/lib/libsima_neat.so.2", result.stdout)
+
+    def test_package_owned_compatibility_soname_is_never_quarantined(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+touch "${tmp}/libsima_neat.so.2.1.2"
+ln -s libsima_neat.so.2.1.2 "${tmp}/libsima_neat.so.3"
+ln -s libsima_neat.so.3 "${tmp}/libsima_neat.so"
+ln -s libsima_neat.so.2.1.2 "${tmp}/libsima_neat.so.2"
+
+sima_neat_global_lib_dir() { printf '%s\n' "${tmp}"; }
+dpkg-query() {
+  case "$1" in
+    -L)
+      printf '%s\n' \
+        "${tmp}/libsima_neat.so.2.1.2" \
+        "${tmp}/libsima_neat.so.3"
+      ;;
+    -S)
+      printf 'test-package: %s\n' "$2"
+      ;;
+    *) return 1 ;;
+  esac
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.3'; }
+run_sudo() { "$@"; }
+
+repair_global_sima_neat_lib_links
+[[ "$(readlink "${tmp}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
+! compgen -G "${tmp}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
+printf 'OWNED_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OWNED_OK", result.stdout)
+        self.assertIn("Preserving package-owned libsima_neat compatibility link", result.stdout)
+
+    def test_wrong_package_owned_manifest_links_are_repaired_without_quarantine(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+touch "${tmp}/libsima_neat.so.2.1.2"
+ln -s missing-libsima-neat "${tmp}/libsima_neat.so.3"
+ln -s libsima_neat.so.2 "${tmp}/libsima_neat.so"
+ln -s libsima_neat.so.2.1.2 "${tmp}/libsima_neat.so.2"
+
+sima_neat_global_lib_dir() { printf '%s\n' "${tmp}"; }
+dpkg-query() {
+  case "$1" in
+    -L)
+      printf '%s\n' \
+        "${tmp}/libsima_neat.so.2.1.2" \
+        "${tmp}/libsima_neat.so.3"
+      ;;
+    -S) printf 'test-package: %s\n' "$2" ;;
+    *) return 1 ;;
+  esac
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.3'; }
+run_sudo() { "$@"; }
+
+repair_global_sima_neat_lib_links
+verify_global_sima_neat_lib_links
+[[ "$(readlink "${tmp}/libsima_neat.so.3")" == 'libsima_neat.so.2.1.2' ]]
+[[ "$(readlink "${tmp}/libsima_neat.so")" == 'libsima_neat.so.3' ]]
+[[ "$(readlink "${tmp}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
+! compgen -G "${tmp}/libsima_neat.so*.bak-neat-installer-*" >/dev/null
+printf 'OWNED_REPAIR_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OWNED_REPAIR_OK", result.stdout)
+        self.assertEqual(result.stdout.count("Repairing package-owned symlink"), 2)
+
+    def test_elf_soname_must_match_packaged_soname_link(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+touch "${tmp}/libsima_neat.so.2.1.2"
+ln -s libsima_neat.so.2.1.2 "${tmp}/libsima_neat.so.3"
+ln -s libsima_neat.so.3 "${tmp}/libsima_neat.so"
+
+sima_neat_global_lib_dir() { printf '%s\n' "${tmp}"; }
+dpkg-query() {
+  case "$1" in
+    -L)
+      printf '%s\n' \
+        "${tmp}/libsima_neat.so.2.1.2" \
+        "${tmp}/libsima_neat.so.3"
+      ;;
+    -S) printf 'sima-neat: %s\n' "$2" ;;
+    *) return 1 ;;
+  esac
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.2'; }
+run_sudo() { "$@"; }
+
+repair_global_sima_neat_lib_links
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Packaged libsima_neat SONAME does not match its package manifest",
+            result.stderr,
+        )
+
+
 if __name__ == "__main__":
     if "--installer" in sys.argv:
         index = sys.argv.index("--installer")

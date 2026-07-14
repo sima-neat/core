@@ -1392,78 +1392,195 @@ repair_stale_global_dispatcher_lib() {
   fi
 }
 
+sima_neat_global_lib_dir() {
+  printf '%s\n' "/usr/lib"
+}
+
 find_packaged_sima_neat_versioned_lib() {
-  local candidate
-  local selected=""
+  local lib_dir package_files candidate basename
+  local -a matches=()
+  lib_dir="$(sima_neat_global_lib_dir)"
+  package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
+
   while IFS= read -r candidate; do
-    case "${candidate}" in
-      /usr/lib/libsima_neat.so.2.*)
-        [[ "${candidate}" != *".bak"* && -e "${candidate}" ]] || continue
-        selected="${candidate}"
-        ;;
-    esac
-  done < <(dpkg-query -L sima-neat 2>/dev/null | sort -V)
-  if [[ -n "${selected}" ]]; then
-    printf '%s\n' "${selected}"
-    return 0
+    [[ "$(dirname "${candidate}")" == "${lib_dir}" ]] || continue
+    basename="$(basename "${candidate}")"
+    if [[ "${basename}" =~ ^libsima_neat\.so\.[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
+      matches+=("${candidate}")
+    fi
+  done <<<"${package_files}"
+
+  if [[ "${#matches[@]}" -ne 1 ]]; then
+    echo "Expected exactly one packaged versioned libsima_neat library, found ${#matches[@]}." >&2
+    return 1
+  fi
+  printf '%s\n' "${matches[0]}"
+}
+
+find_packaged_sima_neat_soname_link() {
+  local lib_dir package_files candidate basename
+  local -a matches=()
+  lib_dir="$(sima_neat_global_lib_dir)"
+  package_files="$(dpkg-query -L sima-neat 2>/dev/null)" || return 1
+
+  while IFS= read -r candidate; do
+    [[ "$(dirname "${candidate}")" == "${lib_dir}" ]] || continue
+    basename="$(basename "${candidate}")"
+    if [[ "${basename}" =~ ^libsima_neat\.so\.[1-9][0-9]*$ ]]; then
+      matches+=("${candidate}")
+    fi
+  done <<<"${package_files}"
+
+  if [[ "${#matches[@]}" -ne 1 ]]; then
+    echo "Expected exactly one packaged libsima_neat SONAME link, found ${#matches[@]}." >&2
+    return 1
+  fi
+  printf '%s\n' "${matches[0]}"
+}
+
+read_sima_neat_elf_soname() {
+  local versioned_lib="$1"
+  LC_ALL=C readelf -d "${versioned_lib}" 2>/dev/null |
+    sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p' |
+    head -n 1
+}
+
+sima_neat_path_is_package_owned() {
+  dpkg-query -S "$1" >/dev/null 2>&1
+}
+
+quarantine_unowned_sima_neat_path() {
+  local path="$1"
+  [[ -e "${path}" || -L "${path}" ]] || return 0
+
+  if sima_neat_path_is_package_owned "${path}"; then
+    echo "Refusing to replace package-owned libsima_neat path: ${path}" >&2
+    return 1
   fi
 
-  find /usr/lib -maxdepth 1 -type f -name 'libsima_neat.so.2.*' ! -name '*.bak*' 2>/dev/null \
-    | sort -V \
-    | tail -n 1
+  local timestamp
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  local backup="${path}.bak-neat-installer-${timestamp}"
+  local suffix=0
+  while [[ -e "${backup}" || -L "${backup}" ]]; do
+    suffix=$((suffix + 1))
+    backup="${path}.bak-neat-installer-${timestamp}.${suffix}"
+  done
+  log "Quarantining stale unowned libsima_neat path ${path} -> ${backup}"
+  run_sudo mv -f -- "${path}" "${backup}"
+}
+
+quarantine_stale_unowned_sima_neat_soname_links() {
+  local expected_soname_link="$1"
+  local lib_dir candidate basename nullglob_was_set=0
+  lib_dir="$(sima_neat_global_lib_dir)"
+
+  shopt -q nullglob && nullglob_was_set=1
+  shopt -s nullglob
+  for candidate in "${lib_dir}"/libsima_neat.so.*; do
+    basename="$(basename "${candidate}")"
+    [[ "${basename}" =~ ^libsima_neat\.so\.[1-9][0-9]*$ ]] || continue
+    [[ "${candidate}" != "${expected_soname_link}" ]] || continue
+    if sima_neat_path_is_package_owned "${candidate}"; then
+      log "Preserving package-owned libsima_neat compatibility link ${candidate}"
+      continue
+    fi
+    quarantine_unowned_sima_neat_path "${candidate}" || return 1
+  done
+  if [[ "${nullglob_was_set}" -eq 0 ]]; then
+    shopt -u nullglob
+  fi
+}
+
+ensure_sima_neat_symlink() {
+  local link_path="$1"
+  local link_target="$2"
+  local expected_resolved="$3"
+  local actual_target=""
+  local actual_resolved=""
+
+  if [[ -L "${link_path}" ]]; then
+    actual_target="$(readlink "${link_path}")"
+    actual_resolved="$(readlink -f "${link_path}" 2>/dev/null || true)"
+    if [[ "${actual_target}" == "${link_target}" &&
+          "${actual_resolved}" == "${expected_resolved}" ]]; then
+      return 0
+    fi
+    if sima_neat_path_is_package_owned "${link_path}"; then
+      log "Repairing package-owned symlink ${link_path} -> ${link_target}"
+      run_sudo ln -sfn -- "${link_target}" "${link_path}"
+      return 0
+    fi
+  fi
+
+  quarantine_unowned_sima_neat_path "${link_path}" || return 1
+  log "Repairing ${link_path} -> ${link_target}"
+  run_sudo ln -s -- "${link_target}" "${link_path}"
 }
 
 repair_global_sima_neat_lib_links() {
-  local versioned_lib
-  versioned_lib="$(find_packaged_sima_neat_versioned_lib || true)"
-  if [[ -z "${versioned_lib}" || ! -e "${versioned_lib}" ]]; then
-    log "libsima_neat link repair skipped; packaged versioned library not found."
-    return 0
+  local versioned_lib soname_link soname_target devel_link elf_soname=""
+  versioned_lib="$(find_packaged_sima_neat_versioned_lib)" || return 1
+  soname_link="$(find_packaged_sima_neat_soname_link)" || return 1
+  devel_link="$(sima_neat_global_lib_dir)/libsima_neat.so"
+
+  if [[ ! -f "${versioned_lib}" || -L "${versioned_lib}" ]]; then
+    echo "Packaged versioned libsima_neat library is missing: ${versioned_lib}" >&2
+    return 1
   fi
 
-  local soname_link="/usr/lib/libsima_neat.so.2"
-  local devel_link="/usr/lib/libsima_neat.so"
-  local soname_target
   soname_target="$(basename "${versioned_lib}")"
-
-  if [[ ! -L "${soname_link}" || "$(readlink "${soname_link}")" != "${soname_target}" ]]; then
-    log "Repairing ${soname_link} -> ${soname_target}"
-    run_sudo ln -sfn "${soname_target}" "${soname_link}"
+  if command -v readelf >/dev/null 2>&1; then
+    elf_soname="$(read_sima_neat_elf_soname "${versioned_lib}")"
+    if [[ -z "${elf_soname}" || "${elf_soname}" != "$(basename "${soname_link}")" ]]; then
+      echo "Packaged libsima_neat SONAME does not match its package manifest." >&2
+      echo "  ELF SONAME:       ${elf_soname:-<missing>}" >&2
+      echo "  packaged symlink: $(basename "${soname_link}")" >&2
+      return 1
+    fi
   fi
 
-  if [[ ! -L "${devel_link}" || "$(readlink "${devel_link}")" != "libsima_neat.so.2" ]]; then
-    log "Repairing ${devel_link} -> libsima_neat.so.2"
-    run_sudo ln -sfn "libsima_neat.so.2" "${devel_link}"
-  fi
+  quarantine_stale_unowned_sima_neat_soname_links "${soname_link}"
+  ensure_sima_neat_symlink "${soname_link}" "${soname_target}" "${versioned_lib}"
+  ensure_sima_neat_symlink "${devel_link}" "$(basename "${soname_link}")" "${versioned_lib}"
 }
 
 verify_global_sima_neat_lib_links() {
-  local versioned_lib
-  versioned_lib="$(find_packaged_sima_neat_versioned_lib || true)"
-  if [[ -z "${versioned_lib}" || ! -e "${versioned_lib}" ]]; then
-    echo "Could not find packaged /usr/lib/libsima_neat.so.2.* after install." >&2
+  local versioned_lib soname_link soname_resolved devel_link devel_resolved elf_soname=""
+  versioned_lib="$(find_packaged_sima_neat_versioned_lib)" || exit 1
+  soname_link="$(find_packaged_sima_neat_soname_link)" || exit 1
+  devel_link="$(sima_neat_global_lib_dir)/libsima_neat.so"
+
+  if [[ ! -f "${versioned_lib}" || -L "${versioned_lib}" ]]; then
+    echo "Packaged versioned libsima_neat library is missing: ${versioned_lib}" >&2
     exit 1
   fi
 
-  local resolved
-  resolved="$(readlink -f /usr/lib/libsima_neat.so.2 2>/dev/null || true)"
-  if [[ -z "${resolved}" || "${resolved}" != "${versioned_lib}" || "${resolved}" == *".bak"* ]]; then
-    echo "/usr/lib/libsima_neat.so.2 does not resolve to the packaged library." >&2
+  if command -v readelf >/dev/null 2>&1; then
+    elf_soname="$(read_sima_neat_elf_soname "${versioned_lib}")"
+    if [[ -z "${elf_soname}" || "${elf_soname}" != "$(basename "${soname_link}")" ]]; then
+      echo "Packaged libsima_neat SONAME does not match its package manifest." >&2
+      exit 1
+    fi
+  fi
+
+  soname_resolved="$(readlink -f "${soname_link}" 2>/dev/null || true)"
+  if [[ "${soname_resolved}" != "${versioned_lib}" || "${soname_resolved}" == *".bak"* ]]; then
+    echo "${soname_link} does not resolve to the packaged library." >&2
     echo "  expected: ${versioned_lib}" >&2
-    echo "  actual:   ${resolved:-<missing>}" >&2
+    echo "  actual:   ${soname_resolved:-<missing>}" >&2
     exit 1
   fi
 
-  local devel_resolved
-  devel_resolved="$(readlink -f /usr/lib/libsima_neat.so 2>/dev/null || true)"
+  devel_resolved="$(readlink -f "${devel_link}" 2>/dev/null || true)"
   if [[ "${devel_resolved}" != "${versioned_lib}" ]]; then
-    echo "/usr/lib/libsima_neat.so does not resolve to the packaged library." >&2
+    echo "${devel_link} does not resolve to the packaged library." >&2
     echo "  expected: ${versioned_lib}" >&2
     echo "  actual:   ${devel_resolved:-<missing>}" >&2
     exit 1
   fi
 
-  log "Verified libsima_neat links resolve to ${versioned_lib}"
+  log "Verified $(basename "${soname_link}") and libsima_neat.so resolve to ${versioned_lib}"
 }
 
 install_debs_on_board() {
