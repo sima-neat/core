@@ -137,5 +137,9 @@ sima-cli sdk remove
 
 ## Next Step
 
-Continue to [DevKit Sync](/getting-started/dev-environment/devkit-sync/) to
-learn how SDK workspace sharing and `dk` command execution work.
+- **Compiling a model in the SDK?** Continue to
+  [Compile a Model](/compile-a-model/) — this runs entirely in the SDK, with no
+  DevKit required.
+- **Pairing a DevKit?** Set up
+  [DevKit Sync](/getting-started/dev-environment/devkit-sync/) to share your SDK
+  workspace and run `dk` commands on the hardware.

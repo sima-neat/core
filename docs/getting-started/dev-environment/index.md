@@ -28,6 +28,15 @@ Start with SDK installation. Use the other SDK topics when you need to change
 settings, add Model Compiler later, understand DevKit Sync behavior, or prepare
 offline packages for restricted networks.
 
+:::tip SDK-only happy path
+If you installed the SDK and have not paired a DevKit, you only need two steps:
+[Install the Environment](/getting-started/dev-environment/install-the-environment/),
+then [Compile a Model](/compile-a-model/) — model compilation runs entirely in the
+SDK. Configure SDK, DevKit Sync, Install Model Compiler (it is offered during
+setup), and the Neat Library and PyNeat pages are optional side-trips; visit them
+only when you need them or once you pair a DevKit.
+:::
+
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>SDK Topics</h2>
