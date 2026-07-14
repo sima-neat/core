@@ -7,6 +7,7 @@
 #include "builder/OutputSpec.h"
 #include "graph/GraphTypes.h"
 #include "internal/InputStream.h"
+#include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Run.h"
 #include "pipeline/GraphOptions.h"
@@ -14,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -111,8 +113,19 @@ struct FusedRealtimeIngressBranch {
   /// Exact public options from the source-to-consumer realtime link.  Fused
   /// lowering must retain these because there is no graph-runtime scheduler
   /// left outside the monolithic GStreamer pipeline to enforce them.
-  RealtimeGraphLinkOptions link_options;
+  RealtimeMuxByStream link_options;
   std::vector<std::shared_ptr<Node>> nodes;
+  /**
+   * Optional graph-owned encoded output tapped before this branch's decoder.
+   * The fused pipeline keeps the H.264 GstBuffer reference-counted and routes
+   * it to the named graph sink without a process-global callback.
+   */
+  struct EncodedOutput {
+    graph::NodeId sink_node = graph::kInvalidNode;
+    OutputOptions options;
+    std::string stream_id;
+  };
+  std::optional<EncodedOutput> encoded_output;
   OutputSpec output_spec;
   bool output_complete = false;
 };
@@ -120,6 +133,14 @@ struct FusedRealtimeIngressBranch {
 struct FusedRealtimeIngress {
   std::vector<FusedRealtimeIngressBranch> branches;
 };
+
+/**
+ * Graph-scoped dispatcher for optional encoded outputs materialized inside a
+ * fused realtime ingress pipeline. The dispatcher must never block the live
+ * RTSP streaming thread.
+ */
+using FusedEncodedOutputDispatch =
+    std::function<bool(const FusedRealtimeIngressBranch::EncodedOutput&, Sample&&, std::string*)>;
 
 struct MaterializedNodeAttribution {
   enum class Role {
@@ -209,6 +230,7 @@ struct StageNodePlan {
   graph::NodeId node_id = graph::kInvalidNode;
   std::shared_ptr<graph::nodes::StageNode> node;
   Provenance provenance;
+  bool consumed_by_fused_realtime_ingress = false;
 };
 
 struct EdgePlan {
@@ -218,7 +240,7 @@ struct EdgePlan {
   graph::PortId to_port = graph::kInvalidPort;
   OutputSpec spec;
   bool spec_complete = false;
-  RealtimeGraphLinkOptions link_options;
+  RealtimeMuxByStream link_options;
   std::string stream_id;
   bool consumed_by_fused_realtime_ingress = false;
 };
@@ -244,7 +266,7 @@ struct PublicGraphEdgePlan {
   graph::NodeId runtime_from = graph::kInvalidNode;
   graph::NodeId runtime_to = graph::kInvalidNode;
   std::vector<std::size_t> runtime_edge_indices;
-  RealtimeGraphLinkOptions link_options;
+  RealtimeMuxByStream link_options;
   std::string stream_id;
 };
 
@@ -277,8 +299,7 @@ struct RuntimeCompileOptions {
 };
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& graph, const RunOptions& opt,
-                                        std::optional<Sample> seed,
-                                        bool fuse_realtime_source_branches);
+                                        std::optional<Sample> seed);
 
 // Reject statically known connected-source shapes that exceed a downstream ingress capacity.
 void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan);

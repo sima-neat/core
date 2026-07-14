@@ -113,6 +113,7 @@ using simaai::neat::Device;
 using simaai::neat::DeviceType;
 using simaai::neat::Graph;
 using simaai::neat::GraphElementMetrics;
+using simaai::neat::GraphLinkOptions;
 using simaai::neat::GraphLinkPolicy;
 using simaai::neat::GraphNodeMetrics;
 using simaai::neat::GraphOptions;
@@ -145,7 +146,7 @@ using simaai::neat::PowerRailSummary;
 using simaai::neat::PowerSummary;
 using simaai::neat::PullError;
 using simaai::neat::PullStatus;
-using simaai::neat::RealtimeGraphLinkOptions;
+using simaai::neat::RealtimeMuxByStream;
 using simaai::neat::Run;
 using simaai::neat::RunAdvancedOptions;
 using simaai::neat::RunAutoExportOptions;
@@ -2321,28 +2322,17 @@ NB_MODULE(_pyneat_core, m) {
       .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream)
       .value("RealtimeEveryFrameByStream", GraphLinkPolicy::RealtimeEveryFrameByStream);
 
-  // Python objects are extension-owned, so keep the existing Python property surface while the
-  // released three-member C++ GraphLinkOptions stays ABI-stable.
-  nb::class_<RealtimeGraphLinkOptions>(m, "GraphLinkOptions")
+  nb::class_<GraphLinkOptions>(m, "GraphLinkOptions")
       .def(nb::init<>())
-      .def_prop_rw(
-          "policy", [](const RealtimeGraphLinkOptions& options) { return options.policy; },
-          [](RealtimeGraphLinkOptions& options, GraphLinkPolicy policy) {
-            options.policy = policy;
-          })
-      .def_prop_rw(
-          "queue_depth",
-          [](const RealtimeGraphLinkOptions& options) { return options.queue_depth; },
-          [](RealtimeGraphLinkOptions& options, int queue_depth) {
-            options.queue_depth = queue_depth;
-          })
-      .def_prop_rw(
-          "stream_id", [](const RealtimeGraphLinkOptions& options) { return options.stream_id; },
-          [](RealtimeGraphLinkOptions& options, std::string stream_id) {
-            options.stream_id = std::move(stream_id);
-          })
-      .def_rw("max_inflight_per_stream", &RealtimeGraphLinkOptions::max_inflight_per_stream)
-      .def_rw("max_inflight_total", &RealtimeGraphLinkOptions::max_inflight_total);
+      .def_rw("policy", &GraphLinkOptions::policy)
+      .def_rw("queue_depth", &GraphLinkOptions::queue_depth)
+      .def_rw("stream_id", &GraphLinkOptions::stream_id);
+
+  nb::class_<RealtimeMuxByStream, GraphLinkOptions>(m, "RealtimeMuxByStream")
+      .def(nb::init<>())
+      .def(nb::init<const GraphLinkOptions&>(), "options"_a)
+      .def_rw("max_inflight_per_stream", &RealtimeMuxByStream::max_inflight_per_stream)
+      .def_rw("max_inflight_total", &RealtimeMuxByStream::max_inflight_total);
 
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())
@@ -2981,9 +2971,12 @@ NB_MODULE(_pyneat_core, m) {
       .def(
           "connect",
           [](Graph& self, const Graph& from, const Graph& to,
-             const RealtimeGraphLinkOptions& options) -> Graph& {
-            return self.connect_realtime(from, to, options);
-          },
+             const GraphLinkOptions& options) -> Graph& { return self.connect(from, to, options); },
+          "from_graph"_a, "to_graph"_a, "options"_a, nb::rv_policy::reference_internal)
+      .def(
+          "connect",
+          [](Graph& self, const Graph& from, const Graph& to, const RealtimeMuxByStream& options)
+              -> Graph& { return self.connect(from, to, options); },
           "from_graph"_a, "to_graph"_a, "options"_a, nb::rv_policy::reference_internal)
       .def(
           "connect",
@@ -3073,12 +3066,6 @@ NB_MODULE(_pyneat_core, m) {
           "image_format"_a = nb::none())
       .def("build_source", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "build_fused_realtime_source",
-          [](Graph& self, const RunOptions& options) {
-            return self.build_fused_realtime_sources(options);
-          },
-          "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def("build", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def(

@@ -12,7 +12,6 @@
 #pragma once
 
 #include "pipeline/GraphOptions.h"
-#include "pipeline/LatestByStreamFrameTap.h"
 #include "pipeline/Run.h"
 #include "pipeline/Graph.h"
 #include "pipeline/RunExport.h"

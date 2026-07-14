@@ -125,7 +125,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where);
+    bool require_sink, bool public_output_contract, const char* where,
+    const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch = {});
 
 void session_build_compile_contracts(BuildResult* build_result,
                                      const std::vector<std::shared_ptr<Node>>& source_nodes,

@@ -23,11 +23,6 @@ bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer,
 // replace buffers without invoking arbitrary GstMeta transforms, so their
 // terminal probe is the authoritative completion signal instead.
 bool set_latest_by_stream_mux_lifetime_guard_enabled(GstElement* element, bool enabled);
-bool dispatch_latest_by_stream_encoded_frame_for_buffer(GstBuffer* buffer, GstCaps* caps,
-                                                        const char* stream_id,
-                                                        std::string* error = nullptr);
-unsigned long attach_latest_by_stream_encoded_frame_tap_probe(GstPad* pad, std::string stream_id);
-bool latest_by_stream_encoded_frame_callback_enabled();
 
 } // namespace pipeline_internal
 } // namespace simaai::neat

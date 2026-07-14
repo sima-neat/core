@@ -1112,7 +1112,7 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.stage_groups.reserve(execution.plan.stage_nodes.size());
   for (const auto& st : execution.plan.stage_nodes) {
-    if (!st.node) {
+    if (!st.node || st.consumed_by_fused_realtime_ingress) {
       continue;
     }
 
@@ -1175,6 +1175,19 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   std::vector<bool> has_out(runtime_node_count(execution.plan), false);
   std::unordered_map<std::string, std::size_t> realtime_link_by_target;
+  std::unordered_map<NodeId, OutputOptions> fused_encoded_output_options;
+  for (const auto& segment : execution.plan.pipeline_segments) {
+    if (!segment.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    for (const auto& branch : segment.fused_realtime_ingress->branches) {
+      if (branch.encoded_output.has_value() &&
+          branch.encoded_output->sink_node != graph::kInvalidNode) {
+        fused_encoded_output_options.emplace(branch.encoded_output->sink_node,
+                                             branch.encoded_output->options);
+      }
+    }
+  }
 
   const auto downstream_target_for = [&](const EdgePlan& e,
                                          std::size_t eidx) -> std::optional<DownstreamTarget> {
@@ -1217,8 +1230,9 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
     if (e.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream) {
       throw std::runtime_error(
-          "RealtimeEveryFrameByStream requires Graph::build_fused_realtime_sources(...) "
-          "and an eligible multi-source fused decoder graph");
+          "RealtimeEveryFrameByStream requires an eligible multi-source realtime fan-in; "
+          "Graph::build() could not fuse this topology without changing its every-frame "
+          "backpressure contract");
     }
     if (e.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream) {
       const std::string key = target_key(*downstream);
@@ -1243,7 +1257,14 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   for (NodeId id = 0; id < has_out.size(); ++id) {
     if (!has_out[id]) {
-      execution.sinks[id] = std::make_shared<GraphSinkQueue>(core->graph_options.edge_queue);
+      std::size_t capacity = core->graph_options.edge_queue;
+      const auto encoded = fused_encoded_output_options.find(id);
+      if (encoded != fused_encoded_output_options.end()) {
+        capacity = encoded->second.max_buffers <= 0
+                       ? 0U
+                       : static_cast<std::size_t>(encoded->second.max_buffers);
+      }
+      execution.sinks[id] = std::make_shared<GraphSinkQueue>(capacity);
     }
   }
 }
@@ -1445,6 +1466,48 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    const std::weak_ptr<RunCore> weak_core = core;
+    start_opt.fused_encoded_output_dispatch =
+        [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
+                    std::string* error) {
+          const auto locked = weak_core.lock();
+          if (!locked || locked->graph_stop_requested()) {
+            if (error) {
+              *error = "graph stopped before encoded Output dispatch";
+            }
+            return false;
+          }
+          auto& execution = locked->graph_execution();
+          const auto sink = execution.sinks.find(output.sink_node);
+          if (sink == execution.sinks.end() || !sink->second) {
+            if (error) {
+              *error = "encoded Output sink is unavailable";
+            }
+            locked->graph_request_stop("fused encoded Output sink is unavailable");
+            return false;
+          }
+
+          // Never block the RTSP streaming thread. A Latest output replaces its
+          // oldest queued AU; an EveryFrame output treats overflow as fatal so
+          // video and inference cannot silently diverge.
+          const auto enqueue =
+              enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
+          if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
+              enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest) {
+            return true;
+          }
+
+          const std::string reason =
+              enqueue == FusedEncodedOutputEnqueueResult::Closed
+                  ? "encoded Output queue is closed"
+                  : "encoded Output queue overflowed; pull encoded outputs faster or increase "
+                    "OutputOptions::max_buffers";
+          if (error) {
+            *error = reason;
+          }
+          locked->graph_request_stop(reason);
+          return false;
+        };
     rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
     rt.transport.built.store(true, std::memory_order_release);
   }

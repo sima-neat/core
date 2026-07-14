@@ -272,7 +272,7 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
       preview_sink.add(simaai::neat::nodes::Input(preview));
       preview_sink.add(simaai::neat::nodes::Output(preview + "_out"));
 
-      simaai::neat::RealtimeGraphLinkOptions link;
+      simaai::neat::RealtimeMuxByStream link;
       link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       link.queue_depth = 1;
       link.stream_id = stream;

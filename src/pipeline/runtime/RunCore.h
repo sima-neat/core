@@ -128,6 +128,7 @@ struct RunCoreStartOptions {
   GraphRuntimeOptions graph_options;
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
+  FusedEncodedOutputDispatch fused_encoded_output_dispatch;
 };
 
 struct RunCore {

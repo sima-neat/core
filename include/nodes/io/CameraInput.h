@@ -19,7 +19,7 @@ namespace simaai::neat {
 /**
  * @brief Options for CameraInput, a live libcamera/MIPI source.
  *
- * The public contract is deliberately camera/frame oriented.  When fallback is
+ * The public contract is deliberately camera/frame oriented. When fallback is
  * enabled, Neat inserts a private adaptive camera memory bridge: EV74 SiMaAI
  * buffers pass through; OS/libcamera buffers are copied into pooled EV74 SiMaAI
  * memory and stamped with GstSimaMeta.  Users do not expose an OsToSima node.
@@ -43,10 +43,11 @@ struct CameraInputOptions {
   bool leaky_queue = true;
   std::uint32_t queue_depth = 2;
 
-  // True (default): insert Neat's private adaptive bridge; EV74 SiMaAI buffers
-  // pass through, otherwise the bridge copies into EV74 SiMaAI memory.
-  // False: require strict camera/device zero-copy and fail if unavailable.
-  bool allow_cpu_fallback = true;
+  // False (default): require strict camera/device zero-copy and fail if unavailable.
+  // True: insert Neat's private adaptive bridge; EV74 SiMaAI buffers pass through,
+  // otherwise the bridge copies into EV74 SiMaAI memory. This is an explicit
+  // compatibility escape hatch for camera stacks without DMA-BUF export support.
+  bool allow_cpu_fallback = false;
 };
 
 class CameraInput final : public Node, public OutputSpecProvider {

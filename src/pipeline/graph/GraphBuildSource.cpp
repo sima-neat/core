@@ -23,6 +23,7 @@
 #include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
@@ -1837,9 +1838,84 @@ void attach_fused_realtime_stage_counters(GstElement* pipeline,
 
 std::optional<std::size_t> parse_fused_branch_index_from_name(const std::string& name);
 
-void attach_fused_encoded_frame_tap_probes(GstElement* pipeline,
-                                           const runtime::FusedRealtimeIngress& ingress) {
-  if (!pipeline || !pipeline_internal::latest_by_stream_encoded_frame_callback_enabled()) {
+struct FusedEncodedOutputProbeContext {
+  runtime::FusedRealtimeIngressBranch::EncodedOutput output;
+  runtime::FusedEncodedOutputDispatch dispatch;
+};
+
+Sample make_fused_encoded_output_sample(GstBuffer* buffer, GstCaps* caps,
+                                        const std::string& stream_id) {
+  if (!buffer) {
+    throw std::runtime_error("encoded H.264 buffer is null");
+  }
+  if (!caps) {
+    throw std::runtime_error("encoded H.264 caps are unavailable");
+  }
+  GstSample* gst_sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  if (!gst_sample) {
+    throw std::runtime_error("failed to create encoded H.264 sample");
+  }
+  try {
+    Sample sample = sample_from_gst_envelope(gst_sample, "fused encoded Output",
+                                             /*copy_output=*/false, nullptr);
+    gst_sample_unref(gst_sample);
+    if (!stream_id.empty()) {
+      sample.stream_id = stream_id;
+    }
+    return sample;
+  } catch (...) {
+    gst_sample_unref(gst_sample);
+    throw;
+  }
+}
+
+GstPadProbeReturn fused_encoded_output_probe(GstPad* pad, GstPadProbeInfo* info,
+                                             gpointer user_data) {
+  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
+    return GST_PAD_PROBE_OK;
+  }
+  auto* context = static_cast<FusedEncodedOutputProbeContext*>(user_data);
+  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  GstCaps* caps = pad ? gst_pad_get_current_caps(pad) : nullptr;
+  std::string error;
+  bool delivered = false;
+  try {
+    if (!context || !context->dispatch) {
+      throw std::runtime_error("encoded output dispatcher is unavailable");
+    }
+    Sample sample = make_fused_encoded_output_sample(buffer, caps, context->output.stream_id);
+    delivered = context->dispatch(context->output, std::move(sample), &error);
+  } catch (const std::exception& ex) {
+    error = ex.what();
+  } catch (...) {
+    error = "unknown fused encoded output failure";
+  }
+  if (caps) {
+    gst_caps_unref(caps);
+  }
+  if (delivered) {
+    return GST_PAD_PROBE_OK;
+  }
+
+  GstElement* parent = pad ? gst_pad_get_parent_element(pad) : nullptr;
+  if (parent) {
+    const char* id = context && !context->output.stream_id.empty()
+                         ? context->output.stream_id.c_str()
+                         : "unknown";
+    GST_ELEMENT_ERROR(parent, RESOURCE, FAILED,
+                      ("Encoded Output dispatch failed for stream '%s'", id),
+                      ("%s", error.empty() ? "unknown encoded Output failure" : error.c_str()));
+    gst_object_unref(parent);
+  } else {
+    std::fprintf(stderr, "[fused-encoded-output] fatal dispatch failure: %s\n", error.c_str());
+  }
+  return GST_PAD_PROBE_DROP;
+}
+
+void attach_fused_encoded_output_probes(GstElement* pipeline,
+                                        const runtime::FusedRealtimeIngress& ingress,
+                                        const runtime::FusedEncodedOutputDispatch& dispatch) {
+  if (!pipeline || !dispatch) {
     return;
   }
   GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
@@ -1856,17 +1932,28 @@ void attach_fused_encoded_frame_tap_probes(GstElement* pipeline,
         factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
     const std::string factory_name = factory_c ? factory_c : "";
     // H264Depacketize always ends in an AU-aligned byte-stream capsfilter named
-    // *_h264_caps. Probe its src pad so the exact bytes entering the decoder
-    // can also be published without an additional RTSP session or encoder.
+    // *_h264_caps. Probe its src pad so the exact ref-counted GstBuffer entering
+    // the decoder is also exposed as the graph-scoped named Output.
     if (factory_name == "capsfilter" && name.find("_h264_caps") != std::string::npos) {
       const auto branch_index = parse_fused_branch_index_from_name(name);
       if (branch_index.has_value() && *branch_index < ingress.branches.size()) {
-        const std::string stream_id = ingress.branches[*branch_index].stream_id.empty()
-                                          ? ("stream" + std::to_string(*branch_index))
-                                          : ingress.branches[*branch_index].stream_id;
-        if (GstPad* src = gst_element_get_static_pad(element, "src")) {
-          (void)pipeline_internal::attach_latest_by_stream_encoded_frame_tap_probe(src, stream_id);
-          gst_object_unref(src);
+        const auto& branch = ingress.branches[*branch_index];
+        if (branch.encoded_output.has_value()) {
+          if (GstPad* src = gst_element_get_static_pad(element, "src")) {
+            auto* context = new FusedEncodedOutputProbeContext{*branch.encoded_output, dispatch};
+            const gulong probe = gst_pad_add_probe(
+                src, GST_PAD_PROBE_TYPE_BUFFER, fused_encoded_output_probe, context,
+                +[](gpointer data) { delete static_cast<FusedEncodedOutputProbeContext*>(data); });
+            if (probe == 0) {
+              delete context;
+              gst_object_unref(src);
+              g_value_reset(&item);
+              g_value_unset(&item);
+              gst_iterator_free(it);
+              throw std::runtime_error("failed to attach fused encoded Output probe");
+            }
+            gst_object_unref(src);
+          }
         }
       }
     }
@@ -2683,6 +2770,11 @@ BuildResult build_fused_realtime_source_pipeline(
 
 namespace session_test {
 
+Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
+                                                 const std::string& stream_id) {
+  return make_fused_encoded_output_sample(buffer, caps, stream_id);
+}
+
 std::optional<std::size_t>
 find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pending_pts,
                                          std::optional<std::uint64_t> output_pts) {
@@ -2695,8 +2787,7 @@ find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pendi
   return find_fused_decoder_timing_match(pending, output_pts, std::nullopt);
 }
 
-std::string
-render_fused_realtime_ingress_queue_for_test(const RealtimeGraphLinkOptions& link_options) {
+std::string render_fused_realtime_ingress_queue_for_test(const RealtimeMuxByStream& link_options) {
   return fused_ingress_queue_fragment(1, link_options.policy ==
                                              GraphLinkPolicy::RealtimeEveryFrameByStream);
 }
@@ -2721,7 +2812,7 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
 
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
-    const std::vector<RealtimeGraphLinkOptions>& link_options) {
+    const std::vector<RealtimeMuxByStream>& link_options) {
   runtime::FusedRealtimeIngress ingress;
   for (std::size_t i = 0; i < link_options.size(); ++i) {
     runtime::FusedRealtimeIngressBranch branch;
@@ -2740,7 +2831,7 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
 
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
-    const std::vector<RealtimeGraphLinkOptions>& link_options, bool enable_terminal_loans) {
+    const std::vector<RealtimeMuxByStream>& link_options, bool enable_terminal_loans) {
   runtime::FusedRealtimeIngress ingress;
   for (std::size_t i = 0; i < link_options.size(); ++i) {
     runtime::FusedRealtimeIngressBranch branch;
@@ -2762,7 +2853,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     const runtime::FusedRealtimeIngress& ingress,
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const std::shared_ptr<void>& guard,
     std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
-    bool require_sink, bool public_output_contract, const char* where) {
+    bool require_sink, bool public_output_contract, const char* where,
+    const runtime::FusedEncodedOutputDispatch& encoded_output_dispatch) {
   gst_init_once();
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_fused_realtime_source_pipeline",
@@ -2857,7 +2949,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   attach_fused_realtime_branch_counters(pipeline.get(), ingress.branches.size());
   attach_fused_realtime_stage_counters(pipeline.get(), ingress);
   attach_fused_decoder_timing_probes(pipeline.get(), ingress);
-  attach_fused_encoded_frame_tap_probes(pipeline.get(), ingress);
+  attach_fused_encoded_output_probes(pipeline.get(), ingress, encoded_output_dispatch);
 
   for (std::size_t branch_index = 0; branch_index < build_branch_nodes.size(); ++branch_index) {
     std::vector<std::shared_ptr<Node>> logical = build_branch_nodes[branch_index];
@@ -3060,14 +3152,10 @@ void Graph::run() {
 }
 
 Run Graph::build(const RunOptions& opt) {
-  return build_source_internal_(opt, false);
+  return build_source_internal_(opt);
 }
 
-Run Graph::build_fused_realtime_sources(const RunOptions& opt) {
-  return build_source_internal_(opt, true);
-}
-
-Run Graph::build_source_internal_(const RunOptions& opt, bool fuse_realtime_source_branches) {
+Run Graph::build_source_internal_(const RunOptions& opt) {
   const pipeline_internal::ScopedBuildTiming timing("Graph::build", "kind=no_input");
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
   pipeline_internal::ux::ProgressReporter progress(opt_.verbose, 4);
@@ -3075,8 +3163,7 @@ Run Graph::build_source_internal_(const RunOptions& opt, bool fuse_realtime_sour
   gst_init_once();
 
   progress.step("Building graph...");
-  runtime::ExecutionGraphPlan plan =
-      runtime::compile_public_graph(*this, opt, std::nullopt, fuse_realtime_source_branches);
+  runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
   if (plan.linear_compat) {
     progress.detail(std::string("mode=async nodes=") +
                     std::to_string(linear_nodes_snapshot("Graph::build").size()));

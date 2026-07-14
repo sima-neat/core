@@ -10,6 +10,8 @@
 #include "graph/nodes/StreamScheduler.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/rtp/H264Depacketize.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/CapsStringUtil.h"
@@ -173,7 +175,7 @@ struct NormalizedCompositionEdge {
   std::string to_port;
   std::string from_endpoint;
   std::string to_endpoint;
-  RealtimeGraphLinkOptions link_options;
+  RealtimeMuxByStream link_options;
   std::string stream_id;
   CombinePolicy combine_policy = CombinePolicy::None;
 };
@@ -196,7 +198,7 @@ struct LoweredExplicitEdge {
   graph::NodeId to = graph::kInvalidNode;
   std::string from_port;
   std::string to_port;
-  RealtimeGraphLinkOptions link_options;
+  RealtimeMuxByStream link_options;
   std::string stream_id;
 };
 
@@ -207,23 +209,23 @@ struct PublicGraphLowering {
   std::vector<LoweredExplicitEdge> lowered_edges;
 };
 
-bool realtime_latest_link(const RealtimeGraphLinkOptions& opt) {
+bool realtime_latest_link(const RealtimeMuxByStream& opt) {
   return opt.policy == GraphLinkPolicy::RealtimeLatestByStream ||
          opt.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
 }
 
-bool default_link(const RealtimeGraphLinkOptions& opt) {
+bool default_link(const RealtimeMuxByStream& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
 void validate_realtime_inflight_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("RealtimeGraphLinkOptions::") + name +
+    throw std::runtime_error(std::string("RealtimeMuxByStream::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-void validate_non_default_link_options(const RealtimeGraphLinkOptions& opt) {
+void validate_non_default_link_options(const RealtimeMuxByStream& opt) {
   if (default_link(opt)) {
     return;
   }
@@ -241,8 +243,7 @@ int merge_inflight_cap(int existing, int incoming) {
   return std::min(existing, incoming);
 }
 
-RealtimeGraphLinkOptions merge_link_options(RealtimeGraphLinkOptions a,
-                                            const RealtimeGraphLinkOptions& b) {
+RealtimeMuxByStream merge_link_options(RealtimeMuxByStream a, const RealtimeMuxByStream& b) {
   validate_non_default_link_options(a);
   validate_non_default_link_options(b);
 
@@ -434,7 +435,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   std::unordered_set<std::string> emitted_edges;
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
-                            std::string to_endpoint, RealtimeGraphLinkOptions link_options,
+                            std::string to_endpoint, RealtimeMuxByStream link_options,
                             std::string stream_id, CombinePolicy combine_policy) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
@@ -463,11 +464,11 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     RealtimeGraphLinkOptions, std::string, CombinePolicy, std::vector<bool>&)>
+                     RealtimeMuxByStream, std::string, CombinePolicy, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
-                    RealtimeGraphLinkOptions link_options, std::string stream_id,
+                    RealtimeMuxByStream link_options, std::string stream_id,
                     CombinePolicy combine_policy, std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
     link_options = merge_link_options(link_options, edge.link_options);
@@ -1531,8 +1532,7 @@ void validate_unique_source_buffer_names(
 }
 
 void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId from,
-                                        graph::NodeId to,
-                                        const RealtimeGraphLinkOptions& link_options,
+                                        graph::NodeId to, const RealtimeMuxByStream& link_options,
                                         const std::string& stream_id) {
   const bool propagate_policy = !default_link(link_options);
   const bool propagate_stream_id = !stream_id.empty();
@@ -1558,7 +1558,7 @@ void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId 
     if (edge_index >= plan->edges.size()) {
       continue;
     }
-    RealtimeGraphLinkOptions& dst = plan->edges[edge_index].link_options;
+    RealtimeMuxByStream& dst = plan->edges[edge_index].link_options;
     if (propagate_policy) {
       dst = merge_link_options(dst, link_options);
     }
@@ -1711,6 +1711,135 @@ bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segmen
   return segment.output_edges.size() == 1U;
 }
 
+struct EncodedOutputFusionMatch {
+  std::size_t source_segment = static_cast<std::size_t>(-1);
+  std::size_t decoder_segment = static_cast<std::size_t>(-1);
+  std::size_t output_segment = static_cast<std::size_t>(-1);
+  std::size_t fanout_stage = static_cast<std::size_t>(-1);
+  std::vector<std::size_t> consumed_edges;
+  std::vector<std::shared_ptr<Node>> branch_nodes;
+  FusedRealtimeIngressBranch::EncodedOutput encoded_output;
+};
+
+std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
+    const ExecutionGraphPlan& plan,
+    const std::unordered_map<graph::NodeId, std::size_t>& segment_by_node,
+    std::size_t target_edge_index) {
+  if (target_edge_index >= plan.edges.size()) {
+    return std::nullopt;
+  }
+  const auto& target_edge = plan.edges[target_edge_index];
+  const auto decoder_it = segment_by_node.find(target_edge.from);
+  if (decoder_it == segment_by_node.end() || decoder_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t decoder_index = decoder_it->second;
+  const auto& decoder = plan.pipeline_segments[decoder_index];
+  if (decoder.consumed_by_fused_realtime_ingress || decoder.fused_realtime_ingress.has_value() ||
+      decoder.input_edges.size() != 1U || decoder.output_edges.size() != 1U ||
+      decoder.output_edges.front() != target_edge_index) {
+    return std::nullopt;
+  }
+  const bool is_h264_decoder =
+      std::any_of(decoder.nodes.begin(), decoder.nodes.end(), [](const auto& node) {
+        const auto* sima_decode = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
+        return sima_decode && sima_decode->options().type == SimaDecodeType::H264;
+      });
+  if (!is_h264_decoder) {
+    return std::nullopt;
+  }
+
+  const std::size_t fanout_to_decoder_edge = decoder.input_edges.front();
+  if (fanout_to_decoder_edge >= plan.edges.size()) {
+    return std::nullopt;
+  }
+  const graph::NodeId fanout_node = plan.edges[fanout_to_decoder_edge].from;
+  std::size_t fanout_stage_index = static_cast<std::size_t>(-1);
+  for (std::size_t i = 0; i < plan.stage_nodes.size(); ++i) {
+    const auto& stage = plan.stage_nodes[i];
+    if (stage.node_id == fanout_node && stage.node && stage.node->kind() == "FanOut" &&
+        !stage.consumed_by_fused_realtime_ingress) {
+      fanout_stage_index = i;
+      break;
+    }
+  }
+  if (fanout_stage_index == static_cast<std::size_t>(-1) ||
+      !is_generated_fanout_node(plan, fanout_node)) {
+    return std::nullopt;
+  }
+
+  std::vector<std::size_t> fanout_inputs;
+  std::vector<std::size_t> fanout_outputs;
+  for (std::size_t i = 0; i < plan.edges.size(); ++i) {
+    if (plan.edges[i].consumed_by_fused_realtime_ingress) {
+      continue;
+    }
+    if (plan.edges[i].to == fanout_node) {
+      fanout_inputs.push_back(i);
+    }
+    if (plan.edges[i].from == fanout_node) {
+      fanout_outputs.push_back(i);
+    }
+  }
+  if (fanout_inputs.size() != 1U || fanout_outputs.size() != 2U ||
+      std::find(fanout_outputs.begin(), fanout_outputs.end(), fanout_to_decoder_edge) ==
+          fanout_outputs.end()) {
+    return std::nullopt;
+  }
+
+  const std::size_t source_to_fanout_edge = fanout_inputs.front();
+  const auto source_it = segment_by_node.find(plan.edges[source_to_fanout_edge].from);
+  if (source_it == segment_by_node.end() || source_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t source_index = source_it->second;
+  const auto& source = plan.pipeline_segments[source_index];
+  if (!segment_is_private_live_source_for_fusion(source, source_to_fanout_edge)) {
+    return std::nullopt;
+  }
+  const bool is_h264_source =
+      std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+        return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
+      });
+  if (!is_h264_source) {
+    return std::nullopt;
+  }
+
+  const std::size_t fanout_to_output_edge = fanout_outputs.front() == fanout_to_decoder_edge
+                                                ? fanout_outputs.back()
+                                                : fanout_outputs.front();
+  const auto output_it = segment_by_node.find(plan.edges[fanout_to_output_edge].to);
+  if (output_it == segment_by_node.end() || output_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t output_index = output_it->second;
+  const auto& output = plan.pipeline_segments[output_index];
+  if (output.consumed_by_fused_realtime_ingress || output.input_edges.size() != 1U ||
+      output.input_edges.front() != fanout_to_output_edge || !output.output_edges.empty() ||
+      output.nodes.size() != 1U || output.node_ids.empty()) {
+    return std::nullopt;
+  }
+  const auto* output_node = dynamic_cast<const simaai::neat::Output*>(output.nodes.front().get());
+  if (!output_node) {
+    return std::nullopt;
+  }
+
+  EncodedOutputFusionMatch match;
+  match.source_segment = source_index;
+  match.decoder_segment = decoder_index;
+  match.output_segment = output_index;
+  match.fanout_stage = fanout_stage_index;
+  match.consumed_edges = {source_to_fanout_edge, fanout_to_decoder_edge, fanout_to_output_edge,
+                          target_edge_index};
+  match.branch_nodes.reserve(source.nodes.size() + decoder.nodes.size());
+  match.branch_nodes.insert(match.branch_nodes.end(), source.nodes.begin(), source.nodes.end());
+  match.branch_nodes.insert(match.branch_nodes.end(), decoder.nodes.begin(), decoder.nodes.end());
+  match.encoded_output.sink_node = output.node_ids.back();
+  match.encoded_output.options = output_node->options();
+  match.encoded_output.stream_id = target_edge.stream_id;
+  return match;
+}
+
 bool fused_realtime_input_edges_share_destination(const ExecutionGraphPlan& plan,
                                                   const std::vector<std::size_t>& input_edges) {
   if (input_edges.empty()) {
@@ -1744,6 +1873,17 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     }
   }
 
+  struct BranchCandidate {
+    std::size_t source_segment = static_cast<std::size_t>(-1);
+    std::vector<std::size_t> consumed_segments;
+    std::vector<std::size_t> consumed_edges;
+    std::optional<std::size_t> consumed_stage;
+    std::vector<std::shared_ptr<Node>> nodes;
+    std::optional<FusedRealtimeIngressBranch::EncodedOutput> encoded_output;
+    OutputSpec output_spec;
+    bool output_complete = false;
+  };
+
   for (std::size_t target_index = 0; target_index < plan->pipeline_segments.size();
        ++target_index) {
     auto& target = plan->pipeline_segments[target_index];
@@ -1759,8 +1899,8 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     }
 
     bool all_realtime = true;
-    std::vector<std::size_t> source_segment_indices;
-    source_segment_indices.reserve(target.input_edges.size());
+    std::vector<BranchCandidate> candidates;
+    candidates.reserve(target.input_edges.size());
     for (const std::size_t edge_index : target.input_edges) {
       if (edge_index >= plan->edges.size()) {
         all_realtime = false;
@@ -1771,20 +1911,42 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         all_realtime = false;
         break;
       }
-      auto it = segment_by_node.find(edge.from);
-      if (it == segment_by_node.end() || it->second == target_index ||
-          it->second >= plan->pipeline_segments.size()) {
-        all_realtime = false;
-        break;
+
+      BranchCandidate candidate;
+      auto source_it = segment_by_node.find(edge.from);
+      if (source_it != segment_by_node.end() && source_it->second != target_index &&
+          source_it->second < plan->pipeline_segments.size() &&
+          segment_is_private_live_source_for_fusion(plan->pipeline_segments[source_it->second],
+                                                    edge_index)) {
+        const auto& source = plan->pipeline_segments[source_it->second];
+        candidate.source_segment = source_it->second;
+        candidate.consumed_segments.push_back(source_it->second);
+        candidate.consumed_edges.push_back(edge_index);
+        candidate.nodes = source.nodes;
+        candidate.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
+        candidate.output_complete = edge.spec_complete || source.output_complete;
+      } else {
+        const auto encoded_match =
+            match_encoded_output_fusion_branch(*plan, segment_by_node, edge_index);
+        if (!encoded_match.has_value()) {
+          all_realtime = false;
+          break;
+        }
+        const auto& decoder = plan->pipeline_segments[encoded_match->decoder_segment];
+        candidate.source_segment = encoded_match->decoder_segment;
+        candidate.consumed_segments = {encoded_match->source_segment,
+                                       encoded_match->decoder_segment,
+                                       encoded_match->output_segment};
+        candidate.consumed_edges = encoded_match->consumed_edges;
+        candidate.consumed_stage = encoded_match->fanout_stage;
+        candidate.nodes = encoded_match->branch_nodes;
+        candidate.encoded_output = encoded_match->encoded_output;
+        candidate.output_spec = edge.spec_complete ? edge.spec : decoder.output_spec;
+        candidate.output_complete = edge.spec_complete || decoder.output_complete;
       }
-      const auto& source = plan->pipeline_segments[it->second];
-      if (!segment_is_private_live_source_for_fusion(source, edge_index)) {
-        all_realtime = false;
-        break;
-      }
-      source_segment_indices.push_back(it->second);
+      candidates.push_back(std::move(candidate));
     }
-    if (!all_realtime || source_segment_indices.size() != target.input_edges.size()) {
+    if (!all_realtime || candidates.size() != target.input_edges.size()) {
       continue;
     }
 
@@ -1793,7 +1955,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     for (std::size_t ordinal = 0; ordinal < target.input_edges.size(); ++ordinal) {
       const std::size_t edge_index = target.input_edges[ordinal];
       const auto& edge = plan->edges[edge_index];
-      const auto& source = plan->pipeline_segments[source_segment_indices[ordinal]];
+      auto& candidate = candidates[ordinal];
 
       FusedRealtimeIngressBranch branch;
       branch.edge_index = edge_index;
@@ -1801,19 +1963,31 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       branch.stream_id =
           edge.stream_id.empty() ? ("stream" + std::to_string(ordinal)) : edge.stream_id;
       branch.link_options = edge.link_options;
-      branch.nodes = source.nodes;
-      branch.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
-      branch.output_complete = edge.spec_complete || source.output_complete;
+      branch.nodes = std::move(candidate.nodes);
+      branch.encoded_output = std::move(candidate.encoded_output);
+      if (branch.encoded_output.has_value() && branch.encoded_output->stream_id.empty()) {
+        branch.encoded_output->stream_id = branch.stream_id;
+      }
+      branch.output_spec = std::move(candidate.output_spec);
+      branch.output_complete = candidate.output_complete;
       fused.branches.push_back(std::move(branch));
     }
 
-    for (const std::size_t edge_index : target.input_edges) {
-      if (edge_index < plan->edges.size()) {
-        plan->edges[edge_index].consumed_by_fused_realtime_ingress = true;
+    for (const auto& candidate : candidates) {
+      for (const std::size_t edge_index : candidate.consumed_edges) {
+        if (edge_index < plan->edges.size()) {
+          plan->edges[edge_index].consumed_by_fused_realtime_ingress = true;
+        }
       }
-    }
-    for (const std::size_t source_index : source_segment_indices) {
-      plan->pipeline_segments[source_index].consumed_by_fused_realtime_ingress = true;
+      for (const std::size_t segment_index : candidate.consumed_segments) {
+        if (segment_index < plan->pipeline_segments.size()) {
+          plan->pipeline_segments[segment_index].consumed_by_fused_realtime_ingress = true;
+        }
+      }
+      if (candidate.consumed_stage.has_value() &&
+          *candidate.consumed_stage < plan->stage_nodes.size()) {
+        plan->stage_nodes[*candidate.consumed_stage].consumed_by_fused_realtime_ingress = true;
+      }
     }
 
     target.fused_realtime_ingress = std::move(fused);
@@ -2287,8 +2461,7 @@ ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
 }
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
-                                        const RunOptions& opt, std::optional<Sample> seed,
-                                        bool fuse_realtime_source_branches) {
+                                        const RunOptions& opt, std::optional<Sample> seed) {
   const auto total_start = pipeline_internal::build_timing_now();
   const auto view = public_graph.composition_view_for_internal_compile();
   (void)view.groups;
@@ -2355,9 +2528,9 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
     validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
-    if (fuse_realtime_source_branches) {
-      fuse_realtime_fan_in_segments(lowering.graph, &plan);
-    }
+    // Fusion is an execution-plan lowering, not a public build mode. Eligible live
+    // fan-in is fused automatically; ineligible topology remains segmented.
+    fuse_realtime_fan_in_segments(lowering.graph, &plan);
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,
                                view.named_fragments, &plan);
     map_explicit_public_vertex_endpoints(runtime_node_for_vertex, view.vertices, &plan);

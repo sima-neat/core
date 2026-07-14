@@ -9,6 +9,9 @@
 #include "nodes/io/CameraInput.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/RTSPInput.h"
+#include "nodes/groups/RtspEncodedInput.h"
+#include "nodes/rtp/H264Depacketize.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
@@ -17,6 +20,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdlib>
 #include <memory>
@@ -52,10 +56,8 @@ static_assert(offsetof(simaai::neat::GraphLinkOptions, queue_depth) ==
               offsetof(ReleasedGraphLinkOptionsLayout, queue_depth));
 static_assert(offsetof(simaai::neat::GraphLinkOptions, stream_id) ==
               offsetof(ReleasedGraphLinkOptionsLayout, stream_id));
-static_assert(
-    std::is_base_of_v<simaai::neat::GraphLinkOptions, simaai::neat::RealtimeGraphLinkOptions>);
-static_assert(sizeof(simaai::neat::RealtimeGraphLinkOptions) >
-              sizeof(simaai::neat::GraphLinkOptions));
+static_assert(std::is_base_of_v<simaai::neat::GraphLinkOptions, simaai::neat::RealtimeMuxByStream>);
+static_assert(sizeof(simaai::neat::RealtimeMuxByStream) > sizeof(simaai::neat::GraphLinkOptions));
 static_assert(AcceptsReleasedBraceConnect<simaai::neat::Graph>);
 
 // RunAdvancedOptions is passed across the public shared-library boundary. Keep
@@ -316,7 +318,7 @@ RUN_TEST(
       require_contains(env_limited_pipeline, "max-inflight-total=3",
                        "fused default admission must honor the realtime global env override");
 
-      simaai::neat::RealtimeGraphLinkOptions explicit_total_link;
+      simaai::neat::RealtimeMuxByStream explicit_total_link;
       explicit_total_link.max_inflight_total = 2;
       const std::string explicit_total_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
@@ -377,13 +379,13 @@ RUN_TEST(
       require_contains(identity_drop_pipeline, "drop-probability=1.0",
                        "identity-preserving fused chains may retain guard-backed drop handling");
 
-      simaai::neat::RealtimeGraphLinkOptions latest_ingress;
+      simaai::neat::RealtimeMuxByStream latest_ingress;
       latest_ingress.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       const std::string latest_ingress_queue =
           simaai::neat::session_test::render_fused_realtime_ingress_queue_for_test(latest_ingress);
       require_contains(latest_ingress_queue, "leaky=downstream",
                        "default latest ingress must retain its non-blocking leaky queue");
-      simaai::neat::RealtimeGraphLinkOptions every_frame_ingress;
+      simaai::neat::RealtimeMuxByStream every_frame_ingress;
       every_frame_ingress.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
       const std::string every_frame_ingress_queue =
           simaai::neat::session_test::render_fused_realtime_ingress_queue_for_test(
@@ -439,7 +441,7 @@ RUN_TEST(
       auto composed_detector = make_composed_consumer_graph();
       for (int stream = 0; stream < 2; ++stream) {
         auto source = make_live_source_graph(stream);
-        simaai::neat::RealtimeGraphLinkOptions link;
+        simaai::neat::RealtimeMuxByStream link;
         link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
         link.queue_depth = 1;
         link.stream_id = "fused_queue_stream" + std::to_string(stream);
@@ -449,14 +451,8 @@ RUN_TEST(
       }
       simaai::neat::RunOptions composed_run_options;
       composed_run_options.queue_depth = 1;
-      const auto default_plan =
+      const auto composed_plan =
           simaai::neat::runtime::compile_public_graph(composed_app, composed_run_options);
-      for (const auto& segment : default_plan.pipeline_segments) {
-        require(!segment.fused_realtime_ingress.has_value(),
-                "the ABI-compatible build path must not silently opt old callers into fusion");
-      }
-      const auto composed_plan = simaai::neat::runtime::compile_public_graph(
-          composed_app, composed_run_options, std::nullopt, true);
       const simaai::neat::runtime::PipelineSegmentPlan* fused_segment = nullptr;
       for (const auto& segment : composed_plan.pipeline_segments) {
         if (segment.fused_realtime_ingress.has_value()) {
@@ -472,7 +468,7 @@ RUN_TEST(
               "fused segment must preserve both source links");
       const auto& first_fused_edge = composed_plan.edges.at(
           fused_segment->fused_realtime_ingress->branches.front().edge_index);
-      std::vector<simaai::neat::RealtimeGraphLinkOptions> fused_link_options;
+      std::vector<simaai::neat::RealtimeMuxByStream> fused_link_options;
       std::string rendered_per_stream_limits;
       bool found_stream0 = false;
       bool found_stream1 = false;
@@ -546,8 +542,8 @@ RUN_TEST(
         released_options_app.connect(make_live_source_graph(300 + stream),
                                      released_options_detector, released_link);
       }
-      const auto released_options_plan = simaai::neat::runtime::compile_public_graph(
-          released_options_app, composed_run_options, std::nullopt, true);
+      const auto released_options_plan =
+          simaai::neat::runtime::compile_public_graph(released_options_app, composed_run_options);
       const simaai::neat::runtime::PipelineSegmentPlan* released_options_segment = nullptr;
       for (const auto& segment : released_options_plan.pipeline_segments) {
         if (segment.fused_realtime_ingress.has_value()) {
@@ -556,8 +552,8 @@ RUN_TEST(
         }
       }
       require(released_options_segment != nullptr,
-              "released GraphLinkOptions path must remain eligible for explicit fusion");
-      std::vector<simaai::neat::RealtimeGraphLinkOptions> released_options_links;
+              "released GraphLinkOptions path must remain eligible for automatic fusion");
+      std::vector<simaai::neat::RealtimeMuxByStream> released_options_links;
       for (const auto& branch : released_options_segment->fused_realtime_ingress->branches) {
         require(branch.link_options.max_inflight_per_stream == -1 &&
                     branch.link_options.max_inflight_total == -1,
@@ -571,12 +567,108 @@ RUN_TEST(
       require_contains(released_options_pipeline, "stream-inflight-limits=\"4,4\"",
                        "released GraphLinkOptions must resolve the framework per-stream default");
 
+      // Public encoded fan-out stays expressed as ordinary graph topology. The
+      // compiler must absorb source+decoder into each fused ingress branch while
+      // preserving the encoded named Outputs as graph-scoped, ref-counted taps.
+      simaai::neat::Graph encoded_fanout_app("encoded_output_fused_app", outer_options);
+      auto encoded_fanout_detector = make_composed_consumer_graph();
+      for (int stream = 0; stream < 2; ++stream) {
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/stream" + std::to_string(stream);
+        source_options.insert_queue = false;
+        source_options.auto_caps_from_stream = false;
+        source_options.h264_fps = 20;
+        source_options.h264_width = 1280;
+        source_options.h264_height = 720;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+
+        simaai::neat::Graph decoder("decoder" + std::to_string(stream));
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        // Match the application topology exactly: the named raw boundary is
+        // required for ordinary connect() inference, but automatic fusion
+        // must normalize it away rather than materializing a decoded-frame
+        // appsink/appsrc pair.
+        decoder.add(simaai::neat::nodes::Output("detector_frame"));
+        simaai::neat::Graph encoded_output("encoded_branch" + std::to_string(stream));
+        encoded_output.add(simaai::neat::nodes::Output(
+            "encoded" + std::to_string(stream),
+            simaai::neat::OutputOptions::EveryFrame(/*max_buffers=*/60)));
+
+        encoded_fanout_app.connect(source, decoder);
+        encoded_fanout_app.connect(source, encoded_output);
+        simaai::neat::RealtimeMuxByStream realtime;
+        realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        realtime.queue_depth = 1;
+        realtime.stream_id = "encoded_stream" + std::to_string(stream);
+        realtime.max_inflight_per_stream = 1;
+        realtime.max_inflight_total = 2;
+        encoded_fanout_app.connect(decoder, encoded_fanout_detector, realtime);
+      }
+      const auto encoded_fanout_plan =
+          simaai::neat::runtime::compile_public_graph(encoded_fanout_app, composed_run_options);
+      const simaai::neat::runtime::PipelineSegmentPlan* encoded_fused_segment = nullptr;
+      for (const auto& segment : encoded_fanout_plan.pipeline_segments) {
+        if (segment.fused_realtime_ingress.has_value()) {
+          require(encoded_fused_segment == nullptr,
+                  "encoded fan-out topology must create one shared fused consumer");
+          encoded_fused_segment = &segment;
+        }
+      }
+      require(encoded_fused_segment != nullptr,
+              "ordinary encoded fan-out topology must be eligible for automatic fusion");
+      require(encoded_fused_segment->fused_realtime_ingress->branches.size() == 2U,
+              "encoded fused topology must preserve both streams");
+      require(encoded_fanout_plan.named_outputs.find("detector_frame") ==
+                  encoded_fanout_plan.named_outputs.end(),
+              "fused decoder boundary must not remain as a public raw-frame Output");
+      std::size_t consumed_segments = 0;
+      for (const auto& segment : encoded_fanout_plan.pipeline_segments) {
+        consumed_segments += segment.consumed_by_fused_realtime_ingress ? 1U : 0U;
+      }
+      require(consumed_segments == 6U,
+              "each encoded stream must absorb its source, decoder, and Output segment");
+      std::size_t consumed_fanouts = 0;
+      for (const auto& stage : encoded_fanout_plan.stage_nodes) {
+        consumed_fanouts += stage.consumed_by_fused_realtime_ingress ? 1U : 0U;
+      }
+      require(consumed_fanouts == 2U,
+              "generated encoded fan-out stages must not also materialize in graph runtime");
+
+      for (std::size_t stream = 0;
+           stream < encoded_fused_segment->fused_realtime_ingress->branches.size(); ++stream) {
+        const auto& branch = encoded_fused_segment->fused_realtime_ingress->branches[stream];
+        require(branch.encoded_output.has_value(),
+                "fused encoded branch must retain its graph-owned Output plan");
+        require(branch.encoded_output->options.max_buffers == 60 &&
+                    !branch.encoded_output->options.drop,
+                "fused encoded Output must preserve EveryFrame queue options");
+        require(branch.stream_id.rfind("encoded_stream", 0) == 0,
+                "fused encoded branch must preserve its configured stream id");
+        const std::string output_name = "encoded" + branch.stream_id.substr(14);
+        const auto named = encoded_fanout_plan.named_outputs.find(output_name);
+        require(named != encoded_fanout_plan.named_outputs.end() &&
+                    named->second.node == branch.encoded_output->sink_node,
+                "fused encoded Output must remain pullable by its public name");
+        require(std::any_of(branch.nodes.begin(), branch.nodes.end(),
+                            [](const auto& node) {
+                              return dynamic_cast<const simaai::neat::H264Depacketize*>(
+                                         node.get()) != nullptr;
+                            }),
+                "fused encoded branch must retain H.264 depacketization");
+        require(std::any_of(branch.nodes.begin(), branch.nodes.end(),
+                            [](const auto& node) {
+                              return dynamic_cast<const simaai::neat::SimaDecode*>(node.get()) !=
+                                     nullptr;
+                            }),
+                "fused encoded branch must retain hardware decode");
+      }
+
       simaai::neat::Graph mixed_policy_app("mixed_realtime_policy_app", outer_options);
       auto mixed_detector = make_composed_consumer_graph();
-      simaai::neat::RealtimeGraphLinkOptions latest_link;
+      simaai::neat::RealtimeMuxByStream latest_link;
       latest_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       mixed_policy_app.connect(make_live_source_graph(200), mixed_detector, latest_link);
-      simaai::neat::RealtimeGraphLinkOptions every_frame_link;
+      simaai::neat::RealtimeMuxByStream every_frame_link;
       every_frame_link.policy = simaai::neat::GraphLinkPolicy::RealtimeEveryFrameByStream;
       bool rejected_mixed_policy = false;
       try {
@@ -590,15 +682,15 @@ RUN_TEST(
       simaai::neat::Graph single_source_app("single_source_not_fused", outer_options);
       auto single_source = make_live_source_graph(99);
       auto single_detector = make_composed_consumer_graph();
-      simaai::neat::RealtimeGraphLinkOptions single_link;
+      simaai::neat::RealtimeMuxByStream single_link;
       single_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       single_link.max_inflight_per_stream = 1;
       single_source_app.connect(single_source, single_detector, single_link);
-      const auto single_source_plan = simaai::neat::runtime::compile_public_graph(
-          single_source_app, composed_run_options, std::nullopt, true);
+      const auto single_source_plan =
+          simaai::neat::runtime::compile_public_graph(single_source_app, composed_run_options);
       for (const auto& segment : single_source_plan.pipeline_segments) {
         require(!segment.fused_realtime_ingress.has_value(),
-                "explicit fused build must leave ineligible one-source topology unchanged");
+                "automatic fusion must leave ineligible one-source topology unchanged");
       }
 
       simaai::neat::GraphOptions synchronous;

@@ -1,8 +1,6 @@
 #include "gst/GstLatestByStreamMux.h"
 
-#include "pipeline/LatestByStreamFrameTap.h"
 #include "pipeline/GraphOptions.h"
-#include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/internal/RealtimeLinkOptions.h"
@@ -13,7 +11,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
@@ -256,153 +253,6 @@ std::atomic<std::uint64_t>& loan_sequence_counter() {
 std::atomic<std::uint64_t>& mux_namespace_counter() {
   static std::atomic<std::uint64_t> counter{1};
   return counter;
-}
-
-struct EncodedFrameTapState {
-  std::mutex mutex;
-  std::condition_variable idle;
-  std::shared_ptr<simaai::neat::LatestByStreamEncodedFrameCallback> callback;
-  std::size_t inflight = 0;
-};
-
-EncodedFrameTapState& encoded_frame_tap_state() {
-  static EncodedFrameTapState state;
-  return state;
-}
-
-void set_encoded_tap_error(std::string* error, const char* message) noexcept {
-  if (!error) {
-    return;
-  }
-  try {
-    *error = message ? message : "unknown encoded-frame tap failure";
-  } catch (...) {
-    // The primary failure may itself be allocation exhaustion. Do not let
-    // best-effort diagnostic text escape a GStreamer C callback.
-  }
-}
-
-struct EncodedFrameInflightGuard {
-  EncodedFrameTapState* state = nullptr;
-
-  ~EncodedFrameInflightGuard() {
-    if (!state) {
-      return;
-    }
-    std::lock_guard<std::mutex> lock(state->mutex);
-    if (state->inflight > 0) {
-      --state->inflight;
-    }
-    if (state->inflight == 0) {
-      state->idle.notify_all();
-    }
-  }
-};
-
-bool copy_and_dispatch_encoded_frame(GstBuffer* buffer, GstCaps* caps, const char* stream_id,
-                                     std::string* error) {
-  if (!buffer || !caps) {
-    set_encoded_tap_error(error, !buffer ? "encoded H.264 buffer is null"
-                                         : "encoded H.264 caps are unavailable");
-    return false;
-  }
-
-  auto& state = encoded_frame_tap_state();
-  EncodedFrameInflightGuard inflight_guard;
-  std::shared_ptr<simaai::neat::LatestByStreamEncodedFrameCallback> callback;
-  {
-    std::lock_guard<std::mutex> lock(state.mutex);
-    if (!state.callback) {
-      return true;
-    }
-    callback = state.callback;
-    ++state.inflight;
-    inflight_guard.state = &state;
-  }
-
-  bool ok = false;
-  try {
-    GstMapInfo map = GST_MAP_INFO_INIT;
-    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-      throw std::runtime_error("failed to map encoded H.264 buffer");
-    }
-    std::vector<std::uint8_t> bytes;
-    try {
-      bytes.assign(map.data, map.data + map.size);
-    } catch (...) {
-      gst_buffer_unmap(buffer, &map);
-      throw;
-    }
-    gst_buffer_unmap(buffer, &map);
-    if (bytes.empty()) {
-      throw std::runtime_error("encoded H.264 buffer is empty");
-    }
-    gchar* caps_text = gst_caps_to_string(caps);
-    if (!caps_text || !*caps_text) {
-      if (caps_text) {
-        g_free(caps_text);
-      }
-      throw std::runtime_error("encoded H.264 caps are empty");
-    }
-    const std::string caps_string(caps_text);
-    g_free(caps_text);
-    const std::int64_t pts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_PTS(buffer))
-                                 ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer))
-                                 : -1;
-    const std::int64_t dts = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DTS(buffer))
-                                 ? static_cast<std::int64_t>(GST_BUFFER_DTS(buffer))
-                                 : -1;
-    const std::int64_t duration = GST_CLOCK_TIME_IS_VALID(GST_BUFFER_DURATION(buffer))
-                                      ? static_cast<std::int64_t>(GST_BUFFER_DURATION(buffer))
-                                      : -1;
-    simaai::neat::Sample sample =
-        simaai::neat::make_encoded_sample(std::move(bytes), caps_string, pts, dts, duration);
-    if (stream_id && *stream_id) {
-      sample.stream_id = stream_id;
-    }
-    (*callback)(std::move(sample));
-    ok = true;
-  } catch (const std::exception& ex) {
-    std::fprintf(stderr, "[latestmux][encoded-tap] frame copy failed: %s\n", ex.what());
-    set_encoded_tap_error(error, ex.what());
-  } catch (...) {
-    std::fprintf(stderr, "[latestmux][encoded-tap] frame copy failed: unknown exception\n");
-    set_encoded_tap_error(error, "unknown encoded-frame tap exception");
-  }
-  return ok;
-}
-
-GstPadProbeReturn encoded_frame_tap_probe(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
-  if ((GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) == 0) {
-    return GST_PAD_PROBE_OK;
-  }
-  auto* stream_id = static_cast<std::string*>(user_data);
-  GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
-  GstCaps* caps = pad ? gst_pad_get_current_caps(pad) : nullptr;
-  std::string error;
-  const bool delivered = copy_and_dispatch_encoded_frame(
-      buffer, caps, stream_id ? stream_id->c_str() : nullptr, &error);
-  if (caps) {
-    gst_caps_unref(caps);
-  }
-  if (delivered) {
-    return GST_PAD_PROBE_OK;
-  }
-
-  // Losing one encoded access unit makes the application's published video
-  // diverge from the frames sent to inference. Surface a fatal pipeline error
-  // rather than logging and continuing with a silently corrupted stream.
-  GstElement* parent = pad ? gst_pad_get_parent_element(pad) : nullptr;
-  if (parent) {
-    const char* id = stream_id && !stream_id->empty() ? stream_id->c_str() : "unknown";
-    GST_ELEMENT_ERROR(parent, RESOURCE, FAILED, ("Encoded-frame tap failed for stream '%s'", id),
-                      ("%s", error.empty() ? "unknown encoded-frame tap failure" : error.c_str()));
-    gst_object_unref(parent);
-  } else {
-    std::fprintf(stderr, "[latestmux][encoded-tap] fatal failure without parent element: %s\n",
-                 error.c_str());
-  }
-  return GST_PAD_PROBE_DROP;
 }
 
 bool ensure_sima_meta_structure_mutable(GstBuffer* buffer, GstStructure** structure_out) {
@@ -2214,27 +2064,6 @@ void gst_latest_by_stream_mux_init(GstLatestByStreamMux* self) {
 
 namespace simaai::neat {
 
-void set_latest_by_stream_encoded_frame_callback(LatestByStreamEncodedFrameCallback callback) {
-  std::shared_ptr<LatestByStreamEncodedFrameCallback> replacement;
-  if (callback) {
-    replacement = std::make_shared<LatestByStreamEncodedFrameCallback>(std::move(callback));
-  }
-  auto& state = encoded_frame_tap_state();
-  std::unique_lock<std::mutex> lock(state.mutex);
-  // Stop admitting work to the previous subscriber before waiting. Otherwise
-  // continuously active RTSP threads can keep inflight nonzero indefinitely.
-  state.callback.reset();
-  state.idle.wait(lock, [&] { return state.inflight == 0; });
-  state.callback = std::move(replacement);
-}
-
-void clear_latest_by_stream_encoded_frame_callback() {
-  auto& state = encoded_frame_tap_state();
-  std::unique_lock<std::mutex> lock(state.mutex);
-  state.callback.reset();
-  state.idle.wait(lock, [&] { return state.inflight == 0; });
-}
-
 bool register_latest_by_stream_mux() {
   static std::once_flag once;
   static bool registered = false;
@@ -2253,31 +2082,6 @@ std::uint64_t latest_by_stream_mux_namespace(GstElement* element) {
 }
 
 namespace pipeline_internal {
-
-bool dispatch_latest_by_stream_encoded_frame_for_buffer(GstBuffer* buffer, GstCaps* caps,
-                                                        const char* stream_id, std::string* error) {
-  return copy_and_dispatch_encoded_frame(buffer, caps, stream_id, error);
-}
-
-unsigned long attach_latest_by_stream_encoded_frame_tap_probe(GstPad* pad, std::string stream_id) {
-  if (!pad) {
-    return 0;
-  }
-  auto* owned_stream_id = new std::string(std::move(stream_id));
-  const gulong probe_id = gst_pad_add_probe(
-      pad, GST_PAD_PROBE_TYPE_BUFFER, encoded_frame_tap_probe, owned_stream_id,
-      +[](gpointer data) { delete static_cast<std::string*>(data); });
-  if (probe_id == 0) {
-    delete owned_stream_id;
-  }
-  return static_cast<unsigned long>(probe_id);
-}
-
-bool latest_by_stream_encoded_frame_callback_enabled() {
-  auto& state = encoded_frame_tap_state();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  return static_cast<bool>(state.callback);
-}
 
 bool set_latest_by_stream_mux_lifetime_guard_enabled(GstElement* element, bool enabled) {
   if (!element || !G_TYPE_CHECK_INSTANCE_TYPE(element, GST_TYPE_LATEST_BY_STREAM_MUX)) {

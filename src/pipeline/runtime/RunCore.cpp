@@ -1131,7 +1131,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
             ? session_build_fused_realtime_source_stream_internal(
                   *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
                   opt.run_options, opt.mode, opt.require_sink, public_output_contract,
-                  "RunCore::start(plan/fused-realtime)")
+                  "RunCore::start(plan/fused-realtime)", opt.fused_encoded_output_dispatch)
             : session_build_source_stream_internal(
                   nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
                   opt.require_sink, public_output_contract, "RunCore::start(plan/source)");

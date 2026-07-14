@@ -51,8 +51,8 @@ namespace simaai::neat {
  * `Sample::stream_id` (or per source edge when the stream id is empty), and schedules ready
  * streams fairly into the downstream graph. `RealtimeEveryFrameByStream` is the opt-in fused
  * decoder-source variant: it retains one pending frame per stream and blocks only that producer
- * until the mux consumes it, preserving bursty input without another EV-memory queue. Build these
- * links with `Graph::build_fused_realtime_sources()`.
+ * until the mux consumes it, preserving bursty input without another EV-memory queue. Ordinary
+ * `Graph::build()` automatically chooses fused lowering for eligible live fan-in.
  */
 enum class GraphLinkPolicy {
   Default = 0,
@@ -75,16 +75,16 @@ struct GraphLinkOptions {
 /**
  * @brief Realtime admission options for a bounded live Graph connection.
  *
- * This is intentionally a separate type from `GraphLinkOptions`.  `GraphLinkOptions` is passed
+ * This is intentionally a separate type from `GraphLinkOptions`. `GraphLinkOptions` is passed
  * by reference across the public shared-library boundary and its released three-member layout is
  * ABI-stable.  Appending admission fields to that type would make a newer library read beyond an
- * object constructed by an older caller.  Use `Graph::connect_realtime()` when setting either
- * admission limit; ordinary `Graph::connect()` remains source- and binary-compatible and uses the
- * defaults below.
+ * object constructed by an older caller. Pass `RealtimeMuxByStream` to ordinary
+ * `Graph::connect()` when setting either admission limit; released `GraphLinkOptions` calls remain
+ * source- and binary-compatible and use the defaults below.
  */
-struct RealtimeGraphLinkOptions : GraphLinkOptions {
-  RealtimeGraphLinkOptions() = default;
-  RealtimeGraphLinkOptions(const GraphLinkOptions& options) : GraphLinkOptions(options) {}
+struct RealtimeMuxByStream : GraphLinkOptions {
+  RealtimeMuxByStream() = default;
+  RealtimeMuxByStream(const GraphLinkOptions& options) : GraphLinkOptions(options) {}
 
   /// Only applies to realtime-by-stream links carrying raw decoder-backed samples.
   /// -1 uses the framework default (4); positive values set the per-stream raw-frame inflight cap.

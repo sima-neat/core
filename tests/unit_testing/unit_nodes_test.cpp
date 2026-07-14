@@ -66,9 +66,11 @@ int main() {
                      "RTSPInput name mismatch");
 
     simaai::neat::CameraInputOptions cam_opt;
-    require(cam_opt.allow_cpu_fallback,
-            "CameraInput must default to the adaptive bridge on supported package sets");
-    auto cam = simaai::neat::nodes::CameraInput(cam_opt);
+    require(!cam_opt.allow_cpu_fallback, "CameraInput must default to strict device zero-copy");
+
+    simaai::neat::CameraInputOptions fallback_cam_opt = cam_opt;
+    fallback_cam_opt.allow_cpu_fallback = true;
+    auto cam = simaai::neat::nodes::CameraInput(fallback_cam_opt);
     require_contains(cam->backend_fragment(0), "libcamerasrc name=n0_camera_src",
                      "CameraInput source missing");
     require_contains(cam->backend_fragment(0), "neatcamerabridge name=n0_camera_bridge",
