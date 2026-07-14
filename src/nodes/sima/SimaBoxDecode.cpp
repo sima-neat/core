@@ -496,6 +496,20 @@ void apply_raw_yolov6_yolox_compiled_payload_overrides(CompiledBoxDecodeContract
   }
 }
 
+void apply_ssd_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
+  if (!compiled || compiled->payload.decode_type != BoxDecodeType::Ssd) {
+    return;
+  }
+  // SSD confidence heads are raw class logits decoded with a softmax over the class
+  // dimension. Keep the grouped-by-role head layout (all loc heads, then all conf
+  // heads) robust even when a model-managed route was auto-extracted.
+  compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Softmax;
+  if (!compiled->payload.decode_type_option.has_value() ||
+      *compiled->payload.decode_type_option == BoxDecodeTypeOption::Auto) {
+    compiled->payload.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+  }
+}
+
 } // namespace
 
 static BoxDecodeOptionsInternal options_from_model(
@@ -689,6 +703,7 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
   apply_raw_yolov6_yolox_compiled_payload_overrides(&compiled_contract);
+  apply_ssd_compiled_payload_overrides(&compiled_contract);
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
   }

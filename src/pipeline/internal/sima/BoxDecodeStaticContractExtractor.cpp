@@ -800,6 +800,13 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
       decode_type_is_yolov26_family_local(decode_type)) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
+  if (decode_type == BoxDecodeType::Ssd) {
+    // SSD confidence heads are class logits decoded with a softmax over the class dimension
+    // (background included). The activation is implied by the decode type, so raw/manual-wired SSD
+    // loc/conf tensors resolve without needing special class_logit tensor names (this matches the
+    // softmax default the static-contract normalization applies downstream).
+    return BoxDecodeScoreActivation::Softmax;
+  }
   set_error(error_message,
             "boxdecode inferred input tensors require explicit class score activation semantics");
   return std::nullopt;
@@ -1051,6 +1058,12 @@ bool stage_is_detess_like_local(const MpkPluginIoContract& plugin) {
 
 bool stage_is_dequant_like_local(const MpkPluginIoContract& plugin) {
   return kernel_is_dequant_like_local(stage_identity_token_local(plugin));
+}
+
+bool stage_is_boxdecode_like_local(const MpkPluginIoContract& plugin) {
+  const std::string token = lower_copy_local(stage_identity_token_local(plugin));
+  return token.find("boxdecode") != std::string::npos ||
+         token.find("objectdecode") != std::string::npos;
 }
 
 bool stage_has_explicit_dequant_quant_local(const MpkPluginIoContract& plugin) {
@@ -2391,6 +2404,28 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
 
   BoxDecodeStaticContract out;
   out.score_activation = BoxDecodeScoreActivation::Unknown;
+  // Source the decode type from the MPK boxdecode stage, scoped to SSD. Prefer the explicit
+  // terminal_stage; otherwise (terminal-less callers, e.g. the strict-route probe) fall back to the
+  // boxdecode plugin in the chain. Non-SSD/undeclared types stay Unspecified, so behavior is
+  // unchanged for them.
+  const MpkPluginIoContract* boxdecode_stage = terminal_stage;
+  if (!boxdecode_stage) {
+    for (const auto& plugin : contract.plugins) {
+      if (stage_is_boxdecode_like_local(plugin)) {
+        boxdecode_stage = &plugin;
+        break;
+      }
+    }
+  }
+  if (boxdecode_stage &&
+      parse_box_decode_type_token(boxdecode_stage->decode_type) == BoxDecodeType::Ssd) {
+    out.decode_type = BoxDecodeType::Ssd;
+    if (const auto parsed_option =
+            parse_box_decode_type_option_token(boxdecode_stage->decode_type_option);
+        parsed_option.has_value()) {
+      out.decode_type_option = *parsed_option;
+    }
+  }
   const auto tess_needed =
       terminal_stage ? std::optional<bool>(route_flags.tess_needed)
                      : resolve_external_boxdecode_tess_needed_local(
