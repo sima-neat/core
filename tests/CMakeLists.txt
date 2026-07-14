@@ -345,6 +345,7 @@ set(UNIT_TESTS
   unit_preprocess_roi_split_test
   unit_preprocess_meta_template_dynamic_test
   unit_preproc_contract_rules_test
+  unit_inputstream_stop_flush_test
   unit_inputstream_stop_timeout_detach_test
   unit_inputappsrc_stop_race_test
   unit_neatdecoder_keepalive_test
