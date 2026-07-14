@@ -210,6 +210,12 @@ set(SIMANEAT_PLATFORM_DEP_PACKAGE_MIN_VERSION
   "${SIMANEAT_PLATFORM_VERSION_MAJOR}.${SIMANEAT_PLATFORM_VERSION_MINOR}.${SIMANEAT_PREVIOUS_PLATFORM_PATCH}~")
 set(SIMANEAT_PLATFORM_DEP_PACKAGE_MAX_VERSION
   "${SIMANEAT_PLATFORM_VERSION_MAJOR}.${SIMANEAT_PLATFORM_VERSION_MINOR}.${SIMANEAT_NEXT_PLATFORM_PATCH}")
+# The 2.1.1 SiMa memory ABI remains compatible across the supported 2.1.x
+# platform range. Keep its dependency floor independent from the generic
+# platform package floor so a 2.1.3 NEAT package remains installable on the
+# available SDK/DevKit memory package.
+set(SIMANEAT_SIMAAI_MEMORY_PACKAGE_MIN_VERSION
+  "${SIMANEAT_PLATFORM_VERSION_MAJOR}.${SIMANEAT_PLATFORM_VERSION_MINOR}.1~")
 
 # Debian package versions do not allow underscores. Keep branch-derived versions
 # installable by normalizing every non-Debian-version character to '-'.
@@ -1489,7 +1495,7 @@ string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPEND
 set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
   "pkg-config"
-  "simaai-memory-lib-dev (>= ${SIMANEAT_PLATFORM_DEP_PACKAGE_MIN_VERSION})"
+  "simaai-memory-lib-dev (>= ${SIMANEAT_SIMAAI_MEMORY_PACKAGE_MIN_VERSION})"
   "simaai-memory-lib-dev (<< ${SIMANEAT_PLATFORM_DEP_PACKAGE_MAX_VERSION})"
   "libgstreamer1.0-dev"
   "libgstreamer-plugins-base1.0-dev"

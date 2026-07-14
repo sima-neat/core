@@ -1,7 +1,6 @@
 {
   "internals": {
-    "branch": "codex/internals-libcamera-source",
-    "spec": "626573d0d6b5"
+    "policy": "snap"
   },
   "llima": {
     "policy": "snap"
@@ -10,5 +9,6 @@
     "channel": "develop"
   },
   "package-version": "0.3.0",
-  "platform-version": "2.1.2"
+  "platform-version": "2.1.3",
+  "pre-release-version": "pre3813"
 }
