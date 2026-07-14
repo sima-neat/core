@@ -2,9 +2,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -18,6 +21,11 @@ namespace simaai::neat {
 namespace {
 
 using json = nlohmann::json;
+
+constexpr size_t kMaxDatagramPayload = 1200;
+constexpr size_t kChunkHeaderSize = 12;
+constexpr size_t kMaxChunkPayload = kMaxDatagramPayload - kChunkHeaderSize;
+constexpr size_t kMaxLogicalPayload = 65507;
 
 void update_max(std::atomic<uint64_t>& maximum, uint64_t value) {
   uint64_t current = maximum.load(std::memory_order_relaxed);
@@ -121,6 +129,7 @@ struct MetadataSender::Impl {
   int metadata_port = 0;
   bool nonblocking = true;
   bool ok = false;
+  mutable std::atomic<uint64_t> next_message_id{1};
   std::atomic<uint64_t> send_attempts{0};
   std::atomic<uint64_t> datagrams_sent{0};
   std::atomic<uint64_t> send_failures{0};
@@ -129,6 +138,51 @@ struct MetadataSender::Impl {
   std::atomic<uint64_t> last_send_duration_ns{0};
   std::atomic<uint64_t> max_send_duration_ns{0};
   std::atomic<int> last_errno{0};
+
+  bool send_datagram(const char* payload, size_t payload_size, std::string* err) {
+    send_attempts.fetch_add(1, std::memory_order_relaxed);
+    const auto send_start = std::chrono::steady_clock::now();
+    const int flags = nonblocking ? MSG_DONTWAIT : 0;
+    const ssize_t sent = ::sendto(fd, payload, payload_size, flags,
+                                  reinterpret_cast<const sockaddr*>(&addr), addr_len);
+    const int send_errno = sent < 0 ? errno : 0;
+    const auto duration_ns =
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  std::chrono::steady_clock::now() - send_start)
+                                  .count());
+    last_send_duration_ns.store(duration_ns, std::memory_order_relaxed);
+    update_max(max_send_duration_ns, duration_ns);
+
+    if (sent < 0) {
+      send_failures.fetch_add(1, std::memory_order_relaxed);
+      last_errno.store(send_errno, std::memory_order_relaxed);
+      const bool send_would_block = send_errno == EAGAIN || send_errno == EWOULDBLOCK;
+      const bool send_no_buffer_space = send_errno == ENOBUFS;
+      if (send_would_block) {
+        would_block.fetch_add(1, std::memory_order_relaxed);
+      } else if (send_no_buffer_space) {
+        no_buffer_space.fetch_add(1, std::memory_order_relaxed);
+      }
+      if (err) {
+        if (nonblocking && (send_would_block || send_no_buffer_space)) {
+          err->clear();
+        } else {
+          *err = std::string("sendto failed: ") + std::strerror(send_errno);
+        }
+      }
+      return false;
+    }
+    if (static_cast<size_t>(sent) != payload_size) {
+      send_failures.fetch_add(1, std::memory_order_relaxed);
+      last_errno.store(EIO, std::memory_order_relaxed);
+      if (err)
+        *err = "sendto sent a partial datagram";
+      return false;
+    }
+    datagrams_sent.fetch_add(1, std::memory_order_relaxed);
+    last_errno.store(0, std::memory_order_relaxed);
+    return true;
+  }
 };
 
 MetadataSender::MetadataSender(const MetadataSenderOptions& opt, std::string* err)
@@ -203,49 +257,34 @@ bool MetadataSender::send_raw_json(const std::string& payload, std::string* err)
       *err = "MetadataSender not initialized";
     return false;
   }
-  impl_->send_attempts.fetch_add(1, std::memory_order_relaxed);
-  const auto send_start = std::chrono::steady_clock::now();
-  const int flags = impl_->nonblocking ? MSG_DONTWAIT : 0;
-  const ssize_t sent = ::sendto(impl_->fd, payload.data(), payload.size(), flags,
-                                reinterpret_cast<const sockaddr*>(&impl_->addr), impl_->addr_len);
-  const int send_errno = sent < 0 ? errno : 0;
-  const auto duration_ns =
-      static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                std::chrono::steady_clock::now() - send_start)
-                                .count());
-  impl_->last_send_duration_ns.store(duration_ns, std::memory_order_relaxed);
-  update_max(impl_->max_send_duration_ns, duration_ns);
-  if (sent < 0) {
-    impl_->send_failures.fetch_add(1, std::memory_order_relaxed);
-    impl_->last_errno.store(send_errno, std::memory_order_relaxed);
-    const bool would_block = send_errno == EAGAIN || send_errno == EWOULDBLOCK;
-    const bool no_buffer_space = send_errno == ENOBUFS;
-    if (would_block) {
-      impl_->would_block.fetch_add(1, std::memory_order_relaxed);
-    } else if (no_buffer_space) {
-      impl_->no_buffer_space.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (err) {
-      if (impl_->nonblocking && (would_block || no_buffer_space)) {
-        // Congestion is the expected drop path for a nonblocking real-time
-        // sender.  Keep diagnostics in stats(), but leave the error empty so
-        // language bindings can return False instead of raising.
-        err->clear();
-      } else {
-        *err = std::string("sendto failed: ") + std::strerror(send_errno);
-      }
-    }
-    return false;
-  }
-  if (static_cast<size_t>(sent) != payload.size()) {
-    impl_->send_failures.fetch_add(1, std::memory_order_relaxed);
-    impl_->last_errno.store(EIO, std::memory_order_relaxed);
+  if (payload.size() > kMaxLogicalPayload) {
     if (err)
-      *err = "sendto sent a partial datagram";
+      *err = "MetadataSender payload exceeds 65507 bytes";
     return false;
   }
-  impl_->datagrams_sent.fetch_add(1, std::memory_order_relaxed);
-  impl_->last_errno.store(0, std::memory_order_relaxed);
+  if (payload.size() <= kMaxDatagramPayload) {
+    return impl_->send_datagram(payload.data(), payload.size(), err);
+  }
+
+  const size_t chunk_count = (payload.size() + kMaxChunkPayload - 1) / kMaxChunkPayload;
+  const uint64_t message_id = impl_->next_message_id.fetch_add(1, std::memory_order_relaxed);
+  std::array<char, kMaxDatagramPayload> datagram{};
+  datagram[0] = 0x4e;
+  datagram[1] = 0x01;
+  for (size_t byte = 0; byte < sizeof(message_id); ++byte) {
+    datagram[2 + byte] = static_cast<char>(message_id >> ((7 - byte) * 8));
+  }
+  datagram[11] = static_cast<char>(chunk_count);
+
+  for (size_t chunk_index = 0; chunk_index < chunk_count; ++chunk_index) {
+    const size_t offset = chunk_index * kMaxChunkPayload;
+    const size_t chunk_size = std::min(kMaxChunkPayload, payload.size() - offset);
+    datagram[10] = static_cast<char>(chunk_index);
+    std::memcpy(datagram.data() + kChunkHeaderSize, payload.data() + offset, chunk_size);
+    if (!impl_->send_datagram(datagram.data(), kChunkHeaderSize + chunk_size, err)) {
+      return false;
+    }
+  }
   return true;
 }
 

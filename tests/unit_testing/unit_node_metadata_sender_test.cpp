@@ -214,6 +214,71 @@ RUN_TEST(
       require(json::parse(received)["type"].get<std::string>() == "raw",
               "MetadataSender send_raw_json payload mismatch");
 
+      const std::string mtu_sized_payload(1200, 'r');
+      require(sender.send_raw_json(mtu_sized_payload, &send_err),
+              "MetadataSender 1200-byte send_raw_json failed: " + send_err);
+      require(rx.recv_one(&received, 2000), "MetadataSender 1200-byte payload not received");
+      require(received == mtu_sized_payload,
+              "MetadataSender must preserve 1200-byte raw payloads byte-for-byte");
+
+      const std::string chunked_payload(1201, 'x');
+      require(sender.send_raw_json(chunked_payload, &send_err),
+              "MetadataSender chunked send_raw_json failed: " + send_err);
+
+      std::string first_chunk;
+      std::string second_chunk;
+      require(rx.recv_one(&first_chunk, 2000), "MetadataSender first chunk not received");
+      require(rx.recv_one(&second_chunk, 2000), "MetadataSender second chunk not received");
+      require(first_chunk.size() == 1200, "MetadataSender first chunk must fit 1200-byte MTU");
+      require(second_chunk.size() == 25, "MetadataSender second chunk size mismatch");
+      require(static_cast<unsigned char>(first_chunk[0]) == 0x4e &&
+                  static_cast<unsigned char>(first_chunk[1]) == 0x01,
+              "MetadataSender chunk header magic/version mismatch");
+      require(first_chunk.substr(2, 8) == second_chunk.substr(2, 8),
+              "MetadataSender chunks must share one message id");
+      require(static_cast<unsigned char>(first_chunk[10]) == 0 &&
+                  static_cast<unsigned char>(second_chunk[10]) == 1,
+              "MetadataSender chunk indexes mismatch");
+      require(static_cast<unsigned char>(first_chunk[11]) == 2 &&
+                  static_cast<unsigned char>(second_chunk[11]) == 2,
+              "MetadataSender chunk counts mismatch");
+      require(first_chunk.substr(12) + second_chunk.substr(12) == chunked_payload,
+              "MetadataSender chunks must reconstruct the original payload");
+
+      const std::string max_payload(65507, 'm');
+      require(sender.send_raw_json(max_payload, &send_err),
+              "MetadataSender 65507-byte send_raw_json failed: " + send_err);
+      std::string reconstructed;
+      reconstructed.reserve(max_payload.size());
+      std::string max_message_id;
+      for (int expected_index = 0; expected_index < 56; ++expected_index) {
+        std::string chunk;
+        require(rx.recv_one(&chunk, 2000), "MetadataSender maximum-size chunk not received");
+        require(chunk.size() <= 1200, "MetadataSender chunk exceeds 1200-byte UDP payload");
+        require(static_cast<unsigned char>(chunk[0]) == 0x4e &&
+                    static_cast<unsigned char>(chunk[1]) == 0x01,
+                "MetadataSender maximum-size chunk header mismatch");
+        if (max_message_id.empty()) {
+          max_message_id = chunk.substr(2, 8);
+        }
+        require(chunk.substr(2, 8) == max_message_id,
+                "MetadataSender maximum-size chunks must share one message id");
+        require(static_cast<unsigned char>(chunk[10]) == expected_index,
+                "MetadataSender maximum-size chunk index mismatch");
+        require(static_cast<unsigned char>(chunk[11]) == 56,
+                "MetadataSender maximum-size chunk count mismatch");
+        reconstructed.append(chunk.data() + 12, chunk.size() - 12);
+      }
+      require(max_message_id != first_chunk.substr(2, 8),
+              "MetadataSender chunked messages must have distinct message ids");
+      require(reconstructed == max_payload,
+              "MetadataSender maximum-size chunks must reconstruct the original payload");
+
+      const std::string oversized_payload(65508, 'x');
+      require(!sender.send_raw_json(oversized_payload, &send_err),
+              "MetadataSender must reject payloads larger than 65507 bytes");
+      require_contains(send_err, "65507", "MetadataSender oversized payload error mismatch");
+
       const std::string data_json = R"({"tracks":[{"id":"trk-1","bbox":[10,20,30,40]}]})";
       require(sender.send_metadata("tracking", data_json, 12345, "frame-7", &send_err),
               "MetadataSender send_metadata failed: " + send_err);
@@ -230,8 +295,8 @@ RUN_TEST(
               "MetadataSender send_metadata data mismatch");
 
       const auto send_stats = sender.stats();
-      require(send_stats.send_attempts == 2, "MetadataSender send-attempt stats mismatch");
-      require(send_stats.datagrams_sent == 2, "MetadataSender sent-datagram stats mismatch");
+      require(send_stats.send_attempts == 61, "MetadataSender send-attempt stats mismatch");
+      require(send_stats.datagrams_sent == 61, "MetadataSender sent-datagram stats mismatch");
       require(send_stats.send_failures == 0, "MetadataSender failure stats mismatch");
       require(send_stats.would_block == 0, "MetadataSender would-block stats mismatch");
       require(send_stats.no_buffer_space == 0, "MetadataSender ENOBUFS stats mismatch");

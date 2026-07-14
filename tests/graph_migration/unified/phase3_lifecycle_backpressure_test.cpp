@@ -103,8 +103,7 @@ RUN_TEST("graph_migration_phase3_lifecycle_backpressure_test", [] {
                 stats_after_burst.push_failures > 0,
             "rapid non-blocking push burst at queue_depth=1 should reject or record a drop");
     require(run.running(), "try_push backpressure must leave the connected Run active");
-    require(run.last_error().empty(),
-            "try_push backpressure must not latch a connected-Run error");
+    require(run.last_error().empty(), "try_push backpressure must not latch a connected-Run error");
 
     bool recovered = false;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
