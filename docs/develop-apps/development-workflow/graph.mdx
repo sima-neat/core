@@ -538,11 +538,23 @@ Both C++ and Python expose these fields on `GraphLinkOptions`, which is passed t
 | `max_inflight_per_stream` | A realtime-by-stream link carries raw decoder-backed samples and needs an explicit downstream admission cap per stream. The field default is `-1`; Core uses `4`. Fused source lowering applies the resolved value to the corresponding mux stream. |
 | `max_inflight_total` | A realtime-by-stream link needs a hard global cap across streams. The field default is `-1`; without an env override, Core derives `min(max_inflight_per_stream * stream_count, 8)`. |
 
-:::caution Rebuild C++ applications after upgrading
+:::caution Upgrade preview applications and saved graphs
 
-The admission fields are members of `GraphLinkOptions`, so this version changes its C++ binary layout. Rebuild C++ applications and plugins against the matching Core package instead of mixing old binaries with the new library.
+This version adds admission fields to `GraphLinkOptions` and advances the Neat Library C++ ABI and shared-library SONAME to 3. Rebuild C++ applications and plugins against the matching Core package. Do not mix binaries built for `libsima_neat.so.2` with `libsima_neat.so.3`.
 
-When migrating from an earlier preview, replace `RealtimeMuxByStream` with `GraphLinkOptions`, replace `RealtimeEveryFrameByStream` with `RealtimeLatestByStream`, and use ordinary `connect()` and `build()`. Rebuild and save any graph that contains the removed `realtime_every_frame_by_stream` policy.
+Migrate preview source code as follows:
+
+| Preview API | Current API |
+| --- | --- |
+| `RealtimeGraphLinkOptions` | `GraphLinkOptions` |
+| `graph.connect_realtime(from, to, link)` | `graph.connect(from, to, link)` |
+| `graph.build_fused_realtime_sources(options)` (C++) | `graph.build(options)` |
+| `graph.build_fused_realtime_source(options)` (Python) | `graph.build(options)` |
+| `RealtimeEveryFrameByStream` | `RealtimeLatestByStream` when freshness and replacement are acceptable |
+
+`RealtimeLatestByStream` is a freshness policy, not a lossless replacement for `RealtimeEveryFrameByStream`. It retains one pending sample per stream and replaces that sample when a newer frame arrives.
+
+`Graph::load()` rejects saved JSON containing `"link_policy": "realtime_every_frame_by_stream"`. Regenerate the graph from updated source. If JSON is the only source, change the policy to `realtime_latest_by_stream` only when dropping stale frames is acceptable, then load and save it again with this version.
 
 :::
 
