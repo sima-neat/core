@@ -1900,7 +1900,7 @@ bool should_insert_boundaries_for_mode(const char* mode_key, bool def_val) {
   return env_bool(mode_key, def_val);
 }
 
-static int async_queue2_depth(int requested_depth = 0) {
+int session_build_async_queue2_depth(int requested_depth) {
   if (requested_depth > 0) {
     return std::min(requested_depth, 1024);
   }
@@ -1917,50 +1917,78 @@ static int async_queue2_depth(int requested_depth = 0) {
   }();
   return cached_env_or_default;
 }
-static std::string async_queue2_fragment(int requested_depth = 0) {
-  const int depth = async_queue2_depth(requested_depth);
+std::string session_build_async_queue2_fragment(int requested_depth) {
+  const int depth = session_build_async_queue2_depth(requested_depth);
   return "queue max-size-buffers=" + std::to_string(depth) + " max-size-bytes=0 max-size-time=0";
 }
 
-static std::string append_boolean_property_if_absent(std::string fragment,
-                                                     const std::string& factory,
-                                                     const std::string& property, bool value) {
-  if (!value || fragment.find(factory) == std::string::npos ||
-      fragment.find(property + "=") != std::string::npos) {
-    return fragment;
+static bool fragment_segment_uses_factory(std::string_view segment, std::string_view factory) {
+  const std::size_t start = segment.find_first_not_of(" \t\r\n");
+  if (start == std::string_view::npos || segment.compare(start, factory.size(), factory) != 0) {
+    return false;
   }
-  const std::size_t factory_pos = fragment.find(factory);
-  std::size_t insert_pos = fragment.find('!', factory_pos);
-  if (insert_pos == std::string::npos) {
-    insert_pos = fragment.size();
-  }
-  fragment.insert(insert_pos, " " + property + "=true ");
-  return fragment;
+  const std::size_t after = start + factory.size();
+  return after == segment.size() || std::isspace(static_cast<unsigned char>(segment[after])) != 0;
 }
 
-static std::string set_int_property_if_factory_present(std::string fragment,
-                                                       const std::string& factory,
-                                                       const std::string& property, int value) {
-  if (value <= 0 || fragment.find(factory) == std::string::npos) {
-    return fragment;
+static void set_fragment_segment_property(std::string* segment, std::string_view property,
+                                          std::string_view value) {
+  if (!segment) {
+    return;
   }
-  const std::string key = property + "=";
-  const size_t pos = fragment.find(key);
-  if (pos != std::string::npos) {
-    size_t vstart = pos + key.size();
-    size_t vend = vstart;
-    while (vend < fragment.size() && std::isdigit(static_cast<unsigned char>(fragment[vend]))) {
-      ++vend;
+  const std::string key = std::string(property) + "=";
+  std::size_t search = 0;
+  while (search < segment->size()) {
+    const std::size_t pos = segment->find(key, search);
+    if (pos == std::string::npos) {
+      break;
     }
-    fragment.replace(vstart, vend - vstart, std::to_string(value));
-    return fragment;
+    const bool token_start =
+        pos == 0 || std::isspace(static_cast<unsigned char>((*segment)[pos - 1])) != 0;
+    if (!token_start) {
+      search = pos + key.size();
+      continue;
+    }
+    const std::size_t value_start = pos + key.size();
+    std::size_t value_end = value_start;
+    while (value_end < segment->size() &&
+           std::isspace(static_cast<unsigned char>((*segment)[value_end])) == 0) {
+      ++value_end;
+    }
+    segment->replace(value_start, value_end - value_start, value);
+    return;
   }
-  const std::size_t factory_pos = fragment.find(factory);
-  std::size_t insert_pos = fragment.find('!', factory_pos);
-  if (insert_pos == std::string::npos) {
-    insert_pos = fragment.size();
+
+  std::size_t insert_pos = segment->size();
+  while (insert_pos > 0 &&
+         std::isspace(static_cast<unsigned char>((*segment)[insert_pos - 1])) != 0) {
+    --insert_pos;
   }
-  fragment.insert(insert_pos, " " + key + std::to_string(value) + " ");
+  segment->insert(insert_pos, " " + key + std::string(value));
+}
+
+static std::string set_property_for_factory_segments(std::string fragment, std::string_view factory,
+                                                     std::string_view property,
+                                                     std::string_view value) {
+  std::size_t segment_start = 0;
+  while (segment_start <= fragment.size()) {
+    const std::size_t separator = fragment.find('!', segment_start);
+    const std::size_t segment_end = separator == std::string::npos ? fragment.size() : separator;
+    std::string segment = fragment.substr(segment_start, segment_end - segment_start);
+    if (fragment_segment_uses_factory(segment, factory)) {
+      set_fragment_segment_property(&segment, property, value);
+      fragment.replace(segment_start, segment_end - segment_start, segment);
+      if (separator != std::string::npos) {
+        segment_start += segment.size() + 1U;
+        continue;
+      }
+      break;
+    }
+    if (separator == std::string::npos) {
+      break;
+    }
+    segment_start = separator + 1U;
+  }
   return fragment;
 }
 
@@ -2051,8 +2079,8 @@ static bool env_explicit_false_session_build_local(const char* name) {
   return raw && *raw && std::strcmp(raw, "0") == 0;
 }
 
-static std::string apply_session_fast_path_options_to_fragment(std::string fragment,
-                                                               const GraphOptions* sess_opt) {
+std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
+                                                              const GraphOptions* sess_opt) {
   if (!sess_opt) {
     return fragment;
   }
@@ -2062,16 +2090,18 @@ static std::string apply_session_fast_path_options_to_fragment(std::string fragm
   const bool processmla_async =
       sess_opt->processmla.async &&
       !env_explicit_false_session_build_local("SIMA_PROCESSMLA_SAFE_ASYNC");
-  fragment = append_boolean_property_if_absent(std::move(fragment), "neatprocesscvu", "async",
-                                               processcvu_async);
-  fragment = append_boolean_property_if_absent(std::move(fragment), "neatprocessmla", "async",
-                                               processmla_async);
-  fragment =
-      set_int_property_if_factory_present(std::move(fragment), "neatprocessmla", "num-buffers",
-                                          sess_opt->processmla.output_pool_buffers);
-  fragment = append_boolean_property_if_absent(std::move(fragment), "neatprocessmla",
-                                               "defer-output-invalidate",
-                                               sess_opt->processmla.defer_output_invalidate);
+  fragment = set_property_for_factory_segments(std::move(fragment), "neatprocesscvu", "async",
+                                               processcvu_async ? "true" : "false");
+  fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "async",
+                                               processmla_async ? "true" : "false");
+  if (sess_opt->processmla.output_pool_buffers > 0) {
+    fragment =
+        set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "num-buffers",
+                                          std::to_string(sess_opt->processmla.output_pool_buffers));
+  }
+  fragment = set_property_for_factory_segments(
+      std::move(fragment), "neatprocessmla", "defer-output-invalidate",
+      sess_opt->processmla.defer_output_invalidate ? "true" : "false");
   return fragment;
 }
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);
@@ -2881,7 +2911,8 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
   br.name_transform = name_transform;
   br.diag->queue2_enabled = insert_queue2;
   const int requested_queue_depth = sess_opt ? sess_opt->async_queue_depth : 0;
-  br.diag->queue2_depth = insert_queue2 ? async_queue2_depth(requested_queue_depth) : 0;
+  br.diag->queue2_depth =
+      insert_queue2 ? session_build_async_queue2_depth(requested_queue_depth) : 0;
 
   pipeline_internal::PipelineBuildContext build_ctx(name_transform);
   dump_node_debug_options(nodes, name_transform);
@@ -2904,7 +2935,7 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
         want_queue2 = false;
       }
       if (want_queue2) {
-        ss << " ! " << async_queue2_fragment(requested_queue_depth) << " ! ";
+        ss << " ! " << session_build_async_queue2_fragment(requested_queue_depth) << " ! ";
       } else {
         ss << " ! ";
       }
@@ -2915,7 +2946,8 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
     nr.kind = nodes[i]->kind();
     nr.user_label = nodes[i]->user_label();
     NodeFragment frag = make_node_fragment(nodes[i], (int)i, name_transform);
-    nr.backend_fragment = apply_session_fast_path_options_to_fragment(frag.fragment, sess_opt);
+    nr.backend_fragment =
+        session_build_apply_fast_path_options_to_fragment(frag.fragment, sess_opt);
     nr.elements = frag.element_names;
     br.diag->node_reports.push_back(nr);
 

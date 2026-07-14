@@ -11,9 +11,11 @@
 
 #include <opencv2/core.hpp>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -167,6 +169,35 @@ RUN_TEST(
         require(fill.max_call_ms < 50,
                 run_api_case("active_backpressure_non_blocking",
                              "Run::try_push should remain non-blocking under pressure"));
+
+        // A full internal queue is a normal try_push() result, not a fatal
+        // graph error. Drain accepted work and prove the same Run admits new
+        // input afterward. This protects long-lived nonblocking egress paths
+        // (for example encoded H.264 VideoSender pipelines) from being killed
+        // by one transient busy result.
+        require(run.last_error().empty(),
+                run_api_case("active_backpressure_nonfatal_error",
+                             "Run::try_push backpressure must not latch a graph error"));
+        require(run.running(),
+                run_api_case("active_backpressure_nonfatal_running",
+                             "Run::try_push backpressure must leave the Run active"));
+        bool recovered_after_backpressure = false;
+        const auto recovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < recovery_deadline) {
+          Sample drained;
+          PullError drain_err;
+          (void)run.pull(10, drained, &drain_err);
+          if (run.try_push(TensorList{seed})) {
+            recovered_after_backpressure = true;
+            break;
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(recovered_after_backpressure,
+                run_api_case("active_backpressure_recovery",
+                             "Run should accept input after transient try_push backpressure"));
+        require(run.last_error().empty(), run_api_case("active_backpressure_recovery_error",
+                                                       "recovered Run should remain error-free"));
 
         run.close_input();
         require(!run.try_push(TensorList{seed}),

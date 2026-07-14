@@ -14,8 +14,33 @@ Use `MetadataSender` when an external viewer, recorder, or service accepts UTF-8
 - Default host: `127.0.0.1`
 - Default metadata port base: `9100`
 - Channel port rule: `metadata_port_base + channel`
+- Default send mode: nonblocking (`MSG_DONTWAIT`)
 - Payload encoding: UTF-8 JSON text
 - Required top-level fields: `type`, `data`
+- Maximum logical payload: 65,507 bytes
+
+`MetadataSender` keeps each UDP payload at or below 1200 bytes. JSON payloads
+up to 1200 bytes remain one unchanged datagram. Larger payloads are split into
+chunks with this 12-byte binary header:
+
+| Byte | Size | Value |
+| --- | --- | --- |
+| 0 | 1 | Magic byte `0x4e` |
+| 1 | 1 | Protocol version `0x01` |
+| 2 | 8 | Message ID as an unsigned 64-bit big-endian integer |
+| 10 | 1 | Zero-based chunk index |
+| 11 | 1 | Total chunk count |
+
+Each chunk carries up to 1188 JSON bytes. A receiver reassembles chunks with
+the same sender address and message ID in chunk-index order before parsing the
+JSON. UDP delivery remains best effort: the sender does not retry a failed
+chunk, and `send_raw_json(...)` or `send_metadata(...)` returns `false` after
+the first local send failure.
+
+Receivers should accept both unchanged JSON datagrams and versioned chunks.
+Update Insight to a release with chunk reassembly before or together with this
+Neat Library version. Older Insight versions continue to receive payloads up
+to 1200 bytes, but cannot decode larger chunked payloads.
 
 For Insight, pair metadata channel `N` with the video UDP stream on `9000 + N`.
 If Insight or another receiver runs behind container port remapping, pass the mapped host and port explicitly from the app.
@@ -67,6 +92,40 @@ sender.send_raw_json(
     &err);
 ```
 
+## Real-Time Dispatch Is Nonblocking by Default
+
+`MetadataSender` applies `MSG_DONTWAIT` to each datagram by default so a locally
+congested send buffer cannot delay a thread that also dispatches video or
+inference work. When the kernel cannot accept a datagram immediately, the send
+returns `false` instead of waiting. Treat that metadata packet as dropped and
+continue real-time work; UDP delivery is not guaranteed.
+
+The default constructor and the default send options are equivalent:
+
+```cpp
+simaai::neat::MetadataSenderSendOptions send_opt;
+simaai::neat::MetadataSender sender(opt, send_opt, &err);
+```
+
+Callers that explicitly prefer blocking delivery attempts can opt in:
+
+```cpp
+simaai::neat::MetadataSenderSendOptions send_opt;
+send_opt.nonblocking = false;
+simaai::neat::MetadataSender sender(opt, send_opt, &err);
+```
+
+Use `stats()` to distinguish congestion from other failures and, in explicit
+blocking mode, to detect slow calls:
+
+```cpp
+const auto stats = sender.stats();
+std::cerr << "sent=" << stats.datagrams_sent
+          << " would_block=" << stats.would_block
+          << " enobufs=" << stats.no_buffer_space
+          << " max_send_ns=" << stats.max_send_duration_ns << '\n';
+```
+
 ## Python
 
 ```python
@@ -97,4 +156,10 @@ sender.send_metadata(
     12345,
     "frame-7",
 )
+
+stats = sender.stats()
+print(stats.datagrams_sent, stats.would_block, stats.max_send_duration_ns)
 ```
+
+As in C++, explicitly set `send_opt.nonblocking = False` and pass it as the
+second constructor argument only when blocking behavior is required.

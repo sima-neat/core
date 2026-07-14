@@ -724,7 +724,18 @@ jobs:
           SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-12)"
           PACKAGE_SPEC="core@${REF_NAME}:${SHORT_SHA}"
           echo "Installing ${PACKAGE_SPEC} from Vulcan env ${VULCAN_ENV}"
-          sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all
+          for attempt in 1 2 3 4; do
+            if sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all; then
+              break
+            fi
+            if [[ "${attempt}" -eq 4 ]]; then
+              echo "Artifact installation failed after ${attempt} attempts." >&2
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "Artifact installation attempt ${attempt} failed; retrying in ${delay}s." >&2
+            sleep "${delay}"
+          done
 
       - name: Locate installed extras content
         run: |

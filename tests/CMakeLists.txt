@@ -100,6 +100,31 @@ add_custom_target(prepare_perf_codec_fixtures
   VERBATIM
 )
 
+# Keep installer package-recovery behavior in the normal CTest/DevKit gate.
+# Copy both files below the build tests root so the Vulcan extras path rebasing
+# also makes this test self-contained on the ARM64 runner.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_install_neat_framework_native_restore.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
+  COPYONLY
+)
+configure_file(
+  "${CMAKE_SOURCE_DIR}/tools/install_neat_framework.sh"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
+  COPYONLY
+)
+add_test(
+  NAME unit_install_neat_framework_native_restore_test
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
+          --installer "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
+)
+set_tests_properties(
+  unit_install_neat_framework_native_restore_test
+  PROPERTIES LABELS "unit;installer;regression"
+)
+
 # ------------------------------------------------------------------------------
 # Python test source compilation
 # ------------------------------------------------------------------------------
@@ -292,6 +317,7 @@ set(UNIT_TESTS
   unit_graph_stamp_frame_id_test
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
+  unit_fused_realtime_fast_path_options_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
@@ -304,6 +330,8 @@ set(UNIT_TESTS
   unit_gst_init_guard_test
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
+  unit_latest_mux_fairness_test
+  unit_latest_mux_backpressure_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
   unit_http_mjpeg_decoded_group_test
@@ -1746,6 +1774,25 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   set_property(TEST codec_runtime_stream_contract_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
   set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_test(
+    NAME codec_runtime_nested_zero_copy_boundary_test
+    COMMAND codec_runtime_stream_test
+            --case rtsp-h264-decoded
+            --frames 5
+            --repeat 2
+            --determinism
+            --nested-boundary
+  )
+  append_pipeline_test_env(codec_runtime_nested_zero_copy_boundary_test)
+  set_property(
+    TEST codec_runtime_nested_zero_copy_boundary_test
+    APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;determinism;lifecycle"
+  )
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(codec_runtime_nested_zero_copy_boundary_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_test(
     NAME codec_runtime_bad_url_diagnostics

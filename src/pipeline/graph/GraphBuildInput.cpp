@@ -2908,6 +2908,15 @@ void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt
   maybe_enable_rtsp_appsink_drop(stream_opt, nodes);
 }
 
+void session_build_maybe_enable_rtsp_appsink_drop(
+    InputStreamOptions& stream_opt, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const std::vector<std::vector<std::shared_ptr<Node>>>& branch_nodes) {
+  maybe_enable_rtsp_appsink_drop(stream_opt, consumer_nodes);
+  for (const auto& nodes : branch_nodes) {
+    maybe_enable_rtsp_appsink_drop(stream_opt, nodes);
+  }
+}
+
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes) {
   return public_output_endpoint_selector_local(nodes);
