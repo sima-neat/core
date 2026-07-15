@@ -836,6 +836,63 @@ RUN_TEST(
                                                     realtime_encoded_output,
                                                     "realtime encoded-output link");
 
+      // Encoded fusion concatenates the source and decoder fragments. Until
+      // that fused boundary can reproduce arbitrary link semantics, any
+      // non-default source-to-decoder contract must retain the segmented path.
+      const auto require_nondefault_decoder_link_falls_back =
+          [&](simaai::neat::GraphLinkOptions decoder_link, const char* reason) {
+            simaai::neat::Graph app(std::string("decoder_link_fallback_") + reason, outer_options);
+            auto detector = make_composed_consumer_graph();
+            for (int stream = 0; stream < 2; ++stream) {
+              simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+              source_options.url = "rtsp://example.test/decoder-link" + std::to_string(stream);
+              source_options.insert_queue = false;
+              source_options.auto_caps_from_stream = false;
+              source_options.h264_fps = 20;
+              source_options.h264_width = 1280;
+              source_options.h264_height = 720;
+              auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+
+              simaai::neat::Graph decoder("contract_decoder" + std::to_string(stream));
+              decoder.add(simaai::neat::nodes::SimaDecode());
+              decoder.add(simaai::neat::nodes::Output("contract_detector_frame"));
+              auto stream_decoder_link = decoder_link;
+              if (!stream_decoder_link.stream_id.empty()) {
+                stream_decoder_link.stream_id += std::to_string(stream);
+              }
+              app.connect(source, decoder, stream_decoder_link);
+
+              simaai::neat::GraphLinkOptions detector_link;
+              detector_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+              detector_link.stream_id = "contract_stream" + std::to_string(stream);
+              app.connect(decoder, detector, detector_link);
+
+              simaai::neat::Graph output("contract_encoded_output" + std::to_string(stream));
+              output.add(simaai::neat::nodes::Output("contract_h264_" + std::to_string(stream),
+                                                     simaai::neat::OutputOptions::EveryFrame(4)));
+              app.connect(source, output);
+            }
+
+            const auto plan =
+                simaai::neat::runtime::compile_public_graph(app, composed_run_options);
+            require(std::none_of(plan.pipeline_segments.begin(), plan.pipeline_segments.end(),
+                                 [](const auto& segment) {
+                                   return segment.fused_realtime_ingress.has_value();
+                                 }),
+                    std::string("encoded fusion must preserve the segmented path for ") + reason);
+          };
+      simaai::neat::GraphLinkOptions realtime_decoder_link;
+      realtime_decoder_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+      realtime_decoder_link.queue_depth = 1;
+      realtime_decoder_link.max_inflight_per_stream = 1;
+      realtime_decoder_link.max_inflight_total = 2;
+      require_nondefault_decoder_link_falls_back(realtime_decoder_link,
+                                                 "realtime source-decoder link");
+      simaai::neat::GraphLinkOptions identified_decoder_link;
+      identified_decoder_link.stream_id = "decoder_input_";
+      require_nondefault_decoder_link_falls_back(identified_decoder_link,
+                                                 "identified source-decoder link");
+
       simaai::neat::Graph shared_encoded_output_app("shared_encoded_output_fallback",
                                                     outer_options);
       auto shared_output_detector = make_composed_consumer_graph();
@@ -937,11 +994,11 @@ RUN_TEST(
       for (const auto& branch : direct_video_fused->fused_realtime_ingress->branches) {
         require(!branch.encoded_output.has_value(),
                 "direct VideoSender fusion must not synthesize a public encoded Output");
-        require(branch.encoded_sink_nodes.size() == 2U &&
-                    branch.encoded_sink_nodes[0]->kind() == "H264Packetize" &&
-                    branch.encoded_sink_nodes[1]->kind() == "UdpOutput",
-                "direct VideoSender fusion must reuse the source parser and retain the "
-                "packetizer and sink");
+        require(branch.encoded_sink_nodes.size() == 3U &&
+                    branch.encoded_sink_nodes[0]->kind() == "H264Parse" &&
+                    branch.encoded_sink_nodes[1]->kind() == "H264Packetize" &&
+                    branch.encoded_sink_nodes[2]->kind() == "UdpOutput",
+                "direct VideoSender fusion must retain the parser, packetizer, and sink");
         require(branch.encoded_split_node_index.has_value() &&
                     *branch.encoded_split_node_index < branch.nodes.size() &&
                     branch.nodes[*branch.encoded_split_node_index]->kind() == "SimaDecode",
@@ -968,9 +1025,9 @@ RUN_TEST(
           " ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! neatdecoder";
       const std::string leaky_video_queue =
           "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! "
-          "rtph264pay";
+          "h264parse";
       const std::string lossless_video_queue =
-          "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! rtph264pay";
+          "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! h264parse";
       require(count_occurrences(direct_video_pipeline, lossless_decoder_queue) == 2U,
               "a queue-less encoded prefix must retain one lossless decoder queue per stream");
       require(count_occurrences(direct_video_pipeline, lossless_video_queue) == 1U,
@@ -1052,8 +1109,8 @@ RUN_TEST(
               "collisions: " +
                   direct_video_parse_message);
 
-      // Kind-based recognition must not optimize away a customer-configured
-      // parser whose caps/header behavior differs from the VideoSender preset.
+      // Kind-based recognition must preserve a customer-configured parser's
+      // caps/header behavior exactly.
       simaai::neat::Graph custom_video_app("custom_encoded_video_fused_app", outer_options);
       auto custom_video_detector = make_composed_consumer_graph();
       for (int stream = 0; stream < 2; ++stream) {

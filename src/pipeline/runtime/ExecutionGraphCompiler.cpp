@@ -11,8 +11,6 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/rtp/H264Depacketize.h"
-#include "nodes/sima/H264Packetize.h"
-#include "nodes/sima/H264Parse.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
@@ -252,6 +250,13 @@ bool realtime_latest_link(const GraphLinkOptions& opt) {
 
 bool default_link(const GraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
+}
+
+bool exact_default_link(const GraphLinkOptions& opt) {
+  const GraphLinkOptions defaults;
+  return opt.policy == defaults.policy && opt.queue_depth == defaults.queue_depth &&
+         opt.stream_id.empty() && opt.max_inflight_per_stream == defaults.max_inflight_per_stream &&
+         opt.max_inflight_total == defaults.max_inflight_total;
 }
 
 void validate_realtime_inflight_option(const char* name, int value) {
@@ -1792,25 +1797,6 @@ bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
          segment.nodes[2]->kind() == "UdpOutput";
 }
 
-bool encoded_video_sender_parser_is_redundant(const PipelineSegmentPlan& segment) {
-  if (!is_encoded_video_sender_segment(segment)) {
-    return false;
-  }
-  const auto* parser = dynamic_cast<const simaai::neat::H264Parse*>(segment.nodes[0].get());
-  const auto* packetizer = dynamic_cast<const simaai::neat::H264Packetize*>(segment.nodes[1].get());
-  if (!parser || !packetizer) {
-    return false;
-  }
-  const auto& parser_options = parser->options();
-  // H264Depacketize already guarantees parsed, byte-stream, AU-aligned input.
-  // The standard VideoSender configures the parser and packetizer with the
-  // same SPS/PPS interval, so the packetizer fully subsumes this parser. Keep
-  // a custom parser when it enforces caps or has distinct header-insertion
-  // semantics rather than optimizing away customer-visible behavior.
-  return !parser_options.enforce_caps &&
-         parser_options.config_interval == packetizer->config_interval();
-}
-
 std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
     const ExecutionGraphPlan& plan,
     const std::unordered_map<graph::NodeId, std::size_t>& segment_by_node,
@@ -1843,7 +1829,17 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
   if (fanout_to_decoder_edge >= plan.edges.size()) {
     return std::nullopt;
   }
-  const graph::NodeId fanout_node = plan.edges[fanout_to_decoder_edge].from;
+  const auto& decoder_input_edge = plan.edges[fanout_to_decoder_edge];
+  // Encoded fusion concatenates the source prefix directly with the decoder
+  // prefix. It cannot currently reproduce a scheduled/latest boundary,
+  // admission settings, queue tuning, or stream-id stamping on that public
+  // source-to-decoder edge. Keep any such topology on the segmented path
+  // rather than silently changing the ordinary connect() contract.
+  if (!exact_default_link(decoder_input_edge.link_options) ||
+      !decoder_input_edge.stream_id.empty()) {
+    return std::nullopt;
+  }
+  const graph::NodeId fanout_node = decoder_input_edge.from;
   std::size_t fanout_stage_index = static_cast<std::size_t>(-1);
   for (std::size_t i = 0; i < plan.stage_nodes.size(); ++i) {
     const auto& stage = plan.stage_nodes[i];
@@ -1950,17 +1946,12 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
                                          : encoded_output_edge.link_options.stream_id;
   } else {
     match.encoded_sink_link_options = encoded_output_edge.link_options;
-    if (encoded_video_sender_parser_is_redundant(output)) {
-      // RtspEncodedInput already terminates in parsed, AU-aligned byte-stream
-      // H.264. The standard VideoSender parser uses the same config interval
-      // as its payloader, so lower that exact preset to packetizer + UDP only.
-      match.encoded_sink_nodes.assign(output.nodes.begin() + 1, output.nodes.end());
-    } else {
-      // Preserve a custom H264Parse exactly. Automatic fusion is an execution
-      // lowering and must not silently remove caps enforcement or a distinct
-      // SPS/PPS insertion policy from an otherwise eligible customer graph.
-      match.encoded_sink_nodes = output.nodes;
-    }
+    // Preserve VideoSender's parser exactly. Finding H264Depacketize somewhere
+    // in the source segment does not prove that the source's public output tail
+    // is still parsed AU-aligned byte-stream H.264; a legal source fragment may
+    // transform the stream afterward. Fusion is an execution lowering and must
+    // not remove parser/caps/header semantics without an exact output contract.
+    match.encoded_sink_nodes = output.nodes;
   }
   return match;
 }
