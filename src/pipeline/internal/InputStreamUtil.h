@@ -228,6 +228,13 @@ bool update_simaai_meta_fields(
     const std::optional<std::string>& origin_stage_id_override = std::nullopt,
     const std::optional<int>& origin_output_slot_override = std::nullopt);
 bool write_sample_timing_to_gst_buffer(GstBuffer* buffer, const SampleTimingOverrides& timing);
+// Internal pieces of write_sample_timing_to_gst_buffer(). Callers which already
+// own a writable GstSimaMeta structure can use these to update the GstBuffer
+// header and that structure without reacquiring or copying the custom meta.
+bool apply_sample_timing_to_gst_buffer_header(GstBuffer* buffer,
+                                              const SampleTimingOverrides& timing);
+bool write_sample_timing_to_gst_structure(GstStructure* structure,
+                                          const SampleTimingOverrides& timing);
 void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out);
 bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta);
 // Merge `axis_perm` (and only that field) onto an existing GstSimaMeta on

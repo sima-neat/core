@@ -257,14 +257,17 @@ bool ensure_sima_meta_structure_mutable(GstBuffer* buffer, GstStructure** struct
   if (!buffer || !structure_out) {
     return false;
   }
+  // GstCustomMeta parents its GstStructure to the owning buffer's refcount.
+  // Consequently an existing structure is mutable exactly when the buffer is
+  // writable. The terminal probe already takes GStreamer's copy-on-write path;
+  // copying every field into a replacement GstCustomMeta here is redundant and
+  // particularly expensive for ProcessCVU metadata with many fields.
+  if (!gst_buffer_is_writable(buffer)) {
+    return false;
+  }
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
-  bool added_meta = false;
   if (!meta) {
-    if (!gst_buffer_is_writable(buffer)) {
-      return false;
-    }
     meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
-    added_meta = true;
   }
   if (!meta) {
     return false;
@@ -272,42 +275,6 @@ bool ensure_sima_meta_structure_mutable(GstBuffer* buffer, GstStructure** struct
   GstStructure* s = gst_custom_meta_get_structure(meta);
   if (!s) {
     return false;
-  }
-
-  bool structure_mutable = added_meta;
-#if defined(GST_STRUCTURE_IS_MUTABLE)
-  structure_mutable = GST_STRUCTURE_IS_MUTABLE(s);
-#elif defined(GST_STRUCTURE_IS_WRITABLE)
-  structure_mutable = GST_STRUCTURE_IS_WRITABLE(s);
-#endif
-  if (!structure_mutable) {
-    if (!gst_buffer_is_writable(buffer)) {
-      return false;
-    }
-    GstStructure* snapshot = gst_structure_copy(s);
-    gst_buffer_remove_meta(buffer, &meta->meta);
-    meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
-    s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-    if (!s) {
-      if (snapshot) {
-        gst_structure_free(snapshot);
-      }
-      return false;
-    }
-    if (snapshot) {
-      const gint n_fields = gst_structure_n_fields(snapshot);
-      for (gint i = 0; i < n_fields; ++i) {
-        const char* fname = gst_structure_nth_field_name(snapshot, i);
-        if (!fname) {
-          continue;
-        }
-        const GValue* val = gst_structure_get_value(snapshot, fname);
-        if (val) {
-          gst_structure_set_value(s, fname, val);
-        }
-      }
-      gst_structure_free(snapshot);
-    }
   }
 
   *structure_out = s;
@@ -466,29 +433,18 @@ void release_all_loans_for_mux(GstLatestByStreamMux* self) {
   }
 }
 
-void restore_loan_timing_on_buffer(const std::shared_ptr<LoanEntry>& entry, GstBuffer* buffer) {
-  if (!entry || !buffer || entry->timing.empty()) {
-    return;
-  }
-  if (entry->timing.pts_ns.has_value()) {
-    GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(*entry->timing.pts_ns);
-  }
-  if (entry->timing.dts_ns.has_value()) {
-    GST_BUFFER_DTS(buffer) = static_cast<GstClockTime>(*entry->timing.dts_ns);
-  }
-  if (entry->timing.duration_ns.has_value()) {
-    GST_BUFFER_DURATION(buffer) = static_cast<GstClockTime>(*entry->timing.duration_ns);
-  }
-  (void)simaai::neat::write_sample_timing_to_gst_buffer(buffer, entry->timing);
-}
-
 void restore_loan_identity_and_timing_on_buffer(const std::shared_ptr<LoanEntry>& entry,
                                                 const LoanKey& key, GstBuffer* buffer) {
   if (!entry || !buffer) {
     return;
   }
 
-  restore_loan_timing_on_buffer(entry, buffer);
+  if (!entry->timing.empty()) {
+    // Restore native PTS/DTS/duration first. This preserves the old behavior
+    // even when a caller supplies a non-writable buffer and GstSimaMeta cannot
+    // be updated below.
+    (void)simaai::neat::apply_sample_timing_to_gst_buffer_header(buffer, entry->timing);
+  }
 
   // Replacement-stage output pools may recycle scalar GstSimaMeta fields from
   // an older stream even though the current result is valid.  Once terminal
@@ -500,6 +456,14 @@ void restore_loan_identity_and_timing_on_buffer(const std::shared_ptr<LoanEntry>
   GstStructure* s = nullptr;
   if (!ensure_sima_meta_structure_mutable(buffer, &s) || !s) {
     return;
+  }
+  // Use the same writable GstStructure transaction for timing and identity.
+  // Reacquiring timing metadata through write_sample_timing_to_gst_buffer()
+  // used to copy the complete ProcessCVU structure once, then this identity
+  // pass copied it a second time on GStreamer versions without a public
+  // structure-mutability macro.
+  if (!entry->timing.empty()) {
+    (void)simaai::neat::write_sample_timing_to_gst_structure(s, entry->timing);
   }
   gst_structure_set(s, "stream-id", G_TYPE_STRING, key.stream_id.c_str(), "orig-stream-id",
                     G_TYPE_STRING, key.stream_id.c_str(), "frame-id", G_TYPE_INT64,
@@ -2288,6 +2252,21 @@ void release_latest_by_stream_mux_loan(const std::string& stream_id, std::int64_
 }
 
 bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer, std::uint64_t namespace_hint) {
+  // A lifecycle carrier is authoritative even if its scalar private/public
+  // GstSimaMeta fields are stale. Claim it first: guarded identity-preserving
+  // chains do not need the replacing-chain public metadata parse at all, and
+  // the one-shot claim remains the serialization point for concurrent terminal
+  // calls through the same physical buffer.
+  const LoanGuardTerminalClaim guard_claim =
+      claim_loan_drop_guard_for_terminal(buffer, namespace_hint);
+  if (guard_claim.present) {
+    const auto& guard = guard_claim.guard;
+    if (!guard_claim.claimed || !guard) {
+      return false;
+    }
+    return release_loan_for_key_impl(guard->key, "lifetime-meta", buffer, guard->sequence);
+  }
+
   std::string current_stream_id;
   std::string original_stream_id;
   std::string buffer_name;
@@ -2325,20 +2304,6 @@ bool release_latest_by_stream_mux_loan_for_buffer(GstBuffer* buffer, std::uint64
     std::string identity_stream;
     (void)read_stream_frame_key(buffer, &identity_stream, &public_frame_id, &public_input_seq,
                                 &public_orig_input_seq);
-  }
-
-  // A lifecycle carrier is authoritative even if its scalar private/public
-  // fields are stale. Claim it once before any replacing-chain fallback so two
-  // terminal calls/threads cannot consume two retained references through the
-  // same physical buffer.
-  const LoanGuardTerminalClaim guard_claim =
-      claim_loan_drop_guard_for_terminal(buffer, namespace_hint);
-  if (guard_claim.present) {
-    const auto& guard = guard_claim.guard;
-    if (!guard_claim.claimed || !guard) {
-      return false;
-    }
-    return release_loan_for_key_impl(guard->key, "lifetime-meta", buffer, guard->sequence);
   }
 
   // Buffer-replacing fused stages intentionally disable lifecycle guards. The

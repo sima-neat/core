@@ -2616,7 +2616,8 @@ SampleTimingOverrides sample_timing_overrides_from_sample(const Sample& sample) 
   return out;
 }
 
-bool write_sample_timing_to_gst_buffer(GstBuffer* buffer, const SampleTimingOverrides& timing) {
+bool apply_sample_timing_to_gst_buffer_header(GstBuffer* buffer,
+                                              const SampleTimingOverrides& timing) {
   if (!buffer) {
     return false;
   }
@@ -2655,11 +2656,12 @@ bool write_sample_timing_to_gst_buffer(GstBuffer* buffer, const SampleTimingOver
                  static_cast<unsigned long long>(GST_BUFFER_DURATION(buffer)));
   }
 
-#if SIMA_HAS_SIMAAI_POOL
-  GstCustomMeta* custom = nullptr;
-  GstStructure* s = nullptr;
-  if (!ensure_custom_meta_structure_mutable(buffer, "GstSimaMeta", &custom, &s)) {
-    return timing.empty();
+  return true;
+}
+
+bool write_sample_timing_to_gst_structure(GstStructure* s, const SampleTimingOverrides& timing) {
+  if (!s) {
+    return false;
   }
 
   const gboolean pts_valid = timing.pts_ns.has_value() ? TRUE : FALSE;
@@ -2680,6 +2682,21 @@ bool write_sample_timing_to_gst_buffer(GstBuffer* buffer, const SampleTimingOver
   if (timing.pts_ns.has_value()) {
     gst_structure_set(s, "timestamp", G_TYPE_UINT64, static_cast<guint64>(*timing.pts_ns), nullptr);
   }
+  return true;
+}
+
+bool write_sample_timing_to_gst_buffer(GstBuffer* buffer, const SampleTimingOverrides& timing) {
+  if (!apply_sample_timing_to_gst_buffer_header(buffer, timing)) {
+    return false;
+  }
+
+#if SIMA_HAS_SIMAAI_POOL
+  GstCustomMeta* custom = nullptr;
+  GstStructure* s = nullptr;
+  if (!ensure_custom_meta_structure_mutable(buffer, "GstSimaMeta", &custom, &s)) {
+    return timing.empty();
+  }
+  (void)write_sample_timing_to_gst_structure(s, timing);
   (void)custom;
 #else
   if (!timing.empty()) {

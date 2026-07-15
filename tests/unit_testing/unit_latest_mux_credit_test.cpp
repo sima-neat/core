@@ -43,6 +43,32 @@ struct MuxLoanKey {
   std::int64_t frame_id = -1;
 };
 
+struct TerminalMetaCloneSentinel {
+  int value = 0;
+};
+
+std::atomic<int>& terminal_meta_sentinel_copies() {
+  static std::atomic<int> copies{0};
+  return copies;
+}
+
+gpointer copy_terminal_meta_sentinel(gpointer boxed) {
+  terminal_meta_sentinel_copies().fetch_add(1, std::memory_order_relaxed);
+  const auto* source = static_cast<const TerminalMetaCloneSentinel*>(boxed);
+  return source ? static_cast<gpointer>(new TerminalMetaCloneSentinel(*source)) : nullptr;
+}
+
+void free_terminal_meta_sentinel(gpointer boxed) {
+  delete static_cast<TerminalMetaCloneSentinel*>(boxed);
+}
+
+GType terminal_meta_clone_sentinel_type() {
+  static const GType type =
+      g_boxed_type_register_static("NeatUnitLatestMuxTerminalMetaCloneSentinel",
+                                   copy_terminal_meta_sentinel, free_terminal_meta_sentinel);
+  return type;
+}
+
 simaai::neat::Sample make_gst_sample_backed_sample(std::optional<MuxLoanKey> key) {
   GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 16U, nullptr);
   require(buffer != nullptr, "failed to allocate GstBuffer");
@@ -564,6 +590,98 @@ void test_terminal_release_restores_original_pts() {
   require(next != nullptr, "timing restoration should also release mux admission credit");
   release_terminal_loan(fixture, kStreamId, 22);
   gst_sample_unref(next);
+  stop_latest_mux_pipeline(&fixture);
+}
+
+void test_guarded_terminal_restore_is_in_place_and_authoritative() {
+  constexpr const char* kStreamId = "guarded-in-place-stream";
+  constexpr std::int64_t kFrameId = 73;
+  constexpr GstClockTime kPts = 7300 * GST_MSECOND;
+  constexpr GstClockTime kDts = 7290 * GST_MSECOND;
+  constexpr GstClockTime kDuration = 50 * GST_MSECOND;
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-guarded-in-place-pipeline", kStreamId);
+
+  require(gst_app_src_push_buffer(
+              GST_APP_SRC(fixture.appsrc),
+              make_mux_input_buffer_with_timing(kFrameId, kPts, kDts, kDuration)) == GST_FLOW_OK,
+          "failed to push guarded in-place timing fixture");
+  GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(output != nullptr, "guarded in-place fixture should reach the mux output");
+  GstBuffer* terminal = gst_buffer_copy_deep(gst_sample_get_buffer(output));
+  require(terminal != nullptr && gst_buffer_is_writable(terminal),
+          "guarded terminal copy should be writable");
+
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(terminal, "GstSimaMeta");
+  GstStructure* structure = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  require(structure != nullptr, "guarded terminal copy should preserve GstSimaMeta");
+  const TerminalMetaCloneSentinel sentinel{731};
+  gst_structure_set(structure, "terminal-meta-clone-sentinel", terminal_meta_clone_sentinel_type(),
+                    &sentinel, nullptr);
+
+  // Deliberately make every public/private scalar and timing field stale. The
+  // lifecycle guard, not these recycled values, is the authoritative key.
+  gst_structure_set(
+      structure, "stream-id", G_TYPE_STRING, "stale-public-stream", "orig-stream-id", G_TYPE_STRING,
+      "stale-original-stream", "frame-id", G_TYPE_INT64, static_cast<gint64>(9999), "input-seq",
+      G_TYPE_INT64, static_cast<gint64>(9999), "orig-input-seq", G_TYPE_INT64,
+      static_cast<gint64>(9999), kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanNamespaceField,
+      G_TYPE_UINT64, static_cast<guint64>(fixture.mux_namespace + 1U), kLoanStreamIdField,
+      G_TYPE_STRING, "stale-private-stream", kLoanFrameIdField, G_TYPE_INT64,
+      static_cast<gint64>(9999), "neat-latest-mux-loan-input-seq", G_TYPE_INT64,
+      static_cast<gint64>(9999), "neat-latest-mux-loan-orig-input-seq", G_TYPE_INT64,
+      static_cast<gint64>(9999), "sample-frame-id-valid", G_TYPE_BOOLEAN, TRUE, "sample-frame-id",
+      G_TYPE_INT64, static_cast<gint64>(9999), "sample-pts-valid", G_TYPE_BOOLEAN, TRUE,
+      "sample-pts-ns", G_TYPE_UINT64, static_cast<guint64>(9999), "sample-dts-valid",
+      G_TYPE_BOOLEAN, TRUE, "sample-dts-ns", G_TYPE_UINT64, static_cast<guint64>(9999),
+      "sample-duration-valid", G_TYPE_BOOLEAN, TRUE, "sample-duration-ns", G_TYPE_UINT64,
+      static_cast<guint64>(9999), "timestamp", G_TYPE_UINT64, static_cast<guint64>(9999), nullptr);
+  GST_BUFFER_PTS(terminal) = 9999;
+  GST_BUFFER_DTS(terminal) = 9998;
+  GST_BUFFER_DURATION(terminal) = 9997;
+  terminal_meta_sentinel_copies().store(0, std::memory_order_relaxed);
+
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              terminal, fixture.mux_namespace),
+          "authoritative lifecycle guard should release despite stale scalar metadata");
+  require(terminal_meta_sentinel_copies().load(std::memory_order_relaxed) == 0,
+          "terminal restore must update writable GstSimaMeta in place, not clone unrelated fields");
+  require_canonical_terminal_loan(terminal, kStreamId, kFrameId, fixture.mux_namespace, kPts, kDts,
+                                  kDuration);
+
+  meta = gst_buffer_get_custom_meta(terminal, "GstSimaMeta");
+  structure = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  const GValue* sentinel_value =
+      structure ? gst_structure_get_value(structure, "terminal-meta-clone-sentinel") : nullptr;
+  const auto* restored_sentinel =
+      sentinel_value
+          ? static_cast<const TerminalMetaCloneSentinel*>(g_value_get_boxed(sentinel_value))
+          : nullptr;
+  gboolean valid = FALSE;
+  gint64 frame = -1;
+  guint64 pts = 0;
+  guint64 dts = 0;
+  guint64 duration = 0;
+  guint64 timestamp = 0;
+  require(
+      restored_sentinel && restored_sentinel->value == sentinel.value &&
+          gst_structure_get_boolean(structure, "sample-frame-id-valid", &valid) == TRUE &&
+          valid == TRUE && gst_structure_get_int64(structure, "sample-frame-id", &frame) == TRUE &&
+          frame == kFrameId &&
+          gst_structure_get_boolean(structure, "sample-pts-valid", &valid) == TRUE &&
+          valid == TRUE && gst_structure_get_uint64(structure, "sample-pts-ns", &pts) == TRUE &&
+          pts == kPts && gst_structure_get_boolean(structure, "sample-dts-valid", &valid) == TRUE &&
+          valid == TRUE && gst_structure_get_uint64(structure, "sample-dts-ns", &dts) == TRUE &&
+          dts == kDts &&
+          gst_structure_get_boolean(structure, "sample-duration-valid", &valid) == TRUE &&
+          valid == TRUE &&
+          gst_structure_get_uint64(structure, "sample-duration-ns", &duration) == TRUE &&
+          duration == kDuration &&
+          gst_structure_get_uint64(structure, "timestamp", &timestamp) == TRUE && timestamp == kPts,
+      "in-place terminal restore should preserve unrelated metadata and canonical timing fields");
+
+  gst_buffer_unref(terminal);
+  gst_sample_unref(output);
   stop_latest_mux_pipeline(&fixture);
 }
 
@@ -1578,6 +1696,7 @@ int main() {
     test_graph_scoped_encoded_output_owned_copy_releases_source();
     test_graph_scoped_encoded_output_queue_overflow_policy();
     test_terminal_release_restores_original_pts();
+    test_guarded_terminal_restore_is_in_place_and_authoritative();
     test_replacing_chain_uses_per_stream_fifo_timing();
     test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate();
     test_keyed_release_cannot_restore_finalized_timing();
