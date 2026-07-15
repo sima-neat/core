@@ -137,6 +137,11 @@ graph.add(pyneat.nodes.output(
 
 `Latest()` keeps the newest result when the app cannot pull every output. Use `EveryFrame(...)` when every output matters. Use `Clocked(...)` when the output must follow the pipeline clock.
 
+`RunOptions::queue_depth` controls graph ingress and internal runtime queues. It does not replace
+the queue contract of a public `Output`: `OutputOptions::max_buffers` and `drop` control that
+terminal queue and take precedence. Framework-created output queues fall back to the `RunOptions`
+defaults.
+
 ## Validate before you build
 
 Use `graph.validate(...)` when you want graph-construction evidence without starting a live run.
@@ -324,6 +329,12 @@ render_inputs_graph = pyneat.graphs.combine(
 ```
 
 `render_inputs_graph` is still an ordinary `Graph` fragment. You can connect it into a larger application like any other `Graph`.
+
+`graphs::Combine()` creates its output with the default `OutputOptions`: four queued samples,
+blocking overflow, and no clock synchronization. When that output remains a public terminal, drain
+it while producing. If a finite batch must be pushed before it is pulled, build the explicit fan-in
+shown above and configure its output with `OutputOptions::EveryFrame(...)` sized for that batch.
+In Python, use `pyneat.OutputOptions.every_frame(...)`.
 
 :::note
 `CombinePolicy` tells Neat how to match incoming samples:
