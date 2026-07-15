@@ -1032,6 +1032,7 @@ RUN_TEST(
             simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
         video_options.host = "127.0.0.1";
         video_options.channel = stream;
+        video_options.async = false;
         auto video_sender = simaai::neat::nodes::groups::VideoSender(video_options);
         video_sender.set_name("direct_video_sender_" + std::to_string(stream));
         simaai::neat::GraphLinkOptions video_link;
@@ -1177,6 +1178,56 @@ RUN_TEST(
               "the full fused direct VideoSender pipeline must parse without element-name "
               "collisions: " +
                   direct_video_parse_message);
+
+      // An asynchronous UDP sink is safe as a separate VideoSender pipeline,
+      // but absorbing it into the detector pipeline would make video preroll
+      // part of decoder startup. Preserve that public state-change contract by
+      // leaving the entire realtime fan-in segmented.
+      simaai::neat::Graph async_video_app("direct_encoded_async_video_fallback", outer_options);
+      auto async_video_detector = make_composed_consumer_graph();
+      for (int stream = 0; stream < 2; ++stream) {
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/async-direct" + std::to_string(stream);
+        source_options.insert_queue = false;
+        source_options.auto_caps_from_stream = false;
+        source_options.h264_fps = 20;
+        source_options.h264_width = 1280;
+        source_options.h264_height = 720;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+
+        simaai::neat::Graph decoder("async_direct_decoder" + std::to_string(stream));
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        decoder.add(simaai::neat::nodes::Output("async_direct_detector_frame"));
+
+        simaai::neat::GraphLinkOptions realtime;
+        realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        realtime.queue_depth = 1;
+        realtime.stream_id = "async_direct_stream" + std::to_string(stream);
+        realtime.max_inflight_per_stream = 1;
+        realtime.max_inflight_total = 2;
+        async_video_app.connect(source, decoder);
+        async_video_app.connect(decoder, async_video_detector, realtime);
+
+        auto video_options =
+            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
+        video_options.host = "127.0.0.1";
+        video_options.channel = stream;
+        video_options.async = true;
+        auto video_sender = simaai::neat::nodes::groups::VideoSender(video_options);
+        video_sender.set_name("async_direct_video_sender_" + std::to_string(stream));
+        simaai::neat::GraphLinkOptions video_link;
+        if (stream == 1) {
+          video_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        }
+        async_video_app.connect(source, video_sender, video_link);
+      }
+      const auto async_video_plan =
+          simaai::neat::runtime::compile_public_graph(async_video_app, composed_run_options);
+      require(std::none_of(
+                  async_video_plan.pipeline_segments.begin(),
+                  async_video_plan.pipeline_segments.end(),
+                  [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); }),
+              "an async VideoSender UDP sink must keep realtime fan-in segmented");
 
       // Kind-based recognition must preserve a customer-configured parser's
       // caps/header behavior exactly.

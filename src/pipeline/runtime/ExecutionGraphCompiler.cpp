@@ -10,6 +10,7 @@
 #include "graph/nodes/StreamScheduler.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/UdpOutput.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
@@ -1792,9 +1793,18 @@ bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
   if (segment.nodes.size() != 3U) {
     return false;
   }
-  return segment.nodes[0] && segment.nodes[0]->kind() == "H264Parse" && segment.nodes[1] &&
-         segment.nodes[1]->kind() == "H264Packetize" && segment.nodes[2] &&
-         segment.nodes[2]->kind() == "UdpOutput";
+  if (!segment.nodes[0] || segment.nodes[0]->kind() != "H264Parse" || !segment.nodes[1] ||
+      segment.nodes[1]->kind() != "H264Packetize" || !segment.nodes[2] ||
+      segment.nodes[2]->kind() != "UdpOutput") {
+    return false;
+  }
+
+  const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(segment.nodes[2].get());
+  // Absorbing an asynchronous GstBaseSink into the live detector pipeline
+  // changes its state domain: that sink can hold the shared pipeline in PAUSED
+  // while waiting for preroll from every encoded branch. Keep this public
+  // topology segmented rather than coupling video egress to decoder startup.
+  return udp_output && !udp_output->options().async;
 }
 
 std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
