@@ -62,11 +62,5 @@ find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pendi
 std::size_t
 attach_fused_decoder_timing_probes_for_test(GstElement* pipeline,
                                             const runtime::FusedRealtimeIngress& ingress);
-std::optional<std::string>
-fused_raw_input_credit_boundary_for_test(const std::vector<std::shared_ptr<Node>>& consumer_nodes,
-                                         const GraphOptions& options);
-std::size_t attach_fused_raw_input_credit_probe_for_test(
-    GstElement* pipeline, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
-    const GraphOptions& options, std::uint64_t mux_namespace);
 
 } // namespace simaai::neat::session_test

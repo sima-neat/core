@@ -14,7 +14,6 @@
 #include <gst/gst.h>
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -720,25 +719,6 @@ void test_replacing_chain_uses_per_stream_fifo_timing() {
   require(blocked == nullptr,
           "destroying replaced decoded inputs must not release terminal admission early");
 
-  // Model the first ProcessCVU src output. ProcessCVU has already returned the
-  // decoder-backed input at this point, so raw admission can reopen even while
-  // the derived MLA/boxdecode result (and its timing match) is delayed.
-  GstBuffer* stale_preproc_output = make_terminal_sequence_buffer(kStreamId, 999, 999, 999);
-  require(
-      !simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-          stale_preproc_output, fixture.mux_namespace),
-      "stale ProcessCVU identity must not shift raw admission to another frame");
-  gst_buffer_unref(stale_preproc_output);
-  GstBuffer* first_preproc_output = make_terminal_sequence_buffer(kStreamId, 101, 101, 101);
-  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-              first_preproc_output, fixture.mux_namespace),
-          "ProcessCVU completion should return the oldest raw-input credit");
-  gst_buffer_unref(first_preproc_output);
-  GstSample* fifth = pull_mux_output(fixture.appsink, GST_SECOND);
-  require(fifth != nullptr,
-          "raw-input completion should admit the pending fifth frame before terminal output");
-  gst_sample_unref(fifth);
-
   const auto release_and_require_canonical = [&](GstBuffer* terminal,
                                                  std::int64_t expected_frame_id,
                                                  GstClockTime expected_pts, const char* reason) {
@@ -753,30 +733,19 @@ void test_replacing_chain_uses_per_stream_fifo_timing() {
 
   // Public frame/sequence fields are not freshness tokens on replacement
   // buffers. Even though they name frame 104, the ordered per-stream contract
-  // must complete frame 101. Its timing entry must survive the earlier raw
-  // credit return.
+  // must complete frame 101.
   release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 101, 104, 104), 101,
                                 100 * GST_MSECOND,
                                 "recycled public identity should use stream FIFO");
-
-  require(gst_app_src_push_buffer(
-              GST_APP_SRC(fixture.appsrc),
-              make_mux_input_buffer_with_timing(106, 600 * GST_MSECOND, GST_CLOCK_TIME_NONE,
-                                                50 * GST_MSECOND)) == GST_FLOW_OK,
-          "failed to push double-release sentinel input");
-  require(pull_mux_output(fixture.appsink, 100 * GST_MSECOND) == nullptr,
-          "terminal completion must not return an already-early raw credit and discharge a "
-          "newer frame");
+  GstSample* fifth = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(fifth != nullptr, "one terminal completion should admit the pending fifth frame");
+  gst_sample_unref(fifth);
 
   // Every replacement metadata shape uses the same enforced ordered completion
   // order within this stream.
   release_and_require_canonical(make_terminal_identity_buffer(kStreamId, std::nullopt), 102,
                                 200 * GST_MSECOND,
                                 "stream-only terminal should use the bounded FIFO fallback");
-  GstSample* sixth = pull_mux_output(fixture.appsink, GST_SECOND);
-  require(sixth != nullptr,
-          "the next genuinely unreleased frame should admit the double-release sentinel");
-  gst_sample_unref(sixth);
   release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, std::nullopt, 103, 103),
                                 103, 300 * GST_MSECOND,
                                 "sequence-only identity should use stream FIFO");
@@ -786,201 +755,8 @@ void test_replacing_chain_uses_per_stream_fifo_timing() {
   release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 9999, 105, 105), 105,
                                 500 * GST_MSECOND,
                                 "pending frame should retain its registered FIFO timing");
-  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 9999, 106, 106), 106,
-                                600 * GST_MSECOND,
-                                "double-release sentinel should retain its registered timing");
 
   stop_latest_mux_pipeline(&fixture);
-}
-
-void test_concurrent_raw_completion_claims_distinct_replacing_loans() {
-  constexpr const char* kStreamId = "concurrent-raw-completion-stream";
-  constexpr int kLimit = 4;
-  LatestMuxPipeline fixture =
-      make_latest_mux_pipeline("latest-mux-concurrent-raw-completion-pipeline", kStreamId, kLimit,
-                               /*lifetime_guard_enabled=*/false);
-
-  for (std::int64_t frame_id = 1; frame_id <= kLimit; ++frame_id) {
-    push_mux_input(fixture.appsrc, frame_id);
-    GstSample* decoded = pull_mux_output(fixture.appsink, GST_SECOND);
-    require(decoded != nullptr, "concurrent raw fixture should fill the admission gate");
-    gst_sample_unref(decoded);
-  }
-
-  std::mutex start_mutex;
-  std::condition_variable start_cv;
-  bool start = false;
-  std::array<bool, kLimit> released{};
-  std::vector<std::thread> workers;
-  workers.reserve(kLimit);
-  for (int index = 0; index < kLimit; ++index) {
-    workers.emplace_back([&, index] {
-      {
-        std::unique_lock<std::mutex> lock(start_mutex);
-        start_cv.wait(lock, [&] { return start; });
-      }
-      GstBuffer* preproc = make_terminal_identity_buffer(kStreamId, std::nullopt);
-      released[static_cast<std::size_t>(index)] =
-          simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-              preproc, fixture.mux_namespace);
-      gst_buffer_unref(preproc);
-    });
-  }
-  {
-    std::lock_guard<std::mutex> lock(start_mutex);
-    start = true;
-  }
-  start_cv.notify_all();
-  for (auto& worker : workers) {
-    worker.join();
-  }
-  require(std::all_of(released.begin(), released.end(), [](bool value) { return value; }),
-          "concurrent ProcessCVU completions must claim distinct per-stream FIFO credits");
-
-  // All four raw credits, not just one shared oldest selection, must be
-  // available before any terminal result is completed.
-  for (std::int64_t frame_id = kLimit + 1; frame_id <= 2 * kLimit; ++frame_id) {
-    push_mux_input(fixture.appsrc, frame_id);
-    GstSample* decoded = pull_mux_output(fixture.appsink, GST_SECOND);
-    require(decoded != nullptr, "every concurrent raw completion should reopen one admission slot");
-    gst_sample_unref(decoded);
-  }
-
-  // Terminal completion still consumes the original timing registry records;
-  // it must not return their already-released credits a second time.
-  for (std::int64_t frame_id = 1; frame_id <= kLimit; ++frame_id) {
-    release_terminal_loan(fixture, kStreamId, frame_id);
-  }
-  for (std::int64_t frame_id = kLimit + 1; frame_id <= 2 * kLimit; ++frame_id) {
-    GstBuffer* preproc = make_terminal_identity_buffer(kStreamId, std::nullopt);
-    require(
-        simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-            preproc, fixture.mux_namespace),
-        "cleanup ProcessCVU completion should release each second-wave raw credit");
-    gst_buffer_unref(preproc);
-    release_terminal_loan(fixture, kStreamId, frame_id);
-  }
-
-  stop_latest_mux_pipeline(&fixture);
-}
-
-void test_raw_completion_is_stream_scoped_and_preserves_out_of_order_timing() {
-  constexpr const char* kStream0 = "raw-scope-stream0";
-  constexpr const char* kStream1 = "raw-scope-stream1";
-  GstElement* pipeline = gst_pipeline_new("latest-mux-raw-stream-scope-pipeline");
-  GstElement* mux = gst_element_factory_make("neatlatestbystreammux", nullptr);
-  GstElement* appsink = gst_element_factory_make("appsink", nullptr);
-  require(pipeline && mux && appsink, "failed to create two-stream raw-credit fixture");
-  g_object_set(mux, "stream-ids", "raw-scope-stream0,raw-scope-stream1", "stream-inflight-limits",
-               "1,1", "max-inflight-total", 2, nullptr);
-  require(simaai::neat::pipeline_internal::set_latest_by_stream_mux_lifetime_guard_enabled(
-              mux, /*enabled=*/false),
-          "failed to configure replacing mode for two-stream raw-credit fixture");
-  g_object_set(appsink, "sync", FALSE, "max-buffers", 8U, "drop", FALSE, "enable-last-sample",
-               FALSE, nullptr);
-  gst_bin_add_many(GST_BIN(pipeline), mux, appsink, nullptr);
-  require(gst_element_link(mux, appsink) == TRUE, "failed to link two-stream raw-credit fixture");
-
-  std::array<GstElement*, 2> appsrcs{};
-  std::array<GstPad*, 2> mux_pads{};
-  GstCaps* caps =
-      gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "GRAY8", "width", G_TYPE_INT, 4,
-                          "height", G_TYPE_INT, 4, "framerate", GST_TYPE_FRACTION, 1, 1, nullptr);
-  require(caps != nullptr, "failed to allocate two-stream raw-credit caps");
-  for (std::size_t index = 0; index < appsrcs.size(); ++index) {
-    appsrcs[index] = gst_element_factory_make("appsrc", nullptr);
-    require(appsrcs[index] != nullptr, "failed to create two-stream raw-credit appsrc");
-    g_object_set(appsrcs[index], "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
-    gst_app_src_set_caps(GST_APP_SRC(appsrcs[index]), caps);
-    gst_bin_add(GST_BIN(pipeline), appsrcs[index]);
-    const std::string pad_name = "sink_" + std::to_string(index);
-    mux_pads[index] = gst_element_request_pad_simple(mux, pad_name.c_str());
-    GstPad* source_pad = gst_element_get_static_pad(appsrcs[index], "src");
-    require(mux_pads[index] && source_pad &&
-                gst_pad_link(source_pad, mux_pads[index]) == GST_PAD_LINK_OK,
-            "failed to link two-stream raw-credit appsrc");
-    gst_object_unref(source_pad);
-  }
-  gst_caps_unref(caps);
-
-  const std::uint64_t mux_namespace = simaai::neat::latest_by_stream_mux_namespace(mux);
-  require(mux_namespace != 0U, "two-stream raw-credit mux should expose a namespace");
-  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
-          "failed to start two-stream raw-credit fixture");
-
-  const auto push = [&](std::size_t stream, std::int64_t frame_id, GstClockTime pts) {
-    require(gst_app_src_push_buffer(GST_APP_SRC(appsrcs[stream]),
-                                    make_mux_input_buffer_with_timing(
-                                        frame_id, pts, GST_CLOCK_TIME_NONE, 10 * GST_MSECOND)) ==
-                GST_FLOW_OK,
-            "failed to push two-stream raw-credit input");
-  };
-  const auto release_raw = [&](const char* stream) {
-    GstBuffer* preproc = make_terminal_identity_buffer(stream, std::nullopt);
-    const bool released =
-        simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-            preproc, mux_namespace);
-    gst_buffer_unref(preproc);
-    require(released, "ProcessCVU completion should release its own stream's raw credit");
-  };
-  const auto release_terminal = [&](const char* stream, std::int64_t frame_id,
-                                    GstClockTime expected_pts) {
-    GstBuffer* terminal = make_terminal_identity_buffer(stream, std::nullopt);
-    GST_BUFFER_PTS(terminal) = 999 * GST_MSECOND;
-    require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
-                terminal, mux_namespace),
-            "delayed two-stream terminal result should retain its timing entry");
-    require_canonical_terminal_loan(terminal, stream, frame_id, mux_namespace, expected_pts,
-                                    GST_CLOCK_TIME_NONE, 10 * GST_MSECOND);
-    gst_buffer_unref(terminal);
-  };
-
-  push(0, 11, 110 * GST_MSECOND);
-  GstSample* stream0_first = pull_mux_output(appsink, GST_SECOND);
-  require(stream0_first != nullptr, "stream 0 should fill its raw-credit lane");
-  gst_sample_unref(stream0_first);
-  push(1, 21, 210 * GST_MSECOND);
-  GstSample* stream1_first = pull_mux_output(appsink, GST_SECOND);
-  require(stream1_first != nullptr, "stream 1 should fill its raw-credit lane");
-  gst_sample_unref(stream1_first);
-
-  // Finish stream 1's preproc first. Only stream 1 may advance; stream 0 must
-  // remain blocked until its own preproc completion arrives.
-  release_raw(kStream1);
-  push(1, 22, 220 * GST_MSECOND);
-  GstSample* stream1_second = pull_mux_output(appsink, GST_SECOND);
-  require(stream1_second != nullptr,
-          "out-of-order stream 1 preproc completion should reopen stream 1");
-  gst_sample_unref(stream1_second);
-  push(0, 12, 120 * GST_MSECOND);
-  require(pull_mux_output(appsink, 100 * GST_MSECOND) == nullptr,
-          "stream 1 raw completion must not release stream 0 admission");
-
-  // Terminal timing may arrive after another raw frame has already entered.
-  // It must still match the oldest terminal record in that same stream.
-  release_terminal(kStream1, 21, 210 * GST_MSECOND);
-  release_raw(kStream0);
-  GstSample* stream0_second = pull_mux_output(appsink, GST_SECOND);
-  require(stream0_second != nullptr,
-          "stream 0 should advance after its own delayed preproc completion");
-  gst_sample_unref(stream0_second);
-  release_terminal(kStream0, 11, 110 * GST_MSECOND);
-
-  release_raw(kStream1);
-  release_terminal(kStream1, 22, 220 * GST_MSECOND);
-  release_raw(kStream0);
-  release_terminal(kStream0, 12, 120 * GST_MSECOND);
-
-  for (GstElement* appsrc : appsrcs) {
-    (void)gst_app_src_end_of_stream(GST_APP_SRC(appsrc));
-  }
-  require(gst_element_set_state(pipeline, GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
-          "failed to stop two-stream raw-credit fixture");
-  for (std::size_t index = 0; index < mux_pads.size(); ++index) {
-    gst_element_release_request_pad(mux, mux_pads[index]);
-    gst_object_unref(mux_pads[index]);
-  }
-  gst_object_unref(pipeline);
 }
 
 void test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate() {
@@ -1630,41 +1406,14 @@ void test_stale_guard_sequence_cannot_release_reused_key() {
 void test_teardown_releases_unresolved_terminal_credit() {
   constexpr const char* kStreamId = "teardown-stream";
   LatestMuxPipeline fixture =
-      make_latest_mux_pipeline("latest-mux-unresolved-teardown-pipeline", kStreamId,
-                               /*stream_inflight_limit=*/1, /*lifetime_guard_enabled=*/false);
+      make_latest_mux_pipeline("latest-mux-unresolved-teardown-pipeline", kStreamId);
 
   push_mux_input(fixture.appsrc, 7);
   GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
   require(output != nullptr, "latest-mux should emit the unresolved teardown frame");
 
   const std::uint64_t mux_namespace = fixture.mux_namespace;
-  GstBuffer* preproc = make_terminal_identity_buffer(kStreamId, std::nullopt);
-  std::mutex start_mutex;
-  std::condition_variable start_cv;
-  bool start = false;
-  std::thread raw_completion([&] {
-    {
-      std::unique_lock<std::mutex> lock(start_mutex);
-      start_cv.wait(lock, [&] { return start; });
-    }
-    (void)simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
-        preproc, mux_namespace);
-  });
-  std::thread teardown([&] {
-    {
-      std::unique_lock<std::mutex> lock(start_mutex);
-      start_cv.wait(lock, [&] { return start; });
-    }
-    stop_latest_mux_pipeline(&fixture);
-  });
-  {
-    std::lock_guard<std::mutex> lock(start_mutex);
-    start = true;
-  }
-  start_cv.notify_all();
-  raw_completion.join();
-  teardown.join();
-  gst_buffer_unref(preproc);
+  stop_latest_mux_pipeline(&fixture);
   gst_sample_unref(output);
 
   GstBuffer* late_terminal = make_terminal_identity_buffer(kStreamId, 7);
@@ -1949,8 +1698,6 @@ int main() {
     test_terminal_release_restores_original_pts();
     test_guarded_terminal_restore_is_in_place_and_authoritative();
     test_replacing_chain_uses_per_stream_fifo_timing();
-    test_concurrent_raw_completion_claims_distinct_replacing_loans();
-    test_raw_completion_is_stream_scoped_and_preserves_out_of_order_timing();
     test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate();
     test_keyed_release_cannot_restore_finalized_timing();
     test_public_per_stream_limit_reaches_mux_gate();
