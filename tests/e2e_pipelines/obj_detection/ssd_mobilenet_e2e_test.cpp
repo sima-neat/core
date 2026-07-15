@@ -199,6 +199,56 @@ void run_ssd_benchmark(const std::string& tar_gz) {
   require(report.energy_joules >= 0.0, "ssd benchmark: energy must be non-negative");
 }
 
+// Times the decode-terminated graph, so latency includes the on-device box decode
+// (run_ssd_benchmark times only the model forward pass).
+void run_ssd_boxdecode_perf(const std::string& tar_gz, const cv::Mat& img,
+                            const AccuracyConfig& cfg) {
+  auto model = simaai::neat::Model(tar_gz, make_ssd_options(cfg));
+
+  simaai::neat::Graph p;
+  p.add(simaai::neat::nodes::Input());
+  p.add(simaai::neat::nodes::groups::Preprocess(model));
+  p.add(simaai::neat::nodes::groups::Infer(model));
+  p.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::Ssd,
+                                           cfg.boxdecode_score_threshold, cfg.nms_iou, cfg.top_k));
+  p.add(simaai::neat::nodes::Output());
+
+  auto make_sample = [&]() {
+    return simaai::neat::Sample{simaai::neat::Sample::from_image(
+        img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)};
+  };
+
+  auto run = p.build_seeded_internal(make_sample(), simaai::neat::RunMode::Sync);
+
+  const int warmup = 5;
+  const int measured = env_int("SIMA_SSD_BOXDECODE_PERF_ITERS", 50);
+  for (int i = 0; i < warmup; ++i) {
+    simaai::neat::Sample outs = run.run(make_sample(), 30000);
+    require(!outs.empty(), "ssd boxdecode perf warmup expected at least one sample");
+  }
+
+  const auto start = std::chrono::steady_clock::now();
+  int completed = 0;
+  for (int i = 0; i < measured; ++i) {
+    simaai::neat::Sample outs = run.run(make_sample(), 30000);
+    require(!outs.empty(), "ssd boxdecode perf run expected at least one sample");
+    completed += 1;
+  }
+  const auto end = std::chrono::steady_clock::now();
+
+  const double elapsed_s = std::chrono::duration<double>(end - start).count();
+  const double mean_latency_ms = (completed > 0) ? (elapsed_s / completed) * 1000.0 : 0.0;
+  const double decode_fps = (mean_latency_ms > 0.0) ? (1000.0 / mean_latency_ms) : 0.0;
+  std::cout << "[boxdecode_perf] iters=" << completed << " mean_latency_ms=" << mean_latency_ms
+            << " fps=" << decode_fps << "\n";
+
+  require(completed == measured, "ssd boxdecode perf: not all iterations completed");
+  require(std::isfinite(mean_latency_ms), "ssd boxdecode perf: latency must be finite");
+  require(std::isfinite(decode_fps), "ssd boxdecode perf: fps must be finite");
+  require(mean_latency_ms > 0.0, "ssd boxdecode perf: latency must be positive");
+  require(decode_fps > 0.0, "ssd boxdecode perf: fps must be positive");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -220,6 +270,7 @@ int main(int argc, char** argv) {
     if (!res.ok)
       return 2;
 
+    run_ssd_boxdecode_perf(tar_gz, img_bgr, cfg);
     run_ssd_benchmark(tar_gz);
 
     std::cout << "[OK] ssd_mobilenet_e2e_test passed\n";

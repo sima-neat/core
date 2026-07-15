@@ -36,8 +36,8 @@ struct BoxDecodeCompiledContractOptions {
 /// already inferred score activation selects the matching grouped option.
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract);
 
-// Apply SSD defaults (softmax, grouped-by-role, class-count) to a model-managed contract before
-// lowering. No-op for non-SSD decode types.
+// Apply SSD defaults (recipe-specific activation, grouped-by-role layout, class-count) to a
+// model-managed contract before lowering. No-op for non-SSD decode types.
 void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
 
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
