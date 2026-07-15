@@ -2,6 +2,8 @@
 #include "model_archive_fixture_utils.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/Quant.h"
+#include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -396,25 +398,52 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
             "model-managed Preproc must retain the configured capacity in model lineage");
 #endif
 
-    Preproc node(opt);
+    auto node = std::make_shared<Preproc>(opt);
     InputContract seed_contract;
     seed_contract.media_type = "video/x-raw";
     seed_contract.format = "RGB";
     seed_contract.width = 1280;
     seed_contract.height = 720;
     seed_contract.depth = 3;
-    node.apply_input_contract(seed_contract, nullptr);
-    require(node.options().input_width() == 1280 && node.options().input_height() == 720,
+    node->apply_input_contract(seed_contract, nullptr);
+    require(node->options().input_width() == 1280 && node->options().input_height() == 720,
             "model-managed Preproc must bind the smaller seed as actual geometry");
+
+    pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+    const std::vector<std::shared_ptr<Node>> nodes{node};
+    const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
+    require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value(),
+            "model-managed Preproc capacity contract must compile without diagnostics");
+    const auto& processcvu = *compiled.stages.front().processcvu;
+    require(processcvu.payload.input_shapes.size() == 1U &&
+                processcvu.payload.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
+            "compiled Preproc payload must retain capacity after a smaller seed is bound");
+    require(processcvu.runtime_contract.logical_inputs.size() == 1U &&
+                processcvu.runtime_contract.logical_inputs.front().shape ==
+                    std::vector<std::int64_t>({1080, 1920, 3}),
+            "compiled Preproc logical input must retain capacity after a smaller seed is bound");
+
+    const auto manifest =
+        render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
+    require(diagnostics.errors.empty() && manifest.has_value() && manifest->stages.size() == 1U,
+            "model-managed Preproc capacity contract must render without diagnostics");
+    const auto& rendered_stage = manifest->stages.front();
+    require(rendered_stage.logical_inputs.size() == 1U &&
+                rendered_stage.logical_inputs.front().shape ==
+                    std::vector<std::int64_t>({1080, 1920, 3}) &&
+                rendered_stage.processcvu.input_shapes.size() == 1U &&
+                rendered_stage.processcvu.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
+            "rendered Preproc static contract must expose the full dynamic input capacity");
 
     InputContract capacity_contract = seed_contract;
     capacity_contract.width = 1920;
     capacity_contract.height = 1080;
-    node.apply_input_contract(capacity_contract, nullptr);
-    require(node.options().input_width() == 1920 && node.options().input_height() == 1080,
+    node->apply_input_contract(capacity_contract, nullptr);
+    require(node->options().input_width() == 1920 && node->options().input_height() == 1080,
             "model-managed Preproc must accept a later contract up to its configured capacity");
 #ifdef SIMA_NEAT_INTERNAL
-    const auto rebound_max_shape = model_managed_preproc_max_input_shape(node.options());
+    const auto rebound_max_shape = model_managed_preproc_max_input_shape(node->options());
     require(PreprocOptions::shape_dim(rebound_max_shape, 1) == 1920 &&
                 PreprocOptions::shape_dim(rebound_max_shape, 0) == 1080,
             "runtime contract rebinding must not shrink the model-managed capacity");
