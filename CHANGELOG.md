@@ -17,8 +17,6 @@ The format is based on Keep a Changelog and follows semantic versioning.
 - BREAKING: The archive loader is now an internal `Model` implementation detail; public
   `mpk/*` headers and `pyneat.mpk` inspection/extraction bindings were removed.
 
-## [0.3.0]
-
 ## [0.1.0]
 
 ### Added
