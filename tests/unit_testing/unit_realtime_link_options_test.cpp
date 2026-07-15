@@ -48,7 +48,7 @@ simaai::neat::Sample make_raw_holder_sample(std::string stream_id, std::int64_t 
 }
 
 simaai::neat::runtime::RealtimeLatestLink::Stats
-run_one_raw_sample(const simaai::neat::RealtimeGraphLinkOptions& options, int stream_count = 1,
+run_one_raw_sample(const simaai::neat::GraphLinkOptions& options, int stream_count = 1,
                    bool use_explicit_stream_ids = true) {
   simaai::neat::runtime::DownstreamTarget target{
       simaai::neat::runtime::DownstreamTarget::Kind::PipelineInput,
@@ -104,9 +104,9 @@ run_one_raw_sample(const simaai::neat::RealtimeGraphLinkOptions& options, int st
 }
 
 void verify_raw_frame_cap_blocks_after(
-    const simaai::neat::RealtimeGraphLinkOptions& options, int stream_count, int admitted_frames,
+    const simaai::neat::GraphLinkOptions& options, int stream_count, int admitted_frames,
     const std::string& label, bool use_explicit_link_stream_ids = true,
-    const std::vector<simaai::neat::RealtimeGraphLinkOptions>& additional_edge_options = {}) {
+    const std::vector<simaai::neat::GraphLinkOptions>& additional_edge_options = {}) {
   simaai::neat::runtime::DownstreamTarget target{
       simaai::neat::runtime::DownstreamTarget::Kind::PipelineInput,
       0U,
@@ -194,7 +194,7 @@ void verify_raw_frame_cap_blocks_after(
 }
 
 void verify_per_stream_cap_blocks_after_two_raw_frames() {
-  simaai::neat::RealtimeGraphLinkOptions options;
+  simaai::neat::GraphLinkOptions options;
   options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
   options.max_inflight_per_stream = 2;
   options.max_inflight_total = 10;
@@ -202,7 +202,7 @@ void verify_per_stream_cap_blocks_after_two_raw_frames() {
 }
 
 void verify_multiplexed_stream_ids_scale_default_total_cap() {
-  simaai::neat::RealtimeGraphLinkOptions options;
+  simaai::neat::GraphLinkOptions options;
   options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
   options.max_inflight_per_stream = 4;
   verify_raw_frame_cap_blocks_after(options, 4, 8,
@@ -211,12 +211,12 @@ void verify_multiplexed_stream_ids_scale_default_total_cap() {
 }
 
 void verify_asymmetric_fan_in_uses_strictest_caps() {
-  simaai::neat::RealtimeGraphLinkOptions first_options;
+  simaai::neat::GraphLinkOptions first_options;
   first_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
   first_options.max_inflight_per_stream = 8;
   first_options.max_inflight_total = 8;
 
-  simaai::neat::RealtimeGraphLinkOptions second_options = first_options;
+  simaai::neat::GraphLinkOptions second_options = first_options;
   second_options.max_inflight_per_stream = 1;
   second_options.max_inflight_total = 2;
 
@@ -244,13 +244,13 @@ int main() {
     simaai::neat::gst_init_once();
     ::unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
 
-    simaai::neat::RealtimeGraphLinkOptions default_options;
+    simaai::neat::GraphLinkOptions default_options;
     default_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     default_options.queue_depth = 1;
     verify_raw_frame_cap_blocks_after(default_options, 4, 8, "default global raw-frame cap",
                                       /*use_explicit_link_stream_ids=*/false);
 
-    simaai::neat::RealtimeGraphLinkOptions explicit_total_options;
+    simaai::neat::GraphLinkOptions explicit_total_options;
     explicit_total_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     explicit_total_options.max_inflight_per_stream = 4;
     explicit_total_options.max_inflight_total = 10;
@@ -260,7 +260,7 @@ int main() {
     verify_multiplexed_stream_ids_scale_default_total_cap();
     verify_asymmetric_fan_in_uses_strictest_caps();
 
-    simaai::neat::RealtimeGraphLinkOptions zero_options;
+    simaai::neat::GraphLinkOptions zero_options;
     zero_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     zero_options.max_inflight_per_stream = 0;
     bool rejected_zero = false;
@@ -271,7 +271,7 @@ int main() {
     }
     require(rejected_zero, "max_inflight_per_stream=0 should be rejected");
 
-    simaai::neat::RealtimeGraphLinkOptions zero_total_options;
+    simaai::neat::GraphLinkOptions zero_total_options;
     zero_total_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     zero_total_options.max_inflight_total = 0;
     bool rejected_zero_total = false;
@@ -282,7 +282,7 @@ int main() {
     }
     require(rejected_zero_total, "max_inflight_total=0 should be rejected");
 
-    simaai::neat::RealtimeGraphLinkOptions negative_options;
+    simaai::neat::GraphLinkOptions negative_options;
     negative_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     negative_options.max_inflight_per_stream = -2;
     bool rejected_negative = false;
@@ -293,7 +293,7 @@ int main() {
     }
     require(rejected_negative, "max_inflight_per_stream<-1 should be rejected");
 
-    simaai::neat::RealtimeGraphLinkOptions negative_total_options;
+    simaai::neat::GraphLinkOptions negative_total_options;
     negative_total_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     negative_total_options.max_inflight_total = -2;
     bool rejected_negative_total = false;

@@ -159,10 +159,13 @@ def _assert_not_type_error(call):
 
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
-  assert hasattr(pyneat.Graph, "build_fused_realtime_source")
+  assert not hasattr(pyneat.Graph, "build_fused_realtime_source")
+  assert not hasattr(pyneat.Graph, "connect_realtime")
   assert hasattr(pyneat, "GraphOptions")
   assert hasattr(pyneat, "GraphLinkOptions")
+  assert not hasattr(pyneat, "RealtimeMuxByStream")
   assert hasattr(pyneat, "GraphLinkPolicy")
+  assert not hasattr(pyneat.GraphLinkPolicy, "RealtimeEveryFrameByStream")
   assert hasattr(pyneat, "GraphReport")
   assert hasattr(pyneat, "NeatError")
   assert hasattr(pyneat, "ModelRouteOptions")
@@ -230,15 +233,13 @@ def test_graph_link_options_surface():
   opt.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
   opt.queue_depth = 7
   opt.stream_id = "camera0"
-  opt.max_inflight_per_stream = 4
-  opt.max_inflight_total = 16
   assert opt.policy == pyneat.GraphLinkPolicy.RealtimeLatestByStream
   assert opt.queue_depth == 7
   assert opt.stream_id == "camera0"
+  opt.max_inflight_per_stream = 4
+  opt.max_inflight_total = 16
   assert opt.max_inflight_per_stream == 4
   assert opt.max_inflight_total == 16
-  opt.policy = pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
-  assert opt.policy == pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
 
   source = pyneat.Graph()
   source.custom_with_role(

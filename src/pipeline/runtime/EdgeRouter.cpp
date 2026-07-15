@@ -37,9 +37,10 @@ void request_stop(const EdgeRouterCallbacks& callbacks, const std::string& msg) 
 const char* graph_backpressure_timeout_explanation() {
   return " This can happen because of graph backpressure: downstream stages, appsinks, or the "
          "application are not draining outputs as fast as inputs are pushed, so an internal "
-         "edge/pipeline queue filled before the timeout. Pull outputs concurrently, reduce the "
-         "push rate, increase GraphRunOptions.edge_queue/push_timeout_ms, or remove/relax slow "
-         "downstream stages.";
+         "edge/pipeline queue filled before the timeout. Drain outputs concurrently, reduce the "
+         "push rate, increase RunOptions::queue_depth for ingress/internal queues, configure the "
+         "terminal Output with OutputOptions::EveryFrame(...) for bounded lossless buffering, or "
+         "remove/relax slow downstream stages.";
 }
 
 std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
@@ -114,12 +115,12 @@ int realtime_credit_probe_every() {
 
 void validate_realtime_credit_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("RealtimeGraphLinkOptions::") + name +
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-int realtime_credit_max_inflight_per_stream(const RealtimeGraphLinkOptions& options) {
+int realtime_credit_max_inflight_per_stream(const GraphLinkOptions& options) {
   validate_realtime_credit_option("max_inflight_per_stream", options.max_inflight_per_stream);
   return pipeline_internal::resolved_realtime_max_inflight_per_stream(options);
 }
@@ -134,7 +135,7 @@ int safe_total_credit_limit(int per_stream, std::size_t stream_count) {
   return per_stream * static_cast<int>(stream_count);
 }
 
-int realtime_credit_max_inflight_total(const RealtimeGraphLinkOptions& options, int per_stream,
+int realtime_credit_max_inflight_total(const GraphLinkOptions& options, int per_stream,
                                        std::size_t stream_count) {
   validate_realtime_credit_option("max_inflight_total", options.max_inflight_total);
   if (options.max_inflight_total > 0) {
@@ -327,8 +328,8 @@ void apply_link_stream_id(const ExecutionGraphRuntime& runtime, std::size_t edge
 
 } // namespace
 
-RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream,
-                                       RealtimeGraphLinkOptions options, std::string stream_id)
+RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options,
+                                       std::string stream_id)
     : downstream_(downstream), options_(options),
       credit_namespace_(pipeline_internal::next_realtime_frame_credit_namespace()),
       credit_limit_per_stream_(0), credit_limit_global_(0) {
@@ -465,7 +466,7 @@ void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::s
 }
 
 void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
-                                            const RealtimeGraphLinkOptions& options) {
+                                            const GraphLinkOptions& options) {
   if (edge_index == invalid_edge_index()) {
     return;
   }
@@ -931,8 +932,22 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
   }
 
-  if (!sink_it->second->push(RuntimeSinkQueueMsg{std::move(sample), edge_index},
-                             options.push_timeout_ms)) {
+  bool enqueued = false;
+  bool dropped_incoming = false;
+  const OutputOptions* output_options = sink_it->second->output_options();
+  if (output_options) {
+    const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : -1;
+    const auto result = enqueue_graph_sink_output(
+        *sink_it->second, *output_options, RuntimeSinkQueueMsg{std::move(sample), edge_index},
+        output_timeout_ms);
+    dropped_incoming = result == FusedEncodedOutputEnqueueResult::DroppedIncoming;
+    enqueued = result == FusedEncodedOutputEnqueueResult::Enqueued ||
+               result == FusedEncodedOutputEnqueueResult::ReplacedOldest || dropped_incoming;
+  } else {
+    enqueued = sink_it->second->push(RuntimeSinkQueueMsg{std::move(sample), edge_index},
+                                     options.push_timeout_ms);
+  }
+  if (!enqueued) {
     if (trace) {
       trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
     }
@@ -948,7 +963,9 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     return false;
   }
   if (trace) {
-    trace_graph_message_event(TraceGraphMessageEventType::QueueIn, trace_args);
+    trace_graph_message_event(dropped_incoming ? TraceGraphMessageEventType::Drop
+                                               : TraceGraphMessageEventType::QueueIn,
+                              trace_args);
   }
   return true;
 }

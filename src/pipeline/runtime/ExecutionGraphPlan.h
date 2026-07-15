@@ -7,6 +7,7 @@
 #include "builder/OutputSpec.h"
 #include "graph/GraphTypes.h"
 #include "internal/InputStream.h"
+#include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Run.h"
 #include "pipeline/GraphOptions.h"
@@ -14,6 +15,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -111,8 +113,35 @@ struct FusedRealtimeIngressBranch {
   /// Exact public options from the source-to-consumer realtime link.  Fused
   /// lowering must retain these because there is no graph-runtime scheduler
   /// left outside the monolithic GStreamer pipeline to enforce them.
-  RealtimeGraphLinkOptions link_options;
+  GraphLinkOptions link_options;
   std::vector<std::shared_ptr<Node>> nodes;
+  /**
+   * Optional graph-owned encoded output tapped before this branch's decoder.
+   * The fused pipeline keeps the H.264 GstBuffer reference-counted and routes
+   * it to the named graph sink without a process-global callback.
+   */
+  struct EncodedOutput {
+    graph::NodeId sink_node = graph::kInvalidNode;
+    OutputOptions options;
+    std::string stream_id;
+  };
+  std::optional<EncodedOutput> encoded_output;
+  /**
+   * Optional encoded H.264 sink branch tapped before the hardware decoder.
+   * These nodes are rendered behind a tee branch in the fused source pipeline
+   * (for example H264Packetize -> UdpOutput). The normalized RTSP source
+   * parser is shared by the video and decoder paths. The original public link
+   * options select lossless backpressure for Default or latest replacement
+   * for RealtimeLatestByStream.
+   */
+  std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+  GraphLinkOptions encoded_sink_link_options;
+  /**
+   * Node offset immediately after the original encoded source segment. The
+   * tee must stay at this public fan-out boundary; decoder-fragment nodes that
+   * happen to precede SimaDecode are private to the decoder branch.
+   */
+  std::optional<std::size_t> encoded_split_node_index;
   OutputSpec output_spec;
   bool output_complete = false;
 };
@@ -120,6 +149,21 @@ struct FusedRealtimeIngressBranch {
 struct FusedRealtimeIngress {
   std::vector<FusedRealtimeIngressBranch> branches;
 };
+
+enum class FusedEncodedOutputDispatchResult {
+  Delivered,
+  Stopping,
+  Failed,
+};
+
+/**
+ * Graph-scoped dispatcher for optional encoded outputs materialized inside a
+ * fused realtime ingress pipeline. OutputOptions retain their public queue
+ * contract: EveryFrame may backpressure the producing RTSP thread, while a
+ * dropping Output remains non-blocking.
+ */
+using FusedEncodedOutputDispatch = std::function<FusedEncodedOutputDispatchResult(
+    const FusedRealtimeIngressBranch::EncodedOutput&, Sample&&, std::string*)>;
 
 struct MaterializedNodeAttribution {
   enum class Role {
@@ -209,6 +253,7 @@ struct StageNodePlan {
   graph::NodeId node_id = graph::kInvalidNode;
   std::shared_ptr<graph::nodes::StageNode> node;
   Provenance provenance;
+  bool consumed_by_fused_realtime_ingress = false;
 };
 
 struct EdgePlan {
@@ -218,7 +263,7 @@ struct EdgePlan {
   graph::PortId to_port = graph::kInvalidPort;
   OutputSpec spec;
   bool spec_complete = false;
-  RealtimeGraphLinkOptions link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
   bool consumed_by_fused_realtime_ingress = false;
 };
@@ -244,7 +289,7 @@ struct PublicGraphEdgePlan {
   graph::NodeId runtime_from = graph::kInvalidNode;
   graph::NodeId runtime_to = graph::kInvalidNode;
   std::vector<std::size_t> runtime_edge_indices;
-  RealtimeGraphLinkOptions link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
 };
 
@@ -277,8 +322,7 @@ struct RuntimeCompileOptions {
 };
 
 ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& graph, const RunOptions& opt,
-                                        std::optional<Sample> seed,
-                                        bool fuse_realtime_source_branches);
+                                        std::optional<Sample> seed);
 
 // Reject statically known connected-source shapes that exceed a downstream ingress capacity.
 void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan);
@@ -299,6 +343,9 @@ bool fused_realtime_source_segment_eligible_for_test(bool already_fused);
 
 bool fused_realtime_destinations_share_port_for_test(
     const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations);
+
+std::optional<std::vector<std::string>>
+resolve_unique_fused_stream_ids_for_test(const std::vector<std::string>& configured_stream_ids);
 
 } // namespace session_test
 

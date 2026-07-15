@@ -405,11 +405,26 @@ GstFlowReturn appsink_new_sample(GstAppSink* sink, gpointer user_data) {
     return GST_FLOW_OK;
 
   {
-    std::lock_guard<std::mutex> lock(st->cb_mu);
+    std::unique_lock<std::mutex> lock(st->cb_mu);
     if (st->cb_queue_max > 0 && st->cb_queue.size() >= st->cb_queue_max) {
-      log_appsink_sample_refs("drop", sample, st->cb_queue.size());
-      gst_sample_unref(sample);
-      return GST_FLOW_OK;
+      if (st->opt.explicit_public_output_options && !st->opt.appsink_drop) {
+        st->cb_cv.wait(lock, [&] {
+          return st->stop_requested.load() || st->cb_queue.size() < st->cb_queue_max;
+        });
+        if (st->stop_requested.load()) {
+          gst_sample_unref(sample);
+          return GST_FLOW_FLUSHING;
+        }
+      } else if (st->opt.explicit_public_output_options) {
+        GstSample* oldest = st->cb_queue.front();
+        st->cb_queue.pop_front();
+        log_appsink_sample_refs("replace", oldest, st->cb_queue.size());
+        gst_sample_unref(oldest);
+      } else {
+        log_appsink_sample_refs("drop", sample, st->cb_queue.size());
+        gst_sample_unref(sample);
+        return GST_FLOW_OK;
+      }
     }
     log_appsink_sample_refs("queue", sample, st->cb_queue.size());
     st->cb_queue.push_back(sample);

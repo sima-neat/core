@@ -33,6 +33,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -68,8 +69,7 @@ using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
 
 bool realtime_by_stream_policy(GraphLinkPolicy policy) {
-  return policy == GraphLinkPolicy::RealtimeLatestByStream ||
-         policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
+  return policy == GraphLinkPolicy::RealtimeLatestByStream;
 }
 
 std::string gst_double_quote(std::string value) {
@@ -1112,7 +1112,7 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.stage_groups.reserve(execution.plan.stage_nodes.size());
   for (const auto& st : execution.plan.stage_nodes) {
-    if (!st.node) {
+    if (!st.node || st.consumed_by_fused_realtime_ingress) {
       continue;
     }
 
@@ -1175,6 +1175,43 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   std::vector<bool> has_out(runtime_node_count(execution.plan), false);
   std::unordered_map<std::string, std::size_t> realtime_link_by_target;
+  std::unordered_set<NodeId> consumed_fused_nodes;
+  std::unordered_map<NodeId, OutputOptions> fused_encoded_output_options;
+  for (const auto& segment : execution.plan.pipeline_segments) {
+    if (segment.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(segment.node_ids.begin(), segment.node_ids.end());
+    }
+    if (!segment.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    for (const auto& branch : segment.fused_realtime_ingress->branches) {
+      if (branch.encoded_output.has_value() &&
+          branch.encoded_output->sink_node != graph::kInvalidNode) {
+        fused_encoded_output_options.emplace(branch.encoded_output->sink_node,
+                                             branch.encoded_output->options);
+      }
+    }
+  }
+
+  const auto terminal_output_options_for = [&](NodeId id) -> const OutputOptions* {
+    for (const auto& segment : execution.plan.pipeline_segments) {
+      for (std::size_t local = 0; local < segment.nodes.size(); ++local) {
+        if (attributed_runtime_node_for_segment_node(segment, local) != id) {
+          continue;
+        }
+        const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes[local].get());
+        if (output) {
+          return &output->options();
+        }
+      }
+    }
+    return nullptr;
+  };
+  for (const auto& stage : execution.plan.stage_nodes) {
+    if (stage.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(stage.node_id);
+    }
+  }
 
   const auto downstream_target_for = [&](const EdgePlan& e,
                                          std::size_t eidx) -> std::optional<DownstreamTarget> {
@@ -1215,11 +1252,6 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
       continue;
     }
 
-    if (e.link_options.policy == GraphLinkPolicy::RealtimeEveryFrameByStream) {
-      throw std::runtime_error(
-          "RealtimeEveryFrameByStream requires Graph::build_fused_realtime_sources(...) "
-          "and an eligible multi-source fused decoder graph");
-    }
     if (e.link_options.policy == GraphLinkPolicy::RealtimeLatestByStream) {
       const std::string key = target_key(*downstream);
       auto it = realtime_link_by_target.find(key);
@@ -1243,7 +1275,25 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   for (NodeId id = 0; id < has_out.size(); ++id) {
     if (!has_out[id]) {
-      execution.sinks[id] = std::make_shared<GraphSinkQueue>(core->graph_options.edge_queue);
+      const auto encoded = fused_encoded_output_options.find(id);
+      // Source/decoder/fan-out/VideoSender nodes absorbed into fused ingress
+      // are executed inside the target pipeline and are not graph sinks.  The
+      // only consumed node that still owns a sink queue is an explicit encoded
+      // Output, whose queue is fed by the graph-scoped fused dispatcher.
+      if (consumed_fused_nodes.find(id) != consumed_fused_nodes.end() &&
+          encoded == fused_encoded_output_options.end()) {
+        continue;
+      }
+      std::size_t capacity = core->graph_options.edge_queue;
+      const OutputOptions* output_options = encoded != fused_encoded_output_options.end()
+                                                ? &encoded->second
+                                                : terminal_output_options_for(id);
+      if (output_options) {
+        capacity = output_options->max_buffers <= 0
+                       ? 0U
+                       : static_cast<std::size_t>(output_options->max_buffers);
+      }
+      execution.sinks[id] = std::make_shared<GraphSinkQueue>(capacity, output_options);
     }
   }
 }
@@ -1445,6 +1495,51 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    const std::weak_ptr<RunCore> weak_core = core;
+    start_opt.fused_encoded_output_dispatch =
+        [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
+                    std::string* error) {
+          const auto locked = weak_core.lock();
+          if (!locked || locked->graph_stop_requested()) {
+            if (error) {
+              *error = "graph stopped before encoded Output dispatch";
+            }
+            return FusedEncodedOutputDispatchResult::Stopping;
+          }
+          auto& execution = locked->graph_execution();
+          const auto sink = execution.sinks.find(output.sink_node);
+          if (sink == execution.sinks.end() || !sink->second) {
+            if (error) {
+              *error = "encoded Output sink is unavailable";
+            }
+            locked->graph_request_stop("fused encoded Output sink is unavailable");
+            return FusedEncodedOutputDispatchResult::Failed;
+          }
+
+          // Preserve OutputOptions exactly: Latest replaces its oldest queued
+          // AU without blocking, while EveryFrame applies backpressure until
+          // Run::pull() makes room. Closing the queue wakes blocked producers.
+          const auto enqueue =
+              enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
+          if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
+              enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest ||
+              enqueue == FusedEncodedOutputEnqueueResult::DroppedIncoming) {
+            return FusedEncodedOutputDispatchResult::Delivered;
+          }
+          if (enqueue == FusedEncodedOutputEnqueueResult::Closed) {
+            if (error) {
+              *error = "encoded Output queue closed during graph stop";
+            }
+            return FusedEncodedOutputDispatchResult::Stopping;
+          }
+
+          const std::string reason = "encoded Output queue overflowed unexpectedly";
+          if (error) {
+            *error = reason;
+          }
+          locked->graph_request_stop(reason);
+          return FusedEncodedOutputDispatchResult::Failed;
+        };
     rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
     rt.transport.built.store(true, std::memory_order_release);
   }

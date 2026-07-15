@@ -110,6 +110,32 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
   }
 
   {
+    // Regression: process more than four ByFrame pairs while draining each joined bundle with a
+    // bounded pull. This keeps the terminal output moving and verifies that no frame is lost.
+    constexpr int kPairs = 12;
+    simaai::neat::Graph join = simaai::neat::graphs::Combine({"left", "right"}, "combined",
+                                                             simaai::neat::CombinePolicy::ByFrame);
+    simaai::neat::Run run = join.build();
+
+    for (int frame = 0; frame < kPairs; ++frame) {
+      require(run.push("left", simaai::neat::Sample{sample_with_frame(frame, "cam-left", 0x31)}),
+              "Drained Combine ByFrame left push failed at frame " + std::to_string(frame) + ": " +
+                  run.last_error());
+      require(run.push("right", simaai::neat::Sample{sample_with_frame(frame, "cam-right", 0x32)}),
+              "Drained Combine ByFrame right push failed at frame " + std::to_string(frame) + ": " +
+                  run.last_error());
+      auto out = run.pull("combined", 5000);
+      require(out.has_value(), "Drained Combine ByFrame pull timed out at frame " +
+                                   std::to_string(frame) + ": " + run.last_error());
+      require_bundle_fields(*out, "Drained Combine ByFrame");
+      require(out->frame_id == frame,
+              "Drained Combine ByFrame returned the wrong frame_id at frame " +
+                  std::to_string(frame));
+    }
+    run.close();
+  }
+
+  {
     simaai::neat::Graph join = simaai::neat::graphs::Combine({"left", "right"}, "combined",
                                                              simaai::neat::CombinePolicy::ByPts);
     simaai::neat::Run run = join.build();
@@ -272,7 +298,7 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
       preview_sink.add(simaai::neat::nodes::Input(preview));
       preview_sink.add(simaai::neat::nodes::Output(preview + "_out"));
 
-      simaai::neat::RealtimeGraphLinkOptions link;
+      simaai::neat::GraphLinkOptions link;
       link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       link.queue_depth = 1;
       link.stream_id = stream;

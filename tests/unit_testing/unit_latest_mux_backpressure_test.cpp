@@ -130,8 +130,8 @@ struct Fixture {
   ProbeState probe;
 };
 
-void init_fixture(Fixture* fixture, const char* name, bool block_when_pending,
-                  const char* inflight_limits = "0,0", int max_inflight_total = 0) {
+void init_fixture(Fixture* fixture, const char* name, const char* inflight_limits = "0,0",
+                  int max_inflight_total = 0) {
   require(fixture != nullptr, "latest-mux backpressure fixture pointer is null");
   Fixture& f = *fixture;
   f.pipeline = gst_pipeline_new(name);
@@ -139,7 +139,7 @@ void init_fixture(Fixture* fixture, const char* name, bool block_when_pending,
   f.sink = gst_element_factory_make("fakesink", nullptr);
   require(f.pipeline && f.mux && f.sink, "failed to create latest-mux backpressure fixture");
   g_object_set(f.mux, "stream-ids", "stream0,stream1", "max-inflight-total", max_inflight_total,
-               "block-when-pending", block_when_pending ? TRUE : FALSE, nullptr);
+               nullptr);
   if (inflight_limits) {
     g_object_set(f.mux, "stream-inflight-limits", inflight_limits, nullptr);
   }
@@ -228,7 +228,7 @@ void wait_for_outputs(Fixture* f, std::size_t count) {
 
 void test_default_mode_keeps_latest() {
   Fixture f;
-  init_fixture(&f, "latest-mux-default-latest", false);
+  init_fixture(&f, "latest-mux-default-latest");
   arm_blocking_probe(&f);
   require(gst_pad_chain(f.pads[0], make_buffer(1)) == GST_FLOW_OK,
           "default latest mode rejected first pending frame");
@@ -247,7 +247,7 @@ void test_default_mode_keeps_latest() {
 
 void test_unconfigured_direct_mux_does_not_take_terminal_loans() {
   Fixture f;
-  init_fixture(&f, "latest-mux-direct-no-loans", false, nullptr);
+  init_fixture(&f, "latest-mux-direct-no-loans", nullptr);
   constexpr std::size_t kFrames = 12U;
   for (std::size_t i = 0; i < kFrames; ++i) {
     const std::size_t stream = i % f.pads.size();
@@ -259,49 +259,9 @@ void test_unconfigured_direct_mux_does_not_take_terminal_loans() {
   stop_fixture(&f);
 }
 
-void test_blocking_mode_preserves_burst() {
+void test_credit_release_emits_latest_pending_frame() {
   Fixture f;
-  init_fixture(&f, "latest-mux-every-frame", true);
-  arm_blocking_probe(&f);
-  require(gst_pad_chain(f.pads[0], make_buffer(11)) == GST_FLOW_OK,
-          "blocking mode rejected first pending frame");
-  GstFlowReturn second_flow = GST_FLOW_ERROR;
-  bool second_done = false;
-  std::mutex done_mutex;
-  std::condition_variable done_cv;
-  std::thread second([&] {
-    second_flow = gst_pad_chain(f.pads[0], make_buffer(12));
-    {
-      std::lock_guard<std::mutex> lock(done_mutex);
-      second_done = true;
-    }
-    done_cv.notify_all();
-  });
-  {
-    std::unique_lock<std::mutex> lock(done_mutex);
-    require(!done_cv.wait_for(lock, std::chrono::milliseconds(100), [&] { return second_done; }),
-            "blocking mode must backpressure a producer whose pending slot is occupied");
-  }
-  unblock_probe(&f);
-  {
-    std::unique_lock<std::mutex> lock(done_mutex);
-    require(done_cv.wait_for(lock, std::chrono::seconds(3), [&] { return second_done; }),
-            "blocked producer did not resume after the worker consumed its pending frame");
-  }
-  second.join();
-  require(second_flow == GST_FLOW_OK, "resumed producer should enqueue its frame successfully");
-  wait_for_outputs(&f, 2U);
-  {
-    std::lock_guard<std::mutex> lock(f.probe.mutex);
-    require(f.probe.outputs[0].frame_id == 11 && f.probe.outputs[1].frame_id == 12,
-            "blocking mode must emit every burst frame in order");
-  }
-  stop_fixture(&f);
-}
-
-void test_credit_release_unblocks_pending_producer() {
-  Fixture f;
-  init_fixture(&f, "latest-mux-blocked-credit", true, "1,1");
+  init_fixture(&f, "latest-mux-latest-credit", "1,1");
   {
     std::lock_guard<std::mutex> lock(f.probe.mutex);
     f.probe.auto_release_loans = true;
@@ -312,22 +272,13 @@ void test_credit_release_unblocks_pending_producer() {
   wait_for_outputs(&f, 1U);
   require(gst_pad_chain(f.pads[0], make_buffer(42)) == GST_FLOW_OK,
           "credit fixture rejected pending frame");
-  GstFlowReturn third_flow = GST_FLOW_ERROR;
-  bool third_done = false;
-  std::mutex done_mutex;
-  std::condition_variable done_cv;
-  std::thread third([&] {
-    third_flow = gst_pad_chain(f.pads[0], make_buffer(43));
-    {
-      std::lock_guard<std::mutex> lock(done_mutex);
-      third_done = true;
-    }
-    done_cv.notify_all();
-  });
+  require(gst_pad_chain(f.pads[0], make_buffer(43)) == GST_FLOW_OK,
+          "credit fixture rejected latest replacement frame");
   {
-    std::unique_lock<std::mutex> lock(done_mutex);
-    require(!done_cv.wait_for(lock, std::chrono::milliseconds(100), [&] { return third_done; }),
-            "terminal-credit saturation should keep the producer blocked");
+    std::unique_lock<std::mutex> lock(f.probe.mutex);
+    require(!f.probe.cv.wait_for(lock, std::chrono::milliseconds(100),
+                                 [&] { return f.probe.outputs.size() >= 2U; }),
+            "terminal-credit saturation must keep the latest frame pending");
   }
   GstBuffer* held = nullptr;
   {
@@ -339,20 +290,18 @@ void test_credit_release_unblocks_pending_producer() {
               held, f.probe.mux_namespace),
           "terminal release did not return mux credit");
   gst_buffer_unref(held);
+  wait_for_outputs(&f, 2U);
   {
-    std::unique_lock<std::mutex> lock(done_mutex);
-    require(done_cv.wait_for(lock, std::chrono::seconds(3), [&] { return third_done; }),
-            "credit release did not unblock the pending producer");
+    std::lock_guard<std::mutex> lock(f.probe.mutex);
+    require(f.probe.outputs[1].frame_id == 43,
+            "credit release must emit the latest replacement instead of a stale pending frame");
   }
-  third.join();
-  require(third_flow == GST_FLOW_OK, "credit-unblocked producer should return GST_FLOW_OK");
-  wait_for_outputs(&f, 3U);
   stop_fixture(&f);
 }
 
 void test_total_credit_caps_all_streams() {
   Fixture f;
-  init_fixture(&f, "latest-mux-total-credit", true, "2,2", 2);
+  init_fixture(&f, "latest-mux-total-credit", "2,2", 2);
   {
     std::lock_guard<std::mutex> lock(f.probe.mutex);
     f.probe.hold_all_loans = true;
@@ -389,163 +338,6 @@ void test_total_credit_caps_all_streams() {
   stop_fixture(&f);
 }
 
-void test_flush_start_wakes_blocked_producer() {
-  Fixture f;
-  init_fixture(&f, "latest-mux-blocked-flush", true);
-  arm_blocking_probe(&f);
-  require(gst_pad_chain(f.pads[0], make_buffer(51)) == GST_FLOW_OK,
-          "flush fixture rejected pending frame");
-  GstFlowReturn blocked_flow = GST_FLOW_OK;
-  bool blocked_done = false;
-  std::mutex done_mutex;
-  std::condition_variable done_cv;
-  std::thread producer([&] {
-    blocked_flow = gst_pad_chain(f.pads[0], make_buffer(52));
-    {
-      std::lock_guard<std::mutex> lock(done_mutex);
-      blocked_done = true;
-    }
-    done_cv.notify_all();
-  });
-  require(gst_pad_send_event(f.pads[0], gst_event_new_flush_start()) == TRUE,
-          "failed to send blocking mux FLUSH_START");
-  {
-    std::unique_lock<std::mutex> lock(done_mutex);
-    require(done_cv.wait_for(lock, std::chrono::seconds(3), [&] { return blocked_done; }),
-            "FLUSH_START did not wake the blocked mux producer");
-  }
-  require(blocked_flow == GST_FLOW_FLUSHING, "flushed producer must return GST_FLOW_FLUSHING");
-  producer.join();
-  unblock_probe(&f);
-  require(gst_pad_send_event(f.pads[0], gst_event_new_flush_stop(FALSE)) == TRUE,
-          "failed to send blocking mux FLUSH_STOP");
-  stop_fixture(&f);
-}
-
-void test_multistream_every_frame_order_and_eos() {
-  Fixture f;
-  init_fixture(&f, "latest-mux-multistream-every-frame", true);
-  {
-    std::lock_guard<std::mutex> lock(f.probe.mutex);
-    f.probe.output_delay = std::chrono::milliseconds(1);
-  }
-  constexpr int kFrames = 40;
-  GstFlowReturn first_flow = GST_FLOW_OK;
-  GstFlowReturn second_flow = GST_FLOW_OK;
-  std::thread first([&] {
-    for (int i = 0; i < kFrames; ++i) {
-      first_flow = gst_pad_chain(f.pads[0], make_buffer(100 + i));
-      if (first_flow != GST_FLOW_OK) {
-        return;
-      }
-    }
-  });
-  std::thread second([&] {
-    for (int i = 0; i < kFrames; ++i) {
-      second_flow = gst_pad_chain(f.pads[1], make_buffer(200 + i));
-      if (second_flow != GST_FLOW_OK) {
-        return;
-      }
-    }
-  });
-  first.join();
-  second.join();
-  require(first_flow == GST_FLOW_OK && second_flow == GST_FLOW_OK,
-          "multistream every-frame producer failed");
-  require(gst_pad_send_event(f.pads[0], gst_event_new_eos()) == TRUE, "failed to send stream0 EOS");
-  require(gst_pad_send_event(f.pads[1], gst_event_new_eos()) == TRUE, "failed to send stream1 EOS");
-  wait_for_outputs(&f, 2U * kFrames);
-  std::vector<std::int64_t> stream0;
-  std::vector<std::int64_t> stream1;
-  {
-    std::lock_guard<std::mutex> lock(f.probe.mutex);
-    for (const auto& output : f.probe.outputs) {
-      (output.stream_id == "stream0" ? stream0 : stream1).push_back(output.frame_id);
-    }
-  }
-  require(stream0.size() == kFrames && stream1.size() == kFrames,
-          "every-frame multistream mode must emit every input before EOS");
-  for (int i = 0; i < kFrames; ++i) {
-    require(stream0[i] == 100 + i && stream1[i] == 200 + i,
-            "every-frame multistream mode must preserve per-stream order");
-  }
-  stop_fixture(&f);
-}
-
-void test_state_stop_wakes_blocked_producer() {
-  Fixture f;
-  init_fixture(&f, "latest-mux-blocked-stop", true);
-  arm_blocking_probe(&f);
-  require(gst_pad_chain(f.pads[0], make_buffer(21)) == GST_FLOW_OK,
-          "blocked-stop fixture rejected pending frame");
-  GstFlowReturn blocked_flow = GST_FLOW_OK;
-  bool blocked_done = false;
-  std::mutex done_mutex;
-  std::condition_variable done_cv;
-  std::thread producer([&] {
-    blocked_flow = gst_pad_chain(f.pads[0], make_buffer(22));
-    {
-      std::lock_guard<std::mutex> lock(done_mutex);
-      blocked_done = true;
-    }
-    done_cv.notify_all();
-  });
-  GstStateChangeReturn stop_result = GST_STATE_CHANGE_FAILURE;
-  std::thread stop([&] { stop_result = gst_element_set_state(f.pipeline, GST_STATE_NULL); });
-  {
-    std::unique_lock<std::mutex> lock(done_mutex);
-    require(done_cv.wait_for(lock, std::chrono::seconds(3), [&] { return blocked_done; }),
-            "state stop did not wake the blocked mux producer");
-  }
-  require(blocked_flow == GST_FLOW_FLUSHING,
-          "state-stopped producer must return GST_FLOW_FLUSHING");
-  unblock_probe(&f);
-  producer.join();
-  stop.join();
-  require(stop_result != GST_STATE_CHANGE_FAILURE, "blocking mux state stop failed");
-  for (GstPad*& pad : f.pads) {
-    gst_element_release_request_pad(f.mux, pad);
-    gst_object_unref(pad);
-    pad = nullptr;
-  }
-  gst_object_unref(f.pipeline);
-  f.pipeline = nullptr;
-}
-
-void test_release_pad_wakes_blocked_producer() {
-  Fixture f;
-  init_fixture(&f, "latest-mux-blocked-release-pad", true);
-  arm_blocking_probe(&f);
-  require(gst_pad_chain(f.pads[0], make_buffer(31)) == GST_FLOW_OK,
-          "release-pad fixture rejected pending frame");
-  GstFlowReturn blocked_flow = GST_FLOW_OK;
-  bool blocked_done = false;
-  std::mutex done_mutex;
-  std::condition_variable done_cv;
-  std::thread producer([&] {
-    blocked_flow = gst_pad_chain(f.pads[0], make_buffer(32));
-    {
-      std::lock_guard<std::mutex> lock(done_mutex);
-      blocked_done = true;
-    }
-    done_cv.notify_all();
-  });
-  GstPad* released_pad = f.pads[0];
-  std::thread release([&] { gst_element_release_request_pad(f.mux, released_pad); });
-  {
-    std::unique_lock<std::mutex> lock(done_mutex);
-    require(done_cv.wait_for(lock, std::chrono::seconds(3), [&] { return blocked_done; }),
-            "request-pad release did not wake the blocked mux producer");
-  }
-  require(blocked_flow == GST_FLOW_FLUSHING, "released-pad producer must return GST_FLOW_FLUSHING");
-  producer.join();
-  release.join();
-  gst_object_unref(released_pad);
-  f.pads[0] = nullptr;
-  unblock_probe(&f);
-  stop_fixture(&f);
-}
-
 } // namespace
 
 int main() {
@@ -553,13 +345,8 @@ int main() {
     simaai::neat::gst_init_once();
     test_default_mode_keeps_latest();
     test_unconfigured_direct_mux_does_not_take_terminal_loans();
-    test_blocking_mode_preserves_burst();
-    test_credit_release_unblocks_pending_producer();
+    test_credit_release_emits_latest_pending_frame();
     test_total_credit_caps_all_streams();
-    test_flush_start_wakes_blocked_producer();
-    test_multistream_every_frame_order_and_eos();
-    test_state_stop_wakes_blocked_producer();
-    test_release_pad_wakes_blocked_producer();
     std::cout << "[OK] unit_latest_mux_backpressure_test passed\n";
     return 0;
   } catch (const std::exception& e) {

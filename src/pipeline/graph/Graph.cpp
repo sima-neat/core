@@ -1503,11 +1503,6 @@ Graph& Graph::connect(const Graph& from, const Graph& to) {
 }
 
 Graph& Graph::connect(const Graph& from, const Graph& to, const GraphLinkOptions& options) {
-  return connect_realtime(from, to, RealtimeGraphLinkOptions(options));
-}
-
-Graph& Graph::connect_realtime(const Graph& from, const Graph& to,
-                               const RealtimeGraphLinkOptions& options) {
   const auto [from_start, from_end] =
       import_or_reuse_composition_fragment_(from, "Graph::connect(from)");
   if (from_end <= from_start) {

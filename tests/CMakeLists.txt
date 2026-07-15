@@ -319,6 +319,7 @@ set(UNIT_TESTS
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
   unit_fused_realtime_fast_path_options_test
+  unit_public_output_appsink_contract_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
@@ -332,6 +333,7 @@ set(UNIT_TESTS
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
   unit_latest_mux_fairness_test
+  unit_latest_mux_periodic_fairness_test
   unit_latest_mux_backpressure_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
@@ -346,6 +348,7 @@ set(UNIT_TESTS
   unit_preprocess_roi_split_test
   unit_preprocess_meta_template_dynamic_test
   unit_preproc_contract_rules_test
+  unit_inputstream_stop_flush_test
   unit_inputstream_stop_timeout_detach_test
   unit_inputappsrc_stop_race_test
   unit_neatdecoder_keepalive_test

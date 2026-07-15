@@ -44,9 +44,9 @@ simaai::neat::Graph push_passthrough_fragment(const std::string& input_name,
   return g;
 }
 
-simaai::neat::Graph
-linked_passthrough_fragment(const std::string& input_name, const std::string& output_name,
-                            const simaai::neat::RealtimeGraphLinkOptions& link) {
+simaai::neat::Graph linked_passthrough_fragment(const std::string& input_name,
+                                                const std::string& output_name,
+                                                const simaai::neat::GraphLinkOptions& link) {
   simaai::neat::Graph in;
   in.add(simaai::neat::nodes::Input(input_name));
 
@@ -245,12 +245,12 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
-    simaai::neat::RealtimeGraphLinkOptions valid_realtime;
+    simaai::neat::GraphLinkOptions valid_realtime;
     valid_realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     valid_realtime.max_inflight_per_stream = 4;
     valid_realtime.max_inflight_total = 16;
 
-    simaai::neat::RealtimeGraphLinkOptions invalid_realtime = valid_realtime;
+    simaai::neat::GraphLinkOptions invalid_realtime = valid_realtime;
     invalid_realtime.max_inflight_per_stream = 0;
 
     auto left = live_camera_source_fragment("valid_realtime_camera");
@@ -264,12 +264,12 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
-    simaai::neat::RealtimeGraphLinkOptions valid_realtime;
+    simaai::neat::GraphLinkOptions valid_realtime;
     valid_realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     valid_realtime.max_inflight_per_stream = 4;
     valid_realtime.max_inflight_total = 16;
 
-    simaai::neat::RealtimeGraphLinkOptions invalid_realtime = valid_realtime;
+    simaai::neat::GraphLinkOptions invalid_realtime = valid_realtime;
     invalid_realtime.max_inflight_total = -2;
 
     auto left = live_camera_source_fragment("valid_realtime_total_camera");
@@ -283,11 +283,11 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
-    simaai::neat::RealtimeGraphLinkOptions valid_inner;
+    simaai::neat::GraphLinkOptions valid_inner;
     valid_inner.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     valid_inner.max_inflight_per_stream = 4;
 
-    simaai::neat::RealtimeGraphLinkOptions invalid_outer = valid_inner;
+    simaai::neat::GraphLinkOptions invalid_outer = valid_inner;
     invalid_outer.max_inflight_per_stream = 0;
 
     auto source = live_camera_source_fragment("compiler_merge_invalid_realtime_camera");
@@ -301,11 +301,11 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
-    simaai::neat::RealtimeGraphLinkOptions valid_inner;
+    simaai::neat::GraphLinkOptions valid_inner;
     valid_inner.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     valid_inner.max_inflight_total = 16;
 
-    simaai::neat::RealtimeGraphLinkOptions invalid_outer = valid_inner;
+    simaai::neat::GraphLinkOptions invalid_outer = valid_inner;
     invalid_outer.max_inflight_total = -2;
 
     auto source = live_camera_source_fragment("compiler_merge_invalid_total_camera");
@@ -318,12 +318,12 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   }
 
   {
-    simaai::neat::RealtimeGraphLinkOptions inner;
+    simaai::neat::GraphLinkOptions inner;
     inner.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     inner.max_inflight_per_stream = 16;
     inner.max_inflight_total = 16;
 
-    simaai::neat::RealtimeGraphLinkOptions outer = inner;
+    simaai::neat::GraphLinkOptions outer = inner;
     outer.max_inflight_per_stream = 4;
     outer.max_inflight_total = 4;
 

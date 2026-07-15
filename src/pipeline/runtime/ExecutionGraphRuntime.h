@@ -53,7 +53,86 @@ struct RuntimeSinkQueueMsg {
   std::size_t edge_index = invalid_edge_index();
 };
 
-using GraphSinkQueue = simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg>;
+enum class FusedEncodedOutputEnqueueResult {
+  Enqueued,
+  ReplacedOldest,
+  DroppedIncoming,
+  Overflow,
+  Closed,
+};
+
+class GraphSinkQueue final
+    : public simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg> {
+public:
+  explicit GraphSinkQueue(std::size_t capacity = 0, const OutputOptions* output_options = nullptr)
+      : BlockingQueue(capacity), has_output_options_(output_options != nullptr),
+        output_options_(output_options ? *output_options : OutputOptions{}) {}
+
+  const OutputOptions* output_options() const noexcept {
+    return has_output_options_ ? &output_options_ : nullptr;
+  }
+
+private:
+  friend FusedEncodedOutputEnqueueResult
+  enqueue_graph_sink_output(GraphSinkQueue&, const OutputOptions&, RuntimeSinkQueueMsg&&, int);
+  friend FusedEncodedOutputEnqueueResult
+  enqueue_fused_encoded_output(GraphSinkQueue&, const OutputOptions&, Sample&&);
+  std::mutex latest_enqueue_mu_;
+  bool has_output_options_ = false;
+  OutputOptions output_options_{};
+};
+
+inline FusedEncodedOutputEnqueueResult enqueue_graph_sink_output(GraphSinkQueue& queue,
+                                                                 const OutputOptions& options,
+                                                                 RuntimeSinkQueueMsg&& message,
+                                                                 int timeout_ms) {
+  if (!options.drop) {
+    // Match Output/Appsink EveryFrame semantics: a bounded full queue applies
+    // backpressure until Run::pull() makes room (or graph teardown closes it).
+    if (queue.push(std::move(message), timeout_ms)) {
+      return FusedEncodedOutputEnqueueResult::Enqueued;
+    }
+    return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                          : FusedEncodedOutputEnqueueResult::Overflow;
+  }
+
+  // Multiple fused live sources may publish concurrently to one named Latest
+  // output. Serialize only the replace sequence; the queue itself remains
+  // independently safe for its consumer and for ordinary single-step pushes.
+  std::lock_guard<std::mutex> enqueue_lock(queue.latest_enqueue_mu_);
+  if (queue.try_push(std::move(message))) {
+    return FusedEncodedOutputEnqueueResult::Enqueued;
+  }
+  if (queue.closed()) {
+    return FusedEncodedOutputEnqueueResult::Closed;
+  }
+
+  RuntimeSinkQueueMsg discarded;
+  const bool replaced = queue.pop(discarded, 0);
+  if (replaced) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(discarded.sample,
+                                                                 "graph-sink-latest-replace");
+  }
+  if (queue.try_push(std::move(message))) {
+    return replaced ? FusedEncodedOutputEnqueueResult::ReplacedOldest
+                    : FusedEncodedOutputEnqueueResult::Enqueued;
+  }
+  if (!queue.closed()) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(message.sample,
+                                                                 "graph-sink-latest-drop-incoming");
+    return FusedEncodedOutputEnqueueResult::DroppedIncoming;
+  }
+  return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                        : FusedEncodedOutputEnqueueResult::Overflow;
+}
+
+/** Queue policy used by graph-scoped encoded Outputs. */
+inline FusedEncodedOutputEnqueueResult
+enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
+  return enqueue_graph_sink_output(
+      queue, options,
+      RuntimeSinkQueueMsg{.sample = std::move(sample), .edge_index = invalid_edge_index()}, -1);
+}
 
 struct DownstreamTarget {
   enum class Kind {
@@ -95,8 +174,7 @@ public:
     std::size_t ready = 0;
   };
 
-  RealtimeLatestLink(DownstreamTarget downstream, RealtimeGraphLinkOptions options,
-                     std::string stream_id);
+  RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options, std::string stream_id);
   RealtimeLatestLink(const RealtimeLatestLink&) = delete;
   RealtimeLatestLink& operator=(const RealtimeLatestLink&) = delete;
   ~RealtimeLatestLink();
@@ -104,7 +182,7 @@ public:
   bool offer(simaai::neat::Sample&& sample, std::size_t edge_index);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
-                          const RealtimeGraphLinkOptions& options);
+                          const GraphLinkOptions& options);
   void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
   void close();
   void join();
@@ -113,7 +191,7 @@ public:
   const DownstreamTarget& downstream() const noexcept {
     return downstream_;
   }
-  const RealtimeGraphLinkOptions& options() const noexcept {
+  const GraphLinkOptions& options() const noexcept {
     return options_;
   }
 
@@ -133,7 +211,7 @@ private:
   void run_();
 
   DownstreamTarget downstream_;
-  RealtimeGraphLinkOptions options_;
+  GraphLinkOptions options_;
   DispatchFn dispatch_;
   StopFn stop_;
   ErrorFn error_;
@@ -144,7 +222,7 @@ private:
   pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
   std::unordered_set<std::size_t> edge_indices_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
-  std::unordered_map<std::size_t, RealtimeGraphLinkOptions> link_options_by_edge_;
+  std::unordered_map<std::size_t, GraphLinkOptions> link_options_by_edge_;
   std::deque<std::string> ready_;
   std::uint64_t credit_namespace_ = 0;
   int credit_limit_per_stream_ = 0;
