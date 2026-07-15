@@ -175,7 +175,7 @@ struct NormalizedCompositionEdge {
   std::string to_port;
   std::string from_endpoint;
   std::string to_endpoint;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
   CombinePolicy combine_policy = CombinePolicy::None;
 };
@@ -198,7 +198,7 @@ struct LoweredExplicitEdge {
   graph::NodeId to = graph::kInvalidNode;
   std::string from_port;
   std::string to_port;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
 };
 
@@ -209,23 +209,23 @@ struct PublicGraphLowering {
   std::vector<LoweredExplicitEdge> lowered_edges;
 };
 
-bool realtime_latest_link(const RealtimeMuxByStream& opt) {
+bool realtime_latest_link(const GraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::RealtimeLatestByStream ||
          opt.policy == GraphLinkPolicy::RealtimeEveryFrameByStream;
 }
 
-bool default_link(const RealtimeMuxByStream& opt) {
+bool default_link(const GraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
 void validate_realtime_inflight_option(const char* name, int value) {
   if (value == 0 || value < -1) {
-    throw std::runtime_error(std::string("RealtimeMuxByStream::") + name +
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
                              " must be -1 or a positive value");
   }
 }
 
-void validate_non_default_link_options(const RealtimeMuxByStream& opt) {
+void validate_non_default_link_options(const GraphLinkOptions& opt) {
   if (default_link(opt)) {
     return;
   }
@@ -243,7 +243,7 @@ int merge_inflight_cap(int existing, int incoming) {
   return std::min(existing, incoming);
 }
 
-RealtimeMuxByStream merge_link_options(RealtimeMuxByStream a, const RealtimeMuxByStream& b) {
+GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
   validate_non_default_link_options(a);
   validate_non_default_link_options(b);
 
@@ -435,7 +435,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   std::unordered_set<std::string> emitted_edges;
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
-                            std::string to_endpoint, RealtimeMuxByStream link_options,
+                            std::string to_endpoint, GraphLinkOptions link_options,
                             std::string stream_id, CombinePolicy combine_policy) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
@@ -464,11 +464,11 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     RealtimeMuxByStream, std::string, CombinePolicy, std::vector<bool>&)>
+                     GraphLinkOptions, std::string, CombinePolicy, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
-                    RealtimeMuxByStream link_options, std::string stream_id,
+                    GraphLinkOptions link_options, std::string stream_id,
                     CombinePolicy combine_policy, std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
     link_options = merge_link_options(link_options, edge.link_options);
@@ -1532,7 +1532,7 @@ void validate_unique_source_buffer_names(
 }
 
 void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId from,
-                                        graph::NodeId to, const RealtimeMuxByStream& link_options,
+                                        graph::NodeId to, const GraphLinkOptions& link_options,
                                         const std::string& stream_id) {
   const bool propagate_policy = !default_link(link_options);
   const bool propagate_stream_id = !stream_id.empty();
@@ -1558,7 +1558,7 @@ void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId 
     if (edge_index >= plan->edges.size()) {
       continue;
     }
-    RealtimeMuxByStream& dst = plan->edges[edge_index].link_options;
+    GraphLinkOptions& dst = plan->edges[edge_index].link_options;
     if (propagate_policy) {
       dst = merge_link_options(dst, link_options);
     }
@@ -2003,6 +2003,16 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
   }
 
   resolve_default_endpoints(graph, plan);
+}
+
+void reject_unfused_realtime_edges(const ExecutionGraphPlan& plan) {
+  for (const auto& edge : plan.edges) {
+    if (realtime_latest_link(edge.link_options) && !edge.consumed_by_fused_realtime_ingress) {
+      throw std::runtime_error(
+          "compile_public_graph: realtime-by-stream policy requires fused live-source fan-in; "
+          "appsrc fallback is disabled");
+    }
+  }
 }
 
 struct NamedEndpointCandidate {
@@ -2528,9 +2538,9 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
     validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
-    // Fusion is an execution-plan lowering, not a public build mode. Eligible live
-    // fan-in is fused automatically; ineligible topology remains segmented.
+    // Fusion is an execution-plan lowering, not a public build mode.
     fuse_realtime_fan_in_segments(lowering.graph, &plan);
+    reject_unfused_realtime_edges(plan);
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,
                                view.named_fragments, &plan);
     map_explicit_public_vertex_endpoints(runtime_node_for_vertex, view.vertices, &plan);

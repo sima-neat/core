@@ -180,10 +180,10 @@ concept accepts_brace_connect =
     requires(T& graph, const T& from, const T& to) { graph.connect(from, to, {}); };
 
 template <typename T>
-concept has_connect_realtime = requires(T& graph, const T& from, const T& to,
-                                        const simaai::neat::RealtimeMuxByStream& options) {
-  graph.connect_realtime(from, to, options);
-};
+concept has_connect_realtime =
+    requires(T& graph, const T& from, const T& to, const simaai::neat::GraphLinkOptions& options) {
+      graph.connect_realtime(from, to, options);
+    };
 
 template <typename T>
 concept has_fused_realtime_build = requires(T& graph) { graph.build_fused_realtime_sources(); };
@@ -245,11 +245,18 @@ int main() {
   static_assert(!has_connect_realtime<Graph>,
                 "bounded realtime links must use ordinary Graph::connect()");
   static_assert(
-      std::is_same_v<decltype(std::declval<Graph&>().connect(
-                         std::declval<const Graph&>(), std::declval<const Graph&>(),
-                         std::declval<simaai::neat::RealtimeMuxByStream&>())),
-                     Graph&>,
-      "the constrained connect convenience must accept the extended realtime options type");
+      std::is_same_v<
+          decltype(std::declval<simaai::neat::GraphLinkOptions&>().max_inflight_per_stream), int>,
+      "GraphLinkOptions must expose the per-stream realtime admission cap");
+  static_assert(
+      std::is_same_v<decltype(std::declval<simaai::neat::GraphLinkOptions&>().max_inflight_total),
+                     int>,
+      "GraphLinkOptions must expose the total realtime admission cap");
+  static_assert(std::is_same_v<decltype(std::declval<Graph&>().connect(
+                                   std::declval<const Graph&>(), std::declval<const Graph&>(),
+                                   std::declval<simaai::neat::GraphLinkOptions&>())),
+                               Graph&>,
+                "ordinary connect must accept the unified graph link options type");
 
   static_assert(!has_enable_metrics_field<simaai::neat::RunOptions>::value,
                 "RunOptions::enable_metrics should not be public");

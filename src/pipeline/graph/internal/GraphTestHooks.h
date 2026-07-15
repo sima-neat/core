@@ -15,7 +15,7 @@
 
 namespace simaai::neat {
 struct GraphOptions;
-struct RealtimeMuxByStream;
+struct GraphLinkOptions;
 class Node;
 struct Sample;
 struct InputOptions;
@@ -34,11 +34,11 @@ std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options);
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
-    const std::vector<RealtimeMuxByStream>& link_options);
+    const std::vector<GraphLinkOptions>& link_options);
 std::string render_fused_realtime_consumer_pipeline_for_test(
     const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
-    const std::vector<RealtimeMuxByStream>& link_options, bool enable_terminal_loans);
-std::string render_fused_realtime_ingress_queue_for_test(const RealtimeMuxByStream& link_options);
+    const std::vector<GraphLinkOptions>& link_options, bool enable_terminal_loans);
+std::string render_fused_realtime_ingress_queue_for_test(const GraphLinkOptions& link_options);
 GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info);
 Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
                                                  const std::string& stream_id);

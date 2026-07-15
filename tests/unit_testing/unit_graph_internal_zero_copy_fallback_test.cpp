@@ -403,34 +403,16 @@ RUN_TEST(
       mixed_policy_app.connect(cam0, preview);
       mixed_policy_app.connect(cam0, detector);
       mixed_policy_app.connect(cam1, detector);
-      const auto mixed_plan =
-          simaai::neat::runtime::compile_public_graph(mixed_policy_app, simaai::neat::RunOptions{});
-      bool saw_shared_fanout_trunk = false;
-      bool saw_default_fanout_branch = false;
-      bool saw_realtime_fanout_branch = false;
-      for (const auto& edge : mixed_plan.edges) {
-        const bool from_fanout = edge.from < mixed_plan.node_labels.size() &&
-                                 mixed_plan.node_labels[edge.from].rfind("fanout", 0) == 0;
-        const bool to_fanout = edge.to < mixed_plan.node_labels.size() &&
-                               mixed_plan.node_labels[edge.to].rfind("fanout", 0) == 0;
-        if (to_fanout) {
-          saw_shared_fanout_trunk = true;
-          require(edge.link_options.policy == simaai::neat::GraphLinkPolicy::Default,
-                  "realtime fan-in policy must not attach to a shared FanOut trunk");
-        }
-        if (from_fanout && edge.link_options.policy == simaai::neat::GraphLinkPolicy::Default) {
-          saw_default_fanout_branch = true;
-        }
-        if (from_fanout &&
-            edge.link_options.policy == simaai::neat::GraphLinkPolicy::RealtimeLatestByStream) {
-          saw_realtime_fanout_branch = true;
-        }
+      bool mixed_policy_rejected = false;
+      try {
+        (void)simaai::neat::runtime::compile_public_graph(mixed_policy_app,
+                                                          simaai::neat::RunOptions{});
+      } catch (const std::exception& e) {
+        mixed_policy_rejected =
+            std::string(e.what()).find("appsrc fallback is disabled") != std::string::npos;
       }
-      require(saw_shared_fanout_trunk, "test graph should lower shared producer through FanOut");
-      require(saw_default_fanout_branch,
-              "default branch from shared FanOut should keep default policy");
-      require(saw_realtime_fanout_branch,
-              "fan-in branch from shared FanOut should keep realtime policy");
+      require(mixed_policy_rejected,
+              "realtime fan-in from a shared source must not fall back to appsrc transport");
 
       simaai::neat::Graph redundant_branch_fan_in_app("redundant_branch_live_fan_in");
       auto redundant_detector = [] {
@@ -443,13 +425,13 @@ RUN_TEST(
         auto source = live_source("redundant_cam" + std::to_string(stream));
         auto one_output_branch = simaai::neat::graphs::Branch("source", {"detector_frame"});
 
-        simaai::neat::RealtimeMuxByStream decoded_link;
+        simaai::neat::GraphLinkOptions decoded_link;
         decoded_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
         decoded_link.queue_depth = 1;
         decoded_link.stream_id = "redundant_stream" + std::to_string(stream);
         redundant_branch_fan_in_app.connect(source, one_output_branch, decoded_link);
 
-        simaai::neat::RealtimeMuxByStream detector_link;
+        simaai::neat::GraphLinkOptions detector_link;
         detector_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
         detector_link.queue_depth = 16;
         detector_link.stream_id = "redundant_stream" + std::to_string(stream);
@@ -477,7 +459,7 @@ RUN_TEST(
       require(saw_redundant_stream0 && saw_redundant_stream1,
               "one-output Branch elision must preserve per-stream realtime identities");
 
-      simaai::neat::RealtimeMuxByStream stream_link;
+      simaai::neat::GraphLinkOptions stream_link;
       stream_link.stream_id = "compat_stream";
 
       simaai::neat::Graph default_stream_one_to_one_app("default_link_stream_id_one_to_one");
@@ -569,7 +551,8 @@ RUN_TEST(
           simaai::neat::graph::kInvalidPort,
           0U,
       };
-      simaai::neat::RealtimeMuxByStream realtime_credit_options;
+      simaai::neat::GraphLinkOptions realtime_credit_options;
+      realtime_credit_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       realtime_credit_options.max_inflight_per_stream = 1;
       simaai::neat::runtime::RealtimeLatestLink realtime_link(
           realtime_target, realtime_credit_options, "credit_stream");

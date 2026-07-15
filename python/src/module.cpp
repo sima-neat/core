@@ -146,7 +146,6 @@ using simaai::neat::PowerRailSummary;
 using simaai::neat::PowerSummary;
 using simaai::neat::PullError;
 using simaai::neat::PullStatus;
-using simaai::neat::RealtimeMuxByStream;
 using simaai::neat::Run;
 using simaai::neat::RunAdvancedOptions;
 using simaai::neat::RunAutoExportOptions;
@@ -2326,13 +2325,9 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("policy", &GraphLinkOptions::policy)
       .def_rw("queue_depth", &GraphLinkOptions::queue_depth)
-      .def_rw("stream_id", &GraphLinkOptions::stream_id);
-
-  nb::class_<RealtimeMuxByStream, GraphLinkOptions>(m, "RealtimeMuxByStream")
-      .def(nb::init<>())
-      .def(nb::init<const GraphLinkOptions&>(), "options"_a)
-      .def_rw("max_inflight_per_stream", &RealtimeMuxByStream::max_inflight_per_stream)
-      .def_rw("max_inflight_total", &RealtimeMuxByStream::max_inflight_total);
+      .def_rw("stream_id", &GraphLinkOptions::stream_id)
+      .def_rw("max_inflight_per_stream", &GraphLinkOptions::max_inflight_per_stream)
+      .def_rw("max_inflight_total", &GraphLinkOptions::max_inflight_total);
 
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())
@@ -2972,11 +2967,6 @@ NB_MODULE(_pyneat_core, m) {
           "connect",
           [](Graph& self, const Graph& from, const Graph& to,
              const GraphLinkOptions& options) -> Graph& { return self.connect(from, to, options); },
-          "from_graph"_a, "to_graph"_a, "options"_a, nb::rv_policy::reference_internal)
-      .def(
-          "connect",
-          [](Graph& self, const Graph& from, const Graph& to, const RealtimeMuxByStream& options)
-              -> Graph& { return self.connect(from, to, options); },
           "from_graph"_a, "to_graph"_a, "options"_a, nb::rv_policy::reference_internal)
       .def(
           "connect",

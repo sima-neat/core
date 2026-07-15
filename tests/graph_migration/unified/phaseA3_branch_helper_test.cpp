@@ -93,7 +93,7 @@ RUN_TEST("graph_migration_phaseA3_branch_helper_test", [] {
     simaai::neat::Graph app;
     app.connect(source, branch);
 
-    simaai::neat::RealtimeMuxByStream realtime;
+    simaai::neat::GraphLinkOptions realtime;
     realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     realtime.queue_depth = 1;
     realtime.stream_id = "stream0";
@@ -101,8 +101,9 @@ RUN_TEST("graph_migration_phaseA3_branch_helper_test", [] {
     app.connect(branch, video, realtime);
 
     const auto report = app.validate();
-    require(report.error_code.empty(),
-            "Branch boundary elision with realtime fanout should validate, got " +
-                report.error_code + ": " + report.repro_note);
+    require(!report.error_code.empty(),
+            "realtime fanout from appsrc input must not validate without mux fusion");
+    require(report.repro_note.find("appsrc fallback is disabled") != std::string::npos,
+            "realtime fanout rejection should explain that appsrc fallback is disabled");
   }
 });

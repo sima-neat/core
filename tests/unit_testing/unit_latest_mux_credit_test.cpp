@@ -1553,7 +1553,7 @@ int main() {
         unrelated_ns, "unit-stamped-with-sidecar-cleanup");
 
     {
-      simaai::neat::RealtimeMuxByStream bounded_options;
+      simaai::neat::GraphLinkOptions bounded_options;
       bounded_options.queue_depth = 1;
       bounded_options.max_inflight_per_stream = 1;
       bounded_options.max_inflight_total = 1;
@@ -1788,7 +1788,7 @@ int main() {
     simaai::neat::Sample replacement_sample = make_gst_sample_backed_sample(std::nullopt);
     replacement_sample.stream_id = "pending-stream";
     replacement_sample.frame_id = 2;
-    simaai::neat::RealtimeMuxByStream pending_options;
+    simaai::neat::GraphLinkOptions pending_options;
     pending_options.queue_depth = 1;
     simaai::neat::runtime::DownstreamTarget pending_target;
     simaai::neat::runtime::RealtimeLatestLink pending_link(pending_target, pending_options,

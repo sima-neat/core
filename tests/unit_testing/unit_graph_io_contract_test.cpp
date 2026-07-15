@@ -121,7 +121,7 @@ RUN_TEST(
       stream_sink.add(nodes::Output("classes"));
 
       Graph stream_app("graph_io_default_link_stream_id");
-      RealtimeMuxByStream stream_link;
+      GraphLinkOptions stream_link;
       stream_link.stream_id = "persisted-stream-0";
       stream_app.connect(stream_source, stream_sink, stream_link);
 
@@ -148,7 +148,7 @@ RUN_TEST(
                       "default-link stream id roundtrip should keep default policy implicit"));
 
       Graph realtime_app("graph_io_realtime_link_options");
-      RealtimeMuxByStream realtime_link;
+      GraphLinkOptions realtime_link;
       realtime_link.policy = GraphLinkPolicy::RealtimeLatestByStream;
       realtime_link.queue_depth = 4;
       realtime_link.max_inflight_per_stream = 4;
@@ -187,7 +187,7 @@ RUN_TEST(
                                "realtime total raw-frame inflight limit should survive load/save"));
 
       Graph every_frame_app("graph_io_every_frame_link_policy");
-      RealtimeMuxByStream every_frame_link = realtime_link;
+      GraphLinkOptions every_frame_link = realtime_link;
       every_frame_link.policy = GraphLinkPolicy::RealtimeEveryFrameByStream;
       every_frame_app.connect(stream_source, stream_sink, every_frame_link);
       const std::string every_frame_path = tmp_json_path("graph_io_every_frame_link_policy.json");

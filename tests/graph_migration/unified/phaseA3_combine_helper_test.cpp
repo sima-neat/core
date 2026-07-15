@@ -272,7 +272,7 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
       preview_sink.add(simaai::neat::nodes::Input(preview));
       preview_sink.add(simaai::neat::nodes::Output(preview + "_out"));
 
-      simaai::neat::RealtimeMuxByStream link;
+      simaai::neat::GraphLinkOptions link;
       link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
       link.queue_depth = 1;
       link.stream_id = stream;
@@ -283,13 +283,9 @@ RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
     }
     app.connect(rr, detector_sink);
 
-    const std::string backend = app.describe_backend(false);
-    require_contains(backend, "StreamScheduler",
-                     "Branched source RoundRobin should lower through StreamScheduler");
-    require_contains(backend, ":stream0",
-                     "Branched source RoundRobin should keep stream0 scheduler input");
-    require_contains(backend, ":stream1",
-                     "Branched source RoundRobin should keep stream1 scheduler input");
+    require_throws_contains([&] { (void)app.describe_backend(false); },
+                            "appsrc fallback is disabled",
+                            "realtime branched RoundRobin must not use segmented appsrc transport");
   }
 
   {

@@ -113,7 +113,7 @@ struct FusedRealtimeIngressBranch {
   /// Exact public options from the source-to-consumer realtime link.  Fused
   /// lowering must retain these because there is no graph-runtime scheduler
   /// left outside the monolithic GStreamer pipeline to enforce them.
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::vector<std::shared_ptr<Node>> nodes;
   /**
    * Optional graph-owned encoded output tapped before this branch's decoder.
@@ -240,7 +240,7 @@ struct EdgePlan {
   graph::PortId to_port = graph::kInvalidPort;
   OutputSpec spec;
   bool spec_complete = false;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
   bool consumed_by_fused_realtime_ingress = false;
 };
@@ -266,7 +266,7 @@ struct PublicGraphEdgePlan {
   graph::NodeId runtime_from = graph::kInvalidNode;
   graph::NodeId runtime_to = graph::kInvalidNode;
   std::vector<std::size_t> runtime_edge_indices;
-  RealtimeMuxByStream link_options;
+  GraphLinkOptions link_options;
   std::string stream_id;
 };
 

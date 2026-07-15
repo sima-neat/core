@@ -191,9 +191,9 @@ struct Graph::CompositionGraph {
   VertexId append_runtime_vertex(RuntimeNodePtr node);
   void recompute_unique_tail() noexcept;
   void connect_runtime_port(VertexId from, VertexId to, std::string from_port, std::string to_port,
-                            RealtimeMuxByStream link_options = {});
+                            GraphLinkOptions link_options = {});
   void connect_endpoint(VertexId from, VertexId to, std::string from_endpoint,
-                        std::string to_endpoint, RealtimeMuxByStream link_options = {});
+                        std::string to_endpoint, GraphLinkOptions link_options = {});
   std::pair<VertexId, VertexId> append_node(NodePtr node);
   bool is_linear() const noexcept;
   std::vector<NodePtr> linear_nodes_or_throw(const char* where) const;

@@ -125,8 +125,7 @@ public:
     std::size_t ready = 0;
   };
 
-  RealtimeLatestLink(DownstreamTarget downstream, RealtimeMuxByStream options,
-                     std::string stream_id);
+  RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOptions options, std::string stream_id);
   RealtimeLatestLink(const RealtimeLatestLink&) = delete;
   RealtimeLatestLink& operator=(const RealtimeLatestLink&) = delete;
   ~RealtimeLatestLink();
@@ -134,7 +133,7 @@ public:
   bool offer(simaai::neat::Sample&& sample, std::size_t edge_index);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
-                          const RealtimeMuxByStream& options);
+                          const GraphLinkOptions& options);
   void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
   void close();
   void join();
@@ -143,7 +142,7 @@ public:
   const DownstreamTarget& downstream() const noexcept {
     return downstream_;
   }
-  const RealtimeMuxByStream& options() const noexcept {
+  const GraphLinkOptions& options() const noexcept {
     return options_;
   }
 
@@ -163,7 +162,7 @@ private:
   void run_();
 
   DownstreamTarget downstream_;
-  RealtimeMuxByStream options_;
+  GraphLinkOptions options_;
   DispatchFn dispatch_;
   StopFn stop_;
   ErrorFn error_;
@@ -174,7 +173,7 @@ private:
   pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
   std::unordered_set<std::size_t> edge_indices_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
-  std::unordered_map<std::size_t, RealtimeMuxByStream> link_options_by_edge_;
+  std::unordered_map<std::size_t, GraphLinkOptions> link_options_by_edge_;
   std::deque<std::string> ready_;
   std::uint64_t credit_namespace_ = 0;
   int credit_limit_per_stream_ = 0;

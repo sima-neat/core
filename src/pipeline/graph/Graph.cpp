@@ -1503,11 +1503,11 @@ Graph& Graph::connect(const Graph& from, const Graph& to) {
 }
 
 Graph& Graph::connect(const Graph& from, const Graph& to, const GraphLinkOptions& options) {
-  return connect_with_link_options_(from, to, RealtimeMuxByStream(options));
+  return connect_with_link_options_(from, to, options);
 }
 
 Graph& Graph::connect_with_link_options_(const Graph& from, const Graph& to,
-                                         const RealtimeMuxByStream& options) {
+                                         const GraphLinkOptions& options) {
   const auto [from_start, from_end] =
       import_or_reuse_composition_fragment_(from, "Graph::connect(from)");
   if (from_end <= from_start) {
