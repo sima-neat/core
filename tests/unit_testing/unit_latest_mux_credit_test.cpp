@@ -601,38 +601,42 @@ void test_replacing_chain_uses_per_stream_fifo_timing() {
   require(blocked == nullptr,
           "destroying replaced decoded inputs must not release terminal admission early");
 
-  const auto release_and_require_pts = [&](GstBuffer* terminal, GstClockTime expected_pts,
-                                           const char* reason) {
+  const auto release_and_require_canonical = [&](GstBuffer* terminal,
+                                                 std::int64_t expected_frame_id,
+                                                 GstClockTime expected_pts, const char* reason) {
     GST_BUFFER_PTS(terminal) = 999 * GST_MSECOND;
     require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
                 terminal, fixture.mux_namespace),
             reason);
-    require(GST_BUFFER_PTS(terminal) == expected_pts,
-            "terminal selection restored timing from the wrong outstanding stream loan");
+    require_canonical_terminal_loan(terminal, kStreamId, expected_frame_id, fixture.mux_namespace,
+                                    expected_pts, GST_CLOCK_TIME_NONE, 50 * GST_MSECOND);
     gst_buffer_unref(terminal);
   };
 
   // Public frame/sequence fields are not freshness tokens on replacement
   // buffers. Even though they name frame 104, the ordered per-stream contract
   // must complete frame 101.
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 104, 104),
-                          100 * GST_MSECOND, "recycled public identity should use stream FIFO");
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 101, 104, 104), 101,
+                                100 * GST_MSECOND,
+                                "recycled public identity should use stream FIFO");
   GstSample* fifth = pull_mux_output(fixture.appsink, GST_SECOND);
   require(fifth != nullptr, "one terminal completion should admit the pending fifth frame");
   gst_sample_unref(fifth);
 
   // Every replacement metadata shape uses the same enforced ordered completion
   // order within this stream.
-  release_and_require_pts(make_terminal_identity_buffer(kStreamId, std::nullopt), 200 * GST_MSECOND,
-                          "stream-only terminal should use the bounded FIFO fallback");
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, std::nullopt, 103, 103),
-                          300 * GST_MSECOND, "sequence-only identity should use stream FIFO");
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 102, 102),
-                          400 * GST_MSECOND,
-                          "stale public sequence should not select a completed frame");
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 9999, 105, 105),
-                          500 * GST_MSECOND,
-                          "pending frame should retain its registered FIFO timing");
+  release_and_require_canonical(make_terminal_identity_buffer(kStreamId, std::nullopt), 102,
+                                200 * GST_MSECOND,
+                                "stream-only terminal should use the bounded FIFO fallback");
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, std::nullopt, 103, 103),
+                                103, 300 * GST_MSECOND,
+                                "sequence-only identity should use stream FIFO");
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 101, 102, 102), 104,
+                                400 * GST_MSECOND,
+                                "stale public sequence should not select a completed frame");
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 9999, 105, 105), 105,
+                                500 * GST_MSECOND,
+                                "pending frame should retain its registered FIFO timing");
 
   stop_latest_mux_pipeline(&fixture);
 }
@@ -1215,6 +1219,11 @@ void test_fanout_terminal_and_drop_release_retained_credit() {
 
 void test_stale_guard_sequence_cannot_release_reused_key() {
   constexpr const char* kStreamId = "stale-guard-stream";
+  constexpr GstClockTime kReplacementPts = 4202 * GST_MSECOND;
+  constexpr GstClockTime kReplacementDts = 4201 * GST_MSECOND;
+  constexpr GstClockTime kSentinelPts = 9999 * GST_MSECOND;
+  constexpr GstClockTime kSentinelDts = 9998 * GST_MSECOND;
+  constexpr GstClockTime kSentinelDuration = 99 * GST_MSECOND;
   LatestMuxPipeline fixture =
       make_latest_mux_pipeline("latest-mux-stale-guard-pipeline", kStreamId);
 
@@ -1232,20 +1241,41 @@ void test_stale_guard_sequence_cannot_release_reused_key() {
 
   // Reuse the same public/private key under a new registry sequence while an
   // old copied carrier still exists.
-  push_mux_input(fixture.appsrc, 42);
+  require(gst_app_src_push_buffer(GST_APP_SRC(fixture.appsrc),
+                                  make_mux_input_buffer_with_timing(42, kReplacementPts,
+                                                                    kReplacementDts,
+                                                                    GST_MSECOND)) == GST_FLOW_OK,
+          "failed to push same-key replacement with distinct timing");
   GstSample* replacement = pull_mux_output(fixture.appsink, GST_SECOND);
   require(replacement != nullptr, "same key should register again after first completion");
+
+  GST_BUFFER_PTS(stale_carrier) = kSentinelPts;
+  GST_BUFFER_DTS(stale_carrier) = kSentinelDts;
+  GST_BUFFER_DURATION(stale_carrier) = kSentinelDuration;
   require(!simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
               stale_carrier, fixture.mux_namespace),
           "stale guard sequence must not release a newer loan with the same scalar key");
+  require(GST_BUFFER_PTS(stale_carrier) == kSentinelPts &&
+              GST_BUFFER_DTS(stale_carrier) == kSentinelDts &&
+              GST_BUFFER_DURATION(stale_carrier) == kSentinelDuration,
+          "stale guard rejection must not restore metadata from the newer same-key loan");
   gst_buffer_unref(stale_carrier);
 
   push_mux_input(fixture.appsrc, 43);
   GstSample* blocked = pull_mux_output(fixture.appsink, 100 * GST_MSECOND);
   require(blocked == nullptr, "new same-key loan must remain charged after stale guard rejection");
+
+  GstBuffer* replacement_buffer = gst_buffer_copy_deep(gst_sample_get_buffer(replacement));
+  require(replacement_buffer != nullptr, "failed to copy same-key replacement terminal buffer");
+  GST_BUFFER_PTS(replacement_buffer) = kSentinelPts;
+  GST_BUFFER_DTS(replacement_buffer) = kSentinelDts;
+  GST_BUFFER_DURATION(replacement_buffer) = kSentinelDuration;
   require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
-              gst_sample_get_buffer(replacement), fixture.mux_namespace),
+              replacement_buffer, fixture.mux_namespace),
           "current same-key guard should release its own registration");
+  require_canonical_terminal_loan(replacement_buffer, kStreamId, 42, fixture.mux_namespace,
+                                  kReplacementPts, kReplacementDts, GST_MSECOND);
+  gst_buffer_unref(replacement_buffer);
   gst_sample_unref(replacement);
 
   GstSample* progress = pull_mux_output(fixture.appsink, GST_SECOND);

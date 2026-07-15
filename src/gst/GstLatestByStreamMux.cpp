@@ -763,9 +763,13 @@ bool release_loan_for_key_impl(const LoanKey& key, const char* mode,
       return false;
     }
     sequence = entry->sequence;
-    restore_loan_identity_and_timing_on_buffer(entry, key, terminal_buffer);
     final_release = consume_loan_ref_locked(entry);
   }
+  // Terminal metadata mutation can allocate, copy, and rewrite GstMeta.  Keep
+  // that work outside the process-wide registry lock: the selected entry and
+  // key are immutable and the shared_ptr keeps their timing alive after a
+  // final consume erases the registry entry.
+  restore_loan_identity_and_timing_on_buffer(entry, key, terminal_buffer);
   if (final_release) {
     disarm_loan_drop_guard(terminal_buffer, key, sequence);
   } else {
@@ -2244,11 +2248,6 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
       sole_fallback = true;
     }
     if (found && !ambiguous_namespace) {
-      // The registry entry is authoritative after either sequence/frame
-      // matching or the namespace-bounded sole-loan fallback.  Terminal
-      // buffers can come from recycled output pools, so restore their routing
-      // identity as well as timing before exposing them to the application.
-      restore_loan_identity_and_timing_on_buffer(entry, selected, terminal_buffer);
       final_release = consume_loan_ref_locked(entry);
     }
   }
@@ -2261,6 +2260,13 @@ bool release_oldest_loan_for_stream(const std::string& stream_id, std::int64_t f
     }
     return false;
   }
+  // The registry entry is authoritative after either sequence/frame matching
+  // or the namespace-bounded sole-loan fallback.  Terminal buffers can come
+  // from recycled output pools, so restore their routing identity and timing
+  // before exposing them to the application.  Do not hold the process-wide
+  // registry lock while mutating GstMeta; entry is retained by shared_ptr and
+  // its identity/timing are immutable after registration.
+  restore_loan_identity_and_timing_on_buffer(entry, selected, terminal_buffer);
   if (loan_debug_enabled()) {
     std::fprintf(
         stderr, "[latestmux][loan] release ns=%llu stream=%s frame=%lld mode=%s final=%d\n",
