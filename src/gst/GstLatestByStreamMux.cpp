@@ -1195,8 +1195,7 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
   selected->ready_ticket = 0;
   selected->has_ready_ticket = false;
   ++selected->fair_service_count;
-  self->service_frontier =
-      std::max(self->service_frontier, selected->fair_service_count);
+  self->service_frontier = std::max(self->service_frontier, selected->fair_service_count);
   ++selected->emitted;
   return selected;
 }
@@ -1740,8 +1739,7 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
   }
   g_mutex_unlock(&self->lock);
 
-  std::fprintf(stderr,
-               "[latestmux][stats] reason=%s slots=%zu service_frontier=%llu\n",
+  std::fprintf(stderr, "[latestmux][stats] reason=%s slots=%zu service_frontier=%llu\n",
                reason ? reason : "unknown", rows.size(),
                static_cast<unsigned long long>(service_frontier));
   for (const auto& row : rows) {

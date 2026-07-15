@@ -126,8 +126,8 @@ void add_rtsp_teardown_timeout(GstElement* element, RtspTeardownTimeouts& result
   constexpr std::uint64_t kMaximumAccumulatedNs = 30ULL * GST_SECOND;
   result.total_ns = std::min(result.total_ns, kMaximumAccumulatedNs);
   const std::uint64_t remaining_ns = kMaximumAccumulatedNs - result.total_ns;
-  result.total_ns = timeout_ns >= remaining_ns ? kMaximumAccumulatedNs
-                                                : result.total_ns + timeout_ns;
+  result.total_ns =
+      timeout_ns >= remaining_ns ? kMaximumAccumulatedNs : result.total_ns + timeout_ns;
   ++result.sources;
 }
 
@@ -301,8 +301,7 @@ void log_incomplete_element_states(GstElement* pipeline) {
   }
 }
 
-void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result,
-                              int timeout_ms) {
+void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result, int timeout_ms) {
   const char* reason = result.status == TeardownStatus::StateChangeFailure
                            ? "teardown state change failed"
                            : "teardown timed out";
@@ -873,9 +872,8 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
   // those waits before initiating NULL; after the transition starts, dynamic
   // rtspsrc children may already be disappearing.
   const int timeout_ms =
-      prefer_synchronous
-          ? effective_synchronous_teardown_timeout_ms(local, teardown_timeout_ms())
-          : teardown_timeout_ms();
+      prefer_synchronous ? effective_synchronous_teardown_timeout_ms(local, teardown_timeout_ms())
+                         : teardown_timeout_ms();
 
   // Defer teardown to the reaper to avoid blocking in gst_element_set_state for
   // legacy push/appsrc paths.  Live/source pipelines (CameraInput/RTSP/etc.)
@@ -902,9 +900,7 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
       const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                   std::chrono::steady_clock::now() - teardown_started_at)
                                   .count();
-      wait_timeout_ms = elapsed_ms >= timeout_ms
-                            ? 0
-                            : timeout_ms - static_cast<int>(elapsed_ms);
+      wait_timeout_ms = elapsed_ms >= timeout_ms ? 0 : timeout_ms - static_cast<int>(elapsed_ms);
     }
     const TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
     if (result.status == TeardownStatus::Complete)

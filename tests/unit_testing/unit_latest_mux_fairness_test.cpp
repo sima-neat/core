@@ -208,8 +208,7 @@ void wait_for_observation(FairnessProbeState* state, std::uint64_t before) {
   require(!state->callback_failed, "latest-mux fairness probe callback failed");
 }
 
-void activate_cohort_at_one_frontier(FairnessProbeState* state,
-                                     std::size_t cohort_size,
+void activate_cohort_at_one_frontier(FairnessProbeState* state, std::size_t cohort_size,
                                      const char* context) {
   require(state != nullptr && cohort_size > 0U && cohort_size <= state->sink_pads.size(),
           "invalid latest-mux activation cohort");
@@ -220,17 +219,14 @@ void activate_cohort_at_one_frontier(FairnessProbeState* state,
     observed_before = state->observed;
     state->block_next = true;
   }
-  require(chain_one(state, 0U) == GST_FLOW_OK,
-          "latest-mux " + label + " trigger failed");
+  require(chain_one(state, 0U) == GST_FLOW_OK, "latest-mux " + label + " trigger failed");
   {
     std::unique_lock<std::mutex> lock(state->mutex);
-    require(state->cv.wait_for(lock, std::chrono::seconds(3),
-                               [&] { return state->blocked; }),
+    require(state->cv.wait_for(lock, std::chrono::seconds(3), [&] { return state->blocked; }),
             "latest-mux " + label + " worker did not block");
   }
   for (std::size_t index = 0; index < cohort_size; ++index) {
-    require(chain_one(state, index) == GST_FLOW_OK,
-            "latest-mux " + label + " staging failed");
+    require(chain_one(state, index) == GST_FLOW_OK, "latest-mux " + label + " staging failed");
   }
   {
     std::lock_guard<std::mutex> lock(state->mutex);
@@ -241,10 +237,7 @@ void activate_cohort_at_one_frontier(FairnessProbeState* state,
     std::unique_lock<std::mutex> lock(state->mutex);
     const std::uint64_t target = observed_before + 1U + cohort_size;
     require(state->cv.wait_for(lock, std::chrono::seconds(5),
-                               [&] {
-                                 return state->observed >= target ||
-                                        state->callback_failed;
-                               }),
+                               [&] { return state->observed >= target || state->callback_failed; }),
             "timed out staging latest-mux " + label);
     require(!state->callback_failed, "latest-mux " + label + " probe failed");
     state->blocked = false;
@@ -442,12 +435,11 @@ int main() {
     }
     {
       std::unique_lock<std::mutex> lock(state.mutex);
-      require(state.cv.wait_for(
-                  lock, std::chrono::seconds(5),
-                  [&] {
-                    return state.picks.size() == state.collection_target ||
-                           state.callback_failed;
-                  }),
+      require(state.cv.wait_for(lock, std::chrono::seconds(5),
+                                [&] {
+                                  return state.picks.size() == state.collection_target ||
+                                         state.callback_failed;
+                                }),
               "timed out collecting latest-mux catch-up selections");
       require(!state.callback_failed, "latest-mux catch-up probe callback failed");
       require(state.picks.size() == kDeficitRecoveryPickCount,
@@ -496,29 +488,24 @@ int main() {
       }
     }
 
-    require(gst_pad_send_event(
-                state.sink_pads[23],
-                gst_event_new_stream_start("fairness-restarted-stream23")) == TRUE,
+    require(gst_pad_send_event(state.sink_pads[23],
+                               gst_event_new_stream_start("fairness-restarted-stream23")) == TRUE,
             "failed to send latest-mux restart stream-start event");
     {
       std::lock_guard<std::mutex> lock(state.mutex);
       state.block_next = true;
     }
-    require(chain_one(&state, 0U) == GST_FLOW_OK,
-            "latest-mux restart-fairness trigger failed");
+    require(chain_one(&state, 0U) == GST_FLOW_OK, "latest-mux restart-fairness trigger failed");
     {
       std::unique_lock<std::mutex> lock(state.mutex);
       require(state.cv.wait_for(lock, std::chrono::seconds(3), [&] { return state.blocked; }),
               "latest-mux restart-fairness worker did not block");
     }
-    require(chain_one(&state, 23U) == GST_FLOW_OK,
-            "latest-mux restarted stream staging failed");
+    require(chain_one(&state, 23U) == GST_FLOW_OK, "latest-mux restarted stream staging failed");
     for (std::size_t index = 1; index + 1U < kSlotCount; ++index) {
-      require(chain_one(&state, index) == GST_FLOW_OK,
-              "latest-mux restart peer staging failed");
+      require(chain_one(&state, index) == GST_FLOW_OK, "latest-mux restart peer staging failed");
     }
-    require(chain_one(&state, 0U) == GST_FLOW_OK,
-            "latest-mux restart final staging failed");
+    require(chain_one(&state, 0U) == GST_FLOW_OK, "latest-mux restart final staging failed");
     {
       std::lock_guard<std::mutex> lock(state.mutex);
       state.collecting = true;
@@ -527,20 +514,18 @@ int main() {
     }
     {
       std::unique_lock<std::mutex> lock(state.mutex);
-      require(state.cv.wait_for(
-                  lock, std::chrono::seconds(5),
-                  [&] {
-                    return state.picks.size() == state.collection_target ||
-                           state.callback_failed;
-                  }),
+      require(state.cv.wait_for(lock, std::chrono::seconds(5),
+                                [&] {
+                                  return state.picks.size() == state.collection_target ||
+                                         state.callback_failed;
+                                }),
               "timed out collecting latest-mux restart selections");
       require(!state.callback_failed, "latest-mux restart-fairness probe failed");
       for (std::size_t stream = 1; stream + 1U < kSlotCount; ++stream) {
         require(state.picks[stream - 1U] == stream,
                 "restarted stream must not inherit predecessor catch-up debt");
       }
-      require(state.picks[kSlotCount - 2U] == 23U &&
-                  state.picks[kSlotCount - 1U] == 0U,
+      require(state.picks[kSlotCount - 2U] == 23U && state.picks[kSlotCount - 1U] == 0U,
               "restarted and frontier streams must retain ready-ticket order");
     }
 
