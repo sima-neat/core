@@ -272,6 +272,57 @@ RUN_TEST(
       const std::string pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               make_consumer_nodes(), options);
+      const auto raw_credit_boundary =
+          simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
+              make_consumer_nodes(), options);
+      require(raw_credit_boundary.has_value() && *raw_credit_boundary == "n0_preproc",
+              "fused raw admission must attach to the first ProcessCVU src boundary");
+      GError* raw_credit_parse_error = nullptr;
+      GstElement* raw_credit_probe_pipeline = gst_parse_launch(
+          "identity name=n0_preproc ! fakesink name=raw_credit_sink", &raw_credit_parse_error);
+      const std::string raw_credit_parse_message =
+          raw_credit_parse_error && raw_credit_parse_error->message
+              ? raw_credit_parse_error->message
+              : "";
+      if (raw_credit_parse_error) {
+        g_error_free(raw_credit_parse_error);
+      }
+      require(raw_credit_probe_pipeline != nullptr,
+              "failed to parse raw-input credit probe fixture: " + raw_credit_parse_message);
+      require(simaai::neat::session_test::attach_fused_raw_input_credit_probe_for_test(
+                  raw_credit_probe_pipeline, make_consumer_nodes(), options,
+                  /*mux_namespace=*/17U) == 1U,
+              "one fused ProcessCVU boundary must receive exactly one raw-credit probe");
+      std::vector<std::shared_ptr<simaai::neat::Node>> identity_only_nodes{
+          std::make_shared<FragmentNode>("IdentityRoute", "identity", "identity_only")};
+      require(!simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
+                   identity_only_nodes, options)
+                      .has_value() &&
+                  simaai::neat::session_test::attach_fused_raw_input_credit_probe_for_test(
+                      raw_credit_probe_pipeline, identity_only_nodes, options,
+                      /*mux_namespace=*/17U) == 0U,
+              "identity-preserving fused chains must not gain a raw-credit boundary");
+      simaai::neat::GraphOptions synchronous_raw_credit_options = options;
+      synchronous_raw_credit_options.processcvu.async = false;
+      require(!simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
+                   make_consumer_nodes(), synchronous_raw_credit_options)
+                      .has_value() &&
+                  simaai::neat::session_test::attach_fused_raw_input_credit_probe_for_test(
+                      raw_credit_probe_pipeline, make_consumer_nodes(),
+                      synchronous_raw_credit_options,
+                      /*mux_namespace=*/17U) == 0U,
+              "synchronous ProcessCVU must retain terminal admission because input unref may be "
+              "deferred past src push");
+      std::vector<std::shared_ptr<simaai::neat::Node>> single_buffer_cvu_nodes{
+          std::make_shared<FragmentNode>(
+              "SingleBufferCvuRoute", "neatprocesscvu", "single_buffer_preproc",
+              " async=false num-buffers=1 ! appsink name=single_buffer_output")};
+      require(!simaai::neat::session_test::fused_raw_input_credit_boundary_for_test(
+                   single_buffer_cvu_nodes, options)
+                   .has_value(),
+              "async=true with num-buffers=1 still runs ProcessCVU synchronously and must retain "
+              "terminal admission");
+      gst_object_unref(raw_credit_probe_pipeline);
       require_contains(pipeline, "neatlatestbystreammux",
                        "test must exercise the fused realtime renderer");
       require_contains(pipeline, "stream-inflight-limits=\"4\"",
