@@ -36,10 +36,6 @@ RUN_TEST("graph_migration_phaseA2_connect_overload_facade_test", [] {
                                simaai::neat::Graph&>);
   static_assert(std::is_same_v<decltype(std::declval<simaai::neat::Graph&>().connect(
                                    std::declval<const simaai::neat::Model&>(),
-                                   std::declval<const simaai::neat::Model&>())),
-                               simaai::neat::Graph&>);
-  static_assert(std::is_same_v<decltype(std::declval<simaai::neat::Graph&>().connect(
-                                   std::declval<const simaai::neat::Model&>(),
                                    std::declval<std::shared_ptr<simaai::neat::Node>>())),
                                simaai::neat::Graph&>);
   static_assert(std::is_same_v<decltype(std::declval<simaai::neat::Graph&>().connect(

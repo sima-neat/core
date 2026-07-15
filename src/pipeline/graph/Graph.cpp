@@ -1583,15 +1583,6 @@ Graph& Graph::connect(std::shared_ptr<Node> from, const Graph& to) {
   return *this;
 }
 
-Graph& Graph::connect(const Model& from, const Model& to) {
-  const auto from_range = import_or_reuse_model_fragment_(from, "Graph::connect(from)");
-  const auto to_range = import_or_reuse_model_fragment_(to, "Graph::connect(to)");
-  connect_imported_ranges_(from_range, model_endpoint_name(from), to_range, model_endpoint_name(to),
-                           "Graph::connect");
-  mark_composition_changed();
-  return *this;
-}
-
 Graph& Graph::connect(const Model& from, const Graph& to) {
   const auto from_range = import_or_reuse_model_fragment_(from, "Graph::connect(from)");
   const auto to_range = is_output_collection_fragment_(to)

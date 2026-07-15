@@ -3010,11 +3010,6 @@ NB_MODULE(_pyneat_core, m) {
           "from_node"_a, "to_graph"_a, nb::rv_policy::reference_internal)
       .def(
           "connect",
-          [](Graph& self, const simaai::neat::Model& from,
-             const simaai::neat::Model& to) -> Graph& { return self.connect(from, to); },
-          "from_model"_a, "to_model"_a, nb::rv_policy::reference_internal)
-      .def(
-          "connect",
           [](Graph& self, const simaai::neat::Model& from, const Graph& to) -> Graph& {
             return self.connect(from, to);
           },
