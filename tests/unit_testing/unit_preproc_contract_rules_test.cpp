@@ -370,6 +370,58 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
   }
 
   {
+    const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");
+    Model::Options model_opt;
+    model_opt.preprocess.kind = InputKind::Image;
+    model_opt.preprocess.enable = AutoFlag::On;
+    model_opt.preprocess.input_max_width = 1920;
+    model_opt.preprocess.input_max_height = 1080;
+    model_opt.preprocess.input_max_depth = 3;
+    model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+    model_opt.preprocess.resize.enable = AutoFlag::On;
+    model_opt.preprocess.resize.width = 640;
+    model_opt.preprocess.resize.height = 640;
+    model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+    Model model(fixture.tar_path, model_opt);
+
+    PreprocOptions opt(model);
+    require(opt.input_width() == 1920 && opt.input_height() == 1080 && opt.input_channels() == 3,
+            "model-managed Preproc must project the configured capacity into its static input "
+            "shape before a smaller seed is bound");
+#ifdef SIMA_NEAT_INTERNAL
+    const auto initial_max_shape = model_managed_preproc_max_input_shape(opt);
+    require(PreprocOptions::shape_dim(initial_max_shape, 1) == 1920 &&
+                PreprocOptions::shape_dim(initial_max_shape, 0) == 1080 &&
+                PreprocOptions::shape_channels(initial_max_shape) == 3,
+            "model-managed Preproc must retain the configured capacity in model lineage");
+#endif
+
+    Preproc node(opt);
+    InputContract seed_contract;
+    seed_contract.media_type = "video/x-raw";
+    seed_contract.format = "RGB";
+    seed_contract.width = 1280;
+    seed_contract.height = 720;
+    seed_contract.depth = 3;
+    node.apply_input_contract(seed_contract, nullptr);
+    require(node.options().input_width() == 1280 && node.options().input_height() == 720,
+            "model-managed Preproc must bind the smaller seed as actual geometry");
+
+    InputContract capacity_contract = seed_contract;
+    capacity_contract.width = 1920;
+    capacity_contract.height = 1080;
+    node.apply_input_contract(capacity_contract, nullptr);
+    require(node.options().input_width() == 1920 && node.options().input_height() == 1080,
+            "model-managed Preproc must accept a later contract up to its configured capacity");
+#ifdef SIMA_NEAT_INTERNAL
+    const auto rebound_max_shape = model_managed_preproc_max_input_shape(node.options());
+    require(PreprocOptions::shape_dim(rebound_max_shape, 1) == 1920 &&
+                PreprocOptions::shape_dim(rebound_max_shape, 0) == 1080,
+            "runtime contract rebinding must not shrink the model-managed capacity");
+#endif
+  }
+
+  {
     PreprocOptions opt;
     opt.model_managed_contract = true;
     opt.set_input_shape({720, 1280, 3});
