@@ -4,6 +4,7 @@
 
 #include "internal/InputStream.h"
 #include "builder/InputContractConfigurable.h"
+#include "nodes/common/Output.h"
 #include "pipeline/internal/contract/ContractFacts.h"
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 
@@ -12,6 +13,40 @@
 #include <vector>
 
 namespace simaai::neat {
+
+namespace graph_build_internal {
+
+// Output renders its queue contract into the pipeline string.  The parsed
+// appsink is configured once more when InputStream takes ownership, so carry
+// the same contract into InputStreamOptions instead of letting RunOptions
+// silently replace it.  Keep this helper private/header-local: it is build
+// plumbing, not a customer-facing API or ABI surface.
+static inline const Output*
+explicit_public_terminal_output(const InputStreamOptions& stream_opt,
+                                const std::vector<std::shared_ptr<Node>>& nodes) noexcept {
+  if (!stream_opt.public_output_contract || nodes.empty()) {
+    return nullptr;
+  }
+  return dynamic_cast<const Output*>(nodes.back().get());
+}
+
+static inline bool
+apply_explicit_public_output_options(InputStreamOptions& stream_opt,
+                                     const std::vector<std::shared_ptr<Node>>& nodes) noexcept {
+  const Output* output = explicit_public_terminal_output(stream_opt, nodes);
+  if (!output) {
+    return false;
+  }
+
+  const OutputOptions& options = output->options();
+  stream_opt.appsink_max_buffers = options.max_buffers < 0 ? 0 : options.max_buffers;
+  stream_opt.appsink_drop = options.drop;
+  stream_opt.appsink_sync = options.sync;
+  stream_opt.explicit_public_output_options = true;
+  return true;
+}
+
+} // namespace graph_build_internal
 
 namespace pipeline_internal::terminal_output_contract {
 struct PublicOutputEndpointSelector;

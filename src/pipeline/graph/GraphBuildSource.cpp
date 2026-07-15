@@ -814,6 +814,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   RunOptions merged_opt = session_build_apply_run_defaults(requested_opt, sess_opt);
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
   stream_opt.public_output_contract = public_output_contract;
+  graph_build_internal::apply_explicit_public_output_options(stream_opt, build_nodes);
   // Source-mode pipelines own live/producers such as MIPI/libcamera, RTSP, and
   // other self-driven sources.  They must reach NULL before Run::close() returns;
   // otherwise deferred no-flush teardown can race process/plugin destruction
@@ -3225,6 +3226,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   RunOptions merged_opt = session_build_apply_run_defaults(requested_opt, sess_opt);
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
   stream_opt.public_output_contract = public_output_contract;
+  graph_build_internal::apply_explicit_public_output_options(stream_opt, build_consumer_nodes);
   stream_opt.prefer_synchronous_teardown = true;
   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_consumer_nodes,
                                                build_branch_nodes);

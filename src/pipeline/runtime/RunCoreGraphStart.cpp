@@ -1192,6 +1192,21 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
       }
     }
   }
+
+  const auto terminal_output_options_for = [&](NodeId id) -> const OutputOptions* {
+    for (const auto& segment : execution.plan.pipeline_segments) {
+      for (std::size_t local = 0; local < segment.nodes.size(); ++local) {
+        if (attributed_runtime_node_for_segment_node(segment, local) != id) {
+          continue;
+        }
+        const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes[local].get());
+        if (output) {
+          return &output->options();
+        }
+      }
+    }
+    return nullptr;
+  };
   for (const auto& stage : execution.plan.stage_nodes) {
     if (stage.consumed_by_fused_realtime_ingress) {
       consumed_fused_nodes.insert(stage.node_id);
@@ -1270,12 +1285,15 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         continue;
       }
       std::size_t capacity = core->graph_options.edge_queue;
-      if (encoded != fused_encoded_output_options.end()) {
-        capacity = encoded->second.max_buffers <= 0
+      const OutputOptions* output_options = encoded != fused_encoded_output_options.end()
+                                                ? &encoded->second
+                                                : terminal_output_options_for(id);
+      if (output_options) {
+        capacity = output_options->max_buffers <= 0
                        ? 0U
-                       : static_cast<std::size_t>(encoded->second.max_buffers);
+                       : static_cast<std::size_t>(output_options->max_buffers);
       }
-      execution.sinks[id] = std::make_shared<GraphSinkQueue>(capacity);
+      execution.sinks[id] = std::make_shared<GraphSinkQueue>(capacity, output_options);
     }
   }
 }
@@ -1504,7 +1522,8 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
           const auto enqueue =
               enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
           if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
-              enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest) {
+              enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest ||
+              enqueue == FusedEncodedOutputEnqueueResult::DroppedIncoming) {
             return FusedEncodedOutputDispatchResult::Delivered;
           }
           if (enqueue == FusedEncodedOutputEnqueueResult::Closed) {

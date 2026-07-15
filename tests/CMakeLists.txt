@@ -319,6 +319,7 @@ set(UNIT_TESTS
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
   unit_fused_realtime_fast_path_options_test
+  unit_public_output_appsink_contract_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test

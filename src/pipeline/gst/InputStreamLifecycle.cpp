@@ -192,7 +192,10 @@ void InputStream::start(std::function<void(Sample)> on_output) {
   state_->teardown_on_exit.store(false);
   state_->use_callbacks = inputstream_use_appsink_callbacks_enabled();
   state_->cb_eos.store(false);
-  state_->cb_queue_max = std::max<std::size_t>(1, state_->opt.appsink_max_buffers);
+  state_->cb_queue_max =
+      state_->opt.explicit_public_output_options && state_->opt.appsink_max_buffers <= 0
+          ? 0U
+          : std::max<std::size_t>(1, state_->opt.appsink_max_buffers);
   state_->running.store(true);
 
   auto st = state_;
@@ -233,6 +236,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             if (!st->cb_queue.empty()) {
               sample = st->cb_queue.front();
               st->cb_queue.pop_front();
+              st->cb_cv.notify_one();
             } else if (st->cb_eos.load()) {
               eos_seen = true;
             }

@@ -931,8 +931,22 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
   }
 
-  if (!sink_it->second->push(RuntimeSinkQueueMsg{std::move(sample), edge_index},
-                             options.push_timeout_ms)) {
+  bool enqueued = false;
+  bool dropped_incoming = false;
+  const OutputOptions* output_options = sink_it->second->output_options();
+  if (output_options) {
+    const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : -1;
+    const auto result = enqueue_graph_sink_output(
+        *sink_it->second, *output_options, RuntimeSinkQueueMsg{std::move(sample), edge_index},
+        output_timeout_ms);
+    dropped_incoming = result == FusedEncodedOutputEnqueueResult::DroppedIncoming;
+    enqueued = result == FusedEncodedOutputEnqueueResult::Enqueued ||
+               result == FusedEncodedOutputEnqueueResult::ReplacedOldest || dropped_incoming;
+  } else {
+    enqueued = sink_it->second->push(RuntimeSinkQueueMsg{std::move(sample), edge_index},
+                                     options.push_timeout_ms);
+  }
+  if (!enqueued) {
     if (trace) {
       trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
     }
@@ -948,7 +962,9 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     return false;
   }
   if (trace) {
-    trace_graph_message_event(TraceGraphMessageEventType::QueueIn, trace_args);
+    trace_graph_message_event(dropped_incoming ? TraceGraphMessageEventType::Drop
+                                               : TraceGraphMessageEventType::QueueIn,
+                              trace_args);
   }
   return true;
 }

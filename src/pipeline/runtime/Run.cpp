@@ -246,6 +246,11 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   st->pipeline.stream = std::move(stream);
   st->opt = opt;
   st->pipeline.stream_opt = stream_opt;
+  if (stream_opt.explicit_public_output_options) {
+    st->opt.queue_depth = stream_opt.appsink_max_buffers;
+    st->opt.overflow_policy =
+        stream_opt.appsink_drop ? OverflowPolicy::KeepLatest : OverflowPolicy::Block;
+  }
   st->mode = mode;
   st->pipeline.tensor_input_opt_for_cv = tensor_input_opt_for_cv;
   st->pipeline.input_route_processor = std::move(input_route_processor);
@@ -374,7 +379,8 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
       }
       if (max > 0) {
         OverflowPolicy output_drop = st->opt.overflow_policy;
-        if (output_drop == OverflowPolicy::Block && !copy_output &&
+        if (output_drop == OverflowPolicy::Block &&
+            !st->pipeline.stream_opt.explicit_public_output_options && !copy_output &&
             pipeline_internal::env_bool("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", true)) {
           output_drop = OverflowPolicy::KeepLatest;
         }

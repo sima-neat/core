@@ -56,6 +56,7 @@ struct RuntimeSinkQueueMsg {
 enum class FusedEncodedOutputEnqueueResult {
   Enqueued,
   ReplacedOldest,
+  DroppedIncoming,
   Overflow,
   Closed,
 };
@@ -63,25 +64,36 @@ enum class FusedEncodedOutputEnqueueResult {
 class GraphSinkQueue final
     : public simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg> {
 public:
-  using BlockingQueue::BlockingQueue;
+  explicit GraphSinkQueue(std::size_t capacity = 0, const OutputOptions* output_options = nullptr)
+      : BlockingQueue(capacity), has_output_options_(output_options != nullptr),
+        output_options_(output_options ? *output_options : OutputOptions{}) {}
+
+  const OutputOptions* output_options() const noexcept {
+    return has_output_options_ ? &output_options_ : nullptr;
+  }
 
 private:
   friend FusedEncodedOutputEnqueueResult
+  enqueue_graph_sink_output(GraphSinkQueue&, const OutputOptions&, RuntimeSinkQueueMsg&&, int);
+  friend FusedEncodedOutputEnqueueResult
   enqueue_fused_encoded_output(GraphSinkQueue&, const OutputOptions&, Sample&&);
   std::mutex latest_enqueue_mu_;
+  bool has_output_options_ = false;
+  OutputOptions output_options_{};
 };
 
-/** Queue policy used by graph-scoped encoded Outputs. */
-inline FusedEncodedOutputEnqueueResult
-enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
-  RuntimeSinkQueueMsg message{.sample = std::move(sample), .edge_index = invalid_edge_index()};
+inline FusedEncodedOutputEnqueueResult enqueue_graph_sink_output(GraphSinkQueue& queue,
+                                                                 const OutputOptions& options,
+                                                                 RuntimeSinkQueueMsg&& message,
+                                                                 int timeout_ms) {
   if (!options.drop) {
     // Match Output/Appsink EveryFrame semantics: a bounded full queue applies
     // backpressure until Run::pull() makes room (or graph teardown closes it).
-    if (queue.push(std::move(message))) {
+    if (queue.push(std::move(message), timeout_ms)) {
       return FusedEncodedOutputEnqueueResult::Enqueued;
     }
-    return FusedEncodedOutputEnqueueResult::Closed;
+    return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                          : FusedEncodedOutputEnqueueResult::Overflow;
   }
 
   // Multiple fused live sources may publish concurrently to one named Latest
@@ -96,12 +108,30 @@ enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options
   }
 
   RuntimeSinkQueueMsg discarded;
-  (void)queue.pop(discarded, 0);
+  const bool replaced = queue.pop(discarded, 0);
+  if (replaced) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(discarded.sample,
+                                                                 "graph-sink-latest-replace");
+  }
   if (queue.try_push(std::move(message))) {
-    return FusedEncodedOutputEnqueueResult::ReplacedOldest;
+    return replaced ? FusedEncodedOutputEnqueueResult::ReplacedOldest
+                    : FusedEncodedOutputEnqueueResult::Enqueued;
+  }
+  if (!queue.closed()) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(message.sample,
+                                                                 "graph-sink-latest-drop-incoming");
+    return FusedEncodedOutputEnqueueResult::DroppedIncoming;
   }
   return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
                         : FusedEncodedOutputEnqueueResult::Overflow;
+}
+
+/** Queue policy used by graph-scoped encoded Outputs. */
+inline FusedEncodedOutputEnqueueResult
+enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
+  return enqueue_graph_sink_output(
+      queue, options,
+      RuntimeSinkQueueMsg{.sample = std::move(sample), .edge_index = invalid_edge_index()}, -1);
 }
 
 struct DownstreamTarget {
