@@ -196,6 +196,88 @@ native_modalix_restore_specs specs
 
 
 class SimaNeatLinkRepairTest(unittest.TestCase):
+    def test_sdk_sysroot_preserves_current_bundle_compatibility_link(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mkdir -p "${tmp}/usr/lib"
+lib_dir="${tmp}/usr/lib"
+touch "${lib_dir}/libsima_neat.so.2.1.2"
+ln -s libsima_neat.so.2.1.2 "${lib_dir}/libsima_neat.so.3"
+ln -s libsima_neat.so.3 "${lib_dir}/libsima_neat.so"
+ln -s libsima_neat.so.2.1.2 "${lib_dir}/libsima_neat.so.2"
+
+collect_current_bundle_sima_neat_lib_paths() {
+  local sysroot="$1"
+  local -n out="$2"
+  out=(
+    "${sysroot}/usr/lib/libsima_neat.so.2.1.2"
+    "${sysroot}/usr/lib/libsima_neat.so.3"
+    "${sysroot}/usr/lib/libsima_neat.so.2"
+    "${sysroot}/usr/lib/libsima_neat.so"
+  )
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.3'; }
+run_sudo() { "$@"; }
+
+repair_sysroot_sima_neat_libs "${tmp}"
+[[ "$(readlink "${lib_dir}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
+! compgen -G "${lib_dir}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
+printf 'SDK_COMPAT_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SDK_COMPAT_OK", result.stdout)
+        self.assertNotIn(
+            "Quarantining stale SDK sysroot libsima_neat path", result.stdout
+        )
+
+    def test_sdk_sysroot_quarantines_libraries_not_owned_by_current_bundle(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mkdir -p "${tmp}/usr/lib"
+lib_dir="${tmp}/usr/lib"
+touch "${lib_dir}/libsima_neat.so.2.1.2"
+ln -s libsima_neat.so.2.1.2 "${lib_dir}/libsima_neat.so.3"
+ln -s libsima_neat.so.3 "${lib_dir}/libsima_neat.so"
+touch "${lib_dir}/libsima_neat.so.2.0.0"
+ln -s libsima_neat.so.2.0.0 "${lib_dir}/libsima_neat.so.2"
+
+collect_current_bundle_sima_neat_lib_paths() {
+  local sysroot="$1"
+  local -n out="$2"
+  out=(
+    "${sysroot}/usr/lib/libsima_neat.so.2.1.2"
+    "${sysroot}/usr/lib/libsima_neat.so.3"
+    "${sysroot}/usr/lib/libsima_neat.so"
+  )
+}
+read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.3'; }
+run_sudo() { "$@"; }
+
+repair_sysroot_sima_neat_libs "${tmp}"
+[[ "$(readlink -f "${lib_dir}/libsima_neat.so")" == "${lib_dir}/libsima_neat.so.2.1.2" ]]
+[[ ! -e "${lib_dir}/libsima_neat.so.2" && ! -L "${lib_dir}/libsima_neat.so.2" ]]
+[[ ! -e "${lib_dir}/libsima_neat.so.2.0.0" ]]
+compgen -G "${lib_dir}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
+compgen -G "${lib_dir}/libsima_neat.so.2.0.0.bak-neat-installer-*" >/dev/null
+printf 'SDK_ABI3_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SDK_ABI3_OK", result.stdout)
+        self.assertEqual(
+            result.stdout.count("Quarantining stale SDK sysroot libsima_neat path"),
+            2,
+        )
+
     def test_abi3_package_manifest_drives_links_and_quarantines_unowned_abi2(self) -> None:
         result = run_bash(
             r'''

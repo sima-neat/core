@@ -1700,6 +1700,128 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+collect_current_bundle_sima_neat_lib_paths() {
+  local sysroot="$1"
+  local -n out_paths="$2"
+  local deb package entry normalized basename
+  out_paths=()
+
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    case "${package}" in
+      sima-neat | sima-neat-dev) ;;
+      *) continue ;;
+    esac
+
+    while IFS= read -r entry; do
+      normalized="/${entry#./}"
+      [[ "$(dirname "${normalized}")" == "/usr/lib" ]] || continue
+      basename="$(basename "${normalized}")"
+      [[ "${basename}" == libsima_neat.so* ]] || continue
+      out_paths+=("${sysroot}${normalized}")
+    done < <(dpkg-deb --fsys-tarfile "${deb}" | tar -tf -)
+  done
+
+  if [[ "${#out_paths[@]}" -eq 0 ]]; then
+    echo "Current install bundle does not declare any libsima_neat library paths." >&2
+    return 1
+  fi
+}
+
+sima_neat_path_is_in_array() {
+  local needle="$1"
+  shift
+  local candidate
+  for candidate in "$@"; do
+    [[ "${candidate}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+repair_sysroot_sima_neat_libs() {
+  local sysroot="$1"
+  local lib_dir="${sysroot}/usr/lib"
+  local devel_link="${lib_dir}/libsima_neat.so"
+  local soname_basename soname_link versioned_basename versioned_lib elf_soname=""
+  local candidate basename timestamp backup suffix nullglob_was_set=0
+  local -a bundle_paths=()
+
+  collect_current_bundle_sima_neat_lib_paths "${sysroot}" bundle_paths
+
+  if [[ ! -L "${devel_link}" ]]; then
+    echo "SDK sysroot install is missing the packaged libsima_neat.so linker symlink." >&2
+    return 1
+  fi
+  soname_basename="$(readlink "${devel_link}")"
+  if [[ ! "${soname_basename}" =~ ^libsima_neat\.so\.[1-9][0-9]*$ ]]; then
+    echo "SDK sysroot libsima_neat.so has an invalid SONAME target: ${soname_basename}" >&2
+    return 1
+  fi
+  soname_link="${lib_dir}/${soname_basename}"
+  if [[ ! -L "${soname_link}" ]]; then
+    echo "SDK sysroot install is missing the packaged SONAME link: ${soname_link}" >&2
+    return 1
+  fi
+  versioned_basename="$(readlink "${soname_link}")"
+  if [[ ! "${versioned_basename}" =~ ^libsima_neat\.so\.[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
+    echo "SDK sysroot SONAME link has an invalid target: ${versioned_basename}" >&2
+    return 1
+  fi
+  versioned_lib="${lib_dir}/${versioned_basename}"
+  if [[ ! -f "${versioned_lib}" || -L "${versioned_lib}" ]]; then
+    echo "SDK sysroot packaged libsima_neat library is missing: ${versioned_lib}" >&2
+    return 1
+  fi
+
+  for candidate in "${devel_link}" "${soname_link}" "${versioned_lib}"; do
+    if ! sima_neat_path_is_in_array "${candidate}" "${bundle_paths[@]}"; then
+      echo "SDK sysroot libsima_neat path is not owned by the current bundle: ${candidate}" >&2
+      return 1
+    fi
+  done
+
+  if command -v readelf >/dev/null 2>&1; then
+    elf_soname="$(read_sima_neat_elf_soname "${versioned_lib}")"
+    if [[ -z "${elf_soname}" || "${elf_soname}" != "${soname_basename}" ]]; then
+      echo "SDK sysroot libsima_neat SONAME does not match the current bundle." >&2
+      echo "  ELF SONAME:       ${elf_soname:-<missing>}" >&2
+      echo "  packaged symlink: ${soname_basename}" >&2
+      return 1
+    fi
+  fi
+
+  shopt -q nullglob && nullglob_was_set=1
+  shopt -s nullglob
+  for candidate in "${lib_dir}"/libsima_neat.so.*; do
+    basename="$(basename "${candidate}")"
+    if [[ ! "${basename}" =~ ^libsima_neat\.so\.[1-9][0-9]*$ &&
+          ! "${basename}" =~ ^libsima_neat\.so\.[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
+      continue
+    fi
+    sima_neat_path_is_in_array "${candidate}" "${bundle_paths[@]}" && continue
+
+    timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    backup="${candidate}.bak-neat-installer-${timestamp}"
+    suffix=0
+    while [[ -e "${backup}" || -L "${backup}" ]]; do
+      suffix=$((suffix + 1))
+      backup="${candidate}.bak-neat-installer-${timestamp}.${suffix}"
+    done
+    log "Quarantining stale SDK sysroot libsima_neat path ${candidate} -> ${backup}"
+    run_sudo mv -f -- "${candidate}" "${backup}"
+  done
+  if [[ "${nullglob_was_set}" -eq 0 ]]; then
+    shopt -u nullglob
+  fi
+
+  if [[ "$(readlink -f "${devel_link}" 2>/dev/null || true)" != "${versioned_lib}" ||
+        "$(readlink -f "${soname_link}" 2>/dev/null || true)" != "${versioned_lib}" ]]; then
+    echo "SDK sysroot libsima_neat links do not resolve to the current bundle." >&2
+    return 1
+  fi
+  log "Verified SDK sysroot ${soname_basename} and libsima_neat.so resolve to ${versioned_lib}"
+}
+
 install_debs_into_sysroot() {
   local sysroot
   sysroot="$(sysroot_path)"
@@ -1720,6 +1842,7 @@ install_debs_into_sysroot() {
     run_sudo dpkg-deb -x "${deb}" "${sysroot}"
   done
 
+  repair_sysroot_sima_neat_libs "${sysroot}"
   cache_install_artifacts_in_sysroot
 }
 
