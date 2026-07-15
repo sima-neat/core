@@ -2263,10 +2263,10 @@ GstPadProbeReturn fused_decoder_timing_probe(GstPad*, GstPadProbeInfo* info, gpo
   return GST_PAD_PROBE_OK;
 }
 
-void attach_fused_decoder_timing_probes(GstElement* pipeline,
-                                        const runtime::FusedRealtimeIngress& ingress) {
+std::size_t attach_fused_decoder_timing_probes(GstElement* pipeline,
+                                               const runtime::FusedRealtimeIngress& ingress) {
   if (!pipeline || ingress.branches.empty()) {
-    return;
+    return 0U;
   }
   std::vector<std::shared_ptr<FusedDecoderTimingBranch>> timing;
   timing.reserve(ingress.branches.size());
@@ -2276,8 +2276,9 @@ void attach_fused_decoder_timing_probes(GstElement* pipeline,
 
   GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
   if (!it) {
-    return;
+    return 0U;
   }
+  std::size_t attached = 0U;
   GValue item = G_VALUE_INIT;
   while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
     GstElement* element = GST_ELEMENT(g_value_get_object(&item));
@@ -2288,25 +2289,38 @@ void attach_fused_decoder_timing_probes(GstElement* pipeline,
         factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
     const std::string factory_name = factory_c ? factory_c : "";
     const auto branch_index = parse_fused_branch_index_from_name(name);
-    if (branch_index.has_value() && *branch_index < timing.size()) {
-      const bool encoded_au =
-          factory_name == "capsfilter" && name.find("_h264_caps") != std::string::npos;
-      const bool decoder_output = factory_name == "neatdecoder";
-      if (encoded_au || decoder_output) {
-        GstPad* pad = gst_element_get_static_pad(element, "src");
-        if (pad) {
-          auto* ctx = new FusedDecoderTimingProbeCtx{timing[*branch_index], decoder_output};
-          gst_pad_add_probe(
-              pad, GST_PAD_PROBE_TYPE_BUFFER, fused_decoder_timing_probe, ctx,
-              +[](gpointer data) { delete static_cast<FusedDecoderTimingProbeCtx*>(data); });
-          gst_object_unref(pad);
+    if (!branch_index.has_value() || *branch_index >= timing.size() ||
+        factory_name != "neatdecoder") {
+      g_value_reset(&item);
+      continue;
+    }
+
+    // Capture the AU timing at this decoder's input and restore it on this
+    // decoder's output.  Name-matching every *_h264_caps element is unsafe in
+    // an encoded fan-out: the source/decode prefix and VideoSender branch can
+    // each contain an H264Parse capsfilter, which would enqueue the same AU
+    // more than once and leave stale timing records behind.
+    for (const auto& [pad_name, decoder_output] :
+         std::array<std::pair<const char*, bool>, 2>{{{"sink", false}, {"src", true}}}) {
+      GstPad* pad = gst_element_get_static_pad(element, pad_name);
+      if (pad) {
+        auto* ctx = new FusedDecoderTimingProbeCtx{timing[*branch_index], decoder_output};
+        const gulong probe_id = gst_pad_add_probe(
+            pad, GST_PAD_PROBE_TYPE_BUFFER, fused_decoder_timing_probe, ctx,
+            +[](gpointer data) { delete static_cast<FusedDecoderTimingProbeCtx*>(data); });
+        if (probe_id != 0U) {
+          ++attached;
+        } else {
+          delete ctx;
         }
+        gst_object_unref(pad);
       }
     }
     g_value_reset(&item);
   }
   g_value_unset(&item);
   gst_iterator_free(it);
+  return attached;
 }
 
 enum class FusedBranchCounterStage {
@@ -3075,6 +3089,12 @@ find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pendi
     pending.push_back(std::move(timing));
   }
   return find_fused_decoder_timing_match(pending, output_pts, std::nullopt);
+}
+
+std::size_t
+attach_fused_decoder_timing_probes_for_test(GstElement* pipeline,
+                                            const runtime::FusedRealtimeIngress& ingress) {
+  return attach_fused_decoder_timing_probes(pipeline, ingress);
 }
 
 GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info) {

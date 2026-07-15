@@ -59,5 +59,8 @@ std::size_t attach_fused_encoded_output_probe_for_test(
 std::optional<std::size_t>
 find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pending_pts,
                                          std::optional<std::uint64_t> output_pts);
+std::size_t
+attach_fused_decoder_timing_probes_for_test(GstElement* pipeline,
+                                            const runtime::FusedRealtimeIngress& ingress);
 
 } // namespace simaai::neat::session_test

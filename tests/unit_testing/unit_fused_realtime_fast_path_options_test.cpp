@@ -397,6 +397,24 @@ RUN_TEST(
                    .has_value(),
               "an uncorrelated decoder output must retain its own timestamps instead of guessing");
 
+      GstElement* timing_probe_pipeline = gst_pipeline_new("fused_timing_probe_pipeline");
+      GstElement* source_h264_caps = gst_element_factory_make("capsfilter", "n0_h264_caps_b0");
+      GstElement* video_sender_h264_caps =
+          gst_element_factory_make("capsfilter", "n1_h264_caps_b0");
+      GstElement* timing_probe_decoder = gst_element_factory_make("neatdecoder", "decoder_b0");
+      require(timing_probe_pipeline && source_h264_caps && video_sender_h264_caps &&
+                  timing_probe_decoder,
+              "failed to create fused decoder timing-probe fixture");
+      gst_bin_add_many(GST_BIN(timing_probe_pipeline), source_h264_caps, video_sender_h264_caps,
+                       timing_probe_decoder, nullptr);
+      simaai::neat::runtime::FusedRealtimeIngress timing_probe_ingress;
+      timing_probe_ingress.branches.emplace_back();
+      require(simaai::neat::session_test::attach_fused_decoder_timing_probes_for_test(
+                  timing_probe_pipeline, timing_probe_ingress) == 2U,
+              "decoder timing must attach once at decoder input and once at decoder output; "
+              "source and VideoSender H.264 capsfilters must not duplicate AU timing");
+      gst_object_unref(timing_probe_pipeline);
+
       using simaai::neat::graph::NodeId;
       using simaai::neat::graph::PortId;
       require(simaai::neat::runtime::session_test::fused_realtime_source_segment_eligible_for_test(
