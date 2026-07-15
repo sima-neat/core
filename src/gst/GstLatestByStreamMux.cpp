@@ -138,6 +138,12 @@ struct PendingSlot {
   // while still preserving latest-only storage.
   guint64 ready_ticket = 0;
   bool has_ready_ticket = false;
+  // Dispatch recency is the primary fairness key. New streams enter at the
+  // current service frontier so they do not acquire historical catch-up debt;
+  // an established stream which was absent or credit-blocked retains its last
+  // service position and therefore receives one prompt turn when it returns.
+  guint64 last_service_ordinal = 0;
+  bool fairness_active = false;
   std::atomic<std::uint64_t> received{0};
   std::atomic<std::uint64_t> replaced{0};
   std::atomic<std::uint64_t> no_credit_skips{0};
@@ -162,6 +168,7 @@ struct _GstLatestByStreamMux {
   guint next_pad_index = 0;
   guint rr_index = 0;
   guint64 next_ready_ticket = 1;
+  guint64 service_ordinal = 0;
   bool lifetime_guard_enabled;
   bool started = false;
   bool stopping = false;
@@ -1079,13 +1086,16 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
       continue;
     }
 
-    // Oldest-ready selection prevents a producer whose arrival phase happens
-    // to sit just behind the RR cursor from repeatedly losing service. A slot
-    // blocked on terminal credit retains one ticket, so it is selected
-    // promptly once eligible but never receives an unbounded historical
-    // catch-up burst. Scan from the RR cursor for deterministic tie-breaking;
-    // tickets are unique during a playing epoch in normal operation.
-    if (!selected || slot->ready_ticket < selected->ready_ticket) {
+    // Prefer the eligible stream which was serviced least recently. Periodic
+    // producers can repeatedly transition pending -> empty between dispatches;
+    // ordering only by the age of the current pending buffer lets their fixed
+    // arrival phases lock some streams into a permanently lower service rate.
+    // Service recency survives those empty intervals and bounds that skew.
+    // ready_ticket preserves deterministic ordering among equally new streams
+    // and still protects the age of a latest-only replacement.
+    if (!selected || slot->last_service_ordinal < selected->last_service_ordinal ||
+        (slot->last_service_ordinal == selected->last_service_ordinal &&
+         slot->ready_ticket < selected->ready_ticket)) {
       selected = slot;
       selected_idx = idx;
     }
@@ -1112,6 +1122,7 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
   self->rr_index = (selected_idx + 1U) % n;
   selected->ready_ticket = 0;
   selected->has_ready_ticket = false;
+  selected->last_service_ordinal = ++self->service_ordinal;
   ++selected->emitted;
   return selected;
 }
@@ -1311,6 +1322,10 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
   if (!slot->pending) {
     slot->ready_ticket = self->next_ready_ticket++;
     slot->has_ready_ticket = true;
+    if (!slot->fairness_active) {
+      slot->last_service_ordinal = self->service_ordinal;
+      slot->fairness_active = true;
+    }
   }
   if (slot->pending) {
     slot->replaced.fetch_add(1, std::memory_order_relaxed);
@@ -1679,12 +1694,15 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     self->stats_pushes = 0;
     self->rr_index = 0;
     self->next_ready_ticket = 1;
+    self->service_ordinal = 0;
     gst_segment_init(&self->pending_segment, GST_FORMAT_TIME);
     detached.reserve(self->slots.size());
     for (PendingSlot* slot : self->slots) {
       if (slot) {
         slot->eos = false;
         slot->emitted = 0;
+        slot->last_service_ordinal = 0;
+        slot->fairness_active = false;
         reset_slot_stats(slot);
         if (GstBuffer* buffer = detach_pending_locked(slot)) {
           detached.push_back(buffer);

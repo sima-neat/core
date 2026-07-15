@@ -332,6 +332,7 @@ set(UNIT_TESTS
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
   unit_latest_mux_fairness_test
+  unit_latest_mux_periodic_fairness_test
   unit_latest_mux_backpressure_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test

@@ -288,11 +288,11 @@ int main() {
               "latest-mux worker did not reach the blocking probe");
     }
 
-    // With the sole worker blocked, make the late-joining slot 23 oldest-ready,
+    // With the sole worker blocked, make late-joining slot 23 oldest-ready,
     // then replace it several times. Replacement must retain its original
-    // ticket while the pending payload remains latest-only. Stage every other
-    // stream afterward. The probe replenishes each winner synchronously, so a
-    // serviced stream receives a fresh ticket at the back of the ready set.
+    // ticket while the pending payload remains latest-only. A new participant
+    // enters at the current service frontier rather than inheriting a lifetime
+    // deficit, while established streams retain their dispatch recency.
     std::int64_t newest_slot23_frame = -1;
     for (int replacement = 0; replacement < 4; ++replacement) {
       require(chain_one(&state, 23U, &newest_slot23_frame) == GST_FLOW_OK,
@@ -319,15 +319,18 @@ int main() {
               "latest-mux fairness rotation produced too few selections");
       require(state.pick_frame_ids.size() == kSlotCount,
               "latest-mux fairness rotation lost frame identities");
-      require(state.picks[0] == 23U,
-              "the oldest ready stream must win even when it is behind the RR cursor");
-      require(state.pick_frame_ids[0] == newest_slot23_frame,
+      require(state.picks[0] == 1U && state.picks[1] == 2U && state.picks[2] == 3U,
+              "late join must not overtake established streams with older service recency");
+      require(state.picks[3] == 23U,
+              "late join must enter promptly at the current service frontier");
+      require(state.pick_frame_ids[3] == newest_slot23_frame,
               "ready-ticket retention must still emit the newest replacement frame");
-      for (std::size_t i = 1; i + 1U < kSlotCount; ++i) {
-        require(state.picks[i] == i, "oldest-ready scheduling must preserve bounded ready order");
+      for (std::size_t i = 4; i + 1U < kSlotCount; ++i) {
+        require(state.picks[i] == i,
+                "new streams at the same service frontier must preserve ready order");
       }
       require(state.picks.back() == 0U,
-              "a replenished winner must not jump ahead of already-ready peers");
+              "the most recently serviced established stream must remain at the frontier tail");
     }
 
     // Reset the mux epoch, then make every stream active before introducing a
@@ -371,10 +374,11 @@ int main() {
     }
 
     // Slot 23 is now three lifetime dispatches behind every peer. Block on a
-    // slot-0 trigger, make slot 23 oldest-ready, and then keep every stream
+    // slot-0 trigger, make slot 23 ready last, and then keep every stream
     // pending. The old lifetime-min policy would dispatch slot 23 repeatedly
-    // to repay historical deficit. Bounded ready-age fairness gives it one
-    // prompt turn, then places its synchronous replenishment behind all peers.
+    // to repay historical deficit, while oldest-ready would put it behind all
+    // peers. Bounded service-recency fairness gives it one prompt turn, then
+    // places its synchronous replenishment behind all peers.
     {
       std::lock_guard<std::mutex> lock(state.mutex);
       state.block_next = true;
