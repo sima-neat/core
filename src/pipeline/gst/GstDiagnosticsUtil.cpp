@@ -118,27 +118,45 @@ TeardownReaperState& teardown_reaper_state() {
   return *state;
 }
 
-void begin_teardown(GstElement* pipeline, bool flush) {
+GstStateChangeReturn begin_teardown(GstElement* pipeline, bool flush) {
   if (!pipeline)
-    return;
+    return GST_STATE_CHANGE_SUCCESS;
   if (flush) {
     gst_element_send_event(pipeline, gst_event_new_flush_start());
     gst_element_send_event(pipeline, gst_event_new_flush_stop(TRUE));
   }
-  gst_element_set_state(pipeline, GST_STATE_NULL);
+  return gst_element_set_state(pipeline, GST_STATE_NULL);
 }
 
-bool finish_teardown(GstElement* pipeline, int timeout_ms) {
+enum class TeardownResult {
+  Complete,
+  TimedOut,
+  StateChangeFailure,
+};
+
+TeardownResult finish_teardown(GstElement* pipeline, GstStateChangeReturn begin_result,
+                               int timeout_ms) {
   if (!pipeline)
-    return true;
+    return TeardownResult::Complete;
   GstState cur = GST_STATE_VOID_PENDING;
   GstState pend = GST_STATE_VOID_PENDING;
   const GstClockTime timeout = static_cast<GstClockTime>(timeout_ms) * GST_MSECOND;
-  gst_element_get_state(pipeline, &cur, &pend, timeout);
-  if (cur != GST_STATE_NULL)
-    return false;
+  const GstStateChangeReturn wait_result = gst_element_get_state(pipeline, &cur, &pend, timeout);
+  if (cur != GST_STATE_NULL) {
+    return begin_result == GST_STATE_CHANGE_FAILURE || wait_result == GST_STATE_CHANGE_FAILURE
+               ? TeardownResult::StateChangeFailure
+               : TeardownResult::TimedOut;
+  }
   gst_object_unref(pipeline);
-  return true;
+  return TeardownResult::Complete;
+}
+
+void warn_incomplete_teardown(TeardownResult result) {
+  if (result == TeardownResult::StateChangeFailure) {
+    std::cerr << "[WARN] stop_and_unref(): teardown state change failed; deferring to reaper.\n";
+    return;
+  }
+  std::cerr << "[WARN] stop_and_unref(): teardown timed out; deferring to reaper.\n";
 }
 
 void reaper_main() {
@@ -158,8 +176,8 @@ void reaper_main() {
     std::vector<TeardownReaperState::Pending> retry;
     const int timeout_ms = teardown_timeout_ms();
     for (const auto& item : work) {
-      begin_teardown(item.pipeline, item.flush);
-      if (!finish_teardown(item.pipeline, timeout_ms)) {
+      const GstStateChangeReturn begin_result = begin_teardown(item.pipeline, item.flush);
+      if (finish_teardown(item.pipeline, begin_result, timeout_ms) != TeardownResult::Complete) {
         retry.push_back(item);
       }
     }
@@ -667,14 +685,15 @@ void stop_and_unref(GstElement*& e) {
   GstElement* local = e;
   e = nullptr;
 
-  begin_teardown(local, /*flush=*/true);
+  const GstStateChangeReturn begin_result = begin_teardown(local, /*flush=*/true);
 
   const bool async_only = env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
   if (!async_only) {
     const int timeout_ms = teardown_timeout_ms();
-    if (finish_teardown(local, timeout_ms))
+    const TeardownResult result = finish_teardown(local, begin_result, timeout_ms);
+    if (result == TeardownResult::Complete)
       return;
-    std::cerr << "[WARN] stop_and_unref(): teardown timed out; deferring to reaper.\n";
+    warn_incomplete_teardown(result);
   }
 
   enqueue_teardown(local, /*flush=*/true);
@@ -698,14 +717,15 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
     return;
   }
 
-  begin_teardown(local, /*flush=*/false);
+  const GstStateChangeReturn begin_result = begin_teardown(local, /*flush=*/false);
 
   const bool async_only = !prefer_synchronous && env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
   if (!async_only) {
     const int timeout_ms = teardown_timeout_ms();
-    if (finish_teardown(local, timeout_ms))
+    const TeardownResult result = finish_teardown(local, begin_result, timeout_ms);
+    if (result == TeardownResult::Complete)
       return;
-    std::cerr << "[WARN] stop_and_unref(): teardown timed out; deferring to reaper.\n";
+    warn_incomplete_teardown(result);
   }
 
   enqueue_teardown(local, /*flush=*/false);

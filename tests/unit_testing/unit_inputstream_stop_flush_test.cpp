@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -73,45 +74,58 @@ RUN_TEST("unit_inputstream_stop_flush_test", ([] {
            gst_init_once();
            EnvVarGuard flush_timeout("SIMA_INPUTSTREAM_STOP_FLUSH_TIMEOUT_MS", "0");
 
-           GError* error = nullptr;
-           GstElement* pipeline = gst_parse_launch(
-               "appsrc name=mysrc is-live=true format=time "
-               "caps=application/octet-stream ! identity name=probe ! fakesink sync=false",
-               &error);
-           if (error) {
-             const std::string message =
-                 error->message ? error->message : "failed to build stop-flush test pipeline";
-             g_error_free(error);
-             throw std::runtime_error(message);
-           }
-           require(pipeline != nullptr, "expected a valid stop-flush test pipeline");
+           const auto run_stop = [](bool prefer_synchronous_teardown) {
+             GError* error = nullptr;
+             GstElement* pipeline = gst_parse_launch(
+                 "appsrc name=mysrc is-live=true format=time "
+                 "caps=application/octet-stream ! identity name=probe ! fakesink sync=false",
+                 &error);
+             if (error) {
+               const std::string message =
+                   error->message ? error->message : "failed to build stop-flush test pipeline";
+               g_error_free(error);
+               throw std::runtime_error(message);
+             }
+             require(pipeline != nullptr, "expected a valid stop-flush test pipeline");
 
-           GstElement* appsrc = gst_bin_get_by_name(GST_BIN(pipeline), "mysrc");
-           GstElement* identity = gst_bin_get_by_name(GST_BIN(pipeline), "probe");
-           require(appsrc != nullptr && identity != nullptr,
-                   "stop-flush test pipeline elements are missing");
+             GstElement* appsrc = gst_bin_get_by_name(GST_BIN(pipeline), "mysrc");
+             GstElement* identity = gst_bin_get_by_name(GST_BIN(pipeline), "probe");
+             require(appsrc != nullptr && identity != nullptr,
+                     "stop-flush test pipeline elements are missing");
 
-           FlushCounts counts;
-           GstPad* sink_pad = gst_element_get_static_pad(identity, "sink");
-           require(sink_pad != nullptr, "identity sink pad is missing");
-           gst_pad_add_probe(sink_pad, GST_PAD_PROBE_TYPE_EVENT_FLUSH, count_flush_events, &counts,
-                             nullptr);
-           gst_object_unref(sink_pad);
-           gst_object_unref(identity);
+             FlushCounts counts;
+             GstPad* sink_pad = gst_element_get_static_pad(identity, "sink");
+             require(sink_pad != nullptr, "identity sink pad is missing");
+             gst_pad_add_probe(sink_pad, GST_PAD_PROBE_TYPE_EVENT_FLUSH, count_flush_events,
+                               &counts, nullptr);
+             gst_object_unref(sink_pad);
+             gst_object_unref(identity);
 
-           require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
-                   "failed to start stop-flush test pipeline");
+             require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+                     "failed to start stop-flush test pipeline");
 
-           InputOptions input_options;
-           InputStreamOptions stream_options;
-           InputStream stream = InputStream::create(pipeline, appsrc, nullptr, make_encoded_spec(),
-                                                    input_options, stream_options, {}, nullptr);
-           stream.stop();
+             InputOptions input_options;
+             InputStreamOptions stream_options;
+             stream_options.prefer_synchronous_teardown = prefer_synchronous_teardown;
+             InputStream stream =
+                 InputStream::create(pipeline, appsrc, nullptr, make_encoded_spec(), input_options,
+                                     stream_options, {}, nullptr);
+             stream.stop();
 
-           require(counts.starts.load(std::memory_order_relaxed) >= 1,
-                   "InputStream::stop must send FLUSH_START");
-           require(counts.stops.load(std::memory_order_relaxed) == 0,
-                   "InputStream::stop must keep the pipeline flushing until NULL");
+             const int starts = counts.starts.load(std::memory_order_relaxed);
+             const int stops = counts.stops.load(std::memory_order_relaxed);
+             stream.close();
+             return std::pair{starts, stops};
+           };
 
-           stream.close();
+           const auto legacy = run_stop(false);
+           require(legacy.first >= 1, "legacy InputStream::stop must send FLUSH_START");
+           require(legacy.second == 0,
+                   "legacy InputStream::stop must keep the pipeline flushing until NULL");
+
+           const auto synchronous = run_stop(true);
+           require(synchronous.first == 0,
+                   "synchronous live InputStream::stop must not send pre-NULL FLUSH_START");
+           require(synchronous.second == 0,
+                   "synchronous live InputStream::stop must not send FLUSH_STOP");
          }));

@@ -517,7 +517,12 @@ void InputStream::stop() {
       std::fprintf(stderr, "[INPUTSTREAM] stop: appsrc block=false\n");
     }
   }
-  const bool stop_flush = inputstream_stop_flush_enabled();
+  // Source/live pipelines request bounded synchronous teardown.  Do not send
+  // FLUSH_START ahead of their NULL transition: source elements may interpret
+  // that event as a runtime restart request and race the state change.  Keep
+  // the legacy pre-flush for deferred/appsrc teardown paths.
+  const bool stop_flush =
+      inputstream_stop_flush_enabled() && !state_->opt.prefer_synchronous_teardown;
   if (stop_flush && pipeline_ref) {
     if (stop_trace_enabled()) {
       std::fprintf(stderr, "[STOP] InputStream::stop flush state=%p pipeline=%p\n",
