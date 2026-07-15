@@ -5,6 +5,7 @@
 #include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
+#include "pipeline/internal/SampleTimingGstUtil.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
@@ -443,7 +444,8 @@ void restore_loan_identity_and_timing_on_buffer(const std::shared_ptr<LoanEntry>
     // Restore native PTS/DTS/duration first. This preserves the old behavior
     // even when a caller supplies a non-writable buffer and GstSimaMeta cannot
     // be updated below.
-    (void)simaai::neat::apply_sample_timing_to_gst_buffer_header(buffer, entry->timing);
+    (void)simaai::neat::pipeline_internal::sample_timing_gst_detail::apply_to_buffer_header(
+        buffer, entry->timing);
   }
 
   // Replacement-stage output pools may recycle scalar GstSimaMeta fields from
@@ -463,7 +465,8 @@ void restore_loan_identity_and_timing_on_buffer(const std::shared_ptr<LoanEntry>
   // pass copied it a second time on GStreamer versions without a public
   // structure-mutability macro.
   if (!entry->timing.empty()) {
-    (void)simaai::neat::write_sample_timing_to_gst_structure(s, entry->timing);
+    (void)simaai::neat::pipeline_internal::sample_timing_gst_detail::write_to_structure(
+        s, entry->timing);
   }
   gst_structure_set(s, "stream-id", G_TYPE_STRING, key.stream_id.c_str(), "orig-stream-id",
                     G_TYPE_STRING, key.stream_id.c_str(), "frame-id", G_TYPE_INT64,
