@@ -1,6 +1,8 @@
 #include "gst/GstInit.h"
 #include "internal/InputStream.h"
 #include "nodes/io/Input.h"
+#include "pipeline/internal/GstDiagnosticsUtil.h"
+#include "pipeline/internal/GstTeardownBudget.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -9,6 +11,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -73,6 +76,49 @@ RUN_TEST("unit_inputstream_stop_flush_test", ([] {
 
            gst_init_once();
            EnvVarGuard flush_timeout("SIMA_INPUTSTREAM_STOP_FLUSH_TIMEOUT_MS", "0");
+
+           using simaai::neat::pipeline_internal::synchronous_live_teardown_budget_ms;
+           constexpr std::uint64_t kDefaultRtspTeardownNs = 100'000'000ULL;
+           require(synchronous_live_teardown_budget_ms(2000, 0, 0) == 2000,
+                   "non-RTSP teardown must retain the existing 2s budget");
+           const int streams24_budget = synchronous_live_teardown_budget_ms(
+               2000, 24ULL * kDefaultRtspTeardownNs, 24);
+           require(streams24_budget == 4650,
+                   "24 RTSP sources must add 2.4s plus the scheduling margin");
+           const int streams48_budget = synchronous_live_teardown_budget_ms(
+               2000, 48ULL * kDefaultRtspTeardownNs, 48);
+           require(streams48_budget == 7050,
+                   "48 RTSP sources must add 4.8s plus the scheduling margin");
+           require(synchronous_live_teardown_budget_ms(2000, 1, 1) == 2251,
+                   "sub-millisecond RTSP timeouts must round up rather than under-budget");
+           require(synchronous_live_teardown_budget_ms(
+                       2000, std::numeric_limits<std::uint64_t>::max(), 1) == 30000,
+                   "pathological RTSP teardown budgets must be capped at 30s");
+
+           const auto pipeline_budget = [](std::size_t rtsp_sources) {
+             GstElement* pipeline = gst_pipeline_new(nullptr);
+             require(pipeline != nullptr, "expected teardown-budget test pipeline");
+             for (std::size_t i = 0; i < rtsp_sources; ++i) {
+               GstElement* source = gst_element_factory_make("rtspsrc", nullptr);
+               require(source != nullptr, "rtspsrc is required for teardown-budget test");
+               // Keep this explicit so the test follows the effective property
+               // rather than depending on the host GStreamer package default.
+               g_object_set(source, "teardown-timeout", kDefaultRtspTeardownNs, nullptr);
+               require(gst_bin_add(GST_BIN(pipeline), source),
+                       "failed to add rtspsrc to teardown-budget test pipeline");
+             }
+             const int budget =
+                 simaai::neat::pipeline_internal::effective_synchronous_teardown_timeout_ms(
+                     pipeline, 2000);
+             gst_object_unref(pipeline);
+             return budget;
+           };
+           require(pipeline_budget(0) == 2000,
+                   "a normal graph without RTSP sources must keep the 2s budget");
+           require(pipeline_budget(24) == streams24_budget,
+                   "24-source graph must include every rtspsrc TEARDOWN timeout");
+           require(pipeline_budget(48) == streams48_budget,
+                   "48-source graph must include every rtspsrc TEARDOWN timeout");
 
            const auto run_stop = [](bool prefer_synchronous_teardown) {
              GError* error = nullptr;
