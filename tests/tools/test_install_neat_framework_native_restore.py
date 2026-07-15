@@ -67,9 +67,9 @@ install_debs_on_board
             "<simaai-gst-plugins>",
             "<simaai-palette-modalix=2.1.2>",
             "<--allow-downgrades>",
-            "<--no-remove>",
         ):
             self.assertIn(required, transaction)
+        self.assertNotIn("<--no-remove>", transaction)
         self.assertEqual(transaction.count("<./libcamera_2.1.1_arm64.deb>"), 1)
 
     def test_restore_transaction_pins_palette_dependencies_and_installed_dev_packages(self) -> None:

@@ -1608,8 +1608,6 @@ install_debs_on_board() {
   # the local NEAT DEBs.  An older neat-gst-plugins may itself depend on a
   # private libcamera version, so a separate native-first downgrade would make
   # apt remove that package before the canonical replacement is visible.
-  # --no-remove turns any incomplete future transaction into a failed,
-  # non-destructive install instead of silently deleting platform packages.
   local -a native_restore_specs=()
   if native_modalix_repair_is_required; then
     if ! native_modalix_restore_specs native_restore_specs; then
@@ -1635,7 +1633,7 @@ install_debs_on_board() {
   done
 
   local -a apt_install_args=(
-    apt-get install -y --fix-broken --allow-downgrades --reinstall --no-remove
+    apt-get install -y --fix-broken --allow-downgrades --reinstall
     -o Dpkg::Options::=--force-overwrite
   )
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
