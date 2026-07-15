@@ -2744,8 +2744,8 @@ bool fused_consumer_fragment_replaces_buffers(const std::string& fragment) {
   return false;
 }
 
-std::optional<std::string> fused_consumer_segment_property_value(const std::string& segment,
-                                                                 const std::string& property) {
+std::optional<std::string> fused_consumer_segment_property_raw_value(const std::string& segment,
+                                                                     const std::string& property) {
   const std::string lower = lower_copy(segment);
   const auto is_space = [](char value) {
     return std::isspace(static_cast<unsigned char>(value)) != 0;
@@ -2802,7 +2802,7 @@ std::optional<std::string> fused_consumer_segment_property_value(const std::stri
       const char quote = lower[cursor++];
       const std::size_t close = lower.find(quote, cursor);
       effective_value =
-          lower.substr(cursor, close == std::string::npos ? std::string::npos : close - cursor);
+          segment.substr(cursor, close == std::string::npos ? std::string::npos : close - cursor);
       if (close == std::string::npos) {
         break;
       }
@@ -2813,10 +2813,150 @@ std::optional<std::string> fused_consumer_segment_property_value(const std::stri
     while (end < lower.size() && !is_space(lower[end])) {
       ++end;
     }
-    effective_value = lower.substr(cursor, end - cursor);
+    effective_value = segment.substr(cursor, end - cursor);
     i = end;
   }
   return effective_value;
+}
+
+std::optional<std::string> fused_consumer_segment_property_value(const std::string& segment,
+                                                                 const std::string& property) {
+  auto value = fused_consumer_segment_property_raw_value(segment, property);
+  if (value) {
+    *value = lower_copy(*value);
+  }
+  return value;
+}
+
+std::optional<std::string>
+fused_first_processcvu_element_name(const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+                                    const NameTransform& name_transform,
+                                    const GraphOptions& options) {
+  for (std::size_t index = 0; index < consumer_nodes.size(); ++index) {
+    const auto& node = consumer_nodes[index];
+    if (!node) {
+      continue;
+    }
+    const NodeFragment fragment = make_node_fragment(node, static_cast<int>(index), name_transform);
+    const std::string rendered_fragment =
+        session_build_apply_fast_path_options_to_fragment(fragment.fragment, &options);
+    for (const auto& segment : split_fused_consumer_segments(rendered_fragment)) {
+      if (fused_consumer_segment_factory(segment) != "neatprocesscvu") {
+        continue;
+      }
+      // In the prepared-direct synchronous hot path ProcessCVU may defer
+      // unreffing its input list until after src push. Async completion cleans
+      // that list before finish_buffer(), so only async=true is a proven
+      // decoder-buffer release boundary. Sync chains retain terminal release.
+      const auto async = fused_consumer_segment_property_value(segment, "async");
+      if (!async || (*async != "true" && *async != "1")) {
+        return std::nullopt;
+      }
+      if (const auto buffers = fused_consumer_segment_property_value(segment, "num-buffers");
+          buffers) {
+        char* end = nullptr;
+        const unsigned long parsed = std::strtoul(buffers->c_str(), &end, 10);
+        if (end == buffers->c_str() || !end || *end != '\0' || parsed <= 1UL) {
+          return std::nullopt;
+        }
+      }
+      if (auto name = fused_consumer_segment_property_raw_value(segment, "name");
+          name && !name->empty()) {
+        return name;
+      }
+      // Framework nodes declare every concrete element name. A nameless
+      // ProcessCVU fragment is invalid for probe attachment, but retaining the
+      // single-name fallback keeps custom test nodes deterministic.
+      if (fragment.element_names.size() == 1U && !fragment.element_names.front().empty()) {
+        return fragment.element_names.front();
+      }
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+struct FusedRawInputCreditProbeCtx {
+  std::uint64_t mux_namespace = 0;
+  std::atomic<int> runtime_early_release_enabled{-1};
+};
+
+GstPadProbeReturn fused_raw_input_credit_probe(GstPad* pad, GstPadProbeInfo* info,
+                                               gpointer user_data) {
+  auto* ctx = static_cast<FusedRawInputCreditProbeCtx*>(user_data);
+  GstBuffer* buffer = info ? GST_PAD_PROBE_INFO_BUFFER(info) : nullptr;
+  if (!ctx || ctx->mux_namespace == 0 || !buffer) {
+    return GST_PAD_PROBE_OK;
+  }
+
+  int enabled = ctx->runtime_early_release_enabled.load(std::memory_order_acquire);
+  if (enabled < 0) {
+    gboolean effective_async = FALSE;
+    gulong num_buffers = 0;
+    GstObject* parent = pad ? gst_pad_get_parent(pad) : nullptr;
+    if (parent) {
+      GObjectClass* object_class = G_OBJECT_GET_CLASS(parent);
+      if (g_object_class_find_property(object_class, "async") &&
+          g_object_class_find_property(object_class, "num-buffers")) {
+        g_object_get(G_OBJECT(parent), "async", &effective_async, "num-buffers", &num_buffers,
+                     nullptr);
+      }
+      gst_object_unref(parent);
+    }
+    enabled = effective_async == TRUE && num_buffers > 1UL ? 1 : 0;
+    ctx->runtime_early_release_enabled.store(enabled, std::memory_order_release);
+  }
+  if (enabled != 0) {
+    (void)pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+        buffer, ctx->mux_namespace);
+  }
+  return GST_PAD_PROBE_OK;
+}
+
+std::size_t attach_fused_raw_input_credit_probe(
+    GstElement* pipeline, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const NameTransform& name_transform, const GraphOptions& options, std::uint64_t mux_namespace,
+    const char* where) {
+  if (!pipeline || mux_namespace == 0) {
+    return 0;
+  }
+  const auto boundary_name =
+      fused_first_processcvu_element_name(consumer_nodes, name_transform, options);
+  if (!boundary_name) {
+    return 0;
+  }
+
+  GstElement* element = gst_bin_get_by_name(GST_BIN(pipeline), boundary_name->c_str());
+  if (!element) {
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        std::string(where ? where : "Graph::build(fused)") +
+            ": raw-input credit boundary element '" + *boundary_name + "' was not found",
+        "Ensure ProcessCVU element_names() matches its backend fragment.");
+  }
+  GstPad* src_pad = gst_element_get_static_pad(element, "src");
+  gst_object_unref(element);
+  if (!src_pad) {
+    session_build_throw_session_error_simple(error_codes::kPipelineShape,
+                                             std::string(where ? where : "Graph::build(fused)") +
+                                                 ": raw-input credit boundary '" + *boundary_name +
+                                                 "' has no static src pad",
+                                             "A fused ProcessCVU needs a static src pad.");
+  }
+
+  const gulong probe_id = gst_pad_add_probe(
+      src_pad, GST_PAD_PROBE_TYPE_BUFFER, fused_raw_input_credit_probe,
+      new FusedRawInputCreditProbeCtx{mux_namespace},
+      +[](gpointer data) { delete static_cast<FusedRawInputCreditProbeCtx*>(data); });
+  gst_object_unref(src_pad);
+  if (probe_id == 0) {
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        std::string(where ? where : "Graph::build(fused)") +
+            ": failed to attach raw-input credit probe to '" + *boundary_name + "'",
+        "Keep the first ProcessCVU output available to the fused graph runtime.");
+  }
+  return 1;
 }
 
 bool fused_consumer_property_is_zero(const std::string& value) {
@@ -3098,6 +3238,20 @@ attach_fused_decoder_timing_probes_for_test(GstElement* pipeline,
   return attach_fused_decoder_timing_probes(pipeline, ingress);
 }
 
+std::optional<std::string>
+fused_raw_input_credit_boundary_for_test(const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+                                         const GraphOptions& options) {
+  return fused_first_processcvu_element_name(consumer_nodes, make_name_transform(options), options);
+}
+
+std::size_t attach_fused_raw_input_credit_probe_for_test(
+    GstElement* pipeline, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const GraphOptions& options, std::uint64_t mux_namespace) {
+  return attach_fused_raw_input_credit_probe(pipeline, consumer_nodes, make_name_transform(options),
+                                             options, mux_namespace,
+                                             "fused raw-input credit unit test");
+}
+
 GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info) {
   return make_fused_terminal_probe_buffer_writable(info);
 }
@@ -3360,12 +3514,21 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
               last_pipeline,
           "Keep the fused latest-by-stream mux in the source pipeline.", last_pipeline);
     }
-    // A fused mux loan covers work from mux emission through the terminal
-    // consumer pipeline. Release it as soon as the result reaches GstAppSink's
-    // sink pad, before GstAppSink can retain it as preroll or discard it under
-    // its own bounded-queue policy. Waiting for Run::pull() is insufficient:
-    // samples consumed internally by GstAppSink never reach that path, and
-    // decoder buffer pools can recycle GstBuffers without finalizing them.
+    // ProcessCVU has finished reading the decoded EV buffer before it pushes
+    // from its src pad. Return raw-input admission there so inference/metadata
+    // latency cannot unnecessarily pin decoder buffers. Keep the registry
+    // entry alive: the terminal probe still needs its exact timing record.
+    if (br.fused_consumer_replaces_buffers) {
+      (void)attach_fused_raw_input_credit_probe(pipeline.get(), build_consumer_nodes,
+                                                name_transform, sess_opt, mux_namespace, where);
+    }
+
+    // Complete the timing/identity registry entry as soon as the result reaches
+    // GstAppSink's sink pad, before GstAppSink can retain it as preroll or
+    // discard it under its own bounded-queue policy. Waiting for Run::pull() is
+    // insufficient: samples consumed internally by GstAppSink never reach that
+    // path, and decoder buffer pools can recycle GstBuffers without finalizing
+    // them.
     if (GstPad* terminal_pad = gst_element_get_static_pad(raw_sink, "sink")) {
       const gulong probe_id = gst_pad_add_probe(
           terminal_pad, GST_PAD_PROBE_TYPE_BUFFER,
