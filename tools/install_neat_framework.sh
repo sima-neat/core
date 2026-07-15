@@ -1700,6 +1700,43 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+validate_single_sima_neat_package_pair() {
+  local deb package version
+  local -a core_debs=()
+  local -a core_versions=()
+  local -a dev_debs=()
+  local -a dev_versions=()
+
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    case "${package}" in
+      sima-neat)
+        core_debs+=("${deb}")
+        core_versions+=("$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)")
+        ;;
+      sima-neat-dev)
+        dev_debs+=("${deb}")
+        dev_versions+=("$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)")
+        ;;
+    esac
+  done
+
+  if [[ "${#core_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 ]]; then
+    echo "SDK sysroot install requires exactly one sima-neat and one sima-neat-dev package." >&2
+    echo "  sima-neat packages:     ${#core_debs[@]}" >&2
+    echo "  sima-neat-dev packages: ${#dev_debs[@]}" >&2
+    echo "Remove stale package versions or install from a generated metadata/manifest bundle." >&2
+    return 1
+  fi
+  if [[ -z "${core_versions[0]}" || -z "${dev_versions[0]}" ||
+        "${core_versions[0]}" != "${dev_versions[0]}" ]]; then
+    echo "SDK sysroot sima-neat package versions do not match." >&2
+    echo "  sima-neat:     ${core_versions[0]:-<missing>} (${core_debs[0]})" >&2
+    echo "  sima-neat-dev: ${dev_versions[0]:-<missing>} (${dev_debs[0]})" >&2
+    return 1
+  fi
+}
+
 collect_current_bundle_sima_neat_lib_paths() {
   local sysroot="$1"
   local -n out_paths="$2"
@@ -1835,6 +1872,7 @@ install_debs_into_sysroot() {
   fi
 
   log "Detected eLxr SDK environment; installing DEBs into sysroot: ${sysroot}"
+  validate_single_sima_neat_package_pair
   ensure_sima_lmm_sysroot_deps "${sysroot}"
   local deb
   for deb in "${DEBS[@]}"; do

@@ -196,6 +196,80 @@ native_modalix_restore_specs specs
 
 
 class SimaNeatLinkRepairTest(unittest.TestCase):
+    def test_sdk_sysroot_rejects_multiple_core_package_pairs(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(core-old.deb core-new.deb dev-new.deb)
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$2:$3" in
+    core-old.deb:Package|core-new.deb:Package) printf '%s\n' sima-neat ;;
+    dev-new.deb:Package) printf '%s\n' sima-neat-dev ;;
+    core-old.deb:Version) printf '%s\n' 0.2.0 ;;
+    core-new.deb:Version|dev-new.deb:Version) printf '%s\n' 0.3.0 ;;
+    *) return 2 ;;
+  esac
+}
+validate_single_sima_neat_package_pair
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "requires exactly one sima-neat and one sima-neat-dev package",
+            result.stderr,
+        )
+        self.assertIn("sima-neat packages:     2", result.stderr)
+
+    def test_sdk_sysroot_rejects_mismatched_core_package_versions(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(core.deb dev.deb)
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$2:$3" in
+    core.deb:Package) printf '%s\n' sima-neat ;;
+    dev.deb:Package) printf '%s\n' sima-neat-dev ;;
+    core.deb:Version) printf '%s\n' 0.3.0+core ;;
+    dev.deb:Version) printf '%s\n' 0.3.0+dev ;;
+    *) return 2 ;;
+  esac
+}
+validate_single_sima_neat_package_pair
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("package versions do not match", result.stderr)
+        self.assertIn("0.3.0+core", result.stderr)
+        self.assertIn("0.3.0+dev", result.stderr)
+
+    def test_sdk_sysroot_accepts_one_matching_core_package_pair(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(core.deb dev.deb unrelated.deb)
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$2:$3" in
+    core.deb:Package) printf '%s\n' sima-neat ;;
+    dev.deb:Package) printf '%s\n' sima-neat-dev ;;
+    unrelated.deb:Package) printf '%s\n' neat-runtime ;;
+    core.deb:Version|dev.deb:Version) printf '%s\n' 0.3.0 ;;
+    unrelated.deb:Version) printf '%s\n' 1.0 ;;
+    *) return 2 ;;
+  esac
+}
+validate_single_sima_neat_package_pair
+printf 'PAIR_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PAIR_OK", result.stdout)
+
     def test_sdk_sysroot_preserves_current_bundle_compatibility_link(self) -> None:
         result = run_bash(
             r'''
