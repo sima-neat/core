@@ -284,9 +284,22 @@ RUN_TEST(
             pipeline, nullptr, sink, raw_rgb_spec(16, 16, 100), simaai::neat::InputOptions{},
             stream_options, {}, nullptr);
 
+        // A stopped appsink reports EOS, while a PLAYING finite source can
+        // fill and block the sink before the worker installs its callbacks.
+        // PAUSED is the deterministic hand-off state: the worker stays alive
+        // and the source cannot outrun callback installation.
+        require(gst_element_set_state(pipeline, GST_STATE_PAUSED) != GST_STATE_CHANGE_FAILURE,
+                "EveryFrame saturation pipeline did not pause");
+        GstState current_state = GST_STATE_NULL;
+        GstState pending_state = GST_STATE_VOID_PENDING;
+        require(gst_element_get_state(pipeline, &current_state, &pending_state, 5 * GST_SECOND) !=
+                        GST_STATE_CHANGE_FAILURE &&
+                    current_state == GST_STATE_PAUSED,
+                "EveryFrame saturation pipeline did not reach PAUSED");
+
         simaai::neat::RunOptions run_options;
         run_options.preset = simaai::neat::RunPreset::Realtime;
-        run_options.queue_depth = 2;
+        run_options.queue_depth = 1;
         run_options.overflow_policy = simaai::neat::OverflowPolicy::KeepLatest;
         run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
         auto core = simaai::neat::runtime::RunCore::start_single_pipeline(
@@ -303,15 +316,15 @@ RUN_TEST(
           }
         } stop{core};
 
-        // InputStream installs the optional callbacks on its worker.  Keep the
-        // source stopped until that worker has entered its normal pull loop.
+        // InputStream installs the optional callbacks on its worker.  PAUSED
+        // keeps that worker valid while it enters the normal callback loop.
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
                 "EveryFrame saturation pipeline did not start");
 
-        require(core->opt.queue_depth == 2 &&
-                    core->opt.overflow_policy == simaai::neat::OverflowPolicy::Block,
-                "RunCore did not latch explicit EveryFrame output policy");
+        require(core->opt.queue_depth == 1 &&
+                    core->opt.overflow_policy == simaai::neat::OverflowPolicy::KeepLatest,
+                "explicit Output policy overwrote input RunOptions");
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         std::int64_t previous_pts = -1;
