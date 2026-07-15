@@ -21,6 +21,7 @@
 namespace {
 
 constexpr std::size_t kSlotCount = 24U;
+constexpr std::size_t kDeficitRecoveryPickCount = kSlotCount + 2U;
 
 GstBuffer* make_input_buffer(std::int64_t frame_id) {
   GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 16U, nullptr);
@@ -80,6 +81,7 @@ struct FairnessProbeState {
   bool blocked = false;
   bool unblock = false;
   bool collecting = false;
+  std::size_t collection_target = kSlotCount;
   bool block_first_collected = false;
   bool collection_blocked = false;
   bool unblock_collection = false;
@@ -134,10 +136,10 @@ GstPadProbeReturn fairness_probe(GstPad*, GstPadProbeInfo* info, gpointer user_d
       state->cv.notify_all();
       state->cv.wait(lock, [&] { return state->unblock; });
     }
-    if (!trigger && state->collecting && state->picks.size() < kSlotCount) {
+    if (!trigger && state->collecting && state->picks.size() < state->collection_target) {
       state->picks.push_back(*index);
       state->pick_frame_ids.push_back(*id);
-      replenish = state->picks.size() < kSlotCount;
+      replenish = state->picks.size() < state->collection_target;
       state->cv.notify_all();
       if (state->block_first_collected) {
         state->block_first_collected = false;
@@ -206,6 +208,50 @@ void wait_for_observation(FairnessProbeState* state, std::uint64_t before) {
   require(!state->callback_failed, "latest-mux fairness probe callback failed");
 }
 
+void activate_cohort_at_one_frontier(FairnessProbeState* state,
+                                     std::size_t cohort_size,
+                                     const char* context) {
+  require(state != nullptr && cohort_size > 0U && cohort_size <= state->sink_pads.size(),
+          "invalid latest-mux activation cohort");
+  const std::string label = context ? context : "cohort";
+  std::uint64_t observed_before = 0;
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    observed_before = state->observed;
+    state->block_next = true;
+  }
+  require(chain_one(state, 0U) == GST_FLOW_OK,
+          "latest-mux " + label + " trigger failed");
+  {
+    std::unique_lock<std::mutex> lock(state->mutex);
+    require(state->cv.wait_for(lock, std::chrono::seconds(3),
+                               [&] { return state->blocked; }),
+            "latest-mux " + label + " worker did not block");
+  }
+  for (std::size_t index = 0; index < cohort_size; ++index) {
+    require(chain_one(state, index) == GST_FLOW_OK,
+            "latest-mux " + label + " staging failed");
+  }
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->unblock = true;
+    state->cv.notify_all();
+  }
+  {
+    std::unique_lock<std::mutex> lock(state->mutex);
+    const std::uint64_t target = observed_before + 1U + cohort_size;
+    require(state->cv.wait_for(lock, std::chrono::seconds(5),
+                               [&] {
+                                 return state->observed >= target ||
+                                        state->callback_failed;
+                               }),
+            "timed out staging latest-mux " + label);
+    require(!state->callback_failed, "latest-mux " + label + " probe failed");
+    state->blocked = false;
+    state->unblock = false;
+  }
+}
+
 void start_mux_epoch(const FairnessProbeState& state, std::uint64_t epoch) {
   for (std::size_t index = 0; index < state.sink_pads.size(); ++index) {
     const std::string stream =
@@ -260,23 +306,22 @@ int main() {
             "failed to start latest-mux fairness pipeline");
     start_mux_epoch(state, 1U);
 
-    // Give streams 0-3 a lifetime head start. Streams 4-23 have not joined the
-    // scheduling epoch yet.
-    for (int round = 0; round < 3; ++round) {
-      for (std::size_t index = 0; index < 4U; ++index) {
-        std::uint64_t before = 0;
-        {
-          std::lock_guard<std::mutex> lock(state.mutex);
-          before = state.observed;
-        }
-        require(chain_one(&state, index) == GST_FLOW_OK, "latest-mux warmup chain failed");
-        wait_for_observation(&state, before);
+    // Join streams 0-3 at one frontier, then give that cohort a service head
+    // start. Streams 4-23 have not joined the scheduling epoch yet.
+    activate_cohort_at_one_frontier(&state, 4U, "initial cohort");
+    for (std::size_t index = 0; index < 4U; ++index) {
+      std::uint64_t before = 0;
+      {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        before = state.observed;
       }
+      require(chain_one(&state, index) == GST_FLOW_OK, "latest-mux warmup chain failed");
+      wait_for_observation(&state, before);
     }
 
     // Emit one trigger from slot 0 and stop the worker inside its src push. Its
-    // next cursor is now slot 1, while slot 0 has emitted four times, slots 1-3
-    // three times, and slots 4-23 have never been active.
+    // next cursor is now slot 1. Slot 0 is one virtual service ahead of the
+    // established peers; streams 4-23 have never been active.
     {
       std::lock_guard<std::mutex> lock(state.mutex);
       state.block_next = true;
@@ -352,15 +397,10 @@ int main() {
             "failed to restart latest-mux fairness pipeline");
     start_mux_epoch(state, 2U);
 
-    for (std::size_t index = 0; index < kSlotCount; ++index) {
-      std::uint64_t before = 0;
-      {
-        std::lock_guard<std::mutex> lock(state.mutex);
-        before = state.observed;
-      }
-      require(chain_one(&state, index) == GST_FLOW_OK, "latest-mux activation chain failed");
-      wait_for_observation(&state, before);
-    }
+    // Join every stream at one frontier. The trigger is already counted once;
+    // staging all 24 while its output callback is blocked gives each newcomer
+    // the same service baseline before the worker resumes.
+    activate_cohort_at_one_frontier(&state, kSlotCount, "balanced activation");
     for (int round = 0; round < 3; ++round) {
       for (std::size_t index = 0; index + 1U < kSlotCount; ++index) {
         std::uint64_t before = 0;
@@ -373,12 +413,11 @@ int main() {
       }
     }
 
-    // Slot 23 is now three lifetime dispatches behind every peer. Block on a
-    // slot-0 trigger, make slot 23 ready last, and then keep every stream
-    // pending. The old lifetime-min policy would dispatch slot 23 repeatedly
-    // to repay historical deficit, while oldest-ready would put it behind all
-    // peers. Bounded service-recency fairness gives it one prompt turn, then
-    // places its synchronous replenishment behind all peers.
+    // Slot 23 is now three dispatches behind every peer. Block on a slot-0
+    // trigger, make slot 23 ready first, and keep every selected stream
+    // pending. Max-min service fairness must use spare capacity to repay the
+    // established deficit instead of giving slot 23 only one prompt turn and
+    // preserving the skew forever.
     {
       std::lock_guard<std::mutex> lock(state.mutex);
       state.block_next = true;
@@ -396,6 +435,7 @@ int main() {
     require(chain_one(&state, 0U) == GST_FLOW_OK, "latest-mux catch-up final staging chain failed");
     {
       std::lock_guard<std::mutex> lock(state.mutex);
+      state.collection_target = kDeficitRecoveryPickCount;
       state.collecting = true;
       state.unblock = true;
       state.cv.notify_all();
@@ -404,26 +444,111 @@ int main() {
       std::unique_lock<std::mutex> lock(state.mutex);
       require(state.cv.wait_for(
                   lock, std::chrono::seconds(5),
-                  [&] { return state.picks.size() == kSlotCount || state.callback_failed; }),
+                  [&] {
+                    return state.picks.size() == state.collection_target ||
+                           state.callback_failed;
+                  }),
               "timed out collecting latest-mux catch-up selections");
       require(!state.callback_failed, "latest-mux catch-up probe callback failed");
-      require(state.picks.size() == kSlotCount,
+      require(state.picks.size() == kDeficitRecoveryPickCount,
               "latest-mux catch-up window produced too few selections");
-      require(state.picks[0] == 23U,
-              "a late-but-ready stream must receive one prompt fairness turn");
-      for (std::size_t i = 1; i + 1U < kSlotCount; ++i) {
-        require(state.picks[i] == i,
-                "a late stream's new ticket must follow every already-ready peer");
+      require(state.picks[0] == 23U && state.picks[1] == 23U && state.picks[2] == 23U,
+              "an established lagging stream must receive cumulative deficit recovery");
+      for (std::size_t stream = 1; stream + 1U < kSlotCount; ++stream) {
+        require(state.picks[stream + 2U] == stream,
+                "equal-count streams must resume retained ready-ticket order");
       }
-      require(state.picks.back() == 0U,
-              "bounded catch-up must contain every stream exactly once, without a burst");
+      require(state.picks.back() == 23U,
+              "the lagging stream must receive the final turn that reaches the frontier");
+    }
+
+    // A new STREAM_START on an established request pad denotes a new producer
+    // epoch. It must join at the current frontier rather than inheriting the
+    // predecessor's historical deficit and monopolizing spare service.
+    require(gst_element_set_state(pipeline, GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
+            "failed to reset latest-mux restart-fairness pipeline");
+    {
+      std::lock_guard<std::mutex> lock(state.mutex);
+      state.picks.clear();
+      state.pick_frame_ids.clear();
+      state.block_next = false;
+      state.blocked = false;
+      state.unblock = false;
+      state.collecting = false;
+      state.collection_target = kSlotCount;
+      state.callback_failed = false;
+    }
+    require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+            "failed to restart latest-mux restart-fairness pipeline");
+    start_mux_epoch(state, 3U);
+
+    activate_cohort_at_one_frontier(&state, kSlotCount, "restart activation");
+    for (int round = 0; round < 3; ++round) {
+      for (std::size_t index = 0; index + 1U < kSlotCount; ++index) {
+        std::uint64_t before = 0;
+        {
+          std::lock_guard<std::mutex> lock(state.mutex);
+          before = state.observed;
+        }
+        require(chain_one(&state, index) == GST_FLOW_OK,
+                "latest-mux restart deficit warmup failed");
+        wait_for_observation(&state, before);
+      }
+    }
+
+    require(gst_pad_send_event(
+                state.sink_pads[23],
+                gst_event_new_stream_start("fairness-restarted-stream23")) == TRUE,
+            "failed to send latest-mux restart stream-start event");
+    {
+      std::lock_guard<std::mutex> lock(state.mutex);
+      state.block_next = true;
+    }
+    require(chain_one(&state, 0U) == GST_FLOW_OK,
+            "latest-mux restart-fairness trigger failed");
+    {
+      std::unique_lock<std::mutex> lock(state.mutex);
+      require(state.cv.wait_for(lock, std::chrono::seconds(3), [&] { return state.blocked; }),
+              "latest-mux restart-fairness worker did not block");
+    }
+    require(chain_one(&state, 23U) == GST_FLOW_OK,
+            "latest-mux restarted stream staging failed");
+    for (std::size_t index = 1; index + 1U < kSlotCount; ++index) {
+      require(chain_one(&state, index) == GST_FLOW_OK,
+              "latest-mux restart peer staging failed");
+    }
+    require(chain_one(&state, 0U) == GST_FLOW_OK,
+            "latest-mux restart final staging failed");
+    {
+      std::lock_guard<std::mutex> lock(state.mutex);
+      state.collecting = true;
+      state.unblock = true;
+      state.cv.notify_all();
+    }
+    {
+      std::unique_lock<std::mutex> lock(state.mutex);
+      require(state.cv.wait_for(
+                  lock, std::chrono::seconds(5),
+                  [&] {
+                    return state.picks.size() == state.collection_target ||
+                           state.callback_failed;
+                  }),
+              "timed out collecting latest-mux restart selections");
+      require(!state.callback_failed, "latest-mux restart-fairness probe failed");
+      for (std::size_t stream = 1; stream + 1U < kSlotCount; ++stream) {
+        require(state.picks[stream - 1U] == stream,
+                "restarted stream must not inherit predecessor catch-up debt");
+      }
+      require(state.picks[kSlotCount - 2U] == 23U &&
+                  state.picks[kSlotCount - 1U] == 0U,
+              "restarted and frontier streams must retain ready-ticket order");
     }
 
     // Credit-blocked oldest-ready stream: hold stream 0's first terminal loan,
     // then queue it ahead of streams 2 and 1 while the worker is stopped in a
     // stream-1 trigger. Stream 0 must not head-of-line block eligible work.
-    // Once its credit is returned, it gets exactly one prompt old-ticket turn;
-    // synchronous replenishment then moves it behind both ready peers.
+    // Once its credit is returned, it repays its accumulated service deficit;
+    // equal-count streams then resume retained ready-ticket order.
     require(gst_element_set_state(pipeline, GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
             "failed to reset latest-mux credit fairness pipeline");
     {
@@ -434,6 +559,7 @@ int main() {
       state.blocked = false;
       state.unblock = false;
       state.collecting = false;
+      state.collection_target = kSlotCount;
       state.block_first_collected = false;
       state.collection_blocked = false;
       state.unblock_collection = false;
@@ -443,7 +569,7 @@ int main() {
     }
     require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
             "failed to restart latest-mux credit fairness pipeline");
-    start_mux_epoch(state, 3U);
+    start_mux_epoch(state, 4U);
 
     std::uint64_t before = 0;
     {
@@ -502,8 +628,8 @@ int main() {
       require(!state.callback_failed, "latest-mux credit-fairness probe failed");
       require(state.picks[1] == 0U,
               "restored credit must promptly service the preserved oldest ticket");
-      require(state.picks[2] == 1U && state.picks[3] == 2U && state.picks[4] == 0U,
-              "restored stream must receive one priority turn, not a catch-up burst");
+      require(state.picks[2] == 1U && state.picks[3] == 0U && state.picks[4] == 2U,
+              "restored stream must repay its deficit before equal-count ticket order resumes");
     }
 
     require(gst_element_set_state(pipeline, GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,

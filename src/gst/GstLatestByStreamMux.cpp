@@ -139,11 +139,12 @@ struct PendingSlot {
   // while still preserving latest-only storage.
   guint64 ready_ticket = 0;
   bool has_ready_ticket = false;
-  // Dispatch recency is the primary fairness key. New streams enter at the
-  // current service frontier so they do not acquire historical catch-up debt;
-  // an established stream which was absent or credit-blocked retains its last
-  // service position and therefore receives one prompt turn when it returns.
-  guint64 last_service_ordinal = 0;
+  // Virtual service count used only for scheduling. Unlike emitted (which is
+  // a truthful output statistic), this count starts at the current service
+  // frontier when a stream first joins or restarts. Established streams retain
+  // their deficit across temporary absence/credit blocking and can therefore
+  // consume spare capacity until the active streams are level again.
+  guint64 fair_service_count = 0;
   bool fairness_active = false;
   std::atomic<std::uint64_t> received{0};
   std::atomic<std::uint64_t> replaced{0};
@@ -169,7 +170,7 @@ struct _GstLatestByStreamMux {
   guint next_pad_index = 0;
   guint rr_index = 0;
   guint64 next_ready_ticket = 1;
-  guint64 service_ordinal = 0;
+  guint64 service_frontier = 0;
   bool lifetime_guard_enabled;
   bool started = false;
   bool stopping = false;
@@ -1159,15 +1160,13 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
       continue;
     }
 
-    // Prefer the eligible stream which was serviced least recently. Periodic
-    // producers can repeatedly transition pending -> empty between dispatches;
-    // ordering only by the age of the current pending buffer lets their fixed
-    // arrival phases lock some streams into a permanently lower service rate.
-    // Service recency survives those empty intervals and bounds that skew.
-    // ready_ticket preserves deterministic ordering among equally new streams
-    // and still protects the age of a latest-only replacement.
-    if (!selected || slot->last_service_ordinal < selected->last_service_ordinal ||
-        (slot->last_service_ordinal == selected->last_service_ordinal &&
+    // Max-min service fairness gives an established lagging stream more than
+    // one prompt turn when spare capacity exists. This closes accumulated
+    // phase/credit deficits instead of merely preserving them forever.
+    // ready_ticket keeps equal-count streams deterministic and preserves the
+    // age of an empty -> pending transition across latest-only replacement.
+    if (!selected || slot->fair_service_count < selected->fair_service_count ||
+        (slot->fair_service_count == selected->fair_service_count &&
          slot->ready_ticket < selected->ready_ticket)) {
       selected = slot;
       selected_idx = idx;
@@ -1195,7 +1194,9 @@ PendingSlot* take_next_slot_locked(GstLatestByStreamMux* self, bool* loan_acquir
   self->rr_index = (selected_idx + 1U) % n;
   selected->ready_ticket = 0;
   selected->has_ready_ticket = false;
-  selected->last_service_ordinal = ++self->service_ordinal;
+  ++selected->fair_service_count;
+  self->service_frontier =
+      std::max(self->service_frontier, selected->fair_service_count);
   ++selected->emitted;
   return selected;
 }
@@ -1392,13 +1393,15 @@ GstFlowReturn sink_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer) {
     return GST_FLOW_FLUSHING;
   }
   const std::uint64_t received_before = slot->received.fetch_add(1, std::memory_order_relaxed);
+  if (!slot->fairness_active) {
+    // A first frame (or the first frame after STREAM_START) joins at the
+    // current maximum service count. It owes no work from before it existed.
+    slot->fair_service_count = self->service_frontier;
+    slot->fairness_active = true;
+  }
   if (!slot->pending) {
     slot->ready_ticket = self->next_ready_ticket++;
     slot->has_ready_ticket = true;
-    if (!slot->fairness_active) {
-      slot->last_service_ordinal = self->service_ordinal;
-      slot->fairness_active = true;
-    }
   }
   if (slot->pending) {
     slot->replaced.fetch_add(1, std::memory_order_relaxed);
@@ -1454,6 +1457,13 @@ gboolean sink_event(GstPad* pad, GstObject* parent, GstEvent* event) {
 
   switch (GST_EVENT_TYPE(event)) {
   case GST_EVENT_STREAM_START: {
+    g_mutex_lock(&self->lock);
+    // A new upstream stream epoch must not inherit an arbitrarily old deficit
+    // from a disconnected predecessor using the same request pad. Apply the
+    // new frontier on its first buffer; an old pending buffer, if any, keeps
+    // the predecessor's service count until then.
+    slot->fairness_active = false;
+    g_mutex_unlock(&self->lock);
     gst_event_unref(event);
     const std::string stream_id = std::string(GST_ELEMENT_NAME(self)) + ":src";
     return forward_event_once(self, gst_event_new_stream_start(stream_id.c_str()),
@@ -1665,6 +1675,7 @@ struct SlotStatsSnapshot {
   guint64 received = 0;
   guint64 replaced = 0;
   guint64 emitted = 0;
+  guint64 fair_service_count = 0;
   guint64 ready_ticket = 0;
   guint64 no_credit_skips = 0;
   bool pending = false;
@@ -1683,6 +1694,7 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
   }
 
   std::vector<SlotStatsSnapshot> rows;
+  guint64 service_frontier = 0;
   g_mutex_lock(&self->lock);
   if (once && self->stats_reported) {
     g_mutex_unlock(&self->lock);
@@ -1691,6 +1703,7 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
   if (once) {
     self->stats_reported = true;
   }
+  service_frontier = self->service_frontier;
   rows.reserve(self->slots.size());
   for (const PendingSlot* slot : self->slots) {
     if (!slot) {
@@ -1706,6 +1719,7 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
     row.received = slot->received.load(std::memory_order_relaxed);
     row.replaced = slot->replaced.load(std::memory_order_relaxed);
     row.emitted = slot->emitted;
+    row.fair_service_count = slot->fair_service_count;
     row.ready_ticket = slot->ready_ticket;
     row.no_credit_skips = slot->no_credit_skips.load(std::memory_order_relaxed);
     row.pending = slot->pending != nullptr;
@@ -1726,18 +1740,21 @@ void print_slot_stats(GstLatestByStreamMux* self, const char* reason, bool once)
   }
   g_mutex_unlock(&self->lock);
 
-  std::fprintf(stderr, "[latestmux][stats] reason=%s slots=%zu\n", reason ? reason : "unknown",
-               rows.size());
+  std::fprintf(stderr,
+               "[latestmux][stats] reason=%s slots=%zu service_frontier=%llu\n",
+               reason ? reason : "unknown", rows.size(),
+               static_cast<unsigned long long>(service_frontier));
   for (const auto& row : rows) {
     std::fprintf(
         stderr,
         "[latestmux][stats] slot=%u stream=%s chain=%llu replaced=%llu emitted=%llu "
-        "ready_ticket=%llu pending=%d eos=%d no_credit_skips=%llu "
+        "fair_service_count=%llu ready_ticket=%llu pending=%d eos=%d no_credit_skips=%llu "
         "loans_registered=%llu "
         "loans_released_output=%llu loans_released_without_output=%llu missing_key=%llu "
         "loan_inflight=%d loan_limit=%d\n",
         row.index, row.stream_id.c_str(), static_cast<unsigned long long>(row.received),
         static_cast<unsigned long long>(row.replaced), static_cast<unsigned long long>(row.emitted),
+        static_cast<unsigned long long>(row.fair_service_count),
         static_cast<unsigned long long>(row.ready_ticket), row.pending ? 1 : 0, row.eos ? 1 : 0,
         static_cast<unsigned long long>(row.no_credit_skips),
         static_cast<unsigned long long>(row.loans_registered),
@@ -1767,14 +1784,14 @@ GstStateChangeReturn change_state(GstElement* element, GstStateChange transition
     self->stats_pushes = 0;
     self->rr_index = 0;
     self->next_ready_ticket = 1;
-    self->service_ordinal = 0;
+    self->service_frontier = 0;
     gst_segment_init(&self->pending_segment, GST_FORMAT_TIME);
     detached.reserve(self->slots.size());
     for (PendingSlot* slot : self->slots) {
       if (slot) {
         slot->eos = false;
         slot->emitted = 0;
-        slot->last_service_ordinal = 0;
+        slot->fair_service_count = 0;
         slot->fairness_active = false;
         reset_slot_stats(slot);
         if (GstBuffer* buffer = detach_pending_locked(slot)) {
