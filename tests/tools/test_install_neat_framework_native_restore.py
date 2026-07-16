@@ -11,11 +11,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "tools" / "install_neat_framework.sh"
+RECOVERY = ROOT / "scripts" / "fix_devkit_runtime.sh"
 
 
-def run_bash(script: str) -> subprocess.CompletedProcess[str]:
+def run_bash(
+    script: str, target: Path = INSTALLER
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["bash", "-c", script, "bash", str(INSTALLER)],
+        ["bash", "-c", script, "bash", str(target)],
         check=False,
         text=True,
         capture_output=True,
@@ -557,6 +560,73 @@ printf 'PRIVATE_OK\n'
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PRIVATE_OK", result.stdout)
         self.assertIn("versioned package-owned dispatcher", result.stdout)
+
+
+
+class DevKitRecoveryDispatcherTest(unittest.TestCase):
+    def test_recovery_quarantines_every_global_dispatcher_without_alias(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mkdir -p "${tmp}/loader"
+printf stale > "${tmp}/loader/libneatdispatchercore.so.bak-20260705"
+ln -s libneatdispatchercore.so.bak-20260705 \
+  "${tmp}/loader/libneatdispatchercore.so"
+export NEAT_RECOVERY_DISPATCHER_GLOBAL_LIB_DIR="${tmp}/loader"
+export NEAT_RECOVERY_DISPATCHER_QUARANTINE_DIR="${tmp}/quarantine"
+export NEAT_RECOVERY_FUNCTIONS_ONLY=ON
+source "$1"
+run_step() {
+  shift
+  "$@"
+}
+dpkg-query() { return 1; }
+ldconfig() { :; }
+quarantine_stale_global_dispatcher_libs
+[[ ! -e "${tmp}/loader/libneatdispatchercore.so" ]]
+[[ ! -L "${tmp}/loader/libneatdispatchercore.so" ]]
+[[ ! -e "${tmp}/loader/libneatdispatchercore.so.bak-20260705" ]]
+[[ -L "${tmp}/quarantine/libneatdispatchercore.so" ]]
+[[ -f "${tmp}/quarantine/libneatdispatchercore.so.bak-20260705" ]]
+[[ "$(find "${tmp}/loader" -name 'libneatdispatchercore.so*' | wc -l)" -eq 0 ]]
+printf 'RECOVERY_MIGRATED\n'
+''',
+            RECOVERY,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RECOVERY_MIGRATED", result.stdout)
+        self.assertIn("no global alias was created", result.stdout)
+
+    def test_recovery_refuses_package_owned_global_dispatcher(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mkdir -p "${tmp}/loader"
+touch "${tmp}/loader/libneatdispatchercore.so"
+export NEAT_RECOVERY_DISPATCHER_GLOBAL_LIB_DIR="${tmp}/loader"
+export NEAT_RECOVERY_DISPATCHER_QUARANTINE_DIR="${tmp}/quarantine"
+export NEAT_RECOVERY_FUNCTIONS_ONLY=ON
+source "$1"
+run_step() {
+  shift
+  "$@"
+}
+dpkg-query() { printf 'legacy-runtime: %s\n' "$2"; }
+ldconfig() { :; }
+! quarantine_stale_global_dispatcher_libs
+[[ -f "${tmp}/loader/libneatdispatchercore.so" ]]
+[[ ! -e "${tmp}/quarantine" ]]
+printf 'RECOVERY_REFUSED\n'
+''',
+            RECOVERY,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RECOVERY_REFUSED", result.stdout)
+        self.assertIn("package-owned global dispatcher", result.stderr)
 
 
 
