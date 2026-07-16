@@ -5099,9 +5099,6 @@ int resolve_preproc_max_input_width(const internal::PreprocessPlannerResult& pla
     if (effective.input_max_width > 0) {
       return effective.input_max_width;
     }
-    if (input && input->width > 0) {
-      return input->width;
-    }
     if (plan.modelpack_max_width > 0 &&
         (effective.resize.width <= 0 || plan.modelpack_max_width > effective.resize.width)) {
       return plan.modelpack_max_width;
@@ -5123,9 +5120,6 @@ int resolve_preproc_max_input_height(const internal::PreprocessPlannerResult& pl
     const auto& effective = plan.resolved_plan.effective;
     if (effective.input_max_height > 0) {
       return effective.input_max_height;
-    }
-    if (input && input->height > 0) {
-      return input->height;
     }
     if (plan.modelpack_max_height > 0 &&
         (effective.resize.height <= 0 || plan.modelpack_max_height > effective.resize.height)) {
