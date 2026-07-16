@@ -8,6 +8,8 @@ ROOT_FREE_SPACE_THRESHOLD_MB=500
 EV74_FIRMWARE_INSTALLER="/usr/libexec/sima-neat-firmware/install.sh"
 EV74_FIRMWARE_TARGET="/lib/firmware/modalix-cvu-fw"
 EV74_FIRMWARE_SHA_FILE="/usr/share/sima-neat-firmware/modalix-cvu-fw.sha256"
+DISPATCHER_GLOBAL_LIB_DIR="${NEAT_RECOVERY_DISPATCHER_GLOBAL_LIB_DIR:-/usr/lib/aarch64-linux-gnu}"
+DISPATCHER_QUARANTINE_DIR="${NEAT_RECOVERY_DISPATCHER_QUARANTINE_DIR:-/var/lib/sima-neat/quarantine/dispatcher}"
 
 if [[ $# -gt 0 ]]; then
   pass="$1"
@@ -113,35 +115,51 @@ cleanup_tmp_sima_if_root_low_space() {
   '
 }
 
-repair_stale_global_dispatcher_lib() {
-  local global_lib="/usr/lib/aarch64-linux-gnu/libneatdispatchercore.so"
-  local runtime_lib="/usr/lib/aarch64-linux-gnu/neat/runtime/libneatdispatchercore.so"
+quarantine_stale_global_dispatcher_libs() {
+  local candidate owner destination timestamp
+  local -a candidates=()
 
-  if [[ ! -e "${runtime_lib}" ]]; then
-    printf "[recovery] dispatcher lib repair skipped: runtime lib not found at %s\n" "${runtime_lib}"
+  if [[ ! -d "${DISPATCHER_GLOBAL_LIB_DIR}" ]]; then
+    printf "[recovery] dispatcher quarantine skipped: loader directory not found at %s\n" \
+      "${DISPATCHER_GLOBAL_LIB_DIR}"
     return 0
   fi
 
-  if [[ -L "${global_lib}" && "$(readlink -f "${global_lib}")" == "${runtime_lib}" ]]; then
-    printf "[recovery] dispatcher lib repair skipped: %s already points at runtime lib\n" "${global_lib}"
+  mapfile -t candidates < <(
+    find "${DISPATCHER_GLOBAL_LIB_DIR}" -maxdepth 1 -mindepth 1 \
+      -name 'libneatdispatchercore.so*' -print | sort
+  )
+  if [[ "${#candidates[@]}" -eq 0 ]]; then
+    printf "[recovery] dispatcher quarantine skipped: no global dispatcher paths found\n"
     return 0
   fi
 
-  if [[ -e "${global_lib}" ]]; then
-    if dpkg-query -S "${global_lib}" >/dev/null 2>&1; then
-      printf "[recovery] dispatcher lib repair skipped: %s is package-owned\n" "${global_lib}"
-      return 0
+  # Refuse the complete migration before moving anything when another package
+  # owns one of these paths. Its package must perform the ownership transition.
+  for candidate in "${candidates[@]}"; do
+    owner="$(dpkg-query -S "${candidate}" 2>/dev/null || true)"
+    if [[ -n "${owner}" ]]; then
+      printf "[recovery] refusing package-owned global dispatcher path %s: %s\n" \
+        "${candidate}" "${owner}" >&2
+      return 1
     fi
+  done
 
-    local backup="${global_lib}.bak-$(date -u +%Y%m%dT%H%M%SZ)"
-    run_step "quarantine stale unowned ${global_lib}" mv -f "${global_lib}" "${backup}"
-  fi
+  run_step "create dispatcher quarantine" mkdir -p "${DISPATCHER_QUARANTINE_DIR}" || return 1
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  for candidate in "${candidates[@]}"; do
+    destination="${DISPATCHER_QUARANTINE_DIR}/$(basename "${candidate}")"
+    if [[ -e "${destination}" || -L "${destination}" ]]; then
+      destination="${destination}.${timestamp}.$$"
+    fi
+    run_step "quarantine stale unowned ${candidate}" \
+      mv -f -- "${candidate}" "${destination}" || return 1
+  done
 
-  if [[ ! -e "${global_lib}" ]]; then
-    run_step "link ${global_lib} to packaged runtime lib" ln -s "${runtime_lib}" "${global_lib}"
-  fi
+  run_step "refresh dynamic loader cache" ldconfig || return 1
+  printf "[recovery] quarantined %d global dispatcher path(s); no global alias was created\n" \
+    "${#candidates[@]}"
 }
-
 empty_coprocessing() {
   if [[ "${TARGET_COPROCESSING_DIR}" != "/data/simaai/coprocessing" ]]; then
     printf "[recovery] empty coprocessing skipped: unexpected target %s\n" "${TARGET_COPROCESSING_DIR}"
@@ -173,7 +191,13 @@ stop_runtime_services() {
   run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
 }
 
-repair_stale_global_dispatcher_lib
+if [[ "${NEAT_RECOVERY_FUNCTIONS_ONLY:-OFF}" == "ON" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+if ! quarantine_stale_global_dispatcher_libs; then
+  exit 1
+fi
 if ! activate_staged_ev74_firmware_if_needed; then
   exit 1
 fi

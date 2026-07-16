@@ -3,6 +3,8 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/SampleUtil.h"
 
+#include <unordered_set>
+
 namespace simaai::neat {
 
 namespace {
@@ -29,7 +31,10 @@ public:
     }
     cv_.notify_one();
     worker_.join();
-    for (GstBuffer* buffer : pending_) {
+
+    // pending_ is a non-owning worklist. tracked_ owns the one retained
+    // reference for every root that has not been returned to its pool yet.
+    for (GstBuffer* buffer : tracked_) {
       gst_buffer_unref(buffer);
     }
   }
@@ -38,11 +43,35 @@ public:
     if (buffers.empty()) {
       return;
     }
+    std::size_t redundant_count = buffers.size();
+    bool wake_worker = false;
     {
       std::lock_guard<std::mutex> lock(mu_);
-      pending_.insert(pending_.end(), buffers.begin(), buffers.end());
+      if (!stopping_) {
+        auto redundant_end = buffers.begin();
+        for (GstBuffer* buffer : buffers) {
+          if (tracked_.insert(buffer).second) {
+            // tracked_ owns this reference. pending_ only schedules checks.
+            pending_.push_back(buffer);
+          } else {
+            // Every enqueue transfers an owned reference. One retained root is
+            // sufficient to keep the pooled buffer alive, so consume extras.
+            *redundant_end++ = buffer;
+          }
+        }
+        redundant_count = static_cast<std::size_t>(redundant_end - buffers.begin());
+        wake_worker = true;
+      }
     }
-    cv_.notify_one();
+
+    // GstBuffer finalizers can run qdata callbacks that enqueue more roots.
+    // Never unref while holding mu_, or that re-entry can deadlock.
+    for (std::size_t i = 0; i < redundant_count; ++i) {
+      gst_buffer_unref(buffers[i]);
+    }
+    if (wake_worker) {
+      cv_.notify_one();
+    }
   }
 
 private:
@@ -55,21 +84,29 @@ private:
         buffers.swap(pending_);
         lock.unlock();
 
-        std::vector<GstBuffer*> retry;
-        retry.reserve(buffers.size());
-        for (GstBuffer* buffer : buffers) {
-          // Some supported GStreamer releases finalize parent metadata before
-          // releasing shared memory. Return pooled parents only after every
-          // downstream memory reference is gone.
-          if (gst_buffer_is_all_memory_writable(buffer)) {
-            gst_buffer_unref(buffer);
-          } else {
-            retry.push_back(buffer);
-          }
-        }
+        const auto releasable_end =
+            std::partition(buffers.begin(), buffers.end(), [](GstBuffer* buffer) {
+              // Some supported GStreamer releases finalize parent metadata
+              // before releasing shared memory. Return pooled parents only
+              // after every downstream memory reference is gone.
+              return gst_buffer_is_writable(buffer) && gst_buffer_is_all_memory_writable(buffer);
+            });
 
         lock.lock();
-        pending_.insert(pending_.end(), retry.begin(), retry.end());
+        pending_.insert(pending_.end(), releasable_end, buffers.end());
+
+        // Stop tracking before the final unref can synchronously return a
+        // buffer to its pool and make the pointer available for reuse.
+        for (auto it = buffers.begin(); it != releasable_end; ++it) {
+          tracked_.erase(*it);
+        }
+
+        lock.unlock();
+        for (auto it = buffers.begin(); it != releasable_end; ++it) {
+          gst_buffer_unref(*it);
+        }
+        lock.lock();
+
         if (!pending_.empty()) {
           cv_.wait_for(lock, std::chrono::milliseconds(1));
         }
@@ -80,6 +117,7 @@ private:
   std::mutex mu_;
   std::condition_variable cv_;
   std::vector<GstBuffer*> pending_;
+  std::unordered_set<GstBuffer*> tracked_;
   bool stopping_ = false;
   std::thread worker_;
 };
