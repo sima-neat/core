@@ -89,11 +89,22 @@ INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basena
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
+SIMAAI_MEMORY_DEBS=()
+SIMAAI_MEMORY_RUNTIME_DEB=""
+SIMAAI_MEMORY_DEV_DEB=""
+SIMAAI_MEMORY_REQUIRED_VERSION=""
+SIMAAI_MEMORY_PAYLOAD_PATH=""
+SIMAAI_MEMORY_PAYLOAD_SHA256=""
+SIMAAI_MEMORY_PAYLOAD_BUILD_ID=""
+SIMAAI_MEMORY_PREINSTALL_PACKAGES=""
+SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
+SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
+SIMAAI_MEMORY_TRANSACTION_COMPLETE=0
 
 cleanup_installer_tmp_dirs() {
   local dir
   for dir in "${INSTALLER_TMP_DIRS[@]}"; do
-    [[ -n "${dir}" && -d "${dir}" ]] && rm -rf "${dir}"
+    [[ -n "${dir}" && ( -e "${dir}" || -L "${dir}" ) ]] && rm -rf -- "${dir}"
   done
 }
 trap cleanup_installer_tmp_dirs EXIT
@@ -854,6 +865,343 @@ print(match.group(1))
 ' "${dependency}" <<<"${control}"
 }
 
+exact_dependency_version_from_relations() {
+  local dependency="$1"
+  python3 -c '
+import re
+import sys
+
+dependency = sys.argv[1]
+relations = sys.stdin.read().strip()
+match = re.search(
+    rf"(?:^|,)\s*{re.escape(dependency)}(?:\:[^\s(,|]+)?\s*"
+    rf"\(\s*=\s*([^\s)]+)\s*\)",
+    relations,
+)
+if match is None:
+    raise SystemExit(1)
+print(match.group(1))
+' "${dependency}"
+}
+
+palette_required_simaai_memory_version() {
+  local palette_version depends version
+  if deb_package_is_installed simaai-palette-modalix; then
+    palette_version="$(deb_package_installed_version simaai-palette-modalix)"
+    depends="$(dpkg-query -W -f='${Depends}' simaai-palette-modalix 2>/dev/null || true)"
+    version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
+    if [[ -z "${version}" ]]; then
+      echo "Installed simaai-palette-modalix=${palette_version} has no exact simaai-memory-lib dependency." >&2
+      return 1
+    fi
+    printf '%s\n' "${version}"
+    return 0
+  fi
+
+  palette_version="$(apt_candidate_version simaai-palette-modalix)"
+  if [[ -z "${palette_version}" || "${palette_version}" == "(none)" ]]; then
+    echo "Cannot discover the platform's required simaai-memory-lib revision: simaai-palette-modalix is not installed and has no APT candidate." >&2
+    return 1
+  fi
+  apt_exact_dependency_version simaai-palette-modalix "${palette_version}" simaai-memory-lib
+}
+
+board_debian_architecture() {
+  dpkg --print-architecture
+}
+
+artifact_checksum_for_file() {
+  local file="$1"
+  python3 - "$(basename "${file}")" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+name = sys.argv[1]
+checksums = set()
+for path in sorted(Path.cwd().glob("metadata*.json")):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"invalid package metadata {path}: {exc}")
+    value = data.get("resources-checksum", {}).get(name)
+    if value:
+        checksums.add(str(value).strip().lower())
+if len(checksums) > 1:
+    raise SystemExit(f"conflicting artifact checksums for {name}: {sorted(checksums)}")
+if checksums:
+    value = checksums.pop()
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise SystemExit(f"invalid SHA256 for {name}: {value}")
+    print(value)
+PY
+}
+
+collect_local_simaai_memory_debs() {
+  local deb package version arch depends dev_runtime_version board_arch
+  local runtime_deb="" dev_deb=""
+
+  for deb in "${DEBS[@]}"; do
+    [[ -f "${deb}" ]] || continue
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    case "${package}" in
+      simaai-memory-lib)
+        if [[ -n "${runtime_deb}" ]]; then
+          echo "Artifact contains more than one simaai-memory-lib runtime DEB." >&2
+          return 1
+        fi
+        runtime_deb="${deb}"
+        ;;
+      simaai-memory-lib-dev)
+        if [[ -n "${dev_deb}" ]]; then
+          echo "Artifact contains more than one simaai-memory-lib-dev DEB." >&2
+          return 1
+        fi
+        dev_deb="${deb}"
+        ;;
+    esac
+  done
+
+  if [[ -z "${runtime_deb}" || -z "${dev_deb}" ]]; then
+    echo "The board artifact must bundle exactly one local simaai-memory-lib runtime and dev DEB." >&2
+    return 1
+  fi
+
+  SIMAAI_MEMORY_REQUIRED_VERSION="$(palette_required_simaai_memory_version)" || return 1
+  board_arch="$(board_debian_architecture)" || return 1
+  for deb in "${runtime_deb}" "${dev_deb}"; do
+    package="$(dpkg-deb -f "${deb}" Package)"
+    version="$(dpkg-deb -f "${deb}" Version)"
+    arch="$(dpkg-deb -f "${deb}" Architecture)"
+    if [[ "${version}" != "${SIMAAI_MEMORY_REQUIRED_VERSION}" ]]; then
+      echo "Bundled ${package} has version ${version}; installed palette requires exact revision ${SIMAAI_MEMORY_REQUIRED_VERSION}." >&2
+      return 1
+    fi
+    if [[ "${arch}" != "${board_arch}" ]]; then
+      echo "Bundled ${package} has architecture ${arch}; board architecture is ${board_arch}." >&2
+      return 1
+    fi
+  done
+
+  depends="$(dpkg-deb -f "${dev_deb}" Depends 2>/dev/null || true)"
+  dev_runtime_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
+  if [[ "${dev_runtime_version}" != "${SIMAAI_MEMORY_REQUIRED_VERSION}" ]]; then
+    echo "Bundled simaai-memory-lib-dev must depend on simaai-memory-lib (= ${SIMAAI_MEMORY_REQUIRED_VERSION})." >&2
+    return 1
+  fi
+
+  SIMAAI_MEMORY_RUNTIME_DEB="${runtime_deb}"
+  SIMAAI_MEMORY_DEV_DEB="${dev_deb}"
+  SIMAAI_MEMORY_DEBS=("${runtime_deb}" "${dev_deb}")
+}
+
+validate_local_simaai_memory_payload() {
+  local extract_dir payload soname symbol build_id expected_deb_sha actual_deb_sha package_deb
+  local -a payloads=()
+  extract_dir="$(mktemp -d /tmp/sima-neat-memory-payload-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${extract_dir}")
+  dpkg-deb -x "${SIMAAI_MEMORY_RUNTIME_DEB}" "${extract_dir}"
+  mapfile -t payloads < <(find "${extract_dir}/usr/lib" -type f -name 'libsimaaimem.so.*' | sort)
+  if [[ "${#payloads[@]}" -ne 1 ]]; then
+    echo "Bundled simaai-memory-lib must contain exactly one versioned libsimaaimem payload; found ${#payloads[@]}." >&2
+    return 1
+  fi
+  payload="${payloads[0]}"
+
+  soname="$(LC_ALL=C readelf -d "${payload}" 2>/dev/null |
+    sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p' | head -n1)"
+  if [[ "${soname}" != "libsimaaimem.so.2" ]]; then
+    echo "Bundled simaai-memory-lib has unexpected SONAME ${soname:-<missing>}; expected libsimaaimem.so.2." >&2
+    return 1
+  fi
+  symbol="$(LC_ALL=C readelf -Ws "${payload}" 2>/dev/null |
+    awk '$8 == "simaai_memory_export_dmabuf_fd" { print $8; exit }')"
+  if [[ -z "${symbol}" ]]; then
+    echo "Bundled simaai-memory-lib is missing simaai_memory_export_dmabuf_fd." >&2
+    return 1
+  fi
+  build_id="$(LC_ALL=C readelf -n "${payload}" 2>/dev/null |
+    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
+  if [[ -z "${build_id}" ]]; then
+    echo "Bundled simaai-memory-lib payload has no ELF build ID." >&2
+    return 1
+  fi
+
+  for package_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
+    expected_deb_sha="$(artifact_checksum_for_file "${package_deb}")" || return 1
+    if [[ -n "${expected_deb_sha}" ]]; then
+      actual_deb_sha="$(sha256sum "${package_deb}" | awk '{print $1}')"
+      if [[ "${actual_deb_sha}" != "${expected_deb_sha}" ]]; then
+        echo "Bundled $(basename "${package_deb}") checksum does not match package metadata." >&2
+        return 1
+      fi
+    else
+      log "No resources-checksum entry was supplied for $(basename "${package_deb}"); installed payload identity will still be verified against the bundled DEB."
+    fi
+  done
+
+  SIMAAI_MEMORY_PAYLOAD_PATH="${payload#${extract_dir}}"
+  SIMAAI_MEMORY_PAYLOAD_SHA256="$(sha256sum "${payload}" | awk '{print $1}')"
+  SIMAAI_MEMORY_PAYLOAD_BUILD_ID="${build_id}"
+  log "Validated bundled simaai-memory-lib=${SIMAAI_MEMORY_REQUIRED_VERSION} payload sha256=${SIMAAI_MEMORY_PAYLOAD_SHA256} build-id=${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}"
+}
+
+remove_local_simaai_memory_debs_from_general_transaction() {
+  local deb memory_deb is_memory
+  local -a remaining=()
+  for deb in "${DEBS[@]}"; do
+    is_memory=0
+    for memory_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
+      if [[ "${deb}" == "${memory_deb}" ]]; then
+        is_memory=1
+        break
+      fi
+    done
+    [[ "${is_memory}" -eq 1 ]] || remaining+=("${deb}")
+  done
+  DEBS=("${remaining[@]}")
+}
+
+snapshot_memory_transaction_guard_state() {
+  local ota_owner
+  SIMAAI_MEMORY_PREINSTALL_PACKAGES="$(mktemp /tmp/sima-neat-memory-packages-before-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${SIMAAI_MEMORY_PREINSTALL_PACKAGES}")
+  dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null |
+    awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${SIMAAI_MEMORY_PREINSTALL_PACKAGES}"
+
+  if ! deb_package_is_installed simaai-palette-modalix; then
+    echo "simaai-palette-modalix must be installed before the isolated memory replacement." >&2
+    return 1
+  fi
+  SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION="$(deb_package_installed_version simaai-palette-modalix)"
+  SIMAAI_MEMORY_PREINSTALL_OTA_PATH="$(command -v simaai-ota 2>/dev/null || true)"
+  if [[ -z "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" ]]; then
+    echo "simaai-ota is missing before the memory replacement." >&2
+    return 1
+  fi
+  ota_owner="$(dpkg-query -S "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" 2>/dev/null || true)"
+  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
+    echo "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH} is not owned by simaai-palette-modalix before the memory replacement: ${ota_owner:-<unowned>}" >&2
+    return 1
+  fi
+}
+
+verify_memory_guard_palette_and_ota() {
+  local current_palette ota_path ota_owner
+  if ! deb_package_is_installed simaai-palette-modalix; then
+    echo "simaai-palette-modalix was removed during NEAT installation." >&2
+    return 1
+  fi
+  current_palette="$(deb_package_installed_version simaai-palette-modalix)"
+  if [[ "${current_palette}" != "${SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION}" ]]; then
+    echo "simaai-palette-modalix changed from ${SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION} to ${current_palette}." >&2
+    return 1
+  fi
+  ota_path="$(command -v simaai-ota 2>/dev/null || true)"
+  if [[ "${ota_path}" != "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" ]]; then
+    echo "simaai-ota path changed or disappeared during NEAT installation: ${ota_path:-<missing>}." >&2
+    return 1
+  fi
+  ota_owner="$(dpkg-query -S "${ota_path}" 2>/dev/null || true)"
+  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
+    echo "simaai-ota is no longer owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
+    return 1
+  fi
+}
+
+verify_installed_simaai_memory_payload() {
+  local installed_version installed_sha installed_build_id owner
+  if ! deb_package_is_installed simaai-memory-lib; then
+    echo "simaai-memory-lib is not installed after the isolated replacement." >&2
+    return 1
+  fi
+  installed_version="$(deb_package_installed_version simaai-memory-lib)"
+  if [[ "${installed_version}" != "${SIMAAI_MEMORY_REQUIRED_VERSION}" ]]; then
+    echo "Installed simaai-memory-lib version ${installed_version} does not match ${SIMAAI_MEMORY_REQUIRED_VERSION}." >&2
+    return 1
+  fi
+  if [[ ! -f "${SIMAAI_MEMORY_PAYLOAD_PATH}" ]]; then
+    echo "Installed simaai-memory-lib payload is missing: ${SIMAAI_MEMORY_PAYLOAD_PATH}" >&2
+    return 1
+  fi
+  owner="$(dpkg-query -S "${SIMAAI_MEMORY_PAYLOAD_PATH}" 2>/dev/null || true)"
+  if [[ ! "${owner}" =~ ^simaai-memory-lib(:[^:[:space:]]+)?:[[:space:]] ]]; then
+    echo "Installed memory payload is not owned by simaai-memory-lib: ${owner:-<unowned>}." >&2
+    return 1
+  fi
+  installed_sha="$(sha256sum "${SIMAAI_MEMORY_PAYLOAD_PATH}" | awk '{print $1}')"
+  installed_build_id="$(LC_ALL=C readelf -n "${SIMAAI_MEMORY_PAYLOAD_PATH}" 2>/dev/null |
+    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
+  if [[ "${installed_sha}" != "${SIMAAI_MEMORY_PAYLOAD_SHA256}" ||
+        "${installed_build_id}" != "${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}" ]]; then
+    echo "Installed simaai-memory-lib payload does not match the bundled artifact." >&2
+    echo "  expected sha/build-id: ${SIMAAI_MEMORY_PAYLOAD_SHA256} / ${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}" >&2
+    echo "  installed sha/build-id: ${installed_sha:-<missing>} / ${installed_build_id:-<missing>}" >&2
+    return 1
+  fi
+  log "Verified installed simaai-memory-lib payload matches the bundled artifact."
+}
+
+verify_memory_transaction_preservation() {
+  local after missing audit_log
+  after="$(mktemp /tmp/sima-neat-memory-packages-after-XXXXXX)"
+  audit_log="$(mktemp /tmp/sima-neat-memory-dpkg-audit-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${after}" "${audit_log}")
+  dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null |
+    awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${after}"
+  missing="$(comm -23 "${SIMAAI_MEMORY_PREINSTALL_PACKAGES}" "${after}")"
+  if [[ -n "${missing}" ]]; then
+    echo "The isolated simaai-memory replacement removed preinstalled packages:" >&2
+    while IFS= read -r package; do
+      [[ -n "${package}" ]] && printf '  %s\n' "${package}" >&2
+    done <<<"${missing}"
+    return 1
+  fi
+  verify_memory_guard_palette_and_ota || return 1
+  if ! run_sudo apt-get check; then
+    echo "APT dependency check failed after the isolated simaai-memory replacement." >&2
+    return 1
+  fi
+  if ! dpkg --audit >"${audit_log}" 2>&1 || [[ -s "${audit_log}" ]]; then
+    echo "dpkg audit failed after the isolated simaai-memory replacement:" >&2
+    cat "${audit_log}" >&2
+    return 1
+  fi
+  log "Verified the isolated simaai-memory replacement removed no preinstalled packages and preserved simaai-ota."
+}
+
+install_local_simaai_memory_transaction() {
+  local simulation_log
+  local -a apt_args=(apt-get install -y --reinstall --no-remove)
+
+  collect_local_simaai_memory_debs || return 1
+  validate_local_simaai_memory_payload || return 1
+  snapshot_memory_transaction_guard_state || return 1
+  simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${simulation_log}")
+
+  log "Simulating isolated local simaai-memory replacement with package removal disabled."
+  if ! run_sudo "${apt_args[@]}" --simulate "${SIMAAI_MEMORY_DEBS[@]}" >"${simulation_log}" 2>&1; then
+    cat "${simulation_log}" >&2
+    echo "APT rejected the isolated local simaai-memory transaction; no packages were changed." >&2
+    return 1
+  fi
+  cat "${simulation_log}"
+  if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
+    echo "APT simulation planned package removal for the isolated simaai-memory transaction; refusing to continue." >&2
+    grep '^Remv[[:space:]]' "${simulation_log}" >&2
+    return 1
+  fi
+
+  log "Installing bundled simaai-memory runtime/dev packages in an isolated zero-removal transaction."
+  run_sudo "${apt_args[@]}" "${SIMAAI_MEMORY_DEBS[@]}" || return 1
+  verify_installed_simaai_memory_payload || return 1
+  verify_memory_transaction_preservation || return 1
+  SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
+  remove_local_simaai_memory_debs_from_general_transaction
+}
+
 local_deb_for_exact_package() {
   local package="$1"
   local version="$2"
@@ -926,6 +1274,13 @@ native_modalix_restore_specs() {
 
   out_array=()
   for package in libcamera libcamera-tools simaai-memory-lib; do
+    # The bundled memory runtime/dev pair is installed and verified in its own
+    # zero-removal transaction. Never let this broader native-repair resolver
+    # substitute the repository's indistinguishable same-version payload.
+    if [[ "${package}" == "simaai-memory-lib" &&
+          "${SIMAAI_MEMORY_TRANSACTION_COMPLETE:-0}" -eq 1 ]]; then
+      continue
+    fi
     version="$(apt_exact_dependency_version \
       simaai-palette-modalix "${palette_version}" "${package}")" || {
       echo "simaai-palette-modalix=${palette_version} has no exact dependency on ${package}" >&2
@@ -1361,35 +1716,112 @@ verify_board_codec_services() {
   done
 }
 
-repair_stale_global_dispatcher_lib() {
-  local global_lib="/usr/lib/aarch64-linux-gnu/libneatdispatchercore.so"
-  local runtime_lib="/usr/lib/aarch64-linux-gnu/neat/runtime/libneatdispatchercore.so"
+dispatcher_multiarch_triplet() {
+  dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null || printf '%s\n' 'aarch64-linux-gnu'
+}
 
-  if [[ ! -e "${runtime_lib}" ]]; then
-    log "Dispatcher lib repair skipped; runtime lib not found at ${runtime_lib}"
-    return 0
-  fi
+dispatcher_global_lib_dir() {
+  printf '/usr/lib/%s\n' "$(dispatcher_multiarch_triplet)"
+}
 
-  if [[ -L "${global_lib}" && "$(readlink -f "${global_lib}")" == "${runtime_lib}" ]]; then
-    log "Dispatcher lib repair skipped; ${global_lib} already points at the packaged runtime lib."
-    return 0
-  fi
+dispatcher_private_runtime_dir() {
+  printf '%s/neat/runtime\n' "$(dispatcher_global_lib_dir)"
+}
 
-  if [[ -e "${global_lib}" ]]; then
-    if dpkg-query -S "${global_lib}" >/dev/null 2>&1; then
-      log "Dispatcher lib repair skipped; ${global_lib} is package-owned."
-      return 0
+dispatcher_quarantine_root() {
+  printf '%s\n' '/var/lib/sima-neat/quarantine/dispatcher'
+}
+
+collect_stale_global_dispatcher_paths() {
+  local out_array_name="$1"
+  local -n out_array="${out_array_name}"
+  local lib_dir
+  lib_dir="$(dispatcher_global_lib_dir)"
+  out_array=()
+  [[ -d "${lib_dir}" ]] || return 0
+  mapfile -t out_array < <(
+    find "${lib_dir}" -maxdepth 1 -mindepth 1 \
+      -name 'libneatdispatchercore.so*' \
+      -print | sort
+  )
+}
+
+migrate_stale_global_dispatcher_libs() {
+  local quarantine_dir path owner
+  local -a stale_paths=()
+  collect_stale_global_dispatcher_paths stale_paths
+  [[ "${#stale_paths[@]}" -gt 0 ]] || return 0
+
+  for path in "${stale_paths[@]}"; do
+    owner="$(dpkg-query -S "${path}" 2>/dev/null || true)"
+    if [[ -n "${owner}" ]]; then
+      echo "Refusing to quarantine package-owned global dispatcher path ${path}: ${owner}" >&2
+      echo "The dispatcher package must migrate that ownership explicitly." >&2
+      return 1
     fi
+  done
 
-    local backup="${global_lib}.bak-neat-installer-$(date -u +%Y%m%dT%H%M%SZ)"
-    log "Quarantining stale unowned dispatcher lib ${global_lib} -> ${backup}"
-    run_sudo mv -f "${global_lib}" "${backup}"
+  quarantine_dir="$(dispatcher_quarantine_root)/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  run_sudo mkdir -p "${quarantine_dir}"
+  for path in "${stale_paths[@]}"; do
+    log "Quarantining stale global dispatcher path outside loader directories: ${path}"
+    run_sudo mv -- "${path}" "${quarantine_dir}/$(basename "${path}")"
+  done
+  run_sudo ldconfig >/dev/null 2>&1 || true
+}
+
+dispatcher_path_is_owned_by_neat_runtime() {
+  local path="$1" owner
+  owner="$(dpkg-query -S "${path}" 2>/dev/null || true)"
+  [[ "${owner}" =~ ^neat-runtime(:[^:[:space:]]+)?:[[:space:]] ]]
+}
+
+verify_private_dispatcher_runtime() {
+  local runtime_dir runtime_file soname soname_path resolved
+  local -a runtime_files=()
+  local -a stale_paths=()
+  runtime_dir="$(dispatcher_private_runtime_dir)"
+  if [[ ! -d "${runtime_dir}" ]]; then
+    echo "Packaged private dispatcher runtime directory is missing: ${runtime_dir}" >&2
+    return 1
+  fi
+  mapfile -t runtime_files < <(
+    find "${runtime_dir}" -maxdepth 1 -type f \
+      -name 'libneatdispatchercore.so.[0-9]*' -print | sort
+  )
+  if [[ "${#runtime_files[@]}" -ne 1 ]]; then
+    echo "Expected exactly one versioned private dispatcher runtime, found ${#runtime_files[@]} in ${runtime_dir}." >&2
+    return 1
+  fi
+  runtime_file="${runtime_files[0]}"
+  soname="$(LC_ALL=C readelf -d "${runtime_file}" 2>/dev/null |
+    sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p' | head -n1)"
+  if [[ ! "${soname}" =~ ^libneatdispatchercore\.so\.[1-9][0-9]*$ ]]; then
+    echo "Private dispatcher must have a versioned SONAME; got ${soname:-<missing>} from ${runtime_file}." >&2
+    return 1
+  fi
+  soname_path="${runtime_dir}/${soname}"
+  resolved="$(readlink -f "${soname_path}" 2>/dev/null || true)"
+  if [[ "${resolved}" != "${runtime_file}" ]]; then
+    echo "Private dispatcher SONAME path does not resolve to its packaged runtime." >&2
+    echo "  SONAME path: ${soname_path}" >&2
+    echo "  expected:    ${runtime_file}" >&2
+    echo "  resolved:    ${resolved:-<missing>}" >&2
+    return 1
+  fi
+  if ! dispatcher_path_is_owned_by_neat_runtime "${runtime_file}" ||
+      ! dispatcher_path_is_owned_by_neat_runtime "${soname_path}"; then
+    echo "Private dispatcher runtime and SONAME link must both be owned by neat-runtime." >&2
+    return 1
   fi
 
-  if [[ ! -e "${global_lib}" ]]; then
-    log "Linking ${global_lib} to packaged runtime lib ${runtime_lib}"
-    run_sudo ln -s "${runtime_lib}" "${global_lib}"
+  collect_stale_global_dispatcher_paths stale_paths
+  if [[ "${#stale_paths[@]}" -gt 0 ]]; then
+    echo "Stale global dispatcher paths remain in a loader directory:" >&2
+    printf '  %s\n' "${stale_paths[@]}" >&2
+    return 1
   fi
+  log "Verified versioned package-owned dispatcher ${soname} resolves only from ${runtime_dir}."
 }
 
 sima_neat_global_lib_dir() {
@@ -1583,6 +2015,19 @@ verify_global_sima_neat_lib_links() {
   log "Verified $(basename "${soname_link}") and libsima_neat.so resolve to ${versioned_lib}"
 }
 
+complete_board_install_after_packages() {
+  migrate_stale_global_dispatcher_libs
+  verify_private_dispatcher_runtime
+  repair_global_sima_neat_lib_links
+  verify_global_sima_neat_lib_links
+  verify_installed_simaai_memory_payload
+  verify_memory_guard_palette_and_ota
+  activate_board_runtime_after_install
+  restart_board_codec_services
+  verify_board_codec_services
+  verify_board_runtime_services
+}
+
 install_debs_on_board() {
   prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
@@ -1591,18 +2036,22 @@ install_debs_on_board() {
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # Prefer apt-get for normal installs so system dependencies can be resolved.
-  # Some CI/self-hosted DevKit runners can be left in a transiently broken
-  # exact-version state after a previous partial NEAT install, e.g.
-  # neat-gst-plugins(main) depending on neat-runtime(main) while
-  # neat-runtime(beta) is already unpacked.  Still try apt first even when
-  # `apt-get check` is already unhappy: passing the local DEB set gives apt the
-  # replacement packages it needs to repair the transaction and fetch normal
-  # Debian dependencies.  Direct dpkg is only a last resort because it cannot
-  # fetch missing dependencies and can leave CI boards half-configured.
+  # The memory replacement is deliberately isolated from the broader Neat
+  # transaction. It must start from a coherent APT state because --fix-broken
+  # could make an otherwise local reinstall remove unrelated platform packages.
   if ! apt_package_database_is_healthy; then
-    log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
+    echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
+    echo "Repair the board package database first, then rerun this installer." >&2
+    exit 1
   fi
+  if ! install_local_simaai_memory_transaction; then
+    echo "Failed to install the bundled simaai-memory payload without package removals." >&2
+    exit 1
+  fi
+
+  # Prefer apt-get for the remaining packages so normal system dependencies can
+  # be resolved. The memory DEBs have been removed from this set; the repository
+  # cannot silently substitute its indistinguishable same-version payload.
 
   # Resolve native palette repairs up front, but install them atomically with
   # the local NEAT DEBs.  An older neat-gst-plugins may itself depend on a
@@ -1637,13 +2086,7 @@ install_debs_on_board() {
     -o Dpkg::Options::=--force-overwrite
   )
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
-    repair_stale_global_dispatcher_lib
-    repair_global_sima_neat_lib_links
-    verify_global_sima_neat_lib_links
-    activate_board_runtime_after_install
-    restart_board_codec_services
-    verify_board_codec_services
-    verify_board_runtime_services
+    complete_board_install_after_packages
     return 0
   fi
 
@@ -1656,13 +2099,7 @@ install_debs_on_board() {
   log "apt-get install failed; NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL=ON, removing installed NEAT packages represented by the local DEB set and retrying apt."
   remove_installed_local_deb_packages
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
-    repair_stale_global_dispatcher_lib
-    repair_global_sima_neat_lib_links
-    verify_global_sima_neat_lib_links
-    activate_board_runtime_after_install
-    restart_board_codec_services
-    verify_board_codec_services
-    verify_board_runtime_services
+    complete_board_install_after_packages
     return 0
   fi
 
@@ -1678,13 +2115,7 @@ install_debs_on_board() {
     exit 1
   fi
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
-  repair_stale_global_dispatcher_lib
-  repair_global_sima_neat_lib_links
-  verify_global_sima_neat_lib_links
-  activate_board_runtime_after_install
-  restart_board_codec_services
-  verify_board_codec_services
-  verify_board_runtime_services
+  complete_board_install_after_packages
 }
 
 remove_stale_global_sima_lmm_pip_install() {
