@@ -92,7 +92,8 @@ INSTALLER_TMP_DIRS=()
 SIMAAI_MEMORY_DEBS=()
 SIMAAI_MEMORY_RUNTIME_DEB=""
 SIMAAI_MEMORY_DEV_DEB=""
-SIMAAI_MEMORY_REQUIRED_VERSION=""
+SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION=""
+SIMAAI_MEMORY_ACTUAL_VERSION=""
 SIMAAI_MEMORY_PAYLOAD_PATH=""
 SIMAAI_MEMORY_PAYLOAD_SHA256=""
 SIMAAI_MEMORY_PAYLOAD_BUILD_ID=""
@@ -939,8 +940,8 @@ PY
 }
 
 collect_local_simaai_memory_debs() {
-  local deb package version arch depends dev_runtime_version board_arch
-  local runtime_deb="" dev_deb=""
+  local deb package arch depends provides provided_version dev_runtime_version board_arch
+  local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
 
   for deb in "${DEBS[@]}"; do
     [[ -f "${deb}" ]] || continue
@@ -968,26 +969,43 @@ collect_local_simaai_memory_debs() {
     return 1
   fi
 
-  SIMAAI_MEMORY_REQUIRED_VERSION="$(palette_required_simaai_memory_version)" || return 1
+  SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION="$(palette_required_simaai_memory_version)" || return 1
   board_arch="$(board_debian_architecture)" || return 1
+  runtime_version="$(dpkg-deb -f "${runtime_deb}" Version)"
+  dev_version="$(dpkg-deb -f "${dev_deb}" Version)"
+  if [[ -z "${runtime_version}" || "${dev_version}" != "${runtime_version}" ]]; then
+    echo "Bundled memory runtime/dev package versions must match: runtime=${runtime_version:-<missing>} dev=${dev_version:-<missing>}." >&2
+    return 1
+  fi
+  SIMAAI_MEMORY_ACTUAL_VERSION="${runtime_version}"
+
   for deb in "${runtime_deb}" "${dev_deb}"; do
     package="$(dpkg-deb -f "${deb}" Package)"
-    version="$(dpkg-deb -f "${deb}" Version)"
     arch="$(dpkg-deb -f "${deb}" Architecture)"
-    if [[ "${version}" != "${SIMAAI_MEMORY_REQUIRED_VERSION}" ]]; then
-      echo "Bundled ${package} has version ${version}; installed palette requires exact revision ${SIMAAI_MEMORY_REQUIRED_VERSION}." >&2
-      return 1
-    fi
     if [[ "${arch}" != "${board_arch}" ]]; then
       echo "Bundled ${package} has architecture ${arch}; board architecture is ${board_arch}." >&2
       return 1
     fi
   done
 
+  provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
+  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${provides}" || true)"
+  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
+    echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
+    return 1
+  fi
+
+  provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
+  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${provides}" || true)"
+  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
+    echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
+    return 1
+  fi
+
   depends="$(dpkg-deb -f "${dev_deb}" Depends 2>/dev/null || true)"
   dev_runtime_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
-  if [[ "${dev_runtime_version}" != "${SIMAAI_MEMORY_REQUIRED_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib-dev must depend on simaai-memory-lib (= ${SIMAAI_MEMORY_REQUIRED_VERSION})." >&2
+  if [[ "${dev_runtime_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
+    echo "Bundled simaai-memory-lib-dev must depend on simaai-memory-lib (= ${SIMAAI_MEMORY_ACTUAL_VERSION}); got ${depends:-<none>}." >&2
     return 1
   fi
 
@@ -1044,7 +1062,7 @@ validate_local_simaai_memory_payload() {
   SIMAAI_MEMORY_PAYLOAD_PATH="${payload#${extract_dir}}"
   SIMAAI_MEMORY_PAYLOAD_SHA256="$(sha256sum "${payload}" | awk '{print $1}')"
   SIMAAI_MEMORY_PAYLOAD_BUILD_ID="${build_id}"
-  log "Validated bundled simaai-memory-lib=${SIMAAI_MEMORY_REQUIRED_VERSION} payload sha256=${SIMAAI_MEMORY_PAYLOAD_SHA256} build-id=${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}"
+  log "Validated bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} (provides ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}) payload sha256=${SIMAAI_MEMORY_PAYLOAD_SHA256} build-id=${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}"
 }
 
 remove_local_simaai_memory_debs_from_general_transaction() {
@@ -1111,14 +1129,16 @@ verify_memory_guard_palette_and_ota() {
 }
 
 verify_installed_simaai_memory_payload() {
-  local installed_version installed_sha installed_build_id owner
+  local installed_version installed_dev_version installed_sha installed_build_id owner
   if ! deb_package_is_installed simaai-memory-lib; then
     echo "simaai-memory-lib is not installed after the isolated replacement." >&2
     return 1
   fi
   installed_version="$(deb_package_installed_version simaai-memory-lib)"
-  if [[ "${installed_version}" != "${SIMAAI_MEMORY_REQUIRED_VERSION}" ]]; then
-    echo "Installed simaai-memory-lib version ${installed_version} does not match ${SIMAAI_MEMORY_REQUIRED_VERSION}." >&2
+  installed_dev_version="$(deb_package_installed_version simaai-memory-lib-dev 2>/dev/null || true)"
+  if [[ "${installed_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ||
+        "${installed_dev_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
+    echo "Installed memory runtime/dev versions do not match bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}: runtime=${installed_version:-<missing>} dev=${installed_dev_version:-<missing>}." >&2
     return 1
   fi
   if [[ ! -f "${SIMAAI_MEMORY_PAYLOAD_PATH}" ]]; then
