@@ -116,8 +116,7 @@ void require_versioned_provide(const std::string& package, const std::string& pr
   const std::string provides =
       run_capture("dpkg-query -W -f='${Provides}' " + shell_quote(package) + " 2>/dev/null");
   const std::string expected = provided_name + " (= " + provided_version + ")";
-  require(provides == expected,
-          package + " should provide " + expected + ", got: " + provides);
+  require(provides == expected, package + " should provide " + expected + ", got: " + provides);
 }
 
 } // namespace
