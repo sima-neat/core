@@ -432,6 +432,104 @@ install_local_simaai_memory_transaction
         self.assertIn("planned package removal", result.stderr)
         self.assertNotIn("REAL_APT_CALLED", result.stdout + result.stderr)
 
+    def test_guard_allows_fresh_board_without_palette_or_ota(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+dpkg-query() {
+  case "$1:$2" in
+    -W:-f=*) printf 'base-files\tii \n' ;;
+    *) return 1 ;;
+  esac
+}
+deb_package_is_installed() { return 1; }
+snapshot_memory_transaction_guard_state
+verify_memory_guard_palette_and_ota
+printf 'PALETTE_WAS_INSTALLED=%s\n' \
+  "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED}"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PALETTE_WAS_INSTALLED=0", result.stdout)
+        self.assertIn("no pre-existing palette/OTA state", result.stdout)
+
+    def test_guard_preserves_preinstalled_palette_version_and_ota_owner(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mkdir -p "${tmp}/bin"
+printf '#!/bin/sh\n' > "${tmp}/bin/simaai-ota"
+chmod +x "${tmp}/bin/simaai-ota"
+PATH="${tmp}/bin:${PATH}"
+dpkg-query() {
+  case "$1:$2" in
+    -W:-f=*) printf 'base-files\tii \nsimaai-palette-modalix\tii \n' ;;
+    -S:${tmp}/bin/simaai-ota)
+      printf 'simaai-palette-modalix: %s\n' "${tmp}/bin/simaai-ota"
+      ;;
+    *) return 1 ;;
+  esac
+}
+deb_package_is_installed() { [[ "$1" == simaai-palette-modalix ]]; }
+deb_package_installed_version() { printf '%s\n' 2.1.2; }
+snapshot_memory_transaction_guard_state
+verify_memory_guard_palette_and_ota
+printf 'PALETTE_WAS_INSTALLED=%s\n' \
+  "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED}"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PALETTE_WAS_INSTALLED=1", result.stdout)
+
+    def test_guard_rejects_removal_of_preinstalled_palette(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=1
+SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=2.1.2
+SIMAAI_MEMORY_PREINSTALL_OTA_PATH=/usr/bin/simaai-ota
+deb_package_is_installed() { return 1; }
+verify_memory_guard_palette_and_ota
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("simaai-palette-modalix was removed", result.stderr)
+
+    def test_final_check_requires_canonical_palette_ota_ownership(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+deb_package_is_installed() { [[ "$1" == simaai-palette-modalix ]]; }
+simaai_ota_command_path() { printf '%s\n' /usr/bin/simaai-ota; }
+dpkg-query() {
+  [[ "$1:$2" == '-S:/usr/bin/simaai-ota' ]] || return 1
+  printf 'simaai-palette-modalix: /usr/bin/simaai-ota\n'
+}
+verify_canonical_palette_and_ota_installation
+printf 'CANONICAL_PALETTE_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CANONICAL_PALETTE_OK", result.stdout)
+
+    def test_final_check_rejects_missing_palette_after_fresh_install(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+deb_package_is_installed() { return 1; }
+verify_canonical_palette_and_ota_installation
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not installed after the native Modalix transaction", result.stderr)
+
     def test_preservation_check_rejects_any_preinstalled_package_loss(self) -> None:
         result = run_bash(
             r'''

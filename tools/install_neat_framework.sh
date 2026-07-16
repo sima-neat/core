@@ -98,6 +98,7 @@ SIMAAI_MEMORY_PAYLOAD_PATH=""
 SIMAAI_MEMORY_PAYLOAD_SHA256=""
 SIMAAI_MEMORY_PAYLOAD_BUILD_ID=""
 SIMAAI_MEMORY_PREINSTALL_PACKAGES=""
+SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=0
 SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
 SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
 SIMAAI_MEMORY_TRANSACTION_COMPLETE=0
@@ -1088,9 +1089,12 @@ snapshot_memory_transaction_guard_state() {
   dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null |
     awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${SIMAAI_MEMORY_PREINSTALL_PACKAGES}"
 
+  SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=0
+  SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
+  SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
   if ! deb_package_is_installed simaai-palette-modalix; then
-    echo "simaai-palette-modalix must be installed before the isolated memory replacement." >&2
-    return 1
+    log "simaai-palette-modalix is not installed; the isolated memory transaction has no pre-existing palette/OTA state to preserve."
+    return 0
   fi
   SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION="$(deb_package_installed_version simaai-palette-modalix)"
   SIMAAI_MEMORY_PREINSTALL_OTA_PATH="$(command -v simaai-ota 2>/dev/null || true)"
@@ -1103,10 +1107,14 @@ snapshot_memory_transaction_guard_state() {
     echo "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH} is not owned by simaai-palette-modalix before the memory replacement: ${ota_owner:-<unowned>}" >&2
     return 1
   fi
+  SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=1
 }
 
 verify_memory_guard_palette_and_ota() {
   local current_palette ota_path ota_owner
+  if [[ "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED:-0}" -ne 1 ]]; then
+    return 0
+  fi
   if ! deb_package_is_installed simaai-palette-modalix; then
     echo "simaai-palette-modalix was removed during NEAT installation." >&2
     return 1
@@ -1124,6 +1132,28 @@ verify_memory_guard_palette_and_ota() {
   ota_owner="$(dpkg-query -S "${ota_path}" 2>/dev/null || true)"
   if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
     echo "simaai-ota is no longer owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
+    return 1
+  fi
+}
+
+simaai_ota_command_path() {
+  command -v simaai-ota 2>/dev/null || true
+}
+
+verify_canonical_palette_and_ota_installation() {
+  local ota_path ota_owner
+  if ! deb_package_is_installed simaai-palette-modalix; then
+    echo "simaai-palette-modalix is not installed after the native Modalix transaction." >&2
+    return 1
+  fi
+  ota_path="$(simaai_ota_command_path)"
+  if [[ "${ota_path}" != "/usr/bin/simaai-ota" ]]; then
+    echo "Canonical simaai-ota is missing after the native Modalix transaction: ${ota_path:-<missing>}." >&2
+    return 1
+  fi
+  ota_owner="$(dpkg-query -S /usr/bin/simaai-ota 2>/dev/null || true)"
+  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
+    echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
     return 1
   fi
 }
@@ -1188,7 +1218,11 @@ verify_memory_transaction_preservation() {
     cat "${audit_log}" >&2
     return 1
   fi
-  log "Verified the isolated simaai-memory replacement removed no preinstalled packages and preserved simaai-ota."
+  if [[ "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED:-0}" -eq 1 ]]; then
+    log "Verified the isolated simaai-memory replacement removed no preinstalled packages and preserved simaai-palette-modalix/simaai-ota."
+  else
+    log "Verified the isolated simaai-memory replacement removed no preinstalled packages; no pre-existing palette/OTA state required preservation."
+  fi
 }
 
 install_local_simaai_memory_transaction() {
@@ -2042,6 +2076,7 @@ complete_board_install_after_packages() {
   verify_global_sima_neat_lib_links
   verify_installed_simaai_memory_payload
   verify_memory_guard_palette_and_ota
+  verify_canonical_palette_and_ota_installation
   activate_board_runtime_after_install
   restart_board_codec_services
   verify_board_codec_services
