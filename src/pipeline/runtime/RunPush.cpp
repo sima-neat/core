@@ -215,6 +215,7 @@ runtime::EdgeRouterOptions graph_router_options_for_push(const runtime::RunCore&
   runtime::EdgeRouterOptions options = core.graph_options.router_options();
   if (!block) {
     options.push_timeout_ms = 0;
+    options.request_stop_on_backpressure = false;
   }
   return options;
 }
@@ -232,10 +233,23 @@ std::string default_input_name(const runtime::RunCore& core) {
   return "default";
 }
 
-Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& in) {
+Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& in,
+                                         std::string_view endpoint_name) {
   Sample out = in;
   if (out.stream_id.empty()) {
-    out.stream_id = "default";
+    if (endpoint_name.empty()) {
+      out.stream_id = "default";
+    } else {
+      out.stream_id.assign(endpoint_name.data(), endpoint_name.size());
+    }
+  }
+  if (!endpoint_name.empty()) {
+    if (out.port_name.empty()) {
+      out.port_name.assign(endpoint_name.data(), endpoint_name.size());
+    }
+    if (out.stream_label.empty()) {
+      out.stream_label.assign(endpoint_name.data(), endpoint_name.size());
+    }
   }
 
   // Prefer a run-local public-ingress sequence over frame_id fallback whenever sequence fields are
@@ -258,7 +272,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                                     bool block) {
   for (const auto& msg : msgs) {
     enforce_public_sample_push_transferable(msg, "Run::push");
-    Sample stamped = stamp_public_graph_ingress_sample(core, msg);
+    Sample stamped = stamp_public_graph_ingress_sample(core, msg, endpoint_name);
     if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
       std::fprintf(stderr,
                    "[SAMPLE_TIMING] graph_push_endpoint node=%zu port=%u has_port=%d "

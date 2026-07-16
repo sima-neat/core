@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(SimaNeat VERSION 0.1.0 LANGUAGES CXX)
+project(SimaNeat VERSION 0.3.0 LANGUAGES CXX)
 
 enable_testing()
 
@@ -103,13 +103,15 @@ simaneat_configure_sanitizers()
 # ------------------------------------------------------------------------------
 # Versioning from deps/manifest.json:
 # - package-version controls package/artifact identity.
-# - platform-version controls ABI and CMake package compatibility.
+# - platform-version controls dependency and CMake package compatibility.
+# - abi-version controls the public C++ shared-library ABI and SONAME.
 # Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
 set(SIMANEAT_PLATFORM_VERSION "")
 set(SIMANEAT_PACKAGE_BASE_VERSION "")
+set(SIMANEAT_ABI_VERSION "")
 execute_process(
-  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); print(data['platform-version']); print(data['package-version'])"
+  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); print(data['platform-version']); print(data['package-version']); print(data['abi-version'])"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   RESULT_VARIABLE PLATFORM_VERSION_RESULT
   OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
@@ -117,11 +119,17 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
-  message(FATAL_ERROR "Failed to read package-version and platform-version from deps/manifest.json")
+  message(FATAL_ERROR
+    "Failed to read package-version, platform-version, and abi-version from deps/manifest.json")
 endif()
 string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
 list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
 list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_PACKAGE_BASE_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_ABI_VERSION)
+if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR
+    "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
+endif()
 
 set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 execute_process(
@@ -217,15 +225,6 @@ string(REGEX REPLACE "[^A-Za-z0-9.+~-]" "-" SIMANEAT_VERSION "${SIMANEAT_VERSION
 # Debian version must start with a digit. Also normalize common "v1.2.3" tags.
 if (SIMANEAT_VERSION MATCHES "^v[0-9].*")
   string(REGEX REPLACE "^v" "" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
-endif()
-
-set(SIMANEAT_ABI_VERSION "${SIMANEAT_PLATFORM_VERSION}")
-if (SIMANEAT_ABI_VERSION MATCHES "^v[0-9].*")
-  string(REGEX REPLACE "^v" "" SIMANEAT_ABI_VERSION "${SIMANEAT_ABI_VERSION}")
-endif()
-string(REGEX REPLACE "^([0-9]+).*$" "\\1" SIMANEAT_ABI_VERSION "${SIMANEAT_ABI_VERSION}")
-if (NOT SIMANEAT_ABI_VERSION MATCHES "^[0-9]+$")
-  set(SIMANEAT_ABI_VERSION "0")
 endif()
 
 if (SIMANEAT_STRICT_WARNINGS)
@@ -889,6 +888,8 @@ add_library(sima_neat SHARED
 )
 set_target_properties(sima_neat PROPERTIES
   OUTPUT_NAME sima_neat
+  # VERSION identifies the implementation/platform build. SOVERSION is the
+  # independently versioned public C++ ABI that consumers record in DT_NEEDED.
   VERSION "${SIMANEAT_PLATFORM_VERSION}"
   SOVERSION "${SIMANEAT_ABI_VERSION}"
 )

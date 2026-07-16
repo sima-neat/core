@@ -564,6 +564,8 @@ const char* combine_policy_name(CombinePolicy policy) {
     return "ByFrame";
   case CombinePolicy::ByPts:
     return "ByPts";
+  case CombinePolicy::RoundRobin:
+    return "RoundRobin";
   }
   return "None";
 }
@@ -574,6 +576,9 @@ CombinePolicy parse_combine_policy(const std::string& value) {
   }
   if (value == "ByPts") {
     return CombinePolicy::ByPts;
+  }
+  if (value == "RoundRobin") {
+    return CombinePolicy::RoundRobin;
   }
   return CombinePolicy::None;
 }
@@ -1227,6 +1232,9 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
           case CombinePolicy::ByPts:
             oss << "ByPts";
             break;
+          case CombinePolicy::RoundRobin:
+            oss << "RoundRobin";
+            break;
           case CombinePolicy::None:
             oss << "None";
             break;
@@ -1369,6 +1377,12 @@ void Graph::save(const std::string& path) const {
       if (edge.link_options.policy != GraphLinkPolicy::Default) {
         oss << ",\"link_policy\":\"" << link_policy_name(edge.link_options.policy) << "\","
             << "\"link_queue_depth\":" << edge.link_options.queue_depth;
+      }
+      if (edge.link_options.max_inflight_per_stream != -1) {
+        oss << ",\"link_max_inflight_per_stream\":" << edge.link_options.max_inflight_per_stream;
+      }
+      if (edge.link_options.max_inflight_total != -1) {
+        oss << ",\"link_max_inflight_total\":" << edge.link_options.max_inflight_total;
       }
       if (!edge.stream_id.empty()) {
         oss << ",\"link_stream_id\":\"" << json_escape(edge.stream_id) << "\"";
@@ -1592,6 +1606,9 @@ Graph Graph::load(const std::string& path) {
         throw_io_error(error_codes::kIoParse, "Graph::load", path,
                        "unsupported edge link_policy '" + link_policy + "'");
       }
+      edge.link_options.max_inflight_per_stream =
+          int_field(eobj, "link_max_inflight_per_stream", -1);
+      edge.link_options.max_inflight_total = int_field(eobj, "link_max_inflight_total", -1);
       edge.stream_id = string_field(eobj, "link_stream_id", "");
       edge.link_options.stream_id = edge.stream_id;
       if (edge.kind == CompositionEdgeKind::PublicEndpoint) {

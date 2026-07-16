@@ -2324,7 +2324,9 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("policy", &GraphLinkOptions::policy)
       .def_rw("queue_depth", &GraphLinkOptions::queue_depth)
-      .def_rw("stream_id", &GraphLinkOptions::stream_id);
+      .def_rw("stream_id", &GraphLinkOptions::stream_id)
+      .def_rw("max_inflight_per_stream", &GraphLinkOptions::max_inflight_per_stream)
+      .def_rw("max_inflight_total", &GraphLinkOptions::max_inflight_total);
 
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())
@@ -3170,7 +3172,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::CombinePolicy>(m, "CombinePolicy")
       .value("None_", simaai::neat::CombinePolicy::None)
       .value("ByFrame", simaai::neat::CombinePolicy::ByFrame)
-      .value("ByPts", simaai::neat::CombinePolicy::ByPts);
+      .value("ByPts", simaai::neat::CombinePolicy::ByPts)
+      .value("RoundRobin", simaai::neat::CombinePolicy::RoundRobin);
 
   nb::class_<simaai::neat::OutputOptions>(m, "OutputOptions")
       .def(nb::init<>())
@@ -3542,6 +3545,20 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("channel", &simaai::neat::MetadataSenderOptions::channel)
       .def_rw("metadata_port_base", &simaai::neat::MetadataSenderOptions::metadata_port_base);
 
+  nb::class_<simaai::neat::MetadataSenderSendOptions>(m, "MetadataSenderSendOptions")
+      .def(nb::init<>())
+      .def_rw("nonblocking", &simaai::neat::MetadataSenderSendOptions::nonblocking);
+
+  nb::class_<simaai::neat::MetadataSenderStats>(m, "MetadataSenderStats")
+      .def_ro("send_attempts", &simaai::neat::MetadataSenderStats::send_attempts)
+      .def_ro("datagrams_sent", &simaai::neat::MetadataSenderStats::datagrams_sent)
+      .def_ro("send_failures", &simaai::neat::MetadataSenderStats::send_failures)
+      .def_ro("would_block", &simaai::neat::MetadataSenderStats::would_block)
+      .def_ro("no_buffer_space", &simaai::neat::MetadataSenderStats::no_buffer_space)
+      .def_ro("last_send_duration_ns", &simaai::neat::MetadataSenderStats::last_send_duration_ns)
+      .def_ro("max_send_duration_ns", &simaai::neat::MetadataSenderStats::max_send_duration_ns)
+      .def_ro("last_errno", &simaai::neat::MetadataSenderStats::last_errno);
+
   nb::class_<simaai::neat::MetadataSender>(m, "MetadataSender")
       .def(
           "__init__",
@@ -3554,9 +3571,23 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "options"_a)
+      .def(
+          "__init__",
+          [](simaai::neat::MetadataSender* self, const simaai::neat::MetadataSenderOptions& opt,
+             const simaai::neat::MetadataSenderSendOptions& send_opt) {
+            std::string err;
+            new (self) simaai::neat::MetadataSender(opt, send_opt, &err);
+            if (!self->ok()) {
+              self->~MetadataSender();
+              throw std::runtime_error(err.empty() ? "MetadataSender init failed" : err);
+            }
+          },
+          "options"_a, "send_options"_a)
       .def("ok", &simaai::neat::MetadataSender::ok)
       .def("host", &simaai::neat::MetadataSender::host)
       .def("metadata_port", &simaai::neat::MetadataSender::metadata_port)
+      .def("nonblocking", &simaai::neat::MetadataSender::nonblocking)
+      .def("stats", &simaai::neat::MetadataSender::stats)
       .def(
           "send_raw_json",
           [](const simaai::neat::MetadataSender& self, const std::string& payload) {
@@ -3723,7 +3754,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("dec_width", &simaai::neat::SimaDecodeOptions::dec_width)
       .def_rw("dec_height", &simaai::neat::SimaDecodeOptions::dec_height)
       .def_rw("dec_fps", &simaai::neat::SimaDecodeOptions::dec_fps)
-      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers);
+      .def_rw("num_buffers", &simaai::neat::SimaDecodeOptions::num_buffers)
+      .def_rw("input_buffers", &simaai::neat::SimaDecodeOptions::input_buffers)
+      .def_rw("decoder_tuning", &simaai::neat::SimaDecodeOptions::decoder_tuning)
+      .def_rw("memory_opt", &simaai::neat::SimaDecodeOptions::memory_opt);
   nb::class_<simaai::neat::HttpSourceOptions>(m, "HttpSourceOptions")
       .def(nb::init<>())
       .def_rw("location", &simaai::neat::HttpSourceOptions::location)
@@ -4123,6 +4157,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV26Seg", simaai::neat::BoxDecodeType::YoloV26Seg)
       .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
+      .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)

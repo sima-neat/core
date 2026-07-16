@@ -15,6 +15,7 @@
 #include "test_utils.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -22,6 +23,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -211,6 +213,28 @@ void keyed_sample_push_is_a_control_that_collects_exact_latency_samples() {
           "keyed Sample control should not produce unkeyed graph timing entries");
   require(report.graph_sample_timing_misses == 0,
           "keyed Sample control should not produce graph timing misses");
+}
+
+void model_runner_pull_returns_one_ready_output_at_a_time() {
+  using namespace simaai::neat;
+
+  constexpr int kReadyOutputs = 8;
+  Model::Runner runner(make_benchmark_style_rgb_run(make_rgb_input(0)));
+  for (int i = 0; i < kReadyOutputs; ++i) {
+    require(runner.push(TensorList{make_rgb_input(i)}), "Model::Runner burst push should succeed");
+  }
+
+  // Let the pass-through graph queue the complete burst. Runner::pull() must still return one
+  // temporal result per call rather than draining all currently ready outputs into an outer Bundle.
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  for (int i = 0; i < kReadyOutputs; ++i) {
+    const Sample output = runner.pull(kTimeoutMs);
+    require(!output.empty(), "Model::Runner burst pull should return every queued output");
+    require(output.size() == 1,
+            "Model::Runner::pull must not temporally coalesce ready outputs; got " +
+                std::to_string(output.size()));
+  }
+  runner.close();
 }
 
 void logical_batch_size_controls_inference_throughput() {
@@ -417,6 +441,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     benchmark_style_tensorlist_push_must_collect_latency_for_every_output);
            run_case("keyed_sample_latency_control",
                     keyed_sample_push_is_a_control_that_collects_exact_latency_samples);
+           run_case("model_runner_pull_is_singular",
+                    model_runner_pull_returns_one_ready_output_at_a_time);
            run_case("logical_batch_throughput", logical_batch_size_controls_inference_throughput);
            run_case("graph_sample_timing_counter_deltas",
                     graph_sample_timing_counters_are_measurement_window_deltas);

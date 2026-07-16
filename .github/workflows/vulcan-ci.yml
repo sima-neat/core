@@ -340,7 +340,18 @@ jobs:
           SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-12)"
           PACKAGE_SPEC="core@${REF_NAME}:${SHORT_SHA}"
           echo "Installing ${PACKAGE_SPEC} from Vulcan env ${VULCAN_ENV}"
-          sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all
+          for attempt in 1 2 3 4; do
+            if sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all; then
+              break
+            fi
+            if [[ "${attempt}" -eq 4 ]]; then
+              echo "Artifact installation failed after ${attempt} attempts." >&2
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "Artifact installation attempt ${attempt} failed; retrying in ${delay}s." >&2
+            sleep "${delay}"
+          done
 
       - name: Locate installed extras content
         run: |
@@ -429,10 +440,13 @@ jobs:
               -e "s|/[^\"[:space:]]*/tutorials/run_with_modelzoo\\.sh|${TUTORIALS_SHARE_ROOT}/run_with_modelzoo.sh|g" \
               -e "s|/[^\"[:space:]]*/tutorials/build\\.sh|${TUTORIALS_SHARE_ROOT}/build.sh|g" \
               "${f}"
+            sed -E -i \
+              -e "s#(add_test\\((genai_vlm_run_test|genai_graph_vlm_run_test|genai_asr_run_test|genai_graph_asr_run_test|genai_server_http_test)[[:space:]]+\"[^\"]+\"[[:space:]]+)\"[^\"]+\"#\\1\"${TEST_ASSETS_ROOT}\"#g" \
+              "${f}"
           done
-          if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+          if grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
             echo "Unresolved build-tree paths after CTest rebasing:" >&2
-            rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
+            grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
             echo "CTEST path rebasing incomplete; stale absolute paths remain." >&2
             exit 1
           fi
@@ -442,6 +456,30 @@ jobs:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           ./scripts/fix_devkit_runtime.sh
+
+      - name: Prepare GenAI models
+        run: |
+          set -euo pipefail
+          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
+          PREPARE_GENAI_MODELS="${EXTRAS_PREFIX}/share/sima-neat/tests/tools/prepare_genai_models.sh"
+          if [[ ! -x "${PREPARE_GENAI_MODELS}" ]]; then
+            echo "Installed GenAI model preparation helper not found: ${PREPARE_GENAI_MODELS}" >&2
+            exit 1
+          fi
+
+          export LLIMA_MODELS_PATH="${LLIMA_MODELS_PATH:-/media/nvme/llima/models}"
+          export SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-Qwen2.5-0.5B-Instruct-GPTQ-a16w4}"
+          export SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-LFM2.5-VL-450M-a16w4}"
+          export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8}"
+
+          "${PREPARE_GENAI_MODELS}"
+
+          {
+            printf 'LLIMA_MODELS_PATH=%s\n' "${LLIMA_MODELS_PATH}"
+            printf 'SIMA_TEST_LLIMA_TEXT_MODEL=%s\n' "${SIMA_TEST_LLIMA_TEXT_MODEL}"
+            printf 'SIMA_TEST_LLIMA_VLM_MODEL=%s\n' "${SIMA_TEST_LLIMA_VLM_MODEL}"
+            printf 'SIMA_TEST_LLIMA_ASR_MODEL=%s\n' "${SIMA_TEST_LLIMA_ASR_MODEL}"
+          } >> "${GITHUB_ENV}"
 
       - name: Build docs C++ examples from DevKit-installed package
         run: |
@@ -463,6 +501,14 @@ jobs:
           fi
           printf '%s\n' "${CTEST_DIRS[@]}" | sed 's|^|Detected CTest dir: |'
           printf '%s\n' "${CTEST_DIRS[@]}" > _work/ctest_dirs.txt
+
+      - name: Run Installed DevKit Package Inventory Test
+        run: |
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          ctest --test-dir "${TEST_DIR}" \
+            --label-regex "devkit-package-inventory" \
+            --output-on-failure \
+            --no-tests=error
 
       - name: Run Fast Non-E2E Tests (Parallel)
         env:
@@ -539,6 +585,29 @@ jobs:
               --output-on-failure \
               --no-tests=error
           fi
+
+      - name: Run GenAI / LLiMa E2E Tests
+        env:
+          SIMA_CTEST_GENAI_JOBS: "1"
+        run: |
+          set -x
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-genai"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
+          echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          echo "Using LLIMA_MODELS_PATH=${LLIMA_MODELS_PATH}"
+          echo "Using SIMA_TEST_LLIMA_TEXT_MODEL=${SIMA_TEST_LLIMA_TEXT_MODEL}"
+          echo "Using SIMA_TEST_LLIMA_VLM_MODEL=${SIMA_TEST_LLIMA_VLM_MODEL}"
+          echo "Using SIMA_TEST_LLIMA_ASR_MODEL=${SIMA_TEST_LLIMA_ASR_MODEL}"
+          ctest --test-dir "${TEST_DIR}" \
+            --label-regex "llima" \
+            --timeout 900 \
+            -j "${SIMA_CTEST_GENAI_JOBS:-1}" \
+            --output-on-failure \
+            --no-tests=error
 
       - name: Run Perf and Throughput Tests (Isolated)
         env:
@@ -625,7 +694,7 @@ jobs:
           fi
 
           "${PYTHON_BIN}" -m pip install --upgrade pip
-          "${PYTHON_BIN}" -m pip install pytest
+          "${PYTHON_BIN}" -m pip install pytest requests
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
@@ -641,7 +710,7 @@ jobs:
           du -sh "${TMP_ROOT}"/sima* "${TMP_ROOT}"/resnet*_mpk* 2>/dev/null || true
 
           echo "Cleaning ${MPK_BASE}* (this-job MpK extraction roots)"
-          rm -rf "${MPK_BASE}" "${MPK_BASE}-manifest" "${MPK_BASE}-tput" || true
+          rm -rf "${MPK_BASE}" "${MPK_BASE}-genai" "${MPK_BASE}-manifest" "${MPK_BASE}-tput" || true
           if [[ -f _work/gst_registry_dir.txt ]]; then
             GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
             echo "Cleaning shared GStreamer registry dir ${GST_REGISTRY_DIR}"

@@ -7,15 +7,22 @@
 #include "graph/nodes/JoinBundle.h"
 #include "graph/nodes/PipelineNode.h"
 #include "graph/nodes/StageNode.h"
+#include "graph/nodes/StreamScheduler.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/UdpOutput.h"
+#include "nodes/rtp/H264Depacketize.h"
+#include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/CapsStringUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/InputPolicy.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -94,7 +101,16 @@ void resolve_default_endpoints(const graph::Graph& graph, ExecutionGraphPlan* pl
   std::unordered_set<graph::NodeId> pipeline_nodes;
 
   for (const auto& seg : plan->pipeline_segments) {
+    // Keep consumed fused-ingress nodes out of the generic graph-sink fallback
+    // below.  They still belong to pipeline segments in the compiled plan even
+    // though the fused target renders them in its monolithic source pipeline.
+    // In particular, a consumed UdpOutput from an encoded VideoSender branch
+    // must not become a phantom pull endpoint merely because its original
+    // segment no longer starts independently.
     pipeline_nodes.insert(seg.node_ids.begin(), seg.node_ids.end());
+    if (seg.consumed_by_fused_realtime_ingress) {
+      continue;
+    }
     if (seg.node_ids.empty()) {
       continue;
     }
@@ -113,6 +129,30 @@ void resolve_default_endpoints(const graph::Graph& graph, ExecutionGraphPlan* pl
           .node = seg.node_ids.back(),
           .port = graph::kInvalidPort,
           .segment = seg.id,
+      });
+    }
+  }
+
+  // A public encoded Output absorbed into fused ingress is the one intentional
+  // exception: it remains a graph-owned pull endpoint even though its original
+  // Output-only segment is consumed.  Add it explicitly rather than treating
+  // every terminal node from every consumed segment as a GraphSink.
+  std::unordered_set<graph::NodeId> fused_encoded_outputs;
+  for (const auto& seg : plan->pipeline_segments) {
+    if (seg.consumed_by_fused_realtime_ingress || !seg.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    for (const auto& branch : seg.fused_realtime_ingress->branches) {
+      if (!branch.encoded_output.has_value() ||
+          branch.encoded_output->sink_node == graph::kInvalidNode ||
+          !fused_encoded_outputs.insert(branch.encoded_output->sink_node).second) {
+        continue;
+      }
+      outputs.push_back(Endpoint{
+          .kind = Endpoint::Kind::GraphSink,
+          .node = branch.encoded_output->sink_node,
+          .port = graph::kInvalidPort,
+          .segment = static_cast<std::size_t>(-1),
       });
     }
   }
@@ -173,6 +213,7 @@ struct NormalizedCompositionEdge {
   std::string to_endpoint;
   GraphLinkOptions link_options;
   std::string stream_id;
+  CombinePolicy combine_policy = CombinePolicy::None;
 };
 
 struct NormalizedPublicView {
@@ -212,7 +253,42 @@ bool default_link(const GraphLinkOptions& opt) {
   return opt.policy == GraphLinkPolicy::Default;
 }
 
+bool exact_default_link(const GraphLinkOptions& opt) {
+  const GraphLinkOptions defaults;
+  return opt.policy == defaults.policy && opt.queue_depth == defaults.queue_depth &&
+         opt.stream_id.empty() && opt.max_inflight_per_stream == defaults.max_inflight_per_stream &&
+         opt.max_inflight_total == defaults.max_inflight_total;
+}
+
+void validate_realtime_inflight_option(const char* name, int value) {
+  if (value == 0 || value < -1) {
+    throw std::runtime_error(std::string("GraphLinkOptions::") + name +
+                             " must be -1 or a positive value");
+  }
+}
+
+void validate_non_default_link_options(const GraphLinkOptions& opt) {
+  if (default_link(opt)) {
+    return;
+  }
+  validate_realtime_inflight_option("max_inflight_per_stream", opt.max_inflight_per_stream);
+  validate_realtime_inflight_option("max_inflight_total", opt.max_inflight_total);
+}
+
+int merge_inflight_cap(int existing, int incoming) {
+  if (existing == -1) {
+    return incoming;
+  }
+  if (incoming == -1) {
+    return existing;
+  }
+  return std::min(existing, incoming);
+}
+
 GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& b) {
+  validate_non_default_link_options(a);
+  validate_non_default_link_options(b);
+
   if (default_link(a)) {
     return b;
   }
@@ -225,6 +301,9 @@ GraphLinkOptions merge_link_options(GraphLinkOptions a, const GraphLinkOptions& 
   if (b.queue_depth > 0) {
     a.queue_depth = b.queue_depth;
   }
+  a.max_inflight_per_stream =
+      merge_inflight_cap(a.max_inflight_per_stream, b.max_inflight_per_stream);
+  a.max_inflight_total = merge_inflight_cap(a.max_inflight_total, b.max_inflight_total);
   if (!b.stream_id.empty()) {
     a.stream_id = b.stream_id;
   }
@@ -245,6 +324,10 @@ simaai::neat::graph::nodes::JoinKeyPolicy join_key_policy_for(CombinePolicy poli
   case CombinePolicy::ByFrame:
   case CombinePolicy::None:
     return simaai::neat::graph::nodes::JoinKeyPolicy::StreamFrame;
+  case CombinePolicy::RoundRobin:
+    throw std::runtime_error(
+        "compile_public_graph: CombinePolicy::RoundRobin is lowered through StreamScheduler, "
+        "not JoinBundle");
   }
   return simaai::neat::graph::nodes::JoinKeyPolicy::StreamFrame;
 }
@@ -390,7 +473,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   const auto add_edge = [&](std::size_t from, std::size_t to, NormalizedCompositionEdgeKind kind,
                             std::string from_port, std::string to_port, std::string from_endpoint,
                             std::string to_endpoint, GraphLinkOptions link_options,
-                            std::string stream_id) {
+                            std::string stream_id, CombinePolicy combine_policy) {
     if (from == NormalizedPublicView::kInvalid || to == NormalizedPublicView::kInvalid) {
       return;
     }
@@ -399,8 +482,9 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::string key = std::to_string(from) + ":" + std::to_string(to) + ":" +
                             std::to_string(static_cast<int>(kind)) + ":" + from_port + ":" +
-                            to_port + ":" + std::to_string(static_cast<int>(link_options.policy)) +
-                            ":" + stream_id;
+                            to_port + ":" + from_endpoint + ":" + to_endpoint + ":" +
+                            std::to_string(static_cast<int>(link_options.policy)) + ":" +
+                            stream_id + ":" + std::to_string(static_cast<int>(combine_policy));
     if (!emitted_edges.insert(key).second) {
       return;
     }
@@ -412,16 +496,17 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
                                                   .from_endpoint = std::move(from_endpoint),
                                                   .to_endpoint = std::move(to_endpoint),
                                                   .link_options = link_options,
-                                                  .stream_id = std::move(stream_id)});
+                                                  .stream_id = std::move(stream_id),
+                                                  .combine_policy = combine_policy});
   };
 
   std::function<void(std::size_t, std::size_t, std::string, std::string, std::string, bool,
-                     GraphLinkOptions, std::string, std::vector<bool>&)>
+                     GraphLinkOptions, std::string, CombinePolicy, std::vector<bool>&)>
       follow_edge;
   follow_edge = [&](std::size_t start_norm, std::size_t edge_index, std::string from_port,
                     std::string from_endpoint, std::string to_endpoint, bool bypassed_boundary,
                     GraphLinkOptions link_options, std::string stream_id,
-                    std::vector<bool>& visiting) {
+                    CombinePolicy combine_policy, std::vector<bool>& visiting) {
     const auto& edge = view.edges[edge_index];
     link_options = merge_link_options(link_options, edge.link_options);
     if (!edge.stream_id.empty()) {
@@ -437,7 +522,12 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
       from_port = edge.from_port;
     }
     if (edge.endpoint.has_value()) {
-      if (from_endpoint.empty()) {
+      // When an explicit public boundary is elided, the logical source endpoint for the
+      // downstream edge becomes the boundary edge we are crossing (for example a Branch output or
+      // Combine input), not the physical producer that originally entered the boundary chain.  If
+      // we keep the oldest upstream endpoint, multi-source live graphs whose sources all end in
+      // the same node kind (for example CapsRaw) collapse to duplicate fan-in names.
+      if ((bypassed_boundary && combine_policy == CombinePolicy::None) || from_endpoint.empty()) {
         from_endpoint = edge.endpoint->from_endpoint;
       }
       if (!edge.endpoint->to_endpoint.empty()) {
@@ -446,6 +536,17 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
 
     const std::size_t to_original = edge.to;
+    if (elide[to_original]) {
+      const CombinePolicy boundary_policy = output_combine_policy(view.vertices[to_original]);
+      if (boundary_policy != CombinePolicy::None) {
+        if (combine_policy != CombinePolicy::None && combine_policy != boundary_policy) {
+          throw std::runtime_error(
+              "compile_public_graph: conflicting CombinePolicy while lowering connected "
+              "boundary");
+        }
+        combine_policy = boundary_policy;
+      }
+    }
     if (!elide[to_original]) {
       const std::size_t to_norm = out.vertex_for_original[to_original];
       NormalizedCompositionEdgeKind kind =
@@ -467,8 +568,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
         to_port.clear();
       }
       add_edge(start_norm, to_norm, kind, std::move(from_port), std::move(to_port),
-               std::move(from_endpoint), std::move(to_endpoint), link_options,
-               std::move(stream_id));
+               std::move(from_endpoint), std::move(to_endpoint), link_options, std::move(stream_id),
+               combine_policy);
       return;
     }
 
@@ -484,7 +585,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     for (const std::size_t next_edge : outgoing[to_original]) {
       follow_edge(start_norm, next_edge, from_port, from_endpoint, to_endpoint, true, link_options,
-                  stream_id, visiting);
+                  stream_id, combine_policy, visiting);
     }
     visiting[to_original] = false;
   };
@@ -496,7 +597,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     }
     const std::size_t from_norm = out.vertex_for_original[edge.from];
     std::vector<bool> visiting(n, false);
-    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, {}, {}, visiting);
+    follow_edge(from_norm, edge_index, edge.from_port, {}, {}, false, {}, {}, CombinePolicy::None,
+                visiting);
   }
 
   // Pipeline-quality pass: if public composition produced a simple one-to-one connection,
@@ -743,23 +845,34 @@ build_runtime_graph_from_connected_public_view(const View& view,
   }
 
   std::vector<LoweredExplicitEdge> lowered_edges;
-  std::unordered_map<std::size_t, std::vector<std::size_t>> public_endpoint_inputs_by_target;
+  std::unordered_map<std::size_t, std::vector<std::size_t>> combine_inputs_by_target;
   for (std::size_t i = 0; i < view.edges.size(); ++i) {
     const auto& edge = view.edges[i];
-    if (is_public_endpoint_edge(edge)) {
-      public_endpoint_inputs_by_target[edge.to].push_back(i);
+    if (is_public_endpoint_edge(edge) || edge.combine_policy != CombinePolicy::None) {
+      combine_inputs_by_target[edge.to].push_back(i);
     }
   }
 
   std::unordered_set<std::size_t> combine_handled_edges;
-  for (const auto& [target_vertex, incoming_edges] : public_endpoint_inputs_by_target) {
+  for (const auto& [target_vertex, incoming_edges] : combine_inputs_by_target) {
     if (incoming_edges.size() <= 1U) {
       continue;
     }
     if (target_vertex >= view.vertices.size()) {
       throw std::runtime_error("compile_public_graph: public endpoint target out of range");
     }
-    const CombinePolicy policy = output_combine_policy(view.vertices[target_vertex]);
+    CombinePolicy policy = output_combine_policy(view.vertices[target_vertex]);
+    for (const std::size_t edge_index : incoming_edges) {
+      const CombinePolicy edge_policy = view.edges[edge_index].combine_policy;
+      if (edge_policy == CombinePolicy::None) {
+        continue;
+      }
+      if (policy != CombinePolicy::None && policy != edge_policy) {
+        throw std::runtime_error(
+            "compile_public_graph: conflicting CombinePolicy on public endpoint fan-in");
+      }
+      policy = edge_policy;
+    }
     const FragmentBoundaryHints* target_hints =
         boundary_hints_for_normalized_target(view, target_vertex);
     const bool model_ingress_combine = policy == CombinePolicy::None && target_hints != nullptr &&
@@ -769,13 +882,13 @@ build_runtime_graph_from_connected_public_view(const View& view,
         std::all_of(incoming_edges.begin(), incoming_edges.end(), [&](std::size_t edge_index) {
           return realtime_latest_link(view.edges[edge_index].link_options);
         });
-    if (realtime_fan_in && !model_ingress_combine) {
+    if (policy == CombinePolicy::None && realtime_fan_in && !model_ingress_combine) {
       continue;
     }
     if (policy == CombinePolicy::None && !model_ingress_combine) {
       throw std::runtime_error(
           "compile_public_graph: public endpoint has multiple producers; set an explicit "
-          "CombinePolicy::ByFrame or CombinePolicy::ByPts");
+          "CombinePolicy::ByFrame, CombinePolicy::ByPts, or CombinePolicy::RoundRobin");
     }
 
     std::vector<std::size_t> ordered_incoming_edges;
@@ -826,6 +939,46 @@ build_runtime_graph_from_connected_public_view(const View& view,
         ordered_incoming_edges.push_back(incoming_edges[i]);
         input_names.push_back(std::move(name));
       }
+    }
+
+    if (policy == CombinePolicy::RoundRobin && !model_ingress_combine) {
+      simaai::neat::graph::nodes::StreamSchedulerOptions scheduler_opt;
+      scheduler_opt.max_batch = 1;
+      scheduler_opt.inputs = input_names;
+      const graph::NodeId scheduler_node =
+          out.graph.add(simaai::neat::graph::nodes::StreamSchedulerNode(
+              scheduler_opt, "combine_rr_" + std::to_string(target_vertex), "in", "out"));
+
+      for (std::size_t i = 0; i < ordered_incoming_edges.size(); ++i) {
+        const auto& edge = view.edges[ordered_incoming_edges[i]];
+        const graph::NodeId from = runtime_node_for_vertex[edge.from];
+        if (from == graph::kInvalidNode) {
+          throw std::runtime_error(
+              "compile_public_graph: round-robin combine edge references unmapped source");
+        }
+        std::string stream_id = normalized_edge_stream_id(edge);
+        lowered_edges.push_back(LoweredExplicitEdge{
+            .from = from,
+            .to = scheduler_node,
+            .from_port = edge.from_port.empty() ? "out" : edge.from_port,
+            .to_port = input_names[i],
+            .link_options = edge.link_options,
+            .stream_id = std::move(stream_id),
+        });
+        combine_handled_edges.insert(ordered_incoming_edges[i]);
+      }
+
+      const graph::NodeId to = runtime_node_for_vertex[target_vertex];
+      if (to == graph::kInvalidNode) {
+        throw std::runtime_error("compile_public_graph: round-robin combine target is unmapped");
+      }
+      lowered_edges.push_back(LoweredExplicitEdge{
+          .from = scheduler_node,
+          .to = to,
+          .from_port = "out",
+          .to_port = "in",
+      });
+      continue;
     }
 
     simaai::neat::graph::nodes::JoinBundleOptions join_opt;
@@ -883,7 +1036,7 @@ build_runtime_graph_from_connected_public_view(const View& view,
         !realtime_latest_link(edge.link_options)) {
       throw std::runtime_error(
           "compile_public_graph: public endpoint has multiple producers; set an explicit "
-          "CombinePolicy::ByFrame or CombinePolicy::ByPts");
+          "CombinePolicy::ByFrame, CombinePolicy::ByPts, or CombinePolicy::RoundRobin");
     }
     const graph::NodeId from = runtime_node_for_vertex[edge.from];
     const graph::NodeId to = runtime_node_for_vertex[edge.to];
@@ -1341,6 +1494,80 @@ std::string normalized_edge_stream_id(const NormalizedCompositionEdge& edge) {
   return edge.link_options.stream_id;
 }
 
+template <typename Edges>
+void validate_unique_source_buffer_names(
+    std::span<const std::shared_ptr<simaai::neat::Node>> vertices, const Edges& edges) {
+  struct SourceIdentity {
+    std::size_t vertex = 0;
+    std::string label;
+  };
+  std::unordered_map<std::string, std::vector<SourceIdentity>> sources_by_buffer_name;
+  for (std::size_t i = 0; i < vertices.size(); ++i) {
+    const auto& node = vertices[i];
+    if (!node || node->input_role() != InputRole::Source) {
+      continue;
+    }
+    const std::string buffer_name = node->buffer_name_hint(static_cast<int>(i));
+    if (buffer_name.empty()) {
+      continue;
+    }
+    std::string label = node->user_label();
+    if (label.empty()) {
+      label = node->kind() + "@" + std::to_string(i);
+    }
+    sources_by_buffer_name[buffer_name].push_back(SourceIdentity{.vertex = i, .label = label});
+  }
+
+  std::vector<std::vector<std::size_t>> outgoing(vertices.size());
+  for (const auto& edge : edges) {
+    if (edge.from < outgoing.size() && edge.to < outgoing.size()) {
+      outgoing[edge.from].push_back(edge.to);
+    }
+  }
+  const auto reachable_from = [&](std::size_t source) {
+    std::vector<bool> reachable(vertices.size(), false);
+    std::vector<std::size_t> pending{source};
+    while (!pending.empty()) {
+      const std::size_t current = pending.back();
+      pending.pop_back();
+      for (const std::size_t next : outgoing[current]) {
+        if (!reachable[next]) {
+          reachable[next] = true;
+          pending.push_back(next);
+        }
+      }
+    }
+    return reachable;
+  };
+
+  for (const auto& [buffer_name, sources] : sources_by_buffer_name) {
+    std::vector<std::vector<bool>> reachable;
+    reachable.reserve(sources.size());
+    for (const auto& source : sources) {
+      reachable.push_back(reachable_from(source.vertex));
+    }
+    for (std::size_t left = 0; left < sources.size(); ++left) {
+      for (std::size_t right = left + 1U; right < sources.size(); ++right) {
+        bool converges = false;
+        for (std::size_t vertex = 0; vertex < vertices.size(); ++vertex) {
+          if (reachable[left][vertex] && reachable[right][vertex]) {
+            converges = true;
+            break;
+          }
+        }
+        if (!converges) {
+          continue;
+        }
+        throw std::runtime_error(
+            "compile_public_graph: duplicate source buffer_name '" + buffer_name + "' for '" +
+            sources[left].label + "' and '" + sources[right].label +
+            "' on converging graph paths. Multi-source graphs must stamp a unique buffer_name "
+            "before Branch/FanOut so downstream CVU/MLA/preprocess metadata is unambiguous.");
+      }
+    }
+  }
+}
+
 void apply_link_options_to_runtime_path(ExecutionGraphPlan* plan, graph::NodeId from,
                                         graph::NodeId to, const GraphLinkOptions& link_options,
                                         const std::string& stream_id) {
@@ -1398,6 +1625,9 @@ void apply_normalized_link_policies(const NormalizedPublicView& view,
     return;
   }
   for (const auto& edge : view.edges) {
+    if (edge.combine_policy != CombinePolicy::None) {
+      continue;
+    }
     const std::string stream_id = normalized_edge_stream_id(edge);
     if (edge.from >= runtime_node_for_vertex.size() || edge.to >= runtime_node_for_vertex.size()) {
       continue;
@@ -1495,9 +1725,42 @@ bool segment_has_output_edge(const PipelineSegmentPlan& segment, std::size_t edg
          segment.output_edges.end();
 }
 
+bool fused_stream_id_is_csv_safe(const std::string& stream_id) {
+  if (stream_id.empty()) {
+    return true;
+  }
+  const auto is_space = [](char value) {
+    return std::isspace(static_cast<unsigned char>(value)) != 0;
+  };
+  return stream_id.find(',') == std::string::npos && !is_space(stream_id.front()) &&
+         !is_space(stream_id.back());
+}
+
+std::optional<std::vector<std::string>>
+resolve_unique_fused_stream_ids(std::span<const std::string> configured_stream_ids) {
+  std::vector<std::string> effective;
+  effective.reserve(configured_stream_ids.size());
+  std::unordered_set<std::string> unique;
+  for (std::size_t ordinal = 0; ordinal < configured_stream_ids.size(); ++ordinal) {
+    std::string stream_id = configured_stream_ids[ordinal].empty()
+                                ? ("stream" + std::to_string(ordinal))
+                                : configured_stream_ids[ordinal];
+    if (!unique.insert(stream_id).second) {
+      return std::nullopt;
+    }
+    effective.push_back(std::move(stream_id));
+  }
+  return effective;
+}
+
 bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segment,
                                                std::size_t edge_index) {
-  if (segment.consumed_by_fused_realtime_ingress || segment.nodes.empty()) {
+  // A previously fused consumer is source-like and inputless, but its nested
+  // source branches live in fused_realtime_ingress rather than nodes.  Until
+  // recursive fusion explicitly flattens/preserves those branches, treating
+  // that segment as a leaf source would silently discard the original ingress.
+  if (segment.consumed_by_fused_realtime_ingress || segment.nodes.empty() ||
+      segment.fused_realtime_ingress.has_value()) {
     return false;
   }
   if (!segment.boundary.source_like || !segment.input_edges.empty()) {
@@ -1513,6 +1776,251 @@ bool segment_is_private_live_source_for_fusion(const PipelineSegmentPlan& segmen
   return segment.output_edges.size() == 1U;
 }
 
+struct EncodedOutputFusionMatch {
+  std::size_t source_segment = static_cast<std::size_t>(-1);
+  std::size_t decoder_segment = static_cast<std::size_t>(-1);
+  std::size_t output_segment = static_cast<std::size_t>(-1);
+  std::size_t fanout_stage = static_cast<std::size_t>(-1);
+  std::vector<std::size_t> consumed_edges;
+  std::vector<std::shared_ptr<Node>> branch_nodes;
+  FusedRealtimeIngressBranch::EncodedOutput encoded_output;
+  std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+  GraphLinkOptions encoded_sink_link_options;
+  std::size_t encoded_split_node_index = 0;
+};
+
+bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
+  if (segment.nodes.size() != 3U) {
+    return false;
+  }
+  if (!segment.nodes[0] || segment.nodes[0]->kind() != "H264Parse" || !segment.nodes[1] ||
+      segment.nodes[1]->kind() != "H264Packetize" || !segment.nodes[2] ||
+      segment.nodes[2]->kind() != "UdpOutput") {
+    return false;
+  }
+
+  const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(segment.nodes[2].get());
+  // Absorbing an asynchronous GstBaseSink into the live detector pipeline
+  // changes its state domain: that sink can hold the shared pipeline in PAUSED
+  // while waiting for preroll from every encoded branch. Keep this public
+  // topology segmented rather than coupling video egress to decoder startup.
+  return udp_output && !udp_output->options().async;
+}
+
+std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
+    const ExecutionGraphPlan& plan,
+    const std::unordered_map<graph::NodeId, std::size_t>& segment_by_node,
+    std::size_t target_edge_index) {
+  if (target_edge_index >= plan.edges.size()) {
+    return std::nullopt;
+  }
+  const auto& target_edge = plan.edges[target_edge_index];
+  const auto decoder_it = segment_by_node.find(target_edge.from);
+  if (decoder_it == segment_by_node.end() || decoder_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t decoder_index = decoder_it->second;
+  const auto& decoder = plan.pipeline_segments[decoder_index];
+  if (decoder.consumed_by_fused_realtime_ingress || decoder.fused_realtime_ingress.has_value() ||
+      decoder.input_edges.size() != 1U || decoder.output_edges.size() != 1U ||
+      decoder.output_edges.front() != target_edge_index) {
+    return std::nullopt;
+  }
+  const bool is_h264_decoder =
+      std::any_of(decoder.nodes.begin(), decoder.nodes.end(), [](const auto& node) {
+        const auto* sima_decode = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
+        return sima_decode && sima_decode->options().type == SimaDecodeType::H264;
+      });
+  if (!is_h264_decoder) {
+    return std::nullopt;
+  }
+
+  const std::size_t fanout_to_decoder_edge = decoder.input_edges.front();
+  if (fanout_to_decoder_edge >= plan.edges.size()) {
+    return std::nullopt;
+  }
+  const auto& decoder_input_edge = plan.edges[fanout_to_decoder_edge];
+  // Encoded fusion concatenates the source prefix directly with the decoder
+  // prefix. It cannot currently reproduce a scheduled/latest boundary,
+  // admission settings, queue tuning, or stream-id stamping on that public
+  // source-to-decoder edge. Keep any such topology on the segmented path
+  // rather than silently changing the ordinary connect() contract.
+  if (!exact_default_link(decoder_input_edge.link_options) ||
+      !decoder_input_edge.stream_id.empty()) {
+    return std::nullopt;
+  }
+  const graph::NodeId fanout_node = decoder_input_edge.from;
+  std::size_t fanout_stage_index = static_cast<std::size_t>(-1);
+  for (std::size_t i = 0; i < plan.stage_nodes.size(); ++i) {
+    const auto& stage = plan.stage_nodes[i];
+    if (stage.node_id == fanout_node && stage.node && stage.node->kind() == "FanOut" &&
+        !stage.consumed_by_fused_realtime_ingress) {
+      fanout_stage_index = i;
+      break;
+    }
+  }
+  if (fanout_stage_index == static_cast<std::size_t>(-1) ||
+      !is_generated_fanout_node(plan, fanout_node)) {
+    return std::nullopt;
+  }
+
+  std::vector<std::size_t> fanout_inputs;
+  std::vector<std::size_t> fanout_outputs;
+  for (std::size_t i = 0; i < plan.edges.size(); ++i) {
+    if (plan.edges[i].consumed_by_fused_realtime_ingress) {
+      continue;
+    }
+    if (plan.edges[i].to == fanout_node) {
+      fanout_inputs.push_back(i);
+    }
+    if (plan.edges[i].from == fanout_node) {
+      fanout_outputs.push_back(i);
+    }
+  }
+  if (fanout_inputs.size() != 1U || fanout_outputs.size() != 2U ||
+      std::find(fanout_outputs.begin(), fanout_outputs.end(), fanout_to_decoder_edge) ==
+          fanout_outputs.end()) {
+    return std::nullopt;
+  }
+
+  const std::size_t source_to_fanout_edge = fanout_inputs.front();
+  const auto source_it = segment_by_node.find(plan.edges[source_to_fanout_edge].from);
+  if (source_it == segment_by_node.end() || source_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t source_index = source_it->second;
+  const auto& source = plan.pipeline_segments[source_index];
+  if (!segment_is_private_live_source_for_fusion(source, source_to_fanout_edge)) {
+    return std::nullopt;
+  }
+  const bool is_h264_source =
+      std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+        return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
+      });
+  if (!is_h264_source) {
+    return std::nullopt;
+  }
+
+  const std::size_t fanout_to_output_edge = fanout_outputs.front() == fanout_to_decoder_edge
+                                                ? fanout_outputs.back()
+                                                : fanout_outputs.front();
+  const auto output_it = segment_by_node.find(plan.edges[fanout_to_output_edge].to);
+  if (output_it == segment_by_node.end() || output_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t output_index = output_it->second;
+  const auto& output = plan.pipeline_segments[output_index];
+  if (output.consumed_by_fused_realtime_ingress || output.input_edges.size() != 1U ||
+      output.input_edges.front() != fanout_to_output_edge || !output.output_edges.empty() ||
+      output.node_ids.empty()) {
+    return std::nullopt;
+  }
+  const auto* output_node =
+      output.nodes.size() == 1U
+          ? dynamic_cast<const simaai::neat::Output*>(output.nodes.front().get())
+          : nullptr;
+  if (!output_node && !is_encoded_video_sender_segment(output)) {
+    return std::nullopt;
+  }
+
+  const auto& encoded_output_edge = plan.edges[fanout_to_output_edge];
+  if (output_node) {
+    const auto& options = output_node->options();
+    // A fused pad probe can preserve ordinary, unclocked Output buffering,
+    // but it cannot faithfully reproduce clock synchronization, public
+    // combine policies, or the per-stream scheduler on a realtime link.
+    // Keep those topologies on the segmented path instead of silently
+    // changing their public semantics.
+    if (!default_link(encoded_output_edge.link_options) || options.sync ||
+        options.combine_policy != CombinePolicy::None) {
+      return std::nullopt;
+    }
+  }
+
+  EncodedOutputFusionMatch match;
+  match.source_segment = source_index;
+  match.decoder_segment = decoder_index;
+  match.output_segment = output_index;
+  match.fanout_stage = fanout_stage_index;
+  match.consumed_edges = {source_to_fanout_edge, fanout_to_decoder_edge, fanout_to_output_edge,
+                          target_edge_index};
+  match.branch_nodes.reserve(source.nodes.size() + decoder.nodes.size());
+  match.branch_nodes.insert(match.branch_nodes.end(), source.nodes.begin(), source.nodes.end());
+  match.encoded_split_node_index = match.branch_nodes.size();
+  match.branch_nodes.insert(match.branch_nodes.end(), decoder.nodes.begin(), decoder.nodes.end());
+  if (output_node) {
+    match.encoded_output.sink_node = output.node_ids.back();
+    match.encoded_output.options = output_node->options();
+    match.encoded_output.stream_id = !encoded_output_edge.stream_id.empty()
+                                         ? encoded_output_edge.stream_id
+                                         : encoded_output_edge.link_options.stream_id;
+  } else {
+    match.encoded_sink_link_options = encoded_output_edge.link_options;
+    // Preserve VideoSender's parser exactly. Finding H264Depacketize somewhere
+    // in the source segment does not prove that the source's public output tail
+    // is still parsed AU-aligned byte-stream H.264; a legal source fragment may
+    // transform the stream afterward. Fusion is an execution lowering and must
+    // not remove parser/caps/header semantics without an exact output contract.
+    match.encoded_sink_nodes = output.nodes;
+  }
+  return match;
+}
+
+bool fused_realtime_input_edges_share_destination(const ExecutionGraphPlan& plan,
+                                                  const std::vector<std::size_t>& input_edges) {
+  if (input_edges.empty()) {
+    return false;
+  }
+  std::optional<std::pair<graph::NodeId, graph::PortId>> destination;
+  for (const std::size_t edge_index : input_edges) {
+    if (edge_index >= plan.edges.size()) {
+      return false;
+    }
+    const auto& edge = plan.edges[edge_index];
+    const auto current = std::pair{edge.to, edge.to_port};
+    if (!destination.has_value()) {
+      destination = current;
+    } else if (*destination != current) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool fused_output_specs_are_compatible(const OutputSpec& lhs, const OutputSpec& rhs) {
+  const auto strings_compatible = [](const std::string& a, const std::string& b,
+                                     bool ignore_unknown = false) {
+    const auto known = [ignore_unknown](const std::string& value) {
+      return !value.empty() && (!ignore_unknown || value != "Unknown");
+    };
+    return !known(a) || !known(b) || a == b;
+  };
+  const auto positive_ints_compatible = [](int a, int b) { return a <= 0 || b <= 0 || a == b; };
+
+  if (lhs.payload_type != PayloadType::Auto && rhs.payload_type != PayloadType::Auto &&
+      lhs.payload_type != rhs.payload_type) {
+    return false;
+  }
+  if (!strings_compatible(lhs.media_type, rhs.media_type) ||
+      !strings_compatible(lhs.format, rhs.format) || !strings_compatible(lhs.dtype, rhs.dtype) ||
+      !strings_compatible(lhs.layout, rhs.layout) ||
+      !strings_compatible(lhs.memory, rhs.memory, /*ignore_unknown=*/true) ||
+      !positive_ints_compatible(lhs.width, rhs.width) ||
+      !positive_ints_compatible(lhs.height, rhs.height) ||
+      !positive_ints_compatible(lhs.depth, rhs.depth)) {
+    return false;
+  }
+
+  if (lhs.fps_num > 0 && lhs.fps_den > 0 && rhs.fps_num > 0 && rhs.fps_den > 0) {
+    const auto lhs_rate = static_cast<std::int64_t>(lhs.fps_num) * rhs.fps_den;
+    const auto rhs_rate = static_cast<std::int64_t>(rhs.fps_num) * lhs.fps_den;
+    if (lhs_rate != rhs_rate) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan* plan) {
   if (!plan || plan->pipeline_segments.empty() || plan->edges.empty()) {
     return;
@@ -1525,6 +2033,20 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     }
   }
 
+  struct BranchCandidate {
+    std::size_t source_segment = static_cast<std::size_t>(-1);
+    std::vector<std::size_t> consumed_segments;
+    std::vector<std::size_t> consumed_edges;
+    std::optional<std::size_t> consumed_stage;
+    std::vector<std::shared_ptr<Node>> nodes;
+    std::optional<FusedRealtimeIngressBranch::EncodedOutput> encoded_output;
+    std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
+    GraphLinkOptions encoded_sink_link_options;
+    std::optional<std::size_t> encoded_split_node_index;
+    OutputSpec output_spec;
+    bool output_complete = false;
+  };
+
   for (std::size_t target_index = 0; target_index < plan->pipeline_segments.size();
        ++target_index) {
     auto& target = plan->pipeline_segments[target_index];
@@ -1532,34 +2054,108 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         target.fused_realtime_ingress.has_value()) {
       continue;
     }
+    // One neatlatestbystreammux has one linear src pad. It can replace true
+    // fan-in to a single consumer ingress, but not a multi-input segment whose
+    // edges intentionally address distinct ports/endpoints.
+    if (!fused_realtime_input_edges_share_destination(*plan, target.input_edges)) {
+      continue;
+    }
 
     bool all_realtime = true;
-    std::vector<std::size_t> source_segment_indices;
-    source_segment_indices.reserve(target.input_edges.size());
+    std::vector<BranchCandidate> candidates;
+    candidates.reserve(target.input_edges.size());
     for (const std::size_t edge_index : target.input_edges) {
       if (edge_index >= plan->edges.size()) {
         all_realtime = false;
         break;
       }
       const auto& edge = plan->edges[edge_index];
-      if (edge.link_options.policy != GraphLinkPolicy::RealtimeLatestByStream) {
+      if (!realtime_latest_link(edge.link_options)) {
         all_realtime = false;
         break;
       }
-      auto it = segment_by_node.find(edge.from);
-      if (it == segment_by_node.end() || it->second == target_index ||
-          it->second >= plan->pipeline_segments.size()) {
+      // The fused mux transports stream ids through one CSV property. Commas
+      // and edge whitespace would split or normalize an otherwise valid public
+      // id, so retain exact semantics through the segmented runtime instead.
+      if (!fused_stream_id_is_csv_safe(edge.stream_id)) {
         all_realtime = false;
         break;
       }
-      const auto& source = plan->pipeline_segments[it->second];
-      if (!segment_is_private_live_source_for_fusion(source, edge_index)) {
-        all_realtime = false;
-        break;
+
+      BranchCandidate candidate;
+      auto source_it = segment_by_node.find(edge.from);
+      if (source_it != segment_by_node.end() && source_it->second != target_index &&
+          source_it->second < plan->pipeline_segments.size() &&
+          segment_is_private_live_source_for_fusion(plan->pipeline_segments[source_it->second],
+                                                    edge_index)) {
+        const auto& source = plan->pipeline_segments[source_it->second];
+        candidate.source_segment = source_it->second;
+        candidate.consumed_segments.push_back(source_it->second);
+        candidate.consumed_edges.push_back(edge_index);
+        candidate.nodes = source.nodes;
+        candidate.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
+        candidate.output_complete = edge.spec_complete || source.output_complete;
+      } else {
+        const auto encoded_match =
+            match_encoded_output_fusion_branch(*plan, segment_by_node, edge_index);
+        if (!encoded_match.has_value()) {
+          all_realtime = false;
+          break;
+        }
+        const auto& decoder = plan->pipeline_segments[encoded_match->decoder_segment];
+        candidate.source_segment = encoded_match->decoder_segment;
+        candidate.consumed_segments = {encoded_match->source_segment,
+                                       encoded_match->decoder_segment,
+                                       encoded_match->output_segment};
+        candidate.consumed_edges = encoded_match->consumed_edges;
+        candidate.consumed_stage = encoded_match->fanout_stage;
+        candidate.nodes = encoded_match->branch_nodes;
+        if (encoded_match->encoded_output.sink_node != graph::kInvalidNode) {
+          candidate.encoded_output = encoded_match->encoded_output;
+        }
+        candidate.encoded_sink_nodes = encoded_match->encoded_sink_nodes;
+        candidate.encoded_sink_link_options = encoded_match->encoded_sink_link_options;
+        candidate.encoded_split_node_index = encoded_match->encoded_split_node_index;
+        candidate.output_spec = edge.spec_complete ? edge.spec : decoder.output_spec;
+        candidate.output_complete = edge.spec_complete || decoder.output_complete;
       }
-      source_segment_indices.push_back(it->second);
+      candidates.push_back(std::move(candidate));
     }
-    if (!all_realtime || source_segment_indices.size() != target.input_edges.size()) {
+    if (!all_realtime || candidates.size() != target.input_edges.size()) {
+      continue;
+    }
+
+    // The fused mux addresses branches by stream id.  Unlike the segmented
+    // runtime, it cannot preserve two producer edges that intentionally share
+    // an id: its id-to-pad lookup would collapse them onto one branch.  Resolve
+    // the same ordinal fallbacks used by the renderer before mutating the plan
+    // and decline fusion on any collision (including an explicit "streamN"
+    // colliding with another edge's fallback).
+    std::vector<std::string> configured_stream_ids;
+    configured_stream_ids.reserve(target.input_edges.size());
+    for (const std::size_t edge_index : target.input_edges) {
+      configured_stream_ids.push_back(plan->edges[edge_index].stream_id);
+    }
+    auto effective_stream_ids = resolve_unique_fused_stream_ids(configured_stream_ids);
+    if (!effective_stream_ids.has_value()) {
+      continue;
+    }
+
+    // One fused mux has one negotiated src-pad contract. If known branch
+    // fields disagree, leave the graph segmented so each source retains its
+    // own caps negotiation rather than committing fusion and failing later
+    // during pipeline materialization.
+    bool compatible_caps = true;
+    for (std::size_t lhs = 0; compatible_caps && lhs < candidates.size(); ++lhs) {
+      for (std::size_t rhs = lhs + 1; rhs < candidates.size(); ++rhs) {
+        if (!fused_output_specs_are_compatible(candidates[lhs].output_spec,
+                                               candidates[rhs].output_spec)) {
+          compatible_caps = false;
+          break;
+        }
+      }
+    }
+    if (!compatible_caps) {
       continue;
     }
 
@@ -1568,26 +2164,41 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     for (std::size_t ordinal = 0; ordinal < target.input_edges.size(); ++ordinal) {
       const std::size_t edge_index = target.input_edges[ordinal];
       const auto& edge = plan->edges[edge_index];
-      const auto& source = plan->pipeline_segments[source_segment_indices[ordinal]];
+      auto& candidate = candidates[ordinal];
 
       FusedRealtimeIngressBranch branch;
       branch.edge_index = edge_index;
       branch.source_node = edge.from;
-      branch.stream_id =
-          edge.stream_id.empty() ? ("stream" + std::to_string(ordinal)) : edge.stream_id;
-      branch.nodes = source.nodes;
-      branch.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
-      branch.output_complete = edge.spec_complete || source.output_complete;
+      branch.stream_id = (*effective_stream_ids)[ordinal];
+      branch.link_options = edge.link_options;
+      branch.nodes = std::move(candidate.nodes);
+      branch.encoded_output = std::move(candidate.encoded_output);
+      branch.encoded_sink_nodes = std::move(candidate.encoded_sink_nodes);
+      branch.encoded_sink_link_options = candidate.encoded_sink_link_options;
+      branch.encoded_split_node_index = candidate.encoded_split_node_index;
+      if (branch.encoded_output.has_value() && branch.encoded_output->stream_id.empty()) {
+        branch.encoded_output->stream_id = branch.stream_id;
+      }
+      branch.output_spec = std::move(candidate.output_spec);
+      branch.output_complete = candidate.output_complete;
       fused.branches.push_back(std::move(branch));
     }
 
-    for (const std::size_t edge_index : target.input_edges) {
-      if (edge_index < plan->edges.size()) {
-        plan->edges[edge_index].consumed_by_fused_realtime_ingress = true;
+    for (const auto& candidate : candidates) {
+      for (const std::size_t edge_index : candidate.consumed_edges) {
+        if (edge_index < plan->edges.size()) {
+          plan->edges[edge_index].consumed_by_fused_realtime_ingress = true;
+        }
       }
-    }
-    for (const std::size_t source_index : source_segment_indices) {
-      plan->pipeline_segments[source_index].consumed_by_fused_realtime_ingress = true;
+      for (const std::size_t segment_index : candidate.consumed_segments) {
+        if (segment_index < plan->pipeline_segments.size()) {
+          plan->pipeline_segments[segment_index].consumed_by_fused_realtime_ingress = true;
+        }
+      }
+      if (candidate.consumed_stage.has_value() &&
+          *candidate.consumed_stage < plan->stage_nodes.size()) {
+        plan->stage_nodes[*candidate.consumed_stage].consumed_by_fused_realtime_ingress = true;
+      }
     }
 
     target.fused_realtime_ingress = std::move(fused);
@@ -1849,7 +2460,152 @@ void apply_public_fragment_metadata(
   }
 }
 
+const InputOptions* ingress_options_for_segment_edge(const ExecutionGraphPlan& plan,
+                                                     const PipelineSegmentPlan& segment,
+                                                     std::size_t edge_index,
+                                                     std::size_t ingress_index) {
+  if (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty()) {
+    const auto& hints = *segment.boundary_hints;
+    if (edge_index < plan.edges.size()) {
+      const graph::PortId to_port = plan.edges[edge_index].to_port;
+      if (to_port != graph::kInvalidPort && to_port < plan.port_names.size()) {
+        const std::string& port_name = plan.port_names[to_port];
+        const auto match = std::find(hints.ingress_endpoint_names.begin(),
+                                     hints.ingress_endpoint_names.end(), port_name);
+        if (match != hints.ingress_endpoint_names.end()) {
+          const std::size_t matched_index =
+              static_cast<std::size_t>(match - hints.ingress_endpoint_names.begin());
+          if (matched_index < hints.ingress_inputs.size()) {
+            return &hints.ingress_inputs[matched_index];
+          }
+        }
+      }
+    }
+    if (ingress_index < hints.ingress_inputs.size()) {
+      return &hints.ingress_inputs[ingress_index];
+    }
+    return nullptr;
+  }
+  for (const auto& node : segment.nodes) {
+    if (const auto* input = dynamic_cast<const simaai::neat::Input*>(node.get())) {
+      return &input->options();
+    }
+  }
+  return nullptr;
+}
+
+bool is_shape_passthrough_stage(const ExecutionGraphPlan& plan, graph::NodeId node_id) {
+  for (const auto& stage : plan.stage_nodes) {
+    if (stage.node_id != node_id || !stage.node) {
+      continue;
+    }
+    const std::string kind = stage.node->kind();
+    return kind == "FanOut" || kind == "StreamScheduler";
+  }
+  return false;
+}
+
+void collect_static_ingress_specs(const ExecutionGraphPlan& plan, std::size_t edge_index,
+                                  std::unordered_set<std::size_t>* visited,
+                                  std::vector<const OutputSpec*>* specs) {
+  if (!visited || !specs || edge_index >= plan.edges.size() ||
+      !visited->insert(edge_index).second) {
+    return;
+  }
+  const EdgePlan& edge = plan.edges[edge_index];
+  if (is_shape_passthrough_stage(plan, edge.from)) {
+    for (std::size_t i = 0; i < plan.edges.size(); ++i) {
+      if (plan.edges[i].to == edge.from) {
+        collect_static_ingress_specs(plan, i, visited, specs);
+      }
+    }
+    return;
+  }
+  if (edge.spec.width > 0 || edge.spec.height > 0 || edge.spec.depth > 0) {
+    specs->push_back(&edge.spec);
+  }
+}
+
+void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& plan) {
+  for (const auto& segment : plan.pipeline_segments) {
+    if (segment.input_edges.empty()) {
+      continue;
+    }
+
+    const auto validate = [&](const char* dimension, int actual, int configured_max,
+                              std::size_t ingress_index) {
+      const int capacity = configured_max > 0 ? configured_max : -1;
+      if (actual <= 0 || capacity <= 0 || actual <= capacity) {
+        return;
+      }
+      const std::string where = "compile_public_graph: segment " + std::to_string(segment.id) +
+                                " ingress " + std::to_string(ingress_index);
+      throw std::invalid_argument(
+          pipeline_internal::shape_limit_exceeded_message(where, dimension, actual, capacity) +
+          ". Fix: " + pipeline_internal::shape_limit_fix_hint(dimension, actual));
+    };
+
+    for (std::size_t ingress_index = 0; ingress_index < segment.input_edges.size();
+         ++ingress_index) {
+      const std::size_t edge_index = segment.input_edges[ingress_index];
+      const InputOptions* options =
+          ingress_options_for_segment_edge(plan, segment, edge_index, ingress_index);
+      if (!options) {
+        continue;
+      }
+      std::unordered_set<std::size_t> visited;
+      std::vector<const OutputSpec*> specs;
+      collect_static_ingress_specs(plan, edge_index, &visited, &specs);
+      for (const OutputSpec* spec : specs) {
+        validate("width", spec->width, options->max_width, ingress_index);
+        validate("height", spec->height, options->max_height, ingress_index);
+        validate("depth", spec->depth, options->max_depth, ingress_index);
+      }
+    }
+  }
+}
+
 } // namespace
+
+namespace session_test {
+
+bool fused_realtime_source_segment_eligible_for_test(bool already_fused) {
+  PipelineSegmentPlan segment;
+  segment.nodes.push_back(nullptr);
+  segment.boundary.source_like = true;
+  segment.output_edges.push_back(7U);
+  if (already_fused) {
+    segment.fused_realtime_ingress.emplace();
+  }
+  return segment_is_private_live_source_for_fusion(segment, 7U);
+}
+
+bool fused_realtime_destinations_share_port_for_test(
+    const std::vector<std::pair<graph::NodeId, graph::PortId>>& destinations) {
+  ExecutionGraphPlan plan;
+  std::vector<std::size_t> input_edges;
+  plan.edges.reserve(destinations.size());
+  input_edges.reserve(destinations.size());
+  for (const auto& [node, port] : destinations) {
+    EdgePlan edge;
+    edge.to = node;
+    edge.to_port = port;
+    input_edges.push_back(plan.edges.size());
+    plan.edges.push_back(std::move(edge));
+  }
+  return fused_realtime_input_edges_share_destination(plan, input_edges);
+}
+
+std::optional<std::vector<std::string>>
+resolve_unique_fused_stream_ids_for_test(const std::vector<std::string>& configured_stream_ids) {
+  return resolve_unique_fused_stream_ids(configured_stream_ids);
+}
+
+} // namespace session_test
+
+void validate_static_connected_input_capacities(const ExecutionGraphPlan& plan) {
+  validate_static_connected_input_capacities_impl(plan);
+}
 
 ExecutionGraphPlan build_execution_plan_from_compiled(const graph::Graph& graph,
                                                       const graph::CompiledGraph& compiled,
@@ -1925,6 +2681,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   const auto total_start = pipeline_internal::build_timing_now();
   const auto view = public_graph.composition_view_for_internal_compile();
   (void)view.groups;
+  validate_unique_source_buffer_names(view.vertices, view.edges);
 
   ExecutionGraphPlan empty_plan;
   empty_plan.linear_compat = true;
@@ -1985,13 +2742,11 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_lowered_link_policies(lowering.lowered_edges, &plan);
     apply_normalized_link_policies(normalized, lowering.runtime_node_for_vertex, &plan);
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
+    validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
-    // Prefer the C++ graph-runtime RealtimeLatestLink path for live fan-in.
-    // The legacy fused ingress collapses live source branches into one
-    // monolithic GStreamer pipeline and is kept only as an explicit rollback.
-    if (pipeline_internal::env_bool("SIMA_GRAPH_LEGACY_FUSED_REALTIME_INGRESS", false)) {
-      fuse_realtime_fan_in_segments(lowering.graph, &plan);
-    }
+    // Fusion is an execution-plan lowering, not a public build mode. Eligible live
+    // fan-in is fused automatically; ineligible topology remains segmented.
+    fuse_realtime_fan_in_segments(lowering.graph, &plan);
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,
                                view.named_fragments, &plan);
     map_explicit_public_vertex_endpoints(runtime_node_for_vertex, view.vertices, &plan);
