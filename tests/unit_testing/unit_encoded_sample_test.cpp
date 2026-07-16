@@ -14,6 +14,7 @@
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <iostream>
@@ -441,7 +442,144 @@ int main() {
               "nested metadata source buffer should return to its pool after transfer release");
       require(reacquired_buffer == expected_parent,
               "nested metadata source pool should recycle the original buffer");
+
+      // Reuse the same one-buffer pool root across two independent appsrc
+      // consumers. This mirrors a graph fan-out where encoder and detector
+      // branches both create a zero-copy transfer proxy for one camera frame.
+      GstBuffer* fanout_parent = reacquired_buffer;
+      GstMemory* fanout_memory = gst_buffer_peek_memory(reacquired_buffer, 0);
+      require(fanout_memory == expected_memory,
+              "fan-out fixture should reuse the original pooled memory");
+      GstSample* fanout_gst_sample = gst_sample_new(reacquired_buffer, caps, nullptr, nullptr);
       gst_buffer_unref(reacquired_buffer);
+      reacquired_buffer = nullptr;
+      require(fanout_gst_sample != nullptr, "failed to create fan-out pooled GstSample");
+      Sample fanout_holder_sample = sample_from_gst_encoded(fanout_gst_sample, h264_caps);
+      gst_sample_unref(fanout_gst_sample);
+      fanout_holder_sample.tensors.front().device.type = DeviceType::SIMA_CVU;
+      fanout_holder_sample.tensors.front().storage->device.type = DeviceType::SIMA_CVU;
+      fanout_holder_sample.input_seq = 5;
+      fanout_holder_sample.orig_input_seq = 5;
+
+      const auto make_fanout_stream = [&](const char* pipeline_name, const char* appsrc_name,
+                                          const char* appsink_name,
+                                          GstElement** appsink_out) -> InputStream {
+        GstElement* fanout_pipeline = gst_pipeline_new(pipeline_name);
+        GstElement* fanout_appsrc = gst_element_factory_make("appsrc", appsrc_name);
+        GstElement* fanout_appsink = gst_element_factory_make("appsink", appsink_name);
+        require(fanout_pipeline != nullptr && fanout_appsrc != nullptr && fanout_appsink != nullptr,
+                "failed to create fan-out holder transfer pipeline");
+        g_object_set(fanout_appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, "block", TRUE,
+                     nullptr);
+        g_object_set(fanout_appsink, "sync", FALSE, "max-buffers", 1U, "drop", FALSE,
+                     "enable-last-sample", FALSE, nullptr);
+        gst_app_src_set_caps(GST_APP_SRC(fanout_appsrc), caps);
+        gst_bin_add_many(GST_BIN(fanout_pipeline), fanout_appsrc, fanout_appsink, nullptr);
+        require(gst_element_link(fanout_appsrc, fanout_appsink),
+                "failed to link fan-out holder transfer pipeline");
+        fanout_appsrc = gst_bin_get_by_name(GST_BIN(fanout_pipeline), appsrc_name);
+        fanout_appsink = gst_bin_get_by_name(GST_BIN(fanout_pipeline), appsink_name);
+        require(fanout_appsrc != nullptr && fanout_appsink != nullptr,
+                "failed to retain fan-out holder transfer elements");
+        require(gst_element_set_state(fanout_pipeline, GST_STATE_PLAYING) !=
+                    GST_STATE_CHANGE_FAILURE,
+                "failed to start fan-out holder transfer pipeline");
+        *appsink_out = fanout_appsink;
+        return InputStream::create(fanout_pipeline, fanout_appsrc, fanout_appsink,
+                                   derive_sample_spec_or_throw(fanout_holder_sample), src_opt,
+                                   stream_opt, {}, nullptr);
+      };
+
+      GstElement* fanout_appsink_a = nullptr;
+      GstElement* fanout_appsink_b = nullptr;
+      InputStream fanout_stream_a = make_fanout_stream("zero-copy-fanout-a", "fanout-src-a",
+                                                       "fanout-sink-a", &fanout_appsink_a);
+      InputStream fanout_stream_b = make_fanout_stream("zero-copy-fanout-b", "fanout-src-b",
+                                                       "fanout-sink-b", &fanout_appsink_b);
+      require(fanout_stream_a.try_push_message(fanout_holder_sample),
+              "first fan-out holder push failed");
+      require(fanout_stream_b.try_push_message(fanout_holder_sample),
+              "second fan-out holder push failed");
+
+      GstSample* fanout_pulled_a =
+          gst_app_sink_try_pull_sample(GST_APP_SINK(fanout_appsink_a), GST_SECOND);
+      GstSample* fanout_pulled_b =
+          gst_app_sink_try_pull_sample(GST_APP_SINK(fanout_appsink_b), GST_SECOND);
+      require(fanout_pulled_a != nullptr && fanout_pulled_b != nullptr,
+              "fan-out holder pull timed out");
+      GstBuffer* fanout_transfer_a = gst_sample_get_buffer(fanout_pulled_a);
+      GstBuffer* fanout_transfer_b = gst_sample_get_buffer(fanout_pulled_b);
+      require(fanout_transfer_a != fanout_transfer_b,
+              "fan-out branches should own distinct transfer buffers");
+      require(gst_buffer_peek_memory(fanout_transfer_a, 0) == fanout_memory &&
+                  gst_buffer_peek_memory(fanout_transfer_b, 0) == fanout_memory,
+              "fan-out transfers should share the original pooled memory");
+      GstParentBufferMeta* fanout_parent_meta_a =
+          gst_buffer_get_parent_buffer_meta(fanout_transfer_a);
+      GstParentBufferMeta* fanout_parent_meta_b =
+          gst_buffer_get_parent_buffer_meta(fanout_transfer_b);
+      require(fanout_parent_meta_a != nullptr && fanout_parent_meta_a->buffer != nullptr &&
+                  fanout_parent_meta_b != nullptr && fanout_parent_meta_b->buffer != nullptr,
+              "each fan-out transfer should retain a deferred parent proxy");
+      require(fanout_parent_meta_a->buffer != fanout_parent_meta_b->buffer,
+              "fan-out branches should own distinct deferred parent proxies");
+
+      std::atomic<int> fanout_proxy_a_finalized{0};
+      std::atomic<int> fanout_proxy_b_finalized{0};
+      const auto count_proxy_finalization = [](gpointer data, GstMiniObject*) {
+        static_cast<std::atomic<int>*>(data)->fetch_add(1, std::memory_order_relaxed);
+      };
+      gst_mini_object_weak_ref(GST_MINI_OBJECT_CAST(fanout_parent_meta_a->buffer),
+                               count_proxy_finalization, &fanout_proxy_a_finalized);
+      gst_mini_object_weak_ref(GST_MINI_OBJECT_CAST(fanout_parent_meta_b->buffer),
+                               count_proxy_finalization, &fanout_proxy_b_finalized);
+      const auto wait_for_proxy_finalization = [](const std::atomic<int>& count) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1000);
+        while (count.load(std::memory_order_relaxed) == 0 &&
+               std::chrono::steady_clock::now() < deadline) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return count.load(std::memory_order_relaxed) == 1;
+      };
+
+      fanout_holder_sample = Sample{};
+      fanout_stream_a.close();
+      fanout_stream_b.close();
+
+      gst_sample_unref(fanout_pulled_a);
+      require(wait_for_proxy_finalization(fanout_proxy_a_finalized),
+              "first fan-out proxy should finalize with its branch");
+      require(fanout_proxy_b_finalized.load(std::memory_order_relaxed) == 0,
+              "second fan-out proxy must remain alive with its branch");
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      blocked_buffer = nullptr;
+      const GstFlowReturn one_branch_blocked_flow =
+          gst_buffer_pool_acquire_buffer(pool, &blocked_buffer, &acquire_params);
+      if (blocked_buffer) {
+        gst_buffer_unref(blocked_buffer);
+      }
+      require(one_branch_blocked_flow != GST_FLOW_OK,
+              "source pool must remain blocked while one fan-out branch is alive");
+
+      gst_sample_unref(fanout_pulled_b);
+      require(wait_for_proxy_finalization(fanout_proxy_b_finalized),
+              "second fan-out proxy should finalize with its branch");
+      GstBuffer* fanout_reacquired_buffer = nullptr;
+      GstFlowReturn fanout_reacquire_flow = GST_FLOW_EOS;
+      for (int attempt = 0; attempt < 100 && fanout_reacquire_flow != GST_FLOW_OK; ++attempt) {
+        fanout_reacquire_flow =
+            gst_buffer_pool_acquire_buffer(pool, &fanout_reacquired_buffer, &acquire_params);
+        if (fanout_reacquire_flow != GST_FLOW_OK) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+      }
+      require(fanout_reacquire_flow == GST_FLOW_OK,
+              "source buffer should return to its pool after every fan-out branch releases it");
+      require(fanout_reacquired_buffer == fanout_parent,
+              "fan-out source pool should recycle the original buffer");
+      require(gst_buffer_peek_memory(fanout_reacquired_buffer, 0) == fanout_memory,
+              "fan-out source pool should recycle the original memory");
+      gst_buffer_unref(fanout_reacquired_buffer);
       require(gst_buffer_pool_set_active(pool, FALSE),
               "failed to deactivate encoded source buffer pool");
       gst_object_unref(pool);
