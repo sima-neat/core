@@ -370,6 +370,15 @@ std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContr
 /// Returns the logical-output contracts at the MLA boundary.
 std::vector<MpkTensorContract> get_mla_logical_outputs_contract(const MpkContract& contract);
 
+/// Packed transport byte span for an MLA detessellation boundary stage, given
+/// the boundary tensor dtype. Returns 0 when the stage geometry/dtype is
+/// insufficient to size the transport view. Low-rank (`any_shape_on_mla`) frame
+/// shapes (rank < 3, e.g. `[1, N]`) carry no spatial H/W/C tessellation and are
+/// sized as dense flat buffers. Exposed for unit testing of the boundary
+/// transport sizing contract (internal header; not part of the stable API).
+std::uint64_t expected_detess_packed_transport_bytes(const MpkPluginIoContract& stage,
+                                                     const std::string& boundary_dtype);
+
 /// Returns the quant params for a named plugin if present.
 std::optional<MpkQuantContract> get_quant_params_contract(const MpkContract& contract,
                                                           const std::string& plugin_name_or_id);

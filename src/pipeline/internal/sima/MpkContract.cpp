@@ -895,7 +895,24 @@ std::uint64_t expected_detess_packed_input_size_bytes_local(const MpkPluginIoCon
     shape.erase(shape.begin());
   }
   if (shape.size() < 3U) {
-    return 0U;
+    // Low-rank detess outputs (e.g. `any_shape_on_mla` flat [1, N] or [N]
+    // tensors that are not laid out as spatial H/W/C) carry no channel
+    // tessellation, so the packed transport span is simply the dense byte
+    // size = product(dims) * element_size. Returning 0 here previously made the
+    // MLA boundary transport check reject otherwise-valid non-4D MLA outputs.
+    const std::uint64_t low_rank_elem_bytes = dtype_size_bytes_local(dtype);
+    if (low_rank_elem_bytes == 0U) {
+      return 0U;
+    }
+    std::uint64_t total = low_rank_elem_bytes;
+    for (const std::int64_t dim : shape) {
+      const auto factor = static_cast<std::uint64_t>(std::max<std::int64_t>(dim, 1));
+      if (total > std::numeric_limits<std::uint64_t>::max() / factor) {
+        return 0U;
+      }
+      total *= factor;
+    }
+    return total;
   }
 
   std::uint64_t batch = 1U;
@@ -6957,6 +6974,11 @@ get_mla_boundary_physical_outputs_contract(const MpkContract& contract) {
     return *outputs;
   }
   return {};
+}
+
+std::uint64_t expected_detess_packed_transport_bytes(const MpkPluginIoContract& stage,
+                                                     const std::string& boundary_dtype) {
+  return expected_detess_packed_input_size_bytes_local(stage, boundary_dtype);
 }
 
 std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContract& contract) {
