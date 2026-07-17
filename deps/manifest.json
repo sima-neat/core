@@ -1,6 +1,7 @@
 {
   "internals": {
-    "policy": "snap"
+    "branch": "improving-errors-mipi",
+    "spec": "4c51464921fe"
   },
   "llima": {
     "policy": "snap"
