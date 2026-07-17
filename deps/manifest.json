@@ -1,7 +1,7 @@
 {
   "internals": {
     "branch": "codex/mipi-runtime-coherency",
-    "spec": "57416eb713f1"
+    "spec": "030d44bb555d"
   },
   "llima": {
     "policy": "snap"
