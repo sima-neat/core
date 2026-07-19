@@ -431,7 +431,7 @@ void collect_decoder_candidate_from_node(
     ExecutionGraphRuntime& execution, std::size_t pipeline_index, std::size_t node_index,
     const std::shared_ptr<simaai::neat::Node>& node, simaai::neat::graph::NodeId runtime_node,
     const OutputSpec& decoder_output_spec, bool fused_branch, std::size_t fused_branch_index,
-    std::vector<DecoderAdmissionCandidate>& candidates, std::size_t* automatic_decoders,
+    std::vector<DecoderAdmissionCandidate>& candidates, std::size_t* admission_decoder_count,
     std::size_t* missing_shape_decoders) {
   (void)execution;
   const auto* dec = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
@@ -442,8 +442,8 @@ void collect_decoder_candidate_from_node(
   if (!decode_type_uses_video_admission(opt.type)) {
     return;
   }
-  if (automatic_decoders) {
-    ++(*automatic_decoders);
+  if (admission_decoder_count) {
+    ++(*admission_decoder_count);
   }
 
   const std::uint32_t explicit_width = positive_u32_or_zero(opt.dec_width);
@@ -497,10 +497,10 @@ void collect_decoder_candidate_from_node(
 
 bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
                                           std::vector<DecoderAdmissionCandidate>& candidates,
-                                          std::size_t* automatic_decoders,
+                                          std::size_t* admission_decoder_count,
                                           std::size_t* missing_shape_decoders) {
-  if (automatic_decoders) {
-    *automatic_decoders = 0;
+  if (admission_decoder_count) {
+    *admission_decoder_count = 0;
   }
   if (missing_shape_decoders) {
     *missing_shape_decoders = 0;
@@ -523,7 +523,7 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
       collect_decoder_candidate_from_node(
           execution, pipeline_index, node_index, runtime->nodes[node_index],
           runtime_node_for_materialized_decoder(*runtime, node_index), decoder_spec,
-          /*fused_branch=*/false, static_cast<std::size_t>(-1), candidates, automatic_decoders,
+          /*fused_branch=*/false, static_cast<std::size_t>(-1), candidates, admission_decoder_count,
           missing_shape_decoders);
     }
 
@@ -541,8 +541,8 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
                                         node_index, {});
           collect_decoder_candidate_from_node(
               execution, pipeline_index, node_index, branch.nodes[node_index], branch.source_node,
-              decoder_spec, /*fused_branch=*/true, branch_index, candidates, automatic_decoders,
-              missing_shape_decoders);
+              decoder_spec, /*fused_branch=*/true, branch_index, candidates,
+              admission_decoder_count, missing_shape_decoders);
         }
       }
     }
@@ -765,18 +765,18 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
   }
 
   std::vector<DecoderAdmissionCandidate> candidates;
-  std::size_t automatic_decoders = 0;
+  std::size_t admission_decoder_count = 0;
   std::size_t missing_shape_decoders = 0;
-  collect_decoder_admission_candidates(execution, candidates, &automatic_decoders,
+  collect_decoder_admission_candidates(execution, candidates, &admission_decoder_count,
                                        &missing_shape_decoders);
-  if (automatic_decoders <= 1) {
+  if (admission_decoder_count <= 1) {
     return;
   }
   if (missing_shape_decoders > 0) {
     const std::string msg =
         "RunCore::start(graph): automatic decoder admission requires decoded width/height for "
         "each H.264/H.265 decoder in a multi-decoder graph; missing shape for " +
-        std::to_string(missing_shape_decoders) + " of " + std::to_string(automatic_decoders) +
+        std::to_string(missing_shape_decoders) + " of " + std::to_string(admission_decoder_count) +
         " decoder(s).";
     if (env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {
       throw std::runtime_error(msg);
@@ -784,7 +784,7 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     if (decoder_plan_debug_enabled()) {
       std::fprintf(stderr,
                    "[DECPLAN] admission_skip reason=missing_shape automatic=%zu missing=%zu\n",
-                   automatic_decoders, missing_shape_decoders);
+                   admission_decoder_count, missing_shape_decoders);
     }
     return;
   }
