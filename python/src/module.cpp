@@ -3741,7 +3741,9 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
       .value("H264", simaai::neat::SimaDecodeType::H264)
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
-      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG);
+      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG)
+      .value("H265", simaai::neat::SimaDecodeType::H265);
+  m.attr("SimaDecodeType").attr("HEVC") = m.attr("SimaDecodeType").attr("H265");
   nb::class_<simaai::neat::SimaDecodeOptions>(m, "SimaDecodeOptions")
       .def(nb::init<>())
       .def_rw("type", &simaai::neat::SimaDecodeOptions::type)

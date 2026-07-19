@@ -785,6 +785,7 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   )
   native_decode = pyneat.SimaDecodeOptions()
   assert native_decode.type == pyneat.SimaDecodeType.H264
+  assert pyneat.SimaDecodeType.HEVC == pyneat.SimaDecodeType.H265
   assert native_decode.out_format == pyneat.Format.NV12
   assert native_decode.raw_output is True
   assert native_decode.input_buffers == -1
@@ -806,6 +807,10 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert native_decode.memory_opt is True
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.MJPEG
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.H265
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.HEVC
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
 
 

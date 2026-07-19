@@ -17,9 +17,11 @@ namespace simaai::neat {
 
 /// Encoded media type decoded by `SimaDecode`.
 enum class SimaDecodeType {
-  H264 = 0, ///< H.264 elementary stream.
-  JPEG,     ///< Single JPEG frame.
-  MJPEG,    ///< JPEG-frame video stream after framing/depacketization.
+  H264 = 0,    ///< H.264 elementary stream.
+  JPEG = 1,    ///< Single JPEG frame.
+  MJPEG = 2,   ///< JPEG-frame video stream after framing/depacketization.
+  H265 = 3,    ///< H.265/HEVC Main 8-bit 4:2:0 elementary stream.
+  HEVC = H265, ///< Alias for H.265.
 };
 
 /**
