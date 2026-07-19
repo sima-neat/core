@@ -103,10 +103,10 @@ run_one_raw_sample(const simaai::neat::GraphLinkOptions& options, int stream_cou
   return stats;
 }
 
-void verify_raw_frame_cap_blocks_after(const simaai::neat::GraphLinkOptions& options,
-                                       int stream_count, int admitted_frames,
-                                       const std::string& label,
-                                       bool use_explicit_link_stream_ids = true) {
+void verify_raw_frame_cap_blocks_after(
+    const simaai::neat::GraphLinkOptions& options, int stream_count, int admitted_frames,
+    const std::string& label, bool use_explicit_link_stream_ids = true,
+    const std::vector<simaai::neat::GraphLinkOptions>& additional_edge_options = {}) {
   simaai::neat::runtime::DownstreamTarget target{
       simaai::neat::runtime::DownstreamTarget::Kind::PipelineInput,
       0U,
@@ -117,8 +117,14 @@ void verify_raw_frame_cap_blocks_after(const simaai::neat::GraphLinkOptions& opt
   simaai::neat::runtime::RealtimeLatestLink link(target, options,
                                                  use_explicit_link_stream_ids ? "stream0" : "");
   for (int i = 1; i < stream_count; ++i) {
-    link.add_edge_stream_id(static_cast<std::size_t>(i),
-                            use_explicit_link_stream_ids ? "stream" + std::to_string(i) : "");
+    const std::string stream_id = use_explicit_link_stream_ids ? "stream" + std::to_string(i) : "";
+    const std::size_t options_index = static_cast<std::size_t>(i - 1);
+    if (options_index < additional_edge_options.size()) {
+      link.add_edge_stream_id(static_cast<std::size_t>(i), stream_id,
+                              additional_edge_options[options_index]);
+    } else {
+      link.add_edge_stream_id(static_cast<std::size_t>(i), stream_id);
+    }
   }
 
   std::mutex mu;
@@ -204,13 +210,38 @@ void verify_multiplexed_stream_ids_scale_default_total_cap() {
                                     /*use_explicit_link_stream_ids=*/false);
 }
 
+void verify_asymmetric_fan_in_uses_strictest_caps() {
+  simaai::neat::GraphLinkOptions first_options;
+  first_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+  first_options.max_inflight_per_stream = 8;
+  first_options.max_inflight_total = 8;
+
+  simaai::neat::GraphLinkOptions second_options = first_options;
+  second_options.max_inflight_per_stream = 1;
+  second_options.max_inflight_total = 2;
+
+  simaai::neat::runtime::DownstreamTarget target{
+      simaai::neat::runtime::DownstreamTarget::Kind::PipelineInput,
+      0U,
+      simaai::neat::graph::kInvalidPort,
+      0U,
+  };
+  simaai::neat::runtime::RealtimeLatestLink link(target, first_options, "stream0");
+  link.add_edge_stream_id(1U, "stream1", second_options);
+  require(link.options().max_inflight_per_stream == 1,
+          "non-fused fan-in must enforce the strictest producer per-stream cap");
+  require(link.options().max_inflight_total == 2,
+          "non-fused fan-in must enforce the strictest producer total cap");
+  verify_raw_frame_cap_blocks_after(first_options, 2, 2,
+                                    "asymmetric non-fused fan-in admission caps",
+                                    /*use_explicit_link_stream_ids=*/true, {second_options});
+}
+
 } // namespace
 
 int main() {
   try {
     simaai::neat::gst_init_once();
-    ::unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM");
-    ::unsetenv("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM");
     ::unsetenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_GLOBAL");
 
     simaai::neat::GraphLinkOptions default_options;
@@ -227,6 +258,7 @@ int main() {
                                       "explicit global raw-frame cap above default");
     verify_per_stream_cap_blocks_after_two_raw_frames();
     verify_multiplexed_stream_ids_scale_default_total_cap();
+    verify_asymmetric_fan_in_uses_strictest_caps();
 
     simaai::neat::GraphLinkOptions zero_options;
     zero_options.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;

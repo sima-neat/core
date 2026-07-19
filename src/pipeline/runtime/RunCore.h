@@ -84,6 +84,7 @@ struct GraphRuntimeOptions {
     return EdgeRouterOptions{
         .edge_queue = edge_queue,
         .push_timeout_ms = push_timeout_ms,
+        .request_stop_on_backpressure = true,
     };
   }
 };
@@ -127,6 +128,7 @@ struct RunCoreStartOptions {
   GraphRuntimeOptions graph_options;
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
+  FusedEncodedOutputDispatch fused_encoded_output_dispatch;
 };
 
 struct RunCore {

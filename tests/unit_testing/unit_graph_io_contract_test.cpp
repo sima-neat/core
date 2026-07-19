@@ -186,6 +186,20 @@ RUN_TEST(
                        io_case("realtime_link_max_inflight_total_roundtrip",
                                "realtime total raw-frame inflight limit should survive load/save"));
 
+      std::string removed_every_frame_json = realtime_link_json;
+      const std::string latest_policy = "realtime_latest_by_stream";
+      const std::size_t policy_pos = removed_every_frame_json.find(latest_policy);
+      require(policy_pos != std::string::npos,
+              io_case("removed_every_frame_fixture", "realtime policy fixture key missing"));
+      removed_every_frame_json.replace(policy_pos, latest_policy.size(),
+                                       "realtime_every_frame_by_stream");
+      const std::string removed_every_frame_path =
+          tmp_json_path("graph_io_removed_every_frame_policy.json");
+      write_text(removed_every_frame_path, removed_every_frame_json);
+      require_neat_error([&]() { (void)Graph::load(removed_every_frame_path); },
+                         error_codes::kIoParse, "unsupported edge link_policy",
+                         "realtime_every_frame_by_stream");
+
       const std::string missing_file = tmp_json_path("graph_io_missing_input.json");
       {
         std::error_code ec;

@@ -6025,6 +6025,9 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       stage.frame_shape = read_shape_vector_alias(*params, {"frame_shape", "frame_shapes"});
       stage.frame_type = read_string_alias(*params, {"frame_type"}).value_or("");
       stage.round_off = read_string_alias(*params, {"round_off", "rounding"}).value_or("");
+      stage.decode_type = read_string_alias(*params, {"decode_type", "decode-type"}).value_or("");
+      stage.decode_type_option =
+          read_string_alias(*params, {"decode_type_option", "decode-type-option"}).value_or("");
       stage.has_canonical_processcvu_contract = true;
       if (!output_shapes.empty()) {
         stage.out_shape_raw = output_shapes.front();

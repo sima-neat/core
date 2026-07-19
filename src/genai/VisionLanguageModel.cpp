@@ -354,7 +354,7 @@ struct VisionLanguageModel::Impl {
     text_streamer->set_preserved_token_ids(preserved_tool_call_tokens);
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
-        vlm_helper->get_pad_token_id(), *text_streamer, true);
+        vlm_helper->get_pad_token_id(), *text_streamer);
     if (info.accepts_image) {
       image_processor = make_image_processor(cfg, info.root / "devkit");
       vision_model = std::make_unique<simaai::llima::VisionModel>(info.root);

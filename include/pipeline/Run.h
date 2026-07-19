@@ -163,9 +163,20 @@ using GraphRunAutoExportOptions = RunAutoExportOptions;
  */
 struct RunOptions {
   RunPreset preset = RunPreset::Balanced; ///< Convenience preset that tunes the other fields.
-  int queue_depth = 4;                    ///< Capacity of the input/output buffer queues.
-  OverflowPolicy overflow_policy =
-      OverflowPolicy::Block; ///< What to do when the input queue is full.
+  /**
+   * @brief Capacity of ingress and internal runtime queues.
+   *
+   * Framework-created output queues also use this default. A public `Output` node owns its
+   * terminal queue contract through `OutputOptions::max_buffers`, which takes precedence over this
+   * value.
+   */
+  int queue_depth = 4;
+  /**
+   * @brief Overflow policy for ingress and general runtime queues.
+   *
+   * A public `Output` node uses its `OutputOptions::drop` policy instead.
+   */
+  OverflowPolicy overflow_policy = OverflowPolicy::Block;
   OutputMemory output_memory =
       OutputMemory::Auto; ///< Whether output tensors are zero-copy or owned.
   /**

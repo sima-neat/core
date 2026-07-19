@@ -82,6 +82,106 @@ simaai::neat::Graph mixed_live_and_finite_source_fragment() {
 
 RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
   {
+    simaai::neat::runtime::ExecutionGraphPlan plan;
+    simaai::neat::runtime::PipelineSegmentPlan segment;
+    segment.id = 7;
+    segment.input_edges = {0};
+    simaai::neat::runtime::FragmentBoundaryHints hints;
+    simaai::neat::InputOptions options;
+    options.max_width = 1920;
+    options.max_height = 1080;
+    options.max_depth = 3;
+    hints.ingress_inputs.push_back(options);
+    segment.boundary_hints = std::move(hints);
+    plan.pipeline_segments.push_back(std::move(segment));
+
+    simaai::neat::runtime::EdgePlan edge;
+    edge.spec.width = 2048;
+    edge.spec.height = 1080;
+    edge.spec.depth = 3;
+    edge.spec_complete = true;
+    plan.edges.push_back(std::move(edge));
+
+    require_throws_contains(
+        [&] { simaai::neat::runtime::validate_static_connected_input_capacities(plan); },
+        "input width 2048 exceeds configured capacity 1920",
+        "known connected source shape should fail at compile preflight");
+    require_throws_contains(
+        [&] { simaai::neat::runtime::validate_static_connected_input_capacities(plan); },
+        "Model::Options::preprocess.input_max_width",
+        "connected shape preflight should provide the public model fix");
+  }
+
+  {
+    simaai::neat::runtime::ExecutionGraphPlan plan;
+    plan.port_names.push_back("small");
+    plan.port_names.push_back("large");
+    simaai::neat::runtime::PipelineSegmentPlan segment;
+    segment.id = 8;
+    segment.input_edges = {0};
+    simaai::neat::runtime::FragmentBoundaryHints hints;
+    hints.ingress_endpoint_names.push_back("small");
+    hints.ingress_endpoint_names.push_back("large");
+    simaai::neat::InputOptions small;
+    small.max_width = 640;
+    small.max_height = 480;
+    small.max_depth = 3;
+    simaai::neat::InputOptions large = small;
+    large.max_width = 1920;
+    large.max_height = 1080;
+    hints.ingress_inputs.push_back(small);
+    hints.ingress_inputs.push_back(large);
+    segment.boundary_hints = std::move(hints);
+    plan.pipeline_segments.push_back(std::move(segment));
+
+    simaai::neat::runtime::EdgePlan edge;
+    edge.to_port = 1;
+    edge.spec.width = 1280;
+    edge.spec.height = 720;
+    edge.spec.depth = 3;
+    edge.spec_complete = true;
+    plan.edges.push_back(std::move(edge));
+
+    simaai::neat::runtime::validate_static_connected_input_capacities(plan);
+  }
+
+  {
+    simaai::neat::runtime::ExecutionGraphPlan plan;
+    plan.port_names.push_back("large");
+    plan.port_names.push_back("small");
+    simaai::neat::runtime::PipelineSegmentPlan segment;
+    segment.id = 9;
+    segment.input_edges = {0};
+    simaai::neat::runtime::FragmentBoundaryHints hints;
+    hints.ingress_endpoint_names.push_back("large");
+    hints.ingress_endpoint_names.push_back("small");
+    simaai::neat::InputOptions large;
+    large.max_width = 1920;
+    large.max_height = 1080;
+    large.max_depth = 3;
+    simaai::neat::InputOptions small = large;
+    small.max_width = 640;
+    small.max_height = 480;
+    hints.ingress_inputs.push_back(large);
+    hints.ingress_inputs.push_back(small);
+    segment.boundary_hints = std::move(hints);
+    plan.pipeline_segments.push_back(std::move(segment));
+
+    simaai::neat::runtime::EdgePlan edge;
+    edge.to_port = 1;
+    edge.spec.width = 800;
+    edge.spec.height = 480;
+    edge.spec.depth = 3;
+    edge.spec_complete = true;
+    plan.edges.push_back(std::move(edge));
+
+    require_throws_contains(
+        [&] { simaai::neat::runtime::validate_static_connected_input_capacities(plan); },
+        "input width 800 exceeds configured capacity 640",
+        "each connected source shape should use its matching ingress capacity");
+  }
+
+  {
     simaai::neat::Graph empty;
     auto sink = output_fragment();
     simaai::neat::Graph app;
@@ -245,6 +345,29 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
       saw_realtime_override = true;
     }
     require(saw_realtime_override, "compiler boundary merge test should produce a realtime edge");
+  }
+
+  {
+    auto left = live_camera_source_fragment("camera");
+    auto right = live_camera_source_fragment("camera");
+    auto sink = push_passthrough_fragment("image", "classes");
+    simaai::neat::Graph app;
+    app.connect(left, sink);
+    app.connect(right, sink);
+    const auto report = app.validate();
+    require(!report.error_code.empty(),
+            "duplicate CameraInput buffer_name should fail connected graph validation");
+    require_contains(report.repro_note, "duplicate source buffer_name",
+                     "duplicate CameraInput buffer_name diagnostic");
+  }
+
+  {
+    simaai::neat::Graph app;
+    app.connect(simaai::neat::nodes::CameraInput(), simaai::neat::nodes::Output("left_preview"));
+    app.connect(simaai::neat::nodes::CameraInput(), simaai::neat::nodes::Output("right_preview"));
+    const auto report = app.validate();
+    require(report.error_code.empty(),
+            "independent CameraInput paths may share the public default buffer_name");
   }
 
   {

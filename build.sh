@@ -2239,12 +2239,27 @@ run_install_sanity_check() {
 
   local -a core_real_libs=()
   local -a core_soname_links=()
+  local expected_abi=""
+  expected_abi="$(sed -n 's/^set(SimaNeat_ABI_VERSION "\([0-9][0-9]*\)")$/\1/p' \
+    "${BUILD_DIR}/SimaNeatConfig.cmake")"
+  if [[ ! "${expected_abi}" =~ ^[1-9][0-9]*$ ]]; then
+    echo
+    echo "ERROR: unable to read a valid public ABI from ${BUILD_DIR}/SimaNeatConfig.cmake."
+    echo "Refusing to package a library without an explicit ABI contract."
+    exit 1
+  fi
   mapfile -t core_real_libs < <(find "${core_install_dir}/lib" -maxdepth 1 -type f -name 'libsima_neat.so.*' | sort)
   mapfile -t core_soname_links < <(find "${core_install_dir}/lib" -maxdepth 1 -type l -name 'libsima_neat.so.*' | sort)
   if [[ "${#core_real_libs[@]}" -lt 1 ]]; then
     echo
     echo "ERROR: versioned libsima_neat shared object missing from core install tree."
     echo "Refusing to package an incomplete core .deb."
+    exit 1
+  fi
+  if [[ ! -L "${core_install_dir}/lib/libsima_neat.so.${expected_abi}" ]]; then
+    echo
+    echo "ERROR: expected ABI ${expected_abi} SONAME link missing from core install tree."
+    echo "Refusing to package a core .deb with a stale or missing public-library ABI."
     exit 1
   fi
   if [[ "${#core_soname_links[@]}" -lt 1 ]]; then
@@ -2269,6 +2284,14 @@ run_install_sanity_check() {
     echo
     echo "ERROR: dev install tree is missing headers, CMake config, libsima_neat.so linker symlink, or libsima_neat.a."
     echo "Refusing to package an incomplete dev .deb."
+    exit 1
+  fi
+  local dev_link_target=""
+  dev_link_target="$(readlink "${dev_install_dir}/lib/libsima_neat.so")"
+  if [[ "$(basename "${dev_link_target}")" != "libsima_neat.so.${expected_abi}" ]]; then
+    echo
+    echo "ERROR: dev linker symlink targets '${dev_link_target}', expected ABI ${expected_abi}."
+    echo "Refusing to package mismatched core and development packages."
     exit 1
   fi
 }
@@ -2406,6 +2429,12 @@ stage_package_artifacts_to_dist() {
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
+
+  # The Core package declares an explicit LLiMa ABI range. Fail before
+  # publishing/installing a bundle when the copied LLiMa DEBs do not satisfy
+  # that range (for example Core 0.2.x combined with LLiMa 0.3.x).
+  python3 "${REPO_ROOT}/tools/validate_neat_package_bundle.py" "${REPO_ROOT}/dist"
+
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
     chmod +x "dist/install_neat_framework.sh"
@@ -2419,7 +2448,7 @@ stage_package_artifacts_to_dist() {
   fi
 }
 
-write_dist_platform_version_manifest_field() {
+write_dist_package_contract_manifest_fields() {
   if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
     return 0
   fi
@@ -2437,8 +2466,11 @@ target_path = Path(sys.argv[2])
 
 source = json.loads(source_path.read_text(encoding="utf-8"))
 platform_version = str(source.get("platform-version", "")).strip()
+abi_version = str(source.get("abi-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty platform-version in {source_path}")
+if not abi_version.isdigit() or int(abi_version) < 1:
+    raise SystemExit(f"Missing or invalid abi-version in {source_path}")
 
 if target_path.exists():
     target = json.loads(target_path.read_text(encoding="utf-8"))
@@ -2448,10 +2480,11 @@ if not isinstance(target, dict):
     raise SystemExit(f"{target_path} must contain a JSON object")
 
 target["platform-version"] = platform_version
+target["abi-version"] = abi_version
 target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 
-  echo "Updated dist/manifest.json platform-version from ${NEAT_DEPS_MANIFEST}"
+  echo "Updated dist/manifest.json platform-version and abi-version from ${NEAT_DEPS_MANIFEST}"
 }
 
 append_dist_manifest_matches() {
@@ -2923,7 +2956,7 @@ main() {
   build_deb_if_requested
   build_extras_archive_if_requested
   stage_package_artifacts_to_dist
-  write_dist_platform_version_manifest_field
+  write_dist_package_contract_manifest_fields
   write_install_manifest
   generate_package_metadata_if_requested
   print_artifact_summary

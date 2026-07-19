@@ -100,6 +100,31 @@ add_custom_target(prepare_perf_codec_fixtures
   VERBATIM
 )
 
+# Keep installer package-recovery behavior in the normal CTest/DevKit gate.
+# Copy both files below the build tests root so the Vulcan extras path rebasing
+# also makes this test self-contained on the ARM64 runner.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_install_neat_framework_native_restore.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
+  COPYONLY
+)
+configure_file(
+  "${CMAKE_SOURCE_DIR}/tools/install_neat_framework.sh"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
+  COPYONLY
+)
+add_test(
+  NAME unit_install_neat_framework_native_restore_test
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
+          --installer "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
+)
+set_tests_properties(
+  unit_install_neat_framework_native_restore_test
+  PROPERTIES LABELS "unit;installer;regression"
+)
+
 # ------------------------------------------------------------------------------
 # Python test source compilation
 # ------------------------------------------------------------------------------
@@ -260,6 +285,7 @@ set(UNIT_TESTS
   unit_contracts_test
   unit_boxdecode_render_manifest_from_model_test
   unit_boxdecode_yolo_layout_matrix_test
+  unit_boxdecode_ssd_layout_matrix_test
   unit_model_route_retarget_helper_test
   unit_dequant_processcvu_contract_equivalence_test
   unit_dequant_node_fragment_test
@@ -292,6 +318,8 @@ set(UNIT_TESTS
   unit_graph_stamp_frame_id_test
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
+  unit_fused_realtime_fast_path_options_test
+  unit_public_output_appsink_contract_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
@@ -304,6 +332,9 @@ set(UNIT_TESTS
   unit_gst_init_guard_test
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
+  unit_latest_mux_fairness_test
+  unit_latest_mux_periodic_fairness_test
+  unit_latest_mux_backpressure_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
   unit_http_mjpeg_decoded_group_test
@@ -317,6 +348,7 @@ set(UNIT_TESTS
   unit_preprocess_roi_split_test
   unit_preprocess_meta_template_dynamic_test
   unit_preproc_contract_rules_test
+  unit_inputstream_stop_flush_test
   unit_inputstream_stop_timeout_detach_test
   unit_inputappsrc_stop_race_test
   unit_neatdecoder_keepalive_test
@@ -1491,6 +1523,47 @@ if (NOT sync_yolov8_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
+  yolov8_dynamic_boxdecode_geometry_sync_test
+  e2e_pipelines/obj_detection/yolov8_dynamic_boxdecode_geometry_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR} --mode sync
+)
+
+if (NOT yolov8_dynamic_boxdecode_geometry_sync_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_dynamic_boxdecode_geometry_sync_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;dynamic;sync")
+endif()
+
+add_pipeline_test(
+  yolov8_dynamic_boxdecode_geometry_async_test
+  e2e_pipelines/obj_detection/yolov8_dynamic_boxdecode_geometry_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR} --mode async
+)
+
+if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_dynamic_boxdecode_geometry_async_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;boxdecode;dynamic;async")
+endif()
+
+add_pipeline_test(
+  ssd_mobilenet_e2e_test
+  e2e_pipelines/obj_detection/ssd_mobilenet_e2e_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST ssd_mobilenet_e2e_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;benchmark;metrics")
+  set_property(TEST ssd_mobilenet_e2e_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_tests_properties(ssd_mobilenet_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+add_pipeline_test(
   sync_yolov8_test_detessdequant
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
   e2e_pipelines/e2e_utils.cpp
@@ -1500,6 +1573,21 @@ add_pipeline_test(
 
 if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST sync_yolov8_test_detessdequant APPEND PROPERTY LABELS "e2e;obj_detection")
+endif()
+
+add_pipeline_test(
+  seedless_yolov8_preproc_input_max_smoke_test
+  e2e_pipelines/obj_detection/seedless_yolov8_preproc_input_max_smoke_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT seedless_yolov8_preproc_input_max_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST seedless_yolov8_preproc_input_max_smoke_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;smoke")
+  set_tests_properties(seedless_yolov8_preproc_input_max_smoke_test PROPERTIES
+    SKIP_RETURN_CODE 77
+    TIMEOUT 120)
 endif()
 
 add_pipeline_test_long(
@@ -1711,6 +1799,25 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_test(
+    NAME codec_runtime_nested_zero_copy_boundary_test
+    COMMAND codec_runtime_stream_test
+            --case rtsp-h264-decoded
+            --frames 5
+            --repeat 2
+            --determinism
+            --nested-boundary
+  )
+  append_pipeline_test_env(codec_runtime_nested_zero_copy_boundary_test)
+  set_property(
+    TEST codec_runtime_nested_zero_copy_boundary_test
+    APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;determinism;lifecycle"
+  )
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(codec_runtime_nested_zero_copy_boundary_test PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_test(
     NAME codec_runtime_bad_url_diagnostics
     COMMAND codec_runtime_stream_test --case bad-url-diagnostics --timeout-ms 2000
   )
@@ -1903,6 +2010,7 @@ foreach(test
     unit_neatencoder_keepalive_test
     unit_modelpack_mla_handoff_segment_test
     unit_yolov8_mla_handoff_segment_test
+    seedless_yolov8_preproc_input_max_smoke_test
     graph_migration_phase3_lazy_dynamic_spec_test
     graph_migration_phase3_yolov8_bgr_bf16_preproc_test
     graph_migration_phase3_connected_yolo_route_test

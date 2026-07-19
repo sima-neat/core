@@ -105,10 +105,18 @@ void require_installed_packages(const std::vector<PackageExpectation>& packages)
   throw std::runtime_error(message.str());
 }
 
-void require_neat_variant(const std::string& package) {
+void require_package_version(const std::string& package, const std::string& expected) {
   const std::string version = package_version(package);
-  require(version.find("+neat") != std::string::npos,
-          package + " should be installed from the NEAT-compatible package set, got " + version);
+  require(version == expected,
+          package + " should have package version " + expected + ", got " + version);
+}
+
+void require_versioned_provide(const std::string& package, const std::string& provided_name,
+                               const std::string& provided_version) {
+  const std::string provides =
+      run_capture("dpkg-query -W -f='${Provides}' " + shell_quote(package) + " 2>/dev/null");
+  const std::string expected = provided_name + " (= " + provided_version + ")";
+  require(provides == expected, package + " should provide " + expected + ", got: " + provides);
 }
 
 } // namespace
@@ -153,11 +161,13 @@ int main() {
     require_installed_packages(neat_packages);
     require_installed_packages(native_sima_packages);
 
-    require_neat_variant("libcamera");
-    require_neat_variant("libcamera-tools");
-    require_neat_variant("libcamera-dev");
-    require_neat_variant("simaai-memory-lib");
-    require_neat_variant("simaai-memory-lib-dev");
+    require_package_version("libcamera", "2.1.1");
+    require_package_version("libcamera-tools", "2.1.1");
+    require_package_version("libcamera-dev", "2.1.1");
+    require_package_version("simaai-memory-lib", "2.1.1-0neat1");
+    require_package_version("simaai-memory-lib-dev", "2.1.1-0neat1");
+    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1");
+    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1");
 
     require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
             "simaai-ota command should remain available through simaai-palette-modalix");

@@ -28,7 +28,7 @@ struct ASRModel::Impl {
     }
 
     internal::ensure_llima_runtime_connected();
-    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root, true);
+    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root);
   }
 
   GenerationResult run(const GenerationRequest& request) {

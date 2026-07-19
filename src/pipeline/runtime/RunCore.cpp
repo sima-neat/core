@@ -109,9 +109,10 @@ std::mutex& graph_pipeline_build_mu_for_core() {
 const char* graph_backpressure_timeout_explanation() {
   return " This can happen because of graph backpressure: downstream stages, appsinks, or the "
          "application are not draining outputs as fast as inputs are pushed, so an internal "
-         "edge/pipeline queue filled before the timeout. Pull outputs concurrently, reduce the "
-         "push rate, increase GraphRunOptions.edge_queue/push_timeout_ms, or remove/relax slow "
-         "downstream stages.";
+         "edge/pipeline queue filled before the timeout. Drain outputs concurrently, reduce the "
+         "push rate, increase RunOptions::queue_depth for ingress/internal queues, configure the "
+         "terminal Output with OutputOptions::EveryFrame(...) for bounded lossless buffering, or "
+         "remove/relax slow downstream stages.";
 }
 
 using SampleIdentity = PipelineSegmentRuntime::GraphTransport::SampleIdentity;
@@ -567,7 +568,7 @@ bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
   auto& stage = *execution.stages[pick];
   RuntimeStageQueueMsg next{.in_port = port, .sample = std::move(sample), .edge_index = edge_index};
   const bool ok = stage.inbox.push(std::move(next), options.push_timeout_ms);
-  if (!ok && !graph_stop_requested()) {
+  if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
     std::ostringstream msg;
     msg << "GraphRun: stage inbox backpressure timeout (node="
         << static_cast<std::size_t>(group.node_id) << ", edge_queue=" << options.edge_queue
@@ -650,7 +651,7 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
     Sample copy = sample;
     const bool ok = pipe.transport.input_queue->push(
         RuntimePipelineQueueMsg{std::move(copy), invalid_edge_index()}, options.push_timeout_ms);
-    if (!ok && !graph_stop_requested()) {
+    if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
       std::ostringstream msg;
       msg << "GraphRun::push timed out waiting for pipeline input queue (seg="
           << static_cast<std::size_t>(pipe.seg.id) << ", edge_queue=" << options.edge_queue
@@ -1131,7 +1132,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
             ? session_build_fused_realtime_source_stream_internal(
                   *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
                   opt.run_options, opt.mode, opt.require_sink, public_output_contract,
-                  "RunCore::start(plan/fused-realtime)")
+                  "RunCore::start(plan/fused-realtime)", opt.fused_encoded_output_dispatch)
             : session_build_source_stream_internal(
                   nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
                   opt.require_sink, public_output_contract, "RunCore::start(plan/source)");

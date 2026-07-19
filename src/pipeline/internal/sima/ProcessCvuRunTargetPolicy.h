@@ -52,8 +52,7 @@ struct ProcessCvuBackendDecision {
   std::string effective_run_target = "AUTO"; ///< The token actually applied.
   ProcessCvuResolvedExecBackend resolved_exec_backend =
       ProcessCvuResolvedExecBackend::Evxx; ///< Resolved backend.
-  std::string reason;         ///< Human-readable reason for the decision (for diagnostics).
-  bool used_fallback = false; ///< True if the requested target was unavailable and we fell back.
+  std::string reason; ///< Human-readable reason for the decision (for diagnostics).
 };
 
 /// Normalize a run-target token (case-fold, alias collapse) — e.g., `"a65"` -> `"A65"`.
@@ -67,6 +66,7 @@ ProcessCvuBackendCapabilities
 processcvu_backend_capabilities(const ProcessCvuStagePayload& payload);
 
 /// Compute the final run-target decision for a stage given the compile input.
+/// @throws std::invalid_argument when an explicit target is unsupported by the stage.
 ProcessCvuBackendDecision
 resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
                                     const ContractCompileInput& compile_input,

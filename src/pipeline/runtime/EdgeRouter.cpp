@@ -1,5 +1,6 @@
 #include "EdgeRouter.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeLinkOptions.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 
@@ -36,9 +37,10 @@ void request_stop(const EdgeRouterCallbacks& callbacks, const std::string& msg) 
 const char* graph_backpressure_timeout_explanation() {
   return " This can happen because of graph backpressure: downstream stages, appsinks, or the "
          "application are not draining outputs as fast as inputs are pushed, so an internal "
-         "edge/pipeline queue filled before the timeout. Pull outputs concurrently, reduce the "
-         "push rate, increase GraphRunOptions.edge_queue/push_timeout_ms, or remove/relax slow "
-         "downstream stages.";
+         "edge/pipeline queue filled before the timeout. Drain outputs concurrently, reduce the "
+         "push rate, increase RunOptions::queue_depth for ingress/internal queues, configure the "
+         "terminal Output with OutputOptions::EveryFrame(...) for bounded lossless buffering, or "
+         "remove/relax slow downstream stages.";
 }
 
 std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
@@ -111,9 +113,6 @@ int realtime_credit_probe_every() {
   return value;
 }
 
-constexpr int kDefaultRawCreditPerStream = 4;
-constexpr int kDefaultRawCreditTotalCap = 8;
-
 void validate_realtime_credit_option(const char* name, int value) {
   if (value == 0 || value < -1) {
     throw std::runtime_error(std::string("GraphLinkOptions::") + name +
@@ -123,18 +122,7 @@ void validate_realtime_credit_option(const char* name, int value) {
 
 int realtime_credit_max_inflight_per_stream(const GraphLinkOptions& options) {
   validate_realtime_credit_option("max_inflight_per_stream", options.max_inflight_per_stream);
-  if (options.max_inflight_per_stream > 0) {
-    return options.max_inflight_per_stream;
-  }
-  static const int value = [] {
-    int parsed = 0;
-    if (pipeline_internal::env_int("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", &parsed)) {
-      return std::max(0, parsed);
-    }
-    return std::max(0, pipeline_internal::env_int("SIMA_LATEST_MUX_MAX_INFLIGHT_PER_STREAM",
-                                                  kDefaultRawCreditPerStream));
-  }();
-  return value;
+  return pipeline_internal::resolved_realtime_max_inflight_per_stream(options);
 }
 
 int safe_total_credit_limit(int per_stream, std::size_t stream_count) {
@@ -162,7 +150,8 @@ int realtime_credit_max_inflight_total(const GraphLinkOptions& options, int per_
    * Derive it from the per-stream cap so 4-stream and 16-stream fan-in graphs
    * scale without a hidden fixed global bottleneck.
    */
-  return std::min(safe_total_credit_limit(per_stream, stream_count), kDefaultRawCreditTotalCap);
+  return pipeline_internal::default_realtime_max_inflight_total(
+      safe_total_credit_limit(per_stream, stream_count));
 }
 
 int realtime_link_log_every() {
@@ -343,8 +332,11 @@ RealtimeLatestLink::RealtimeLatestLink(DownstreamTarget downstream, GraphLinkOpt
                                        std::string stream_id)
     : downstream_(downstream), options_(options),
       credit_namespace_(pipeline_internal::next_realtime_frame_credit_namespace()),
-      credit_limit_per_stream_(realtime_credit_max_inflight_per_stream(options_)),
-      credit_limit_global_(0) {
+      credit_limit_per_stream_(0), credit_limit_global_(0) {
+  if (downstream_.edge_index != invalid_edge_index()) {
+    link_options_by_edge_.emplace(downstream_.edge_index, options);
+  }
+  recompute_admission_options_locked_();
   add_edge_stream_id(downstream_.edge_index, stream_id);
   log_realtime_credit_probe_basic("construct", downstream_, downstream_.edge_index, stream_id,
                                   static_cast<std::size_t>(options_.queue_depth));
@@ -473,6 +465,21 @@ void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::s
   configure_global_credit_limit_locked_();
 }
 
+void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
+                                            const GraphLinkOptions& options) {
+  if (edge_index == invalid_edge_index()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(mu_);
+  edge_indices_.insert(edge_index);
+  if (!stream_id.empty()) {
+    stream_id_by_edge_[edge_index] = stream_id;
+  }
+  link_options_by_edge_[edge_index] = options;
+  recompute_admission_options_locked_();
+  configure_global_credit_limit_locked_();
+}
+
 void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error) {
   dispatch_ = std::move(dispatch);
   stop_ = std::move(stop);
@@ -590,11 +597,46 @@ RealtimeLatestLink::credit_lane_for_key_locked_(const std::string& key) {
   return lane;
 }
 
+void RealtimeLatestLink::recompute_admission_options_locked_() {
+  int strictest_per_stream = std::numeric_limits<int>::max();
+  int strictest_explicit_total = std::numeric_limits<int>::max();
+  for (const auto& [edge_index, options] : link_options_by_edge_) {
+    (void)edge_index;
+    strictest_per_stream =
+        std::min(strictest_per_stream, realtime_credit_max_inflight_per_stream(options));
+    validate_realtime_credit_option("max_inflight_total", options.max_inflight_total);
+    if (options.max_inflight_total > 0) {
+      strictest_explicit_total = std::min(strictest_explicit_total, options.max_inflight_total);
+    }
+  }
+
+  credit_limit_per_stream_ =
+      strictest_per_stream == std::numeric_limits<int>::max() ? 0 : strictest_per_stream;
+  options_.max_inflight_per_stream = credit_limit_per_stream_;
+  options_.max_inflight_total =
+      strictest_explicit_total == std::numeric_limits<int>::max() ? -1 : strictest_explicit_total;
+
+  for (auto& [key, lane] : credit_lanes_) {
+    (void)key;
+    if (lane && lane->gate) {
+      lane->gate->configure(credit_limit_per_stream_);
+    }
+  }
+}
+
 void RealtimeLatestLink::configure_global_credit_limit_locked_() {
   const std::size_t stream_count =
       std::max<std::size_t>(1U, std::max(edge_indices_.size(), credit_lanes_.size()));
-  credit_limit_global_ =
-      realtime_credit_max_inflight_total(options_, credit_limit_per_stream_, stream_count);
+  int strictest_total = 0;
+  for (const auto& [edge_index, options] : link_options_by_edge_) {
+    (void)edge_index;
+    const int candidate =
+        realtime_credit_max_inflight_total(options, credit_limit_per_stream_, stream_count);
+    if (candidate > 0) {
+      strictest_total = strictest_total > 0 ? std::min(strictest_total, candidate) : candidate;
+    }
+  }
+  credit_limit_global_ = strictest_total;
   if (credit_limit_global_ <= 0) {
     global_credit_lane_.reset();
     return;
@@ -711,9 +753,8 @@ void RealtimeLatestLink::run_() {
         credit_applicable_selected = credit_applicable;
         pending.has_sample = false;
         pending.queued = false;
-        const bool stream_credit_acquired =
+        credit_acquired =
             credit_applicable && credit_lane && credit_lane->gate && credit_lane->gate->enabled();
-        credit_acquired = stream_credit_acquired || global_credit_acquired;
         selected = true;
         break;
       }
@@ -727,22 +768,19 @@ void RealtimeLatestLink::run_() {
       atomic_add_max(ready_wait_ns_, ready_wait_max_ns_, elapsed_ns_since(ready_at));
     }
 
-    if (credit_acquired) {
+    const bool any_credit_acquired = credit_acquired || global_credit_acquired;
+    if (any_credit_acquired) {
       const bool credit_key_available = !sample.stream_id.empty() && sample.frame_id >= 0;
-      const auto primary_credit_lane =
-          (credit_lane && credit_lane->gate && credit_lane->gate->enabled()) ? credit_lane
-                                                                             : global_credit_lane;
       if (credit_key_available) {
         credit = pipeline_internal::RealtimeFrameCredit{credit_namespace_, sample.stream_id,
                                                         sample.frame_id};
+        const auto& primary_lane = credit_acquired ? credit_lane : global_credit_lane;
         std::vector<pipeline_internal::RealtimeFrameCreditLanePtr> companions;
-        if (global_credit_acquired && global_credit_lane &&
-            global_credit_lane != primary_credit_lane) {
+        if (credit_acquired && global_credit_acquired && global_credit_lane) {
           companions.push_back(global_credit_lane);
         }
         credit_registered = pipeline_internal::register_realtime_frame_credit(
-            credit.namespace_id, credit.stream_id, credit.frame_id, primary_credit_lane,
-            companions);
+            credit.namespace_id, credit.stream_id, credit.frame_id, primary_lane, companions);
         if (credit_registered) {
           pipeline_internal::attach_realtime_frame_credit_to_sample(sample, credit);
           if (!pipeline_internal::sample_has_attached_realtime_frame_credit(sample)) {
@@ -771,16 +809,18 @@ void RealtimeLatestLink::run_() {
                                     credit_applicable_selected);
         }
         if (!credit_released_after_register) {
-          if (primary_credit_lane) {
+          if (credit_acquired && credit_lane) {
             if (!credit_key_available) {
-              primary_credit_lane->missing_key.fetch_add(1, std::memory_order_relaxed);
+              credit_lane->missing_key.fetch_add(1, std::memory_order_relaxed);
             }
-            if (primary_credit_lane->gate) {
-              primary_credit_lane->gate->release();
+            if (credit_lane->gate) {
+              credit_lane->gate->release();
             }
           }
-          if (global_credit_acquired && global_credit_lane && global_credit_lane->gate &&
-              global_credit_lane != primary_credit_lane) {
+          if (global_credit_acquired && global_credit_lane && global_credit_lane->gate) {
+            if (!credit_key_available) {
+              global_credit_lane->missing_key.fetch_add(1, std::memory_order_relaxed);
+            }
             global_credit_lane->gate->release();
           }
         }
@@ -892,13 +932,27 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
   }
 
-  if (!sink_it->second->push(RuntimeSinkQueueMsg{std::move(sample), edge_index},
-                             options.push_timeout_ms)) {
+  bool enqueued = false;
+  bool dropped_incoming = false;
+  const OutputOptions* output_options = sink_it->second->output_options();
+  if (output_options) {
+    const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : -1;
+    const auto result = enqueue_graph_sink_output(
+        *sink_it->second, *output_options, RuntimeSinkQueueMsg{std::move(sample), edge_index},
+        output_timeout_ms);
+    dropped_incoming = result == FusedEncodedOutputEnqueueResult::DroppedIncoming;
+    enqueued = result == FusedEncodedOutputEnqueueResult::Enqueued ||
+               result == FusedEncodedOutputEnqueueResult::ReplacedOldest || dropped_incoming;
+  } else {
+    enqueued = sink_it->second->push(RuntimeSinkQueueMsg{std::move(sample), edge_index},
+                                     options.push_timeout_ms);
+  }
+  if (!enqueued) {
     if (trace) {
       trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
     }
     pipeline_internal::release_realtime_frame_credits(realtime_credits, "graph-sink-drop");
-    if (!stop_requested(callbacks)) {
+    if (options.request_stop_on_backpressure && !stop_requested(callbacks)) {
       std::ostringstream msg;
       msg << "GraphRun: sink backpressure timeout (node=" << static_cast<std::size_t>(sink_node)
           << ", edge_queue=" << options.edge_queue
@@ -909,7 +963,9 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     return false;
   }
   if (trace) {
-    trace_graph_message_event(TraceGraphMessageEventType::QueueIn, trace_args);
+    trace_graph_message_event(dropped_incoming ? TraceGraphMessageEventType::Drop
+                                               : TraceGraphMessageEventType::QueueIn,
+                              trace_args);
   }
   return true;
 }
@@ -1058,7 +1114,7 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       if (dispatch_options.drop_pipeline_input_when_full) {
         return true;
       }
-      if (!stop_requested(callbacks)) {
+      if (options.request_stop_on_backpressure && !stop_requested(callbacks)) {
         std::ostringstream msg;
         msg << "GraphRun: pipeline input backpressure timeout (seg="
             << static_cast<std::size_t>(runtime_->pipelines[target.index]->seg.id)

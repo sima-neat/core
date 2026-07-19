@@ -86,3 +86,27 @@ opt.video_port_base = 9000
 graph = pyneat.Graph()
 graph.add(pyneat.groups.video_sender(opt))
 ```
+
+### Fan out encoded RTSP to inference and preview
+
+When one encoded RTSP source feeds both decoding/inference and `VideoSender`, connect the source directly to the sender. For a live preview such as Insight, set the encoded sender edge to `RealtimeLatestByStream`:
+
+```cpp
+simaai::neat::GraphLinkOptions video_link;
+video_link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+
+graph.connect(encoded_source, decoder);
+graph.connect(decoder, detector, detector_link);
+graph.connect(encoded_source, video_sender, video_link);
+```
+
+```python
+video_link = pyneat.GraphLinkOptions()
+video_link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+
+graph.connect(encoded_source, decoder)
+graph.connect(decoder, detector, detector_link)
+graph.connect(encoded_source, video_sender, video_link)
+```
+
+The sender branch stays before `SimaDecode`, so it does not re-encode video or copy decoded frames to CPU. With `RealtimeLatestByStream`, the fused sender branch keeps at most one pending H.264 access unit and replaces stale data if UDP egress slows. The default edge policy remains lossless and can backpressure the shared encoded source, including its decoder branch. Use the default only when preserving every access unit is more important than keeping live inference fresh.

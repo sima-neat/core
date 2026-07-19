@@ -1,6 +1,7 @@
 // src/pipeline/internal/GstDiagnosticsUtil.cpp
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/internal/GstTeardownBudget.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include "pipeline/ErrorCodes.h"
@@ -98,6 +99,72 @@ int teardown_timeout_ms() {
   return (val < 0) ? 0 : val;
 }
 
+struct RtspTeardownTimeouts {
+  std::uint64_t total_ns = 0;
+  std::size_t sources = 0;
+};
+
+void add_rtsp_teardown_timeout(GstElement* element, RtspTeardownTimeouts& result) {
+  if (!element)
+    return;
+
+  GstElementFactory* factory = gst_element_get_factory(element); // borrowed
+  const gchar* factory_name =
+      factory ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)) : nullptr;
+  if (g_strcmp0(factory_name, "rtspsrc") != 0)
+    return;
+
+  GParamSpec* property =
+      g_object_class_find_property(G_OBJECT_GET_CLASS(element), "teardown-timeout");
+  if (!property || G_PARAM_SPEC_VALUE_TYPE(property) != G_TYPE_UINT64 ||
+      (property->flags & G_PARAM_READABLE) == 0) {
+    return;
+  }
+
+  guint64 timeout_ns = 0;
+  g_object_get(G_OBJECT(element), "teardown-timeout", &timeout_ns, nullptr);
+  constexpr std::uint64_t kMaximumAccumulatedNs = 30ULL * GST_SECOND;
+  result.total_ns = std::min(result.total_ns, kMaximumAccumulatedNs);
+  const std::uint64_t remaining_ns = kMaximumAccumulatedNs - result.total_ns;
+  result.total_ns =
+      timeout_ns >= remaining_ns ? kMaximumAccumulatedNs : result.total_ns + timeout_ns;
+  ++result.sources;
+}
+
+RtspTeardownTimeouts rtsp_teardown_timeouts(GstElement* pipeline) {
+  RtspTeardownTimeouts result;
+  add_rtsp_teardown_timeout(pipeline, result);
+  if (!pipeline || !GST_IS_BIN(pipeline))
+    return result;
+
+  GstIterator* iterator = gst_bin_iterate_recurse(GST_BIN(pipeline));
+  if (!iterator)
+    return result;
+
+  GValue item = G_VALUE_INIT;
+  bool done = false;
+  while (!done) {
+    switch (gst_iterator_next(iterator, &item)) {
+    case GST_ITERATOR_OK:
+      add_rtsp_teardown_timeout(GST_ELEMENT(g_value_get_object(&item)), result);
+      g_value_reset(&item);
+      break;
+    case GST_ITERATOR_RESYNC:
+      gst_iterator_resync(iterator);
+      result = RtspTeardownTimeouts{};
+      add_rtsp_teardown_timeout(pipeline, result);
+      break;
+    case GST_ITERATOR_ERROR:
+    case GST_ITERATOR_DONE:
+      done = true;
+      break;
+    }
+  }
+  g_value_unset(&item);
+  gst_iterator_free(iterator);
+  return result;
+}
+
 int reaper_sleep_ms() {
   return std::max(10, env_int("SIMA_GST_TEARDOWN_REAPER_MS", 250));
 }
@@ -118,27 +185,132 @@ TeardownReaperState& teardown_reaper_state() {
   return *state;
 }
 
-void begin_teardown(GstElement* pipeline, bool flush) {
+GstStateChangeReturn begin_teardown(GstElement* pipeline, bool flush) {
   if (!pipeline)
-    return;
+    return GST_STATE_CHANGE_SUCCESS;
   if (flush) {
     gst_element_send_event(pipeline, gst_event_new_flush_start());
     gst_element_send_event(pipeline, gst_event_new_flush_stop(TRUE));
   }
-  gst_element_set_state(pipeline, GST_STATE_NULL);
+  return gst_element_set_state(pipeline, GST_STATE_NULL);
 }
 
-bool finish_teardown(GstElement* pipeline, int timeout_ms) {
+enum class TeardownStatus {
+  Complete,
+  TimedOut,
+  StateChangeFailure,
+};
+
+struct TeardownResult {
+  TeardownStatus status = TeardownStatus::Complete;
+  GstStateChangeReturn begin_result = GST_STATE_CHANGE_SUCCESS;
+  GstStateChangeReturn wait_result = GST_STATE_CHANGE_SUCCESS;
+  GstState current = GST_STATE_NULL;
+  GstState pending = GST_STATE_VOID_PENDING;
+};
+
+TeardownResult finish_teardown(GstElement* pipeline, GstStateChangeReturn begin_result,
+                               int timeout_ms) {
   if (!pipeline)
-    return true;
+    return {};
   GstState cur = GST_STATE_VOID_PENDING;
   GstState pend = GST_STATE_VOID_PENDING;
   const GstClockTime timeout = static_cast<GstClockTime>(timeout_ms) * GST_MSECOND;
-  gst_element_get_state(pipeline, &cur, &pend, timeout);
-  if (cur != GST_STATE_NULL)
-    return false;
+  const GstStateChangeReturn wait_result = gst_element_get_state(pipeline, &cur, &pend, timeout);
+  TeardownResult result;
+  result.begin_result = begin_result;
+  result.wait_result = wait_result;
+  result.current = cur;
+  result.pending = pend;
+  if (cur != GST_STATE_NULL) {
+    result.status =
+        begin_result == GST_STATE_CHANGE_FAILURE || wait_result == GST_STATE_CHANGE_FAILURE
+            ? TeardownStatus::StateChangeFailure
+            : TeardownStatus::TimedOut;
+    return result;
+  }
   gst_object_unref(pipeline);
-  return true;
+  return result;
+}
+
+void log_incomplete_element_states(GstElement* pipeline) {
+  if (!pipeline || !GST_IS_BIN(pipeline))
+    return;
+
+  constexpr std::size_t kMaximumReportedElements = 16;
+  std::size_t incomplete = 0;
+  std::size_t reported = 0;
+  GstIterator* iterator = gst_bin_iterate_recurse(GST_BIN(pipeline));
+  if (!iterator)
+    return;
+
+  GValue item = G_VALUE_INIT;
+  bool done = false;
+  while (!done) {
+    switch (gst_iterator_next(iterator, &item)) {
+    case GST_ITERATOR_OK: {
+      auto* element = GST_ELEMENT(g_value_get_object(&item));
+      GstState current = GST_STATE_VOID_PENDING;
+      GstState pending = GST_STATE_VOID_PENDING;
+      GstStateChangeReturn last_return = GST_STATE_CHANGE_SUCCESS;
+      if (!GST_STATE_TRYLOCK(element)) {
+        ++incomplete;
+        if (reported < kMaximumReportedElements) {
+          std::cerr << "[WARN] stop_and_unref(): incomplete element name="
+                    << GST_OBJECT_NAME(element) << " type=" << G_OBJECT_TYPE_NAME(element)
+                    << " state-lock=busy\n";
+          ++reported;
+        }
+        g_value_reset(&item);
+        break;
+      }
+      current = GST_STATE(element);
+      pending = GST_STATE_PENDING(element);
+      last_return = GST_STATE_RETURN(element);
+      GST_STATE_UNLOCK(element);
+      if (current != GST_STATE_NULL ||
+          (pending != GST_STATE_VOID_PENDING && pending != GST_STATE_NULL)) {
+        ++incomplete;
+        if (reported < kMaximumReportedElements) {
+          std::cerr << "[WARN] stop_and_unref(): incomplete element name="
+                    << GST_OBJECT_NAME(element) << " type=" << G_OBJECT_TYPE_NAME(element)
+                    << " current=" << state_name(current) << " pending=" << state_name(pending)
+                    << " state_return=" << static_cast<int>(last_return) << "\n";
+          ++reported;
+        }
+      }
+      g_value_reset(&item);
+      break;
+    }
+    case GST_ITERATOR_RESYNC:
+      gst_iterator_resync(iterator);
+      incomplete = 0;
+      reported = 0;
+      break;
+    case GST_ITERATOR_ERROR:
+    case GST_ITERATOR_DONE:
+      done = true;
+      break;
+    }
+  }
+  g_value_unset(&item);
+  gst_iterator_free(iterator);
+  if (incomplete > reported) {
+    std::cerr << "[WARN] stop_and_unref(): " << (incomplete - reported)
+              << " additional incomplete elements omitted\n";
+  }
+}
+
+void warn_incomplete_teardown(GstElement* pipeline, const TeardownResult& result, int timeout_ms) {
+  const char* reason = result.status == TeardownStatus::StateChangeFailure
+                           ? "teardown state change failed"
+                           : "teardown timed out";
+  std::cerr << "[WARN] stop_and_unref(): " << reason << " after " << timeout_ms
+            << "ms; begin_return=" << static_cast<int>(result.begin_result)
+            << " wait_return=" << static_cast<int>(result.wait_result)
+            << " current=" << state_name(result.current)
+            << " pending=" << state_name(result.pending) << "; deferring to reaper.\n";
+  log_incomplete_element_states(pipeline);
 }
 
 void reaper_main() {
@@ -158,8 +330,9 @@ void reaper_main() {
     std::vector<TeardownReaperState::Pending> retry;
     const int timeout_ms = teardown_timeout_ms();
     for (const auto& item : work) {
-      begin_teardown(item.pipeline, item.flush);
-      if (!finish_teardown(item.pipeline, timeout_ms)) {
+      const GstStateChangeReturn begin_result = begin_teardown(item.pipeline, item.flush);
+      if (finish_teardown(item.pipeline, begin_result, timeout_ms).status !=
+          TeardownStatus::Complete) {
         retry.push_back(item);
       }
     }
@@ -192,6 +365,11 @@ void enqueue_teardown(GstElement* pipeline, bool flush) {
 }
 
 } // namespace
+
+int effective_synchronous_teardown_timeout_ms(GstElement* pipeline, int base_timeout_ms) {
+  const RtspTeardownTimeouts rtsp = rtsp_teardown_timeouts(pipeline);
+  return synchronous_live_teardown_budget_ms(base_timeout_ms, rtsp.total_ns, rtsp.sources);
+}
 
 bool map_video_frame_read(SampleHolder& h, std::string& err) {
   err.clear();
@@ -667,14 +845,15 @@ void stop_and_unref(GstElement*& e) {
   GstElement* local = e;
   e = nullptr;
 
-  begin_teardown(local, /*flush=*/true);
+  const GstStateChangeReturn begin_result = begin_teardown(local, /*flush=*/true);
 
   const bool async_only = env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
   if (!async_only) {
     const int timeout_ms = teardown_timeout_ms();
-    if (finish_teardown(local, timeout_ms))
+    const TeardownResult result = finish_teardown(local, begin_result, timeout_ms);
+    if (result.status == TeardownStatus::Complete)
       return;
-    std::cerr << "[WARN] stop_and_unref(): teardown timed out; deferring to reaper.\n";
+    warn_incomplete_teardown(local, result, timeout_ms);
   }
 
   enqueue_teardown(local, /*flush=*/true);
@@ -687,6 +866,15 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
   GstElement* local = e;
   e = nullptr;
 
+  // Preserve the normal 2s behavior for non-live/legacy pipelines. A fused
+  // live graph can contain many rtspsrc instances, each of which may wait for
+  // its configured RTSP TEARDOWN timeout during PAUSED -> READY. Account for
+  // those waits before initiating NULL; after the transition starts, dynamic
+  // rtspsrc children may already be disappearing.
+  const int timeout_ms =
+      prefer_synchronous ? effective_synchronous_teardown_timeout_ms(local, teardown_timeout_ms())
+                         : teardown_timeout_ms();
+
   // Defer teardown to the reaper to avoid blocking in gst_element_set_state for
   // legacy push/appsrc paths.  Live/source pipelines (CameraInput/RTSP/etc.)
   // prefer bounded synchronous NULL teardown so Run::close() does not return
@@ -698,14 +886,26 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
     return;
   }
 
-  begin_teardown(local, /*flush=*/false);
+  const auto teardown_started_at = std::chrono::steady_clock::now();
+  const GstStateChangeReturn begin_result = begin_teardown(local, /*flush=*/false);
 
   const bool async_only = !prefer_synchronous && env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
   if (!async_only) {
-    const int timeout_ms = teardown_timeout_ms();
-    if (finish_teardown(local, timeout_ms))
+    int wait_timeout_ms = timeout_ms;
+    if (prefer_synchronous) {
+      // gst_element_set_state() can itself synchronously execute each
+      // rtspsrc PAUSED -> READY wait. Charge that time to the one computed
+      // budget instead of allowing the subsequent get_state() wait to spend
+      // the full budget a second time.
+      const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - teardown_started_at)
+                                  .count();
+      wait_timeout_ms = elapsed_ms >= timeout_ms ? 0 : timeout_ms - static_cast<int>(elapsed_ms);
+    }
+    const TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
+    if (result.status == TeardownStatus::Complete)
       return;
-    std::cerr << "[WARN] stop_and_unref(): teardown timed out; deferring to reaper.\n";
+    warn_incomplete_teardown(local, result, timeout_ms);
   }
 
   enqueue_teardown(local, /*flush=*/false);

@@ -18,6 +18,12 @@ int main() {
 
     require(simaai::neat::element_exists("identity"), "identity element missing");
     simaai::neat::require_element("identity", "unit_gst_helpers_test");
+    require(simaai::neat::element_property_exists("videotestsrc", "num-buffers"),
+            "lazy-loaded videotestsrc property was not discovered");
+    require(simaai::neat::element_property_exists("videotestsrc", "num-buffers"),
+            "element property discovery changed across repeated calls");
+    require(!simaai::neat::element_property_exists("videotestsrc", "not-a-real-property"),
+            "element property discovery accepted an unknown property");
 
     const char* desc =
         "videotestsrc num-buffers=1 ! video/x-raw,format=NV12,width=16,height=16,framerate=30/1 ! "
