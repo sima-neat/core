@@ -49,6 +49,8 @@ constexpr int kDefaultTimeoutMs = 20000;
 
 enum class CaseKind {
   RtspH264Decoded,
+  RtspH265EncodedBoundary,
+  RtspH265Decoded,
   RtspMjpegEncodedBoundary,
   RtspMjpegDecoded,
   RtspMjpegDecodedVideorate,
@@ -152,6 +154,22 @@ TestCase test_case_for(CaseKind kind) {
             "SIMANEAT_TEST_RTSP_H264_URLS",
             "SIMANEAT_TEST_RTSP_H264_FPS",
             "video/x-raw"};
+  case CaseKind::RtspH265EncodedBoundary:
+    return {kind,
+            "rtsp-h265-encoded-boundary",
+            "SIMANEAT_TEST_RTSP_H265_URL",
+            "SIMANEAT_TEST_RTSP_H265_URLS",
+            "SIMANEAT_TEST_RTSP_H265_FPS",
+            "video/x-h265",
+            false};
+  case CaseKind::RtspH265Decoded:
+    return {kind,
+            "rtsp-h265-decoded",
+            "SIMANEAT_TEST_RTSP_H265_URL",
+            "SIMANEAT_TEST_RTSP_H265_URLS",
+            "SIMANEAT_TEST_RTSP_H265_FPS",
+            "video/x-raw",
+            false};
   case CaseKind::RtspMjpegEncodedBoundary:
     return {kind,
             "rtsp-mjpeg-encoded-boundary",
@@ -199,6 +217,8 @@ TestCase test_case_for(CaseKind kind) {
 
 std::vector<TestCase> all_test_cases() {
   return {test_case_for(CaseKind::RtspH264Decoded),
+          test_case_for(CaseKind::RtspH265EncodedBoundary),
+          test_case_for(CaseKind::RtspH265Decoded),
           test_case_for(CaseKind::RtspMjpegEncodedBoundary),
           test_case_for(CaseKind::RtspMjpegDecoded),
           test_case_for(CaseKind::RtspMjpegDecodedVideorate),
@@ -262,6 +282,12 @@ CaseKind parse_case_kind(const std::string& value) {
   if (value == "rtsp-h264-decoded") {
     return CaseKind::RtspH264Decoded;
   }
+  if (value == "rtsp-h265-encoded-boundary") {
+    return CaseKind::RtspH265EncodedBoundary;
+  }
+  if (value == "rtsp-h265-decoded") {
+    return CaseKind::RtspH265Decoded;
+  }
   if (value == "rtsp-mjpeg-encoded-boundary") {
     return CaseKind::RtspMjpegEncodedBoundary;
   }
@@ -289,6 +315,8 @@ void print_help(const char* exe) {
                " [--nested-boundary]\n"
             << "Cases:\n"
             << "  rtsp-h264-decoded\n"
+            << "  rtsp-h265-encoded-boundary\n"
+            << "  rtsp-h265-decoded\n"
             << "  rtsp-mjpeg-encoded-boundary\n"
             << "  rtsp-mjpeg-decoded\n"
             << "  rtsp-mjpeg-decoded-videorate\n"
@@ -408,10 +436,12 @@ std::string sample_contract_signature(const TestCase& test_case, const Sample& s
   oss << "case=" << test_case.name
       << ";payload=" << static_cast<int>(simaai::neat::sample_payload_type(sample));
   switch (test_case.kind) {
+  case CaseKind::RtspH265EncodedBoundary:
   case CaseKind::RtspMjpegEncodedBoundary:
     oss << ";tensors=" << sample.tensors.size() << ";caps=" << test_case.expected_caps;
     break;
   case CaseKind::RtspH264Decoded:
+  case CaseKind::RtspH265Decoded:
   case CaseKind::RtspMjpegDecoded:
   case CaseKind::RtspMjpegDecodedVideorate:
   case CaseKind::HttpMjpegDecoded:
@@ -443,6 +473,19 @@ void require_backend_contract(const Graph& graph, const TestCase& test_case, int
   case CaseKind::RtspH264Decoded:
     require_contains(backend, "dec-fps=" + source_fps_text,
                      test_case.name + ": source_fps should configure decoder FPS");
+    break;
+  case CaseKind::RtspH265EncodedBoundary:
+    require_contains(backend, "rtph265depay", test_case.name + ": H.265 depayloader is missing");
+    require_contains(backend, "h265parse", test_case.name + ": H.265 parser is missing");
+    break;
+  case CaseKind::RtspH265Decoded:
+    require_contains(backend, "rtph265depay", test_case.name + ": H.265 depayloader is missing");
+    require_contains(backend, "h265parse", test_case.name + ": H.265 parser is missing");
+    require_contains(backend, "dec-type=h265", test_case.name + ": H.265 decoder is missing");
+    if (source_fps > 0) {
+      require_contains(backend, "dec-fps=" + source_fps_text,
+                       test_case.name + ": source_fps should configure decoder FPS");
+    }
     break;
   case CaseKind::RtspMjpegEncodedBoundary:
     require_contains(backend, "encoded_capsfix",
@@ -480,6 +523,22 @@ Graph make_source_graph(const TestCase& test_case, const std::string& url, int s
     RtspDecodedInputOptions options;
     options.url = url;
     options.codec = RtspCodec::H264;
+    options.source_fps = source_fps;
+    graph.add(RtspDecodedInput(options));
+    break;
+  }
+  case CaseKind::RtspH265EncodedBoundary: {
+    RtspEncodedInputOptions options;
+    options.url = url;
+    options.codec = RtspCodec::H265;
+    options.source_fps = source_fps;
+    graph.add(RtspEncodedInput(options));
+    break;
+  }
+  case CaseKind::RtspH265Decoded: {
+    RtspDecodedInputOptions options;
+    options.url = url;
+    options.codec = RtspCodec::H265;
     options.source_fps = source_fps;
     graph.add(RtspDecodedInput(options));
     break;
@@ -543,6 +602,16 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample,
   require_contains(metadata, test_case.expected_caps, test_case.name + ": sample caps mismatch");
 
   switch (test_case.kind) {
+  case CaseKind::RtspH265EncodedBoundary: {
+    require(simaai::neat::sample_payload_type(sample) == PayloadType::Encoded,
+            test_case.name + ": expected encoded payload");
+    require(sample.caps_string.find("video/x-raw,format=ENCODED") == std::string::npos,
+            test_case.name + ": encoded output must not use raw ENCODED caps");
+    require(sample.tensors.size() == 1U, test_case.name + ": expected one encoded tensor");
+    require(sample.tensors.front().storage != nullptr,
+            test_case.name + ": encoded tensor missing storage");
+    break;
+  }
   case CaseKind::RtspMjpegEncodedBoundary: {
     require(simaai::neat::sample_payload_type(sample) == PayloadType::Encoded,
             test_case.name + ": expected encoded payload");
@@ -561,6 +630,7 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample,
   }
 
   case CaseKind::RtspH264Decoded:
+  case CaseKind::RtspH265Decoded:
   case CaseKind::RtspMjpegDecoded:
   case CaseKind::RtspMjpegDecodedVideorate:
   case CaseKind::HttpMjpegDecoded:
@@ -658,7 +728,10 @@ std::vector<std::string> run_decoded_source(const TestCase& test_case, const std
                                             bool nested_boundary) {
   std::vector<std::string> signatures;
   Graph source_graph = make_source_graph(test_case, url, source_fps);
-  Run source_run = source_graph.build(make_run_options(OutputMemory::ZeroCopy));
+  // H.264 owns the zero-copy boundary coverage; this H.265 case validates decoded samples.
+  const OutputMemory output_memory =
+      (test_case.kind == CaseKind::RtspH265Decoded) ? OutputMemory::Owned : OutputMemory::ZeroCopy;
+  Run source_run = source_graph.build(make_run_options(output_memory));
   Sample first_sample =
       pull_or_throw(source_run, "source", timeout_ms, test_case.name + ": source pull");
   require_sample_contract(test_case, first_sample);
@@ -766,7 +839,8 @@ int skip_missing_fps_env(const TestCase& test_case) {
 
 std::vector<std::string> run_one_iteration(const TestCase& test_case, const std::string& url,
                                            int source_fps, const Args& args) {
-  if (test_case.kind == CaseKind::RtspMjpegEncodedBoundary) {
+  if (test_case.kind == CaseKind::RtspH265EncodedBoundary ||
+      test_case.kind == CaseKind::RtspMjpegEncodedBoundary) {
     return run_encoded_boundary(test_case, url, source_fps, args.frames, args.timeout_ms);
   }
   return run_decoded_source(test_case, url, source_fps, args.frames, args.timeout_ms,

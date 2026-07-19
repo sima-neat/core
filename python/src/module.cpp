@@ -66,6 +66,7 @@
 #include "nodes/sima/Detess.h"
 #include "nodes/sima/DetessCast.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/PCIeSink.h"
@@ -3388,7 +3389,9 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<simaai::neat::nodes::groups::RtspCodec>(m, "RtspCodec")
       .value("H264", simaai::neat::nodes::groups::RtspCodec::H264)
-      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG);
+      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG)
+      .value("H265", simaai::neat::nodes::groups::RtspCodec::H265);
+  m.attr("RtspCodec").attr("HEVC") = m.attr("RtspCodec").attr("H265");
 
   nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
       .def(nb::init<>())
@@ -3405,6 +3408,8 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_payload_type)
       .def_rw("mjpeg_payload_type",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::mjpeg_payload_type)
+      .def_rw("h265_payload_type",
+              &simaai::neat::nodes::groups::RtspEncodedInputOptions::h265_payload_type)
       .def_rw("h264_parse_config_interval",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_parse_config_interval)
       .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_fps)
@@ -3871,6 +3876,7 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
                 "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
                 "h264_height"_a = -1, "enforce_h264_caps"_a = true);
+  nodes_mod.def("h265_depacketize", &simaai::neat::nodes::H265Depacketize, "payload_type"_a = 96);
   nodes_mod.def("input",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::InputOptions)>(
                     &simaai::neat::nodes::Input),

@@ -82,6 +82,7 @@ RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptio
   out.sync_mode = opt.sync_mode;
   out.h264_payload_type = opt.payload_type;
   out.mjpeg_payload_type = opt.mjpeg_payload_type;
+  out.h265_payload_type = opt.payload_type;
   out.h264_parse_config_interval = opt.h264_parse_config_interval;
   out.h264_fps = opt.h264_fps;
   out.h264_width = opt.h264_width;
@@ -102,6 +103,8 @@ SimaDecodeType sima_decode_type(RtspCodec type) {
     return SimaDecodeType::H264;
   case RtspCodec::MJPEG:
     return SimaDecodeType::MJPEG;
+  case RtspCodec::H265:
+    return SimaDecodeType::H265;
   }
   throw std::invalid_argument("RtspDecodedInputOutputSpec: unsupported codec");
 }
@@ -133,6 +136,10 @@ int mjpeg_dec_fps(const RtspDecodedInputOptions& opt) {
   if (opt.dec_fps > 0)
     return opt.dec_fps;
   return opt.output_caps.fps;
+}
+
+int h265_dec_fps(const RtspDecodedInputOptions& opt) {
+  return (opt.source_fps > 0) ? opt.source_fps : opt.dec_fps;
 }
 
 int mjpeg_dec_width(const RtspDecodedInputOptions& opt) {
@@ -199,8 +206,12 @@ OutputSpec rtsp_decoder_spec(const RtspDecodedInputOptions& opt, int source_fps)
   dec.decoder_name = opt.decoder_name;
   dec.raw_output = opt.decoder_raw_output;
   dec.next_element = opt.decoder_next_element;
-  dec.dec_width = (opt.codec == RtspCodec::H264) ? h264_dec_width(opt) : mjpeg_dec_width(opt);
-  dec.dec_height = (opt.codec == RtspCodec::H264) ? h264_dec_height(opt) : mjpeg_dec_height(opt);
+  dec.dec_width = (opt.codec == RtspCodec::H264)
+                      ? h264_dec_width(opt)
+                      : ((opt.codec == RtspCodec::H265) ? opt.dec_width : mjpeg_dec_width(opt));
+  dec.dec_height = (opt.codec == RtspCodec::H264)
+                       ? h264_dec_height(opt)
+                       : ((opt.codec == RtspCodec::H265) ? opt.dec_height : mjpeg_dec_height(opt));
   dec.dec_fps = source_fps;
   dec.num_buffers = opt.num_buffers;
   simaai::neat::SimaDecode decoder(dec);
@@ -261,6 +272,13 @@ OutputSpec RtspEncodedInputOutputSpec(const RtspEncodedInputOptions& opt) {
     out.fps_den = 1;
     out.note = "RtspEncodedInput MJPEG (hint)";
     break;
+  case RtspCodec::H265:
+    out.media_type = "video/x-h265";
+    out.format = "H265";
+    out.fps_num = opt.source_fps;
+    out.fps_den = 1;
+    out.note = "RtspEncodedInput H265 (hint)";
+    break;
   }
   if (out.media_type.empty()) {
     throw std::invalid_argument("RtspEncodedInputOutputSpec: unsupported codec");
@@ -271,7 +289,10 @@ OutputSpec RtspEncodedInputOutputSpec(const RtspEncodedInputOptions& opt) {
 
 OutputSpec RtspDecodedInputOutputSpec(const RtspDecodedInputOptions& opt) {
   const auto& c = opt.output_caps;
-  const int source_fps = (opt.codec == RtspCodec::H264) ? h264_dec_fps(opt) : mjpeg_dec_fps(opt);
+  const int source_fps =
+      (opt.codec == RtspCodec::H264)
+          ? h264_dec_fps(opt)
+          : ((opt.codec == RtspCodec::H265) ? h265_dec_fps(opt) : mjpeg_dec_fps(opt));
   OutputSpec out = rtsp_decoder_spec(opt, source_fps);
   if (c.enable) {
     const int fps = decoded_tail_fps(opt, source_fps);
