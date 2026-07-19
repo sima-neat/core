@@ -56,8 +56,10 @@ RUN_TEST(
       auto jpeg_parse = simaai::neat::nodes::JpegParse();
       auto rtp_jpeg_depay = simaai::neat::nodes::RTPJpegDepacketize();
       simaai::neat::SimaDecodeOptions sima_decode_opt;
-      sima_decode_opt.type = simaai::neat::SimaDecodeType::JPEG;
+      sima_decode_opt.type = simaai::neat::SimaDecodeType::H265;
       auto sima_decode = simaai::neat::nodes::SimaDecode(sima_decode_opt);
+      sima_decode_opt.type = simaai::neat::SimaDecodeType::HEVC;
+      auto sima_decode_hevc = simaai::neat::nodes::SimaDecode(sima_decode_opt);
       simaai::neat::nodes::groups::RtspEncodedInputOptions rtsp_encoded_opt;
       rtsp_encoded_opt.url = "rtsp://example.local/mjpeg";
       rtsp_encoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
@@ -153,6 +155,7 @@ RUN_TEST(
       (void)jpeg_parse;
       (void)rtp_jpeg_depay;
       (void)sima_decode;
+      (void)sima_decode_hevc;
       (void)rtsp_encoded_group;
       (void)rtsp_encoded_spec;
       (void)rtsp_decoded_group;

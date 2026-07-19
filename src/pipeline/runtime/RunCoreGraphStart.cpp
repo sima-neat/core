@@ -278,6 +278,8 @@ const char* sima_decode_type_debug_name(simaai::neat::SimaDecodeType type) {
     return "jpeg";
   case simaai::neat::SimaDecodeType::MJPEG:
     return "mjpeg";
+  case simaai::neat::SimaDecodeType::H265:
+    return "h265";
   }
   return "unknown";
 }
@@ -372,9 +374,23 @@ std::uint32_t positive_u32_or_zero(int value) {
   return value > 0 ? static_cast<std::uint32_t>(value) : 0U;
 }
 
+constexpr bool decode_type_uses_video_admission(simaai::neat::SimaDecodeType type) {
+  return type == simaai::neat::SimaDecodeType::H264 || type == simaai::neat::SimaDecodeType::H265;
+}
+
+constexpr std::uint32_t decoder_admission_codec(simaai::neat::SimaDecodeType type) {
+  return type == simaai::neat::SimaDecodeType::H265 ? pipeline_internal::kDecoderAdmissionCodecH265
+                                                    : pipeline_internal::kDecoderAdmissionCodecH264;
+}
+
+static_assert(decoder_admission_codec(simaai::neat::SimaDecodeType::H264) ==
+              pipeline_internal::kDecoderAdmissionCodecH264);
+static_assert(decoder_admission_codec(simaai::neat::SimaDecodeType::H265) ==
+              pipeline_internal::kDecoderAdmissionCodecH265);
+
 bool decoder_candidate_uses_zero_copy_output(const DecoderAdmissionCandidate& candidate) {
   const auto& opt = candidate.options;
-  if (opt.type != simaai::neat::SimaDecodeType::H264 || !opt.raw_output) {
+  if (!decode_type_uses_video_admission(opt.type) || !opt.raw_output) {
     return false;
   }
   if (!opt.out_format.empty() && opt.out_format.tag != simaai::neat::FormatTag::NV12) {
@@ -415,7 +431,7 @@ void collect_decoder_candidate_from_node(
     ExecutionGraphRuntime& execution, std::size_t pipeline_index, std::size_t node_index,
     const std::shared_ptr<simaai::neat::Node>& node, simaai::neat::graph::NodeId runtime_node,
     const OutputSpec& decoder_output_spec, bool fused_branch, std::size_t fused_branch_index,
-    std::vector<DecoderAdmissionCandidate>& candidates, std::size_t* auto_h264_decoders,
+    std::vector<DecoderAdmissionCandidate>& candidates, std::size_t* automatic_decoders,
     std::size_t* missing_shape_decoders) {
   (void)execution;
   const auto* dec = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
@@ -423,11 +439,11 @@ void collect_decoder_candidate_from_node(
     return;
   }
   const auto& opt = dec->options();
-  if (opt.type != simaai::neat::SimaDecodeType::H264) {
+  if (!decode_type_uses_video_admission(opt.type)) {
     return;
   }
-  if (auto_h264_decoders) {
-    ++(*auto_h264_decoders);
+  if (automatic_decoders) {
+    ++(*automatic_decoders);
   }
 
   const std::uint32_t explicit_width = positive_u32_or_zero(opt.dec_width);
@@ -481,10 +497,10 @@ void collect_decoder_candidate_from_node(
 
 bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
                                           std::vector<DecoderAdmissionCandidate>& candidates,
-                                          std::size_t* auto_h264_decoders,
+                                          std::size_t* automatic_decoders,
                                           std::size_t* missing_shape_decoders) {
-  if (auto_h264_decoders) {
-    *auto_h264_decoders = 0;
+  if (automatic_decoders) {
+    *automatic_decoders = 0;
   }
   if (missing_shape_decoders) {
     *missing_shape_decoders = 0;
@@ -507,7 +523,7 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
       collect_decoder_candidate_from_node(
           execution, pipeline_index, node_index, runtime->nodes[node_index],
           runtime_node_for_materialized_decoder(*runtime, node_index), decoder_spec,
-          /*fused_branch=*/false, static_cast<std::size_t>(-1), candidates, auto_h264_decoders,
+          /*fused_branch=*/false, static_cast<std::size_t>(-1), candidates, automatic_decoders,
           missing_shape_decoders);
     }
 
@@ -525,7 +541,7 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
                                         node_index, {});
           collect_decoder_candidate_from_node(
               execution, pipeline_index, node_index, branch.nodes[node_index], branch.source_node,
-              decoder_spec, /*fused_branch=*/true, branch_index, candidates, auto_h264_decoders,
+              decoder_spec, /*fused_branch=*/true, branch_index, candidates, automatic_decoders,
               missing_shape_decoders);
         }
       }
@@ -749,26 +765,26 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
   }
 
   std::vector<DecoderAdmissionCandidate> candidates;
-  std::size_t auto_h264_decoders = 0;
+  std::size_t automatic_decoders = 0;
   std::size_t missing_shape_decoders = 0;
-  collect_decoder_admission_candidates(execution, candidates, &auto_h264_decoders,
+  collect_decoder_admission_candidates(execution, candidates, &automatic_decoders,
                                        &missing_shape_decoders);
-  if (auto_h264_decoders <= 1) {
+  if (automatic_decoders <= 1) {
     return;
   }
   if (missing_shape_decoders > 0) {
     const std::string msg =
         "RunCore::start(graph): automatic decoder admission requires decoded width/height for "
-        "each H.264 decoder in a multi-decoder graph; missing shape for " +
-        std::to_string(missing_shape_decoders) + " of " + std::to_string(auto_h264_decoders) +
+        "each H.264/H.265 decoder in a multi-decoder graph; missing shape for " +
+        std::to_string(missing_shape_decoders) + " of " + std::to_string(automatic_decoders) +
         " decoder(s).";
     if (env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {
       throw std::runtime_error(msg);
     }
     if (decoder_plan_debug_enabled()) {
       std::fprintf(stderr,
-                   "[DECPLAN] admission_skip reason=missing_shape auto_h264=%zu missing=%zu\n",
-                   auto_h264_decoders, missing_shape_decoders);
+                   "[DECPLAN] admission_skip reason=missing_shape automatic=%zu missing=%zu\n",
+                   automatic_decoders, missing_shape_decoders);
     }
     return;
   }
@@ -784,7 +800,7 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     const auto& candidate = candidates[i];
     pipeline_internal::DecoderAdmissionStreamRequest stream;
     stream.stream_index = static_cast<std::uint32_t>(i);
-    stream.codec = 101;       // Decoder daemon admission protocol AVC/H.264 id.
+    stream.codec = decoder_admission_codec(candidate.options.type);
     stream.stream_mode = 202; // Align-split input mode used by parser/depay paths.
     stream.width = candidate.width;
     stream.height = candidate.height;

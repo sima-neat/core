@@ -40,6 +40,17 @@ simaai::neat::OutputSpec encoded_h264_spec() {
   return spec;
 }
 
+simaai::neat::OutputSpec encoded_h265_spec() {
+  simaai::neat::OutputSpec spec;
+  spec.media_type = "video/x-h265";
+  spec.format = "H265";
+  spec.width = 1920;
+  spec.height = 1080;
+  spec.fps_num = 60;
+  spec.fps_den = 1;
+  return spec;
+}
+
 void require_element_names(const std::vector<std::string>& actual,
                            const std::vector<std::string>& expected, const std::string& label) {
   require(actual.size() == expected.size(), label + " element count mismatch");
@@ -69,6 +80,32 @@ void check_default_h264_raw_output() {
   require(out.layout == "Planar", "NV12 output should advertise planar layout");
   require(out.dtype == "UInt8", "SimaDecode dtype mismatch");
   require(out.byte_size == 1280 * 720 * 3 / 2, "NV12 byte size mismatch");
+}
+
+void check_h265_aliases_use_canonical_backend_name() {
+  static_assert(static_cast<int>(simaai::neat::SimaDecodeType::H264) == 0);
+  static_assert(static_cast<int>(simaai::neat::SimaDecodeType::JPEG) == 1);
+  static_assert(static_cast<int>(simaai::neat::SimaDecodeType::MJPEG) == 2);
+  static_assert(static_cast<int>(simaai::neat::SimaDecodeType::H265) == 3);
+  static_assert(simaai::neat::SimaDecodeType::HEVC == simaai::neat::SimaDecodeType::H265);
+
+  for (const auto type : {simaai::neat::SimaDecodeType::H265, simaai::neat::SimaDecodeType::HEVC}) {
+    simaai::neat::SimaDecodeOptions opt;
+    opt.type = type;
+
+    const simaai::neat::SimaDecode decode(opt);
+    const std::string fragment = decode.backend_fragment(4);
+    require_contains(fragment, "dec-type=h265",
+                     "SimaDecode H.265 aliases should use the canonical backend name");
+
+    const simaai::neat::OutputSpec out = decode.output_spec(encoded_h265_spec());
+    require(out.media_type == "video/x-raw", "SimaDecode H.265 output media type mismatch");
+    require(out.format == "NV12", "SimaDecode H.265 output format mismatch");
+    require(out.width == 1920 && out.height == 1080,
+            "SimaDecode H.265 should preserve input shape");
+    require(out.fps_num == 60 && out.fps_den == 1, "SimaDecode H.265 should preserve input fps");
+    require(out.memory == "SimaAI", "SimaDecode H.265 raw output should use SimaAI memory");
+  }
 }
 
 void check_jpeg_raw_output_options() {
@@ -192,6 +229,7 @@ void check_h264_decode_wrapper_compatibility() {
 int main() {
   try {
     check_default_h264_raw_output();
+    check_h265_aliases_use_canonical_backend_name();
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
     check_invalid_options();
