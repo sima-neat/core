@@ -51,6 +51,31 @@ struct RunCore;
 struct RuntimePipelineQueueMsg {
   Sample sample;
   std::size_t edge_index = static_cast<std::size_t>(-1);
+  bool sanitized = false;
+};
+
+struct IdentitySeqKey {
+  enum class Kind : std::uint8_t {
+    Input,
+    Orig,
+  };
+
+  Kind kind = Kind::Input;
+  std::int64_t value = -1;
+  std::string stream_id;
+
+  bool operator==(const IdentitySeqKey& other) const {
+    return kind == other.kind && value == other.value && stream_id == other.stream_id;
+  }
+};
+
+struct IdentitySeqKeyHash {
+  std::size_t operator()(const IdentitySeqKey& key) const noexcept {
+    std::size_t h = std::hash<std::int64_t>{}(key.value);
+    h ^= static_cast<std::size_t>(key.kind) + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U);
+    h ^= std::hash<std::string>{}(key.stream_id) + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U);
+    return h;
+  }
 };
 
 // Runtime state for one compiled pipeline segment.
@@ -136,9 +161,9 @@ struct PipelineSegmentRuntime {
       std::string port_name;
     };
 
-    std::unordered_map<int64_t, SampleIdentity> identity_by_input_seq;
+    std::unordered_map<IdentitySeqKey, SampleIdentity, IdentitySeqKeyHash> identity_by_input_seq;
     std::unordered_map<int64_t, std::deque<SampleIdentity>> identity_by_frame;
-    std::deque<int64_t> input_seq_order;
+    std::deque<std::vector<IdentitySeqKey>> input_seq_order;
     std::deque<int64_t> stream_order;
     std::deque<SampleIdentity> pending_identities;
     std::atomic<int64_t> identity_rewrite_count{0};

@@ -513,6 +513,18 @@ GstBuffer* make_zero_copy_view(GstBuffer* src, const SampleSpec& spec, std::stri
   gst_buffer_add_parent_buffer_meta(view, src);
   copy_custom_meta(view, src, "GstSimaMeta");
   copy_custom_meta(view, src, "GstSimaSampleMeta");
+  if (has_simaai_preprocess_meta(src)) {
+    std::string copy_err;
+    if (!copy_simaai_preprocess_meta(view, src, &copy_err)) {
+      if (err) {
+        *err = copy_err.empty()
+                   ? "zero-copy view: failed to preserve preprocess metadata"
+                   : "zero-copy view: failed to preserve preprocess metadata: " + copy_err;
+      }
+      gst_buffer_unref(view);
+      return nullptr;
+    }
+  }
   return view;
 }
 

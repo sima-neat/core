@@ -8,6 +8,7 @@
 #include "graph/nodes/StageNode.h"
 #include "graph/runtime/BlockingQueue.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/PipelineSegmentRuntime.h"
 #include "pipeline/runtime/TraceMessageEvents.h"
@@ -30,6 +31,11 @@
 #include <utility>
 #include <vector>
 
+namespace simaai::neat::pipeline_internal {
+struct RealtimeFrameCreditLane;
+using RealtimeFrameCreditLanePtr = std::shared_ptr<RealtimeFrameCreditLane>;
+} // namespace simaai::neat::pipeline_internal
+
 namespace simaai::neat::runtime {
 
 using BlockingQueueSample = simaai::neat::graph::runtime::BlockingQueue<simaai::neat::Sample>;
@@ -47,7 +53,86 @@ struct RuntimeSinkQueueMsg {
   std::size_t edge_index = invalid_edge_index();
 };
 
-using GraphSinkQueue = simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg>;
+enum class FusedEncodedOutputEnqueueResult {
+  Enqueued,
+  ReplacedOldest,
+  DroppedIncoming,
+  Overflow,
+  Closed,
+};
+
+class GraphSinkQueue final
+    : public simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg> {
+public:
+  explicit GraphSinkQueue(std::size_t capacity = 0, const OutputOptions* output_options = nullptr)
+      : BlockingQueue(capacity), has_output_options_(output_options != nullptr),
+        output_options_(output_options ? *output_options : OutputOptions{}) {}
+
+  const OutputOptions* output_options() const noexcept {
+    return has_output_options_ ? &output_options_ : nullptr;
+  }
+
+private:
+  friend FusedEncodedOutputEnqueueResult
+  enqueue_graph_sink_output(GraphSinkQueue&, const OutputOptions&, RuntimeSinkQueueMsg&&, int);
+  friend FusedEncodedOutputEnqueueResult
+  enqueue_fused_encoded_output(GraphSinkQueue&, const OutputOptions&, Sample&&);
+  std::mutex latest_enqueue_mu_;
+  bool has_output_options_ = false;
+  OutputOptions output_options_{};
+};
+
+inline FusedEncodedOutputEnqueueResult enqueue_graph_sink_output(GraphSinkQueue& queue,
+                                                                 const OutputOptions& options,
+                                                                 RuntimeSinkQueueMsg&& message,
+                                                                 int timeout_ms) {
+  if (!options.drop) {
+    // Match Output/Appsink EveryFrame semantics: a bounded full queue applies
+    // backpressure until Run::pull() makes room (or graph teardown closes it).
+    if (queue.push(std::move(message), timeout_ms)) {
+      return FusedEncodedOutputEnqueueResult::Enqueued;
+    }
+    return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                          : FusedEncodedOutputEnqueueResult::Overflow;
+  }
+
+  // Multiple fused live sources may publish concurrently to one named Latest
+  // output. Serialize only the replace sequence; the queue itself remains
+  // independently safe for its consumer and for ordinary single-step pushes.
+  std::lock_guard<std::mutex> enqueue_lock(queue.latest_enqueue_mu_);
+  if (queue.try_push(std::move(message))) {
+    return FusedEncodedOutputEnqueueResult::Enqueued;
+  }
+  if (queue.closed()) {
+    return FusedEncodedOutputEnqueueResult::Closed;
+  }
+
+  RuntimeSinkQueueMsg discarded;
+  const bool replaced = queue.pop(discarded, 0);
+  if (replaced) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(discarded.sample,
+                                                                 "graph-sink-latest-replace");
+  }
+  if (queue.try_push(std::move(message))) {
+    return replaced ? FusedEncodedOutputEnqueueResult::ReplacedOldest
+                    : FusedEncodedOutputEnqueueResult::Enqueued;
+  }
+  if (!queue.closed()) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(message.sample,
+                                                                 "graph-sink-latest-drop-incoming");
+    return FusedEncodedOutputEnqueueResult::DroppedIncoming;
+  }
+  return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                        : FusedEncodedOutputEnqueueResult::Overflow;
+}
+
+/** Queue policy used by graph-scoped encoded Outputs. */
+inline FusedEncodedOutputEnqueueResult
+enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
+  return enqueue_graph_sink_output(
+      queue, options,
+      RuntimeSinkQueueMsg{.sample = std::move(sample), .edge_index = invalid_edge_index()}, -1);
+}
 
 struct DownstreamTarget {
   enum class Kind {
@@ -79,6 +164,13 @@ public:
     std::uint64_t ready_wait_max_ns = 0;
     std::uint64_t dispatch_ns = 0;
     std::uint64_t dispatch_max_ns = 0;
+    std::uint64_t no_credit_skips = 0;
+    std::uint64_t credit_registered = 0;
+    std::uint64_t credit_released_by_output = 0;
+    std::uint64_t credit_released_without_output = 0;
+    std::uint64_t credit_missing_key = 0;
+    std::size_t credit_inflight = 0;
+    std::size_t credit_limit = 0;
     std::size_t ready = 0;
   };
 
@@ -89,10 +181,13 @@ public:
 
   bool offer(simaai::neat::Sample&& sample, std::size_t edge_index);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id);
+  void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
+                          const GraphLinkOptions& options);
   void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
   void close();
   void join();
   Stats stats() const;
+  std::string debug_stream_ids() const;
   const DownstreamTarget& downstream() const noexcept {
     return downstream_;
   }
@@ -110,6 +205,9 @@ private:
   };
 
   std::string key_for_(const simaai::neat::Sample& sample, std::size_t edge_index) const;
+  void recompute_admission_options_locked_();
+  pipeline_internal::RealtimeFrameCreditLanePtr credit_lane_for_key_locked_(const std::string& key);
+  void configure_global_credit_limit_locked_();
   void run_();
 
   DownstreamTarget downstream_;
@@ -120,8 +218,15 @@ private:
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::unordered_map<std::string, Pending> pending_;
+  std::unordered_map<std::string, pipeline_internal::RealtimeFrameCreditLanePtr> credit_lanes_;
+  pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
+  std::unordered_set<std::size_t> edge_indices_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
+  std::unordered_map<std::size_t, GraphLinkOptions> link_options_by_edge_;
   std::deque<std::string> ready_;
+  std::uint64_t credit_namespace_ = 0;
+  int credit_limit_per_stream_ = 0;
+  int credit_limit_global_ = 0;
   bool closed_ = false;
   std::thread worker_;
   std::atomic<std::uint64_t> offered_{0};
@@ -132,6 +237,7 @@ private:
   std::atomic<std::uint64_t> ready_wait_max_ns_{0};
   std::atomic<std::uint64_t> dispatch_ns_{0};
   std::atomic<std::uint64_t> dispatch_max_ns_{0};
+  std::atomic<std::uint64_t> no_credit_skips_{0};
 };
 
 struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
@@ -139,12 +245,39 @@ struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
   std::function<bool()> stop_requested_fn;
 
   bool emit(simaai::neat::graph::StageOutMsg msg) override {
-    return emit_fn ? emit_fn(std::move(msg)) : false;
+    const auto credits = pipeline_internal::realtime_frame_credits_for_sample(msg.sample);
+    const bool ok = emit_fn ? emit_fn(std::move(msg)) : false;
+    if (ok && !credits.empty()) {
+      std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+      if (track_emitted_credits_) {
+        emitted_credits_.insert(emitted_credits_.end(), credits.begin(), credits.end());
+      }
+    }
+    return ok;
   }
 
   bool stop_requested() const override {
     return stop_requested_fn ? stop_requested_fn() : true;
   }
+
+  void begin_input_credit_tracking() {
+    std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+    emitted_credits_.clear();
+    track_emitted_credits_ = true;
+  }
+
+  std::vector<pipeline_internal::RealtimeFrameCredit> end_input_credit_tracking() {
+    std::lock_guard<std::mutex> lock(emitted_credit_mu_);
+    track_emitted_credits_ = false;
+    std::vector<pipeline_internal::RealtimeFrameCredit> out;
+    out.swap(emitted_credits_);
+    return out;
+  }
+
+private:
+  std::mutex emitted_credit_mu_;
+  bool track_emitted_credits_ = false;
+  std::vector<pipeline_internal::RealtimeFrameCredit> emitted_credits_;
 };
 
 struct StageRuntime {

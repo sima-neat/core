@@ -510,10 +510,10 @@ struct VisionLanguageModel::Impl {
     text_streamer = std::make_unique<simaai::llima::TextStreamer>(
         vlm_helper->get_tokenizer(),
         [this](const std::string& metric, double value) { record_metric(metric, value); },
-        [](const std::string&, bool) {});
+        [](const std::string&, bool, bool) {});
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
-        vlm_helper->get_pad_token_id(), *text_streamer, true);
+        vlm_helper->get_pad_token_id(), *text_streamer);
     if (info.accepts_image) {
       image_processor = make_image_processor(cfg, info.root / "devkit");
       vision_model = std::make_unique<simaai::llima::VisionModel>(info.root);
@@ -687,7 +687,7 @@ struct VisionLanguageModel::Impl {
   void configure_run_callbacks() {
     text_streamer->set_info_callback(
         [this](const std::string& metric, double value) { record_metric(metric, value); });
-    text_streamer->set_text_callback([](const std::string&, bool) {});
+    text_streamer->set_text_callback([](const std::string&, bool, bool) {});
   }
 
   void reset_metrics() {
@@ -794,14 +794,15 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
             });
         const bool buffer_for_tools = !request.tools.empty();
         std::string buffered_text;
-        model->text_streamer->set_text_callback([&producer, buffer_for_tools, &buffered_text](
-                                                    const std::string& text, bool stream_end) {
-          if (buffer_for_tools) {
-            buffered_text += text;
-            return;
-          }
-          producer.record_text(text, stream_end);
-        });
+        model->text_streamer->set_text_callback(
+            [&producer, buffer_for_tools, &buffered_text](const std::string& text, bool stream_end,
+                                                          bool) {
+              if (buffer_for_tools) {
+                buffered_text += text;
+                return;
+              }
+              producer.record_text(text, stream_end);
+            });
 
         auto output_token_ids = model->generate_tokens(request);
         std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";

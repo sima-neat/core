@@ -6,7 +6,9 @@
 #include "nodes/io/Input.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
@@ -35,6 +37,7 @@ bool has_input_appsrc(std::span<const std::shared_ptr<simaai::neat::Node>> nodes
 bool has_output_appsink(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 bool has_internal_source(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
+bool is_encoded_sample(const Sample& sample);
 } // namespace simaai::neat::graph
 
 namespace simaai::neat::runtime {
@@ -106,9 +109,10 @@ std::mutex& graph_pipeline_build_mu_for_core() {
 const char* graph_backpressure_timeout_explanation() {
   return " This can happen because of graph backpressure: downstream stages, appsinks, or the "
          "application are not draining outputs as fast as inputs are pushed, so an internal "
-         "edge/pipeline queue filled before the timeout. Pull outputs concurrently, reduce the "
-         "push rate, increase GraphRunOptions.edge_queue/push_timeout_ms, or remove/relax slow "
-         "downstream stages.";
+         "edge/pipeline queue filled before the timeout. Drain outputs concurrently, reduce the "
+         "push rate, increase RunOptions::queue_depth for ingress/internal queues, configure the "
+         "terminal Output with OutputOptions::EveryFrame(...) for bounded lossless buffering, or "
+         "remove/relax slow downstream stages.";
 }
 
 using SampleIdentity = PipelineSegmentRuntime::GraphTransport::SampleIdentity;
@@ -135,6 +139,35 @@ bool has_sample_identity(const SampleIdentity& id) {
   return id.frame_id >= 0 || id.pts_ns >= 0 || id.dts_ns >= 0 || id.duration_ns >= 0 ||
          id.input_seq >= 0 || id.orig_input_seq >= 0 || !id.stream_id.empty() ||
          !id.stream_label.empty() || !id.port_name.empty();
+}
+
+const char* identity_seq_key_name(IdentitySeqKey::Kind kind) {
+  switch (kind) {
+  case IdentitySeqKey::Kind::Input:
+    return "input_seq";
+  case IdentitySeqKey::Kind::Orig:
+    return "orig_input_seq";
+  }
+  return "seq";
+}
+
+bool public_stream_id_for_identity_key(const std::string& stream_id) {
+  return !stream_id.empty() && !is_internal_stream_id(stream_id);
+}
+
+std::size_t effective_identity_map_capacity(const PipelineSegmentRuntime& pipe) {
+  const std::size_t base = simaai::neat::graph::identity_map_capacity();
+  if (base == 0) {
+    return 0;
+  }
+  const int per_input_edge =
+      std::max(0, pipeline_internal::env_int("SIMA_GRAPH_IDENTITY_MAP_PER_INPUT_EDGE", 128));
+  if (per_input_edge <= 0 || pipe.seg.input_edges.size() <= 1U) {
+    return base;
+  }
+  const std::size_t fan_in_floor =
+      pipe.seg.input_edges.size() * static_cast<std::size_t>(per_input_edge);
+  return std::max(base, fan_in_floor);
 }
 
 void restore_sample_identity_if_needed(Sample& sample, const SampleIdentity& id,
@@ -203,6 +236,76 @@ MaterializedSegmentNodes materialize_segment_nodes(const PipelineSegmentPlan& se
   }
 
   return out;
+}
+
+bool input_options_request_encoded_system_memory(const InputOptions& opt) {
+  if (opt.payload_type != PayloadType::Encoded) {
+    return false;
+  }
+  const bool system_memory = opt.memory_policy == InputMemoryPolicy::SystemMemory ||
+                             (!opt.use_simaai_pool && opt.memory_policy == InputMemoryPolicy::Auto);
+  if (!system_memory) {
+    return false;
+  }
+  /*
+   * Non-blocking encoded inputs are preview/egress style graph boundaries.
+   * They should not retain upstream GstSample holders because those holders may
+   * still pin decoder/EV74-visible memory on a sibling branch.  Blocking encoded
+   * inputs are the decode path and keep the holder optimization.
+   */
+  return !opt.block;
+}
+
+const InputOptions* first_input_options(const PipelineSegmentRuntime& pipe) {
+  for (const auto& node : pipe.nodes) {
+    const auto* input = dynamic_cast<const simaai::neat::Input*>(node.get());
+    if (input) {
+      return &input->options();
+    }
+  }
+  return nullptr;
+}
+
+bool tensor_storage_is_cpu_backed(const Tensor& tensor) {
+  if (!tensor.storage) {
+    return false;
+  }
+  return tensor.storage->kind == StorageKind::CpuOwned ||
+         tensor.storage->kind == StorageKind::CpuExternal;
+}
+
+void copy_encoded_pipeline_input_to_cpu_if_needed(const PipelineSegmentRuntime& pipe,
+                                                  Sample& sample) {
+  const InputOptions* input = first_input_options(pipe);
+  if (!input || !input_options_request_encoded_system_memory(*input)) {
+    return;
+  }
+  if (!simaai::neat::graph::is_encoded_sample(sample) || sample.tensors.empty()) {
+    return;
+  }
+
+  Tensor& tensor = sample.tensors.front();
+  if (tensor_storage_is_cpu_backed(tensor)) {
+    return;
+  }
+
+  Tensor cpu = pipeline_internal::transfer_to_cpu(tensor);
+  cpu.device = {DeviceType::CPU, 0};
+  cpu.read_only = true;
+  if (!cpu.semantic.encoded.has_value()) {
+    cpu.semantic.encoded = tensor.semantic.encoded;
+  }
+  sample.tensors.front() = std::move(cpu);
+  sample.owned = true;
+
+  if (pipeline_internal::env_bool("SIMA_GRAPH_ENCODED_EGRESS_COPY_DEBUG", false)) {
+    std::fprintf(stderr,
+                 "[GRAPH] encoded_egress_cpu_copy seg=%zu stream_id=%s frame_id=%lld "
+                 "input_seq=%lld bytes=%zu\n",
+                 static_cast<std::size_t>(pipe.seg.id), sample.stream_id.c_str(),
+                 static_cast<long long>(sample.frame_id), static_cast<long long>(sample.input_seq),
+                 sample.tensors.front().storage ? sample.tensors.front().storage->size_bytes : 0U);
+  }
 }
 
 } // namespace
@@ -465,7 +568,7 @@ bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
   auto& stage = *execution.stages[pick];
   RuntimeStageQueueMsg next{.in_port = port, .sample = std::move(sample), .edge_index = edge_index};
   const bool ok = stage.inbox.push(std::move(next), options.push_timeout_ms);
-  if (!ok && !graph_stop_requested()) {
+  if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
     std::ostringstream msg;
     msg << "GraphRun: stage inbox backpressure timeout (node="
         << static_cast<std::size_t>(group.node_id) << ", edge_queue=" << options.edge_queue
@@ -548,7 +651,7 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
     Sample copy = sample;
     const bool ok = pipe.transport.input_queue->push(
         RuntimePipelineQueueMsg{std::move(copy), invalid_edge_index()}, options.push_timeout_ms);
-    if (!ok && !graph_stop_requested()) {
+    if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
       std::ostringstream msg;
       msg << "GraphRun::push timed out waiting for pipeline input queue (seg="
           << static_cast<std::size_t>(pipe.seg.id) << ", edge_queue=" << options.edge_queue
@@ -592,6 +695,7 @@ void RunCore::graph_sanitize_pipeline_input(std::size_t index, Sample& sample) {
   const int64_t prev_duration = sample.duration_ns;
   const int64_t prev_frame = sample.frame_id;
   sample = simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
+  copy_encoded_pipeline_input_to_cpu_if_needed(pipe, sample);
   if (simaai::neat::pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
     std::fprintf(stderr,
                  "[SAMPLE_TIMING] graph_sanitize seg=%zu before_frame=%lld after_frame=%lld "
@@ -615,7 +719,7 @@ void RunCore::graph_sanitize_pipeline_input(std::size_t index, Sample& sample) {
                  static_cast<std::size_t>(pipe.seg.id), static_cast<long long>(prev_input_seq),
                  static_cast<long long>(sample.input_seq), sample.stream_id.c_str());
   }
-  const std::size_t max_stream_map = simaai::neat::graph::identity_map_capacity();
+  const std::size_t max_stream_map = effective_identity_map_capacity(pipe);
   const SampleIdentity identity = capture_sample_identity(sample);
   if (has_sample_identity(identity)) {
     std::lock_guard<std::mutex> lock(pipe.transport.stream_mu);
@@ -625,23 +729,40 @@ void RunCore::graph_sanitize_pipeline_input(std::size_t index, Sample& sample) {
         pipe.transport.pending_identities.pop_front();
       }
     }
-    if (sample.input_seq >= 0) {
-      pipe.transport.identity_by_input_seq[sample.input_seq] = identity;
-      pipe.transport.input_seq_order.push_back(sample.input_seq);
+    std::vector<IdentitySeqKey> seq_keys;
+    const auto add_identity_seq = [&](IdentitySeqKey key) {
+      const char* seq_name = identity_seq_key_name(key.kind);
+      if (key.value < 0) {
+        return;
+      }
+      pipe.transport.identity_by_input_seq[key] = identity;
+      seq_keys.push_back(key);
       if (simaai::neat::graph::graph_debug_enabled()) {
         std::fprintf(stderr,
-                     "[GRAPH] identity_map_add seg=%zu input_seq=%lld frame_id=%lld "
-                     "pts_ns=%lld stream_id=%s map=%zu\n",
-                     static_cast<std::size_t>(pipe.seg.id),
-                     static_cast<long long>(sample.input_seq),
+                     "[GRAPH] identity_map_add seg=%zu %s=%lld key_stream=%s frame_id=%lld "
+                     "pts_ns=%lld stream_id=%s map=%zu groups=%zu\n",
+                     static_cast<std::size_t>(pipe.seg.id), seq_name,
+                     static_cast<long long>(key.value), key.stream_id.c_str(),
                      static_cast<long long>(sample.frame_id), static_cast<long long>(sample.pts_ns),
-                     sample.stream_id.c_str(), pipe.transport.identity_by_input_seq.size());
+                     sample.stream_id.c_str(), pipe.transport.identity_by_input_seq.size(),
+                     pipe.transport.input_seq_order.size());
       }
-      if (max_stream_map > 0) {
-        while (pipe.transport.input_seq_order.size() > max_stream_map) {
-          const int64_t drop = pipe.transport.input_seq_order.front();
-          pipe.transport.input_seq_order.pop_front();
-          pipe.transport.identity_by_input_seq.erase(drop);
+    };
+    add_identity_seq(IdentitySeqKey{IdentitySeqKey::Kind::Input, sample.input_seq, std::string{}});
+    if (sample.orig_input_seq != sample.input_seq &&
+        public_stream_id_for_identity_key(sample.stream_id)) {
+      add_identity_seq(
+          IdentitySeqKey{IdentitySeqKey::Kind::Orig, sample.orig_input_seq, sample.stream_id});
+    }
+    if (!seq_keys.empty()) {
+      pipe.transport.input_seq_order.push_back(std::move(seq_keys));
+    }
+    if (max_stream_map > 0) {
+      while (pipe.transport.input_seq_order.size() > max_stream_map) {
+        const auto drop = std::move(pipe.transport.input_seq_order.front());
+        pipe.transport.input_seq_order.pop_front();
+        for (const auto& key : drop) {
+          pipe.transport.identity_by_input_seq.erase(key);
         }
       }
     }
@@ -714,9 +835,13 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
     return;
   auto& pipe = *execution.pipelines[index];
   const Sample before = sample;
-  const bool prefer_mapped = true;
   const bool looks_internal = is_internal_stream_id(sample.stream_id);
   const bool missing = sample.stream_id.empty();
+  // The frame-id fallback is not globally unique for multistream realtime graphs
+  // and may wrap/repeat.  Trust exact input_seq and ordered pipeline FIFO first;
+  // only let frame-id fallback replace the stream id when the output did not
+  // carry a usable public stream id.
+  const bool prefer_frame_mapped_stream = missing || looks_internal;
   bool map_lookup_attempted = false;
   bool map_hit = false;
 
@@ -726,40 +851,74 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
         sample.duration_ns != before.duration_ns) {
       pipe.transport.identity_rewrite_count.fetch_add(1, std::memory_order_relaxed);
     }
-    const bool required_mapping = missing || looks_internal || prefer_mapped;
+    const bool required_mapping = missing || looks_internal || prefer_frame_mapped_stream;
     if (required_mapping && map_lookup_attempted && !map_hit) {
       pipe.transport.identity_map_miss_count.fetch_add(1, std::memory_order_relaxed);
     }
   };
 
   std::lock_guard<std::mutex> lock(pipe.transport.stream_mu);
-  if (sample.input_seq >= 0) {
+  const auto try_identity_seq = [&](IdentitySeqKey key) -> bool {
+    const char* seq_name = identity_seq_key_name(key.kind);
+    if (key.value < 0) {
+      return false;
+    }
     map_lookup_attempted = true;
-    auto it = pipe.transport.identity_by_input_seq.find(sample.input_seq);
+    auto it = pipe.transport.identity_by_input_seq.find(key);
     if (it != pipe.transport.identity_by_input_seq.end()) {
-      restore_sample_identity_if_needed(sample, it->second, prefer_mapped);
+      restore_sample_identity_if_needed(sample, it->second, /*prefer_mapped=*/true);
       map_hit = true;
       if (simaai::neat::graph::graph_debug_enabled()) {
         std::fprintf(stderr,
-                     "[GRAPH] identity_map_use seg=%zu input_seq=%lld frame_id=%lld pts_ns=%lld "
-                     "stream_id=%s map=%zu\n",
-                     static_cast<std::size_t>(pipe.seg.id),
-                     static_cast<long long>(sample.input_seq),
+                     "[GRAPH] identity_map_use seg=%zu %s=%lld key_stream=%s frame_id=%lld "
+                     "pts_ns=%lld stream_id=%s map=%zu\n",
+                     static_cast<std::size_t>(pipe.seg.id), seq_name,
+                     static_cast<long long>(key.value), key.stream_id.c_str(),
                      static_cast<long long>(sample.frame_id), static_cast<long long>(sample.pts_ns),
                      sample.stream_id.c_str(), pipe.transport.identity_by_input_seq.size());
       }
       finalize_identity_diag();
-      return;
+      return true;
     }
     if (simaai::neat::graph::graph_debug_enabled()) {
       std::fprintf(stderr,
-                   "[GRAPH] identity_map_miss seg=%zu input_seq=%lld frame_id=%lld pts_ns=%lld "
-                   "stream_id=%s missing=%d internal=%d map=%zu\n",
-                   static_cast<std::size_t>(pipe.seg.id), static_cast<long long>(sample.input_seq),
+                   "[GRAPH] identity_map_miss seg=%zu %s=%lld key_stream=%s frame_id=%lld "
+                   "pts_ns=%lld stream_id=%s missing=%d internal=%d map=%zu\n",
+                   static_cast<std::size_t>(pipe.seg.id), seq_name,
+                   static_cast<long long>(key.value), key.stream_id.c_str(),
                    static_cast<long long>(sample.frame_id), static_cast<long long>(sample.pts_ns),
                    sample.stream_id.c_str(), static_cast<int>(missing),
                    static_cast<int>(looks_internal), pipe.transport.identity_by_input_seq.size());
     }
+    return false;
+  };
+  if (try_identity_seq(
+          IdentitySeqKey{IdentitySeqKey::Kind::Input, sample.input_seq, std::string{}})) {
+    return;
+  }
+  if (sample.orig_input_seq != sample.input_seq &&
+      public_stream_id_for_identity_key(sample.stream_id) &&
+      try_identity_seq(
+          IdentitySeqKey{IdentitySeqKey::Kind::Orig, sample.orig_input_seq, sample.stream_id})) {
+    return;
+  }
+
+  if (!pipe.transport.pending_identities.empty()) {
+    map_lookup_attempted = true;
+    const SampleIdentity pending = pipe.transport.pending_identities.front();
+    pipe.transport.pending_identities.pop_front();
+    restore_sample_identity_if_needed(sample, pending, /*prefer_mapped=*/true);
+    map_hit = true;
+    if (simaai::neat::graph::graph_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[GRAPH] identity_map_fallback seg=%zu frame_id=%lld input_seq=%lld "
+                   "pts_ns=%lld stream_id=%s pending=%zu\n",
+                   static_cast<std::size_t>(pipe.seg.id), static_cast<long long>(sample.frame_id),
+                   static_cast<long long>(sample.input_seq), static_cast<long long>(sample.pts_ns),
+                   sample.stream_id.c_str(), pipe.transport.pending_identities.size());
+    }
+    finalize_identity_diag();
+    return;
   }
 
   if (sample.frame_id >= 0) {
@@ -772,7 +931,7 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
       if (remaining == 0) {
         pipe.transport.identity_by_frame.erase(it);
       }
-      restore_sample_identity_if_needed(sample, identity, prefer_mapped);
+      restore_sample_identity_if_needed(sample, identity, prefer_frame_mapped_stream);
       map_hit = true;
       if (simaai::neat::graph::graph_debug_enabled()) {
         std::fprintf(stderr,
@@ -794,22 +953,6 @@ void RunCore::graph_restore_stream_id_if_needed(std::size_t index, Sample& sampl
                    static_cast<long long>(sample.input_seq), static_cast<long long>(sample.pts_ns),
                    sample.stream_id.c_str(), static_cast<int>(missing),
                    static_cast<int>(looks_internal), pipe.transport.identity_by_frame.size());
-    }
-  }
-
-  if (!pipe.transport.pending_identities.empty()) {
-    map_lookup_attempted = true;
-    const SampleIdentity pending = pipe.transport.pending_identities.front();
-    pipe.transport.pending_identities.pop_front();
-    restore_sample_identity_if_needed(sample, pending, prefer_mapped);
-    map_hit = true;
-    if (simaai::neat::graph::graph_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[GRAPH] identity_map_fallback seg=%zu frame_id=%lld input_seq=%lld "
-                   "pts_ns=%lld stream_id=%s pending=%zu\n",
-                   static_cast<std::size_t>(pipe.seg.id), static_cast<long long>(sample.frame_id),
-                   static_cast<long long>(sample.input_seq), static_cast<long long>(sample.pts_ns),
-                   sample.stream_id.c_str(), pipe.transport.pending_identities.size());
     }
   }
   finalize_identity_diag();
@@ -871,10 +1014,14 @@ std::optional<RuntimeSinkQueueMsg> graph_pull_msg_impl(RunCore& core,
                           ? it->second->pop_with_restore_reservation(queued, wait_ms)
                           : it->second->pop(queued, wait_ms);
   if (!popped) {
-    std::fprintf(stderr,
-                 "[GRAPH] GraphRun::pull: queue pop returned empty for node %zu (timeout=%dms or "
-                 "queue closed)\n",
-                 static_cast<std::size_t>(node_id), wait_ms);
+    // Nonblocking graph pulls are frequently used as opportunistic drain probes. An empty queue
+    // with timeout=0 is an expected no-data result, not a diagnostic event.
+    if (wait_ms != 0 || simaai::neat::graph::graph_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[GRAPH] GraphRun::pull: queue pop returned empty for node %zu "
+                   "(timeout=%dms or queue closed)\n",
+                   static_cast<std::size_t>(node_id), wait_ms);
+    }
     return std::nullopt;
   }
   if (graph_message_trace_enabled(&execution) && queued.edge_index != invalid_edge_index()) {
@@ -937,7 +1084,9 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
   if (!queued.has_value()) {
     return std::nullopt;
   }
-  return std::move(queued->sample);
+  Sample out = std::move(queued->sample);
+  pipeline_internal::release_realtime_frame_credits_for_sample(out, "graph-sink-pull");
+  return out;
 }
 
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -983,7 +1132,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
             ? session_build_fused_realtime_source_stream_internal(
                   *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
                   opt.run_options, opt.mode, opt.require_sink, public_output_contract,
-                  "RunCore::start(plan/fused-realtime)")
+                  "RunCore::start(plan/fused-realtime)", opt.fused_encoded_output_dispatch)
             : session_build_source_stream_internal(
                   nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
                   opt.require_sink, public_output_contract, "RunCore::start(plan/source)");

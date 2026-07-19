@@ -56,6 +56,19 @@ RUN_TEST(
         require(out.resolved_max_input_depth == 4, "model policy: explicit max depth must win");
       }
 
+      // Capacity diagnostics must report the actual value, configured limit, and public fix.
+      {
+        const std::string message =
+            shape_limit_exceeded_message("Graph::build(input)", "width", 2048, 1920);
+        const std::string hint = shape_limit_fix_hint("width", 2048);
+        require_contains(message, "input width 2048 exceeds configured capacity 1920",
+                         "shape diagnostic should include actual and configured width");
+        require_contains(hint, "Model::Options::preprocess.input_max_width",
+                         "shape diagnostic should name the public model option");
+        require_contains(hint, "at least 2048",
+                         "shape diagnostic should include the required capacity");
+      }
+
       // Graph bounded mode: explicit seed/max should be preserved with origins.
       {
         InputOptions opt;

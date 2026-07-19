@@ -685,9 +685,19 @@ bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledN
                                        : element_names(input.node_index).front();
   try {
     require_supported_single_output_handoff(opt_);
+    PreprocOptions compile_opt = opt_;
+    const PreprocMaxInputShape max_shape = max_input_shape_from_model_lineage(opt_);
+    if (opt_.model_managed_contract && opt_.dynamic_input_dims && max_shape.height > 0 &&
+        max_shape.width > 0 && max_shape.channels > 0) {
+      // Input-contract materialization records the current frame geometry in opt_. Keep that
+      // observable state intact, but compile the processcvu static envelope from the model's
+      // declared capacity so a smaller first source cannot prevent a larger later source from
+      // being accepted at runtime.
+      compile_opt.set_input_shape({max_shape.height, max_shape.width, max_shape.channels});
+    }
     const auto compiled =
         pipeline_internal::sima::stagesemantics::build_processcvu_compiled_contract_from_options(
-            options());
+            compile_opt);
     return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
         kind(), element_name, element_name, contract_definition(), compiled, out, err);
   } catch (const std::exception& ex) {

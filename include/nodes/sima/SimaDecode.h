@@ -39,6 +39,10 @@ struct SimaDecodeOptions {
   int dec_height = -1;      ///< Decoded frame height override; `-1` = upstream-defined.
   int dec_fps = -1;         ///< Decoded frame rate override; `-1` = upstream-defined.
   int num_buffers = -1;     ///< Output buffer pool size override; `-1` = element default.
+  int input_buffers = -1;   ///< Decoder input buffer count override; `-1` = element default.
+  std::string decoder_tuning; ///< Optional native decoder tuning ("low-memory",
+                              ///< "throughput-low-latency", ...).
+  bool memory_opt = false;    ///< If true, enable the decoder memory-optimized path.
 };
 
 /**

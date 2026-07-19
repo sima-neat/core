@@ -28,7 +28,7 @@ struct ASRModel::Impl {
     }
 
     internal::ensure_llima_runtime_connected();
-    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root, true);
+    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root);
   }
 
   GenerationResult run(const GenerationRequest& request) {
@@ -94,7 +94,7 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
           ~CallbackGuard() {
             if (model && model->whisper_model) {
               model->whisper_model->set_info_callback([](const std::string&, double) {});
-              model->whisper_model->set_text_callback([](const std::string&, bool) {});
+              model->whisper_model->set_text_callback([](const std::string&, bool, bool) {});
             }
           }
         } callback_guard{model};
@@ -104,7 +104,7 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
               producer.record_metric(metric, value);
             });
         model->whisper_model->set_text_callback(
-            [&producer](const std::string& text, bool stream_end) {
+            [&producer](const std::string& text, bool stream_end, bool) {
               producer.record_text(text, stream_end);
             });
 

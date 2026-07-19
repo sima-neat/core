@@ -4,6 +4,11 @@ description: Install the PyNeat wheel in a custom Python virtual environment
 sidebar_position: 3
 ---
 
+:::note DevKit only — skip for SDK installs
+These steps set up PyNeat on a DevKit (or a bare host acting as a runtime). If
+you are working inside the Neat SDK, skip this page.
+:::
+
 :::tip PyNeat is already installed with Neat Library
 PyNeat is bundled with the Neat Library and is installed automatically when you
 install the Neat Library.

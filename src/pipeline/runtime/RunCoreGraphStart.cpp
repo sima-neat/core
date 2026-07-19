@@ -14,6 +14,7 @@
 #include "pipeline/internal/DecoderAdmissionClient.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <functional>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <span>
@@ -31,6 +33,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -65,6 +68,10 @@ using simaai::neat::graph::StageOutMsg;
 using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
 
+bool realtime_by_stream_policy(GraphLinkPolicy policy) {
+  return policy == GraphLinkPolicy::RealtimeLatestByStream;
+}
+
 std::string gst_double_quote(std::string value) {
   std::string out;
   out.reserve(value.size() + 2U);
@@ -91,6 +98,63 @@ void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t
   std::uint64_t cur = max_value.load(std::memory_order_relaxed);
   while (cur < ns && !max_value.compare_exchange_weak(cur, ns, std::memory_order_relaxed,
                                                       std::memory_order_relaxed)) {
+  }
+}
+
+bool same_realtime_frame_credit(const pipeline_internal::RealtimeFrameCredit& lhs,
+                                const pipeline_internal::RealtimeFrameCredit& rhs) {
+  if (lhs.namespace_id != 0 || rhs.namespace_id != 0) {
+    return lhs.namespace_id == rhs.namespace_id && lhs.stream_id == rhs.stream_id &&
+           lhs.frame_id == rhs.frame_id;
+  }
+  if (lhs.frame_id >= 0 || rhs.frame_id >= 0) {
+    return lhs.stream_id == rhs.stream_id && lhs.frame_id == rhs.frame_id;
+  }
+  if (lhs.input_seq >= 0 || rhs.input_seq >= 0) {
+    return lhs.stream_id == rhs.stream_id && lhs.input_seq == rhs.input_seq;
+  }
+  if (lhs.orig_input_seq >= 0 || rhs.orig_input_seq >= 0) {
+    return lhs.stream_id == rhs.stream_id && lhs.orig_input_seq == rhs.orig_input_seq;
+  }
+  return false;
+}
+
+bool contains_realtime_frame_credit(
+    const std::vector<pipeline_internal::RealtimeFrameCredit>& credits,
+    const pipeline_internal::RealtimeFrameCredit& needle) {
+  return std::any_of(credits.begin(), credits.end(), [&](const auto& candidate) {
+    return same_realtime_frame_credit(candidate, needle);
+  });
+}
+
+void append_realtime_frame_credits(std::vector<pipeline_internal::RealtimeFrameCredit>* out,
+                                   const std::vector<pipeline_internal::RealtimeFrameCredit>& in) {
+  if (!out || in.empty()) {
+    return;
+  }
+  for (const auto& credit : in) {
+    if (!contains_realtime_frame_credit(*out, credit)) {
+      out->push_back(credit);
+    }
+  }
+}
+
+void release_unforwarded_stage_input_credits(
+    const std::vector<pipeline_internal::RealtimeFrameCredit>& input_credits,
+    const std::vector<pipeline_internal::RealtimeFrameCredit>& forwarded_credits,
+    const char* mode) {
+  if (input_credits.empty()) {
+    return;
+  }
+  std::vector<pipeline_internal::RealtimeFrameCredit> unforwarded;
+  for (const auto& credit : input_credits) {
+    if (!contains_realtime_frame_credit(forwarded_credits, credit) &&
+        !contains_realtime_frame_credit(unforwarded, credit)) {
+      unforwarded.push_back(credit);
+    }
+  }
+  if (!unforwarded.empty()) {
+    pipeline_internal::release_realtime_frame_credits_without_output(unforwarded, mode);
   }
 }
 
@@ -148,6 +212,62 @@ std::size_t runtime_node_count(const ExecutionGraphPlan& plan) {
 bool decoder_plan_debug_enabled() {
   return env_bool("SIMA_DECODER_PLAN_DEBUG", false) ||
          env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+bool decoder_cma_debug_enabled() {
+  return env_bool("SIMA_DECODER_CMA_DEBUG", false) ||
+         env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
+}
+
+struct CmaSnapshot {
+  long mem_free_kb = -1;
+  long mem_available_kb = -1;
+  long cma_total_kb = -1;
+  long cma_free_kb = -1;
+};
+
+bool read_cma_snapshot(CmaSnapshot& out) {
+  std::ifstream in("/proc/meminfo");
+  if (!in.is_open()) {
+    return false;
+  }
+  std::string key;
+  long value = 0;
+  std::string unit;
+  while (in >> key >> value >> unit) {
+    if (key == "MemFree:") {
+      out.mem_free_kb = value;
+    } else if (key == "MemAvailable:") {
+      out.mem_available_kb = value;
+    } else if (key == "CmaTotal:") {
+      out.cma_total_kb = value;
+    } else if (key == "CmaFree:") {
+      out.cma_free_kb = value;
+    }
+  }
+  return true;
+}
+
+void log_decoder_cma_snapshot(const char* event, std::size_t streams = 0,
+                              std::uint64_t reserved_bytes = 0) {
+  if (!decoder_cma_debug_enabled()) {
+    return;
+  }
+  CmaSnapshot snap;
+  if (!read_cma_snapshot(snap)) {
+    std::fprintf(stderr, "[DECCMA] event=%s streams=%zu reserved_bytes=%llu read_failed=1\n",
+                 event ? event : "snapshot", streams,
+                 static_cast<unsigned long long>(reserved_bytes));
+    return;
+  }
+  std::fprintf(stderr,
+               "[DECCMA] event=%s streams=%zu reserved_bytes=%llu mem_free_kb=%ld "
+               "mem_available_kb=%ld cma_total_kb=%ld cma_free_kb=%ld cma_used_kb=%ld\n",
+               event ? event : "snapshot", streams, static_cast<unsigned long long>(reserved_bytes),
+               snap.mem_free_kb, snap.mem_available_kb, snap.cma_total_kb, snap.cma_free_kb,
+               (snap.cma_total_kb >= 0 && snap.cma_free_kb >= 0)
+                   ? (snap.cma_total_kb - snap.cma_free_kb)
+                   : -1);
 }
 
 const char* sima_decode_type_debug_name(simaai::neat::SimaDecodeType type) {
@@ -440,6 +560,14 @@ struct DecoderAdmissionProperties {
   bool zero_copy_output = false;
 };
 
+bool explicit_decoder_tuning(const std::string& tuning) {
+  return !tuning.empty() && tuning != "auto" && tuning != "default";
+}
+
+bool decoder_tuning_uses_memory_opt(const std::string& tuning) {
+  return tuning == "low-memory" || tuning == "throughput-low-latency";
+}
+
 class RuntimeAdmittedSimaDecode final : public simaai::neat::Node,
                                         public simaai::neat::OutputSpecProvider {
 public:
@@ -538,8 +666,16 @@ void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
   }
 
   auto opt = candidate.options;
-  if (lease.resolved_output_buffers > 0) {
-    opt.num_buffers = static_cast<int>(lease.resolved_output_buffers);
+  const bool explicit_output_buffers = opt.num_buffers > 0;
+  const int resolved_output_buffers =
+      lease.resolved_output_buffers > 0 ? static_cast<int>(lease.resolved_output_buffers) : 0;
+  if (resolved_output_buffers > 0 &&
+      (!explicit_output_buffers || opt.num_buffers < resolved_output_buffers)) {
+    // The admission daemon returns the decoder's safe output-pool contract for
+    // the admitted graph.  Treat it as a floor, not only as a default: an
+    // explicit lower app value can admit successfully but then starve the
+    // zero-copy decoder after the native pool is exhausted.
+    opt.num_buffers = resolved_output_buffers;
   }
 
   DecoderAdmissionProperties admission_props;
@@ -548,12 +684,26 @@ void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
   admission_props.stream_index = static_cast<int>(lease.stream_index);
   admission_props.lease_token_hi = lease.lease_token_hi;
   admission_props.lease_token_lo = lease.lease_token_lo;
-  if (lease.resolved_input_buffers > 0) {
+  if (opt.input_buffers > 0) {
+    admission_props.input_buffers = opt.input_buffers;
+  } else if (lease.resolved_input_buffers > 0) {
     admission_props.input_buffers = static_cast<int>(lease.resolved_input_buffers);
   }
-  admission_props.tuning = pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
-  admission_props.memory_opt = lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
+  admission_props.tuning =
+      explicit_decoder_tuning(opt.decoder_tuning)
+          ? opt.decoder_tuning
+          : pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
+  admission_props.memory_opt = opt.memory_opt ||
+                               decoder_tuning_uses_memory_opt(admission_props.tuning) ||
+                               lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
   admission_props.zero_copy_output = decoder_candidate_uses_zero_copy_output(candidate);
+
+  // RuntimeAdmittedSimaDecode injects the admitted properties itself.  Clear
+  // the generic node fields so the final neatdecoder fragment has one
+  // authoritative dec-ip-cnt / decoder-tuning / memory-opt setting.
+  opt.input_buffers = -1;
+  opt.decoder_tuning.clear();
+  opt.memory_opt = false;
 
   auto replacement =
       std::make_shared<RuntimeAdmittedSimaDecode>(std::move(opt), std::move(admission_props));
@@ -578,10 +728,11 @@ void apply_decoder_admission_lease(ExecutionGraphRuntime& execution,
 
   if (decoder_plan_debug_enabled()) {
     std::fprintf(stderr,
-                 "[DECPLAN] admission_bind %s stream=%u out=%u in=%u tuning=%s token=%llu:%llu "
-                 "bytes=%llu\n",
+                 "[DECPLAN] admission_bind %s stream=%u out=%d/%u in=%d/%u tuning=%s "
+                 "token=%llu:%llu bytes=%llu\n",
                  decoder_admission_candidate_description(execution, candidate).c_str(),
-                 lease.stream_index, lease.resolved_output_buffers, lease.resolved_input_buffers,
+                 lease.stream_index, opt.num_buffers, lease.resolved_output_buffers,
+                 admission_props.input_buffers, lease.resolved_input_buffers,
                  pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning),
                  static_cast<unsigned long long>(lease.lease_token_hi),
                  static_cast<unsigned long long>(lease.lease_token_lo),
@@ -625,6 +776,8 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     return;
   }
 
+  log_decoder_cma_snapshot("before_admission_request", candidates.size());
+
   std::vector<pipeline_internal::DecoderAdmissionStreamRequest> streams;
   streams.reserve(candidates.size());
   for (std::size_t i = 0; i < candidates.size(); ++i) {
@@ -655,6 +808,7 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
 
   auto admission = pipeline_internal::admit_decoder_graph(streams, false);
   if (!admission.admitted) {
+    log_decoder_cma_snapshot("after_admission_rejected", candidates.size());
     const bool require = env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false);
     if (admission.endpoint_missing && !require) {
       if (decoder_plan_debug_enabled()) {
@@ -670,6 +824,8 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
         ". Reduce the number of streams/fps/resolution, stop another decoder workload, or check "
         "the decoder daemon/admission socket.");
   }
+  log_decoder_cma_snapshot("after_admission_accepted", candidates.size(),
+                           admission.estimated_reserved_bytes);
 
   // Arm the existing RunCore cleanup path before any post-admission validation can throw.
   // If the daemon accepted the graph but returns a malformed/stale lease response, graph
@@ -704,6 +860,8 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
                  pipeline_internal::decoder_admission_uuid_to_string(admission.group_uuid).c_str(),
                  static_cast<unsigned long long>(admission.estimated_reserved_bytes));
   }
+  log_decoder_cma_snapshot("after_admission_bound", candidates.size(),
+                           admission.estimated_reserved_bytes);
 }
 
 GraphReport make_graph_start_report(const ExecutionGraphPlan& plan, const std::string& detail) {
@@ -930,7 +1088,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
           continue;
         }
         const auto& link = execution.plan.edges[edge_index].link_options;
-        if (link.policy == GraphLinkPolicy::RealtimeLatestByStream) {
+        if (realtime_by_stream_policy(link.policy)) {
           realtime_input = true;
         }
       }
@@ -954,7 +1112,7 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.stage_groups.reserve(execution.plan.stage_nodes.size());
   for (const auto& st : execution.plan.stage_nodes) {
-    if (!st.node) {
+    if (!st.node || st.consumed_by_fused_realtime_ingress) {
       continue;
     }
 
@@ -1017,6 +1175,43 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   std::vector<bool> has_out(runtime_node_count(execution.plan), false);
   std::unordered_map<std::string, std::size_t> realtime_link_by_target;
+  std::unordered_set<NodeId> consumed_fused_nodes;
+  std::unordered_map<NodeId, OutputOptions> fused_encoded_output_options;
+  for (const auto& segment : execution.plan.pipeline_segments) {
+    if (segment.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(segment.node_ids.begin(), segment.node_ids.end());
+    }
+    if (!segment.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    for (const auto& branch : segment.fused_realtime_ingress->branches) {
+      if (branch.encoded_output.has_value() &&
+          branch.encoded_output->sink_node != graph::kInvalidNode) {
+        fused_encoded_output_options.emplace(branch.encoded_output->sink_node,
+                                             branch.encoded_output->options);
+      }
+    }
+  }
+
+  const auto terminal_output_options_for = [&](NodeId id) -> const OutputOptions* {
+    for (const auto& segment : execution.plan.pipeline_segments) {
+      for (std::size_t local = 0; local < segment.nodes.size(); ++local) {
+        if (attributed_runtime_node_for_segment_node(segment, local) != id) {
+          continue;
+        }
+        const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes[local].get());
+        if (output) {
+          return &output->options();
+        }
+      }
+    }
+    return nullptr;
+  };
+  for (const auto& stage : execution.plan.stage_nodes) {
+    if (stage.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(stage.node_id);
+    }
+  }
 
   const auto downstream_target_for = [&](const EdgePlan& e,
                                          std::size_t eidx) -> std::optional<DownstreamTarget> {
@@ -1068,7 +1263,7 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         it = realtime_link_by_target.find(key);
       } else if (it->second < execution.realtime_links.size() &&
                  execution.realtime_links[it->second]) {
-        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id);
+        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id, e.link_options);
       }
       outs.push_back(DownstreamTarget{DownstreamTarget::Kind::RealtimeLatestLink, it->second,
                                       e.to_port, eidx});
@@ -1080,7 +1275,25 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   for (NodeId id = 0; id < has_out.size(); ++id) {
     if (!has_out[id]) {
-      execution.sinks[id] = std::make_shared<GraphSinkQueue>(core->graph_options.edge_queue);
+      const auto encoded = fused_encoded_output_options.find(id);
+      // Source/decoder/fan-out/VideoSender nodes absorbed into fused ingress
+      // are executed inside the target pipeline and are not graph sinks.  The
+      // only consumed node that still owns a sink queue is an explicit encoded
+      // Output, whose queue is fed by the graph-scoped fused dispatcher.
+      if (consumed_fused_nodes.find(id) != consumed_fused_nodes.end() &&
+          encoded == fused_encoded_output_options.end()) {
+        continue;
+      }
+      std::size_t capacity = core->graph_options.edge_queue;
+      const OutputOptions* output_options = encoded != fused_encoded_output_options.end()
+                                                ? &encoded->second
+                                                : terminal_output_options_for(id);
+      if (output_options) {
+        capacity = output_options->max_buffers <= 0
+                       ? 0U
+                       : static_cast<std::size_t>(output_options->max_buffers);
+      }
+      execution.sinks[id] = std::make_shared<GraphSinkQueue>(capacity, output_options);
     }
   }
 }
@@ -1186,7 +1399,10 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("stage_on_input", msg.sample);
         }
+        const auto input_realtime_credits =
+            pipeline_internal::realtime_frame_credits_for_sample(msg.sample);
         std::vector<StageOutMsg> outputs;
+        st.emitter.begin_input_credit_tracking();
         try {
           const auto exec_start = std::chrono::steady_clock::now();
           st.exec->on_input(std::move(msg), outputs);
@@ -1194,9 +1410,21 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           atomic_add_max(st.telemetry.on_input_ns, st.telemetry.on_input_max_ns,
                          elapsed_ns_since(exec_start));
         } catch (const std::exception& e) {
+          const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
+          release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
+                                                  "stage-on-input-exception");
           core->graph_request_stop(e.what());
           break;
         }
+        std::vector<pipeline_internal::RealtimeFrameCredit> forwarded_realtime_credits =
+            st.emitter.end_input_credit_tracking();
+        for (const auto& out_msg : outputs) {
+          append_realtime_frame_credits(
+              &forwarded_realtime_credits,
+              pipeline_internal::realtime_frame_credits_for_sample(out_msg.sample));
+        }
+        release_unforwarded_stage_input_credits(input_realtime_credits, forwarded_realtime_credits,
+                                                "stage-input-consumed");
 
         for (auto& out_msg : outputs) {
           const auto route_start = std::chrono::steady_clock::now();
@@ -1267,6 +1495,51 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    const std::weak_ptr<RunCore> weak_core = core;
+    start_opt.fused_encoded_output_dispatch =
+        [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
+                    std::string* error) {
+          const auto locked = weak_core.lock();
+          if (!locked || locked->graph_stop_requested()) {
+            if (error) {
+              *error = "graph stopped before encoded Output dispatch";
+            }
+            return FusedEncodedOutputDispatchResult::Stopping;
+          }
+          auto& execution = locked->graph_execution();
+          const auto sink = execution.sinks.find(output.sink_node);
+          if (sink == execution.sinks.end() || !sink->second) {
+            if (error) {
+              *error = "encoded Output sink is unavailable";
+            }
+            locked->graph_request_stop("fused encoded Output sink is unavailable");
+            return FusedEncodedOutputDispatchResult::Failed;
+          }
+
+          // Preserve OutputOptions exactly: Latest replaces its oldest queued
+          // AU without blocking, while EveryFrame applies backpressure until
+          // Run::pull() makes room. Closing the queue wakes blocked producers.
+          const auto enqueue =
+              enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
+          if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
+              enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest ||
+              enqueue == FusedEncodedOutputEnqueueResult::DroppedIncoming) {
+            return FusedEncodedOutputDispatchResult::Delivered;
+          }
+          if (enqueue == FusedEncodedOutputEnqueueResult::Closed) {
+            if (error) {
+              *error = "encoded Output queue closed during graph stop";
+            }
+            return FusedEncodedOutputDispatchResult::Stopping;
+          }
+
+          const std::string reason = "encoded Output queue overflowed unexpectedly";
+          if (error) {
+            *error = reason;
+          }
+          locked->graph_request_stop(reason);
+          return FusedEncodedOutputDispatchResult::Failed;
+        };
     rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
     rt.transport.built.store(true, std::memory_order_release);
   }
@@ -1401,7 +1674,26 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
         Sample sample = *sample_opt;
         last_output = std::chrono::steady_clock::now();
         emit_diag("sample");
+        if (env_bool("SIMA_GRAPH_PRE_RESTORE_DEBUG", false)) {
+          static std::atomic<int> pre_restore_logs{0};
+          const int seen = pre_restore_logs.fetch_add(1, std::memory_order_relaxed);
+          if (seen < env_int("SIMA_GRAPH_PRE_RESTORE_DEBUG_LIMIT", 64)) {
+            std::fprintf(stderr,
+                         "[GRAPH] pre_restore_output seg=%zu kind=%d stream_id=%s frame_id=%lld "
+                         "input_seq=%lld orig_input_seq=%lld pts_ns=%lld fields=%zu "
+                         "tensors=%zu\n",
+                         static_cast<std::size_t>(pipe.seg.id), static_cast<int>(sample.kind),
+                         sample.stream_id.c_str(), static_cast<long long>(sample.frame_id),
+                         static_cast<long long>(sample.input_seq),
+                         static_cast<long long>(sample.orig_input_seq),
+                         static_cast<long long>(sample.pts_ns), sample.fields.size(),
+                         sample.tensors.size());
+          }
+        }
         core->graph_restore_stream_id_if_needed(i, sample);
+        // A pipeline output is an internal forwarding boundary, not final consumption. Keep
+        // realtime and holder credits attached until a terminal pull, drop, or closed sink owns
+        // the corresponding release.
         simaai::neat::graph::log_first_decoded_once(sample, pipe.seg.id);
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("pipeline_pull", sample);
@@ -1479,18 +1771,30 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
         trace_graph_message_event(TraceGraphMessageEventType::EdgeSinkRecv, args);
       }
       Sample sample = std::move(queued.sample);
+      const auto realtime_credits = pipeline_internal::realtime_frame_credits_for_sample(sample);
+      bool realtime_credits_released = false;
+      const auto release_input_realtime_credits = [&](const char* mode) {
+        if (realtime_credits_released) {
+          return;
+        }
+        pipeline_internal::release_realtime_frame_credits(realtime_credits, mode);
+        realtime_credits_released = true;
+      };
       if (simaai::neat::graph::graph_debug_enabled()) {
         simaai::neat::graph::graph_debug_sample("pipeline_push_pop", sample);
       }
 
-      const auto sanitize_start = std::chrono::steady_clock::now();
-      core->graph_sanitize_pipeline_input(i, sample);
-      pipe.transport.telemetry.push_thread_sanitize_calls.fetch_add(1, std::memory_order_relaxed);
-      atomic_add_max(pipe.transport.telemetry.push_thread_sanitize_ns,
-                     pipe.transport.telemetry.push_thread_sanitize_max_ns,
-                     elapsed_ns_since(sanitize_start));
+      if (!queued.sanitized) {
+        const auto sanitize_start = std::chrono::steady_clock::now();
+        core->graph_sanitize_pipeline_input(i, sample);
+        pipe.transport.telemetry.push_thread_sanitize_calls.fetch_add(1, std::memory_order_relaxed);
+        atomic_add_max(pipe.transport.telemetry.push_thread_sanitize_ns,
+                       pipe.transport.telemetry.push_thread_sanitize_max_ns,
+                       elapsed_ns_since(sanitize_start));
+      }
 
       if (simaai::neat::graph::is_encoded_sample(sample) && sample.caps_string.empty()) {
+        release_input_realtime_credits("pipeline-input-invalid");
         core->graph_request_stop("GraphRun: encoded Sample missing caps_string");
         return;
       }
@@ -1504,6 +1808,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
           atomic_add_max(pipe.transport.telemetry.push_thread_ensure_build_ns,
                          pipe.transport.telemetry.push_thread_ensure_build_max_ns,
                          elapsed_ns_since(ensure_start));
+          release_input_realtime_credits("pipeline-input-build-failed");
           core->graph_request_stop(build_err.empty() ? "GraphRun: pipeline build failed"
                                                      : build_err);
           return;
@@ -1527,6 +1832,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
                      pipe.transport.telemetry.push_thread_push_samples_max_ns,
                      elapsed_ns_since(push_start));
       if (!pushed) {
+        release_input_realtime_credits("pipeline-input-push-failed");
         const std::string err = pipe.run_core ? pipe.run_core->last_error() : std::string{};
         if (realtime_edge && !core->graph_stop_requested() && err.empty()) {
           continue;
@@ -1571,6 +1877,9 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
         }
         core->graph_request_stop("GraphRun: pipeline push failed");
         return;
+      }
+      if (!pipe.transport.has_output) {
+        release_input_realtime_credits("pipeline-input-sink-only-pushed");
       }
     }
   });

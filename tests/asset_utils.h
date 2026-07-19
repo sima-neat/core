@@ -156,6 +156,7 @@ struct TestRuntimePaths {
   fs::path model_archive_fixture_root;
   fs::path model_archive_fixture_manifest;
   fs::path decoder_fixture;
+  fs::path codec_perf_h264_fixture;
 };
 
 inline void append_unique_path(std::vector<fs::path>& out, const fs::path& path) {
@@ -289,6 +290,8 @@ inline const TestRuntimePaths& test_runtime_paths() {
             text, "model_archive_fixture_manifest_rel", value.build_root);
         value.decoder_fixture =
             resolve_manifest_relative_path(text, "decoder_fixture_rel", value.build_root);
+        value.codec_perf_h264_fixture =
+            resolve_manifest_relative_path(text, "codec_perf_h264_fixture_rel", value.build_root);
       }
     }
 
@@ -315,6 +318,9 @@ inline const TestRuntimePaths& test_runtime_paths() {
     if (value.decoder_fixture.empty())
       value.decoder_fixture =
           value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
+    if (value.codec_perf_h264_fixture.empty())
+      value.codec_perf_h264_fixture =
+          value.source_root / "build" / "test-assets" / "codec-perf" / "h264_1280x720_30fps.h264";
 
     return value;
   }();
@@ -355,6 +361,10 @@ inline fs::path test_model_archive_fixture_manifest_path() {
 
 inline fs::path test_decoder_fixture_path() {
   return test_runtime_paths().decoder_fixture;
+}
+
+inline fs::path test_codec_perf_h264_fixture_path() {
+  return test_runtime_paths().codec_perf_h264_fixture;
 }
 
 inline fs::path default_asset_root(const fs::path& root_in = {}) {

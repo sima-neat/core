@@ -5,6 +5,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 
 #include <algorithm>
@@ -214,6 +215,7 @@ runtime::EdgeRouterOptions graph_router_options_for_push(const runtime::RunCore&
   runtime::EdgeRouterOptions options = core.graph_options.router_options();
   if (!block) {
     options.push_timeout_ms = 0;
+    options.request_stop_on_backpressure = false;
   }
   return options;
 }
@@ -231,10 +233,23 @@ std::string default_input_name(const runtime::RunCore& core) {
   return "default";
 }
 
-Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& in) {
+Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& in,
+                                         std::string_view endpoint_name) {
   Sample out = in;
   if (out.stream_id.empty()) {
-    out.stream_id = "default";
+    if (endpoint_name.empty()) {
+      out.stream_id = "default";
+    } else {
+      out.stream_id.assign(endpoint_name.data(), endpoint_name.size());
+    }
+  }
+  if (!endpoint_name.empty()) {
+    if (out.port_name.empty()) {
+      out.port_name.assign(endpoint_name.data(), endpoint_name.size());
+    }
+    if (out.stream_label.empty()) {
+      out.stream_label.assign(endpoint_name.data(), endpoint_name.size());
+    }
   }
 
   // Prefer a run-local public-ingress sequence over frame_id fallback whenever sequence fields are
@@ -257,7 +272,7 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                                     bool block) {
   for (const auto& msg : msgs) {
     enforce_public_sample_push_transferable(msg, "Run::push");
-    Sample stamped = stamp_public_graph_ingress_sample(core, msg);
+    Sample stamped = stamp_public_graph_ingress_sample(core, msg, endpoint_name);
     if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
       std::fprintf(stderr,
                    "[SAMPLE_TIMING] graph_push_endpoint node=%zu port=%u has_port=%d "
@@ -313,6 +328,13 @@ struct InputQueueAdmission {
   const char* reason = "";
 };
 
+void release_realtime_credits_for_dropped_input(const InputItem& item, const char* mode) {
+  if (item.kind != QueuedInputKind::Message) {
+    return;
+  }
+  pipeline_internal::release_realtime_frame_credits_for_sample(item.msg, mode);
+}
+
 InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
                                              runtime::PipelineSegmentRuntime& segment,
                                              std::unique_lock<std::mutex>& lock, bool block) {
@@ -342,6 +364,8 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
     }
   } else if (core.opt.overflow_policy == OverflowPolicy::KeepLatest) {
     if (run_internal::queue_full(segment.in_queue, max)) {
+      release_realtime_credits_for_dropped_input(segment.in_queue.front(),
+                                                 "async-input-drop-oldest");
       segment.in_queue.pop_front();
       core.inputs_dropped.fetch_add(1, std::memory_order_relaxed);
     }

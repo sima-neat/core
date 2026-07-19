@@ -46,6 +46,7 @@ struct StreamSchedulerOptions {
   StreamDropPolicy drop_policy =
       StreamDropPolicy::DropOldest; ///< Overflow policy when a per-stream queue is full.
   int max_batch = 1;                ///< Scheduling-only batch (emit up to N per input).
+  std::vector<std::string> inputs;  ///< Optional named input ports used as stream-id fallbacks.
 };
 
 /**
@@ -72,11 +73,13 @@ public:
 private:
   void ensure_stream_(const std::string& stream_id);
   bool emit_one_(std::vector<StageOutMsg>& out);
+  std::string fallback_stream_id_for_port_(PortId port) const;
 
   StreamSchedulerOptions opt_;
   std::unordered_map<std::string, std::deque<Sample>> queues_;
   std::deque<std::string> rr_order_;
   std::unordered_set<std::string> active_;
+  std::unordered_map<PortId, std::string> fallback_stream_id_by_port_;
   PortId out_port_ = kInvalidPort;
 };
 

@@ -159,15 +159,20 @@ def _assert_not_type_error(call):
 
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
+  assert not hasattr(pyneat.Graph, "build_fused_realtime_source")
+  assert not hasattr(pyneat.Graph, "connect_realtime")
   assert hasattr(pyneat, "GraphOptions")
   assert hasattr(pyneat, "GraphLinkOptions")
+  assert not hasattr(pyneat, "RealtimeMuxByStream")
   assert hasattr(pyneat, "GraphLinkPolicy")
+  assert not hasattr(pyneat.GraphLinkPolicy, "RealtimeEveryFrameByStream")
   assert hasattr(pyneat, "GraphReport")
   assert hasattr(pyneat, "NeatError")
   assert hasattr(pyneat, "ModelRouteOptions")
   assert hasattr(pyneat, "graphs")
   assert hasattr(pyneat.graphs, "branch")
   assert hasattr(pyneat.graphs, "combine")
+  assert hasattr(pyneat.CombinePolicy, "RoundRobin")
 
   for removed_name in (
       "graph",
@@ -195,6 +200,12 @@ def test_graph_pythonic_add_and_describe():
   text = graph.describe_backend()
   assert isinstance(text, str)
   assert text
+
+
+def test_graph_combine_round_robin_surface():
+  graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.RoundRobin)
+  assert isinstance(graph, pyneat.Graph)
+  assert "combine=RoundRobin" in graph.describe()
 
 
 def test_graph_pythonic_add_graph_and_connect_alias():
@@ -225,6 +236,10 @@ def test_graph_link_options_surface():
   assert opt.policy == pyneat.GraphLinkPolicy.RealtimeLatestByStream
   assert opt.queue_depth == 7
   assert opt.stream_id == "camera0"
+  opt.max_inflight_per_stream = 4
+  opt.max_inflight_total = 16
+  assert opt.max_inflight_per_stream == 4
+  assert opt.max_inflight_total == 16
 
   source = pyneat.Graph()
   source.custom_with_role(
@@ -396,6 +411,7 @@ def test_output_stage_option_structs_expose_expected_fields():
   video_encoder = pyneat.VideoSenderEncoderOptions()
   video_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30)
   metadata_sender = pyneat.MetadataSenderOptions()
+  metadata_send = pyneat.MetadataSenderSendOptions()
 
   for field in UDP_OUTPUT_OPTION_FIELDS:
     assert hasattr(udp, field), field
@@ -418,6 +434,8 @@ def test_output_stage_option_structs_expose_expected_fields():
 
   for field in METADATA_SENDER_OPTION_FIELDS:
     assert hasattr(metadata_sender, field), field
+  assert hasattr(metadata_send, "nonblocking")
+  assert metadata_send.nonblocking is True
 
   assert hasattr(pyneat, "H264ParseAlignment")
   assert hasattr(pyneat, "H264ParseStreamFormat")
@@ -425,6 +443,8 @@ def test_output_stage_option_structs_expose_expected_fields():
   assert hasattr(pyneat, "VideoSenderEncoderOptions")
   assert hasattr(pyneat, "VideoSenderOptions")
   assert hasattr(pyneat, "MetadataSenderOptions")
+  assert hasattr(pyneat, "MetadataSenderSendOptions")
+  assert hasattr(pyneat, "MetadataSenderStats")
   assert hasattr(pyneat, "MetadataSender")
   assert hasattr(pyneat.groups, "video_sender")
 
@@ -506,6 +526,7 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30))
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
   _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
+  _assert_not_type_error(lambda: pyneat.MetadataSenderSendOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions()))
 
 
@@ -766,6 +787,9 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert native_decode.type == pyneat.SimaDecodeType.H264
   assert native_decode.out_format == pyneat.Format.NV12
   assert native_decode.raw_output is True
+  assert native_decode.input_buffers == -1
+  assert native_decode.decoder_tuning == ""
+  assert native_decode.memory_opt is False
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode())
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.JPEG
@@ -773,6 +797,13 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   native_decode.dec_width = 640
   native_decode.dec_height = 480
   native_decode.dec_fps = 30
+  native_decode.num_buffers = 4
+  native_decode.input_buffers = 4
+  native_decode.decoder_tuning = "throughput-low-latency"
+  native_decode.memory_opt = True
+  assert native_decode.input_buffers == 4
+  assert native_decode.decoder_tuning == "throughput-low-latency"
+  assert native_decode.memory_opt is True
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.MJPEG
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))

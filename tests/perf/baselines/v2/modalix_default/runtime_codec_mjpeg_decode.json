@@ -1,0 +1,17 @@
+{
+  "scenario_id": "runtime_codec_mjpeg_decode",
+  "model_id": "synthetic_jpeg_frame_1280x720",
+  "pipeline_id": "app_boundary_jpegparse_sima_mjpeg_decode_1280x720",
+  "run_mode": "codec_mjpeg_decode",
+  "iterations": 1000,
+  "metrics_thresholds": {
+    "throughput_min": 10.0,
+    "p50_max": 1000.0,
+    "p95_max": 3000.0,
+    "startup_max": 20000.0,
+    "rss_peak_kb_max": 1400000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  }
+}

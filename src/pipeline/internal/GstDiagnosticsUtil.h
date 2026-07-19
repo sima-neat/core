@@ -76,7 +76,8 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
 
 // -----------------------------
 // Teardown helper (best-effort, avoids deadlocks)
-// SIMA_GST_TEARDOWN_TIMEOUT_MS: wait for NULL (ms)
+// SIMA_GST_TEARDOWN_TIMEOUT_MS: base wait for NULL (ms); synchronous RTSP
+// pipelines add their effective per-source TEARDOWN waits, capped at 30s
 // SIMA_GST_TEARDOWN_ASYNC: skip wait, defer to reaper
 // SIMA_GST_TEARDOWN_REAPER_MS: retry interval (ms)
 // SIMA_GST_TEARDOWN_DEFER_NO_FLUSH: defer no-flush teardowns to reaper
@@ -84,5 +85,10 @@ std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElemen
 void stop_and_unref(GstElement*& e);
 // Skip flush events during teardown (avoid gst_element_send_event deadlocks).
 void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous = false);
+
+// Internal observability/test hook for the bounded synchronous live-source
+// teardown policy. Adds each rtspsrc's effective TEARDOWN wait to the supplied
+// base timeout, plus a bounded scheduler margin.
+int effective_synchronous_teardown_timeout_ms(GstElement* pipeline, int base_timeout_ms);
 
 } // namespace simaai::neat::pipeline_internal

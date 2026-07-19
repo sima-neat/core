@@ -103,6 +103,10 @@ struct InputStreamOptions {
   // transport appsinks, where downstream edge/view contracts must be preserved
   // instead of being rewritten as public terminal outputs.
   bool public_output_contract = true;
+  // True only when a terminal public Output Node supplied max_buffers/drop/sync.
+  // Its queue policy owns every handoff after appsink; RunOptions remains the
+  // input/general scheduling policy and must not replace this contract.
+  bool explicit_public_output_options = false;
   // Same-graph pipeline-to-pipeline pushes are still owned by the live graph
   // runtime, so they do not need a public cross-Run loan attached by Run::pull.
   // Public/cross-Run ingress keeps this false and must carry a transferable loan.

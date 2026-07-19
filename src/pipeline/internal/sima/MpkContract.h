@@ -265,6 +265,9 @@ struct MpkPluginIoContract {
   std::vector<std::int64_t> frame_shape;
   std::string frame_type;
   std::string round_off;
+  // Boxdecode decode-type tokens from MPK params (e.g. "ssd"); empty when not declared.
+  std::string decode_type;
+  std::string decode_type_option;
   // Canonical processcvu contract decoded from MPK params and tensor contracts.
   // These fields are model-managed source-of-truth and keep raw output rank.
   bool has_canonical_processcvu_contract = false;

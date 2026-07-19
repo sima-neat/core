@@ -91,51 +91,52 @@ int main(int argc, char** argv) {
 
     std::cout << graph.describe() << "\n";
 
+    const int expected = streams * frames;
     simaai::neat::Run run = graph.build();
     // END STEP
 
-    // STEP push-streams
+    int received = 0;
+    int first_fields = -1;
     for (int frame = 0; frame < frames; ++frame) {
       for (int sid = 0; sid < streams; ++sid) {
         const int logical_frame = frame * streams + sid;
+
+        // STEP push-streams
         if (!run.push("left", make_rgb_sample(std::to_string(sid), logical_frame))) {
           throw std::runtime_error("left push failed: " + run.last_error());
         }
         if (!run.push("right", make_rgb_sample(std::to_string(sid), logical_frame))) {
           throw std::runtime_error("right push failed: " + run.last_error());
         }
-      }
-    }
-    // END STEP
+        // END STEP
 
-    // STEP pull-bundles
-    const int expected = streams * frames;
-    int received = 0;
-    int first_fields = -1;
-    for (int i = 0; i < expected; ++i) {
-      auto maybe_bundle = run.pull("combined", /*timeout_ms=*/2000);
-      if (!maybe_bundle.has_value()) {
-        throw std::runtime_error("timed out waiting for combined output");
-      }
-      const auto& bundle = *maybe_bundle;
-      if (first_fields < 0)
-        first_fields = static_cast<int>(bundle.fields.size());
-      ++received;
-      if (i < 4) {
-        std::cout << "bundle stream=" << bundle.stream_id << " fields=" << bundle.fields.size()
-                  << "\n";
+        // STEP pull-bundles
+        auto maybe_bundle = run.pull("combined", /*timeout_ms=*/2000);
+        if (!maybe_bundle.has_value()) {
+          throw std::runtime_error("timed out waiting for combined output: " + run.last_error());
+        }
+        const auto& bundle = *maybe_bundle;
+        const int fields = static_cast<int>(bundle.fields.size());
+        if (fields != 2)
+          throw std::runtime_error("joined bundle should contain two fields");
+        if (first_fields < 0)
+          first_fields = fields;
+        ++received;
+        if (received <= 4) {
+          std::cout << "bundle stream=" << bundle.stream_id << " fields=" << fields << "\n";
+        }
+        // END STEP
       }
     }
 
     run.close();
-    // END STEP
     // END CORE LOGIC
 
     if (received != expected)
       throw std::runtime_error("expected=" + std::to_string(expected) +
                                " received=" + std::to_string(received));
     if (first_fields != 2)
-      throw std::runtime_error("join should emit an image+bbox bundle");
+      throw std::runtime_error("join should emit a two-field bundle");
 
     std::cout << "received=" << received << " fields=" << first_fields << "\n";
     std::cout << "[OK] 015_run_multiple_streams\n";

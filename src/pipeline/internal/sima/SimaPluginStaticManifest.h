@@ -49,6 +49,7 @@ enum class BoxDecodeScoreActivation : std::uint8_t {
   Unknown = 0,
   Identity = 1, ///< Pass-through (scores already activated upstream).
   Sigmoid = 2,  ///< Apply sigmoid to scores.
+  Softmax = 3,  ///< Apply softmax across the class dimension (e.g. SSD confidence heads).
 };
 
 /// Quantization parameters for one tensor.
