@@ -37,18 +37,18 @@ struct ASRModel::Impl {
 
     std::lock_guard<std::mutex> run_lock(run_mutex);
     const std::string language = request.language.empty() ? "en" : request.language;
-    std::string text;
+    simaai::llima::WhisperModel::TranscriptionResult transcription;
     if (request.audio_file.has_value()) {
-      text = whisper_model->run_model(*request.audio_file, language);
+      transcription = whisper_model->run_model(*request.audio_file, language);
     } else {
       const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
-      text = whisper_model->run_model_from_pcm(
+      transcription = whisper_model->run_model_from_pcm(
           std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
           language);
     }
 
     GenerationResult result;
-    result.text = std::move(text);
+    result.text = std::move(transcription.text);
     result.finish_reason = "stop";
     return result;
   }
