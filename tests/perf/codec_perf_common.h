@@ -468,9 +468,8 @@ run_throughput_phase(const CodecPerfConfig& config, const simaai::neat::Sample& 
     simaai::neat::Graph warmup_graph = make_decode_graph(config, seed, output_buffers, false, true);
     simaai::neat::Run warmup_run = warmup_graph.build(
         simaai::neat::Sample{seed}, codec_run_options(static_cast<int>(warmup.size()), true));
-    const bool close_input = config.decode_type == simaai::neat::SimaDecodeType::MJPEG;
-    push_and_pull_burst(warmup_run, warmup, warmup_outputs, close_input,
-                        "codec perf throughput warmup", true);
+    push_and_pull_burst(warmup_run, warmup, warmup_outputs, true, "codec perf throughput warmup",
+                        true);
     warmup_run.stop();
   }
 
@@ -489,9 +488,8 @@ run_throughput_phase(const CodecPerfConfig& config, const simaai::neat::Sample& 
   measure_options.include_edge_latency = false;
   measure_options.include_power = false;
   auto measure_scope = run.start_measurement(measure_options);
-  const bool close_input = config.decode_type == simaai::neat::SimaDecodeType::MJPEG;
   sima_perf::PerfMetrics metrics =
-      measure_decode_throughput(run, measured, measured_outputs, close_input, true);
+      measure_decode_throughput(run, measured, measured_outputs, true, true);
   const simaai::neat::MeasureReport report = measure_scope.stop();
   run.stop();
   return {.metrics = metrics, .report = report};
@@ -576,14 +574,10 @@ inline int run_codec_decode_perf(const CodecPerfConfig& config,
     }
 
     const int output_buffers = 64;
-    // H.26x keeps one or more decoded pictures until a later access unit arrives. Feed an
-    // uncounted release window and stop timing at the requested output count.
-    const int release_inputs =
-        config.decode_type == simaai::neat::SimaDecodeType::MJPEG ? 0 : output_buffers;
-    std::vector<simaai::neat::Sample> warmup = make_sample_sequence(
-        frames, config, warmup_iterations == 0 ? 0 : warmup_iterations + release_inputs);
-    std::vector<simaai::neat::Sample> measured = make_sample_sequence(
-        frames, config, iterations + release_inputs, warmup_iterations + release_inputs);
+    std::vector<simaai::neat::Sample> warmup =
+        make_sample_sequence(frames, config, warmup_iterations);
+    std::vector<simaai::neat::Sample> measured =
+        make_sample_sequence(frames, config, iterations, warmup_iterations);
     const simaai::neat::Sample& seed = warmup.empty() ? measured.front() : warmup.front();
 
     double startup_ms = 0.0;
