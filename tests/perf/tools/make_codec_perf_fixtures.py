@@ -52,6 +52,8 @@ def make_h264(path: Path, width: int, height: int, fps: int, duration_s: int) ->
             "zerolatency",
             "-x264-params",
             f"keyint={fps}:min-keyint={fps}:scenecut=0",
+            "-bsf:v",
+            "filter_units=remove_types=6",
             "-f",
             "h264",
             str(path),
@@ -81,6 +83,8 @@ def make_h265(path: Path, width: int, height: int, fps: int, duration_s: int) ->
             "main",
             "-x265-params",
             f"keyint={fps}:min-keyint={fps}:scenecut=0:bframes=0:log-level=error",
+            "-bsf:v",
+            "filter_units=remove_types=39|40",
             "-f",
             "hevc",
             str(path),
@@ -139,8 +143,8 @@ def needs_generation(path: Path, force: bool) -> bool:
 
 def generate(output_dir: Path, force: bool, width: int, height: int, fps: int) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    h264 = output_dir / f"h264_{width}x{height}_{fps}fps.h264"
-    h265 = output_dir / f"h265_{width}x{height}_{fps}fps.h265"
+    h264 = output_dir / f"h264_{width}x{height}_{fps}fps_no_sei.h264"
+    h265 = output_dir / f"h265_{width}x{height}_{fps}fps_no_sei.h265"
     generate_h264 = needs_generation(h264, force)
     generate_h265 = needs_generation(h265, force)
 
