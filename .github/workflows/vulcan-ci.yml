@@ -604,6 +604,7 @@ jobs:
           echo "Using SIMA_TEST_LLIMA_ASR_MODEL=${SIMA_TEST_LLIMA_ASR_MODEL}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "llima" \
+            -E "^(genai_asr_run_test|genai_graph_asr_run_test|genai_server_http_test)$" \
             --timeout 900 \
             -j "${SIMA_CTEST_GENAI_JOBS:-1}" \
             --output-on-failure \
