@@ -17,8 +17,10 @@ namespace simaai::neat::nodes::groups {
 
 /// RTSP stream codec path to depayload and parse.
 enum class RtspCodec {
-  H264 = 0, ///< RTSP RTP/H.264 path.
-  MJPEG,    ///< RTSP RTP/JPEG MJPEG path.
+  H264 = 0,    ///< RTSP RTP/H.264 path.
+  MJPEG = 1,   ///< RTSP RTP/JPEG MJPEG path.
+  H265 = 2,    ///< RTSP RTP/H.265 path.
+  HEVC = H265, ///< Alias for H.265.
 };
 
 /**
@@ -52,12 +54,14 @@ struct RtspEncodedInputOptions {
   int fallback_h264_height = -1;     ///< Fallback H.264 height used if auto-caps fails.
   int source_fps =
       -1; ///< Declared source stream FPS for codec caps repair (-1 = use legacy FPS fields).
+  int h265_payload_type = 96; ///< RTP payload type for H.265 streams.
 };
 
 /**
  * @brief Build the live-RTSP encoded input Graph.
  *
  * H.264 chain: `rtspsrc` -> RTP H.264 depay/parse -> optional H.264 caps fixup.
+ * H.265 chain: `rtspsrc` -> RTP H.265 depay/parse.
  * MJPEG chain: `rtspsrc` -> RTP JPEG depay -> `jpegparse`.
  *
  * @param opt Configuration for source, transport, queueing, and codec framing.

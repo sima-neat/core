@@ -55,6 +55,7 @@ RUN_TEST(
       auto multipart_demux = simaai::neat::nodes::MultipartJpegDemux();
       auto jpeg_parse = simaai::neat::nodes::JpegParse();
       auto rtp_jpeg_depay = simaai::neat::nodes::RTPJpegDepacketize();
+      auto h265_depay = simaai::neat::nodes::H265Depacketize();
       simaai::neat::SimaDecodeOptions sima_decode_opt;
       sima_decode_opt.type = simaai::neat::SimaDecodeType::H265;
       auto sima_decode = simaai::neat::nodes::SimaDecode(sima_decode_opt);
@@ -67,6 +68,12 @@ RUN_TEST(
       auto rtsp_encoded_group = simaai::neat::nodes::groups::RtspEncodedInput(rtsp_encoded_opt);
       auto rtsp_encoded_spec =
           simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(rtsp_encoded_opt);
+      static_assert(simaai::neat::nodes::groups::RtspCodec::HEVC ==
+                    simaai::neat::nodes::groups::RtspCodec::H265);
+      rtsp_encoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+      rtsp_encoded_opt.h265_payload_type = 98;
+      auto rtsp_h265_encoded_group =
+          simaai::neat::nodes::groups::RtspEncodedInput(rtsp_encoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_decoded_opt;
       rtsp_decoded_opt.url = "rtsp://example.local/h264";
       rtsp_decoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::H264;
@@ -74,6 +81,9 @@ RUN_TEST(
       rtsp_decoded_opt.use_videorate = true;
       rtsp_decoded_opt.video_rate_fps = 15;
       auto rtsp_decoded_group = simaai::neat::nodes::groups::RtspDecodedInput(rtsp_decoded_opt);
+      rtsp_decoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::HEVC;
+      auto rtsp_h265_decoded_group =
+          simaai::neat::nodes::groups::RtspDecodedInput(rtsp_decoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions legacy_rtsp_decoded_opt{
           "rtsp://example.local/h264",
           200,
@@ -154,11 +164,14 @@ RUN_TEST(
       (void)multipart_demux;
       (void)jpeg_parse;
       (void)rtp_jpeg_depay;
+      (void)h265_depay;
       (void)sima_decode;
       (void)sima_decode_hevc;
       (void)rtsp_encoded_group;
       (void)rtsp_encoded_spec;
+      (void)rtsp_h265_encoded_group;
       (void)rtsp_decoded_group;
+      (void)rtsp_h265_decoded_group;
       (void)legacy_rtsp_decoded_opt;
       (void)http_mjpeg_group;
       (void)legacy_http_mjpeg_opt;
