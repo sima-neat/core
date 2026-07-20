@@ -1846,6 +1846,19 @@ if (NOT h265_decode_determinism_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST h265_decode_determinism_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
+add_pipeline_test(
+  h265_decode_resnet50_e2e_test
+  e2e_pipelines/img_classification/h265_decode_resnet50_e2e_test.cpp
+)
+
+if (NOT h265_decode_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(h265_decode_resnet50_e2e_test prepare_perf_codec_fixtures)
+  set_property(TEST h265_decode_resnet50_e2e_test
+    APPEND PROPERTY LABELS "e2e;codec;h265;img_classification;zero_copy;sync;async")
+  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
 add_pipeline_test_long(
   h265_rtsp_resnet50_e2e_test
   e2e_pipelines/img_classification/h265_rtsp_resnet50_e2e_test.cpp
@@ -2191,6 +2204,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   file_read_test
   codec_decode_accuracy_test
   h265_decode_determinism_test
+  h265_decode_resnet50_e2e_test
   h265_rtsp_resnet50_e2e_test
   codec_runtime_stream_test
   resnet50_modelpack_jpeg
