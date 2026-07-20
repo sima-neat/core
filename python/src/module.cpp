@@ -3876,7 +3876,8 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
                 "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
                 "h264_height"_a = -1, "enforce_h264_caps"_a = true);
-  nodes_mod.def("h265_depacketize", &simaai::neat::nodes::H265Depacketize, "payload_type"_a = 96);
+  nodes_mod.def("h265_depacketize", &simaai::neat::nodes::H265Depacketize, "payload_type"_a = 96,
+                "source_fps"_a = -1);
   nodes_mod.def("input",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::InputOptions)>(
                     &simaai::neat::nodes::Input),

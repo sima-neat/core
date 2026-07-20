@@ -142,7 +142,7 @@ RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptio
   out.fallback_h264_height = opt.fallback_h264_height;
   out.source_fps = (opt.codec == RtspCodec::H264)
                        ? ((opt.source_fps > 0) ? opt.source_fps : opt.h264_fps)
-                       : source_fps;
+                       : ((opt.codec == RtspCodec::H265) ? opt.source_fps : source_fps);
   return out;
 }
 

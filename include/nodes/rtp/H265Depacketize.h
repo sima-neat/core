@@ -20,8 +20,9 @@ namespace simaai::neat {
  */
 class H265Depacketize final : public Node, public OutputSpecProvider {
 public:
-  /// Construct with an RTP payload type. Values `<= 0` disable payload filtering.
-  explicit H265Depacketize(int payload_type = 96);
+  /// Construct with an RTP payload type and optional source framerate.
+  /// Payload values `<= 0` disable filtering; FPS values `<= 0` leave it unspecified.
+  explicit H265Depacketize(int payload_type = 96, int source_fps = -1);
 
   std::string kind() const override {
     return "H265Depacketize";
@@ -36,14 +37,18 @@ public:
   int payload_type() const {
     return payload_type_;
   }
+  int source_fps() const {
+    return source_fps_;
+  }
 
 private:
   int payload_type_ = 96;
+  int source_fps_ = -1;
 };
 
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
 /// Convenience factory for an `H265Depacketize` Node.
-std::shared_ptr<simaai::neat::Node> H265Depacketize(int payload_type = 96);
+std::shared_ptr<simaai::neat::Node> H265Depacketize(int payload_type = 96, int source_fps = -1);
 } // namespace simaai::neat::nodes

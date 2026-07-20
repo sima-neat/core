@@ -160,16 +160,14 @@ TestCase test_case_for(CaseKind kind) {
             "SIMANEAT_TEST_RTSP_H265_URL",
             "SIMANEAT_TEST_RTSP_H265_URLS",
             "SIMANEAT_TEST_RTSP_H265_FPS",
-            "video/x-h265",
-            false};
+            "video/x-h265"};
   case CaseKind::RtspH265Decoded:
     return {kind,
             "rtsp-h265-decoded",
             "SIMANEAT_TEST_RTSP_H265_URL",
             "SIMANEAT_TEST_RTSP_H265_URLS",
             "SIMANEAT_TEST_RTSP_H265_FPS",
-            "video/x-raw",
-            false};
+            "video/x-raw"};
   case CaseKind::RtspMjpegEncodedBoundary:
     return {kind,
             "rtsp-mjpeg-encoded-boundary",
@@ -477,15 +475,17 @@ void require_backend_contract(const Graph& graph, const TestCase& test_case, int
   case CaseKind::RtspH265EncodedBoundary:
     require_contains(backend, "rtph265depay", test_case.name + ": H.265 depayloader is missing");
     require_contains(backend, "h265parse", test_case.name + ": H.265 parser is missing");
+    require_contains(backend, "framerate=(fraction)" + source_fps_text + "/1",
+                     test_case.name + ": source_fps should configure H.265 caps");
     break;
   case CaseKind::RtspH265Decoded:
     require_contains(backend, "rtph265depay", test_case.name + ": H.265 depayloader is missing");
     require_contains(backend, "h265parse", test_case.name + ": H.265 parser is missing");
     require_contains(backend, "dec-type=h265", test_case.name + ": H.265 decoder is missing");
-    if (source_fps > 0) {
-      require_contains(backend, "dec-fps=" + source_fps_text,
-                       test_case.name + ": source_fps should configure decoder FPS");
-    }
+    require_contains(backend, "framerate=(fraction)" + source_fps_text + "/1",
+                     test_case.name + ": source_fps should configure H.265 caps");
+    require_contains(backend, "dec-fps=" + source_fps_text,
+                     test_case.name + ": source_fps should configure decoder FPS");
     break;
   case CaseKind::RtspMjpegEncodedBoundary:
     require_contains(backend, "encoded_capsfix",
@@ -610,6 +610,8 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample,
     require(sample.tensors.size() == 1U, test_case.name + ": expected one encoded tensor");
     require(sample.tensors.front().storage != nullptr,
             test_case.name + ": encoded tensor missing storage");
+    require(caps_contains_fps(sample.caps_string, expected_encoded_fps),
+            test_case.name + ": encoded caps did not carry configured source FPS");
     break;
   }
   case CaseKind::RtspMjpegEncodedBoundary: {

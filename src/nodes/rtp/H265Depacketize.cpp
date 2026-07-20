@@ -7,7 +7,8 @@
 
 namespace simaai::neat {
 
-H265Depacketize::H265Depacketize(int payload_type) : payload_type_(payload_type) {}
+H265Depacketize::H265Depacketize(int payload_type, int source_fps)
+    : payload_type_(payload_type), source_fps_(source_fps) {}
 
 std::string H265Depacketize::backend_fragment(int node_index) const {
   const std::string rtp = "n" + std::to_string(node_index) + "_rtp_caps";
@@ -23,7 +24,11 @@ std::string H265Depacketize::backend_fragment(int node_index) const {
   ss << "\" ! rtph265depay name=" << depay << " ! h265parse name=" << parser
      << " disable-passthrough=true ! capsfilter name=" << caps
      << " caps=\"video/x-h265,parsed=true,stream-format=(string)byte-stream,"
-        "alignment=(string)au\"";
+        "alignment=(string)au";
+  if (source_fps_ > 0) {
+    ss << ",framerate=(fraction)" << source_fps_ << "/1";
+  }
+  ss << "\"";
   return ss.str();
 }
 
@@ -40,6 +45,10 @@ OutputSpec H265Depacketize::output_spec(const OutputSpec& /*input*/) const {
   OutputSpec out;
   out.media_type = "video/x-h265";
   out.format = "H265";
+  if (source_fps_ > 0) {
+    out.fps_num = source_fps_;
+    out.fps_den = 1;
+  }
   out.certainty = SpecCertainty::Hint;
   out.note = "RTP depay -> H265";
   return out;
@@ -49,8 +58,8 @@ OutputSpec H265Depacketize::output_spec(const OutputSpec& /*input*/) const {
 
 namespace simaai::neat::nodes {
 
-std::shared_ptr<simaai::neat::Node> H265Depacketize(int payload_type) {
-  return std::make_shared<simaai::neat::H265Depacketize>(payload_type);
+std::shared_ptr<simaai::neat::Node> H265Depacketize(int payload_type, int source_fps) {
+  return std::make_shared<simaai::neat::H265Depacketize>(payload_type, source_fps);
 }
 
 } // namespace simaai::neat::nodes

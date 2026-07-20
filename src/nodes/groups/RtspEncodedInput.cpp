@@ -115,7 +115,7 @@ void add_mjpeg_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
 
 void add_h265_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                    const RtspEncodedInputOptions& opt, bool insert_queue) {
-  nodes.push_back(nodes::H265Depacketize(opt.h265_payload_type));
+  nodes.push_back(nodes::H265Depacketize(opt.h265_payload_type, opt.source_fps));
   if (insert_queue) {
     nodes.push_back(nodes::Queue());
   }

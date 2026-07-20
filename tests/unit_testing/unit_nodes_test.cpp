@@ -100,7 +100,7 @@ int main() {
     }
     require(depay_partial_threw, "Partial H264 caps should throw an actionable error");
 
-    auto h265_depay = simaai::neat::nodes::H265Depacketize(98);
+    auto h265_depay = simaai::neat::nodes::H265Depacketize(98, 30);
     const std::string h265_fragment = h265_depay->backend_fragment(4);
     require_contains(h265_fragment, "encoding-name=H265", "H265 RTP caps missing");
     require_contains(h265_fragment, "payload=98", "H265 payload mismatch");
@@ -109,6 +109,8 @@ int main() {
     require_contains(h265_fragment, "stream-format=(string)byte-stream",
                      "H265 byte-stream caps missing");
     require_contains(h265_fragment, "alignment=(string)au", "H265 AU caps missing");
+    require_contains(h265_fragment, "framerate=(fraction)30/1",
+                     "H265 configured source FPS missing");
     require(h265_depay->element_names(4).size() == 4U,
             "H265Depacketize element_names size mismatch");
     const auto* h265_spec_provider =
@@ -117,6 +119,7 @@ int main() {
     const auto h265_spec = h265_spec_provider->output_spec({});
     require(h265_spec.media_type == "video/x-h265", "H265 media type mismatch");
     require(h265_spec.format == "H265", "H265 format mismatch");
+    require(h265_spec.fps_num == 30 && h265_spec.fps_den == 1, "H265 FPS mismatch");
 
     auto dec = simaai::neat::nodes::H264Decode(2, "NV12");
     const std::string dec_expect = std::string(decoder_element_name()) + " name=n1_decoder";
