@@ -183,6 +183,11 @@ GraphOutputs pull_graph_outputs(simaai::neat::Run& run, bool stop_on_error = fal
     if (auto sample = run.pull("done", 10)) {
       outputs.done = *sample;
       outputs.saw_done = true;
+      if (outputs.tokens.empty()) {
+        if (auto trailing_token = run.pull("tokens", 500)) {
+          outputs.tokens += sample_text(*trailing_token);
+        }
+      }
       break;
     }
     if (auto sample = run.pull("error", 10)) {

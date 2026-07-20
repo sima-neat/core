@@ -268,6 +268,11 @@ def _pull_public_language_outputs(run, stop_on_error=False):
     sample = run.pull("done", 10)
     if sample is not None:
       done = sample
+      if token_samples == 0:
+        trailing_token = run.pull("tokens", 500)
+        if trailing_token is not None:
+          tokens.append(trailing_token.to_text())
+          token_samples += 1
       break
     sample = run.pull("error", 10)
     if sample is not None:
