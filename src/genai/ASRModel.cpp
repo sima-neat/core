@@ -12,6 +12,19 @@
 #include <utility>
 
 namespace simaai::neat::genai {
+namespace {
+
+const char* asr_task_name(ASRTask task) {
+  switch (task) {
+  case ASRTask::Transcribe:
+    return "transcribe";
+  case ASRTask::Translate:
+    return "translate";
+  }
+  throw std::invalid_argument("Unsupported ASR task");
+}
+
+} // namespace
 
 struct ASRModel::Impl {
   explicit Impl(std::filesystem::path model_dir_in)
@@ -36,15 +49,16 @@ struct ASRModel::Impl {
     load();
 
     std::lock_guard<std::mutex> run_lock(run_mutex);
-    const std::string language = request.language.empty() ? "en" : request.language;
+    const std::string language = request.language.empty() ? "auto" : request.language;
+    const char* task = asr_task_name(request.asr_task);
     simaai::llima::WhisperModel::TranscriptionResult transcription;
     if (request.audio_file.has_value()) {
-      transcription = whisper_model->run_model(*request.audio_file, language);
+      transcription = whisper_model->run_model(*request.audio_file, language, task);
     } else {
       const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
       transcription = whisper_model->run_model_from_pcm(
           std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
-          language);
+          language, task);
     }
 
     GenerationResult result;
@@ -108,15 +122,16 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
               producer.record_text(text, stream_end);
             });
 
-        const std::string language = request.language.empty() ? "en" : request.language;
+        const std::string language = request.language.empty() ? "auto" : request.language;
+        const char* task = asr_task_name(request.asr_task);
         simaai::llima::WhisperModel::TranscriptionResult transcription;
         if (request.audio_file.has_value()) {
-          transcription = model->whisper_model->run_model(*request.audio_file, language);
+          transcription = model->whisper_model->run_model(*request.audio_file, language, task);
         } else {
           const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
           transcription = model->whisper_model->run_model_from_pcm(
               std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
-              language);
+              language, task);
         }
         producer.finish(producer.cancelled() ? "interrupted" : "stop",
                         std::optional<std::uint32_t>(0), transcription.language,

@@ -2037,6 +2037,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)
       .value("ASR", simaai::neat::genai::GenAITask::ASR);
 
+  nb::enum_<simaai::neat::genai::ASRTask>(m, "ASRTask")
+      .value("Transcribe", simaai::neat::genai::ASRTask::Transcribe)
+      .value("Translate", simaai::neat::genai::ASRTask::Translate);
+
   nb::class_<simaai::neat::genai::ImageList>(m, "ImageList")
       .def(nb::init<>())
       .def(nb::init<std::vector<Tensor>>(), "images"_a)
@@ -2100,6 +2104,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("audio", &simaai::neat::genai::GenerationRequest::audio)
       .def_rw("audio_file", &simaai::neat::genai::GenerationRequest::audio_file)
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
+      .def_rw("asr_task", &simaai::neat::genai::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
       .def_prop_rw(
           "tools",
@@ -2242,6 +2247,7 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
   genai_mod.attr("GenAITask") = m.attr("GenAITask");
+  genai_mod.attr("ASRTask") = m.attr("ASRTask");
   genai_mod.attr("ImageList") = m.attr("ImageList");
   genai_mod.attr("ChatMessage") = m.attr("ChatMessage");
   genai_mod.attr("GenerationMetrics") = m.attr("GenerationMetrics");
@@ -2265,6 +2271,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::SpeechTranscriberOptions>(genai_mod, "SpeechTranscriberOptions")
       .def(nb::init<>())
       .def_rw("language", &simaai::neat::genai::SpeechTranscriberOptions::language)
+      .def_rw("task", &simaai::neat::genai::SpeechTranscriberOptions::task)
       .def_rw("streaming", &simaai::neat::genai::SpeechTranscriberOptions::streaming);
 
   nb::module_ genai_graphs_mod = genai_mod.def_submodule("graphs", "GenAI public Graph fragments");

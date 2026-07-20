@@ -144,7 +144,8 @@ public:
   void on_input(graph::StageMsg&& msg, std::vector<graph::StageOutMsg>& out) override {
     try {
       GenerationRequest request;
-      request.language = options_.language.empty() ? "en" : options_.language;
+      request.language = options_.language.empty() ? "auto" : options_.language;
+      request.asr_task = options_.task;
 
       if (msg.in_port == audio_port_) {
         request.audio = require_single_tensor(msg.sample, "GenAI SpeechTranscriber audio input");
