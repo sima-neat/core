@@ -548,7 +548,6 @@ jobs:
           SIMANEAT_TEST_RTSP_H264_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H264_FPS }}
           SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
           SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
-          SIMANEAT_TEST_RTSP_H265_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H265_FPS }}
           SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
           SIMANEAT_TEST_RTSP_MJPEG_URLS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URLS }}
           SIMANEAT_TEST_RTSP_MJPEG_FPS: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_FPS }}
@@ -561,10 +560,6 @@ jobs:
           set -x
           if [[ -z "${SIMANEAT_TEST_RTSP_H265_URL}" && -z "${SIMANEAT_TEST_RTSP_H265_URLS}" ]]; then
             echo "Set SIMANEAT_TEST_RTSP_H265_URL or SIMANEAT_TEST_RTSP_H265_URLS for H.265 E2E coverage." >&2
-            exit 1
-          fi
-          if [[ ! "${SIMANEAT_TEST_RTSP_H265_FPS}" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Set SIMANEAT_TEST_RTSP_H265_FPS to a positive integer for H.265 E2E coverage." >&2
             exit 1
           fi
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"

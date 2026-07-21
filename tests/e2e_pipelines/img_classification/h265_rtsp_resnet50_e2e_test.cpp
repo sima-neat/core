@@ -4,6 +4,7 @@
 #include "pipeline/Graph.h"
 
 #include "asset_utils.h"
+#include "rtsp_probe_utils.h"
 #include "test_utils.h"
 
 #include <algorithm>
@@ -41,20 +42,6 @@ std::string h265_url_from_env() {
   const std::string values(urls);
   const std::size_t delimiter = values.find_first_of(",; \t\r\n");
   return trim_copy(values.substr(0, delimiter));
-}
-
-int h265_fps_from_env() {
-  const char* value = std::getenv("SIMANEAT_TEST_RTSP_H265_FPS");
-  if (!value || !*value) {
-    throw std::runtime_error("SIMANEAT_TEST_RTSP_H265_FPS is required");
-  }
-
-  char* end = nullptr;
-  const long fps = std::strtol(value, &end, 10);
-  if (end == value || *end != '\0' || fps <= 0) {
-    throw std::runtime_error("SIMANEAT_TEST_RTSP_H265_FPS must be a positive integer");
-  }
-  return static_cast<int>(fps);
 }
 
 simaai::neat::Graph make_graph(const std::string& url, int source_fps,
@@ -124,7 +111,7 @@ int main() {
   }
 
   try {
-    const int source_fps = h265_fps_from_env();
+    const int source_fps = sima_test::probe_rtsp_source_fps(url);
     const std::string model_path = sima_test::resolve_resnet50_tar();
     require(!model_path.empty(),
             "ResNet50 model pack not found; set SIMA_MODEL_TAR or SIMA_RESNET50_TAR");
