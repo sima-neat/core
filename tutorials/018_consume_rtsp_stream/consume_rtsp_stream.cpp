@@ -10,6 +10,9 @@
 #include "neat.h"
 #include "nodes/groups/RtspDecodedInput.h"
 
+#include <opencv2/videoio.hpp>
+
+#include <cmath>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -43,6 +46,19 @@ simaai::neat::nodes::groups::RtspCodec parse_codec(const std::string& value) {
   throw std::invalid_argument("--codec must be h264, avc, h265, or hevc");
 }
 
+int probe_source_fps(const std::string& url) {
+  cv::VideoCapture capture(url);
+  if (!capture.isOpened()) {
+    throw std::runtime_error("failed to open the RTSP source for FPS probing");
+  }
+  const int fps = static_cast<int>(std::lround(capture.get(cv::CAP_PROP_FPS)));
+  capture.release();
+  if (fps <= 0) {
+    throw std::runtime_error("failed to probe a positive RTSP source FPS");
+  }
+  return fps;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -56,9 +72,12 @@ int main(int argc, char** argv) {
     std::string codec_name = "h264";
     get_arg(argc, argv, "--codec", codec_name);
     const int frames = parse_int_arg(argc, argv, "--frames", 5);
-    const int source_fps = parse_int_arg(argc, argv, "--source-fps", -1);
+    int source_fps = parse_int_arg(argc, argv, "--source-fps", -1);
     if (source_fps != -1 && source_fps <= 0) {
       throw std::invalid_argument("--source-fps must be positive");
+    }
+    if (source_fps == -1) {
+      source_fps = probe_source_fps(url);
     }
 
     // CORE LOGIC

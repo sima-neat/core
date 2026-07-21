@@ -29,14 +29,16 @@ This is a *consumer* only. To publish a stream, run a separate RTSP server (e.g.
 the tutorial also accepts `avc`, `h265`, and `hevc`, where AVC equals H.264 and
 HEVC equals H.265.
 
-Set `source_fps` when the RTSP caps do not carry a valid frame rate; without
-either value, decoder startup fails. For H.265, Neat propagates this value into
-the parsed stream caps and decoder configuration. Neat does not probe the URL or
-use this option to change the frame rate. The H.265 stream must use HEVC Main
-profile, 8-bit, 4:2:0 input.
+Set `source_fps` when you already know the source cadence. If you omit it, this
+tutorial probes the RTSP stream and supplies the detected value to
+`RtspDecodedInput`. The group itself does not probe the URL. For H.265, Neat
+propagates this value into the parsed stream caps and decoder configuration. It
+does not change the frame rate. The H.265 stream must use HEVC Main profile,
+8-bit, 4:2:0 input.
 
-Setting `tcp = true` requests RTSP-over-TCP, which avoids RTP packet loss on
-unreliable networks at the cost of some latency.
+Setting `tcp = true` carries RTP over TCP. TCP preserves order and retransmits
+lost segments, which can reduce visible loss compared with UDP but can increase
+latency while recovering lost data.
 
 ### Compose the graph {#step-compose-graph}
 
@@ -44,7 +46,7 @@ Build a `Graph` with just two stages: the `RtspDecodedInput` fragment (the sourc
 
 ### Pull decoded frames {#step-pull-frames}
 
-With the run live, loop and `pull(...)` with a timeout. Each successful pull yields a `Sample` whose tensor is one decoded frame; we print `frame=N shape=[...]`, where the shape is the frame in the decoder's native layout (typically `[H, W]` or `[H, W, C]` depending on the output format). A pull that returns nothing (or an empty tensor) prints `frame=N rtsp_timeout` and breaks the loop — that usually means the URL is wrong or the stream is not delivering. The timeout is what keeps a dead stream from hanging the program.
+With the run live, loop and `pull(...)` with a timeout. Each successful pull yields a `Sample` whose tensor is one decoded frame. The tutorial uses the default NV12 output, represented as a logical `[H, W]` tensor with Y and UV plane metadata. A pull that returns nothing (or an empty tensor) prints `frame=N rtsp_timeout` and breaks the loop — that usually means the URL is wrong or the stream is not delivering. The timeout is what keeps a dead stream from hanging the program.
 
 **C++:** A frame is extracted with `tensors_from_sample(*sample, true)`; the loop checks for an empty list before reading `shape`.
 
@@ -58,9 +60,10 @@ server and point `--url` at it. Run the **Python** and **C++ (prebuilt)** comman
 from the **Neat install root** (the directory that contains `share/` and
 `lib/`); run the **build from source** commands from the **repo root**.
 
-The automated tutorial regression uses the H.264 default and reads
-`SIMANEAT_TEST_RTSP_H264_URL`. If several sources are configured, it reads the
-first URL from `SIMANEAT_TEST_RTSP_H264_URLS`.
+The automated tutorial regression runs both codecs. It reads the first usable
+URL from `SIMANEAT_TEST_RTSP_H264_URL` or `SIMANEAT_TEST_RTSP_H264_URLS`, and
+from `SIMANEAT_TEST_RTSP_H265_URL` or `SIMANEAT_TEST_RTSP_H265_URLS`. The test
+probes each source and supplies its detected FPS to the RTSP group.
 
 **Python:**
 ```bash
@@ -103,3 +106,4 @@ If the stream is unreachable you will instead see `frame=0 rtsp_timeout`. To int
 ## Source Files
 - C++: `tutorials/018_consume_rtsp_stream/consume_rtsp_stream.cpp`
 - Python: `tutorials/018_consume_rtsp_stream/consume_rtsp_stream.py`
+- Python FPS probe: `tutorials/018_consume_rtsp_stream/probe_rtsp_fps.py`

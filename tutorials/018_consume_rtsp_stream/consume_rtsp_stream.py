@@ -12,7 +12,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
+from pathlib import Path
 
 try:
     import pyneat
@@ -21,6 +23,20 @@ except ImportError:
         "pyneat is not importable. Either Neat is not installed, or the venv is not activated.\n"
         "Run: source ~/pyneat/bin/activate"
     )
+
+
+def probe_source_fps(url: str, codec: str) -> int:
+    probe = Path(__file__).with_name("probe_rtsp_fps.py")
+    result = subprocess.run(
+        [sys.executable, str(probe), "--url", url, "--codec", codec],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"failed to probe RTSP source FPS: {detail}")
+    return int(result.stdout.strip())
 
 
 def main(argv: list[str]) -> int:
@@ -36,12 +52,17 @@ def main(argv: list[str]) -> int:
         "--source-fps",
         type=int,
         default=-1,
-        help="Known source cadence; required when RTSP caps omit FPS",
+        help="Known source cadence; omitted means probe the RTSP stream",
     )
     ap.add_argument("--frames", type=int, default=5, help="Frames to pull")
     args = ap.parse_args(argv[1:])
     if args.source_fps != -1 and args.source_fps <= 0:
         ap.error("--source-fps must be positive")
+    source_fps = (
+        args.source_fps
+        if args.source_fps != -1
+        else probe_source_fps(args.url, args.codec)
+    )
 
     # CORE LOGIC
     # STEP configure-rtsp
@@ -54,7 +75,7 @@ def main(argv: list[str]) -> int:
         "h265": pyneat.RtspCodec.H265,
         "hevc": pyneat.RtspCodec.HEVC,
     }[args.codec]
-    rtsp_opt.source_fps = args.source_fps
+    rtsp_opt.source_fps = source_fps
     rtsp_opt.tcp = True
     # END STEP
 
