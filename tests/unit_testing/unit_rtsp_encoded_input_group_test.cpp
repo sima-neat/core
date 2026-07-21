@@ -156,8 +156,17 @@ void check_rtp_jpeg_depacketize_node() {
 }
 
 void check_h264_encoded_group() {
+  static_assert(static_cast<int>(simaai::neat::nodes::groups::RtspCodec::H264) == 0);
+  static_assert(simaai::neat::nodes::groups::RtspCodec::AVC ==
+                simaai::neat::nodes::groups::RtspCodec::H264);
+
   const auto opt = make_h264_encoded_options();
   const Graph group = simaai::neat::nodes::groups::RtspEncodedInput(opt);
+
+  auto avc_opt = opt;
+  avc_opt.codec = simaai::neat::nodes::groups::RtspCodec::AVC;
+  compare_graph_fragments(simaai::neat::nodes::groups::RtspEncodedInput(avc_opt), group,
+                          "AVC encoded topology");
 
   std::vector<std::shared_ptr<simaai::neat::Node>> manual;
   manual.push_back(simaai::neat::nodes::RTSPInput(opt.url, opt.latency_ms, opt.tcp,
@@ -368,6 +377,10 @@ void check_decoded_h264_group() {
   opt.num_buffers = 6;
 
   const Graph group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  auto avc_opt = opt;
+  avc_opt.codec = simaai::neat::nodes::groups::RtspCodec::AVC;
+  compare_graph_fragments(simaai::neat::nodes::groups::RtspDecodedInput(avc_opt), group,
+                          "AVC decoded topology");
   require_contains(group.describe(), "SimaDecode", "H264 decoded graph should contain SimaDecode");
   if (const auto backend = describe_backend_if_available(group, "H264 decoded backend")) {
     require_contains(*backend, "rtph264depay", "H264 decoded backend should contain H264 depay");

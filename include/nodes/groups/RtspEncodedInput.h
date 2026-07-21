@@ -18,6 +18,7 @@ namespace simaai::neat::nodes::groups {
 /// RTSP stream codec path to depayload and parse.
 enum class RtspCodec {
   H264 = 0,    ///< RTSP RTP/H.264 path.
+  AVC = H264,  ///< Alias for H.264.
   MJPEG = 1,   ///< RTSP RTP/JPEG MJPEG path.
   H265 = 2,    ///< RTSP RTP/H.265 path.
   HEVC = H265, ///< Alias for H.265.

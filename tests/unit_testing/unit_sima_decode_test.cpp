@@ -82,6 +82,18 @@ void check_default_h264_raw_output() {
   require(out.byte_size == 1280 * 720 * 3 / 2, "NV12 byte size mismatch");
 }
 
+void check_avc_alias_uses_canonical_backend_name() {
+  static_assert(static_cast<int>(simaai::neat::SimaDecodeType::H264) == 0);
+  static_assert(simaai::neat::SimaDecodeType::AVC == simaai::neat::SimaDecodeType::H264);
+
+  simaai::neat::SimaDecodeOptions opt;
+  opt.type = simaai::neat::SimaDecodeType::AVC;
+
+  const simaai::neat::SimaDecode decode(opt);
+  require_contains(decode.backend_fragment(4), "dec-type=h264",
+                   "SimaDecode AVC alias should use the canonical backend name");
+}
+
 void check_h265_aliases_use_canonical_backend_name() {
   static_assert(static_cast<int>(simaai::neat::SimaDecodeType::H264) == 0);
   static_assert(static_cast<int>(simaai::neat::SimaDecodeType::JPEG) == 1);
@@ -229,6 +241,7 @@ void check_h264_decode_wrapper_compatibility() {
 int main() {
   try {
     check_default_h264_raw_output();
+    check_avc_alias_uses_canonical_backend_name();
     check_h265_aliases_use_canonical_backend_name();
     check_jpeg_raw_output_options();
     check_mjpeg_system_memory_output();
