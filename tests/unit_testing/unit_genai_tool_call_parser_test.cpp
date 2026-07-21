@@ -105,6 +105,19 @@ RUN_TEST(
               ToolCallFormat::Gemma,
               {"<|tool_call>", "call:get_weather{city:<|\"|>Tokyo<|\"|>}", "<tool_call|>"}),
           "get_weather", "Tokyo");
+      const auto typed_gemma = collect_tool_calls(
+          ToolCallFormat::Gemma,
+          {"call:configure{count:7,enabled:true,limit:null,label:<|\"|>seven<|\"|>}"});
+      const auto typed_args = nlohmann::json::parse(
+          typed_gemma.at(0).at("function").at("arguments").get<std::string>());
+      require(typed_args.at("count") == 7, "Gemma integer argument type mismatch");
+      require(typed_args.at("enabled") == true, "Gemma boolean argument type mismatch");
+      require(typed_args.at("limit").is_null(), "Gemma null argument type mismatch");
+      require(typed_args.at("label") == "seven", "Gemma string argument mismatch");
+
+      const auto gemma_brace = collect_tool_calls(
+          ToolCallFormat::Gemma, {"call:search{query:<|\"|>a}b<|\"|>}"});
+      require_argument(gemma_brace, "query", "a}b");
       require_first_call(collect_tool_calls(ToolCallFormat::Lfm,
                                             {"<|tool_call_start|>[get_weather(city=\"Tokyo\")]",
                                              "<|tool_call_end|>"}),
