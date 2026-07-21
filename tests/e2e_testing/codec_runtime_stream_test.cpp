@@ -8,6 +8,7 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/internal/TensorUtil.h"
+#include "rtsp_probe_utils.h"
 #include "test_utils.h"
 
 #include <gst/gst.h>
@@ -159,15 +160,12 @@ TestCase test_case_for(CaseKind kind) {
             "rtsp-h265-encoded-boundary",
             "SIMANEAT_TEST_RTSP_H265_URL",
             "SIMANEAT_TEST_RTSP_H265_URLS",
-            "SIMANEAT_TEST_RTSP_H265_FPS",
+            {},
             "video/x-h265"};
   case CaseKind::RtspH265Decoded:
-    return {kind,
-            "rtsp-h265-decoded",
-            "SIMANEAT_TEST_RTSP_H265_URL",
-            "SIMANEAT_TEST_RTSP_H265_URLS",
-            "SIMANEAT_TEST_RTSP_H265_FPS",
-            "video/x-raw"};
+    return {
+        kind, "rtsp-h265-decoded", "SIMANEAT_TEST_RTSP_H265_URL", "SIMANEAT_TEST_RTSP_H265_URLS",
+        {},   "video/x-raw"};
   case CaseKind::RtspMjpegEncodedBoundary:
     return {kind,
             "rtsp-mjpeg-encoded-boundary",
@@ -399,6 +397,14 @@ Sample pull_or_throw(Run& run, const std::string& output_name, int timeout_ms,
 int source_fps_from_env(const TestCase& test_case) {
   const std::optional<int> fps = positive_int_from_env(test_case.fps_env);
   return fps.value_or(-1);
+}
+
+int source_fps_for_url(const TestCase& test_case, const std::string& url) {
+  if (test_case.kind == CaseKind::RtspH265EncodedBoundary ||
+      test_case.kind == CaseKind::RtspH265Decoded) {
+    return sima_test::probe_rtsp_source_fps(url);
+  }
+  return source_fps_from_env(test_case);
 }
 
 int video_rate_fps_from_source(int source_fps) {
@@ -912,7 +918,7 @@ int main(int argc, char** argv) {
       if (url.empty()) {
         return skip_missing_env(test_case);
       }
-      const int source_fps = source_fps_from_env(test_case);
+      const int source_fps = source_fps_for_url(test_case, url);
       if (test_case.requires_source_fps && source_fps <= 0) {
         return skip_missing_fps_env(test_case);
       }
@@ -929,7 +935,7 @@ int main(int argc, char** argv) {
                   << " to run " << test_case.name << "\n";
         continue;
       }
-      const int source_fps = source_fps_from_env(test_case);
+      const int source_fps = source_fps_for_url(test_case, url);
       if (test_case.requires_source_fps && source_fps <= 0) {
         std::cout << "[SKIP] set " << test_case.fps_env << " to run " << test_case.name << "\n";
         continue;
@@ -940,7 +946,7 @@ int main(int argc, char** argv) {
     for (const auto& test_case : sync_smoke_test_cases()) {
       const std::string url = first_url_from_env(test_case);
       if (!url.empty()) {
-        const int source_fps = source_fps_from_env(test_case);
+        const int source_fps = source_fps_for_url(test_case, url);
         if (test_case.requires_source_fps && source_fps <= 0) {
           continue;
         }

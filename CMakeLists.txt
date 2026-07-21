@@ -1141,10 +1141,10 @@ file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL
   "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_CODEC_PERF_H264_FIXTURE_REL
   "${CMAKE_BINARY_DIR}"
-  "${CMAKE_BINARY_DIR}/test-assets/codec-perf/h264_1280x720_30fps.h264")
+  "${CMAKE_BINARY_DIR}/test-assets/codec-perf/h264_1280x720_30fps_no_sei.h264")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_CODEC_PERF_H265_FIXTURE_REL
   "${CMAKE_BINARY_DIR}"
-  "${CMAKE_BINARY_DIR}/test-assets/codec-perf/h265_1280x720_30fps.h265")
+  "${CMAKE_BINARY_DIR}/test-assets/codec-perf/h265_1280x720_30fps_no_sei.h265")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_SHARED_TEST_ASSET_ROOT_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}")
@@ -1193,8 +1193,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
   "mpk_fixture_root_rel": "test-assets/mpk",
   "mpk_fixture_manifest_rel": "test-assets/mpk/fixtures_manifest.json",
   "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264",
-  "codec_perf_h264_fixture_rel": "test-assets/codec-perf/h264_1280x720_30fps.h264",
-  "codec_perf_h265_fixture_rel": "test-assets/codec-perf/h265_1280x720_30fps.h265",
+  "codec_perf_h264_fixture_rel": "test-assets/codec-perf/h264_1280x720_30fps_no_sei.h264",
+  "codec_perf_h265_fixture_rel": "test-assets/codec-perf/h265_1280x720_30fps_no_sei.h265",
   "shared_test_asset_root_rel": "../../share/sima-neat/test-assets"
 }
 ]=])

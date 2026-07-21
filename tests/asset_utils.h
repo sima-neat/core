@@ -322,11 +322,11 @@ inline const TestRuntimePaths& test_runtime_paths() {
       value.decoder_fixture =
           value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
     if (value.codec_perf_h264_fixture.empty())
-      value.codec_perf_h264_fixture =
-          value.source_root / "build" / "test-assets" / "codec-perf" / "h264_1280x720_30fps.h264";
+      value.codec_perf_h264_fixture = value.source_root / "build" / "test-assets" / "codec-perf" /
+                                      "h264_1280x720_30fps_no_sei.h264";
     if (value.codec_perf_h265_fixture.empty())
-      value.codec_perf_h265_fixture =
-          value.source_root / "build" / "test-assets" / "codec-perf" / "h265_1280x720_30fps.h265";
+      value.codec_perf_h265_fixture = value.source_root / "build" / "test-assets" / "codec-perf" /
+                                      "h265_1280x720_30fps_no_sei.h265";
 
     return value;
   }();
