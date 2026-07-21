@@ -29,10 +29,11 @@ This is a *consumer* only. To publish a stream, run a separate RTSP server (e.g.
 the tutorial also accepts `avc`, `h265`, and `hevc`, where AVC equals H.264 and
 HEVC equals H.265.
 
-Set `source_fps` when the stream cadence is known. For H.265, Neat propagates
-this value into the parsed stream caps and decoder configuration. Neat does not
-probe the URL or use this option to change the frame rate. The H.265 stream must
-use HEVC Main profile, 8-bit, 4:2:0 input.
+Set `source_fps` when the RTSP caps do not carry a valid frame rate; without
+either value, decoder startup fails. For H.265, Neat propagates this value into
+the parsed stream caps and decoder configuration. Neat does not probe the URL or
+use this option to change the frame rate. The H.265 stream must use HEVC Main
+profile, 8-bit, 4:2:0 input.
 
 Setting `tcp = true` requests RTSP-over-TCP, which avoids RTP packet loss on
 unreliable networks at the cost of some latency.
@@ -64,7 +65,7 @@ first URL from `SIMANEAT_TEST_RTSP_H264_URLS`.
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/018_consume_rtsp_stream/consume_rtsp_stream.py \
-  --url rtsp://host:port/stream --frames 5
+  --url rtsp://host:port/stream --source-fps 30 --frames 5
 ```
 
 For H.265:

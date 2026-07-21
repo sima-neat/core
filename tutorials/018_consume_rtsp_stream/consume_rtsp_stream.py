@@ -36,7 +36,7 @@ def main(argv: list[str]) -> int:
         "--source-fps",
         type=int,
         default=-1,
-        help="Known source cadence; recommended for H.265",
+        help="Known source cadence; required when RTSP caps omit FPS",
     )
     ap.add_argument("--frames", type=int, default=5, help="Frames to pull")
     args = ap.parse_args(argv[1:])

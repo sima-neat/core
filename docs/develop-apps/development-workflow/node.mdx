@@ -198,10 +198,12 @@ Use it when your app needs the encoded samples, for example to split one parsed
 stream into decode and video-output graphs. `RtspDecodedInput(...)` appends
 `SimaDecode(...)` and returns raw decoded video.
 
-`source_fps` declares the source cadence. Neat does not probe the RTSP URL for
-this value. For H.265, the value is propagated into the parsed encoded caps and
-the decoder `dec-fps` setting. It does not request rate conversion. To change
-the output cadence, enable `use_videorate` and set `video_rate_fps`.
+`source_fps` declares the source cadence. Set it when the RTSP caps do not carry
+a valid frame rate; without either value, decoder startup fails. Neat does not
+probe the RTSP URL for this value. For H.265, the value is propagated into the
+parsed encoded caps and the decoder `dec-fps` setting. It does not request rate
+conversion. To change the output cadence, enable `use_videorate` and set
+`video_rate_fps`.
 
 For HTTP multipart MJPEG, use `HttpMjpegDecodedInput(...)`. HTTP multipart
 MJPEG is not RTP, so it uses `HttpSource -> MultipartJpegDemux -> JpegParse ->
