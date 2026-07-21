@@ -149,12 +149,9 @@ bool starts_with(const std::string& value, const std::string& prefix) {
 TestCase test_case_for(CaseKind kind) {
   switch (kind) {
   case CaseKind::RtspH264Decoded:
-    return {kind,
-            "rtsp-h264-decoded",
-            "SIMANEAT_TEST_RTSP_H264_URL",
-            "SIMANEAT_TEST_RTSP_H264_URLS",
-            "SIMANEAT_TEST_RTSP_H264_FPS",
-            "video/x-raw"};
+    return {
+        kind, "rtsp-h264-decoded", "SIMANEAT_TEST_RTSP_H264_URL", "SIMANEAT_TEST_RTSP_H264_URLS",
+        {},   "video/x-raw"};
   case CaseKind::RtspH265EncodedBoundary:
     return {kind,
             "rtsp-h265-encoded-boundary",
@@ -400,7 +397,8 @@ int source_fps_from_env(const TestCase& test_case) {
 }
 
 int source_fps_for_url(const TestCase& test_case, const std::string& url) {
-  if (test_case.kind == CaseKind::RtspH265EncodedBoundary ||
+  if (test_case.kind == CaseKind::RtspH264Decoded ||
+      test_case.kind == CaseKind::RtspH265EncodedBoundary ||
       test_case.kind == CaseKind::RtspH265Decoded) {
     return sima_test::probe_rtsp_source_fps(url);
   }
