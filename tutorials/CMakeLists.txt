@@ -168,36 +168,58 @@ add_tutorial(tutorial_018_consume_rtsp_stream
   NO_TEST
   LABELS asset
 )
-add_test(
-  NAME tutorial_018_consume_rtsp_stream
-  COMMAND /bin/sh -c [=[
-url="${SIMANEAT_TEST_RTSP_H264_URL:-}"
+
+function(add_rtsp_tutorial_test test_name codec)
+  add_test(
+    NAME ${test_name}
+    COMMAND /bin/sh -c [=[
+codec="$2"
+test_name="$3"
+case "${codec}" in
+  h264)
+    url="${SIMANEAT_TEST_RTSP_H264_URL:-}"
+    urls="${SIMANEAT_TEST_RTSP_H264_URLS:-}"
+    ;;
+  h265)
+    url="${SIMANEAT_TEST_RTSP_H265_URL:-}"
+    urls="${SIMANEAT_TEST_RTSP_H265_URLS:-}"
+    ;;
+  *)
+    echo "${test_name}: unsupported codec ${codec}" >&2
+    exit 1
+    ;;
+esac
+
 if [ -z "${url}" ]; then
-  urls="${SIMANEAT_TEST_RTSP_H264_URLS:-}"
   url="${urls%%[ ,;]*}"
 fi
 if [ -z "${url}" ]; then
-  echo "Skipping tutorial_018_consume_rtsp_stream: set SIMANEAT_TEST_RTSP_H264_URL or SIMANEAT_TEST_RTSP_H264_URLS"
+  echo "Skipping ${test_name}: set the ${codec} RTSP test URL"
   exit 77
 fi
-out="$("$1" --url "${url}" --frames 10)"
+
+out="$("$1" --url "${url}" --codec "${codec}" --frames 10)"
 printf '%s\n' "${out}"
 if printf '%s\n' "${out}" | grep -q 'rtsp_timeout'; then
-  echo "tutorial_018_consume_rtsp_stream: RTSP timeout while pulling frames" >&2
+  echo "${test_name}: RTSP timeout while pulling frames" >&2
   exit 1
 fi
 shape_count="$(printf '%s\n' "${out}" | grep -cE '^frame=[0-9]+ shape=')"
 if [ "${shape_count}" -ne 10 ]; then
-  echo "tutorial_018_consume_rtsp_stream: expected 10 decoded frames, got ${shape_count}" >&2
+  echo "${test_name}: expected 10 decoded frames, got ${shape_count}" >&2
   exit 1
 fi
-]=] sh $<TARGET_FILE:tutorial_018_consume_rtsp_stream>
-)
-set_tests_properties(tutorial_018_consume_rtsp_stream PROPERTIES
-  LABELS "tutorial;asset;rtsp"
-  RESOURCE_LOCK "dispatcher"
-  SKIP_RETURN_CODE 77
-)
+]=] sh $<TARGET_FILE:tutorial_018_consume_rtsp_stream> "${codec}" "${test_name}"
+  )
+  set_tests_properties(${test_name} PROPERTIES
+    LABELS "tutorial;asset;rtsp;${codec}"
+    RESOURCE_LOCK "dispatcher"
+    SKIP_RETURN_CODE 77
+  )
+endfunction()
+
+add_rtsp_tutorial_test(tutorial_018_consume_rtsp_stream h264)
+add_rtsp_tutorial_test(tutorial_018_consume_rtsp_stream_h265 h265)
 
 add_tutorial(tutorial_019_run_an_llm
   019_run_an_llm/run_an_llm.cpp

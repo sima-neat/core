@@ -160,7 +160,6 @@ simaai::neat::Graph make_decode_graph(const TuningCase& tuning, const simaai::ne
   input.pool_max_buffers = kQueueDepth;
   input.memory_policy = simaai::neat::InputMemoryPolicy::SystemMemory;
   graph.add(simaai::neat::nodes::Input(input));
-  graph.add(simaai::neat::nodes::Custom(h265_parser_fragment()));
 
   simaai::neat::SimaDecodeOptions decode;
   decode.type = simaai::neat::SimaDecodeType::H265;
@@ -173,6 +172,8 @@ simaai::neat::Graph make_decode_graph(const TuningCase& tuning, const simaai::ne
   decode.memory_opt = tuning.memory_opt;
   graph.add(simaai::neat::nodes::SimaDecode(decode));
   graph.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::EveryFrame(kQueueDepth)));
+  require(graph.describe_backend(false).find("h265parse") == std::string::npos,
+          "direct parsed H.265 decode must not insert a parser");
   return graph;
 }
 
