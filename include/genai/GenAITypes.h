@@ -44,6 +44,12 @@ enum class GenAITask {
   ASR,
 };
 
+/// Whisper decoding task for ASR requests.
+enum class ASRTask {
+  Transcribe,
+  Translate,
+};
+
 /**
  * @brief Ordered image inputs for GenAI requests and chat messages.
  *
@@ -102,7 +108,10 @@ struct GenerationRequest {
   bool use_cached_images = false;
   std::optional<Tensor> audio;
   std::optional<std::filesystem::path> audio_file;
-  std::string language = "en";
+  /// ASR source language code/name, or `auto` to detect it.
+  std::string language = "auto";
+  /// Whisper decoding task. Ignored by non-ASR models.
+  ASRTask asr_task = ASRTask::Transcribe;
   std::uint32_t max_new_tokens = 0;
   Json tools = Json::array();
   Json tool_choice = nullptr;
@@ -112,6 +121,12 @@ struct GenerationResult {
   std::string text;
   GenerationMetrics metrics;
   std::string finish_reason;
+  /// Detected or explicitly selected ASR source language.
+  std::string language;
+  /// Probability that the ASR input contains no speech.
+  std::optional<float> no_speech_prob;
+  /// Mean log probability over generated ASR tokens.
+  std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
 };
 
@@ -120,6 +135,12 @@ struct TokenSample {
   GenerationMetrics metrics;
   bool is_final = false;
   std::string finish_reason;
+  /// Detected or explicitly selected ASR source language on the final sample.
+  std::string language;
+  /// Probability that the ASR input contains no speech, set on the final sample.
+  std::optional<float> no_speech_prob;
+  /// Mean log probability over generated ASR tokens, set on the final sample.
+  std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
 };
 
@@ -175,7 +196,9 @@ private:
     void record_metric(const std::string& metric, double value);
     void record_text(const std::string& text, bool stream_end);
     void push(TokenSample sample);
-    void finish(std::string finish_reason, std::optional<std::uint32_t> generated_tokens);
+    void finish(std::string finish_reason, std::optional<std::uint32_t> generated_tokens,
+                std::string language = {}, std::optional<float> no_speech_prob = std::nullopt,
+                std::optional<float> avg_logprob = std::nullopt);
     bool cancelled() const;
     GenerationMetrics current_metrics() const;
 

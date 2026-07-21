@@ -2075,6 +2075,11 @@ install(
   COMPONENT extras
 )
 install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_de.wav"
+  DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
+install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_16k_mono_f32le.raw"
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
   COMPONENT extras

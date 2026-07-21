@@ -22,6 +22,12 @@ Create a task-specific model handle, configure graph-fragment options, and build
 
 The vision-language fragment exposes `prompt`, `image`, and `use_cached_image` inputs plus `tokens`, `done`, `encoded`, and `error` outputs. The speech transcriber fragment exposes `audio` and `audio_path` inputs plus `tokens`, `done`, and `error` outputs.
 
+`SpeechTranscriberOptions` defaults to automatic language detection and
+transcription. Set `task` to `ASRTask::Translate` in C++ or
+`ASRTask.Translate` in Python to translate speech into English. Its `done`
+bundle reports the detected source language and, when available,
+`no_speech_prob` and `avg_logprob`.
+
 ### Add the fragment to an app graph {#step-compose-graph}
 
 Add the fragment to a larger application graph. The fragment keeps its public endpoint names, so application code can push and pull by name.
