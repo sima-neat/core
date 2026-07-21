@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
@@ -32,6 +33,7 @@ constexpr const char* kAsrModelEnv = "SIMA_TEST_LLIMA_ASR_MODEL";
 constexpr const char* kExpectedText = "The capital of Germany is Berlin.";
 constexpr const char* kExpectedVlmText = "Skier in the air.";
 constexpr const char* kExpectedAsrText = "tell me a joke please";
+constexpr const char* kExpectedTranslation = "please tell me a joke";
 
 std::string trim_text(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -224,19 +226,28 @@ void request_image_completion(int port, const fs::path& image_path) {
   require(trim_text(text) == kExpectedVlmText, "server image chat returned unexpected text");
 }
 
-void request_audio_transcription(int port, const fs::path& audio_path) {
+void request_audio(int port, const fs::path& audio_path, const std::string& endpoint,
+                   const std::string& task, const std::string& expected_text,
+                   const std::string& expected_language) {
   auto client = make_client(port);
   httplib::MultipartFormDataItems items = {
       {"model", "asr", "", ""},
-      {"language", "en", "", ""},
       {"file", read_file(audio_path), audio_path.filename().string(), "audio/wav"},
   };
-  const Json body = parse_response(client.Post("/v1/audio/transcriptions", items),
-                                   "POST /v1/audio/transcriptions");
+  const Json body = parse_response(client.Post(endpoint, items), "POST " + endpoint);
   const std::string text = body.at("text").get<std::string>();
   std::cout << "GENAI_SERVER_ASR text=" << text << "\n";
-  require(normalize_transcript(text) == kExpectedAsrText,
-          "server audio transcription returned unexpected text");
+  require(normalize_transcript(text) == expected_text,
+          "server audio " + task + " returned unexpected text");
+  require(body.at("task") == task, "server audio response should report task=" + task);
+  require(body.at("language") == expected_language,
+          "server audio request should report detected language " + expected_language);
+  const double no_speech_prob = body.at("no_speech_prob").get<double>();
+  require(std::isfinite(no_speech_prob), "server audio no_speech_prob should be finite");
+  require(no_speech_prob >= 0.0 && no_speech_prob <= 1.0,
+          "server audio no_speech_prob should be within [0, 1]");
+  require(std::isfinite(body.at("avg_logprob").get<double>()),
+          "server audio avg_logprob should be finite");
 }
 
 } // namespace
@@ -258,6 +269,7 @@ int main(int argc, char** argv) {
         "devkit/whisper_config.json");
     const fs::path image_path = fixture_path(argv[1], "tests/images/people.jpg");
     const fs::path audio_path = fixture_path(argv[1], "tests/assets/genai/audio.wav");
+    const fs::path german_audio_path = fixture_path(argv[1], "tests/assets/genai/audio_de.wav");
     const int port = choose_free_port();
 
     std::cout << "GENAI_SERVER text_model_dir=" << text_model_dir << "\n";
@@ -279,7 +291,10 @@ int main(int argc, char** argv) {
     require_model_list_contains(port);
     request_text_completion(port);
     request_image_completion(port, image_path);
-    request_audio_transcription(port, audio_path);
+    request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,
+                  "en");
+    request_audio(port, german_audio_path, "/v1/audio/translations", "translate",
+                  kExpectedTranslation, "de");
 
     server.stop();
     std::cout << "[OK] genai_server_http_test passed\n";

@@ -108,12 +108,33 @@ python3 share/sima-neat/tutorials/021_serve_genai_models/request_chat_completion
 
 ### Audio request to the ASR model
 
+The transcription client defaults to automatic source-language detection. Use
+`--language` when the source language is known:
+
 ```bash
 python3 share/sima-neat/tutorials/021_serve_genai_models/request_audio_transcription.py \
   --server-ip <modalix-ip> \
   --model asr \
   speech.wav
 ```
+
+To translate speech into English, add `--translate`. The client sends the same
+multipart request to `POST /v1/audio/translations`:
+
+```bash
+python3 share/sima-neat/tutorials/021_serve_genai_models/request_audio_transcription.py \
+  --server-ip <modalix-ip> \
+  --model asr \
+  --translate \
+  speech-in-another-language.wav
+```
+
+Transcription uses `POST /v1/audio/transcriptions`. Both routes support
+`stream=true`; the supplied client streams text and prints the detected source
+language, `no_speech_prob`, and `avg_logprob` from the final event. A higher
+`no_speech_prob` indicates that Whisper considers the input more likely to
+contain no speech. `avg_logprob` is the mean log probability of generated
+tokens, where a higher (less negative) value indicates a more confident decode.
 
 ## In Practice
 

@@ -24,33 +24,33 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">graph = pyneat.graphs.combine([&quot;left&quot;, &quot;rig…</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">run = graph.build()</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">expected = args.streams * args.frames</text>
+<text x="76" y="300" class="fmono fln">3</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">run = graph.build()</text>
 </g>
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Push streams</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">for frame in range(args.frames):</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">if not run.push(&quot;left&quot;, [make_rgb_sample(st…</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">  for sid in range(args.streams):</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">  raise RuntimeError(f&quot;left push failed: {r…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">    logical_frame = frame * args.streams +…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">if not run.push(&quot;right&quot;, [make_rgb_sample(s…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">    if not run.push(&quot;left&quot;, [make_rgb_sampl…</text>
-<text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">      raise RuntimeError(f&quot;left push failed…</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">  raise RuntimeError(f&quot;right push failed: {…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Pull bundles</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">expected = args.streams * args.frames</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">bundle = run.pull(&quot;combined&quot;, 2000)</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">received = 0</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">if bundle is None:</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">for _ in range(expected):</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">  raise RuntimeError(f&quot;timed out waiting fo…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">  if run.pull(&quot;combined&quot;, 2000) is not None:</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">fields = len(bundle.fields)</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">    received += 1</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">if fields != 2:</text>
 </g>
 </g>
 <g filter="url(#fsh)">
