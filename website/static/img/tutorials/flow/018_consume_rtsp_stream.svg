@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 520" role="img" aria-labelledby="ftl ftd">
 <title id="ftl">Consume a Live RTSP Stream</title>
-<desc id="ftd">Attach a live H.264 RTSP stream to a `Graph` with the `RtspDecodedInput` fragment, which handles RTSP connect, depacketize, and H.264 decode — you hand it a URL and pull decoded frames.</desc>
+<desc id="ftd">Attach a live H.264 or H.265 RTSP stream to a `Graph` with the `RtspDecodedInput` fragment.</desc>
 <defs>
 <linearGradient id="fbg" x1="80" y1="40" x2="1240" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>
 <linearGradient id="fgreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>
@@ -12,8 +12,7 @@
 <circle cx="1188" cy="82" r="58" fill="#C0E8DB" opacity="0.5"/>
 <circle cx="112" cy="432" r="50" fill="#BFE0CF" opacity="0.45"/>
 <text x="54" y="68" class="fsans fttl">Consume a Live RTSP Stream</text>
-<text x="54" y="96" class="fsans fsub">Attach a live H.264 RTSP stream to a `Graph` with the `RtspDecodedInput` fragment, which handles RTSP connect, depacketize, and</text>
-<text x="54" y="116" class="fsans fsub">H.264 decode — you hand it a URL and pull decoded frames.</text>
+<text x="54" y="96" class="fsans fsub">Attach a live H.264 or H.265 RTSP stream to a `Graph` with the `RtspDecodedInput` fragment.</text>
 <g filter="url(#fsh)">
 <rect x="54" y="132" width="470" height="316" rx="26" fill="#1F232A"/>
 <rect x="54" y="132" width="470" height="46" rx="26" fill="#181C22"/>
@@ -22,39 +21,41 @@
 <g id="code0" class="fanim" opacity="1">
 <text x="76" y="212" class="fsans fcap">STEP 1 · Configure rtsp</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve"># Configure RtspDecodedInputOptions: the UR…</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve"># Configure the URL, codec, source cadence,…</text>
 <text x="76" y="274" class="fmono fln">2</text>
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">rtsp_opt = pyneat.RtspDecodedInputOptions()</text>
 <text x="76" y="300" class="fmono fln">3</text>
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">rtsp_opt.url = args.url</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">rtsp_opt.tcp = True</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">rtsp_opt.codec = {</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">    &quot;h264&quot;: pyneat.RtspCodec.H264,</text>
 </g>
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Compose graph</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve"># Build a Graph whose only stages are the R…</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">s = pyneat.Graph()</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">graph = pyneat.Graph()</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">s.add(pyneat.groups.rtsp_decoded_input(rtsp…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">graph.add(pyneat.groups.rtsp_decoded_input(…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">s.add(pyneat.nodes.output())</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">graph.add(pyneat.nodes.output())</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">run = s.build(pyneat.RunOptions())</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">run = graph.build(pyneat.RunOptions())</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Pull frames</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">for i in range(args.frames):</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">  frame_sample = run.pull(timeout_ms=5000)</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">    frame_sample = run.pull(timeout_ms=5000)</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">  if frame_sample is None or not frame_samp…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">    if frame_sample is None or not frame_sa…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">    print(f&quot;frame={i} rtsp_timeout&quot;)</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">        print(f&quot;frame={i} rtsp_timeout&quot;)</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">    break</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">        break</text>
 </g>
 </g>
 <g filter="url(#fsh)">

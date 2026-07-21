@@ -96,7 +96,7 @@ Use `byte_format=` only for byte-format tensor payloads. Do not combine `byte_fo
 
 ### Create encoded samples in Python
 
-Use `Sample.from_encoded(...)` when the graph input expects encoded media, such as H.264, and the app owns the bytes.
+Use `Sample.from_encoded(...)` when the graph input expects encoded media, such as H.264 or H.265, and the app owns the bytes.
 
 ```python
 sample = pyneat.Sample.from_encoded(
@@ -111,6 +111,10 @@ run.push("video", [sample])
 ```
 
 The `caps_string` tells the graph what the bytes mean. `port_name` ties the sample to the graph input name. If you have decoded pixels, do not use this path; create an image tensor or image sample instead.
+
+For a parsed H.265 access unit, use
+`video/x-h265,parsed=true,stream-format=byte-stream,alignment=au`. The H.265
+decoder path requires HEVC Main profile, 8-bit, 4:2:0 input.
 
 ## Create tensors in C++
 
@@ -330,7 +334,7 @@ if sample is not None:
 | --- | --- |
 | `PayloadType.Image` | Decoded pixels. Inspect image format, width, height, and pixel metadata. |
 | `PayloadType.Tensor` | Model or application tensors. Inspect dtype, shape, layout, and semantic metadata. |
-| `PayloadType.Encoded` | Encoded media such as H.264. Inspect `caps_string`, codec, timestamps, and payload tag. |
+| `PayloadType.Encoded` | Encoded media such as H.264 or H.265. Inspect `caps_string`, codec, timestamps, and payload tag. |
 | `PayloadType.Auto` | Let Neat infer from tensor/sample metadata when possible. |
 
 Text, audio, byte-stream, and opaque bytes travel as tensor semantics or specialized specs, not separate `PayloadType` enum values.

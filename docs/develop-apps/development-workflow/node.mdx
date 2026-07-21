@@ -105,15 +105,35 @@ compatibility wrappers. New H.264 decode graphs should use `SimaDecode` with
 
 ## Encoded decode paths
 
-Use `SimaDecode` for encoded streams that should be decoded by the native SiMa
-decoder. It accepts H.264, JPEG, and MJPEG after the stream has already been
-framed into complete encoded samples:
+Choose the API based on what your graph receives:
+
+| Input available to the graph | API | Output |
+| --- | --- | --- |
+| Complete, parsed encoded access units | `SimaDecode(...)` | Raw decoded video |
+| An RTSP stream that should remain encoded | `RtspEncodedInput(...)` | Parsed encoded access units |
+| An RTSP stream that should be decoded | `RtspDecodedInput(...)` | Raw decoded video |
+
+`SimaDecode` does not connect to RTSP, depacketize RTP, or parse an elementary
+stream. Use it when the upstream stage or the application already provides
+complete encoded samples.
 
 | Encoded input | Native decoder option | Typical upstream path |
 | --- | --- | --- |
-| H.264 access units | `SimaDecodeType::H264` | RTSP H.264 depacketize + parse, or another parsed H.264 source |
+| H.264/AVC access units | `SimaDecodeType::H264` or `SimaDecodeType::AVC` | RTSP H.264 depacketize + parse, or another parsed H.264 source |
+| H.265/HEVC access units | `SimaDecodeType::H265` or `SimaDecodeType::HEVC` | RTSP H.265 depacketize + parse, or another parsed H.265 source |
 | Single JPEG frames | `SimaDecodeType::JPEG` | `JpegParse()` or an app-provided encoded JPEG sample |
 | MJPEG frame stream | `SimaDecodeType::MJPEG` | HTTP multipart demux + `JpegParse()`, or RTSP JPEG depacketize + `JpegParse()` |
+
+The aliases select identical decoder paths: `H264` equals `AVC`, and `H265`
+equals `HEVC`. The same aliases are available through `RtspCodec` in C++ and
+Python.
+
+H.265 input must use the HEVC Main profile with 8-bit, 4:2:0 chroma. Direct
+elementary-stream input must be parsed, Annex-B byte-stream, and access-unit
+aligned. Its parameter sets (VPS, SPS, and PPS) must reach the decoder before
+frames that depend on them. `RtspEncodedInput` handles RTP depacketization and
+H.265 parsing for the RTSP path. Main 10, 10-bit, 4:2:2, and monochrome 4:0:0
+bitstreams are not supported. Encode grayscale sources as 8-bit 4:2:0.
 
 `SimaDecodeOptions::raw_output` defaults to `true`. In that mode the decoder
 emits native raw buffers, normally NV12 in SiMaAI memory, which is the intended
@@ -124,25 +144,64 @@ when the next stage needs CPU-visible `video/x-raw(memory:SystemMemory)` buffers
 JPEG decode nodes. Use them for simple CPU image pipelines. Do not use them for
 native MJPEG video decode before model preprocessing.
 
-For RTSP, prefer the codec-aware groups when the source shape is standard:
+For RTSP, prefer the codec-aware groups when the source shape is standard.
+H.264 remains the default. Select H.265 or HEVC explicitly:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
 
 ```cpp
 simaai::neat::nodes::groups::RtspEncodedInputOptions encoded;
 encoded.url = "rtsp://camera.example/live";
-encoded.codec = simaai::neat::nodes::groups::RtspCodec::H264; // default
+encoded.codec = simaai::neat::nodes::groups::RtspCodec::HEVC;
+encoded.source_fps = 30;
+
+auto encoded_graph =
+    simaai::neat::nodes::groups::RtspEncodedInput(encoded);
 
 simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
 decoded.url = "rtsp://camera.example/live";
-decoded.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
-decoded.dec_width = 1280;
-decoded.dec_height = 720;
-decoded.dec_fps = 30;
+decoded.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+decoded.source_fps = 30;
+
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(decoded));
+graph.add(simaai::neat::nodes::Output("frames"));
 ```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+encoded = pyneat.RtspEncodedInputOptions()
+encoded.url = "rtsp://camera.example/live"
+encoded.codec = pyneat.RtspCodec.HEVC
+encoded.source_fps = 30
+
+encoded_graph = pyneat.groups.rtsp_encoded_input(encoded)
+
+decoded = pyneat.RtspDecodedInputOptions()
+decoded.url = "rtsp://camera.example/live"
+decoded.codec = pyneat.RtspCodec.H265
+decoded.source_fps = 30
+
+graph = pyneat.Graph()
+graph.add(pyneat.groups.rtsp_decoded_input(decoded))
+graph.add(pyneat.nodes.output("frames"))
+```
+
+</CodeTab>
+</CodeTabs>
 
 `RtspEncodedInput(...)` stops after source depacketization and parse/framing.
 Use it when your app needs the encoded samples, for example to split one parsed
 stream into decode and video-output graphs. `RtspDecodedInput(...)` appends
 `SimaDecode(...)` and returns raw decoded video.
+
+`source_fps` declares the source cadence. Neat does not probe the RTSP URL for
+this value. For H.265, the value is propagated into the parsed encoded caps and
+the decoder `dec-fps` setting. It does not request rate conversion. To change
+the output cadence, enable `use_videorate` and set `video_rate_fps`.
 
 For HTTP multipart MJPEG, use `HttpMjpegDecodedInput(...)`. HTTP multipart
 MJPEG is not RTP, so it uses `HttpSource -> MultipartJpegDemux -> JpegParse ->
@@ -158,8 +217,8 @@ Use source-owned groups when the graph should read media by itself. Build those 
 | Still image fixture | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
 | Video file | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
 | Live MIPI/libcamera camera | `nodes::CameraInput(...)` / `pyneat.nodes.camera_input(...)` | `width`, `height`, `framerate_num`, `format`; optional `camera_name` | `allow_cpu_fallback`, queue fields, `buffer_name` |
-| Live RTSP encoded H.264 or MJPEG stream | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec` when not H.264 | `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP payload type |
-| Live RTSP decoded H.264 or MJPEG stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec` when not H.264 | `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, decoded width/height/FPS, `out_format`, `output_caps` |
+| Live RTSP encoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP payload type |
+| Live RTSP decoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, decoded width/height, `out_format`, `output_caps` |
 | HTTP multipart MJPEG stream | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, decoded width/height/FPS, `output_caps` |
 | Raw or encoded video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)` or `H264RtpUdpFromEncoded()` | `host`, `channel`, `video_port_base`, encoder/RTP options |
 | RTP/H.264 over UDP output | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | destination host/port when the defaults are not right | `h264_caps`, `payload_type`, `config_interval` |
@@ -352,7 +411,8 @@ Use these patterns when the boundary contract matters before the first push.
 | --- | --- | --- |
 | Fixed-size decoded image | `payload_type`, `format`, `width`, `height` | The pushed tensor or sample already carries complete image metadata. |
 | Dynamic decoded image | `payload_type`, `format`, `max_width`, `max_height`, and optional `max_bytes` | The graph only accepts one fixed size. |
-| Encoded H.264 input | `payload_type = Encoded`, `format = H264`, and caps metadata on the pushed `Sample` | The graph source owns the stream through an RTSP or file group. |
+| Encoded H.264 input | `payload_type = Encoded`, `format = H264`, and H.264 caps on the pushed `Sample` | The graph source owns the stream through an RTSP or file group. |
+| Encoded H.265 input | `payload_type = Encoded`, `format = ENCODED`, and H.265 caps on the boundary and pushed `Sample` | The graph source owns and parses the stream through an RTSP or file group. |
 | Detection coordinate mapping | `preprocess_meta` | The model route owns preprocessing and emits the metadata itself. |
 
 For dynamic image input, bound the stream without pretending every frame has the same size:
@@ -388,23 +448,39 @@ graph.add(pyneat.nodes.input("image", iopt))
 </CodeTab>
 </CodeTabs>
 
-For encoded H.264 that your app pushes, make the boundary encoded and put the caps on the sample:
+For parsed H.265 access units that your app pushes, make the boundary encoded,
+identify the codec through caps, and select the matching decoder type. There is
+no `FormatTag::H265`; use the generic `ENCODED` tag with `video/x-h265` caps.
+Set the decoder width, height, and FPS to the elementary stream values:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
+simaai::neat::Graph graph;
+
 simaai::neat::InputOptions iopt;
 iopt.payload_type = simaai::neat::PayloadType::Encoded;
-iopt.format = simaai::neat::FormatTag::H264;
+iopt.format = simaai::neat::FormatTag::ENCODED;
+iopt.caps_override =
+    "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au";
 
 graph.add(simaai::neat::nodes::Input("video", iopt));
+
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::H265;
+decode.dec_width = 1280;
+decode.dec_height = 720;
+decode.dec_fps = 30;
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+graph.add(simaai::neat::nodes::Output("frames"));
+
 auto run = graph.build();
 
-std::vector<std::uint8_t> bytes = /* your H.264 access unit */;
+std::vector<std::uint8_t> bytes = /* one parsed H.265 access unit */;
 auto sample = simaai::neat::make_encoded_sample(
     std::move(bytes),
-    "video/x-h264,stream-format=byte-stream,alignment=au");
+    "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au");
 sample.port_name = "video";
 run.push("video", sample);
 ```
@@ -413,16 +489,32 @@ run.push("video", sample);
 <CodeTab label="Python" lang="python">
 
 ```python
+graph = pyneat.Graph()
+
 iopt = pyneat.InputOptions()
 iopt.payload_type = pyneat.PayloadType.Encoded
-iopt.format = pyneat.Format.H264
+iopt.format = pyneat.Format.ENCODED
+iopt.caps_override = (
+    "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
+)
 
 graph.add(pyneat.nodes.input("video", iopt))
+
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.H265
+decode.dec_width = 1280
+decode.dec_height = 720
+decode.dec_fps = 30
+graph.add(pyneat.nodes.sima_decode(decode))
+graph.add(pyneat.nodes.output("frames"))
+
 run = graph.build()
 
 sample = pyneat.Sample.from_encoded(
     data,
-    caps_string="video/x-h264,stream-format=byte-stream,alignment=au",
+    caps_string=(
+        "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
+    ),
     port_name="video",
 )
 run.push("video", [sample])
