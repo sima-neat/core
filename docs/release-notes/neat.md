@@ -16,10 +16,11 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Runtime changes
 
-- Native H.265/HEVC decode is available through `SimaDecode`,
-  `RtspEncodedInput`, and `RtspDecodedInput` in C++ and Python. H.265 inputs
-  must use HEVC Main profile, 8-bit, 4:2:0. The codec selectors accept both
-  `H265` and `HEVC`; H.264 selectors also accept `AVC`.
+- Native H.265/HEVC decode is available through `SimaDecode` and
+  `RtspDecodedInput` in C++ and Python. `RtspEncodedInput` provides parsed H.265
+  access units without decoding them. H.265 inputs must use HEVC Main profile,
+  8-bit, 4:2:0. The codec selectors accept both `H265` and `HEVC`; H.264
+  selectors also accept `AVC`.
 - Ordinary `build()` now selects fused lowering automatically for eligible live fan-in. A direct encoded H.264 `VideoSender` branch is fused before decode without a decoded-frame CPU copy. Set that edge to `RealtimeLatestByStream` for live preview so a slow video receiver replaces stale access units instead of backpressuring the decoder branch.
 
 - Added C++ and Python `CameraInput` documentation and tutorial coverage for MIPI/libcamera source-owned graphs, including adaptive SiMaAI memory handoff before CVU/MLA model routes.

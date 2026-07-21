@@ -133,19 +133,49 @@ elementary-stream input must be parsed, Annex-B byte-stream, and access-unit
 aligned. Its parameter sets (VPS, SPS, and PPS) must reach the decoder before
 frames that depend on them. `RtspEncodedInput` handles RTP depacketization and
 H.265 parsing for the RTSP path. Main 10, 10-bit, 4:2:2, and monochrome 4:0:0
-bitstreams are not supported. Encode grayscale sources as 8-bit 4:2:0.
+bitstreams are not supported. For grayscale content, encode an 8-bit 4:2:0
+stream whose Y plane contains the grayscale image and whose U and V samples use
+the neutral value 128.
 
-`SimaDecodeOptions::raw_output` defaults to `true`. In that mode the decoder
-emits native raw buffers, normally NV12 in SiMaAI memory, which is the intended
-path before CVU preprocessing and MLA inference. Set `raw_output=false` only
-when the next stage needs CPU-visible `video/x-raw(memory:SystemMemory)` buffers.
+Verify a stream before using it:
+
+```bash
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+  -show_entries stream=codec_name,profile,pix_fmt \
+  -of default=noprint_wrappers=1 rtsp://camera.example/live
+```
+
+The H.265 decoder requires `codec_name=hevc`, `profile=Main`, and
+`pix_fmt=yuv420p`.
+
+`SimaDecodeOptions::raw_output` controls the decoder's immediate output:
+
+| Value | Decoder output |
+| --- | --- |
+| `true` (default) | Native NV12 or I420 in SiMaAI memory. Use NV12 for decoder zero-copy output. |
+| `false` | Converted `video/x-raw(memory:SystemMemory)` output for CPU consumers. |
+
+`raw_output` is separate from decoder `zero-copy-output`. Core enables
+`zero-copy-output` during decoder admission when the graph can forward the
+decoder's native NV12 buffer. `RunOptions::output_memory` separately controls
+whether a terminal output shares its backing buffer (`ZeroCopy`) or is copied
+into framework-owned storage (`Owned`).
+
+Leave `decoder_tuning` empty or set it to `auto` for general streams. Use
+`throughput-low-latency` only for streams encoded without B-frames and with one
+reference picture; that mode disables decoded-picture reordering.
 
 `nodes::JpegDecode()` and `pyneat.nodes.jpeg_decode()` are separate CPU/GStreamer
 JPEG decode nodes. Use them for simple CPU image pipelines. Do not use them for
 native MJPEG video decode before model preprocessing.
 
 For RTSP, prefer the codec-aware groups when the source shape is standard.
-H.264 remains the default. Select H.265 or HEVC explicitly:
+H.264 remains the default. Select H.265 or HEVC explicitly.
+
+### Keep RTSP input encoded
+
+Use `RtspEncodedInput(...)` to depacketize and parse the stream without
+decoding it:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -158,7 +188,38 @@ encoded.source_fps = 30;
 
 auto encoded_graph =
     simaai::neat::nodes::groups::RtspEncodedInput(encoded);
+```
 
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+encoded = pyneat.RtspEncodedInputOptions()
+encoded.url = "rtsp://camera.example/live"
+encoded.codec = pyneat.RtspCodec.HEVC
+encoded.source_fps = 30
+
+encoded_graph = pyneat.groups.rtsp_encoded_input(encoded)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`RtspEncodedInput(...)` stops after source depacketization and parse/framing.
+Use it when your app needs the encoded samples, for example to split one parsed
+stream into decode and video-output graphs. For H.265, `source_fps` is written
+to the parsed encoded caps when the stream does not advertise a valid frame
+rate.
+
+### Decode RTSP input
+
+Use `RtspDecodedInput(...)` to append `SimaDecode(...)` and return raw decoded
+video:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
 simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
 decoded.url = "rtsp://camera.example/live";
 decoded.codec = simaai::neat::nodes::groups::RtspCodec::H265;
@@ -173,13 +234,6 @@ graph.add(simaai::neat::nodes::Output("frames"));
 <CodeTab label="Python" lang="python">
 
 ```python
-encoded = pyneat.RtspEncodedInputOptions()
-encoded.url = "rtsp://camera.example/live"
-encoded.codec = pyneat.RtspCodec.HEVC
-encoded.source_fps = 30
-
-encoded_graph = pyneat.groups.rtsp_encoded_input(encoded)
-
 decoded = pyneat.RtspDecodedInputOptions()
 decoded.url = "rtsp://camera.example/live"
 decoded.codec = pyneat.RtspCodec.H265
@@ -193,15 +247,10 @@ graph.add(pyneat.nodes.output("frames"))
 </CodeTab>
 </CodeTabs>
 
-`RtspEncodedInput(...)` stops after source depacketization and parse/framing.
-Use it when your app needs the encoded samples, for example to split one parsed
-stream into decode and video-output graphs. `RtspDecodedInput(...)` appends
-`SimaDecode(...)` and returns raw decoded video.
-
-`source_fps` declares the source cadence. Set it when the RTSP caps do not carry
-a valid frame rate; without either value, decoder startup fails. Neat does not
-probe the RTSP URL for this value. For H.265, the value is propagated into the
-parsed encoded caps and the decoder `dec-fps` setting. It does not request rate
+For H.265, `RtspDecodedInput(...)` uses `source_fps` for both the parsed caps and
+decoder `dec-fps`. Set it when the RTSP caps do not carry a valid frame rate;
+without either value, decoder startup fails. Neat does not probe the RTSP URL
+for this value. It declares the source cadence and does not request rate
 conversion. To change the output cadence, enable `use_videorate` and set
 `video_rate_fps`.
 
@@ -479,12 +528,13 @@ graph.add(simaai::neat::nodes::Output("frames"));
 
 auto run = graph.build();
 
-std::vector<std::uint8_t> bytes = /* one parsed H.265 access unit */;
-auto sample = simaai::neat::make_encoded_sample(
-    std::move(bytes),
-    "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au");
-sample.port_name = "video";
-run.push("video", sample);
+auto push_h265_access_unit = [&run](std::vector<std::uint8_t> bytes) {
+  auto sample = simaai::neat::make_encoded_sample(
+      std::move(bytes),
+      "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au");
+  sample.port_name = "video";
+  run.push("video", sample);
+};
 ```
 
 </CodeTab>
@@ -512,14 +562,15 @@ graph.add(pyneat.nodes.output("frames"))
 
 run = graph.build()
 
-sample = pyneat.Sample.from_encoded(
-    data,
-    caps_string=(
-        "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
-    ),
-    port_name="video",
-)
-run.push("video", [sample])
+def push_h265_access_unit(run: pyneat.Run, data: bytes) -> None:
+    sample = pyneat.Sample.from_encoded(
+        data,
+        caps_string=(
+            "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
+        ),
+        port_name="video",
+    )
+    run.push("video", [sample])
 ```
 
 </CodeTab>
