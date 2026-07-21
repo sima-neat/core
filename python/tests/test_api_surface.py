@@ -788,6 +788,7 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   )
   native_decode = pyneat.SimaDecodeOptions()
   assert native_decode.type == pyneat.SimaDecodeType.H264
+  assert pyneat.SimaDecodeType.AVC == pyneat.SimaDecodeType.H264
   assert pyneat.SimaDecodeType.HEVC == pyneat.SimaDecodeType.H265
   assert native_decode.out_format == pyneat.Format.NV12
   assert native_decode.raw_output is True
@@ -795,6 +796,8 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert native_decode.decoder_tuning == ""
   assert native_decode.memory_opt is False
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode())
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.AVC
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.JPEG
   native_decode.raw_output = False
@@ -857,6 +860,7 @@ def test_jpeg_framing_nodes_are_exposed():
 
 def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert pyneat.RtspCodec.H264.name == "H264"
+  assert pyneat.RtspCodec.AVC == pyneat.RtspCodec.H264
   assert pyneat.RtspCodec.MJPEG.name == "MJPEG"
   assert pyneat.RtspCodec.H265 == pyneat.RtspCodec.HEVC
   _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize())
@@ -880,6 +884,11 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.h265_payload_type == 96
   assert encoded.auto_caps_from_stream is True
   assert encoded.source_fps == -1
+
+  encoded.url = "rtsp://example.local/avc"
+  encoded.codec = pyneat.RtspCodec.AVC
+  avc_group = pyneat.groups.rtsp_encoded_input(encoded)
+  assert "rtph264depay" in avc_group.describe_backend().lower()
 
   encoded.url = "rtsp://example.local/mjpeg"
   encoded.codec = pyneat.RtspCodec.MJPEG

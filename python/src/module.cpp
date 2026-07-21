@@ -3404,6 +3404,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("H264", simaai::neat::nodes::groups::RtspCodec::H264)
       .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG)
       .value("H265", simaai::neat::nodes::groups::RtspCodec::H265);
+  m.attr("RtspCodec").attr("AVC") = m.attr("RtspCodec").attr("H264");
   m.attr("RtspCodec").attr("HEVC") = m.attr("RtspCodec").attr("H265");
 
   nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
@@ -3761,6 +3762,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
       .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG)
       .value("H265", simaai::neat::SimaDecodeType::H265);
+  m.attr("SimaDecodeType").attr("AVC") = m.attr("SimaDecodeType").attr("H264");
   m.attr("SimaDecodeType").attr("HEVC") = m.attr("SimaDecodeType").attr("H265");
   nb::class_<simaai::neat::SimaDecodeOptions>(m, "SimaDecodeOptions")
       .def(nb::init<>())
