@@ -545,7 +545,6 @@ jobs:
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
           SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
-          SIMANEAT_TEST_RTSP_H264_FPS: ${{ vars.SIMANEAT_TEST_RTSP_H264_FPS }}
           SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
           SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
           SIMANEAT_TEST_RTSP_MJPEG_URL: ${{ vars.SIMANEAT_TEST_RTSP_MJPEG_URL }}
@@ -674,6 +673,8 @@ jobs:
         env:
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
           SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
+          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
+          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
         run: |
           EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
           TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/build.sh"
@@ -704,6 +705,8 @@ jobs:
         env:
           SIMANEAT_TEST_RTSP_H264_URL: ${{ vars.SIMANEAT_TEST_RTSP_H264_URL }}
           SIMANEAT_TEST_RTSP_H264_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H264_URLS }}
+          SIMANEAT_TEST_RTSP_H265_URL: ${{ vars.SIMANEAT_TEST_RTSP_H265_URL }}
+          SIMANEAT_TEST_RTSP_H265_URLS: ${{ vars.SIMANEAT_TEST_RTSP_H265_URLS }}
         run: |
           PYNEAT_HOME="${HOME}/pyneat"
           if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then

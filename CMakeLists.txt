@@ -1455,6 +1455,7 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-core406"
   "libopencv-imgproc406"
   "libopencv-imgcodecs406"
+  "libopencv-videoio406"
   "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
   "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
