@@ -92,6 +92,29 @@ RUN_TEST(
         require_contains(backend, "port=9001", "VideoSender encoded UDP port mismatch");
       }
 
+      {
+        auto opt = VideoSenderOptions::H265RtpUdpFromEncoded();
+        opt.channel = 2;
+
+        require(opt.rtp.payload_type == 98, "VideoSender H265 payload type default mismatch");
+        require(!opt.is_raw_input() && opt.is_encoded_input(),
+                "VideoSender H265 input kind mismatch");
+
+        const auto graph = VideoSender(opt);
+        require_in_order(graph.describe(), {"H265Parse", "H265Packetize", "UdpOutput"},
+                         "VideoSender H265 path should include parse, pay, udp only");
+
+        const std::string backend = graph.describe_backend();
+        require_contains(backend, "h265parse", "VideoSender H265 parser missing");
+        require_contains(backend, "rtph265pay", "VideoSender H265 packetizer missing");
+        require_contains(backend, "pt=98", "VideoSender H265 RTP payload type mismatch");
+        require_contains(backend, "port=9002", "VideoSender H265 UDP port mismatch");
+        require(backend.find("neatencoder") == std::string::npos,
+                "VideoSender H265 must not encode raw video");
+        require(backend.find("h264parse") == std::string::npos,
+                "VideoSender H265 must not use H264 parser");
+      }
+
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(0, 720, 30); },
                                "VideoSender should reject invalid raw width");
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(1280, 0, 30); },
