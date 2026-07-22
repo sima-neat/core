@@ -90,6 +90,8 @@ Environment:
   OPENVSCODE_SERVER_HTTPS_PORT
                            Browser VS Code HTTPS port
   OPENVSCODE_SERVER_TOKEN  Browser VS Code access token
+  OPENVSCODE_SERVER_WITHOUT_TOKEN
+                           Set to 1 only to allow access without authentication
   OPENVSCODE_WORKSPACE     Browser VS Code workspace path (default: /workspace)
   NEAT_MODEL_COMPILER_DIR  Model Compiler extension directory (default: /sdk-extensions/model-compiler)
   SIMA_CLI_BIN             sima-cli executable path/name override
