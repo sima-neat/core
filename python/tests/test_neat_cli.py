@@ -351,7 +351,7 @@ def test_sdk_status_prints_exposed_ports_from_port_map(tmp_path: Path) -> None:
         for line in proc.stdout.splitlines()
     )
     assert "Local access uses a browser on this SDK host; remote access uses another machine." in proc.stdout
-    assert "Prefer the local URL on this host; it remains valid if the host network IP changes." in proc.stdout
+    assert "Prefer the local URL on this host; it remains valid even if the host network IP changes." in proc.stdout
     assert "VS Code URLs contain an access token; do not share them." in proc.stdout
     assert "Exposed Ports" in proc.stdout
     assert "Name               Protocol Host Port (Start) Host Port (End)" in proc.stdout

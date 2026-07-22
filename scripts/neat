@@ -875,7 +875,7 @@ print_web_access_urls() {
   printf '\n%sWeb Access%s\n' "${BOLD}" "${RESET}"
   printf '  %sLocal access uses a browser on this SDK host; remote access uses another machine.%s\n' \
     "${DIM}" "${RESET}"
-  printf '  %sPrefer the local URL on this host; it remains valid if the host network IP changes.%s\n' \
+  printf '  %sPrefer the local URL on this host; it remains valid even if the host network IP changes.%s\n' \
     "${DIM}" "${RESET}"
   if [[ -n "${insight_web_ui_port}" ]]; then
     print_colored_kv "Insight (local)" "https://127.0.0.1:${insight_web_ui_port}" "${GREEN}"
