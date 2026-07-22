@@ -76,6 +76,12 @@ PY
   fi
 fi
 
+echo "[repo-hygiene] checking LLiMa dependency artifact profile..."
+if ! grep -Fq 'NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima/debs}"' build.sh; then
+  echo "ERROR: Core must fetch download-only LLiMa dependencies from llima/debs." >&2
+  fail=1
+fi
+
 echo "[repo-hygiene] checking tracked binary artifacts in source paths..."
 while IFS= read -r path; do
   [[ -z "${path}" ]] && continue
