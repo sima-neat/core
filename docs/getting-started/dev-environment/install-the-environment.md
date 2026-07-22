@@ -87,11 +87,14 @@ From inside the SDK shell, run:
 neat
 </ShellCommand>
 
-The command output includes the Insight URL. Open that URL in Chrome to inspect
-workspace files, media sources, stream delivery, and runtime behavior. On a
-local host, the URL is typically `https://localhost:9900`. From another machine
-on the network, use the host IP address shown by the SDK environment. For more
-information, see [Insight](/tools/insight/).
+The command output includes a **Web Access** section with local and remote URLs
+for Insight and browser-based VS Code. Local access means opening the URL in a
+browser on the same machine that runs the SDK; remote access means opening it
+from another machine. Prefer the local `127.0.0.1` URL when the browser and SDK
+are on the same host because it continues to work if the host's network IP
+changes. For remote access, use the URL derived from `NFS_SERVER_HOST_IP`. The
+VS Code URL includes the configured access token and opens the configured
+workspace. For more information, see [Insight](/tools/insight/).
 
 ### Use VS Code
 
