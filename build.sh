@@ -1337,6 +1337,14 @@ PY
   rm -rf "${output_dir}"
   mkdir -p "${output_dir}"
   if ! "${SIMA_CLI_BIN}" "${install_args[@]}"; then
+    if [[ "${NEAT_LLIMA_SNAP_TAG_POLICY}" != "ON" &&
+          "${NEAT_LLIMA_SNAP_POLICY}" == "ON" &&
+          "${llima_ref}" != "develop:latest" ]]; then
+      echo "Resolved LLiMa Vulcan artifact '${resolved_ref}' is unavailable; retrying develop:latest." >&2
+      rm -rf "${output_dir}"
+      fetch_neat_llima_vulcan_artifacts "develop:latest" "${output_dir}"
+      return
+    fi
     echo "ERROR: Failed to fetch LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}" >&2
     exit 1
   fi
