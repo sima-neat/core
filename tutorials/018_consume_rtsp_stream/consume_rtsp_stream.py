@@ -12,9 +12,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
-from pathlib import Path
+
+from probe_rtsp_fps import probe_source_fps
 
 try:
     import pyneat
@@ -23,20 +23,6 @@ except ImportError:
         "pyneat is not importable. Either Neat is not installed, or the venv is not activated.\n"
         "Run: source ~/pyneat/bin/activate"
     )
-
-
-def probe_source_fps(url: str, codec: str) -> int:
-    probe = Path(__file__).with_name("probe_rtsp_fps.py")
-    result = subprocess.run(
-        [sys.executable, str(probe), "--url", url, "--codec", codec],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(f"failed to probe RTSP source FPS: {detail}")
-    return int(result.stdout.strip())
 
 
 def main(argv: list[str]) -> int:
@@ -59,9 +45,7 @@ def main(argv: list[str]) -> int:
     if args.source_fps != -1 and args.source_fps <= 0:
         ap.error("--source-fps must be positive")
     source_fps = (
-        args.source_fps
-        if args.source_fps != -1
-        else probe_source_fps(args.url, args.codec)
+        args.source_fps if args.source_fps != -1 else probe_source_fps(args.url)
     )
 
     # CORE LOGIC

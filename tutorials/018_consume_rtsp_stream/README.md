@@ -30,13 +30,11 @@ the tutorial also accepts `avc`, `h265`, and `hevc`, where AVC equals H.264 and
 HEVC equals H.265.
 
 Set `source_fps` when you already know the source cadence. If you omit it, this
-tutorial uses `ffprobe` to read `avg_frame_rate`, falling back to
-`r_frame_rate`, and supplies the detected value to `RtspDecodedInput`. This
-automatic path requires `ffprobe` on `PATH`; otherwise, pass `--source-fps`
-explicitly. The group itself does not probe the URL. For H.265, Neat propagates
-this value into the parsed stream caps and decoder configuration. It does not
-change the frame rate. The H.265 stream must use HEVC Main profile, 8-bit, 4:2:0
-input.
+tutorial opens the RTSP source with OpenCV, reads its reported FPS, and supplies
+the detected value to `RtspDecodedInput`. The group itself does not probe the
+URL. For H.265, Neat propagates this value into the parsed stream caps and
+decoder configuration. It does not change the frame rate. The H.265 stream must
+use HEVC Main profile, 8-bit, 4:2:0 input.
 
 Setting `tcp = true` carries RTP over TCP. TCP preserves order and retransmits
 lost segments, which can reduce visible loss compared with UDP but can increase
@@ -108,4 +106,4 @@ If the stream is unreachable you will instead see `frame=0 rtsp_timeout`. To int
 ## Source Files
 - C++: `tutorials/018_consume_rtsp_stream/consume_rtsp_stream.cpp`
 - Python: `tutorials/018_consume_rtsp_stream/consume_rtsp_stream.py`
-- Python FPS probe: `tutorials/018_consume_rtsp_stream/probe_rtsp_fps.py`
+- Python OpenCV FPS probe: `tutorials/018_consume_rtsp_stream/probe_rtsp_fps.py`

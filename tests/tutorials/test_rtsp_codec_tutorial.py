@@ -31,44 +31,44 @@ def load_fps_probe() -> ModuleType:
     return module
 
 
-def test_rtsp_fps_probe_prefers_average_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rtsp_fps_probe_rounds_opencv_rate(monkeypatch: pytest.MonkeyPatch) -> None:
     probe = load_fps_probe()
-    result = subprocess.CompletedProcess(
-        args=["ffprobe"],
-        returncode=0,
-        stdout="r_frame_rate=60/1\navg_frame_rate=30000/1001\n",
-        stderr="",
-    )
-    monkeypatch.setattr(probe.subprocess, "run", lambda *args, **kwargs: result)
+
+    class Capture:
+        def isOpened(self) -> bool:
+            return True
+
+        def get(self, prop: int) -> float:
+            assert prop == probe.cv2.CAP_PROP_FPS
+            return 30000 / 1001
+
+        def release(self) -> None:
+            pass
+
+    monkeypatch.setattr(probe.cv2, "VideoCapture", lambda url: Capture())
 
     assert probe.probe_source_fps("rtsp://example/stream") == 30
 
 
-def test_rtsp_fps_probe_falls_back_to_reported_rate(
+def test_rtsp_fps_probe_releases_failed_capture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     probe = load_fps_probe()
-    result = subprocess.CompletedProcess(
-        args=["ffprobe"],
-        returncode=0,
-        stdout="r_frame_rate=120/1\navg_frame_rate=0/0\n",
-        stderr="",
-    )
-    monkeypatch.setattr(probe.subprocess, "run", lambda *args, **kwargs: result)
+    released = False
 
-    assert probe.probe_source_fps("rtsp://example/stream") == 120
+    class Capture:
+        def isOpened(self) -> bool:
+            return False
 
+        def release(self) -> None:
+            nonlocal released
+            released = True
 
-def test_rtsp_fps_probe_requires_ffprobe(monkeypatch: pytest.MonkeyPatch) -> None:
-    probe = load_fps_probe()
+    monkeypatch.setattr(probe.cv2, "VideoCapture", lambda url: Capture())
 
-    def missing_ffprobe(*args, **kwargs):
-        raise FileNotFoundError
-
-    monkeypatch.setattr(probe.subprocess, "run", missing_ffprobe)
-
-    with pytest.raises(RuntimeError, match="ffprobe is required"):
+    with pytest.raises(RuntimeError, match="failed to open RTSP source"):
         probe.probe_source_fps("rtsp://example/stream")
+    assert released
 
 
 def first_rtsp_url(codec: str) -> str | None:
