@@ -127,12 +127,12 @@ struct FusedRealtimeIngressBranch {
   };
   std::optional<EncodedOutput> encoded_output;
   /**
-   * Optional encoded H.264 sink branch tapped before the hardware decoder.
+   * Optional H.264 or H.265 encoded-video sink branch tapped before the hardware decoder.
    * These nodes are rendered behind a tee branch in the fused source pipeline
-   * (for example H264Packetize -> UdpOutput). The normalized RTSP source
-   * parser is shared by the video and decoder paths. The original public link
-   * options select lossless backpressure for Default or latest replacement
-   * for RealtimeLatestByStream.
+   * (for example H264Packetize or H265Packetize -> UdpOutput). The normalized
+   * RTSP source parser is shared by the encoded video and decoder paths. The
+   * original public link options select lossless backpressure for Default or
+   * latest replacement for RealtimeLatestByStream.
    */
   std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
   GraphLinkOptions encoded_sink_link_options;

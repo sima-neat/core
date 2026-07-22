@@ -1241,6 +1241,54 @@ RUN_TEST(
       require(h265_video_pipeline.find("rtph265pay name=pay0") == std::string::npos,
               "fused H265 VideoSender branches must not retain the fixed pay0 name");
 
+      simaai::neat::Graph mixed_codec_app("mixed_codec_video_sender_fallback", outer_options);
+      auto mixed_codec_detector = make_composed_consumer_graph();
+      for (int stream = 0; stream < 2; ++stream) {
+        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+        source_options.url = "rtsp://example.test/mixed-codec" + std::to_string(stream);
+        source_options.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+        source_options.insert_queue = false;
+        source_options.source_fps = 30;
+        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+
+        simaai::neat::Graph decoder("mixed_codec_decoder" + std::to_string(stream));
+        simaai::neat::SimaDecodeOptions decode_options;
+        decode_options.type = simaai::neat::SimaDecodeType::H265;
+        decoder.add(simaai::neat::nodes::SimaDecode(decode_options));
+        decoder.add(simaai::neat::nodes::Output("mixed_codec_detector_frame"));
+
+        simaai::neat::GraphLinkOptions realtime;
+        realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        realtime.queue_depth = 1;
+        realtime.stream_id = "mixed_codec_stream" + std::to_string(stream);
+        realtime.max_inflight_per_stream = 1;
+        realtime.max_inflight_total = 2;
+        mixed_codec_app.connect(source, decoder);
+        mixed_codec_app.connect(decoder, mixed_codec_detector, realtime);
+
+        auto video_options =
+            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
+        video_options.channel = stream;
+        mixed_codec_app.connect(source, simaai::neat::nodes::groups::VideoSender(video_options));
+      }
+      const auto mixed_codec_plan =
+          simaai::neat::runtime::compile_public_graph(mixed_codec_app, composed_run_options);
+      require(std::none_of(
+                  mixed_codec_plan.pipeline_segments.begin(),
+                  mixed_codec_plan.pipeline_segments.end(),
+                  [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); }),
+              "an H264 VideoSender must not fuse into an H265 source and decoder path");
+      const auto separate_h264_senders =
+          std::count_if(mixed_codec_plan.pipeline_segments.begin(),
+                        mixed_codec_plan.pipeline_segments.end(), [](const auto& segment) {
+                          return segment.nodes.size() == 3U && segment.nodes[0] &&
+                                 segment.nodes[0]->kind() == "H264Parse" && segment.nodes[1] &&
+                                 segment.nodes[1]->kind() == "H264Packetize" && segment.nodes[2] &&
+                                 segment.nodes[2]->kind() == "UdpOutput";
+                        });
+      require(separate_h264_senders == 2,
+              "codec-mismatched VideoSender branches must remain separate pipeline segments");
+
       // An asynchronous UDP sink is safe as a separate VideoSender pipeline,
       // but absorbing it into the detector pipeline would make video preroll
       // part of decoder startup. Preserve that public state-change contract by
