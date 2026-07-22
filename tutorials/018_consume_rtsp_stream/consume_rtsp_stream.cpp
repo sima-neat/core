@@ -10,9 +10,9 @@
 #include "neat.h"
 #include "nodes/groups/RtspDecodedInput.h"
 
-#include <opencv2/videoio.hpp>
-
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -46,15 +46,62 @@ simaai::neat::nodes::groups::RtspCodec parse_codec(const std::string& value) {
   throw std::invalid_argument("--codec must be h264, avc, h265, or hevc");
 }
 
-int probe_source_fps(const std::string& url) {
-  cv::VideoCapture capture(url);
-  if (!capture.isOpened()) {
-    throw std::runtime_error("failed to open the RTSP source for FPS probing");
+std::string shell_quote(const std::string& value) {
+  std::string out = "'";
+  for (const char c : value) {
+    out += c == '\'' ? "'\\''" : std::string(1, c);
   }
-  const int fps = static_cast<int>(std::lround(capture.get(cv::CAP_PROP_FPS)));
-  capture.release();
+  out += "'";
+  return out;
+}
+
+int fps_from_rate(const std::string& value) {
+  try {
+    const auto slash = value.find('/');
+    const double numerator = std::stod(value.substr(0, slash));
+    const double denominator =
+        slash == std::string::npos ? 1.0 : std::stod(value.substr(slash + 1));
+    const double fps = denominator > 0.0 ? numerator / denominator : 0.0;
+    return fps > 0.0 ? static_cast<int>(std::lround(fps)) : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+int probe_source_fps(const std::string& url) {
+  const std::string command = "ffprobe -v error -rw_timeout 5000000 -select_streams v:0 "
+                              "-show_entries stream=avg_frame_rate,r_frame_rate -of default=nw=1 " +
+                              shell_quote(url) + " 2>/dev/null";
+  FILE* pipe = ::popen(command.c_str(), "r");
+  if (!pipe) {
+    throw std::runtime_error("failed to run ffprobe for RTSP source FPS");
+  }
+
+  int average_fps = 0;
+  int reported_fps = 0;
+  std::array<char, 256> buffer{};
+  while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) {
+    const std::string line(buffer.data());
+    const auto separator = line.find('=');
+    if (separator == std::string::npos) {
+      continue;
+    }
+    const std::string key = line.substr(0, separator);
+    const int fps = fps_from_rate(line.substr(separator + 1));
+    if (key == "avg_frame_rate") {
+      average_fps = fps;
+    } else if (key == "r_frame_rate") {
+      reported_fps = fps;
+    }
+  }
+  const int status = ::pclose(pipe);
+  if (status != 0) {
+    throw std::runtime_error("ffprobe failed to probe RTSP source FPS");
+  }
+
+  const int fps = average_fps > 0 ? average_fps : reported_fps;
   if (fps <= 0) {
-    throw std::runtime_error("failed to probe a positive RTSP source FPS");
+    throw std::runtime_error("ffprobe did not report a positive RTSP source FPS");
   }
   return fps;
 }
