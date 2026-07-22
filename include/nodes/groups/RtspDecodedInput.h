@@ -36,7 +36,7 @@ struct RtspDecodedInputOptions {
   std::string url;       ///< `rtsp://` URL to consume.
   int latency_ms = 200;  ///< Jitter-buffer latency in milliseconds.
   bool tcp = true;       ///< If true, request the RTSP TCP transport.
-  int payload_type = 96; ///< RTP payload type number for the H.264 stream.
+  int payload_type = 96; ///< RTP payload type number for H.264 and H.265 streams.
   int h264_parse_config_interval =
       -1;                   ///< SPS/PPS reinjection interval for the H.264 parser (-1 = default).
   int h264_fps = -1;        ///< Expected FPS injected into the parser caps (-1 = unspecified).
@@ -96,6 +96,7 @@ struct RtspDecodedInputOptions {
  * @brief Build the live-RTSP input Graph: source, depayload+parse, hardware decode.
  *
  * Typical H.264 chain: `RtspEncodedInput(H264)` -> `SimaDecode(H264)`.
+ * Typical H.265 chain: `RtspEncodedInput(H265)` -> `SimaDecode(H265)`.
  * Typical MJPEG chain: `RtspEncodedInput(MJPEG)` -> `SimaDecode(MJPEG)`.
  *
  * @param opt Configuration (URL, transport, parser fallback caps, decoder output).

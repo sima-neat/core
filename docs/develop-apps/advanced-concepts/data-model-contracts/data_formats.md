@@ -27,6 +27,7 @@ Common tags:
 | `NV12` | image/video | Y plane plus interleaved UV plane. Width and height must be even. |
 | `I420` | image/video | Y, U, and V planes. Width and height must be even. |
 | `H264` | encoded | H.264 access unit / NAL stream. |
+| `ENCODED` | encoded | Generic encoded payload. The caps string identifies codecs without a dedicated format tag, including H.265. |
 | `FP32` | tensor | Float32 tensor payload. |
 | `INT8` | tensor | Signed INT8 tensor payload. |
 | `UINT8` | tensor | Unsigned UINT8 tensor payload. |
@@ -42,7 +43,7 @@ Common tags:
 | --- | --- | --- |
 | `Image` | decoded pixels | pixel format, width, height, layout, image semantic metadata |
 | `Tensor` | model or app tensor | dtype, shape, layout, tensor semantic metadata |
-| `Encoded` | encoded media such as H.264 | caps string, codec format, timestamps |
+| `Encoded` | encoded media such as H.264, H.265, or JPEG | caps string, codec format, timestamps |
 | `Auto` | infer when possible | use only when tensor/sample metadata is enough |
 
 Text, audio, byte-stream, and opaque-byte payloads use tensor semantics or specialized specs. They are not separate `PayloadType` enum values in the public API reviewed for this release.
@@ -101,6 +102,10 @@ input_options.height = 480
 </CodeTabs>
 
 Set only the fields the boundary needs. If the tensor or sample already carries enough metadata, avoid duplicate guesses.
+
+H.264 has the dedicated `H264` tag. H.265 does not have a `H265` format tag;
+use `ENCODED` and provide `video/x-h265` caps on the input boundary and encoded
+sample.
 
 ## Advanced image/video output adapter
 

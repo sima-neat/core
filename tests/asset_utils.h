@@ -157,6 +157,7 @@ struct TestRuntimePaths {
   fs::path model_archive_fixture_manifest;
   fs::path decoder_fixture;
   fs::path codec_perf_h264_fixture;
+  fs::path codec_perf_h265_fixture;
 };
 
 inline void append_unique_path(std::vector<fs::path>& out, const fs::path& path) {
@@ -292,6 +293,8 @@ inline const TestRuntimePaths& test_runtime_paths() {
             resolve_manifest_relative_path(text, "decoder_fixture_rel", value.build_root);
         value.codec_perf_h264_fixture =
             resolve_manifest_relative_path(text, "codec_perf_h264_fixture_rel", value.build_root);
+        value.codec_perf_h265_fixture =
+            resolve_manifest_relative_path(text, "codec_perf_h265_fixture_rel", value.build_root);
       }
     }
 
@@ -319,8 +322,11 @@ inline const TestRuntimePaths& test_runtime_paths() {
       value.decoder_fixture =
           value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
     if (value.codec_perf_h264_fixture.empty())
-      value.codec_perf_h264_fixture =
-          value.source_root / "build" / "test-assets" / "codec-perf" / "h264_1280x720_30fps.h264";
+      value.codec_perf_h264_fixture = value.source_root / "build" / "test-assets" / "codec-perf" /
+                                      "h264_1280x720_30fps_no_sei.h264";
+    if (value.codec_perf_h265_fixture.empty())
+      value.codec_perf_h265_fixture = value.source_root / "build" / "test-assets" / "codec-perf" /
+                                      "h265_1280x720_30fps_no_sei.h265";
 
     return value;
   }();
@@ -365,6 +371,10 @@ inline fs::path test_decoder_fixture_path() {
 
 inline fs::path test_codec_perf_h264_fixture_path() {
   return test_runtime_paths().codec_perf_h264_fixture;
+}
+
+inline fs::path test_codec_perf_h265_fixture_path() {
+  return test_runtime_paths().codec_perf_h265_fixture;
 }
 
 inline fs::path default_asset_root(const fs::path& root_in = {}) {

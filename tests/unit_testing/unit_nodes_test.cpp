@@ -11,6 +11,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/CameraInput.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
@@ -98,6 +99,27 @@ int main() {
           std::string(e.what()).find("require width, height, and fps") != std::string::npos;
     }
     require(depay_partial_threw, "Partial H264 caps should throw an actionable error");
+
+    auto h265_depay = simaai::neat::nodes::H265Depacketize(98, 30);
+    const std::string h265_fragment = h265_depay->backend_fragment(4);
+    require_contains(h265_fragment, "encoding-name=H265", "H265 RTP caps missing");
+    require_contains(h265_fragment, "payload=98", "H265 payload mismatch");
+    require_contains(h265_fragment, "rtph265depay name=n4_depay", "H265 depay missing");
+    require_contains(h265_fragment, "h265parse name=n4_h265parse", "H265 parser missing");
+    require_contains(h265_fragment, "stream-format=(string)byte-stream",
+                     "H265 byte-stream caps missing");
+    require_contains(h265_fragment, "alignment=(string)au", "H265 AU caps missing");
+    require_contains(h265_fragment, "framerate=(fraction)30/1",
+                     "H265 configured source FPS missing");
+    require(h265_depay->element_names(4).size() == 4U,
+            "H265Depacketize element_names size mismatch");
+    const auto* h265_spec_provider =
+        dynamic_cast<simaai::neat::OutputSpecProvider*>(h265_depay.get());
+    require(h265_spec_provider != nullptr, "H265Depacketize should provide output spec");
+    const auto h265_spec = h265_spec_provider->output_spec({});
+    require(h265_spec.media_type == "video/x-h265", "H265 media type mismatch");
+    require(h265_spec.format == "H265", "H265 format mismatch");
+    require(h265_spec.fps_num == 30 && h265_spec.fps_den == 1, "H265 FPS mismatch");
 
     auto dec = simaai::neat::nodes::H264Decode(2, "NV12");
     const std::string dec_expect = std::string(decoder_element_name()) + " name=n1_decoder";

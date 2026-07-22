@@ -12,6 +12,8 @@ namespace simaai::neat::pipeline_internal {
 
 inline constexpr std::uint32_t kDecoderAdmissionPolicyZeroCopyOutput = 1u << 8;
 inline constexpr std::uint32_t kDecoderAdmissionPolicyNoOutputCopy = 1u << 9;
+inline constexpr std::uint32_t kDecoderAdmissionCodecH264 = 101;
+inline constexpr std::uint32_t kDecoderAdmissionCodecH265 = 102;
 
 struct DecoderAdmissionStreamRequest {
   std::uint32_t stream_index = 0;
