@@ -8,15 +8,67 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 
 TUTORIALS_ROOT = Path(__file__).resolve().parents[2] / "tutorials"
 TUTORIAL = TUTORIALS_ROOT / "018_consume_rtsp_stream" / "consume_rtsp_stream.py"
+FPS_PROBE = TUTORIAL.with_name("probe_rtsp_fps.py")
 TIMEOUT_SEC = int(os.environ.get("SIMA_TUTORIAL_TIMEOUT_SEC", "180"))
 REQUIRE_RUNTIME = os.environ.get("SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME") == "1"
 PYNEAT_AVAILABLE = importlib.util.find_spec("pyneat") is not None
+
+
+def load_fps_probe() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "tutorial_018_probe_rtsp_fps", FPS_PROBE
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_rtsp_fps_probe_prefers_average_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    probe = load_fps_probe()
+    result = subprocess.CompletedProcess(
+        args=["ffprobe"],
+        returncode=0,
+        stdout="r_frame_rate=60/1\navg_frame_rate=30000/1001\n",
+        stderr="",
+    )
+    monkeypatch.setattr(probe.subprocess, "run", lambda *args, **kwargs: result)
+
+    assert probe.probe_source_fps("rtsp://example/stream") == 30
+
+
+def test_rtsp_fps_probe_falls_back_to_reported_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = load_fps_probe()
+    result = subprocess.CompletedProcess(
+        args=["ffprobe"],
+        returncode=0,
+        stdout="r_frame_rate=120/1\navg_frame_rate=0/0\n",
+        stderr="",
+    )
+    monkeypatch.setattr(probe.subprocess, "run", lambda *args, **kwargs: result)
+
+    assert probe.probe_source_fps("rtsp://example/stream") == 120
+
+
+def test_rtsp_fps_probe_requires_ffprobe(monkeypatch: pytest.MonkeyPatch) -> None:
+    probe = load_fps_probe()
+
+    def missing_ffprobe(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(probe.subprocess, "run", missing_ffprobe)
+
+    with pytest.raises(RuntimeError, match="ffprobe is required"):
+        probe.probe_source_fps("rtsp://example/stream")
 
 
 def first_rtsp_url(codec: str) -> str | None:

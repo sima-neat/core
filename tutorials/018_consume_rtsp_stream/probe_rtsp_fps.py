@@ -1,15 +1,64 @@
 #!/usr/bin/env python3
-"""Probe RTSP cadence from encoded access-unit timestamps."""
+"""Probe RTSP cadence from stream metadata reported by ffprobe."""
 
 from __future__ import annotations
 
 import argparse
-import statistics
+import subprocess
+from fractions import Fraction
 
-import gi
 
-gi.require_version("Gst", "1.0")
-from gi.repository import Gst  # noqa: E402
+def fps_from_rate(value: str) -> int:
+    try:
+        fps = float(Fraction(value))
+    except (ValueError, ZeroDivisionError):
+        return 0
+    return int(round(fps)) if fps > 0 else 0
+
+
+def probe_source_fps(url: str) -> int:
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-rw_timeout",
+        "5000000",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=avg_frame_rate,r_frame_rate",
+        "-of",
+        "default=nw=1",
+        url,
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffprobe is required when --source-fps is omitted") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("timed out while probing RTSP source FPS") from exc
+
+    if result.returncode != 0:
+        raise RuntimeError("ffprobe failed to probe RTSP source FPS")
+
+    values: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            values[key] = value
+
+    fps = fps_from_rate(values.get("avg_frame_rate", "")) or fps_from_rate(
+        values.get("r_frame_rate", "")
+    )
+    if fps <= 0:
+        raise RuntimeError("ffprobe did not report a positive RTSP source FPS")
+    return fps
 
 
 def main() -> int:
@@ -20,42 +69,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    Gst.init(None)
-    encoding = "H265" if args.codec in ("h265", "hevc") else "H264"
-    depay = "rtph265depay" if encoding == "H265" else "rtph264depay"
-    elementary_parser = "h265parse" if encoding == "H265" else "h264parse"
-    escaped_url = args.url.replace("\\", "\\\\").replace('"', '\\"')
-    pipeline = Gst.parse_launch(
-        f'rtspsrc location="{escaped_url}" protocols=tcp latency=100 name=src '
-        f"src. ! application/x-rtp,media=video,encoding-name={encoding} "
-        f"! {depay} ! {elementary_parser} "
-        "! appsink name=sink sync=false max-buffers=16 drop=false"
-    )
-    sink = pipeline.get_by_name("sink")
-    if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
-        raise RuntimeError("failed to start the RTSP FPS probe")
-
-    timestamps: list[int] = []
-    try:
-        for _ in range(10):
-            sample = sink.emit("try-pull-sample", 5 * Gst.SECOND)
-            if sample is None:
-                raise RuntimeError("timed out while probing RTSP FPS")
-            timestamps.append(sample.get_buffer().pts)
-    finally:
-        pipeline.set_state(Gst.State.NULL)
-
-    deltas = [
-        current - previous
-        for previous, current in zip(timestamps, timestamps[1:])
-        if previous != Gst.CLOCK_TIME_NONE and current > previous
-    ]
-    if not deltas:
-        raise RuntimeError("failed to derive RTSP FPS from encoded timestamps")
-    fps = round(Gst.SECOND / statistics.median(deltas))
-    if fps <= 0:
-        raise RuntimeError("failed to probe a positive RTSP source FPS")
-    print(fps)
+    print(probe_source_fps(args.url))
     return 0
 
 
