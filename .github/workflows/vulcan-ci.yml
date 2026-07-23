@@ -320,6 +320,9 @@ jobs:
           clean: true
           fetch-depth: 0
 
+      - name: Verify sima-cli authentication
+        run: scripts/ci/check_sima_cli_session.sh
+
       - name: Clean test workspace
         run: |
           rm -rf _work
