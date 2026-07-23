@@ -42,8 +42,7 @@ private:
 bool is_expected_teardown_error(const std::string& msg) {
   return msg.find("stream is stopping") != std::string::npos ||
          msg.find("EOS has been reached") != std::string::npos ||
-         msg.find("gst_app_src_end_of_stream failed (flow=-2:flushing)") !=
-             std::string::npos ||
+         msg.find("gst_app_src_end_of_stream failed (flow=-2:flushing)") != std::string::npos ||
          msg.find("stream closed") != std::string::npos;
 }
 
