@@ -31,6 +31,7 @@ run_step() {
   if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
     printf "[recovery] %s timed out after %ss (kill grace %ss)\n" \
       "$label" "$RECOVERY_STEP_TIMEOUT_SECONDS" "$RECOVERY_STEP_KILL_GRACE_SECONDS" >&2
+    exit "$rc"
   fi
   printf "[recovery] %s rc=%d\n" "$label" "$rc"
   return $rc
