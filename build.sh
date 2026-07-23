@@ -2466,6 +2466,7 @@ target_path = Path(sys.argv[2])
 
 source = json.loads(source_path.read_text(encoding="utf-8"))
 platform_version = str(source.get("platform-version", "")).strip()
+modelzoo_version = str(source.get("modelzoo-version", "")).strip() or platform_version
 abi_version = str(source.get("abi-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty platform-version in {source_path}")
@@ -2480,11 +2481,12 @@ if not isinstance(target, dict):
     raise SystemExit(f"{target_path} must contain a JSON object")
 
 target["platform-version"] = platform_version
+target["modelzoo-version"] = modelzoo_version
 target["abi-version"] = abi_version
 target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 
-  echo "Updated dist/manifest.json platform-version and abi-version from ${NEAT_DEPS_MANIFEST}"
+  echo "Updated dist/manifest.json platform-version, modelzoo-version, and abi-version from ${NEAT_DEPS_MANIFEST}"
 }
 
 append_dist_manifest_matches() {

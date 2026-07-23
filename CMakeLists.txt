@@ -104,14 +104,17 @@ simaneat_configure_sanitizers()
 # Versioning from deps/manifest.json:
 # - package-version controls package/artifact identity.
 # - platform-version controls dependency and CMake package compatibility.
+# - modelzoo-version selects compatible Model Zoo assets and defaults to
+#   platform-version when omitted.
 # - abi-version controls the public C++ shared-library ABI and SONAME.
 # Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
 set(SIMANEAT_PLATFORM_VERSION "")
+set(SIMANEAT_MODELZOO_VERSION "")
 set(SIMANEAT_PACKAGE_BASE_VERSION "")
 set(SIMANEAT_ABI_VERSION "")
 execute_process(
-  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); print(data['platform-version']); print(data['package-version']); print(data['abi-version'])"
+  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); platform=data['platform-version']; print(platform); print(data.get('modelzoo-version') or platform); print(data['package-version']); print(data['abi-version'])"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   RESULT_VARIABLE PLATFORM_VERSION_RESULT
   OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
@@ -120,12 +123,13 @@ execute_process(
 )
 if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
   message(FATAL_ERROR
-    "Failed to read package-version, platform-version, and abi-version from deps/manifest.json")
+    "Failed to read package-version, platform-version, modelzoo-version, and abi-version from deps/manifest.json")
 endif()
 string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
 list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_PACKAGE_BASE_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_ABI_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_MODELZOO_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_PACKAGE_BASE_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 3 SIMANEAT_ABI_VERSION)
 if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR
     "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")

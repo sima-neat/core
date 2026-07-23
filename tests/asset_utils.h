@@ -19,6 +19,18 @@ namespace sima_test {
 
 namespace fs = std::filesystem;
 
+#ifndef SIMA_NEAT_MODELZOO_VERSION_STRING
+#define SIMA_NEAT_MODELZOO_VERSION_STRING ""
+#endif
+
+inline std::string modelzoo_version() {
+  if (const char* override_version = std::getenv("SIMA_MODELZOO_VERSION");
+      override_version != nullptr && override_version[0] != '\0') {
+    return override_version;
+  }
+  return SIMA_NEAT_MODELZOO_VERSION_STRING;
+}
+
 inline std::string shell_quote(const std::string& s) {
   std::string out = "'";
   for (char c : s) {
@@ -418,8 +430,12 @@ inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& 
 }
 
 inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
-  const std::string cmd =
-      "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo get " + shell_quote(model_name);
+  std::string cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
+  const std::string version = modelzoo_version();
+  if (!version.empty()) {
+    cmd += " -v " + shell_quote(version);
+  }
+  cmd += " get " + shell_quote(model_name);
   return std::system(cmd.c_str());
 }
 

@@ -34,6 +34,8 @@ A release is blocked unless all conditions below are true:
 15. Release metadata is complete:
    - `project(SimaNeat VERSION x.y.z)` updated in `CMakeLists.txt`
    - `package-version` and `platform-version` updated in `deps/manifest.json` when required
+   - `modelzoo-version` explicitly selects the validated Model Zoo release when it differs from
+     `platform-version`; if omitted, Model Zoo resolution defaults to `platform-version`
    - `abi-version` in `deps/manifest.json` is incremented whenever a public C++ type layout or
      exported binary contract changes incompatibly; all C++ applications and Python bindings are
      rebuilt against that ABI
