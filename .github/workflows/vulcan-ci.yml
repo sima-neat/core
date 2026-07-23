@@ -218,7 +218,12 @@ jobs:
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
               (
                 cd dist
-                NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON ./install_neat_framework.sh --local
+                # The reusable SDK build image can trail the target platform. This
+                # self-install checks packaging only; the DevKit job below performs
+                # the authoritative target-platform installation and runtime test.
+                NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON \
+                  NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON \
+                  ./install_neat_framework.sh --local
               )
               rm -rf /tmp/sima-neat-doc-examples-sdk
               tests/docs/build_docs_examples.sh \
