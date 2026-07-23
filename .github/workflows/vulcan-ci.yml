@@ -456,11 +456,18 @@ jobs:
             exit 1
           fi
 
-      - name: Fix devkit runtime
-        env:
-          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+      - name: Verify devkit runtime after installation
         run: |
-          ./scripts/fix_devkit_runtime.sh
+          set -euo pipefail
+          systemctl is-active --quiet simaai-appcomplex.service
+          for remoteproc in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do
+            state="$(cat "${remoteproc}/state")"
+            echo "${remoteproc}: state=${state}"
+            if [[ "${state}" != "running" ]]; then
+              echo "${remoteproc} is not running after package installation." >&2
+              exit 1
+            fi
+          done
 
       - name: Prepare GenAI models
         run: |
