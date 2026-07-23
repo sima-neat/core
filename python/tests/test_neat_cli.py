@@ -503,6 +503,13 @@ def test_json_status_exports_components_and_ports(tmp_path: Path) -> None:
     } in payload["exposedPorts"]
     assert "Coding Agent Playbooks" not in proc.stdout
 
+    env["NFS_SERVER_HOST_IP"] = "192.0.2.20"
+    proc = run_neat(tmp_path, ["--json"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["insight"]["webUiUrl"] == "https://192.0.2.20:9900"
+
 
 def test_json_status_offline_skips_network(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"

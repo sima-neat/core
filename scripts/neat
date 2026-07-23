@@ -1048,7 +1048,7 @@ print_status_json() {
     NEAT_JSON_MODEL_COMPILER_VERSION="${MODEL_COMPILER_VERSION}" \
     NEAT_JSON_MODEL_COMPILER_DETAIL="${MODEL_COMPILER_DETAIL}" \
     NEAT_JSON_PORT_MAP_FILE="${PORT_MAP_FILE}" \
-    NEAT_JSON_CONTAINER_HOST_IP="${CONTAINER_HOST_IP:-}" \
+    NEAT_JSON_NETWORK_HOST="${NFS_SERVER_HOST_IP:-${CONTAINER_HOST_IP:-}}" \
     python3 - <<'PY'
 import json
 import os
@@ -1133,10 +1133,10 @@ main_ui_port = next(
     (row["hostPortStart"] for row in ports if row["name"] == "mainUI" and row["hostPortStart"]),
     None,
 )
-container_host_ip = env("NEAT_JSON_CONTAINER_HOST_IP")
+network_host = env("NEAT_JSON_NETWORK_HOST")
 insight_web_ui_url = (
-    f"https://{container_host_ip}:{main_ui_port}"
-    if container_host_ip and main_ui_port
+    f"https://{network_host}:{main_ui_port}"
+    if network_host and main_ui_port
     else None
 )
 
