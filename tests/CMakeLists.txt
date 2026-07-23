@@ -1941,32 +1941,6 @@ function(append_pipeline_test_resource_lock name lock)
   endif()
 endfunction()
 
-# These tests inspect contracts from real model archives. The archives are
-# served through the Developer Portal and therefore require an interactive
-# user login when they are not already cached. Keep the tests available for
-# authenticated/manual runs, but identify them so non-interactive CI does not
-# block waiting for device authorization.
-foreach(test
-    unit_boxdecode_render_manifest_from_model_test
-    unit_model_infer_output_name_test
-    unit_model_input_spec_contract_test
-    unit_model_metadata_test
-    unit_model_output_spec_contract_test
-    unit_model_route_planner_test
-    unit_model_route_retarget_helper_test
-    unit_model_stage_fragments_test
-    unit_modelpack_mla_handoff_segment_test
-    unit_post_region_materialization_test
-    unit_preproc_contract_rules_test
-    unit_route_capability_mpk_static_contract_test
-    unit_sima_boxdecode_node_fragment_test
-    unit_yolov8_contract_subset_test
-    unit_yolov8_mla_handoff_segment_test)
-  if (TEST ${test})
-    set_property(TEST ${test} APPEND PROPERTY LABELS "authenticated-model-assets")
-  endif()
-endforeach()
-
 # The DevKit has finite EV/MLA runtime channels. Running two model/CVU-heavy
 # E2E tests concurrently is faster when it works, but it also reproduces
 # preflight pull timeouts and missing-output failures under load. Keep CTest
