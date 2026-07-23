@@ -59,20 +59,85 @@ install_debs_on_board
 
         self.assertEqual(result.returncode, 0, result.stderr)
         apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
-        self.assertEqual(len(apt_lines), 1, result.stdout)
-        transaction = apt_lines[0]
+        self.assertEqual(len(apt_lines), 2, result.stdout)
+        transaction, apt_check = apt_lines
+        self.assertEqual(apt_check, "APT: <apt-get> <check>")
         for required in (
             "<./neat-gst-plugins_fixed.deb>",
             "<./sima-neat_fixed.deb>",
             "<./libcamera_2.1.1_arm64.deb>",
-            "<simaai-gst-plugins>",
-            "<simaai-palette-modalix=2.1.2>",
             "<--allow-downgrades>",
         ):
             self.assertIn(required, transaction)
+        self.assertNotIn("<simaai-gst-plugins>", transaction)
+        self.assertNotIn("<simaai-palette-modalix=2.1.2>", transaction)
         self.assertNotIn("simaai-memory-lib", transaction)
         self.assertNotIn("<--no-remove>", transaction)
         self.assertEqual(transaction.count("<./libcamera_2.1.1_arm64.deb>"), 1)
+
+    def test_board_transaction_accepts_exact_identity_preserving_replacement(
+        self,
+    ) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+replacement="${tmp}/neat-common.deb"
+simulation="${tmp}/simulation.log"
+touch "${replacement}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4040]' > "${simulation}"
+dpkg-query() {
+  printf '%s\n' '2.1.3~pre4040'
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4040)' ;;
+    Replaces) printf '%s\n' 'simaai-common' ;;
+    Conflicts) printf '%s\n' 'simaai-common' ;;
+    *) return 2 ;;
+  esac
+}
+verify_simulated_package_removals "${simulation}" "${replacement}"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Verified platform package replacements", result.stdout)
+        self.assertIn("simaai-common=2.1.3~pre4040", result.stdout)
+
+    def test_board_transaction_rejects_non_exact_replacement(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+replacement="${tmp}/neat-common.deb"
+simulation="${tmp}/simulation.log"
+touch "${replacement}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4040]' > "${simulation}"
+dpkg-query() {
+  printf '%s\n' '2.1.3~pre4040'
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Provides) printf '%s\n' 'simaai-common (= 2.1.3)' ;;
+    Replaces) printf '%s\n' 'simaai-common' ;;
+    Conflicts) printf '%s\n' 'simaai-common' ;;
+    *) return 2 ;;
+  esac
+}
+verify_simulated_package_removals "${simulation}" "${replacement}"
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "without a bundled package that Provides its exact installed version",
+            result.stderr,
+        )
 
     def test_restore_transaction_pins_palette_dependencies_and_installed_dev_packages(self) -> None:
         result = run_bash(

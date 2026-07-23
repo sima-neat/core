@@ -218,7 +218,12 @@ jobs:
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
               (
                 cd dist
-                NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON ./install_neat_framework.sh --local
+                # The reusable SDK build image can trail the target platform. This
+                # self-install checks packaging only; the DevKit job below performs
+                # the authoritative target-platform installation and runtime test.
+                NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON \
+                  NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON \
+                  ./install_neat_framework.sh --local
               )
               rm -rf /tmp/sima-neat-doc-examples-sdk
               tests/docs/build_docs_examples.sh \
@@ -314,6 +319,9 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+
+      - name: Verify sima-cli authentication
+        run: scripts/ci/check_sima_cli_session.sh
 
       - name: Clean test workspace
         run: |
@@ -451,11 +459,18 @@ jobs:
             exit 1
           fi
 
-      - name: Fix devkit runtime
-        env:
-          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+      - name: Verify devkit runtime after installation
         run: |
-          ./scripts/fix_devkit_runtime.sh
+          set -euo pipefail
+          systemctl is-active --quiet simaai-appcomplex.service
+          for remoteproc in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do
+            state="$(cat "${remoteproc}/state")"
+            echo "${remoteproc}: state=${state}"
+            if [[ "${state}" != "running" ]]; then
+              echo "${remoteproc} is not running after package installation." >&2
+              exit 1
+            fi
+          done
 
       - name: Prepare GenAI models
         run: |

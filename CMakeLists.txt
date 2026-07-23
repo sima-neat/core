@@ -104,14 +104,17 @@ simaneat_configure_sanitizers()
 # Versioning from deps/manifest.json:
 # - package-version controls package/artifact identity.
 # - platform-version controls dependency and CMake package compatibility.
+# - modelzoo-version selects compatible Model Zoo assets and defaults to
+#   platform-version when omitted.
 # - abi-version controls the public C++ shared-library ABI and SONAME.
 # Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
 set(SIMANEAT_PLATFORM_VERSION "")
+set(SIMANEAT_MODELZOO_VERSION "")
 set(SIMANEAT_PACKAGE_BASE_VERSION "")
 set(SIMANEAT_ABI_VERSION "")
 execute_process(
-  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); print(data['platform-version']); print(data['package-version']); print(data['abi-version'])"
+  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); platform=data['platform-version']; print(platform); print(data.get('modelzoo-version') or platform); print(data['package-version']); print(data['abi-version'])"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   RESULT_VARIABLE PLATFORM_VERSION_RESULT
   OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
@@ -120,12 +123,13 @@ execute_process(
 )
 if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
   message(FATAL_ERROR
-    "Failed to read package-version, platform-version, and abi-version from deps/manifest.json")
+    "Failed to read package-version, platform-version, modelzoo-version, and abi-version from deps/manifest.json")
 endif()
 string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
 list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_PACKAGE_BASE_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_ABI_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_MODELZOO_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_PACKAGE_BASE_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 3 SIMANEAT_ABI_VERSION)
 if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
   message(FATAL_ERROR
     "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
@@ -203,20 +207,36 @@ math(EXPR SIMANEAT_NEXT_PACKAGE_MINOR "${SIMANEAT_PACKAGE_BASE_VERSION_MINOR} + 
 set(SIMANEAT_DEP_PACKAGE_MIN_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 set(SIMANEAT_DEP_PACKAGE_MAX_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION_MAJOR}.${SIMANEAT_NEXT_PACKAGE_MINOR}.0")
 
-string(REPLACE "." ";" SIMANEAT_PLATFORM_VERSION_PARTS "${SIMANEAT_PLATFORM_VERSION}")
-list(GET SIMANEAT_PLATFORM_VERSION_PARTS 0 SIMANEAT_PLATFORM_VERSION_MAJOR)
-list(GET SIMANEAT_PLATFORM_VERSION_PARTS 1 SIMANEAT_PLATFORM_VERSION_MINOR)
-list(GET SIMANEAT_PLATFORM_VERSION_PARTS 2 SIMANEAT_PLATFORM_VERSION_PATCH)
-if (SIMANEAT_PLATFORM_VERSION_PATCH GREATER 0)
-  math(EXPR SIMANEAT_PREVIOUS_PLATFORM_PATCH "${SIMANEAT_PLATFORM_VERSION_PATCH} - 1")
-else()
-  set(SIMANEAT_PREVIOUS_PLATFORM_PATCH "${SIMANEAT_PLATFORM_VERSION_PATCH}")
+set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "" CACHE STRING
+  "Exact simaai-memory-lib-dev version bundled by the resolved Internals artifact")
+if (SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
+  file(GLOB SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/debs/simaai-memory-lib-dev_*.deb")
+  list(LENGTH SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
+    SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT)
+  if (SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT EQUAL 1)
+    list(GET SIMANEAT_BUNDLED_MEMORY_DEV_DEBS 0
+      SIMANEAT_BUNDLED_MEMORY_DEV_DEB)
+    execute_process(
+      COMMAND dpkg-deb -f
+        "${SIMANEAT_BUNDLED_MEMORY_DEV_DEB}" Version
+      RESULT_VARIABLE SIMANEAT_MEMORY_VERSION_RESULT
+      OUTPUT_VARIABLE SIMANEAT_MEMORY_DEV_PACKAGE_VERSION
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (NOT SIMANEAT_MEMORY_VERSION_RESULT EQUAL 0)
+      set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "")
+    endif()
+  endif()
 endif()
-math(EXPR SIMANEAT_NEXT_PLATFORM_PATCH "${SIMANEAT_PLATFORM_VERSION_PATCH} + 1")
-set(SIMANEAT_PLATFORM_DEP_PACKAGE_MIN_VERSION
-  "${SIMANEAT_PLATFORM_VERSION_MAJOR}.${SIMANEAT_PLATFORM_VERSION_MINOR}.${SIMANEAT_PREVIOUS_PLATFORM_PATCH}~")
-set(SIMANEAT_PLATFORM_DEP_PACKAGE_MAX_VERSION
-  "${SIMANEAT_PLATFORM_VERSION_MAJOR}.${SIMANEAT_PLATFORM_VERSION_MINOR}.${SIMANEAT_NEXT_PLATFORM_PATCH}")
+if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS
+    AND SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
+  message(FATAL_ERROR
+    "Could not determine the exact simaai-memory-lib-dev version from the "
+    "resolved Internals artifact under deps/debs. Core package dependencies "
+    "must follow the bundled package; they must not be inferred from "
+    "platform-version.")
+endif()
 
 # Debian package versions do not allow underscores. Keep branch-derived versions
 # installable by normalizing every non-Debian-version character to '-'.
@@ -1465,8 +1485,6 @@ string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPEND
 set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
   "pkg-config"
-  "simaai-memory-lib-dev (>= ${SIMANEAT_PLATFORM_DEP_PACKAGE_MIN_VERSION})"
-  "simaai-memory-lib-dev (<< ${SIMANEAT_PLATFORM_DEP_PACKAGE_MAX_VERSION})"
   "libgstreamer1.0-dev"
   "libgstreamer-plugins-base1.0-dev"
   "libgstrtspserver-1.0-dev"
@@ -1476,6 +1494,10 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
 )
+if (NOT SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
+  list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
+    "simaai-memory-lib-dev (= ${SIMANEAT_MEMORY_DEV_PACKAGE_VERSION})")
+endif()
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
     "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
