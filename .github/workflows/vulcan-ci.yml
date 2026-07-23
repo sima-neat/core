@@ -539,7 +539,7 @@ jobs:
           FAST_JOBS="${SIMA_CTEST_FAST_JOBS:-4}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "strict" \
-            --label-exclude "perf|e2e" \
+            --label-exclude "perf|e2e|authenticated-model-assets" \
             -E "^(unit_dispatcher_watchdog_test)$" \
             -j "${FAST_JOBS}" \
             --output-on-failure \
