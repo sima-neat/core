@@ -1,6 +1,6 @@
 ---
 title: Compatibility
-description: Reference for supported Neat SDK, Neat Library, DevKit software, and Model Compiler version combinations
+description: Reference for supported Neat SDK, Neat Library, Neat Apps, DevKit software, and Model Compiler version combinations
 sidebar_position: 4
 mdx:
   format: mdx
@@ -26,12 +26,14 @@ Development Environment (referred to as Neat SDK) and Neat Library pages. Those
 flows install supported default combinations.
 
 Palette Neat has several versioned components. In most cases, compatibility
-comes down to two rules:
+comes down to three rules:
 
 1. The **Neat Library** and **Neat SDK** must both be compatible
    with the DevKit software version they run or build against.
 2. The **Model Compiler** must be compatible with the **Neat SDK**
    or host environment where it is installed.
+3. Each **Neat Apps** release must use the **Neat Library** version it was built
+   and validated against.
 
 Each Neat SDK release series targets a specific DevKit software version. Patch
 revisions on the SDK may add tooling fixes without requiring a new DevKit image.
@@ -128,6 +130,25 @@ For Neat Library 0.1.0:
 <ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core@v0.1.0
 </ShellCommand>
+
+## Neat Apps
+
+Neat Apps and Neat Library follow independent release cycles, so their version
+numbers do not need to match. Use this table to identify the Neat Library
+version required by each Apps release.
+
+| Neat Apps | Compatible Neat Library |
+| :--- | :--- |
+| [**0.4.0**](https://github.com/sima-neat/apps/releases/tag/v0.4.0) | **0.3.0** |
+
+Install Apps 0.4.0 from a compatible Neat SDK or DevKit:
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install apps@v0.4.0
+</ShellCommand>
+
+The Apps installer installs the exact Neat Library artifact recorded by the
+Apps package. You do not need to install that dependency separately.
 
 ## Model Compiler
 
