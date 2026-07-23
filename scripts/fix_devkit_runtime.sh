@@ -10,6 +10,8 @@ EV74_FIRMWARE_TARGET="/lib/firmware/modalix-cvu-fw"
 EV74_FIRMWARE_SHA_FILE="/usr/share/sima-neat-firmware/modalix-cvu-fw.sha256"
 DISPATCHER_GLOBAL_LIB_DIR="${NEAT_RECOVERY_DISPATCHER_GLOBAL_LIB_DIR:-/usr/lib/aarch64-linux-gnu}"
 DISPATCHER_QUARANTINE_DIR="${NEAT_RECOVERY_DISPATCHER_QUARANTINE_DIR:-/var/lib/sima-neat/quarantine/dispatcher}"
+RECOVERY_STEP_TIMEOUT_SECONDS="${NEAT_RECOVERY_STEP_TIMEOUT_SECONDS:-120}"
+RECOVERY_STEP_KILL_GRACE_SECONDS="${NEAT_RECOVERY_STEP_KILL_GRACE_SECONDS:-10}"
 
 if [[ $# -gt 0 ]]; then
   pass="$1"
@@ -20,8 +22,16 @@ run_step() {
   local label="$1"
   shift
   printf "[recovery] %s...\n" "$label"
-  printf '%s\n' "$pass" | sudo -S -p '' "$@"
+  printf '%s\n' "$pass" | timeout \
+    --foreground \
+    --kill-after="${RECOVERY_STEP_KILL_GRACE_SECONDS}s" \
+    "${RECOVERY_STEP_TIMEOUT_SECONDS}s" \
+    sudo -S -p '' "$@"
   local rc=$?
+  if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+    printf "[recovery] %s timed out after %ss (kill grace %ss)\n" \
+      "$label" "$RECOVERY_STEP_TIMEOUT_SECONDS" "$RECOVERY_STEP_KILL_GRACE_SECONDS" >&2
+  fi
   printf "[recovery] %s rc=%d\n" "$label" "$rc"
   return $rc
 }
