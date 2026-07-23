@@ -321,17 +321,39 @@ def test_sdk_status_prints_exposed_ports_from_port_map(tmp_path: Path) -> None:
             "SYSROOT": str(sysroot),
             "NEAT_PORT_MAP_FILE": str(port_map),
             "CONTAINER_HOST_IP": "192.0.2.10",
+            "NFS_SERVER_HOST_IP": "192.0.2.20",
+            "OPENVSCODE_SERVER_HTTPS_PORT": "10000",
+            "OPENVSCODE_SERVER_TOKEN": "test-token",
+            "OPENVSCODE_WORKSPACE": "/workspace",
         }
     )
 
     proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
 
     assert proc.returncode == 0, proc.stderr
-    assert "Exposed Ports" in proc.stdout
+    assert "Web Access" in proc.stdout
     assert any(
-        line.split() == ["Insight", "Web", "UI", "https://192.0.2.10:9900"]
+        line.split() == ["Insight", "(local)", "https://127.0.0.1:9900"]
         for line in proc.stdout.splitlines()
     )
+    assert any(
+        line.split() == ["Insight", "(remote)", "https://192.0.2.20:9900"]
+        for line in proc.stdout.splitlines()
+    )
+    assert any(
+        line.split()
+        == ["VS", "Code", "(local)", "https://127.0.0.1:10000/?tkn=test-token&folder=/workspace"]
+        for line in proc.stdout.splitlines()
+    )
+    assert any(
+        line.split()
+        == ["VS", "Code", "(remote)", "https://192.0.2.20:10000/?tkn=test-token&folder=/workspace"]
+        for line in proc.stdout.splitlines()
+    )
+    assert "Local access uses a browser on this SDK host; remote access uses another machine." in proc.stdout
+    assert "Prefer the local URL on this host; it remains valid even if the host network IP changes." in proc.stdout
+    assert "VS Code URLs contain an access token; do not share them." in proc.stdout
+    assert "Exposed Ports" in proc.stdout
     assert "Name               Protocol Host Port (Start) Host Port (End)" in proc.stdout
     assert any(line.split() == ["mainUI", "tcp", "9900", "-"] for line in proc.stdout.splitlines())
     assert any(
@@ -366,14 +388,44 @@ def test_sdk_status_colorizes_insight_web_ui_url(tmp_path: Path) -> None:
             "SYSROOT": str(sysroot),
             "NEAT_PORT_MAP_FILE": str(port_map),
             "CONTAINER_HOST_IP": "192.0.2.10",
+            "NFS_SERVER_HOST_IP": "192.0.2.20",
+            "OPENVSCODE_SERVER_HTTPS_PORT": "10000",
+            "OPENVSCODE_SERVER_TOKEN": "test-token",
         }
     )
 
     proc = run_neat(tmp_path, ["--offline", "--color=always"], env)
 
     assert proc.returncode == 0, proc.stderr
-    assert "\x1b[1m\x1b[0;32mInsight Web UI" in proc.stdout
-    assert "\x1b[1m\x1b[0;32mhttps://192.0.2.10:9900\x1b[0m" in proc.stdout
+    assert "\x1b[1m\x1b[0;32mInsight (local)" in proc.stdout
+    assert "\x1b[1m\x1b[0;32mhttps://127.0.0.1:9900\x1b[0m" in proc.stdout
+    assert "\x1b[1m\x1b[0;32mVS Code (remote)" in proc.stdout
+    assert "\x1b[1m\x1b[0;32mhttps://192.0.2.20:10000/?tkn=test-token&folder=/workspace\x1b[0m" in proc.stdout
+
+
+def test_sdk_status_prints_vscode_urls_without_port_map(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    sdk_release = tmp_path / "sdk-release"
+    sdk_release.write_text("SDK Version = 10.0.0.244\neLXr Version = 2.0.0\n", encoding="utf-8")
+    env.update(
+        {
+            "ELXR_SDK_RELEASE_FILE": str(sdk_release),
+            "NFS_SERVER_HOST_IP": "192.0.2.20",
+            "OPENVSCODE_SERVER_HTTPS_PORT": "10000",
+            "OPENVSCODE_SERVER_TOKEN": "test-token",
+            "OPENVSCODE_WORKSPACE": "/workspace",
+        }
+    )
+
+    proc = run_neat(tmp_path, ["--offline", "--color=never"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "Insight (local)" not in proc.stdout
+    assert "https://127.0.0.1:10000/?tkn=test-token&folder=/workspace" in proc.stdout
+    assert "https://192.0.2.20:10000/?tkn=test-token&folder=/workspace" in proc.stdout
+    assert "Exposed Ports" not in proc.stdout
 
 
 def test_json_status_exports_components_and_ports(tmp_path: Path) -> None:
@@ -450,6 +502,13 @@ def test_json_status_exports_components_and_ports(tmp_path: Path) -> None:
         "hostPortEnd": None,
     } in payload["exposedPorts"]
     assert "Coding Agent Playbooks" not in proc.stdout
+
+    env["NFS_SERVER_HOST_IP"] = "192.0.2.20"
+    proc = run_neat(tmp_path, ["--json"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["insight"]["webUiUrl"] == "https://192.0.2.20:9900"
 
 
 def test_json_status_offline_skips_network(tmp_path: Path) -> None:

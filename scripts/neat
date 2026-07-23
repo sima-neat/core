@@ -86,6 +86,13 @@ Environment:
   NEAT_UPDATE_CONNECT_TIMEOUT_SECONDS
                            Per-request update check connect timeout in seconds (default: 3)
   NEAT_PORT_MAP_FILE       SDK exposed-port map (default: $HOME/.insight-config/neat-port-map.json)
+  NFS_SERVER_HOST_IP       SDK host address used for network-access URLs
+  OPENVSCODE_SERVER_HTTPS_PORT
+                           Browser VS Code HTTPS port
+  OPENVSCODE_SERVER_TOKEN  Browser VS Code access token
+  OPENVSCODE_SERVER_WITHOUT_TOKEN
+                           Set to 1 only to allow access without authentication
+  OPENVSCODE_WORKSPACE     Browser VS Code workspace path (default: /workspace)
   NEAT_MODEL_COMPILER_DIR  Model Compiler extension directory (default: /sdk-extensions/model-compiler)
   SIMA_CLI_BIN             sima-cli executable path/name override
   SYSROOT                  SDK sysroot path (default: /opt/toolchain/aarch64/modalix)
@@ -855,6 +862,55 @@ format_insight_service_state() {
   printf 'status=%s%s%s' "${state_color}" "${INSIGHT_SERVICE_STATE}" "${RESET}"
 }
 
+print_web_access_urls() {
+  local insight_web_ui_port="$1"
+  local network_host="${NFS_SERVER_HOST_IP:-${CONTAINER_HOST_IP:-}}"
+  local vscode_port="${OPENVSCODE_SERVER_HTTPS_PORT:-}"
+  local vscode_token="${OPENVSCODE_SERVER_TOKEN:-}"
+  local vscode_workspace="${OPENVSCODE_WORKSPACE:-/workspace}"
+  local vscode_query=""
+
+  if [[ -z "${insight_web_ui_port}" && -z "${vscode_port}" ]]; then
+    return 0
+  fi
+
+  printf '\n%sWeb Access%s\n' "${BOLD}" "${RESET}"
+  printf '  %sLocal access uses a browser on this SDK host; remote access uses another machine.%s\n' \
+    "${DIM}" "${RESET}"
+  printf '  %sPrefer the local URL on this host; it remains valid even if the host network IP changes.%s\n' \
+    "${DIM}" "${RESET}"
+  if [[ -n "${insight_web_ui_port}" ]]; then
+    print_colored_kv "Insight (local)" "https://127.0.0.1:${insight_web_ui_port}" "${GREEN}"
+    if [[ -n "${network_host}" && "${network_host}" != "127.0.0.1" ]]; then
+      print_colored_kv "Insight (remote)" "https://${network_host}:${insight_web_ui_port}" "${GREEN}"
+    fi
+  fi
+
+  if [[ -n "${vscode_port}" ]]; then
+    if [[ -n "${vscode_token}" ]]; then
+      vscode_query="?tkn=${vscode_token}"
+    elif [[ "${OPENVSCODE_SERVER_WITHOUT_TOKEN:-0}" != "1" ]]; then
+      printf '  %s%-18s%s %sOPENVSCODE_SERVER_TOKEN is not available in this shell%s\n' \
+        "${BOLD}" "VS Code" "${RESET}" "${YELLOW}" "${RESET}"
+      return 0
+    fi
+    if [[ -n "${vscode_workspace}" ]]; then
+      if [[ -n "${vscode_query}" ]]; then
+        vscode_query="${vscode_query}&folder=${vscode_workspace}"
+      else
+        vscode_query="?folder=${vscode_workspace}"
+      fi
+    fi
+    print_colored_kv "VS Code (local)" "https://127.0.0.1:${vscode_port}/${vscode_query}" "${GREEN}"
+    if [[ -n "${network_host}" && "${network_host}" != "127.0.0.1" ]]; then
+      print_colored_kv "VS Code (remote)" "https://${network_host}:${vscode_port}/${vscode_query}" "${GREEN}"
+    fi
+    if [[ -n "${vscode_token}" ]]; then
+      printf '  %sVS Code URLs contain an access token; do not share them.%s\n' "${DIM}" "${RESET}"
+    fi
+  fi
+}
+
 print_exposed_ports() {
   local rows
   local insight_web_ui_port=""
@@ -862,10 +918,15 @@ print_exposed_ports() {
   local protocol=""
   local host_start=""
   local host_end=""
-  if [[ "${ENV_MODE}" != "elxr-sdk" || ! -f "${PORT_MAP_FILE}" ]]; then
+  if [[ "${ENV_MODE}" != "elxr-sdk" ]]; then
+    return 0
+  fi
+  if [[ ! -f "${PORT_MAP_FILE}" ]]; then
+    print_web_access_urls ""
     return 0
   fi
   if ! have_cmd python3; then
+    print_web_access_urls ""
     printf '\n%sExposed Ports%s\n' "${BOLD}" "${RESET}"
     printf '  %spython3 not found; unable to read %s%s\n' "${YELLOW}" "${PORT_MAP_FILE}" "${RESET}"
     return 0
@@ -911,21 +972,18 @@ for row in rows:
 PY
 )"
 
-  if [[ -z "${rows}" ]]; then
-    return 0
-  fi
-
-  printf '\n%sExposed Ports%s\n' "${BOLD}" "${RESET}"
   while IFS=$'\t' read -r name protocol host_start host_end; do
     if [[ "${name}" == "mainUI" && -n "${host_start}" ]]; then
       insight_web_ui_port="${host_start}"
       break
     fi
   done <<< "${rows}"
-  if [[ -n "${CONTAINER_HOST_IP:-}" && -n "${insight_web_ui_port}" ]]; then
-    print_colored_kv "Insight Web UI" "https://${CONTAINER_HOST_IP}:${insight_web_ui_port}" "${GREEN}"
-    echo
+  print_web_access_urls "${insight_web_ui_port}"
+  if [[ -z "${rows}" ]]; then
+    return 0
   fi
+
+  printf '\n%sExposed Ports%s\n' "${BOLD}" "${RESET}"
   printf '  %-18s %-8s %-17s %-15s\n' "Name" "Protocol" "Host Port (Start)" "Host Port (End)"
   printf '  %-18s %-8s %-17s %-15s\n' "------------------" "--------" "-----------------" "---------------"
   while IFS=$'\t' read -r name protocol host_start host_end; do
@@ -990,7 +1048,7 @@ print_status_json() {
     NEAT_JSON_MODEL_COMPILER_VERSION="${MODEL_COMPILER_VERSION}" \
     NEAT_JSON_MODEL_COMPILER_DETAIL="${MODEL_COMPILER_DETAIL}" \
     NEAT_JSON_PORT_MAP_FILE="${PORT_MAP_FILE}" \
-    NEAT_JSON_CONTAINER_HOST_IP="${CONTAINER_HOST_IP:-}" \
+    NEAT_JSON_NETWORK_HOST="${NFS_SERVER_HOST_IP:-${CONTAINER_HOST_IP:-}}" \
     python3 - <<'PY'
 import json
 import os
@@ -1075,10 +1133,10 @@ main_ui_port = next(
     (row["hostPortStart"] for row in ports if row["name"] == "mainUI" and row["hostPortStart"]),
     None,
 )
-container_host_ip = env("NEAT_JSON_CONTAINER_HOST_IP")
+network_host = env("NEAT_JSON_NETWORK_HOST")
 insight_web_ui_url = (
-    f"https://{container_host_ip}:{main_ui_port}"
-    if container_host_ip and main_ui_port
+    f"https://{network_host}:{main_ui_port}"
+    if network_host and main_ui_port
     else None
 )
 
