@@ -1947,35 +1947,7 @@ endfunction()
 # authenticated/manual runs, but identify them so non-interactive CI does not
 # block waiting for device authorization.
 foreach(test
-    async_yolov8_tput_test
-    graph_migration_legacy_preproc_yolov8_matrix_test
-    graph_migration_legacy_yolov8_variant_route_matrix_test
-    graph_migration_phase3_connected_yolo_route_test
-    graph_migration_phase3_lazy_dynamic_spec_test
-    graph_migration_phase3_yolov8_bgr_bf16_preproc_test
-    graph_migration_unified_preproc_yolov8_matrix_test
-    graph_migration_unified_yolov8_graph_model_composition_test
-    graph_migration_unified_yolov8_variant_route_matrix_test
-    graphpipes_yolo_metadata_sender_16stream_test
-    hybrid_graph_rtsp_resnet50_tput_test
-    macro_mixed_multistream_multimodel_preproc_pressure_repro
-    macro_mixed_multistream_multimodel_tput_smoke
-    mnist_async_consumer_visibility_control_test
-    mnist_preproc_channels1_accuracy_test
-    model_resnet50_multi_test
-    model_unique_names_test
-    modelzoo_bulk_models_test
-    preproc_yolov8_matrix_test
-    resnet50_modelpack_direct
-    resnet50_modelpack_jpeg
-    resnet50_modelpack_rtsp
-    resnet50_neatargmax_test
-    seedless_yolov8_preproc_input_max_smoke_test
-    ssd_mobilenet_e2e_test
-    sync_yolov8_test
-    sync_yolov8_test_detessdequant
     unit_boxdecode_render_manifest_from_model_test
-    unit_dispatcher_watchdog_test
     unit_model_infer_output_name_test
     unit_model_input_spec_contract_test
     unit_model_metadata_test
@@ -1989,11 +1961,7 @@ foreach(test
     unit_route_capability_mpk_static_contract_test
     unit_sima_boxdecode_node_fragment_test
     unit_yolov8_contract_subset_test
-    unit_yolov8_mla_handoff_segment_test
-    yolov8_dynamic_boxdecode_geometry_async_test
-    yolov8_dynamic_boxdecode_geometry_sync_test
-    yolov8_model_benchmark_metrics_test
-    yolov8_variant_route_matrix_test)
+    unit_yolov8_mla_handoff_segment_test)
   if (TEST ${test})
     set_property(TEST ${test} APPEND PROPERTY LABELS "authenticated-model-assets")
   endif()

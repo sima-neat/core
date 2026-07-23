@@ -590,7 +590,7 @@ jobs:
           else
             ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
-              --label-exclude "perf|llima|authenticated-model-assets" \
+              --label-exclude "perf|llima" \
               -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
@@ -635,7 +635,7 @@ jobs:
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
-            --label-exclude "llima|disabled|authenticated-model-assets" \
+            --label-exclude "llima|disabled" \
             -E "^(modelzoo_bulk_models_test)$" \
             --output-on-failure \
             --no-tests=error
