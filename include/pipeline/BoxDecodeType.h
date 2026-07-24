@@ -31,10 +31,19 @@ namespace simaai::neat {
  * 32-channel mask-coefficient heads, and a trailing mask prototype.
  * `YoloV26Pose` uses the same raw l/t/r/b bbox heads, 1-channel pose scores,
  * and 51-channel keypoint heads.
- * `Ssd` covers the SSD detector family (any feature-map count / input size):
- * grouped per-level localization heads (depth = 4 * priors-per-cell) paired with
- * class-confidence heads (depth = num_classes * priors-per-cell), decoded against
- * prior/anchor boxes with softmax class scores.
+ * `Ssd` supports exactly two SSD recipes (not a generic SSD decoder), validated
+ * against the box-decode head geometry at compile time: SSD300 (feature maps
+ * {38,19,10,5,3,1}, priors-per-cell {4,6,6,6,4,4}, softmax class scores) and
+ * SSD-MobileNetV2-COCO (feature maps {19,10,5,3,2,1}, priors-per-cell
+ * {3,6,6,6,6,6}, per-class sigmoid scores). Both are 300x300 models, use grouped
+ * per-level localization heads (depth = 4 * priors-per-cell) paired with
+ * class-confidence heads (depth = num_classes * priors-per-cell), and require a
+ * stretch preprocessing resize; any other head set, model frame or resize is
+ * rejected.
+ *
+ * SSD `num_classes` contract: the class count is always derived from the
+ * confidence-head depth. An explicit value may only narrow the reported range
+ * (`<=` the encoded depth); a larger value is rejected rather than warned about.
  *
  * @ingroup pipeline
  */
@@ -63,7 +72,7 @@ enum class BoxDecodeType : std::int32_t {
   YoloV26Seg = 19,  ///< YOLO26 segmentation heads.
   YoloV6 = 20,      ///< YOLOv6 raw l/t/r/b distance heads.
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
-  Ssd = 22,         ///< SSD-family detection (prior/anchor decode, softmax class scores).
+  Ssd = 22,         ///< SSD detection, two 300x300 recipes; activation is recipe-specific.
 };
 
 /**
@@ -324,9 +333,10 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "YOLOX raw-head contract: interleaved [bbox_i, obj_logit_i, class_logit_i] "
            "heads with raw xywh boxes, objectness logits, and class logits.";
   case BoxDecodeType::Ssd:
-    return "SSD contract: per-level grouped localization heads (depth=4*priors-per-cell) "
-           "paired with class-confidence heads (depth=num_classes*priors-per-cell), decoded "
-           "against prior/anchor boxes with softmax class scores.";
+    return "SSD contract (two recipes only): per-level grouped localization heads "
+           "(depth=4*priors-per-cell) paired with class-confidence heads "
+           "(depth=num_classes*priors-per-cell). SSD300 (feats {38,19,10,5,3,1}) uses softmax "
+           "class scores; SSD-MobileNetV2-COCO (feats {19,10,5,3,2,1}) uses per-class sigmoid.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

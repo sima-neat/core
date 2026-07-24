@@ -163,7 +163,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
-| `BoxDecodeType::Ssd` | `ssd` | SSD-family detection (any feature-map count / input size) |
+| `BoxDecodeType::Ssd` | `ssd` | SSD detection — two supported recipes: SSD300 and SSD-MobileNetV2-COCO |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | R-CNN proposal stage |
@@ -192,14 +192,38 @@ Advanced tensor-contract rules:
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
 - `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
-- `Ssd` uses grouped per-level localization heads (depth = `4 * priors-per-cell`)
-  paired with class-confidence heads (depth = `num_classes * priors-per-cell`).
-  Boxes are decoded against the model's prior/anchor boxes and class scores use a
-  softmax over the class dimension (background included). The decode is generic
-  across SSD variants: the feature-map count, input size, and per-level
-  priors-per-cell are read from the model archive, and the class count is derived
-  from the loc/conf head geometry. Leave `decode_type_option` as `Auto`; the
-  grouped-by-role layout is selected automatically.
+- `Ssd` is **not** a generic SSD decoder. It supports exactly **two recipes**,
+  and the box-decode head geometry is validated against them at compile time —
+  any other head set is rejected with a clear error rather than silently decoded:
+  - **SSD300** (`dboxes300_coco`): 300×300 input, feature maps
+    `{38,19,10,5,3,1}`, priors-per-cell `{4,6,6,6,4,4}`, confidence channel order
+    `class*A + anchor`, class scores via **softmax** over the class dimension
+    (background at index 0 included).
+  - **SSD-MobileNetV2-COCO** (`ssd_anchor_generator`): 300×300 input, feature
+    maps `{19,10,5,3,2,1}`, priors-per-cell `{3,6,6,6,6,6}`, confidence channel
+    order `anchor*C + class`, class scores via per-class **sigmoid** (background
+    ignored).
+
+  Both recipes use grouped per-level localization heads (depth =
+  `4 * priors-per-cell`) paired with class-confidence heads (depth =
+  `num_classes * priors-per-cell`), FasterRcnnBoxCoder variance scaling
+  (`scale_xy 0.1`, `scale_wh 0.2`), and a **stretch** (anisotropic) preprocessing
+  resize. The score activation is fixed by the recipe (matching the on-device
+  decoder), and the grouped-by-role layout is selected automatically — leave
+  `decode_type_option` as `Auto`. A non-grouped layout token is rejected.
+
+  The **300×300 model frame is part of the recipe**, not just the head geometry:
+  a resolved preprocess resize target or model-dimension override of any other
+  size is rejected at build time, because the prior tables and the stretch
+  back-projection are only valid at that frame.
+
+  **`num_classes` contract.** The class count is always derived from the
+  confidence-head depth (`conf_depth / priors-per-cell`, background at index 0
+  included). An explicit `num_classes` may only **narrow** the reported range —
+  it must be `<=` the encoded depth, and the runtime clamps the reported
+  foreground channels accordingly. A value **larger** than the encoded depth is a
+  contract error and is rejected at build time; the heads cannot supply those
+  classes. Leave it unset to use the full encoded depth.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
 - `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do

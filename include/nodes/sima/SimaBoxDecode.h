@@ -79,8 +79,9 @@ struct BoxDecodeOptionsInternal;
  * **Supported families.**
  *
  * Supported decode families include YOLO, YOLOv5/v7/v8/v9/v10 detection and segmentation
- * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, the SSD detector
- * family (prior/anchor decode with softmax class scores), DETR, EfficientDet, RCNN stage 1,
+ * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, SSD (two supported
+ * recipes only: SSD300 with softmax class scores and SSD-MobileNetV2-COCO with per-class sigmoid,
+ * both 300x300 and requiring a stretch preprocessing resize), DETR, EfficientDet, RCNN stage 1,
  * and CenterNet. `BoxDecodeType::Unspecified` is only a sentinel and fails before runtime.
  *
  * **Score and layout notes.**

@@ -1559,6 +1559,17 @@ if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(ssd_mobilenet_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# Device-free SSD contract coverage. No SKIP_RETURN_CODE: it must fail, never skip.
+add_pipeline_test(
+  ssd300_contract_e2e_test
+  e2e_pipelines/obj_detection/ssd300_contract_e2e_test.cpp
+)
+
+if (NOT ssd300_contract_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST ssd300_contract_e2e_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;contract;strict")
+endif()
+
 add_pipeline_test(
   sync_yolov8_test_detessdequant
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
