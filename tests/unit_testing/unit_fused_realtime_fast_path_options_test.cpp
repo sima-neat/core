@@ -1238,6 +1238,8 @@ RUN_TEST(
               "each H265 branch must render a uniquely named RTP packetizer");
       require(count_occurrences(h265_video_pipeline, "pt=98") >= 2U,
               "each H265 VideoSender branch must use payload type 98");
+      require(count_occurrences(h265_video_pipeline, "sleep-time=250") == 2U,
+              "each fused H265 VideoSender branch must pace RTP packets");
       require(h265_video_pipeline.find("rtph265pay name=pay0") == std::string::npos,
               "fused H265 VideoSender branches must not retain the fixed pay0 name");
 

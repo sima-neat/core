@@ -108,6 +108,7 @@ RUN_TEST(
         require_contains(backend, "h265parse", "VideoSender H265 parser missing");
         require_contains(backend, "rtph265pay", "VideoSender H265 packetizer missing");
         require_contains(backend, "pt=98", "VideoSender H265 RTP payload type mismatch");
+        require_contains(backend, "sleep-time=250", "VideoSender H265 packet pacing missing");
         require_contains(backend, "port=9002", "VideoSender H265 UDP port mismatch");
         require(backend.find("neatencoder") == std::string::npos,
                 "VideoSender H265 must not encode raw video");

@@ -17,6 +17,9 @@
 namespace simaai::neat::nodes::groups {
 namespace {
 
+// Bounds synchronized multi-stream IDR bursts without changing the board TX queue.
+constexpr int kH265RtpPacketPacingUs = 250;
+
 class H265ParseNode final : public simaai::neat::Node, public simaai::neat::OutputSpecProvider {
 public:
   explicit H265ParseNode(int config_interval) : config_interval_(config_interval) {}
@@ -59,14 +62,16 @@ public:
   NodeCapsBehavior caps_behavior() const override {
     return NodeCapsBehavior::Dynamic;
   }
-  std::string backend_fragment(int) const override {
+  std::string backend_fragment(int node_index) const override {
     std::ostringstream fragment;
     fragment << "rtph265pay name=pay0 pt=" << payload_type_
-             << " config-interval=" << config_interval_ << " timestamp-offset=0";
+             << " config-interval=" << config_interval_ << " timestamp-offset=0"
+             << " ! identity name=n" << node_index
+             << "_h265_packet_pacer silent=true sleep-time=" << kH265RtpPacketPacingUs;
     return fragment.str();
   }
-  std::vector<std::string> element_names(int) const override {
-    return {"pay0"};
+  std::vector<std::string> element_names(int node_index) const override {
+    return {"pay0", "n" + std::to_string(node_index) + "_h265_packet_pacer"};
   }
   simaai::neat::OutputSpec output_spec(const simaai::neat::OutputSpec&) const override {
     simaai::neat::OutputSpec out;
