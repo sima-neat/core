@@ -1089,14 +1089,26 @@ ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt) {
   switch (memory_policy) {
   case InputMemoryPolicy::Ev74:
     resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_EV74);
+    resolved.cached_cpu_mapping = true;
     resolved.target_source = "policy";
     break;
   case InputMemoryPolicy::Dms0:
     resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS0);
+    /*
+     * Model lowering selects DMS0 when MLA is the first effective consumer.
+     * The native MLA ABI imports dma-bufs, and simaai-memory intentionally
+     * refuses to export a legacy cached allocation: exporting it would create
+     * cached and coherent aliases for the same DMS resource range. Allocate
+     * coherent storage at the source rather than hiding an extra staging copy
+     * in ProcessMLA. CPU producers may still map and populate the coherent
+     * allocation before ownership is transferred to MLA.
+     */
+    resolved.cached_cpu_mapping = false;
     resolved.target_source = "policy";
     break;
   case InputMemoryPolicy::SystemMemory:
     resolved.use_simaai_memory = false;
+    resolved.cached_cpu_mapping = true;
     resolved.target_source = "policy";
     break;
   case InputMemoryPolicy::Auto: {
@@ -1104,14 +1116,18 @@ ResolvedInputMemoryPolicy resolve_input_memory_policy(const InputOptions& opt) {
         upper_copy(pipeline_internal::env_str("SIMA_INPUTSTREAM_TENSOR_TARGET", ""));
     if (target_override == "EV74") {
       resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_EV74);
+      resolved.cached_cpu_mapping = true;
       resolved.target_source = "env";
     } else if (target_override == "DMS0") {
       resolved.target_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS0);
+      resolved.cached_cpu_mapping = false;
       resolved.target_source = "env";
     } else {
       resolved.target_flag =
           static_cast<std::uint64_t>((bf16_tensor || ifm0_hint) ? GST_SIMAAI_MEMORY_TARGET_DMS0
                                                                 : GST_SIMAAI_MEMORY_TARGET_EV74);
+      resolved.cached_cpu_mapping =
+          resolved.target_flag != static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS0);
       resolved.target_source = "heuristic";
     }
   } break;
@@ -2191,8 +2207,17 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
       gst_simaai_segment_memory_init_once();
-      GstMemoryFlags flags =
-          static_cast<GstMemoryFlags>(target_flag | GST_SIMAAI_MEMORY_FLAG_CACHED);
+      /*
+       * Do not unconditionally add CACHED here. DMS0 is the direct-MLA
+       * ingress policy and must remain coherent so its parent allocation can
+       * be exported as a dma-buf without contradictory aliases. This keeps
+       * the zero-copy ownership boundary explicit; ProcessMLA never allocates
+       * or copies through a private fallback buffer.
+       */
+      GstMemoryFlags flags = static_cast<GstMemoryFlags>(target_flag);
+      if (resolved.cached_cpu_mapping) {
+        flags = static_cast<GstMemoryFlags>(flags | GST_SIMAAI_MEMORY_FLAG_CACHED);
+      }
       const bool tensor_input = tensor_media;
       const std::string segment_name =
           !opt.buffer_name.empty() ? opt.buffer_name

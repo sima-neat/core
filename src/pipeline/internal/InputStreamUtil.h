@@ -166,6 +166,13 @@ struct InputBufferPoolGuard {
 struct ResolvedInputMemoryPolicy {
   bool use_simaai_memory = true;
   std::uint64_t target_flag = 0;
+  /*
+   * DMS0 storage that can become an MLA dma-buf must have one coherent
+   * mapping policy. Keep cacheability in the resolved policy instead of
+   * inferring it again in the allocator: EV74 ingress remains cached for CPU
+   * preprocessing, while direct MLA ingress is coherent/exportable.
+   */
+  bool cached_cpu_mapping = true;
   const char* target_source = "heuristic";
 };
 

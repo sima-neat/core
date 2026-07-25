@@ -614,6 +614,24 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
   if (mem_flags == 0) {
     mem_flags = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED);
   }
+  /*
+   * A transfer creates new destination storage, so its cache policy must be
+   * selected for the destination owner rather than inherited blindly from the
+   * source.  The native MLA ABI consumes a dma-buf.  simaai-memory correctly
+   * rejects exporting a legacy cached DMS allocation because a second
+   * coherent dma-buf alias for the same physical range would violate the
+   * single-cacheability contract.  Therefore every explicit SIMA_MLA transfer
+   * creates coherent/exportable storage, including Tensor::mla(true), model
+   * benchmark inputs, and Model::Runner inputs that bypass appsrc's own pool.
+   *
+   * SIMA_CVU keeps the historical cached CPU mapping: CVU/preprocess inputs
+   * are commonly populated and inspected by the CPU before device execution.
+   * This is not a staging fallback and adds no copy to ProcessMLA; the copy in
+   * this function is the caller-requested CPU/device placement transfer.
+   */
+  if (target.type == DeviceType::SIMA_MLA) {
+    mem_flags &= ~static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED);
+  }
   // We will map/write into the destination; do not request read-only memory.
   mem_flags &= ~static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_RDONLY);
 

@@ -1935,7 +1935,8 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   return t;
 }
 
-Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index) {
+Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index,
+                                       InputMemoryPolicy ingress_memory_policy) {
   if (spec.shape.empty()) {
     throw std::runtime_error("Model::benchmark: input_specs() entry has empty shape");
   }
@@ -2012,6 +2013,31 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
       tensor.layout = TensorLayout::HWC;
       tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
     }
+  }
+  /*
+   * Synthetic inputs must obey the same resolved ingress contract as public
+   * Model::Runner inputs.  The old unconditional tensor.cvu() happened to be
+   * valid while every model entered an EV74/preprocess stage, but it sends a
+   * cached EV74 allocation straight into ProcessMLA for a native MLA-first
+   * graph.  The direct kernel backend cannot export that legacy cached
+   * allocation as a dma-buf without creating conflicting cache aliases.
+   *
+   * Dms0 therefore means an explicit coherent Tensor::mla(true) destination;
+   * Ev74 retains the cached CVU placement needed by preprocessing.  Keeping
+   * this selection at synthetic-input construction also means the benchmark
+   * performs no hidden per-frame placement copy in the timed path.
+   */
+  switch (ingress_memory_policy) {
+  case InputMemoryPolicy::Dms0:
+    return tensor.mla(true);
+  case InputMemoryPolicy::Ev74:
+    return tensor.cvu();
+  case InputMemoryPolicy::SystemMemory:
+    return tensor;
+  case InputMemoryPolicy::Auto:
+    // Model::input_appsrc_options_list() normally resolves Auto. Preserve the
+    // historical CVU-safe fallback for malformed/third-party model metadata.
+    return tensor.cvu();
   }
   return tensor.cvu();
 }
@@ -2154,8 +2180,15 @@ TensorList make_synthetic_benchmark_inputs(const Model& model) {
   }
   TensorList inputs;
   inputs.reserve(specs.size());
+  const std::vector<InputOptions> ingress_options = model.input_appsrc_options_list(true);
+  if (!ingress_options.empty() && ingress_options.size() != specs.size()) {
+    throw std::runtime_error(
+        "Model::benchmark: input spec/options cardinality mismatch for synthetic inputs");
+  }
   for (std::size_t i = 0; i < specs.size(); ++i) {
-    inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
+    const InputMemoryPolicy memory_policy =
+        ingress_options.empty() ? InputMemoryPolicy::Auto : ingress_options[i].memory_policy;
+    inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i, memory_policy));
   }
   attach_benchmark_preprocess_meta_for_boxdecode(model, inputs);
   return inputs;

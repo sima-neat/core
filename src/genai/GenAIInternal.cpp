@@ -106,7 +106,19 @@ void ensure_llima_runtime_connected() {
   static std::once_flag once;
   std::call_once(once, [] {
     simaai::llima::set_log_level(spdlog::level::warn);
-    simaai::llima::connect_mla_rt({});
+    /*
+     * LLiMa's direct-kernel backend deliberately has no MLA-RT transport to
+     * connect.  connect_mla() creates the process-wide direct /dev/mla
+     * session while preserving the rest of Neat's existing initialization
+     * sequence below (environment parsing and sample defaults).  Do not use
+     * the higher-level llima::connect() here: it would repeat those steps and
+     * replace Neat's logger with a file logger as an unrelated side effect.
+     *
+     * The empty argument vector is retained for source compatibility with
+     * LLiMa's transition API; direct-kernel sessions intentionally ignore the
+     * historical MLA-RT command-line arguments.
+     */
+    simaai::llima::connect_mla({});
     simaai::llima::MLAModelWithBuffer::read_env_vars();
     simaai::llima::ImageProcessor::read_env_vars();
     simaai::llima::initialize_default_sample_files();

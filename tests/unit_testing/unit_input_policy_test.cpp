@@ -27,6 +27,31 @@ RUN_TEST(
         require(out.resolved_max_input_depth == 3, "model policy: default RGB max depth must be 3");
       }
 
+      // Direct MLA ingress must resolve to a coherent/exportable DMS0
+      // allocation. EV74 ingress remains cached because it is consumed by CPU
+      // and CVU preprocessing before any MLA ownership transfer.
+      {
+        InputOptions dms0;
+        dms0.payload_type = PayloadType::Tensor;
+        dms0.format = "EVXX_BFLOAT16";
+        dms0.memory_policy = InputMemoryPolicy::Dms0;
+        const ResolvedInputMemoryPolicy dms0_policy =
+            resolve_input_memory_policy(dms0);
+        require(dms0_policy.use_simaai_memory,
+                "DMS0 ingress must use SiMa device-visible storage");
+        require(!dms0_policy.cached_cpu_mapping,
+                "DMS0/direct-MLA ingress must use the coherent dma-buf contract");
+
+        InputOptions ev74 = dms0;
+        ev74.memory_policy = InputMemoryPolicy::Ev74;
+        const ResolvedInputMemoryPolicy ev74_policy =
+            resolve_input_memory_policy(ev74);
+        require(ev74_policy.use_simaai_memory,
+                "EV74 ingress must use SiMa device-visible storage");
+        require(ev74_policy.cached_cpu_mapping,
+                "EV74 preprocessing ingress must retain its cached CPU mapping");
+      }
+
       // Model defaults are independent from dynamic runtime ingress dimensions.
       {
         ModelInputPolicyRequest req;

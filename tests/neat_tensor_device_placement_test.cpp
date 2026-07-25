@@ -126,11 +126,19 @@ int main() {
     simaai::neat::Tensor mla_force = cpu.mla(true);
     require(mla_force.device.type == simaai::neat::DeviceType::SIMA_MLA && mla_force.device.id == 0,
             "mla(true) should yield DMS0");
+    require(static_cast<bool>(mla_force.storage), "mla(true) missing destination storage");
+    require((mla_force.storage->sima_mem_flags &
+             static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED)) == 0U,
+            "MLA transfer destination must be coherent/exportable");
 
     require(static_cast<bool>(t_ev74.storage), "missing EV74 storage");
     t_ev74.storage->sima_segments = segments;
 
     simaai::neat::Tensor dms_copy = t_ev74.mla(true);
+    require(static_cast<bool>(dms_copy.storage), "EV74-to-MLA transfer missing storage");
+    require((dms_copy.storage->sima_mem_flags &
+             static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED)) == 0U,
+            "EV74-to-MLA transfer must not inherit the source cache flag");
     auto stats_mid = simaai::neat::pipeline_internal::tensor_transfer_pool_stats();
 
     GstBuffer* out_buf =
