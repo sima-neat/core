@@ -263,10 +263,33 @@ RUN_TEST(
       gst_buffer_unref(writable_probe_buffer);
 
       simaai::neat::GraphOptions options;
+      /*
+       * The intent-named surface must win over the raw compatibility field.
+       * This is the same model-level then route-level overlay used by real
+       * model graphs, reduced to a deterministic unit assertion.
+       */
+      simaai::neat::GraphOptions priority_precedence;
+      priority_precedence.processmla.workload_priority = simaai::neat::WorkloadPriority::Background;
+      priority_precedence.advanced_execution.workload_priority =
+          simaai::neat::WorkloadPriority::Foreground;
+      priority_precedence.resolve_advanced_execution();
+      require(priority_precedence.processmla.workload_priority ==
+                  simaai::neat::WorkloadPriority::Foreground,
+              "advanced workload priority must override the raw graph default");
+
+      simaai::neat::AdvancedExecutionOptions model_priority;
+      model_priority.workload_priority = simaai::neat::WorkloadPriority::Background;
+      simaai::neat::AdvancedExecutionOptions route_priority;
+      route_priority.workload_priority = simaai::neat::WorkloadPriority::Foreground;
+      model_priority.overlay(route_priority);
+      require(model_priority.workload_priority == simaai::neat::WorkloadPriority::Foreground,
+              "route workload priority must override model workload priority");
+
       options.processcvu.async = true;
       options.processmla.async = true;
       options.processmla.output_pool_buffers = 7;
       options.processmla.defer_output_invalidate = true;
+      options.processmla.workload_priority = simaai::neat::WorkloadPriority::Foreground;
       options.async_queue_depth = 4;
 
       const std::string pipeline =
@@ -339,6 +362,8 @@ RUN_TEST(
                        "fused ProcessMLA must receive the public output-pool option");
       require_contains(pipeline, "defer-output-invalidate=true",
                        "fused ProcessMLA must receive the public deferred-cache-sync option");
+      require_contains(pipeline, "workload-priority=foreground",
+                       "fused ProcessMLA must receive one resolved graph/session priority");
 
       const std::string queue = "queue max-size-buffers=4 max-size-bytes=0 max-size-time=0";
       require(count_occurrences(pipeline, queue) == 3U,
@@ -350,8 +375,11 @@ RUN_TEST(
                        "first fused queue must decouple the mux from ProcessCVU");
       require_contains(pipeline, "num-buffers=4 ! " + queue + " ! neatprocessmla",
                        "second fused queue must decouple ProcessCVU from ProcessMLA");
-      require_contains(pipeline, "defer-output-invalidate=true ! " + queue + " ! neatboxdecode",
-                       "third fused queue must decouple ProcessMLA from decode");
+      require_contains(pipeline,
+                       "defer-output-invalidate=true workload-priority=foreground ! " + queue +
+                           " ! neatboxdecode",
+                       "third fused queue must decouple ProcessMLA from decode after all resolved "
+                       "MLA context properties");
       require_contains(pipeline, "neatboxdecode name=n0_boxdecode ! appsink name=n0_output",
                        "terminal Output must stay directly connected to decode");
       require(pipeline.find("leaky=") == std::string::npos,

@@ -904,7 +904,20 @@ ProcessCvuOptions parse_processcvu_options_json(const JsonValue::JsonObject& obj
 void write_processmla_options_json(std::ostream& oss, const ProcessMlaOptions& opt) {
   oss << "{\"async\":" << (opt.async ? "true" : "false") << ","
       << "\"output_pool_buffers\":" << opt.output_pool_buffers << ","
-      << "\"defer_output_invalidate\":" << (opt.defer_output_invalidate ? "true" : "false") << "}";
+      << "\"defer_output_invalidate\":" << (opt.defer_output_invalidate ? "true" : "false")
+      << ",\"workload_priority\":\"";
+  switch (opt.workload_priority) {
+  case WorkloadPriority::Foreground:
+    oss << "foreground";
+    break;
+  case WorkloadPriority::Background:
+    oss << "background";
+    break;
+  case WorkloadPriority::Normal:
+    oss << "normal";
+    break;
+  }
+  oss << "\"}";
 }
 
 ProcessMlaOptions parse_processmla_options_json(const JsonValue::JsonObject& obj) {
@@ -913,6 +926,22 @@ ProcessMlaOptions parse_processmla_options_json(const JsonValue::JsonObject& obj
   opt.output_pool_buffers = int_field(obj, "output_pool_buffers", opt.output_pool_buffers);
   opt.defer_output_invalidate =
       bool_field(obj, "defer_output_invalidate", opt.defer_output_invalidate);
+  const std::string priority = string_field(obj, "workload_priority", "normal");
+  if (priority == "foreground") {
+    opt.workload_priority = WorkloadPriority::Foreground;
+  } else if (priority == "background") {
+    opt.workload_priority = WorkloadPriority::Background;
+  } else if (priority == "normal") {
+    opt.workload_priority = WorkloadPriority::Normal;
+  } else {
+    /*
+     * Do not silently turn a misspelled product policy into Normal.  Saved
+     * graphs are executable configuration, and a hidden priority downgrade
+     * would invalidate latency/isolation expectations.
+     */
+    throw std::runtime_error("invalid processmla workload_priority '" + priority +
+                             "'; expected foreground, normal, or background");
+  }
   return opt;
 }
 

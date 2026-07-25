@@ -15,12 +15,14 @@ def test_advanced_execution_options_roundtrip():
   # Optionals default to unset (None), not a value.
   assert ae.inference_async is None
   assert ae.preprocess_target is None
+  assert ae.workload_priority is None
   ae.preprocess_target = "EV74"
   ae.postprocess_target = "A65"
   ae.preprocess_async = True
   ae.inference_async = False  # explicit false must round-trip as False, not None
   ae.inference_output_buffers = 8
   ae.defer_output_cache_sync = False
+  ae.workload_priority = pyneat.WorkloadPriority.Foreground
   ae.internal_queue_depth = 3
   assert ae.preprocess_target == "EV74"
   assert ae.postprocess_target == "A65"
@@ -28,6 +30,7 @@ def test_advanced_execution_options_roundtrip():
   assert ae.inference_async is False
   assert ae.inference_output_buffers == 8
   assert ae.defer_output_cache_sync is False
+  assert ae.workload_priority == pyneat.WorkloadPriority.Foreground
   assert ae.internal_queue_depth == 3
 
 
@@ -50,7 +53,9 @@ def test_graph_options_execution_surface_is_advanced_only():
   assert hasattr(go, "advanced_execution")
   assert hasattr(go, "verbose")
   go.advanced_execution.inference_async = False
+  go.advanced_execution.workload_priority = pyneat.WorkloadPriority.Background
   assert go.advanced_execution.inference_async is False  # nested in-place mutation persists
+  assert go.advanced_execution.workload_priority == pyneat.WorkloadPriority.Background
   # S2: raw legacy execution fields are NOT bound on GraphOptions.
   for raw in ("processcvu", "processmla", "async_queue_depth", "prepared_runner"):
     assert not hasattr(go, raw), raw

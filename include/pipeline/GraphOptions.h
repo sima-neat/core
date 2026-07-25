@@ -260,6 +260,22 @@ struct ProcessCvuOptions {
 };
 
 /**
+ * @brief Product intent for arbitration between independent MLA contexts.
+ *
+ * This is deliberately the complete public priority vocabulary.  Neat does
+ * not expose the kernel's numeric group/intra bands, per-job priority, or
+ * scheduler tuning: a graph/session selects one immutable intent and the
+ * direct ProcessMLA backend maps it to the kernel context priority once.
+ * Arbitration remains at compiled-job boundaries, so a foreground graph can
+ * run between LLM layers without making an in-flight MLA command preemptible.
+ */
+enum class WorkloadPriority {
+  Normal = 0, ///< Default application work.
+  Foreground, ///< Latency-sensitive work, such as an interactive vision graph.
+  Background, ///< Throughput work that yields at compiled-job boundaries.
+};
+
+/**
  * @brief process-MLA execution options.
  */
 struct ProcessMlaOptions {
@@ -281,6 +297,11 @@ struct ProcessMlaOptions {
   /// low-level pipelines that expose raw MLA outputs to legacy CPU readers can
   /// still override the element property to false.
   bool defer_output_invalidate = true;
+
+  /// Configure the direct MLA context once for this graph/session.  This is a
+  /// context property, not a frame/job property; changing it after execution
+  /// starts is intentionally unsupported by ProcessMLA and the kernel ABI.
+  WorkloadPriority workload_priority = WorkloadPriority::Normal;
 };
 
 /**
@@ -325,11 +346,15 @@ struct AdvancedExecutionOptions {
   std::optional<std::string> preprocess_target; ///< -> processcvu.pre_run_target.
   /// Backend for model-managed process-CVU post adapters. This does not relocate BoxDecode,
   /// which executes on A65.
-  std::optional<std::string> postprocess_target;        ///< -> processcvu.post_run_target.
-  std::optional<bool> preprocess_async;                 ///< -> processcvu.async.
-  std::optional<bool> inference_async;                  ///< -> processmla.async.
-  std::optional<int> inference_output_buffers;          ///< -> processmla.output_pool_buffers.
-  std::optional<bool> defer_output_cache_sync;          ///< -> processmla.defer_output_invalidate.
+  std::optional<std::string> postprocess_target; ///< -> processcvu.post_run_target.
+  std::optional<bool> preprocess_async;          ///< -> processcvu.async.
+  std::optional<bool> inference_async;           ///< -> processmla.async.
+  std::optional<int> inference_output_buffers;   ///< -> processmla.output_pool_buffers.
+  std::optional<bool> defer_output_cache_sync;   ///< -> processmla.defer_output_invalidate.
+  /// MLA scheduling intent for the graph/session.  This resolves to one
+  /// configure-once ProcessMLA context priority; it does not expose kernel
+  /// priority bands or per-job controls.
+  std::optional<WorkloadPriority> workload_priority;    ///< -> processmla.workload_priority.
   std::optional<PreparedRunnerOptions> prepared_runner; ///< -> prepared_runner (whole-object).
   std::optional<int> internal_queue_depth;              ///< -> async_queue_depth.
 
@@ -348,6 +373,8 @@ struct AdvancedExecutionOptions {
       inference_output_buffers = other.inference_output_buffers;
     if (other.defer_output_cache_sync)
       defer_output_cache_sync = other.defer_output_cache_sync;
+    if (other.workload_priority)
+      workload_priority = other.workload_priority;
     if (other.prepared_runner)
       prepared_runner = other.prepared_runner;
     if (other.internal_queue_depth)
@@ -425,6 +452,9 @@ struct GraphOptions {
     }
     if (advanced_execution.defer_output_cache_sync) {
       processmla.defer_output_invalidate = *advanced_execution.defer_output_cache_sync;
+    }
+    if (advanced_execution.workload_priority) {
+      processmla.workload_priority = *advanced_execution.workload_priority;
     }
     if (advanced_execution.prepared_runner) {
       prepared_runner = *advanced_execution.prepared_runner;

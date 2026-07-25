@@ -6757,9 +6757,21 @@ nlohmann::ordered_json processcvu_options_json(const ProcessCvuOptions& opt) {
 }
 
 nlohmann::ordered_json processmla_options_json(const ProcessMlaOptions& opt) {
+  const char* workload_priority = "normal";
+  switch (opt.workload_priority) {
+  case WorkloadPriority::Foreground:
+    workload_priority = "foreground";
+    break;
+  case WorkloadPriority::Background:
+    workload_priority = "background";
+    break;
+  case WorkloadPriority::Normal:
+    break;
+  }
   return {{"async", opt.async},
           {"output_pool_buffers", opt.output_pool_buffers},
-          {"defer_output_invalidate", opt.defer_output_invalidate}};
+          {"defer_output_invalidate", opt.defer_output_invalidate},
+          {"workload_priority", workload_priority}};
 }
 
 nlohmann::ordered_json prepared_runner_options_json(const PreparedRunnerOptions& opt) {

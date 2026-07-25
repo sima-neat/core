@@ -2315,6 +2315,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("ring_depth", &simaai::neat::PreparedRunnerOptions::ring_depth)
       .def_rw("profile", &simaai::neat::PreparedRunnerOptions::profile)
       .def_rw("dequant_flags", &simaai::neat::PreparedRunnerOptions::dequant_flags);
+  nb::enum_<simaai::neat::WorkloadPriority>(m, "WorkloadPriority")
+      .value("Normal", simaai::neat::WorkloadPriority::Normal)
+      .value("Foreground", simaai::neat::WorkloadPriority::Foreground)
+      .value("Background", simaai::neat::WorkloadPriority::Background);
   nb::class_<simaai::neat::AdvancedExecutionOptions>(m, "AdvancedExecutionOptions")
       .def(nb::init<>())
       .def_rw("preprocess_target", &simaai::neat::AdvancedExecutionOptions::preprocess_target)
@@ -2325,6 +2329,7 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::AdvancedExecutionOptions::inference_output_buffers)
       .def_rw("defer_output_cache_sync",
               &simaai::neat::AdvancedExecutionOptions::defer_output_cache_sync)
+      .def_rw("workload_priority", &simaai::neat::AdvancedExecutionOptions::workload_priority)
       .def_rw("prepared_runner", &simaai::neat::AdvancedExecutionOptions::prepared_runner)
       .def_rw("internal_queue_depth",
               &simaai::neat::AdvancedExecutionOptions::internal_queue_depth);
@@ -4290,7 +4295,8 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("async_", &simaai::neat::ProcessMlaOptions::async)
       .def_rw("output_pool_buffers", &simaai::neat::ProcessMlaOptions::output_pool_buffers)
-      .def_rw("defer_output_invalidate", &simaai::neat::ProcessMlaOptions::defer_output_invalidate);
+      .def_rw("defer_output_invalidate", &simaai::neat::ProcessMlaOptions::defer_output_invalidate)
+      .def_rw("workload_priority", &simaai::neat::ProcessMlaOptions::workload_priority);
 
   nb::class_<simaai::neat::Model::InferenceTerminalPolicy>(m, "InferenceTerminalPolicy")
       .def(nb::init<>())

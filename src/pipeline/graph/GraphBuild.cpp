@@ -2079,6 +2079,24 @@ static bool env_explicit_false_session_build_local(const char* name) {
   return raw && *raw && std::strcmp(raw, "0") == 0;
 }
 
+static const char* workload_priority_property_value(WorkloadPriority priority) {
+  /*
+   * Keep the public surface semantic and intentionally small.  These tokens
+   * are the ProcessMLA product ABI; the plugin alone translates them into the
+   * kernel's private numeric intra-group priorities.  Neat must never grow a
+   * second copy of that policy table.
+   */
+  switch (priority) {
+  case WorkloadPriority::Foreground:
+    return "foreground";
+  case WorkloadPriority::Background:
+    return "background";
+  case WorkloadPriority::Normal:
+    return "normal";
+  }
+  return "normal";
+}
+
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt) {
   if (!sess_opt) {
@@ -2102,6 +2120,15 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   fragment = set_property_for_factory_segments(
       std::move(fragment), "neatprocessmla", "defer-output-invalidate",
       sess_opt->processmla.defer_output_invalidate ? "true" : "false");
+  /*
+   * Always project the resolved value, including Normal.  This makes the
+   * effective graph self-describing and prevents an ambient plugin default
+   * from changing scheduling behavior.  ProcessMLA applies the value once
+   * while opening its direct kernel context, never once per frame.
+   */
+  fragment = set_property_for_factory_segments(
+      std::move(fragment), "neatprocessmla", "workload-priority",
+      workload_priority_property_value(sess_opt->processmla.workload_priority));
   return fragment;
 }
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);

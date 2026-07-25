@@ -141,8 +141,20 @@ MLA may require INT8/BF16 and tessellated layouts, while user code generally wor
 and normal tensor layouts. The framework bridges that gap with manifest-driven adapter stages.
 
 Preprocessing and postprocessing are explicit framework stages/options. A format mismatch, missing
-required preprocessing metadata, unavailable MLA dispatcher, invalid model archive or MPK contract, or caps negotiation
-failure should surface as an actionable structured error rather than a hidden runtime correction.
+required preprocessing metadata, unavailable direct MLA backend, invalid model archive or MPK
+contract, or caps negotiation failure should surface as an actionable structured error rather than
+a hidden runtime correction.
+
+### MLA scheduling intent
+
+Neat exposes one product-level MLA priority intent: `Foreground`, `Normal`, or `Background`.
+Graph construction resolves model and route precedence once and writes the resulting immutable
+`workload-priority` property on each ProcessMLA stage. ProcessMLA configures its direct kernel
+context before accepting work. Priority is therefore a graph/session property, never a per-frame
+command, and arbitration occurs only between compiled MLA jobs. Kernel group/intra numbers,
+queue policy, and fairness controls remain private implementation details rather than Neat API.
+Foreground promotion requires `CAP_SYS_NICE` at the application service/container boundary;
+missing privilege is an explicit setup failure, never a silent priority fallback.
 
 ---
 

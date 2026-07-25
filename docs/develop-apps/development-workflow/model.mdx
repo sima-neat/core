@@ -540,6 +540,7 @@ Most models should run with default execution settings first. Once you have a co
 | Allow MLA inference to run asynchronously | `advanced_execution.inference_async` | Useful for streaming workloads that keep work in flight. |
 | Adjust inference output buffering | `advanced_execution.inference_output_buffers` | Increase only when measurement shows output buffering is the bottleneck. |
 | Defer output cache synchronization | `advanced_execution.defer_output_cache_sync` | Advanced. Use only when the consumer and memory lifetime are understood. |
+| Mark MLA work as foreground or background | `advanced_execution.workload_priority` | Select `Foreground`, `Normal`, or `Background`. Priority is fixed for the graph/session and takes effect only between compiled MLA jobs. |
 | Use a prepared runner | `advanced_execution.prepared_runner` | Advanced route-runner experiment. Keep it out of first-run code. |
 | Adjust internally inserted queue depth | `advanced_execution.internal_queue_depth` | Advanced. Queue depth absorbs jitter; it does not create accelerator capacity. |
 
@@ -552,6 +553,7 @@ Set advanced execution fields at the narrowest scope that matches the experiment
 simaai::neat::Model::RouteOptions route;
 route.name_suffix = "_lane0";
 route.advanced_execution.inference_async = true;
+route.advanced_execution.workload_priority = simaai::neat::WorkloadPriority::Foreground;
 
 auto runner = model.build(route);
 ```
@@ -563,6 +565,7 @@ auto runner = model.build(route);
 route = pyneat.ModelRouteOptions()
 route.name_suffix = "_lane0"
 route.advanced_execution.inference_async = True
+route.advanced_execution.workload_priority = pyneat.WorkloadPriority.Foreground
 
 runner = model.build_with_route_options(route)
 ```
@@ -571,6 +574,11 @@ runner = model.build_with_route_options(route)
 </CodeTabs>
 
 Keep the default route as your control. Change one field, measure, export evidence, then decide whether the change earns a place in the app.
+
+`Foreground` promotes the MLA context and therefore requires `CAP_SYS_NICE` on the application
+process. Grant that capability at the service or container boundary; do not add it to Neat or the
+model package. If the capability is absent, direct MLA setup fails with a permission error rather
+than silently running at normal priority. `Background` is an unprivileged demotion.
 
 C++ also exposes lower-level `processcvu`, `processmla`, `prepared_runner`, and `async_queue_depth` fields on `Model::Options`, `Model::RouteOptions`, and `GraphOptions`. Prefer `advanced_execution` in customer examples unless you are preserving existing C++ code or debugging a specific lower-level field.
 
