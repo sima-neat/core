@@ -22,7 +22,7 @@ std::string H265Depacketize::backend_fragment(int node_index) const {
     ss << ",payload=" << payload_type_;
   }
   ss << "\" ! rtph265depay name=" << depay << " ! h265parse name=" << parser
-     << " disable-passthrough=true ! capsfilter name=" << caps
+     << " disable-passthrough=true config-interval=-1 ! capsfilter name=" << caps
      << " caps=\"video/x-h265,parsed=true,stream-format=(string)byte-stream,"
         "alignment=(string)au";
   if (source_fps_ > 0) {

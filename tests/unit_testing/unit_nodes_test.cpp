@@ -106,6 +106,8 @@ int main() {
     require_contains(h265_fragment, "payload=98", "H265 payload mismatch");
     require_contains(h265_fragment, "rtph265depay name=n4_depay", "H265 depay missing");
     require_contains(h265_fragment, "h265parse name=n4_h265parse", "H265 parser missing");
+    require_contains(h265_fragment, "config-interval=-1",
+                     "H265 parser should repeat parameter sets on random access pictures");
     require_contains(h265_fragment, "stream-format=(string)byte-stream",
                      "H265 byte-stream caps missing");
     require_contains(h265_fragment, "alignment=(string)au", "H265 AU caps missing");
