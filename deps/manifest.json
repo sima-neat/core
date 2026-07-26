@@ -8,7 +8,7 @@
   "sdk": {
     "channel": "develop"
   },
-  "package-version": "0.3.0",
+  "package-version": "0.4.0",
   "platform-version": "2.1.2",
-  "abi-version": "4"
+  "abi-version": "5"
 }

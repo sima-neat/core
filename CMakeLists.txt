@@ -131,6 +131,21 @@ if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
     "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
 endif()
 
+# CMake does not remove a previous target's SOVERSION symlink when a build tree
+# is reconfigured. Such a stale `libsima_neat.so.4 ->` ABI-5 implementation is
+# worse than a loader failure because an old binary can bind silently. Remove
+# only stale SONAME symlinks in this build directory; never touch real versioned
+# files or installed prefixes.
+file(GLOB SIMANEAT_POSSIBLE_STALE_SONAME_LINKS
+  "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}sima_neat${CMAKE_SHARED_LIBRARY_SUFFIX}.*")
+foreach(_simaneat_soname_link IN LISTS SIMANEAT_POSSIBLE_STALE_SONAME_LINKS)
+  if(IS_SYMLINK "${_simaneat_soname_link}" AND
+     NOT _simaneat_soname_link MATCHES
+       "\\${CMAKE_SHARED_LIBRARY_SUFFIX}\\.${SIMANEAT_ABI_VERSION}$")
+    file(REMOVE "${_simaneat_soname_link}")
+  endif()
+endforeach()
+
 set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 execute_process(
   COMMAND git describe --tags --exact-match
@@ -196,12 +211,16 @@ else()
   endif()
 endif()
 
-string(REPLACE "." ";" SIMANEAT_PACKAGE_BASE_VERSION_PARTS "${SIMANEAT_PACKAGE_BASE_VERSION}")
-list(GET SIMANEAT_PACKAGE_BASE_VERSION_PARTS 0 SIMANEAT_PACKAGE_BASE_VERSION_MAJOR)
-list(GET SIMANEAT_PACKAGE_BASE_VERSION_PARTS 1 SIMANEAT_PACKAGE_BASE_VERSION_MINOR)
-math(EXPR SIMANEAT_NEXT_PACKAGE_MINOR "${SIMANEAT_PACKAGE_BASE_VERSION_MINOR} + 1")
-set(SIMANEAT_DEP_PACKAGE_MIN_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
-set(SIMANEAT_DEP_PACKAGE_MAX_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION_MAJOR}.${SIMANEAT_NEXT_PACKAGE_MINOR}.0")
+# The public WorkloadPriority addition changes the layout of exported C++
+# option structs and therefore starts ABI 5.  Runtime, plugin, Internals and
+# LLiMa packages are one binary closure: accepting a broad minor-version range
+# here would allow apt to combine an ABI-5 libSimaNeat with ABI-4 plugins or
+# Python bindings.  Keep the release dependency exact.  Branch metadata still
+# identifies this source package, while the cooperating binary closure uses
+# the manifest's release version.
+set(SIMANEAT_COMPONENT_PACKAGE_VERSION
+    "${SIMANEAT_PACKAGE_BASE_VERSION}" CACHE STRING
+    "Exact version required for the matching NEAT runtime/plugin closure")
 
 string(REPLACE "." ";" SIMANEAT_PLATFORM_VERSION_PARTS "${SIMANEAT_PLATFORM_VERSION}")
 list(GET SIMANEAT_PLATFORM_VERSION_PARTS 0 SIMANEAT_PLATFORM_VERSION_MAJOR)
@@ -905,6 +924,28 @@ target_link_libraries(sima_neat PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_static PUBLIC sima_neat_common)
 target_link_libraries(sima_neat_objects PRIVATE sima_neat_common)
 add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_static)
+find_program(SIMANEAT_READELF_EXECUTABLE NAMES llvm-readelf readelf)
+if(SIMANEAT_READELF_EXECUTABLE)
+  add_custom_command(TARGET sima_neat POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+      -DNEAT_LIBRARY=$<TARGET_FILE:sima_neat>
+      -DNEAT_LINK_DIR=$<TARGET_FILE_DIR:sima_neat>
+      -DREADELF=${SIMANEAT_READELF_EXECUTABLE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyNeatSoname.cmake
+    COMMENT "Verifying Neat ABI-5 SONAME and stale-link rejection"
+    VERBATIM)
+endif()
+if(BUILD_TESTING AND SIMANEAT_READELF_EXECUTABLE)
+  add_test(
+    NAME sima_neat_abi5_soname
+    COMMAND ${CMAKE_COMMAND}
+      -DNEAT_LIBRARY=$<TARGET_FILE:sima_neat>
+      -DNEAT_LINK_DIR=$<TARGET_FILE_DIR:sima_neat>
+      -DREADELF=${SIMANEAT_READELF_EXECUTABLE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyNeatSoname.cmake)
+  set_tests_properties(sima_neat_abi5_soname PROPERTIES
+    LABELS "tier1;abi;packaging")
+endif()
 target_compile_definitions(sima_neat_objects PRIVATE
   SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"
   SIMA_NEAT_PLATFORM_VERSION_STRING="${SIMANEAT_PLATFORM_VERSION}"
@@ -1450,15 +1491,12 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-core406"
   "libopencv-imgproc406"
   "libopencv-imgcodecs406"
-  "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
-  "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-gst-plugins (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  "neat-runtime (= ${SIMANEAT_COMPONENT_PACKAGE_VERSION})"
+  "neat-gst-plugins (= ${SIMANEAT_COMPONENT_PACKAGE_VERSION})"
 )
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
-    "sima-lmm-core (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-    "sima-lmm-core (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+    "sima-lmm-core (= ${SIMANEAT_COMPONENT_PACKAGE_VERSION})"
     "libcpp-httplib0.11")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
@@ -1473,13 +1511,11 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "libglib2.0-dev"
   "libopencv-dev"
   "nlohmann-json3-dev"
-  "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  "neat-internals-dev (= ${SIMANEAT_COMPONENT_PACKAGE_VERSION})"
 )
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
-    "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-    "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})")
+    "sima-lmm-dev (= ${SIMANEAT_COMPONENT_PACKAGE_VERSION})")
 endif()
 string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
 set(CPACK_INSTALL_CMAKE_PROJECTS
