@@ -3536,6 +3536,8 @@ NB_MODULE(_pyneat_core, m) {
                   "height"_a, "fps"_a)
       .def_static("h264_rtp_udp_from_encoded",
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded)
+      .def_static("h265_rtp_udp_from_encoded",
+                  &simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded)
       .def("is_raw_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_raw_input)
       .def("is_encoded_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_encoded_input)
       .def_prop_ro("width", &simaai::neat::nodes::groups::VideoSenderOptions::width)

@@ -56,6 +56,9 @@ RUN_TEST(
       auto jpeg_parse = simaai::neat::nodes::JpegParse();
       auto rtp_jpeg_depay = simaai::neat::nodes::RTPJpegDepacketize();
       auto h265_depay = simaai::neat::nodes::H265Depacketize();
+      auto h265_video_sender_options =
+          simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded();
+      auto h265_video_sender = simaai::neat::nodes::groups::VideoSender(h265_video_sender_options);
       simaai::neat::SimaDecodeOptions sima_decode_opt;
       sima_decode_opt.type = simaai::neat::SimaDecodeType::H265;
       auto sima_decode = simaai::neat::nodes::SimaDecode(sima_decode_opt);

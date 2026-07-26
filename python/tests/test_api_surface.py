@@ -525,6 +525,7 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.VideoSenderEncoderOptions())
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30))
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h265_rtp_udp_from_encoded())
   _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSenderSendOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions()))
@@ -615,6 +616,7 @@ def test_output_stage_option_structs_are_mutable():
   video_sender.encoder = video_encoder
 
   encoded_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded()
+  h265_encoded_sender = pyneat.VideoSenderOptions.h265_rtp_udp_from_encoded()
 
   metadata_sender = pyneat.MetadataSenderOptions()
   metadata_sender.host = "127.0.0.1"
@@ -631,6 +633,10 @@ def test_output_stage_option_structs_are_mutable():
   assert parse.alignment == pyneat.H264ParseAlignment.AU
   assert parse.stream_format == pyneat.H264ParseStreamFormat.ByteStream
   assert parse.enforce_caps is True
+  assert encoded_sender.rtp.payload_type == 96
+  assert h265_encoded_sender.rtp.payload_type == 98
+  assert h265_encoded_sender.is_encoded_input() is True
+  assert h265_encoded_sender.is_raw_input() is False
 
   assert group.h264_caps == 'video/x-h264,profile="high"'
   assert group.payload_type == 97
