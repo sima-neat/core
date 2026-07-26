@@ -5,6 +5,9 @@
 #include "nodes/io/Input.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "pipeline/NeatError.h"
+#include "pipeline/internal/GstDiagnosticsUtil.h"
+#include "gst/GstInit.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -14,6 +17,49 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
            using namespace simaai::neat;
 
            const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x51);
+
+           require(std::string(error_codes::kMlaBackend) == "runtime.mla_backend",
+                   "direct MLA runtime failures need a stable taxonomy code");
+
+           /*
+            * ProcessMLA reports worker-thread failures on the Gst bus. Prove
+            * the diagnostic bridge recognizes the stable errno/phase payload
+            * and does not misclassify the failure as a caps error.
+            */
+           {
+             gst_init_once();
+             GstElement* pipeline = gst_pipeline_new("mla-error-taxonomy");
+             GstElement* source = gst_element_factory_make("fakesrc", "mla-stage");
+             require(pipeline != nullptr && source != nullptr,
+                     "failed to create MLA taxonomy test pipeline");
+             require(gst_bin_add(GST_BIN(pipeline), source),
+                     "failed to add MLA taxonomy source");
+
+             GError* backend_error = g_error_new_literal(
+                 GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_FAILED,
+                 "MLA job completion failed");
+             GstMessage* message = gst_message_new_error(
+                 GST_OBJECT(source), backend_error,
+                 "backend_errno=-5; phase=job_completion; backend_detail=fault");
+             g_error_free(backend_error);
+             require(gst_element_post_message(source, message),
+                     "failed to post MLA taxonomy error");
+
+             bool classified = false;
+             try {
+               pipeline_internal::throw_if_bus_error(
+                   pipeline, {}, "unit_error_code_taxonomy_test");
+             } catch (const NeatError& error) {
+               classified = error.report().error_code == error_codes::kMlaBackend;
+               require_contains(error.what(), "backend_errno=-5",
+                                "MLA errno was not preserved");
+               require_contains(error.what(), "phase=job_completion",
+                                "MLA failure phase was not preserved");
+             }
+             gst_object_unref(pipeline);
+             require(classified,
+                     "MLA worker failure was not classified as runtime.mla_backend");
+           }
 
            // misconfig.pipeline_shape: build(input) without Input() must fail before runtime.
            {

@@ -3718,8 +3718,10 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
       if (props->batch_sz_model > 0) {
         pipelineStr << "batch-sz-model=" << props->batch_sz_model << " ";
       }
-      const bool force_single_pipe = env_truthy_local("SIMA_FORCE_MLA_SINGLE_PIPE");
-      const bool use_multi_pipeline = !force_single_pipe && num_buffers_mla > 1;
+      // Compatibility spelling only. The direct plugin ignores this property;
+      // derive it deterministically without retaining an environment-selected
+      // ProcessMLA execution mode.
+      const bool use_multi_pipeline = num_buffers_mla > 1;
       pipelineStr << "multi-pipeline=" << (use_multi_pipeline ? "true" : "false") << " ";
       if (num_buffers_mla > 0) {
         pipelineStr << " num-buffers=" << num_buffers_mla << " ";

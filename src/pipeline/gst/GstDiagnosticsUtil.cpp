@@ -748,7 +748,10 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   maybe_dump_dot(pipeline, std::string(where) + "_error");
 
   GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
-  rep.error_code = error_codes::kCaps;
+  const bool mla_backend_error = line.find("backend_errno=") != std::string::npos &&
+                                 line.find("phase=") != std::string::npos;
+  rep.error_code = mla_backend_error ? error_codes::kMlaBackend
+                                     : error_codes::kCaps;
   std::ostringstream note;
   note << "where=" << (where ? where : "GstDiagnosticsUtil::throw_if_bus_error")
        << " code=" << rep.error_code << " summary=GST ERROR" << " details=element='"
@@ -756,7 +759,9 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   rep.repro_note = note.str();
   if (diag)
     rep.repro_note += "\n" + boundary_summary(diag);
-  rep.repro_note += "\nHint: inspect offending caps and upstream/downstream element contract.";
+  rep.repro_note += mla_backend_error
+                        ? "\nHint: inspect backend_errno, phase, kernel logs, and MLA fault telemetry."
+                        : "\nHint: inspect offending caps and upstream/downstream element contract.";
   throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
                   std::move(rep));
 }

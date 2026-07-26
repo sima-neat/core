@@ -279,9 +279,9 @@ enum class WorkloadPriority {
  * @brief process-MLA execution options.
  */
 struct ProcessMlaOptions {
-  /// Enable the safe async processmla submit/emit path. Default true uses the
-  /// optimized prepared async lane when the plugin/stage is eligible; set false,
-  /// or use the plugin/env kill switches, to force the synchronous fallback.
+  /// Deprecated ABI/source-compatibility storage. ProcessMLA now has one
+  /// terminal-CQE execution path, so this value no longer selects an engine.
+  /// It remains in ABI 4 and will be removed only at an approved ABI break.
   bool async = true;
 
   /// Optional processmla output pool size override. A value <= 0 leaves the
@@ -290,12 +290,9 @@ struct ProcessMlaOptions {
   /// downstream stages still hold previous tensor-set outputs.
   int output_pool_buffers = 0;
 
-  /// For prepared MLASHM outputs, skip the immediate producer-side CPU
-  /// invalidate and stamp the output metadata as device-produced/cpu-dirty.
-  /// The framework runtime default is enabled so MLA->CVU/postprocess routes
-  /// pay the invalidate only at the actual CPU consumer boundary. Manual
-  /// low-level pipelines that expose raw MLA outputs to legacy CPU readers can
-  /// still override the element property to false.
+  /// Compatibility request for immediate versus consumer-boundary CPU cache
+  /// visibility. New code should rely on automatic buffer ownership. Kept in
+  /// ABI 4 until every legacy/raw GStreamer CPU consumer is qualified.
   bool defer_output_invalidate = true;
 
   /// Configure the direct MLA context once for this graph/session.  This is a
@@ -348,7 +345,9 @@ struct AdvancedExecutionOptions {
   /// which executes on A65.
   std::optional<std::string> postprocess_target; ///< -> processcvu.post_run_target.
   std::optional<bool> preprocess_async;          ///< -> processcvu.async.
-  std::optional<bool> inference_async;           ///< -> processmla.async.
+  /// Deprecated compatibility field; direct ProcessMLA is always terminal-CQE
+  /// asynchronous and this value is ignored by resolution.
+  std::optional<bool> inference_async;
   std::optional<int> inference_output_buffers;   ///< -> processmla.output_pool_buffers.
   std::optional<bool> defer_output_cache_sync;   ///< -> processmla.defer_output_invalidate.
   /// MLA scheduling intent for the graph/session.  This resolves to one
@@ -444,9 +443,8 @@ struct GraphOptions {
     if (advanced_execution.preprocess_async) {
       processcvu.async = *advanced_execution.preprocess_async;
     }
-    if (advanced_execution.inference_async) {
-      processmla.async = *advanced_execution.inference_async;
-    }
+    // inference_async is deliberately ignored. Keep its storage for ABI/source
+    // compatibility, but never recreate a second ProcessMLA execution mode.
     if (advanced_execution.inference_output_buffers) {
       processmla.output_pool_buffers = *advanced_execution.inference_output_buffers;
     }

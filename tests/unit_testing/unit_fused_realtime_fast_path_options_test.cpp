@@ -1452,8 +1452,10 @@ RUN_TEST(
       const std::string synchronous_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               make_consumer_nodes(), synchronous);
-      require(synchronous_pipeline.find("async=true") == std::string::npos,
-              "explicit public synchronous options must not enable fused async stages");
+      require_contains(synchronous_pipeline, "neatprocesscvu name=n0_preproc async=false",
+                       "ProcessCVU retains its independent compatibility mode");
+      require_contains(synchronous_pipeline, "neatprocessmla name=n0_mla async=true",
+                       "deprecated ProcessMLA async=false must not select a retired engine");
       require_contains(synchronous_pipeline, "defer-output-invalidate=false",
                        "explicit public cache-sync option must be preserved by fused rendering");
     }));

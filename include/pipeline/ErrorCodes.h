@@ -38,6 +38,9 @@ inline constexpr const char* kRuntimeAbiMismatch = "misconfig.runtime_abi_mismat
 inline constexpr const char* kParseLaunch = "build.parse_launch";
 /// `Run::pull()` encountered a runtime-side error (downstream EOS, bus error, or appsink failure).
 inline constexpr const char* kRuntimePull = "runtime.pull";
+/// The direct ProcessMLA/kernel execution path failed after graph startup. The
+/// diagnostic message preserves `backend_errno` and the failing phase.
+inline constexpr const char* kMlaBackend = "runtime.mla_backend";
 
 // ── I/O classes ──────────────────────────────────────────────────────────────────────────
 /// JSON or config parsing error (typically from the MPK contract or a per-stage config).

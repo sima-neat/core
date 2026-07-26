@@ -1879,7 +1879,10 @@ void throw_if_bus_error_local(GstElement* pipeline, const std::shared_ptr<DiagCt
   maybe_dump_dot(pipeline, std::string(where) + "_error");
 
   GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
-  rep.error_code = error_codes::kCaps;
+  const bool mla_backend_error = line.find("backend_errno=") != std::string::npos &&
+                                 line.find("phase=") != std::string::npos;
+  rep.error_code = mla_backend_error ? error_codes::kMlaBackend
+                                     : error_codes::kCaps;
   std::ostringstream note;
   note << "where=" << (where ? where : "Graph::build") << " code=" << rep.error_code
        << " summary=GST ERROR" << " details=element='" << (src ? src : "<unknown>") << "' error='"
@@ -1892,7 +1895,9 @@ void throw_if_bus_error_local(GstElement* pipeline, const std::shared_ptr<DiagCt
   if (!boundary.empty()) {
     rep.repro_note += "\n" + boundary;
   }
-  rep.repro_note += "\nHint: inspect caps negotiation and offending element diagnostics.";
+  rep.repro_note += mla_backend_error
+                        ? "\nHint: inspect backend_errno, phase, kernel logs, and MLA fault telemetry."
+                        : "\nHint: inspect caps negotiation and offending element diagnostics.";
   throw NeatError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
 }
 
@@ -2105,13 +2110,10 @@ std::string session_build_apply_fast_path_options_to_fragment(std::string fragme
   fragment = maybe_replace_post_dequant_with_prepared_runner(fragment, sess_opt);
   const bool processcvu_async = sess_opt->processcvu.async &&
                                 !env_explicit_false_session_build_local("SIMA_PROCESSCVU_ASYNC");
-  const bool processmla_async =
-      sess_opt->processmla.async &&
-      !env_explicit_false_session_build_local("SIMA_PROCESSMLA_SAFE_ASYNC");
   fragment = set_property_for_factory_segments(std::move(fragment), "neatprocesscvu", "async",
                                                processcvu_async ? "true" : "false");
   fragment = set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "async",
-                                               processmla_async ? "true" : "false");
+                                               "true");
   if (sess_opt->processmla.output_pool_buffers > 0) {
     fragment =
         set_property_for_factory_segments(std::move(fragment), "neatprocessmla", "num-buffers",

@@ -57,11 +57,19 @@ RUN_TEST("unit_mla_workload_priority_options_test", ([] {
             */
            GraphOptions resolved;
            resolved.processmla.workload_priority = WorkloadPriority::Background;
+           resolved.processmla.async = false;
+           resolved.advanced_execution.inference_async = false;
            resolved.advanced_execution.workload_priority = WorkloadPriority::Foreground;
            resolved.resolve_advanced_execution();
+           if (resolved.processmla.async) {
+             throw std::runtime_error(
+                 "deprecated inference_async must not mutate compatibility storage");
+           }
            const std::string foreground_fragment =
                simaai::neat::session_build_apply_fast_path_options_to_fragment(
                    "neatprocessmla name=mla workload-priority=normal", &resolved);
+           require_contains(foreground_fragment, "async=true",
+                            "deprecated async=false must still render the sole direct path");
            require_contains(foreground_fragment, "workload-priority=foreground",
                             "advanced MLA priority must override the compatibility value");
            if (foreground_fragment.find("workload-priority=normal") != std::string::npos) {
