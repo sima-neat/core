@@ -24,6 +24,11 @@ class H265ParseNode final : public simaai::neat::Node, public simaai::neat::Outp
 public:
   explicit H265ParseNode(int config_interval) : config_interval_(config_interval) {}
 
+  // The kind() strings below are matched by name in ExecutionGraphCompiler.cpp
+  // (encoded_video_sender_codec) and GraphBuildSource.cpp
+  // (append_fused_node_fragment) to recognize this sender for encoded-output
+  // fusion. Renaming either string silently disables fusion rather than failing
+  // to compile; unit_fused_realtime_fast_path_options_test guards that.
   std::string kind() const override {
     return "H265Parse";
   }
@@ -93,35 +98,6 @@ void require_positive(int value, const char* name) {
   }
 }
 
-void append_h264_rtp_udp_nodes(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
-                               const VideoSenderOptions& opt) {
-  nodes.push_back(nodes::H264Parse(opt.rtp.config_interval));
-  nodes.push_back(
-      nodes::H264Packetize(simaai::neat::H264Packetize::PayloadType(opt.rtp.payload_type),
-                           simaai::neat::H264Packetize::ConfigInterval(opt.rtp.config_interval)));
-
-  simaai::neat::UdpOutputOptions udp_opt;
-  udp_opt.host = opt.host;
-  udp_opt.port = opt.video_port();
-  udp_opt.sync = opt.sync;
-  udp_opt.async = opt.async;
-  nodes.push_back(nodes::UdpOutput(udp_opt));
-}
-
-void append_h265_rtp_udp_nodes(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
-                               const VideoSenderOptions& opt) {
-  nodes.push_back(std::make_shared<H265ParseNode>(opt.rtp.config_interval));
-  nodes.push_back(
-      std::make_shared<H265PacketizeNode>(opt.rtp.payload_type, opt.rtp.config_interval));
-
-  simaai::neat::UdpOutputOptions udp_opt;
-  udp_opt.host = opt.host;
-  udp_opt.port = opt.video_port();
-  udp_opt.sync = opt.sync;
-  udp_opt.async = opt.async;
-  nodes.push_back(nodes::UdpOutput(udp_opt));
-}
-
 } // namespace
 
 VideoSenderOptions VideoSenderOptions::H264RtpUdpFromRaw(int width, int height, int fps) {
@@ -166,10 +142,22 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
   }
 
   if (opt.input_kind_ == VideoSenderOptions::InputKind::EncodedH265) {
-    append_h265_rtp_udp_nodes(nodes, opt);
+    nodes.push_back(std::make_shared<H265ParseNode>(opt.rtp.config_interval));
+    nodes.push_back(
+        std::make_shared<H265PacketizeNode>(opt.rtp.payload_type, opt.rtp.config_interval));
   } else {
-    append_h264_rtp_udp_nodes(nodes, opt);
+    nodes.push_back(nodes::H264Parse(opt.rtp.config_interval));
+    nodes.push_back(
+        nodes::H264Packetize(simaai::neat::H264Packetize::PayloadType(opt.rtp.payload_type),
+                             simaai::neat::H264Packetize::ConfigInterval(opt.rtp.config_interval)));
   }
+
+  simaai::neat::UdpOutputOptions udp_opt;
+  udp_opt.host = opt.host;
+  udp_opt.port = opt.video_port();
+  udp_opt.sync = opt.sync;
+  udp_opt.async = opt.async;
+  nodes.push_back(nodes::UdpOutput(udp_opt));
 
   simaai::neat::Graph graph("video_sender");
   for (auto& node : nodes) {

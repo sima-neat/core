@@ -1,5 +1,6 @@
 #include "nodes/groups/GroupOutputSpec.h"
 
+#include "nodes/groups/internal/RtspCodecMapping.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/PayloadType.h"
 
@@ -69,57 +70,6 @@ OutputSpec apply_raw_caps(OutputSpec out, const simaai::neat::FormatSpec& format
   return out;
 }
 
-RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInputOptions& opt,
-                                                     int source_fps) {
-  RtspEncodedInputOptions out;
-  out.url = opt.url;
-  out.codec = opt.codec;
-  out.latency_ms = opt.latency_ms;
-  out.tcp = opt.tcp;
-  out.drop_on_latency = opt.drop_on_latency;
-  out.buffer_mode = opt.buffer_mode;
-  out.insert_queue = opt.insert_queue;
-  out.sync_mode = opt.sync_mode;
-  out.h264_payload_type = opt.payload_type;
-  out.mjpeg_payload_type = opt.mjpeg_payload_type;
-  out.h265_payload_type = opt.payload_type;
-  out.h264_parse_config_interval = opt.h264_parse_config_interval;
-  out.h264_fps = opt.h264_fps;
-  out.h264_width = opt.h264_width;
-  out.h264_height = opt.h264_height;
-  out.auto_caps_from_stream = opt.auto_caps_from_stream;
-  out.fallback_h264_fps = opt.fallback_h264_fps;
-  out.fallback_h264_width = opt.fallback_h264_width;
-  out.fallback_h264_height = opt.fallback_h264_height;
-  out.source_fps = (opt.codec == RtspCodec::H264)
-                       ? ((opt.source_fps > 0) ? opt.source_fps : opt.h264_fps)
-                       : ((opt.codec == RtspCodec::H265) ? opt.source_fps : source_fps);
-  return out;
-}
-
-SimaDecodeType sima_decode_type(RtspCodec type) {
-  switch (type) {
-  case RtspCodec::H264:
-    return SimaDecodeType::H264;
-  case RtspCodec::MJPEG:
-    return SimaDecodeType::MJPEG;
-  case RtspCodec::H265:
-    return SimaDecodeType::H265;
-  }
-  throw std::invalid_argument("RtspDecodedInputOutputSpec: unsupported codec");
-}
-
-int h264_dec_width(const RtspDecodedInputOptions& opt) {
-  return (opt.dec_width > 0) ? opt.dec_width
-                             : ((opt.h264_width > 0) ? opt.h264_width : opt.fallback_h264_width);
-}
-
-int h264_dec_height(const RtspDecodedInputOptions& opt) {
-  return (opt.dec_height > 0)
-             ? opt.dec_height
-             : ((opt.h264_height > 0) ? opt.h264_height : opt.fallback_h264_height);
-}
-
 int h264_dec_fps(const RtspDecodedInputOptions& opt) {
   if (opt.source_fps > 0)
     return opt.source_fps;
@@ -140,18 +90,6 @@ int mjpeg_dec_fps(const RtspDecodedInputOptions& opt) {
 
 int h265_dec_fps(const RtspDecodedInputOptions& opt) {
   return (opt.source_fps > 0) ? opt.source_fps : opt.dec_fps;
-}
-
-int mjpeg_dec_width(const RtspDecodedInputOptions& opt) {
-  if (opt.dec_width > 0 || opt.use_videoscale)
-    return opt.dec_width;
-  return (opt.output_caps.width > 0) ? opt.output_caps.width : opt.dec_width;
-}
-
-int mjpeg_dec_height(const RtspDecodedInputOptions& opt) {
-  if (opt.dec_height > 0 || opt.use_videoscale)
-    return opt.dec_height;
-  return (opt.output_caps.height > 0) ? opt.output_caps.height : opt.dec_height;
 }
 
 int encoded_h264_fps(const RtspEncodedInputOptions& opt) {
@@ -200,7 +138,7 @@ OutputSpec http_mjpeg_decoder_spec(const HttpMjpegDecodedInputOptions& opt, int 
 
 OutputSpec rtsp_decoder_spec(const RtspDecodedInputOptions& opt, int source_fps) {
   simaai::neat::SimaDecodeOptions dec;
-  dec.type = sima_decode_type(opt.codec);
+  dec.type = sima_decode_type(opt.codec, "RtspDecodedInputOutputSpec");
   dec.sima_allocator_type = opt.sima_allocator_type;
   dec.out_format = opt.out_format;
   dec.decoder_name = opt.decoder_name;
