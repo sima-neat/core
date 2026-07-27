@@ -43,6 +43,7 @@ enum class FormatTag {
   YUYV,          ///< YUV 4:2:2 packed (Y0 U Y1 V).
   ENCODED,       ///< Generic encoded payload (codec from caps).
   H264,          ///< H.264 access unit / NAL stream.
+  H265,          ///< H.265 / HEVC access unit / NAL stream.
   ByteStream,    ///< Opaque byte stream; downstream interprets bytes by contract.
   MLA,           ///< MLA-tessellated tensor payload.
   BBOX,          ///< Decoded bounding-box byte stream.
@@ -78,6 +79,8 @@ inline const char* format_tag_name(FormatTag tag) {
     return "ENCODED";
   case FormatTag::H264:
     return "H264";
+  case FormatTag::H265:
+    return "H265";
   case FormatTag::ByteStream:
     return "BYTESTREAM";
   case FormatTag::MLA:
@@ -216,6 +219,8 @@ inline FormatTag format_tag_from_string(const std::string& value) {
     return FormatTag::ENCODED;
   if (up == "H264")
     return FormatTag::H264;
+  if (up == "H265")
+    return FormatTag::H265;
   if (up == "BYTESTREAM" || up == "BYTE_STREAM" || up == "BYTE-STREAM" || up == "RAW_BYTES" ||
       up == "RAW-BYTES" || up == "OPAQUE_BYTES" || up == "OPAQUE-BYTES" || up == "OCTET_STREAM" ||
       up == "OCTET-STREAM")
