@@ -58,25 +58,28 @@ graph.add(pyneat.groups.video_sender(opt))
 
 ## Encoded H.264 or H.265
 
-For encoded input, select the matching factory. Neat parses, packetizes, and
-sends the stream without re-encoding.
+For encoded input, pass the stream codec to the passthrough factory. Neat
+parses, packetizes, and sends the stream without re-encoding.
 
 | Codec | C++ factory | Python factory | Default RTP payload type |
 | --- | --- | --- | ---: |
-| H.264 | `H264RtpUdpFromEncoded()` | `h264_rtp_udp_from_encoded()` | 96 |
-| H.265 | `H265RtpUdpFromEncoded()` | `h265_rtp_udp_from_encoded()` | 98 |
+| H.264 | `Passthrough(RtspCodec::H264)` | `passthrough(pyneat.RtspCodec.H264)` | 96 |
+| H.265 | `Passthrough(RtspCodec::H265)` | `passthrough(pyneat.RtspCodec.H265)` | 98 |
+
+MJPEG passthrough is rejected: the sender has no RTP/JPEG packetizer.
 
 H.265 example:
 
 ```cpp
-auto opt = simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded();
+auto opt = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+    simaai::neat::nodes::groups::RtspCodec::H265);
 opt.host = "127.0.0.1";
 opt.channel = 0;
 graph.add(simaai::neat::nodes::groups::VideoSender(opt));
 ```
 
 ```python
-opt = pyneat.VideoSenderOptions.h265_rtp_udp_from_encoded()
+opt = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265)
 opt.host = "127.0.0.1"
 opt.channel = 0
 graph.add(pyneat.groups.video_sender(opt))

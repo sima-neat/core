@@ -271,7 +271,7 @@ Use source-owned groups when the graph should read media by itself. Build those 
 | Live RTSP encoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP payload type |
 | Live RTSP decoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, decoded width/height, `out_format`, `output_caps` |
 | HTTP multipart MJPEG stream | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, decoded width/height/FPS, `output_caps` |
-| Raw or encoded H.264/H.265 video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`, `H264RtpUdpFromEncoded()`, or `H265RtpUdpFromEncoded()` | `host`, `channel`, `video_port_base`, encoder/RTP options |
+| Raw or encoded H.264/H.265 video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`, or `Passthrough(RtspCodec::H264 / RtspCodec::H265)` | `host`, `channel`, `video_port_base`, encoder/RTP options |
 | RTP/H.264 over UDP output | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | destination host/port when the defaults are not right | `h264_caps`, `payload_type`, `config_interval` |
 
 A source-owned graph is a different runtime shape than an app-pushed graph:
@@ -463,7 +463,7 @@ Use these patterns when the boundary contract matters before the first push.
 | Fixed-size decoded image | `payload_type`, `format`, `width`, `height` | The pushed tensor or sample already carries complete image metadata. |
 | Dynamic decoded image | `payload_type`, `format`, `max_width`, `max_height`, and optional `max_bytes` | The graph only accepts one fixed size. |
 | Encoded H.264 input | `payload_type = Encoded`, `format = H264`, and H.264 caps on the pushed `Sample` | The graph source owns the stream through an RTSP or file group. |
-| Encoded H.265 input | `payload_type = Encoded`, `format = ENCODED`, and H.265 caps on the boundary and pushed `Sample` | The graph source owns and parses the stream through an RTSP or file group. |
+| Encoded H.265 input | `payload_type = Encoded`, `format = H265`, and H.265 caps on the pushed `Sample` | The graph source owns and parses the stream through an RTSP or file group. |
 | Detection coordinate mapping | `preprocess_meta` | The model route owns preprocessing and emits the metadata itself. |
 
 For dynamic image input, bound the stream without pretending every frame has the same size:
@@ -500,9 +500,9 @@ graph.add(pyneat.nodes.input("image", iopt))
 </CodeTabs>
 
 For parsed H.265 access units that your app pushes, make the boundary encoded,
-identify the codec through caps, and select the matching decoder type. There is
-no `FormatTag::H265`; use the generic `ENCODED` tag with `video/x-h265` caps.
-Set the decoder width, height, and FPS to the elementary stream values:
+select `FormatTag::H265`, and select the matching decoder type. The media type
+is resolved from the tag, so no caps string is required. Set the decoder width,
+height, and FPS to the elementary stream values:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -512,9 +512,7 @@ simaai::neat::Graph graph;
 
 simaai::neat::InputOptions iopt;
 iopt.payload_type = simaai::neat::PayloadType::Encoded;
-iopt.format = simaai::neat::FormatTag::ENCODED;
-iopt.caps_override =
-    "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au";
+iopt.format = simaai::neat::FormatTag::H265;
 
 graph.add(simaai::neat::nodes::Input("video", iopt));
 
@@ -545,10 +543,7 @@ graph = pyneat.Graph()
 
 iopt = pyneat.InputOptions()
 iopt.payload_type = pyneat.PayloadType.Encoded
-iopt.format = pyneat.Format.ENCODED
-iopt.caps_override = (
-    "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
-)
+iopt.format = pyneat.Format.H265
 
 graph.add(pyneat.nodes.input("video", iopt))
 

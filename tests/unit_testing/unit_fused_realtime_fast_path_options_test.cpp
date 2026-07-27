@@ -1028,8 +1028,8 @@ RUN_TEST(
         direct_video_app.connect(source, decoder);
         direct_video_app.connect(decoder, direct_video_detector, realtime);
 
-        auto video_options =
-            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
+        auto video_options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+            simaai::neat::nodes::groups::RtspCodec::H264);
         video_options.host = "127.0.0.1";
         video_options.channel = stream;
         video_options.async = false;
@@ -1221,9 +1221,10 @@ RUN_TEST(
             return app;
           };
 
-      simaai::neat::Graph h265_video_app = build_two_stream_h265_app(
-          "direct_h265_video_fused_app", "h265_direct",
-          simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded());
+      simaai::neat::Graph h265_video_app =
+          build_two_stream_h265_app("direct_h265_video_fused_app", "h265_direct",
+                                    simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+                                        simaai::neat::nodes::groups::RtspCodec::H265));
       const auto h265_video_plan =
           simaai::neat::runtime::compile_public_graph(h265_video_app, composed_run_options);
       const auto h265_video_fused = std::find_if(
@@ -1256,9 +1257,10 @@ RUN_TEST(
       require(h265_video_pipeline.find("rtph265pay name=pay0") == std::string::npos,
               "fused H265 VideoSender branches must not retain the fixed pay0 name");
 
-      simaai::neat::Graph mixed_codec_app = build_two_stream_h265_app(
-          "mixed_codec_video_sender_fallback", "mixed_codec",
-          simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded());
+      simaai::neat::Graph mixed_codec_app =
+          build_two_stream_h265_app("mixed_codec_video_sender_fallback", "mixed_codec",
+                                    simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+                                        simaai::neat::nodes::groups::RtspCodec::H264));
       const auto mixed_codec_plan =
           simaai::neat::runtime::compile_public_graph(mixed_codec_app, composed_run_options);
       require(std::none_of(
@@ -1306,8 +1308,8 @@ RUN_TEST(
         async_video_app.connect(source, decoder);
         async_video_app.connect(decoder, async_video_detector, realtime);
 
-        auto video_options =
-            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
+        auto video_options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+            simaai::neat::nodes::groups::RtspCodec::H264);
         video_options.host = "127.0.0.1";
         video_options.channel = stream;
         video_options.async = true;

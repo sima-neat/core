@@ -12,6 +12,7 @@
 #include "test_main.h"
 
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -56,8 +57,8 @@ RUN_TEST(
       auto jpeg_parse = simaai::neat::nodes::JpegParse();
       auto rtp_jpeg_depay = simaai::neat::nodes::RTPJpegDepacketize();
       auto h265_depay = simaai::neat::nodes::H265Depacketize();
-      auto h265_video_sender_options =
-          simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded();
+      auto h265_video_sender_options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+          simaai::neat::nodes::groups::RtspCodec::H265);
       auto h265_video_sender = simaai::neat::nodes::groups::VideoSender(h265_video_sender_options);
       simaai::neat::SimaDecodeOptions sima_decode_opt;
       sima_decode_opt.type = simaai::neat::SimaDecodeType::H265;
@@ -74,7 +75,7 @@ RUN_TEST(
       static_assert(simaai::neat::nodes::groups::RtspCodec::HEVC ==
                     simaai::neat::nodes::groups::RtspCodec::H265);
       rtsp_encoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::H265;
-      rtsp_encoded_opt.h265_payload_type = 98;
+      rtsp_encoded_opt.payload_type = 98;
       auto rtsp_h265_encoded_group =
           simaai::neat::nodes::groups::RtspEncodedInput(rtsp_encoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_decoded_opt;
@@ -144,6 +145,12 @@ RUN_TEST(
               "HttpMjpegDecodedInputOptions aggregate field order changed");
       require(legacy_http_mjpeg_opt.ssl_strict,
               "HttpMjpegDecodedInputOptions ssl_strict should default to true");
+      require(std::string(simaai::neat::format_tag_name(simaai::neat::FormatTag::H265)) == "H265",
+              "FormatTag::H265 must render as H265");
+      require(simaai::neat::format_tag_from_string("H265") == simaai::neat::FormatTag::H265,
+              "H265 must round-trip back through format_tag_from_string");
+      require(simaai::neat::format_tag_from_string("h265") == simaai::neat::FormatTag::H265,
+              "format tag parsing must stay case-insensitive for H265");
       simaai::neat::nodes::groups::ImageInputGroupOptions image_opt;
       image_opt.path = "test.jpg";
       auto group = simaai::neat::nodes::groups::ImageInputGroup(image_opt);

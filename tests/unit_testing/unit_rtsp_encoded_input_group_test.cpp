@@ -1,6 +1,7 @@
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/groups/GroupOutputSpec.h"
+#include "nodes/groups/internal/RtspCodecMapping.h"
 
 #include "nodes/common/EncodedCapsFixup.h"
 #include "gst/GstHelpers.h"
@@ -98,7 +99,7 @@ simaai::neat::nodes::groups::RtspEncodedInputOptions make_h264_encoded_options()
   opt.tcp = false;
   opt.drop_on_latency = true;
   opt.buffer_mode = "none";
-  opt.h264_payload_type = 97;
+  opt.payload_type = 97;
   opt.h264_parse_config_interval = 1;
   opt.h264_fps = 30;
   opt.h264_width = 640;
@@ -111,7 +112,7 @@ simaai::neat::nodes::groups::RtspEncodedInputOptions make_mjpeg_encoded_options(
   opt.url = "rtsp://example.local/mjpeg";
   opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
   opt.latency_ms = 80;
-  opt.mjpeg_payload_type = 26;
+  opt.payload_type = 26;
   return opt;
 }
 
@@ -120,7 +121,7 @@ simaai::neat::nodes::groups::RtspEncodedInputOptions make_h265_encoded_options()
   opt.url = "rtsp://example.local/h265";
   opt.codec = simaai::neat::nodes::groups::RtspCodec::H265;
   opt.latency_ms = 100;
-  opt.h265_payload_type = 98;
+  opt.payload_type = 98;
   opt.source_fps = 30;
   return opt;
 }
@@ -173,7 +174,7 @@ void check_h264_encoded_group() {
                                                   opt.drop_on_latency, opt.buffer_mode));
   manual.push_back(simaai::neat::nodes::Queue());
   manual.push_back(
-      simaai::neat::nodes::H264Depacketize(opt.h264_payload_type, opt.h264_parse_config_interval,
+      simaai::neat::nodes::H264Depacketize(opt.payload_type, opt.h264_parse_config_interval,
                                            opt.h264_fps, opt.h264_width, opt.h264_height));
   manual.push_back(simaai::neat::nodes::Queue());
   compare_graph_fragments(group, graph_from_nodes(std::move(manual)), "H264 encoded topology");
@@ -222,7 +223,7 @@ void check_h265_encoded_group() {
   manual.push_back(simaai::neat::nodes::RTSPInput(opt.url, opt.latency_ms, opt.tcp,
                                                   opt.drop_on_latency, opt.buffer_mode));
   manual.push_back(simaai::neat::nodes::Queue());
-  manual.push_back(simaai::neat::nodes::H265Depacketize(opt.h265_payload_type, opt.source_fps));
+  manual.push_back(simaai::neat::nodes::H265Depacketize(opt.payload_type, opt.source_fps));
   manual.push_back(simaai::neat::nodes::Queue());
   compare_graph_fragments(group, graph_from_nodes(std::move(manual)), "H265 encoded topology");
 
@@ -285,7 +286,7 @@ void check_mjpeg_encoded_group() {
   manual.push_back(simaai::neat::nodes::RTSPInput(opt.url, opt.latency_ms, opt.tcp,
                                                   opt.drop_on_latency, opt.buffer_mode));
   manual.push_back(simaai::neat::nodes::Queue());
-  manual.push_back(simaai::neat::nodes::RTPJpegDepacketize(opt.mjpeg_payload_type));
+  manual.push_back(simaai::neat::nodes::RTPJpegDepacketize(opt.payload_type));
   manual.push_back(simaai::neat::nodes::JpegParse());
   manual.push_back(simaai::neat::nodes::Queue());
   simaai::neat::EncodedCapsFixupOptions fixup{"image/jpeg", opt.source_fps};
@@ -718,6 +719,100 @@ void check_mjpeg_sdp_fps_matches_selected_payload() {
   require(session_fps == 24, "MJPEG SDP FPS should fall back to session-level framerate");
 }
 
+// Payload resolution is the one part of the codec-neutral RTSP input surface
+// that live streams cannot exercise: every stream Neat is validated against
+// advertises payload 96, so the `0` (filtering disabled) and explicit-override
+// branches have no runtime witness. Cover the whole codec x payload_type x
+// legacy-field space here instead.
+void check_payload_type_resolution_matrix() {
+  using simaai::neat::nodes::groups::default_payload_type;
+  using simaai::neat::nodes::groups::resolve_payload_type;
+  using simaai::neat::nodes::groups::RtspCodec;
+  using simaai::neat::nodes::groups::RtspEncodedInputOptions;
+
+  require(default_payload_type(RtspCodec::H264) == 96, "H264 default payload type mismatch");
+  require(default_payload_type(RtspCodec::H265) == 96, "H265 default payload type mismatch");
+  require(default_payload_type(RtspCodec::MJPEG) == 26, "MJPEG default payload type mismatch");
+
+  // Moved off every codec default, so a case that returns it proves the legacy
+  // field was the source rather than a coincidence.
+  constexpr int kLegacy = 97;
+
+  struct Case {
+    RtspCodec codec;
+    int payload_type;  ///< Value written to the codec-neutral field.
+    bool legacy_set;   ///< If true, both deprecated per-codec fields carry kLegacy.
+    int expected;      ///< Payload the depacketizer must be configured with.
+    const char* label; ///< Failure text identifying the row.
+  };
+
+  const Case cases[] = {
+      // -1 defers: the legacy field wins when set, otherwise the codec default.
+      {RtspCodec::H264, -1, false, 96, "H264 unset payload should use the codec default"},
+      {RtspCodec::H264, -1, true, kLegacy, "H264 unset payload should honor h264_payload_type"},
+      {RtspCodec::MJPEG, -1, false, 26, "MJPEG unset payload should use the codec default"},
+      {RtspCodec::MJPEG, -1, true, kLegacy, "MJPEG unset payload should honor mjpeg_payload_type"},
+      {RtspCodec::H265, -1, false, 96, "H265 unset payload should use the codec default"},
+      {RtspCodec::H265, -1, true, 96,
+       "H265 has no legacy field and must ignore the H264/MJPEG ones"},
+
+      // 0 disables payload filtering and must survive every legacy field state.
+      {RtspCodec::H264, 0, false, 0, "H264 payload 0 should disable filtering"},
+      {RtspCodec::H264, 0, true, 0, "H264 payload 0 should outrank h264_payload_type"},
+      {RtspCodec::MJPEG, 0, false, 0, "MJPEG payload 0 should disable filtering"},
+      {RtspCodec::MJPEG, 0, true, 0, "MJPEG payload 0 should outrank mjpeg_payload_type"},
+      {RtspCodec::H265, 0, false, 0, "H265 payload 0 should disable filtering"},
+      {RtspCodec::H265, 0, true, 0, "H265 payload 0 should ignore the legacy fields"},
+
+      // An explicit payload wins outright, for every codec.
+      {RtspCodec::H264, 98, false, 98, "H264 explicit payload should win"},
+      {RtspCodec::H264, 98, true, 98, "H264 explicit payload should outrank h264_payload_type"},
+      {RtspCodec::MJPEG, 98, false, 98, "MJPEG explicit payload should win"},
+      {RtspCodec::MJPEG, 98, true, 98, "MJPEG explicit payload should outrank mjpeg_payload_type"},
+      {RtspCodec::H265, 98, false, 98, "H265 explicit payload should win"},
+      {RtspCodec::H265, 98, true, 98, "H265 explicit payload should ignore the legacy fields"},
+  };
+
+  for (const Case& c : cases) {
+    RtspEncodedInputOptions opt;
+    opt.url = "rtsp://example.local/payload-matrix";
+    opt.codec = c.codec;
+    opt.payload_type = c.payload_type;
+    if (c.legacy_set) {
+      opt.h264_payload_type = kLegacy;
+      opt.mjpeg_payload_type = kLegacy;
+    }
+    const int resolved = resolve_payload_type(opt);
+    require(resolved == c.expected, std::string(c.label) + " (got " + std::to_string(resolved) +
+                                        ", expected " + std::to_string(c.expected) + ")");
+  }
+
+  // The resolved value is what reaches the pipeline: a positive payload becomes
+  // a caps filter and 0 removes the constraint entirely.
+  for (const RtspCodec codec : {RtspCodec::H264, RtspCodec::MJPEG, RtspCodec::H265}) {
+    RtspEncodedInputOptions filtered;
+    filtered.url = "rtsp://example.local/payload-filter";
+    filtered.codec = codec;
+    filtered.payload_type = 98;
+    filtered.auto_caps_from_stream = false;
+    filtered.fallback_h264_fps = 30;
+    filtered.fallback_h264_width = 1280;
+    filtered.fallback_h264_height = 720;
+    const Graph filtered_group = simaai::neat::nodes::groups::RtspEncodedInput(filtered);
+    if (const auto backend = describe_backend_if_available(filtered_group, "payload filter")) {
+      require_contains(*backend, "payload=98", "explicit payload should reach the RTP caps");
+    }
+
+    auto unfiltered = filtered;
+    unfiltered.payload_type = 0;
+    const Graph unfiltered_group = simaai::neat::nodes::groups::RtspEncodedInput(unfiltered);
+    if (const auto backend =
+            describe_backend_if_available(unfiltered_group, "payload unfiltered")) {
+      require_not_contains(*backend, "payload=", "payload 0 should remove the RTP caps filter");
+    }
+  }
+}
+
 void check_invalid_codec_errors() {
   auto encoded = make_h264_encoded_options();
   encoded.codec = static_cast<simaai::neat::nodes::groups::RtspCodec>(999);
@@ -755,6 +850,7 @@ int main() {
     check_decoded_source_fps_and_videorate();
     check_decoded_mjpeg_output_caps_decoder_fallback();
     check_mjpeg_sdp_fps_matches_selected_payload();
+    check_payload_type_resolution_matrix();
     check_invalid_codec_errors();
     std::cout << "[OK] unit_rtsp_encoded_input_group_test passed\n";
     return 0;

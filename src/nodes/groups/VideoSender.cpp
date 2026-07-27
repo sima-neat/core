@@ -114,15 +114,21 @@ VideoSenderOptions VideoSenderOptions::H264RtpUdpFromRaw(int width, int height, 
 }
 
 VideoSenderOptions VideoSenderOptions::H264RtpUdpFromEncoded() {
-  VideoSenderOptions opt;
-  opt.input_kind_ = InputKind::EncodedH264;
-  return opt;
+  return Passthrough(RtspCodec::H264);
 }
 
-VideoSenderOptions VideoSenderOptions::H265RtpUdpFromEncoded() {
+VideoSenderOptions VideoSenderOptions::Passthrough(RtspCodec codec) {
+  if (codec != RtspCodec::H264 && codec != RtspCodec::H265) {
+    throw std::invalid_argument("VideoSenderOptions: codec not supported by Passthrough; only "
+                                "H264 and H265 can be forwarded as RTP");
+  }
+
   VideoSenderOptions opt;
-  opt.input_kind_ = InputKind::EncodedH265;
-  opt.rtp.payload_type = 98;
+  opt.input_kind_ = InputKind::Encoded;
+  opt.codec_ = codec;
+  // Transmit-side defaults, deliberately independent of the RTSP input-side
+  // defaults: Core sends H.265 as 98 while expecting to receive it as 96.
+  opt.rtp.payload_type = (codec == RtspCodec::H265) ? 98 : 96;
   return opt;
 }
 
@@ -141,7 +147,7 @@ simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
                                           opt.encoder.level));
   }
 
-  if (opt.input_kind_ == VideoSenderOptions::InputKind::EncodedH265) {
+  if (opt.codec_ == RtspCodec::H265) {
     nodes.push_back(std::make_shared<H265ParseNode>(opt.rtp.config_interval));
     nodes.push_back(
         std::make_shared<H265PacketizeNode>(opt.rtp.payload_type, opt.rtp.config_interval));

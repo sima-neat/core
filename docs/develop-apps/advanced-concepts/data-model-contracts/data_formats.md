@@ -27,7 +27,8 @@ Common tags:
 | `NV12` | image/video | Y plane plus interleaved UV plane. Width and height must be even. |
 | `I420` | image/video | Y, U, and V planes. Width and height must be even. |
 | `H264` | encoded | H.264 access unit / NAL stream. |
-| `ENCODED` | encoded | Generic encoded payload. The caps string identifies codecs without a dedicated format tag, including H.265. |
+| `H265` | encoded | H.265 / HEVC access unit / NAL stream. |
+| `ENCODED` | encoded | Generic encoded payload. The caps string identifies codecs without a dedicated format tag. |
 | `FP32` | tensor | Float32 tensor payload. |
 | `INT8` | tensor | Signed INT8 tensor payload. |
 | `UINT8` | tensor | Unsigned UINT8 tensor payload. |
@@ -103,9 +104,9 @@ input_options.height = 480
 
 Set only the fields the boundary needs. If the tensor or sample already carries enough metadata, avoid duplicate guesses.
 
-H.264 has the dedicated `H264` tag. H.265 does not have a `H265` format tag;
-use `ENCODED` and provide `video/x-h265` caps on the input boundary and encoded
-sample.
+H.264 and H.265 have the dedicated `H264` and `H265` tags. Set the matching tag
+on the input boundary; the media type is resolved from it. Use `ENCODED` with an
+explicit caps string only for codecs that have no dedicated tag.
 
 ## Advanced image/video output adapter
 
