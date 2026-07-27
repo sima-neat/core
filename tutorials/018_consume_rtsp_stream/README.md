@@ -32,9 +32,11 @@ HEVC equals H.265.
 Set `source_fps` when you already know the source cadence. If you omit it, this
 tutorial opens the RTSP source with OpenCV, reads its reported FPS, and supplies
 the detected value to `RtspDecodedInput`. The group itself does not probe the
-URL. For H.265, Neat propagates this value into the parsed stream caps and
-decoder configuration. It does not change the frame rate. The H.265 stream must
-use HEVC Main profile, 8-bit, 4:2:0 input.
+URL. Only the probing path needs OpenCV, and the Python version imports it on
+demand, so supplying `--source-fps` runs without it; to probe, install it with
+`pip install opencv-python`. For H.265, Neat propagates this value into the
+parsed stream caps and decoder configuration. It does not change the frame rate.
+The H.265 stream must use HEVC Main profile, 8-bit, 4:2:0 input.
 
 Setting `tcp = true` carries RTP over TCP. TCP preserves order and retransmits
 lost segments, which can reduce visible loss compared with UDP but can increase

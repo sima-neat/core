@@ -14,8 +14,6 @@ from __future__ import annotations
 import argparse
 import sys
 
-from probe_rtsp_fps import probe_source_fps
-
 try:
     import pyneat
 except ImportError:
@@ -44,9 +42,12 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv[1:])
     if args.source_fps != -1 and args.source_fps <= 0:
         ap.error("--source-fps must be positive")
-    source_fps = (
-        args.source_fps if args.source_fps != -1 else probe_source_fps(args.url)
-    )
+    source_fps = args.source_fps
+    if source_fps == -1:
+        # Imported here so supplying --source-fps does not require OpenCV.
+        from probe_rtsp_fps import probe_source_fps
+
+        source_fps = probe_source_fps(args.url)
 
     # CORE LOGIC
     # STEP configure-rtsp
