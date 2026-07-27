@@ -1455,7 +1455,6 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-core406"
   "libopencv-imgproc406"
   "libopencv-imgcodecs406"
-  "libopencv-videoio406"
   "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
   "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
@@ -1478,6 +1477,8 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "libgstrtspserver-1.0-dev"
   "libglib2.0-dev"
   "libopencv-dev"
+  # Test-only: tests/rtsp_probe_utils.h probes source FPS with cv::VideoCapture.
+  "libopencv-videoio406"
   "nlohmann-json3-dev"
   "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
