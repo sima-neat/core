@@ -80,7 +80,7 @@ struct RtspDecodedInputOptions {
       RtspCodec::H264;          ///< RTSP codec path to build. Default preserves H.264 behavior.
   bool drop_on_latency = false; ///< If true, ask `rtspsrc` to drop late buffers.
   std::string buffer_mode;      ///< Optional `rtspsrc` buffer-mode value; empty = default.
-  int mjpeg_payload_type = 26;  ///< RTP payload type number for the MJPEG/RTP JPEG stream.
+  int mjpeg_payload_type = 26;  ///< Deprecated; use `payload_type`. RTP payload type for MJPEG.
   int dec_width = -1;           ///< Decoded frame width override; `-1` = upstream-defined.
   int dec_height = -1;          ///< Decoded frame height override; `-1` = upstream-defined.
   int dec_fps = -1; ///< Decoded frame rate override; for MJPEG also a missing-caps FPS fallback.

@@ -52,8 +52,10 @@ inline void warn_deprecated_h264_payload_type_once() {
 inline void warn_deprecated_mjpeg_payload_type_once() {
   static std::once_flag warned;
   std::call_once(warned, []() {
-    std::fprintf(stderr, "[WARN] RtspEncodedInputOptions::mjpeg_payload_type is deprecated. "
-                         "Set RtspEncodedInputOptions::payload_type instead.\n");
+    // Names the field rather than a struct: the decoded options project onto the
+    // encoded ones, so this fires for callers that only ever set the decoded field.
+    std::fprintf(stderr, "[WARN] mjpeg_payload_type is deprecated. "
+                         "Set payload_type instead.\n");
   });
 }
 
