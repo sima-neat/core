@@ -1179,38 +1179,51 @@ RUN_TEST(
               "collisions: " +
                   direct_video_parse_message);
 
-      simaai::neat::Graph h265_video_app("direct_h265_video_fused_app", outer_options);
-      auto h265_video_detector = make_composed_consumer_graph();
-      for (int stream = 0; stream < 2; ++stream) {
-        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
-        source_options.url = "rtsp://example.test/h265-direct" + std::to_string(stream);
-        source_options.codec = simaai::neat::nodes::groups::RtspCodec::H265;
-        source_options.insert_queue = false;
-        source_options.source_fps = 30;
-        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
+      // The two cases below build the same two-stream H.265 RTSP topology and
+      // differ only in the VideoSender codec tapping the source. Sharing the
+      // builder keeps that codec the single variable under test: a matching
+      // H.265 sender must fuse, a mismatched H.264 sender must not.
+      const auto build_two_stream_h265_app =
+          [&](const std::string& app_name, const std::string& prefix,
+              const simaai::neat::nodes::groups::VideoSenderOptions& sender_template) {
+            simaai::neat::Graph app(app_name, outer_options);
+            auto detector = make_composed_consumer_graph();
+            for (int stream = 0; stream < 2; ++stream) {
+              simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
+              source_options.url =
+                  "rtsp://example.test/" + prefix + "-source" + std::to_string(stream);
+              source_options.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+              source_options.insert_queue = false;
+              source_options.source_fps = 30;
+              auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
 
-        simaai::neat::Graph decoder("h265_direct_decoder" + std::to_string(stream));
-        simaai::neat::SimaDecodeOptions decode_options;
-        decode_options.type = simaai::neat::SimaDecodeType::H265;
-        decoder.add(simaai::neat::nodes::SimaDecode(decode_options));
-        decoder.add(simaai::neat::nodes::Output("h265_direct_detector_frame"));
+              simaai::neat::Graph decoder(prefix + "_decoder" + std::to_string(stream));
+              simaai::neat::SimaDecodeOptions decode_options;
+              decode_options.type = simaai::neat::SimaDecodeType::H265;
+              decoder.add(simaai::neat::nodes::SimaDecode(decode_options));
+              decoder.add(simaai::neat::nodes::Output(prefix + "_detector_frame"));
 
-        simaai::neat::GraphLinkOptions realtime;
-        realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
-        realtime.queue_depth = 1;
-        realtime.stream_id = "h265_direct_stream" + std::to_string(stream);
-        realtime.max_inflight_per_stream = 1;
-        realtime.max_inflight_total = 2;
-        h265_video_app.connect(source, decoder);
-        h265_video_app.connect(decoder, h265_video_detector, realtime);
+              simaai::neat::GraphLinkOptions realtime;
+              realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+              realtime.queue_depth = 1;
+              realtime.stream_id = prefix + "_stream" + std::to_string(stream);
+              realtime.max_inflight_per_stream = 1;
+              realtime.max_inflight_total = 2;
+              app.connect(source, decoder);
+              app.connect(decoder, detector, realtime);
 
-        auto video_options =
-            simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded();
-        video_options.channel = stream;
-        auto video_sender = simaai::neat::nodes::groups::VideoSender(video_options);
-        video_sender.set_name("h265_direct_video_sender_" + std::to_string(stream));
-        h265_video_app.connect(source, video_sender);
-      }
+              auto video_options = sender_template;
+              video_options.channel = stream;
+              auto video_sender = simaai::neat::nodes::groups::VideoSender(video_options);
+              video_sender.set_name(prefix + "_video_sender_" + std::to_string(stream));
+              app.connect(source, video_sender);
+            }
+            return app;
+          };
+
+      simaai::neat::Graph h265_video_app = build_two_stream_h265_app(
+          "direct_h265_video_fused_app", "h265_direct",
+          simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded());
       const auto h265_video_plan =
           simaai::neat::runtime::compile_public_graph(h265_video_app, composed_run_options);
       const auto h265_video_fused = std::find_if(
@@ -1243,36 +1256,9 @@ RUN_TEST(
       require(h265_video_pipeline.find("rtph265pay name=pay0") == std::string::npos,
               "fused H265 VideoSender branches must not retain the fixed pay0 name");
 
-      simaai::neat::Graph mixed_codec_app("mixed_codec_video_sender_fallback", outer_options);
-      auto mixed_codec_detector = make_composed_consumer_graph();
-      for (int stream = 0; stream < 2; ++stream) {
-        simaai::neat::nodes::groups::RtspEncodedInputOptions source_options;
-        source_options.url = "rtsp://example.test/mixed-codec" + std::to_string(stream);
-        source_options.codec = simaai::neat::nodes::groups::RtspCodec::H265;
-        source_options.insert_queue = false;
-        source_options.source_fps = 30;
-        auto source = simaai::neat::nodes::groups::RtspEncodedInput(source_options);
-
-        simaai::neat::Graph decoder("mixed_codec_decoder" + std::to_string(stream));
-        simaai::neat::SimaDecodeOptions decode_options;
-        decode_options.type = simaai::neat::SimaDecodeType::H265;
-        decoder.add(simaai::neat::nodes::SimaDecode(decode_options));
-        decoder.add(simaai::neat::nodes::Output("mixed_codec_detector_frame"));
-
-        simaai::neat::GraphLinkOptions realtime;
-        realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
-        realtime.queue_depth = 1;
-        realtime.stream_id = "mixed_codec_stream" + std::to_string(stream);
-        realtime.max_inflight_per_stream = 1;
-        realtime.max_inflight_total = 2;
-        mixed_codec_app.connect(source, decoder);
-        mixed_codec_app.connect(decoder, mixed_codec_detector, realtime);
-
-        auto video_options =
-            simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
-        video_options.channel = stream;
-        mixed_codec_app.connect(source, simaai::neat::nodes::groups::VideoSender(video_options));
-      }
+      simaai::neat::Graph mixed_codec_app = build_two_stream_h265_app(
+          "mixed_codec_video_sender_fallback", "mixed_codec",
+          simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded());
       const auto mixed_codec_plan =
           simaai::neat::runtime::compile_public_graph(mixed_codec_app, composed_run_options);
       require(std::none_of(
