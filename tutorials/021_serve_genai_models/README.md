@@ -94,6 +94,50 @@ python3 share/sima-neat/tutorials/021_serve_genai_models/request_chat_completion
   "Give me three tips for designing a small REST API."
 ```
 
+### Tool-calling request to the LLM
+
+The OpenAI-compatible `POST /v1/chat/completions` endpoint and the Ollama-compatible
+`POST /api/chat` endpoint accept function definitions in the `tools` array. Each entry
+must have `type: "function"`, a `function` object, and a non-empty string
+`function.name`. The function description and JSON Schema parameters may be included
+inside the `function` object:
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "What is the weather in Paris?"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {"type": "string"}
+            },
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "stream": false
+  }'
+```
+
+Set `tool_choice` to `"auto"` to let the model select a declared tool or to `"none"`
+to disable tool prompting and parsing. Omitting `tool_choice`, or setting it to
+`null`, behaves like `"auto"` when `tools` is non-empty. Malformed tool definitions,
+non-array `tools`, and unsupported `tool_choice` values or types return HTTP 400 with
+an `invalid_request_error`. The same tool-definition and tool-choice validation
+applies to direct `GenerationRequest` calls before inference starts.
+
 ### Text and image request to the VLM
 
 The request script base64-encodes the image and sends it as an OpenAI-compatible `image_url` content part.
