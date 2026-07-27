@@ -407,18 +407,19 @@ Additionally, runtime paths may verify required plugins are present:
 - `require_element("appsink", ...)`, etc.
 
 ### Building pipelines
-A `Graph` is built by adding `Node` objects:
+A `Graph` is built by adding `Node` objects and reusable Graph fragments. Use a
+codec-aware fragment for RTSP so the source is depacketized and parsed before
+decode:
 
 ```cpp
-simaai::neat::Graph graph;
-simaai::neat::SimaDecodeOptions decode_options;
-decode_options.type = simaai::neat::SimaDecodeType::H264;
-decode_options.raw_output = false;
+simaai::neat::nodes::groups::RtspDecodedInputOptions source;
+source.url = "rtsp://example/live";
+source.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+source.source_fps = 30;
 
-graph.add(simaai::neat::nodes::RTSPInput("rtsp://example/live"))
-     .add(simaai::neat::nodes::SimaDecode(decode_options))
-     .add(simaai::neat::nodes::CapsNV12SysMem(-1, -1, -1))
-     .add(simaai::neat::nodes::Output());
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
+graph.add(simaai::neat::nodes::Output());
 ```
 
 Internally:
