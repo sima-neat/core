@@ -315,10 +315,22 @@ inline simaai::neat::Graph make_decode_graph(const CodecPerfConfig& config,
   return graph;
 }
 
-/// Push every sample from a producer thread while pulling @p expected_outputs
-/// decoded frames, and return the instant the last expected output arrived.
-/// Input is always closed once the pushes finish: every burst caller measures a
-/// bounded sequence and needs EOS to drain it.
+/**
+ * @brief Push every sample from a producer thread while pulling
+ *        @p expected_outputs decoded frames.
+ *
+ * @return The instant the last expected output arrived, so the caller can time
+ *         the drain rather than the teardown.
+ *
+ * Once the pushes finish the producer closes the input: a burst measures a
+ * bounded sequence and needs EOS to drain. An @p expected_outputs of 0 is the
+ * exception — it returns immediately without pushing, and therefore without
+ * closing the input, leaving the run reusable.
+ *
+ * Requires a graph built for zero-copy output. Every pulled sample is checked
+ * for it unconditionally, so a run configured for owned output fails here
+ * rather than reporting throughput for a different memory path.
+ */
 inline sima_perf::Clock::time_point
 push_and_pull_burst(simaai::neat::Run& run, const std::vector<simaai::neat::Sample>& samples,
                     int expected_outputs, const std::string& context) {
@@ -383,6 +395,17 @@ push_and_pull_burst(simaai::neat::Run& run, const std::vector<simaai::neat::Samp
   return outputs_done;
 }
 
+/**
+ * @brief Push and pull one sample at a time, recording per-frame residency.
+ *
+ * Single-flight by construction: the next push waits for the previous output,
+ * so @p latencies_ms measures decode residency rather than queue depth.
+ *
+ * @param close_input Whether to close the input after the last sample. Pass
+ *        false to keep the run alive for a following measured phase.
+ *
+ * Requires a graph built for zero-copy output, checked on every pulled sample.
+ */
 inline sima_perf::PerfMetrics
 measure_decode_residency(simaai::neat::Run& run, const std::vector<simaai::neat::Sample>& samples,
                          std::vector<double>& latencies_ms, bool close_input) {
