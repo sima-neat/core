@@ -62,7 +62,19 @@ std::optional<std::string> apply_tool_options(const nlohmann::json& body,
     if (!body.at("tools").is_array()) {
       return "tools must be an array";
     }
-    request.tools = body.at("tools");
+    const auto& tools = body.at("tools");
+    for (std::size_t i = 0; i < tools.size(); ++i) {
+      const auto& tool = tools.at(i);
+      if (!tool.is_object() || !tool.contains("type") || tool.at("type") != "function" ||
+          !tool.contains("function") || !tool.at("function").is_object() ||
+          !tool.at("function").contains("name") ||
+          !tool.at("function").at("name").is_string() ||
+          tool.at("function").at("name").get_ref<const std::string&>().empty()) {
+        return "tools[" + std::to_string(i) +
+               "] must contain type 'function' and a non-empty string function.name";
+      }
+    }
+    request.tools = tools;
   }
   if (body.contains("tool_choice")) {
     const auto& choice = body.at("tool_choice");
