@@ -988,7 +988,8 @@ void append_fused_node_fragment(BuildResult* br, std::ostringstream* pipeline,
   // gst_parse_launch() pipeline, however, and may contain one RTP packetizer
   // per source.  Those elements must have unique names inside that pipeline;
   // they are not exported as RTSP media factory payloaders.
-  if (node->kind() == "H264Packetize" && name_transform_enabled(name_transform)) {
+  if ((node->kind() == "H264Packetize" || node->kind() == "H265Packetize") &&
+      name_transform_enabled(name_transform)) {
     const std::string unique_payloader_name = "neat_fused_pay_" + std::to_string(actual_index);
     frag.fragment = rewrite_fragment_names(frag.fragment, {{"pay0", unique_payloader_name}});
     for (auto& element_name : frag.element_names) {
@@ -3121,7 +3122,7 @@ BuildResult build_fused_realtime_source_pipeline(
                     [](const auto& node) { return node && node->kind() == "SimaDecode"; });
     if (has_encoded_boundary && (encoded_split > nodes.size() || !decoder_after_split)) {
       throw std::invalid_argument(
-          "fused encoded branch requires a valid source boundary before H.264 SimaDecode");
+          "fused encoded branch requires a valid source boundary before SimaDecode");
     }
 
     ss << ' ';

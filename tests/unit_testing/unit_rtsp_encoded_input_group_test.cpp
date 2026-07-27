@@ -10,6 +10,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
@@ -114,6 +115,16 @@ simaai::neat::nodes::groups::RtspEncodedInputOptions make_mjpeg_encoded_options(
   return opt;
 }
 
+simaai::neat::nodes::groups::RtspEncodedInputOptions make_h265_encoded_options() {
+  simaai::neat::nodes::groups::RtspEncodedInputOptions opt;
+  opt.url = "rtsp://example.local/h265";
+  opt.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+  opt.latency_ms = 100;
+  opt.h265_payload_type = 98;
+  opt.source_fps = 30;
+  return opt;
+}
+
 void check_rtp_jpeg_depacketize_node() {
   auto node = simaai::neat::nodes::RTPJpegDepacketize(26);
   const std::string fragment = node->backend_fragment(7);
@@ -145,8 +156,17 @@ void check_rtp_jpeg_depacketize_node() {
 }
 
 void check_h264_encoded_group() {
+  static_assert(static_cast<int>(simaai::neat::nodes::groups::RtspCodec::H264) == 0);
+  static_assert(simaai::neat::nodes::groups::RtspCodec::AVC ==
+                simaai::neat::nodes::groups::RtspCodec::H264);
+
   const auto opt = make_h264_encoded_options();
   const Graph group = simaai::neat::nodes::groups::RtspEncodedInput(opt);
+
+  auto avc_opt = opt;
+  avc_opt.codec = simaai::neat::nodes::groups::RtspCodec::AVC;
+  compare_graph_fragments(simaai::neat::nodes::groups::RtspEncodedInput(avc_opt), group,
+                          "AVC encoded topology");
 
   std::vector<std::shared_ptr<simaai::neat::Node>> manual;
   manual.push_back(simaai::neat::nodes::RTSPInput(opt.url, opt.latency_ms, opt.tcp,
@@ -192,6 +212,38 @@ void check_h264_auto_caps_fixup() {
     require_contains(*backend, "h264_capsfix",
                      "H264 auto caps backend should include caps fixup identity");
   }
+}
+
+void check_h265_encoded_group() {
+  const auto opt = make_h265_encoded_options();
+  const Graph group = simaai::neat::nodes::groups::RtspEncodedInput(opt);
+
+  std::vector<std::shared_ptr<simaai::neat::Node>> manual;
+  manual.push_back(simaai::neat::nodes::RTSPInput(opt.url, opt.latency_ms, opt.tcp,
+                                                  opt.drop_on_latency, opt.buffer_mode));
+  manual.push_back(simaai::neat::nodes::Queue());
+  manual.push_back(simaai::neat::nodes::H265Depacketize(opt.h265_payload_type, opt.source_fps));
+  manual.push_back(simaai::neat::nodes::Queue());
+  compare_graph_fragments(group, graph_from_nodes(std::move(manual)), "H265 encoded topology");
+
+  if (const auto backend = describe_backend_if_available(group, "H265 encoded backend")) {
+    require_contains(*backend, "encoding-name=H265", "H265 RTP caps missing");
+    require_contains(*backend, "rtph265depay", "H265 encoded backend should contain H265 depay");
+    require_contains(*backend, "h265parse", "H265 encoded backend should contain H265 parse");
+    require_contains(*backend, "framerate=(fraction)30/1",
+                     "H265 source_fps should configure H265 caps");
+    require_not_contains(*backend, "rtph264depay",
+                         "H265 encoded backend should not contain H264 depay");
+    require_not_contains(*backend, "rtpjpegdepay",
+                         "H265 encoded backend should not contain RTP JPEG");
+  }
+
+  const auto spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(opt);
+  require(spec.payload_type == simaai::neat::PayloadType::Encoded,
+          "H265 encoded group should advertise encoded payload");
+  require(spec.media_type == "video/x-h265", "H265 encoded group media type mismatch");
+  require(spec.format == "H265", "H265 encoded group format mismatch");
+  require(spec.fps_num == 30 && spec.fps_den == 1, "H265 encoded group fps mismatch");
 }
 
 void check_h264_explicit_fallback_caps_without_probe() {
@@ -283,6 +335,16 @@ void check_source_fps_forwarding() {
   const auto mjpeg_spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(mjpeg);
   require(mjpeg_spec.fps_num == 120, "MJPEG encoded spec should use source_fps");
 
+  auto h265 = make_h265_encoded_options();
+  h265.source_fps = 60;
+  const Graph h265_group = simaai::neat::nodes::groups::RtspEncodedInput(h265);
+  if (const auto backend = describe_backend_if_available(h265_group, "H265 source_fps backend")) {
+    require_contains(*backend, "framerate=(fraction)60/1",
+                     "H265 source_fps should configure H265 caps");
+  }
+  const auto h265_spec = simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(h265);
+  require(h265_spec.fps_num == 60, "H265 encoded spec should use source_fps");
+
   auto bad = make_h264_encoded_options();
   bad.source_fps = 60;
   bad.h264_fps = 30;
@@ -315,6 +377,10 @@ void check_decoded_h264_group() {
   opt.num_buffers = 6;
 
   const Graph group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  auto avc_opt = opt;
+  avc_opt.codec = simaai::neat::nodes::groups::RtspCodec::AVC;
+  compare_graph_fragments(simaai::neat::nodes::groups::RtspDecodedInput(avc_opt), group,
+                          "AVC decoded topology");
   require_contains(group.describe(), "SimaDecode", "H264 decoded graph should contain SimaDecode");
   if (const auto backend = describe_backend_if_available(group, "H264 decoded backend")) {
     require_contains(*backend, "rtph264depay", "H264 decoded backend should contain H264 depay");
@@ -331,6 +397,59 @@ void check_decoded_h264_group() {
   require(spec.width == 640 && spec.height == 480, "H264 decoded group shape mismatch");
   require(spec.fps_num == 30 && spec.memory == "SimaAI",
           "H264 decoded group should advertise decoder-native SimaAI output");
+}
+
+void check_decoded_h265_group() {
+  simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
+  opt.url = "rtsp://example.local/h265";
+  opt.codec = simaai::neat::nodes::groups::RtspCodec::HEVC;
+  opt.payload_type = 99;
+  opt.dec_width = 1280;
+  opt.dec_height = 720;
+  opt.source_fps = 30;
+  opt.decoder_name = "rtsp_h265_decoder";
+
+  const Graph group = simaai::neat::nodes::groups::RtspDecodedInput(opt);
+  require_contains(group.describe(), "SimaDecode", "H265 decoded graph should contain SimaDecode");
+  if (const auto backend = describe_backend_if_available(group, "H265 decoded backend")) {
+    require_contains(*backend, "payload=99", "H265 decoded backend should use payload_type");
+    require_contains(*backend, "rtph265depay", "H265 decoded backend should contain H265 depay");
+    require_contains(*backend, "h265parse", "H265 decoded backend should contain H265 parse");
+    require_contains(*backend, "dec-type=h265", "H265 decoded backend should use SimaDecode(H265)");
+    require_contains(*backend, "dec-width=1280", "H265 decoded backend should forward dec_width");
+    require_contains(*backend, "dec-height=720", "H265 decoded backend should forward dec_height");
+    require_contains(*backend, "framerate=(fraction)30/1",
+                     "H265 decoded source_fps should configure source caps");
+    require_contains(*backend, "dec-fps=30", "H265 decoded backend should forward source_fps");
+    require_not_contains(*backend, "rtph264depay",
+                         "H265 decoded backend should not contain H264 depay");
+    require_not_contains(*backend, "rtpjpegdepay",
+                         "H265 decoded backend should not contain RTP JPEG");
+  }
+
+  const auto spec = simaai::neat::nodes::groups::RtspDecodedInputOutputSpec(opt);
+  require(spec.media_type == "video/x-raw", "H265 decoded group media type mismatch");
+  require(spec.format == "NV12", "H265 decoded group format mismatch");
+  require(spec.width == 1280 && spec.height == 720, "H265 decoded group shape mismatch");
+  require(spec.fps_num == 30 && spec.memory == "SimaAI",
+          "H265 decoded group should advertise decoder-native SimaAI output");
+
+  auto decoder_only = opt;
+  decoder_only.source_fps = -1;
+  decoder_only.dec_fps = 25;
+  const Graph decoder_only_group = simaai::neat::nodes::groups::RtspDecodedInput(decoder_only);
+  if (const auto backend =
+          describe_backend_if_available(decoder_only_group, "H265 decoder-only FPS backend")) {
+    require_contains(*backend, "dec-fps=25", "H265 dec_fps should configure decoder FPS");
+    require_not_contains(*backend, "framerate=(fraction)25/1",
+                         "H265 dec_fps should not configure source caps");
+  }
+
+  auto conflicting = opt;
+  conflicting.dec_fps = 25;
+  require_throws_with([&]() { (void)simaai::neat::nodes::groups::RtspDecodedInput(conflicting); },
+                      "source_fps conflicts with dec_fps",
+                      "conflicting H265 source and decoder FPS declarations");
 }
 
 void check_decoded_mjpeg_group() {
@@ -626,10 +745,12 @@ int main() {
     check_h264_encoded_group();
     check_h264_auto_caps_fixup();
     check_h264_explicit_fallback_caps_without_probe();
+    check_h265_encoded_group();
     check_mjpeg_encoded_group();
     check_source_fps_forwarding();
     check_no_queue_mode();
     check_decoded_h264_group();
+    check_decoded_h265_group();
     check_decoded_mjpeg_group();
     check_decoded_source_fps_and_videorate();
     check_decoded_mjpeg_output_caps_decoder_fallback();

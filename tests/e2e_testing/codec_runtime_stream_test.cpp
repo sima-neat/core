@@ -3,14 +3,11 @@
 #include "nodes/groups/HttpMjpegDecodedInput.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/RtspEncodedInput.h"
-#include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
-#include "pipeline/internal/TensorUtil.h"
+#include "rtsp_probe_utils.h"
 #include "test_utils.h"
-
-#include <gst/gst.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -25,8 +22,6 @@
 namespace {
 
 using simaai::neat::Graph;
-using simaai::neat::InputMemoryPolicy;
-using simaai::neat::InputOptions;
 using simaai::neat::OutputMemory;
 using simaai::neat::OutputOptions;
 using simaai::neat::PayloadType;
@@ -49,6 +44,8 @@ constexpr int kDefaultTimeoutMs = 20000;
 
 enum class CaseKind {
   RtspH264Decoded,
+  RtspH265EncodedBoundary,
+  RtspH265Decoded,
   RtspMjpegEncodedBoundary,
   RtspMjpegDecoded,
   RtspMjpegDecodedVideorate,
@@ -75,7 +72,6 @@ struct Args {
   int timeout_ms = kDefaultTimeoutMs;
   int repeat = 1;
   bool determinism = false;
-  bool nested_boundary = false;
 };
 
 std::string trim_copy(const std::string& value) {
@@ -146,12 +142,20 @@ bool starts_with(const std::string& value, const std::string& prefix) {
 TestCase test_case_for(CaseKind kind) {
   switch (kind) {
   case CaseKind::RtspH264Decoded:
+    return {
+        kind, "rtsp-h264-decoded", "SIMANEAT_TEST_RTSP_H264_URL", "SIMANEAT_TEST_RTSP_H264_URLS",
+        {},   "video/x-raw"};
+  case CaseKind::RtspH265EncodedBoundary:
     return {kind,
-            "rtsp-h264-decoded",
-            "SIMANEAT_TEST_RTSP_H264_URL",
-            "SIMANEAT_TEST_RTSP_H264_URLS",
-            "SIMANEAT_TEST_RTSP_H264_FPS",
-            "video/x-raw"};
+            "rtsp-h265-encoded-boundary",
+            "SIMANEAT_TEST_RTSP_H265_URL",
+            "SIMANEAT_TEST_RTSP_H265_URLS",
+            {},
+            "video/x-h265"};
+  case CaseKind::RtspH265Decoded:
+    return {
+        kind, "rtsp-h265-decoded", "SIMANEAT_TEST_RTSP_H265_URL", "SIMANEAT_TEST_RTSP_H265_URLS",
+        {},   "video/x-raw"};
   case CaseKind::RtspMjpegEncodedBoundary:
     return {kind,
             "rtsp-mjpeg-encoded-boundary",
@@ -199,6 +203,8 @@ TestCase test_case_for(CaseKind kind) {
 
 std::vector<TestCase> all_test_cases() {
   return {test_case_for(CaseKind::RtspH264Decoded),
+          test_case_for(CaseKind::RtspH265EncodedBoundary),
+          test_case_for(CaseKind::RtspH265Decoded),
           test_case_for(CaseKind::RtspMjpegEncodedBoundary),
           test_case_for(CaseKind::RtspMjpegDecoded),
           test_case_for(CaseKind::RtspMjpegDecodedVideorate),
@@ -262,6 +268,12 @@ CaseKind parse_case_kind(const std::string& value) {
   if (value == "rtsp-h264-decoded") {
     return CaseKind::RtspH264Decoded;
   }
+  if (value == "rtsp-h265-encoded-boundary") {
+    return CaseKind::RtspH265EncodedBoundary;
+  }
+  if (value == "rtsp-h265-decoded") {
+    return CaseKind::RtspH265Decoded;
+  }
   if (value == "rtsp-mjpeg-encoded-boundary") {
     return CaseKind::RtspMjpegEncodedBoundary;
   }
@@ -285,10 +297,11 @@ CaseKind parse_case_kind(const std::string& value) {
 
 void print_help(const char* exe) {
   std::cout << "Usage: " << exe
-            << " [--case NAME] [--frames N] [--timeout-ms N] [--repeat N] [--determinism]"
-               " [--nested-boundary]\n"
+            << " [--case NAME] [--frames N] [--timeout-ms N] [--repeat N] [--determinism]\n"
             << "Cases:\n"
             << "  rtsp-h264-decoded\n"
+            << "  rtsp-h265-encoded-boundary\n"
+            << "  rtsp-h265-decoded\n"
             << "  rtsp-mjpeg-encoded-boundary\n"
             << "  rtsp-mjpeg-decoded\n"
             << "  rtsp-mjpeg-decoded-videorate\n"
@@ -323,8 +336,6 @@ Args parse_args(int argc, char** argv) {
       args.repeat = std::stoi(require_value("--repeat"));
     } else if (arg == "--determinism") {
       args.determinism = true;
-    } else if (arg == "--nested-boundary") {
-      args.nested_boundary = true;
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -375,6 +386,15 @@ int source_fps_from_env(const TestCase& test_case) {
   return fps.value_or(-1);
 }
 
+int source_fps_for_url(const TestCase& test_case, const std::string& url) {
+  if (test_case.kind == CaseKind::RtspH264Decoded ||
+      test_case.kind == CaseKind::RtspH265EncodedBoundary ||
+      test_case.kind == CaseKind::RtspH265Decoded) {
+    return sima_test::probe_rtsp_source_fps(url);
+  }
+  return source_fps_from_env(test_case);
+}
+
 int video_rate_fps_from_source(int source_fps) {
   require(source_fps > 0, "videorate runtime case requires source FPS");
   return (source_fps > 1) ? std::max(1, source_fps / 2) : 1;
@@ -408,10 +428,12 @@ std::string sample_contract_signature(const TestCase& test_case, const Sample& s
   oss << "case=" << test_case.name
       << ";payload=" << static_cast<int>(simaai::neat::sample_payload_type(sample));
   switch (test_case.kind) {
+  case CaseKind::RtspH265EncodedBoundary:
   case CaseKind::RtspMjpegEncodedBoundary:
     oss << ";tensors=" << sample.tensors.size() << ";caps=" << test_case.expected_caps;
     break;
   case CaseKind::RtspH264Decoded:
+  case CaseKind::RtspH265Decoded:
   case CaseKind::RtspMjpegDecoded:
   case CaseKind::RtspMjpegDecodedVideorate:
   case CaseKind::HttpMjpegDecoded:
@@ -441,6 +463,21 @@ void require_backend_contract(const Graph& graph, const TestCase& test_case, int
 
   switch (test_case.kind) {
   case CaseKind::RtspH264Decoded:
+    require_contains(backend, "dec-fps=" + source_fps_text,
+                     test_case.name + ": source_fps should configure decoder FPS");
+    break;
+  case CaseKind::RtspH265EncodedBoundary:
+    require_contains(backend, "rtph265depay", test_case.name + ": H.265 depayloader is missing");
+    require_contains(backend, "h265parse", test_case.name + ": H.265 parser is missing");
+    require_contains(backend, "framerate=(fraction)" + source_fps_text + "/1",
+                     test_case.name + ": source_fps should configure H.265 caps");
+    break;
+  case CaseKind::RtspH265Decoded:
+    require_contains(backend, "rtph265depay", test_case.name + ": H.265 depayloader is missing");
+    require_contains(backend, "h265parse", test_case.name + ": H.265 parser is missing");
+    require_contains(backend, "dec-type=h265", test_case.name + ": H.265 decoder is missing");
+    require_contains(backend, "framerate=(fraction)" + source_fps_text + "/1",
+                     test_case.name + ": source_fps should configure H.265 caps");
     require_contains(backend, "dec-fps=" + source_fps_text,
                      test_case.name + ": source_fps should configure decoder FPS");
     break;
@@ -480,6 +517,22 @@ Graph make_source_graph(const TestCase& test_case, const std::string& url, int s
     RtspDecodedInputOptions options;
     options.url = url;
     options.codec = RtspCodec::H264;
+    options.source_fps = source_fps;
+    graph.add(RtspDecodedInput(options));
+    break;
+  }
+  case CaseKind::RtspH265EncodedBoundary: {
+    RtspEncodedInputOptions options;
+    options.url = url;
+    options.codec = RtspCodec::H265;
+    options.source_fps = source_fps;
+    graph.add(RtspEncodedInput(options));
+    break;
+  }
+  case CaseKind::RtspH265Decoded: {
+    RtspDecodedInputOptions options;
+    options.url = url;
+    options.codec = RtspCodec::H265;
     options.source_fps = source_fps;
     graph.add(RtspDecodedInput(options));
     break;
@@ -543,6 +596,18 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample,
   require_contains(metadata, test_case.expected_caps, test_case.name + ": sample caps mismatch");
 
   switch (test_case.kind) {
+  case CaseKind::RtspH265EncodedBoundary: {
+    require(simaai::neat::sample_payload_type(sample) == PayloadType::Encoded,
+            test_case.name + ": expected encoded payload");
+    require(sample.caps_string.find("video/x-raw,format=ENCODED") == std::string::npos,
+            test_case.name + ": encoded output must not use raw ENCODED caps");
+    require(sample.tensors.size() == 1U, test_case.name + ": expected one encoded tensor");
+    require(sample.tensors.front().storage != nullptr,
+            test_case.name + ": encoded tensor missing storage");
+    require(caps_contains_fps(sample.caps_string, expected_encoded_fps),
+            test_case.name + ": encoded caps did not carry configured source FPS");
+    break;
+  }
   case CaseKind::RtspMjpegEncodedBoundary: {
     require(simaai::neat::sample_payload_type(sample) == PayloadType::Encoded,
             test_case.name + ": expected encoded payload");
@@ -561,6 +626,7 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample,
   }
 
   case CaseKind::RtspH264Decoded:
+  case CaseKind::RtspH265Decoded:
   case CaseKind::RtspMjpegDecoded:
   case CaseKind::RtspMjpegDecodedVideorate:
   case CaseKind::HttpMjpegDecoded:
@@ -577,162 +643,24 @@ void require_sample_contract(const TestCase& test_case, const Sample& sample,
   }
 }
 
-void require_same_gst_memory(const Sample& lhs, const Sample& rhs, const std::string& context) {
-  const simaai::neat::TensorList lhs_tensors = simaai::neat::tensors_from_sample(lhs, true);
-  const simaai::neat::TensorList rhs_tensors = simaai::neat::tensors_from_sample(rhs, true);
-  require(lhs_tensors.size() == 1U && rhs_tensors.size() == 1U,
-          context + ": expected one tensor per sample");
-  require(lhs_tensors.front().storage && rhs_tensors.front().storage,
-          context + ": missing tensor storage");
-
-  GstBuffer* lhs_buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(
-      lhs_tensors.front().storage->holder);
-  GstBuffer* rhs_buffer = simaai::neat::pipeline_internal::buffer_from_tensor_holder(
-      rhs_tensors.front().storage->holder);
-  require(lhs_buffer, context + ": left sample is not GstSample-backed");
-  require(rhs_buffer, context + ": right sample is not GstSample-backed");
-  require(gst_buffer_n_memory(lhs_buffer) == gst_buffer_n_memory(rhs_buffer),
-          context + ": GstMemory count changed across zero-copy boundary");
-  for (guint i = 0; i < gst_buffer_n_memory(lhs_buffer); ++i) {
-    require(gst_buffer_peek_memory(lhs_buffer, i) == gst_buffer_peek_memory(rhs_buffer, i),
-            context + ": payload memory was copied across zero-copy boundary");
-  }
-  gst_buffer_unref(lhs_buffer);
-  gst_buffer_unref(rhs_buffer);
-}
-
-std::vector<std::string> run_encoded_boundary(const TestCase& test_case, const std::string& url,
-                                              int source_fps, int frames, int timeout_ms) {
+std::vector<std::string> run_source(const TestCase& test_case, const std::string& url,
+                                    int source_fps, int frames, int timeout_ms) {
   std::vector<std::string> signatures;
-  Graph source_graph = make_source_graph(test_case, url, source_fps);
-  Run source_run = source_graph.build(make_run_options(OutputMemory::ZeroCopy));
-  Sample first_sample =
-      pull_or_throw(source_run, "source", timeout_ms, test_case.name + ": source pull");
-  require_sample_contract(test_case, first_sample, source_fps);
+  Graph graph = make_source_graph(test_case, url, source_fps);
+  const OutputMemory output_memory =
+      (test_case.kind == CaseKind::RtspH265Decoded) ? OutputMemory::Owned : OutputMemory::ZeroCopy;
+  Run run = graph.build(make_run_options(output_memory));
 
-  InputOptions input_options;
-  input_options.payload_type = simaai::neat::sample_payload_type(first_sample);
-  input_options.caps_override = first_sample.caps_string;
-  input_options.is_live = true;
-  input_options.block = true;
-  input_options.pool_max_buffers = 8;
-  input_options.memory_policy = InputMemoryPolicy::SystemMemory;
-
-  Graph boundary_graph("rtsp-mjpeg-encoded-boundary-pass-through");
-  boundary_graph.add(simaai::neat::nodes::Input("encoded", input_options));
-  boundary_graph.add(simaai::neat::nodes::Output("encoded", OutputOptions::EveryFrame(8)));
-  Run boundary_run =
-      boundary_graph.build(Sample{first_sample}, make_run_options(OutputMemory::ZeroCopy));
-
-  int source_pull = 1;
-  int boundary_push = 0;
-  int boundary_pull = 0;
-  auto push_and_pull = [&](const Sample& sample) {
-    require(boundary_run.push("encoded", sample), test_case.name + ": boundary push failed");
-    ++boundary_push;
-    Sample out =
-        pull_or_throw(boundary_run, "encoded", timeout_ms, test_case.name + ": boundary pull");
-    ++boundary_pull;
-    require_sample_contract(test_case, out, source_fps);
-    signatures.push_back(sample_contract_signature(test_case, out));
-  };
-
-  push_and_pull(first_sample);
-  while (source_pull < frames) {
-    Sample sample =
-        pull_or_throw(source_run, "source", timeout_ms, test_case.name + ": source pull");
-    ++source_pull;
+  int pulled = 0;
+  while (pulled < frames) {
+    Sample sample = pull_or_throw(run, "source", timeout_ms, test_case.name + ": source pull");
     require_sample_contract(test_case, sample, source_fps);
-    push_and_pull(sample);
+    signatures.push_back(sample_contract_signature(test_case, sample));
+    ++pulled;
   }
 
-  boundary_run.close();
-  source_run.close();
-  std::cout << "[OK] " << test_case.name << " frames=" << frames << " source_pull=" << source_pull
-            << " boundary_push=" << boundary_push << " boundary_pull=" << boundary_pull << "\n";
-  return signatures;
-}
-
-std::vector<std::string> run_decoded_source(const TestCase& test_case, const std::string& url,
-                                            int source_fps, int frames, int timeout_ms,
-                                            bool nested_boundary) {
-  std::vector<std::string> signatures;
-  Graph source_graph = make_source_graph(test_case, url, source_fps);
-  Run source_run = source_graph.build(make_run_options(OutputMemory::ZeroCopy));
-  Sample first_sample =
-      pull_or_throw(source_run, "source", timeout_ms, test_case.name + ": source pull");
-  require_sample_contract(test_case, first_sample);
-
-  InputOptions input_options;
-  input_options.payload_type = simaai::neat::sample_payload_type(first_sample);
-  input_options.caps_override = first_sample.caps_string;
-  input_options.is_live = true;
-  input_options.block = true;
-  input_options.pool_max_buffers = 8;
-
-  const auto make_boundary_run = [&](const std::string& suffix) {
-    Graph graph(test_case.name + suffix);
-    graph.add(simaai::neat::nodes::Input("decoded", input_options));
-    graph.add(simaai::neat::nodes::Output("decoded", OutputOptions::EveryFrame(8)));
-    return graph.build(Sample{first_sample}, make_run_options(OutputMemory::ZeroCopy));
-  };
-  Run first_boundary_run = make_boundary_run("-zero-copy-boundary-1");
-  std::optional<Run> second_boundary_run;
-  if (nested_boundary) {
-    second_boundary_run.emplace(make_boundary_run("-zero-copy-boundary-2"));
-  }
-
-  int source_pull = 1;
-  int first_boundary_pull = 0;
-  int second_boundary_pull = 0;
-  const bool require_zero_copy_identity = test_case.kind == CaseKind::RtspH264Decoded;
-  auto push_and_pull = [&](const Sample& sample) {
-    require(first_boundary_run.push("decoded", sample),
-            test_case.name + ": first boundary push failed");
-    Sample first_out = pull_or_throw(first_boundary_run, "decoded", timeout_ms,
-                                     test_case.name + ": first boundary pull");
-    ++first_boundary_pull;
-    require_sample_contract(test_case, first_out);
-    if (require_zero_copy_identity) {
-      require_same_gst_memory(sample, first_out, test_case.name + ": first boundary");
-    }
-
-    Sample out = std::move(first_out);
-    if (second_boundary_run) {
-      require(second_boundary_run->push("decoded", out),
-              test_case.name + ": second boundary push failed");
-      Sample nested_out = pull_or_throw(*second_boundary_run, "decoded", timeout_ms,
-                                        test_case.name + ": second boundary pull");
-      ++second_boundary_pull;
-      if (require_zero_copy_identity) {
-        require_same_gst_memory(out, nested_out, test_case.name + ": second boundary");
-      }
-      out = std::move(nested_out);
-    }
-    require_sample_contract(test_case, out);
-    if (require_zero_copy_identity) {
-      require_same_gst_memory(sample, out, test_case.name + ": end-to-end boundary chain");
-    }
-    signatures.push_back(sample_contract_signature(test_case, out));
-  };
-
-  push_and_pull(first_sample);
-  while (source_pull < frames) {
-    Sample sample =
-        pull_or_throw(source_run, "source", timeout_ms, test_case.name + ": source pull");
-    require_sample_contract(test_case, sample);
-    ++source_pull;
-    push_and_pull(sample);
-  }
-
-  if (second_boundary_run) {
-    second_boundary_run->close();
-  }
-  first_boundary_run.close();
-  source_run.close();
-  std::cout << "[OK] " << test_case.name << " frames=" << frames << " source_pull=" << source_pull
-            << " first_boundary_pull=" << first_boundary_pull
-            << " second_boundary_pull=" << second_boundary_pull << "\n";
+  run.close();
+  std::cout << "[OK] " << test_case.name << " frames=" << pulled << "\n";
   return signatures;
 }
 
@@ -766,11 +694,7 @@ int skip_missing_fps_env(const TestCase& test_case) {
 
 std::vector<std::string> run_one_iteration(const TestCase& test_case, const std::string& url,
                                            int source_fps, const Args& args) {
-  if (test_case.kind == CaseKind::RtspMjpegEncodedBoundary) {
-    return run_encoded_boundary(test_case, url, source_fps, args.frames, args.timeout_ms);
-  }
-  return run_decoded_source(test_case, url, source_fps, args.frames, args.timeout_ms,
-                            args.nested_boundary);
+  return run_source(test_case, url, source_fps, args.frames, args.timeout_ms);
 }
 
 void run_test_case(const TestCase& test_case, const std::string& url, int source_fps,
@@ -836,7 +760,7 @@ int main(int argc, char** argv) {
       if (url.empty()) {
         return skip_missing_env(test_case);
       }
-      const int source_fps = source_fps_from_env(test_case);
+      const int source_fps = source_fps_for_url(test_case, url);
       if (test_case.requires_source_fps && source_fps <= 0) {
         return skip_missing_fps_env(test_case);
       }
@@ -853,7 +777,7 @@ int main(int argc, char** argv) {
                   << " to run " << test_case.name << "\n";
         continue;
       }
-      const int source_fps = source_fps_from_env(test_case);
+      const int source_fps = source_fps_for_url(test_case, url);
       if (test_case.requires_source_fps && source_fps <= 0) {
         std::cout << "[SKIP] set " << test_case.fps_env << " to run " << test_case.name << "\n";
         continue;
@@ -864,7 +788,7 @@ int main(int argc, char** argv) {
     for (const auto& test_case : sync_smoke_test_cases()) {
       const std::string url = first_url_from_env(test_case);
       if (!url.empty()) {
-        const int source_fps = source_fps_from_env(test_case);
+        const int source_fps = source_fps_for_url(test_case, url);
         if (test_case.requires_source_fps && source_fps <= 0) {
           continue;
         }

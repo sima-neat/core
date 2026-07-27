@@ -16,7 +16,16 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Runtime changes
 
-- Ordinary `build()` now selects fused lowering automatically for eligible live fan-in. A direct encoded H.264 `VideoSender` branch is fused before decode without a decoded-frame CPU copy. Set that edge to `RealtimeLatestByStream` for live preview so a slow video receiver replaces stale access units instead of backpressuring the decoder branch.
+- Native H.265/HEVC decode is available through `SimaDecode` and
+  `RtspDecodedInput` in C++ and Python. `RtspEncodedInput` provides parsed H.265
+  access units without decoding them. H.265 inputs must use HEVC Main profile,
+  8-bit, 4:2:0. The codec selectors accept both `H265` and `HEVC`; H.264
+  selectors also accept `AVC`.
+- `VideoSender` forwards encoded H.265 as RTP over UDP without re-encoding
+  through `VideoSenderOptions::H265RtpUdpFromEncoded()` /
+  `pyneat.VideoSenderOptions.h265_rtp_udp_from_encoded()`. H.265 uses RTP
+  payload type 98 by default; H.264 keeps 96.
+- Ordinary `build()` now selects fused lowering automatically for eligible live fan-in. A direct encoded H.264 or H.265 `VideoSender` branch is fused before decode without a decoded-frame CPU copy. The source, decoder, and sender must agree on codec; a mismatched pair stays in separate pipeline segments. Set that edge to `RealtimeLatestByStream` for live preview so a slow video receiver replaces stale access units instead of backpressuring the decoder branch.
 
 - Added C++ and Python `CameraInput` documentation and tutorial coverage for MIPI/libcamera source-owned graphs, including adaptive SiMaAI memory handoff before CVU/MLA model routes.
 - `MetadataSender` now keeps UDP payloads within 1200 bytes by chunking larger
@@ -26,6 +35,7 @@ Release notes for the SiMa.ai Neat Library.
 
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |
+| 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |
 | 0.2.2 | 2.1.2.2 | [Neat Library 0.2.2](https://github.com/sima-neat/core/releases/tag/v0.2.2) |
 | 0.2.1 | 2.1.2.1 | [Neat Library 0.2.1](https://github.com/sima-neat/core/releases/tag/v0.2.1) |
 | 0.2.0 | 2.1.2 | [Neat Library 0.2.0](https://github.com/sima-neat/core/releases/tag/v0.2.0) |

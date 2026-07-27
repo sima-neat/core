@@ -17,7 +17,7 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-import perf_schema as schema
+import perf_schema as schema  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,7 @@ SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_graph_join_bundle", "perf_runtime_graph_join_bundle_test"),
     ScenarioSpec("runtime_codec_mjpeg_decode", "perf_runtime_codec_mjpeg_decode_test"),
     ScenarioSpec("runtime_codec_h264_decode", "perf_runtime_codec_h264_decode_test"),
+    ScenarioSpec("runtime_codec_h265_decode", "perf_runtime_codec_h265_decode_test"),
 )
 
 
@@ -166,12 +167,12 @@ def configure_and_build(repo_root: Path, build_dir: Path, targets: list[str]) ->
     return True, ""
 
 
-def run_modalix_preflight(repo_root: Path, build_dir: Path) -> tuple[bool, str]:
+def run_modalix_preflight(repo_root: Path, ctest_dir: Path) -> tuple[bool, str]:
     proc = run_cmd(
         [
             "ctest",
             "--test-dir",
-            str(build_dir),
+            str(ctest_dir),
             "--output-on-failure",
             "-R",
             "^unit_modalix_contract_preflight_test$",
@@ -191,7 +192,7 @@ def run_modalix_preflight(repo_root: Path, build_dir: Path) -> tuple[bool, str]:
 def run_scenario(
     *,
     repo_root: Path,
-    build_dir: Path,
+    executable_dir: Path,
     results_dir: Path,
     profile: schema.PerfProfile,
     spec: ScenarioSpec,
@@ -199,7 +200,7 @@ def run_scenario(
     timeout_sec: int,
     iterations_override: int | None,
 ) -> schema.PerfResult:
-    exe_path = build_dir / "tests" / spec.target
+    exe_path = executable_dir / spec.target
     if not exe_path.exists():
         return build_result(
             scenario_id=spec.scenario_id,
@@ -349,11 +350,17 @@ def print_summary(results: list[schema.PerfResult]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    repo_root_default = THIS_DIR.parents[3]
+    repo_root_default = THIS_DIR.parents[2]
 
     parser = argparse.ArgumentParser(description="Run perf matrix against strict baselines")
     parser.add_argument("--repo-root", type=Path, default=repo_root_default)
     parser.add_argument("--build-dir", type=Path, default=Path("build-perf-gate"))
+    parser.add_argument(
+        "--prebuilt-tests-dir",
+        type=Path,
+        default=None,
+        help="Run installed test executables from this directory without configuring or building.",
+    )
     parser.add_argument(
         "--profile-dir",
         type=Path,
@@ -411,26 +418,36 @@ def main() -> int:
         print_summary(results)
         return 0
 
-    build_targets = ["unit_modalix_contract_preflight_test", *[spec.target for spec in SCENARIOS]]
-    ok, build_error = configure_and_build(repo_root, build_dir, build_targets)
-    if not ok:
-        results: list[schema.PerfResult] = []
-        for spec in SCENARIOS:
-            result = build_result(
-                scenario_id=spec.scenario_id,
-                modalix_profile_id=profile.modalix_profile_id,
-                status=schema.ResultStatus.FAIL,
-                failure_class=schema.FailureClass.ENV_BROKEN,
-                reason_code=schema.ReasonCode.ENV_RUNTIME_CRASH,
-                metrics=dict(schema.DEFAULT_EMPTY_METRICS),
-                run_meta={"phase": "build", "error": build_error},
-            )
-            write_result(results_dir, result)
-            results.append(result)
-        print_summary(results)
-        return 1
+    if args.prebuilt_tests_dir is not None:
+        executable_dir = (
+            (repo_root / args.prebuilt_tests_dir).resolve()
+            if not args.prebuilt_tests_dir.is_absolute()
+            else args.prebuilt_tests_dir
+        )
+        preflight_dir = executable_dir
+    else:
+        build_targets = ["unit_modalix_contract_preflight_test", *[spec.target for spec in SCENARIOS]]
+        ok, build_error = configure_and_build(repo_root, build_dir, build_targets)
+        if not ok:
+            results: list[schema.PerfResult] = []
+            for spec in SCENARIOS:
+                result = build_result(
+                    scenario_id=spec.scenario_id,
+                    modalix_profile_id=profile.modalix_profile_id,
+                    status=schema.ResultStatus.FAIL,
+                    failure_class=schema.FailureClass.ENV_BROKEN,
+                    reason_code=schema.ReasonCode.ENV_RUNTIME_CRASH,
+                    metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+                    run_meta={"phase": "build", "error": build_error},
+                )
+                write_result(results_dir, result)
+                results.append(result)
+            print_summary(results)
+            return 1
+        executable_dir = build_dir / "tests"
+        preflight_dir = build_dir
 
-    preflight_ok, preflight_error = run_modalix_preflight(repo_root, build_dir)
+    preflight_ok, preflight_error = run_modalix_preflight(repo_root, preflight_dir)
     if not preflight_ok:
         preflight_reason = schema.classify_env_failure(
             exit_code=1,
@@ -458,7 +475,7 @@ def main() -> int:
         baseline = baseline_map[spec.scenario_id]
         result = run_scenario(
             repo_root=repo_root,
-            build_dir=build_dir,
+            executable_dir=executable_dir,
             results_dir=results_dir,
             profile=profile,
             spec=spec,

@@ -20,6 +20,8 @@ const char* decoder_type_name(SimaDecodeType type) {
     return "jpeg";
   case SimaDecodeType::MJPEG:
     return "mjpeg";
+  case SimaDecodeType::H265:
+    return "h265";
   }
   throw std::invalid_argument("SimaDecode: unsupported decode type");
 }
