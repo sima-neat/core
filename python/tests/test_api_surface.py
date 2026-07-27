@@ -525,7 +525,8 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.VideoSenderEncoderOptions())
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30))
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
-  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h265_rtp_udp_from_encoded())
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H264))
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265))
   _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSenderSendOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions()))
@@ -615,8 +616,8 @@ def test_output_stage_option_structs_are_mutable():
   video_sender.rtp = video_rtp
   video_sender.encoder = video_encoder
 
-  encoded_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded()
-  h265_encoded_sender = pyneat.VideoSenderOptions.h265_rtp_udp_from_encoded()
+  encoded_sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H264)
+  h265_encoded_sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265)
 
   metadata_sender = pyneat.MetadataSenderOptions()
   metadata_sender.host = "127.0.0.1"
@@ -887,7 +888,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.sync_mode is False
   assert encoded.h264_payload_type == 96
   assert encoded.mjpeg_payload_type == 26
-  assert encoded.h265_payload_type == 96
+  assert encoded.payload_type == -1
   assert encoded.auto_caps_from_stream is True
   assert encoded.source_fps == -1
 
@@ -915,7 +916,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
 
   encoded.url = "rtsp://example.local/h265"
   encoded.codec = pyneat.RtspCodec.HEVC
-  encoded.h265_payload_type = 98
+  encoded.payload_type = 98
   h265_group = pyneat.groups.rtsp_encoded_input(encoded)
   h265_backend = h265_group.describe_backend().lower()
   assert "rtph265depay" in h265_backend
@@ -931,7 +932,7 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.codec == pyneat.RtspCodec.H264
   assert decoded.drop_on_latency is False
   assert decoded.buffer_mode == ""
-  assert decoded.payload_type == 96
+  assert decoded.payload_type == -1
   assert decoded.mjpeg_payload_type == 26
   assert decoded.dec_width == -1
   assert decoded.dec_height == -1

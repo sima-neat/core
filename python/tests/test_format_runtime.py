@@ -57,6 +57,8 @@ def test_format_converters_in_advanced_tier():
   adv = pyneat.advanced
   assert adv.format_tag_name(pyneat.Format.NV12) == "NV12"
   assert adv.format_tag_from_string("NV12") == pyneat.Format.NV12
+  assert adv.format_tag_name(pyneat.Format.H265) == "H265"
+  assert adv.format_tag_from_string("H265") == pyneat.Format.H265
   assert adv.is_raw_video_format(pyneat.Format.NV12) is True
   assert adv.is_tensor_payload_format(pyneat.Format.FP32) is True
   assert adv.is_raw_video_format(pyneat.Format.FP32) is False

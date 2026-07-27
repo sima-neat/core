@@ -8,6 +8,7 @@
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
+#include "nodes/groups/internal/RtspCodecMapping.h"
 #include "pipeline/internal/SyncBuild.h"
 
 #include <memory>
@@ -87,7 +88,7 @@ void add_source_and_optional_queue(std::vector<std::shared_ptr<simaai::neat::Nod
 void add_h264_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                    const RtspEncodedInputOptions& opt, bool insert_queue) {
   const ResolvedH264Caps caps = resolve_h264_caps(opt);
-  nodes.push_back(nodes::H264Depacketize(opt.h264_payload_type, opt.h264_parse_config_interval,
+  nodes.push_back(nodes::H264Depacketize(resolve_payload_type(opt), opt.h264_parse_config_interval,
                                          caps.fps, caps.width, caps.height,
                                          /*enforce_h264_caps=*/!caps.auto_caps));
   if (insert_queue) {
@@ -101,7 +102,7 @@ void add_h264_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
 
 void add_mjpeg_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                     const RtspEncodedInputOptions& opt, bool insert_queue) {
-  nodes.push_back(nodes::RTPJpegDepacketize(opt.mjpeg_payload_type));
+  nodes.push_back(nodes::RTPJpegDepacketize(resolve_payload_type(opt)));
   nodes.push_back(nodes::JpegParse());
   if (insert_queue) {
     nodes.push_back(nodes::Queue());
@@ -115,7 +116,7 @@ void add_mjpeg_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
 
 void add_h265_path(std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                    const RtspEncodedInputOptions& opt, bool insert_queue) {
-  nodes.push_back(nodes::H265Depacketize(opt.h265_payload_type, opt.source_fps));
+  nodes.push_back(nodes::H265Depacketize(resolve_payload_type(opt), opt.source_fps));
   if (insert_queue) {
     nodes.push_back(nodes::Queue());
   }

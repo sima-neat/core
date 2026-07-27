@@ -271,7 +271,7 @@ Use source-owned groups when the graph should read media by itself. Build those 
 | Live RTSP encoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, RTP payload type |
 | Live RTSP decoded H.264, H.265, or MJPEG stream | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`, `codec` when not H.264 | `source_fps`, `latency_ms`, `tcp`, `drop_on_latency`, `buffer_mode`, decoded width/height, `out_format`, `output_caps` |
 | HTTP multipart MJPEG stream | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`, `decoder_next_element`, decoded width/height/FPS, `output_caps` |
-| Raw or encoded H.264/H.265 video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`, `H264RtpUdpFromEncoded()`, or `H265RtpUdpFromEncoded()` | `host`, `channel`, `video_port_base`, encoder/RTP options |
+| Raw or encoded H.264/H.265 video output | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`, or `Passthrough(RtspCodec::H264 / RtspCodec::H265)` | `host`, `channel`, `video_port_base`, encoder/RTP options |
 | RTP/H.264 over UDP output | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | destination host/port when the defaults are not right | `h264_caps`, `payload_type`, `config_interval` |
 
 A source-owned graph is a different runtime shape than an app-pushed graph:

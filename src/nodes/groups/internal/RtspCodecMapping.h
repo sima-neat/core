@@ -23,10 +23,68 @@
 #include "nodes/groups/RtspEncodedInput.h"
 #include "nodes/sima/SimaDecode.h"
 
+#include <cstdio>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
 namespace simaai::neat::nodes::groups {
+
+/**
+ * @brief RTP payload type a codec uses when the caller declares none.
+ *
+ * MJPEG carries the static RTP/AVP JPEG payload; the H.26x paths use the first
+ * dynamic payload. This is the *input* side default only: the encoded video
+ * sender picks its own transmit payload per codec and must not read this.
+ */
+inline int default_payload_type(RtspCodec codec) {
+  return codec == RtspCodec::MJPEG ? 26 : 96;
+}
+
+inline void warn_deprecated_h264_payload_type_once() {
+  static std::once_flag warned;
+  std::call_once(warned, []() {
+    std::fprintf(stderr, "[WARN] RtspEncodedInputOptions::h264_payload_type is deprecated. "
+                         "Set RtspEncodedInputOptions::payload_type instead.\n");
+  });
+}
+
+inline void warn_deprecated_mjpeg_payload_type_once() {
+  static std::once_flag warned;
+  std::call_once(warned, []() {
+    std::fprintf(stderr, "[WARN] RtspEncodedInputOptions::mjpeg_payload_type is deprecated. "
+                         "Set RtspEncodedInputOptions::payload_type instead.\n");
+  });
+}
+
+/**
+ * @brief Resolve the RTP payload type the encoded group filters on.
+ *
+ * Resolution order is load-bearing: a declared `payload_type` wins, then the
+ * codec's deprecated per-codec field while one still exists, then the codec
+ * default. Because only negative values fall through, `payload_type == 0`
+ * reaches the depacketizers as 0, which is how a caller disables payload
+ * filtering for a stream whose payload number is unknown.
+ *
+ * The deprecation warning fires only when a legacy field is both consulted and
+ * carries a value the codec default would not have produced, so a default
+ * configuration stays silent.
+ */
+inline int resolve_payload_type(const RtspEncodedInputOptions& opt) {
+  if (opt.payload_type >= 0) {
+    return opt.payload_type;
+  }
+  const int fallback = default_payload_type(opt.codec);
+  if (opt.codec == RtspCodec::H264 && opt.h264_payload_type != fallback) {
+    warn_deprecated_h264_payload_type_once();
+    return opt.h264_payload_type;
+  }
+  if (opt.codec == RtspCodec::MJPEG && opt.mjpeg_payload_type != fallback) {
+    warn_deprecated_mjpeg_payload_type_once();
+    return opt.mjpeg_payload_type;
+  }
+  return fallback;
+}
 
 /**
  * @brief Project decoded-input options onto the encoded source they imply.
@@ -47,9 +105,8 @@ inline RtspEncodedInputOptions encoded_options_from_decoded(const RtspDecodedInp
   out.buffer_mode = opt.buffer_mode;
   out.insert_queue = opt.insert_queue;
   out.sync_mode = opt.sync_mode;
-  out.h264_payload_type = opt.payload_type;
+  out.payload_type = opt.payload_type;
   out.mjpeg_payload_type = opt.mjpeg_payload_type;
-  out.h265_payload_type = opt.payload_type;
   out.h264_parse_config_interval = opt.h264_parse_config_interval;
   out.h264_fps = opt.h264_fps;
   out.h264_width = opt.h264_width;

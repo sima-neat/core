@@ -320,10 +320,10 @@ std::string sample_to_text_for_python(const Sample& sample) {
 // Python they are surfaced as the `Format` enum directly: reads return the underlying
 // FormatTag, writes accept a FormatTag only. Passing a plain string raises TypeError —
 // callers select a value from pyneat.Format (e.g. pyneat.Format.NV12).
-template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::* member) {
   return [member](const C& self) { return (self.*member).tag; };
 }
-template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::* member) {
   return [member](C& self, simaai::neat::FormatTag value) { self.*member = value; };
 }
 
@@ -3422,8 +3422,7 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_payload_type)
       .def_rw("mjpeg_payload_type",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::mjpeg_payload_type)
-      .def_rw("h265_payload_type",
-              &simaai::neat::nodes::groups::RtspEncodedInputOptions::h265_payload_type)
+      .def_rw("payload_type", &simaai::neat::nodes::groups::RtspEncodedInputOptions::payload_type)
       .def_rw("h264_parse_config_interval",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_parse_config_interval)
       .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_fps)
@@ -3535,9 +3534,12 @@ NB_MODULE(_pyneat_core, m) {
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
                   "height"_a, "fps"_a)
       .def_static("h264_rtp_udp_from_encoded",
-                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded)
-      .def_static("h265_rtp_udp_from_encoded",
-                  &simaai::neat::nodes::groups::VideoSenderOptions::H265RtpUdpFromEncoded)
+                  []() {
+                    return simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+                        simaai::neat::nodes::groups::RtspCodec::H264);
+                  })
+      .def_static("passthrough", &simaai::neat::nodes::groups::VideoSenderOptions::Passthrough,
+                  "codec"_a)
       .def("is_raw_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_raw_input)
       .def("is_encoded_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_encoded_input)
       .def_prop_ro("width", &simaai::neat::nodes::groups::VideoSenderOptions::width)
@@ -4442,6 +4444,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("YUYV", simaai::neat::FormatTag::YUYV)
       .value("ENCODED", simaai::neat::FormatTag::ENCODED)
       .value("H264", simaai::neat::FormatTag::H264)
+      .value("H265", simaai::neat::FormatTag::H265)
       .value("ByteStream", simaai::neat::FormatTag::ByteStream)
       .value("FP32", simaai::neat::FormatTag::FP32)
       .value("INT8", simaai::neat::FormatTag::INT8)
