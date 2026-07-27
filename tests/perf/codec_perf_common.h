@@ -315,10 +315,13 @@ inline simaai::neat::Graph make_decode_graph(const CodecPerfConfig& config,
   return graph;
 }
 
+/// Push every sample from a producer thread while pulling @p expected_outputs
+/// decoded frames, and return the instant the last expected output arrived.
+/// Input is always closed once the pushes finish: every burst caller measures a
+/// bounded sequence and needs EOS to drain it.
 inline sima_perf::Clock::time_point
 push_and_pull_burst(simaai::neat::Run& run, const std::vector<simaai::neat::Sample>& samples,
-                    int expected_outputs, bool close_input, const std::string& context,
-                    bool require_zero_copy_output) {
+                    int expected_outputs, const std::string& context) {
   if (expected_outputs == 0) {
     return sima_perf::Clock::now();
   }
@@ -331,9 +334,7 @@ push_and_pull_burst(simaai::neat::Run& run, const std::vector<simaai::neat::Samp
           throw std::runtime_error(context + ": push failed");
         }
       }
-      if (close_input) {
-        run.close_input();
-      }
+      run.close_input();
     } catch (...) {
       push_error = std::current_exception();
       try {
@@ -349,7 +350,7 @@ push_and_pull_burst(simaai::neat::Run& run, const std::vector<simaai::neat::Samp
     int64_t first_output_frame_id = -1;
     for (int pulled = 0; pulled < expected_outputs; ++pulled) {
       simaai::neat::Sample out = pull_or_throw(run, 5000, context + ": pull");
-      require_decoded_sample(out, context, require_zero_copy_output);
+      require_decoded_sample(out, context, /*require_zero_copy_output=*/true);
       if (pulled == 0) {
         first_output_frame_id = out.frame_id;
       }
@@ -383,23 +384,8 @@ push_and_pull_burst(simaai::neat::Run& run, const std::vector<simaai::neat::Samp
 }
 
 inline sima_perf::PerfMetrics
-measure_decode_throughput(simaai::neat::Run& run, const std::vector<simaai::neat::Sample>& samples,
-                          int expected_outputs, bool close_input,
-                          bool require_zero_copy_output = false) {
-  const auto run_t0 = sima_perf::Clock::now();
-  const auto run_t1 = push_and_pull_burst(run, samples, expected_outputs, close_input,
-                                          "codec perf throughput", require_zero_copy_output);
-
-  sima_perf::PerfMetrics metrics;
-  const double seconds = sima_perf::elapsed_seconds(run_t0, run_t1);
-  metrics.throughput = seconds > 0.0 ? static_cast<double>(expected_outputs) / seconds : 0.0;
-  return metrics;
-}
-
-inline sima_perf::PerfMetrics
 measure_decode_residency(simaai::neat::Run& run, const std::vector<simaai::neat::Sample>& samples,
-                         std::vector<double>& latencies_ms, bool close_input = true,
-                         bool require_zero_copy_output = false) {
+                         std::vector<double>& latencies_ms, bool close_input) {
   latencies_ms.clear();
   latencies_ms.reserve(samples.size());
 
@@ -413,7 +399,7 @@ measure_decode_residency(simaai::neat::Run& run, const std::vector<simaai::neat:
         throw std::runtime_error("codec perf measured push failed");
       }
       simaai::neat::Sample out = pull_or_throw(run, 5000, "codec perf measured pull");
-      require_decoded_sample(out, "codec perf", require_zero_copy_output);
+      require_decoded_sample(out, "codec perf", /*require_zero_copy_output=*/true);
       if (i == 0) {
         first_output_frame_id = out.frame_id;
       }
@@ -468,8 +454,7 @@ run_throughput_phase(const CodecPerfConfig& config, const simaai::neat::Sample& 
     simaai::neat::Graph warmup_graph = make_decode_graph(config, seed, output_buffers, false, true);
     simaai::neat::Run warmup_run = warmup_graph.build(
         simaai::neat::Sample{seed}, codec_run_options(static_cast<int>(warmup.size()), true));
-    push_and_pull_burst(warmup_run, warmup, warmup_outputs, true, "codec perf throughput warmup",
-                        true);
+    push_and_pull_burst(warmup_run, warmup, warmup_outputs, "codec perf throughput warmup");
     warmup_run.stop();
   }
 
@@ -488,8 +473,13 @@ run_throughput_phase(const CodecPerfConfig& config, const simaai::neat::Sample& 
   measure_options.include_edge_latency = false;
   measure_options.include_power = false;
   auto measure_scope = run.start_measurement(measure_options);
-  sima_perf::PerfMetrics metrics =
-      measure_decode_throughput(run, measured, measured_outputs, true, true);
+  const auto measured_t0 = sima_perf::Clock::now();
+  const auto measured_t1 =
+      push_and_pull_burst(run, measured, measured_outputs, "codec perf throughput");
+  sima_perf::PerfMetrics metrics;
+  const double measured_seconds = sima_perf::elapsed_seconds(measured_t0, measured_t1);
+  metrics.throughput =
+      measured_seconds > 0.0 ? static_cast<double>(measured_outputs) / measured_seconds : 0.0;
   const simaai::neat::MeasureReport report = measure_scope.stop();
   run.stop();
   return {.metrics = metrics, .report = report};
@@ -504,7 +494,7 @@ inline CodecPerfPhaseResult run_residency_phase(const CodecPerfConfig& config,
   simaai::neat::Run run = graph.build(simaai::neat::Sample{seed}, codec_run_options(8, true));
 
   std::vector<double> warmup_latencies_ms;
-  measure_decode_residency(run, warmup, warmup_latencies_ms, false, true);
+  measure_decode_residency(run, warmup, warmup_latencies_ms, /*close_input=*/false);
 
   simaai::neat::MeasureOptions measure_options;
   measure_options.include_plugin_latency = false;
@@ -514,7 +504,7 @@ inline CodecPerfPhaseResult run_residency_phase(const CodecPerfConfig& config,
 
   std::vector<double> latencies_ms;
   sima_perf::PerfMetrics metrics =
-      measure_decode_residency(run, measured, latencies_ms, true, true);
+      measure_decode_residency(run, measured, latencies_ms, /*close_input=*/true);
   const simaai::neat::MeasureReport report = measure_scope.stop();
   run.stop();
   return {.metrics = metrics, .report = report};
@@ -586,11 +576,7 @@ inline int run_codec_decode_perf(const CodecPerfConfig& config,
         config, seed, warmup, warmup_iterations, measured, iterations, output_buffers, &startup_ms);
     std::optional<CodecPerfPhaseResult> latency;
     if (config.decode_type == simaai::neat::SimaDecodeType::MJPEG) {
-      const std::vector<simaai::neat::Sample> latency_warmup(warmup.begin(),
-                                                             warmup.begin() + warmup_iterations);
-      const std::vector<simaai::neat::Sample> latency_measured(measured.begin(),
-                                                               measured.begin() + iterations);
-      latency = run_residency_phase(config, seed, latency_warmup, latency_measured, output_buffers);
+      latency = run_residency_phase(config, seed, warmup, measured, output_buffers);
     }
 
     sima_perf::PerfMetrics metrics = throughput.metrics;

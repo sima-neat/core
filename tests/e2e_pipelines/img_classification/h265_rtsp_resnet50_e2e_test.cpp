@@ -4,11 +4,10 @@
 #include "pipeline/Graph.h"
 
 #include "asset_utils.h"
+#include "resnet50_test_utils.h"
 #include "rtsp_probe_utils.h"
 #include "test_utils.h"
 
-#include <algorithm>
-#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -18,7 +17,6 @@ namespace {
 
 constexpr int kFrames = 10;
 constexpr int kPullTimeoutMs = 20000;
-constexpr std::size_t kResNet50Classes = 1000;
 constexpr const char* kDecoderName = "decoder_h265_rtsp";
 
 std::string trim_copy(const std::string& value) {
@@ -73,35 +71,6 @@ simaai::neat::Graph make_graph(const std::string& url, int source_fps,
   return graph;
 }
 
-void require_valid_resnet50_output(const simaai::neat::Sample& sample, int frame) {
-  const std::string context = "frame " + std::to_string(frame);
-  require(simaai::neat::sample_payload_type(sample) == simaai::neat::PayloadType::Tensor,
-          context + ": model output payload is not a Tensor");
-  require(sample.media_type == "application/vnd.simaai.tensor",
-          context + ": model output media type mismatch");
-  const simaai::neat::TensorList tensors = simaai::neat::tensors_from_sample(sample, true);
-  require(tensors.size() == 1U, context + ": expected one ResNet50 output tensor");
-  const simaai::neat::Tensor& tensor = tensors.front();
-  require(tensor.storage != nullptr, context + ": output tensor has no storage");
-  require(tensor.storage->kind == simaai::neat::StorageKind::CpuOwned,
-          context + ": output tensor is not stored in owned CPU memory");
-  require(tensor.dtype == simaai::neat::TensorDType::Float32,
-          context + ": output tensor is not Float32");
-  require(tensor.is_dense(), context + ": output tensor is not dense");
-  require(tensor.dense_bytes_tight() == kResNet50Classes * sizeof(float),
-          context + ": output tensor is not exactly 1000 Float32 scores");
-
-  const simaai::neat::Mapping mapping = tensor.map(simaai::neat::MapMode::Read);
-  require(mapping.data != nullptr, context + ": output tensor is not CPU-readable");
-  require(mapping.size_bytes >= kResNet50Classes * sizeof(float),
-          context + ": output tensor contains fewer than 1000 scores");
-
-  const auto* scores = static_cast<const float*>(mapping.data);
-  require(std::all_of(scores, scores + kResNet50Classes,
-                      [](float value) { return std::isfinite(value); }),
-          context + ": output tensor contains a non-finite score");
-}
-
 } // namespace
 
 int main() {
@@ -124,7 +93,7 @@ int main() {
     for (int frame = 0; frame < kFrames; ++frame) {
       const auto output = run.pull(kPullTimeoutMs);
       require(output.has_value(), "timed out waiting for frame " + std::to_string(frame));
-      require_valid_resnet50_output(*output, frame);
+      sima_test::require_valid_resnet50_output(*output, "frame " + std::to_string(frame));
     }
     run.close();
 
