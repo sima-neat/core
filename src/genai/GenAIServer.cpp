@@ -67,8 +67,7 @@ std::optional<std::string> apply_tool_options(const nlohmann::json& body,
       const auto& tool = tools.at(i);
       if (!tool.is_object() || !tool.contains("type") || tool.at("type") != "function" ||
           !tool.contains("function") || !tool.at("function").is_object() ||
-          !tool.at("function").contains("name") ||
-          !tool.at("function").at("name").is_string() ||
+          !tool.at("function").contains("name") || !tool.at("function").at("name").is_string() ||
           tool.at("function").at("name").get_ref<const std::string&>().empty()) {
         return "tools[" + std::to_string(i) +
                "] must contain type 'function' and a non-empty string function.name";
@@ -78,8 +77,7 @@ std::optional<std::string> apply_tool_options(const nlohmann::json& body,
   }
   if (body.contains("tool_choice")) {
     const auto& choice = body.at("tool_choice");
-    if (!choice.is_null() &&
-        (!choice.is_string() || (choice != "auto" && choice != "none"))) {
+    if (!choice.is_null() && (!choice.is_string() || (choice != "auto" && choice != "none"))) {
       return "Only tool_choice 'auto' or 'none' is supported";
     }
     request.tool_choice = choice;
@@ -262,9 +260,9 @@ std::string chat_chunk(const std::string& model_name, const std::string& complet
   return "data: " + chunk.dump() + "\n\n";
 }
 
-std::string chat_tool_call_chunk(const std::string& model_name,
-                                 const std::string& completion_id, std::uint64_t created,
-                                 const Json& tool_calls, const GenerationMetrics& metrics) {
+std::string chat_tool_call_chunk(const std::string& model_name, const std::string& completion_id,
+                                 std::uint64_t created, const Json& tool_calls,
+                                 const GenerationMetrics& metrics) {
   nlohmann::json delta_tool_calls = nlohmann::json::array();
   for (std::size_t i = 0; i < tool_calls.size(); ++i) {
     nlohmann::json tool_call = tool_calls.at(i);
@@ -1198,11 +1196,11 @@ struct GenAIServer::Impl {
                 continue;
               }
               const auto chunk = chat_chunk(model_name, completion_id, created, sample->text,
-                                             std::nullopt, metrics);
+                                            std::nullopt, metrics);
               write_sink(sink, chunk);
             }
-            const auto done = chat_chunk(model_name, completion_id, created, "", "stop") +
-                              "data: [DONE]\n\n";
+            const auto done =
+                chat_chunk(model_name, completion_id, created, "", "stop") + "data: [DONE]\n\n";
             write_sink(sink, done);
           } catch (const std::exception& e) {
             const nlohmann::json error = {{"error", {{"message", e.what()}}}};

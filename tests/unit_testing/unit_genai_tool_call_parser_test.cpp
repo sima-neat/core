@@ -115,8 +115,8 @@ RUN_TEST(
       require(typed_args.at("limit").is_null(), "Gemma null argument type mismatch");
       require(typed_args.at("label") == "seven", "Gemma string argument mismatch");
 
-      const auto gemma_brace = collect_tool_calls(
-          ToolCallFormat::Gemma, {"call:search{query:<|\"|>a}b<|\"|>}"});
+      const auto gemma_brace =
+          collect_tool_calls(ToolCallFormat::Gemma, {"call:search{query:<|\"|>a}b<|\"|>}"});
       require_argument(gemma_brace, "query", "a}b");
       require_first_call(collect_tool_calls(ToolCallFormat::Lfm,
                                             {"<|tool_call_start|>[get_weather(city=\"Tokyo\")]",

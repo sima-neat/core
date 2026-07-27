@@ -51,15 +51,24 @@ void validate_text_generation_request(const GenerationRequest& request) {
   if (!request.tools.is_array()) {
     throw std::runtime_error("GenerationRequest::tools must be an array");
   }
+  for (std::size_t i = 0; i < request.tools.size(); ++i) {
+    const auto& tool = request.tools.at(i);
+    if (!tool.is_object() || !tool.contains("type") || tool.at("type") != "function" ||
+        !tool.contains("function") || !tool.at("function").is_object() ||
+        !tool.at("function").contains("name") || !tool.at("function").at("name").is_string() ||
+        tool.at("function").at("name").get_ref<const std::string&>().empty()) {
+      throw std::runtime_error(
+          "GenerationRequest::tools[" + std::to_string(i) +
+          "] must contain type 'function' and a non-empty string function.name");
+    }
+  }
   if (!request.tool_choice.is_null()) {
     if (!request.tool_choice.is_string()) {
-      throw std::runtime_error(
-          "GenerationRequest supports only tool_choice 'auto' or 'none'");
+      throw std::runtime_error("GenerationRequest supports only tool_choice 'auto' or 'none'");
     }
     const auto choice = request.tool_choice.get<std::string>();
     if (choice != "auto" && choice != "none") {
-      throw std::runtime_error(
-          "GenerationRequest supports only tool_choice 'auto' or 'none'");
+      throw std::runtime_error("GenerationRequest supports only tool_choice 'auto' or 'none'");
     }
   }
 
