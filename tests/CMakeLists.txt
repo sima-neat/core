@@ -445,6 +445,10 @@ set(UNIT_TESTS
   unit_plugin_failure_messages_test
 )
 
+if (SimaLMM_FOUND)
+  list(APPEND UNIT_TESTS unit_genai_tool_call_parser_test)
+endif()
+
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
   list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)
 endif()
