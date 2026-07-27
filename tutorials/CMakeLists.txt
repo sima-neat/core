@@ -212,7 +212,7 @@ fi
 ]=] sh $<TARGET_FILE:tutorial_018_consume_rtsp_stream> "${codec}" "${test_name}"
   )
   set_tests_properties(${test_name} PROPERTIES
-    LABELS "tutorial;asset;rtsp;${codec}"
+    LABELS "tutorial;asset;rtsp;long;${codec}"
     RESOURCE_LOCK "dispatcher"
     SKIP_RETURN_CODE 77
   )
