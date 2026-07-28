@@ -87,6 +87,85 @@ Start with default `ModelOptions`. Add options only when the model contract or i
 | Stop the model route early | `inference_terminal` | Advanced route-debugging path. Do not use it for first-run code. |
 | Tune execution placement or internal queues | `processcvu`, `processmla`, `advanced_execution` | Advanced. Measure the default path before tuning. |
 
+## Choose MLA workload priority
+
+Most applications should keep the default `Normal` priority. Set a different
+intent only when independent MLA graphs need predictable arbitration:
+
+- `Foreground` for latency-sensitive interactive work;
+- `Normal` for ordinary application inference; or
+- `Background` for sustained throughput work that should yield between
+  compiled MLA jobs.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.advanced_execution.workload_priority =
+    simaai::neat::WorkloadPriority::Foreground;
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.advanced_execution.workload_priority = (
+    pyneat.WorkloadPriority.Foreground
+)
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+The resolved intent is applied once when ProcessMLA opens the graph's direct
+kernel context. It is not a per-input setting. A foreground graph may run
+before lower-priority work at the next compiled-job boundary, but it cannot
+interrupt a command already running on the MLA.
+
+`Foreground` requires `CAP_SYS_NICE` in the application service or container.
+If that privilege is missing, graph setup fails instead of silently selecting
+another priority. Route-level `advanced_execution.workload_priority`, when
+set, overrides the model-level value for that route.
+
+Neat deliberately does not expose numeric kernel priority bands, per-job
+priority, fairness controls, or MLA queue depth. These are kernel/runtime
+implementation details rather than portable model options.
+
+## Direct ProcessMLA execution
+
+Model routes use one MLA graph path:
+
+```text
+model input
+  -> optional model-managed preprocessing
+  -> ProcessMLA
+  -> direct MLA kernel backend
+  -> optional model-managed postprocessing
+```
+
+ProcessMLA imports coherent dma-buf-backed tensors, submits one immutable
+compiled job, and consumes its terminal completion. It does not select
+Dispatcher or MLA-RT, and an unavailable direct backend is an explicit runtime
+error rather than a fallback to another engine.
+
+The route planner allocates direct MLA-first inputs in coherent, exportable
+DMS0 storage. If your application requests MLA placement explicitly,
+`tensor.mla(true)` performs that placement copy before submission. ProcessMLA
+does not hide an additional staging copy. See the
+[memory model](/develop-apps/advanced-concepts/memory_model) for the full
+ownership contract.
+
+The legacy `processmla.async` and
+`advanced_execution.inference_async` fields remain for source and ABI
+compatibility. They no longer choose an execution path: ProcessMLA always uses
+the terminal-completion direct backend. New applications should not set them.
+
 ### Image input with detection decode
 
 Use this pattern when the model expects image preprocessing and emits YOLO-style detections.

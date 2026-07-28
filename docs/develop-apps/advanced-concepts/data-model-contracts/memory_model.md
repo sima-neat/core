@@ -1,6 +1,6 @@
 ---
 title: Memory model
-description: Zero-copy buffers, segments, the (buffer_id, paddr, vaddr) triple, and cache coherence.
+description: Zero-copy buffers, segments, coherent MLA ingress, and ownership transitions.
 sidebar_position: 3
 slug: /develop-apps/advanced-concepts/memory_model
 ---
@@ -9,17 +9,23 @@ slug: /develop-apps/advanced-concepts/memory_model
 
 The Neat framework's runtime moves a lot of bytes — encoded video frames, decoded YUV planes, FP32 input tensors, INT8 quantized tiles, MLA scratchpad images. Doing that without an explicit memory model would mean a copy at every stage boundary. This page explains how the framework avoids those copies.
 
-## The buffer triple: `(buffer_id, paddr, vaddr)`
+## Internal buffer identity
 
-Every buffer the framework moves is identified by three things:
+Framework-managed buffers carry an internal identity that may include:
 
 - **`buffer_id`** — a stable integer the runtime uses to track the buffer's lifecycle (refcount, segment ownership).
-- **`paddr`** — physical address, the IOMMU's view of the buffer. MLA / EV74 / DMA hardware sees this.
+- **`paddr`** — a platform address used by older accelerator integrations.
 - **`vaddr`** — virtual address, the application's view. CPU code dereferences this.
 
-The triple lets a buffer be addressed by either side (CPU or accelerator) without copying. A single allocation appears in *both* the kernel page tables (so software can read it) and the IOMMU page tables (so hardware can DMA into it).
+The direct MLA path does not accept a physical address supplied by an
+application. ProcessMLA exports or receives a dma-buf file descriptor, and the
+kernel validates the imported allocation and every bound byte range. Physical
+address fields remain internal compatibility data for components that still
+need them.
 
-Stage-to-stage hand-offs pass the triple, not the bytes.
+Stage-to-stage handoffs pass buffer ownership and metadata, not the tensor
+bytes. A shared allocation can therefore be visible to both CPU and device
+without making its address part of the public MLA contract.
 
 ## Segments
 
@@ -28,16 +34,51 @@ Buffers come from named **segments**. A segment is a contiguous region of memory
 Examples:
 
 - A `nv12_decode` segment holds decoded YUV from H.264 — CPU-readable for diagnostic taps, IOMMU-readable for the resize node.
-- A `mla_input` segment holds the tessellated tensor handed to the MLA — only the MLA hardware reads it; CPU access requires an explicit map.
+- A direct MLA input segment holds a coherent, dma-buf-exportable tensor handed
+  to ProcessMLA. CPU access uses an explicit map and must finish before device
+  ownership begins.
 - A `model_output` segment holds FP32 tensors after detessellation — CPU-readable so the application can pull them out.
 
-A `Tensor` carries its segment alongside the triple, so the framework knows whether a peek/poke from CPU code is valid.
+A `Tensor` carries its segment and placement metadata, so the framework knows
+whether CPU mapping and a device handoff are valid.
 
 ## Cache coherence
 
-The MLA, EV74, and CPU all have their own caches. When a buffer is written by one and read by another, the framework inserts cache flush / invalidate calls at the boundary. Application code never has to think about this — it's handled at the segment level when buffers cross stages.
+The MLA, EV74, and CPU have different access and cache contracts. Neat chooses
+the allocation policy and performs the ownership transition when a buffer
+crosses a stage boundary. A coherent mapping removes contradictory
+cached/coherent aliases; it does not remove execution ordering. ProcessMLA
+does not submit a buffer while application or framework CPU code owns it.
 
-The one place application code does have to think about it: when **mapping** a `TensorBuffer` for direct CPU read or write via `Mapping`. The framework inserts the right invalidate (read map) or flush (write map) at unmap time. See [`MapMode`](/reference/cppapi/namespaces/simaai-neat) and [`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer).
+Application code expresses CPU ownership by **mapping** a `TensorBuffer` for
+read or write through `Mapping`. Unmapping ends that access before the tensor
+is handed to another stage. See
+[`MapMode`](/reference/cppapi/namespaces/simaai-neat) and
+[`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer).
+
+## Coherent direct MLA ingress
+
+The route determines where a public input must be allocated:
+
+- If EV74 preprocessing is the first effective consumer, Neat uses the
+  EV74-compatible input policy and hands the transformed result to MLA.
+- If MLA is the first effective consumer, Neat allocates coherent,
+  exportable DMS0 storage at the source. ProcessMLA imports that allocation
+  directly.
+
+Model runners and synthetic benchmark inputs resolve this policy from the
+model route. They do not allocate a cached DMS0 input and repair it with a
+hidden per-frame staging copy.
+
+For explicit tensor placement, `tensor.mla(true)` creates a new coherent MLA
+destination and copies the source tensor into it. The copy is the placement
+operation requested by the caller; ProcessMLA does not add another copy.
+Calling `tensor.mla()` without `force=true` may return the tensor unchanged
+when it already satisfies the target placement.
+
+Do not create cached and coherent aliases of the same DMS0 allocation. A
+legacy cached allocation that cannot be exported safely is rejected instead
+of being reinterpreted behind the application's back.
 
 ## Zero-copy in practice
 
@@ -47,7 +88,9 @@ A typical inference pipeline:
 file → demux → H.264 decode → resize → preproc → MLA → postproc → app
 ```
 
-Without zero-copy, that's seven copies. With the buffer triple and segments, it's zero — every stage hands off `(buffer_id, paddr, vaddr)` and the next stage operates in place.
+Without a shared memory contract, each arrow could require a copy. With
+zero-copy, compatible stages retain and hand off the same allocation rather
+than copying its bytes.
 
 The framework's planner is responsible for picking segments such that consecutive stages can share. When two adjacent stages have incompatible segment requirements, the planner inserts a `Transfer` `ConversionKind` and records it in any active `ConversionTraceCollector`. Watch for these — they're the only places real bytes move at runtime.
 
@@ -61,7 +104,7 @@ Do not add a public `OsToSima`, `videoconvert`, or `videoscale` stage just to ma
 
 ## Related types
 
-- [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer) — the buffer-triple container.
+- [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer) — buffer identity, mapping, and storage.
 - [`Segment`](/reference/cppapi/structs/simaai-neat-segment) — segment handle.
 - [`Mapping`](/reference/cppapi/structs/simaai-neat-mapping) — RAII map handle for direct CPU access.
 - [`MemoryContract`](/reference/cppapi/files/include-contracts-contracttypes-h) — how a Node prefers to allocate.
@@ -69,5 +112,5 @@ Do not add a public `OsToSima`, `videoconvert`, or `videoscale` stage just to ma
 
 ## Further reading
 
-- "Tensors and buffers" — §0.10, §18, §19, §20 of the design deep dive.
-- "TensorBuffer ABI" — §20 of the design deep dive.
+- [Processor backends](/develop-apps/advanced-concepts/processor_backends) —
+  direct ProcessMLA and workload-priority behavior.

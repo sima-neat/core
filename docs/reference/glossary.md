@@ -21,7 +21,7 @@ Terms and acronyms that appear across the framework's docs and code.
 | **MPK** | The model inference contract JSON (`mpk.json` or `*_mpk.json`) embedded in a `.tar.gz` model archive. |
 | **Sample** | The framework's unit of pipeline data — wraps a tensor or encoded media plus metadata. |
 | **Tensor** | The framework's typed view of a buffer of pixels / audio / inference results. |
-| **TensorBuffer** | The underlying memory backing a `Tensor` — carries the `(buffer_id, paddr, vaddr)` triple. |
+| **TensorBuffer** | The underlying memory backing a `Tensor`. It carries framework identity, mapping, and device-placement metadata. |
 | **Segment** | A named memory region with allocator + access metadata. Buffers come from segments. |
 
 ## Hardware
@@ -30,7 +30,7 @@ Terms and acronyms that appear across the framework's docs and code.
 |---|---|
 | **Modalix** | SiMa's edge AI SoC platform. The framework targets it. |
 | **MLA** | Machine Learning Accelerator — the SoC's main inference engine. |
-| **MLASHM** | MLA Shared Memory — a low-latency memory region the MLA reads from. |
+| **MLASHM** | Legacy name for the older MLA shared-memory transport. Direct ProcessMLA uses coherent dma-buf-backed DMS0 allocations. |
 | **EV74 / CVU** | Compute Vision Unit — a SIMD-friendly DSP for preprocess / postprocess kernels. |
 | **A65** | The application ARM cores running Linux. |
 | **APU** | Audio Processing Unit. |
@@ -39,6 +39,7 @@ Terms and acronyms that appear across the framework's docs and code.
 | **VCCM** | A SoC-internal coherent memory region used by some accelerators. |
 | **OCM** | On-chip memory used by the MLA. |
 | **DMS** | Direct Memory Server — the SoC's memory controller / allocator service. |
+| **DMS0** | The DMS memory domain used for coherent, dma-buf-exportable direct MLA buffers. |
 | **RPMsg** | Remote-processor messaging — the IPC channel between A65 and M4. |
 | **IOMMU** | I/O memory-management unit — maps physical to virtual for hardware. |
 

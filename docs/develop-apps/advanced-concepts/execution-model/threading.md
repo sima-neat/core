@@ -16,7 +16,7 @@ For a typical `Run`:
 | Thread | Role | Owned by |
 | --- | --- | --- |
 | GStreamer streaming threads | Move buffers through source, transform, and sink paths. | GStreamer runtime |
-| MLA dispatcher threads | Submit MLA work and reap completions. | Neat runtime |
+| ProcessMLA CQ and ordered-emitter threads | Consume each direct kernel job's terminal completion and publish outputs in input order. | Neat runtime |
 | EV74 / CVU dispatcher threads | Submit CVU-side kernels and poll for completion. | Neat runtime |
 | Pull-side waiters and bus watchers | Move output samples into public queues and report runtime errors. | Neat runtime |
 | Application threads | Call `Graph.build(...)`, `Graph.run(...)`, `Run.push(...)`, `Run.pull(...)`, `Run.stop()`, or callbacks. | Your application |

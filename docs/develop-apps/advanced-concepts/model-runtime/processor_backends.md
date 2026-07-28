@@ -28,16 +28,62 @@ EV74 work is dispatched via per-stage CVU submission threads. Kernel binaries ar
 
 ## MLA — machine learning accelerator
 
-The Modalix MLA. The model's compiled weights and graph live here. Dispatched via an MLA submission thread that takes tessellated input from the EV74 (or directly from a quant stage) and produces tessellated output to be detessellated downstream.
+The Modalix MLA runs compiler-produced QMLA model stages. In a Neat graph,
+`ProcessMLA` is the single MLA execution path:
 
-MLA work has two flavors:
+```text
+Neat model route
+  -> ProcessMLA
+  -> direct MLA backend
+  -> /dev/mla
+  -> terminal job completion
+```
+
+ProcessMLA loads the compiled model, imports dma-buf-backed inputs and outputs,
+binds their compiler-defined byte ranges, and submits the resulting immutable
+job to the kernel. The kernel owns hardware dispatch, priority arbitration,
+fault handling, and completion. The graph path does not select Dispatcher or
+MLA-RT, and it does not switch between synchronous and asynchronous MLA
+engines.
+
+MLA work still has two model-level flavors:
 
 - **MLA inference** — the main model graph.
-- **MLA prep / fused ops** — pre/post kernels compiled into the MLA when the contract allows it (the "MLA tess" column of the [dtype contract](/develop-apps/advanced-concepts/dtype_contract)).
+- **MLA prep or fused operations** — pre/post operations compiled into the MLA
+  when the MPK contract allows it. See the "MLA tess" column of the
+  [dtype contract](/develop-apps/advanced-concepts/dtype_contract).
 
-## MLASHM — MLA shared memory
+### MLA scheduling intent
 
-A specialized memory region the MLA can read with the lowest latency. Buffers destined for MLA inputs are allocated from MLASHM segments when possible. The planner ensures the EV74-side preprocess writes directly into MLASHM so the MLA can consume without a transfer.
+Independent graphs can state one of three intents:
+
+| Intent | Use |
+| --- | --- |
+| `Foreground` | Latency-sensitive work that should run before lower-priority contexts at the next compiled-job boundary. |
+| `Normal` | Default application inference. |
+| `Background` | Throughput-oriented work, such as a long-running language-model session. |
+
+The resolved intent configures the ProcessMLA kernel context once, before it
+accepts work. MLA commands are non-preemptive: a higher-priority context may
+run between compiled jobs, not in the middle of a job already executing.
+
+`Foreground` requires `CAP_SYS_NICE` for the application service or container.
+Missing privilege is a setup error; Neat does not silently fall back to
+`Normal`. Numeric kernel bands, per-job priority, fairness policy, and queue
+depth remain private implementation details.
+
+### DMS0 — direct MLA buffers
+
+A graph whose first effective consumer is the MLA uses coherent,
+dma-buf-exportable DMS0 storage. CPU code may populate the coherent mapping
+before the buffer is transferred to device ownership. ProcessMLA imports that
+same allocation; it does not hide a private input copy.
+
+When EV74 preprocessing runs first, the planner preserves the memory contract
+required by that stage and the MLA handoff. Application code normally does not
+choose a segment directly. See the
+[memory model](/develop-apps/advanced-concepts/memory_model) for explicit
+tensor placement and ownership rules.
 
 ## APU — audio processing unit
 
@@ -60,6 +106,11 @@ When a Graph is built, the route planner walks each stage and asks:
 3. **Can adjacent stages share segments?** — the [memory model](/develop-apps/advanced-concepts/memory_model) dictates what's possible; the planner uses it.
 
 The output is a `RouteGraph` where every stage carries a target processor and a segment policy. You can inspect this via `Graph::describe()`.
+
+ProcessMLA intentionally exposes no application control for kernel queue depth,
+numeric priority, per-frame priority, or a second MLA transport. Those details
+would duplicate the kernel scheduler and make otherwise equivalent graphs
+behave differently.
 
 ## Further reading
 
