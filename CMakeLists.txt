@@ -1,5 +1,38 @@
 cmake_minimum_required(VERSION 3.16)
-project(SimaNeat VERSION 0.3.0 LANGUAGES CXX)
+
+# Versioning from deps/manifest.json:
+# - package-version controls package/artifact and CMake project identity.
+# - platform-version controls dependency and CMake package compatibility.
+# - modelzoo-version selects compatible Model Zoo assets and defaults to
+#   platform-version when omitted.
+# - abi-version controls the public C++ shared-library ABI and SONAME.
+set(SIMANEAT_PLATFORM_VERSION "")
+set(SIMANEAT_MODELZOO_VERSION "")
+set(SIMANEAT_PACKAGE_BASE_VERSION "")
+set(SIMANEAT_ABI_VERSION "")
+execute_process(
+  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); platform=data['platform-version']; print(platform); print(data.get('modelzoo-version') or platform); print(data['package-version']); print(data['abi-version'])"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+  RESULT_VARIABLE SIMANEAT_MANIFEST_RESULT
+  OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
+  ERROR_QUIET
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if (NOT SIMANEAT_MANIFEST_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
+  message(FATAL_ERROR
+    "Failed to read package-version, platform-version, modelzoo-version, and abi-version from deps/manifest.json")
+endif()
+string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_MODELZOO_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_PACKAGE_BASE_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 3 SIMANEAT_ABI_VERSION)
+if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR
+    "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
+endif()
+
+project(SimaNeat VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}" LANGUAGES CXX)
 
 enable_testing()
 
@@ -101,40 +134,9 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
 simaneat_configure_sanitizers()
 
 # ------------------------------------------------------------------------------
-# Versioning from deps/manifest.json:
-# - package-version controls package/artifact identity.
-# - platform-version controls dependency and CMake package compatibility.
-# - modelzoo-version selects compatible Model Zoo assets and defaults to
-#   platform-version when omitted.
-# - abi-version controls the public C++ shared-library ABI and SONAME.
+# Build/package versioning:
 # Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
-set(SIMANEAT_PLATFORM_VERSION "")
-set(SIMANEAT_MODELZOO_VERSION "")
-set(SIMANEAT_PACKAGE_BASE_VERSION "")
-set(SIMANEAT_ABI_VERSION "")
-execute_process(
-  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); platform=data['platform-version']; print(platform); print(data.get('modelzoo-version') or platform); print(data['package-version']); print(data['abi-version'])"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  RESULT_VARIABLE PLATFORM_VERSION_RESULT
-  OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
-  ERROR_QUIET
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
-  message(FATAL_ERROR
-    "Failed to read package-version, platform-version, modelzoo-version, and abi-version from deps/manifest.json")
-endif()
-string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_MODELZOO_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_PACKAGE_BASE_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 3 SIMANEAT_ABI_VERSION)
-if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
-  message(FATAL_ERROR
-    "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
-endif()
-
 set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 execute_process(
   COMMAND git describe --tags --exact-match
