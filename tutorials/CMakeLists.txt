@@ -51,6 +51,7 @@ function(add_tutorial exe source)
           ${AT_MODEL}
           "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
           "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}"
+          "${SIMANEAT_MODELZOO_VERSION}"
           $<TARGET_FILE:${exe}>
           ${test_args}
       )

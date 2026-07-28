@@ -9,6 +9,13 @@ enable_testing()
 include(CMakeParseArguments)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+if (NOT DEFINED SIMANEAT_MODELZOO_VERSION OR SIMANEAT_MODELZOO_VERSION STREQUAL "")
+  message(FATAL_ERROR "SIMANEAT_MODELZOO_VERSION must be resolved from deps/manifest.json")
+endif()
+add_compile_definitions(
+  SIMA_NEAT_MODELZOO_VERSION_STRING="${SIMANEAT_MODELZOO_VERSION}"
+)
+
 option(SIMANEAT_CTEST_FOR_DEVKIT
   "Emit CTestTestfile with absolute DevKit /usr/lib paths (skip configure-time EXISTS checks)"
   OFF)
