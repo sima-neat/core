@@ -95,6 +95,7 @@ struct BoxDecodeStaticContract {
   double detection_threshold = 0.0;     ///< Score cutoff before NMS.
   double nms_iou_threshold = 0.0;       ///< IoU threshold used by NMS.
   int num_classes = 0;                  ///< Number of class scores per anchor.
+  int ssd_model_frame = 0;              ///< Recipe-required SSD square frame (0 = non-SSD).
 
   std::vector<BoxDecodeTensorStaticContract> tensors; ///< Per-input tensor specs.
   std::vector<std::string> tensor_names; ///< Logical tensor names (parallel to `tensors`).

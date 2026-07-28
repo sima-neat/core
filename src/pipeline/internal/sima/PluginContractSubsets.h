@@ -209,6 +209,7 @@ struct BoxDecodeContractSubset {
   std::optional<BoxDecodeTypeOption> decode_type_option;
   BoxDecodeScoreActivation score_activation = BoxDecodeScoreActivation::Unknown;
   int num_classes = 0;
+  int ssd_model_frame = 0;
 };
 
 // Phase 3a (Option A++): public wrappers around the per-frame normalization
