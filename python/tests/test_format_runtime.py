@@ -53,6 +53,18 @@ def test_format_tag_alias():
   assert pyneat.FormatTag is pyneat.Format
 
 
+def test_format_codec_aliases():
+  # Same codec spellings as RtspCodec and SimaDecodeType.
+  assert pyneat.Format.AVC == pyneat.Format.H264
+  assert pyneat.Format.HEVC == pyneat.Format.H265
+  assert pyneat.FormatTag.HEVC == pyneat.Format.H265
+  # Aliases stay assignable and keep the canonical serialized spelling.
+  rtsp = pyneat.RtspDecodedInputOptions()
+  rtsp.out_format = pyneat.Format.HEVC
+  assert rtsp.out_format == pyneat.Format.H265
+  assert pyneat.advanced.format_tag_name(pyneat.Format.HEVC) == "H265"
+
+
 def test_format_converters_in_advanced_tier():
   adv = pyneat.advanced
   assert adv.format_tag_name(pyneat.Format.NV12) == "NV12"

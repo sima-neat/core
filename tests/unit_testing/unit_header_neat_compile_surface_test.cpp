@@ -151,6 +151,20 @@ RUN_TEST(
               "H265 must round-trip back through format_tag_from_string");
       require(simaai::neat::format_tag_from_string("h265") == simaai::neat::FormatTag::H265,
               "format tag parsing must stay case-insensitive for H265");
+      static_assert(simaai::neat::FormatTag::AVC == simaai::neat::FormatTag::H264);
+      static_assert(simaai::neat::FormatTag::HEVC == simaai::neat::FormatTag::H265);
+      // The aliases must not shift the values of the enumerators declared after them.
+      static_assert(static_cast<int>(simaai::neat::FormatTag::H264) == 8);
+      static_assert(static_cast<int>(simaai::neat::FormatTag::H265) == 9);
+      static_assert(static_cast<int>(simaai::neat::FormatTag::ByteStream) == 10);
+      require(simaai::neat::format_tag_from_string("AVC") == simaai::neat::FormatTag::H264,
+              "AVC must parse to FormatTag::H264");
+      require(simaai::neat::format_tag_from_string("hevc") == simaai::neat::FormatTag::H265,
+              "HEVC must parse to FormatTag::H265, case-insensitively");
+      require(std::string(simaai::neat::format_tag_name(simaai::neat::FormatTag::AVC)) == "H264",
+              "FormatTag::AVC must serialize as the canonical H264 spelling");
+      require(simaai::neat::format_tag_to_string(simaai::neat::FormatTag::HEVC) == "H265",
+              "FormatTag::HEVC must serialize as the canonical H265 spelling");
       simaai::neat::nodes::groups::ImageInputGroupOptions image_opt;
       image_opt.path = "test.jpg";
       auto group = simaai::neat::nodes::groups::ImageInputGroup(image_opt);
