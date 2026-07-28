@@ -388,6 +388,7 @@ struct BoxDecodeStagePayload {
   double nms_iou_threshold = 0.0;
   int topk = 0;
   int num_classes = 0;
+  int ssd_model_frame = 0; ///< Recipe-required SSD square frame (0 = non-SSD / unconstrained).
   std::vector<sima_ev_shape_desc> slice_shapes;
   std::vector<int> tensor_storage_kind;
 };

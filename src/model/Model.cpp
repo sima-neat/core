@@ -6047,7 +6047,20 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
     std::optional<ResizeMode> resize_mode_override = opt.boxdecode_resize_mode;
     if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 && model_width > 0 &&
         model_height > 0 && !resize_mode_override.has_value()) {
-      resize_mode_override = resolved.effective.resize.mode;
+      // Hint for manual-geometry routes; it also strips the preproc meta bucket. With no
+      // resize stage, use the stretch the SSD decoder inverts instead of the plan default.
+      // The MPK supplies the decode type when the caller left it Unspecified.
+      BoxDecodeType effective_decode_type = decode_type;
+      if (effective_decode_type == BoxDecodeType::Unspecified) {
+        if (auto mpk = try_model_managed_boxdecode_contract(pack); mpk.has_value()) {
+          effective_decode_type = mpk->payload.decode_type;
+        }
+      }
+      const bool resize_runs =
+          resolved.enabled && resolved.effective.resize.enable != AutoFlag::Off;
+      resize_mode_override = (!resize_runs && effective_decode_type == BoxDecodeType::Ssd)
+                                 ? ResizeMode::Stretch
+                                 : resolved.effective.resize.mode;
     }
     return simaai::neat::nodes::SimaBoxDecode(
         model, decode_type, detection_threshold, nms_iou_threshold, top_k, stage_name,
@@ -8285,8 +8298,13 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
     validate_requested_boxdecode_contract_type(compiled->payload.decode_type, opt.decode_type,
                                                "Model-managed boxdecode stage");
     if (model.impl_->options.num_classes > 0) {
+      // The MPK depth is authoritative for SSD; narrowing is allowed, exceeding it is not.
+      pipeline_internal::sima::stagesemantics::validate_ssd_num_classes(
+          compiled->payload.decode_type, model.impl_->options.num_classes,
+          compiled->payload.num_classes, "Model-managed boxdecode stage");
       if (compiled->payload.num_classes > 0 &&
-          compiled->payload.num_classes != model.impl_->options.num_classes) {
+          compiled->payload.num_classes != model.impl_->options.num_classes &&
+          compiled->payload.decode_type != BoxDecodeType::Ssd) {
         std::fprintf(
             stderr,
             "[WARN] BoxDecode num_classes mismatch: user=%d inferred_from_mpk=%d "

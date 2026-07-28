@@ -258,6 +258,21 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
                              "preproc_resize_mode") != standalone_req->required_fields.end(),
                    "manual boxdecode should preserve non-geometry preprocess requirements");
 
+           // A raw SSD node is stretch-only: it must assert stretch (emit resize-mode=stretch)
+           // and drop the preproc_resize_mode requirement so it cannot consume a letterbox mode.
+           auto ssd_node =
+               simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100,
+                                                  "ssd_manual", 1280, 720, 300, 300);
+           const auto* ssd_box = dynamic_cast<const simaai::neat::SimaBoxDecode*>(ssd_node.get());
+           require(ssd_box != nullptr, "raw SSD boxdecode factory should return a concrete node");
+           require_contains(ssd_box->backend_fragment(0), "resize-mode=stretch",
+                            "raw SSD boxdecode must assert a stretch resize");
+           const auto ssd_req = ssd_box->preprocess_meta_requirement();
+           require(!ssd_req.has_value() ||
+                       std::find(ssd_req->required_fields.begin(), ssd_req->required_fields.end(),
+                                 "preproc_resize_mode") == ssd_req->required_fields.end(),
+                   "raw SSD boxdecode must drop the preproc_resize_mode requirement");
+
            bool threw_partial_model_dims = false;
            try {
              (void)simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25,

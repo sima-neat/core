@@ -801,10 +801,7 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
     return BoxDecodeScoreActivation::Sigmoid;
   }
   if (decode_type == BoxDecodeType::Ssd) {
-    // SSD confidence heads are class logits decoded with a softmax over the class dimension
-    // (background included). The activation is implied by the decode type, so raw/manual-wired SSD
-    // loc/conf tensors resolve without needing special class_logit tensor names (this matches the
-    // softmax default the static-contract normalization applies downstream).
+    // Placeholder only: the recipe-specific activation is fixed downstream.
     return BoxDecodeScoreActivation::Softmax;
   }
   set_error(error_message,

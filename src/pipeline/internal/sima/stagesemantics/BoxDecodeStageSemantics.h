@@ -36,8 +36,17 @@ struct BoxDecodeCompiledContractOptions {
 /// already inferred score activation selects the matching grouped option.
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract);
 
-// Apply SSD defaults (softmax, grouped-by-role, class-count) to a model-managed contract before
-// lowering. No-op for non-SSD decode types.
+// SSD class count is fixed by the conf-head depth; an explicit value may only narrow
+// it. Throws when `requested` exceeds `encoded`. No-op for non-SSD.
+void validate_ssd_num_classes(BoxDecodeType decode_type, int requested, int encoded,
+                              const char* context);
+
+// Recipe-required SSD square frame for this contract's head geometry (SSD300/v1/v2 = 300,
+// v3 = 320). Returns 0 for non-SSD or unresolved geometry.
+int ssd_expected_model_frame(const BoxDecodeStaticContract& contract);
+
+// Apply SSD defaults (recipe-specific activation, grouped-by-role layout, class-count) to a
+// model-managed contract before lowering. No-op for non-SSD decode types.
 void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
 
 BoxDecodeStaticContract finalize_boxdecode_static_contract(

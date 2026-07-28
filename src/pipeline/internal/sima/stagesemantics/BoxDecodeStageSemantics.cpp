@@ -4,6 +4,7 @@
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,8 @@
 #include <initializer_list>
 #include <optional>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace simaai::neat::pipeline_internal::sima::stagesemantics {
 namespace {
@@ -405,12 +408,8 @@ bool decode_type_is_ssd(BoxDecodeType type) {
   return type == BoxDecodeType::Ssd;
 }
 
-// SSD groups per-level localization heads (depth = 4 * priors-per-cell) with
-// class-confidence heads (depth = num_classes * priors-per-cell). Heads are grouped
-// by role: the first half are localization, the second half confidence, paired per
-// feature level by spatial size. The number of priors-per-cell may differ per level
-// (e.g. 4/6/6/6/4/4), but the class count is identical across levels. Inference is
-// purely geometric so it works for any SSD variant (input size / feature-map count).
+// Grouped by role: first half loc (4*A), second half conf (num_classes*A), paired by
+// feature level with one class count across levels.
 int infer_ssd_grouped_class_depth(const BoxDecodeStaticContract& contract) {
   if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return 0;
@@ -439,6 +438,127 @@ int infer_ssd_grouped_class_depth(const BoxDecodeStaticContract& contract) {
     classes = next;
   }
   return classes.value_or(0);
+}
+
+// The only supported recipes; must match internals genericboxdecode/boxdecode_ssd.h.
+//   Ssd300          -- feats {38,19,10,5,3,1}, priors {4,6,6,6,4,4}, 300, softmax.
+//   MobileNetV2Coco -- feats {19,10,5,3,2,1}, priors {3,6,6,6,6,6}, 300, sigmoid (v1/v2).
+//   MobileNetV3Coco -- feats {20,10,5,3,2,1}, priors {3,6,6,6,6,6}, 320, sigmoid.
+enum class SsdRecipe { Unsupported, Ssd300, MobileNetV2Coco, MobileNetV3Coco };
+
+struct SsdLevelSignature {
+  int feat;
+  int priors;
+};
+
+// (feat, priors-per-cell) in descending feature-map order. Keep in lockstep with
+// internals kSsd300Levels / kSsdMobilenetLevels.
+constexpr std::array<SsdLevelSignature, 6> kSsd300Signature = {{
+    {38, 4},
+    {19, 6},
+    {10, 6},
+    {5, 6},
+    {3, 4},
+    {1, 4},
+}};
+constexpr std::array<SsdLevelSignature, 6> kMobilenetSignature = {{
+    {19, 3},
+    {10, 6},
+    {5, 6},
+    {3, 6},
+    {2, 6},
+    {1, 6},
+}};
+// SSD-MobileNetV3-COCO: same anchor generator as V2 but a 320x320 input, so level 0 is
+// 20x20 instead of 19x19; every other level and the prior counts are unchanged.
+constexpr std::array<SsdLevelSignature, 6> kMobilenetV3Signature = {{
+    {20, 3},
+    {10, 6},
+    {5, 6},
+    {3, 6},
+    {2, 6},
+    {1, 6},
+}};
+
+[[maybe_unused]] const char* ssd_recipe_name(SsdRecipe recipe) {
+  switch (recipe) {
+  case SsdRecipe::Ssd300:
+    return "SSD300";
+  case SsdRecipe::MobileNetV2Coco:
+    return "SSD-MobileNetV2-COCO";
+  case SsdRecipe::MobileNetV3Coco:
+    return "SSD-MobileNetV3-COCO";
+  default:
+    return "unsupported";
+  }
+}
+
+// Score activation is a fixed property of the recipe. Both MobileNet recipes score with
+// per-class sigmoid; SSD300 uses softmax.
+BoxDecodeScoreActivation ssd_recipe_score_activation(SsdRecipe recipe) {
+  return (recipe == SsdRecipe::MobileNetV2Coco || recipe == SsdRecipe::MobileNetV3Coco)
+             ? BoxDecodeScoreActivation::Sigmoid
+             : BoxDecodeScoreActivation::Softmax;
+}
+
+// Model frame is a fixed property of the recipe. SSD300 and V2 are 300x300; V3 is 320x320.
+int ssd_recipe_model_frame(SsdRecipe recipe) {
+  return (recipe == SsdRecipe::MobileNetV3Coco) ? 320 : 300;
+}
+
+// Unsupported unless the per-level (feature side, priors-per-cell) signature matches
+// exactly one recipe.
+SsdRecipe resolve_ssd_recipe(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
+    return SsdRecipe::Unsupported;
+  }
+  const std::size_t levels = contract.tensors.size() / 2U;
+  std::vector<std::pair<int, int>> sig; // (feat, priors-per-cell)
+  sig.reserve(levels);
+  std::optional<int> classes;
+  for (std::size_t i = 0; i < levels; ++i) {
+    const auto loc = tensor_hwc(contract.tensors[i]);
+    const auto conf = tensor_hwc(contract.tensors[i + levels]);
+    if (!loc.has_value() || !conf.has_value() || !same_hw(*loc, *conf) || loc->h != loc->w ||
+        loc->semantic_c < 4 || (loc->semantic_c % 4) != 0) {
+      return SsdRecipe::Unsupported;
+    }
+    const int priors_per_cell = loc->semantic_c / 4;
+    // The loc signature alone does not identify a recipe.
+    if (conf->semantic_c <= 0 || (conf->semantic_c % priors_per_cell) != 0) {
+      return SsdRecipe::Unsupported;
+    }
+    const auto next = consistent_positive_depth(classes, conf->semantic_c / priors_per_cell);
+    if (!next.has_value()) {
+      return SsdRecipe::Unsupported;
+    }
+    classes = next;
+    sig.emplace_back(loc->w, priors_per_cell);
+  }
+  std::sort(sig.begin(), sig.end(), [](const std::pair<int, int>& a, const std::pair<int, int>& b) {
+    return a.first > b.first;
+  });
+  const auto matches = [&sig](const auto& recipe) {
+    if (sig.size() != recipe.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < recipe.size(); ++i) {
+      if (sig[i].first != recipe[i].feat || sig[i].second != recipe[i].priors) {
+        return false;
+      }
+    }
+    return true;
+  };
+  if (matches(kSsd300Signature)) {
+    return SsdRecipe::Ssd300;
+  }
+  if (matches(kMobilenetSignature)) {
+    return SsdRecipe::MobileNetV2Coco;
+  }
+  if (matches(kMobilenetV3Signature)) {
+    return SsdRecipe::MobileNetV3Coco;
+  }
+  return SsdRecipe::Unsupported;
 }
 
 int infer_packed_yolo_class_depth(const BoxDecodeStaticContract& contract) {
@@ -550,7 +670,10 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
 
   const int inferred = infer_boxdecode_num_classes_from_contract(contract);
   if (user_num_classes > 0) {
-    if (inferred > 0 && user_num_classes != inferred) {
+    validate_ssd_num_classes(contract.decode_type, user_num_classes, inferred, context);
+    // Narrowing is the documented SSD contract, so it is not a mismatch there.
+    const bool ssd_narrowing = decode_type_is_ssd(contract.decode_type);
+    if (inferred > 0 && user_num_classes != inferred && !ssd_narrowing) {
       std::fprintf(stderr,
                    "[WARN] %s num_classes mismatch: user=%d inferred_from_mpk=%d decode_type=%s. "
                    "Using user value.\n",
@@ -599,15 +722,37 @@ void apply_ssd_static_contract_overrides(BoxDecodeStaticContract* contract) {
   if (!contract || contract->decode_type != BoxDecodeType::Ssd) {
     return;
   }
-  // SSD confidence heads carry raw logits; the decoder applies softmax across the
-  // class dimension (background included) before thresholding. Grouped-by-role is the
-  // canonical SSD head layout (all localization heads, then all confidence heads).
-  contract->score_activation = BoxDecodeScoreActivation::Softmax;
+  // Any other layout token would pair loc/conf differently than validated here.
   if (contract->decode_type_option == BoxDecodeTypeOption::Auto) {
     contract->decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+  } else if (contract->decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+    throw std::invalid_argument(
+        std::string("SSD BoxDecode supports only the grouped-by-role head layout, but got '") +
+        box_decode_type_option_token(contract->decode_type_option) +
+        "'. Use BoxDecodeTypeOption::Auto or GroupedByRole.");
   }
+  const SsdRecipe recipe = resolve_ssd_recipe(*contract);
+  if (recipe == SsdRecipe::Unsupported) {
+    if (!contract->tensors.empty()) {
+      throw std::runtime_error(
+          "SSD BoxDecode supports only three recipes -- SSD300 (feats {38,19,10,5,3,1}, "
+          "priors {4,6,6,6,4,4}), SSD-MobileNetV2-COCO (feats {19,10,5,3,2,1}, priors "
+          "{3,6,6,6,6,6}, 300x300) and SSD-MobileNetV3-COCO (feats {20,10,5,3,2,1}, priors "
+          "{3,6,6,6,6,6}, 320x320) -- but the box-decode head geometry matches none. "
+          "Generic SSD head sets are not supported.");
+    }
+    // Token-only contract: validated once tensors exist.
+    contract->score_activation = BoxDecodeScoreActivation::Softmax;
+    return;
+  }
+  contract->score_activation = ssd_recipe_score_activation(recipe);
+  contract->ssd_model_frame = ssd_recipe_model_frame(recipe);
+  const int inferred_classes = infer_ssd_grouped_class_depth(*contract);
   if (contract->num_classes <= 0) {
-    contract->num_classes = infer_ssd_grouped_class_depth(*contract);
+    contract->num_classes = inferred_classes;
+  } else {
+    validate_ssd_num_classes(contract->decode_type, contract->num_classes, inferred_classes,
+                             "BoxDecode");
   }
 }
 
@@ -644,6 +789,26 @@ void populate_boxdecode_node_contract_common(
 }
 
 } // namespace
+
+int ssd_expected_model_frame(const BoxDecodeStaticContract& contract) {
+  if (!decode_type_is_ssd(contract.decode_type)) {
+    return 0;
+  }
+  const SsdRecipe recipe = resolve_ssd_recipe(contract);
+  return (recipe == SsdRecipe::Unsupported) ? 0 : ssd_recipe_model_frame(recipe);
+}
+
+void validate_ssd_num_classes(BoxDecodeType decode_type, int requested, int encoded,
+                              const char* context) {
+  if (!decode_type_is_ssd(decode_type) || requested <= 0 || encoded <= 0 || requested <= encoded) {
+    return;
+  }
+  throw std::invalid_argument(
+      std::string(context ? context : "BoxDecode") +
+      ": SSD num_classes=" + std::to_string(requested) + " exceeds the " + std::to_string(encoded) +
+      " classes encoded in the confidence heads. Use a value <= " + std::to_string(encoded) +
+      ", or leave it unset to infer from the head geometry.");
+}
 
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract) {
   if (!contract) {
@@ -743,15 +908,18 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.score_activation = options.score_activation != BoxDecodeScoreActivation::Unknown
                                           ? options.score_activation
                                           : subset.score_activation;
-  // Model-managed SSD subsets may omit score/layout; apply the same SSD defaults as the
-  // static-contract path here (the single construction point for the MPK subset route). Idempotent.
+  // MPK subsets may omit the layout; the recipe activation is carried through.
   if (compiled.payload.decode_type == BoxDecodeType::Ssd) {
-    // SSD always decodes with class-dimension softmax; force it even if a non-Unknown domain was
-    // forwarded, matching apply_ssd_static_contract_overrides on the static-contract path.
-    compiled.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+    if (compiled.payload.score_activation == BoxDecodeScoreActivation::Unknown) {
+      compiled.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+    }
     if (!compiled.payload.decode_type_option.has_value() ||
         *compiled.payload.decode_type_option == BoxDecodeTypeOption::Auto) {
       compiled.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+    } else if (*compiled.payload.decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+      throw std::invalid_argument(
+          std::string("SSD BoxDecode supports only the grouped-by-role head layout, but got '") +
+          box_decode_type_option_token(*compiled.payload.decode_type_option) + "'.");
     }
   }
   compiled.payload.input_dtype = resolve_boxdecode_input_dtype(subset);
@@ -763,7 +931,10 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.detection_threshold = options.detection_threshold;
   compiled.payload.nms_iou_threshold = options.nms_iou_threshold;
   compiled.payload.topk = options.topk;
+  validate_ssd_num_classes(compiled.payload.decode_type, options.num_classes, subset.num_classes,
+                           "BoxDecode");
   compiled.payload.num_classes = options.num_classes > 0 ? options.num_classes : subset.num_classes;
+  compiled.payload.ssd_model_frame = subset.ssd_model_frame;
   compiled.payload.slice_shapes = subset.slice_shapes;
   compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
   compiled.runtime_contract.plugin_kind = "boxdecode";
