@@ -12,6 +12,7 @@
 #include "test_main.h"
 
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -55,9 +56,15 @@ RUN_TEST(
       auto multipart_demux = simaai::neat::nodes::MultipartJpegDemux();
       auto jpeg_parse = simaai::neat::nodes::JpegParse();
       auto rtp_jpeg_depay = simaai::neat::nodes::RTPJpegDepacketize();
+      auto h265_depay = simaai::neat::nodes::H265Depacketize();
+      auto h265_video_sender_options = simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+          simaai::neat::nodes::groups::RtspCodec::H265);
+      auto h265_video_sender = simaai::neat::nodes::groups::VideoSender(h265_video_sender_options);
       simaai::neat::SimaDecodeOptions sima_decode_opt;
-      sima_decode_opt.type = simaai::neat::SimaDecodeType::JPEG;
+      sima_decode_opt.type = simaai::neat::SimaDecodeType::H265;
       auto sima_decode = simaai::neat::nodes::SimaDecode(sima_decode_opt);
+      sima_decode_opt.type = simaai::neat::SimaDecodeType::HEVC;
+      auto sima_decode_hevc = simaai::neat::nodes::SimaDecode(sima_decode_opt);
       simaai::neat::nodes::groups::RtspEncodedInputOptions rtsp_encoded_opt;
       rtsp_encoded_opt.url = "rtsp://example.local/mjpeg";
       rtsp_encoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::MJPEG;
@@ -65,6 +72,12 @@ RUN_TEST(
       auto rtsp_encoded_group = simaai::neat::nodes::groups::RtspEncodedInput(rtsp_encoded_opt);
       auto rtsp_encoded_spec =
           simaai::neat::nodes::groups::RtspEncodedInputOutputSpec(rtsp_encoded_opt);
+      static_assert(simaai::neat::nodes::groups::RtspCodec::HEVC ==
+                    simaai::neat::nodes::groups::RtspCodec::H265);
+      rtsp_encoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+      rtsp_encoded_opt.payload_type = 98;
+      auto rtsp_h265_encoded_group =
+          simaai::neat::nodes::groups::RtspEncodedInput(rtsp_encoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_decoded_opt;
       rtsp_decoded_opt.url = "rtsp://example.local/h264";
       rtsp_decoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::H264;
@@ -72,6 +85,9 @@ RUN_TEST(
       rtsp_decoded_opt.use_videorate = true;
       rtsp_decoded_opt.video_rate_fps = 15;
       auto rtsp_decoded_group = simaai::neat::nodes::groups::RtspDecodedInput(rtsp_decoded_opt);
+      rtsp_decoded_opt.codec = simaai::neat::nodes::groups::RtspCodec::HEVC;
+      auto rtsp_h265_decoded_group =
+          simaai::neat::nodes::groups::RtspDecodedInput(rtsp_decoded_opt);
       simaai::neat::nodes::groups::RtspDecodedInputOptions legacy_rtsp_decoded_opt{
           "rtsp://example.local/h264",
           200,
@@ -129,6 +145,12 @@ RUN_TEST(
               "HttpMjpegDecodedInputOptions aggregate field order changed");
       require(legacy_http_mjpeg_opt.ssl_strict,
               "HttpMjpegDecodedInputOptions ssl_strict should default to true");
+      require(std::string(simaai::neat::format_tag_name(simaai::neat::FormatTag::H265)) == "H265",
+              "FormatTag::H265 must render as H265");
+      require(simaai::neat::format_tag_from_string("H265") == simaai::neat::FormatTag::H265,
+              "H265 must round-trip back through format_tag_from_string");
+      require(simaai::neat::format_tag_from_string("h265") == simaai::neat::FormatTag::H265,
+              "format tag parsing must stay case-insensitive for H265");
       simaai::neat::nodes::groups::ImageInputGroupOptions image_opt;
       image_opt.path = "test.jpg";
       auto group = simaai::neat::nodes::groups::ImageInputGroup(image_opt);
@@ -152,10 +174,14 @@ RUN_TEST(
       (void)multipart_demux;
       (void)jpeg_parse;
       (void)rtp_jpeg_depay;
+      (void)h265_depay;
       (void)sima_decode;
+      (void)sima_decode_hevc;
       (void)rtsp_encoded_group;
       (void)rtsp_encoded_spec;
+      (void)rtsp_h265_encoded_group;
       (void)rtsp_decoded_group;
+      (void)rtsp_h265_decoded_group;
       (void)legacy_rtsp_decoded_opt;
       (void)http_mjpeg_group;
       (void)legacy_http_mjpeg_opt;

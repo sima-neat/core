@@ -68,6 +68,7 @@ REQUIRED_SCENARIO_IDS = (
     "runtime_graph_join_bundle",
     "runtime_codec_mjpeg_decode",
     "runtime_codec_h264_decode",
+    "runtime_codec_h265_decode",
 )
 
 

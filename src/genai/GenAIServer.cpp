@@ -56,6 +56,35 @@ void set_error(httplib::Response& res, const std::string& message, int status) {
   set_json(res, {{"error", {{"message", message}, {"type", "invalid_request_error"}}}}, status);
 }
 
+std::optional<std::string> apply_tool_options(const nlohmann::json& body,
+                                              GenerationRequest& request) {
+  if (body.contains("tools")) {
+    if (!body.at("tools").is_array()) {
+      return "tools must be an array";
+    }
+    const auto& tools = body.at("tools");
+    for (std::size_t i = 0; i < tools.size(); ++i) {
+      const auto& tool = tools.at(i);
+      if (!tool.is_object() || !tool.contains("type") || tool.at("type") != "function" ||
+          !tool.contains("function") || !tool.at("function").is_object() ||
+          !tool.at("function").contains("name") || !tool.at("function").at("name").is_string() ||
+          tool.at("function").at("name").get_ref<const std::string&>().empty()) {
+        return "tools[" + std::to_string(i) +
+               "] must contain type 'function' and a non-empty string function.name";
+      }
+    }
+    request.tools = tools;
+  }
+  if (body.contains("tool_choice")) {
+    const auto& choice = body.at("tool_choice");
+    if (!choice.is_null() && (!choice.is_string() || (choice != "auto" && choice != "none"))) {
+      return "Only tool_choice 'auto' or 'none' is supported";
+    }
+    request.tool_choice = choice;
+  }
+  return std::nullopt;
+}
+
 void write_sink(httplib::DataSink& sink, const std::string& text) {
   sink.write(text.data(), text.size());
 }
@@ -197,13 +226,14 @@ GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_s
   return metrics;
 }
 
-std::string chat_chunk(const std::string& model_name, const std::string& text,
+std::string chat_chunk(const std::string& model_name, const std::string& completion_id,
+                       std::uint64_t created, const std::string& text,
                        const std::optional<std::string>& finish_reason = std::nullopt,
                        const std::optional<GenerationMetrics>& metrics = std::nullopt) {
   nlohmann::json chunk;
-  chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
+  chunk["id"] = completion_id;
   chunk["object"] = "chat.completion.chunk";
-  chunk["created"] = unix_time_s();
+  chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.has_value()) {
     if (metrics->time_to_first_token_s > 0.0) {
@@ -230,7 +260,8 @@ std::string chat_chunk(const std::string& model_name, const std::string& text,
   return "data: " + chunk.dump() + "\n\n";
 }
 
-std::string chat_tool_call_chunk(const std::string& model_name, const Json& tool_calls,
+std::string chat_tool_call_chunk(const std::string& model_name, const std::string& completion_id,
+                                 std::uint64_t created, const Json& tool_calls,
                                  const GenerationMetrics& metrics) {
   nlohmann::json delta_tool_calls = nlohmann::json::array();
   for (std::size_t i = 0; i < tool_calls.size(); ++i) {
@@ -240,9 +271,9 @@ std::string chat_tool_call_chunk(const std::string& model_name, const Json& tool
   }
 
   nlohmann::json chunk;
-  chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
+  chunk["id"] = completion_id;
   chunk["object"] = "chat.completion.chunk";
-  chunk["created"] = unix_time_s();
+  chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.time_to_first_token_s > 0.0) {
     chunk["ttft"] = metrics.time_to_first_token_s;
@@ -972,11 +1003,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.messages = parse_chat_messages(body);
-      if (body.contains("tools") && body.at("tools").is_array()) {
-        request.tools = body.at("tools");
-      }
-      if (body.contains("tool_choice")) {
-        request.tool_choice = body.at("tool_choice");
+      if (const auto error = apply_tool_options(body, request)) {
+        set_error(res, *error, 400);
+        return;
       }
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1060,11 +1089,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.messages = parse_chat_messages(body);
-      if (body.contains("tools") && body.at("tools").is_array()) {
-        request.tools = body.at("tools");
-      }
-      if (body.contains("tool_choice")) {
-        request.tool_choice = body.at("tool_choice");
+      if (const auto error = apply_tool_options(body, request)) {
+        set_error(res, *error, 400);
+        return;
       }
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1146,6 +1173,8 @@ struct GenAIServer::Impl {
         [this, model_name = std::move(model_name), model = std::move(model),
          request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
           try {
+            const auto created = unix_time_s();
+            const auto completion_id = "chatcmpl-" + std::to_string(created);
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
@@ -1154,21 +1183,24 @@ struct GenAIServer::Impl {
               const auto metrics = metrics_with_ttft_once(sample->metrics, ttft_sent);
               if (sample->is_final) {
                 const auto final_chunk =
-                    chat_chunk(model_name, "", choice_finish_reason(sample->finish_reason),
-                               metrics) +
+                    chat_chunk(model_name, completion_id, created, "",
+                               choice_finish_reason(sample->finish_reason), metrics) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
               if (!sample->tool_calls.empty()) {
-                write_sink(sink, chat_tool_call_chunk(model_name, sample->tool_calls, metrics));
+                write_sink(sink, chat_tool_call_chunk(model_name, completion_id, created,
+                                                      sample->tool_calls, metrics));
                 continue;
               }
-              const auto chunk = chat_chunk(model_name, sample->text, std::nullopt, metrics);
+              const auto chunk = chat_chunk(model_name, completion_id, created, sample->text,
+                                            std::nullopt, metrics);
               write_sink(sink, chunk);
             }
-            const auto done = chat_chunk(model_name, "", "stop") + "data: [DONE]\n\n";
+            const auto done =
+                chat_chunk(model_name, completion_id, created, "", "stop") + "data: [DONE]\n\n";
             write_sink(sink, done);
           } catch (const std::exception& e) {
             const nlohmann::json error = {{"error", {{"message", e.what()}}}};

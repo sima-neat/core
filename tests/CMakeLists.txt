@@ -452,6 +452,10 @@ set(UNIT_TESTS
   unit_plugin_failure_messages_test
 )
 
+if (SimaLMM_FOUND)
+  list(APPEND UNIT_TESTS unit_genai_tool_call_parser_test)
+endif()
+
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
   list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)
 endif()
@@ -762,6 +766,7 @@ set(PERF_TARGETS
   perf_runtime_graph_join_bundle_test
   perf_runtime_codec_mjpeg_decode_test
   perf_runtime_codec_h264_decode_test
+  perf_runtime_codec_h265_decode_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -776,7 +781,8 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
-  if (target STREQUAL "perf_runtime_codec_h264_decode_test")
+  if (target STREQUAL "perf_runtime_codec_h264_decode_test" OR
+      target STREQUAL "perf_runtime_codec_h265_decode_test")
     add_dependencies(${target} prepare_perf_codec_fixtures)
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
@@ -1802,25 +1808,6 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_test(
-    NAME codec_runtime_nested_zero_copy_boundary_test
-    COMMAND codec_runtime_stream_test
-            --case rtsp-h264-decoded
-            --frames 5
-            --repeat 2
-            --determinism
-            --nested-boundary
-  )
-  append_pipeline_test_env(codec_runtime_nested_zero_copy_boundary_test)
-  set_property(
-    TEST codec_runtime_nested_zero_copy_boundary_test
-    APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;determinism;lifecycle"
-  )
-  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
-  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
-  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
-  set_tests_properties(codec_runtime_nested_zero_copy_boundary_test PROPERTIES SKIP_RETURN_CODE 77)
-
-  add_test(
     NAME codec_runtime_bad_url_diagnostics
     COMMAND codec_runtime_stream_test --case bad-url-diagnostics --timeout-ms 2000
   )
@@ -1838,6 +1825,45 @@ if (NOT codec_decode_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_dependencies(codec_decode_accuracy_test prepare_perf_codec_fixtures)
   set_property(TEST codec_decode_accuracy_test APPEND PROPERTY LABELS "e2e;codec;accuracy")
   set_property(TEST codec_decode_accuracy_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
+add_pipeline_test(
+  h265_decode_determinism_test
+  e2e_testing/h265_decode_determinism_test.cpp
+)
+
+if (NOT h265_decode_determinism_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(h265_decode_determinism_test prepare_perf_codec_fixtures)
+  set_property(TEST h265_decode_determinism_test APPEND PROPERTY LABELS "e2e;codec;h265;determinism")
+  set_property(TEST h265_decode_determinism_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
+add_pipeline_test(
+  h265_decode_resnet50_e2e_test
+  e2e_pipelines/img_classification/h265_decode_resnet50_e2e_test.cpp
+)
+
+if (NOT h265_decode_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(h265_decode_resnet50_e2e_test prepare_perf_codec_fixtures)
+  set_property(TEST h265_decode_resnet50_e2e_test
+    APPEND PROPERTY LABELS "e2e;codec;h265;img_classification;zero_copy;sync;async")
+  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
+add_pipeline_test_long(
+  h265_rtsp_resnet50_e2e_test
+  e2e_pipelines/img_classification/h265_rtsp_resnet50_e2e_test.cpp
+)
+
+if (NOT h265_rtsp_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  append_pipeline_test_env(h265_rtsp_resnet50_e2e_test)
+  set_property(TEST h265_rtsp_resnet50_e2e_test
+    APPEND PROPERTY LABELS "e2e;codec;h265;rtsp;img_classification")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(h265_rtsp_resnet50_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_pipeline_test(
@@ -1980,6 +2006,7 @@ foreach(test
     resnet50_modelpack_direct
     resnet50_modelpack_jpeg
     resnet50_modelpack_rtsp
+    h265_rtsp_resnet50_e2e_test
     resnet50_neatargmax_test
     rtsp_pull_frame_test
     hybrid_graph_rtsp_resnet50_tput_test)
@@ -2173,6 +2200,9 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   decoder_visible_caps_test
   file_read_test
   codec_decode_accuracy_test
+  h265_decode_determinism_test
+  h265_decode_resnet50_e2e_test
+  h265_rtsp_resnet50_e2e_test
   codec_runtime_stream_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp

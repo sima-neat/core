@@ -12,6 +12,7 @@
 #include "nodes/io/Input.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
@@ -1789,14 +1790,13 @@ struct EncodedOutputFusionMatch {
   std::size_t encoded_split_node_index = 0;
 };
 
-bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
+std::optional<SimaDecodeType> encoded_video_sender_codec(const PipelineSegmentPlan& segment) {
   if (segment.nodes.size() != 3U) {
-    return false;
+    return std::nullopt;
   }
-  if (!segment.nodes[0] || segment.nodes[0]->kind() != "H264Parse" || !segment.nodes[1] ||
-      segment.nodes[1]->kind() != "H264Packetize" || !segment.nodes[2] ||
+  if (!segment.nodes[0] || !segment.nodes[1] || !segment.nodes[2] ||
       segment.nodes[2]->kind() != "UdpOutput") {
-    return false;
+    return std::nullopt;
   }
 
   const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(segment.nodes[2].get());
@@ -1804,7 +1804,16 @@ bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
   // changes its state domain: that sink can hold the shared pipeline in PAUSED
   // while waiting for preroll from every encoded branch. Keep this public
   // topology segmented rather than coupling video egress to decoder startup.
-  return udp_output && !udp_output->options().async;
+  if (!udp_output || udp_output->options().async) {
+    return std::nullopt;
+  }
+  if (segment.nodes[0]->kind() == "H264Parse" && segment.nodes[1]->kind() == "H264Packetize") {
+    return SimaDecodeType::H264;
+  }
+  if (segment.nodes[0]->kind() == "H265Parse" && segment.nodes[1]->kind() == "H265Packetize") {
+    return SimaDecodeType::H265;
+  }
+  return std::nullopt;
 }
 
 std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
@@ -1826,12 +1835,18 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
       decoder.output_edges.front() != target_edge_index) {
     return std::nullopt;
   }
-  const bool is_h264_decoder =
-      std::any_of(decoder.nodes.begin(), decoder.nodes.end(), [](const auto& node) {
-        const auto* sima_decode = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
-        return sima_decode && sima_decode->options().type == SimaDecodeType::H264;
-      });
-  if (!is_h264_decoder) {
+  const auto decoder_codec = [&decoder]() -> std::optional<SimaDecodeType> {
+    const auto it = std::find_if(decoder.nodes.begin(), decoder.nodes.end(), [](const auto& node) {
+      const auto* sima_decode = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
+      return sima_decode && (sima_decode->options().type == SimaDecodeType::H264 ||
+                             sima_decode->options().type == SimaDecodeType::H265);
+    });
+    if (it == decoder.nodes.end()) {
+      return std::nullopt;
+    }
+    return dynamic_cast<const simaai::neat::SimaDecode*>((*it).get())->options().type;
+  }();
+  if (!decoder_codec.has_value()) {
     return std::nullopt;
   }
 
@@ -1893,11 +1908,20 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
   if (!segment_is_private_live_source_for_fusion(source, source_to_fanout_edge)) {
     return std::nullopt;
   }
-  const bool is_h264_source =
-      std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
-        return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
-      });
-  if (!is_h264_source) {
+  const auto source_codec = [&source]() -> std::optional<SimaDecodeType> {
+    if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+          return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
+        })) {
+      return SimaDecodeType::H264;
+    }
+    if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+          return dynamic_cast<const simaai::neat::H265Depacketize*>(node.get()) != nullptr;
+        })) {
+      return SimaDecodeType::H265;
+    }
+    return std::nullopt;
+  }();
+  if (source_codec != decoder_codec) {
     return std::nullopt;
   }
 
@@ -1919,12 +1943,18 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
       output.nodes.size() == 1U
           ? dynamic_cast<const simaai::neat::Output*>(output.nodes.front().get())
           : nullptr;
-  if (!output_node && !is_encoded_video_sender_segment(output)) {
-    return std::nullopt;
+  if (!output_node) {
+    const auto sender_codec = encoded_video_sender_codec(output);
+    if (!sender_codec.has_value() || sender_codec != decoder_codec) {
+      return std::nullopt;
+    }
   }
 
   const auto& encoded_output_edge = plan.edges[fanout_to_output_edge];
   if (output_node) {
+    if (decoder_codec != SimaDecodeType::H264) {
+      return std::nullopt;
+    }
     const auto& options = output_node->options();
     // A fused pad probe can preserve ordinary, unclocked Output buffering,
     // but it cannot faithfully reproduce clock synchronization, public
@@ -1956,9 +1986,9 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
                                          : encoded_output_edge.link_options.stream_id;
   } else {
     match.encoded_sink_link_options = encoded_output_edge.link_options;
-    // Preserve VideoSender's parser exactly. Finding H264Depacketize somewhere
+    // Preserve VideoSender's parser exactly. Finding a codec depacketizer somewhere
     // in the source segment does not prove that the source's public output tail
-    // is still parsed AU-aligned byte-stream H.264; a legal source fragment may
+    // is still parsed AU-aligned byte-stream video; a legal source fragment may
     // transform the stream afterward. Fusion is an execution lowering and must
     // not remove parser/caps/header semantics without an exact output contract.
     match.encoded_sink_nodes = output.nodes;

@@ -66,6 +66,7 @@
 #include "nodes/sima/Detess.h"
 #include "nodes/sima/DetessCast.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/PCIeSink.h"
@@ -3401,7 +3402,10 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<simaai::neat::nodes::groups::RtspCodec>(m, "RtspCodec")
       .value("H264", simaai::neat::nodes::groups::RtspCodec::H264)
-      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG);
+      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG)
+      .value("H265", simaai::neat::nodes::groups::RtspCodec::H265);
+  m.attr("RtspCodec").attr("AVC") = m.attr("RtspCodec").attr("H264");
+  m.attr("RtspCodec").attr("HEVC") = m.attr("RtspCodec").attr("H265");
 
   nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
       .def(nb::init<>())
@@ -3418,6 +3422,7 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_payload_type)
       .def_rw("mjpeg_payload_type",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::mjpeg_payload_type)
+      .def_rw("payload_type", &simaai::neat::nodes::groups::RtspEncodedInputOptions::payload_type)
       .def_rw("h264_parse_config_interval",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_parse_config_interval)
       .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_fps)
@@ -3529,7 +3534,12 @@ NB_MODULE(_pyneat_core, m) {
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
                   "height"_a, "fps"_a)
       .def_static("h264_rtp_udp_from_encoded",
-                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded)
+                  []() {
+                    return simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+                        simaai::neat::nodes::groups::RtspCodec::H264);
+                  })
+      .def_static("passthrough", &simaai::neat::nodes::groups::VideoSenderOptions::Passthrough,
+                  "codec"_a)
       .def("is_raw_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_raw_input)
       .def("is_encoded_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_encoded_input)
       .def_prop_ro("width", &simaai::neat::nodes::groups::VideoSenderOptions::width)
@@ -3754,7 +3764,10 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
       .value("H264", simaai::neat::SimaDecodeType::H264)
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
-      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG);
+      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG)
+      .value("H265", simaai::neat::SimaDecodeType::H265);
+  m.attr("SimaDecodeType").attr("AVC") = m.attr("SimaDecodeType").attr("H264");
+  m.attr("SimaDecodeType").attr("HEVC") = m.attr("SimaDecodeType").attr("H265");
   nb::class_<simaai::neat::SimaDecodeOptions>(m, "SimaDecodeOptions")
       .def(nb::init<>())
       .def_rw("type", &simaai::neat::SimaDecodeOptions::type)
@@ -3882,6 +3895,8 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
                 "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
                 "h264_height"_a = -1, "enforce_h264_caps"_a = true);
+  nodes_mod.def("h265_depacketize", &simaai::neat::nodes::H265Depacketize, "payload_type"_a = 96,
+                "source_fps"_a = -1);
   nodes_mod.def("input",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::InputOptions)>(
                     &simaai::neat::nodes::Input),
@@ -4429,6 +4444,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("YUYV", simaai::neat::FormatTag::YUYV)
       .value("ENCODED", simaai::neat::FormatTag::ENCODED)
       .value("H264", simaai::neat::FormatTag::H264)
+      .value("H265", simaai::neat::FormatTag::H265)
       .value("ByteStream", simaai::neat::FormatTag::ByteStream)
       .value("FP32", simaai::neat::FormatTag::FP32)
       .value("INT8", simaai::neat::FormatTag::INT8)
