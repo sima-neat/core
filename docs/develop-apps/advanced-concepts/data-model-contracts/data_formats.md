@@ -26,8 +26,8 @@ Common tags:
 | `GRAY8` | image | 8-bit grayscale. |
 | `NV12` | image/video | Y plane plus interleaved UV plane. Width and height must be even. |
 | `I420` | image/video | Y, U, and V planes. Width and height must be even. |
-| `H264` | encoded | H.264 access unit / NAL stream. |
-| `H265` | encoded | H.265 / HEVC access unit / NAL stream. |
+| `H264` | encoded | H.264 access unit / NAL stream. `AVC` is an alias. |
+| `H265` | encoded | H.265 / HEVC access unit / NAL stream. `HEVC` is an alias. |
 | `ENCODED` | encoded | Generic encoded payload. The caps string identifies codecs without a dedicated format tag. |
 | `FP32` | tensor | Float32 tensor payload. |
 | `INT8` | tensor | Signed INT8 tensor payload. |

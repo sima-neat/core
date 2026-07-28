@@ -4450,6 +4450,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("INT8", simaai::neat::FormatTag::INT8)
       .value("UINT8", simaai::neat::FormatTag::UINT8)
       .value("BF16", simaai::neat::FormatTag::BF16);
+  m.attr("Format").attr("AVC") = m.attr("Format").attr("H264");
+  m.attr("Format").attr("HEVC") = m.attr("Format").attr("H265");
   m.attr("FormatTag") = m.attr("Format");
   // Format string<->tag converters are caps/jargon utilities → advanced tier (S8).
   advanced_mod.def("format_tag_name", &simaai::neat::format_tag_name, "tag"_a);

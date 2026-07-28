@@ -125,8 +125,8 @@ complete encoded samples.
 | MJPEG frame stream | `SimaDecodeType::MJPEG` | HTTP multipart demux + `JpegParse()`, or RTSP JPEG depacketize + `JpegParse()` |
 
 The aliases select identical decoder paths: `H264` equals `AVC`, and `H265`
-equals `HEVC`. The same aliases are available through `RtspCodec` in C++ and
-Python.
+equals `HEVC`. The same aliases are available through `RtspCodec` and
+`FormatTag` in C++ and Python.
 
 H.265 input must use the HEVC Main profile with 8-bit, 4:2:0 chroma. Direct
 elementary-stream input must be parsed, Annex-B byte-stream, and access-unit

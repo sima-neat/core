@@ -20,7 +20,8 @@ Release notes for the SiMa.ai Neat Library.
   `RtspDecodedInput` in C++ and Python. `RtspEncodedInput` provides parsed H.265
   access units without decoding them. H.265 inputs must use HEVC Main profile,
   8-bit, 4:2:0. The codec selectors accept both `H265` and `HEVC`; H.264
-  selectors also accept `AVC`.
+  selectors also accept `AVC`. `FormatTag` / `pyneat.Format` accept the same
+  aliases at encoded graph boundaries, and still serialize as `H264` and `H265`.
 - `VideoSender` forwards encoded H.264 or H.265 as RTP over UDP without
   re-encoding through `VideoSenderOptions::Passthrough(codec)` /
   `pyneat.VideoSenderOptions.passthrough(codec)`. H.265 uses RTP payload type 98
