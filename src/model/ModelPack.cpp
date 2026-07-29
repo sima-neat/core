@@ -1054,19 +1054,6 @@ static std::string extract_and_organize(const std::string& tar_path,
   opt.require_pipeline_sequence = false;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
   try {
-    {
-      std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
-      auto& cache = modelpack_extract_cache();
-      const auto found = cache.find(cache_key);
-      if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
-        return found->second;
-      }
-    }
-
-    const auto manifest = simaai::neat::internal::ModelArchiveLoader::inspect(tar_path, opt);
-    const std::uint64_t required_available_bytes =
-        required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes);
-
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
     auto& cache = modelpack_extract_cache();
     const auto found = cache.find(cache_key);
@@ -1074,8 +1061,15 @@ static std::string extract_and_organize(const std::string& tar_path,
       return found->second;
     }
 
+    // Chosen through a callback because the root is sized from the manifest, which the loader
+    // only has after validating — and validating twice is what this avoids.
     const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
-        tar_path, modelpack_output_root(cleanup_extracted_model_data, required_available_bytes),
+        tar_path,
+        [&](const simaai::neat::internal::ModelArchiveManifest& manifest) {
+          return modelpack_output_root(
+              cleanup_extracted_model_data,
+              required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes));
+        },
         opt);
     const fs::path target_dir(extracted.package_root);
 

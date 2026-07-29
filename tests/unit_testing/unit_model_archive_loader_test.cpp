@@ -3,12 +3,14 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -37,6 +39,18 @@ void write_empty_file(const std::filesystem::path& path) {
   std::filesystem::create_directories(path.parent_path(), ec);
   std::ofstream out(path, std::ios::binary);
   out << "not an archive";
+}
+
+std::vector<std::string> extracted_file_set(const std::filesystem::path& package_root) {
+  namespace fs = std::filesystem;
+  std::vector<std::string> files;
+  for (const auto& it : fs::recursive_directory_iterator(package_root)) {
+    if (!it.is_regular_file())
+      continue;
+    files.push_back(fs::relative(it.path(), package_root).generic_string());
+  }
+  std::sort(files.begin(), files.end());
+  return files;
 }
 
 } // namespace
@@ -140,4 +154,82 @@ RUN_TEST(
           [&]() { (void)ModelArchiveLoader::inspect(collision.string(), strict); },
           ModelArchiveErrorClass::InvalidArchive,
           "destination collision should fail with invalid_archive when reject flag is set");
+
+      // Exactly the entries validation classified as extractable — what a bulk-tar rewrite
+      // would silently break by also materializing directory entries and skipped aux files.
+      require(extracted_file_set(fs::path(first.package_root)) ==
+                  std::vector<std::string>{"etc/0_preproc.json", "etc/0_process_mla.json",
+                                           "etc/pipeline_sequence.json", "lib/model.so",
+                                           "share/model.elf"},
+              "extracted file set should be exactly the archive's classified entries");
+
+      // Baked into the JSON configs, so absolute even when the caller names the root relatively.
+      {
+        const fs::path cwd = fs::current_path();
+        const std::string rel_root = sima_test::make_temp_dir("model_archive_loader_relative");
+        fs::current_path(rel_root);
+        ModelArchiveExtractResult relative;
+        try {
+          relative = ModelArchiveLoader::extract(valid.string(), "./nested/root");
+        } catch (...) {
+          fs::current_path(cwd);
+          throw;
+        }
+        fs::current_path(cwd);
+        require(fs::path(relative.package_root).is_absolute(),
+                "extract should return an absolute package_root for a relative output root");
+        require(fs::exists(fs::path(relative.etc_dir) / "pipeline_sequence.json"),
+                "relative-root extraction should still materialize etc contents");
+      }
+
+      // The callback overload hands the manifest over so the caller can size the root.
+      {
+        const std::string callback_root = sima_test::make_temp_dir("model_archive_loader_callback");
+        bool root_chosen = false;
+        const ModelArchiveExtractResult chosen = ModelArchiveLoader::extract(
+            valid.string(),
+            [&](const ModelArchiveManifest& m) {
+              require(!m.entries.empty(), "root-selection callback should receive the manifest");
+              root_chosen = true;
+              return callback_root;
+            },
+            ModelArchiveLoaderOptions{});
+        require(root_chosen, "root-selection callback should be invoked");
+        require(fs::path(chosen.package_root).parent_path() == fs::path(callback_root),
+                "extract should honor the root returned by the callback");
+      }
+
+      // A private TMPDIR makes staging observable: the gzip-bomb ceiling rejects an archive
+      // within the compressed limit, and no staging copy survives any of the three outcomes.
+      {
+        const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_tmpdir");
+        const std::string staging_root = sima_test::make_temp_dir("model_archive_loader_staging");
+        {
+          sima_test::ScopedEnvVar tmpdir("TMPDIR", private_tmp);
+          (void)ModelArchiveLoader::extract(valid.string(), staging_root);
+
+          ModelArchiveLoaderOptions bomb;
+          bomb.max_inflated_archive_bytes = 64ULL;
+          require_model_archive_error(
+              [&]() { (void)ModelArchiveLoader::extract(valid.string(), staging_root, bomb); },
+              ModelArchiveErrorClass::SizeLimitExceeded,
+              "inflated archive over max_inflated_archive_bytes should fail with "
+              "size_limit_exceeded");
+
+          bool propagated = false;
+          try {
+            (void)ModelArchiveLoader::extract(
+                valid.string(),
+                [](const ModelArchiveManifest&) -> std::string {
+                  throw std::runtime_error("no usable extraction root");
+                },
+                ModelArchiveLoaderOptions{});
+          } catch (const std::runtime_error&) {
+            propagated = true;
+          }
+          require(propagated, "a throwing root-selection callback should propagate");
+        }
+        require(fs::is_empty(private_tmp),
+                "loader should leave no archive staging directories behind");
+      }
     }));

@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -61,6 +62,9 @@ struct ModelArchiveManifest {
 
 struct ModelArchiveLoaderOptions {
   std::size_t max_archive_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL;
+  // Gzip-bomb guard for the staging copy: the compressed size says nothing about how far a
+  // hostile archive expands.
+  std::size_t max_inflated_archive_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL;
   std::size_t max_entry_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL;
   std::size_t max_total_json_bytes = 32ULL * 1024ULL * 1024ULL;
   std::size_t max_entries = 2048;
@@ -90,6 +94,17 @@ struct ModelArchiveExtractResult {
   ModelArchiveManifest manifest;
 };
 
+/// Selects the extraction root, given the manifest of the archive already validated. Invoked
+/// before any output file is created.
+using ChooseModelArchiveOutputRoot = std::function<std::string(const ModelArchiveManifest&)>;
+
+/// Reads .tar.gz model archives.
+///
+/// Every entry point inflates the archive exactly once into a private staging copy under TMPDIR
+/// and reads listings, JSON, and payload bytes back out of that copy, so every entry point —
+/// inspect() included — needs temp space for the inflated size. Two properties follow: replacing
+/// the archive on disk mid-load cannot change what is validated or written, and tar is never
+/// handed a filesystem destination, because this class computes every output path itself.
 class ModelArchiveLoader {
 public:
   static ModelArchiveManifest inspect(const std::string& archive_path,
@@ -97,6 +112,12 @@ public:
 
   static ModelArchiveExtractResult extract(const std::string& archive_path,
                                            const std::string& output_root,
+                                           const ModelArchiveLoaderOptions& opt = {});
+
+  /// extract() for callers whose root choice depends on the archive's extracted size, without
+  /// costing them a second validation pass.
+  static ModelArchiveExtractResult extract(const std::string& archive_path,
+                                           const ChooseModelArchiveOutputRoot& choose_output_root,
                                            const ModelArchiveLoaderOptions& opt = {});
 };
 
