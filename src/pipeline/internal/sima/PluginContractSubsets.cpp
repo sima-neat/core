@@ -3,6 +3,7 @@
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
@@ -2053,11 +2054,16 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
 std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mpk(
     const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
     const MpkPluginIoContract* terminal_stage, std::string* error_message) {
-  const auto extracted = build_boxdecode_static_contract_from_mpk(contract, route_flags,
-                                                                  terminal_stage, error_message);
+  auto extracted = build_boxdecode_static_contract_from_mpk(contract, route_flags, terminal_stage,
+                                                            error_message);
   if (!extracted.has_value()) {
     return std::nullopt;
   }
+  // Apply the SSD-family contract defaults (softmax score activation, grouped-by-role layout, and
+  // geometric class-count inference) on the model-managed static contract before lowering it, so
+  // the subset — and the compiled payload built from it — carries a valid class count and layout
+  // into neatobjectdecode instead of the raw MPK defaults (Unknown / Auto / 0).
+  stagesemantics::apply_ssd_model_managed_contract_defaults(&*extracted);
   return extract_boxdecode_contract_subset_from_static_contract(*extracted);
 }
 

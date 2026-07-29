@@ -66,6 +66,7 @@
 #include "nodes/sima/Detess.h"
 #include "nodes/sima/DetessCast.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/PCIeSink.h"
@@ -113,6 +114,7 @@ using simaai::neat::Device;
 using simaai::neat::DeviceType;
 using simaai::neat::Graph;
 using simaai::neat::GraphElementMetrics;
+using simaai::neat::GraphLinkOptions;
 using simaai::neat::GraphLinkPolicy;
 using simaai::neat::GraphNodeMetrics;
 using simaai::neat::GraphOptions;
@@ -145,7 +147,6 @@ using simaai::neat::PowerRailSummary;
 using simaai::neat::PowerSummary;
 using simaai::neat::PullError;
 using simaai::neat::PullStatus;
-using simaai::neat::RealtimeGraphLinkOptions;
 using simaai::neat::Run;
 using simaai::neat::RunAdvancedOptions;
 using simaai::neat::RunAutoExportOptions;
@@ -2037,6 +2038,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)
       .value("ASR", simaai::neat::genai::GenAITask::ASR);
 
+  nb::enum_<simaai::neat::genai::ASRTask>(m, "ASRTask")
+      .value("Transcribe", simaai::neat::genai::ASRTask::Transcribe)
+      .value("Translate", simaai::neat::genai::ASRTask::Translate);
+
   nb::class_<simaai::neat::genai::ImageList>(m, "ImageList")
       .def(nb::init<>())
       .def(nb::init<std::vector<Tensor>>(), "images"_a)
@@ -2100,6 +2105,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("audio", &simaai::neat::genai::GenerationRequest::audio)
       .def_rw("audio_file", &simaai::neat::genai::GenerationRequest::audio_file)
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
+      .def_rw("asr_task", &simaai::neat::genai::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
       .def_prop_rw(
           "tools",
@@ -2123,6 +2129,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("text", &simaai::neat::genai::GenerationResult::text)
       .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
       .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
+      .def_rw("language", &simaai::neat::genai::GenerationResult::language)
+      .def_rw("no_speech_prob", &simaai::neat::genai::GenerationResult::no_speech_prob)
+      .def_rw("avg_logprob", &simaai::neat::genai::GenerationResult::avg_logprob)
       .def_prop_rw(
           "tool_calls",
           [](const simaai::neat::genai::GenerationResult& result) {
@@ -2138,6 +2147,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
       .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
       .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
+      .def_rw("language", &simaai::neat::genai::TokenSample::language)
+      .def_rw("no_speech_prob", &simaai::neat::genai::TokenSample::no_speech_prob)
+      .def_rw("avg_logprob", &simaai::neat::genai::TokenSample::avg_logprob)
       .def_prop_rw(
           "tool_calls",
           [](const simaai::neat::genai::TokenSample& sample) {
@@ -2236,6 +2248,7 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
   genai_mod.attr("GenAITask") = m.attr("GenAITask");
+  genai_mod.attr("ASRTask") = m.attr("ASRTask");
   genai_mod.attr("ImageList") = m.attr("ImageList");
   genai_mod.attr("ChatMessage") = m.attr("ChatMessage");
   genai_mod.attr("GenerationMetrics") = m.attr("GenerationMetrics");
@@ -2259,6 +2272,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::SpeechTranscriberOptions>(genai_mod, "SpeechTranscriberOptions")
       .def(nb::init<>())
       .def_rw("language", &simaai::neat::genai::SpeechTranscriberOptions::language)
+      .def_rw("task", &simaai::neat::genai::SpeechTranscriberOptions::task)
       .def_rw("streaming", &simaai::neat::genai::SpeechTranscriberOptions::streaming);
 
   nb::module_ genai_graphs_mod = genai_mod.def_submodule("graphs", "GenAI public Graph fragments");
@@ -2318,31 +2332,15 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<GraphLinkPolicy>(m, "GraphLinkPolicy")
       .value("Default", GraphLinkPolicy::Default)
-      .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream)
-      .value("RealtimeEveryFrameByStream", GraphLinkPolicy::RealtimeEveryFrameByStream);
+      .value("RealtimeLatestByStream", GraphLinkPolicy::RealtimeLatestByStream);
 
-  // Python objects are extension-owned, so keep the existing Python property surface while the
-  // released three-member C++ GraphLinkOptions stays ABI-stable.
-  nb::class_<RealtimeGraphLinkOptions>(m, "GraphLinkOptions")
+  nb::class_<GraphLinkOptions>(m, "GraphLinkOptions")
       .def(nb::init<>())
-      .def_prop_rw(
-          "policy", [](const RealtimeGraphLinkOptions& options) { return options.policy; },
-          [](RealtimeGraphLinkOptions& options, GraphLinkPolicy policy) {
-            options.policy = policy;
-          })
-      .def_prop_rw(
-          "queue_depth",
-          [](const RealtimeGraphLinkOptions& options) { return options.queue_depth; },
-          [](RealtimeGraphLinkOptions& options, int queue_depth) {
-            options.queue_depth = queue_depth;
-          })
-      .def_prop_rw(
-          "stream_id", [](const RealtimeGraphLinkOptions& options) { return options.stream_id; },
-          [](RealtimeGraphLinkOptions& options, std::string stream_id) {
-            options.stream_id = std::move(stream_id);
-          })
-      .def_rw("max_inflight_per_stream", &RealtimeGraphLinkOptions::max_inflight_per_stream)
-      .def_rw("max_inflight_total", &RealtimeGraphLinkOptions::max_inflight_total);
+      .def_rw("policy", &GraphLinkOptions::policy)
+      .def_rw("queue_depth", &GraphLinkOptions::queue_depth)
+      .def_rw("stream_id", &GraphLinkOptions::stream_id)
+      .def_rw("max_inflight_per_stream", &GraphLinkOptions::max_inflight_per_stream)
+      .def_rw("max_inflight_total", &GraphLinkOptions::max_inflight_total);
 
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())
@@ -2981,9 +2979,7 @@ NB_MODULE(_pyneat_core, m) {
       .def(
           "connect",
           [](Graph& self, const Graph& from, const Graph& to,
-             const RealtimeGraphLinkOptions& options) -> Graph& {
-            return self.connect_realtime(from, to, options);
-          },
+             const GraphLinkOptions& options) -> Graph& { return self.connect(from, to, options); },
           "from_graph"_a, "to_graph"_a, "options"_a, nb::rv_policy::reference_internal)
       .def(
           "connect",
@@ -3073,12 +3069,6 @@ NB_MODULE(_pyneat_core, m) {
           "image_format"_a = nb::none())
       .def("build_source", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "build_fused_realtime_source",
-          [](Graph& self, const RunOptions& options) {
-            return self.build_fused_realtime_sources(options);
-          },
-          "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def("build", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def(
@@ -3412,7 +3402,10 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<simaai::neat::nodes::groups::RtspCodec>(m, "RtspCodec")
       .value("H264", simaai::neat::nodes::groups::RtspCodec::H264)
-      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG);
+      .value("MJPEG", simaai::neat::nodes::groups::RtspCodec::MJPEG)
+      .value("H265", simaai::neat::nodes::groups::RtspCodec::H265);
+  m.attr("RtspCodec").attr("AVC") = m.attr("RtspCodec").attr("H264");
+  m.attr("RtspCodec").attr("HEVC") = m.attr("RtspCodec").attr("H265");
 
   nb::class_<simaai::neat::nodes::groups::RtspEncodedInputOptions>(m, "RtspEncodedInputOptions")
       .def(nb::init<>())
@@ -3429,6 +3422,7 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_payload_type)
       .def_rw("mjpeg_payload_type",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::mjpeg_payload_type)
+      .def_rw("payload_type", &simaai::neat::nodes::groups::RtspEncodedInputOptions::payload_type)
       .def_rw("h264_parse_config_interval",
               &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_parse_config_interval)
       .def_rw("h264_fps", &simaai::neat::nodes::groups::RtspEncodedInputOptions::h264_fps)
@@ -3540,7 +3534,12 @@ NB_MODULE(_pyneat_core, m) {
                   &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
                   "height"_a, "fps"_a)
       .def_static("h264_rtp_udp_from_encoded",
-                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded)
+                  []() {
+                    return simaai::neat::nodes::groups::VideoSenderOptions::Passthrough(
+                        simaai::neat::nodes::groups::RtspCodec::H264);
+                  })
+      .def_static("passthrough", &simaai::neat::nodes::groups::VideoSenderOptions::Passthrough,
+                  "codec"_a)
       .def("is_raw_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_raw_input)
       .def("is_encoded_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_encoded_input)
       .def_prop_ro("width", &simaai::neat::nodes::groups::VideoSenderOptions::width)
@@ -3765,7 +3764,10 @@ NB_MODULE(_pyneat_core, m) {
   nb::enum_<simaai::neat::SimaDecodeType>(m, "SimaDecodeType")
       .value("H264", simaai::neat::SimaDecodeType::H264)
       .value("JPEG", simaai::neat::SimaDecodeType::JPEG)
-      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG);
+      .value("MJPEG", simaai::neat::SimaDecodeType::MJPEG)
+      .value("H265", simaai::neat::SimaDecodeType::H265);
+  m.attr("SimaDecodeType").attr("AVC") = m.attr("SimaDecodeType").attr("H264");
+  m.attr("SimaDecodeType").attr("HEVC") = m.attr("SimaDecodeType").attr("H265");
   nb::class_<simaai::neat::SimaDecodeOptions>(m, "SimaDecodeOptions")
       .def(nb::init<>())
       .def_rw("type", &simaai::neat::SimaDecodeOptions::type)
@@ -3893,6 +3895,8 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
                 "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
                 "h264_height"_a = -1, "enforce_h264_caps"_a = true);
+  nodes_mod.def("h265_depacketize", &simaai::neat::nodes::H265Depacketize, "payload_type"_a = 96,
+                "source_fps"_a = -1);
   nodes_mod.def("input",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::InputOptions)>(
                     &simaai::neat::nodes::Input),
@@ -4181,6 +4185,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV26Seg", simaai::neat::BoxDecodeType::YoloV26Seg)
       .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
       .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
+      .value("Ssd", simaai::neat::BoxDecodeType::Ssd)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
@@ -4439,11 +4444,14 @@ NB_MODULE(_pyneat_core, m) {
       .value("YUYV", simaai::neat::FormatTag::YUYV)
       .value("ENCODED", simaai::neat::FormatTag::ENCODED)
       .value("H264", simaai::neat::FormatTag::H264)
+      .value("H265", simaai::neat::FormatTag::H265)
       .value("ByteStream", simaai::neat::FormatTag::ByteStream)
       .value("FP32", simaai::neat::FormatTag::FP32)
       .value("INT8", simaai::neat::FormatTag::INT8)
       .value("UINT8", simaai::neat::FormatTag::UINT8)
       .value("BF16", simaai::neat::FormatTag::BF16);
+  m.attr("Format").attr("AVC") = m.attr("Format").attr("H264");
+  m.attr("Format").attr("HEVC") = m.attr("Format").attr("H265");
   m.attr("FormatTag") = m.attr("Format");
   // Format string<->tag converters are caps/jargon utilities → advanced tier (S8).
   advanced_mod.def("format_tag_name", &simaai::neat::format_tag_name, "tag"_a);

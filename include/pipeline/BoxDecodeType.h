@@ -31,6 +31,10 @@ namespace simaai::neat {
  * 32-channel mask-coefficient heads, and a trailing mask prototype.
  * `YoloV26Pose` uses the same raw l/t/r/b bbox heads, 1-channel pose scores,
  * and 51-channel keypoint heads.
+ * `Ssd` covers the SSD detector family (any feature-map count / input size):
+ * grouped per-level localization heads (depth = 4 * priors-per-cell) paired with
+ * class-confidence heads (depth = num_classes * priors-per-cell), decoded against
+ * prior/anchor boxes with softmax class scores.
  *
  * @ingroup pipeline
  */
@@ -59,6 +63,7 @@ enum class BoxDecodeType : std::int32_t {
   YoloV26Seg = 19,  ///< YOLO26 segmentation heads.
   YoloV6 = 20,      ///< YOLOv6 raw l/t/r/b distance heads.
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
+  Ssd = 22,         ///< SSD-family detection (prior/anchor decode, softmax class scores).
 };
 
 /**
@@ -150,6 +155,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolov6";
   case BoxDecodeType::YoloX:
     return "yolox";
+  case BoxDecodeType::Ssd:
+    return "ssd";
   case BoxDecodeType::Detr:
     return "detr";
   case BoxDecodeType::EffDet:
@@ -213,6 +220,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
     return true;
+  case BoxDecodeType::Ssd:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -244,6 +252,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Pose:
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
+  case BoxDecodeType::Ssd:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -275,6 +284,7 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
+  case BoxDecodeType::Ssd:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -313,6 +323,10 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::YoloX:
     return "YOLOX raw-head contract: interleaved [bbox_i, obj_logit_i, class_logit_i] "
            "heads with raw xywh boxes, objectness logits, and class logits.";
+  case BoxDecodeType::Ssd:
+    return "SSD contract: per-level grouped localization heads (depth=4*priors-per-cell) "
+           "paired with class-confidence heads (depth=num_classes*priors-per-cell), decoded "
+           "against prior/anchor boxes with softmax class scores.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

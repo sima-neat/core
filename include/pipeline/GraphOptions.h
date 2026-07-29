@@ -49,15 +49,12 @@ namespace simaai::neat {
  * `RealtimeLatestByStream` automatically so users do not need app-local fan-in mutex code.
  * `RealtimeLatestByStream` keeps producers non-blocking, retains only the latest frame per
  * `Sample::stream_id` (or per source edge when the stream id is empty), and schedules ready
- * streams fairly into the downstream graph. `RealtimeEveryFrameByStream` is the opt-in fused
- * decoder-source variant: it retains one pending frame per stream and blocks only that producer
- * until the mux consumes it, preserving bursty input without another EV-memory queue. Build these
- * links with `Graph::build_fused_realtime_sources()`.
+ * streams fairly into the downstream graph. Ordinary `Graph::build()` automatically chooses
+ * fused lowering for eligible live fan-in.
  */
 enum class GraphLinkPolicy {
   Default = 0,
   RealtimeLatestByStream,
-  RealtimeEveryFrameByStream,
 };
 
 /**
@@ -65,27 +62,12 @@ enum class GraphLinkPolicy {
  */
 struct GraphLinkOptions {
   GraphLinkPolicy policy = GraphLinkPolicy::Default;
+  /// Reserved for source compatibility. RealtimeLatestByStream always keeps one pending sample
+  /// per stream, regardless of this value.
   int queue_depth = 16;
-  /// Compatibility stream id to stamp on samples crossing this link before realtime scheduling.
-  /// New runtime code copies this value into internal edge metadata during composition; leave it
-  /// empty for automatic per-edge identity.
+  /// Optional stable stream id stamped on samples before realtime scheduling. Leave it empty to
+  /// derive identity from the source edge.
   std::string stream_id;
-};
-
-/**
- * @brief Realtime admission options for a bounded live Graph connection.
- *
- * This is intentionally a separate type from `GraphLinkOptions`.  `GraphLinkOptions` is passed
- * by reference across the public shared-library boundary and its released three-member layout is
- * ABI-stable.  Appending admission fields to that type would make a newer library read beyond an
- * object constructed by an older caller.  Use `Graph::connect_realtime()` when setting either
- * admission limit; ordinary `Graph::connect()` remains source- and binary-compatible and uses the
- * defaults below.
- */
-struct RealtimeGraphLinkOptions : GraphLinkOptions {
-  RealtimeGraphLinkOptions() = default;
-  RealtimeGraphLinkOptions(const GraphLinkOptions& options) : GraphLinkOptions(options) {}
-
   /// Only applies to realtime-by-stream links carrying raw decoder-backed samples.
   /// -1 uses the framework default (4); positive values set the per-stream raw-frame inflight cap.
   int max_inflight_per_stream = -1;

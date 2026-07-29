@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include "genai/GenAITypes.h"
+
 #include <cstdint>
 #include <string>
 
@@ -19,7 +21,11 @@ struct VisionLanguageOptions {
 
 /// Options for `genai::graphs::SpeechTranscriber(...)`.
 struct SpeechTranscriberOptions {
-  std::string language = "en";
+  /// Source language code/name, or `auto` to detect it.
+  std::string language = "auto";
+  /// Decode in the source language or translate speech into English.
+  ASRTask task = ASRTask::Transcribe;
+  /// Emit incremental text samples when true.
   bool streaming = true;
 };
 

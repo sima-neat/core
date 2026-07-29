@@ -8,7 +8,11 @@
 namespace simaai::neat {
 
 OutputOptions OutputOptions::Latest() {
-  return OutputOptions{};
+  OutputOptions opt;
+  opt.max_buffers = 1;
+  opt.drop = true;
+  opt.sync = false;
+  return opt;
 }
 
 OutputOptions OutputOptions::EveryFrame(int max_buffers) {

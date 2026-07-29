@@ -44,8 +44,8 @@ RUN_TEST("unit_modalix_contract_preflight_test", ([] {
            }());
 
            const std::vector<const char*> required_elements = {
-               "appsrc",     "appsink", "filesrc",  "h264parse",   "videoconvert",
-               "videoscale", "queue",   "identity", "neatdecoder",
+               "appsrc",       "appsink",    "filesrc", "h264parse", "h265parse",
+               "videoconvert", "videoscale", "queue",   "identity",  "neatdecoder",
            };
 
            std::vector<std::string> missing_elements;

@@ -5,6 +5,7 @@ DEFAULT_LLIMA_MODELS_PATH="/media/nvme/llima/models"
 DEFAULT_TEXT_MODEL="Qwen2.5-0.5B-Instruct-GPTQ-a16w4"
 DEFAULT_VLM_MODEL="LFM2.5-VL-450M-a16w4"
 DEFAULT_ASR_MODEL="whisper-small-a16w8"
+DEFAULT_ASR_REPO="florianvoss/whisper-small-a16w8"
 
 usage() {
   cat <<EOF
@@ -17,7 +18,7 @@ Environment:
   SIMA_TEST_LLIMA_TEXT_MODEL     Text model name. Default: ${DEFAULT_TEXT_MODEL}
   SIMA_TEST_LLIMA_VLM_MODEL      VLM model name. Default: ${DEFAULT_VLM_MODEL}
   SIMA_TEST_LLIMA_ASR_MODEL      ASR model name. Default: ${DEFAULT_ASR_MODEL}
-  SIMA_TEST_GENAI_FORCE_DOWNLOAD Set to 1 to run hf download even when the expected config exists.
+  SIMA_TEST_LLIMA_ASR_REPO       ASR Hugging Face repo. Default: ${DEFAULT_ASR_REPO}
 
 The SIMA_TEST_LLIMA_*_MODEL values must be model directory names under
 LLIMA_MODELS_PATH, not absolute paths and not Hugging Face repo ids.
@@ -41,18 +42,14 @@ validate_model_name() {
 
 download_model() {
   local label="$1"
-  local model_name="$2"
-  local expected_config="$3"
+  local repo_id="$2"
+  local model_name="$3"
+  local expected_config="$4"
   local target_dir="${LLIMA_MODELS_PATH}/${model_name}"
 
-  if [[ "${SIMA_TEST_GENAI_FORCE_DOWNLOAD:-0}" != "1" && -f "${target_dir}/${expected_config}" ]]; then
-    echo "[genai-models] ${label}: using existing ${target_dir}"
-    return
-  fi
-
   mkdir -p "${target_dir}"
-  echo "[genai-models] ${label}: downloading simaai/${model_name} to ${target_dir}"
-  hf download "simaai/${model_name}" --local-dir "${target_dir}"
+  echo "[genai-models] ${label}: synchronizing ${repo_id} to ${target_dir}"
+  hf download "${repo_id}" --local-dir "${target_dir}"
 
   if [[ ! -f "${target_dir}/${expected_config}" ]]; then
     echo "ERROR: downloaded ${label} model is missing ${expected_config}: ${target_dir}" >&2
@@ -80,6 +77,7 @@ LLIMA_MODELS_PATH="${LLIMA_MODELS_PATH:-${DEFAULT_LLIMA_MODELS_PATH}}"
 SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-${DEFAULT_TEXT_MODEL}}"
 SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-${DEFAULT_VLM_MODEL}}"
 SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-${DEFAULT_ASR_MODEL}}"
+SIMA_TEST_LLIMA_ASR_REPO="${SIMA_TEST_LLIMA_ASR_REPO:-${DEFAULT_ASR_REPO}}"
 
 validate_model_name "SIMA_TEST_LLIMA_TEXT_MODEL" "${SIMA_TEST_LLIMA_TEXT_MODEL}"
 validate_model_name "SIMA_TEST_LLIMA_VLM_MODEL" "${SIMA_TEST_LLIMA_VLM_MODEL}"
@@ -87,8 +85,14 @@ validate_model_name "SIMA_TEST_LLIMA_ASR_MODEL" "${SIMA_TEST_LLIMA_ASR_MODEL}"
 
 mkdir -p "${LLIMA_MODELS_PATH}"
 
-download_model "text" "${SIMA_TEST_LLIMA_TEXT_MODEL}" "devkit/vlm_config.json"
-download_model "vlm" "${SIMA_TEST_LLIMA_VLM_MODEL}" "devkit/vlm_config.json"
-download_model "asr" "${SIMA_TEST_LLIMA_ASR_MODEL}" "devkit/whisper_config.json"
+download_model \
+  "text" "simaai/${SIMA_TEST_LLIMA_TEXT_MODEL}" "${SIMA_TEST_LLIMA_TEXT_MODEL}" \
+  "devkit/vlm_config.json"
+download_model \
+  "vlm" "simaai/${SIMA_TEST_LLIMA_VLM_MODEL}" "${SIMA_TEST_LLIMA_VLM_MODEL}" \
+  "devkit/vlm_config.json"
+download_model \
+  "asr" "${SIMA_TEST_LLIMA_ASR_REPO}" "${SIMA_TEST_LLIMA_ASR_MODEL}" \
+  "devkit/whisper_config.json"
 
 echo "[genai-models] ready under ${LLIMA_MODELS_PATH}"

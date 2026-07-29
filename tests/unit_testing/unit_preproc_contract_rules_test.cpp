@@ -1,7 +1,12 @@
 #include "model/Model.h"
+#ifdef SIMA_NEAT_INTERNAL
+#include "model/internal/ModelInternal.h"
+#endif
 #include "model_archive_fixture_utils.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/Quant.h"
+#include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/sima/ContractRender.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -368,6 +373,157 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
     require_not_contains(
         frag, "config=", "model-managed Preproc fragment must not emit a legacy config path");
   }
+
+  {
+    const auto fixture = make_preproc_fixture("preproc_dynamic_capacity_rebind");
+    Model::Options model_opt;
+    model_opt.preprocess.kind = InputKind::Image;
+    model_opt.preprocess.enable = AutoFlag::On;
+    model_opt.preprocess.input_max_width = 1920;
+    model_opt.preprocess.input_max_height = 1080;
+    model_opt.preprocess.input_max_depth = 3;
+    model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+    model_opt.preprocess.resize.enable = AutoFlag::On;
+    model_opt.preprocess.resize.width = 640;
+    model_opt.preprocess.resize.height = 640;
+    model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+    Model model(fixture.tar_path, model_opt);
+
+    PreprocOptions opt(model);
+    require(opt.input_width() == 1920 && opt.input_height() == 1080 && opt.input_channels() == 3,
+            "model-managed Preproc must project the configured capacity into its static input "
+            "shape before a smaller seed is bound");
+#ifdef SIMA_NEAT_INTERNAL
+    const auto initial_max_shape = model_managed_preproc_max_input_shape(opt);
+    require(PreprocOptions::shape_dim(initial_max_shape, 1) == 1920 &&
+                PreprocOptions::shape_dim(initial_max_shape, 0) == 1080 &&
+                PreprocOptions::shape_channels(initial_max_shape) == 3,
+            "model-managed Preproc must retain the configured capacity in model lineage");
+#endif
+
+    auto node = std::make_shared<Preproc>(opt);
+    InputContract seed_contract;
+    seed_contract.media_type = "video/x-raw";
+    seed_contract.format = "RGB";
+    seed_contract.width = 1280;
+    seed_contract.height = 720;
+    seed_contract.depth = 3;
+    node->apply_input_contract(seed_contract, nullptr);
+    require(node->options().input_width() == 1280 && node->options().input_height() == 720,
+            "model-managed Preproc must bind the smaller seed as actual geometry");
+
+    pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+    const std::vector<std::shared_ptr<Node>> nodes{node};
+    const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
+    require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value(),
+            "model-managed Preproc capacity contract must compile without diagnostics");
+    const auto& processcvu = *compiled.stages.front().processcvu;
+    require(processcvu.payload.input_shapes.size() == 1U &&
+                processcvu.payload.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
+            "compiled Preproc payload must retain capacity after a smaller seed is bound");
+    require(processcvu.runtime_contract.logical_inputs.size() == 1U &&
+                processcvu.runtime_contract.logical_inputs.front().shape ==
+                    std::vector<std::int64_t>({1080, 1920, 3}),
+            "compiled Preproc logical input must retain capacity after a smaller seed is bound");
+
+    const auto manifest =
+        render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
+    require(diagnostics.errors.empty() && manifest.has_value() && manifest->stages.size() == 1U,
+            "model-managed Preproc capacity contract must render without diagnostics");
+    const auto& rendered_stage = manifest->stages.front();
+    require(rendered_stage.logical_inputs.size() == 1U &&
+                rendered_stage.logical_inputs.front().shape ==
+                    std::vector<std::int64_t>({1080, 1920, 3}) &&
+                rendered_stage.processcvu.input_shapes.size() == 1U &&
+                rendered_stage.processcvu.input_shapes.front() == std::vector<int>({1080, 1920, 3}),
+            "rendered Preproc static contract must expose the full dynamic input capacity");
+
+    InputContract capacity_contract = seed_contract;
+    capacity_contract.width = 1920;
+    capacity_contract.height = 1080;
+    node->apply_input_contract(capacity_contract, nullptr);
+    require(node->options().input_width() == 1920 && node->options().input_height() == 1080,
+            "model-managed Preproc must accept a later contract up to its configured capacity");
+#ifdef SIMA_NEAT_INTERNAL
+    const auto rebound_max_shape = model_managed_preproc_max_input_shape(node->options());
+    require(PreprocOptions::shape_dim(rebound_max_shape, 1) == 1920 &&
+                PreprocOptions::shape_dim(rebound_max_shape, 0) == 1080,
+            "runtime contract rebinding must not shrink the model-managed capacity");
+#endif
+  }
+
+#ifdef SIMA_NEAT_INTERNAL
+  {
+    const auto fixture = make_preproc_fixture("preproc_default_capacity_seed_rebind");
+    Model::Options model_opt;
+    model_opt.preprocess.kind = InputKind::Image;
+    model_opt.preprocess.enable = AutoFlag::On;
+    model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::RGB;
+    model_opt.preprocess.resize.enable = AutoFlag::On;
+    model_opt.preprocess.resize.width = 640;
+    model_opt.preprocess.resize.height = 640;
+    model_opt.preprocess.resize.mode = ResizeMode::Letterbox;
+    Model model(fixture.tar_path, model_opt);
+
+    InputOptions seed;
+    seed.payload_type = PayloadType::Image;
+    seed.format = FormatTag::RGB;
+    seed.width = 1280;
+    seed.height = 720;
+    seed.depth = 3;
+    const auto seeded_nodes =
+        internal::ModelAccess::build_preprocess_nodes_for_input(model, seed, false);
+    std::shared_ptr<Preproc> seeded_preproc;
+    for (const auto& candidate : seeded_nodes) {
+      seeded_preproc = std::dynamic_pointer_cast<Preproc>(candidate);
+      if (seeded_preproc) {
+        break;
+      }
+    }
+    require(seeded_preproc != nullptr, "seeded model route must contain Preproc");
+    require(seeded_preproc->options().input_width() == 1920 &&
+                seeded_preproc->options().input_height() == 1080,
+            "seeded model Preproc must size its static shape from the default input capacity");
+
+    InputContract seed_contract;
+    seed_contract.media_type = "video/x-raw";
+    seed_contract.format = "RGB";
+    seed_contract.width = 1280;
+    seed_contract.height = 720;
+    seed_contract.depth = 3;
+    seeded_preproc->apply_input_contract(seed_contract, nullptr);
+    require(seeded_preproc->options().input_width() == 1280 &&
+                seeded_preproc->options().input_height() == 720,
+            "seeded model Preproc must bind the seed as actual frame geometry");
+
+    const auto seeded_max_shape = model_managed_preproc_max_input_shape(seeded_preproc->options());
+    require(PreprocOptions::shape_dim(seeded_max_shape, 1) == 1920 &&
+                PreprocOptions::shape_dim(seeded_max_shape, 0) == 1080,
+            "a 720p seed must retain the documented default 1920x1080 input capacity");
+
+    pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+    const auto compiled = compile_node_contracts(std::vector<std::shared_ptr<Node>>{seeded_preproc},
+                                                 ContractCompileInput{}, &diagnostics);
+    require(diagnostics.errors.empty() && compiled.fully_renderable &&
+                compiled.stages.size() == 1U && compiled.stages.front().processcvu.has_value() &&
+                compiled.stages.front().processcvu->payload.input_shapes.size() == 1U &&
+                compiled.stages.front().processcvu->payload.input_shapes.front() ==
+                    std::vector<int>({1080, 1920, 3}),
+            "seeded Preproc must compile its static envelope at the default input capacity");
+
+    InputContract later_contract;
+    later_contract.media_type = "video/x-raw";
+    later_contract.format = "RGB";
+    later_contract.width = 1920;
+    later_contract.height = 1080;
+    later_contract.depth = 3;
+    seeded_preproc->apply_input_contract(later_contract, nullptr);
+    require(seeded_preproc->options().input_width() == 1920 &&
+                seeded_preproc->options().input_height() == 1080,
+            "a default-capacity model seeded at 720p must admit a later 1080p frame");
+  }
+#endif
 
   {
     PreprocOptions opt;

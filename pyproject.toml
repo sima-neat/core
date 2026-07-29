@@ -35,6 +35,9 @@ dev = [
   "build>=1.2.0",
   "cibuildwheel>=2.20.0",
   "pytest>=8.0.0",
+  # tests/tutorials/test_rtsp_codec_tutorial.py imports the tutorial FPS probe,
+  # which uses cv2. Not a runtime dependency of pyneat itself.
+  "opencv-python>=4.8",
 ]
 
 [tool.scikit-build]

@@ -31,10 +31,20 @@ void require_in_order(const std::string& text, const std::vector<std::string>& n
   }
 }
 
+// The only intentional use of the deprecated factory. Isolated here because a
+// diagnostic pragma cannot live inside the RUN_TEST macro argument.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+simaai::neat::nodes::groups::VideoSenderOptions deprecated_h264_encoded_options() {
+  return simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
+}
+#pragma GCC diagnostic pop
+
 } // namespace
 
 RUN_TEST(
     "unit_video_sender_test", ([] {
+      using simaai::neat::nodes::groups::RtspCodec;
       using simaai::neat::nodes::groups::VideoSender;
       using simaai::neat::nodes::groups::VideoSenderOptions;
 
@@ -78,7 +88,8 @@ RUN_TEST(
       }
 
       {
-        auto opt = VideoSenderOptions::H264RtpUdpFromEncoded();
+        auto opt = VideoSenderOptions::Passthrough(RtspCodec::H264);
+        require(opt.rtp.payload_type == 96, "VideoSender H264 payload type default mismatch");
         opt.channel = 1;
         opt.video_port_base = 9000;
         opt.rtp.payload_type = 98;
@@ -92,10 +103,55 @@ RUN_TEST(
         require_contains(backend, "port=9001", "VideoSender encoded UDP port mismatch");
       }
 
+      {
+        // The deprecated factory must stay a pure alias, so a caller that has
+        // not migrated yet keeps byte-identical pipelines.
+        const auto legacy = deprecated_h264_encoded_options();
+        const auto migrated = VideoSenderOptions::Passthrough(RtspCodec::H264);
+        require(legacy.rtp.payload_type == migrated.rtp.payload_type,
+                "deprecated H264 encoded factory payload type drifted from Passthrough");
+        // Element names embed a process-wide instance counter, so two separately
+        // built graphs never stringify identically. Compare the node sequence and
+        // the wire-visible properties instead, which is what "pure alias" means.
+        require(VideoSender(legacy).describe() == VideoSender(migrated).describe(),
+                "deprecated H264 encoded factory node sequence drifted from Passthrough");
+        const std::string legacy_backend = VideoSender(legacy).describe_backend();
+        require_contains(legacy_backend, "pt=96",
+                         "deprecated H264 encoded factory payload type drifted from Passthrough");
+        require_contains(legacy_backend, "port=9000",
+                         "deprecated H264 encoded factory UDP port drifted from Passthrough");
+      }
+
+      {
+        auto opt = VideoSenderOptions::Passthrough(RtspCodec::H265);
+        opt.channel = 2;
+
+        require(opt.rtp.payload_type == 98, "VideoSender H265 payload type default mismatch");
+        require(!opt.is_raw_input() && opt.is_encoded_input(),
+                "VideoSender H265 input kind mismatch");
+
+        const auto graph = VideoSender(opt);
+        require_in_order(graph.describe(), {"H265Parse", "H265Packetize", "UdpOutput"},
+                         "VideoSender H265 path should include parse, pay, udp only");
+
+        const std::string backend = graph.describe_backend();
+        require_contains(backend, "h265parse", "VideoSender H265 parser missing");
+        require_contains(backend, "rtph265pay", "VideoSender H265 packetizer missing");
+        require_contains(backend, "pt=98", "VideoSender H265 RTP payload type mismatch");
+        require_contains(backend, "sleep-time=250", "VideoSender H265 packet pacing missing");
+        require_contains(backend, "port=9002", "VideoSender H265 UDP port mismatch");
+        require(backend.find("neatencoder") == std::string::npos,
+                "VideoSender H265 must not encode raw video");
+        require(backend.find("h264parse") == std::string::npos,
+                "VideoSender H265 must not use H264 parser");
+      }
+
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(0, 720, 30); },
                                "VideoSender should reject invalid raw width");
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(1280, 0, 30); },
                                "VideoSender should reject invalid raw height");
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(1280, 720, 0); },
                                "VideoSender should reject invalid raw fps");
+      require_invalid_argument([] { (void)VideoSenderOptions::Passthrough(RtspCodec::MJPEG); },
+                               "VideoSender should reject MJPEG passthrough");
     }));

@@ -9,6 +9,13 @@ enable_testing()
 include(CMakeParseArguments)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+if (NOT DEFINED SIMANEAT_MODELZOO_VERSION OR SIMANEAT_MODELZOO_VERSION STREQUAL "")
+  message(FATAL_ERROR "SIMANEAT_MODELZOO_VERSION must be resolved from deps/manifest.json")
+endif()
+add_compile_definitions(
+  SIMA_NEAT_MODELZOO_VERSION_STRING="${SIMANEAT_MODELZOO_VERSION}"
+)
+
 option(SIMANEAT_CTEST_FOR_DEVKIT
   "Emit CTestTestfile with absolute DevKit /usr/lib paths (skip configure-time EXISTS checks)"
   OFF)
@@ -285,6 +292,7 @@ set(UNIT_TESTS
   unit_contracts_test
   unit_boxdecode_render_manifest_from_model_test
   unit_boxdecode_yolo_layout_matrix_test
+  unit_boxdecode_ssd_layout_matrix_test
   unit_model_route_retarget_helper_test
   unit_dequant_processcvu_contract_equivalence_test
   unit_dequant_node_fragment_test
@@ -318,6 +326,7 @@ set(UNIT_TESTS
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
   unit_fused_realtime_fast_path_options_test
+  unit_public_output_appsink_contract_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
@@ -331,6 +340,7 @@ set(UNIT_TESTS
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
   unit_latest_mux_fairness_test
+  unit_latest_mux_periodic_fairness_test
   unit_latest_mux_backpressure_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
@@ -345,6 +355,7 @@ set(UNIT_TESTS
   unit_preprocess_roi_split_test
   unit_preprocess_meta_template_dynamic_test
   unit_preproc_contract_rules_test
+  unit_inputstream_stop_flush_test
   unit_inputstream_stop_timeout_detach_test
   unit_inputappsrc_stop_race_test
   unit_neatdecoder_keepalive_test
@@ -440,6 +451,10 @@ set(UNIT_TESTS
   unit_visual_frontend_node_api_test
   unit_plugin_failure_messages_test
 )
+
+if (SimaLMM_FOUND)
+  list(APPEND UNIT_TESTS unit_genai_tool_call_parser_test)
+endif()
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
   list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)
@@ -751,6 +766,7 @@ set(PERF_TARGETS
   perf_runtime_graph_join_bundle_test
   perf_runtime_codec_mjpeg_decode_test
   perf_runtime_codec_h264_decode_test
+  perf_runtime_codec_h265_decode_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -765,7 +781,8 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
-  if (target STREQUAL "perf_runtime_codec_h264_decode_test")
+  if (target STREQUAL "perf_runtime_codec_h264_decode_test" OR
+      target STREQUAL "perf_runtime_codec_h265_decode_test")
     add_dependencies(${target} prepare_perf_codec_fixtures)
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
@@ -1541,6 +1558,21 @@ if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TES
 endif()
 
 add_pipeline_test(
+  ssd_mobilenet_e2e_test
+  e2e_pipelines/obj_detection/ssd_mobilenet_e2e_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST ssd_mobilenet_e2e_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;benchmark;metrics")
+  set_property(TEST ssd_mobilenet_e2e_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_tests_properties(ssd_mobilenet_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
+add_pipeline_test(
   sync_yolov8_test_detessdequant
   e2e_pipelines/obj_detection/sync_yolov8_test_detessdequant.cpp
   e2e_pipelines/e2e_utils.cpp
@@ -1776,25 +1808,6 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(codec_runtime_stream_contract_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_test(
-    NAME codec_runtime_nested_zero_copy_boundary_test
-    COMMAND codec_runtime_stream_test
-            --case rtsp-h264-decoded
-            --frames 5
-            --repeat 2
-            --determinism
-            --nested-boundary
-  )
-  append_pipeline_test_env(codec_runtime_nested_zero_copy_boundary_test)
-  set_property(
-    TEST codec_runtime_nested_zero_copy_boundary_test
-    APPEND PROPERTY LABELS "strict;long;e2e;codec;rtsp;determinism;lifecycle"
-  )
-  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
-  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
-  set_property(TEST codec_runtime_nested_zero_copy_boundary_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
-  set_tests_properties(codec_runtime_nested_zero_copy_boundary_test PROPERTIES SKIP_RETURN_CODE 77)
-
-  add_test(
     NAME codec_runtime_bad_url_diagnostics
     COMMAND codec_runtime_stream_test --case bad-url-diagnostics --timeout-ms 2000
   )
@@ -1812,6 +1825,45 @@ if (NOT codec_decode_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   add_dependencies(codec_decode_accuracy_test prepare_perf_codec_fixtures)
   set_property(TEST codec_decode_accuracy_test APPEND PROPERTY LABELS "e2e;codec;accuracy")
   set_property(TEST codec_decode_accuracy_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
+add_pipeline_test(
+  h265_decode_determinism_test
+  e2e_testing/h265_decode_determinism_test.cpp
+)
+
+if (NOT h265_decode_determinism_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(h265_decode_determinism_test prepare_perf_codec_fixtures)
+  set_property(TEST h265_decode_determinism_test APPEND PROPERTY LABELS "e2e;codec;h265;determinism")
+  set_property(TEST h265_decode_determinism_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
+add_pipeline_test(
+  h265_decode_resnet50_e2e_test
+  e2e_pipelines/img_classification/h265_decode_resnet50_e2e_test.cpp
+)
+
+if (NOT h265_decode_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_dependencies(h265_decode_resnet50_e2e_test prepare_perf_codec_fixtures)
+  set_property(TEST h265_decode_resnet50_e2e_test
+    APPEND PROPERTY LABELS "e2e;codec;h265;img_classification;zero_copy;sync;async")
+  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST h265_decode_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
+add_pipeline_test_long(
+  h265_rtsp_resnet50_e2e_test
+  e2e_pipelines/img_classification/h265_rtsp_resnet50_e2e_test.cpp
+)
+
+if (NOT h265_rtsp_resnet50_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  append_pipeline_test_env(h265_rtsp_resnet50_e2e_test)
+  set_property(TEST h265_rtsp_resnet50_e2e_test
+    APPEND PROPERTY LABELS "e2e;codec;h265;rtsp;img_classification")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_property(TEST h265_rtsp_resnet50_e2e_test APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+  set_tests_properties(h265_rtsp_resnet50_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_pipeline_test(
@@ -1954,6 +2006,7 @@ foreach(test
     resnet50_modelpack_direct
     resnet50_modelpack_jpeg
     resnet50_modelpack_rtsp
+    h265_rtsp_resnet50_e2e_test
     resnet50_neatargmax_test
     rtsp_pull_frame_test
     hybrid_graph_rtsp_resnet50_tput_test)
@@ -2041,6 +2094,11 @@ install(
 )
 install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio.wav"
+  DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_de.wav"
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
   COMPONENT extras
 )
@@ -2142,6 +2200,9 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   decoder_visible_caps_test
   file_read_test
   codec_decode_accuracy_test
+  h265_decode_determinism_test
+  h265_decode_resnet50_e2e_test
+  h265_rtsp_resnet50_e2e_test
   codec_runtime_stream_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp

@@ -457,6 +457,11 @@ simaai::neat::Model::Options make_roi_batch_model_options() {
   simaai::neat::Model::Options model_opt;
   model_opt.preprocess.kind = simaai::neat::InputKind::Image;
   model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  // This synthetic fixture only supplies 64x48 source images. Pin that known
+  // admission envelope so INTERAREA is validated against reachable source
+  // geometry rather than the public 1920x1080 default dynamic-image capacity.
+  model_opt.preprocess.input_max_width = 64;
+  model_opt.preprocess.input_max_height = 48;
   model_opt.preprocess.resize.enable = simaai::neat::AutoFlag::On;
   model_opt.preprocess.resize.width = 64;
   model_opt.preprocess.resize.height = 48;

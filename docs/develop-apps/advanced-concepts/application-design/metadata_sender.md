@@ -126,6 +126,9 @@ std::cerr << "sent=" << stats.datagrams_sent
           << " max_send_ns=" << stats.max_send_duration_ns << '\n';
 ```
 
+`stats()` is safe to read while sends are in progress. Treat the result as a
+concurrent diagnostic snapshot, not a transactional snapshot of one instant.
+
 ## Python
 
 ```python

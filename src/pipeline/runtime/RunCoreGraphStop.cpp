@@ -14,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace simaai::neat::graph {
@@ -173,6 +174,26 @@ void dump_transport_diag(const ExecutionGraphRuntime& execution) {
   }
 }
 
+void close_fused_encoded_output_sinks(ExecutionGraphRuntime& execution) {
+  std::unordered_set<simaai::neat::graph::NodeId> closed;
+  for (const auto& segment : execution.plan.pipeline_segments) {
+    if (!segment.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    for (const auto& branch : segment.fused_realtime_ingress->branches) {
+      if (!branch.encoded_output.has_value() ||
+          branch.encoded_output->sink_node == simaai::neat::graph::kInvalidNode ||
+          !closed.insert(branch.encoded_output->sink_node).second) {
+        continue;
+      }
+      const auto sink = execution.sinks.find(branch.encoded_output->sink_node);
+      if (sink != execution.sinks.end() && sink->second) {
+        sink->second->close();
+      }
+    }
+  }
+}
+
 } // namespace
 
 void RunCore::stop_graph() {
@@ -190,6 +211,11 @@ void RunCore::stop_graph() {
   }
 
   ExecutionGraphRuntime& execution = graph_execution();
+  // An EveryFrame encoded tap may be blocked in its source streaming thread
+  // waiting for Run::pull() to make room. Close only these auxiliary sink
+  // queues before stopping source pipelines so the producer wakes promptly;
+  // ordinary graph sinks remain open for the normal close_input() drain.
+  close_fused_encoded_output_sinks(execution);
   for (auto& pipe : execution.pipelines) {
     if (!pipe) {
       continue;

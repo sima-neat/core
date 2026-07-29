@@ -203,10 +203,10 @@ simaai::neat::genai::ASRModel model("/media/nvme/llima/models/whisper-model");
 
 simaai::neat::genai::GenerationRequest request;
 request.audio_file = "meeting.wav";
-request.language = "en";
 
 auto result = model.run(request);
 std::cout << result.text << "\n";
+std::cout << "language=" << result.language << "\n";
 ```
 
 </CodeTab>
@@ -217,13 +217,47 @@ model = neat.genai.ASRModel("/media/nvme/llima/models/whisper-model")
 
 request = neat.genai.GenerationRequest()
 request.audio_file = "meeting.wav"
-request.language = "en"
 
-print(model.run(request).text)
+result = model.run(request)
+print(result.text)
+print(f"language={result.language}")
 ```
 
 </CodeTab>
 </CodeTabs>
+
+The default language is `auto`, so multilingual Whisper models detect the
+source language. Set `request.language` to a supported language code or name
+when the source language is known. Results also expose `no_speech_prob` and
+`avg_logprob` when the loaded Whisper artifact provides those probes. A higher
+`no_speech_prob` means the input is more likely to contain no speech. A higher
+(less negative) `avg_logprob` means Whisper assigned greater average
+probability to the generated tokens.
+
+To translate speech into English, select the translation task:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+request.asr_task = simaai::neat::genai::ASRTask::Translate;
+auto result = model.run(request);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+request.asr_task = neat.genai.ASRTask.Translate
+result = model.run(request)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`GenAIServer` exposes transcription at `POST /v1/audio/transcriptions` and
+translation at `POST /v1/audio/translations`. Both endpoints accept the same
+multipart form fields and support `stream=true`.
 
 ## Compose GenAI into a Graph
 
@@ -236,6 +270,45 @@ Graph fragments:
 
 These fragments expose GenAI stages through named graph endpoints so you can
 compose them with the same `Graph` and `Run` model used by the rest of Neat.
+
+For ASR graphs, `SpeechTranscriberOptions` uses automatic source-language
+detection and transcription by default. Select translation explicitly:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto model = std::make_shared<simaai::neat::genai::ASRModel>(
+    "/media/nvme/llima/models/whisper-small-a16w8");
+
+simaai::neat::genai::SpeechTranscriberOptions options;
+options.task = simaai::neat::genai::ASRTask::Translate;
+options.streaming = true;
+
+auto fragment = simaai::neat::genai::graphs::SpeechTranscriber(model, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.ASRModel(
+    "/media/nvme/llima/models/whisper-small-a16w8"
+)
+
+options = neat.genai.SpeechTranscriberOptions()
+options.task = neat.genai.ASRTask.Translate
+options.streaming = True
+
+fragment = neat.genai.graphs.speech_transcriber(model, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+The fragment accepts `audio` and `audio_path`. Its final `done` bundle includes
+`text`, `finish_reason`, `language`, `no_speech_prob`, and `avg_logprob` when
+the model provides the probe outputs.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

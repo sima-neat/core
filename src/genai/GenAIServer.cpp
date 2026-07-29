@@ -56,6 +56,35 @@ void set_error(httplib::Response& res, const std::string& message, int status) {
   set_json(res, {{"error", {{"message", message}, {"type", "invalid_request_error"}}}}, status);
 }
 
+std::optional<std::string> apply_tool_options(const nlohmann::json& body,
+                                              GenerationRequest& request) {
+  if (body.contains("tools")) {
+    if (!body.at("tools").is_array()) {
+      return "tools must be an array";
+    }
+    const auto& tools = body.at("tools");
+    for (std::size_t i = 0; i < tools.size(); ++i) {
+      const auto& tool = tools.at(i);
+      if (!tool.is_object() || !tool.contains("type") || tool.at("type") != "function" ||
+          !tool.contains("function") || !tool.at("function").is_object() ||
+          !tool.at("function").contains("name") || !tool.at("function").at("name").is_string() ||
+          tool.at("function").at("name").get_ref<const std::string&>().empty()) {
+        return "tools[" + std::to_string(i) +
+               "] must contain type 'function' and a non-empty string function.name";
+      }
+    }
+    request.tools = tools;
+  }
+  if (body.contains("tool_choice")) {
+    const auto& choice = body.at("tool_choice");
+    if (!choice.is_null() && (!choice.is_string() || (choice != "auto" && choice != "none"))) {
+      return "Only tool_choice 'auto' or 'none' is supported";
+    }
+    request.tool_choice = choice;
+  }
+  return std::nullopt;
+}
+
 void write_sink(httplib::DataSink& sink, const std::string& text) {
   sink.write(text.data(), text.size());
 }
@@ -197,13 +226,14 @@ GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_s
   return metrics;
 }
 
-std::string chat_chunk(const std::string& model_name, const std::string& text,
+std::string chat_chunk(const std::string& model_name, const std::string& completion_id,
+                       std::uint64_t created, const std::string& text,
                        const std::optional<std::string>& finish_reason = std::nullopt,
                        const std::optional<GenerationMetrics>& metrics = std::nullopt) {
   nlohmann::json chunk;
-  chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
+  chunk["id"] = completion_id;
   chunk["object"] = "chat.completion.chunk";
-  chunk["created"] = unix_time_s();
+  chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.has_value()) {
     if (metrics->time_to_first_token_s > 0.0) {
@@ -230,7 +260,8 @@ std::string chat_chunk(const std::string& model_name, const std::string& text,
   return "data: " + chunk.dump() + "\n\n";
 }
 
-std::string chat_tool_call_chunk(const std::string& model_name, const Json& tool_calls,
+std::string chat_tool_call_chunk(const std::string& model_name, const std::string& completion_id,
+                                 std::uint64_t created, const Json& tool_calls,
                                  const GenerationMetrics& metrics) {
   nlohmann::json delta_tool_calls = nlohmann::json::array();
   for (std::size_t i = 0; i < tool_calls.size(); ++i) {
@@ -240,9 +271,9 @@ std::string chat_tool_call_chunk(const std::string& model_name, const Json& tool
   }
 
   nlohmann::json chunk;
-  chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
+  chunk["id"] = completion_id;
   chunk["object"] = "chat.completion.chunk";
-  chunk["created"] = unix_time_s();
+  chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.time_to_first_token_s > 0.0) {
     chunk["ttft"] = metrics.time_to_first_token_s;
@@ -312,14 +343,36 @@ std::string completion_chunk(const std::string& model_name, const std::string& t
   return "data: " + chunk.dump() + "\n\n";
 }
 
-std::string audio_chunk(const std::string& text, bool finished,
+const char* asr_task_name(ASRTask task) {
+  return task == ASRTask::Translate ? "translate" : "transcribe";
+}
+
+const char* asr_result_name(ASRTask task) {
+  return task == ASRTask::Translate ? "translation" : "transcription";
+}
+
+std::string audio_chunk(ASRTask task, const std::string& text, bool finished,
                         const std::optional<std::string>& finish_reason = std::nullopt,
-                        const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                        const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                        const std::string& language = {},
+                        std::optional<float> no_speech_prob = std::nullopt,
+                        std::optional<float> avg_logprob = std::nullopt) {
   nlohmann::json chunk;
-  chunk["object"] = finished ? "audio.transcription.done" : "audio.transcription.chunk";
+  const std::string object_prefix = std::string{"audio."} + asr_result_name(task);
+  chunk["object"] = object_prefix + (finished ? ".done" : ".chunk");
+  chunk["task"] = asr_task_name(task);
   chunk["text"] = text;
   if (finished) {
     chunk["finish_reason"] = finish_reason.value_or("stop");
+    if (!language.empty()) {
+      chunk["language"] = language;
+    }
+    if (no_speech_prob.has_value()) {
+      chunk["no_speech_prob"] = *no_speech_prob;
+    }
+    if (avg_logprob.has_value()) {
+      chunk["avg_logprob"] = *avg_logprob;
+    }
   }
   if (metrics.has_value()) {
     if (metrics->time_to_first_token_s > 0.0) {
@@ -664,11 +717,19 @@ struct GenAIServer::Impl {
     http.Post("/v1/completions", [this](const httplib::Request& req, httplib::Response& res) {
       handle_completion(req, res);
     });
-    http.Post(
-        "/v1/audio/transcriptions",
-        [this](const httplib::Request& req, httplib::Response& res) { handle_audio(req, res); });
+    http.Post("/v1/audio/transcriptions",
+              [this](const httplib::Request& req, httplib::Response& res) {
+                handle_audio(req, res, ASRTask::Transcribe);
+              });
     http.Post("/audio/transcriptions", [this](const httplib::Request& req, httplib::Response& res) {
-      handle_audio(req, res);
+      handle_audio(req, res, ASRTask::Transcribe);
+    });
+    http.Post("/v1/audio/translations",
+              [this](const httplib::Request& req, httplib::Response& res) {
+                handle_audio(req, res, ASRTask::Translate);
+              });
+    http.Post("/audio/translations", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_audio(req, res, ASRTask::Translate);
     });
     http.Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
       handle_ollama_chat(req, res);
@@ -688,6 +749,8 @@ struct GenAIServer::Impl {
     http.Options("/v1/completions", options_handler);
     http.Options("/v1/audio/transcriptions", options_handler);
     http.Options("/audio/transcriptions", options_handler);
+    http.Options("/v1/audio/translations", options_handler);
+    http.Options("/audio/translations", options_handler);
     http.Options("/api/chat", options_handler);
     http.Options("/api/generate", options_handler);
     http.Options("/stop", options_handler);
@@ -940,11 +1003,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.messages = parse_chat_messages(body);
-      if (body.contains("tools") && body.at("tools").is_array()) {
-        request.tools = body.at("tools");
-      }
-      if (body.contains("tool_choice")) {
-        request.tool_choice = body.at("tool_choice");
+      if (const auto error = apply_tool_options(body, request)) {
+        set_error(res, *error, 400);
+        return;
       }
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1028,11 +1089,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.messages = parse_chat_messages(body);
-      if (body.contains("tools") && body.at("tools").is_array()) {
-        request.tools = body.at("tools");
-      }
-      if (body.contains("tool_choice")) {
-        request.tool_choice = body.at("tool_choice");
+      if (const auto error = apply_tool_options(body, request)) {
+        set_error(res, *error, 400);
+        return;
       }
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1114,6 +1173,8 @@ struct GenAIServer::Impl {
         [this, model_name = std::move(model_name), model = std::move(model),
          request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
           try {
+            const auto created = unix_time_s();
+            const auto completion_id = "chatcmpl-" + std::to_string(created);
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
@@ -1122,21 +1183,24 @@ struct GenAIServer::Impl {
               const auto metrics = metrics_with_ttft_once(sample->metrics, ttft_sent);
               if (sample->is_final) {
                 const auto final_chunk =
-                    chat_chunk(model_name, "", choice_finish_reason(sample->finish_reason),
-                               metrics) +
+                    chat_chunk(model_name, completion_id, created, "",
+                               choice_finish_reason(sample->finish_reason), metrics) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
               if (!sample->tool_calls.empty()) {
-                write_sink(sink, chat_tool_call_chunk(model_name, sample->tool_calls, metrics));
+                write_sink(sink, chat_tool_call_chunk(model_name, completion_id, created,
+                                                      sample->tool_calls, metrics));
                 continue;
               }
-              const auto chunk = chat_chunk(model_name, sample->text, std::nullopt, metrics);
+              const auto chunk = chat_chunk(model_name, completion_id, created, sample->text,
+                                            std::nullopt, metrics);
               write_sink(sink, chunk);
             }
-            const auto done = chat_chunk(model_name, "", "stop") + "data: [DONE]\n\n";
+            const auto done =
+                chat_chunk(model_name, completion_id, created, "", "stop") + "data: [DONE]\n\n";
             write_sink(sink, done);
           } catch (const std::exception& e) {
             const nlohmann::json error = {{"error", {{"message", e.what()}}}};
@@ -1277,7 +1341,7 @@ struct GenAIServer::Impl {
         });
   }
 
-  void handle_audio(const httplib::Request& req, httplib::Response& res) {
+  void handle_audio(const httplib::Request& req, httplib::Response& res, ASRTask task) {
     set_cors(res);
     try {
       std::string model_name;
@@ -1287,7 +1351,9 @@ struct GenAIServer::Impl {
         model_name = req.get_file_value("model").content;
       }
       if (model_name.empty()) {
-        set_error(res, "OpenAI audio transcription request requires model", 400);
+        set_error(res,
+                  std::string{"OpenAI audio "} + asr_result_name(task) + " request requires model",
+                  400);
         return;
       }
       auto model = find_model(model_name);
@@ -1300,11 +1366,13 @@ struct GenAIServer::Impl {
         return;
       }
       if (!req.has_file("file")) {
-        set_error(res, "OpenAI audio transcription request requires file", 400);
+        set_error(res,
+                  std::string{"OpenAI audio "} + asr_result_name(task) + " request requires file",
+                  400);
         return;
       }
 
-      std::string language = "en";
+      std::string language = "auto";
       if (req.has_param("language")) {
         language = req.get_param_value("language");
       } else if (req.has_file("language")) {
@@ -1320,16 +1388,26 @@ struct GenAIServer::Impl {
 
       const auto audio_path = write_uploaded_file(req.get_file_value("file"));
       if (stream) {
-        handle_audio_stream(res, model_name, std::move(model), audio_path, language);
+        handle_audio_stream(res, model_name, std::move(model), audio_path, language, task);
       } else {
         TempFileGuard guard{audio_path};
         GenerationRequest request;
         request.audio_file = audio_path;
         request.language = language;
+        request.asr_task = task;
         const auto result = model->run(request);
-        set_json(res, {{"text", result.text},
-                       {"model", model_name},
-                       {"finish_reason", choice_finish_reason(result.finish_reason)}});
+        nlohmann::json body = {{"text", result.text},
+                               {"model", model_name},
+                               {"task", asr_task_name(task)},
+                               {"language", result.language},
+                               {"finish_reason", choice_finish_reason(result.finish_reason)}};
+        if (result.no_speech_prob.has_value()) {
+          body["no_speech_prob"] = *result.no_speech_prob;
+        }
+        if (result.avg_logprob.has_value()) {
+          body["avg_logprob"] = *result.avg_logprob;
+        }
+        set_json(res, std::move(body));
       }
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
@@ -1338,19 +1416,20 @@ struct GenAIServer::Impl {
 
   void handle_audio_stream(httplib::Response& res, std::string model_name,
                            std::shared_ptr<GenAIModel> model, std::filesystem::path audio_path,
-                           std::string language) {
+                           std::string language, ASRTask task) {
     res.set_header("Content-Type", "text/event-stream");
     res.set_header("Cache-Control", "no-cache");
     res.set_header("Connection", "keep-alive");
     res.set_chunked_content_provider(
         "text/event-stream", [this, model_name = std::move(model_name), model = std::move(model),
-                              audio_path = std::move(audio_path), language = std::move(language)](
-                                 std::size_t, httplib::DataSink& sink) mutable {
+                              audio_path = std::move(audio_path), language = std::move(language),
+                              task](std::size_t, httplib::DataSink& sink) mutable {
           TempFileGuard guard{audio_path};
           try {
             GenerationRequest request;
             request.audio_file = audio_path;
             request.language = language;
+            request.asr_task = task;
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
@@ -1359,20 +1438,24 @@ struct GenAIServer::Impl {
               const auto metrics = metrics_with_ttft_once(sample->metrics, ttft_sent);
               if (sample->is_final) {
                 const auto final_chunk =
-                    audio_chunk("", true, choice_finish_reason(sample->finish_reason), metrics) +
+                    audio_chunk(task, "", true, choice_finish_reason(sample->finish_reason),
+                                metrics, sample->language, sample->no_speech_prob,
+                                sample->avg_logprob) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
-              const auto chunk = audio_chunk(sample->text, false, std::nullopt, metrics);
+              const auto chunk = audio_chunk(task, sample->text, false, std::nullopt, metrics);
               write_sink(sink, chunk);
             }
-            const auto done = audio_chunk("", true, "stop") + "data: [DONE]\n\n";
+            const auto done = audio_chunk(task, "", true, "stop") + "data: [DONE]\n\n";
             write_sink(sink, done);
           } catch (const std::exception& e) {
-            const nlohmann::json error = {{"object", "audio.transcription.error"},
-                                          {"error", e.what()}};
+            const nlohmann::json error = {
+                {"object", std::string{"audio."} + asr_result_name(task) + ".error"},
+                {"task", asr_task_name(task)},
+                {"error", e.what()}};
             const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
             write_sink(sink, chunk);
           }

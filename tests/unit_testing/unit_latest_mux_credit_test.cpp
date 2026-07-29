@@ -1,7 +1,7 @@
 #include "gst/GstInit.h"
 #include "gst/GstLatestByStreamMux.h"
 #include "pipeline/GraphOptions.h"
-#include "pipeline/LatestByStreamFrameTap.h"
+#include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -14,6 +14,7 @@
 #include <gst/gst.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -42,6 +43,32 @@ struct MuxLoanKey {
   std::string stream_id;
   std::int64_t frame_id = -1;
 };
+
+struct TerminalMetaCloneSentinel {
+  int value = 0;
+};
+
+std::atomic<int>& terminal_meta_sentinel_copies() {
+  static std::atomic<int> copies{0};
+  return copies;
+}
+
+gpointer copy_terminal_meta_sentinel(gpointer boxed) {
+  terminal_meta_sentinel_copies().fetch_add(1, std::memory_order_relaxed);
+  const auto* source = static_cast<const TerminalMetaCloneSentinel*>(boxed);
+  return source ? static_cast<gpointer>(new TerminalMetaCloneSentinel(*source)) : nullptr;
+}
+
+void free_terminal_meta_sentinel(gpointer boxed) {
+  delete static_cast<TerminalMetaCloneSentinel*>(boxed);
+}
+
+GType terminal_meta_clone_sentinel_type() {
+  static const GType type =
+      g_boxed_type_register_static("NeatUnitLatestMuxTerminalMetaCloneSentinel",
+                                   copy_terminal_meta_sentinel, free_terminal_meta_sentinel);
+  return type;
+}
 
 simaai::neat::Sample make_gst_sample_backed_sample(std::optional<MuxLoanKey> key) {
   GstBuffer* buffer = gst_buffer_new_allocate(nullptr, 16U, nullptr);
@@ -311,174 +338,214 @@ void release_terminal_loan(const LatestMuxPipeline& fixture, const char* stream_
   require(released, "namespace-qualified terminal output should release the mux loan");
 }
 
-void test_encoded_frame_tap_owns_au_and_timing() {
+void test_graph_scoped_encoded_output_retains_au_and_timing_zero_copy() {
   constexpr GstClockTime kPts = 9001001;
   constexpr GstClockTime kDts = 8001001;
   constexpr GstClockTime kDuration = 50000000;
   const std::vector<std::uint8_t> expected = {0x00, 0x00, 0x00, 0x01, 0x65, 0x12, 0x34};
   GstCaps* caps =
       gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-  require(caps != nullptr, "failed to allocate encoded-tap caps");
+  require(caps != nullptr, "failed to allocate encoded Output caps");
   GstBuffer* source = make_encoded_tap_buffer(expected, kPts, kDts, kDuration);
+  GST_BUFFER_FLAG_SET(source, GST_BUFFER_FLAG_DELTA_UNIT);
 
-  std::size_t callback_count = 0;
-  simaai::neat::Sample captured;
-  simaai::neat::set_latest_by_stream_encoded_frame_callback([&](simaai::neat::Sample sample) {
-    ++callback_count;
-    captured = std::move(sample);
-  });
-  require(simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
-              source, caps, "stream17"),
-          "valid encoded tap dispatch should succeed");
-  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
+  simaai::neat::Sample captured =
+      simaai::neat::session_test::make_fused_encoded_output_sample_for_test(source, caps,
+                                                                            "stream17");
+  require(captured.stream_id == "stream17", "encoded Output should preserve stream identity");
+  require(captured.pts_ns == static_cast<std::int64_t>(kPts), "encoded Output should preserve PTS");
+  require(captured.dts_ns == static_cast<std::int64_t>(kDts), "encoded Output should preserve DTS");
+  require(captured.duration_ns == static_cast<std::int64_t>(kDuration),
+          "encoded Output should preserve duration");
+  require(captured.caps_string.find("video/x-h264") != std::string::npos,
+          "encoded Output should preserve caps");
+  require(captured.tensors.size() == 1U && captured.tensors.front().storage,
+          "encoded Output should retain one payload tensor");
+  require(captured.tensors.front().storage->kind == simaai::neat::StorageKind::GstSample,
+          "encoded Output must retain the GstSample instead of copying the AU");
 
-  GstMapInfo overwrite = GST_MAP_INFO_INIT;
-  require(gst_buffer_map(source, &overwrite, GST_MAP_WRITE) == TRUE,
-          "failed to remap encoded-tap source buffer");
-  std::fill(overwrite.data, overwrite.data + overwrite.size, 0xEE);
-  gst_buffer_unmap(source, &overwrite);
+  GstSample* retained_sample =
+      static_cast<GstSample*>(captured.tensors.front().storage->holder.get());
+  require(retained_sample != nullptr, "encoded Output storage must retain a GstSample holder");
+  GstBuffer* retained_buffer = gst_sample_get_buffer(retained_sample);
+  require(retained_buffer == source, "encoded Output must reference the exact decoder input AU");
+  require(GST_BUFFER_FLAG_IS_SET(retained_buffer, GST_BUFFER_FLAG_DELTA_UNIT),
+          "encoded Output must preserve GstBuffer flags");
+
+  // The graph Output owns a reference. Releasing the streaming thread's source
+  // and caps references must not invalidate the pulled Sample.
   gst_buffer_unref(source);
   gst_caps_unref(caps);
-
-  require(callback_count == 1U, "encoded tap should deliver exactly one callback");
-  require(captured.stream_id == "stream17", "encoded tap should preserve stream identity");
-  require(captured.pts_ns == static_cast<std::int64_t>(kPts), "encoded tap should preserve PTS");
-  require(captured.dts_ns == static_cast<std::int64_t>(kDts), "encoded tap should preserve DTS");
-  require(captured.duration_ns == static_cast<std::int64_t>(kDuration),
-          "encoded tap should preserve duration");
-  require(captured.caps_string.find("video/x-h264") != std::string::npos,
-          "encoded tap should preserve caps");
-  require(captured.tensors.size() == 1U && captured.tensors.front().storage,
-          "encoded tap should return one owned payload tensor");
   const simaai::neat::Mapping payload = captured.tensors.front().map_read();
   require(payload.data != nullptr && payload.size_bytes == expected.size(),
-          "encoded tap payload has the wrong size");
+          "encoded Output payload has the wrong size after source release");
   const auto* payload_bytes = static_cast<const std::uint8_t*>(payload.data);
   require(std::equal(expected.begin(), expected.end(), payload_bytes),
-          "encoded tap payload must outlive and not alias the source GstBuffer");
+          "encoded Output AU must remain alive until the pulled Sample is released");
 }
 
-void test_clear_encoded_frame_tap_waits_for_inflight_callback() {
-  std::mutex mutex;
-  std::condition_variable condition;
-  bool callback_entered = false;
-  bool release_callback = false;
-  std::atomic<std::size_t> callback_count{0};
-
-  simaai::neat::set_latest_by_stream_encoded_frame_callback([&](simaai::neat::Sample) {
-    callback_count.fetch_add(1, std::memory_order_relaxed);
-    std::unique_lock<std::mutex> lock(mutex);
-    callback_entered = true;
-    condition.notify_all();
-    condition.wait(lock, [&] { return release_callback; });
-  });
-
-  std::thread dispatch_thread([&] {
-    GstCaps* caps =
-        gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-    GstBuffer* buffer = make_encoded_tap_buffer({0x00, 0x00, 0x01, 0x65}, 101, 99, 33);
-    simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(
-        buffer, caps, "stream0");
-    gst_buffer_unref(buffer);
-    gst_caps_unref(caps);
-  });
-  {
-    std::unique_lock<std::mutex> lock(mutex);
-    require(condition.wait_for(lock, std::chrono::seconds(2), [&] { return callback_entered; }),
-            "encoded tap callback did not enter");
-  }
-
-  std::thread release_thread([&] {
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      release_callback = true;
-    }
-    condition.notify_all();
-  });
-  const auto clear_start = std::chrono::steady_clock::now();
-  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
-  const auto clear_elapsed = std::chrono::steady_clock::now() - clear_start;
-  dispatch_thread.join();
-  release_thread.join();
-
-  require(clear_elapsed >= std::chrono::milliseconds(50),
-          "clear must wait until every admitted encoded callback has returned");
-
+void test_graph_scoped_encoded_output_owned_copy_releases_source() {
+  constexpr GstClockTime kPts = 7001001;
+  constexpr GstClockTime kDts = 6001001;
+  constexpr GstClockTime kDuration = 100000000;
+  const std::vector<std::uint8_t> expected = {0x00, 0x00, 0x00, 0x01, 0x41, 0x56, 0x78};
   GstCaps* caps =
       gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-  GstBuffer* buffer = make_encoded_tap_buffer({0x00, 0x00, 0x01, 0x41}, 201, 199, 33);
-  simaai::neat::pipeline_internal::dispatch_latest_by_stream_encoded_frame_for_buffer(buffer, caps,
-                                                                                      "stream0");
-  gst_buffer_unref(buffer);
+  require(caps != nullptr, "failed to allocate owned encoded Output caps");
+  GstBuffer* source = make_encoded_tap_buffer(expected, kPts, kDts, kDuration);
+
+  simaai::neat::Sample captured =
+      simaai::neat::session_test::make_fused_encoded_output_sample_for_test(
+          source, caps, "stream23", /*copy_output=*/true);
+  require(captured.owned, "owned encoded Output should report app-owned storage");
+  require(captured.stream_id == "stream23", "owned encoded Output should preserve stream identity");
+  require(captured.pts_ns == static_cast<std::int64_t>(kPts) &&
+              captured.dts_ns == static_cast<std::int64_t>(kDts) &&
+              captured.duration_ns == static_cast<std::int64_t>(kDuration),
+          "owned encoded Output should preserve timing");
+  require(captured.tensors.size() == 1U && captured.tensors.front().storage &&
+              captured.tensors.front().storage->kind == simaai::neat::StorageKind::CpuExternal,
+          "owned encoded Output must copy into CPU storage, not retain a GstSample");
+
+  gst_buffer_unref(source);
   gst_caps_unref(caps);
-  require(callback_count.load(std::memory_order_relaxed) == 1U,
-          "clear must prevent callbacks from being admitted afterward");
+  const simaai::neat::Mapping payload = captured.tensors.front().map_read();
+  require(payload.data != nullptr && payload.size_bytes == expected.size(),
+          "owned encoded Output payload has the wrong size after source release");
+  const auto* payload_bytes = static_cast<const std::uint8_t*>(payload.data);
+  require(std::equal(expected.begin(), expected.end(), payload_bytes),
+          "owned encoded Output must remain valid independently of its source buffer");
 }
 
-void test_encoded_frame_tap_copy_failure_posts_pipeline_error() {
-  GstElement* pipeline = gst_pipeline_new("encoded-tap-failure-pipeline");
-  GstElement* appsrc = gst_element_factory_make("appsrc", "encoded-tap-failure-source");
-  GstElement* capsfilter = gst_element_factory_make("capsfilter", "encoded-tap-failure-caps");
-  GstElement* fakesink = gst_element_factory_make("fakesink", "encoded-tap-failure-sink");
-  require(pipeline && appsrc && capsfilter && fakesink,
-          "failed to construct encoded-tap failure pipeline");
-
-  GstCaps* caps =
-      gst_caps_from_string("video/x-h264,stream-format=(string)byte-stream,alignment=(string)au");
-  require(caps != nullptr, "failed to allocate encoded-tap failure caps");
-  gst_app_src_set_caps(GST_APP_SRC(appsrc), caps);
-  g_object_set(capsfilter, "caps", caps, nullptr);
-  g_object_set(appsrc, "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
-  g_object_set(fakesink, "sync", FALSE, nullptr);
-  gst_bin_add_many(GST_BIN(pipeline), appsrc, capsfilter, fakesink, nullptr);
-  require(gst_element_link_many(appsrc, capsfilter, fakesink, nullptr) == TRUE,
-          "failed to link encoded-tap failure pipeline");
-
-  std::atomic<std::size_t> callback_count{0};
-  simaai::neat::set_latest_by_stream_encoded_frame_callback(
-      [&](simaai::neat::Sample) { callback_count.fetch_add(1, std::memory_order_relaxed); });
-  GstPad* tap_pad = gst_element_get_static_pad(capsfilter, "src");
-  require(tap_pad != nullptr, "failed to get encoded-tap failure pad");
-  require(simaai::neat::pipeline_internal::attach_latest_by_stream_encoded_frame_tap_probe(
-              tap_pad, "failure-stream") != 0,
-          "failed to attach production encoded-tap probe");
-  gst_object_unref(tap_pad);
-
-  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
-          "failed to start encoded-tap failure pipeline");
-  // An empty AU exercises the same exception-contained copy failure path used
-  // for GstBuffer map failures and allocation failures, without relying on a
-  // platform allocator's interpretation of GST_MEMORY_FLAG_NOT_MAPPABLE.
-  GstBuffer* buffer = gst_buffer_new();
-  require(buffer != nullptr, "failed to allocate encoded-tap failure buffer");
-  GST_BUFFER_PTS(buffer) = 1;
-  GST_BUFFER_DURATION(buffer) = GST_MSECOND;
-  (void)gst_app_src_push_buffer(GST_APP_SRC(appsrc), buffer);
-
-  GstBus* bus = gst_element_get_bus(pipeline);
-  GstMessage* message = gst_bus_timed_pop_filtered(bus, 2 * GST_SECOND, GST_MESSAGE_ERROR);
-  require(message != nullptr,
-          "an encoded-AU copy/map failure must post a fatal pipeline error, not silently drop");
-  GError* gst_error = nullptr;
-  gchar* debug = nullptr;
-  gst_message_parse_error(message, &gst_error, &debug);
-  require(gst_error != nullptr &&
-              std::string(gst_error->message).find("Encoded-frame tap failed") != std::string::npos,
-          "encoded-tap failure should carry an actionable bus error");
-  if (gst_error) {
-    g_error_free(gst_error);
+void test_graph_scoped_encoded_output_queue_overflow_policy() {
+  simaai::neat::runtime::GraphSinkQueue every_frame_queue(1);
+  simaai::neat::OutputOptions every_frame = simaai::neat::OutputOptions::EveryFrame(1);
+  simaai::neat::Sample first;
+  first.frame_id = 1;
+  simaai::neat::Sample second;
+  second.frame_id = 2;
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(every_frame_queue, every_frame,
+                                                              std::move(first)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+          "EveryFrame encoded Output should admit its first AU");
+  std::atomic<bool> producer_started{false};
+  std::atomic<bool> producer_finished{false};
+  simaai::neat::runtime::FusedEncodedOutputEnqueueResult second_result =
+      simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Overflow;
+  std::thread blocked_producer([&] {
+    producer_started.store(true, std::memory_order_release);
+    second_result = simaai::neat::runtime::enqueue_fused_encoded_output(
+        every_frame_queue, every_frame, std::move(second));
+    producer_finished.store(true, std::memory_order_release);
+  });
+  while (!producer_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
   }
-  g_free(debug);
-  gst_message_unref(message);
-  gst_object_unref(bus);
-  require(callback_count.load(std::memory_order_relaxed) == 0U,
-          "invalid encoded AU must not invoke the subscriber with partial data");
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const bool second_push_backpressured = !producer_finished.load(std::memory_order_acquire);
+  simaai::neat::runtime::RuntimeSinkQueueMsg retained;
+  const bool first_preserved = every_frame_queue.pop(retained, 0) && retained.sample.frame_id == 1;
+  blocked_producer.join();
+  require(first_preserved, "EveryFrame backpressure must preserve the already queued AU");
+  require(second_push_backpressured,
+          "EveryFrame encoded Output must backpressure instead of failing or dropping");
+  require(second_result == simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+          "EveryFrame encoded Output must enqueue after Run::pull() makes room");
+  require(every_frame_queue.pop(retained, 0) && retained.sample.frame_id == 2,
+          "EveryFrame encoded Output must preserve the delayed AU");
 
-  simaai::neat::clear_latest_by_stream_encoded_frame_callback();
-  (void)gst_element_set_state(pipeline, GST_STATE_NULL);
-  gst_caps_unref(caps);
-  gst_object_unref(pipeline);
+  simaai::neat::runtime::GraphSinkQueue closing_every_frame_queue(1);
+  simaai::neat::Sample queued_before_close;
+  queued_before_close.frame_id = 3;
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(
+              closing_every_frame_queue, every_frame, std::move(queued_before_close)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+          "close-wakeup fixture must fill the EveryFrame queue");
+  std::atomic<bool> closing_producer_started{false};
+  std::atomic<bool> closing_producer_finished{false};
+  simaai::neat::runtime::FusedEncodedOutputEnqueueResult close_result =
+      simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Overflow;
+  std::thread closing_producer([&] {
+    simaai::neat::Sample blocked_until_close;
+    blocked_until_close.frame_id = 4;
+    closing_producer_started.store(true, std::memory_order_release);
+    close_result = simaai::neat::runtime::enqueue_fused_encoded_output(
+        closing_every_frame_queue, every_frame, std::move(blocked_until_close));
+    closing_producer_finished.store(true, std::memory_order_release);
+  });
+  while (!closing_producer_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const bool close_push_was_blocked = !closing_producer_finished.load(std::memory_order_acquire);
+  closing_every_frame_queue.close();
+  closing_producer.join();
+  require(close_push_was_blocked,
+          "EveryFrame close-wakeup fixture must begin from real backpressure");
+  require(close_result == simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Closed,
+          "closing an EveryFrame queue must promptly wake its blocked producer");
+
+  simaai::neat::runtime::GraphSinkQueue latest_queue(1);
+  simaai::neat::OutputOptions latest = simaai::neat::OutputOptions::Latest();
+  simaai::neat::Sample stale;
+  stale.frame_id = 10;
+  simaai::neat::Sample newest;
+  newest.frame_id = 11;
+  require(
+      simaai::neat::runtime::enqueue_fused_encoded_output(latest_queue, latest, std::move(stale)) ==
+          simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued,
+      "Latest encoded Output should admit its first AU");
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(latest_queue, latest,
+                                                              std::move(newest)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::ReplacedOldest,
+          "Latest encoded Output should replace its oldest AU without blocking");
+  require(latest_queue.pop(retained, 0) && retained.sample.frame_id == 11,
+          "Latest overflow must retain the newest AU");
+
+  latest_queue.close();
+  simaai::neat::Sample closed;
+  require(simaai::neat::runtime::enqueue_fused_encoded_output(latest_queue, latest,
+                                                              std::move(closed)) ==
+              simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Closed,
+          "encoded Output enqueue should distinguish a closed graph sink");
+
+  constexpr int kProducerCount = 8;
+  constexpr int kFramesPerProducer = 2000;
+  simaai::neat::runtime::GraphSinkQueue concurrent_latest_queue(1);
+  std::atomic<int> ready{0};
+  std::atomic<bool> start{false};
+  std::atomic<int> failures{0};
+  std::vector<std::thread> producers;
+  producers.reserve(kProducerCount);
+  for (int producer = 0; producer < kProducerCount; ++producer) {
+    producers.emplace_back([&, producer] {
+      ready.fetch_add(1, std::memory_order_release);
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      for (int frame = 0; frame < kFramesPerProducer; ++frame) {
+        simaai::neat::Sample sample;
+        sample.frame_id = producer * kFramesPerProducer + frame;
+        const auto result = simaai::neat::runtime::enqueue_fused_encoded_output(
+            concurrent_latest_queue, latest, std::move(sample));
+        if (result != simaai::neat::runtime::FusedEncodedOutputEnqueueResult::Enqueued &&
+            result != simaai::neat::runtime::FusedEncodedOutputEnqueueResult::ReplacedOldest) {
+          failures.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+    });
+  }
+  while (ready.load(std::memory_order_acquire) != kProducerCount) {
+    std::this_thread::yield();
+  }
+  start.store(true, std::memory_order_release);
+  for (auto& producer : producers) {
+    producer.join();
+  }
+  require(failures.load(std::memory_order_relaxed) == 0,
+          "concurrent Latest encoded producers must never observe a transient overflow");
+  require(concurrent_latest_queue.size() == 1U,
+          "concurrent Latest encoded producers must retain exactly one newest AU");
 }
 
 void test_terminal_release_restores_original_pts() {
@@ -527,6 +594,98 @@ void test_terminal_release_restores_original_pts() {
   stop_latest_mux_pipeline(&fixture);
 }
 
+void test_guarded_terminal_restore_is_in_place_and_authoritative() {
+  constexpr const char* kStreamId = "guarded-in-place-stream";
+  constexpr std::int64_t kFrameId = 73;
+  constexpr GstClockTime kPts = 7300 * GST_MSECOND;
+  constexpr GstClockTime kDts = 7290 * GST_MSECOND;
+  constexpr GstClockTime kDuration = 50 * GST_MSECOND;
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-guarded-in-place-pipeline", kStreamId);
+
+  require(gst_app_src_push_buffer(
+              GST_APP_SRC(fixture.appsrc),
+              make_mux_input_buffer_with_timing(kFrameId, kPts, kDts, kDuration)) == GST_FLOW_OK,
+          "failed to push guarded in-place timing fixture");
+  GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(output != nullptr, "guarded in-place fixture should reach the mux output");
+  GstBuffer* terminal = gst_buffer_copy_deep(gst_sample_get_buffer(output));
+  require(terminal != nullptr && gst_buffer_is_writable(terminal),
+          "guarded terminal copy should be writable");
+
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(terminal, "GstSimaMeta");
+  GstStructure* structure = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  require(structure != nullptr, "guarded terminal copy should preserve GstSimaMeta");
+  const TerminalMetaCloneSentinel sentinel{731};
+  gst_structure_set(structure, "terminal-meta-clone-sentinel", terminal_meta_clone_sentinel_type(),
+                    &sentinel, nullptr);
+
+  // Deliberately make every public/private scalar and timing field stale. The
+  // lifecycle guard, not these recycled values, is the authoritative key.
+  gst_structure_set(
+      structure, "stream-id", G_TYPE_STRING, "stale-public-stream", "orig-stream-id", G_TYPE_STRING,
+      "stale-original-stream", "frame-id", G_TYPE_INT64, static_cast<gint64>(9999), "input-seq",
+      G_TYPE_INT64, static_cast<gint64>(9999), "orig-input-seq", G_TYPE_INT64,
+      static_cast<gint64>(9999), kLoanValidField, G_TYPE_BOOLEAN, TRUE, kLoanNamespaceField,
+      G_TYPE_UINT64, static_cast<guint64>(fixture.mux_namespace + 1U), kLoanStreamIdField,
+      G_TYPE_STRING, "stale-private-stream", kLoanFrameIdField, G_TYPE_INT64,
+      static_cast<gint64>(9999), "neat-latest-mux-loan-input-seq", G_TYPE_INT64,
+      static_cast<gint64>(9999), "neat-latest-mux-loan-orig-input-seq", G_TYPE_INT64,
+      static_cast<gint64>(9999), "sample-frame-id-valid", G_TYPE_BOOLEAN, TRUE, "sample-frame-id",
+      G_TYPE_INT64, static_cast<gint64>(9999), "sample-pts-valid", G_TYPE_BOOLEAN, TRUE,
+      "sample-pts-ns", G_TYPE_UINT64, static_cast<guint64>(9999), "sample-dts-valid",
+      G_TYPE_BOOLEAN, TRUE, "sample-dts-ns", G_TYPE_UINT64, static_cast<guint64>(9999),
+      "sample-duration-valid", G_TYPE_BOOLEAN, TRUE, "sample-duration-ns", G_TYPE_UINT64,
+      static_cast<guint64>(9999), "timestamp", G_TYPE_UINT64, static_cast<guint64>(9999), nullptr);
+  GST_BUFFER_PTS(terminal) = 9999;
+  GST_BUFFER_DTS(terminal) = 9998;
+  GST_BUFFER_DURATION(terminal) = 9997;
+  terminal_meta_sentinel_copies().store(0, std::memory_order_relaxed);
+
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+              terminal, fixture.mux_namespace),
+          "authoritative lifecycle guard should release despite stale scalar metadata");
+  require(terminal_meta_sentinel_copies().load(std::memory_order_relaxed) == 0,
+          "terminal restore must update writable GstSimaMeta in place, not clone unrelated fields");
+  require_canonical_terminal_loan(terminal, kStreamId, kFrameId, fixture.mux_namespace, kPts, kDts,
+                                  kDuration);
+
+  meta = gst_buffer_get_custom_meta(terminal, "GstSimaMeta");
+  structure = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  const GValue* sentinel_value =
+      structure ? gst_structure_get_value(structure, "terminal-meta-clone-sentinel") : nullptr;
+  const auto* restored_sentinel =
+      sentinel_value
+          ? static_cast<const TerminalMetaCloneSentinel*>(g_value_get_boxed(sentinel_value))
+          : nullptr;
+  gboolean valid = FALSE;
+  gint64 frame = -1;
+  guint64 pts = 0;
+  guint64 dts = 0;
+  guint64 duration = 0;
+  guint64 timestamp = 0;
+  require(
+      restored_sentinel && restored_sentinel->value == sentinel.value &&
+          gst_structure_get_boolean(structure, "sample-frame-id-valid", &valid) == TRUE &&
+          valid == TRUE && gst_structure_get_int64(structure, "sample-frame-id", &frame) == TRUE &&
+          frame == kFrameId &&
+          gst_structure_get_boolean(structure, "sample-pts-valid", &valid) == TRUE &&
+          valid == TRUE && gst_structure_get_uint64(structure, "sample-pts-ns", &pts) == TRUE &&
+          pts == kPts && gst_structure_get_boolean(structure, "sample-dts-valid", &valid) == TRUE &&
+          valid == TRUE && gst_structure_get_uint64(structure, "sample-dts-ns", &dts) == TRUE &&
+          dts == kDts &&
+          gst_structure_get_boolean(structure, "sample-duration-valid", &valid) == TRUE &&
+          valid == TRUE &&
+          gst_structure_get_uint64(structure, "sample-duration-ns", &duration) == TRUE &&
+          duration == kDuration &&
+          gst_structure_get_uint64(structure, "timestamp", &timestamp) == TRUE && timestamp == kPts,
+      "in-place terminal restore should preserve unrelated metadata and canonical timing fields");
+
+  gst_buffer_unref(terminal);
+  gst_sample_unref(output);
+  stop_latest_mux_pipeline(&fixture);
+}
+
 void test_replacing_chain_uses_per_stream_fifo_timing() {
   constexpr const char* kStreamId = "replacing-terminal-stream";
   LatestMuxPipeline fixture = make_latest_mux_pipeline("latest-mux-replacing-terminal-pipeline",
@@ -561,40 +720,267 @@ void test_replacing_chain_uses_per_stream_fifo_timing() {
   require(blocked == nullptr,
           "destroying replaced decoded inputs must not release terminal admission early");
 
-  const auto release_and_require_pts = [&](GstBuffer* terminal, GstClockTime expected_pts,
-                                           const char* reason) {
+  // Model the first ProcessCVU src output. ProcessCVU has already returned the
+  // decoder-backed input at this point, so raw admission can reopen even while
+  // the derived MLA/boxdecode result (and its timing match) is delayed.
+  GstBuffer* stale_preproc_output = make_terminal_sequence_buffer(kStreamId, 999, 999, 999);
+  require(
+      !simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+          stale_preproc_output, fixture.mux_namespace),
+      "stale ProcessCVU identity must not shift raw admission to another frame");
+  gst_buffer_unref(stale_preproc_output);
+  GstBuffer* first_preproc_output = make_terminal_sequence_buffer(kStreamId, 101, 101, 101);
+  require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+              first_preproc_output, fixture.mux_namespace),
+          "ProcessCVU completion should return the oldest raw-input credit");
+  gst_buffer_unref(first_preproc_output);
+  GstSample* fifth = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(fifth != nullptr,
+          "raw-input completion should admit the pending fifth frame before terminal output");
+  gst_sample_unref(fifth);
+
+  const auto release_and_require_canonical = [&](GstBuffer* terminal,
+                                                 std::int64_t expected_frame_id,
+                                                 GstClockTime expected_pts, const char* reason) {
     GST_BUFFER_PTS(terminal) = 999 * GST_MSECOND;
     require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
                 terminal, fixture.mux_namespace),
             reason);
-    require(GST_BUFFER_PTS(terminal) == expected_pts,
-            "terminal selection restored timing from the wrong outstanding stream loan");
+    require_canonical_terminal_loan(terminal, kStreamId, expected_frame_id, fixture.mux_namespace,
+                                    expected_pts, GST_CLOCK_TIME_NONE, 50 * GST_MSECOND);
     gst_buffer_unref(terminal);
   };
 
   // Public frame/sequence fields are not freshness tokens on replacement
   // buffers. Even though they name frame 104, the ordered per-stream contract
-  // must complete frame 101.
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 104, 104),
-                          100 * GST_MSECOND, "recycled public identity should use stream FIFO");
-  GstSample* fifth = pull_mux_output(fixture.appsink, GST_SECOND);
-  require(fifth != nullptr, "one terminal completion should admit the pending fifth frame");
-  gst_sample_unref(fifth);
+  // must complete frame 101. Its timing entry must survive the earlier raw
+  // credit return.
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 101, 104, 104), 101,
+                                100 * GST_MSECOND,
+                                "recycled public identity should use stream FIFO");
+
+  require(gst_app_src_push_buffer(
+              GST_APP_SRC(fixture.appsrc),
+              make_mux_input_buffer_with_timing(106, 600 * GST_MSECOND, GST_CLOCK_TIME_NONE,
+                                                50 * GST_MSECOND)) == GST_FLOW_OK,
+          "failed to push double-release sentinel input");
+  require(pull_mux_output(fixture.appsink, 100 * GST_MSECOND) == nullptr,
+          "terminal completion must not return an already-early raw credit and discharge a "
+          "newer frame");
 
   // Every replacement metadata shape uses the same enforced ordered completion
   // order within this stream.
-  release_and_require_pts(make_terminal_identity_buffer(kStreamId, std::nullopt), 200 * GST_MSECOND,
-                          "stream-only terminal should use the bounded FIFO fallback");
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, std::nullopt, 103, 103),
-                          300 * GST_MSECOND, "sequence-only identity should use stream FIFO");
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 101, 102, 102),
-                          400 * GST_MSECOND,
-                          "stale public sequence should not select a completed frame");
-  release_and_require_pts(make_terminal_sequence_buffer(kStreamId, 9999, 105, 105),
-                          500 * GST_MSECOND,
-                          "pending frame should retain its registered FIFO timing");
+  release_and_require_canonical(make_terminal_identity_buffer(kStreamId, std::nullopt), 102,
+                                200 * GST_MSECOND,
+                                "stream-only terminal should use the bounded FIFO fallback");
+  GstSample* sixth = pull_mux_output(fixture.appsink, GST_SECOND);
+  require(sixth != nullptr,
+          "the next genuinely unreleased frame should admit the double-release sentinel");
+  gst_sample_unref(sixth);
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, std::nullopt, 103, 103),
+                                103, 300 * GST_MSECOND,
+                                "sequence-only identity should use stream FIFO");
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 101, 102, 102), 104,
+                                400 * GST_MSECOND,
+                                "stale public sequence should not select a completed frame");
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 9999, 105, 105), 105,
+                                500 * GST_MSECOND,
+                                "pending frame should retain its registered FIFO timing");
+  release_and_require_canonical(make_terminal_sequence_buffer(kStreamId, 9999, 106, 106), 106,
+                                600 * GST_MSECOND,
+                                "double-release sentinel should retain its registered timing");
 
   stop_latest_mux_pipeline(&fixture);
+}
+
+void test_concurrent_raw_completion_claims_distinct_replacing_loans() {
+  constexpr const char* kStreamId = "concurrent-raw-completion-stream";
+  constexpr int kLimit = 4;
+  LatestMuxPipeline fixture =
+      make_latest_mux_pipeline("latest-mux-concurrent-raw-completion-pipeline", kStreamId, kLimit,
+                               /*lifetime_guard_enabled=*/false);
+
+  for (std::int64_t frame_id = 1; frame_id <= kLimit; ++frame_id) {
+    push_mux_input(fixture.appsrc, frame_id);
+    GstSample* decoded = pull_mux_output(fixture.appsink, GST_SECOND);
+    require(decoded != nullptr, "concurrent raw fixture should fill the admission gate");
+    gst_sample_unref(decoded);
+  }
+
+  std::mutex start_mutex;
+  std::condition_variable start_cv;
+  bool start = false;
+  std::array<bool, kLimit> released{};
+  std::vector<std::thread> workers;
+  workers.reserve(kLimit);
+  for (int index = 0; index < kLimit; ++index) {
+    workers.emplace_back([&, index] {
+      {
+        std::unique_lock<std::mutex> lock(start_mutex);
+        start_cv.wait(lock, [&] { return start; });
+      }
+      GstBuffer* preproc = make_terminal_identity_buffer(kStreamId, std::nullopt);
+      released[static_cast<std::size_t>(index)] =
+          simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+              preproc, fixture.mux_namespace);
+      gst_buffer_unref(preproc);
+    });
+  }
+  {
+    std::lock_guard<std::mutex> lock(start_mutex);
+    start = true;
+  }
+  start_cv.notify_all();
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  require(std::all_of(released.begin(), released.end(), [](bool value) { return value; }),
+          "concurrent ProcessCVU completions must claim distinct per-stream FIFO credits");
+
+  // All four raw credits, not just one shared oldest selection, must be
+  // available before any terminal result is completed.
+  for (std::int64_t frame_id = kLimit + 1; frame_id <= 2 * kLimit; ++frame_id) {
+    push_mux_input(fixture.appsrc, frame_id);
+    GstSample* decoded = pull_mux_output(fixture.appsink, GST_SECOND);
+    require(decoded != nullptr, "every concurrent raw completion should reopen one admission slot");
+    gst_sample_unref(decoded);
+  }
+
+  // Terminal completion still consumes the original timing registry records;
+  // it must not return their already-released credits a second time.
+  for (std::int64_t frame_id = 1; frame_id <= kLimit; ++frame_id) {
+    release_terminal_loan(fixture, kStreamId, frame_id);
+  }
+  for (std::int64_t frame_id = kLimit + 1; frame_id <= 2 * kLimit; ++frame_id) {
+    GstBuffer* preproc = make_terminal_identity_buffer(kStreamId, std::nullopt);
+    require(
+        simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+            preproc, fixture.mux_namespace),
+        "cleanup ProcessCVU completion should release each second-wave raw credit");
+    gst_buffer_unref(preproc);
+    release_terminal_loan(fixture, kStreamId, frame_id);
+  }
+
+  stop_latest_mux_pipeline(&fixture);
+}
+
+void test_raw_completion_is_stream_scoped_and_preserves_out_of_order_timing() {
+  constexpr const char* kStream0 = "raw-scope-stream0";
+  constexpr const char* kStream1 = "raw-scope-stream1";
+  GstElement* pipeline = gst_pipeline_new("latest-mux-raw-stream-scope-pipeline");
+  GstElement* mux = gst_element_factory_make("neatlatestbystreammux", nullptr);
+  GstElement* appsink = gst_element_factory_make("appsink", nullptr);
+  require(pipeline && mux && appsink, "failed to create two-stream raw-credit fixture");
+  g_object_set(mux, "stream-ids", "raw-scope-stream0,raw-scope-stream1", "stream-inflight-limits",
+               "1,1", "max-inflight-total", 2, nullptr);
+  require(simaai::neat::pipeline_internal::set_latest_by_stream_mux_lifetime_guard_enabled(
+              mux, /*enabled=*/false),
+          "failed to configure replacing mode for two-stream raw-credit fixture");
+  g_object_set(appsink, "sync", FALSE, "max-buffers", 8U, "drop", FALSE, "enable-last-sample",
+               FALSE, nullptr);
+  gst_bin_add_many(GST_BIN(pipeline), mux, appsink, nullptr);
+  require(gst_element_link(mux, appsink) == TRUE, "failed to link two-stream raw-credit fixture");
+
+  std::array<GstElement*, 2> appsrcs{};
+  std::array<GstPad*, 2> mux_pads{};
+  GstCaps* caps =
+      gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "GRAY8", "width", G_TYPE_INT, 4,
+                          "height", G_TYPE_INT, 4, "framerate", GST_TYPE_FRACTION, 1, 1, nullptr);
+  require(caps != nullptr, "failed to allocate two-stream raw-credit caps");
+  for (std::size_t index = 0; index < appsrcs.size(); ++index) {
+    appsrcs[index] = gst_element_factory_make("appsrc", nullptr);
+    require(appsrcs[index] != nullptr, "failed to create two-stream raw-credit appsrc");
+    g_object_set(appsrcs[index], "is-live", TRUE, "format", GST_FORMAT_TIME, nullptr);
+    gst_app_src_set_caps(GST_APP_SRC(appsrcs[index]), caps);
+    gst_bin_add(GST_BIN(pipeline), appsrcs[index]);
+    const std::string pad_name = "sink_" + std::to_string(index);
+    mux_pads[index] = gst_element_request_pad_simple(mux, pad_name.c_str());
+    GstPad* source_pad = gst_element_get_static_pad(appsrcs[index], "src");
+    require(mux_pads[index] && source_pad &&
+                gst_pad_link(source_pad, mux_pads[index]) == GST_PAD_LINK_OK,
+            "failed to link two-stream raw-credit appsrc");
+    gst_object_unref(source_pad);
+  }
+  gst_caps_unref(caps);
+
+  const std::uint64_t mux_namespace = simaai::neat::latest_by_stream_mux_namespace(mux);
+  require(mux_namespace != 0U, "two-stream raw-credit mux should expose a namespace");
+  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          "failed to start two-stream raw-credit fixture");
+
+  const auto push = [&](std::size_t stream, std::int64_t frame_id, GstClockTime pts) {
+    require(gst_app_src_push_buffer(GST_APP_SRC(appsrcs[stream]),
+                                    make_mux_input_buffer_with_timing(
+                                        frame_id, pts, GST_CLOCK_TIME_NONE, 10 * GST_MSECOND)) ==
+                GST_FLOW_OK,
+            "failed to push two-stream raw-credit input");
+  };
+  const auto release_raw = [&](const char* stream) {
+    GstBuffer* preproc = make_terminal_identity_buffer(stream, std::nullopt);
+    const bool released =
+        simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+            preproc, mux_namespace);
+    gst_buffer_unref(preproc);
+    require(released, "ProcessCVU completion should release its own stream's raw credit");
+  };
+  const auto release_terminal = [&](const char* stream, std::int64_t frame_id,
+                                    GstClockTime expected_pts) {
+    GstBuffer* terminal = make_terminal_identity_buffer(stream, std::nullopt);
+    GST_BUFFER_PTS(terminal) = 999 * GST_MSECOND;
+    require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
+                terminal, mux_namespace),
+            "delayed two-stream terminal result should retain its timing entry");
+    require_canonical_terminal_loan(terminal, stream, frame_id, mux_namespace, expected_pts,
+                                    GST_CLOCK_TIME_NONE, 10 * GST_MSECOND);
+    gst_buffer_unref(terminal);
+  };
+
+  push(0, 11, 110 * GST_MSECOND);
+  GstSample* stream0_first = pull_mux_output(appsink, GST_SECOND);
+  require(stream0_first != nullptr, "stream 0 should fill its raw-credit lane");
+  gst_sample_unref(stream0_first);
+  push(1, 21, 210 * GST_MSECOND);
+  GstSample* stream1_first = pull_mux_output(appsink, GST_SECOND);
+  require(stream1_first != nullptr, "stream 1 should fill its raw-credit lane");
+  gst_sample_unref(stream1_first);
+
+  // Finish stream 1's preproc first. Only stream 1 may advance; stream 0 must
+  // remain blocked until its own preproc completion arrives.
+  release_raw(kStream1);
+  push(1, 22, 220 * GST_MSECOND);
+  GstSample* stream1_second = pull_mux_output(appsink, GST_SECOND);
+  require(stream1_second != nullptr,
+          "out-of-order stream 1 preproc completion should reopen stream 1");
+  gst_sample_unref(stream1_second);
+  push(0, 12, 120 * GST_MSECOND);
+  require(pull_mux_output(appsink, 100 * GST_MSECOND) == nullptr,
+          "stream 1 raw completion must not release stream 0 admission");
+
+  // Terminal timing may arrive after another raw frame has already entered.
+  // It must still match the oldest terminal record in that same stream.
+  release_terminal(kStream1, 21, 210 * GST_MSECOND);
+  release_raw(kStream0);
+  GstSample* stream0_second = pull_mux_output(appsink, GST_SECOND);
+  require(stream0_second != nullptr,
+          "stream 0 should advance after its own delayed preproc completion");
+  gst_sample_unref(stream0_second);
+  release_terminal(kStream0, 11, 110 * GST_MSECOND);
+
+  release_raw(kStream1);
+  release_terminal(kStream1, 22, 220 * GST_MSECOND);
+  release_raw(kStream0);
+  release_terminal(kStream0, 12, 120 * GST_MSECOND);
+
+  for (GstElement* appsrc : appsrcs) {
+    (void)gst_app_src_end_of_stream(GST_APP_SRC(appsrc));
+  }
+  require(gst_element_set_state(pipeline, GST_STATE_NULL) != GST_STATE_CHANGE_FAILURE,
+          "failed to stop two-stream raw-credit fixture");
+  for (std::size_t index = 0; index < mux_pads.size(); ++index) {
+    gst_element_release_request_pad(mux, mux_pads[index]);
+    gst_object_unref(mux_pads[index]);
+  }
+  gst_object_unref(pipeline);
 }
 
 void test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate() {
@@ -1175,6 +1561,11 @@ void test_fanout_terminal_and_drop_release_retained_credit() {
 
 void test_stale_guard_sequence_cannot_release_reused_key() {
   constexpr const char* kStreamId = "stale-guard-stream";
+  constexpr GstClockTime kReplacementPts = 4202 * GST_MSECOND;
+  constexpr GstClockTime kReplacementDts = 4201 * GST_MSECOND;
+  constexpr GstClockTime kSentinelPts = 9999 * GST_MSECOND;
+  constexpr GstClockTime kSentinelDts = 9998 * GST_MSECOND;
+  constexpr GstClockTime kSentinelDuration = 99 * GST_MSECOND;
   LatestMuxPipeline fixture =
       make_latest_mux_pipeline("latest-mux-stale-guard-pipeline", kStreamId);
 
@@ -1192,20 +1583,41 @@ void test_stale_guard_sequence_cannot_release_reused_key() {
 
   // Reuse the same public/private key under a new registry sequence while an
   // old copied carrier still exists.
-  push_mux_input(fixture.appsrc, 42);
+  require(gst_app_src_push_buffer(GST_APP_SRC(fixture.appsrc),
+                                  make_mux_input_buffer_with_timing(42, kReplacementPts,
+                                                                    kReplacementDts,
+                                                                    GST_MSECOND)) == GST_FLOW_OK,
+          "failed to push same-key replacement with distinct timing");
   GstSample* replacement = pull_mux_output(fixture.appsink, GST_SECOND);
   require(replacement != nullptr, "same key should register again after first completion");
+
+  GST_BUFFER_PTS(stale_carrier) = kSentinelPts;
+  GST_BUFFER_DTS(stale_carrier) = kSentinelDts;
+  GST_BUFFER_DURATION(stale_carrier) = kSentinelDuration;
   require(!simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
               stale_carrier, fixture.mux_namespace),
           "stale guard sequence must not release a newer loan with the same scalar key");
+  require(GST_BUFFER_PTS(stale_carrier) == kSentinelPts &&
+              GST_BUFFER_DTS(stale_carrier) == kSentinelDts &&
+              GST_BUFFER_DURATION(stale_carrier) == kSentinelDuration,
+          "stale guard rejection must not restore metadata from the newer same-key loan");
   gst_buffer_unref(stale_carrier);
 
   push_mux_input(fixture.appsrc, 43);
   GstSample* blocked = pull_mux_output(fixture.appsink, 100 * GST_MSECOND);
   require(blocked == nullptr, "new same-key loan must remain charged after stale guard rejection");
+
+  GstBuffer* replacement_buffer = gst_buffer_copy_deep(gst_sample_get_buffer(replacement));
+  require(replacement_buffer != nullptr, "failed to copy same-key replacement terminal buffer");
+  GST_BUFFER_PTS(replacement_buffer) = kSentinelPts;
+  GST_BUFFER_DTS(replacement_buffer) = kSentinelDts;
+  GST_BUFFER_DURATION(replacement_buffer) = kSentinelDuration;
   require(simaai::neat::pipeline_internal::release_latest_by_stream_mux_loan_for_buffer(
-              gst_sample_get_buffer(replacement), fixture.mux_namespace),
+              replacement_buffer, fixture.mux_namespace),
           "current same-key guard should release its own registration");
+  require_canonical_terminal_loan(replacement_buffer, kStreamId, 42, fixture.mux_namespace,
+                                  kReplacementPts, kReplacementDts, GST_MSECOND);
+  gst_buffer_unref(replacement_buffer);
   gst_sample_unref(replacement);
 
   GstSample* progress = pull_mux_output(fixture.appsink, GST_SECOND);
@@ -1218,14 +1630,41 @@ void test_stale_guard_sequence_cannot_release_reused_key() {
 void test_teardown_releases_unresolved_terminal_credit() {
   constexpr const char* kStreamId = "teardown-stream";
   LatestMuxPipeline fixture =
-      make_latest_mux_pipeline("latest-mux-unresolved-teardown-pipeline", kStreamId);
+      make_latest_mux_pipeline("latest-mux-unresolved-teardown-pipeline", kStreamId,
+                               /*stream_inflight_limit=*/1, /*lifetime_guard_enabled=*/false);
 
   push_mux_input(fixture.appsrc, 7);
   GstSample* output = pull_mux_output(fixture.appsink, GST_SECOND);
   require(output != nullptr, "latest-mux should emit the unresolved teardown frame");
 
   const std::uint64_t mux_namespace = fixture.mux_namespace;
-  stop_latest_mux_pipeline(&fixture);
+  GstBuffer* preproc = make_terminal_identity_buffer(kStreamId, std::nullopt);
+  std::mutex start_mutex;
+  std::condition_variable start_cv;
+  bool start = false;
+  std::thread raw_completion([&] {
+    {
+      std::unique_lock<std::mutex> lock(start_mutex);
+      start_cv.wait(lock, [&] { return start; });
+    }
+    (void)simaai::neat::pipeline_internal::release_latest_by_stream_mux_raw_input_credit_for_buffer(
+        preproc, mux_namespace);
+  });
+  std::thread teardown([&] {
+    {
+      std::unique_lock<std::mutex> lock(start_mutex);
+      start_cv.wait(lock, [&] { return start; });
+    }
+    stop_latest_mux_pipeline(&fixture);
+  });
+  {
+    std::lock_guard<std::mutex> lock(start_mutex);
+    start = true;
+  }
+  start_cv.notify_all();
+  raw_completion.join();
+  teardown.join();
+  gst_buffer_unref(preproc);
   gst_sample_unref(output);
 
   GstBuffer* late_terminal = make_terminal_identity_buffer(kStreamId, 7);
@@ -1504,11 +1943,14 @@ int main() {
   try {
     simaai::neat::gst_init_once();
 
-    test_encoded_frame_tap_owns_au_and_timing();
-    test_clear_encoded_frame_tap_waits_for_inflight_callback();
-    test_encoded_frame_tap_copy_failure_posts_pipeline_error();
+    test_graph_scoped_encoded_output_retains_au_and_timing_zero_copy();
+    test_graph_scoped_encoded_output_owned_copy_releases_source();
+    test_graph_scoped_encoded_output_queue_overflow_policy();
     test_terminal_release_restores_original_pts();
+    test_guarded_terminal_restore_is_in_place_and_authoritative();
     test_replacing_chain_uses_per_stream_fifo_timing();
+    test_concurrent_raw_completion_claims_distinct_replacing_loans();
+    test_raw_completion_is_stream_scoped_and_preserves_out_of_order_timing();
     test_replacing_chain_stale_live_private_collision_cannot_exhaust_total_gate();
     test_keyed_release_cannot_restore_finalized_timing();
     test_public_per_stream_limit_reaches_mux_gate();
@@ -1634,7 +2076,7 @@ int main() {
         unrelated_ns, "unit-stamped-with-sidecar-cleanup");
 
     {
-      simaai::neat::RealtimeGraphLinkOptions bounded_options;
+      simaai::neat::GraphLinkOptions bounded_options;
       bounded_options.queue_depth = 1;
       bounded_options.max_inflight_per_stream = 1;
       bounded_options.max_inflight_total = 1;
@@ -1869,7 +2311,7 @@ int main() {
     simaai::neat::Sample replacement_sample = make_gst_sample_backed_sample(std::nullopt);
     replacement_sample.stream_id = "pending-stream";
     replacement_sample.frame_id = 2;
-    simaai::neat::RealtimeGraphLinkOptions pending_options;
+    simaai::neat::GraphLinkOptions pending_options;
     pending_options.queue_depth = 1;
     simaai::neat::runtime::DownstreamTarget pending_target;
     simaai::neat::runtime::RealtimeLatestLink pending_link(pending_target, pending_options,

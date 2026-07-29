@@ -159,11 +159,11 @@ Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs
 ### 12. `CameraInput strict zero-copy requires a libcamerasrc with simaai-zero-copy`
 
 :::info Cause
-The application explicitly set `CameraInputOptions::allow_cpu_fallback` to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the required properties or the installed memory library cannot export its allocation as a DMA-BUF.
+`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the required properties or the installed memory library cannot export its allocation as a DMA-BUF.
 :::
 
 :::tip Fix
-Keep the default adaptive mode unless you have confirmed the complete zero-copy camera stack is installed:
+Keep strict zero-copy when the coherent camera and memory packages are installed. If you must run against a camera stack without DMA-BUF export, opt into the compatibility bridge explicitly:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">

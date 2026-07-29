@@ -109,9 +109,10 @@ std::mutex& graph_pipeline_build_mu_for_core() {
 const char* graph_backpressure_timeout_explanation() {
   return " This can happen because of graph backpressure: downstream stages, appsinks, or the "
          "application are not draining outputs as fast as inputs are pushed, so an internal "
-         "edge/pipeline queue filled before the timeout. Pull outputs concurrently, reduce the "
-         "push rate, increase GraphRunOptions.edge_queue/push_timeout_ms, or remove/relax slow "
-         "downstream stages.";
+         "edge/pipeline queue filled before the timeout. Drain outputs concurrently, reduce the "
+         "push rate, increase RunOptions::queue_depth for ingress/internal queues, configure the "
+         "terminal Output with OutputOptions::EveryFrame(...) for bounded lossless buffering, or "
+         "remove/relax slow downstream stages.";
 }
 
 using SampleIdentity = PipelineSegmentRuntime::GraphTransport::SampleIdentity;
@@ -1131,7 +1132,7 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
             ? session_build_fused_realtime_source_stream_internal(
                   *segment.fused_realtime_ingress, nodes, opt.guard, last_pipeline, route_options,
                   opt.run_options, opt.mode, opt.require_sink, public_output_contract,
-                  "RunCore::start(plan/fused-realtime)")
+                  "RunCore::start(plan/fused-realtime)", opt.fused_encoded_output_dispatch)
             : session_build_source_stream_internal(
                   nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode,
                   opt.require_sink, public_output_contract, "RunCore::start(plan/source)");

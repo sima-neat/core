@@ -5,6 +5,7 @@
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/CapsBridge.h"
 
+#include <cstring>
 #include <unordered_set>
 
 namespace simaai::neat {
@@ -1805,9 +1806,24 @@ bool tensor_is_device_gstsample_holder(const Tensor& tensor) {
       !tensor.storage->holder) {
     return false;
   }
+  auto* sample = static_cast<GstSample*>(tensor.storage->holder.get());
+  GstBuffer* buffer = sample ? gst_sample_get_buffer(sample) : nullptr;
+  bool uses_simaai_segment_memory = false;
+  if (buffer) {
+    const guint memory_count = gst_buffer_n_memory(buffer);
+    for (guint i = 0; i < memory_count; ++i) {
+      GstMemory* memory = gst_buffer_peek_memory(buffer, i);
+      const char* memory_type = memory && memory->allocator ? memory->allocator->mem_type : nullptr;
+      if (memory_type && (std::strcmp(memory_type, "SimaaiSegmentMemory") == 0 ||
+                          std::strcmp(memory_type, "NeatSimaaiSegmentMemory") == 0)) {
+        uses_simaai_segment_memory = true;
+        break;
+      }
+    }
+  }
   return tensor.device.type != simaai::neat::DeviceType::CPU ||
          tensor.storage->device.type != simaai::neat::DeviceType::CPU ||
-         tensor.storage->sima_mem_target_flags != 0 || !tensor.storage->sima_segments.empty();
+         tensor.storage->sima_mem_target_flags != 0 || uses_simaai_segment_memory;
 }
 
 bool sample_has_device_gstsample_holder(const Sample& sample) {

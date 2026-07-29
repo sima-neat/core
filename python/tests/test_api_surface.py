@@ -159,10 +159,13 @@ def _assert_not_type_error(call):
 
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
-  assert hasattr(pyneat.Graph, "build_fused_realtime_source")
+  assert not hasattr(pyneat.Graph, "build_fused_realtime_source")
+  assert not hasattr(pyneat.Graph, "connect_realtime")
   assert hasattr(pyneat, "GraphOptions")
   assert hasattr(pyneat, "GraphLinkOptions")
+  assert not hasattr(pyneat, "RealtimeMuxByStream")
   assert hasattr(pyneat, "GraphLinkPolicy")
+  assert not hasattr(pyneat.GraphLinkPolicy, "RealtimeEveryFrameByStream")
   assert hasattr(pyneat, "GraphReport")
   assert hasattr(pyneat, "NeatError")
   assert hasattr(pyneat, "ModelRouteOptions")
@@ -230,15 +233,13 @@ def test_graph_link_options_surface():
   opt.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
   opt.queue_depth = 7
   opt.stream_id = "camera0"
-  opt.max_inflight_per_stream = 4
-  opt.max_inflight_total = 16
   assert opt.policy == pyneat.GraphLinkPolicy.RealtimeLatestByStream
   assert opt.queue_depth == 7
   assert opt.stream_id == "camera0"
+  opt.max_inflight_per_stream = 4
+  opt.max_inflight_total = 16
   assert opt.max_inflight_per_stream == 4
   assert opt.max_inflight_total == 16
-  opt.policy = pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
-  assert opt.policy == pyneat.GraphLinkPolicy.RealtimeEveryFrameByStream
 
   source = pyneat.Graph()
   source.custom_with_role(
@@ -524,6 +525,8 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.VideoSenderEncoderOptions())
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30))
   _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H264))
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265))
   _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSenderSendOptions())
   _assert_not_type_error(lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions()))
@@ -613,7 +616,8 @@ def test_output_stage_option_structs_are_mutable():
   video_sender.rtp = video_rtp
   video_sender.encoder = video_encoder
 
-  encoded_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded()
+  encoded_sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H264)
+  h265_encoded_sender = pyneat.VideoSenderOptions.passthrough(pyneat.RtspCodec.H265)
 
   metadata_sender = pyneat.MetadataSenderOptions()
   metadata_sender.host = "127.0.0.1"
@@ -630,6 +634,10 @@ def test_output_stage_option_structs_are_mutable():
   assert parse.alignment == pyneat.H264ParseAlignment.AU
   assert parse.stream_format == pyneat.H264ParseStreamFormat.ByteStream
   assert parse.enforce_caps is True
+  assert encoded_sender.rtp.payload_type == 96
+  assert h265_encoded_sender.rtp.payload_type == 98
+  assert h265_encoded_sender.is_encoded_input() is True
+  assert h265_encoded_sender.is_raw_input() is False
 
   assert group.h264_caps == 'video/x-h264,profile="high"'
   assert group.payload_type == 97
@@ -736,6 +744,7 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert hasattr(pyneat.nodes, "queue")
   assert hasattr(pyneat.nodes, "rtsp_input")
   assert hasattr(pyneat.nodes, "h264_depacketize")
+  assert hasattr(pyneat.nodes, "h265_depacketize")
   assert hasattr(pyneat.nodes, "h264_decode")
   assert hasattr(pyneat.nodes, "sima_decode")
 
@@ -761,6 +770,8 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
           enforce_h264_caps=True,
       )
   )
+  _assert_not_type_error(lambda: pyneat.nodes.h265_depacketize())
+  _assert_not_type_error(lambda: pyneat.nodes.h265_depacketize(payload_type=98))
   with warnings.catch_warnings(record=True) as caught:
     warnings.simplefilter("always")
     _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
@@ -784,12 +795,16 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   )
   native_decode = pyneat.SimaDecodeOptions()
   assert native_decode.type == pyneat.SimaDecodeType.H264
+  assert pyneat.SimaDecodeType.AVC == pyneat.SimaDecodeType.H264
+  assert pyneat.SimaDecodeType.HEVC == pyneat.SimaDecodeType.H265
   assert native_decode.out_format == pyneat.Format.NV12
   assert native_decode.raw_output is True
   assert native_decode.input_buffers == -1
   assert native_decode.decoder_tuning == ""
   assert native_decode.memory_opt is False
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode())
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.AVC
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.JPEG
   native_decode.raw_output = False
@@ -805,6 +820,10 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
   assert native_decode.memory_opt is True
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
   native_decode.type = pyneat.SimaDecodeType.MJPEG
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.H265
+  _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
+  native_decode.type = pyneat.SimaDecodeType.HEVC
   _assert_not_type_error(lambda: pyneat.nodes.sima_decode(native_decode))
 
 
@@ -848,9 +867,15 @@ def test_jpeg_framing_nodes_are_exposed():
 
 def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert pyneat.RtspCodec.H264.name == "H264"
+  assert pyneat.RtspCodec.AVC == pyneat.RtspCodec.H264
   assert pyneat.RtspCodec.MJPEG.name == "MJPEG"
+  assert pyneat.RtspCodec.H265 == pyneat.RtspCodec.HEVC
   _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize())
   _assert_not_type_error(lambda: pyneat.nodes.rtp_jpeg_depacketize(26))
+  h265_depacketize = pyneat.nodes.h265_depacketize(98, 30)
+  h265_depacketize_graph = pyneat.Graph()
+  h265_depacketize_graph.add(h265_depacketize)
+  assert "framerate=(fraction)30/1" in h265_depacketize_graph.describe_backend().lower()
 
   encoded = pyneat.RtspEncodedInputOptions()
   assert encoded.url == ""
@@ -863,8 +888,14 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded.sync_mode is False
   assert encoded.h264_payload_type == 96
   assert encoded.mjpeg_payload_type == 26
+  assert encoded.payload_type == -1
   assert encoded.auto_caps_from_stream is True
   assert encoded.source_fps == -1
+
+  encoded.url = "rtsp://example.local/avc"
+  encoded.codec = pyneat.RtspCodec.AVC
+  avc_group = pyneat.groups.rtsp_encoded_input(encoded)
+  assert "rtph264depay" in avc_group.describe_backend().lower()
 
   encoded.url = "rtsp://example.local/mjpeg"
   encoded.codec = pyneat.RtspCodec.MJPEG
@@ -883,11 +914,25 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert encoded_spec.media_type == "image/jpeg"
   assert encoded_spec.format == "JPEG"
 
+  encoded.url = "rtsp://example.local/h265"
+  encoded.codec = pyneat.RtspCodec.HEVC
+  encoded.payload_type = 98
+  h265_group = pyneat.groups.rtsp_encoded_input(encoded)
+  h265_backend = h265_group.describe_backend().lower()
+  assert "rtph265depay" in h265_backend
+  assert "h265parse" in h265_backend
+  assert "encoding-name=h265" in h265_backend
+  assert "framerate=(fraction)120/1" in h265_backend
+  h265_spec = pyneat.groups.rtsp_encoded_output_spec(encoded)
+  assert h265_spec.payload_type == pyneat.PayloadType.Encoded
+  assert h265_spec.media_type == "video/x-h265"
+  assert h265_spec.format == "H265"
+
   decoded = pyneat.RtspDecodedInputOptions()
   assert decoded.codec == pyneat.RtspCodec.H264
   assert decoded.drop_on_latency is False
   assert decoded.buffer_mode == ""
-  assert decoded.payload_type == 96
+  assert decoded.payload_type == -1
   assert decoded.mjpeg_payload_type == 26
   assert decoded.dec_width == -1
   assert decoded.dec_height == -1
@@ -897,6 +942,22 @@ def test_rtsp_encoded_and_decoded_groups_are_exposed():
   assert decoded.use_videorate is False
   assert decoded.video_rate_fps == -1
   assert decoded.output_caps.memory == pyneat.CapsMemory.Any
+
+  decoded.url = "rtsp://example.local/h265"
+  decoded.codec = pyneat.RtspCodec.H265
+  decoded.dec_width = 1280
+  decoded.dec_height = 720
+  decoded.source_fps = 30
+  h265_decoded_group = pyneat.groups.rtsp_decoded_input(decoded)
+  assert isinstance(h265_decoded_group, pyneat.Graph)
+  h265_decoded_backend = h265_decoded_group.describe_backend().lower()
+  assert "framerate=(fraction)30/1" in h265_decoded_backend
+  assert "dec-fps=30" in h265_decoded_backend
+  h265_decoded_spec = pyneat.groups.rtsp_decoded_output_spec(decoded)
+  assert h265_decoded_spec.media_type == "video/x-raw"
+  assert h265_decoded_spec.format == "NV12"
+  assert h265_decoded_spec.width == 1280
+  assert h265_decoded_spec.height == 720
 
   decoded.url = "rtsp://example.local/mjpeg"
   decoded.codec = pyneat.RtspCodec.MJPEG

@@ -192,7 +192,10 @@ void InputStream::start(std::function<void(Sample)> on_output) {
   state_->teardown_on_exit.store(false);
   state_->use_callbacks = inputstream_use_appsink_callbacks_enabled();
   state_->cb_eos.store(false);
-  state_->cb_queue_max = std::max<std::size_t>(1, state_->opt.appsink_max_buffers);
+  state_->cb_queue_max =
+      state_->opt.explicit_public_output_options && state_->opt.appsink_max_buffers <= 0
+          ? 0U
+          : std::max<std::size_t>(1, state_->opt.appsink_max_buffers);
   state_->running.store(true);
 
   auto st = state_;
@@ -233,6 +236,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             if (!st->cb_queue.empty()) {
               sample = st->cb_queue.front();
               st->cb_queue.pop_front();
+              st->cb_cv.notify_one();
             } else if (st->cb_eos.load()) {
               eos_seen = true;
             }
@@ -513,19 +517,27 @@ void InputStream::stop() {
       std::fprintf(stderr, "[INPUTSTREAM] stop: appsrc block=false\n");
     }
   }
-  const bool stop_flush = inputstream_stop_flush_enabled();
+  // Source/live pipelines request bounded synchronous teardown.  Do not send
+  // FLUSH_START ahead of their NULL transition: source elements may interpret
+  // that event as a runtime restart request and race the state change.  Keep
+  // the legacy pre-flush for deferred/appsrc teardown paths.
+  const bool stop_flush =
+      inputstream_stop_flush_enabled() && !state_->opt.prefer_synchronous_teardown;
   if (stop_flush && pipeline_ref) {
     if (stop_trace_enabled()) {
       std::fprintf(stderr, "[STOP] InputStream::stop flush state=%p pipeline=%p\n",
                    static_cast<void*>(state_.get()), static_cast<void*>(pipeline_ref));
     }
+    // A queue can still have a buffer in flight when teardown begins.  Keep
+    // the pipeline flushing until the NULL state transition: FLUSH_STOP would
+    // reset downstream segments and allow that stale buffer to reach an RTP
+    // payloader/depayloader with an undefined segment.
     const int flush_timeout_ms = inputstream_stop_flush_timeout_ms();
     if (flush_timeout_ms <= 0) {
       GstCallGuard guard(*state_);
       gst_element_send_event(pipeline_ref, gst_event_new_flush_start());
-      gst_element_send_event(pipeline_ref, gst_event_new_flush_stop(TRUE));
       if (inputstream_debug_enabled() || graph_debug_enabled()) {
-        std::fprintf(stderr, "[INPUTSTREAM] stop: flush_start/stop sent\n");
+        std::fprintf(stderr, "[INPUTSTREAM] stop: flush_start sent\n");
       }
     } else {
       auto done = std::make_shared<std::atomic<bool>>(false);
@@ -534,7 +546,6 @@ void InputStream::stop() {
       std::thread flush_thread([flush_pipeline, st, done]() {
         GstCallGuard guard(*st);
         gst_element_send_event(flush_pipeline, gst_event_new_flush_start());
-        gst_element_send_event(flush_pipeline, gst_event_new_flush_stop(TRUE));
         gst_object_unref(flush_pipeline);
         done->store(true, std::memory_order_relaxed);
       });

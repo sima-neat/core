@@ -35,7 +35,8 @@ sima-cli neat install sdk@release-2.1
 
 The first install can take several minutes because it downloads the Neat SDK
 container image. After the image is downloaded, the installer starts SDK setup
-and asks whether you want to pair with a Modalix DevKit.
+and asks whether you want to pair with a Modalix DevKit and whether to install
+the matching Model Compiler inside the SDK.
 
 If you choose to pair with a DevKit, enter the DevKit IP address when prompted.
 The setup flow configures the SDK workspace, starts the SDK container, and
@@ -45,6 +46,14 @@ and you can pair later.
 The `release-2.1` package tracks the latest Neat SDK patch release in the 2.1
 series. The current release is Neat SDK 2.1.2.2, which is compatible with
 DevKit software 2.1.2.
+
+During setup, `sima-cli` also offers to install the matching Model Compiler
+(2.1.2) inside the SDK — accept the prompt if you compile or quantize models
+yourself; there is no separate version to choose. Skip it if you only run
+precompiled model packages. To install it later, pin a specific patch, or use a
+standalone host, see
+[Install Model Compiler](/getting-started/dev-environment/install-model-compiler/)
+and the [Compatibility Guide](/getting-started/compatibility/).
 
 :::note Older SDK releases use the legacy two-step install flow
 For SDK 2.0.0, 2.1.2.0, or 2.1.2.1, install with the legacy image pull and setup
@@ -78,11 +87,14 @@ From inside the SDK shell, run:
 neat
 </ShellCommand>
 
-The command output includes the Insight URL. Open that URL in Chrome to inspect
-workspace files, media sources, stream delivery, and runtime behavior. On a
-local host, the URL is typically `https://localhost:9900`. From another machine
-on the network, use the host IP address shown by the SDK environment. For more
-information, see [Insight](/tools/insight/).
+The command output includes a **Web Access** section with local and remote URLs
+for Insight and browser-based VS Code. Local access means opening the URL in a
+browser on the same machine that runs the SDK; remote access means opening it
+from another machine. Prefer the local `127.0.0.1` URL when the browser and SDK
+are on the same host because it continues to work if the host's network IP
+changes. For remote access, use the URL derived from `NFS_SERVER_HOST_IP`. The
+VS Code URL includes the configured access token and opens the configured
+workspace. For more information, see [Insight](/tools/insight/).
 
 ### Use VS Code
 
@@ -137,5 +149,9 @@ sima-cli sdk remove
 
 ## Next Step
 
-Continue to [DevKit Sync](/getting-started/dev-environment/devkit-sync/) to
-learn how SDK workspace sharing and `dk` command execution work.
+- **Compiling a model in the SDK?** Continue to
+  [Compile a Model](/compile-a-model/) — this runs entirely in the SDK, with no
+  DevKit required.
+- **Pairing a DevKit?** Set up
+  [DevKit Sync](/getting-started/dev-environment/devkit-sync/) to share your SDK
+  workspace and run `dk` commands on the hardware.

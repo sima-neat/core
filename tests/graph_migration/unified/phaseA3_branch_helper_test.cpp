@@ -93,7 +93,7 @@ RUN_TEST("graph_migration_phaseA3_branch_helper_test", [] {
     simaai::neat::Graph app;
     app.connect(source, branch);
 
-    simaai::neat::RealtimeGraphLinkOptions realtime;
+    simaai::neat::GraphLinkOptions realtime;
     realtime.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
     realtime.queue_depth = 1;
     realtime.stream_id = "stream0";

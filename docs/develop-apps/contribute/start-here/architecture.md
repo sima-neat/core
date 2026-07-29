@@ -407,18 +407,19 @@ Additionally, runtime paths may verify required plugins are present:
 - `require_element("appsink", ...)`, etc.
 
 ### Building pipelines
-A `Graph` is built by adding `Node` objects:
+A `Graph` is built by adding `Node` objects and reusable Graph fragments. Use a
+codec-aware fragment for RTSP so the source is depacketized and parsed before
+decode:
 
 ```cpp
-simaai::neat::Graph graph;
-simaai::neat::SimaDecodeOptions decode_options;
-decode_options.type = simaai::neat::SimaDecodeType::H264;
-decode_options.raw_output = false;
+simaai::neat::nodes::groups::RtspDecodedInputOptions source;
+source.url = "rtsp://example/live";
+source.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+source.source_fps = 30;
 
-graph.add(simaai::neat::nodes::RTSPInput("rtsp://example/live"))
-     .add(simaai::neat::nodes::SimaDecode(decode_options))
-     .add(simaai::neat::nodes::CapsNV12SysMem(-1, -1, -1))
-     .add(simaai::neat::nodes::Output());
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
+graph.add(simaai::neat::nodes::Output());
 ```
 
 Internally:
@@ -442,6 +443,21 @@ Internally:
 
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
+
+### Realtime fan-in lowering
+
+Applications describe realtime edges with ordinary `Graph::connect(...)` and
+materialize them with ordinary `Graph::build(...)`. `GraphLinkOptions` carries
+the latest-by-stream policy, stream identity, a reserved queue-depth field, and
+optional raw-frame admission limits. Latest-by-stream lowering always keeps one
+pending sample per stream.
+
+The execution-graph compiler, not the application, decides whether live
+multi-source fan-in can be fused into one GStreamer pipeline. Eligible private,
+inputless source branches are lowered with their by-stream mux and consumer so
+decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
+latest-by-stream topology remains segmented. Nested already-fused source
+segments remain ineligible until their branches can be preserved recursively.
 
 ### Parsing & launch
 

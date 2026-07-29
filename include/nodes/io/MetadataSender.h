@@ -30,7 +30,14 @@ struct MetadataSenderSendOptions {
   bool nonblocking = true;
 };
 
-/** @brief Point-in-time diagnostics for one metadata sender. */
+/**
+ * @brief Point-in-time diagnostics for one metadata sender.
+ *
+ * `MetadataSender::stats()` may be called while other threads are sending. The
+ * returned fields are individually coherent counters, but the structure is a
+ * concurrent diagnostic snapshot rather than a transactional snapshot of one
+ * instant.
+ */
 struct MetadataSenderStats {
   uint64_t send_attempts = 0;         ///< Calls that reached `sendto`.
   uint64_t datagrams_sent = 0;        ///< Complete UDP datagrams accepted by the kernel.
@@ -57,6 +64,7 @@ public:
   const std::string& host() const;
   int metadata_port() const;
   bool nonblocking() const;
+  /// Return a concurrent diagnostic snapshot; fields need not represent one transaction.
   MetadataSenderStats stats() const;
 
   bool send_raw_json(const std::string& payload, std::string* err = nullptr) const;

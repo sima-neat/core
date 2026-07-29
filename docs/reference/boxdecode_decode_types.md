@@ -163,6 +163,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
+| `BoxDecodeType::Ssd` | `ssd` | SSD-family detection (any feature-map count / input size) |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | R-CNN proposal stage |
@@ -191,6 +192,14 @@ Advanced tensor-contract rules:
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
 - `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
+- `Ssd` uses grouped per-level localization heads (depth = `4 * priors-per-cell`)
+  paired with class-confidence heads (depth = `num_classes * priors-per-cell`).
+  Boxes are decoded against the model's prior/anchor boxes and class scores use a
+  softmax over the class dimension (background included). The decode is generic
+  across SSD variants: the feature-map count, input size, and per-level
+  priors-per-cell are read from the model archive, and the class count is derived
+  from the loc/conf head geometry. Leave `decode_type_option` as `Auto`; the
+  grouped-by-role layout is selected automatically.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
 - `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do

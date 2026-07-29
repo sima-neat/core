@@ -19,6 +19,18 @@ namespace sima_test {
 
 namespace fs = std::filesystem;
 
+#ifndef SIMA_NEAT_MODELZOO_VERSION_STRING
+#define SIMA_NEAT_MODELZOO_VERSION_STRING ""
+#endif
+
+inline std::string modelzoo_version() {
+  if (const char* override_version = std::getenv("SIMA_MODELZOO_VERSION");
+      override_version != nullptr && override_version[0] != '\0') {
+    return override_version;
+  }
+  return SIMA_NEAT_MODELZOO_VERSION_STRING;
+}
+
 inline std::string shell_quote(const std::string& s) {
   std::string out = "'";
   for (char c : s) {
@@ -157,6 +169,7 @@ struct TestRuntimePaths {
   fs::path model_archive_fixture_manifest;
   fs::path decoder_fixture;
   fs::path codec_perf_h264_fixture;
+  fs::path codec_perf_h265_fixture;
 };
 
 inline void append_unique_path(std::vector<fs::path>& out, const fs::path& path) {
@@ -292,6 +305,8 @@ inline const TestRuntimePaths& test_runtime_paths() {
             resolve_manifest_relative_path(text, "decoder_fixture_rel", value.build_root);
         value.codec_perf_h264_fixture =
             resolve_manifest_relative_path(text, "codec_perf_h264_fixture_rel", value.build_root);
+        value.codec_perf_h265_fixture =
+            resolve_manifest_relative_path(text, "codec_perf_h265_fixture_rel", value.build_root);
       }
     }
 
@@ -319,8 +334,11 @@ inline const TestRuntimePaths& test_runtime_paths() {
       value.decoder_fixture =
           value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
     if (value.codec_perf_h264_fixture.empty())
-      value.codec_perf_h264_fixture =
-          value.source_root / "build" / "test-assets" / "codec-perf" / "h264_1280x720_30fps.h264";
+      value.codec_perf_h264_fixture = value.source_root / "build" / "test-assets" / "codec-perf" /
+                                      "h264_1280x720_30fps_no_sei.h264";
+    if (value.codec_perf_h265_fixture.empty())
+      value.codec_perf_h265_fixture = value.source_root / "build" / "test-assets" / "codec-perf" /
+                                      "h265_1280x720_30fps_no_sei.h265";
 
     return value;
   }();
@@ -365,6 +383,10 @@ inline fs::path test_decoder_fixture_path() {
 
 inline fs::path test_codec_perf_h264_fixture_path() {
   return test_runtime_paths().codec_perf_h264_fixture;
+}
+
+inline fs::path test_codec_perf_h265_fixture_path() {
+  return test_runtime_paths().codec_perf_h265_fixture;
 }
 
 inline fs::path default_asset_root(const fs::path& root_in = {}) {
@@ -418,8 +440,12 @@ inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& 
 }
 
 inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
-  const std::string cmd =
-      "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo get " + shell_quote(model_name);
+  std::string cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo";
+  const std::string version = modelzoo_version();
+  if (!version.empty()) {
+    cmd += " -v " + shell_quote(version);
+  }
+  cmd += " get " + shell_quote(model_name);
   return std::system(cmd.c_str());
 }
 

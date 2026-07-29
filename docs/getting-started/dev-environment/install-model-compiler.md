@@ -1,7 +1,7 @@
 ---
 title: Install Model Compiler
 description: Install Model Compiler in the Neat SDK or on a supported standalone host
-sidebar_position: 3
+sidebar_position: 5
 ---
 
 :::tip Start here only when installing Model Compiler separately
@@ -25,7 +25,9 @@ For supported version combinations and standalone host requirements, see
 ## Install Inside the SDK
 
 If you skip Model Compiler during SDK setup, install it later from inside the
-Neat SDK. Run the command that matches your Neat SDK container architecture.
+Neat SDK. Run the command that matches your Neat SDK container architecture. To
+check it, run `uname -m` inside the SDK shell: `aarch64` means use the `arm64`
+command, and `x86_64` means use the `amd64` command.
 
 For `amd64` Neat SDK containers:
 
@@ -56,7 +58,9 @@ deactivate-model-compiler
 
 Standalone installation is supported only on host environments listed in
 [Compatibility](/getting-started/compatibility/#model-compiler). Run the
-matching `sima-cli install` command from the supported host environment.
+matching `sima-cli install` command from the supported host environment. To
+check the host architecture, run `uname -m`: `x86_64` uses the `amd64` command,
+and `aarch64` uses the `arm64` command.
 
 For Model Compiler 2.1.2 on `amd64` hosts:
 
