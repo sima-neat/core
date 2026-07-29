@@ -735,8 +735,7 @@ void remove_staging_dirs_of_dead_processes(const fs::path& base) noexcept try {
     ec.clear();
   }
 } catch (const std::exception&) {
-  // Best effort: a concurrent scavenger can make an entry vanish mid-iteration, which must
-  // never fail the load this runs ahead of.
+  // Best effort: scavenging must never fail the load it runs ahead of.
 }
 
 // mkdtemp, not create_directories: it creates the directory atomically at 0700 and fails on an
@@ -763,12 +762,10 @@ fs::path make_staging_dir() {
   return fs::path(buf.data());
 }
 
-// The inflated size is not knowable up front, so the size ceiling and the free-space reserve
-// are both enforced while the bytes stream past rather than checked once beforehand.
+// The inflated size is unknown up front, so both guards are enforced as the bytes stream past.
 void inflate_archive_to_file(const std::string& archive_path, const fs::path& out_path,
                              const ModelArchiveLoaderOptions& opt) {
-  // Redirected, not passed as an argument: an archive path starting with '-' would otherwise
-  // be parsed as a gzip option.
+  // Redirected, not an argument: a path starting with '-' would parse as a gzip option.
   const std::string cmd = std::string("gzip -dc < ") + shell_quote(archive_path) + " 2>/dev/null";
 
   FILE* pipe = ::popen(cmd.c_str(), "r");
@@ -869,9 +866,8 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
   }
 }
 
-// A private, inflated copy of a model archive, removed when the snapshot goes out of scope.
-// Once it is constructed nothing else reads the caller-supplied path, so an archive swapped on
-// disk mid-load cannot make extraction diverge from what was validated.
+// A private inflated copy, removed when it goes out of scope. Nothing reads the caller's path
+// after this exists, so an archive swapped mid-load cannot diverge extraction from validation.
 class ArchiveSnapshot {
 public:
   ArchiveSnapshot(const std::string& archive_path, const ModelArchiveLoaderOptions& opt);
@@ -926,8 +922,7 @@ ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
   dir_ = make_staging_dir();
   tar_path_ = (dir_ / "archive.tar").string();
 
-  // Inflating cannot produce fewer bytes than the archive holds, so the compressed size is a
-  // free lower bound to reject on before writing anything.
+  // Inflating cannot yield fewer bytes than the archive holds: a free lower bound.
   try {
     require_output_space(dir_, source_size_bytes_, opt);
   } catch (...) {
@@ -1326,8 +1321,7 @@ ModelArchiveLoader::extract(const std::string& archive_path,
                       package_root.string());
   }
   ec.clear();
-  // Covers the peak of snapshot and output coexisting when they share a filesystem, since the
-  // snapshot is already written here. On separate filesystems the inflate loop guards staging.
+  // The snapshot is already written, so on a shared filesystem this covers both coexisting.
   require_output_space(root, planned_extracted_regular_bytes(validated.entries), opt);
   try {
     fs::create_directories(package_root / "etc", ec);
@@ -1346,6 +1340,8 @@ ModelArchiveLoader::extract(const std::string& archive_path,
                     "invalid_archive: failed to create share dir under output root");
     }
 
+    // Member at a time to stdout, never `tar -x` into a directory: tar must not be the one
+    // choosing where bytes land.
     for (const auto& entry : validated.entries) {
       if (entry.type != '-')
         continue;

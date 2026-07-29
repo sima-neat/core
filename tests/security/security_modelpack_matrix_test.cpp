@@ -53,8 +53,7 @@ std::vector<std::string> package_file_set(const std::filesystem::path& package_r
   return files;
 }
 
-// Extracts `fixture`, swapping `replacement` over it after validation and before the first byte
-// is written. Returns the extracted package root.
+// Extracts `fixture`, swapping `replacement` over it after validation, before the first write.
 std::string extract_with_archive_swapped_mid_load(const std::string& fixture_rel,
                                                   const std::string& replacement_rel,
                                                   const std::string& scratch_tag) {
@@ -176,8 +175,8 @@ RUN_TEST("security_modelpack_matrix_test", ([] {
            }
 
            // SEC_CASE=archive_replaced_between_validation_and_extraction
-           // Replacing the archive after it passed validation must not change a single extracted
-           // byte. multi_stage_valid differs from basic_valid in both member set and contents.
+           // multi_stage_valid differs from basic_valid in both member set and contents, so any
+           // read of the replaced file would show up below.
            {
              const fs::path reference = fs::path(
                  ModelArchiveLoader::extract(

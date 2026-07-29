@@ -155,8 +155,7 @@ RUN_TEST(
           ModelArchiveErrorClass::InvalidArchive,
           "destination collision should fail with invalid_archive when reject flag is set");
 
-      // Exactly the entries validation classified as extractable — what a bulk-tar rewrite
-      // would silently break by also materializing directory entries and skipped aux files.
+      // Exactly the entries validation classified as extractable, and nothing else.
       require(extracted_file_set(fs::path(first.package_root)) ==
                   std::vector<std::string>{"etc/0_preproc.json", "etc/0_process_mla.json",
                                            "etc/pipeline_sequence.json", "lib/model.so",
@@ -199,8 +198,8 @@ RUN_TEST(
                 "extract should honor the root returned by the callback");
       }
 
-      // A private TMPDIR makes staging observable: the gzip-bomb ceiling rejects an archive
-      // within the compressed limit, and no staging copy survives any of the three outcomes.
+      // A private TMPDIR makes the staging copy observable: none survives any of the three
+      // outcomes below.
       {
         const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_tmpdir");
         const std::string staging_root = sima_test::make_temp_dir("model_archive_loader_staging");

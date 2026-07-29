@@ -94,17 +94,11 @@ struct ModelArchiveExtractResult {
   ModelArchiveManifest manifest;
 };
 
-/// Selects the extraction root, given the manifest of the archive already validated. Invoked
-/// before any output file is created.
+/// Selects the extraction root from the validated manifest, before any output file is created.
 using ChooseModelArchiveOutputRoot = std::function<std::string(const ModelArchiveManifest&)>;
 
-/// Reads .tar.gz model archives.
-///
-/// Every entry point inflates the archive exactly once into a private staging copy under TMPDIR
-/// and reads listings, JSON, and payload bytes back out of that copy, so every entry point —
-/// inspect() included — needs temp space for the inflated size. Two properties follow: replacing
-/// the archive on disk mid-load cannot change what is validated or written, and tar is never
-/// handed a filesystem destination, because this class computes every output path itself.
+/// Reads .tar.gz model archives. Every entry point, inspect() included, inflates the archive
+/// once into a staging copy under TMPDIR and so needs temp space for the inflated size.
 class ModelArchiveLoader {
 public:
   static ModelArchiveManifest inspect(const std::string& archive_path,
@@ -114,8 +108,8 @@ public:
                                            const std::string& output_root,
                                            const ModelArchiveLoaderOptions& opt = {});
 
-  /// extract() for callers whose root choice depends on the archive's extracted size, without
-  /// costing them a second validation pass.
+  /// extract() for callers whose root choice depends on the extracted size, without costing
+  /// them a second validation pass.
   static ModelArchiveExtractResult extract(const std::string& archive_path,
                                            const ChooseModelArchiveOutputRoot& choose_output_root,
                                            const ModelArchiveLoaderOptions& opt = {});
