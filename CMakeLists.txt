@@ -1040,9 +1040,13 @@ if (SimaLMM_FOUND)
   target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
-# Model archives are inflated in process. libz already loads transitively; declared explicitly.
+# Model archives are inflated in process. Private to the implementation: no public header uses
+# zlib, and linking the imported target would put ZLIB::ZLIB in the exported interface, which
+# consumers cannot resolve without a find_dependency(ZLIB) in SimaNeatConfig.
 find_package(ZLIB REQUIRED)
-target_link_libraries(sima_neat_common INTERFACE ZLIB::ZLIB)
+target_include_directories(sima_neat_objects PRIVATE ${ZLIB_INCLUDE_DIRS})
+target_link_libraries(sima_neat PRIVATE ${ZLIB_LIBRARIES})
+target_link_libraries(sima_neat_static PRIVATE ${ZLIB_LIBRARIES})
 
 if (GST_FOUND)
   target_link_libraries(sima_neat_common INTERFACE ${GST_LIBRARIES})
@@ -1481,6 +1485,8 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-core406"
   "libopencv-imgproc406"
   "libopencv-imgcodecs406"
+  # libsima_neat.so links libz directly to inflate model archives in process.
+  "zlib1g"
   "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
   "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
