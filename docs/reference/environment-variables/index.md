@@ -135,6 +135,12 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 - `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove stale dead-`proc_*` extraction roots on startup (default `1`).
 - `SIMA_MODEL_TAR=<path>` — base model-pack path used by examples/tests.
   Per-model overrides (`SIMA_RESNET50_TAR`, `SIMA_YOLO_TAR`, etc.) still take precedence.
+- `TMPDIR=<dir>` — staging directory for model-archive loading (default `/tmp`). Every load,
+  including metadata-only inspection, decompresses the `.tar.gz` once into a private directory
+  here, so this filesystem needs room for the fully decompressed archive plus the free-space
+  reserve — roughly 350 MB for a 150 MB archive. Use a local filesystem; a network mount can
+  disappear while the board is running. The directory is removed when loading finishes, on
+  success and on failure; an abrupt kill or power loss can leave one behind.
 
 ## RTSP / H264
 
