@@ -114,6 +114,11 @@ BenchmarkReport build_benchmark_report_from_measurements(const MeasureReport& la
                                                          const MeasureReport& throughput_report,
                                                          int expected_samples);
 
+PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
+                                                        const ResolvedPreprocessPlan& plan,
+                                                        const PreprocessContractFlags& flags,
+                                                        const BenchmarkOptions& options);
+
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,
                                          const IngressConsumerTensorIdentity& identity);
 Sample remap_sample_to_consumer_identity(Sample sample,

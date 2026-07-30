@@ -2030,23 +2030,8 @@ int benchmark_dim(int64_t value) {
              : 0;
 }
 
-BenchmarkInputGeometry benchmark_input_geometry(const Tensor& tensor,
-                                                const ResolvedPreprocessPlan& plan,
-                                                const PreprocessRuntimeMeta& meta) {
+BenchmarkInputGeometry benchmark_tensor_geometry(const Tensor& tensor) {
   auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
-  for (const auto g :
-       {wh(meta.original_width, meta.original_height), wh(meta.resized_width, meta.resized_height),
-        wh(meta.scaled_width, meta.scaled_height),
-        wh(plan.effective.resize.width, plan.effective.resize.height),
-        wh(plan.mla_contract.width, plan.mla_contract.height)}) {
-    if (g)
-      return g;
-  }
-  for (const auto& c : plan.ingress_contracts) {
-    if (auto g = wh(c.width, c.height))
-      return g;
-  }
-
   if (tensor.axis_semantics.size() == tensor.shape.size()) {
     BenchmarkInputGeometry g;
     for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
@@ -2074,6 +2059,28 @@ BenchmarkInputGeometry benchmark_input_geometry(const Tensor& tensor,
   return {};
 }
 
+BenchmarkInputGeometry benchmark_model_geometry(const Tensor& tensor,
+                                                const ResolvedPreprocessPlan& plan,
+                                                const PreprocessRuntimeMeta& meta) {
+  auto wh = [](int w, int h) { return BenchmarkInputGeometry{w, h}; };
+  for (const auto g :
+       {wh(meta.resized_width, meta.resized_height), wh(meta.scaled_width, meta.scaled_height),
+        wh(plan.effective.resize.width, plan.effective.resize.height),
+        wh(plan.mla_contract.width, plan.mla_contract.height)}) {
+    if (g)
+      return g;
+  }
+  for (const auto& c : plan.ingress_contracts) {
+    if (auto g = wh(c.width, c.height))
+      return g;
+  }
+  if (const BenchmarkInputGeometry tensor_geometry = benchmark_tensor_geometry(tensor);
+      tensor_geometry) {
+    return tensor_geometry;
+  }
+  return wh(meta.original_width, meta.original_height);
+}
+
 std::string benchmark_resize_mode(ResizeMode mode) {
   switch (mode) {
   case ResizeMode::Stretch:
@@ -2096,17 +2103,78 @@ std::string benchmark_input_color(const Tensor& tensor, const ResolvedPreprocess
   return planned.empty() ? "synthetic" : planned;
 }
 
-void set_if_missing(int& field, int value) {
-  if (field <= 0 && value > 0)
-    field = value;
+void validate_benchmark_options(const BenchmarkOptions& options) {
+  if (options.num_samples <= 0) {
+    throw std::runtime_error("Model::benchmark: num_samples must be > 0");
+  }
+  if (options.original_width.has_value() != options.original_height.has_value()) {
+    throw std::runtime_error(
+        "Model::benchmark: original_width and original_height must be provided together");
+  }
+  if (options.original_width.has_value() &&
+      (*options.original_width <= 0 || *options.original_height <= 0)) {
+    throw std::runtime_error("Model::benchmark: original_width and original_height must be > 0");
+  }
 }
 
-void set_if_missing(std::string& field, std::string value) {
-  if (field.empty() && !value.empty())
-    field = std::move(value);
+PreprocessRuntimeMeta
+resolve_benchmark_preprocess_meta_impl(const Tensor& tensor, const ResolvedPreprocessPlan& plan,
+                                       const internal::PreprocessContractFlags& flags,
+                                       const BenchmarkOptions& options) {
+  validate_benchmark_options(options);
+
+  const PreprocessRuntimeMeta existing =
+      tensor.semantic.preprocess.value_or(PreprocessRuntimeMeta{});
+  BenchmarkInputGeometry model_geometry = benchmark_model_geometry(tensor, plan, existing);
+  BenchmarkInputGeometry source_geometry{
+      options.original_width.value_or(existing.original_width),
+      options.original_height.value_or(existing.original_height)};
+  if (!source_geometry) {
+    source_geometry = model_geometry;
+  }
+  if (!model_geometry) {
+    model_geometry = source_geometry;
+  }
+  if (!source_geometry || !model_geometry) {
+    throw std::runtime_error(
+        "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
+  }
+
+  const ResizeMode resize_mode = options.resize_mode.value_or(
+      plan.effective.resize.enable == AutoFlag::On ? plan.effective.resize.mode
+                                                   : ResizeMode::Stretch);
+
+  PreprocessMetaTemplate meta_template;
+  meta_template.enabled = true;
+  meta_template.target_width = model_geometry.width;
+  meta_template.target_height = model_geometry.height;
+  meta_template.scaled_width = model_geometry.width;
+  meta_template.scaled_height = model_geometry.height;
+  meta_template.resize_mode = benchmark_resize_mode(resize_mode);
+  meta_template.color_in = benchmark_input_color(tensor, plan);
+  meta_template.color_out =
+      preprocess_color_format_name(plan.effective.color_convert.output_format);
+  if (meta_template.color_out.empty()) {
+    meta_template.color_out = meta_template.color_in;
+  }
+  meta_template.axis_perm = plan.effective.layout_convert.perm;
+  meta_template.normalize = plan.effective.normalize.enable == AutoFlag::On;
+  meta_template.quantize = flags.quant_needed;
+  meta_template.tessellate = flags.tess_needed;
+
+  InputOptions input_options;
+  input_options.preprocess_meta = std::move(meta_template);
+  const auto meta = make_simaai_preprocess_meta_from_template(input_options, source_geometry.width,
+                                                              source_geometry.height);
+  if (!meta.has_value()) {
+    throw std::runtime_error(
+        "Model::benchmark: failed to create synthetic preprocess metadata for BoxDecode");
+  }
+  return *meta;
 }
 
-void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorList& inputs) {
+void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorList& inputs,
+                                                    const BenchmarkOptions& options) {
   if (internal::ModelAccess::resolved_post_kind(model) != internal::PostRouteStageKind::BoxDecode)
     return;
 
@@ -2114,40 +2182,12 @@ void attach_benchmark_preprocess_meta_for_boxdecode(const Model& model, TensorLi
   const internal::PreprocessContractFlags flags =
       internal::ModelAccess::preprocess_contract_flags(model);
   for (Tensor& tensor : inputs) {
-    const bool had_meta = tensor.semantic.preprocess.has_value();
-    PreprocessRuntimeMeta meta = had_meta ? *tensor.semantic.preprocess : PreprocessRuntimeMeta{};
-    const BenchmarkInputGeometry g = benchmark_input_geometry(tensor, plan, meta);
-    if (!g) {
-      throw std::runtime_error(
-          "Model::benchmark: unable to infer synthetic source geometry required by BoxDecode");
-    }
-
-    set_if_missing(meta.original_width, g.width);
-    set_if_missing(meta.original_height, g.height);
-    set_if_missing(meta.resized_width, g.width);
-    set_if_missing(meta.resized_height, g.height);
-    set_if_missing(meta.scaled_width, meta.resized_width);
-    set_if_missing(meta.scaled_height, meta.resized_height);
-    set_if_missing(meta.resize_mode, plan.effective.resize.enable == AutoFlag::On
-                                         ? benchmark_resize_mode(plan.effective.resize.mode)
-                                         : std::string("stretch"));
-    set_if_missing(meta.color_in, benchmark_input_color(tensor, plan));
-    set_if_missing(meta.color_out,
-                   preprocess_color_format_name(plan.effective.color_convert.output_format));
-    if (meta.color_out.empty())
-      meta.color_out = meta.color_in;
-    if (meta.axis_perm.empty())
-      meta.axis_perm = plan.effective.layout_convert.perm;
-    if (!had_meta) {
-      meta.normalize = plan.effective.normalize.enable == AutoFlag::On;
-      meta.quantize = flags.quant_needed;
-      meta.tessellate = flags.tess_needed;
-    }
-    tensor.semantic.preprocess = std::move(meta);
+    tensor.semantic.preprocess =
+        internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, options);
   }
 }
 
-TensorList make_synthetic_benchmark_inputs(const Model& model) {
+TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOptions& options) {
   const std::vector<TensorSpec> specs = model.input_specs();
   if (specs.empty()) {
     throw std::runtime_error("Model::benchmark: input_specs() returned no inputs");
@@ -2157,7 +2197,7 @@ TensorList make_synthetic_benchmark_inputs(const Model& model) {
   for (std::size_t i = 0; i < specs.size(); ++i) {
     inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
   }
-  attach_benchmark_preprocess_meta_for_boxdecode(model, inputs);
+  attach_benchmark_preprocess_meta_for_boxdecode(model, inputs, options);
   return inputs;
 }
 
@@ -4499,6 +4539,17 @@ build_preprocess_plan_with_verbosity(const std::string& tar_gz, const Model::Opt
 }
 
 } // namespace
+
+namespace internal {
+
+PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
+                                                        const ResolvedPreprocessPlan& plan,
+                                                        const PreprocessContractFlags& flags,
+                                                        const BenchmarkOptions& options) {
+  return resolve_benchmark_preprocess_meta_impl(tensor, plan, flags, options);
+}
+
+} // namespace internal
 
 struct Model::Impl {
   std::string source_path;
@@ -7695,14 +7746,14 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
 }
 #endif
 
-BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
-  if (num_samples <= 0) {
-    throw std::runtime_error("Model::benchmark: num_samples must be > 0");
-  }
+BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
+  validate_benchmark_options(options);
+  const int num_samples = options.num_samples;
+  const bool include_plugin_latency = options.include_plugin_latency;
 
   constexpr int kWarmupSamples = 50;
   constexpr int kTimeoutMs = 120000;
-  const TensorList inputs = make_synthetic_benchmark_inputs(*this);
+  const TensorList inputs = make_synthetic_benchmark_inputs(*this, options);
   const int logical_batch_size = compiled_batch_size();
 
   RunOptions latency_run_options;
@@ -7846,6 +7897,13 @@ BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
   std::cout.precision(old_precision);
 
   return report;
+}
+
+BenchmarkReport Model::benchmark(int num_samples, bool include_plugin_latency) {
+  BenchmarkOptions options;
+  options.num_samples = num_samples;
+  options.include_plugin_latency = include_plugin_latency;
+  return benchmark(options);
 }
 
 BenchmarkReport Model::benchmark(bool include_plugin_latency) {

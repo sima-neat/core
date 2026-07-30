@@ -386,6 +386,28 @@ def test_model_option_structs_are_mutable():
   assert opt.boxdecode_resize_mode == pyneat.ResizeMode.Letterbox
 
 
+def test_benchmark_options_are_mutable():
+  opt = pyneat.BenchmarkOptions()
+
+  assert opt.num_samples == 100
+  assert opt.original_width is None
+  assert opt.original_height is None
+  assert opt.resize_mode is None
+  assert opt.include_plugin_latency is False
+
+  opt.num_samples = 7
+  opt.original_width = 1920
+  opt.original_height = 1080
+  opt.resize_mode = pyneat.ResizeMode.Letterbox
+  opt.include_plugin_latency = True
+
+  assert opt.num_samples == 7
+  assert opt.original_width == 1920
+  assert opt.original_height == 1080
+  assert opt.resize_mode == pyneat.ResizeMode.Letterbox
+  assert opt.include_plugin_latency is True
+
+
 def test_input_stage_option_structs_expose_expected_fields():
   pre = pyneat.PreprocOptions()
   quant_tess = pyneat.QuantTessOptions()

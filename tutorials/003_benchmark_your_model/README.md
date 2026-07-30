@@ -32,6 +32,23 @@ Call `benchmark(samples)`. The API warms up the async model runner, measures an 
 
 The sample count is the number of measured synthetic inputs. Use a larger number for steadier throughput and power numbers; use a smaller number when you only want a quick smoke check.
 
+Detection models whose route ends in BoxDecode can also use `BenchmarkOptions`. Set
+`original_width`, `original_height`, and `resize_mode` to describe the source-image geometry that
+BoxDecode uses when it maps detections from model coordinates. The synthetic tensor remains
+model-shaped:
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.num_samples = 100;
+options.original_width = 1920;
+options.original_height = 1080;
+options.resize_mode = simaai::neat::ResizeMode::Letterbox;
+auto report = model.benchmark(options);
+```
+
+Python exposes the same fields through `pyneat.BenchmarkOptions`. Set both original dimensions or
+omit both; when omitted, the benchmark infers geometry from the resolved model route.
+
 ### Read the report {#step-read-report}
 
 The returned report keeps only the headline fields most users need: average end-to-end latency in milliseconds, throughput in frames per second, average board power in watts when available, and measured energy in joules when available.
