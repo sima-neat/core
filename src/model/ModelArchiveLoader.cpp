@@ -742,18 +742,13 @@ fs::path make_staging_dir() {
   return fs::path(buf.data());
 }
 
-// Both inflate buffers. Measured on Modalix as the knee: 256 KiB costs 3% throughput, 4 MiB buys
-// 1% for 2.2x the resident memory. Must stay within uInt, which bounds a single inflate call.
+// Both inflate buffers. Sized by measurement; bounded by uInt, the limit on one inflate call.
 constexpr std::size_t kInflateBufferBytes = 1024UL * 1024UL;
 static_assert(kInflateBufferBytes <= std::numeric_limits<uInt>::max(),
               "inflate buffers are handed to zlib as uInt");
 
-// In-process gzip decoder, replacing a `gzip -dc` subprocess. Measured on Modalix at 1.73x the
-// subprocess throughput for the same bytes; GNU gzip ships its own inflate rather than zlib's.
-//
-// Concatenated members are one logical stream, which is what `gzip -dc` does and what the archive
-// format permits: stopping at the first end-of-stream marker would silently truncate a valid
-// archive rather than fail it.
+// In-process gzip decoder. Concatenated members are one logical stream, as `gzip -dc` treats them:
+// stopping at the first end-of-stream marker would silently truncate a valid archive.
 class GzipInflater {
 public:
   explicit GzipInflater(const std::string& path) : in_(::fopen(path.c_str(), "rb")) {
@@ -776,19 +771,16 @@ public:
     return in_ != nullptr && stream_open_;
   }
 
-  // True once the stream could not be decoded: corrupt, truncated, or trailing bytes that do not
-  // begin another member. Distinguishes a failed read from a clean end of stream.
+  // Corrupt, truncated, or trailing bytes beginning no member. Separates failure from a clean end.
   bool failed() const noexcept {
     return failed_;
   }
 
-  // Produces up to `size` decompressed bytes, capped at kInflateBufferBytes, and 0 once there are
-  // no more. A short result is normal: one inflate call filled less than the buffer, which does
-  // not mean the stream ended.
+  // Up to `size` bytes, 0 at end of stream. A short result does not mean the stream ended.
   std::size_t read(char* dst, std::size_t size) {
     size = std::min(size, kInflateBufferBytes);
     while (!done_ && !failed_) {
-      // Input exhausted with no end-of-stream marker seen: the archive is truncated.
+      // Input ended with no end-of-stream marker: truncated.
       if (zs_.avail_in == 0 && !refill()) {
         failed_ = true;
         break;
@@ -799,8 +791,7 @@ public:
       const std::size_t produced = size - zs_.avail_out;
 
       if (rc == Z_STREAM_END) {
-        // Only a genuine end of input ends the archive; anything left must begin another member,
-        // and inflate reports it if it does not.
+        // Anything left must begin another member; inflate reports it if it does not.
         if (zs_.avail_in > 0 || !input_eof_) {
           if (::inflateReset(&zs_) != Z_OK) {
             failed_ = true;
@@ -812,7 +803,7 @@ public:
           done_ = true;
         }
       } else if (rc != Z_OK && rc != Z_BUF_ERROR) {
-        // Z_BUF_ERROR only means no progress was possible, which the refill above resolves.
+        // Z_BUF_ERROR means no progress was possible, which the refill above resolves.
         failed_ = true;
         break;
       }
@@ -824,7 +815,7 @@ public:
   }
 
 private:
-  // False at end of input. Sets failed() only for a read error, not for a clean end.
+  // False at end of input; sets failed() only for a read error.
   bool refill() {
     if (input_eof_)
       return false;
@@ -962,8 +953,7 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
     }
   }
 
-  // Checked before the flush: a decode failure is about the archive, not the staging filesystem,
-  // and reporting it as a write error would misdirect the caller.
+  // Before the flush: a decode failure is about the archive, not the staging filesystem.
   if (inflater.failed()) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: failed to decompress archive: " + archive_path);

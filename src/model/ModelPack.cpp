@@ -1025,8 +1025,7 @@ static std::string archive_cache_key(const std::string& tar_path) {
          std::to_string(static_cast<long long>(stamp));
 }
 
-// Stable across processes and library builds, unlike std::hash, which only has to be consistent
-// within one program run.
+// Stable across processes and library builds, unlike std::hash.
 static std::string fnv1a_hex(const std::string& text) {
   std::uint64_t h = 1469598103934665603ULL;
   for (const unsigned char c : text) {
@@ -1038,16 +1037,14 @@ static std::string fnv1a_hex(const std::string& text) {
   return oss.str();
 }
 
-// Directory holding a reusable extracted package, named for the archive identity rather than the
-// pid so a later process can find it. Deliberately not "proc_<pid>": stale-root GC matches only
-// that form, and these are meant to outlive the process that wrote them.
+// Keyed by archive identity, not pid, so a later process finds it. Not "proc_<pid>": stale-root
+// GC matches only that form, and these outlive the process that wrote them.
 static std::string persistent_root_name(const std::string& cache_key) {
   return "pkg_" + fnv1a_hex(cache_key);
 }
 
 // The bases choose_base() may select, in the same order, without probing or creating anything.
-// A lookup must stay side-effect free, so this cannot call is_writable_dir; keep it in step with
-// choose_base.
+// Keep in step with choose_base.
 static std::vector<fs::path> modelpack_base_candidates() {
   std::vector<fs::path> out;
   const char* env_root = std::getenv("SIMA_MPK_EXTRACT_ROOT");
@@ -1066,8 +1063,7 @@ static std::vector<fs::path> modelpack_base_candidates() {
   return out;
 }
 
-// The extracted package for this archive identity if one is already complete on disk. Publication
-// is a directory rename, so anything visible here is fully written and already path-rewritten.
+// Publication is a directory rename, so anything visible here is complete and already rewritten.
 static std::string find_persistent_package(const std::string& root_name) {
   std::error_code ec;
   for (const auto& base : modelpack_base_candidates()) {
@@ -1110,8 +1106,7 @@ static std::string extract_and_organize(const std::string& tar_path,
 
   const std::string cache_key = archive_cache_key(tar_path);
 
-  // Retained extracted data is reusable only when the caller asked for it to be retained. With
-  // cleanup on, extraction stays per-process exactly as before.
+  // Reusable only where retention was requested; with cleanup on, extraction stays per-process.
   const bool reuse_across_processes =
       !modelpack_cleanup_enabled_for_request(cleanup_extracted_model_data);
   const std::string persistent_root = reuse_across_processes ? persistent_root_name(cache_key) : "";
@@ -1137,8 +1132,7 @@ static std::string extract_and_organize(const std::string& tar_path,
       return found->second;
     }
 
-    // Staging directory for a reusable package, so the published directory only ever appears
-    // complete. Sits inside the per-process root, which already handles abandoned data.
+    // Staged inside the per-process root so the published directory only ever appears complete.
     fs::path staging_root;
 
     // Chosen through a callback because the root is sized from the manifest, which the loader
@@ -1167,10 +1161,8 @@ static std::string extract_and_organize(const std::string& tar_path,
         opt);
     const fs::path target_dir(extracted.package_root);
 
-    // Where the package will be readable from. For a reusable package that is its published
-    // path, not the staging path, because the rewritten JSON below bakes it in permanently.
-    // Two levels up from staging: past the staging directory and past the per-process root, so
-    // the published package is a sibling of proc_<pid> and outlives it.
+    // The JSON rewrite below bakes this in permanently, so it must be the published path, not the
+    // staging one. Two levels up clears the staging directory and the per-process root.
     const fs::path published_dir =
         reuse_across_processes
             ? staging_root.parent_path().parent_path() / persistent_root / target_dir.filename()
@@ -1197,8 +1189,7 @@ static std::string extract_and_organize(const std::string& tar_path,
         write_json_file_atomic(entry.path(), cfg, "ModelPack");
       }
     } catch (...) {
-      // The staging root, when there is one, is never garbage collected: cleanup is disabled on
-      // exactly this path, so remove the whole thing rather than just the package inside it.
+      // Staging is never garbage collected here, so remove it rather than the package inside it.
       std::error_code cleanup_ec;
       fs::remove_all(reuse_across_processes ? staging_root : target_dir, cleanup_ec);
       throw;
@@ -1209,8 +1200,7 @@ static std::string extract_and_organize(const std::string& tar_path,
       std::error_code publish_ec;
       fs::rename(staging_root, publish_root, publish_ec);
       if (publish_ec) {
-        // A concurrent loader publishing the same identity is the expected loser here. Its
-        // package is equivalent to ours, so adopt it and drop the staging copy.
+        // A concurrent loader published the same identity; its package is equivalent, so adopt it.
         std::error_code cleanup_ec;
         const std::string ready = find_persistent_package(persistent_root);
         if (ready.empty()) {

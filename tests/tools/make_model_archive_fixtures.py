@@ -633,9 +633,7 @@ def _build_fixture_tree(out_root: Path) -> Dict[str, dict]:
     }
 
     # valid/multi_member_valid.tar.gz (one tar delivered as two concatenated gzip members)
-    # Concatenated members are valid gzip and inflate to the same bytes as the single-member
-    # archive. A decoder that stops at the first end-of-stream marker truncates it silently
-    # instead of failing, so this fixture must extract exactly like basic_valid.
+    # Inflates to the same bytes as basic_valid, so it must extract identically.
     multi_member_rel = "valid/multi_member_valid.tar.gz"
     multi_member_path = out_root / multi_member_rel
     plain_tar = gzip.decompress((out_root / "valid/basic_valid.tar.gz").read_bytes())

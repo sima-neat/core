@@ -1040,8 +1040,7 @@ if (SimaLMM_FOUND)
   target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
-# Model archives are inflated in process. libz already loaded transitively; declared so the
-# dependency is explicit rather than inherited.
+# Model archives are inflated in process. libz already loads transitively; declared explicitly.
 find_package(ZLIB REQUIRED)
 target_link_libraries(sima_neat_common INTERFACE ZLIB::ZLIB)
 

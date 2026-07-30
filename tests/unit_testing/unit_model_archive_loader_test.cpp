@@ -93,9 +93,8 @@ RUN_TEST(
       require(second.package_root == first.package_root,
               "ModelArchiveLoader::extract should be deterministic for same archive/root");
 
-      // Concatenated gzip members are one logical stream. A decoder that stops at the first
-      // end-of-stream marker silently yields a truncated tar here rather than failing, so this
-      // asserts equality with the single-member extraction rather than merely that it succeeded.
+      // A decoder that stops at the first end-of-stream marker truncates this silently rather
+      // than failing, so assert equality with the single-member extraction, not just success.
       const fs::path multi_member =
           sima_test::model_archive_fixture_path("valid/multi_member_valid.tar.gz");
       require(fs::exists(multi_member), "missing multi_member_valid fixture; run "
