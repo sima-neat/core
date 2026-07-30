@@ -742,8 +742,16 @@ void remove_staging_dirs_of_dead_processes(const fs::path& base) noexcept try {
 // existing name, so a pre-created symlink on a shared /tmp cannot capture the staging path.
 fs::path make_staging_dir() {
   std::error_code ec;
-  const fs::path base = fs::temp_directory_path(ec);
-  const fs::path staging_base = ec ? fs::path("/tmp") : base;
+  const fs::path configured = fs::temp_directory_path(ec);
+  // Absolute, because temp_directory_path returns a relative TMPDIR verbatim: the snapshot
+  // outlives a caller callback that may chdir, and both the tar reads and the destructor's
+  // cleanup would then resolve against the wrong directory and leak the staging copy.
+  const fs::path staging_base = fs::absolute(ec ? fs::path("/tmp") : configured, ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                  "failed to resolve a temporary directory for archive staging (" + ec.message() +
+                      ")");
+  }
   remove_staging_dirs_of_dead_processes(staging_base);
 
   const std::string templ =
@@ -787,14 +795,30 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
   }
 
   const bool space_checked = opt.check_output_free_space && output_space_check_enabled();
-  // Sampling less often than the reserve would let the reserve be overrun between two samples.
-  const std::uint64_t space_check_interval = std::clamp<std::uint64_t>(
-      opt.min_output_free_bytes, 1024ULL * 1024ULL, 64ULL * 1024ULL * 1024ULL);
   const fs::path staging_dir = out_path.parent_path();
+
+  // Bytes still writable before the reserve would be breached. Checked before each write, so
+  // the reserve is never spent; a periodic refresh folds in what other writers consumed. The
+  // refresh can only tighten the budget, because our own buffered writes may not be visible to
+  // fs::space yet and a looser number would over-credit us.
+  auto writable_before_reserve = [&](std::uint64_t current) {
+    std::error_code space_ec;
+    const auto space = fs::space(staging_dir, space_ec);
+    if (space_ec)
+      return current;
+    const auto available = static_cast<std::uint64_t>(space.available);
+    const std::uint64_t room =
+        available > opt.min_output_free_bytes ? available - opt.min_output_free_bytes : 0;
+    return std::min(current, room);
+  };
+
+  constexpr std::uint64_t kBudgetRefreshInterval = 64ULL * 1024ULL * 1024ULL;
+  std::uint64_t budget =
+      space_checked ? writable_before_reserve(std::numeric_limits<std::uint64_t>::max()) : 0;
+  std::uint64_t since_refresh = 0;
 
   std::array<char, 65536> buf{};
   std::uint64_t total = 0;
-  std::uint64_t next_space_check = space_check_interval;
 
   while (true) {
     const std::size_t n = ::fread(buf.data(), 1, buf.size(), pipe);
@@ -804,6 +828,28 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
         ::pclose(pipe);
         throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
                       "size_limit_exceeded: inflated archive exceeds configured maximum size");
+      }
+
+      if (space_checked) {
+        if (n > budget) {
+          budget = writable_before_reserve(std::numeric_limits<std::uint64_t>::max());
+        }
+        if (n > budget) {
+          ::pclose(pipe);
+          std::ostringstream oss;
+          oss << "insufficient free space inflating model archive"
+              << " path=" << staging_dir.string() << " inflated=" << format_bytes(total - n)
+              << " reserve=" << format_bytes(opt.min_output_free_bytes)
+              << " writable=" << format_bytes(budget)
+              << " hint=set TMPDIR to a filesystem with enough space";
+          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
+        }
+        budget -= n;
+        since_refresh += n;
+        if (since_refresh >= kBudgetRefreshInterval) {
+          budget = writable_before_reserve(budget);
+          since_refresh = 0;
+        }
       }
 
       errno = 0;
@@ -816,22 +862,6 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
           msg += " (" + std::string(std::strerror(saved_errno)) + ")";
         }
         throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
-      }
-
-      if (space_checked && total >= next_space_check) {
-        std::error_code space_ec;
-        const auto space = fs::space(staging_dir, space_ec);
-        if (!space_ec && space.available < opt.min_output_free_bytes) {
-          ::pclose(pipe);
-          std::ostringstream oss;
-          oss << "insufficient free space inflating model archive"
-              << " path=" << staging_dir.string() << " inflated=" << format_bytes(total)
-              << " reserve=" << format_bytes(opt.min_output_free_bytes)
-              << " available=" << format_bytes(static_cast<std::uint64_t>(space.available))
-              << " hint=set TMPDIR to a filesystem with enough space";
-          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
-        }
-        next_space_check = total + space_check_interval;
       }
     }
 

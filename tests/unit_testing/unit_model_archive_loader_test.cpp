@@ -231,4 +231,64 @@ RUN_TEST(
         require(fs::is_empty(private_tmp),
                 "loader should leave no archive staging directories behind");
       }
+
+      // The reserve must be refused before the write, not noticed after it. The margin leaves
+      // the archive's compressed size (558 B) writable so the up-front lower-bound check still
+      // passes -- with room for the staging directory's own block -- while the 10 KiB inflated
+      // archive does not fit, so only a budget enforced per chunk can reject it.
+      {
+        const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_reserve");
+        const std::string out = sima_test::make_temp_dir("model_archive_loader_reserve_out");
+        constexpr std::uint64_t kWritableMargin = 9216ULL;
+        const auto available = static_cast<std::uint64_t>(fs::space(private_tmp).available);
+        require(available > kWritableMargin, "test needs a temp filesystem with free space");
+
+        ModelArchiveLoaderOptions reserved;
+        reserved.min_output_free_bytes = available - kWritableMargin;
+        sima_test::ScopedEnvVar tmpdir("TMPDIR", private_tmp);
+
+        // Matching the message, not just the class, is what keeps this honest: the up-front
+        // lower-bound check reports "extracting" and would otherwise satisfy the assertion
+        // without the per-chunk budget ever running.
+        std::string reported;
+        try {
+          (void)ModelArchiveLoader::extract(valid.string(), out, reserved);
+        } catch (const ModelArchiveError& e) {
+          reported = e.what();
+        }
+        require_contains(reported, "insufficient free space inflating model archive",
+                         "inflating past the free-space reserve should be refused before the "
+                         "write, by the per-chunk budget");
+        require(fs::is_empty(private_tmp), "a refused inflation should leave no staging copy");
+      }
+
+      // A relative TMPDIR still has to survive a callback that changes the working directory:
+      // a cwd-relative staging path would break the member reads and strand the staging copy.
+      {
+        const fs::path tmp_parent = fs::path(sima_test::make_temp_dir("model_archive_loader_rel"));
+        const fs::path relative_tmp = tmp_parent / "reltmp";
+        const std::string chdir_target = sima_test::make_temp_dir("model_archive_loader_chdir");
+        const std::string out = sima_test::make_temp_dir("model_archive_loader_relative_tmp_out");
+        fs::create_directories(relative_tmp);
+
+        const fs::path cwd = fs::current_path();
+        try {
+          fs::current_path(tmp_parent);
+          sima_test::ScopedEnvVar tmpdir("TMPDIR", "reltmp");
+          const ModelArchiveExtractResult moved = ModelArchiveLoader::extract(
+              valid.string(),
+              [&](const ModelArchiveManifest&) {
+                fs::current_path(chdir_target);
+                return out;
+              },
+              ModelArchiveLoaderOptions{});
+          require(fs::exists(fs::path(moved.etc_dir) / "pipeline_sequence.json"),
+                  "extraction should survive a callback that changes the working directory");
+        } catch (...) {
+          fs::current_path(cwd);
+          throw;
+        }
+        fs::current_path(cwd);
+        require(fs::is_empty(relative_tmp), "a relative TMPDIR should not strand the staging copy");
+      }
     }));
