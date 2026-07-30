@@ -751,7 +751,9 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
   auto room_before_reserve = [&]() -> std::optional<std::uint64_t> {
     std::error_code space_ec;
     const auto space = fs::space(staging_dir, space_ec);
-    if (space_ec)
+    // fs::space reports a value it cannot determine as -1 with ec left clear, which would
+    // otherwise read as unlimited capacity.
+    if (space_ec || space.available == static_cast<std::uintmax_t>(-1))
       return std::nullopt;
     const auto available = static_cast<std::uint64_t>(space.available);
     return available > opt.min_output_free_bytes ? available - opt.min_output_free_bytes : 0;
