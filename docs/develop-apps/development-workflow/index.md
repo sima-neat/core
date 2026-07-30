@@ -41,7 +41,7 @@ preflight checklist, then run one model before adding graph machinery.
 The Development Workflow pages break each of these down in depth. At a glance:
 
 - [Model](/develop-apps/development-workflow/model) — load a compiled model package and expose it as a runnable unit.
-- [GenAIModel](/develop-apps/development-workflow/genai-model) — the generative-model counterpart to `Model`.
+- [GenAI Model](/develop-apps/development-workflow/genai-model) — run generative models directly or serve them over HTTP.
 - [Tensor and Sample](/develop-apps/development-workflow/core_types) — the payload and metadata envelope passed between stages.
 - [Run / Inference](/develop-apps/development-workflow/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
 - [Graph](/develop-apps/development-workflow/graph) — compose model stages, nodes, inputs, and outputs into an application graph.
