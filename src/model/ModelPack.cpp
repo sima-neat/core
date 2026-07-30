@@ -43,6 +43,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <sstream>
@@ -1024,6 +1025,68 @@ static std::string archive_cache_key(const std::string& tar_path) {
          std::to_string(static_cast<long long>(stamp));
 }
 
+// Stable across processes and library builds, unlike std::hash, which only has to be consistent
+// within one program run.
+static std::string fnv1a_hex(const std::string& text) {
+  std::uint64_t h = 1469598103934665603ULL;
+  for (const unsigned char c : text) {
+    h ^= static_cast<std::uint64_t>(c);
+    h *= 1099511628211ULL;
+  }
+  std::ostringstream oss;
+  oss << std::hex << std::setw(16) << std::setfill('0') << h;
+  return oss.str();
+}
+
+// Directory holding a reusable extracted package, named for the archive identity rather than the
+// pid so a later process can find it. Deliberately not "proc_<pid>": stale-root GC matches only
+// that form, and these are meant to outlive the process that wrote them.
+static std::string persistent_root_name(const std::string& cache_key) {
+  return "pkg_" + fnv1a_hex(cache_key);
+}
+
+// The bases choose_base() may select, in the same order, without probing or creating anything.
+// A lookup must stay side-effect free, so this cannot call is_writable_dir; keep it in step with
+// choose_base.
+static std::vector<fs::path> modelpack_base_candidates() {
+  std::vector<fs::path> out;
+  const char* env_root = std::getenv("SIMA_MPK_EXTRACT_ROOT");
+  if (env_root && *env_root) {
+    out.emplace_back(env_root);
+    return out;
+  }
+  out.emplace_back(kDefaultBaseOutputDir);
+  const char* tmpdir = std::getenv("TMPDIR");
+  out.push_back(((tmpdir && *tmpdir) ? fs::path(tmpdir) : fs::path("/tmp")) /
+                "simaai/coprocessing/models");
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+  if (!ec)
+    out.push_back(cwd / "tmp" / "model_extract");
+  return out;
+}
+
+// The extracted package for this archive identity if one is already complete on disk. Publication
+// is a directory rename, so anything visible here is fully written and already path-rewritten.
+static std::string find_persistent_package(const std::string& root_name) {
+  std::error_code ec;
+  for (const auto& base : modelpack_base_candidates()) {
+    const fs::path root = base / root_name;
+    if (!fs::is_directory(root, ec) || ec) {
+      ec.clear();
+      continue;
+    }
+    for (const auto& entry : fs::directory_iterator(root, ec)) {
+      if (ec)
+        break;
+      if (entry.is_directory(ec) && !ec && extracted_layout_ready(entry.path()))
+        return entry.path().string();
+    }
+    ec.clear();
+  }
+  return {};
+}
+
 static std::unordered_map<std::string, std::string>& modelpack_extract_cache() {
   static std::unordered_map<std::string, std::string> cache;
   return cache;
@@ -1046,6 +1109,19 @@ static std::string extract_and_organize(const std::string& tar_path,
   }
 
   const std::string cache_key = archive_cache_key(tar_path);
+
+  // Retained extracted data is reusable only when the caller asked for it to be retained. With
+  // cleanup on, extraction stays per-process exactly as before.
+  const bool reuse_across_processes =
+      !modelpack_cleanup_enabled_for_request(cleanup_extracted_model_data);
+  const std::string persistent_root = reuse_across_processes ? persistent_root_name(cache_key) : "";
+  if (reuse_across_processes) {
+    const std::string ready = find_persistent_package(persistent_root);
+    if (!ready.empty()) {
+      return ready;
+    }
+  }
+
   simaai::neat::internal::ModelArchiveLoaderOptions opt;
   // Runtime model packs may include auxiliary build/report artifacts.
   // Keep strict type validation in security/unit tests (default options),
@@ -1061,17 +1137,44 @@ static std::string extract_and_organize(const std::string& tar_path,
       return found->second;
     }
 
+    // Staging directory for a reusable package, so the published directory only ever appears
+    // complete. Sits inside the per-process root, which already handles abandoned data.
+    fs::path staging_root;
+
     // Chosen through a callback because the root is sized from the manifest, which the loader
     // only has after validating — and validating twice is what this avoids.
     const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
         tar_path,
         [&](const simaai::neat::internal::ModelArchiveManifest& manifest) {
-          return modelpack_output_root(
+          const std::string process_root = modelpack_output_root(
               cleanup_extracted_model_data,
               required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes));
+          if (!reuse_across_processes) {
+            return process_root;
+          }
+          std::error_code stage_ec;
+          staging_root = fs::path(process_root) / (".staging_" + persistent_root);
+          fs::remove_all(staging_root, stage_ec);
+          stage_ec.clear();
+          fs::create_directories(staging_root, stage_ec);
+          if (stage_ec) {
+            throw std::runtime_error("ModelPack: output_storage_unavailable: failed to create "
+                                     "staging extraction root: " +
+                                     staging_root.string() + " (" + stage_ec.message() + ")");
+          }
+          return staging_root.string();
         },
         opt);
     const fs::path target_dir(extracted.package_root);
+
+    // Where the package will be readable from. For a reusable package that is its published
+    // path, not the staging path, because the rewritten JSON below bakes it in permanently.
+    // Two levels up from staging: past the staging directory and past the per-process root, so
+    // the published package is a sibling of proc_<pid> and outlives it.
+    const fs::path published_dir =
+        reuse_across_processes
+            ? staging_root.parent_path().parent_path() / persistent_root / target_dir.filename()
+            : target_dir;
 
     // Preserve existing behavior: materialize model-relative paths as absolute paths
     // anchored at extracted package root.
@@ -1090,17 +1193,40 @@ static std::string extract_and_organize(const std::string& tar_path,
         } catch (const std::exception&) {
           continue;
         }
-        append_model_paths_if_exists(cfg, target_dir.string());
+        append_model_paths_if_exists(cfg, published_dir.string());
         write_json_file_atomic(entry.path(), cfg, "ModelPack");
       }
     } catch (...) {
+      // The staging root, when there is one, is never garbage collected: cleanup is disabled on
+      // exactly this path, so remove the whole thing rather than just the package inside it.
       std::error_code cleanup_ec;
-      fs::remove_all(target_dir, cleanup_ec);
+      fs::remove_all(reuse_across_processes ? staging_root : target_dir, cleanup_ec);
       throw;
     }
 
-    cache[cache_key] = target_dir.string();
-    return target_dir.string();
+    if (reuse_across_processes) {
+      const fs::path publish_root = published_dir.parent_path();
+      std::error_code publish_ec;
+      fs::rename(staging_root, publish_root, publish_ec);
+      if (publish_ec) {
+        // A concurrent loader publishing the same identity is the expected loser here. Its
+        // package is equivalent to ours, so adopt it and drop the staging copy.
+        std::error_code cleanup_ec;
+        const std::string ready = find_persistent_package(persistent_root);
+        if (ready.empty()) {
+          fs::remove_all(staging_root, cleanup_ec);
+          throw std::runtime_error("ModelPack: output_storage_unavailable: failed to publish "
+                                   "extracted package to " +
+                                   publish_root.string() + " (" + publish_ec.message() + ")");
+        }
+        fs::remove_all(staging_root, cleanup_ec);
+        cache[cache_key] = ready;
+        return ready;
+      }
+    }
+
+    cache[cache_key] = published_dir.string();
+    return published_dir.string();
   } catch (const simaai::neat::internal::ModelArchiveError& e) {
     // Surface archive failures as a structured NeatError (not a flat std::runtime_error) so the
     // public Model boundary carries a machine-triage error_code, per the Model.h error contract.

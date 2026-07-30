@@ -43,6 +43,11 @@ void write_empty_file(const std::filesystem::path& path) {
   out << "not an archive";
 }
 
+std::string read_file_bytes(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 std::vector<std::string> extracted_file_set(const std::filesystem::path& package_root) {
   namespace fs = std::filesystem;
   std::vector<std::string> files;
@@ -87,6 +92,25 @@ RUN_TEST(
           ModelArchiveLoader::extract(valid.string(), out_root);
       require(second.package_root == first.package_root,
               "ModelArchiveLoader::extract should be deterministic for same archive/root");
+
+      // Concatenated gzip members are one logical stream. A decoder that stops at the first
+      // end-of-stream marker silently yields a truncated tar here rather than failing, so this
+      // asserts equality with the single-member extraction rather than merely that it succeeded.
+      const fs::path multi_member =
+          sima_test::model_archive_fixture_path("valid/multi_member_valid.tar.gz");
+      require(fs::exists(multi_member), "missing multi_member_valid fixture; run "
+                                        "tests/tools/make_model_archive_fixtures.py");
+      const std::string multi_root = sima_test::make_temp_dir("model_archive_loader_multi_member");
+      const ModelArchiveExtractResult multi =
+          ModelArchiveLoader::extract(multi_member.string(), multi_root);
+      const std::vector<std::string> multi_files = extracted_file_set(multi.package_root);
+      require(multi_files == extracted_file_set(first.package_root),
+              "concatenated-member archive should extract the same file set as basic_valid");
+      for (const auto& rel : multi_files) {
+        require(read_file_bytes(fs::path(multi.package_root) / rel) ==
+                    read_file_bytes(fs::path(first.package_root) / rel),
+                "concatenated-member archive content differs for " + rel);
+      }
 
       const std::string low_space_root = sima_test::make_temp_dir("model_archive_loader_low_space");
       ModelArchiveLoaderOptions low_space;

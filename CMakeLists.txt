@@ -1040,6 +1040,11 @@ if (SimaLMM_FOUND)
   target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
+# Model archives are inflated in process. libz already loaded transitively; declared so the
+# dependency is explicit rather than inherited.
+find_package(ZLIB REQUIRED)
+target_link_libraries(sima_neat_common INTERFACE ZLIB::ZLIB)
+
 if (GST_FOUND)
   target_link_libraries(sima_neat_common INTERFACE ${GST_LIBRARIES})
 endif()

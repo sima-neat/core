@@ -632,6 +632,25 @@ def _build_fixture_tree(out_root: Path) -> Dict[str, dict]:
         "size_bytes": checksum_body_path.stat().st_size,
     }
 
+    # valid/multi_member_valid.tar.gz (one tar delivered as two concatenated gzip members)
+    # Concatenated members are valid gzip and inflate to the same bytes as the single-member
+    # archive. A decoder that stops at the first end-of-stream marker truncates it silently
+    # instead of failing, so this fixture must extract exactly like basic_valid.
+    multi_member_rel = "valid/multi_member_valid.tar.gz"
+    multi_member_path = out_root / multi_member_rel
+    plain_tar = gzip.decompress((out_root / "valid/basic_valid.tar.gz").read_bytes())
+    split_at = len(plain_tar) // 2
+    with multi_member_path.open("wb") as raw:
+        for part in (plain_tar[:split_at], plain_tar[split_at:]):
+            with gzip.GzipFile(fileobj=raw, mode="wb", mtime=FIXED_MTIME) as gz:
+                gz.write(part)
+    generated[multi_member_rel] = {
+        "intent": "valid archive delivered as two concatenated gzip members",
+        "path": multi_member_rel,
+        "sha256": _sha256(multi_member_path),
+        "size_bytes": multi_member_path.stat().st_size,
+    }
+
     shutil.rmtree(out_root / ".scratch", ignore_errors=True)
     return generated
 

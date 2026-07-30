@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <zlib.h>
+
 #include <unistd.h> // mkdtemp
 
 #include <algorithm>
@@ -740,6 +742,113 @@ fs::path make_staging_dir() {
   return fs::path(buf.data());
 }
 
+// Both inflate buffers. Measured on Modalix as the knee: 256 KiB costs 3% throughput, 4 MiB buys
+// 1% for 2.2x the resident memory. Must stay within uInt, which bounds a single inflate call.
+constexpr std::size_t kInflateBufferBytes = 1024UL * 1024UL;
+static_assert(kInflateBufferBytes <= std::numeric_limits<uInt>::max(),
+              "inflate buffers are handed to zlib as uInt");
+
+// In-process gzip decoder, replacing a `gzip -dc` subprocess. Measured on Modalix at 1.73x the
+// subprocess throughput for the same bytes; GNU gzip ships its own inflate rather than zlib's.
+//
+// Concatenated members are one logical stream, which is what `gzip -dc` does and what the archive
+// format permits: stopping at the first end-of-stream marker would silently truncate a valid
+// archive rather than fail it.
+class GzipInflater {
+public:
+  explicit GzipInflater(const std::string& path) : in_(::fopen(path.c_str(), "rb")) {
+    if (in_ != nullptr && ::inflateInit2(&zs_, 16 + MAX_WBITS) == Z_OK) {
+      stream_open_ = true;
+    }
+  }
+
+  ~GzipInflater() {
+    if (stream_open_)
+      ::inflateEnd(&zs_);
+    if (in_ != nullptr)
+      ::fclose(in_);
+  }
+
+  GzipInflater(const GzipInflater&) = delete;
+  GzipInflater& operator=(const GzipInflater&) = delete;
+
+  bool ready() const noexcept {
+    return in_ != nullptr && stream_open_;
+  }
+
+  // True once the stream could not be decoded: corrupt, truncated, or trailing bytes that do not
+  // begin another member. Distinguishes a failed read from a clean end of stream.
+  bool failed() const noexcept {
+    return failed_;
+  }
+
+  // Produces up to `size` decompressed bytes, capped at kInflateBufferBytes, and 0 once there are
+  // no more. A short result is normal: one inflate call filled less than the buffer, which does
+  // not mean the stream ended.
+  std::size_t read(char* dst, std::size_t size) {
+    size = std::min(size, kInflateBufferBytes);
+    while (!done_ && !failed_) {
+      // Input exhausted with no end-of-stream marker seen: the archive is truncated.
+      if (zs_.avail_in == 0 && !refill()) {
+        failed_ = true;
+        break;
+      }
+      zs_.next_out = reinterpret_cast<Bytef*>(dst);
+      zs_.avail_out = static_cast<uInt>(size);
+      const int rc = ::inflate(&zs_, Z_NO_FLUSH);
+      const std::size_t produced = size - zs_.avail_out;
+
+      if (rc == Z_STREAM_END) {
+        // Only a genuine end of input ends the archive; anything left must begin another member,
+        // and inflate reports it if it does not.
+        if (zs_.avail_in > 0 || !input_eof_) {
+          if (::inflateReset(&zs_) != Z_OK) {
+            failed_ = true;
+            break;
+          }
+          if (zs_.avail_in == 0 && !refill())
+            done_ = !failed_; // a clean end of input, not a read error mid-archive
+        } else {
+          done_ = true;
+        }
+      } else if (rc != Z_OK && rc != Z_BUF_ERROR) {
+        // Z_BUF_ERROR only means no progress was possible, which the refill above resolves.
+        failed_ = true;
+        break;
+      }
+
+      if (produced > 0)
+        return produced;
+    }
+    return 0;
+  }
+
+private:
+  // False at end of input. Sets failed() only for a read error, not for a clean end.
+  bool refill() {
+    if (input_eof_)
+      return false;
+    const std::size_t n = ::fread(inbuf_.data(), 1, inbuf_.size(), in_);
+    if (n == 0) {
+      if (::ferror(in_) != 0)
+        failed_ = true;
+      input_eof_ = true;
+      return false;
+    }
+    zs_.next_in = inbuf_.data();
+    zs_.avail_in = static_cast<uInt>(n);
+    return true;
+  }
+
+  FILE* in_ = nullptr;
+  z_stream zs_{};
+  bool stream_open_ = false;
+  bool failed_ = false;
+  bool done_ = false;
+  bool input_eof_ = false;
+  std::vector<unsigned char> inbuf_ = std::vector<unsigned char>(kInflateBufferBytes);
+};
+
 // The inflated size is unknown up front, so both guards are enforced as the bytes stream past.
 void inflate_archive_to_file(const std::string& archive_path, const fs::path& out_path,
                              const ModelArchiveLoaderOptions& opt) {
@@ -770,20 +879,16 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
     budget = *room;
   }
 
-  // Redirected, not an argument: a path starting with '-' would parse as a gzip option.
-  const std::string cmd = std::string("gzip -dc < ") + shell_quote(archive_path) + " 2>/dev/null";
-
-  FILE* pipe = ::popen(cmd.c_str(), "r");
-  if (!pipe) {
+  GzipInflater inflater(archive_path);
+  if (!inflater.ready()) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to open gzip decompression pipe");
+                  "invalid_archive: failed to open archive for decompression: " + archive_path);
   }
 
   errno = 0;
   std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
   if (!out.is_open()) {
     const int saved_errno = errno;
-    ::pclose(pipe);
     std::string msg = "failed to open archive staging file: " + out_path.string();
     if (saved_errno != 0) {
       msg += " (" + std::string(std::strerror(saved_errno)) + ")";
@@ -794,97 +899,84 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
   constexpr std::uint64_t kBudgetRefreshInterval = 64ULL * 1024ULL * 1024ULL;
   std::uint64_t since_refresh = 0;
 
-  std::array<char, 65536> buf{};
+  std::vector<char> buf(kInflateBufferBytes);
   std::uint64_t total = 0;
 
   while (true) {
-    const std::size_t n = ::fread(buf.data(), 1, buf.size(), pipe);
-    if (n > 0) {
-      total += static_cast<std::uint64_t>(n);
-      if (total > opt.max_inflated_archive_bytes) {
-        ::pclose(pipe);
-        throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
-                      "size_limit_exceeded: inflated archive exceeds configured maximum size");
-      }
+    const std::size_t n = inflater.read(buf.data(), buf.size());
+    if (n == 0)
+      break;
 
-      if (space_checked) {
-        // Exhausting the budget is re-measured rather than fatal: another writer may have freed
-        // space since the last look.
-        if (n > budget) {
-          const auto room = room_before_reserve();
-          if (!room) {
-            ::pclose(pipe);
-            throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                          "unable to determine free space for archive staging: " +
-                              staging_dir.string());
-          }
-          budget = *room;
-        }
-        if (n > budget) {
-          ::pclose(pipe);
-          std::ostringstream oss;
-          oss << "insufficient free space inflating model archive"
-              << " path=" << staging_dir.string() << " inflated=" << format_bytes(total - n)
-              << " reserve=" << format_bytes(opt.min_output_free_bytes)
-              << " writable=" << format_bytes(budget)
-              << " hint=set TMPDIR to a filesystem with enough space";
-          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
-        }
-        budget -= n;
-        since_refresh += n;
-        // Only ever tightens: our buffered writes may not be visible to fs::space yet, so a
-        // larger number would over-credit us.
-        if (since_refresh >= kBudgetRefreshInterval) {
-          const auto room = room_before_reserve();
-          if (!room) {
-            ::pclose(pipe);
-            throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                          "unable to determine free space for archive staging: " +
-                              staging_dir.string());
-          }
-          budget = std::min(budget, *room);
-          since_refresh = 0;
-        }
-      }
+    total += static_cast<std::uint64_t>(n);
+    if (total > opt.max_inflated_archive_bytes) {
+      throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                    "size_limit_exceeded: inflated archive exceeds configured maximum size");
+    }
 
-      errno = 0;
-      out.write(buf.data(), static_cast<std::streamsize>(n));
-      if (!out.good()) {
-        const int saved_errno = errno;
-        ::pclose(pipe);
-        std::string msg = "failed writing archive staging file: " + out_path.string();
-        if (saved_errno != 0) {
-          msg += " (" + std::string(std::strerror(saved_errno)) + ")";
+    if (space_checked) {
+      // Exhausting the budget is re-measured rather than fatal: another writer may have freed
+      // space since the last look.
+      if (n > budget) {
+        const auto room = room_before_reserve();
+        if (!room) {
+          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                        "unable to determine free space for archive staging: " +
+                            staging_dir.string());
         }
-        throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
+        budget = *room;
+      }
+      if (n > budget) {
+        std::ostringstream oss;
+        oss << "insufficient free space inflating model archive"
+            << " path=" << staging_dir.string() << " inflated=" << format_bytes(total - n)
+            << " reserve=" << format_bytes(opt.min_output_free_bytes)
+            << " writable=" << format_bytes(budget)
+            << " hint=set TMPDIR to a filesystem with enough space";
+        throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
+      }
+      budget -= n;
+      since_refresh += n;
+      // Only ever tightens: our buffered writes may not be visible to fs::space yet, so a
+      // larger number would over-credit us.
+      if (since_refresh >= kBudgetRefreshInterval) {
+        const auto room = room_before_reserve();
+        if (!room) {
+          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                        "unable to determine free space for archive staging: " +
+                            staging_dir.string());
+        }
+        budget = std::min(budget, *room);
+        since_refresh = 0;
       }
     }
 
-    if (n < buf.size()) {
-      if (::feof(pipe))
-        break;
-      if (::ferror(pipe)) {
-        ::pclose(pipe);
-        throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                      "invalid_archive: failed reading decompressed archive bytes");
+    errno = 0;
+    out.write(buf.data(), static_cast<std::streamsize>(n));
+    if (!out.good()) {
+      const int saved_errno = errno;
+      std::string msg = "failed writing archive staging file: " + out_path.string();
+      if (saved_errno != 0) {
+        msg += " (" + std::string(std::strerror(saved_errno)) + ")";
       }
+      throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
     }
+  }
+
+  // Checked before the flush: a decode failure is about the archive, not the staging filesystem,
+  // and reporting it as a write error would misdirect the caller.
+  if (inflater.failed()) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to decompress archive: " + archive_path);
   }
 
   errno = 0;
   out.close();
   if (!out.good()) {
     const int saved_errno = errno;
-    ::pclose(pipe);
     throw_archive(write_error_class_for_path(saved_errno, out_path),
                   "failed to flush archive staging file: " + out_path.string());
   }
 
-  const int rc = ::pclose(pipe);
-  if (rc != 0) {
-    throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to decompress archive: " + archive_path);
-  }
   if (total == 0) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: archive decompressed to zero bytes: " + archive_path);
