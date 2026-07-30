@@ -57,6 +57,7 @@ constexpr int kFps = 30;
 constexpr int kFramesPerScenario = 6;
 constexpr int kMinimumDecodedFrames = 3;
 constexpr int kReceiverTimeoutMs = 15000;
+constexpr int kScenarioSkippedExitCode = 77;
 constexpr double kMinimumPsnrDb = 18.0;
 constexpr std::uint8_t kPaddingSentinel = 0xD3;
 constexpr std::string_view kDirectIngressKind = "VideoSenderRawIngress[direct_nv12]";
@@ -215,7 +216,7 @@ std::string raw_caps(FormatTag format, int width = kWidth, int height = kHeight)
   return caps.str();
 }
 
-void require_layout_aware_encoder() {
+bool encoder_supports_layout_aware_input() {
   GstObjectPtr<GstElementFactory> factory(gst_element_factory_find("neatencoder"));
   require(factory != nullptr, "required GStreamer factory is unavailable: neatencoder");
   GstObjectPtr<GstPluginFeature> loaded(gst_plugin_feature_load(GST_PLUGIN_FEATURE(factory.get())));
@@ -225,14 +226,6 @@ void require_layout_aware_encoder() {
   require(encoder != nullptr, "failed to instantiate neatencoder");
   GParamSpec* capability =
       g_object_class_find_property(G_OBJECT_GET_CLASS(encoder.get()), "input-layout-aware");
-  require(capability != nullptr,
-          "neatencoder is too old: missing the input-layout-aware capability");
-  require(G_PARAM_SPEC_VALUE_TYPE(capability) == G_TYPE_BOOLEAN &&
-              (capability->flags & G_PARAM_READABLE) != 0,
-          "neatencoder input-layout-aware capability is not a readable boolean");
-  gboolean layout_aware = FALSE;
-  g_object_get(encoder.get(), "input-layout-aware", &layout_aware, nullptr);
-  require(layout_aware, "neatencoder does not support layout-aware raw input");
 
   std::string plugin_path = "<unknown>";
   if (GstObjectPtr<GstPlugin> plugin(gst_plugin_feature_get_plugin(loaded.get())); plugin) {
@@ -240,7 +233,22 @@ void require_layout_aware_encoder() {
       plugin_path = filename;
     }
   }
-  std::cout << "[INFO] neatencoder=" << plugin_path << " input-layout-aware=true\n";
+
+  // Core must remain compatible with the pre-fix plugin: absence of the
+  // capability selects the converter fallback rather than failing the run.
+  if (capability == nullptr) {
+    std::cout << "[INFO] neatencoder=" << plugin_path
+              << " input-layout-aware=<absent>; testing compatibility fallback\n";
+    return false;
+  }
+  require(G_PARAM_SPEC_VALUE_TYPE(capability) == G_TYPE_BOOLEAN &&
+              (capability->flags & G_PARAM_READABLE) != 0,
+          "neatencoder input-layout-aware capability is not a readable boolean");
+  gboolean layout_aware = FALSE;
+  g_object_get(encoder.get(), "input-layout-aware", &layout_aware, nullptr);
+  std::cout << "[INFO] neatencoder=" << plugin_path
+            << " input-layout-aware=" << (layout_aware ? "true" : "false") << "\n";
+  return layout_aware;
 }
 
 GstElementPtr parse_pipeline(const std::string& launch, const std::string& context) {
@@ -1183,6 +1191,7 @@ std::string scenario_filter_from_args(int argc, char** argv) {
 
 int run_aggregate_scenarios(int argc, char** argv) {
   int failures = 0;
+  int skipped = 0;
   for (std::size_t index = 0; index < kAggregateScenarioNames.size(); ++index) {
     const char* scenario = kAggregateScenarioNames[index];
     std::cout << "[RUN] isolated scenario " << scenario << "\n" << std::flush;
@@ -1221,6 +1230,8 @@ int run_aggregate_scenarios(int argc, char** argv) {
     if (waited < 0) {
       ++failures;
       std::cerr << "[FAIL] " << scenario << ": waitpid failed\n";
+    } else if (WIFEXITED(status) && WEXITSTATUS(status) == kScenarioSkippedExitCode) {
+      ++skipped;
     } else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
       ++failures;
       if (WIFSIGNALED(status)) {
@@ -1243,8 +1254,15 @@ int run_aggregate_scenarios(int argc, char** argv) {
               << kAggregateScenarioNames.size() << " isolated scenarios failed\n";
     return 1;
   }
-  std::cout << "[OK] video_sender_adaptive_ingress_e2e_test passed all "
-            << kAggregateScenarioNames.size() << " isolated real-image scenarios\n";
+  std::cout << "[OK] video_sender_adaptive_ingress_e2e_test passed "
+            << (kAggregateScenarioNames.size() - static_cast<std::size_t>(skipped)) << "/"
+            << kAggregateScenarioNames.size() << " isolated real-image scenarios";
+  if (skipped != 0) {
+    std::cout << "; skipped " << skipped
+              << " companion-Internals scenarios because the installed encoder predates the "
+                 "layout capability";
+  }
+  std::cout << "\n";
   return 0;
 }
 
@@ -1270,7 +1288,7 @@ int main(int argc, char** argv) {
   }
   try {
     simaai::neat::gst_init_once();
-    require_layout_aware_encoder();
+    const bool layout_aware = encoder_supports_layout_aware_input();
     const std::string image_path = image_path_from_args(argc, argv);
     const std::string scenario_filter = scenario_filter_from_args(argc, argv);
     require(std::filesystem::is_regular_file(image_path),
@@ -1319,11 +1337,21 @@ int main(int argc, char** argv) {
         continue;
       }
       ++executed;
+      // The legacy encoder ignores GstVideoMeta. Its fallback still covers
+      // tight NV12 and converted formats, but padded NV12 needs the companion
+      // Internals layout fix to avoid interpreting padding as pixels.
+      if (!layout_aware && scenario.format == FormatTag::NV12 && scenario.row_padding != 0) {
+        std::cout << "[SKIP] " << scenario.name
+                  << ": installed neatencoder predates input-layout-aware\n";
+        return kScenarioSkippedExitCode;
+      }
       try {
         const RawFrame& input = frame_for(scenario.format);
         const RawFrame expected =
             scenario.format == FormatTag::RGB ? rgb : convert_frame(input, FormatTag::RGB);
-        run_raw_scenario(scenario, input, expected);
+        RawScenario effective = scenario;
+        effective.expect_direct = scenario.expect_direct && layout_aware;
+        run_raw_scenario(effective, input, expected);
       } catch (const std::exception& error) {
         ++failures;
         std::cerr << "[FAIL] " << scenario.name << ": " << error.what() << "\n";
@@ -1346,6 +1374,11 @@ int main(int argc, char** argv) {
         continue;
       }
       ++executed;
+      if (!layout_aware) {
+        std::cout << "[SKIP] " << scenario.name
+                  << ": installed neatencoder predates input-layout-aware\n";
+        return kScenarioSkippedExitCode;
+      }
       try {
         const RawFrame& input = frame_for(scenario.format);
         const RawFrame expected = convert_frame(input, FormatTag::RGB);
