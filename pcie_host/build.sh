@@ -14,7 +14,6 @@ BUILD_PYTHON="OFF"
 BUILD_EXAMPLES="OFF"
 CLEAN_BUILD="OFF"
 MAKE_DEB="ON"
-INSTALL_DEPS_ONLY="OFF"
 PACKAGE_DIR="${SCRIPT_DIR}/dist"
 INSTALLER_SOURCE="${SCRIPT_DIR}/scripts/install_pciehost.sh"
 INSTALLER_STAGE="${PACKAGE_DIR}/install_pciehost.sh"
@@ -42,7 +41,6 @@ Options:
   --with-examples     Build PCIe host C++ examples
   --python            Build Python bindings and package a Python wheel
   --no-deb            Skip DEB package generation
-  --install-deps-only Install PCIe host build dependencies, then exit
   --build-dir <dir>   Build directory (default: build)
   --debug             Build type Debug (default: Release)
   -h, --help          Show this help
@@ -66,7 +64,7 @@ run_privileged() {
 
 install_build_deps() {
   if ! command -v apt-get >/dev/null 2>&1; then
-    echo "ERROR: --install-deps-only currently supports apt-based hosts only." >&2
+    echo "ERROR: automatic dependency installation supports apt-based hosts only." >&2
     return 1
   fi
 
@@ -140,10 +138,6 @@ while [[ $# -gt 0 ]]; do
       MAKE_DEB="OFF"
       shift
       ;;
-    --install-deps-only)
-      INSTALL_DEPS_ONLY="ON"
-      shift
-      ;;
     --build-dir)
       BUILD_DIR="${2:-}"
       if [[ -z "${BUILD_DIR}" ]]; then
@@ -168,10 +162,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
-  install_build_deps
-  exit 0
-fi
+install_build_deps
 
 manifest_dependency_spec() {
   local key="$1"

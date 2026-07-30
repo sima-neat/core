@@ -49,6 +49,16 @@ std::string write_temp_model_options(const std::string& contents) {
 } // namespace
 
 class Model::Impl {
+private:
+  enum class State {
+    Uninitialized,
+    Starting,
+    Ready,
+    Failed,
+    Stopping,
+    Exited,
+  };
+
 public:
   Impl(std::string model_path, ModelOptions options, ConnectionOptions connection)
       : model_path_(std::move(model_path)), options_(std::move(options)),
@@ -87,10 +97,10 @@ public:
     if (readiness_timeout_ms <= 0) {
       throw std::invalid_argument("readiness_timeout_ms must be positive");
     }
-    if (state_ == PipelineState::Ready) {
+    if (state_ == State::Ready) {
       return;
     }
-    if (channel_.is_running() || state_ == PipelineState::Starting) {
+    if (channel_.is_running() || state_ == State::Starting) {
       close_locked();
     }
 
@@ -106,7 +116,7 @@ public:
       fs::remove(local_options_path, ec);
     }
 
-    state_ = PipelineState::Starting;
+    state_ = State::Starting;
     bool remote_started = false;
     try {
       remote_.start(connection_.queue, remote_model_path, remote_options_path);
@@ -116,9 +126,9 @@ public:
       channel_.configure(facts_, connection_.queue, connection_.card_id,
                          connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode);
-      state_ = PipelineState::Ready;
+      state_ = State::Ready;
     } catch (...) {
-      state_ = PipelineState::Failed;
+      state_ = State::Failed;
       channel_.stop();
       if (remote_started) {
         try {
@@ -132,7 +142,7 @@ public:
 
   bool running() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return state_ == PipelineState::Ready;
+    return state_ == State::Ready;
   }
 
   void close() {
@@ -186,7 +196,7 @@ private:
   }
 
   void ensure_ready() const {
-    if (state_ != PipelineState::Ready) {
+    if (state_ != State::Ready) {
       throw std::runtime_error("PCIe model is not built; call model.build() before run/push/pull");
     }
   }
@@ -206,11 +216,11 @@ private:
 
   void close_locked() {
     channel_.stop();
-    if (state_ == PipelineState::Ready || state_ == PipelineState::Starting ||
-        state_ == PipelineState::Failed || state_ == PipelineState::Stopping) {
-      state_ = PipelineState::Stopping;
+    if (state_ == State::Ready || state_ == State::Starting || state_ == State::Failed ||
+        state_ == State::Stopping) {
+      state_ = State::Stopping;
       remote_.stop(connection_.queue);
-      state_ = PipelineState::Exited;
+      state_ = State::Exited;
     }
   }
 
@@ -221,7 +231,7 @@ private:
   internal::HostPcieChannel channel_;
 
   mutable std::mutex mu_;
-  PipelineState state_ = PipelineState::Uninitialized;
+  State state_ = State::Uninitialized;
   internal::PcieModelFacts facts_;
   ModelInfo model_info_;
 };

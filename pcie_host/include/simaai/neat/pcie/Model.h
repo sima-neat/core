@@ -19,15 +19,6 @@
 
 namespace simaai::neat::pcie {
 
-enum class PipelineState {
-  Uninitialized,
-  Starting,
-  Ready,
-  Failed,
-  Stopping,
-  Exited,
-};
-
 struct ConnectionOptions {
   std::string card_host;
   int card_id = 0;
@@ -422,8 +413,6 @@ struct TensorInfo {
 struct ModelInfo {
   std::vector<TensorInfo> inputs;
   std::vector<TensorInfo> outputs;
-  bool has_preprocess = false;
-  bool has_boxdecode = false;
 };
 
 class Model {

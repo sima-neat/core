@@ -342,8 +342,6 @@ std::size_t tensor_info_payload_bytes(const std::vector<pcie::TensorInfo>& tenso
 
 void print_model_summary(const pcie::ModelInfo& info) {
   std::cout << "model metadata\n";
-  std::cout << "  has_preprocess=" << (info.has_preprocess ? "true" : "false")
-            << " has_boxdecode=" << (info.has_boxdecode ? "true" : "false") << "\n";
   std::cout << "  inputs (" << info.inputs.size() << ")\n";
   for (std::size_t i = 0; i < info.inputs.size(); ++i) {
     const auto& input = info.inputs[i];

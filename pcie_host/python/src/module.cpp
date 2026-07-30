@@ -364,14 +364,6 @@ NB_MODULE(_pyneatpcie_core, m) {
   m.attr("__version__") = "0.0.0";
 #endif
 
-  nb::enum_<pcie::PipelineState>(m, "PipelineState")
-      .value("Uninitialized", pcie::PipelineState::Uninitialized)
-      .value("Starting", pcie::PipelineState::Starting)
-      .value("Ready", pcie::PipelineState::Ready)
-      .value("Failed", pcie::PipelineState::Failed)
-      .value("Stopping", pcie::PipelineState::Stopping)
-      .value("Exited", pcie::PipelineState::Exited);
-
   nb::enum_<pcie::InputKind>(m, "InputKind")
       .value("Tensor", pcie::InputKind::Tensor)
       .value("Image", pcie::InputKind::Image);
@@ -544,9 +536,7 @@ NB_MODULE(_pyneatpcie_core, m) {
   nb::class_<pcie::ModelInfo>(m, "ModelInfo")
       .def(nb::init<>())
       .def_rw("inputs", &pcie::ModelInfo::inputs)
-      .def_rw("outputs", &pcie::ModelInfo::outputs)
-      .def_rw("has_preprocess", &pcie::ModelInfo::has_preprocess)
-      .def_rw("has_boxdecode", &pcie::ModelInfo::has_boxdecode);
+      .def_rw("outputs", &pcie::ModelInfo::outputs);
 
   nb::class_<pcie::Model>(m, "Model")
       .def(nb::init<std::string, pcie::ModelOptions, pcie::ConnectionOptions>(), "model_path"_a,

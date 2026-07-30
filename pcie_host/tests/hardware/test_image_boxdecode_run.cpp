@@ -294,8 +294,6 @@ pcie::Tensor make_bgr_image_tensor(const cv::Mat& mat) {
 
 void print_model_info(const pcie::ModelInfo& info) {
   std::cout << "model metadata\n";
-  std::cout << "  has_preprocess=" << (info.has_preprocess ? "true" : "false")
-            << " has_boxdecode=" << (info.has_boxdecode ? "true" : "false") << "\n";
   std::cout << "  inputs (" << info.inputs.size() << ")\n";
   for (std::size_t i = 0; i < info.inputs.size(); ++i) {
     const auto& input = info.inputs[i];
@@ -561,9 +559,6 @@ int main(int argc, char** argv) {
     std::cout << "  enabled=true mode=letterbox target=core-inferred\n";
 
     model_options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
-    model_options.preprocess.input_max_width = bgr.cols;
-    model_options.preprocess.input_max_height = bgr.rows;
-    model_options.preprocess.input_max_depth = bgr.channels();
     model_options.preprocess.resize.enable = pcie::AutoFlag::On;
     model_options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
     model_options.decode_type = args.decode_type;

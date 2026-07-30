@@ -270,8 +270,6 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
 
 ModelInfo to_public_model_info(const PcieModelFacts& facts) {
   ModelInfo out;
-  out.has_preprocess = facts.has_preprocess;
-  out.has_boxdecode = facts.has_boxdecode;
   out.inputs.reserve(facts.inputs.size());
   out.outputs.reserve(facts.outputs.size());
   for (const auto& input : facts.inputs) {

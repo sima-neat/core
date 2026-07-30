@@ -122,10 +122,11 @@ struct TensorInfo {
 struct ModelInfo {
   std::vector<TensorInfo> inputs;
   std::vector<TensorInfo> outputs;
-  bool has_preprocess = false;
-  bool has_boxdecode = false;
 };
 ```
+
+`ModelInfo` reports the inference tensor contract from the model archive.
+Runtime preprocessing and postprocessing options are not included.
 
 ### Payloads And Results
 
@@ -296,6 +297,10 @@ those staged paths to CMake. CMake does not include headers from a sibling
 ./build.sh --with-tests --no-deb
 ./build.sh --with-tests
 ```
+
+`build.sh` installs its host build dependencies, including
+`nlohmann-json3-dev`, which provides `nlohmann/json.hpp`. Use
+the same build command on a fresh host and for subsequent rebuilds.
 
 `build.sh` writes the locally built packages and a copy of the installer into
 `dist/`:

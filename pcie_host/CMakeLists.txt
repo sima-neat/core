@@ -47,6 +47,12 @@ endif()
 get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
 find_package(PkgConfig REQUIRED)
+find_package(nlohmann_json QUIET)
+if (NOT TARGET nlohmann_json::nlohmann_json)
+  message(FATAL_ERROR
+    "Missing nlohmann_json development package (Ubuntu package: "
+    "nlohmann-json3-dev)")
+endif()
 pkg_check_modules(GST REQUIRED IMPORTED_TARGET
   gstreamer-1.0
   gstreamer-app-1.0
@@ -83,7 +89,10 @@ target_include_directories(sima_neat_pcie_host
 )
 target_compile_options(sima_neat_pcie_host PRIVATE ${GST_CFLAGS_OTHER})
 target_link_directories(sima_neat_pcie_host PRIVATE ${GST_LIBRARY_DIRS})
-target_link_libraries(sima_neat_pcie_host PRIVATE ${GST_LIBRARIES})
+target_link_libraries(sima_neat_pcie_host PRIVATE
+  ${GST_LIBRARIES}
+  nlohmann_json::nlohmann_json
+)
 if (NOT SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR)
   message(FATAL_ERROR
     "SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR is required and must contain "

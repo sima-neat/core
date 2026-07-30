@@ -78,9 +78,6 @@ void print_tensor_info(const pcie::TensorInfo& tensor, std::size_t index) {
 
 void print_model_info(const std::string& title, const pcie::ModelInfo& info) {
   std::cout << title << "\n";
-  std::cout << "  has_preprocess=" << (info.has_preprocess ? "true" : "false")
-            << " has_boxdecode=" << (info.has_boxdecode ? "true" : "false") << "\n";
-
   std::cout << "  inputs (" << info.inputs.size() << "):\n";
   for (std::size_t i = 0; i < info.inputs.size(); ++i) {
     print_tensor_info(info.inputs[i], i);

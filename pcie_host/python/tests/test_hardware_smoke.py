@@ -175,9 +175,6 @@ def _image_options(image: np.ndarray) -> pcie.ModelOptions:
   options = pcie.ModelOptions()
   options.preprocess.kind = pcie.InputKind.Image
   options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
-  options.preprocess.input_max_width = int(image.shape[1])
-  options.preprocess.input_max_height = int(image.shape[0])
-  options.preprocess.input_max_depth = int(image.shape[2])
   options.preprocess.resize.enable = pcie.AutoFlag.On
   options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
   return options

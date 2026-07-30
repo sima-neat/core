@@ -319,8 +319,6 @@ pcie::TensorList make_inputs(const pcie::ModelInfo& info) {
 
 void print_model_info(const pcie::ModelInfo& info) {
   std::cout << "model metadata\n";
-  std::cout << "  has_preprocess=" << (info.has_preprocess ? "true" : "false")
-            << " has_boxdecode=" << (info.has_boxdecode ? "true" : "false") << "\n";
   std::cout << "  inputs (" << info.inputs.size() << ")\n";
   for (std::size_t i = 0; i < info.inputs.size(); ++i) {
     const auto& input = info.inputs[i];
