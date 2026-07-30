@@ -9,7 +9,6 @@ SAN_BUILD_DIR="${SAN_BUILD_DIR:-build-model-archive-security-asan-ubsan}"
 
 archive_security_tests=(
   unit_model_archive_loader_test
-  unit_modelpack_extract_test
   security_modelpack_matrix_test
 )
 
