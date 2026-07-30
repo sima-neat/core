@@ -203,12 +203,9 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
   try {
     pipeline = session_build_parse_pipeline_or_throw(br, "Graph::validate");
   } catch (const NeatError& e) {
-    rep.error_code = error_codes::kParseLaunch;
-    rep.repro_note =
-        format_validate_note("Graph::validate", rep.error_code, "gst_parse_launch failed",
-                             "gst_error='" + std::string(e.what()) + "' pipeline_snippet='" +
-                                 pipeline_snippet(rep.pipeline_string) + "'",
-                             "Validate fragment syntax and plugin availability (gst-inspect-1.0).");
+    rep.error_code =
+        e.report().error_code.empty() ? error_codes::kParseLaunch : e.report().error_code;
+    rep.repro_note = e.report().repro_note.empty() ? std::string(e.what()) : e.report().repro_note;
     rep.repro_gst_launch = "gst-launch-1.0 -v '" + rep.pipeline_string + "'";
     return rep;
   } catch (const std::exception& e) {
@@ -357,12 +354,9 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
   try {
     pipeline = session_build_parse_pipeline_or_throw(br, "Graph::validate(input)");
   } catch (const NeatError& e) {
-    rep.error_code = error_codes::kParseLaunch;
-    rep.repro_note =
-        format_validate_note("Graph::validate(input)", rep.error_code, "gst_parse_launch failed",
-                             "gst_error='" + std::string(e.what()) + "' pipeline_snippet='" +
-                                 pipeline_snippet(rep.pipeline_string) + "'",
-                             "Validate fragment syntax and plugin availability (gst-inspect-1.0).");
+    rep.error_code =
+        e.report().error_code.empty() ? error_codes::kParseLaunch : e.report().error_code;
+    rep.repro_note = e.report().repro_note.empty() ? std::string(e.what()) : e.report().repro_note;
     rep.repro_gst_launch = "gst-launch-1.0 -v '" + rep.pipeline_string + "'";
     return rep;
   } catch (const std::exception& e) {

@@ -73,44 +73,39 @@ static std::string expect_pipeline_error(const std::string& label,
   throw std::runtime_error(label + ": expected NeatError, got success");
 }
 
-static void require_node_field(const std::string& err, const std::string& node) {
-  const std::string needle1 = "node='" + node + "'";
-  const std::string needle2 = "node=" + node;
-  const std::string elem1 = "element='" + node + "'";
-  const std::string elem2 = "element=" + node;
-  const bool exact =
-      (err.find(needle1) != std::string::npos) || (err.find(needle2) != std::string::npos) ||
-      (err.find(elem1) != std::string::npos) || (err.find(elem2) != std::string::npos);
-  if (exact) {
-    return;
-  }
-  const std::string suffix1 = "node='" + node + "_";
-  const std::string suffix2 = "node=" + node + "_";
-  const std::string elem_suffix1 = "element='" + node + "_";
-  const std::string elem_suffix2 = "element=" + node + "_";
-  if (err.find(suffix1) == std::string::npos && err.find(suffix2) == std::string::npos &&
-      err.find(elem_suffix1) == std::string::npos && err.find(elem_suffix2) == std::string::npos) {
-    throw std::runtime_error("missing node field for '" + node + "' in error: " + err);
-  }
-}
-
-static void require_config_path_field(const std::string& err, const std::string& path) {
-  (void)path;
-  require_contains(err, "config_path=", "missing config_path field");
-}
-
-static void require_hint_field(const std::string& err) {
-  require_contains(err, "hint=", "missing hint field");
-}
-
 static void require_resolution_fields(const std::string& err) {
   require_contains(err, "source_used=", "missing source_used field");
   require_contains(err, "missing_field=", "missing missing_field field");
   require_contains(err, "fallback_chain=", "missing fallback_chain field");
 }
 
-static void require_gst_error(const std::string& err) {
-  require_contains(err, "GST ERROR", "expected GST error message");
+static void require_production_error(const std::string& err, const std::string& stage) {
+  require_contains(err, "[runtime.element_failed]", "expected the generic runtime fallback code");
+  require_contains(err, "A pipeline stage stopped while processing data.",
+                   "expected a plain-language failure title");
+  require_contains(err, "Stage: " + stage, "expected the failing stage");
+  require_contains(err, "How to fix:", "expected actionable user guidance");
+  require_contains(err, "Diagnostic ID: gstreamer.unclassified_element_failure",
+                   "expected a stable diagnostic id");
+  require(err.find("GST ERROR") == std::string::npos,
+          "production error should not expose a raw GST ERROR dump");
+  require(err.find("config_path=") == std::string::npos,
+          "production error should not expose raw plugin key/value context");
+  require(err.find("hint=") == std::string::npos,
+          "production error should not expose raw plugin hint fields");
+}
+
+static void require_caps_production_error(const std::string& err, const std::string& stage) {
+  require_contains(err, "[misconfig.media_caps]",
+                   "expected the media-capability configuration code");
+  require_contains(err, "Two connected pipeline stages require incompatible media caps.",
+                   "expected a plain-language caps failure title");
+  require_contains(err, "Stage: " + stage, "expected the failing stage");
+  require_contains(err, "How to fix:", "expected actionable user guidance");
+  require_contains(err, "Diagnostic ID: gstreamer.caps_incompatible",
+                   "expected a stable diagnostic id");
+  require(err.find("GST ERROR") == std::string::npos,
+          "production error should not expose a raw GST ERROR dump");
 }
 
 static std::string expect_raw_gst_pipeline_error(const std::string& label,
@@ -279,11 +274,9 @@ static void test_processmla_failure() {
   });
 
   maybe_dump_error("processmla", err);
-  require_gst_error(err);
-  require_node_field(err, "mla_fail");
-  require_config_path_field(err, cfg.path);
-  require_hint_field(err);
-  require_resolution_fields(err);
+  require_production_error(err, "mla_fail");
+  require_contains(err, "Reason: Missing typed stage config payload",
+                   "expected the plugin's concise reason");
 }
 
 static void test_boxdecode_failure() {
@@ -319,11 +312,8 @@ static void test_boxdecode_failure() {
   });
 
   maybe_dump_error("boxdecode", err);
-  require_gst_error(err);
-  require_node_field(err, "box_fail");
+  require_production_error(err, "box_fail");
   require_contains(err, "Missing", "expected manifest-context failure");
-  require_contains(err, "missing_field=", "expected missing manifest-context field");
-  require_contains(err, "no_fallback=true", "expected explicit no-fallback marker");
 }
 
 static void test_boxdecode_missing_manifest_context_failure() {
@@ -671,9 +661,7 @@ static void test_neatdecoder_failure() {
   });
 
   maybe_dump_error("neatdecoder", err);
-  require_gst_error(err);
-  require_node_field(err, "decoder_fail");
-  require_hint_field(err);
+  require_caps_production_error(err, "decoder_fail");
 }
 
 static void test_neatencoder_dynamic_caps() {

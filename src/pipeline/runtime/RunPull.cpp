@@ -499,12 +499,18 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   }
   auto diag = st->pipeline.stream.diag_ctx();
   const auto handle_stream_error = [&](const std::string& msg) {
+    const std::optional<PullError> typed = st->pipeline.stream.last_error_detail();
+    if (typed.has_value()) {
+      if (err)
+        *err = *typed;
+      return PullStatus::Error;
+    }
     GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
     std::string code = rep.error_code;
     if (code.empty()) {
-      code = error_codes::kRuntimePull;
+      code = error_codes::kRuntimeElementFailed;
     }
-    std::string note = "Run::pull: " + msg;
+    std::string note = msg;
     rep.error_code = code;
     rep.repro_note = note;
     pipeline_internal::error_util::set_pull_error(err, std::move(code), std::move(note),

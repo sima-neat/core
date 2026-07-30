@@ -27,13 +27,35 @@ Framework errors use stable code families:
 | --- | --- | --- |
 | `misconfig.pipeline_shape` | Node order/shape contract violation | Ensure `Input()` first for push pipelines and `Output()` last for pull pipelines |
 | `misconfig.caps` | Caps negotiation/override mismatch | Align `caps_override`, format, and downstream caps |
-| `misconfig.input_shape` | Input tensor/frame/sample shape/layout mismatch | Validate width/height/depth, layout, dtype, storage |
+| `misconfig.input_shape` | Input tensor/frame/sample shape or data type does not match the model contract | Provide the expected shape and data type, or configure model preprocessing |
+| `misconfig.input_capacity` | Source image exceeds preprocessing input capacity | Increase `input_max_width` / `input_max_height`, or scale before the model stage |
+| `misconfig.media_caps` | Adjacent GStreamer stages require incompatible media caps | Align format, resolution, and frame rate or insert conversion |
+| `misconfig.tensor_dtype_missing` | Tensor contract has no dtype/format | Declare a supported tensor dtype in the upstream contract |
+| `misconfig.option_out_of_range` | A stage option is invalid for the current tensor | Choose a value in the range shown by the diagnostic |
 | `build.parse_launch` | `gst_parse_launch` failed | Validate fragment syntax and plugin availability |
+| `build.pipeline_syntax` | Custom GStreamer fragment syntax is invalid | Correct and validate the fragment with `gst-launch-1.0` |
+| `build.plugin_missing` | A required GStreamer element is not installed | Install/replace it and check with `gst-inspect-1.0` |
+| `build.property_invalid` | An element property is unknown or invalid | Check the property name and value with `gst-inspect-1.0` |
 | `runtime.pull` | Runtime pull/timeout/closed-output failure | Check sink output production, queue pressure, and upstream errors |
+| `runtime.element_failed` | A stage failed without a more specific mapping | Correct the reported stage and its upstream input |
+| `runtime.output_timeout` | No output arrived before the configured timeout | Verify source flow or increase an expected timeout |
 | `io.parse` | Saved-graph JSON parse/schema failure | Validate JSON and required node fields |
 | `io.open` | Graph save/load file open/read/write failure | Check path existence, permissions, and storage health |
+| `io.file_not_found` | Input file does not exist | Correct the path and confirm the file exists on the DevKit |
+| `io.permission_denied` | File or device is not readable | Correct ownership/permissions |
+| `io.rtsp_connection_failed` | RTSP source cannot be contacted | Verify URL, reachability, server, and credentials |
+| `io.camera_not_found` | Requested camera is unavailable | Select a reported camera or use the default |
+| `codec.invalid_h264_stream` | Input has no valid H.264 frames | Supply a complete H.264 stream or correct the codec |
+| `resource.device_memory_exhausted` | Device DMA/CMA allocation failed | Reduce concurrent streams, resolution, or buffering |
+| `resource.output_pool_exhausted` | All output buffers remain in use | Release zero-copy outputs or use owned copies |
+| `infra.dispatcher_unavailable` | Accelerator runtime cannot be acquired | Stop competing workloads and verify DevKit compatibility |
 
 `PullError.code` uses the same taxonomy (not only exception paths).
+
+Production messages intentionally omit GStreamer internals. Plugin debug
+verbosity adds the raw GError domain/code, element factory, message, and
+structured plugin details. Credentials and common URL secret parameters are
+redacted before either form is stored.
 
 ## Programmatic handling
 

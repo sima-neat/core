@@ -1,8 +1,10 @@
 // src/pipeline/internal/GstDiagnosticsUtil.cpp
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 #include "pipeline/internal/GstTeardownBudget.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/UxLogging.h"
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
@@ -733,30 +735,35 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
     return;
   }
 
-  const GstMessageType t = GST_MESSAGE_TYPE(msg);
-  const char* src = (GST_MESSAGE_SRC(msg) && GST_IS_OBJECT(GST_MESSAGE_SRC(msg)))
-                        ? GST_OBJECT_NAME(GST_MESSAGE_SRC(msg))
-                        : "<unknown>";
+  std::optional<NormalizedDiagnostic> primary;
+  int primary_priority = -1;
+  do {
+    const GstMessageType type = GST_MESSAGE_TYPE(msg);
+    RawGstError raw = parse_gst_error_message(msg);
+    const std::string source = raw.source_name.empty() ? "<unknown>" : raw.source_name;
+    if (diag) {
+      diag->push_bus(gst_message_type_get_name(type), source,
+                     sanitize_gst_diagnostic_text(gst_message_to_string(msg)));
+    }
+    gst_message_unref(msg);
 
-  std::string line = gst_message_to_string(msg);
-  if (diag)
-    diag->push_bus(gst_message_type_get_name(t), src ? src : "<unknown>", line);
-
-  gst_message_unref(msg);
+    NormalizedDiagnostic candidate = classify_gst_error(std::move(raw));
+    const int priority = diagnostic_priority(candidate);
+    if (!primary.has_value() || priority > primary_priority) {
+      primary = std::move(candidate);
+      primary_priority = priority;
+    }
+    msg = gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR);
+  } while (msg);
   gst_object_unref(bus);
 
   maybe_dump_dot(pipeline, std::string(where) + "_error");
 
+  NormalizedDiagnostic diagnostic = std::move(*primary);
   GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
-  rep.error_code = error_codes::kCaps;
-  std::ostringstream note;
-  note << "where=" << (where ? where : "GstDiagnosticsUtil::throw_if_bus_error")
-       << " code=" << rep.error_code << " summary=GST ERROR" << " details=element='"
-       << (src ? src : "<unknown>") << "' message='" << line << "'";
-  rep.repro_note = note.str();
-  if (diag)
-    rep.repro_note += "\n" + boundary_summary(diag);
-  rep.repro_note += "\nHint: inspect offending caps and upstream/downstream element contract.";
+  rep.error_code = diagnostic.error_code;
+  rep.repro_note =
+      render_diagnostic_body(diagnostic, ux::should_emit_gstreamer_for_current_context());
   throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
                   std::move(rep));
 }

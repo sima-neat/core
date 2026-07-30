@@ -266,16 +266,44 @@ runtime/build/IO paths map terminal failures into stable code families:
 - `misconfig.pipeline_shape`
 - `misconfig.caps`
 - `misconfig.input_shape`
+- `misconfig.input_capacity`
+- `misconfig.media_caps`
+- `misconfig.tensor_dtype_missing`
+- `misconfig.option_out_of_range`
 - `build.parse_launch`
+- `build.pipeline_syntax`
+- `build.plugin_missing`
+- `build.property_invalid`
 - `runtime.pull`
+- `runtime.element_failed`
+- `runtime.output_timeout`
 - `io.parse`
 - `io.open`
+- `io.file_not_found`
+- `io.permission_denied`
+- `io.rtsp_connection_failed`
+- `io.camera_not_found`
+- `codec.*`, `resource.*`, `infra.*`, and `internal.*`
 
-`GraphReport.repro_note` is the human-facing summary and must include enough
-context to reproduce (offending value, node/element context, or hint).
+GStreamer errors pass through one internal parser, classifier, and renderer.
+Classification prefers a versioned Neat diagnostic ID, then the native
+GStreamer domain/code and element factory, then narrow compatibility mappings
+for older plugins. Unknown failures use `runtime.element_failed`; they are not
+reported as `misconfig.caps` unless negotiation actually failed. When a pipeline
+posts several errors, the most specific root cause is rendered and every error
+is retained in the bus log.
+
+`GraphReport.repro_note` is the human-facing summary. Production rendering
+contains a plain-language cause, relevant observed/expected values, concrete
+user actions, and a stable diagnostic ID. Raw plugin strings, source locations,
+and GStreamer domain/code are debug-only. The bracketed public code is added
+once when the `NeatError` is constructed.
 `GraphReport.bus` is the source of truth for plugin/runtime error details.
 For build(input) flows, `GraphReport.build_adaptation` records the resolved shape policy/capability, origins for seed/max limits, byte-guard origin, and applied/skipped adaptation actions.
 For non-throwing runtime pulls, `PullError.code` uses the same taxonomy.
+Input-stream worker failures retain the typed error code and report across the
+worker-thread boundary, so `Run::pull()` and the Python exception translator
+surface the same `NeatError`.
 
 Support triage order is:
 1. bucket by `error_code`

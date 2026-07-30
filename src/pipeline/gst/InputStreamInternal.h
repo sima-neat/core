@@ -118,7 +118,7 @@ struct InputStream::State {
   std::unique_ptr<CallbackCtx> cb_ctx;
   std::function<void(Sample)> callback;
   mutable std::mutex error_mu;
-  std::string error;
+  std::optional<PullError> terminal_error;
   std::optional<CapKey> current_key;
   std::optional<CapKey> pending_key;
   int pending_count = 0;
@@ -243,6 +243,8 @@ int inputstream_stop_flush_timeout_ms();
 int inputstream_stop_timeout_ms();
 
 void set_stream_error(InputStream::State& st, const std::string& msg);
+void set_stream_error(InputStream::State& st, std::string code, std::string msg,
+                      std::optional<GraphReport> report = std::nullopt);
 std::string format_push_failure_error(const InputStream::State& st, const char* where,
                                       GstFlowReturn ret);
 [[noreturn]] void throw_push_failed_with_last_error(const char* where,

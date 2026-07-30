@@ -312,6 +312,7 @@ set(UNIT_TESTS
   unit_dispatcher_recovery_test
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test
+  unit_gst_error_normalizer_test
   unit_encoded_sample_test
   unit_genai_prompt_builder_test
   unit_genai_image_types_test

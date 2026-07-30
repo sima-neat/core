@@ -1,5 +1,7 @@
 #include "InputStreamInternal.h"
 
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/CpuVisibleSample.h"
 
 namespace simaai::neat {
@@ -88,7 +90,14 @@ std::string InputStream::last_error() const {
   if (!state_)
     return {};
   std::lock_guard<std::mutex> lock(state_->error_mu);
-  return state_->error;
+  return state_->terminal_error.has_value() ? state_->terminal_error->message : std::string{};
+}
+
+std::optional<PullError> InputStream::last_error_detail() const {
+  if (!state_)
+    return std::nullopt;
+  std::lock_guard<std::mutex> lock(state_->error_mu);
+  return state_->terminal_error;
 }
 
 InputStreamStats InputStream::stats() const {
@@ -295,8 +304,13 @@ void InputStream::start(std::function<void(Sample)> on_output) {
                 if (inputstream_dot_on_timeout_enabled()) {
                   pipeline_internal::maybe_dump_dot(st->pipeline, "inputstream_timeout");
                 }
-                std::lock_guard<std::mutex> lock(st->error_mu);
-                st->error = "InputStream::start: timeout waiting for output";
+                set_stream_error(
+                    *st, error_codes::kOutputTimeout,
+                    "No output was received before the input-stream timeout expired.\n\n"
+                    "How to fix:\n"
+                    "- Verify that the source is still producing frames.\n"
+                    "- Increase the timeout if this delay is expected.\n\n"
+                    "Diagnostic ID: runtime.output_timeout");
                 st->stop_requested.store(true);
                 break;
               }
@@ -404,12 +418,38 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         if (cb)
           cb(std::move(out));
       }
+    } catch (const NeatError& e) {
+      if (pipeline_or_graph_debug_enabled()) {
+        std::fprintf(stderr, "[INPUTSTREAM] worker_error: %s\n", e.what());
+      }
+      const GraphReport& source_report = e.report();
+      const std::string code = source_report.error_code.empty()
+                                   ? std::string(error_codes::kInternalPluginFailure)
+                                   : source_report.error_code;
+      set_stream_error(*st, code, e.what(), source_report);
     } catch (const std::exception& e) {
       if (pipeline_or_graph_debug_enabled()) {
         std::fprintf(stderr, "[INPUTSTREAM] worker_error: %s\n", e.what());
       }
-      std::lock_guard<std::mutex> lock(st->error_mu);
-      st->error = e.what();
+      GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+      report.error_code = error_codes::kInternalPluginFailure;
+      report.repro_note =
+          "A Neat pipeline stage failed unexpectedly.\n\n"
+          "How to fix:\n"
+          "- Stop and restart the pipeline.\n"
+          "- Confirm that the pipeline uses supported plugins and a compatible MPK.\n\n"
+          "Diagnostic ID: neat.internal_plugin_failure";
+      set_stream_error(*st, report.error_code, report.repro_note, std::move(report));
+    } catch (...) {
+      GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+      report.error_code = error_codes::kInternalPluginFailure;
+      report.repro_note =
+          "A Neat pipeline stage failed unexpectedly.\n\n"
+          "How to fix:\n"
+          "- Stop and restart the pipeline.\n"
+          "- Confirm that the pipeline uses supported plugins and a compatible MPK.\n\n"
+          "Diagnostic ID: neat.unknown_plugin_failure";
+      set_stream_error(*st, report.error_code, report.repro_note, std::move(report));
     }
     st->running.store(false);
     if (st->teardown_on_exit.load() && st->pipeline) {
