@@ -36,7 +36,6 @@ std::size_t identity_map_capacity();
 bool has_input_appsrc(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 bool has_output_appsink(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 bool has_internal_source(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
-InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 bool is_encoded_sample(const Sample& sample);
 } // namespace simaai::neat::graph
 
@@ -219,14 +218,8 @@ MaterializedSegmentNodes materialize_segment_nodes(const PipelineSegmentPlan& se
 
   if (segment.boundary.needs_input && !segment.boundary.source_like &&
       !simaai::neat::graph::has_input_appsrc(segment.nodes)) {
-    InputOptions opt_src;
-    if (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty()) {
-      opt_src = segment.boundary_hints->ingress_inputs.front();
-    } else {
-      opt_src =
-          simaai::neat::graph::input_opts_from_spec(segment.input_spec, segment.input_complete);
-    }
-    out.nodes.insert(out.nodes.begin(), simaai::neat::nodes::Input(opt_src));
+    out.nodes.insert(out.nodes.begin(),
+                     simaai::neat::nodes::Input(injected_boundary_input_options(segment)));
     out.injected_input = true;
   }
 

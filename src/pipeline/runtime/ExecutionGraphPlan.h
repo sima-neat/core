@@ -30,6 +30,7 @@ struct GraphRunOptions;
 namespace nodes {
 class StageNode;
 }
+InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 } // namespace simaai::neat::graph
 
 namespace simaai::neat {
@@ -201,6 +202,18 @@ struct PipelineSegmentPlan {
   std::vector<Provenance> provenance;
   std::vector<MaterializedNodeAttribution> materialized_node_attribution;
 };
+
+// An internal boundary transports whatever timeline it was handed, including no timestamp
+// at all; only a public application-owned Input authors one. Stamping here would give each
+// leg of a fan-out its own running time, which is what splits video from metadata.
+inline InputOptions injected_boundary_input_options(const PipelineSegmentPlan& segment) {
+  InputOptions opt =
+      (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty())
+          ? segment.boundary_hints->ingress_inputs.front()
+          : graph::input_opts_from_spec(segment.input_spec, segment.input_complete);
+  opt.do_timestamp = false;
+  return opt;
+}
 
 inline graph::NodeId attributed_runtime_node_for_segment_node(const PipelineSegmentPlan& segment,
                                                               std::size_t segment_node_index) {
