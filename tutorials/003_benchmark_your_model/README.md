@@ -47,7 +47,8 @@ auto report = model.benchmark(options);
 ```
 
 Python exposes the same fields through `pyneat.BenchmarkOptions`. Set both original dimensions or
-omit both; when omitted, the benchmark infers geometry from the resolved model route.
+omit both; when omitted, the benchmark infers geometry from the resolved model route. Per-run
+benchmark geometry takes precedence over deprecated BoxDecode geometry in `ModelOptions`.
 
 ### Read the report {#step-read-report}
 

@@ -119,6 +119,8 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
                                                         const PreprocessContractFlags& flags,
                                                         const BenchmarkOptions& options);
 
+Model::Options benchmark_build_model_options(const Model::Options& model_options);
+
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,
                                          const IngressConsumerTensorIdentity& identity);
 Sample remap_sample_to_consumer_identity(Sample sample,

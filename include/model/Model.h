@@ -71,6 +71,7 @@ struct BenchmarkReport {
  * source coordinates. Set `original_width` and `original_height` together to benchmark a specific
  * source geometry. When they are omitted, the benchmark infers geometry from the resolved
  * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
+ * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
  */
 struct BenchmarkOptions {
   int num_samples = 100; ///< Number of measured synthetic inputs; must be greater than zero.
@@ -633,6 +634,11 @@ public:
   BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:
+  Runner build_with_model_options(const simaai::neat::TensorList& inputs,
+                                  const Model::RouteOptions& opt,
+                                  const simaai::neat::RunOptions& run_opt,
+                                  const Model::Options& model_opt);
+
   friend struct internal::ModelAccess;
   struct Impl;
   std::unique_ptr<Impl> impl_;

@@ -4549,6 +4549,16 @@ PreprocessRuntimeMeta resolve_benchmark_preprocess_meta(const Tensor& tensor,
   return resolve_benchmark_preprocess_meta_impl(tensor, plan, flags, options);
 }
 
+Model::Options benchmark_build_model_options(const Model::Options& model_options) {
+  Model::Options options = model_options;
+  // BenchmarkOptions describes a per-run buffer contract. Keep deprecated construction-time
+  // BoxDecode geometry from becoming authoritative element properties and masking that metadata.
+  options.boxdecode_original_width = 0;
+  options.boxdecode_original_height = 0;
+  options.boxdecode_resize_mode.reset();
+  return options;
+}
+
 } // namespace internal
 
 struct Model::Impl {
@@ -7556,6 +7566,13 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
 
 Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::RouteOptions& opt,
                            const simaai::neat::RunOptions& run_opt) {
+  return build_with_model_options(inputs, opt, run_opt, impl_->options);
+}
+
+Model::Runner Model::build_with_model_options(const simaai::neat::TensorList& inputs,
+                                              const Model::RouteOptions& opt,
+                                              const simaai::neat::RunOptions& run_opt,
+                                              const Model::Options& model_opt) {
   const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   if (inputs.empty()) {
     throw std::runtime_error("Model::build: empty tensor list");
@@ -7586,10 +7603,10 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
     image_input_info = input_info_from_tensor(inputs.front(), true);
     require_explicit_image_input_info(*image_input_info, "Model::build(TensorList)");
   }
-  auto nodes = build_pipeline_nodes(*this, pack, impl_->options, impl_->preprocess_plan, build_opt,
+  auto nodes = build_pipeline_nodes(*this, pack, model_opt, impl_->preprocess_plan, build_opt,
                                     image_input_info ? &*image_input_info : nullptr, false,
                                     externalize_preprocess);
-  Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
+  Graph p(route_options_from_model_route_options(build_opt, &model_opt));
   add_nodes_to_graph(p, std::move(nodes));
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
@@ -7755,6 +7772,10 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   constexpr int kTimeoutMs = 120000;
   const TensorList inputs = make_synthetic_benchmark_inputs(*this, options);
   const int logical_batch_size = compiled_batch_size();
+  const Model::Options benchmark_model_options =
+      internal::ModelAccess::resolved_post_kind(*this) == internal::PostRouteStageKind::BoxDecode
+          ? internal::benchmark_build_model_options(impl_->options)
+          : impl_->options;
 
   RunOptions latency_run_options;
   latency_run_options.startup_preflight = false;
@@ -7762,7 +7783,8 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   MeasureReport latency_measured;
   MeasureReport throughput_measured;
   {
-    Runner latency_runner = build(inputs, Model::RouteOptions{}, latency_run_options);
+    Runner latency_runner = build_with_model_options(inputs, Model::RouteOptions{},
+                                                     latency_run_options, benchmark_model_options);
     for (int i = 0; i < kWarmupSamples; ++i) {
       if (!latency_runner.push(inputs)) {
         latency_runner.close();
@@ -7793,7 +7815,8 @@ BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
   throughput_run_options.enable_board_power();
 
   {
-    Runner runner = build(inputs, Model::RouteOptions{}, throughput_run_options);
+    Runner runner = build_with_model_options(inputs, Model::RouteOptions{}, throughput_run_options,
+                                             benchmark_model_options);
     const bool defer_eos_until_outputs_drained =
         plan_uses_direct_mla_public_output_boundary(impl_->preprocess_plan);
     for (int i = 0; i < kWarmupSamples; ++i) {

@@ -728,7 +728,8 @@ report = model.benchmark(options)
 Set `original_width` and `original_height` together. The benchmark still generates a model-shaped
 synthetic tensor; these fields supply the source geometry and resize transform required by
 BoxDecode metadata. If you omit them, the benchmark infers geometry from the resolved preprocess
-and model input contracts. Existing `benchmark(num_samples)` calls keep the same behavior.
+and model input contracts. These per-run values take precedence over deprecated BoxDecode geometry
+hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same behavior.
 
 Read `avg_power_watts` and `energy_joules` only when the board power monitor produced samples. If power telemetry is unavailable for the board or rail configuration, those fields stay zero.
 

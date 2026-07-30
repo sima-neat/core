@@ -182,6 +182,24 @@ void benchmark_options_api_is_additive() {
           "legacy benchmark(bool) overload should remain available");
 }
 
+void benchmark_build_options_prefer_runtime_metadata() {
+  using namespace simaai::neat;
+  Model::Options model_options;
+  model_options.boxdecode_original_width = 320;
+  model_options.boxdecode_original_height = 240;
+  model_options.boxdecode_resize_mode = ResizeMode::Crop;
+  model_options.score_threshold = 0.42F;
+
+  const Model::Options benchmark_options = internal::benchmark_build_model_options(model_options);
+  require(benchmark_options.boxdecode_original_width == 0 &&
+              benchmark_options.boxdecode_original_height == 0,
+          "benchmark builds should not emit stale construction-time original geometry");
+  require(!benchmark_options.boxdecode_resize_mode.has_value(),
+          "benchmark builds should use per-buffer resize metadata");
+  require(benchmark_options.score_threshold == model_options.score_threshold,
+          "benchmark builds should preserve unrelated model options");
+}
+
 void benchmark_preprocess_meta_defaults_to_model_geometry() {
   using namespace simaai::neat;
   const Tensor tensor = make_color_tensor(640, 640, ImageSpec::PixelFormat::RGB);
@@ -586,6 +604,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("measurement_boolean_flags_make_profiling_explicit",
                     measurement_boolean_flags_make_profiling_explicit);
            run_case("benchmark_options_api_is_additive", benchmark_options_api_is_additive);
+           run_case("benchmark_build_options_prefer_runtime_metadata",
+                    benchmark_build_options_prefer_runtime_metadata);
            run_case("benchmark_preprocess_meta_defaults",
                     benchmark_preprocess_meta_defaults_to_model_geometry);
            run_case("benchmark_preprocess_meta_explicit_geometry",
