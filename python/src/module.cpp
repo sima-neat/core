@@ -4414,6 +4414,14 @@ NB_MODULE(_pyneat_core, m) {
       .def("close_input", &simaai::neat::Model::Runner::close_input)
       .def("close", &simaai::neat::Model::Runner::close);
 
+  nb::class_<simaai::neat::BenchmarkOptions>(m, "BenchmarkOptions")
+      .def(nb::init<>())
+      .def_rw("num_samples", &simaai::neat::BenchmarkOptions::num_samples)
+      .def_rw("original_width", &simaai::neat::BenchmarkOptions::original_width)
+      .def_rw("original_height", &simaai::neat::BenchmarkOptions::original_height)
+      .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
+      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency);
+
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
@@ -4771,7 +4779,11 @@ NB_MODULE(_pyneat_core, m) {
            static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
                &simaai::neat::Model::benchmark),
            "num_samples"_a = 100, "include_plugin_latency"_a = false,
-           nb::call_guard<nb::gil_scoped_release>());
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark",
+           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
+               const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),
+           "options"_a, nb::call_guard<nb::gil_scoped_release>());
 
   // from-Model constructors for the CVU-atom options (registered here, after Model — pulls tile
   // geometry / quant params / model-managed buffer counts so the standalone nodes are actually
