@@ -8,6 +8,9 @@ ARTIFACT_DIR="${SIMAPCIE_ARTIFACT_DIR:-${WORKSPACE}/_work/pciehost-artifacts}"
 STATE_FILE="${WORK_DIR}/state.env"
 ASSET_ENV_FILE="${WORK_DIR}/assets.env"
 
+# shellcheck source=../../../pcie_host/scripts/host-platform.sh
+source "${WORKSPACE}/pcie_host/scripts/host-platform.sh"
+
 VULCAN_ENV="${VULCAN_ENV:-production}"
 REF_NAME="${REF_NAME:-${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}}"
 SHORT_SHA="${SHORT_SHA:-${GITHUB_SHA:-}}"

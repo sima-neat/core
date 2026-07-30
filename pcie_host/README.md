@@ -264,6 +264,20 @@ falls back to `develop`; tag builds require the matching tag artifact. Automatic
 download reads `latest.tag`, verifies `pcie-host-artifact-<multiarch>.tar.gz`
 with its `.sha256`, and extracts it locally.
 
+Host artifacts are built separately for Ubuntu 22.04 and Ubuntu 24.04.
+`build.sh` reads `/etc/os-release` and selects the matching distro-qualified
+Vulcan package:
+
+```text
+internals/pcie-host/ubuntu22/x86_64-linux-gnu
+internals/pcie-host/ubuntu22/aarch64-linux-gnu
+internals/pcie-host/ubuntu24/x86_64-linux-gnu
+internals/pcie-host/ubuntu24/aarch64-linux-gnu
+```
+
+Other host distributions are rejected because the prebuilt plugin may depend
+on distribution-specific glibc, GLib, and GStreamer versions.
+
 The extracted/local layout is:
 
 ```text
@@ -290,6 +304,16 @@ those staged paths to CMake. CMake does not include headers from a sibling
 dist/sima-pcie-host_<version>_<arch>.deb
 dist/sima-pcie-host-dev_<version>_<arch>.deb
 dist/install_pciehost.sh
+```
+
+Core CI publishes each package set under its matching host distribution and
+Debian architecture:
+
+```text
+core/pciehost/ubuntu22/amd64
+core/pciehost/ubuntu22/arm64
+core/pciehost/ubuntu24/amd64
+core/pciehost/ubuntu24/arm64
 ```
 
 Install the locally built packages on the host with:

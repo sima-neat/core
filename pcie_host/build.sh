@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=scripts/host-platform.sh
+source "${SCRIPT_DIR}/scripts/host-platform.sh"
 cd "${SCRIPT_DIR}"
 
 BUILD_DIR="build"
@@ -346,7 +348,7 @@ install_artifact_from_vulcan_ref() {
   local ref_spec="$1"
   local ref="${ref_spec%%:*}"
   local spec="${ref_spec#*:}"
-  local target="${ARTIFACT_REPOSITORY}/pcie-host/${HOST_MULTIARCH}@${ref}:${spec}"
+  local target="${ARTIFACT_REPOSITORY}/pcie-host/${HOST_DISTRO}/${HOST_MULTIARCH}@${ref}:${spec}"
   local install_dir="${SCRIPT_DIR}/artifacts"
   local sima_cli_args=(neat install --env "${VULCAN_ENV}" -d "${install_dir}")
 
@@ -429,6 +431,7 @@ generate_package_metadata() {
   echo "Writing PCIe host package metadata..."
   PACKAGE_DIR="${PACKAGE_DIR}" \
   DEB_ARCH="${DEB_ARCH}" \
+  HOST_DISTRO="${HOST_DISTRO}" \
   PACKAGE_VERSION="${PACKAGE_VERSION}" \
   GIT_COMMIT="${git_commit}" \
   GIT_BRANCH="${git_branch}" \
@@ -441,6 +444,7 @@ from pathlib import Path
 
 package_dir = Path(os.environ["PACKAGE_DIR"])
 deb_arch = os.environ["DEB_ARCH"]
+host_distro = os.environ["HOST_DISTRO"]
 version = os.environ["PACKAGE_VERSION"]
 commit = os.environ["GIT_COMMIT"]
 branch = os.environ["GIT_BRANCH"]
@@ -499,13 +503,15 @@ if runtime_debs and full_paths:
         )
 
     metadata = {
-        "name": f"gh:sima-neat/pciehost/{deb_arch}",
+        "name": f"gh:sima-neat/pciehost/{host_distro}/{deb_arch}",
         "version": commit_folder,
         "release": "",
         "description": (
-            f"SiMa.ai NEAT PCIe host runtime, development, and Python packages ({deb_arch})"
+            "SiMa.ai NEAT PCIe host runtime, development, and Python packages "
+            f"({host_distro}, {deb_arch})"
             if wheels else
-            f"SiMa.ai NEAT PCIe host runtime and development packages ({deb_arch})"
+            "SiMa.ai NEAT PCIe host runtime and development packages "
+            f"({host_distro}, {deb_arch})"
         ),
         "platforms": [{
             "type": "host",
@@ -522,7 +528,8 @@ if runtime_debs and full_paths:
         "artifact": {
             "type": "debian-packages",
             "repository": "core",
-            "package_path": f"pciehost/{deb_arch}",
+            "package_path": f"pciehost/{host_distro}/{deb_arch}",
+            "distro": host_distro,
             "arches": [deb_arch],
         },
         "repository": os.environ.get("GITHUB_REPOSITORY", "sima-neat/core"),
@@ -542,8 +549,11 @@ if runtime_debs and full_paths:
         wheel = wheels[0].name
         pyneatpcie_metadata = dict(metadata)
         pyneatpcie_metadata.update({
-            "name": f"gh:sima-neat/pyneatpcie/{deb_arch}",
-            "description": f"pyneatpcie wheel for SiMa.ai NEAT PCIe host ({deb_arch})",
+            "name": f"gh:sima-neat/pyneatpcie/{host_distro}/{deb_arch}",
+            "description": (
+                "pyneatpcie wheel for SiMa.ai NEAT PCIe host "
+                f"({host_distro}, {deb_arch})"
+            ),
             "resources": [wheel],
             "resources-checksum": {wheel: resource_checksums[wheel]},
             "installation": {
@@ -552,13 +562,15 @@ if runtime_debs and full_paths:
                     "[bold]pyneatpcie wheel downloaded.[/bold]\n"
                     f"Install it with: python3 -m pip install ./{wheel}\n"
                     "pyneatpcie requires the matching sima-pcie-host runtime package. "
-                    f"If it is not installed yet, run: sima-cli neat install core/pciehost/{deb_arch}\n"
+                    "If it is not installed yet, run: sima-cli neat install "
+                    f"core/pciehost/{host_distro}/{deb_arch}\n"
                 ),
             },
             "artifact": {
                 "type": "python-wheel",
                 "repository": "core",
-                "package_path": f"pciehost/{deb_arch}",
+                "package_path": f"pciehost/{host_distro}/{deb_arch}",
+                "distro": host_distro,
                 "arches": [deb_arch],
             },
             "size": {
@@ -571,6 +583,7 @@ if runtime_debs and full_paths:
 PY
 }
 
+HOST_DISTRO="$(simapcie_detect_host_distro)"
 HOST_MULTIARCH="$(detect_multiarch)"
 DEB_ARCH="$(deb_arch_from_multiarch "${HOST_MULTIARCH}")"
 PACKAGE_VERSION="$(package_version)"
@@ -601,6 +614,7 @@ echo "Generate DEB    : ${MAKE_DEB}"
 echo "Clean build     : ${CLEAN_BUILD}"
 echo "Build dir       : ${BUILD_DIR}"
 echo "Build dir abs   : ${BUILD_DIR_ABS}"
+echo "Host distro     : ${HOST_DISTRO}"
 echo "Host multiarch  : ${HOST_MULTIARCH}"
 echo "Debian arch     : ${DEB_ARCH}"
 echo "Package version : ${PACKAGE_VERSION}"

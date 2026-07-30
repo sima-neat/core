@@ -6,7 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 sanitize_path
 
-package_spec="core/pciehost/amd64@${REF_NAME}:${SHORT_SHA}"
+host_distro="$(simapcie_detect_host_distro)"
+package_spec="core/pciehost/${host_distro}/amd64@${REF_NAME}:${SHORT_SHA}"
 echo "Installing PCIe host package ${package_spec} from Vulcan env ${VULCAN_ENV}"
 SIMA_CLI_CHECK_FOR_UPDATE=0 \
   sima-cli neat install \
