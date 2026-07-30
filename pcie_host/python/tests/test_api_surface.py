@@ -23,6 +23,26 @@ def test_options_surface():
   assert opt.preprocess.color_convert.input_format == pcie.ColorFormat.BGR
   assert opt.decode_type == pcie.BoxDecodeType.YoloV8
   assert not hasattr(pcie, "SimaPCIeHost")
+  assert not hasattr(pcie.Model, "try_push")
+  assert not hasattr(pcie.Model, "pull_result")
+  assert not hasattr(pcie, "InferenceResult")
+
+
+def test_runtime_surface_without_hardware():
+  config = pcie.ModelConfig()
+  config.path = "model.tar.gz"
+  assert config.path == "model.tar.gz"
+
+  completion = pcie.Completion()
+  completion.model_id = 3
+  completion.request_id = 17
+  assert completion.model_id == 3
+  assert completion.request_id == 17
+
+  runtime = pcie.Runtime()
+  assert runtime.retrieve(0) is None
+  runtime.close()
+  runtime.close()
 
 
 def test_tensor_numpy_round_trip():

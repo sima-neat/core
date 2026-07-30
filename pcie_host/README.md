@@ -20,7 +20,7 @@ Public headers install under:
 /usr/include/simaai/neat/pcie/
 ```
 
-Main type:
+Simple single-model type:
 
 ```cpp
 #include <simaai/neat/pcie/Model.h>
@@ -34,6 +34,55 @@ package; applications compiling against this API use `sima-pcie-host-dev`.
 `pcie::Model` serializes only the restricted WP9 model-options schema before
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
+
+### Multi-model runtime
+
+`Runtime` is the minimal OAAX-ready native API for applications that need
+multiple models or correlated asynchronous requests:
+
+```cpp
+#include <simaai/neat/pcie/Runtime.h>
+
+namespace pcie = simaai::neat::pcie;
+
+pcie::Runtime runtime;
+const auto model_id = runtime.load("model.tar.gz");
+
+const pcie::RequestId request_id = 42;
+if (runtime.try_enqueue(model_id, request_id, inputs) ==
+    pcie::EnqueueResult::Accepted) {
+  const auto completion = runtime.retrieve(30000);
+  // completion->model_id identifies the model.
+  // completion->request_id is exactly 42.
+}
+
+runtime.unload(model_id);
+```
+
+A runtime represents one Modalix card. Each loaded model still owns one
+physical PCIe queue; the runtime assigns queues automatically, beginning with
+the preferred `ConnectionOptions::queue`, and exposes only logical `ModelId`
+values. With the current card-side builder, at most six models can be loaded
+concurrently.
+
+`load_models()` reserves all required queues and has batch semantics: if any
+model fails to load, every model created by that call is closed and its queue
+is released. Models already present in the runtime are not affected.
+
+`try_enqueue()` is thread-safe and nonblocking. It returns
+`EnqueueResult::Full` when the model has `max_inflight` accepted requests.
+`retrieve()` returns the next completion from any loaded model. The caller's
+signed 32-bit `RequestId` is attached to `GstSimaHostMeta` as both
+`frame-identifier` and `frame-id`. The PCIe/card round trip preserves the
+32-bit `frame-id`, which is restored unchanged in the completion.
+
+`unload()` stops accepting work for one model, waits for accepted work to
+complete up to its drain timeout, and then releases that model's queue without
+closing other models. `close()` cancels remaining work, is idempotent, and
+wakes blocked `retrieve()` calls.
+
+`Runtime` provides the behavior needed by a thin OAAX C ABI adapter. It does
+not itself export the standardized OAAX `runtime_*` C symbols.
 
 ## SSH Provisioning
 

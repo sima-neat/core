@@ -4,11 +4,13 @@
 #include "ModelOptionsJsonWriter.h"
 #include "PcieModelFactsReader.h"
 #include "RemoteRuntime.h"
+#include "RuntimeModelAccess.h"
 
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -117,10 +119,10 @@ public:
     }
 
     state_ = State::Starting;
-    bool remote_started = false;
+    remote_started_ = false;
     try {
       remote_.start(connection_.queue, remote_model_path, remote_options_path);
-      remote_started = true;
+      remote_started_ = true;
       (void)remote_.wait_ready(connection_.queue, readiness_timeout_ms);
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id,
@@ -130,11 +132,12 @@ public:
     } catch (...) {
       state_ = State::Failed;
       channel_.stop();
-      if (remote_started) {
+      if (remote_started_) {
         try {
           remote_.stop(connection_.queue);
         } catch (...) {
         }
+        remote_started_ = false;
       }
       throw;
     }
@@ -162,12 +165,28 @@ public:
     return channel_.push(tensors);
   }
 
+  bool try_push(const std::int32_t request_id, const TensorList& tensors) {
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      ensure_ready();
+    }
+    return channel_.try_push(request_id, tensors);
+  }
+
   std::optional<TensorList> pull(const int timeout_ms) {
     {
       std::lock_guard<std::mutex> lock(mu_);
       ensure_ready();
     }
     return channel_.pull(timeout_ms);
+  }
+
+  std::optional<internal::RuntimeInferenceResult> pull_result(const int timeout_ms) {
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      ensure_ready();
+    }
+    return channel_.pull_result(timeout_ms);
   }
 
   TensorList run(const Tensor& tensor, const int timeout_ms) {
@@ -215,12 +234,25 @@ private:
   }
 
   void close_locked() {
+    channel_.request_stop();
     channel_.stop();
     if (state_ == State::Ready || state_ == State::Starting || state_ == State::Failed ||
         state_ == State::Stopping) {
       state_ = State::Stopping;
-      remote_.stop(connection_.queue);
+      std::exception_ptr remote_stop_error;
+      if (remote_started_) {
+        try {
+          remote_.stop(connection_.queue);
+          remote_started_ = false;
+        } catch (...) {
+          remote_stop_error = std::current_exception();
+        }
+      }
+      if (remote_stop_error) {
+        std::rethrow_exception(remote_stop_error);
+      }
       state_ = State::Exited;
+      return;
     }
   }
 
@@ -232,6 +264,7 @@ private:
 
   mutable std::mutex mu_;
   State state_ = State::Uninitialized;
+  bool remote_started_ = false;
   internal::PcieModelFacts facts_;
   ModelInfo model_info_;
 };
@@ -284,6 +317,16 @@ TensorList Model::run(const Tensor& tensor, const int timeout_ms) {
 
 TensorList Model::run(const TensorList& tensors, const int timeout_ms) {
   return impl_->run(tensors, timeout_ms);
+}
+
+bool internal::RuntimeModelAccess::try_push(Model& model, const std::int32_t request_id,
+                                           const TensorList& tensors) {
+  return model.impl_->try_push(request_id, tensors);
+}
+
+std::optional<internal::RuntimeInferenceResult>
+internal::RuntimeModelAccess::pull_result(Model& model, const int timeout_ms) {
+  return model.impl_->pull_result(timeout_ms);
 }
 
 } // namespace simaai::neat::pcie

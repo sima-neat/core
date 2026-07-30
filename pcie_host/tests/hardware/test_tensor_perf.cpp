@@ -1,5 +1,6 @@
 #include <simaai/neat/pcie/Model.h>
 
+#include "AsyncTestRunner.h"
 #include "SignalCloseGuard.h"
 
 #include <algorithm>
@@ -533,78 +534,53 @@ void run_throughput(pcie::Model& model, const pcie::TensorList& inputs,
   TimestampQueue timestamps;
   std::vector<double> latencies_ms;
   latencies_ms.reserve(static_cast<std::size_t>(args.iterations));
-  std::atomic_bool failed = false;
-  std::mutex error_mutex;
-  std::exception_ptr error;
-  const auto set_error = [&](std::exception_ptr ptr) {
-    {
-      std::lock_guard<std::mutex> lock(error_mutex);
-      if (!error) {
-        error = std::move(ptr);
-      }
-    }
-    failed.store(true);
-  };
 
   std::atomic<std::int64_t> producer_push_ns{0};
   std::atomic<std::int64_t> consumer_pull_ns{0};
   const auto started = Clock::now();
 
-  auto producer = std::async(std::launch::async, [&] {
-    try {
-      for (int i = 0; i < args.iterations; ++i) {
-        if (failed.load()) {
-          return;
+  pcie::test::run_async_workers(
+      [&] { model.close(); },
+      [&](const std::atomic_bool& cancelled) {
+        for (int i = 0; i < args.iterations; ++i) {
+          if (cancelled.load()) {
+            return;
+          }
+          const auto t0 = Clock::now();
+          timestamps.push(t0);
+          if (!model.push(inputs)) {
+            throw std::runtime_error("throughput push returned false at iteration " +
+                                     std::to_string(i + 1));
+          }
+          producer_push_ns.fetch_add(
+              std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
+          if ((i + 1) == 1 || (i + 1) % 100 == 0 || (i + 1) == args.iterations) {
+            std::cout << "throughput producer " << (i + 1) << "/" << args.iterations << "\n";
+          }
         }
-        const auto t0 = Clock::now();
-        timestamps.push(t0);
-        if (!model.push(inputs)) {
-          throw std::runtime_error("throughput push returned false at iteration " +
-                                   std::to_string(i + 1));
+      },
+      [&](const std::atomic_bool& cancelled) {
+        for (int i = 0; i < args.iterations; ++i) {
+          if (cancelled.load()) {
+            return;
+          }
+          const auto pull_start = Clock::now();
+          const auto result = model.pull(args.pull_timeout_ms);
+          const auto pull_end = Clock::now();
+          consumer_pull_ns.fetch_add(
+              std::chrono::duration_cast<std::chrono::nanoseconds>(pull_end - pull_start).count());
+          if (!result.has_value()) {
+            throw std::runtime_error("throughput pull timed out at iteration " +
+                                     std::to_string(i + 1));
+          }
+          validate_outputs(*result, expected_outputs);
+          const TimePoint push_start = timestamps.pop();
+          latencies_ms.push_back(milliseconds_between(push_start, pull_end));
+          if ((i + 1) == 1 || (i + 1) % 100 == 0 || (i + 1) == args.iterations) {
+            std::cout << "throughput consumer " << (i + 1) << "/" << args.iterations << "\n";
+          }
         }
-        producer_push_ns.fetch_add(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
-        if ((i + 1) == 1 || (i + 1) % 100 == 0 || (i + 1) == args.iterations) {
-          std::cout << "throughput producer " << (i + 1) << "/" << args.iterations << "\n";
-        }
-      }
-    } catch (...) {
-      set_error(std::current_exception());
-    }
-  });
-
-  auto consumer = std::async(std::launch::async, [&] {
-    try {
-      for (int i = 0; i < args.iterations; ++i) {
-        if (failed.load()) {
-          return;
-        }
-        const auto pull_start = Clock::now();
-        const auto result = model.pull(args.pull_timeout_ms);
-        const auto pull_end = Clock::now();
-        consumer_pull_ns.fetch_add(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(pull_end - pull_start).count());
-        if (!result.has_value()) {
-          throw std::runtime_error("throughput pull timed out at iteration " +
-                                   std::to_string(i + 1));
-        }
-        validate_outputs(*result, expected_outputs);
-        const TimePoint push_start = timestamps.pop();
-        latencies_ms.push_back(milliseconds_between(push_start, pull_end));
-        if ((i + 1) == 1 || (i + 1) % 100 == 0 || (i + 1) == args.iterations) {
-          std::cout << "throughput consumer " << (i + 1) << "/" << args.iterations << "\n";
-        }
-      }
-    } catch (...) {
-      set_error(std::current_exception());
-    }
-  });
-
-  producer.get();
-  consumer.get();
-  if (error) {
-    std::rethrow_exception(error);
-  }
+      });
 
   const auto elapsed_ms = milliseconds_between(started, Clock::now());
   const double elapsed_s = elapsed_ms / 1000.0;

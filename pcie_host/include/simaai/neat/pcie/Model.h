@@ -19,6 +19,10 @@
 
 namespace simaai::neat::pcie {
 
+namespace internal {
+class RuntimeModelAccess;
+}
+
 struct ConnectionOptions {
   std::string card_host;
   int card_id = 0;
@@ -445,6 +449,7 @@ public:
 #endif
 
 private:
+  friend class internal::RuntimeModelAccess;
   class Impl;
   std::unique_ptr<Impl> impl_;
 };

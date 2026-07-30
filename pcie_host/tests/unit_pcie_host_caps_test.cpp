@@ -1,5 +1,6 @@
 #include "HostPcieChannel.h"
 
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -53,6 +54,16 @@ int main() {
       rejected_mixed_payload = true;
     }
     require(rejected_mixed_payload, "mixed raw image/tensor payload must be rejected");
+
+    pcie_internal::HostPcieChannel channel;
+    GstBuffer* buffer = gst_buffer_new();
+    require(buffer != nullptr, "failed to allocate request-ID test buffer");
+    constexpr std::int32_t request_id = -123456789;
+    pcie_internal::HostPcieChannel::attach_request_id(buffer, request_id);
+    const auto restored = pcie_internal::HostPcieChannel::request_id_from_buffer(buffer);
+    gst_buffer_unref(buffer);
+    require(restored.has_value(), "request ID metadata must be readable");
+    require(*restored == request_id, "request ID metadata must preserve the signed 32-bit value");
 
     std::cout << "[PASS] host channel caps\n";
     return 0;

@@ -1,5 +1,6 @@
 #include <simaai/neat/pcie/Model.h>
 
+#include "AsyncTestRunner.h"
 #include "SignalCloseGuard.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -654,26 +655,32 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "starting async producer/consumer phase: " << args.iterations << " iteration(s)\n";
-    auto producer = std::async(std::launch::async, [&] {
-      for (int iter = 0; iter < args.iterations; ++iter) {
-        if (iter == 0 || (iter + 1) % 100 == 0 || (iter + 1) == args.iterations) {
-          std::cout << "async producer " << (iter + 1) << "/" << args.iterations << "\n";
-        }
-        const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
-        push_frame(frame, iter + 1, "async");
-      }
-    });
-    auto consumer = std::async(std::launch::async, [&] {
-      for (int iter = 0; iter < args.iterations; ++iter) {
-        if (iter == 0 || (iter + 1) % 100 == 0 || (iter + 1) == args.iterations) {
-          std::cout << "async consumer " << (iter + 1) << "/" << args.iterations << "\n";
-        }
-        const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
-        (void)pull_and_validate(frame, iter + 1, "async");
-      }
-    });
-    producer.get();
-    consumer.get();
+    pcie::test::run_async_workers(
+        [&] { model.close(); },
+        [&](const std::atomic_bool& cancelled) {
+          for (int iter = 0; iter < args.iterations; ++iter) {
+            if (cancelled.load()) {
+              return;
+            }
+            if (iter == 0 || (iter + 1) % 100 == 0 || (iter + 1) == args.iterations) {
+              std::cout << "async producer " << (iter + 1) << "/" << args.iterations << "\n";
+            }
+            const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
+            push_frame(frame, iter + 1, "async");
+          }
+        },
+        [&](const std::atomic_bool& cancelled) {
+          for (int iter = 0; iter < args.iterations; ++iter) {
+            if (cancelled.load()) {
+              return;
+            }
+            if (iter == 0 || (iter + 1) % 100 == 0 || (iter + 1) == args.iterations) {
+              std::cout << "async consumer " << (iter + 1) << "/" << args.iterations << "\n";
+            }
+            const cv::Mat& frame = frames[static_cast<std::size_t>(iter) % frames.size()];
+            (void)pull_and_validate(frame, iter + 1, "async");
+          }
+        });
 
     std::cout << "stopping...\n";
     model.close();

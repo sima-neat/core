@@ -420,6 +420,9 @@ jobs:
 
           assert pyneatpcie.__version__
           assert pyneatpcie.Model
+          assert pyneatpcie.Runtime
+          assert pyneatpcie.ModelConfig
+          assert pyneatpcie.Completion
           assert pyneatpcie.Tensor
           PY
 
@@ -1226,6 +1229,9 @@ jobs:
       SIMAPCIE_PULL_TIMEOUT_MS: "30000"
       SIMAPCIE_SYNC_ITERATIONS: "50"
       SIMAPCIE_TEST_ITERATIONS: "1000"
+      SIMAPCIE_BURST_ITERATIONS: "20"
+      SIMAPCIE_LIFECYCLE_CYCLES: "10"
+      SIMAPCIE_LIFETIME_ITERATIONS: "20"
       SIMAPCIE_STRESS_QUEUES: "0 1 2 3"
       SIMAPCIE_STRESS_ITERATIONS: "1000"
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}

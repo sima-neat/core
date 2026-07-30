@@ -1,5 +1,6 @@
 #include <simaai/neat/pcie/Model.h>
 
+#include "AsyncTestRunner.h"
 #include "SignalCloseGuard.h"
 
 #include <algorithm>
@@ -439,65 +440,43 @@ int main(int argc, char** argv) {
       std::cout << "starting parallel burst phase: " << args.burst_iterations
                 << " push/pull iteration(s)\n";
       const auto burst_started = std::chrono::steady_clock::now();
-      std::mutex burst_error_mutex;
-      std::exception_ptr burst_error;
-      std::atomic_bool burst_failed = false;
-      const auto fail_burst = [&](std::exception_ptr error) {
-        {
-          std::lock_guard<std::mutex> lock(burst_error_mutex);
-          if (!burst_error) {
-            burst_error = std::move(error);
-          }
-        }
-        burst_failed.store(true);
-      };
-      auto producer = std::async(std::launch::async, [&] {
-        try {
-          for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
-            if (burst_failed.load()) {
-              return;
+      pcie::test::run_async_workers(
+          [&] { model.close(); },
+          [&](const std::atomic_bool& cancelled) {
+            for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
+              if (cancelled.load()) {
+                return;
+              }
+              if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
+                std::cout << "burst producer " << iteration << "/" << args.burst_iterations
+                          << "\n";
+              }
+              if (!model.push(inputs)) {
+                throw std::runtime_error("burst push returned false at iteration " +
+                                         std::to_string(iteration));
+              }
             }
-            if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
-              std::cout << "burst producer " << iteration << "/" << args.burst_iterations << "\n";
+          },
+          [&](const std::atomic_bool& cancelled) {
+            for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
+              if (cancelled.load()) {
+                return;
+              }
+              if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
+                std::cout << "burst consumer " << iteration << "/" << args.burst_iterations
+                          << " timeout_ms=" << args.pull_timeout_ms << "\n";
+              }
+              const auto result = model.pull(args.pull_timeout_ms);
+              if (!result.has_value()) {
+                throw std::runtime_error("burst pull timed out without a result at iteration " +
+                                         std::to_string(iteration));
+              }
+              validate_outputs(*result, info.outputs);
+              if (iteration == 1) {
+                print_outputs(*result);
+              }
             }
-            if (!model.push(inputs)) {
-              throw std::runtime_error("burst push returned false at iteration " +
-                                       std::to_string(iteration));
-            }
-          }
-        } catch (...) {
-          fail_burst(std::current_exception());
-        }
-      });
-      auto consumer = std::async(std::launch::async, [&] {
-        try {
-          for (int iteration = 1; iteration <= args.burst_iterations; ++iteration) {
-            if (burst_failed.load()) {
-              return;
-            }
-            if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
-              std::cout << "burst consumer " << iteration << "/" << args.burst_iterations
-                        << " timeout_ms=" << args.pull_timeout_ms << "\n";
-            }
-            const auto result = model.pull(args.pull_timeout_ms);
-            if (!result.has_value()) {
-              throw std::runtime_error("burst pull timed out without a result at iteration " +
-                                       std::to_string(iteration));
-            }
-            validate_outputs(*result, info.outputs);
-            if (iteration == 1) {
-              print_outputs(*result);
-            }
-          }
-        } catch (...) {
-          fail_burst(std::current_exception());
-        }
-      });
-      producer.get();
-      consumer.get();
-      if (burst_error) {
-        std::rethrow_exception(burst_error);
-      }
+          });
       const auto burst_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - burst_started)
                                 .count();
@@ -543,32 +522,38 @@ int main(int argc, char** argv) {
       std::cout << "starting async producer/consumer phase: " << args.iterations
                 << " iteration(s)\n";
       const auto async_started = std::chrono::steady_clock::now();
-      auto producer = std::async(std::launch::async, [&] {
-        for (int iteration = 1; iteration <= args.iterations; ++iteration) {
-          if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
-            std::cout << "async producer " << iteration << "/" << args.iterations << "\n";
-          }
-          if (!model.push(inputs)) {
-            throw std::runtime_error("async push returned false at iteration " +
-                                     std::to_string(iteration));
-          }
-        }
-      });
-      auto consumer = std::async(std::launch::async, [&] {
-        for (int iteration = 1; iteration <= args.iterations; ++iteration) {
-          if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
-            std::cout << "async consumer " << iteration << "/" << args.iterations << "\n";
-          }
-          const auto result = model.pull(args.pull_timeout_ms);
-          if (!result.has_value()) {
-            throw std::runtime_error("async pull timed out without a result at iteration " +
-                                     std::to_string(iteration));
-          }
-          validate_outputs(*result, info.outputs);
-        }
-      });
-      producer.get();
-      consumer.get();
+      pcie::test::run_async_workers(
+          [&] { model.close(); },
+          [&](const std::atomic_bool& cancelled) {
+            for (int iteration = 1; iteration <= args.iterations; ++iteration) {
+              if (cancelled.load()) {
+                return;
+              }
+              if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
+                std::cout << "async producer " << iteration << "/" << args.iterations << "\n";
+              }
+              if (!model.push(inputs)) {
+                throw std::runtime_error("async push returned false at iteration " +
+                                         std::to_string(iteration));
+              }
+            }
+          },
+          [&](const std::atomic_bool& cancelled) {
+            for (int iteration = 1; iteration <= args.iterations; ++iteration) {
+              if (cancelled.load()) {
+                return;
+              }
+              if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
+                std::cout << "async consumer " << iteration << "/" << args.iterations << "\n";
+              }
+              const auto result = model.pull(args.pull_timeout_ms);
+              if (!result.has_value()) {
+                throw std::runtime_error("async pull timed out without a result at iteration " +
+                                         std::to_string(iteration));
+              }
+              validate_outputs(*result, info.outputs);
+            }
+          });
       const auto async_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 std::chrono::steady_clock::now() - async_started)
                                 .count();

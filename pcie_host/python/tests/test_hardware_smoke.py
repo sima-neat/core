@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import struct
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -201,22 +202,73 @@ def _run_sync_push_pull(push_once, pull_once, iterations: int):
     pull_once()
 
 
-def _run_async_push_pull(push_once, pull_once, iterations: int):
+def _run_async_push_pull(push_once, pull_once, iterations: int, cancel):
   assert iterations > 0
+  cancelled = threading.Event()
+  failure_lock = threading.Lock()
+  first_failure = []
 
   def produce():
     for _ in range(iterations):
+      if cancelled.is_set():
+        return
       push_once()
 
   def consume():
     for _ in range(iterations):
+      if cancelled.is_set():
+        return
       pull_once()
 
+  def run(worker):
+    try:
+      worker()
+    except BaseException as error:
+      with failure_lock:
+        first = not first_failure
+        if first:
+          first_failure.append((error, error.__traceback__))
+          cancelled.set()
+      if first:
+        try:
+          cancel()
+        except BaseException:
+          # Preserve the worker failure that caused cancellation.
+          pass
+
   with ThreadPoolExecutor(max_workers=2) as executor:
-    producer = executor.submit(produce)
-    consumer = executor.submit(consume)
+    producer = executor.submit(run, produce)
+    consumer = executor.submit(run, consume)
     producer.result()
     consumer.result()
+
+  if first_failure:
+    error, traceback = first_failure[0]
+    raise error.with_traceback(traceback)
+
+
+def test_async_test_runner_cancels_blocked_peer():
+  producer_waiting = threading.Event()
+  stop_requested = threading.Event()
+  cancel_calls = 0
+
+  def push_once():
+    producer_waiting.set()
+    assert stop_requested.wait(5), "blocked producer was not cancelled"
+
+  def pull_once():
+    assert producer_waiting.wait(5), "producer did not enter its blocking operation"
+    raise RuntimeError("original consumer failure")
+
+  def cancel():
+    nonlocal cancel_calls
+    cancel_calls += 1
+    stop_requested.set()
+
+  with pytest.raises(RuntimeError, match="^original consumer failure$"):
+    _run_async_push_pull(push_once, pull_once, 1, cancel)
+
+  assert cancel_calls == 1
 
 
 def test_metadata_yolov8():
@@ -236,6 +288,84 @@ def test_metadata_yolov8():
       "class_prob_2",
   ]
   assert all(tensor.size_bytes > 0 for tensor in info.outputs)
+
+
+def test_runtime_request_correlation():
+  model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
+  info = pcie.Model(str(model)).info()
+  inputs = _make_inputs(info)
+  request_id = -123456789
+
+  with pcie.Runtime(_connection()) as runtime:
+    model_id = runtime.load(
+        str(model),
+        readiness_timeout_ms=_readiness_timeout_ms(),
+    )
+    assert runtime.try_enqueue(
+        model_id,
+        request_id,
+        inputs,
+    ) == pcie.EnqueueResult.Accepted
+
+    completion = runtime.retrieve(_pull_timeout_ms())
+    assert completion is not None
+    assert completion.model_id == model_id
+    assert completion.request_id == request_id
+    _assert_outputs_match_metadata(completion.outputs, info.outputs)
+    runtime.unload(model_id, _pull_timeout_ms())
+
+
+def test_runtime_two_models_and_independent_unload():
+  model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
+  info = pcie.Model(str(model)).info()
+  inputs = _make_inputs(info)
+
+  configs = []
+  for _ in range(2):
+    config = pcie.ModelConfig()
+    config.path = str(model)
+    configs.append(config)
+
+  with pcie.Runtime(_connection()) as runtime:
+    model_ids = runtime.load_models(
+        configs,
+        readiness_timeout_ms=_readiness_timeout_ms(),
+    )
+    assert len(model_ids) == 2
+    assert model_ids[0] != model_ids[1]
+
+    expected = {
+        (model_ids[0], 101),
+        (model_ids[1], 202),
+    }
+    for model_id, request_id in expected:
+      assert runtime.try_enqueue(
+          model_id,
+          request_id,
+          inputs,
+      ) == pcie.EnqueueResult.Accepted
+
+    received = set()
+    for _ in expected:
+      completion = runtime.retrieve(_pull_timeout_ms())
+      assert completion is not None
+      received.add((completion.model_id, completion.request_id))
+      _assert_outputs_match_metadata(completion.outputs, info.outputs)
+    assert received == expected
+
+    runtime.unload(model_ids[0], _pull_timeout_ms())
+
+    assert runtime.try_enqueue(
+        model_ids[1],
+        303,
+        inputs,
+    ) == pcie.EnqueueResult.Accepted
+    completion = runtime.retrieve(_pull_timeout_ms())
+    assert completion is not None
+    assert completion.model_id == model_ids[1]
+    assert completion.request_id == 303
+    _assert_outputs_match_metadata(completion.outputs, info.outputs)
+    runtime.unload(model_ids[1], _pull_timeout_ms())
 
 
 def test_tensor_run_yolov8():
@@ -260,7 +390,7 @@ def test_tensor_run_yolov8():
       _assert_outputs_match_metadata(outputs, info.outputs)
 
     _run_sync_push_pull(push_once, pull_once, sync_iterations)
-    _run_async_push_pull(push_once, pull_once, async_iterations)
+    _run_async_push_pull(push_once, pull_once, async_iterations, runtime.close)
   finally:
     if runtime is not None:
       runtime.close()
@@ -290,7 +420,7 @@ def test_tensor_parallel_queues_yolov8():
         _assert_outputs_match_metadata(outputs, info.outputs)
 
       _run_sync_push_pull(push_once, pull_once, sync_iterations)
-      _run_async_push_pull(push_once, pull_once, iterations)
+      _run_async_push_pull(push_once, pull_once, iterations, runtime.close)
       return queue
     finally:
       if runtime is not None:
@@ -332,7 +462,7 @@ def test_image_run_yolov8():
       _assert_outputs_match_metadata(outputs, info.outputs)
 
     _run_sync_push_pull(push_once, pull_once, sync_iterations)
-    _run_async_push_pull(push_once, pull_once, async_iterations)
+    _run_async_push_pull(push_once, pull_once, async_iterations, runtime.close)
   finally:
     if runtime is not None:
       runtime.close()
@@ -407,7 +537,7 @@ def test_image_boxdecode_run_yolov8():
         assert any(record[5] == 0 for record in records)
 
     _run_sync_push_pull(push_once, pull_once, sync_iterations)
-    _run_async_push_pull(push_once, pull_once, async_iterations)
+    _run_async_push_pull(push_once, pull_once, async_iterations, runtime.close)
   finally:
     if runtime is not None:
       runtime.close()

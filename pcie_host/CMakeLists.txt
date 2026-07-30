@@ -47,6 +47,7 @@ endif()
 get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
 find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
 find_package(nlohmann_json QUIET)
 if (NOT TARGET nlohmann_json::nlohmann_json)
   message(FATAL_ERROR
@@ -67,6 +68,7 @@ set(SIMA_NEAT_PCIE_HOST_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ModelOptionsJsonWriter.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/PcieModelFactsReader.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/RemoteRuntime.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/Runtime.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/SshRunner.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/model/ModelArchiveLoader.cpp
   ${SIMA_NEAT_CORE_ROOT}/src/pipeline/internal/sima/MpkContract.cpp
@@ -91,6 +93,7 @@ target_compile_options(sima_neat_pcie_host PRIVATE ${GST_CFLAGS_OTHER})
 target_link_directories(sima_neat_pcie_host PRIVATE ${GST_LIBRARY_DIRS})
 target_link_libraries(sima_neat_pcie_host PRIVATE
   ${GST_LIBRARIES}
+  Threads::Threads
   $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
 )
 if (NOT SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR)
@@ -212,17 +215,31 @@ if (SIMAPCIE_BUILD_TESTS)
   )
   target_link_libraries(unit_pcie_host_lifecycle_test PRIVATE sima_neat_pcie_host)
 
+  add_executable(unit_pcie_host_runtime_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_runtime_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_runtime_test PRIVATE sima_neat_pcie_host)
+
   add_executable(unit_pcie_host_ssh_runner_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_ssh_runner_test.cpp
   )
   target_link_libraries(unit_pcie_host_ssh_runner_test PRIVATE sima_neat_pcie_host)
   target_include_directories(unit_pcie_host_ssh_runner_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+  add_executable(unit_pcie_host_async_test_runner_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_async_test_runner_test.cpp
+  )
+  target_link_libraries(unit_pcie_host_async_test_runner_test PRIVATE Threads::Threads)
+  target_include_directories(unit_pcie_host_async_test_runner_test
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
   add_test(NAME unit_pcie_host_tensor_test COMMAND unit_pcie_host_tensor_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
+  add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
+  add_test(NAME unit_pcie_host_async_test_runner_test COMMAND unit_pcie_host_async_test_runner_test)
 endif()
 
 if (SIMAPCIE_BUILD_HARDWARE_TESTS)

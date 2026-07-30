@@ -27,6 +27,7 @@ simapcie_add_hardware_test(test_tensor_perf test_tensor_perf.cpp)
 simapcie_add_hardware_test(test_image_run test_image_run.cpp)
 simapcie_add_hardware_test(test_image_boxdecode_run test_image_boxdecode_run.cpp)
 simapcie_add_hardware_test(test_queue_blocker test_queue_blocker.cpp)
+simapcie_add_hardware_test(test_model_resilience test_model_resilience.cpp)
 
 install(PROGRAMS test_tensor_parallel_queues.sh
   DESTINATION "${SIMAPCIE_HARDWARE_TEST_INSTALL_DIR}"

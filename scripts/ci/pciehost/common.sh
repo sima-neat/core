@@ -139,7 +139,7 @@ REMOTE_SUDO
 
 cleanup_host_pcie_device() {
   local dev="/dev/sima_mla_c${CARD_ID}"
-  local known_pattern='[t]est_tensor_run|[t]est_image_run|[t]est_image_boxdecode_run|[t]est_queue_blocker|[g]st-launch-1.0'
+  local known_pattern='[t]est_tensor_run|[t]est_image_run|[t]est_image_boxdecode_run|[t]est_queue_blocker|[t]est_model_resilience|[g]st-launch-1.0'
 
   if [[ ! -e "${dev}" ]]; then
     return 0
@@ -160,7 +160,7 @@ cleanup_host_pcie_device() {
         first_arg="${cmdline%% *}"
         base="$(basename "${first_arg}")"
         case "${base}" in
-          test_tensor_run|test_image_run|test_image_boxdecode_run|test_queue_blocker|gst-launch-1.0)
+          test_tensor_run|test_image_run|test_image_boxdecode_run|test_queue_blocker|test_model_resilience|gst-launch-1.0)
             printf '%s\n' "${pid}"
             ;;
         esac

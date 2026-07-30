@@ -1,5 +1,6 @@
 #include <simaai/neat/pcie/Model.h>
 
+#include "AsyncTestRunner.h"
 #include "SignalCloseGuard.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -401,39 +402,45 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "starting async producer/consumer phase: " << args.iterations << " iteration(s)\n";
-    auto producer = std::async(std::launch::async, [&] {
-      for (int iteration = 1; iteration <= args.iterations; ++iteration) {
-        if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
-          std::cout << "async producer " << iteration << "/" << args.iterations << "\n";
-        }
-        if (args.opencv_overload) {
+    pcie::test::run_async_workers(
+        [&] { model.close(); },
+        [&](const std::atomic_bool& cancelled) {
+          for (int iteration = 1; iteration <= args.iterations; ++iteration) {
+            if (cancelled.load()) {
+              return;
+            }
+            if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
+              std::cout << "async producer " << iteration << "/" << args.iterations << "\n";
+            }
+            if (args.opencv_overload) {
 #if defined(SIMA_PCIE_HAS_OPENCV_OVERLOAD)
-          if (!model.push(bgr)) {
-            throw std::runtime_error("async push returned false at iteration " +
-                                     std::to_string(iteration));
-          }
+              if (!model.push(bgr)) {
+                throw std::runtime_error("async push returned false at iteration " +
+                                         std::to_string(iteration));
+              }
 #endif
-        } else if (!model.push(image)) {
-          throw std::runtime_error("async push returned false at iteration " +
-                                   std::to_string(iteration));
-        }
-      }
-    });
-    auto consumer = std::async(std::launch::async, [&] {
-      for (int iteration = 1; iteration <= args.iterations; ++iteration) {
-        if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
-          std::cout << "async consumer " << iteration << "/" << args.iterations << "\n";
-        }
-        const auto result = model.pull(args.pull_timeout_ms);
-        if (!result.has_value()) {
-          throw std::runtime_error("async pull timed out without a result at iteration " +
-                                   std::to_string(iteration));
-        }
-        validate_nonzero_outputs(*result);
-      }
-    });
-    producer.get();
-    consumer.get();
+            } else if (!model.push(image)) {
+              throw std::runtime_error("async push returned false at iteration " +
+                                       std::to_string(iteration));
+            }
+          }
+        },
+        [&](const std::atomic_bool& cancelled) {
+          for (int iteration = 1; iteration <= args.iterations; ++iteration) {
+            if (cancelled.load()) {
+              return;
+            }
+            if (iteration == 1 || iteration % 100 == 0 || iteration == args.iterations) {
+              std::cout << "async consumer " << iteration << "/" << args.iterations << "\n";
+            }
+            const auto result = model.pull(args.pull_timeout_ms);
+            if (!result.has_value()) {
+              throw std::runtime_error("async pull timed out without a result at iteration " +
+                                       std::to_string(iteration));
+            }
+            validate_nonzero_outputs(*result);
+          }
+        });
 
     std::cout << "stopping...\n";
     model.close();
