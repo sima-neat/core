@@ -17,11 +17,7 @@ RECOVERY = ROOT / "scripts" / "fix_devkit_runtime.sh"
 def run_bash(
     script: str, target: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """Source `target` in bash and run `script` against it.
-
-    `target` defaults to INSTALLER at call time, not at definition time, so
-    `--installer` and `--recovery` still reach the tests that omit it.
-    """
+    """Resolve INSTALLER at call time so --installer/--recovery still apply."""
     return subprocess.run(
         ["bash", "-c", script, "bash", str(target or INSTALLER)],
         check=False,
@@ -804,11 +800,9 @@ trap 'rm -rf "${tmp}"' EXIT
 calls="${tmp}/calls"
 : > "${calls}"
 export NEAT_RECOVERY_FUNCTIONS_ONLY=ON
-export NEAT_RECOVERY_APPCOMPLEX_POLL_ATTEMPTS=2
 source "$1"
 
-# Record what the sequence would do instead of doing it. The labels are the
-# observable contract; their order is what this suite asserts.
+# Record the step labels instead of running them; their order is the contract.
 run_step() { printf '%s\n' "$1" >> "${calls}"; }
 run_optional_service_step() { printf '%s\n' "$1" >> "${calls}"; }
 empty_coprocessing() { :; }
@@ -821,12 +815,7 @@ line_of() { grep -n -- "$1" "${calls}" | head -1 | cut -d: -f1; }
 
 
 class DevKitRecoveryOrderingTest(unittest.TestCase):
-    """The M4 must only be booted while mlashmcomplex is alive.
-
-    Violating that ordering blocks the writing task in uninterruptible sleep,
-    which no timeout or signal can recover; the board is lost until the
-    hardware watchdog fires. See sima-neat/core#659.
-    """
+    """The M4 must only be booted while mlashmcomplex is alive (#659)."""
 
     def test_m4_boots_before_appcomplex_is_stopped(self) -> None:
         result = run_bash(
@@ -1247,11 +1236,7 @@ repair_global_sima_neat_lib_links
 
 
 def _take_path_option(flag: str) -> Path | None:
-    """Pop `--flag <path>` out of argv so unittest never sees it.
-
-    CTest runs this file from the build tree, where neither script sits at the
-    path derived from `__file__`. Both are passed in explicitly instead.
-    """
+    """Pop `--flag <path>` out of argv; under CTest neither script sits at __file__."""
     if flag not in sys.argv:
         return None
     index = sys.argv.index(flag)

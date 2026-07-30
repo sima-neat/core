@@ -12,13 +12,6 @@ DISPATCHER_GLOBAL_LIB_DIR="${NEAT_RECOVERY_DISPATCHER_GLOBAL_LIB_DIR:-/usr/lib/a
 DISPATCHER_QUARANTINE_DIR="${NEAT_RECOVERY_DISPATCHER_QUARANTINE_DIR:-/var/lib/sima-neat/quarantine/dispatcher}"
 RECOVERY_STEP_TIMEOUT_SECONDS="${NEAT_RECOVERY_STEP_TIMEOUT_SECONDS:-120}"
 RECOVERY_STEP_KILL_GRACE_SECONDS="${NEAT_RECOVERY_STEP_KILL_GRACE_SECONDS:-10}"
-APPCOMPLEX_UNIT="simaai-appcomplex.service"
-# mlashmcomplex is the appcomplex binary. It is matched separately from the
-# other stale runtime processes because it must outlive the remoteproc cycle.
-APPCOMPLEX_PROCESS_NAME='mlashmcomplex'
-APPCOMPLEX_PROCESS_PATTERN='(/usr/bin/)?mlashmcomplex( |$)'
-STALE_RUNTIME_PROCESS_PATTERN='(/usr/bin/)?(simaai_pipeline_handler_new|rctd)( |$)'
-APPCOMPLEX_START_POLL_ATTEMPTS="${NEAT_RECOVERY_APPCOMPLEX_POLL_ATTEMPTS:-5}"
 
 if [[ $# -gt 0 ]]; then
   pass="$1"
@@ -203,71 +196,39 @@ stop_runtime_services() {
   run_optional_service_step \
     "stop simaai-pipeline-manager.service" stop simaai-pipeline-manager.service
   run_optional_service_step "stop rctd.service" stop rctd.service
-  run_step "terminate stale runtime processes" pkill -TERM -f "${STALE_RUNTIME_PROCESS_PATTERN}"
+  run_step "terminate stale runtime processes" pkill -TERM -f '(/usr/bin/)?(simaai_pipeline_handler_new|rctd)( |$)'
   sleep 1
-  run_step "kill stale runtime processes" pkill -KILL -f "${STALE_RUNTIME_PROCESS_PATTERN}"
+  run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(simaai_pipeline_handler_new|rctd)( |$)'
 }
 
-appcomplex_unit_is_installed() {
-  systemctl cat "${APPCOMPLEX_UNIT}" >/dev/null 2>&1
-}
-
-# Matched on the process name, not the command line: a `pgrep -f` on the pattern
-# also matches any shell whose own command line happens to mention it, which
-# silently reports appcomplex as alive when it is not.
-appcomplex_is_running() {
-  pgrep -x "${APPCOMPLEX_PROCESS_NAME}" >/dev/null 2>&1
-}
-
-# Booting the M4 while the MLA shared-memory server is dead can block the
-# writing task in uninterruptible sleep. Nothing recovers the board from that:
-# the step timeout cannot signal a D-state task, and the hardware watchdog is
-# ten minutes away. Refuse to touch remoteproc unless mlashmcomplex is alive.
-#
-# A down appcomplex is also the state a previous recovery run leaves behind when
-# its restart hit the systemd start limit, so clearing that state here is what
-# stops repeated invocations from degrading into the failing case.
+# Booting the M4 while mlashmcomplex is dead blocks the write in uninterruptible
+# sleep, where the step timeout cannot reach it and only the watchdog recovers
+# the board. Refuse rather than hang. Matching on the process name keeps a shell
+# whose own command line mentions mlashmcomplex from reporting a false positive.
 ensure_appcomplex_before_remoteproc() {
-  if ! appcomplex_unit_is_installed; then
-    printf "[recovery] appcomplex precondition skipped: systemd unit %s is not installed on this devkit image\n" \
-      "${APPCOMPLEX_UNIT}"
+  if ! systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
+    printf "[recovery] appcomplex precondition skipped: systemd unit simaai-appcomplex.service is not installed on this devkit image\n"
     return 0
   fi
 
-  if appcomplex_is_running; then
-    return 0
-  fi
+  pgrep -x mlashmcomplex >/dev/null 2>&1 && return 0
 
-  printf "[recovery] %s is down before the remoteproc cycle; restoring it first\n" \
-    "${APPCOMPLEX_UNIT}"
+  printf "[recovery] simaai-appcomplex.service is down before the remoteproc cycle; restoring it first\n"
   run_optional_service_step \
-    "clear ${APPCOMPLEX_UNIT} start-limit state" reset-failed "${APPCOMPLEX_UNIT}"
-  run_optional_service_step "start ${APPCOMPLEX_UNIT}" start "${APPCOMPLEX_UNIT}"
+    "clear simaai-appcomplex.service start-limit state" reset-failed simaai-appcomplex.service
+  run_optional_service_step \
+    "start simaai-appcomplex.service" start simaai-appcomplex.service
 
   local attempt
-  for (( attempt = 1; attempt <= APPCOMPLEX_START_POLL_ATTEMPTS; attempt++ )); do
-    if appcomplex_is_running; then
-      return 0
-    fi
+  for attempt in 1 2 3 4 5; do
+    pgrep -x mlashmcomplex >/dev/null 2>&1 && return 0
     sleep 1
   done
 
-  printf "[recovery] refusing to boot the M4: %s did not come up, and booting it now would hang the board until the hardware watchdog resets it\n" \
-    "${APPCOMPLEX_UNIT}" >&2
+  printf "[recovery] refusing to boot the M4: simaai-appcomplex.service did not come up\n" >&2
   return 1
 }
 
-# Only now may appcomplex go down: init_mla_memory needs /dev/m4_lp_mbox, which
-# appcomplex holds for as long as it runs.
-stop_appcomplex_for_mla_init() {
-  run_optional_service_step "stop ${APPCOMPLEX_UNIT}" stop "${APPCOMPLEX_UNIT}"
-  run_step "terminate stale appcomplex processes" pkill -TERM -f "${APPCOMPLEX_PROCESS_PATTERN}"
-  sleep 1
-  run_step "kill stale appcomplex processes" pkill -KILL -f "${APPCOMPLEX_PROCESS_PATTERN}"
-}
-
-# The order here is the contract. Callers depend on the M4 booting while
-# appcomplex is alive and on init_mla_memory running while it is not.
 recover_devkit_runtime() {
   stop_runtime_services
   empty_coprocessing
@@ -278,9 +239,13 @@ recover_devkit_runtime() {
   run_step "remoteproc1 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
   run_step "remoteproc0 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
   run_step "remoteproc status" sh -c 'for rp in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do echo "$rp: $(cat $rp/name) state=$(cat $rp/state)"; done'
-  stop_appcomplex_for_mla_init
+  # init_mla_memory needs /dev/m4_lp_mbox, which appcomplex holds while it runs.
+  run_optional_service_step "stop simaai-appcomplex.service" stop simaai-appcomplex.service
+  run_step "terminate stale appcomplex processes" pkill -TERM -f '(/usr/bin/)?mlashmcomplex( |$)'
+  sleep 1
+  run_step "kill stale appcomplex processes" pkill -KILL -f '(/usr/bin/)?mlashmcomplex( |$)'
   run_step "init_mla_memory" /usr/bin/init_mla_memory.sh
-  run_optional_service_step "restart ${APPCOMPLEX_UNIT}" restart "${APPCOMPLEX_UNIT}"
+  run_optional_service_step "restart simaai-appcomplex.service" restart simaai-appcomplex.service
   run_optional_service_step \
     "restart simaai-pipeline-manager.service" restart simaai-pipeline-manager.service
   run_optional_service_step "restart rctd.service" restart rctd.service
