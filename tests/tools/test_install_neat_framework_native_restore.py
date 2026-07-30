@@ -798,6 +798,133 @@ printf 'RECOVERY_REFUSED\n'
 
 
 
+RECOVERY_ORDER_HARNESS = r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+calls="${tmp}/calls"
+: > "${calls}"
+export NEAT_RECOVERY_FUNCTIONS_ONLY=ON
+export NEAT_RECOVERY_APPCOMPLEX_POLL_ATTEMPTS=2
+source "$1"
+
+# Record what the sequence would do instead of doing it. The labels are the
+# observable contract; their order is what this suite asserts.
+run_step() { printf '%s\n' "$1" >> "${calls}"; }
+run_optional_service_step() { printf '%s\n' "$1" >> "${calls}"; }
+empty_coprocessing() { :; }
+cleanup_tmp_sima_if_root_low_space() { :; }
+systemctl() { return 0; }
+sleep() { :; }
+
+line_of() { grep -n -- "$1" "${calls}" | head -1 | cut -d: -f1; }
+'''
+
+
+class DevKitRecoveryOrderingTest(unittest.TestCase):
+    """The M4 must only be booted while mlashmcomplex is alive.
+
+    Violating that ordering blocks the writing task in uninterruptible sleep,
+    which no timeout or signal can recover; the board is lost until the
+    hardware watchdog fires. See sima-neat/core#659.
+    """
+
+    def test_m4_boots_before_appcomplex_is_stopped(self) -> None:
+        result = run_bash(
+            RECOVERY_ORDER_HARNESS
+            + r'''
+pgrep() { return 0; }   # appcomplex already running
+
+recover_devkit_runtime
+
+boot="$(line_of 'remoteproc1 start')"
+stop="$(line_of 'stop simaai-appcomplex.service')"
+init="$(line_of 'init_mla_memory')"
+restart="$(line_of 'restart simaai-appcomplex.service')"
+
+(( boot < stop ))    || { printf 'M4 booted after appcomplex stop\n' >&2; exit 1; }
+(( stop < init ))    || { printf 'init_mla_memory ran while appcomplex held the mailbox\n' >&2; exit 1; }
+(( init < restart )) || { printf 'appcomplex restarted before init_mla_memory\n' >&2; exit 1; }
+printf 'RECOVERY_ORDER_OK\n'
+''',
+            RECOVERY,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RECOVERY_ORDER_OK", result.stdout)
+
+    def test_recovery_restarts_a_down_appcomplex_before_booting_the_m4(self) -> None:
+        result = run_bash(
+            RECOVERY_ORDER_HARNESS
+            + r'''
+# Down on the first probe, up once the start step has run.
+probe_count=0
+pgrep() {
+  probe_count=$(( probe_count + 1 ))
+  (( probe_count > 1 ))
+}
+
+recover_devkit_runtime
+
+start="$(line_of 'start simaai-appcomplex.service')"
+reset="$(line_of 'clear simaai-appcomplex.service start-limit state')"
+boot="$(line_of 'remoteproc1 start')"
+
+[[ -n "${reset}" ]] || { printf 'start-limit state was never cleared\n' >&2; exit 1; }
+(( reset < start )) || { printf 'start attempted before clearing the start limit\n' >&2; exit 1; }
+(( start < boot ))  || { printf 'M4 booted before appcomplex was restored\n' >&2; exit 1; }
+printf 'RECOVERY_RESTORED_APPCOMPLEX\n'
+''',
+            RECOVERY,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RECOVERY_RESTORED_APPCOMPLEX", result.stdout)
+
+    def test_recovery_refuses_to_boot_the_m4_when_appcomplex_stays_down(self) -> None:
+        result = run_bash(
+            RECOVERY_ORDER_HARNESS
+            + r'''
+pgrep() { return 1; }   # never comes up
+
+if recover_devkit_runtime; then
+  printf 'recovery reported success with appcomplex down\n' >&2
+  exit 1
+fi
+
+if grep -q 'remoteproc' "${calls}"; then
+  printf 'remoteproc was touched with appcomplex down\n' >&2
+  exit 1
+fi
+printf 'RECOVERY_REFUSED_M4_BOOT\n'
+''',
+            RECOVERY,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RECOVERY_REFUSED_M4_BOOT", result.stdout)
+        self.assertIn("refusing to boot the M4", result.stderr)
+
+    def test_recovery_skips_the_precondition_when_appcomplex_is_not_installed(self) -> None:
+        result = run_bash(
+            RECOVERY_ORDER_HARNESS
+            + r'''
+systemctl() { return 1; }   # unit not installed on this image
+pgrep() { return 1; }
+
+recover_devkit_runtime
+
+boot="$(line_of 'remoteproc1 start')"
+[[ -n "${boot}" ]] || { printf 'recovery stalled on an image without appcomplex\n' >&2; exit 1; }
+printf 'RECOVERY_SKIPPED_PRECONDITION\n'
+''',
+            RECOVERY,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RECOVERY_SKIPPED_PRECONDITION", result.stdout)
+        self.assertIn("is not installed on this devkit image", result.stdout)
+
+
 class SimaNeatLinkRepairTest(unittest.TestCase):
     def test_sdk_sysroot_rejects_multiple_core_package_pairs(self) -> None:
         result = run_bash(
