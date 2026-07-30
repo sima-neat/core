@@ -927,8 +927,8 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
       }
       if (n > budget) {
         std::ostringstream oss;
-        oss << "insufficient free space inflating model archive"
-            << " path=" << staging_dir.string() << " inflated=" << format_bytes(total - n)
+        oss << "insufficient free space inflating model archive" << " path=" << staging_dir.string()
+            << " inflated=" << format_bytes(total - n)
             << " reserve=" << format_bytes(opt.min_output_free_bytes)
             << " writable=" << format_bytes(budget)
             << " hint=set TMPDIR to a filesystem with enough space";
