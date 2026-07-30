@@ -15,10 +15,15 @@ RECOVERY = ROOT / "scripts" / "fix_devkit_runtime.sh"
 
 
 def run_bash(
-    script: str, target: Path = INSTALLER
+    script: str, target: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
+    """Source `target` in bash and run `script` against it.
+
+    `target` defaults to INSTALLER at call time, not at definition time, so
+    `--installer` and `--recovery` still reach the tests that omit it.
+    """
     return subprocess.run(
-        ["bash", "-c", script, "bash", str(target)],
+        ["bash", "-c", script, "bash", str(target or INSTALLER)],
         check=False,
         text=True,
         capture_output=True,
@@ -1114,12 +1119,24 @@ repair_global_sima_neat_lib_links
         )
 
 
+def _take_path_option(flag: str) -> Path | None:
+    """Pop `--flag <path>` out of argv so unittest never sees it.
+
+    CTest runs this file from the build tree, where neither script sits at the
+    path derived from `__file__`. Both are passed in explicitly instead.
+    """
+    if flag not in sys.argv:
+        return None
+    index = sys.argv.index(flag)
+    try:
+        value = Path(sys.argv[index + 1]).resolve()
+    except IndexError as exc:
+        raise SystemExit(f"{flag} requires a path") from exc
+    del sys.argv[index : index + 2]
+    return value
+
+
 if __name__ == "__main__":
-    if "--installer" in sys.argv:
-        index = sys.argv.index("--installer")
-        try:
-            INSTALLER = Path(sys.argv[index + 1]).resolve()
-        except IndexError as exc:
-            raise SystemExit("--installer requires a path") from exc
-        del sys.argv[index : index + 2]
+    INSTALLER = _take_path_option("--installer") or INSTALLER
+    RECOVERY = _take_path_option("--recovery") or RECOVERY
     unittest.main()
