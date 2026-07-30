@@ -8,6 +8,7 @@
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/Graph.h"
 #include "pipeline/TensorAdapters.h"
+#include "asset_utils.h"
 #include "test_utils.h"
 
 #include <gst/app/gstappsink.h>
@@ -1177,7 +1178,7 @@ std::string image_path_from_args(int argc, char** argv) {
       return value;
     }
   }
-  return "tests/assets/preproc_dynamic/ilena_488.jpg";
+  return sima_test::test_shared_asset_path("tests/assets/preproc_dynamic/ilena_488.jpg").string();
 }
 
 std::string scenario_filter_from_args(int argc, char** argv) {

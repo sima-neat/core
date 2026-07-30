@@ -565,9 +565,6 @@ add_pipeline_test_long(
   video_sender_adaptive_ingress_e2e_test
   SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/video_sender_adaptive_ingress_e2e_test.cpp
-  ARGS
-    --image
-    ${CMAKE_SOURCE_DIR}/tests/assets/preproc_dynamic/ilena_488.jpg
 )
 
 if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -2124,6 +2121,11 @@ install(
 install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_16k_mono_f32le.raw"
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/preproc_dynamic/ilena_488.jpg"
+  DESTINATION share/sima-neat/test-assets/tests/assets/preproc_dynamic
   COMPONENT extras
 )
 
