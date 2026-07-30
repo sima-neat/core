@@ -312,6 +312,7 @@ set(UNIT_TESTS
   unit_genai_text_tensor_test
   unit_node_metadata_sender_test
   unit_video_sender_test
+  unit_video_sender_adaptive_ingress_test
   unit_env_util_profile_test
   unit_framestream_test
   unit_move_semantics_proof_test
@@ -559,6 +560,20 @@ foreach(test ${E2E_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e")
   endif()
 endforeach()
+
+add_pipeline_test_long(
+  video_sender_adaptive_ingress_e2e_test
+  SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/video_sender_adaptive_ingress_e2e_test.cpp
+)
+
+if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
+    LABELS "e2e;codec;video_sender;real_media;long")
+  set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
+    RESOURCE_LOCK "accelerator-device;udp")
+  set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+endif()
 
 
 add_pipeline_test(
@@ -2106,6 +2121,11 @@ install(
 install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_16k_mono_f32le.raw"
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/preproc_dynamic/ilena_488.jpg"
+  DESTINATION share/sima-neat/test-assets/tests/assets/preproc_dynamic
   COMPONENT extras
 )
 

@@ -17,11 +17,22 @@ If the receiver runs behind container port remapping, pass the mapped host and a
 
 ## Raw Frames
 
-Use the raw path when the pipeline input to `VideoSender` is raw video frames. Neat converts, encodes, packetizes, and sends:
+Use the raw path when the pipeline input to `VideoSender` is raw video frames.
+Neat selects the safe encoder ingress automatically:
 
 ```text
+NV12 with a proven compatible boundary:
+H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
+
+Other or unknown raw formats:
 VideoConvert -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
 ```
+
+The automatic selection does not add an application option or change the
+`H264RtpUdpFromRaw(...)` API. Proven NV12 in system or SiMaAI memory can feed
+the H.264 encoder directly when the installed encoder advertises
+`input-layout-aware=true`. RGB, BGR, grayscale, I420, unknown memory/layouts,
+and inputs without a reliable format contract retain one conversion to NV12.
 
 ```cpp
 simaai::neat::Graph graph;

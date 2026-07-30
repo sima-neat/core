@@ -27,6 +27,11 @@ Release notes for the SiMa.ai Neat Library.
   `pyneat.VideoSenderOptions.passthrough(codec)`. H.265 uses RTP payload type 98
   by default; H.264 keeps 96. `H264RtpUdpFromEncoded()` is deprecated in favor
   of `Passthrough(RtspCodec::H264)`.
+- Raw `VideoSender` input now omits its format conversion automatically for
+  proven NV12 in system or SiMaAI memory when the installed encoder advertises
+  `input-layout-aware=true`. Other raw formats, unknown memory/layouts, and
+  inputs without a reliable format contract retain the existing conversion to
+  NV12. The `H264RtpUdpFromRaw(...)` C++ and Python APIs are unchanged.
 - RTSP inputs select the RTP payload type with a single codec-neutral
   `payload_type` field on `RtspEncodedInputOptions` and
   `RtspDecodedInputOptions`: `-1` selects the codec default (96 for H.264/H.265,

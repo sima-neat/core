@@ -35,6 +35,7 @@
 #include "contracts/Validators.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorAdapters.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/sima/Cast.h"
@@ -509,6 +510,74 @@ double double_field(const JsonValue::JsonObject& obj, const char* key, double fa
 bool bool_field(const JsonValue::JsonObject& obj, const char* key, bool fallback = false) {
   const JsonValue* value = object_field(obj, key);
   return value && value->type == JsonValue::Type::Bool ? value->b : fallback;
+}
+
+void write_video_sender_raw_ingress_json(std::ostream& out, const Node* node) {
+  if (!node) {
+    return;
+  }
+  const auto config = nodes::groups::internal::video_sender_raw_ingress_config(*node);
+  if (!config.has_value()) {
+    return;
+  }
+  out << "\"video_sender_raw_ingress\":{\"width\":" << config->width
+      << ",\"height\":" << config->height << ",\"fps\":" << config->fps << "},";
+}
+
+std::optional<nodes::groups::internal::VideoSenderRawIngressConfig>
+parse_video_sender_raw_ingress_json(const JsonValue::JsonObject& node, const std::string& path,
+                                    std::size_t node_index) {
+  const JsonValue* value = object_field(node, "video_sender_raw_ingress");
+  if (!value) {
+    return std::nullopt;
+  }
+  if (value->type != JsonValue::Type::Object || !value->obj) {
+    throw_io_error(error_codes::kIoParse, "Graph::load", path,
+                   "video_sender_raw_ingress must be an object (node_index=" +
+                       std::to_string(node_index) + ")");
+  }
+
+  nodes::groups::internal::VideoSenderRawIngressConfig config{
+      .width = int_field(*value->obj, "width", -1),
+      .height = int_field(*value->obj, "height", -1),
+      .fps = int_field(*value->obj, "fps", -1),
+      .fallback_element_names = {},
+  };
+  if (config.width <= 0 || config.height <= 0 || config.fps <= 0) {
+    throw_io_error(error_codes::kIoParse, "Graph::load", path,
+                   "video_sender_raw_ingress dimensions/fps must be positive (node_index=" +
+                       std::to_string(node_index) + ")");
+  }
+
+  // Typed rehydration must retain the names already baked into the serialized
+  // fragment. Graph::load clears its name transform because generic loaded
+  // Nodes do the same; regenerating nX_* here would silently lose that suffix.
+  if (const JsonValue* elements = object_field(node, "elements"); elements) {
+    if (elements->type != JsonValue::Type::Array || !elements->arr) {
+      throw_io_error(error_codes::kIoParse, "Graph::load", path,
+                     "node 'elements' must be array (node_index=" + std::to_string(node_index) +
+                         ")");
+    }
+    if (elements->arr->size() != 3U) {
+      throw_io_error(error_codes::kIoParse, "Graph::load", path,
+                     "video_sender_raw_ingress 'elements' must contain exactly three fallback "
+                     "element names (node_index=" +
+                         std::to_string(node_index) + ")");
+    }
+    config.fallback_element_names.reserve(3U);
+    for (std::size_t element_index = 0; element_index < elements->arr->size(); ++element_index) {
+      const auto& element = (*elements->arr)[element_index];
+      if (element.type != JsonValue::Type::String || element.str.empty()) {
+        throw_io_error(error_codes::kIoParse, "Graph::load", path,
+                       "video_sender_raw_ingress 'elements' entries must be non-empty strings "
+                       "(node_index=" +
+                           std::to_string(node_index) +
+                           ", element_index=" + std::to_string(element_index) + ")");
+      }
+      config.fallback_element_names.push_back(element.str);
+    }
+  }
+  return config;
 }
 
 void warn_deprecated_use_simaai_pool_json_once() {
@@ -1330,6 +1399,7 @@ void Graph::save(const std::string& path) const {
         write_output_options_json(oss, output->options());
         oss << ",";
       }
+      write_video_sender_raw_ingress_json(oss, n.get());
       oss << "\"fragment\":\"" << json_escape(frag.fragment) << "\"," << "\"elements\":[";
       for (std::size_t e = 0; e < frag.element_names.size(); ++e) {
         if (e) {
@@ -1428,7 +1498,9 @@ void Graph::save(const std::string& path) const {
     const auto& elements = frag.element_names;
 
     oss << "    {\"kind\":\"" << json_escape(kind) << "\"," << "\"label\":\"" << json_escape(label)
-        << "\"," << "\"fragment\":\"" << json_escape(fragment) << "\"," << "\"elements\":[";
+        << "\",";
+    write_video_sender_raw_ingress_json(oss, n.get());
+    oss << "\"fragment\":\"" << json_escape(fragment) << "\"," << "\"elements\":[";
 
     for (size_t e = 0; e < elements.size(); ++e) {
       if (e)
@@ -1516,7 +1588,10 @@ Graph Graph::load(const std::string& path) {
       const std::string fragment = string_field(nobj, "fragment");
 
       std::shared_ptr<Node> node;
-      if (kind == "Input") {
+      if (const auto raw_ingress = parse_video_sender_raw_ingress_json(nobj, path, idx);
+          raw_ingress.has_value()) {
+        node = nodes::groups::internal::VideoSenderRawIngress(*raw_ingress);
+      } else if (kind == "Input") {
         InputOptions opt;
         if (const JsonValue* input_opt = object_field(nobj, "input_options");
             input_opt && input_opt->type == JsonValue::Type::Object && input_opt->obj) {
@@ -1787,7 +1862,12 @@ Graph Graph::load(const std::string& path) {
                      "Ensure each node has a non-empty 'fragment' field.");
     }
 
-    sess.add(std::make_shared<ConfiguredNode>(kind, label, fragment, elements));
+    if (const auto raw_ingress = parse_video_sender_raw_ingress_json(nobj, path, idx);
+        raw_ingress.has_value()) {
+      sess.add(nodes::groups::internal::VideoSenderRawIngress(*raw_ingress));
+    } else {
+      sess.add(std::make_shared<ConfiguredNode>(kind, label, fragment, elements));
+    }
   }
 
   return sess;

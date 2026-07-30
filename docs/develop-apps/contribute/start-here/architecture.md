@@ -485,6 +485,22 @@ Boundaries forward the retained `GstBuffer` zero-copy, so a timestamp that
 already exists survives the crossing. Declining to author one can never remove
 it.
 
+### Input-contract specialization
+
+Some compound pipeline Nodes have more than one safe backend representation.
+The graph compiler specializes those Nodes from a statically established
+`OutputSpec`; it does not mutate the public Graph or infer a permanent topology
+from the first runtime sample. A `Derived` or `Authoritative` contract may
+select an optimized representation. `Hint`, unknown format/memory, or a missing
+backend capability selects the conservative representation.
+
+For example, raw `VideoSender` omits its NV12 conversion only for a stable NV12
+contract in system or SiMaAI memory and when `neatencoder` advertises its
+read-only `input-layout-aware=true` capability. `OutputSpec` does not currently
+carry plane strides and offsets, so no memory domain bypasses that capability
+gate. An absent or false capability is treated as unsupported so Core remains
+safe with older Internals packages.
+
 ### Parsing & launch
 
 The library primarily uses:
