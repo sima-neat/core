@@ -237,8 +237,13 @@ NormalizedDiagnostic input_capacity(RawGstError raw) {
   const std::string input_format =
       find_detail(out.raw, {"input-format", "input_format", "format"}).value_or("");
 
-  if (maximum_width.has_value() && maximum_height.has_value() && (*maximum_height * 2) % 3 == 0 &&
-      (*maximum_height * 2) / 3 == *maximum_width) {
+  const bool has_structured_maximum_height =
+      out.raw.details.find("maximum-height") != out.raw.details.end() ||
+      out.raw.details.find("maximum_height") != out.raw.details.end();
+  const bool legacy_nv12_height =
+      !has_structured_maximum_height && contains_ci(input_format, "nv12");
+  if (legacy_nv12_height && maximum_width.has_value() && maximum_height.has_value() &&
+      (*maximum_height * 2) % 3 == 0 && (*maximum_height * 2) / 3 == *maximum_width) {
     maximum_height = (*maximum_height * 2) / 3;
   }
 
@@ -307,6 +312,19 @@ NormalizedDiagnostic file_not_found(RawGstError raw) {
   out.actions = {
       "Correct the file path.",
       "Confirm that the file is present on the DevKit and readable by the application.",
+  };
+  return out;
+}
+
+NormalizedDiagnostic resource_not_found(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kIoOpen, "gstreamer.resource_not_found",
+           "The requested input resource could not be found.");
+  add_fact(out, "Source",
+           find_detail(out.raw, {"source-identity", "source_identity", "location"}).value_or(""));
+  out.actions = {
+      "Verify the source address, path, and resource name.",
+      "Confirm that the remote service or device exposes the requested resource.",
   };
   return out;
 }
@@ -638,7 +656,7 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
 
   if (raw.domain_name == "gst-resource-error-quark") {
     if (raw.code == GST_RESOURCE_ERROR_NOT_FOUND)
-      return file_not_found(std::move(raw));
+      return resource_not_found(std::move(raw));
     if (raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED ||
         (raw.code == GST_RESOURCE_ERROR_OPEN_READ && contains_ci(text, "permission denied"))) {
       NormalizedDiagnostic out =

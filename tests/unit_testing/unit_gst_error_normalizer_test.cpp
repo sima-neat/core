@@ -3,8 +3,10 @@
 #endif
 
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -76,13 +78,13 @@ RUN_TEST(
         RawGstError raw =
             raw_error("neatprocesscvu", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                       "input envelope violation actual_w=1920 actual_h=1080 "
-                      "actual_stride=1920 max_w=640 max_h=960");
+                      "actual_stride=1920 max_w=640 max_h=960 input_format=NV12");
         raw.details["resize-width"] = "640";
         raw.details["resize-height"] = "640";
         const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
         require_code(diagnostic, error_codes::kInputCapacity);
         const std::string text = render_diagnostic_body(diagnostic, false);
-        require_contains(text, "Input stream: 1920x1080 (stride 1920)",
+        require_contains(text, "Input stream: 1920x1080 NV12 (stride 1920)",
                          "input capacity error should report actual input");
         require_contains(text, "Configured maximum: 640x640",
                          "legacy packed-NV12 max height should be rendered as image height");
@@ -90,6 +92,29 @@ RUN_TEST(
                          "input capacity error should distinguish resize target");
         require_contains(text, "input_max_width",
                          "input capacity error should name the user-facing option");
+      }
+
+      {
+        RawGstError raw =
+            raw_error("neatprocesscvu", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                      "The input frame exceeds the configured preprocessing capacity.");
+        raw.details["neat-diagnostic-id"] = "neatprocesscvu.input_envelope_exceeded";
+        raw.details["maximum-width"] = "640";
+        raw.details["maximum-height"] = "960";
+        raw.details["input-format"] = "RGB";
+        const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
+        require_contains(render_diagnostic_body(diagnostic, false), "Configured maximum: 640x960",
+                         "structured portrait capacity must preserve its logical height");
+      }
+
+      {
+        const NormalizedDiagnostic diagnostic = classify_gst_error(raw_error(
+            "souphttpsrc", "gst-resource-error-quark", GST_RESOURCE_ERROR_NOT_FOUND, "Not Found"));
+        require_code(diagnostic, error_codes::kIoOpen);
+        require(diagnostic.diagnostic_id == "gstreamer.resource_not_found",
+                "non-file missing resources must use a generic source diagnostic");
+        require(render_diagnostic_body(diagnostic, false).find("input file") == std::string::npos,
+                "remote missing resources must not be described as local files");
       }
 
       {
@@ -249,5 +274,30 @@ RUN_TEST(
                 "typed pull propagation should preserve the original error code");
         require(pull_error.message == once,
                 "typed pull propagation should not duplicate the bracketed prefix");
+
+        PullError third_party_error;
+        error_util::set_pull_error(&third_party_error, error_codes::kRuntimeElementFailed,
+                                   "[json.exception.parse_error.101] invalid JSON");
+        require(third_party_error.code == error_codes::kRuntimeElementFailed,
+                "third-party bracketed text must not replace a stable framework code");
+        require_contains(third_party_error.message, "[runtime.element_failed]",
+                         "third-party bracketed text should be decorated with the supplied code");
+      }
+
+      {
+        GraphReport report;
+        report.error_code = error_codes::kInputShape;
+        report.repro_note = "Expected shape [1, 224, 224, 3], received [1, 224, 224, 1].";
+        NeatError source(error_util::decorate_error(report.error_code, report.repro_note), report);
+        auto core = std::make_shared<runtime::RunCore>();
+        core->graph_request_stop(source);
+
+        const std::optional<PullError> propagated = core->graph_last_error_detail();
+        require(propagated.has_value(), "graph-backed runs should retain a typed terminal error");
+        require(propagated->code == error_codes::kInputShape,
+                "graph-backed runs should retain the original error code");
+        require(propagated->report.has_value() &&
+                    propagated->report->error_code == error_codes::kInputShape,
+                "graph-backed runs should retain the original GraphReport");
       }
     }));

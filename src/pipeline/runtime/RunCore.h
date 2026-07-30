@@ -27,6 +27,10 @@ namespace simaai::neat::graph {
 struct GraphRunStats;
 }
 
+namespace simaai::neat {
+class NeatError;
+}
+
 namespace simaai::neat::runtime {
 
 struct ExecutionGraphPlan;
@@ -176,6 +180,9 @@ struct RunCore {
   bool graph_stop_requested() const;
   void graph_signal_stop();
   void graph_request_stop(const std::string& err);
+  void graph_request_stop(PullError err);
+  void graph_request_stop(const NeatError& err);
+  std::optional<PullError> graph_last_error_detail() const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                    bool allow_startup_preflight = false);
   bool graph_dispatch_to_stage_group(std::size_t group_index, simaai::neat::graph::PortId port,
@@ -250,6 +257,7 @@ struct RunCore {
   std::atomic<std::int64_t> next_public_graph_input_seq{0};
 
   std::string error;
+  std::optional<PullError> graph_error_detail;
   std::string diag_sysinfo;
   std::unique_ptr<PowerMonitor> power_monitor;
   std::shared_ptr<void> graph_verbose_guard;

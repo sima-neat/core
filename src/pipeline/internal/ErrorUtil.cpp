@@ -1,5 +1,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 
+#include "pipeline/ErrorCodes.h"
+
 namespace simaai::neat::pipeline_internal::error_util {
 namespace {
 
@@ -14,6 +16,26 @@ std::optional<std::string> leading_error_code(std::string_view message) {
   if (close == std::string_view::npos || close <= 1)
     return std::nullopt;
   return std::string(message.substr(1, close - 1));
+}
+
+bool is_framework_error_code(std::string_view code) {
+  static constexpr std::string_view families[] = {
+      "misconfig.", "build.", "runtime.", "io.", "codec.", "resource.", "infra.", "internal.",
+  };
+  for (const std::string_view family : families) {
+    if (code.rfind(family, 0) == 0) {
+      return true;
+    }
+  }
+  return code == error_codes::kDispatcherUnavailableLegacy;
+}
+
+std::optional<std::string> leading_framework_error_code(std::string_view message) {
+  const std::optional<std::string> code = leading_error_code(message);
+  if (!code.has_value() || !is_framework_error_code(*code)) {
+    return std::nullopt;
+  }
+  return code;
 }
 
 } // namespace
@@ -56,7 +78,7 @@ void set_pull_error(PullError* err, std::string code, std::string message,
                     std::optional<GraphReport> report) {
   if (!err)
     return;
-  if (const auto existing_code = leading_error_code(message); existing_code.has_value()) {
+  if (const auto existing_code = leading_framework_error_code(message); existing_code.has_value()) {
     code = *existing_code;
   }
   err->code = std::move(code);
@@ -72,8 +94,9 @@ void set_pull_error(PullError* err, std::string code, std::string message,
     err->report.reset();
   }
 
-  err->message = leading_error_code(message).has_value() ? std::move(message)
-                                                         : decorate_error(err->code, message);
+  err->message = leading_framework_error_code(message).has_value()
+                     ? std::move(message)
+                     : decorate_error(err->code, message);
 }
 
 } // namespace simaai::neat::pipeline_internal::error_util

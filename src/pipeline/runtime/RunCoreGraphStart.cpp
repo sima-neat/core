@@ -1418,6 +1418,12 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           st.telemetry.on_input_calls.fetch_add(1, std::memory_order_relaxed);
           atomic_add_max(st.telemetry.on_input_ns, st.telemetry.on_input_max_ns,
                          elapsed_ns_since(exec_start));
+        } catch (const NeatError& e) {
+          const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
+          release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
+                                                  "stage-on-input-exception");
+          core->graph_request_stop(e);
+          break;
         } catch (const std::exception& e) {
           const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
           release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
@@ -1742,6 +1748,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
                        pipe.transport.telemetry.pull_thread_route_max_ns,
                        elapsed_ns_since(route_start));
       }
+    } catch (const NeatError& e) {
+      core->graph_request_stop(e);
     } catch (const std::exception& e) {
       core->graph_request_stop(e.what());
     }

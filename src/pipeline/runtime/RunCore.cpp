@@ -4,8 +4,11 @@
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorTransfer.h"
@@ -377,15 +380,51 @@ void RunCore::graph_signal_stop() {
 }
 
 void RunCore::graph_request_stop(const std::string& err) {
+  PullError detail;
+  pipeline_internal::error_util::set_pull_error(&detail, error_codes::kRuntimeElementFailed,
+                                                err.empty() ? "A graph stage failed." : err);
+  graph_request_stop(std::move(detail));
+}
+
+void RunCore::graph_request_stop(PullError detail) {
   if (graph_debug_enabled_for_core()) {
-    std::fprintf(stderr, "[GRAPH] request_stop err=%s\n", err.empty() ? "<empty>" : err.c_str());
+    std::fprintf(stderr, "[GRAPH] request_stop err=%s\n",
+                 detail.message.empty() ? "<empty>" : detail.message.c_str());
   }
   {
     std::lock_guard<std::mutex> lock(error_mu);
-    if (error.empty())
-      error = err;
+    if (error.empty()) {
+      if (detail.code.empty()) {
+        detail.code = error_codes::kRuntimeElementFailed;
+      }
+      detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
+      if (detail.report.has_value()) {
+        if (detail.report->error_code.empty()) {
+          detail.report->error_code = detail.code;
+        }
+        if (detail.report->repro_note.empty()) {
+          detail.report->repro_note = detail.message;
+        }
+      }
+      error = detail.message;
+      graph_error_detail = std::move(detail);
+    }
   }
   graph_signal_stop();
+}
+
+void RunCore::graph_request_stop(const NeatError& err) {
+  PullError detail;
+  detail.code = err.report().error_code.empty() ? std::string(error_codes::kInternalPluginFailure)
+                                                : err.report().error_code;
+  detail.message = err.what();
+  detail.report = err.report();
+  graph_request_stop(std::move(detail));
+}
+
+std::optional<PullError> RunCore::graph_last_error_detail() const {
+  std::lock_guard<std::mutex> lock(error_mu);
+  return graph_error_detail;
 }
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,

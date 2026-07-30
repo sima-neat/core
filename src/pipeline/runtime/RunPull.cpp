@@ -95,6 +95,13 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
 
     auto queued = core.graph_pull_msg_with_restore_reservation(node_id, wait_ms);
     if (!queued.has_value()) {
+      if (const std::optional<PullError> typed = core.graph_last_error_detail();
+          typed.has_value()) {
+        if (err) {
+          *err = *typed;
+        }
+        return PullStatus::Error;
+      }
       const std::string graph_err = core.last_error();
       if (!graph_err.empty()) {
         pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull, graph_err);
