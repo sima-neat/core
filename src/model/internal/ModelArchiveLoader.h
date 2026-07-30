@@ -70,6 +70,8 @@ struct ModelArchiveLoaderOptions {
   std::size_t max_entries = 2048;
   std::size_t max_json_depth = 64;
   std::uint64_t min_output_free_bytes = 16ULL * 1024ULL * 1024ULL;
+  // Filesystem for the inflated snapshot. Empty stages under TMPDIR.
+  std::string staging_base;
 
   bool require_pipeline_sequence = true;
   bool require_model_binary = true;

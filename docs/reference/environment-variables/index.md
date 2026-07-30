@@ -130,20 +130,37 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 
 ## Model (legacy env var names retained)
 - `SIMA_MLA_NEXT_CPU=<domain>` — override MLA next_cpu.
-- `SIMA_MPK_EXTRACT_ROOT=<dir>` — base directory for extracted model-archive runtime artifacts.
+- `SIMA_MPK_EXTRACT_ROOT=<dir>` — base directory for model-archive loading. Authoritative: if it
+  is unwritable or below the free-space reserve, loading fails rather than falling back. When it is
+  unset, the base is the first usable candidate of a mounted NVMe filesystem, `/data`, `TMPDIR`,
+  then the working directory. An NVMe candidate must be a `/dev/nvme*` block device mounted
+  somewhere other than `/`, so automatic selection never lands on NFS, on another network
+  filesystem, or on an NVMe root filesystem. NVMe is preferred for capacity and eMMC write wear,
+  not speed — decode is CPU bound and placement does not change load time.
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — delete per-process extracted model-archive data on normal exit (default `1`).
+  With cleanup on, each process extracts into its own `proc_<pid>` root and removes it at exit. With
+  cleanup off, packages are published to a shared `pkg_<archive-identity>` directory and reused by
+  later processes, which skips decoding and extraction entirely. Retained packages are never
+  garbage collected; remove them by hand when the archives they came from are no longer needed.
 - `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove stale dead-`proc_*` extraction roots on startup (default `1`).
 - `SIMA_MODEL_TAR=<path>` — base model-pack path used by examples/tests.
   Per-model overrides (`SIMA_RESNET50_TAR`, `SIMA_YOLO_TAR`, etc.) still take precedence.
 - `SIMA_MPK_EXTRACT_MIN_FREE_BYTES=<bytes>` — free space kept in reserve when staging and
   extracting model archives (default 16 MiB).
-- `TMPDIR=<dir>` — staging directory for model-archive loading (default `/tmp`). Every load,
-  including metadata-only inspection, decompresses the `.tar.gz` once into a private directory
-  here, so this filesystem needs room for the decompressed archive plus
-  `SIMA_MPK_EXTRACT_MIN_FREE_BYTES`; the 150 MB reference pack decompresses to about 354 MB. Use
-  a local filesystem — loading fails if free space cannot be read, which a network mount that
-  goes away will do. The directory is removed when loading finishes, on success and on failure;
-  an abrupt kill or power loss can leave one behind.
+- `TMPDIR=<dir>` — considered only as a late candidate for the base above, and used directly for
+  staging by callers that select no base of their own. Model loading no longer stages here
+  independently: the inflated snapshot and the extracted package share the selected base, so one
+  filesystem needs room for both. Every load, including metadata-only inspection, decompresses the
+  `.tar.gz` once into a private directory, so that filesystem needs room for the decompressed
+  archive plus `SIMA_MPK_EXTRACT_MIN_FREE_BYTES`; the 150 MB reference pack decompresses to about
+  354 MB. Use a local filesystem — loading fails if free space cannot be read, which a network
+  mount that goes away will do. The staging directory is removed when loading finishes, on success
+  and on failure; an abrupt kill or power loss can leave one behind.
+
+The free-space reserve set by `SIMA_MPK_EXTRACT_MIN_FREE_BYTES` is best effort. It is checked
+per chunk during inflation against the filesystem's reported free space, so an unrelated
+concurrent writer can still exhaust the filesystem between checks; the load then fails with the
+bytes written and the path it was using.
 
 ## RTSP / H264
 

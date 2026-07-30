@@ -111,6 +111,19 @@ RUN_TEST(
                 "concatenated-member archive content differs for " + rel);
       }
 
+      // Decoder parity with the `gzip -dc` subprocess this replaced, measured on GNU gzip 1.12:
+      // trailing garbage exits 2 and an empty file exits 1, so both have always been rejected.
+      for (const char* rejected :
+           {"invalid/trailing_garbage.tar.gz", "invalid/empty_archive.tar.gz"}) {
+        const fs::path fixture = sima_test::model_archive_fixture_path(rejected);
+        require(fs::exists(fixture),
+                std::string("missing ") + rejected +
+                    " fixture; run tests/tools/make_model_archive_fixtures.py");
+        require_model_archive_error([&]() { (void)ModelArchiveLoader::inspect(fixture.string()); },
+                                    ModelArchiveErrorClass::InvalidArchive,
+                                    std::string(rejected) + " should fail with invalid_archive");
+      }
+
       const std::string low_space_root = sima_test::make_temp_dir("model_archive_loader_low_space");
       ModelArchiveLoaderOptions low_space;
       low_space.min_output_free_bytes = std::numeric_limits<std::uint64_t>::max() / 2ULL;

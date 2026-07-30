@@ -710,16 +710,17 @@ ModelArchiveErrorClass write_error_class_for_path(int saved_errno, const fs::pat
 
 // mkdtemp, not create_directories: it creates the directory atomically at 0700 and fails on an
 // existing name, so a pre-created symlink on a shared /tmp cannot capture the staging path.
-fs::path make_staging_dir() {
+fs::path make_staging_dir(const std::string& configured_base) {
   std::error_code ec;
-  // No fallback to /tmp: TMPDIR naming an unusable directory is a deliberate choice of staging
-  // filesystem that failed, and quietly staging on the rootfs instead could fill it.
-  const fs::path configured = fs::temp_directory_path(ec);
+  // No fallback to /tmp: an unusable staging base is a deliberate choice of filesystem that
+  // failed, and quietly staging on the rootfs instead could fill it.
+  const fs::path configured =
+      configured_base.empty() ? fs::temp_directory_path(ec) : fs::path(configured_base);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                  "temporary directory for archive staging is unusable (" + ec.message() + ")");
+                  "TMPDIR is unusable for archive staging (" + ec.message() + ")");
   }
-  // Absolute, because temp_directory_path returns a relative TMPDIR verbatim: the snapshot
+  // Absolute, because a relative base is used verbatim: the snapshot
   // outlives a caller callback that may chdir, and both the tar reads and the destructor's
   // cleanup would then resolve against the wrong directory and leak the staging copy.
   const fs::path staging_base = fs::absolute(configured, ec);
@@ -920,9 +921,12 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
         std::ostringstream oss;
         oss << "insufficient free space inflating model archive" << " path=" << staging_dir.string()
             << " inflated=" << format_bytes(total - n)
-            << " reserve=" << format_bytes(opt.min_output_free_bytes)
-            << " writable=" << format_bytes(budget)
-            << " hint=set TMPDIR to a filesystem with enough space";
+            << " reserve=" << format_bytes(opt.min_output_free_bytes) << " writable="
+            << format_bytes(budget)
+            // Model loading stages under the extraction base, so naming TMPDIR would send the
+            // caller to a variable that no longer selects this filesystem.
+            << " hint=set " << (opt.staging_base.empty() ? "TMPDIR" : "SIMA_MPK_EXTRACT_ROOT")
+            << " to a filesystem with enough space";
         throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
       }
       budget -= n;
@@ -1026,7 +1030,7 @@ ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
                   "size_limit_exceeded: archive exceeds configured maximum size");
   }
 
-  dir_ = make_staging_dir();
+  dir_ = make_staging_dir(opt.staging_base);
   tar_path_ = (dir_ / "archive.tar").string();
 
   // The compressed size is not a lower bound for the inflated size, so there is nothing to

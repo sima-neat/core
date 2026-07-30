@@ -649,6 +649,29 @@ def _build_fixture_tree(out_root: Path) -> Dict[str, dict]:
         "size_bytes": multi_member_path.stat().st_size,
     }
 
+    # invalid/trailing_garbage.tar.gz (complete member followed by bytes that begin no member)
+    # GNU gzip 1.12 decompresses this but exits 2, so the loader has always rejected it.
+    trailing_rel = "invalid/trailing_garbage.tar.gz"
+    trailing_path = out_root / trailing_rel
+    trailing_path.write_bytes((out_root / "valid/basic_valid.tar.gz").read_bytes() + b"trailing garbage")
+    generated[trailing_rel] = {
+        "intent": "valid gzip member followed by trailing garbage",
+        "path": trailing_rel,
+        "sha256": _sha256(trailing_path),
+        "size_bytes": trailing_path.stat().st_size,
+    }
+
+    # invalid/empty_archive.tar.gz (no gzip member at all)
+    empty_rel = "invalid/empty_archive.tar.gz"
+    empty_path = out_root / empty_rel
+    empty_path.write_bytes(b"")
+    generated[empty_rel] = {
+        "intent": "zero-byte archive with no gzip member",
+        "path": empty_rel,
+        "sha256": _sha256(empty_path),
+        "size_bytes": 0,
+    }
+
     shutil.rmtree(out_root / ".scratch", ignore_errors=True)
     return generated
 

@@ -608,6 +608,15 @@ if (NOT modelzoo_bulk_models_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST modelzoo_bulk_models_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
 endif()
 
+add_pipeline_test_long(
+  model_archive_load_e2e_test
+  e2e_testing/model_archive_load_e2e_test.cpp
+)
+
+if (NOT model_archive_load_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST model_archive_load_e2e_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
+endif()
+
 add_pipeline_test(
   metadata_sender_udp_integration_test
   e2e_testing/metadata_sender_udp_integration_test.cpp
@@ -768,6 +777,7 @@ set(PERF_TARGETS
   perf_runtime_codec_mjpeg_decode_test
   perf_runtime_codec_h264_decode_test
   perf_runtime_codec_h265_decode_test
+  perf_runtime_model_archive_load_test
 )
 
 foreach(target ${PERF_TARGETS})

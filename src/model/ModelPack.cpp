@@ -819,6 +819,26 @@ static void cleanup_modelpack_process_root() {
   fs::remove_all(fs::path(root), ec);
 }
 
+// Matching the block device keeps NFS and every other network filesystem out of automatic
+// selection without maintaining an fstype allow-list.
+static std::vector<fs::path> nvme_model_bases() {
+  std::vector<fs::path> out;
+  std::ifstream mounts("/proc/mounts");
+  std::string device, mount_point, rest;
+  while (mounts >> device >> mount_point) {
+    std::getline(mounts, rest);
+    if (device.rfind("/dev/nvme", 0) != 0)
+      continue;
+    // An NVMe rootfs is not a data volume, and filling it is the failure this selection avoids.
+    // Mount points are octal-escaped ("\040" for space); skip rather than decode, which falls
+    // through to the next candidate instead of creating a directory with a literal backslash.
+    if (mount_point == "/" || mount_point.find('\\') != std::string::npos)
+      continue;
+    out.push_back(fs::path(mount_point) / "simaai/coprocessing/models");
+  }
+  return out;
+}
+
 static std::string modelpack_output_root(bool cleanup_enabled_request,
                                          std::uint64_t required_available_bytes) {
   if (!modelpack_cleanup_enabled_for_request(cleanup_enabled_request)) {
@@ -869,8 +889,16 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
     }
 
     std::vector<std::string> rejected;
-    const fs::path preferred(kDefaultBaseOutputDir);
     std::string reason;
+    for (const auto& nvme_base : nvme_model_bases()) {
+      reason.clear();
+      if (is_writable_dir(nvme_base, &reason))
+        return nvme_base;
+      rejected.push_back(nvme_base.string() + " (" + reason + ")");
+    }
+
+    const fs::path preferred(kDefaultBaseOutputDir);
+    reason.clear();
     if (is_writable_dir(preferred, &reason))
       return preferred;
     rejected.push_back(preferred.string() + " (" + reason + ")");
@@ -1037,9 +1065,10 @@ static std::string fnv1a_hex(const std::string& text) {
   return oss.str();
 }
 
-// Keyed by archive identity, not pid, so a later process finds it. Not "proc_<pid>": stale-root
-// GC matches only that form, and these outlive the process that wrote them.
-static std::string persistent_root_name(const std::string& cache_key) {
+// Archive identity, not basename: the loader clears its package root before extracting, so two
+// archives sharing a basename would otherwise evict each other. Not "proc_<pid>" — stale-root GC
+// matches only that form, and retained packages outlive the process that wrote them.
+static std::string identity_dir_name(const std::string& cache_key) {
   return "pkg_" + fnv1a_hex(cache_key);
 }
 
@@ -1052,6 +1081,7 @@ static std::vector<fs::path> modelpack_base_candidates() {
     out.emplace_back(env_root);
     return out;
   }
+  out = nvme_model_bases();
   out.emplace_back(kDefaultBaseOutputDir);
   const char* tmpdir = std::getenv("TMPDIR");
   out.push_back(((tmpdir && *tmpdir) ? fs::path(tmpdir) : fs::path("/tmp")) /
@@ -1106,12 +1136,12 @@ static std::string extract_and_organize(const std::string& tar_path,
 
   const std::string cache_key = archive_cache_key(tar_path);
 
+  const std::string identity_dir = identity_dir_name(cache_key);
   // Reusable only where retention was requested; with cleanup on, extraction stays per-process.
   const bool reuse_across_processes =
       !modelpack_cleanup_enabled_for_request(cleanup_extracted_model_data);
-  const std::string persistent_root = reuse_across_processes ? persistent_root_name(cache_key) : "";
   if (reuse_across_processes) {
-    const std::string ready = find_persistent_package(persistent_root);
+    const std::string ready = find_persistent_package(identity_dir);
     if (!ready.empty()) {
       return ready;
     }
@@ -1124,6 +1154,16 @@ static std::string extract_and_organize(const std::string& tar_path,
   opt.reject_unsupported_file_types = false;
   opt.require_pipeline_sequence = false;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
+  // Selected here rather than in the callback below, because the snapshot is written before the
+  // manifest that sizes the extraction. The base is pinned by this first call, so it must carry a
+  // real requirement: passing zero would skip the free-space probe entirely (see
+  // dir_has_available_space) and leave the manifest-sized call below able only to fail. The
+  // compressed size is the largest bound knowable before decoding.
+  std::error_code archive_size_ec;
+  const std::uint64_t archive_bytes = fs::file_size(tar_path, archive_size_ec);
+  opt.staging_base =
+      modelpack_output_root(cleanup_extracted_model_data,
+                            (archive_size_ec ? 0ULL : archive_bytes) + opt.min_output_free_bytes);
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
     auto& cache = modelpack_extract_cache();
@@ -1144,10 +1184,10 @@ static std::string extract_and_organize(const std::string& tar_path,
               cleanup_extracted_model_data,
               required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes));
           if (!reuse_across_processes) {
-            return process_root;
+            return (fs::path(process_root) / identity_dir).string();
           }
           std::error_code stage_ec;
-          staging_root = fs::path(process_root) / (".staging_" + persistent_root);
+          staging_root = fs::path(process_root) / (".staging_" + identity_dir);
           fs::remove_all(staging_root, stage_ec);
           stage_ec.clear();
           fs::create_directories(staging_root, stage_ec);
@@ -1165,7 +1205,7 @@ static std::string extract_and_organize(const std::string& tar_path,
     // staging one. Two levels up clears the staging directory and the per-process root.
     const fs::path published_dir =
         reuse_across_processes
-            ? staging_root.parent_path().parent_path() / persistent_root / target_dir.filename()
+            ? staging_root.parent_path().parent_path() / identity_dir / target_dir.filename()
             : target_dir;
 
     // Preserve existing behavior: materialize model-relative paths as absolute paths
@@ -1202,7 +1242,7 @@ static std::string extract_and_organize(const std::string& tar_path,
       if (publish_ec) {
         // A concurrent loader published the same identity; its package is equivalent, so adopt it.
         std::error_code cleanup_ec;
-        const std::string ready = find_persistent_package(persistent_root);
+        const std::string ready = find_persistent_package(identity_dir);
         if (ready.empty()) {
           fs::remove_all(staging_root, cleanup_ec);
           throw std::runtime_error("ModelPack: output_storage_unavailable: failed to publish "
