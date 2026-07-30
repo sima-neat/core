@@ -833,13 +833,16 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
         budget -= n;
         since_refresh += n;
         // Only ever tightens: our buffered writes may not be visible to fs::space yet, so a
-        // larger number would over-credit us. An unreadable refresh keeps the last good budget,
-        // which is safe because it only decrements.
+        // larger number would over-credit us.
         if (since_refresh >= kBudgetRefreshInterval) {
           const auto room = room_before_reserve();
-          if (room) {
-            budget = std::min(budget, *room);
+          if (!room) {
+            ::pclose(pipe);
+            throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                          "unable to determine free space for archive staging: " +
+                              staging_dir.string());
           }
+          budget = std::min(budget, *room);
           since_refresh = 0;
         }
       }
