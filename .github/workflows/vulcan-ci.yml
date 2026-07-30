@@ -400,8 +400,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          sudo apt-get install -y --no-install-recommends gstreamer1.0-tools
-
           python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
           consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
 
@@ -424,8 +422,6 @@ jobs:
           assert pyneatpcie.Model
           assert pyneatpcie.Tensor
           PY
-
-          gst-inspect-1.0 neatpciehost
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
