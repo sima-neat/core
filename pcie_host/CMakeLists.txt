@@ -91,7 +91,7 @@ target_compile_options(sima_neat_pcie_host PRIVATE ${GST_CFLAGS_OTHER})
 target_link_directories(sima_neat_pcie_host PRIVATE ${GST_LIBRARY_DIRS})
 target_link_libraries(sima_neat_pcie_host PRIVATE
   ${GST_LIBRARIES}
-  nlohmann_json::nlohmann_json
+  $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
 )
 if (NOT SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR)
   message(FATAL_ERROR

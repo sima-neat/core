@@ -415,7 +415,9 @@ Implemented in this first WP11 cut:
 - tensor push through tensor-set/tensorbuffer caps and `GstSimaTensorSetMeta`
 - image tensor push for RGB/BGR/GRAY8/NV12/I420
 
-Known follow-up:
+Validated on Modalix PCIe hardware:
 
-- validate tensor-set metadata attachment on the target host runner
-- hardware smoke must validate all routes on Modalix PCIe hardware
+- tensor-set metadata attachment and transport
+- packaged C++ and Python tensor, image, and boxdecode routes
+- simultaneous execution across four PCIe queues
+- YOLOv8n and EVO50 model variants

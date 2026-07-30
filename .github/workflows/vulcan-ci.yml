@@ -337,12 +337,6 @@ jobs:
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
           "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
 
-      - name: Install PCIe host build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./pcie_host/build.sh --all --install-deps-only
-
       - name: Build PCIe host Debian packages
         shell: bash
         run: |
@@ -400,6 +394,38 @@ jobs:
           sha256sum "${wheels[0]}" > "${wheels[0]}.sha256"
         env:
           DEB_ARCH: ${{ matrix.deb_arch }}
+
+      - name: Smoke test installed PCIe host packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get install -y --no-install-recommends gstreamer1.0-tools
+
+          python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
+          consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
+
+          pcie_host/dist/install_pciehost.sh \
+            --skip-setup \
+            --python \
+            --python-venv "${python_venv}"
+
+          cmake \
+            -S pcie_host/tests/package_smoke \
+            -B "${consumer_build}" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build "${consumer_build}" --parallel
+          "${consumer_build}/sima_pcie_host_package_smoke"
+
+          "${python_venv}/bin/python" - <<'PY'
+          import pyneatpcie
+
+          assert pyneatpcie.__version__
+          assert pyneatpcie.Model
+          assert pyneatpcie.Tensor
+          PY
+
+          gst-inspect-1.0 neatpciehost
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
