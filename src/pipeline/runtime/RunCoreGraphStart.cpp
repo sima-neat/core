@@ -51,7 +51,6 @@ bool has_output_appsink(std::span<const std::shared_ptr<simaai::neat::Node>> nod
 bool has_internal_source(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
                                        std::size_t seg_id);
-InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 bool is_encoded_sample(const Sample& sample);
 std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string* err);
 
@@ -1034,13 +1033,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
 
     if (seg.boundary.needs_input && !seg.boundary.source_like &&
         !simaai::neat::graph::has_input_appsrc(seg.nodes)) {
-      InputOptions opt_src;
-      if (seg.boundary_hints.has_value() && !seg.boundary_hints->ingress_inputs.empty()) {
-        opt_src = seg.boundary_hints->ingress_inputs.front();
-      } else {
-        opt_src = simaai::neat::graph::input_opts_from_spec(seg.input_spec, seg.input_complete);
-      }
-      nodes.insert(nodes.begin(), simaai::neat::nodes::Input(opt_src));
+      nodes.insert(nodes.begin(), simaai::neat::nodes::Input(injected_boundary_input_options(seg)));
       injected_input = true;
     }
 
