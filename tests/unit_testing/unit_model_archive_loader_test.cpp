@@ -234,8 +234,8 @@ RUN_TEST(
                 "loader should leave no archive staging directories behind");
       }
 
-      // The reserve must be refused before the write, not noticed after it: the margin leaves
-      // less room than the inflated archive needs, so only a per-chunk budget can reject it.
+      // The reserve must be refused before the write, not noticed after it. The margin has to
+      // stay below the 10 KiB the fixture inflates to, so only a per-chunk budget can reject it.
       {
         const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_reserve");
         const std::string out = sima_test::make_temp_dir("model_archive_loader_reserve_out");
@@ -310,6 +310,7 @@ RUN_TEST(
           for (int i = 0; i < 250000; ++i) {
             dst.write(reinterpret_cast<const char*>(kEmptyGzipMember), sizeof(kEmptyGzipMember));
           }
+          require(dst.good(), "writing the padded archive should succeed");
         }
         const auto padded_bytes = static_cast<std::uint64_t>(fs::file_size(padded));
         require(padded_bytes > kWindowBytes,
@@ -329,7 +330,8 @@ RUN_TEST(
       }
 
       // Concurrent loads must not see each other's staging copies. Distinct archives catch
-      // content bleeding between loads; the same archive twice catches staging-name collisions.
+      // contents bleeding between loads; the same archive four ways catches a staging path
+      // derived from the archive rather than from mkdtemp.
       {
         const fs::path multi =
             sima_test::model_archive_fixture_path("valid/multi_stage_valid.tar.gz");

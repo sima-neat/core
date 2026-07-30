@@ -2,7 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <unistd.h>
+#include <unistd.h> // mkdtemp
 
 #include <algorithm>
 #include <array>
@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -736,6 +737,31 @@ fs::path make_staging_dir() {
 // The inflated size is unknown up front, so both guards are enforced as the bytes stream past.
 void inflate_archive_to_file(const std::string& archive_path, const fs::path& out_path,
                              const ModelArchiveLoaderOptions& opt) {
+  const bool space_checked = opt.check_output_free_space && output_space_check_enabled();
+  const fs::path staging_dir = out_path.parent_path();
+
+  // Room left before the reserve would be breached. No value means free space could not be read,
+  // which is never treated as unlimited: the reserve cannot be honoured blind.
+  auto room_before_reserve = [&]() -> std::optional<std::uint64_t> {
+    std::error_code space_ec;
+    const auto space = fs::space(staging_dir, space_ec);
+    if (space_ec)
+      return std::nullopt;
+    const auto available = static_cast<std::uint64_t>(space.available);
+    return available > opt.min_output_free_bytes ? available - opt.min_output_free_bytes : 0;
+  };
+
+  // Measured before gzip starts, so an unreadable staging filesystem costs no subprocess.
+  std::uint64_t budget = 0;
+  if (space_checked) {
+    const auto room = room_before_reserve();
+    if (!room) {
+      throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                    "unable to determine free space for archive staging: " + staging_dir.string());
+    }
+    budget = *room;
+  }
+
   // Redirected, not an argument: a path starting with '-' would parse as a gzip option.
   const std::string cmd = std::string("gzip -dc < ") + shell_quote(archive_path) + " 2>/dev/null";
 
@@ -757,27 +783,7 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
     throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
   }
 
-  const bool space_checked = opt.check_output_free_space && output_space_check_enabled();
-  const fs::path staging_dir = out_path.parent_path();
-
-  // Bytes still writable before the reserve would be breached. Checked before each write, so
-  // the reserve is never spent; a periodic refresh folds in what other writers consumed. The
-  // refresh can only tighten the budget, because our own buffered writes may not be visible to
-  // fs::space yet and a looser number would over-credit us.
-  auto writable_before_reserve = [&](std::uint64_t current) {
-    std::error_code space_ec;
-    const auto space = fs::space(staging_dir, space_ec);
-    if (space_ec)
-      return current;
-    const auto available = static_cast<std::uint64_t>(space.available);
-    const std::uint64_t room =
-        available > opt.min_output_free_bytes ? available - opt.min_output_free_bytes : 0;
-    return std::min(current, room);
-  };
-
   constexpr std::uint64_t kBudgetRefreshInterval = 64ULL * 1024ULL * 1024ULL;
-  std::uint64_t budget =
-      space_checked ? writable_before_reserve(std::numeric_limits<std::uint64_t>::max()) : 0;
   std::uint64_t since_refresh = 0;
 
   std::array<char, 65536> buf{};
@@ -794,8 +800,17 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
       }
 
       if (space_checked) {
+        // Exhausting the budget is re-measured rather than fatal: another writer may have freed
+        // space since the last look.
         if (n > budget) {
-          budget = writable_before_reserve(std::numeric_limits<std::uint64_t>::max());
+          const auto room = room_before_reserve();
+          if (!room) {
+            ::pclose(pipe);
+            throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                          "unable to determine free space for archive staging: " +
+                              staging_dir.string());
+          }
+          budget = *room;
         }
         if (n > budget) {
           ::pclose(pipe);
@@ -809,8 +824,14 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
         }
         budget -= n;
         since_refresh += n;
+        // Only ever tightens: our buffered writes may not be visible to fs::space yet, so a
+        // larger number would over-credit us. An unreadable refresh keeps the last good budget,
+        // which is safe because it only decrements.
         if (since_refresh >= kBudgetRefreshInterval) {
-          budget = writable_before_reserve(budget);
+          const auto room = room_before_reserve();
+          if (room) {
+            budget = std::min(budget, *room);
+          }
           since_refresh = 0;
         }
       }
@@ -915,8 +936,8 @@ ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
   dir_ = make_staging_dir();
   tar_path_ = (dir_ / "archive.tar").string();
 
-  // No size pre-check here: the compressed size is not a lower bound for the inflated size, and
-  // the per-chunk budget in inflate_archive_to_file already refuses before each write.
+  // The compressed size is not a lower bound for the inflated size, so there is nothing to
+  // pre-check: inflate_archive_to_file enforces the reserve per chunk.
   try {
     inflate_archive_to_file(archive_path, tar_path_, opt);
   } catch (...) {
