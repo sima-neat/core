@@ -459,6 +459,32 @@ decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
 latest-by-stream topology remains segmented. Nested already-fused source
 segments remain ineligible until their branches can be preserved recursively.
 
+### Internal boundary timing
+
+One logical `Graph` can lower into several GStreamer pipeline segments. Core
+injects an `appsrc` at each internal boundary between them.
+
+**An injected boundary transports the timeline it was handed and never authors a
+timestamp. Only a public, application-owned `Input` authors one.**
+
+`appsrc` stamps from its own segment's running time, so a boundary that authors
+a timestamp gives each leg of a fan-out a different clock. Video RTP then stops
+agreeing with model-output metadata describing the same frame, and no
+application can correct it: lowering consumes the app-declared `Input` nodes, so
+`InputOptions` set by the application never reach the injected boundary.
+
+When adding a segment-materialization path:
+
+* Build the injected options with `injected_boundary_input_options(...)`, which
+  is the single home for this invariant.
+* Keep `is_live = true`. Clearing it stalls live segments.
+* Leave the public `InputOptions::do_timestamp` default alone, so a pushed
+  `cv::Mat` carrying no PTS still receives one at ingress.
+
+Boundaries forward the retained `GstBuffer` zero-copy, so a timestamp that
+already exists survives the crossing. Declining to author one can never remove
+it.
+
 ### Parsing & launch
 
 The library primarily uses:
