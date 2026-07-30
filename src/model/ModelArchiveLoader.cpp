@@ -710,15 +710,21 @@ ModelArchiveErrorClass write_error_class_for_path(int saved_errno, const fs::pat
 // existing name, so a pre-created symlink on a shared /tmp cannot capture the staging path.
 fs::path make_staging_dir() {
   std::error_code ec;
+  // No fallback to /tmp: TMPDIR naming an unusable directory is a deliberate choice of staging
+  // filesystem that failed, and quietly staging on the rootfs instead could fill it.
   const fs::path configured = fs::temp_directory_path(ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                  "temporary directory for archive staging is unusable (" + ec.message() + ")");
+  }
   // Absolute, because temp_directory_path returns a relative TMPDIR verbatim: the snapshot
   // outlives a caller callback that may chdir, and both the tar reads and the destructor's
   // cleanup would then resolve against the wrong directory and leak the staging copy.
-  const fs::path staging_base = fs::absolute(ec ? fs::path("/tmp") : configured, ec);
+  const fs::path staging_base = fs::absolute(configured, ec);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                  "failed to resolve a temporary directory for archive staging (" + ec.message() +
-                      ")");
+                  "failed to resolve the archive staging directory to an absolute path (" +
+                      ec.message() + ")");
   }
 
   const std::string templ = (staging_base / ".sima_mpk_stage_XXXXXX").string();

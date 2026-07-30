@@ -291,6 +291,19 @@ RUN_TEST(
         require(fs::is_empty(relative_tmp), "a relative TMPDIR should not strand the staging copy");
       }
 
+      // An unusable TMPDIR must fail the load, not silently stage on the rootfs: the operator
+      // chose that filesystem, and /tmp may not have room for the inflated archive.
+      {
+        const fs::path missing_tmp =
+            fs::path(sima_test::make_temp_dir("model_archive_loader_missing")) / "absent";
+        const std::string out = sima_test::make_temp_dir("model_archive_loader_missing_out");
+        sima_test::ScopedEnvVar tmpdir("TMPDIR", missing_tmp.string());
+        require_model_archive_error(
+            [&]() { (void)ModelArchiveLoader::extract(valid.string(), out, {}); },
+            ModelArchiveErrorClass::OutputStorageUnavailable,
+            "a TMPDIR that does not exist should fail the load");
+      }
+
       // Concatenated empty gzip members grow the compressed archive without changing what it
       // inflates to, so a check that treats the compressed size as a lower bound rejects an
       // archive that fits. The reserve leaves far more room than the inflated tar needs.
