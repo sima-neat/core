@@ -4,12 +4,14 @@
 #include "test_utils.h"
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -232,10 +234,8 @@ RUN_TEST(
                 "loader should leave no archive staging directories behind");
       }
 
-      // The reserve must be refused before the write, not noticed after it. The margin leaves
-      // the archive's compressed size (558 B) writable so the up-front lower-bound check still
-      // passes -- with room for the staging directory's own block -- while the 10 KiB inflated
-      // archive does not fit, so only a budget enforced per chunk can reject it.
+      // The reserve must be refused before the write, not noticed after it: the margin leaves
+      // less room than the inflated archive needs, so only a per-chunk budget can reject it.
       {
         const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_reserve");
         const std::string out = sima_test::make_temp_dir("model_archive_loader_reserve_out");
@@ -247,9 +247,8 @@ RUN_TEST(
         reserved.min_output_free_bytes = available - kWritableMargin;
         sima_test::ScopedEnvVar tmpdir("TMPDIR", private_tmp);
 
-        // Matching the message, not just the class, is what keeps this honest: the up-front
-        // lower-bound check reports "extracting" and would otherwise satisfy the assertion
-        // without the per-chunk budget ever running.
+        // Matching the message pins this to the inflation budget: the extraction-root check
+        // reports "extracting" and would otherwise satisfy the assertion.
         std::string reported;
         try {
           (void)ModelArchiveLoader::extract(valid.string(), out, reserved);
@@ -290,5 +289,116 @@ RUN_TEST(
         }
         fs::current_path(cwd);
         require(fs::is_empty(relative_tmp), "a relative TMPDIR should not strand the staging copy");
+      }
+
+      // Concatenated empty gzip members grow the compressed archive without changing what it
+      // inflates to, so a check that treats the compressed size as a lower bound rejects an
+      // archive that fits. The reserve leaves far more room than the inflated tar needs.
+      {
+        const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_padded");
+        const std::string out = sima_test::make_temp_dir("model_archive_loader_padded_out");
+        constexpr std::uint64_t kWindowBytes = 4ULL * 1024ULL * 1024ULL;
+        static constexpr unsigned char kEmptyGzipMember[] = {
+            0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+            0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+        const fs::path padded = fs::path(private_tmp) / "padded_valid.tar.gz";
+        {
+          std::ifstream src(valid, std::ios::binary);
+          std::ofstream dst(padded, std::ios::binary);
+          dst << src.rdbuf();
+          for (int i = 0; i < 250000; ++i) {
+            dst.write(reinterpret_cast<const char*>(kEmptyGzipMember), sizeof(kEmptyGzipMember));
+          }
+        }
+        const auto padded_bytes = static_cast<std::uint64_t>(fs::file_size(padded));
+        require(padded_bytes > kWindowBytes,
+                "padding should push the compressed size past the writable window");
+
+        const auto available = static_cast<std::uint64_t>(fs::space(private_tmp).available);
+        require(available > kWindowBytes, "test needs a temp filesystem with free space");
+        ModelArchiveLoaderOptions reserved;
+        reserved.min_output_free_bytes = available - kWindowBytes;
+
+        sima_test::ScopedEnvVar tmpdir("TMPDIR", private_tmp);
+        const ModelArchiveExtractResult padded_result =
+            ModelArchiveLoader::extract(padded.string(), out, reserved);
+        require(fs::exists(fs::path(padded_result.etc_dir) / "pipeline_sequence.json"),
+                "an archive whose compressed size exceeds the writable window should still "
+                "extract when its inflated size fits");
+      }
+
+      // Concurrent loads must not see each other's staging copies. Distinct archives catch
+      // content bleeding between loads; the same archive twice catches staging-name collisions.
+      {
+        const fs::path multi =
+            sima_test::model_archive_fixture_path("valid/multi_stage_valid.tar.gz");
+        require(fs::exists(multi), "multi_stage_valid fixture should exist");
+
+        auto file_set_of = [](const fs::path& archive, const std::string& root) {
+          return extracted_file_set(
+              fs::path(ModelArchiveLoader::extract(archive.string(), root, {}).package_root));
+        };
+        const std::vector<std::string> valid_files =
+            file_set_of(valid, sima_test::make_temp_dir("model_archive_loader_ref_valid"));
+        const std::vector<std::string> multi_files =
+            file_set_of(multi, sima_test::make_temp_dir("model_archive_loader_ref_multi"));
+        require(valid_files != multi_files,
+                "the two fixtures must differ for this test to detect content bleeding");
+
+        // Roots come from the default TMPDIR, before the staging override below: make_temp_dir
+        // honours TMPDIR, so allocating them later would put them under the directory this
+        // asserts is free of staging copies.
+        constexpr std::size_t kLoads = 4;
+        std::vector<std::string> roots;
+        roots.reserve(kLoads);
+        for (std::size_t i = 0; i < kLoads; ++i) {
+          roots.push_back(sima_test::make_temp_dir("model_archive_loader_parallel_out"));
+        }
+
+        const std::string private_tmp = sima_test::make_temp_dir("model_archive_loader_parallel");
+        sima_test::ScopedEnvVar tmpdir("TMPDIR", private_tmp);
+
+        auto run_concurrently = [&](const std::vector<fs::path>& archives,
+                                    const std::string& context) {
+          std::atomic<std::size_t> ready{0};
+          std::vector<std::vector<std::string>> observed(kLoads);
+          std::vector<std::string> failures(kLoads);
+
+          std::vector<std::thread> threads;
+          threads.reserve(kLoads);
+          for (std::size_t i = 0; i < kLoads; ++i) {
+            threads.emplace_back([&, i] {
+              ready.fetch_add(1);
+              while (ready.load() < kLoads) {
+                std::this_thread::yield();
+              }
+              try {
+                observed[i] = extracted_file_set(fs::path(
+                    ModelArchiveLoader::extract(archives[i].string(), roots[i], {}).package_root));
+              } catch (const std::exception& e) {
+                failures[i] = e.what();
+              }
+            });
+          }
+          for (auto& t : threads) {
+            t.join();
+          }
+
+          for (std::size_t i = 0; i < kLoads; ++i) {
+            require(failures[i].empty(),
+                    context + ": load " + std::to_string(i) + " failed: " + failures[i]);
+            const std::vector<std::string>& expected =
+                archives[i] == valid ? valid_files : multi_files;
+            require(observed[i] == expected,
+                    context + ": load " + std::to_string(i) +
+                        " extracted contents that do not match its own archive");
+          }
+        };
+
+        run_concurrently({valid, multi, valid, multi}, "distinct archives");
+        run_concurrently({valid, valid, valid, valid}, "identical archives");
+        require(fs::is_empty(private_tmp),
+                "concurrent loads should leave no archive staging directories behind");
       }
     }));

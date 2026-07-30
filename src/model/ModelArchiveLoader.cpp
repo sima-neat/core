@@ -2,7 +2,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <signal.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -706,38 +705,6 @@ ModelArchiveErrorClass write_error_class_for_path(int saved_errno, const fs::pat
   return ModelArchiveErrorClass::InvalidArchive;
 }
 
-constexpr std::string_view kStagingPrefix = ".sima_mpk_stage_";
-
-// Without this, a SIGKILL mid-load strands a full inflated archive in TMPDIR forever.
-void remove_staging_dirs_of_dead_processes(const fs::path& base) noexcept try {
-  std::error_code ec;
-  for (const auto& entry : fs::directory_iterator(base, ec)) {
-    if (ec)
-      break;
-    const std::string name = entry.path().filename().string();
-    if (name.rfind(kStagingPrefix, 0) != 0)
-      continue;
-
-    // <prefix><pid>_<mkdtemp suffix>
-    const std::size_t sep = name.find('_', kStagingPrefix.size());
-    std::uint64_t pid = 0;
-    if (sep == std::string::npos ||
-        !parse_uint64(name.substr(kStagingPrefix.size(), sep - kStagingPrefix.size()), &pid))
-      continue;
-
-    const auto owner = static_cast<::pid_t>(pid);
-    // EPERM means the pid exists but belongs to someone else: still alive, leave it alone.
-    if (owner == ::getpid() || ::kill(owner, 0) == 0 || errno == EPERM)
-      continue;
-
-    ec.clear();
-    fs::remove_all(entry.path(), ec);
-    ec.clear();
-  }
-} catch (const std::exception&) {
-  // Best effort: scavenging must never fail the load it runs ahead of.
-}
-
 // mkdtemp, not create_directories: it creates the directory atomically at 0700 and fails on an
 // existing name, so a pre-created symlink on a shared /tmp cannot capture the staging path.
 fs::path make_staging_dir() {
@@ -752,12 +719,8 @@ fs::path make_staging_dir() {
                   "failed to resolve a temporary directory for archive staging (" + ec.message() +
                       ")");
   }
-  remove_staging_dirs_of_dead_processes(staging_base);
 
-  const std::string templ =
-      (staging_base / (std::string(kStagingPrefix) +
-                       std::to_string(static_cast<long long>(::getpid())) + "_XXXXXX"))
-          .string();
+  const std::string templ = (staging_base / ".sima_mpk_stage_XXXXXX").string();
 
   std::vector<char> buf(templ.begin(), templ.end());
   buf.push_back('\0');
@@ -952,14 +915,8 @@ ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
   dir_ = make_staging_dir();
   tar_path_ = (dir_ / "archive.tar").string();
 
-  // Inflating cannot yield fewer bytes than the archive holds: a free lower bound.
-  try {
-    require_output_space(dir_, source_size_bytes_, opt);
-  } catch (...) {
-    fs::remove_all(dir_, ec);
-    throw;
-  }
-
+  // No size pre-check here: the compressed size is not a lower bound for the inflated size, and
+  // the per-chunk budget in inflate_archive_to_file already refuses before each write.
   try {
     inflate_archive_to_file(archive_path, tar_path_, opt);
   } catch (...) {
