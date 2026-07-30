@@ -561,6 +561,23 @@ foreach(test ${E2E_TESTS})
   endif()
 endforeach()
 
+add_pipeline_test_long(
+  video_sender_adaptive_ingress_e2e_test
+  SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/video_sender_adaptive_ingress_e2e_test.cpp
+  ARGS
+    --image
+    ${CMAKE_SOURCE_DIR}/tests/assets/preproc_dynamic/ilena_488.jpg
+)
+
+if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
+    LABELS "e2e;codec;video_sender;real_media;long")
+  set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
+    RESOURCE_LOCK "accelerator-device;udp")
+  set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+endif()
+
 
 add_pipeline_test(
   decoder_quality_compare_test
