@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 520" role="img" aria-labelledby="ftl ftd">
-<title id="ftl">Run a VLM</title>
+<title id="ftl">Run a VLM with the Direct API</title>
 <desc id="ftd">Ask repeated questions about the same image without re-encoding the image for every request.</desc>
 <defs>
 <linearGradient id="fbg" x1="80" y1="40" x2="1240" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>
@@ -11,7 +11,7 @@
 <rect x="16" y="16" width="1288" height="488" rx="30" fill="url(#fbg)" stroke="#D8E7F1"/>
 <circle cx="1188" cy="82" r="58" fill="#C0E8DB" opacity="0.5"/>
 <circle cx="112" cy="432" r="50" fill="#BFE0CF" opacity="0.45"/>
-<text x="54" y="68" class="fsans fttl">Run a VLM</text>
+<text x="54" y="68" class="fsans fttl">Run a VLM with the Direct API</text>
 <text x="54" y="96" class="fsans fsub">Ask repeated questions about the same image without re-encoding the image for every request.</text>
 <g filter="url(#fsh)">
 <rect x="54" y="132" width="470" height="316" rx="26" fill="#1F232A"/>

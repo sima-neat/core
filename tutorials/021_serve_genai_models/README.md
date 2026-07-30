@@ -3,7 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
-| Difficulty | Intermediate |
+| Difficulty | Beginner |
 | Estimated Read Time | 15-20 minutes |
 | Model | Qwen3-4B-Instruct-2507-GPTQ-a16w4, Qwen3-VL-4B-Instruct-GPTQ-a16w4, whisper-small-a16w8 |
 | Labels | genai, server, llm, vlm, asr, http |
@@ -14,7 +14,12 @@ Host multiple GenAI models behind the Neat GenAI server so a UI, service, or rem
 
 ## Walkthrough
 
-Direct `model.run(request)` is the best starting point for embedded application logic. Use `GenAIServer` when the application boundary is HTTP: a browser UI, a companion service, or a remote client that should not link against the Neat runtime.
+For most applications, start with `GenAIServer` and its OpenAI-compatible
+`POST /v1/chat/completions` endpoint. Use direct `model.run(request)` calls
+when embedded application logic should own the model call in the same process.
+
+See the [GenAI Server reference](/develop-apps/development-workflow/genai-model/genai-server)
+for the complete endpoint and request contract.
 
 ### Configure the server {#step-configure-server}
 

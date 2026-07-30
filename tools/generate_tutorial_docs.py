@@ -33,10 +33,10 @@ REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 # Modules whose number is not listed here fall to the end in numeric order.
 LEARNING_FLOW_ORDER = [
     1, 2, 3, 4, 5,          # Beginner foundations
-    19, 20,                 # Beginner GenAI patterns
-    21,                     # GenAI serving
+    21,                     # Beginner GenAI serving
     9, 6, 11, 7,            # Core I/O and pre/postprocessing
     8, 10, 12, 13, 18, 23,  # Pipelines, diagnostics, custom graphs, live input
+    19, 20,                 # Intermediate direct GenAI APIs
     14, 15, 16, 17,         # Advanced: hybrid graphs, multi-stream, perf, production
     22,                     # Advanced GenAI composition
 ]
