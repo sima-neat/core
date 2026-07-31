@@ -9,6 +9,7 @@
 #include <fstream>
 #include <functional>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
 #include <thread>
@@ -111,6 +112,25 @@ RUN_TEST(
                 "concatenated-member archive content differs for " + rel);
       }
 
+      // An all-zero tail is block padding, which gzip 1.12 decompresses with exit 0. Rejecting it
+      // would drop archives the subprocess decoder loaded, so assert it extracts, not merely that
+      // it is accepted.
+      const fs::path zero_padded =
+          sima_test::model_archive_fixture_path("valid/zero_padded_valid.tar.gz");
+      require(fs::exists(zero_padded), "missing zero_padded_valid fixture; run "
+                                       "tests/tools/make_model_archive_fixtures.py");
+      const std::string padded_root = sima_test::make_temp_dir("model_archive_loader_zero_padded");
+      const ModelArchiveExtractResult padded =
+          ModelArchiveLoader::extract(zero_padded.string(), padded_root);
+      const std::vector<std::string> padded_files = extracted_file_set(padded.package_root);
+      require(padded_files == extracted_file_set(first.package_root),
+              "zero-padded archive should extract the same file set as basic_valid");
+      for (const auto& rel : padded_files) {
+        require(read_file_bytes(fs::path(padded.package_root) / rel) ==
+                    read_file_bytes(fs::path(first.package_root) / rel),
+                "zero-padded archive content differs for " + rel);
+      }
+
       // Decoder parity with the `gzip -dc` subprocess this replaced, measured on GNU gzip 1.12:
       // trailing garbage exits 2 and an empty file exits 1, so both have always been rejected.
       for (const char* rejected :
@@ -122,6 +142,94 @@ RUN_TEST(
         require_model_archive_error([&]() { (void)ModelArchiveLoader::inspect(fixture.string()); },
                                     ModelArchiveErrorClass::InvalidArchive,
                                     std::string(rejected) + " should fail with invalid_archive");
+      }
+
+      // One inflation per load is the #653 guarantee. Timing cannot prove it, so assert the count
+      // directly: an extract costs exactly one, and a directory load costs none.
+      {
+        const std::uint64_t before = ModelArchiveLoader::inflation_count();
+        (void)ModelArchiveLoader::extract(valid.string(),
+                                          sima_test::make_temp_dir("model_archive_inflation"));
+        require(ModelArchiveLoader::inflation_count() == before + 1,
+                "one archive extract should inflate exactly once");
+      }
+
+      // An unpacked directory must reach the same package as the archive it came from: same
+      // classified layout, same file set, same bytes. Untar basic_valid flat and compare.
+      {
+        const fs::path flat = fs::path(sima_test::make_temp_dir("model_archive_dir_flat")) / "pkg";
+        fs::create_directories(flat);
+        const std::string untar = "tar -xzf '" + valid.string() + "' -C '" + flat.string() + "'";
+        require(std::system(untar.c_str()) == 0, "failed to untar basic_valid for directory load");
+
+        const std::string dir_root = sima_test::make_temp_dir("model_archive_dir_out");
+        const std::uint64_t inflations_before = ModelArchiveLoader::inflation_count();
+        const ModelArchiveExtractResult from_dir =
+            ModelArchiveLoader::extract_directory(flat.string(), dir_root);
+        require(ModelArchiveLoader::inflation_count() == inflations_before,
+                "a directory load should not inflate anything");
+        require(extracted_file_set(from_dir.package_root) == extracted_file_set(first.package_root),
+                "directory load should produce the archive's classified file set");
+        for (const auto& rel : extracted_file_set(from_dir.package_root)) {
+          require(read_file_bytes(fs::path(from_dir.package_root) / rel) ==
+                      read_file_bytes(fs::path(first.package_root) / rel),
+                  "directory load content differs for " + rel);
+        }
+
+        // The caller's tree is an input, never an output.
+        const std::vector<std::string> source_before = extracted_file_set(flat);
+        (void)ModelArchiveLoader::extract_directory(
+            flat.string(), sima_test::make_temp_dir("model_archive_dir_out2"));
+        require(extracted_file_set(flat) == source_before,
+                "directory load must not modify the source directory");
+
+        // Identity covers the tree, so touching a file changes it without reading contents.
+        const std::string identity_before = ModelArchiveLoader::directory_identity(flat.string());
+        require(identity_before == ModelArchiveLoader::directory_identity(flat.string()),
+                "directory identity should be stable for an unchanged directory");
+
+        // An already-classified tree without provenance is still just a source directory.
+        const ModelArchiveExtractResult round_trip = ModelArchiveLoader::extract_directory(
+            from_dir.package_root, sima_test::make_temp_dir("model_archive_dir_round"));
+        require(extracted_file_set(round_trip.package_root) ==
+                    extracted_file_set(from_dir.package_root),
+                "re-ingesting an etc/lib/share tree should preserve its file set");
+
+        // Symlinks and special files can redirect a copy out of the package.
+        const fs::path link_dir =
+            fs::path(sima_test::make_temp_dir("model_archive_dir_link")) / "pkg";
+        fs::copy(flat, link_dir, fs::copy_options::recursive);
+        fs::create_symlink("/etc/passwd", link_dir / "sneaky.json");
+        require_model_archive_error(
+            [&]() {
+              (void)ModelArchiveLoader::extract_directory(
+                  link_dir.string(), sima_test::make_temp_dir("model_archive_dir_link_out"));
+            },
+            ModelArchiveErrorClass::InvalidArchive, "a symlink in a model directory should fail");
+
+        // Limits apply to directories exactly as they do to archive entries.
+        ModelArchiveLoaderOptions few;
+        few.max_entries = 2;
+        require_model_archive_error(
+            [&]() { (void)ModelArchiveLoader::inspect_directory(flat.string(), few); },
+            ModelArchiveErrorClass::SizeLimitExceeded,
+            "too many directory entries should fail with size_limit_exceeded");
+
+        ModelArchiveLoaderOptions small;
+        small.max_entry_bytes = 4;
+        require_model_archive_error(
+            [&]() { (void)ModelArchiveLoader::inspect_directory(flat.string(), small); },
+            ModelArchiveErrorClass::SizeLimitExceeded,
+            "an oversized directory entry should fail with size_limit_exceeded");
+
+        // A directory that is not a model package fails as an invalid archive, not by extension.
+        require_model_archive_error(
+            [&]() {
+              (void)ModelArchiveLoader::inspect_directory(
+                  sima_test::make_temp_dir("model_archive_dir_empty"));
+            },
+            ModelArchiveErrorClass::InvalidArchive,
+            "an empty directory should fail with invalid_archive");
       }
 
       const std::string low_space_root = sima_test::make_temp_dir("model_archive_loader_low_space");

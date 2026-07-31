@@ -56,7 +56,7 @@ inspection and cleanup control during debugging:
 | Variable | Effect |
 | --- | --- |
 | `SIMA_MPK_EXTRACT_ROOT=<dir>` | Sets the base directory for extracted model data. |
-| `SIMA_MPK_CLEANUP_EXTRACTED=0` | Keeps extracted `proc_*` model data after process exit. |
+| `SIMA_MPK_CLEANUP_EXTRACTED=0` | Publishes the extracted package to a shared `pkg_<identity>` directory that later processes reuse, instead of a per-process `proc_*` directory removed at exit. Retained packages are never garbage collected. |
 | `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` | Disables cleanup of stale `proc_*` directories on startup. |
 
 Use them when you need to inspect generated config files or compare extracted

@@ -1040,13 +1040,15 @@ if (SimaLMM_FOUND)
   target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
-# Model archives are inflated in process. Private to the implementation: no public header uses
-# zlib, and linking the imported target would put ZLIB::ZLIB in the exported interface, which
-# consumers cannot resolve without a find_dependency(ZLIB) in SimaNeatConfig.
+# Model archives are inflated in process. No public header uses zlib, so this stays PRIVATE, but a
+# static archive does not absorb its dependencies: CMake emits them in INTERFACE_LINK_LIBRARIES for
+# sima_neat_static regardless. The imported target exports as `ZLIB::ZLIB`, which SimaNeatConfig
+# resolves with find_dependency(ZLIB); ${ZLIB_LIBRARIES} would instead bake this build host's
+# absolute library path into SimaNeatTargets.cmake and break relocatable consumers.
 find_package(ZLIB REQUIRED)
 target_include_directories(sima_neat_objects PRIVATE ${ZLIB_INCLUDE_DIRS})
-target_link_libraries(sima_neat PRIVATE ${ZLIB_LIBRARIES})
-target_link_libraries(sima_neat_static PRIVATE ${ZLIB_LIBRARIES})
+target_link_libraries(sima_neat PRIVATE ZLIB::ZLIB)
+target_link_libraries(sima_neat_static PRIVATE ZLIB::ZLIB)
 
 if (GST_FOUND)
   target_link_libraries(sima_neat_common INTERFACE ${GST_LIBRARIES})
@@ -1509,6 +1511,8 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "libopencv-dev"
   # Test-only: tests/rtsp_probe_utils.h probes source FPS with cv::VideoCapture.
   "libopencv-videoio406"
+  # SimaNeatConfig calls find_dependency(ZLIB), and sima_neat_static exports ZLIB::ZLIB.
+  "zlib1g-dev"
   "nlohmann-json3-dev"
   "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"

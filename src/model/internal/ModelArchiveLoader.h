@@ -99,8 +99,11 @@ struct ModelArchiveExtractResult {
 /// Selects the extraction root from the validated manifest, before any output file is created.
 using ChooseModelArchiveOutputRoot = std::function<std::string(const ModelArchiveManifest&)>;
 
-/// Reads .tar.gz model archives. Every entry point, inspect() included, inflates the archive
-/// once into a staging copy under TMPDIR and so needs temp space for the inflated size.
+/// Reads model packages from a .tar.gz archive or from an unpacked directory. Archive entry
+/// points, inspect() included, inflate the archive once into a staging copy and so need temp
+/// space for the inflated size. Directory entry points only read the source directory; both
+/// apply the same entry, limit, and MPK contract validation, and both classify output into
+/// etc/lib/share.
 class ModelArchiveLoader {
 public:
   static ModelArchiveManifest inspect(const std::string& archive_path,
@@ -115,6 +118,30 @@ public:
   static ModelArchiveExtractResult extract(const std::string& archive_path,
                                            const ChooseModelArchiveOutputRoot& choose_output_root,
                                            const ModelArchiveLoaderOptions& opt = {});
+
+  /// Manifest for an unpacked model directory. Reads the directory; writes nothing.
+  static ModelArchiveManifest inspect_directory(const std::string& source_dir,
+                                                const ModelArchiveLoaderOptions& opt = {});
+
+  /// Copies an unpacked model directory into `output_root`, classified into etc/lib/share. The
+  /// source directory is never modified. Accepts both a flat export and an existing etc/lib/share
+  /// tree; entries are classified by name and extension either way.
+  static ModelArchiveExtractResult extract_directory(const std::string& source_dir,
+                                                     const std::string& output_root,
+                                                     const ModelArchiveLoaderOptions& opt = {});
+
+  static ModelArchiveExtractResult
+  extract_directory(const std::string& source_dir,
+                    const ChooseModelArchiveOutputRoot& choose_output_root,
+                    const ModelArchiveLoaderOptions& opt = {});
+
+  /// Total archive inflations performed by this process. #653 made one load cost exactly one
+  /// inflation; a regression to repeated passes is otherwise only visible as elapsed time.
+  static std::uint64_t inflation_count();
+
+  /// Stable identity for an unpacked directory: canonical source path plus each relative path,
+  /// size, and mtime in sorted order. File contents are not read.
+  static std::string directory_identity(const std::string& source_dir);
 };
 
 } // namespace simaai::neat::internal

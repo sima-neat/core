@@ -9,6 +9,7 @@
 #include "test_utils.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -133,6 +134,50 @@ RUN_TEST(
                 "concurrent loads of one archive should converge on a single package");
       }
       require(!package_file_set(roots[0]).empty(), "the converged package should hold files");
+
+      // An unpacked directory is a first-class load source. Untar the archive flat, load both,
+      // and require the same effective package: same layout, same contents, same Model contract.
+      const fs::path unpacked = scratch / "unpacked";
+      fs::create_directories(unpacked);
+      const std::string untar = "tar -xzf '" + archive + "' -C '" + unpacked.string() + "'";
+      require(std::system(untar.c_str()) == 0, "failed to untar the model pack");
+      const std::vector<std::string> source_before = package_file_set(unpacked);
+
+      simaai::neat::Model from_dir(unpacked.string());
+      const std::string dir_root = package_root_of(from_dir);
+      require(package_file_set(dir_root) == package_file_set(first_root),
+              "a directory load should produce the same package file set as the archive");
+      for (const char* sub : {"etc", "lib", "share"}) {
+        require(fs::is_directory(fs::path(dir_root) / sub),
+                std::string("directory load should classify into ") + sub);
+      }
+      require(fs::path(from_dir.info().mpk_json_path).is_absolute(),
+              "a directory load should rewrite the MPK contract path to an absolute path");
+      require(fs::path(from_dir.info().mpk_json_path).string().rfind(dir_root, 0) == 0,
+              "the rewritten contract path should point inside the produced package");
+      require(from_dir.info().model_name == first.info().model_name,
+              "archive and directory loads should agree on the Model contract");
+
+      // The caller's directory is an input. Nothing may be written into it, and the package must
+      // not simply alias it.
+      require(package_file_set(unpacked) == source_before,
+              "loading from a directory must not modify the source directory");
+      require(dir_root != unpacked.string(),
+              "an unprovenanced directory must be copied, not adopted in place");
+
+      // A Core-produced package that has not been marked ready is still just a directory: it is
+      // copied and re-validated rather than trusted.
+      const fs::path unmarked = scratch / "unmarked";
+      fs::copy(dir_root, unmarked, fs::copy_options::recursive);
+      fs::remove(unmarked / ".sima_modelpack_ready");
+      simaai::neat::Model from_unmarked(unmarked.string());
+      require(package_root_of(from_unmarked) != unmarked.string(),
+              "a package without the ready marker must be copied, not adopted");
+
+      // A marked package this process produced is the zero-copy path: it resolves to itself.
+      simaai::neat::Model from_published(dir_root);
+      require(package_root_of(from_published) == dir_root,
+              "a Core-published package should load directly from its own directory");
 
       // Neither the published package nor the per-process root is garbage collected once
       // retention has been requested, so this test removes both.

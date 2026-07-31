@@ -57,6 +57,7 @@
 #include <vector>
 
 #include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace simaai::neat::internal {
@@ -68,6 +69,10 @@ namespace {
 constexpr const char* kDefaultBaseOutputDir = "/data/simaai/coprocessing/models/";
 constexpr const char* kDirConf = "etc";
 constexpr const char* kModelPackKeepMarkerFile = ".sima_modelpack_keep";
+// Written only after a package is fully validated, classified and path-rewritten, so its
+// presence is what distinguishes a Core-produced package from a directory that merely
+// looks like one. Holds the source identity so reuse can be matched to a request.
+constexpr const char* kModelPackReadyMarkerFile = ".sima_modelpack_ready";
 constexpr std::uint64_t kDefaultExtractFreeReserveBytes = 16ULL * 1024ULL * 1024ULL;
 
 constexpr const char* kDefaultPreviousNodeName = "decoder";
@@ -819,20 +824,56 @@ static void cleanup_modelpack_process_root() {
   fs::remove_all(fs::path(root), ec);
 }
 
-// Matching the block device keeps NFS and every other network filesystem out of automatic
-// selection without maintaining an fstype allow-list.
+// Published package paths are baked into the rewritten JSON, and a relative SIMA_MPK_EXTRACT_ROOT
+// or a cwd-derived base would make them resolve against whatever directory the process later
+// happens to be in. Applied to every candidate so find_persistent_package spells a published root
+// exactly as the publisher did.
+static fs::path canonical_base(const fs::path& base) {
+  std::error_code ec;
+  const fs::path resolved = fs::weakly_canonical(base, ec);
+  if (!ec && !resolved.empty())
+    return resolved;
+  ec.clear();
+  const fs::path absolute = fs::absolute(base, ec);
+  return ec ? base : absolute;
+}
+
+// True for a mount that exists to hold system files rather than data. Filling any of these is the
+// failure automatic selection has to avoid, and none of them is a plausible model store.
+static bool system_mount_point(const std::string& mount_point) {
+  static constexpr const char* kSystemMounts[] = {"/",     "/boot", "/efi",  "/usr",
+                                                  "/var",  "/etc",  "/opt",  "/home",
+                                                  "/root", "/srv",  "/snap", "/recovery"};
+  for (const char* system : kSystemMounts) {
+    // Prefix match so /boot also excludes /boot/efi and /boot/firmware.
+    const std::string base(system);
+    if (mount_point == base || (base != "/" && mount_point.rfind(base + "/", 0) == 0))
+      return true;
+  }
+  return mount_point == "/";
+}
+
+// Automatic selection accepts only a local NVMe data volume. Matching the block device keeps NFS
+// and every other network filesystem out without maintaining an fstype allow-list, and a read-only
+// or system mount is never a model store.
 static std::vector<fs::path> nvme_model_bases() {
   std::vector<fs::path> out;
   std::ifstream mounts("/proc/mounts");
-  std::string device, mount_point, rest;
-  while (mounts >> device >> mount_point) {
+  std::string device, mount_point, fstype, options, rest;
+  while (mounts >> device >> mount_point >> fstype >> options) {
     std::getline(mounts, rest);
     if (device.rfind("/dev/nvme", 0) != 0)
       continue;
-    // An NVMe rootfs is not a data volume, and filling it is the failure this selection avoids.
     // Mount points are octal-escaped ("\040" for space); skip rather than decode, which falls
     // through to the next candidate instead of creating a directory with a literal backslash.
-    if (mount_point == "/" || mount_point.find('\\') != std::string::npos)
+    if (mount_point.find('\\') != std::string::npos)
+      continue;
+    if (system_mount_point(mount_point))
+      continue;
+    // vfat/EFI partitions cannot hold a model package's permissions or sizes.
+    if (fstype == "vfat" || fstype == "msdos" || fstype == "iso9660")
+      continue;
+    if (options == "ro" || options.rfind("ro,", 0) == 0)
       continue;
     out.push_back(fs::path(mount_point) / "simaai/coprocessing/models");
   }
@@ -934,7 +975,7 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
   static std::string root;
   std::lock_guard<std::mutex> lock(root_mu);
   if (root.empty()) {
-    const fs::path base = choose_base();
+    const fs::path base = canonical_base(choose_base());
     const fs::path proc_root =
         base / ("proc_" + std::to_string(static_cast<long long>(::getpid())));
     std::error_code ec;
@@ -1078,7 +1119,7 @@ static std::vector<fs::path> modelpack_base_candidates() {
   std::vector<fs::path> out;
   const char* env_root = std::getenv("SIMA_MPK_EXTRACT_ROOT");
   if (env_root && *env_root) {
-    out.emplace_back(env_root);
+    out.push_back(canonical_base(fs::path(env_root)));
     return out;
   }
   out = nvme_model_bases();
@@ -1090,7 +1131,61 @@ static std::vector<fs::path> modelpack_base_candidates() {
   const fs::path cwd = fs::current_path(ec);
   if (!ec)
     out.push_back(cwd / "tmp" / "model_extract");
+  for (auto& base : out)
+    base = canonical_base(base);
   return out;
+}
+
+// Reuse without re-validating means trusting the layout, the classification and the rewritten
+// absolute paths inside. Only a package this user's Core produced qualifies: a caller-supplied
+// tree that merely has etc/lib/share is copied and re-validated instead.
+static bool published_package_trusted(const fs::path& package_root) {
+  std::error_code ec;
+  const fs::path marker = package_root / kModelPackReadyMarkerFile;
+
+  struct ::stat marker_st {};
+  if (::lstat(marker.c_str(), &marker_st) != 0 || !S_ISREG(marker_st.st_mode))
+    return false;
+
+  const uid_t self = ::getuid();
+  // A component owned by anyone else, or writable by anyone else, could have been substituted
+  // between publication and reuse.
+  auto component_safe = [&](const fs::path& path) {
+    struct ::stat st {};
+    if (::lstat(path.c_str(), &st) != 0)
+      return false;
+    if (S_ISLNK(st.st_mode))
+      return false;
+    if (st.st_uid != self)
+      return false;
+    return (st.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+  };
+
+  if (!component_safe(package_root) || !component_safe(marker))
+    return false;
+  for (const char* dir : {"etc", "lib", "share"}) {
+    if (!component_safe(package_root / dir))
+      return false;
+  }
+
+  fs::recursive_directory_iterator it(package_root, fs::directory_options::none, ec);
+  if (ec)
+    return false;
+  const fs::recursive_directory_iterator end;
+  for (; it != end; it.increment(ec)) {
+    if (ec)
+      return false;
+    if (!component_safe(it->path()))
+      return false;
+  }
+  return extracted_layout_ready(package_root);
+}
+
+static void mark_package_ready(const fs::path& package_root, const std::string& identity) {
+  std::ofstream out(package_root / kModelPackReadyMarkerFile,
+                    std::ios::out | std::ios::trunc | std::ios::binary);
+  if (out.is_open())
+    out << identity << "\n";
 }
 
 // Publication is a directory rename, so anything visible here is complete and already rewritten.
@@ -1105,7 +1200,9 @@ static std::string find_persistent_package(const std::string& root_name) {
     for (const auto& entry : fs::directory_iterator(root, ec)) {
       if (ec)
         break;
-      if (entry.is_directory(ec) && !ec && extracted_layout_ready(entry.path()))
+      // Same trust requirement as a caller-supplied path: a published package is only adopted
+      // when this user's Core wrote it and nothing in it has been substituted since.
+      if (entry.is_directory(ec) && !ec && published_package_trusted(entry.path()))
         return entry.path().string();
     }
     ec.clear();
@@ -1125,21 +1222,30 @@ static std::mutex& modelpack_extract_cache_mutex() {
 
 static std::string extract_and_organize(const std::string& tar_path,
                                         bool cleanup_extracted_model_data) {
-  {
-    std::error_code ec;
-    const fs::path direct_root(tar_path);
-    if (fs::exists(direct_root, ec) && !ec && fs::is_directory(direct_root, ec) && !ec &&
-        extracted_layout_ready(direct_root)) {
-      return direct_root.string();
-    }
+  std::error_code source_ec;
+  const fs::path source_path(tar_path);
+  const bool source_is_directory = fs::is_directory(source_path, source_ec) && !source_ec;
+
+  // The only zero-copy case: a package this Core published, still owned by this user and free of
+  // symlinked components. Any other directory is copied and re-validated below, because its
+  // layout, classification and embedded paths are unverified.
+  if (source_is_directory && published_package_trusted(source_path)) {
+    return source_path.string();
   }
 
-  const std::string cache_key = archive_cache_key(tar_path);
+  const std::string cache_key =
+      source_is_directory ? simaai::neat::internal::ModelArchiveLoader::directory_identity(tar_path)
+                          : archive_cache_key(tar_path);
 
   const std::string identity_dir = identity_dir_name(cache_key);
   // Reusable only where retention was requested; with cleanup on, extraction stays per-process.
   const bool reuse_across_processes =
       !modelpack_cleanup_enabled_for_request(cleanup_extracted_model_data);
+  // Qualified by retention, because the two modes produce packages in different places. Sharing one
+  // entry would let an earlier cleanup-mode load satisfy a later retention request from the
+  // per-process root, so the retained package that other processes look for is never published.
+  const std::string mode_cache_key =
+      cache_key + (reuse_across_processes ? "|retained" : "|process");
   if (reuse_across_processes) {
     const std::string ready = find_persistent_package(identity_dir);
     if (!ready.empty()) {
@@ -1167,7 +1273,7 @@ static std::string extract_and_organize(const std::string& tar_path,
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
     auto& cache = modelpack_extract_cache();
-    const auto found = cache.find(cache_key);
+    const auto found = cache.find(mode_cache_key);
     if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
       return found->second;
     }
@@ -1177,28 +1283,32 @@ static std::string extract_and_organize(const std::string& tar_path,
 
     // Chosen through a callback because the root is sized from the manifest, which the loader
     // only has after validating — and validating twice is what this avoids.
-    const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
-        tar_path,
-        [&](const simaai::neat::internal::ModelArchiveManifest& manifest) {
-          const std::string process_root = modelpack_output_root(
-              cleanup_extracted_model_data,
-              required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes));
-          if (!reuse_across_processes) {
-            return (fs::path(process_root) / identity_dir).string();
-          }
-          std::error_code stage_ec;
-          staging_root = fs::path(process_root) / (".staging_" + identity_dir);
-          fs::remove_all(staging_root, stage_ec);
-          stage_ec.clear();
-          fs::create_directories(staging_root, stage_ec);
-          if (stage_ec) {
-            throw std::runtime_error("ModelPack: output_storage_unavailable: failed to create "
-                                     "staging extraction root: " +
-                                     staging_root.string() + " (" + stage_ec.message() + ")");
-          }
-          return staging_root.string();
-        },
-        opt);
+    const auto choose_root =
+        [&](const simaai::neat::internal::ModelArchiveManifest& manifest) -> std::string {
+      const std::string process_root = modelpack_output_root(
+          cleanup_extracted_model_data,
+          required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes));
+      if (!reuse_across_processes) {
+        return (fs::path(process_root) / identity_dir).string();
+      }
+      std::error_code stage_ec;
+      staging_root = fs::path(process_root) / (".staging_" + identity_dir);
+      fs::remove_all(staging_root, stage_ec);
+      stage_ec.clear();
+      fs::create_directories(staging_root, stage_ec);
+      if (stage_ec) {
+        throw std::runtime_error("ModelPack: output_storage_unavailable: failed to create "
+                                 "staging extraction root: " +
+                                 staging_root.string() + " (" + stage_ec.message() + ")");
+      }
+      return staging_root.string();
+    };
+
+    const auto extracted =
+        source_is_directory
+            ? simaai::neat::internal::ModelArchiveLoader::extract_directory(tar_path, choose_root,
+                                                                            opt)
+            : simaai::neat::internal::ModelArchiveLoader::extract(tar_path, choose_root, opt);
     const fs::path target_dir(extracted.package_root);
 
     // The JSON rewrite below bakes this in permanently, so it must be the published path, not the
@@ -1235,6 +1345,11 @@ static std::string extract_and_organize(const std::string& tar_path,
       throw;
     }
 
+    // Last, so the marker's presence means validation, classification and the path rewrite all
+    // completed. For a retained package this happens before the publishing rename, so nothing
+    // partially written ever becomes visible under the published name.
+    mark_package_ready(target_dir, cache_key);
+
     if (reuse_across_processes) {
       const fs::path publish_root = published_dir.parent_path();
       std::error_code publish_ec;
@@ -1250,12 +1365,12 @@ static std::string extract_and_organize(const std::string& tar_path,
                                    publish_root.string() + " (" + publish_ec.message() + ")");
         }
         fs::remove_all(staging_root, cleanup_ec);
-        cache[cache_key] = ready;
+        cache[mode_cache_key] = ready;
         return ready;
       }
     }
 
-    cache[cache_key] = published_dir.string();
+    cache[mode_cache_key] = published_dir.string();
     return published_dir.string();
   } catch (const simaai::neat::internal::ModelArchiveError& e) {
     // Surface archive failures as a structured NeatError (not a flat std::runtime_error) so the

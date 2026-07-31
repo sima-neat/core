@@ -661,6 +661,18 @@ def _build_fixture_tree(out_root: Path) -> Dict[str, dict]:
         "size_bytes": trailing_path.stat().st_size,
     }
 
+    # valid/zero_padded_valid.tar.gz (complete member followed by an all-zero block tail)
+    # GNU gzip 1.12 decompresses this and exits 0, so it must extract like basic_valid.
+    zero_pad_rel = "valid/zero_padded_valid.tar.gz"
+    zero_pad_path = out_root / zero_pad_rel
+    zero_pad_path.write_bytes((out_root / "valid/basic_valid.tar.gz").read_bytes() + b"\0" * 512)
+    generated[zero_pad_rel] = {
+        "intent": "valid gzip member followed by an all-zero block tail",
+        "path": zero_pad_rel,
+        "sha256": _sha256(zero_pad_path),
+        "size_bytes": zero_pad_path.stat().st_size,
+    }
+
     # invalid/empty_archive.tar.gz (no gzip member at all)
     empty_rel = "invalid/empty_archive.tar.gz"
     empty_path = out_root / empty_rel

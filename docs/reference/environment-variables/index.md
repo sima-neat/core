@@ -130,18 +130,30 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 
 ## Model (legacy env var names retained)
 - `SIMA_MLA_NEXT_CPU=<domain>` — override MLA next_cpu.
-- `SIMA_MPK_EXTRACT_ROOT=<dir>` — base directory for model-archive loading. Authoritative: if it
+- `SIMA_MPK_EXTRACT_ROOT=<dir>` — base directory for model loading, from an archive or an
+  unpacked directory. Resolved to an absolute path once per process, so published packages and the
+  paths rewritten into their JSON never depend on the working directory. Authoritative: if it
   is unwritable or below the free-space reserve, loading fails rather than falling back. When it is
   unset, the base is the first usable candidate of a mounted NVMe filesystem, `/data`, `TMPDIR`,
-  then the working directory. An NVMe candidate must be a `/dev/nvme*` block device mounted
-  somewhere other than `/`, so automatic selection never lands on NFS, on another network
-  filesystem, or on an NVMe root filesystem. NVMe is preferred for capacity and eMMC write wear,
+  then the working directory. An NVMe candidate must be a writable `/dev/nvme*` block device on a
+  data mount: root, `/boot`, `/efi` and other system mounts are excluded, as are vfat/ISO
+  filesystems, so automatic selection never lands on NFS, another network filesystem, a root
+  filesystem, or an EFI partition. NVMe is preferred for capacity and eMMC write wear,
   not speed — decode is CPU bound and placement does not change load time.
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — delete per-process extracted model-archive data on normal exit (default `1`).
   With cleanup on, each process extracts into its own `proc_<pid>` root and removes it at exit. With
   cleanup off, packages are published to a shared `pkg_<archive-identity>` directory and reused by
   later processes, which skips decoding and extraction entirely. Retained packages are never
   garbage collected; remove them by hand when the archives they came from are no longer needed.
+
+`Model` accepts either a `.tar.gz` archive or an unpacked model directory. A directory is validated
+under the same entry, limit and MPK contract rules as an archive, then copied into the selected base
+and classified into `etc/lib/share`, with paths rewritten in the copy; the directory you pass is
+never modified. Skipping decompression makes this substantially faster than the archive it came
+from. A package Core itself published carries a `.sima_modelpack_ready` marker and is loaded
+directly with no copy, provided it is still owned by the current user, is not group- or
+world-writable, and contains no symlinks. Any other directory, including one that already looks like
+`etc/lib/share`, is copied and re-validated.
 - `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove stale dead-`proc_*` extraction roots on startup (default `1`).
 - `SIMA_MODEL_TAR=<path>` — base model-pack path used by examples/tests.
   Per-model overrides (`SIMA_RESNET50_TAR`, `SIMA_YOLO_TAR`, etc.) still take precedence.

@@ -7,6 +7,7 @@
 #include <unistd.h> // mkdtemp
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cerrno>
 #include <cctype>
@@ -748,8 +749,10 @@ constexpr std::size_t kInflateBufferBytes = 1024UL * 1024UL;
 static_assert(kInflateBufferBytes <= std::numeric_limits<uInt>::max(),
               "inflate buffers are handed to zlib as uInt");
 
-// In-process gzip decoder. Concatenated members are one logical stream, as `gzip -dc` treats them:
-// stopping at the first end-of-stream marker would silently truncate a valid archive.
+// In-process gzip decoder, matching what `gzip -dc` accepts. Concatenated members are one logical
+// stream, so stopping at the first end-of-stream marker would silently truncate a valid archive.
+// An all-zero tail is block padding and ends the stream cleanly; nonzero trailing bytes are an
+// error, as gzip reports with exit 2.
 class GzipInflater {
 public:
   explicit GzipInflater(const std::string& path) : in_(::fopen(path.c_str(), "rb")) {
@@ -792,16 +795,13 @@ public:
       const std::size_t produced = size - zs_.avail_out;
 
       if (rc == Z_STREAM_END) {
-        // Anything left must begin another member; inflate reports it if it does not.
-        if (zs_.avail_in > 0 || !input_eof_) {
+        if (more_member_data()) {
           if (::inflateReset(&zs_) != Z_OK) {
             failed_ = true;
             break;
           }
-          if (zs_.avail_in == 0 && !refill())
-            done_ = !failed_; // a clean end of input, not a read error mid-archive
         } else {
-          done_ = true;
+          done_ = !failed_; // a clean end of input, not a read error mid-archive
         }
       } else if (rc != Z_OK && rc != Z_BUF_ERROR) {
         // Z_BUF_ERROR means no progress was possible, which the refill above resolves.
@@ -816,6 +816,22 @@ public:
   }
 
 private:
+  // Called at a member boundary. Skips an all-zero tail, which a gzip member can never start with
+  // (its first byte is 0x1f), so consuming zeros cannot swallow real data. True when a nonzero byte
+  // remains and must begin another member; inflate reports it if it does not.
+  bool more_member_data() {
+    for (;;) {
+      while (zs_.avail_in > 0) {
+        if (*zs_.next_in != 0)
+          return true;
+        ++zs_.next_in;
+        --zs_.avail_in;
+      }
+      if (!refill())
+        return false;
+    }
+  }
+
   // False at end of input; sets failed() only for a read error.
   bool refill() {
     if (input_eof_)
@@ -842,6 +858,11 @@ private:
 };
 
 // The inflated size is unknown up front, so both guards are enforced as the bytes stream past.
+std::atomic<std::uint64_t>& inflation_counter() {
+  static std::atomic<std::uint64_t> count{0};
+  return count;
+}
+
 void inflate_archive_to_file(const std::string& archive_path, const fs::path& out_path,
                              const ModelArchiveLoaderOptions& opt) {
   const bool space_checked = opt.check_output_free_space && output_space_check_enabled();
@@ -1030,6 +1051,7 @@ ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
                   "size_limit_exceeded: archive exceeds configured maximum size");
   }
 
+  inflation_counter().fetch_add(1, std::memory_order_relaxed);
   dir_ = make_staging_dir(opt.staging_base);
   tar_path_ = (dir_ / "archive.tar").string();
 
@@ -1236,20 +1258,22 @@ fs::path extract_destination_rel(const TarEntry& entry) {
   return fs::path("etc") / name;
 }
 
-ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
+// Reads one entry's bytes from whichever source produced it.
+using EntryByteReader = std::function<std::vector<std::uint8_t>(const TarEntry&)>;
+
+// Everything both sources share: per-entry limits, duplicate and destination-collision detection,
+// JSON parsing, and the MPK contract requirements. Only entry production differs.
+ArchiveContents validate_entries(ModelArchiveManifest seed, std::vector<TarEntry> entries,
+                                 const EntryByteReader& read_entry_bytes,
                                  const ModelArchiveLoaderOptions& opt) {
   ArchiveContents out;
+  out.manifest = std::move(seed);
 
-  out.manifest.archive_path = snapshot.source_path();
-  out.manifest.archive_size_bytes = snapshot.source_size_bytes();
-  out.manifest.package_name = package_name_from_archive(fs::path(snapshot.source_path()));
-
-  std::vector<std::string> listing = tar_list_verbose(snapshot.tar_path());
-  if (listing.empty()) {
+  if (entries.empty()) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: archive contains no entries");
   }
-  if (listing.size() > opt.max_entries) {
+  if (entries.size() > opt.max_entries) {
     throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
                   "size_limit_exceeded: archive has too many entries");
   }
@@ -1259,9 +1283,7 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
   std::size_t total_json_bytes = 0;
   std::size_t json_file_count = 0;
 
-  for (const auto& line : listing) {
-    TarEntry entry = parse_tar_line(line, opt, opt.reject_unsupported_file_types);
-
+  for (auto& entry : entries) {
     if (!seen_paths.insert(entry.normalized_path).second) {
       throw_archive(ModelArchiveErrorClass::InvalidArchive,
                     "invalid_archive: duplicate archive entry path: " + entry.normalized_path);
@@ -1316,8 +1338,7 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
   for (const auto& entry : out.entries) {
     if (entry.entry_class != EntryClass::Json)
       continue;
-    const std::vector<std::uint8_t> bytes =
-        read_tar_entry(snapshot.tar_path(), entry.raw_path, opt.max_entry_bytes);
+    const std::vector<std::uint8_t> bytes = read_entry_bytes(entry);
 
     json parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
 
@@ -1354,8 +1375,266 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
   return out;
 }
 
+ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
+                                 const ModelArchiveLoaderOptions& opt) {
+  ModelArchiveManifest seed;
+  seed.archive_path = snapshot.source_path();
+  seed.archive_size_bytes = snapshot.source_size_bytes();
+  seed.package_name = package_name_from_archive(fs::path(snapshot.source_path()));
+
+  const std::vector<std::string> listing = tar_list_verbose(snapshot.tar_path());
+  // Before parsing, so a hostile listing is rejected on its count rather than its content.
+  if (listing.size() > opt.max_entries) {
+    throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                  "size_limit_exceeded: archive has too many entries");
+  }
+
+  std::vector<TarEntry> entries;
+  entries.reserve(listing.size());
+  for (const auto& line : listing) {
+    entries.push_back(parse_tar_line(line, opt, opt.reject_unsupported_file_types));
+  }
+
+  const std::string tar_path = snapshot.tar_path();
+  return validate_entries(
+      std::move(seed), std::move(entries),
+      [&tar_path, &opt](const TarEntry& entry) {
+        return read_tar_entry(tar_path, entry.raw_path, opt.max_entry_bytes);
+      },
+      opt);
+}
+
+// Walks without following symlinks. A symlink or special file in a caller-supplied tree could
+// redirect a copy outside the package or block on a device, and the archive path rejects those
+// entry types too, so both sources accept exactly regular files and directories.
+std::vector<TarEntry> scan_directory_entries(const fs::path& source_dir,
+                                             const ModelArchiveLoaderOptions& opt) {
+  std::vector<TarEntry> entries;
+  std::uint64_t total_bytes = 0;
+  std::error_code ec;
+  fs::recursive_directory_iterator it(source_dir, fs::directory_options::none, ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to read model directory: " + source_dir.string());
+  }
+  const fs::recursive_directory_iterator end;
+  for (; it != end; it.increment(ec)) {
+    if (ec) {
+      throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                    "invalid_archive: failed to walk model directory: " + source_dir.string());
+    }
+    const fs::path path = it->path();
+    const fs::file_status status = it->symlink_status(ec);
+    if (ec) {
+      throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                    "invalid_archive: failed to stat model directory entry: " + path.string());
+    }
+    if (fs::is_symlink(status)) {
+      throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                    "invalid_archive: model directory contains a symlink: " + path.string());
+    }
+    const bool is_dir = fs::is_directory(status);
+    if (!is_dir && !fs::is_regular_file(status)) {
+      throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                    "invalid_archive: model directory contains a special file: " + path.string());
+    }
+    if (entries.size() >= opt.max_entries) {
+      throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                    "size_limit_exceeded: archive has too many entries");
+    }
+
+    TarEntry entry;
+    entry.raw_path = fs::relative(path, source_dir, ec).generic_string();
+    if (ec || entry.raw_path.empty()) {
+      throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                    "invalid_archive: failed to resolve model directory entry: " + path.string());
+    }
+    entry.type = is_dir ? 'd' : '-';
+    if (!is_dir) {
+      entry.size_bytes = static_cast<std::uint64_t>(fs::file_size(path, ec));
+      if (ec) {
+        throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                      "invalid_archive: failed to size model directory entry: " + path.string());
+      }
+      if (!checked_add_u64(total_bytes, entry.size_bytes, &total_bytes) ||
+          total_bytes > opt.max_inflated_archive_bytes) {
+        throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                      "size_limit_exceeded: model directory exceeds the configured byte budget");
+      }
+    }
+    entry.normalized_path = normalize_entry_path(entry.raw_path, opt);
+    entry.entry_class =
+        classify_entry(entry.type, entry.normalized_path, opt.reject_unsupported_file_types);
+    entries.push_back(std::move(entry));
+  }
+  return entries;
+}
+
+std::vector<std::uint8_t> read_directory_entry(const fs::path& source_dir, const TarEntry& entry,
+                                               std::size_t max_bytes) {
+  const fs::path path = source_dir / entry.raw_path;
+  std::ifstream in(path, std::ios::binary);
+  if (!in.is_open()) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to open model directory entry: " + path.string());
+  }
+  std::vector<std::uint8_t> bytes;
+  bytes.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(entry.size_bytes, max_bytes)));
+  char buffer[65536];
+  while (in.read(buffer, sizeof(buffer)) || in.gcount() > 0) {
+    const std::size_t n = static_cast<std::size_t>(in.gcount());
+    if (bytes.size() + n > max_bytes) {
+      throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                    "size_limit_exceeded: model directory entry exceeds maximum allowed size: " +
+                        entry.normalized_path);
+    }
+    bytes.insert(bytes.end(), buffer, buffer + n);
+  }
+  return bytes;
+}
+
+ArchiveContents validate_directory(const fs::path& source_dir,
+                                   const ModelArchiveLoaderOptions& opt) {
+  ModelArchiveManifest seed;
+  seed.archive_path = source_dir.string();
+  seed.package_name = source_dir.filename().string();
+  if (seed.package_name.empty()) {
+    seed.package_name = "package";
+  }
+
+  std::vector<TarEntry> entries = scan_directory_entries(source_dir, opt);
+  for (const auto& entry : entries) {
+    if (entry.type == '-')
+      seed.archive_size_bytes += entry.size_bytes;
+  }
+
+  return validate_entries(
+      std::move(seed), std::move(entries),
+      [&source_dir, &opt](const TarEntry& entry) {
+        return read_directory_entry(source_dir, entry, opt.max_entry_bytes);
+      },
+      opt);
+}
+
 fs::path extract_destination_for(const fs::path& package_root, const TarEntry& entry) {
   return package_root / extract_destination_rel(entry);
+}
+
+// Rejects a non-directory before any walk, so a bad source fails with the same error class an
+// unreadable archive would give.
+fs::path require_model_directory(const std::string& source_dir) {
+  std::error_code ec;
+  const fs::path path(source_dir);
+  if (!fs::is_directory(path, ec) || ec) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: not a model directory: " + source_dir);
+  }
+  return path;
+}
+
+// Enforces the same per-entry ceiling the archive path applies, so a directory cannot smuggle a
+// larger file past the limit that governs tar entries.
+void copy_directory_entry_to_file(const fs::path& source, const fs::path& dst,
+                                  std::size_t max_bytes) {
+  std::ifstream in(source, std::ios::binary);
+  if (!in.is_open()) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to open model directory entry: " + source.string());
+  }
+  errno = 0;
+  std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) {
+    throw_archive(write_error_class_for_path(errno, dst),
+                  "failed to open extraction output file: " + dst.string());
+  }
+
+  std::vector<char> buffer(1024UL * 1024UL);
+  std::uint64_t written = 0;
+  while (in.read(buffer.data(), static_cast<std::streamsize>(buffer.size())) || in.gcount() > 0) {
+    const std::size_t n = static_cast<std::size_t>(in.gcount());
+    if (written + n > max_bytes) {
+      throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                    "size_limit_exceeded: model directory entry exceeds maximum allowed size: " +
+                        source.string());
+    }
+    errno = 0;
+    out.write(buffer.data(), static_cast<std::streamsize>(n));
+    if (!out) {
+      throw_archive(write_error_class_for_path(errno, dst),
+                    "failed writing extraction output file: " + dst.string());
+    }
+    written += n;
+  }
+  errno = 0;
+  out.close();
+  if (!out) {
+    throw_archive(write_error_class_for_path(errno, dst),
+                  "failed to finalize extraction output file: " + dst.string());
+  }
+}
+
+// Produces one entry's bytes at its classified destination.
+using EntryWriter = std::function<void(const TarEntry&, const fs::path& dst)>;
+
+// The half both sources share: pick and prepare the output root, lay out etc/lib/share, and write
+// every classified entry. Only how an entry's bytes are produced differs.
+ModelArchiveExtractResult materialize(ArchiveContents validated,
+                                      const ChooseModelArchiveOutputRoot& choose_output_root,
+                                      const EntryWriter& write_entry,
+                                      const ModelArchiveLoaderOptions& opt) {
+  // Absolute because the returned paths get baked into extracted JSON configs. Not normalized:
+  // collapsing ".." lexically would disagree with how the caller resolved the same path.
+  std::error_code ec;
+  const fs::path root = fs::absolute(fs::path(choose_output_root(validated.manifest)), ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                  "failed to resolve extraction root to an absolute path (" + ec.message() + ")");
+  }
+  fs::create_directories(root, ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to create output root: " + root.string());
+  }
+
+  const fs::path package_root = root / validated.manifest.package_name;
+  fs::remove_all(package_root, ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to remove previous extraction output: " +
+                      package_root.string());
+  }
+  ec.clear();
+  // The source copy already exists, so on a shared filesystem this covers both coexisting.
+  require_output_space(root, planned_extracted_regular_bytes(validated.entries), opt);
+  try {
+    for (const char* dir : {"etc", "lib", "share"}) {
+      fs::create_directories(package_root / dir, ec);
+      if (ec) {
+        throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                      std::string("invalid_archive: failed to create ") + dir +
+                          " dir under output root");
+      }
+    }
+
+    for (const auto& entry : validated.entries) {
+      if (entry.type != '-')
+        continue;
+      if (entry.entry_class == EntryClass::Directory)
+        continue;
+      write_entry(entry, extract_destination_for(package_root, entry));
+    }
+  } catch (...) {
+    fs::remove_all(package_root, ec);
+    throw;
+  }
+
+  ModelArchiveExtractResult out;
+  out.package_root = package_root.string();
+  out.etc_dir = (package_root / "etc").string();
+  out.lib_dir = (package_root / "lib").string();
+  out.share_dir = (package_root / "share").string();
+  out.manifest = std::move(validated.manifest);
+  return out;
 }
 
 } // namespace
@@ -1403,71 +1682,82 @@ ModelArchiveLoader::extract(const std::string& archive_path,
                             const ModelArchiveLoaderOptions& opt) {
   const ArchiveSnapshot snapshot(archive_path, opt);
   ArchiveContents validated = validate_archive(snapshot, opt);
+  const std::string tar_path = snapshot.tar_path();
+  return materialize(
+      std::move(validated), choose_output_root,
+      [&tar_path, &opt](const TarEntry& entry, const fs::path& dst) {
+        // Member at a time to stdout, never `tar -x` into a directory: tar must not be the one
+        // choosing where bytes land.
+        (void)stream_tar_entry_to_file(tar_path, entry.raw_path, dst, opt.max_entry_bytes);
+      },
+      opt);
+}
 
-  // Absolute because the returned paths get baked into extracted JSON configs. Not normalized:
-  // collapsing ".." lexically would disagree with how the caller resolved the same path.
+ModelArchiveManifest ModelArchiveLoader::inspect_directory(const std::string& source_dir,
+                                                           const ModelArchiveLoaderOptions& opt) {
+  return validate_directory(require_model_directory(source_dir), opt).manifest;
+}
+
+ModelArchiveExtractResult
+ModelArchiveLoader::extract_directory(const std::string& source_dir, const std::string& output_root,
+                                      const ModelArchiveLoaderOptions& opt) {
+  return extract_directory(
+      source_dir, [&output_root](const ModelArchiveManifest&) { return output_root; }, opt);
+}
+
+ModelArchiveExtractResult
+ModelArchiveLoader::extract_directory(const std::string& source_dir,
+                                      const ChooseModelArchiveOutputRoot& choose_output_root,
+                                      const ModelArchiveLoaderOptions& opt) {
+  const fs::path source = require_model_directory(source_dir);
+  ArchiveContents validated = validate_directory(source, opt);
+  return materialize(
+      std::move(validated), choose_output_root,
+      [&source, &opt](const TarEntry& entry, const fs::path& dst) {
+        copy_directory_entry_to_file(source / entry.raw_path, dst, opt.max_entry_bytes);
+      },
+      opt);
+}
+
+std::uint64_t ModelArchiveLoader::inflation_count() {
+  return inflation_counter().load(std::memory_order_relaxed);
+}
+
+std::string ModelArchiveLoader::directory_identity(const std::string& source_dir) {
   std::error_code ec;
-  const fs::path root = fs::absolute(fs::path(choose_output_root(validated.manifest)), ec);
-  if (ec) {
-    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                  "failed to resolve extraction root to an absolute path (" + ec.message() + ")");
-  }
-  fs::create_directories(root, ec);
-  if (ec) {
-    throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to create output root: " + root.string());
-  }
-
-  const fs::path package_root = root / validated.manifest.package_name;
-  fs::remove_all(package_root, ec);
-  if (ec) {
-    throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to remove previous extraction output: " +
-                      package_root.string());
-  }
+  const fs::path canonical = fs::weakly_canonical(fs::path(source_dir), ec);
+  std::string identity = (ec ? fs::path(source_dir) : canonical).string();
   ec.clear();
-  // The snapshot is already written, so on a shared filesystem this covers both coexisting.
-  require_output_space(root, planned_extracted_regular_bytes(validated.entries), opt);
-  try {
-    fs::create_directories(package_root / "etc", ec);
-    if (ec) {
-      throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                    "invalid_archive: failed to create etc dir under output root");
-    }
-    fs::create_directories(package_root / "lib", ec);
-    if (ec) {
-      throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                    "invalid_archive: failed to create lib dir under output root");
-    }
-    fs::create_directories(package_root / "share", ec);
-    if (ec) {
-      throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                    "invalid_archive: failed to create share dir under output root");
-    }
 
-    // Member at a time to stdout, never `tar -x` into a directory: tar must not be the one
-    // choosing where bytes land.
-    for (const auto& entry : validated.entries) {
-      if (entry.type != '-')
-        continue;
-      if (entry.entry_class == EntryClass::Directory)
-        continue;
-
-      const fs::path dst = extract_destination_for(package_root, entry);
-      (void)stream_tar_entry_to_file(snapshot.tar_path(), entry.raw_path, dst, opt.max_entry_bytes);
-    }
-  } catch (...) {
-    fs::remove_all(package_root, ec);
-    throw;
+  // Sorted so the identity does not depend on directory iteration order. Sizes and mtimes only:
+  // hashing contents would read every byte and defeat the point of skipping decompression.
+  std::vector<std::string> parts;
+  fs::recursive_directory_iterator it(fs::path(source_dir), fs::directory_options::none, ec);
+  if (ec)
+    return identity;
+  const fs::recursive_directory_iterator end;
+  for (; it != end; it.increment(ec)) {
+    if (ec)
+      return identity;
+    const fs::file_status status = it->symlink_status(ec);
+    if (ec || !fs::is_regular_file(status))
+      continue;
+    const std::uintmax_t size = fs::file_size(it->path(), ec);
+    if (ec)
+      continue;
+    const fs::file_time_type mtime = fs::last_write_time(it->path(), ec);
+    if (ec)
+      continue;
+    parts.push_back(fs::relative(it->path(), fs::path(source_dir), ec).generic_string() + "|" +
+                    std::to_string(static_cast<unsigned long long>(size)) + "|" +
+                    std::to_string(static_cast<long long>(mtime.time_since_epoch().count())));
   }
-
-  ModelArchiveExtractResult out;
-  out.package_root = package_root.string();
-  out.etc_dir = (package_root / "etc").string();
-  out.lib_dir = (package_root / "lib").string();
-  out.share_dir = (package_root / "share").string();
-  out.manifest = std::move(validated.manifest);
-  return out;
+  std::sort(parts.begin(), parts.end());
+  for (const auto& part : parts) {
+    identity += "\n";
+    identity += part;
+  }
+  return identity;
 }
 
 } // namespace simaai::neat::internal
