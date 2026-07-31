@@ -803,7 +803,9 @@ Status: implemented end to end in the working tree on July 31, 2026.
   group a token but remain literal in the property value, while unmatched quotes fall back to the
   ordinary token alternative. Differential tests compare these edge cases with native parsing.
 - Eager seeded connected builds retain the original typed `NeatError` and materialized launch
-  string instead of flattening it through the generic graph-start error wrapper.
+  string instead of flattening it through the generic graph-start error wrapper. The detail is
+  returned by the current segment's build attempt, so an earlier segment's graph-global terminal
+  error cannot be misattributed.
 - Public C++ and Python signatures are unchanged. The ARM64 `Graph` layout remains pinned at 688
   bytes, and the public header-surface gate passes.
 - The complete ARM64 build, including the Python extension, passes.

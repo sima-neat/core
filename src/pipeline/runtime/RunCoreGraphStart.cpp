@@ -1472,18 +1472,17 @@ void prebuild_seeded_default_input_segment(const std::shared_ptr<RunCore>& core,
         "RunCore::start(graph): seeded default input does not resolve to a pipeline segment");
   }
   std::string build_err;
-  if (!core->ensure_graph_pipeline_built(endpoint->segment, *seed, &build_err,
-                                         allow_startup_preflight)) {
-    // ensure_graph_pipeline_built records a typed NeatError before returning false. Preserve that
-    // report for eager seeded builds instead of flattening it through std::runtime_error and the
-    // generic graph-start wrapper. In particular, build-time failures carry the materialized
-    // launch string and precise error code needed for diagnostics and reproduction.
-    auto detail = core->graph_last_error_detail();
-    if (detail.has_value() && detail->report.has_value()) {
-      GraphReport report = std::move(*detail->report);
-      const std::string message = detail->message.empty()
+  PullError current_failure;
+  if (!core->ensure_graph_pipeline_built(
+          endpoint->segment, *seed, &build_err, allow_startup_preflight,
+          /*cancel_on_public_input_close=*/false, &current_failure)) {
+    // Preserve only the typed failure produced by this segment build. The graph-global terminal
+    // error can belong to a different segment prebuilt earlier and is intentionally not consulted.
+    if (current_failure.report.has_value()) {
+      GraphReport report = std::move(*current_failure.report);
+      const std::string message = current_failure.message.empty()
                                       ? "[" + report.error_code + "] " + report.repro_note
-                                      : std::move(detail->message);
+                                      : std::move(current_failure.message);
       throw NeatError(message, std::move(report));
     }
     throw std::runtime_error(build_err.empty()
