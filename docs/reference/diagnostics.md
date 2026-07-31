@@ -46,6 +46,7 @@ Framework errors use stable code families:
 | `io.rtsp_connection_failed` | RTSP source cannot be contacted | Verify URL, reachability, server, and credentials |
 | `io.camera_not_found` | Requested camera is unavailable | Select a reported camera or use the default |
 | `codec.invalid_h264_stream` | Input has no valid H.264 frames | Supply a complete H.264 stream or correct the codec |
+| `resource.memory_allocation_failed` | A required memory allocation failed | Reduce workload memory use and free memory used by other applications or pipelines |
 | `resource.device_memory_exhausted` | Device DMA/CMA allocation failed | Reduce concurrent streams, resolution, or buffering |
 | `resource.output_pool_exhausted` | All output buffers remain in use | Release zero-copy outputs or use owned copies |
 | `infra.dispatcher_unavailable` | Accelerator runtime cannot be acquired | Stop competing workloads and verify DevKit compatibility |

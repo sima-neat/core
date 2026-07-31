@@ -462,15 +462,15 @@ NormalizedDiagnostic device_memory_exhausted(RawGstError raw) {
   return out;
 }
 
-NormalizedDiagnostic allocation_exhausted(RawGstError raw) {
-  NormalizedDiagnostic out = base(
-      std::move(raw), error_codes::kDeviceMemoryExhausted, "gstreamer.memory_allocation_exhausted",
-      "The pipeline could not allocate enough memory for a required buffer.");
+NormalizedDiagnostic memory_allocation_failed(RawGstError raw) {
+  NormalizedDiagnostic out = base(std::move(raw), error_codes::kMemoryAllocationFailed,
+                                  "gstreamer.memory_allocation_failed",
+                                  "The pipeline could not allocate a required memory buffer.");
   add_fact(out, "Allocator", find_detail(out.raw, {"allocator"}).value_or(""));
   out.actions = {
-      "Reduce the number or resolution of simultaneous streams.",
-      "Reduce buffer or queue depth where the application permits it.",
-      "Stop other pipelines using device memory and retry.",
+      "Reduce memory use by lowering the number or resolution of simultaneous streams or by "
+      "reducing buffer and queue depth.",
+      "Free memory used by other applications or pipelines and retry.",
   };
   return out;
 }
@@ -774,7 +774,7 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
         out.actions = {"Free space on the destination or choose another output location."};
         return out;
       }
-      return allocation_exhausted(std::move(raw));
+      return memory_allocation_failed(std::move(raw));
     }
   }
 

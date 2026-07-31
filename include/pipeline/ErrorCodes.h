@@ -90,6 +90,8 @@ inline constexpr const char* kDecodeFailed = "codec.decode_failed";
 inline constexpr const char* kEncodeFailed = "codec.encode_failed";
 
 // ── Resource classes ──────────────────────────────────────────────────────────────────────
+/// A required memory allocation failed without identifying a device-specific allocator.
+inline constexpr const char* kMemoryAllocationFailed = "resource.memory_allocation_failed";
 /// Contiguous device DMA/CMA memory is exhausted.
 inline constexpr const char* kDeviceMemoryExhausted = "resource.device_memory_exhausted";
 /// A plugin could not acquire an output buffer from its pool.

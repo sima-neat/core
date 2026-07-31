@@ -122,9 +122,12 @@ RUN_TEST(
         const NormalizedDiagnostic allocation = classify_gst_error(
             raw_error("neatmodel", "gst-resource-error-quark", GST_RESOURCE_ERROR_NO_SPACE_LEFT,
                       "Output allocation failed"));
-        require_code(allocation, error_codes::kDeviceMemoryExhausted);
-        require(allocation.diagnostic_id == "gstreamer.memory_allocation_exhausted",
+        require_code(allocation, error_codes::kMemoryAllocationFailed);
+        require(allocation.diagnostic_id == "gstreamer.memory_allocation_failed",
                 "plugin allocation failures must not be classified as full storage");
+        require(render_diagnostic_body(allocation, false).find("device memory") ==
+                    std::string::npos,
+                "generic allocation failures must not assume a device allocator");
 
         const NormalizedDiagnostic storage = classify_gst_error(
             raw_error("filesink", "gst-resource-error-quark", GST_RESOURCE_ERROR_NO_SPACE_LEFT,
