@@ -508,8 +508,9 @@ RUN_TEST(
             "structured-pass-secret", "accessToken", G_TYPE_STRING, "camel-access-secret",
             "refreshToken", G_TYPE_STRING, "camel-refresh-secret", "authToken", G_TYPE_STRING,
             "camel-auth-secret", "clientSecret", G_TYPE_STRING, "camel-client-secret",
-            "neat_auth_token", G_TYPE_STRING, "prefixed-auth-secret", "dtype_token", G_TYPE_STRING,
-            "UInt8", "model_signature", G_TYPE_STRING, "sha256:model-metadata", "aws_access_key_id",
+            "sessionToken", G_TYPE_STRING, "structured-session-secret", "neat_auth_token",
+            G_TYPE_STRING, "prefixed-auth-secret", "dtype_token", G_TYPE_STRING, "UInt8",
+            "model_signature", G_TYPE_STRING, "sha256:model-metadata", "aws_access_key_id",
             G_TYPE_STRING, "structured-aws-key", "awsSecretAccessKey", G_TYPE_STRING,
             "structured-aws-secret", "compass", G_TYPE_STRING, "north", nullptr);
         const std::string debug =
@@ -522,6 +523,9 @@ RUN_TEST(
             "camel={\"accessToken\":\"camel-json-access\","
             "\"refreshToken\":\"camel-json-refresh\","
             "\"authToken\":\"camel-json-auth\",\"clientSecret\":\"camel-json-client\"} "
+            "sessions={\"sessionToken\":\"camel-session-secret\","
+            "\"session_token\":\"underscore-session-secret\","
+            "\"session-token\":\"hyphen-session-secret\"} "
             "aws={\"SecretAccessKey\":\"camel-aws-secret\","
             "\"awsSecretAccessKey\":\"camel-prefixed-aws-secret\"} "
             "metadata={\"dtype_token\":\"UInt8\",\"model_signature\":\"sha256:metadata\"} "
@@ -554,6 +558,7 @@ RUN_TEST(
                     raw.details.at("refreshToken") == "<redacted>" &&
                     raw.details.at("authToken") == "<redacted>" &&
                     raw.details.at("clientSecret") == "<redacted>" &&
+                    raw.details.at("sessionToken") == "<redacted>" &&
                     raw.details.at("neat_auth_token") == "<redacted>" &&
                     raw.details.at("aws_access_key_id") == "<redacted>" &&
                     raw.details.at("awsSecretAccessKey") == "<redacted>" &&
@@ -576,6 +581,9 @@ RUN_TEST(
                     raw.debug.find("camel-json-refresh") == std::string::npos &&
                     raw.debug.find("camel-json-auth") == std::string::npos &&
                     raw.debug.find("camel-json-client") == std::string::npos &&
+                    raw.debug.find("camel-session-secret") == std::string::npos &&
+                    raw.debug.find("underscore-session-secret") == std::string::npos &&
+                    raw.debug.find("hyphen-session-secret") == std::string::npos &&
                     raw.debug.find("camel-aws-secret") == std::string::npos &&
                     raw.debug.find("camel-prefixed-aws-secret") == std::string::npos &&
                     raw.debug.find("multiply-password") == std::string::npos &&
