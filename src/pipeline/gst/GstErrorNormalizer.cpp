@@ -124,7 +124,8 @@ std::string redact_uri_credentials(std::string value) {
   }
 
   static constexpr std::string_view sensitive[] = {
-      "token=", "key=", "secret=", "password=", "signature=", "sig=", "pw=", "pwd=",
+      "credential=", "credentials=", "token=", "key=", "secret=",
+      "password=",   "signature=",   "sig=",   "pw=",  "pwd=",
   };
   for (std::string_view marker : sensitive) {
     std::size_t pos = 0;
@@ -137,6 +138,8 @@ std::string redact_uri_credentials(std::string value) {
       "proxy-authorization",
       "proxy_authorization",
       "authorization",
+      "credentials",
+      "credential",
       "access-token",
       "access_token",
       "refresh-token",

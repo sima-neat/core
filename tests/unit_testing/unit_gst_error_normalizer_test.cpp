@@ -337,7 +337,9 @@ RUN_TEST(
             "escaped={\\\"password\\\":\\\"escaped-json-password\\\","
             "\\\"access_token\\\":\\\"escaped-json-token\\\"} "
             "Cookie: sessionid=raw-cookie-secret\n{\"session_cookie\":\"json-cookie-secret\"} "
-            "password=(string)\"typed password secret\"",
+            "password=(string)\"typed password secret\" "
+            "credential='raw credential secret' "
+            "credentials=(string)\"typed credential secret\"",
             details);
         g_error_free(error);
 
@@ -368,7 +370,9 @@ RUN_TEST(
                     raw.debug.find("escaped-json-token") == std::string::npos &&
                     raw.debug.find("raw-cookie-secret") == std::string::npos &&
                     raw.debug.find("json-cookie-secret") == std::string::npos &&
-                    raw.debug.find("typed password secret") == std::string::npos,
+                    raw.debug.find("typed password secret") == std::string::npos &&
+                    raw.debug.find("raw credential secret") == std::string::npos &&
+                    raw.debug.find("typed credential secret") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
@@ -378,6 +382,10 @@ RUN_TEST(
                          "escaped JSON credential fields should retain escaped structure");
         require_contains(raw.debug, "password=(string)\"<redacted>\"",
                          "GStreamer type annotations should remain while values are redacted");
+        require_contains(raw.debug, "credential='<redacted>'",
+                         "credential aliases should redact quoted raw values");
+        require_contains(raw.debug, "credentials=(string)\"<redacted>\"",
+                         "plural credential aliases should redact typed raw values");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);
 
