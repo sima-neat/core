@@ -724,7 +724,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   }
 
   if (is_done) {
-    if (st->pipeline.stream.reached_eos()) {
+    if (!st->pipeline.supports_push && st->pipeline.stream.reached_eos()) {
       set_terminal_error(error_codes::kSourceEnded,
                          "Run::pull: input source reached end of stream");
     } else {

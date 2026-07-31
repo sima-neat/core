@@ -202,6 +202,26 @@ RUN_TEST(
                              "input/output count differences must not imply unexpected EOS"));
       }
 
+      // Application-driven EOS on a drained one-to-one push pipeline is normal closure, not a
+      // finite source ending on its own.
+      {
+        Run push_run = sima_test::make_async_rgb_run(seed, 4, 4);
+        require(push_run.push(TensorList{seed}),
+                run_api_case("push_close_input", "test input should be accepted"));
+        Sample output;
+        PullError err;
+        require(push_run.pull(1000, output, &err) == PullStatus::Ok,
+                run_api_case("push_close_output", "accepted input should produce output"));
+        push_run.close_input();
+
+        const PullStatus status = push_run.pull(1000, output, &err);
+        require(status == PullStatus::Closed,
+                run_api_case("push_close_status", "closed push input should drain normally"));
+        require(err.code == error_codes::kRuntimePull,
+                run_api_case("push_close_code",
+                             "application-driven EOS must not use the source-ended code"));
+      }
+
       // Active async matrix.
       {
         Run run = sima_test::make_async_rgb_run(seed, 32, 32);
