@@ -479,9 +479,28 @@ RUN_TEST(
             classify_gst_parse_error(error, "rtspsrc latency=fast ! fakesink");
         g_error_free(error);
         require_code(diagnostic, error_codes::kPropertyInvalid);
-        require_contains(render_diagnostic_body(diagnostic, false),
-                         "property is unknown or invalid",
+        const std::string production = render_diagnostic_body(diagnostic, false);
+        require_contains(production, "property is unknown or invalid",
                          "invalid property values should receive property-specific guidance");
+        require(production.find("latency") == std::string::npos,
+                "production property errors must not echo raw parser messages");
+        require_contains(render_diagnostic_body(diagnostic, true), "latency",
+                         "debug property errors should retain raw parser messages");
+      }
+
+      {
+        GError* error = g_error_new_literal(GST_LIBRARY_ERROR, GST_LIBRARY_ERROR_FAILED,
+                                            "opaque parser failure custom-value=private");
+        const NormalizedDiagnostic diagnostic = classify_gst_parse_error(error, "custom fragment");
+        g_error_free(error);
+        require_code(diagnostic, error_codes::kParseLaunch);
+        const std::string production = render_diagnostic_body(diagnostic, false);
+        require(production.find("opaque parser failure") == std::string::npos &&
+                    production.find("custom-value") == std::string::npos,
+                "production parse errors must not echo raw parser messages");
+        const std::string debug = render_diagnostic_body(diagnostic, true);
+        require_contains(debug, "opaque parser failure",
+                         "debug parse errors should retain raw parser messages");
       }
 
       {

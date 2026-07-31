@@ -1075,7 +1075,6 @@ NormalizedDiagnostic classify_gst_parse_error(const GError* error,
       NormalizedDiagnostic out =
           base(std::move(raw), error_codes::kPropertyInvalid, "gstreamer.property_invalid",
                "A GStreamer element property is unknown or invalid.");
-      add_fact(out, "Parser message", out.raw.message);
       out.actions = {"Correct the property name/value using `gst-inspect-1.0 <element>`."};
       return out;
     }
@@ -1094,7 +1093,6 @@ NormalizedDiagnostic classify_gst_parse_error(const GError* error,
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kParseLaunch, "gstreamer.parse_launch_failed",
            "GStreamer could not build the generated pipeline.");
-  add_fact(out, "Parser message", out.raw.message);
   out.actions = {
       "Check the custom pipeline fragment and the properties of its elements.",
       "Verify that every required GStreamer plugin is installed.",
