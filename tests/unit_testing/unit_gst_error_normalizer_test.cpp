@@ -214,6 +214,22 @@ RUN_TEST(
       }
 
       {
+        const NormalizedDiagnostic core_missing = classify_gst_error(
+            raw_error("decodebin", "gst-core-error-quark", GST_CORE_ERROR_MISSING_PLUGIN,
+                      "A required decoder plugin is missing"));
+        require_code(core_missing, error_codes::kPluginMissing);
+        require(core_missing.diagnostic_id == "gstreamer.plugin_missing",
+                "native core missing-plugin errors should use the plugin diagnostic");
+
+        const NormalizedDiagnostic codec_missing = classify_gst_error(
+            raw_error("decodebin", "gst-stream-error-quark", GST_STREAM_ERROR_CODEC_NOT_FOUND,
+                      "No decoder is available for this codec"));
+        require_code(codec_missing, error_codes::kPluginMissing);
+        require_contains(render_diagnostic_body(codec_missing, false), "gst-inspect-1.0",
+                         "native missing-codec errors should include installation guidance");
+      }
+
+      {
         RawGstError raw = raw_error("neatmodel", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                                     "failed to acquire output buffer from pool");
         raw.details["plugin"] = "neatmodel";
@@ -314,7 +330,8 @@ RUN_TEST(
             GST_OBJECT(source), error,
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
             "api_key='quoted-api-secret' password=\"quoted-password\" user-pw='rtsp-password' "
-            "user_pw=rtsp-password-underscore pw=short-password pwd='short-password-d'",
+            "user_pw=rtsp-password-underscore pw=short-password pwd='short-password-d' "
+            "json={\"password\":\"json-password\",\"access_token\":\"json-token\"}",
             details);
         g_error_free(error);
 
@@ -337,10 +354,14 @@ RUN_TEST(
                     raw.debug.find("quoted-api-secret") == std::string::npos &&
                     raw.debug.find("quoted-password") == std::string::npos &&
                     raw.debug.find("rtsp-password") == std::string::npos &&
-                    raw.debug.find("short-password") == std::string::npos,
+                    raw.debug.find("short-password") == std::string::npos &&
+                    raw.debug.find("json-password") == std::string::npos &&
+                    raw.debug.find("json-token") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
+        require_contains(raw.debug, "\"access_token\":\"<redacted>\"",
+                         "JSON credential fields should retain structure without their values");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);
 

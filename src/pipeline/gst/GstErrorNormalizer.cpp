@@ -103,8 +103,38 @@ std::string redact_uri_credentials(std::string value) {
   }
 
   static constexpr std::string_view header_secrets[] = {
-      "authorization", "proxy-authorization", "password", "passwd",  "token",
-      "secret",        "signature",           "sig",      "api-key", "apikey",
+      "proxy-authorization",
+      "proxy_authorization",
+      "authorization",
+      "access-token",
+      "access_token",
+      "refresh-token",
+      "refresh_token",
+      "auth-token",
+      "auth_token",
+      "id-token",
+      "id_token",
+      "client-secret",
+      "client_secret",
+      "api-secret",
+      "api_secret",
+      "access-key",
+      "access_key",
+      "private-key",
+      "private_key",
+      "api-key",
+      "api_key",
+      "apikey",
+      "user-pw",
+      "user_pw",
+      "password",
+      "passwd",
+      "token",
+      "secret",
+      "signature",
+      "sig",
+      "pwd",
+      "pw",
   };
   for (std::string_view marker : header_secrets) {
     std::size_t pos = 0;
@@ -115,6 +145,11 @@ std::string redact_uri_credentials(std::string value) {
         continue;
       }
       std::size_t separator = pos + marker.size();
+      const char key_quote =
+          pos > 0 && (value[pos - 1] == '\'' || value[pos - 1] == '"') ? value[pos - 1] : '\0';
+      if (key_quote != '\0' && separator < value.size() && value[separator] == key_quote) {
+        ++separator;
+      }
       while (separator < value.size() &&
              std::isspace(static_cast<unsigned char>(value[separator])) &&
              value[separator] != '\r' && value[separator] != '\n') {
@@ -494,6 +529,23 @@ NormalizedDiagnostic invalid_h264(RawGstError raw) {
   return out;
 }
 
+NormalizedDiagnostic plugin_missing(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kPluginMissing, "gstreamer.plugin_missing",
+           "A required GStreamer element or codec plugin is not installed.");
+  std::string component =
+      find_detail(out.raw, {"missing-plugin", "missing_plugin", "element", "codec"}).value_or("");
+  if (component.empty())
+    component = quoted_subject(combined_raw(out.raw), "no element");
+  add_fact(out, "Missing component", component);
+  out.actions = {
+      "Install the package that provides the missing element or codec, or use an available "
+      "alternative.",
+      "Check element availability with `gst-inspect-1.0 <element>`.",
+  };
+  return out;
+}
+
 NormalizedDiagnostic device_memory_exhausted(RawGstError raw) {
   NormalizedDiagnostic out = base(
       std::move(raw), error_codes::kDeviceMemoryExhausted, "neatprocesscvu.device_memory_exhausted",
@@ -803,6 +855,11 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if (raw.factory_name == "h264parse" && contains_ci(text, "no valid frames")) {
     return invalid_h264(std::move(raw));
   }
+  if ((raw.domain_name == "gst-core-error-quark" && raw.code == GST_CORE_ERROR_MISSING_PLUGIN) ||
+      (raw.domain_name == "gst-stream-error-quark" &&
+       raw.code == GST_STREAM_ERROR_CODEC_NOT_FOUND)) {
+    return plugin_missing(std::move(raw));
+  }
 
   if (raw.domain_name == "gst-resource-error-quark") {
     if (raw.code == GST_RESOURCE_ERROR_SETTINGS)
@@ -888,16 +945,7 @@ NormalizedDiagnostic classify_gst_parse_error(const GError* error,
 
   if (error && error->domain == GST_PARSE_ERROR) {
     if (error->code == GST_PARSE_ERROR_NO_SUCH_ELEMENT) {
-      NormalizedDiagnostic out =
-          base(std::move(raw), error_codes::kPluginMissing, "gstreamer.element_missing",
-               "A required GStreamer element is not installed.");
-      add_fact(out, "Missing element", quoted_subject(out.raw.message, "no element"));
-      out.actions = {
-          "Install the package that provides the missing element or replace it with an available "
-          "element.",
-          "Check availability with `gst-inspect-1.0 <element>`.",
-      };
-      return out;
+      return plugin_missing(std::move(raw));
     }
     if (error->code == GST_PARSE_ERROR_NO_SUCH_PROPERTY ||
         error->code == GST_PARSE_ERROR_COULD_NOT_SET_PROPERTY) {
