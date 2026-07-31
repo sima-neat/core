@@ -26,7 +26,7 @@ RUN_TEST(
       using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 
       const fs::path root = make_temp_pack_root("apu_output_types");
-      const fs::path json_path = root / "typed_object_mpk.json";
+      const fs::path json_path = root / "mpk.json";
 
       std::ofstream out(json_path);
       require(out.is_open(), "failed to open temp mpk json for write");

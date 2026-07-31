@@ -1343,12 +1343,18 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
   for (const auto& entry : out.entries) {
     if (entry.entry_class != EntryClass::Json)
       continue;
+    const std::string base = fs::path(entry.normalized_path).filename().string();
+    constexpr std::string_view mpk_suffix = "_mpk.json";
+    if (opt.validate_mpk_json_only && base != "mpk.json" &&
+        (base.size() <= mpk_suffix.size() ||
+         base.compare(base.size() - mpk_suffix.size(), mpk_suffix.size(), mpk_suffix) != 0)) {
+      continue;
+    }
     const std::vector<std::uint8_t> bytes =
         read_tar_entry(snapshot.tar_path(), entry.raw_path, opt.max_entry_bytes);
 
     json parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
 
-    const std::string base = fs::path(entry.normalized_path).filename().string();
     if (base == "pipeline_sequence.json") {
       try {
         validate_pipeline_sequence_json(parsed);

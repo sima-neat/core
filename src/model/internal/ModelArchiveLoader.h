@@ -76,6 +76,7 @@ struct ModelArchiveLoaderOptions {
   bool require_pipeline_sequence = true;
   bool require_model_binary = true;
   bool reject_unsupported_file_types = true;
+  bool validate_mpk_json_only = false;
   bool reject_duplicate_json_keys = true;
   bool reject_invalid_utf8_paths = true;
   bool reject_unicode_path_confusables = true;
