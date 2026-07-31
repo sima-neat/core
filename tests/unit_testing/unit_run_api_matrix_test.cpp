@@ -109,6 +109,40 @@ RUN_TEST(
                              "Run::pull_tensors should return empty on closed run"));
       }
 
+      // A finite source that has produced all queued output ends normally. Keep the Closed
+      // status while exposing the stable source-ended reason to callers.
+      {
+        Graph source_graph;
+        source_graph.custom("videotestsrc is-live=true num-buffers=3 pattern=black",
+                            InputRole::Source);
+        source_graph.add(nodes::CapsRaw("RGB", 64, 48, 30, CapsMemory::SystemMemory));
+        source_graph.add(nodes::Output(OutputOptions::EveryFrame(4)));
+        Run source_run = source_graph.build();
+
+        Sample output;
+        PullError eos_err;
+        std::size_t output_count = 0;
+        PullStatus source_status = PullStatus::Timeout;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+          source_status = source_run.pull(1000, output, &eos_err);
+          if (source_status != PullStatus::Ok) {
+            break;
+          }
+          ++output_count;
+        }
+        require(output_count > 0,
+                run_api_case("source_eos_output",
+                             "finite source should produce output; status=" +
+                                 std::to_string(static_cast<int>(source_status)) +
+                                 " code=" + eos_err.code + " message=" + eos_err.message));
+        require(source_status == PullStatus::Closed,
+                run_api_case("source_eos_status", "finite source should close after its output"));
+        require(eos_err.code == error_codes::kSourceEnded,
+                run_api_case("source_eos_code", "normal source EOS code mismatch"));
+        require_contains(eos_err.message, "end of stream",
+                         run_api_case("source_eos_message", "normal EOS needs clear context"));
+      }
+
       // A push-backed pipeline that reaches EOS with accepted work still outstanding must
       // expose the stable unexpected-EOS code rather than a generic closed-stream result.
       {

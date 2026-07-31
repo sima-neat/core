@@ -3584,8 +3584,9 @@ void enforce_names_contract(GstElement* pipeline, const BuildResult& br) {
 
       if (!internal_ok && allowed.find(n) == allowed.end()) {
         gst_iterator_free(it);
+        g_value_unset(&item);
         GraphReport rep = br.diag->snapshot_basic();
-        rep.error_code = error_codes::kPipelineShape;
+        rep.error_code = error_codes::kGraphElementName;
         rep.repro_note = "NamingContractViolation: element '" + n +
                          "' is not owned by any node.\n"
                          "Fix: ensure every fragment uses deterministic names and "

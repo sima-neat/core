@@ -249,9 +249,18 @@ RUN_TEST(
         const NormalizedDiagnostic diagnostic =
             classify_gst_error(raw_error("customstage", "gst-stream-error-quark",
                                          GST_STREAM_ERROR_FORMAT, "Input format is not supported"));
+        require_code(diagnostic, error_codes::kMediaFormat);
+        require(diagnostic.diagnostic_id == "gstreamer.media_format_incompatible",
+                "stream-format failures should use the media-format diagnostic");
+      }
+
+      {
+        const NormalizedDiagnostic diagnostic =
+            classify_gst_error(raw_error("capsfilter", "gst-core-error-quark",
+                                         GST_CORE_ERROR_NEGOTIATION, "Caps negotiation failed"));
         require_code(diagnostic, error_codes::kMediaCaps);
         require(diagnostic.diagnostic_id == "gstreamer.caps_incompatible",
-                "documented stream-format failures should use the caps diagnostic");
+                "caps negotiation failures should retain the media-caps diagnostic");
       }
 
       {

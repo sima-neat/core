@@ -726,7 +726,12 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   }
 
   if (is_done) {
-    set_terminal_error(error_codes::kRuntimePull, "Run::pull: stream closed");
+    if (st->pipeline.stream.reached_eos()) {
+      set_terminal_error(error_codes::kSourceEnded,
+                         "Run::pull: input source reached end of stream");
+    } else {
+      set_terminal_error(error_codes::kRuntimePull, "Run::pull: stream closed");
+    }
     stop();
     return PullStatus::Closed;
   }

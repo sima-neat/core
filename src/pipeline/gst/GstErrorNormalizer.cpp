@@ -836,6 +836,23 @@ NormalizedDiagnostic media_caps(RawGstError raw) {
   return out;
 }
 
+NormalizedDiagnostic media_format(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kMediaFormat, "gstreamer.media_format_incompatible",
+           "A pipeline stage received a media format it does not support.");
+  add_fact(out, "Expected format",
+           find_detail(out.raw, {"expected-format", "expected_format"}).value_or(""));
+  add_fact(out, "Received format",
+           find_detail(out.raw, {"received-format", "received_format", "actual-format",
+                                 "actual_format", "format"})
+               .value_or(""));
+  out.actions = {
+      "Configure the connected stages to use a supported media format.",
+      "Add an explicit media-format conversion stage when the formats differ.",
+  };
+  return out;
+}
+
 NormalizedDiagnostic buffer_too_small(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kBufferTooSmall, "neat.buffer_too_small",
@@ -1118,9 +1135,11 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
     }
   }
 
+  if (raw.domain_name == "gst-stream-error-quark" && raw.code == GST_STREAM_ERROR_FORMAT) {
+    return media_format(std::move(raw));
+  }
   if ((raw.domain_name == "gst-core-error-quark" &&
        (raw.code == GST_CORE_ERROR_NEGOTIATION || raw.code == GST_CORE_ERROR_CAPS)) ||
-      (raw.domain_name == "gst-stream-error-quark" && raw.code == GST_STREAM_ERROR_FORMAT) ||
       contains_ci(text, "not-negotiated") || contains_ci(text, "caps negotiation failed")) {
     return media_caps(std::move(raw));
   }
