@@ -146,7 +146,7 @@ bool requires_exact_field_boundary(std::string_view marker) {
   if (!marker.empty() && marker.back() == '=')
     marker.remove_suffix(1);
   return marker == "key" || marker == "token" || marker == "signature" || marker == "sig" ||
-         marker == "session";
+         marker == "session" || marker == "pass";
 }
 
 bool disallowed_preceding_field_character(char c, std::string_view marker) {
@@ -206,8 +206,8 @@ std::string redact_uri_credentials(std::string value) {
   }
 
   static constexpr std::string_view sensitive[] = {
-      "credential=", "credentials=", "passphrase=", "token=", "key=", "secret=",
-      "password=",   "signature=",   "session=",    "sig=",   "pw=",  "pwd=",
+      "credential=", "credentials=", "passphrase=", "token=", "key=", "secret=", "password=",
+      "signature=",  "session=",     "pass=",       "sig=",   "pw=",  "pwd=",
   };
   for (std::string_view marker : sensitive) {
     std::size_t pos = 0;
@@ -265,6 +265,7 @@ std::string redact_uri_credentials(std::string value) {
       "basic",
       "bearer",
       "jwt",
+      "pass",
       "passphrase",
       "password",
       "passwd",
@@ -340,7 +341,8 @@ bool sensitive_detail_name(std::string_view name) {
   std::string normalized = lower_copy(std::string(name));
   std::replace(normalized.begin(), normalized.end(), '_', '-');
   if (normalized == "key" || normalized == "sig" || normalized == "session" ||
-      normalized == "sessionid" || normalized == "jwt" || normalized == "bearer")
+      normalized == "sessionid" || normalized == "jwt" || normalized == "bearer" ||
+      normalized == "pass")
     return true;
   for (std::size_t begin = 0; begin <= normalized.size();) {
     const std::size_t end = normalized.find('-', begin);
@@ -637,6 +639,21 @@ bool dispatcher_specific_context(const RawGstError& raw) {
                            "dispatcher_error", "dispatcher-code", "dispatcher_code",
                            "dispatcher-target", "dispatcher_target"})
       .has_value();
+}
+
+bool device_memory_context(const RawGstError& raw) {
+  if (accelerator_plugin_name(raw))
+    return true;
+
+  const std::string allocator =
+      find_detail(raw, {"allocator", "memory-allocator", "memory_allocator", "memory-type",
+                        "memory_type", "memory-heap", "memory_heap"})
+          .value_or("");
+  const std::string text = allocator + " " + combined_raw(raw);
+  return contains_ci(text, "device memory") || contains_ci(text, "device-memory") ||
+         contains_ci(text, "contiguous memory") || contains_ci(text, "cma") ||
+         contains_ci(text, "dmabuf") || contains_ci(text, "dma-buf") ||
+         contains_ci(text, "simaaimem") || contains_ci(text, "neatallocator");
 }
 
 NormalizedDiagnostic authentication_failed(RawGstError raw) {
@@ -996,11 +1013,15 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       contains_ci(text, "output pool starved")) {
     return output_pool_exhausted(std::move(raw));
   }
-  if (diagnostic_id.find("device_memory_exhausted") != std::string::npos ||
+  const bool buffer_allocation_failed =
       contains_ci(text, "failed to allocate output buffer pool") ||
-      contains_ci(text, "failed to allocate overflow output buffer")) {
+      contains_ci(text, "failed to allocate overflow output buffer");
+  if (diagnostic_id.find("device_memory_exhausted") != std::string::npos ||
+      (buffer_allocation_failed && device_memory_context(raw))) {
     return device_memory_exhausted(std::move(raw));
   }
+  if (buffer_allocation_failed)
+    return memory_allocation_failed(std::move(raw));
   if (diagnostic_id.find("dispatcher_unavailable") != std::string::npos ||
       contains_ci(text, "unable to get dispatcher") || documented_dispatcher_error) {
     return dispatcher_unavailable(std::move(raw));

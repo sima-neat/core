@@ -177,6 +177,25 @@ RUN_TEST(
         require_code(storage, error_codes::kDiskFull);
         require(storage.diagnostic_id == "gstreamer.storage_full",
                 "filesystem output failures should retain the disk-full diagnostic");
+
+        const NormalizedDiagnostic host_pool = classify_gst_error(
+            raw_error("videoconvert", "gst-resource-error-quark", GST_RESOURCE_ERROR_FAILED,
+                      "Failed to allocate output buffer pool"));
+        require_code(host_pool, error_codes::kMemoryAllocationFailed);
+        require(host_pool.diagnostic_id == "gstreamer.memory_allocation_failed",
+                "host buffer-pool failures must not imply device-memory exhaustion");
+
+        const NormalizedDiagnostic device_pool = classify_gst_error(
+            raw_error("neatprocesscvu", "gst-resource-error-quark", GST_RESOURCE_ERROR_FAILED,
+                      "Failed to allocate output buffer pool"));
+        require_code(device_pool, error_codes::kDeviceMemoryExhausted);
+
+        RawGstError device_allocator =
+            raw_error("customfilter", "gst-resource-error-quark", GST_RESOURCE_ERROR_FAILED,
+                      "Failed to allocate overflow output buffer");
+        device_allocator.details["allocator"] = "simaaimem";
+        require_code(classify_gst_error(std::move(device_allocator)),
+                     error_codes::kDeviceMemoryExhausted);
       }
 
       {
@@ -410,6 +429,13 @@ RUN_TEST(
         require_contains(session, "session='<redacted>' session_count=2",
                          "session redaction must preserve non-secret session metadata");
 
+        const std::string pass = redact_gst_credentials(
+            "https://example.test/stream?user=alice&pass=hunter2 bypass=enabled compass=north");
+        require(pass.find("hunter2") == std::string::npos,
+                "bare pass fields must be redacted: " + pass);
+        require_contains(pass, "pass=<redacted> bypass=enabled compass=north",
+                         "pass redaction must preserve fields that only contain the word");
+
         const std::string aws = redact_gst_credentials(
             "https://example.test/input?X-Amz-Signature=aws-signature-value&"
             "X-Amz-Security-Token=aws-session-value&X-Amz-Algorithm=AWS4-HMAC-SHA256");
@@ -467,7 +493,8 @@ RUN_TEST(
             "access_key", G_TYPE_STRING, "access-secret", "private_key", G_TYPE_STRING,
             "private-secret", "user-pw", G_TYPE_STRING, "rtsp-secret", "user_pw", G_TYPE_STRING,
             "rtsp-secret-underscore", "set-cookie", G_TYPE_STRING, "sessionid=structured-secret",
-            "passphrase", G_TYPE_STRING, "structured-srt-secret", nullptr);
+            "passphrase", G_TYPE_STRING, "structured-srt-secret", "pass", G_TYPE_STRING,
+            "structured-pass-secret", "compass", G_TYPE_STRING, "north", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error,
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
@@ -497,7 +524,8 @@ RUN_TEST(
                     raw.details.at("user-pw") == "<redacted>" &&
                     raw.details.at("user_pw") == "<redacted>" &&
                     raw.details.at("set-cookie") == "<redacted>" &&
-                    raw.details.at("passphrase") == "<redacted>",
+                    raw.details.at("passphrase") == "<redacted>" &&
+                    raw.details.at("pass") == "<redacted>" && raw.details.at("compass") == "north",
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         require(raw.debug.find("abc123") == std::string::npos &&
