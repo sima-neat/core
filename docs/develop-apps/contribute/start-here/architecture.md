@@ -289,7 +289,7 @@ GStreamer errors pass through one internal parser, classifier, and renderer.
 Classification prefers a versioned Neat diagnostic ID, then the native
 GStreamer domain/code and element factory, then narrow compatibility mappings
 for older plugins. Unknown failures use `runtime.element_failed`; they are not
-reported as `misconfig.caps` unless negotiation actually failed. When a pipeline
+reported as `misconfig.media_caps` unless negotiation actually failed. When a pipeline
 posts several errors, the most specific root cause is rendered and every error
 is retained in the bus log.
 

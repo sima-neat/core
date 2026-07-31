@@ -86,6 +86,8 @@ RUN_TEST(
                       "actual_stride=1920 max_w=640 max_h=960 input_format=NV12");
         raw.details["resize-width"] = "640";
         raw.details["resize-height"] = "640";
+        raw.details["required-bytes"] = "3110400";
+        raw.details["allocated-bytes"] = "921600";
         const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
         require_code(diagnostic, error_codes::kInputCapacity);
         const std::string text = render_diagnostic_body(diagnostic, false);
@@ -95,6 +97,10 @@ RUN_TEST(
                          "legacy packed-NV12 max height should be rendered as image height");
         require_contains(text, "Model resize target: 640x640",
                          "input capacity error should distinguish resize target");
+        require_contains(text, "Required input bytes: 3110400",
+                         "input capacity error should report the required allocation");
+        require_contains(text, "Allocated input bytes: 921600",
+                         "input capacity error should report the available allocation");
         require_contains(text, "input_max_width",
                          "input capacity error should name the user-facing option");
       }
@@ -335,18 +341,20 @@ RUN_TEST(
                       "The model input does not match the expected tensor contract.");
         raw.details["neat-diagnostic-id"] = "neatprocesscvu.input_contract_mismatch";
         raw.details["input-name"] = "input_tensor";
-        raw.details["expected-shape"] = "[224, 224, 3]";
+        raw.details["expected-shape"] = "[3, 224, 224]";
+        raw.details["expected-layout"] = "CHW";
         raw.details["expected-dtype"] = "Float32";
         raw.details["received-shape"] = "[224, 224, 3]";
+        raw.details["received-layout"] = "HWC";
         raw.details["received-dtype"] = "UInt8";
         raw.details["required-bytes"] = "602112";
         raw.details["actual-bytes"] = "150528";
         const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
         require_code(diagnostic, error_codes::kInputShape);
         const std::string text = render_diagnostic_body(diagnostic, false);
-        require_contains(text, "Expected input: shape [224, 224, 3], type Float32",
+        require_contains(text, "Expected input: shape [3, 224, 224], layout CHW, type Float32",
                          "structured input error should report the expected contract");
-        require_contains(text, "Received input: shape [224, 224, 3], type UInt8",
+        require_contains(text, "Received input: shape [224, 224, 3], layout HWC, type UInt8",
                          "structured input error should report the received contract");
         require_contains(text, "Provide an input tensor with the expected shape and data type",
                          "input error should give a generic correction");
@@ -480,6 +488,26 @@ RUN_TEST(
         require_contains(google, "X-Goog-Algorithm=GOOG4-RSA-SHA256",
                          "Google redaction should preserve non-secret signing metadata");
 
+        const std::string streaming =
+            redact_gst_credentials("https://stream.example.test/live?auth=auth-secret&"
+                                   "playback-token=playback-secret&hdnts=exp=1~hmac=hdnts-secret "
+                                   "stream-key=stream-secret mode=live");
+        require(streaming.find("auth-secret") == std::string::npos &&
+                    streaming.find("playback-secret") == std::string::npos &&
+                    streaming.find("hdnts-secret") == std::string::npos &&
+                    streaming.find("stream-secret") == std::string::npos,
+                "streaming authentication parameters must be redacted: " + streaming);
+        require_contains(streaming, "auth=<redacted>",
+                         "auth query parameters should retain only their names");
+        require_contains(streaming, "playback-token=<redacted>",
+                         "playback tokens should retain only their names");
+        require_contains(streaming, "hdnts=<redacted>",
+                         "HDNTS signed tokens should retain only their names");
+        require_contains(streaming, "stream-key=<redacted>",
+                         "stream keys should retain only their names");
+        require_contains(streaming, "mode=live",
+                         "stream redaction should preserve non-secret parameters");
+
         const std::string contact_url = "https://api.example.test?email=user@example.test#support";
         require(redact_gst_credentials(contact_url) == contact_url,
                 "query and fragment at-signs must not be mistaken for URI userinfo");
@@ -519,11 +547,13 @@ RUN_TEST(
             "refreshToken", G_TYPE_STRING, "camel-refresh-secret", "authToken", G_TYPE_STRING,
             "camel-auth-secret", "clientSecret", G_TYPE_STRING, "camel-client-secret",
             "sessionToken", G_TYPE_STRING, "structured-session-secret", "neat_auth_token",
-            G_TYPE_STRING, "prefixed-auth-secret", "dtype_token", G_TYPE_STRING, "UInt8",
-            "model_signature", G_TYPE_STRING, "sha256:model-metadata", "aws_access_key_id",
-            G_TYPE_STRING, "structured-aws-key", "awsSecretAccessKey", G_TYPE_STRING,
-            "structured-aws-secret", "OPENVSCODE_SERVER_TOKEN", G_TYPE_STRING,
-            "structured-openvscode-secret", "AWSAccessKeyId", G_TYPE_STRING,
+            G_TYPE_STRING, "prefixed-auth-secret", "auth", G_TYPE_STRING, "structured-auth-secret",
+            "playback-token", G_TYPE_STRING, "structured-playback-secret", "hdnts", G_TYPE_STRING,
+            "structured-hdnts-secret", "stream-key", G_TYPE_STRING, "structured-stream-key-secret",
+            "dtype_token", G_TYPE_STRING, "UInt8", "model_signature", G_TYPE_STRING,
+            "sha256:model-metadata", "aws_access_key_id", G_TYPE_STRING, "structured-aws-key",
+            "awsSecretAccessKey", G_TYPE_STRING, "structured-aws-secret", "OPENVSCODE_SERVER_TOKEN",
+            G_TYPE_STRING, "structured-openvscode-secret", "AWSAccessKeyId", G_TYPE_STRING,
             "structured-acronym-aws-key", "AWSSecretAccessKey", G_TYPE_STRING,
             "structured-acronym-aws-secret", "compass", G_TYPE_STRING, "north", nullptr);
         const std::string debug =
@@ -577,6 +607,10 @@ RUN_TEST(
                     raw.details.at("clientSecret") == "<redacted>" &&
                     raw.details.at("sessionToken") == "<redacted>" &&
                     raw.details.at("neat_auth_token") == "<redacted>" &&
+                    raw.details.at("auth") == "<redacted>" &&
+                    raw.details.at("playback-token") == "<redacted>" &&
+                    raw.details.at("hdnts") == "<redacted>" &&
+                    raw.details.at("stream-key") == "<redacted>" &&
                     raw.details.at("aws_access_key_id") == "<redacted>" &&
                     raw.details.at("awsSecretAccessKey") == "<redacted>" &&
                     raw.details.at("OPENVSCODE_SERVER_TOKEN") == "<redacted>" &&
@@ -649,6 +683,64 @@ RUN_TEST(
         require_code(diagnostic, error_codes::kIoOpen);
         require(diagnostic.diagnostic_id == "gstreamer.resource_not_found",
                 "resource errors without a source factory should use the generic mapping");
+
+        gst_message_unref(message);
+        gst_object_unref(source);
+      }
+
+      {
+        GstElement* source = gst_pipeline_new("versioned-wire-format");
+        require(source != nullptr, "pipeline object must be available for wire-format test");
+        GError* error =
+            g_error_new_literal(GST_STREAM_ERROR, GST_STREAM_ERROR_FORMAT,
+                                "The input tensor does not match the expected input contract.");
+        GstStructure* details = gst_structure_new(
+            "simaai-neat-error", "neat-schema-version", G_TYPE_UINT, 1U, "neat-diagnostic-id",
+            G_TYPE_STRING, "neatprocesscvu.input_contract_mismatch", "neat-reason", G_TYPE_STRING,
+            "input_contract_mismatch", "plugin", G_TYPE_STRING, "neatprocesscvu", "node",
+            G_TYPE_STRING, "model_0", "stage", G_TYPE_STRING, "model_0", "graph-id", G_TYPE_INT, 17,
+            "frame-id", G_TYPE_INT64, static_cast<gint64>(42), "input-name", G_TYPE_STRING,
+            "input_tensor", "segment-name", G_TYPE_STRING, "parent", "required-bytes",
+            G_TYPE_UINT64, static_cast<guint64>(602112), "actual-bytes", G_TYPE_UINT64,
+            static_cast<guint64>(150528), "expected-shape", G_TYPE_STRING, "[3, 224, 224]",
+            "expected-layout", G_TYPE_STRING, "CHW", "expected-dtype", G_TYPE_STRING, "Float32",
+            "received-shape", G_TYPE_STRING, "[224, 224, 3]", "received-layout", G_TYPE_STRING,
+            "HWC", "received-dtype", G_TYPE_STRING, "UInt8", nullptr);
+        GstMessage* message =
+            gst_message_new_error_with_details(GST_OBJECT(source), error, "wire debug", details);
+        g_error_free(error);
+
+        const RawGstError raw = parse_gst_error_message(message);
+        require(raw.details.at("neat-schema-version") == "1" &&
+                    raw.details.at("expected-layout") == "CHW" &&
+                    raw.details.at("received-layout") == "HWC",
+                "Core must consume the version-1 plugin wire format");
+        const std::string rendered = render_diagnostic_body(classify_gst_error(raw), false);
+        require_contains(rendered, "Expected input: shape [3, 224, 224], layout CHW, type Float32",
+                         "the production wire format must reach the user-facing diagnostic");
+
+        gst_message_unref(message);
+        gst_object_unref(source);
+      }
+
+      {
+        GstElement* source = gst_pipeline_new("unknown-wire-format");
+        require(source != nullptr, "pipeline object must be available for schema-version test");
+        GError* error =
+            g_error_new_literal(GST_STREAM_ERROR, GST_STREAM_ERROR_FAILED, "Opaque failure.");
+        GstStructure* details = gst_structure_new(
+            "simaai-neat-error", "neat-schema-version", G_TYPE_UINT, 2U, "neat-diagnostic-id",
+            G_TYPE_STRING, "neatprocesscvu.input_contract_mismatch", "expected-shape",
+            G_TYPE_STRING, "[3, 224, 224]", nullptr);
+        GstMessage* message =
+            gst_message_new_error_with_details(GST_OBJECT(source), error, "wire debug", details);
+        g_error_free(error);
+
+        const RawGstError raw = parse_gst_error_message(message);
+        require(raw.details.empty(),
+                "Core must ignore structured fields from unsupported Neat schema versions");
+        require(classify_gst_error(raw).diagnostic_id != "neatprocesscvu.input_contract_mismatch",
+                "unsupported schema versions must fall back instead of being misinterpreted");
 
         gst_message_unref(message);
         gst_object_unref(source);
@@ -889,10 +981,15 @@ RUN_TEST(
         constexpr const char* kPipelineSecret = "pipeline-password";
         constexpr const char* kQuerySecret = "query-token";
         constexpr const char* kBusSecret = "bus-password";
+        constexpr const char* kAuthSecret = "auth-secret";
+        constexpr const char* kPlaybackSecret = "playback-secret";
+        constexpr const char* kHdntsSecret = "hdnts-secret";
+        constexpr const char* kStreamKeySecret = "stream-secret";
         DiagCtx diag;
         diag.pipeline_string =
             "rtspsrc location=\"rtsp://camera:pipeline-password@example.test/live?"
-            "access_token=query-token\" ! fakesink";
+            "access_token=query-token&auth=auth-secret&playback-token=playback-secret&"
+            "hdnts=exp=1~hmac=hdnts-secret\" stream-key=stream-secret ! fakesink";
         NodeReport node;
         node.backend_fragment = diag.pipeline_string;
         diag.node_reports.push_back(std::move(node));
@@ -901,14 +998,26 @@ RUN_TEST(
         const GraphReport report = diag.snapshot_basic();
         require(diag.pipeline_string.find(kPipelineSecret) != std::string::npos,
                 "report redaction must not change the executable pipeline");
-        require(report.pipeline_string.find(kPipelineSecret) == std::string::npos &&
-                    report.pipeline_string.find(kQuerySecret) == std::string::npos &&
-                    report.repro_gst_launch.find(kPipelineSecret) == std::string::npos &&
-                    report.repro_gst_launch.find(kQuerySecret) == std::string::npos &&
-                    report.nodes.front().backend_fragment.find(kPipelineSecret) ==
-                        std::string::npos &&
-                    report.bus.front().detail.find(kBusSecret) == std::string::npos,
-                "report-facing pipeline, node, bus, and repro fields must redact credentials");
+        require(
+            report.pipeline_string.find(kPipelineSecret) == std::string::npos &&
+                report.pipeline_string.find(kQuerySecret) == std::string::npos &&
+                report.pipeline_string.find(kAuthSecret) == std::string::npos &&
+                report.pipeline_string.find(kPlaybackSecret) == std::string::npos &&
+                report.pipeline_string.find(kHdntsSecret) == std::string::npos &&
+                report.pipeline_string.find(kStreamKeySecret) == std::string::npos &&
+                report.repro_gst_launch.find(kPipelineSecret) == std::string::npos &&
+                report.repro_gst_launch.find(kQuerySecret) == std::string::npos &&
+                report.repro_gst_launch.find(kAuthSecret) == std::string::npos &&
+                report.repro_gst_launch.find(kPlaybackSecret) == std::string::npos &&
+                report.repro_gst_launch.find(kHdntsSecret) == std::string::npos &&
+                report.repro_gst_launch.find(kStreamKeySecret) == std::string::npos &&
+                report.nodes.front().backend_fragment.find(kPipelineSecret) == std::string::npos &&
+                report.nodes.front().backend_fragment.find(kAuthSecret) == std::string::npos &&
+                report.nodes.front().backend_fragment.find(kPlaybackSecret) == std::string::npos &&
+                report.nodes.front().backend_fragment.find(kHdntsSecret) == std::string::npos &&
+                report.nodes.front().backend_fragment.find(kStreamKeySecret) == std::string::npos &&
+                report.bus.front().detail.find(kBusSecret) == std::string::npos,
+            "report-facing pipeline, node, bus, and repro fields must redact credentials");
 
         GraphReport manually_populated;
         manually_populated.pipeline_string = diag.pipeline_string;
@@ -916,6 +1025,10 @@ RUN_TEST(
         const std::string json = manually_populated.to_json();
         require(json.find(kPipelineSecret) == std::string::npos &&
                     json.find(kQuerySecret) == std::string::npos &&
+                    json.find(kAuthSecret) == std::string::npos &&
+                    json.find(kPlaybackSecret) == std::string::npos &&
+                    json.find(kHdntsSecret) == std::string::npos &&
+                    json.find(kStreamKeySecret) == std::string::npos &&
                     json.find("serialized-password") == std::string::npos,
                 "GraphReport JSON serialization must provide a final redaction boundary");
 

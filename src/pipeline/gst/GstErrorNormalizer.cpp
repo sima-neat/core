@@ -456,7 +456,8 @@ bool sensitive_detail_name(std::string_view name) {
   }
 
   static constexpr std::string_view exact_names[] = {
-      "key", "sig", "signature", "session", "jwt", "bearer", "pass", "pw", "pwd", "token",
+      "auth", "hdnts",  "key",  "sig", "signature", "session",
+      "jwt",  "bearer", "pass", "pw",  "pwd",       "token",
   };
   for (const std::string_view exact_name : exact_names) {
     if (normalized == exact_name) {
@@ -476,6 +477,7 @@ bool sensitive_detail_name(std::string_view name) {
       "oauth-token",
       "csrf-token",
       "session-token",
+      "playback-token",
       "github-token",
       "openvscode-server-token",
       "x-amz-security-token",
@@ -492,6 +494,7 @@ bool sensitive_detail_name(std::string_view name) {
       "user-pw",
       "set-cookie",
       "session-cookie",
+      "stream-key",
   };
   for (const std::string_view alias : sensitive_aliases) {
     std::size_t pos = 0;
@@ -669,6 +672,8 @@ NormalizedDiagnostic input_capacity(RawGstError raw) {
       find_integer(out.raw, {"maximum-stride", "maximum_stride", "max_stride"});
   const auto resize_width = find_integer(out.raw, {"resize-width", "resize_width"});
   const auto resize_height = find_integer(out.raw, {"resize-height", "resize_height"});
+  const auto required_bytes = find_integer(out.raw, {"required-bytes", "required_bytes"});
+  const auto allocated_bytes = find_integer(out.raw, {"allocated-bytes", "allocated_bytes"});
   const std::string input_format =
       find_detail(out.raw, {"input-format", "input_format", "format"}).value_or("");
 
@@ -690,6 +695,10 @@ NormalizedDiagnostic input_capacity(RawGstError raw) {
   add_fact(out, "Input stream", actual);
   add_fact(out, "Configured maximum", dimensions(maximum_width, maximum_height));
   add_fact(out, "Model resize target", dimensions(resize_width, resize_height));
+  if (required_bytes.has_value())
+    add_fact(out, "Required input bytes", std::to_string(*required_bytes));
+  if (allocated_bytes.has_value())
+    add_fact(out, "Allocated input bytes", std::to_string(*allocated_bytes));
   if (maximum_stride.has_value() && !maximum_width.has_value())
     add_fact(out, "Maximum stride", std::to_string(*maximum_stride));
 
@@ -1044,6 +1053,13 @@ std::string tensor_contract_summary(const RawGstError& raw, bool expected) {
                       : std::initializer_list<std::string_view>{"received-dtype", "received_dtype",
                                                                 "actual-dtype", "actual_dtype"})
           .value_or("");
+  const std::string layout =
+      find_detail(
+          raw, expected
+                   ? std::initializer_list<std::string_view>{"expected-layout", "expected_layout"}
+                   : std::initializer_list<std::string_view>{"received-layout", "received_layout",
+                                                             "actual-layout", "actual_layout"})
+          .value_or("");
   const std::string bytes =
       find_detail(raw, expected
                            ? std::initializer_list<std::string_view>{"required-bytes",
@@ -1055,6 +1071,11 @@ std::string tensor_contract_summary(const RawGstError& raw, bool expected) {
   std::string summary;
   if (!shape.empty())
     summary = "shape " + shape;
+  if (!layout.empty()) {
+    if (!summary.empty())
+      summary += ", ";
+    summary += "layout " + layout;
+  }
   if (!dtype.empty()) {
     if (!summary.empty())
       summary += ", ";
@@ -1139,6 +1160,21 @@ RawGstError parse_gst_error_message(GstMessage* message) {
   const GstStructure* details = nullptr;
   gst_message_parse_error_details(message, &details);
   if (details) {
+    // The named Neat wire format is versioned. Unknown or unversioned payloads from that
+    // namespace must not be interpreted as a contract we understand; retaining the ordinary
+    // GError/debug fields lets classification fall back safely. Other structure names predate
+    // the versioned contract and remain readable for backward compatibility.
+    constexpr guint kSupportedNeatErrorSchemaVersion = 1U;
+    guint schema_version = 0U;
+    const bool versioned_neat_details =
+        g_strcmp0(gst_structure_get_name(details), "simaai-neat-error") == 0;
+    const bool supported_details =
+        !versioned_neat_details ||
+        (gst_structure_get_uint(details, "neat-schema-version", &schema_version) &&
+         schema_version == kSupportedNeatErrorSchemaVersion);
+    if (!supported_details)
+      return out;
+
     const int fields = gst_structure_n_fields(details);
     for (int i = 0; i < fields; ++i) {
       const char* name = gst_structure_nth_field_name(details, i);

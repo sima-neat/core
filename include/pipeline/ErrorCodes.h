@@ -25,8 +25,8 @@ namespace simaai::neat::error_codes {
 // ── Misconfiguration classes ──────────────────────────────────────────────────────────────
 /// Pipeline graph geometry mismatch (e.g., wrong number of sinks, cycles, missing terminal Output).
 inline constexpr const char* kPipelineShape = "misconfig.pipeline_shape";
-/// Caps/format negotiation failed between adjacent elements (resolution, format, framerate,
-/// layout).
+/// A caps override or adjacent Node contract failed framework validation before streaming.
+/// Runtime GStreamer negotiation failures use `kMediaCaps` or `kMediaFormat`.
 inline constexpr const char* kCaps = "misconfig.caps";
 /// Input tensor violates the expected contract (rank, shape, layout, or data type).
 inline constexpr const char* kInputShape = "misconfig.input_shape";

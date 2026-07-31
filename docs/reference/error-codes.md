@@ -13,12 +13,71 @@ Use the error code for programmatic triage. Show the message to the developer. T
 public constants lives in
 [`pipeline/ErrorCodes.h`](/reference/cppapi/files/include-pipeline-errorcodes-h).
 
+## Behavioral breaking change and migration
+
+The diagnostic taxonomy now preserves specific GStreamer root causes. Public method signatures are
+unchanged, but code that compares exact error strings may need to migrate:
+
+| Previous match | More specific code now returned | Migration |
+| --- | --- | --- |
+| `misconfig.caps` for a runtime GStreamer negotiation error | `misconfig.media_caps`, or `misconfig.media_format` when only the format is incompatible | Handle the media code. Keep `misconfig.caps` only for framework validation of caps overrides and adjacent Node contracts. |
+| `build.parse_launch` for every `gst_parse_launch` failure | `build.plugin_missing`, `build.property_invalid`, or `build.pipeline_syntax` | Handle the specific build codes. Keep `build.parse_launch` as the fallback for an unclassified parser failure. |
+| `runtime.pull` for a propagated bus failure | The root-cause code, such as `misconfig.media_caps`, `io.rtsp_connection_failed`, or `resource.output_pool_exhausted` | Handle the root-cause codes and keep a default branch. `runtime.pull` remains the fallback for a local pull failure with no specific cause. |
+
+Use the C++ or Python constants rather than repeating string literals. Always keep a default path
+for codes introduced by a newer Neat Library build.
+
+## Public constants
+
+The same values are available in both language APIs:
+
+| Error code | C++ | Python |
+| --- | --- | --- |
+| `misconfig.pipeline_shape` | `error_codes::kPipelineShape` | `pyneat.ERROR_PIPELINE_SHAPE` |
+| `misconfig.caps` | `error_codes::kCaps` | `pyneat.ERROR_CAPS` |
+| `misconfig.input_shape` | `error_codes::kInputShape` | `pyneat.ERROR_INPUT_SHAPE` |
+| `misconfig.runtime_abi_mismatch` | `error_codes::kRuntimeAbiMismatch` | `pyneat.ERROR_RUNTIME_ABI_MISMATCH` |
+| `misconfig.graph_element_name` | `error_codes::kGraphElementName` | `pyneat.ERROR_GRAPH_ELEMENT_NAME` |
+| `misconfig.media_caps` | `error_codes::kMediaCaps` | `pyneat.ERROR_MEDIA_CAPS` |
+| `misconfig.media_format` | `error_codes::kMediaFormat` | `pyneat.ERROR_MEDIA_FORMAT` |
+| `misconfig.input_capacity` | `error_codes::kInputCapacity` | `pyneat.ERROR_INPUT_CAPACITY` |
+| `misconfig.tensor_dtype_missing` | `error_codes::kTensorDtypeMissing` | `pyneat.ERROR_TENSOR_DTYPE_MISSING` |
+| `misconfig.option_out_of_range` | `error_codes::kOptionOutOfRange` | `pyneat.ERROR_OPTION_OUT_OF_RANGE` |
+| `build.parse_launch` | `error_codes::kParseLaunch` | `pyneat.ERROR_PARSE_LAUNCH` |
+| `build.pipeline_syntax` | `error_codes::kPipelineSyntax` | `pyneat.ERROR_PIPELINE_SYNTAX` |
+| `build.plugin_missing` | `error_codes::kPluginMissing` | `pyneat.ERROR_PLUGIN_MISSING` |
+| `build.property_invalid` | `error_codes::kPropertyInvalid` | `pyneat.ERROR_PROPERTY_INVALID` |
+| `runtime.pull` | `error_codes::kRuntimePull` | `pyneat.ERROR_RUNTIME_PULL` |
+| `runtime.element_failed` | `error_codes::kRuntimeElementFailed` | `pyneat.ERROR_RUNTIME_ELEMENT_FAILED` |
+| `runtime.output_timeout` | `error_codes::kOutputTimeout` | `pyneat.ERROR_OUTPUT_TIMEOUT` |
+| `runtime.unexpected_eos` | `error_codes::kUnexpectedEos` | `pyneat.ERROR_UNEXPECTED_EOS` |
+| `io.parse` | `error_codes::kIoParse` | `pyneat.ERROR_IO_PARSE` |
+| `io.open` | `error_codes::kIoOpen` | `pyneat.ERROR_IO_OPEN` |
+| `io.file_not_found` | `error_codes::kFileNotFound` | `pyneat.ERROR_FILE_NOT_FOUND` |
+| `io.permission_denied` | `error_codes::kPermissionDenied` | `pyneat.ERROR_PERMISSION_DENIED` |
+| `io.rtsp_connection_failed` | `error_codes::kRtspConnectionFailed` | `pyneat.ERROR_RTSP_CONNECTION_FAILED` |
+| `io.camera_not_found` | `error_codes::kCameraNotFound` | `pyneat.ERROR_CAMERA_NOT_FOUND` |
+| `io.model_not_found` | `error_codes::kModelNotFound` | `pyneat.ERROR_MODEL_NOT_FOUND` |
+| `io.source_ended` | `error_codes::kSourceEnded` | `pyneat.ERROR_SOURCE_ENDED` |
+| `codec.invalid_h264_stream` | `error_codes::kInvalidH264Stream` | `pyneat.ERROR_INVALID_H264_STREAM` |
+| `codec.decode_failed` | `error_codes::kDecodeFailed` | `pyneat.ERROR_DECODE_FAILED` |
+| `codec.encode_failed` | `error_codes::kEncodeFailed` | `pyneat.ERROR_ENCODE_FAILED` |
+| `resource.memory_allocation_failed` | `error_codes::kMemoryAllocationFailed` | `pyneat.ERROR_MEMORY_ALLOCATION_FAILED` |
+| `resource.device_memory_exhausted` | `error_codes::kDeviceMemoryExhausted` | `pyneat.ERROR_DEVICE_MEMORY_EXHAUSTED` |
+| `resource.output_pool_exhausted` | `error_codes::kOutputPoolExhausted` | `pyneat.ERROR_OUTPUT_POOL_EXHAUSTED` |
+| `resource.buffer_too_small` | `error_codes::kBufferTooSmall` | `pyneat.ERROR_BUFFER_TOO_SMALL` |
+| `resource.disk_full` | `error_codes::kDiskFull` | `pyneat.ERROR_DISK_FULL` |
+| `infra.dispatcher_unavailable` | `error_codes::kDispatcherUnavailable` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE` |
+| `infra.accelerator_execution_failed` | `error_codes::kAcceleratorExecutionFailed` | `pyneat.ERROR_ACCELERATOR_EXECUTION_FAILED` |
+| `DispatcherUnavailable` (legacy) | `error_codes::kDispatcherUnavailableLegacy` | `pyneat.ERROR_DISPATCHER_UNAVAILABLE_LEGACY` |
+| `internal.plugin_failure` | `error_codes::kInternalPluginFailure` | `pyneat.ERROR_INTERNAL_PLUGIN_FAILURE` |
+
 ## Misconfiguration
 
 | Code | When raised | What to do |
 | --- | --- | --- |
 | `misconfig.pipeline_shape` | The graph has an invalid topology or missing input/output boundary. | Correct the graph connections and required `Input` or `Output` Nodes. |
-| `misconfig.caps` | A caps override or adjacent Node contract is incompatible. | Align the declared format, dimensions, rate, and downstream caps. |
+| `misconfig.caps` | A caps override or adjacent Node contract is incompatible during framework validation. | Align the declared format, dimensions, rate, and adjacent Node contract. |
 | `misconfig.input_shape` | An input tensor does not match the expected shape or data type. | Provide the expected input, or configure model preprocessing through model options. |
 | `misconfig.runtime_abi_mismatch` | Neat and an installed runtime plugin use incompatible ABIs. | Install matching Neat Library and runtime-plugin builds. |
 | `misconfig.graph_element_name` | A custom fragment contains an element that cannot be assigned a stable Node name. | Give custom elements stable, unique names. |
