@@ -219,8 +219,13 @@ std::optional<std::size_t> caps_link_end(std::string_view text, std::size_t oper
       break;
     }
     if (paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && text[i] == ';') {
-      // A semicolon starts a separate top-level chain. It is also a valid terminator for caps
-      // when there is no trailing link operator.
+      // GstCaps uses semicolons between alternative structures, and fields in the following
+      // structure may be whitespace-separated (`; video/x-raw, name=...`). Keep the whole link
+      // token opaque when another media type follows. A non-caps token is left to the outer
+      // analyzer (and ultimately GStreamer's authoritative parser).
+      if (looks_like_caps_start(text, i + 1U)) {
+        continue;
+      }
       return i;
     }
     if (paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && text[i] == closing_operator) {

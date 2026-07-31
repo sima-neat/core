@@ -57,6 +57,15 @@ RUN_TEST(
       }
 
       {
+        const std::string launch = "fakesrc ! video/x-raw, format=NV12; "
+                                   "video/x-raw, name=foo ! fakesink";
+        const Analysis analysis = analyze(launch);
+        require(analysis.complete, "multi-structure caps should analyze completely");
+        require(explicit_name_bindings(analysis).empty(),
+                "whitespace-separated fields in later caps structures must stay opaque");
+      }
+
+      {
         const std::string launch = "( appsrc name=mysrc is-live=true ! "
                                    "video/x-raw,format=NV12,width=640,height=480,name=caps_only ); "
                                    "identity name=after_caps ! video/x-raw,name=terminal_caps";
