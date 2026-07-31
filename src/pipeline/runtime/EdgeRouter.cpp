@@ -969,13 +969,13 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     RuntimeSinkQueueMsg message{std::move(sample), edge_index};
     FusedEncodedOutputEnqueueResult result = FusedEncodedOutputEnqueueResult::Overflow;
     if (!output_options->drop && options.request_stop_on_backpressure) {
-      // EveryFrame applies lossless backpressure, but use bounded waits so graph stop and
-      // concurrent close_input() can cancel a public push that has not entered the sink queue.
-      constexpr int kCancellationPollMs = 50;
-      do {
-        result = enqueue_graph_sink_output(*sink_it->second, *output_options, std::move(message),
-                                           kCancellationPollMs);
-      } while (result == FusedEncodedOutputEnqueueResult::Overflow && !stop_requested(callbacks));
+      // EveryFrame applies lossless backpressure, but graph stop and concurrent close_input()
+      // must be able to cancel a public push that has not entered the sink queue.
+      const bool pushed = sink_it->second->push_interruptible(
+          std::move(message), -1, [&] { return stop_requested(callbacks); });
+      result = pushed ? FusedEncodedOutputEnqueueResult::Enqueued
+                      : (sink_it->second->closed() ? FusedEncodedOutputEnqueueResult::Closed
+                                                   : FusedEncodedOutputEnqueueResult::Overflow);
     } else {
       const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : 0;
       result = enqueue_graph_sink_output(*sink_it->second, *output_options, std::move(message),
@@ -1138,13 +1138,12 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       trace_args = make_trace_graph_message_args(runtime_, target.edge_index, sample);
       trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
     }
+    RuntimePipelineQueueMsg queued{std::move(sample), target.edge_index, sanitized_before_enqueue};
     const bool pushed =
         dispatch_options.drop_pipeline_input_when_full
-            ? input_queue->try_push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index,
-                                                            sanitized_before_enqueue})
-            : input_queue->push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index,
-                                                        sanitized_before_enqueue},
-                                options.push_timeout_ms);
+            ? input_queue->try_push(std::move(queued))
+            : input_queue->push_interruptible(std::move(queued), options.push_timeout_ms,
+                                              [&] { return stop_requested(callbacks); });
     if (!pushed) {
       if (trace) {
         trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);

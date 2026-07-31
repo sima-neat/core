@@ -207,7 +207,8 @@ struct RunCore {
                                    bool allow_startup_preflight = false);
   bool graph_dispatch_to_stage_group(std::size_t group_index, simaai::neat::graph::PortId port,
                                      Sample&& sample, std::size_t edge_index,
-                                     const EdgeRouterOptions& options);
+                                     const EdgeRouterOptions& options,
+                                     bool cancel_on_public_input_close = false);
   bool graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::graph::PortId port,
                   bool has_port, const Sample& sample, const EdgeRouterOptions& options);
   void record_graph_sample_entry(std::string_view endpoint, const Sample& sample,
