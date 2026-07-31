@@ -386,48 +386,55 @@ void RunCore::graph_request_stop(const std::string& err) {
   graph_request_stop(std::move(detail));
 }
 
-void RunCore::graph_request_stop(PullError detail) {
-  if (graph_debug_enabled_for_core()) {
-    std::fprintf(stderr, "[GRAPH] request_stop err=%s\n",
-                 detail.message.empty() ? "<empty>" : detail.message.c_str());
-  }
-  {
-    std::lock_guard<std::mutex> lock(error_mu);
-    const bool typed_upgrade =
-        detail.report.has_value() &&
-        (!graph_error_detail.has_value() || !graph_error_detail->report.has_value());
-    if (error.empty() || typed_upgrade) {
-      if (detail.code.empty()) {
-        detail.code = error_codes::kRuntimeElementFailed;
-      }
-      detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
-      if (detail.report.has_value()) {
-        if (detail.report->error_code.empty()) {
-          detail.report->error_code = detail.code;
-        }
-        if (detail.report->repro_note.empty()) {
-          detail.report->repro_note = detail.message;
-        }
-      }
-      error = detail.message;
-      graph_error_detail = std::move(detail);
+void RunCore::set_terminal_error(PullError detail) {
+  std::lock_guard<std::mutex> lock(error_mu);
+  const bool typed_upgrade =
+      detail.report.has_value() &&
+      (!terminal_error_detail.has_value() || !terminal_error_detail->report.has_value());
+  if (error.empty() || typed_upgrade) {
+    if (detail.code.empty()) {
+      detail.code = error_codes::kRuntimeElementFailed;
     }
+    detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
+    if (detail.report.has_value()) {
+      if (detail.report->error_code.empty()) {
+        detail.report->error_code = detail.code;
+      }
+      if (detail.report->repro_note.empty()) {
+        detail.report->repro_note = detail.message;
+      }
+    }
+    error = detail.message;
+    terminal_error_detail = std::move(detail);
   }
-  graph_signal_stop();
 }
 
-void RunCore::graph_request_stop(const NeatError& err) {
+void RunCore::set_terminal_error(const NeatError& err) {
   PullError detail;
   detail.code = err.report().error_code.empty() ? std::string(error_codes::kInternalPluginFailure)
                                                 : err.report().error_code;
   detail.message = err.what();
   detail.report = err.report();
-  graph_request_stop(std::move(detail));
+  set_terminal_error(std::move(detail));
+}
+
+void RunCore::graph_request_stop(PullError detail) {
+  if (graph_debug_enabled_for_core()) {
+    std::fprintf(stderr, "[GRAPH] request_stop err=%s\n",
+                 detail.message.empty() ? "<empty>" : detail.message.c_str());
+  }
+  set_terminal_error(std::move(detail));
+  graph_signal_stop();
+}
+
+void RunCore::graph_request_stop(const NeatError& err) {
+  set_terminal_error(err);
+  graph_signal_stop();
 }
 
 std::optional<PullError> RunCore::graph_last_error_detail() const {
   std::lock_guard<std::mutex> lock(error_mu);
-  return graph_error_detail;
+  return terminal_error_detail;
 }
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
@@ -503,6 +510,7 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
   tel.ensure_build_canonicalize_ns.fetch_add(static_cast<std::uint64_t>(canonicalize_us) * 1000ULL,
                                              std::memory_order_relaxed);
 
+  std::string build_error;
   try {
     if (graph_debug_enabled_for_core()) {
       std::fprintf(stderr, "[GRAPH] pipeline_build seg=%zu\n",
@@ -553,18 +561,22 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     pipe.transport.cv.notify_all();
     record_total();
     return true;
+  } catch (const NeatError& e) {
+    set_terminal_error(e);
+    build_error = e.what();
   } catch (const std::exception& e) {
-    {
-      std::lock_guard<std::mutex> lock(pipe.transport.mu);
-      pipe.transport.building = false;
-    }
-    pipe.transport.cv.notify_all();
-    tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
-    record_total();
-    if (err)
-      *err = e.what();
-    return false;
+    build_error = e.what();
   }
+  {
+    std::lock_guard<std::mutex> lock(pipe.transport.mu);
+    pipe.transport.building = false;
+  }
+  pipe.transport.cv.notify_all();
+  tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
+  record_total();
+  if (err)
+    *err = std::move(build_error);
+  return false;
 }
 
 bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,

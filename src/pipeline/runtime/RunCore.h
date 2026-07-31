@@ -180,6 +180,8 @@ struct RunCore {
   const ExecutionGraphRuntime& graph_execution() const;
   bool graph_stop_requested() const;
   void graph_signal_stop();
+  void set_terminal_error(PullError err);
+  void set_terminal_error(const NeatError& err);
   void graph_request_stop(const std::string& err);
   void graph_request_stop(PullError err);
   void graph_request_stop(const NeatError& err);
@@ -258,7 +260,7 @@ struct RunCore {
   std::atomic<std::int64_t> next_public_graph_input_seq{0};
 
   std::string error;
-  std::optional<PullError> graph_error_detail;
+  std::optional<PullError> terminal_error_detail;
   std::string diag_sysinfo;
   std::unique_ptr<PowerMonitor> power_monitor;
   std::shared_ptr<void> graph_verbose_guard;

@@ -373,5 +373,16 @@ RUN_TEST(
         require(propagated->report.has_value() &&
                     propagated->report->error_code == error_codes::kInputShape,
                 "a typed graph failure should replace an earlier untyped push placeholder");
+
+        auto linear_core = std::make_shared<runtime::RunCore>();
+        linear_core->set_terminal_error(source);
+        const std::optional<PullError> worker_error = linear_core->last_error_detail();
+        require(worker_error.has_value(),
+                "linear input workers should retain a typed terminal error");
+        require(worker_error->code == error_codes::kInputShape,
+                "linear input workers should retain the original error code");
+        require(worker_error->report.has_value() &&
+                    worker_error->report->error_code == error_codes::kInputShape,
+                "linear input workers should retain the original error report");
       }
     }));
