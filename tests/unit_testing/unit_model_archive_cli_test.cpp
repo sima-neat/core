@@ -16,7 +16,9 @@ namespace {
 namespace fs = std::filesystem;
 
 int run_cli(const std::vector<std::string>& args) {
-  std::string command = sima_test::model_archive_shell_quote(NEAT_MODEL_ARCHIVE_BIN);
+  const fs::path built_cli(NEAT_MODEL_ARCHIVE_BIN);
+  std::string command = sima_test::model_archive_shell_quote(
+      fs::exists(built_cli) ? built_cli.string() : "neat-model-archive");
   for (const auto& arg : args) {
     command += " " + sima_test::model_archive_shell_quote(arg);
   }
@@ -43,6 +45,17 @@ RUN_TEST(
       require(fs::exists(valid), "missing basic_valid fixture");
       require(run_cli({"validate", valid.string()}) == 0,
               "validate must accept a model package with a valid MPK contract");
+
+      const fs::path canonical =
+          sima_test::model_archive_fixture_path("valid/canonical_mpk_name.tar.gz");
+      require(run_cli({"validate", canonical.string()}) == 0,
+              "validate must accept the canonical mpk.json name");
+
+      const fs::path auxiliary =
+          sima_test::model_archive_fixture_path("valid/auxiliary_json_ignored.tar.gz");
+      require(run_cli({"validate", auxiliary.string()}) == 0,
+              "validate must ignore auxiliary JSON contents");
+      simaai::neat::Model auxiliary_model(auxiliary.string());
 
       const fs::path work = sima_test::make_temp_dir("model_archive_cli_contract");
       const fs::path output = work / "valid-package";

@@ -1009,6 +1009,7 @@ static std::string extract_and_organize(const std::string& tar_path,
   // but allow these extras in ModelPack runtime extraction.
   opt.reject_unsupported_file_types = false;
   opt.require_pipeline_sequence = false;
+  opt.validate_auxiliary_json = false;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
@@ -3891,7 +3892,8 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
     if (!mla_cfg.empty()) {
       if (!mpk_contract_.has_value()) {
         throw std::runtime_error(
-            "ModelPack: strict MPK contract required for MLA stage but *_mpk.json is missing");
+            "ModelPack: strict MPK contract required for MLA stage but mpk.json or *_mpk.json is "
+            "missing");
       }
       if (env_truthy_local("SIMA_ROUTE_DEBUG") || env_truthy_local("SIMA_MPK_CONTRACT_DEBUG")) {
         std::fprintf(

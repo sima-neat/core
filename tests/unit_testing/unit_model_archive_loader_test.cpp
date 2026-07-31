@@ -93,6 +93,12 @@ RUN_TEST(
       require(second.package_root == first.package_root,
               "ModelArchiveLoader::extract should be deterministic for same archive/root");
 
+      const fs::path auxiliary =
+          sima_test::model_archive_fixture_path("valid/auxiliary_json_ignored.tar.gz");
+      require_model_archive_error([&]() { (void)ModelArchiveLoader::inspect(auxiliary.string()); },
+                                  ModelArchiveErrorClass::SchemaError,
+                                  "strict loader mode must still validate auxiliary JSON");
+
       // A decoder that stops at the first end-of-stream marker truncates this silently rather
       // than failing, so assert equality with the single-member extraction, not just success.
       const fs::path multi_member =

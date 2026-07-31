@@ -1624,7 +1624,7 @@ std::optional<fs::path> find_mpk_contract_path(const fs::path& package_root) {
       continue;
     }
     const std::string filename = it->path().filename().string();
-    if (ends_with_local(filename, "_mpk.json")) {
+    if (filename == "mpk.json" || ends_with_local(filename, "_mpk.json")) {
       candidates.push_back(it->path());
     }
   }
@@ -5903,7 +5903,7 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
   const auto mpk_path = find_mpk_contract_path(root);
   if (!mpk_path.has_value()) {
     if (error_message) {
-      *error_message = "no *_mpk.json found";
+      *error_message = "no mpk.json or *_mpk.json found";
     }
     return std::nullopt;
   }

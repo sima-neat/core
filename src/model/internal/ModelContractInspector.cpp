@@ -1220,6 +1220,7 @@ inspect_model_contract_archive(const std::string& tar_gz,
     ModelArchiveLoaderOptions loader_options;
     loader_options.reject_unsupported_file_types = false;
     loader_options.require_pipeline_sequence = false;
+    loader_options.validate_auxiliary_json = false;
     manifest = ModelArchiveLoader::inspect(tar_gz, loader_options);
     result.archive_ok = true;
   } catch (const std::exception& e) {

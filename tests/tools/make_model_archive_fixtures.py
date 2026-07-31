@@ -296,6 +296,17 @@ def _base_valid_entries() -> List[dict]:
 
 def _fixture_specs() -> List[FixtureSpec]:
     valid = _base_valid_entries()
+    canonical_mpk_name = copy.deepcopy(valid)
+    for entry in canonical_mpk_name:
+        if entry["name"].endswith("_mpk.json"):
+            entry["name"] = "etc/mpk.json"
+    auxiliary_json_ignored = copy.deepcopy(valid)
+    auxiliary_json_ignored.extend(
+        [
+            {"type": "file", "name": "etc/build_report.json", "data": '{"value":1,"value":2}'},
+            {"type": "file", "name": "etc/manifest.json", "data": '{"version":2}'},
+        ]
+    )
     missing_mpk_contract = [
         e for e in copy.deepcopy(valid) if not e["name"].endswith("_mpk.json")
     ]
@@ -590,6 +601,8 @@ def _fixture_specs() -> List[FixtureSpec]:
     return [
         FixtureSpec("valid/destination_collision.tar.gz", "two entries flatten to same extraction destination (warn by default)", destination_collision),
         FixtureSpec("valid/basic_valid.tar.gz", "baseline valid package (.tar.gz)", valid),
+        FixtureSpec("valid/canonical_mpk_name.tar.gz", "valid package using canonical mpk.json", canonical_mpk_name),
+        FixtureSpec("valid/auxiliary_json_ignored.tar.gz", "valid MPK with non-contract auxiliary JSON", auxiliary_json_ignored),
         FixtureSpec("valid/multi_stage_valid.tar.gz", "valid package with multi-stage inference", multi),
         FixtureSpec("invalid/missing_mpk_contract.tar.gz", "model package missing *_mpk.json", missing_mpk_contract),
         FixtureSpec("invalid/malformed_mpk_contract.tar.gz", "model package has invalid *_mpk.json contract", malformed_mpk_contract),

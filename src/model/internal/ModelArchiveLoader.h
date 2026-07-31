@@ -75,6 +75,8 @@ struct ModelArchiveLoaderOptions {
 
   bool require_pipeline_sequence = true;
   bool require_model_binary = true;
+  // Disable for ModelPack inspection, where only the MPK manifest defines the contract.
+  bool validate_auxiliary_json = true;
   bool reject_unsupported_file_types = true;
   bool reject_duplicate_json_keys = true;
   bool reject_invalid_utf8_paths = true;

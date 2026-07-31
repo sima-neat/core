@@ -78,8 +78,9 @@ yolo_v8s_mpk: valid model archive (7 entries, 162.4 MiB extracted)
 ```
 
 A rejected archive prints the loader error and exits nonzero. This includes a
-missing or malformed `*_mpk.json`. Validation temporarily extracts the package
-and removes it afterward; it does not run inference or check model output.
+missing or malformed `mpk.json`/`*_mpk.json`. Other JSON files are extracted as
+opaque plugin payload. Validation temporarily extracts the package and removes
+it afterward; it does not run inference or check model output.
 
 ```text
 neat-model-archive: invalid_archive: failed to decompress archive: yolo_v8s_mpk.tar.gz

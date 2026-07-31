@@ -38,6 +38,7 @@ ModelArchiveLoaderOptions runtime_parity_options() {
   ModelArchiveLoaderOptions opt;
   opt.reject_unsupported_file_types = false;
   opt.require_pipeline_sequence = false;
+  opt.validate_auxiliary_json = false;
   return opt;
 }
 
