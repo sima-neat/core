@@ -109,7 +109,8 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
         return PullStatus::Error;
       }
       if (core.graph_sink_closed(node_id)) {
-        if (const std::optional<PullError> closed = core.graph_close_detail(); closed.has_value()) {
+        if (const std::optional<PullError> closed = core.graph_close_detail(node_id);
+            closed.has_value()) {
           if (err) {
             *err = *closed;
           }

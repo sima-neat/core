@@ -384,6 +384,9 @@ struct ExecutionGraphRuntime {
   std::condition_variable public_ingress_cv;
   bool public_ingress_closed = false;
   std::size_t public_pushes_inflight = 0;
+  mutable std::mutex close_provenance_mu;
+  std::unordered_map<simaai::neat::graph::NodeId, PullError> source_close_details_by_sink;
+  std::unordered_set<simaai::neat::graph::NodeId> application_closed_sinks;
 
   std::unordered_map<std::uint64_t, std::vector<DownstreamTarget>> adjacency;
   std::atomic<bool> message_trace_enabled{false};

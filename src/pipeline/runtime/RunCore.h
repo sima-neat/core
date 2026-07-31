@@ -197,8 +197,10 @@ struct RunCore {
   bool graph_begin_public_push();
   void graph_end_public_push();
   void graph_close_public_input();
+  void graph_mark_downstream_close_provenance(simaai::neat::graph::NodeId producer_node,
+                                              const PullError* source_close_detail);
   std::optional<PullError> graph_last_error_detail() const;
-  std::optional<PullError> graph_close_detail() const;
+  std::optional<PullError> graph_close_detail(simaai::neat::graph::NodeId sink_node) const;
   bool graph_sink_closed(simaai::neat::graph::NodeId node_id) const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                    bool allow_startup_preflight = false);
@@ -275,7 +277,6 @@ struct RunCore {
 
   std::string error;
   std::optional<PullError> terminal_error_detail;
-  std::optional<PullError> terminal_close_detail;
   std::string diag_sysinfo;
   std::unique_ptr<PowerMonitor> power_monitor;
   std::shared_ptr<void> graph_verbose_guard;

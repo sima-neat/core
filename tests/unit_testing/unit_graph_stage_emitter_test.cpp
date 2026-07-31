@@ -256,6 +256,49 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
             "application-driven graph close should use runtime.pull closure");
   }
 
+  // Closure details are per output branch. A finite source ending must not relabel a separate
+  // application-pushed branch when close_input() drains that branch normally.
+  {
+    simaai::neat::Graph graph;
+    const auto finite_source = graph.append_pipeline_vertex_for_internal_graph_(
+        simaai::neat::nodes::Custom("videotestsrc num-buffers=1 pattern=black ! "
+                                    "video/x-raw,format=RGB,width=64,height=48,framerate=30/1",
+                                    simaai::neat::InputRole::Source));
+    const auto finite_output = add_output_endpoint(graph, "finite_branch");
+    connect_runtime(graph, finite_source, "out", finite_output, "in");
+
+    const auto pushed_input = add_input_endpoint(graph, "pushed_input");
+    const auto pushed_stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node(20));
+    const auto pushed_output = add_output_endpoint(graph, "pushed_branch");
+    connect_runtime(graph, pushed_input, "out", pushed_stage, "in");
+    connect_runtime(graph, pushed_stage, "out", pushed_output, "in");
+
+    simaai::neat::Run run = graph.build();
+    require(run.push("pushed_input", make_text_sample("prompt", "application")),
+            "mixed graph rejected application input");
+    run.close_input();
+
+    simaai::neat::Sample sample;
+    simaai::neat::PullError finite_error;
+    require(run.pull("finite_branch", 1000, sample, &finite_error) == simaai::neat::PullStatus::Ok,
+            "mixed graph finite branch did not produce output");
+    require(run.pull("finite_branch", 1000, sample, &finite_error) ==
+                simaai::neat::PullStatus::Closed,
+            "mixed graph finite branch did not close");
+    require(finite_error.code == simaai::neat::error_codes::kSourceEnded,
+            "mixed graph finite branch lost source-ended provenance");
+
+    simaai::neat::PullError pushed_error;
+    require(run.pull("pushed_branch", 1000, sample, &pushed_error) == simaai::neat::PullStatus::Ok,
+            "mixed graph pushed branch dropped accepted output");
+    require(sample_text(sample) == "application", "mixed graph pushed branch changed payload");
+    require(run.pull("pushed_branch", 1000, sample, &pushed_error) ==
+                simaai::neat::PullStatus::Closed,
+            "mixed graph pushed branch did not close");
+    require(pushed_error.code == simaai::neat::error_codes::kRuntimePull,
+            "finite source incorrectly relabeled application branch closure");
+  }
+
   {
     simaai::neat::Graph graph;
     const auto input = add_input_endpoint(graph, "in");

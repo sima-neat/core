@@ -29,6 +29,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 
 namespace simaai::neat::graph {
@@ -532,6 +533,75 @@ void RunCore::graph_producer_completed(simaai::neat::graph::NodeId producer_node
   }
 }
 
+void RunCore::graph_mark_downstream_close_provenance(simaai::neat::graph::NodeId producer_node,
+                                                     const PullError* source_close_detail) {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+  std::unordered_set<simaai::neat::graph::NodeId> visited_producers;
+  std::unordered_set<simaai::neat::graph::NodeId> downstream_sinks;
+  std::function<void(simaai::neat::graph::NodeId)> visit_producer;
+  std::function<void(const DownstreamTarget&)> visit_target;
+
+  visit_target = [&](const DownstreamTarget& target) {
+    switch (target.kind) {
+    case DownstreamTarget::Kind::GraphSink:
+      downstream_sinks.insert(static_cast<simaai::neat::graph::NodeId>(target.index));
+      return;
+    case DownstreamTarget::Kind::StageGroup:
+      if (target.index < execution.stage_groups.size()) {
+        visit_producer(execution.stage_groups[target.index].node_id);
+      }
+      return;
+    case DownstreamTarget::Kind::PipelineInput:
+      if (target.index < execution.pipelines.size() && execution.pipelines[target.index] &&
+          !execution.pipelines[target.index]->seg.node_ids.empty()) {
+        visit_producer(execution.pipelines[target.index]->seg.node_ids.back());
+      }
+      return;
+    case DownstreamTarget::Kind::RealtimeLatestLink:
+      if (target.index < execution.realtime_links.size() &&
+          execution.realtime_links[target.index]) {
+        visit_target(execution.realtime_links[target.index]->downstream());
+      }
+      return;
+    }
+  };
+
+  visit_producer = [&](simaai::neat::graph::NodeId producer) {
+    if (!visited_producers.insert(producer).second) {
+      return;
+    }
+    bool has_downstream = false;
+    for (const auto& [key, targets] : execution.adjacency) {
+      (void)key;
+      for (const auto& target : targets) {
+        if (target.edge_index == invalid_edge_index() ||
+            target.edge_index >= execution.plan.edges.size() ||
+            execution.plan.edges[target.edge_index].from != producer) {
+          continue;
+        }
+        has_downstream = true;
+        visit_target(target);
+      }
+    }
+    if (!has_downstream && execution.sinks.find(producer) != execution.sinks.end()) {
+      downstream_sinks.insert(producer);
+    }
+  };
+  visit_producer(producer_node);
+
+  std::lock_guard<std::mutex> lock(execution.close_provenance_mu);
+  if (source_close_detail) {
+    for (const auto sink : downstream_sinks) {
+      execution.source_close_details_by_sink.try_emplace(sink, *source_close_detail);
+    }
+    return;
+  }
+  execution.application_closed_sinks.insert(downstream_sinks.begin(), downstream_sinks.end());
+}
+
 void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
                                        std::optional<PullError> close_detail) {
   if (!graph_execution_ || pipeline_index >= graph_execution_->pipelines.size() ||
@@ -542,19 +612,17 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
   if (pipe.transport.completion_forwarded.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
-
   if (close_detail.has_value()) {
-    PullError detail = std::move(*close_detail);
-    if (detail.code.empty()) {
-      detail.code = error_codes::kSourceEnded;
+    if (close_detail->code.empty()) {
+      close_detail->code = error_codes::kSourceEnded;
     }
-    if (detail.message.empty()) {
-      detail.message = "Run::pull: input source reached end of stream";
+    if (close_detail->message.empty()) {
+      close_detail->message = "Run::pull: input source reached end of stream";
     }
-    detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
-    std::lock_guard<std::mutex> lock(error_mu);
-    if (!terminal_close_detail.has_value()) {
-      terminal_close_detail = std::move(detail);
+    close_detail->message =
+        pipeline_internal::error_util::decorate_error(close_detail->code, close_detail->message);
+    if (!pipe.seg.node_ids.empty()) {
+      graph_mark_downstream_close_provenance(pipe.seg.node_ids.back(), &*close_detail);
     }
   }
 
@@ -564,6 +632,9 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
     for (const auto& branch : pipe.seg.fused_realtime_ingress->branches) {
       if (!branch.encoded_output.has_value()) {
         continue;
+      }
+      if (close_detail.has_value()) {
+        graph_mark_downstream_close_provenance(branch.encoded_output->sink_node, &*close_detail);
       }
       const auto sink = graph_execution_->sinks.find(branch.encoded_output->sink_node);
       if (sink != graph_execution_->sinks.end() && sink->second) {
@@ -645,6 +716,8 @@ void RunCore::graph_close_public_input() {
   for (const auto& endpoint : execution.public_ingress_endpoints) {
     const auto stage = execution.node_to_stage_group.find(endpoint.node);
     if (stage != execution.node_to_stage_group.end()) {
+      graph_mark_downstream_close_provenance(execution.stage_groups[stage->second].node_id,
+                                             nullptr);
       graph_target_producer_completed(DownstreamTarget{
           DownstreamTarget::Kind::StageGroup, stage->second, endpoint.port, invalid_edge_index()});
       continue;
@@ -656,6 +729,9 @@ void RunCore::graph_close_public_input() {
       continue;
     }
     const auto& runtime = *execution.pipelines[pipeline->second];
+    if (!runtime.seg.node_ids.empty()) {
+      graph_mark_downstream_close_provenance(runtime.seg.node_ids.back(), nullptr);
+    }
     if (runtime.seg.boundary.direct_graph_source) {
       if (completed_direct_sources.insert(endpoint.node).second) {
         graph_producer_completed(endpoint.node);
@@ -673,9 +749,22 @@ std::optional<PullError> RunCore::graph_last_error_detail() const {
   return terminal_error_detail;
 }
 
-std::optional<PullError> RunCore::graph_close_detail() const {
-  std::lock_guard<std::mutex> lock(error_mu);
-  return terminal_close_detail;
+std::optional<PullError> RunCore::graph_close_detail(simaai::neat::graph::NodeId sink_node) const {
+  if (!graph_execution_) {
+    return std::nullopt;
+  }
+  {
+    std::lock_guard<std::mutex> lock(graph_execution_->close_provenance_mu);
+    if (graph_execution_->application_closed_sinks.find(sink_node) !=
+        graph_execution_->application_closed_sinks.end()) {
+      return std::nullopt;
+    }
+    const auto source_detail = graph_execution_->source_close_details_by_sink.find(sink_node);
+    if (source_detail != graph_execution_->source_close_details_by_sink.end()) {
+      return source_detail->second;
+    }
+  }
+  return std::nullopt;
 }
 
 bool RunCore::graph_sink_closed(simaai::neat::graph::NodeId node_id) const {
