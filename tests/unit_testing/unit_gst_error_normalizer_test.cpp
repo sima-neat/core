@@ -119,6 +119,35 @@ RUN_TEST(
       }
 
       {
+        const NormalizedDiagnostic configuration = classify_gst_error(
+            raw_error("customstage", "gst-resource-error-quark", GST_RESOURCE_ERROR_SETTINGS,
+                      "Configuration could not be parsed"));
+        require_code(configuration, error_codes::kIoParse);
+        require(configuration.diagnostic_id == "gstreamer.configuration_invalid",
+                "documented settings errors should use the configuration diagnostic");
+        require_contains(render_diagnostic_body(configuration, false),
+                         "Correct the configuration for the reported stage",
+                         "configuration errors should provide a corrective action");
+      }
+
+      {
+        const NormalizedDiagnostic busy =
+            classify_gst_error(raw_error("neatprocesscvu", "gst-resource-error-quark",
+                                         GST_RESOURCE_ERROR_BUSY, "Accelerator resource is busy"));
+        require_code(busy, error_codes::kDispatcherUnavailable);
+
+        const NormalizedDiagnostic missing = classify_gst_error(
+            raw_error("simaaiboxdecode", "gst-resource-error-quark", GST_RESOURCE_ERROR_NOT_FOUND,
+                      "Required runtime resource not found"));
+        require_code(missing, error_codes::kDispatcherUnavailable);
+
+        const NormalizedDiagnostic camera_busy =
+            classify_gst_error(raw_error("v4l2src", "gst-resource-error-quark",
+                                         GST_RESOURCE_ERROR_BUSY, "Camera device is busy"));
+        require_code(camera_busy, error_codes::kRuntimeElementFailed);
+      }
+
+      {
         const NormalizedDiagnostic allocation = classify_gst_error(
             raw_error("neatmodel", "gst-resource-error-quark", GST_RESOURCE_ERROR_NO_SPACE_LEFT,
                       "Output allocation failed"));
@@ -269,7 +298,8 @@ RUN_TEST(
             "password", G_TYPE_STRING, "hunter2", "auth-token", G_TYPE_STRING, "do-not-store",
             "sig", G_TYPE_STRING, "signed-secret", "api_key", G_TYPE_STRING, "api-secret",
             "access_key", G_TYPE_STRING, "access-secret", "private_key", G_TYPE_STRING,
-            "private-secret", nullptr);
+            "private-secret", "user-pw", G_TYPE_STRING, "rtsp-secret", "user_pw", G_TYPE_STRING,
+            "rtsp-secret-underscore", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error,
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2",
@@ -285,7 +315,9 @@ RUN_TEST(
                     raw.details.at("sig") == "<redacted>" &&
                     raw.details.at("api_key") == "<redacted>" &&
                     raw.details.at("access_key") == "<redacted>" &&
-                    raw.details.at("private_key") == "<redacted>",
+                    raw.details.at("private_key") == "<redacted>" &&
+                    raw.details.at("user-pw") == "<redacted>" &&
+                    raw.details.at("user_pw") == "<redacted>",
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         require(raw.debug.find("abc123") == std::string::npos &&

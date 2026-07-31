@@ -39,7 +39,7 @@ Framework errors use stable code families:
 | `runtime.pull` | Runtime pull/timeout/closed-output failure | Check sink output production, queue pressure, and upstream errors |
 | `runtime.element_failed` | A stage failed without a more specific mapping | Correct the reported stage and its upstream input |
 | `runtime.output_timeout` | No output arrived before the configured timeout | Verify source flow or increase an expected timeout |
-| `io.parse` | Saved-graph JSON parse/schema failure | Validate JSON and required node fields |
+| `io.parse` | JSON or stage-configuration parse/schema failure | Validate configuration syntax and required fields |
 | `io.open` | Graph save/load file open/read/write failure | Check path existence, permissions, and storage health |
 | `io.file_not_found` | Input file does not exist | Correct the path and confirm the file exists on the DevKit |
 | `io.permission_denied` | File or device is not readable | Correct ownership/permissions |

@@ -138,6 +138,16 @@ bool sensitive_detail_name(std::string_view name) {
   std::replace(normalized.begin(), normalized.end(), '_', '-');
   if (normalized == "key" || normalized == "sig")
     return true;
+  for (std::size_t begin = 0; begin <= normalized.size();) {
+    const std::size_t end = normalized.find('-', begin);
+    const std::string_view token(normalized.data() + begin,
+                                 (end == std::string::npos ? normalized.size() : end) - begin);
+    if (token == "pw" || token == "pwd")
+      return true;
+    if (end == std::string::npos)
+      break;
+    begin = end + 1;
+  }
   static constexpr std::string_view markers[] = {
       "password",      "passwd",  "token",  "secret",     "signature",   "credential",
       "authorization", "api-key", "apikey", "access-key", "private-key",
@@ -390,6 +400,17 @@ bool remote_source(const RawGstError& raw) {
          contains_ci(source, "https://");
 }
 
+bool accelerator_plugin_context(const RawGstError& raw) {
+  const std::string plugin = find_detail(raw, {"plugin"}).value_or(raw.factory_name);
+  const std::string lower = lower_copy(plugin);
+  if (lower.rfind("neat", 0) == 0 || lower.rfind("sima", 0) == 0)
+    return true;
+  return find_detail(raw, {"dispatcher-err", "dispatcher_err", "dispatcher-error",
+                           "dispatcher_error", "dispatcher-code", "dispatcher_code",
+                           "dispatcher-target", "dispatcher_target"})
+      .has_value();
+}
+
 NormalizedDiagnostic authentication_failed(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kIoOpen, "gstreamer.authentication_failed",
@@ -399,6 +420,19 @@ NormalizedDiagnostic authentication_failed(RawGstError raw) {
   out.actions = {
       "Verify the username, password, token, or other credentials configured for the source.",
       "Confirm that the account is allowed to access the requested stream or resource.",
+  };
+  return out;
+}
+
+NormalizedDiagnostic configuration_invalid(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kIoParse, "gstreamer.configuration_invalid",
+           "The reported pipeline stage configuration is invalid.");
+  add_fact(out, "Configuration",
+           find_detail(out.raw, {"config-path", "config_path", "path"}).value_or(""));
+  out.actions = {
+      "Correct the configuration for the reported stage.",
+      "Validate the configuration syntax and values before starting the pipeline.",
   };
   return out;
 }
@@ -686,6 +720,9 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       find_detail(raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"}).value_or("");
   const std::string reason =
       find_detail(raw, {"neat-reason", "neat_reason", "reason"}).value_or("");
+  const bool documented_dispatcher_error =
+      raw.domain_name == "gst-resource-error-quark" && accelerator_plugin_context(raw) &&
+      (raw.code == GST_RESOURCE_ERROR_BUSY || raw.code == GST_RESOURCE_ERROR_NOT_FOUND);
 
   if (diagnostic_id == "neatprocesscvu.input_envelope_exceeded" ||
       contains_ci(text, "envelope violation")) {
@@ -710,7 +747,7 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
     return device_memory_exhausted(std::move(raw));
   }
   if (diagnostic_id.find("dispatcher_unavailable") != std::string::npos ||
-      contains_ci(text, "unable to get dispatcher")) {
+      contains_ci(text, "unable to get dispatcher") || documented_dispatcher_error) {
     return dispatcher_unavailable(std::move(raw));
   }
   if (diagnostic_id.find("accelerator_execution_failed") != std::string::npos ||
@@ -750,6 +787,8 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   }
 
   if (raw.domain_name == "gst-resource-error-quark") {
+    if (raw.code == GST_RESOURCE_ERROR_SETTINGS)
+      return configuration_invalid(std::move(raw));
     if (raw.code == GST_RESOURCE_ERROR_NOT_FOUND)
       return resource_not_found(std::move(raw));
     if (raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED ||
