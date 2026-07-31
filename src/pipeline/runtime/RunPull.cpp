@@ -506,7 +506,7 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   }
   auto diag = st->pipeline.stream.diag_ctx();
   const auto handle_stream_error = [&](const std::string& msg) {
-    const std::optional<PullError> typed = st->pipeline.stream.last_error_detail();
+    const std::optional<PullError> typed = st->last_error_detail();
     if (typed.has_value()) {
       if (err)
         *err = *typed;
