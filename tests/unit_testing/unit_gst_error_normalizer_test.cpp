@@ -439,6 +439,18 @@ RUN_TEST(
             redact_gst_credentials("https://user:password@example.test?email=user@example.test");
         require_contains(userinfo, "https://<redacted>@example.test?email=user@example.test",
                          "URI userinfo should be redacted without changing the query");
+
+        const std::string escaped_userinfo =
+            redact_gst_credentials(R"({"url":"https:\/\/user:password@example.test\/path"})");
+        require(escaped_userinfo.find("user:password") == std::string::npos,
+                "slash-escaped URI userinfo must be redacted: " + escaped_userinfo);
+        require_contains(escaped_userinfo, R"(https:\/\/<redacted>@example.test\/path)",
+                         "slash-escaped URI structure should be preserved");
+
+        const std::string repeatedly_escaped =
+            redact_gst_credentials(R"(https:\\/\\/user:password@example.test\\/path)");
+        require(repeatedly_escaped.find("user:password") == std::string::npos,
+                "repeatedly escaped URI userinfo must be redacted: " + repeatedly_escaped);
       }
 
       {

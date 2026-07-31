@@ -155,13 +155,46 @@ bool disallowed_preceding_field_character(char c, std::string_view marker) {
          (requires_exact_field_boundary(marker) && (value == '_' || value == '-'));
 }
 
+std::optional<std::size_t> find_uri_authority_start(const std::string& value,
+                                                    std::size_t search_from) {
+  std::size_t colon = search_from;
+  while ((colon = value.find(':', colon)) != std::string::npos) {
+    std::size_t scheme_begin = colon;
+    while (scheme_begin > search_from) {
+      const unsigned char c = static_cast<unsigned char>(value[scheme_begin - 1]);
+      if (!std::isalnum(c) && c != '+' && c != '-' && c != '.')
+        break;
+      --scheme_begin;
+    }
+    if (scheme_begin == colon || !std::isalpha(static_cast<unsigned char>(value[scheme_begin]))) {
+      ++colon;
+      continue;
+    }
+
+    std::size_t cursor = colon + 1;
+    while (cursor < value.size() && value[cursor] == '\\')
+      ++cursor;
+    if (cursor >= value.size() || value[cursor] != '/') {
+      ++colon;
+      continue;
+    }
+    ++cursor;
+    while (cursor < value.size() && value[cursor] == '\\')
+      ++cursor;
+    if (cursor < value.size() && value[cursor] == '/')
+      return cursor + 1;
+    ++colon;
+  }
+  return std::nullopt;
+}
+
 std::string redact_uri_credentials(std::string value) {
   std::size_t search_from = 0;
   while (true) {
-    const std::size_t scheme = value.find("://", search_from);
-    if (scheme == std::string::npos)
+    const std::optional<std::size_t> authority_start = find_uri_authority_start(value, search_from);
+    if (!authority_start.has_value())
       break;
-    const std::size_t authority = scheme + 3;
+    const std::size_t authority = *authority_start;
     const std::size_t slash = value.find_first_of("/?# \t\r\n", authority);
     const std::size_t at = value.find('@', authority);
     if (at != std::string::npos && (slash == std::string::npos || at < slash)) {
