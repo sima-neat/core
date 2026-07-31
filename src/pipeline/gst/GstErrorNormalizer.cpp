@@ -820,7 +820,8 @@ NormalizedDiagnostic classify_gst_parse_error(const GError* error,
       };
       return out;
     }
-    if (error->code == GST_PARSE_ERROR_NO_SUCH_PROPERTY) {
+    if (error->code == GST_PARSE_ERROR_NO_SUCH_PROPERTY ||
+        error->code == GST_PARSE_ERROR_COULD_NOT_SET_PROPERTY) {
       NormalizedDiagnostic out =
           base(std::move(raw), error_codes::kPropertyInvalid, "gstreamer.property_invalid",
                "A GStreamer element property is unknown or invalid.");

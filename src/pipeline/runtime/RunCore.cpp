@@ -393,7 +393,10 @@ void RunCore::graph_request_stop(PullError detail) {
   }
   {
     std::lock_guard<std::mutex> lock(error_mu);
-    if (error.empty()) {
+    const bool typed_upgrade =
+        detail.report.has_value() &&
+        (!graph_error_detail.has_value() || !graph_error_detail->report.has_value());
+    if (error.empty() || typed_upgrade) {
       if (detail.code.empty()) {
         detail.code = error_codes::kRuntimeElementFailed;
       }

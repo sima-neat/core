@@ -173,6 +173,7 @@ struct RunCore {
   InputStreamStats input_stats() const;
   RunDiagSnapshot diag_snapshot() const;
   std::string last_error() const;
+  std::optional<PullError> last_error_detail() const;
   std::string diagnostics_summary() const;
 
   ExecutionGraphRuntime& graph_execution();

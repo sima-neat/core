@@ -614,6 +614,17 @@ std::string runtime::RunCore::last_error() const {
   return pipeline.stream.last_error();
 }
 
+std::optional<PullError> runtime::RunCore::last_error_detail() const {
+  {
+    std::lock_guard<std::mutex> lock(error_mu);
+    if (graph_error_detail.has_value())
+      return graph_error_detail;
+  }
+  if (graph_execution_)
+    return std::nullopt;
+  return pipeline.stream.last_error_detail();
+}
+
 std::string runtime::RunCore::diagnostics_summary() const {
   if (graph_execution_)
     return last_error();

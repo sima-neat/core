@@ -1892,7 +1892,13 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
                        static_cast<int>(::getpid()));
           std::raise(SIGSTOP);
         }
-        core->graph_request_stop("GraphRun: pipeline push failed");
+        const std::optional<PullError> typed =
+            pipe.run_core ? pipe.run_core->last_error_detail() : std::nullopt;
+        if (typed.has_value()) {
+          core->graph_request_stop(*typed);
+        } else {
+          core->graph_request_stop("GraphRun: pipeline push failed");
+        }
         return;
       }
       if (!pipe.transport.has_output) {

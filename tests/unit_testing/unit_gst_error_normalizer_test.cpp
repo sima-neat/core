@@ -277,6 +277,18 @@ RUN_TEST(
       }
 
       {
+        GError* error = g_error_new_literal(GST_PARSE_ERROR, GST_PARSE_ERROR_COULD_NOT_SET_PROPERTY,
+                                            "could not set property \"latency\" to \"fast\"");
+        const NormalizedDiagnostic diagnostic =
+            classify_gst_parse_error(error, "rtspsrc latency=fast ! fakesink");
+        g_error_free(error);
+        require_code(diagnostic, error_codes::kPropertyInvalid);
+        require_contains(render_diagnostic_body(diagnostic, false),
+                         "property is unknown or invalid",
+                         "invalid property values should receive property-specific guidance");
+      }
+
+      {
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw_error(
             "mystage", "gst-library-error-quark", GST_LIBRARY_ERROR_FAILED, "opaque failure"));
         require_code(diagnostic, error_codes::kRuntimeElementFailed);
@@ -326,6 +338,7 @@ RUN_TEST(
         report.repro_note = "Expected shape [1, 224, 224, 3], received [1, 224, 224, 1].";
         NeatError source(error_util::decorate_error(report.error_code, report.repro_note), report);
         auto core = std::make_shared<runtime::RunCore>();
+        core->graph_request_stop("GraphRun: pipeline push failed");
         core->graph_request_stop(source);
 
         const std::optional<PullError> propagated = core->graph_last_error_detail();
@@ -334,6 +347,6 @@ RUN_TEST(
                 "graph-backed runs should retain the original error code");
         require(propagated->report.has_value() &&
                     propagated->report->error_code == error_codes::kInputShape,
-                "graph-backed runs should retain the original GraphReport");
+                "a typed graph failure should replace an earlier untyped push placeholder");
       }
     }));
