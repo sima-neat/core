@@ -143,6 +143,16 @@ std::string redact_uri_credentials(std::string value) {
       "apikey",
       "user-pw",
       "user_pw",
+      "set-cookie",
+      "set_cookie",
+      "session-cookie",
+      "session_cookie",
+      "cookie",
+      "session-id",
+      "session_id",
+      "sessionid",
+      "bearer",
+      "jwt",
       "password",
       "passwd",
       "token",
@@ -185,8 +195,9 @@ std::string redact_uri_credentials(std::string value) {
              value[begin] != '\r' && value[begin] != '\n') {
         ++begin;
       }
-      const bool authorization = marker.find("authorization") != std::string_view::npos;
-      pos = redact_secret_value(value, begin, authorization);
+      const bool line_value = marker.find("authorization") != std::string_view::npos ||
+                              marker.find("cookie") != std::string_view::npos;
+      pos = redact_secret_value(value, begin, line_value);
     }
   }
   return value;
@@ -204,7 +215,8 @@ std::string truncate(std::string value, std::size_t max_bytes = 4096) {
 bool sensitive_detail_name(std::string_view name) {
   std::string normalized = lower_copy(std::string(name));
   std::replace(normalized.begin(), normalized.end(), '_', '-');
-  if (normalized == "key" || normalized == "sig")
+  if (normalized == "key" || normalized == "sig" || normalized == "session" ||
+      normalized == "sessionid" || normalized == "jwt" || normalized == "bearer")
     return true;
   for (std::size_t begin = 0; begin <= normalized.size();) {
     const std::size_t end = normalized.find('-', begin);
@@ -217,8 +229,8 @@ bool sensitive_detail_name(std::string_view name) {
     begin = end + 1;
   }
   static constexpr std::string_view markers[] = {
-      "password",      "passwd",  "token",  "secret",     "signature",   "credential",
-      "authorization", "api-key", "apikey", "access-key", "private-key",
+      "password", "passwd", "token",      "secret",      "signature", "credential", "authorization",
+      "api-key",  "apikey", "access-key", "private-key", "cookie",    "session-id",
   };
   for (std::string_view marker : markers) {
     if (normalized.find(marker) != std::string::npos)

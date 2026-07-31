@@ -325,7 +325,8 @@ RUN_TEST(
             "sig", G_TYPE_STRING, "signed-secret", "api_key", G_TYPE_STRING, "api-secret",
             "access_key", G_TYPE_STRING, "access-secret", "private_key", G_TYPE_STRING,
             "private-secret", "user-pw", G_TYPE_STRING, "rtsp-secret", "user_pw", G_TYPE_STRING,
-            "rtsp-secret-underscore", nullptr);
+            "rtsp-secret-underscore", "set-cookie", G_TYPE_STRING, "sessionid=structured-secret",
+            nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error,
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
@@ -333,7 +334,8 @@ RUN_TEST(
             "user_pw=rtsp-password-underscore pw=short-password pwd='short-password-d' "
             "json={\"password\":\"json-password\",\"access_token\":\"json-token\"} "
             "escaped={\\\"password\\\":\\\"escaped-json-password\\\","
-            "\\\"access_token\\\":\\\"escaped-json-token\\\"}",
+            "\\\"access_token\\\":\\\"escaped-json-token\\\"} "
+            "Cookie: sessionid=raw-cookie-secret\n{\"session_cookie\":\"json-cookie-secret\"}",
             details);
         g_error_free(error);
 
@@ -348,7 +350,8 @@ RUN_TEST(
                     raw.details.at("access_key") == "<redacted>" &&
                     raw.details.at("private_key") == "<redacted>" &&
                     raw.details.at("user-pw") == "<redacted>" &&
-                    raw.details.at("user_pw") == "<redacted>",
+                    raw.details.at("user_pw") == "<redacted>" &&
+                    raw.details.at("set-cookie") == "<redacted>",
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         require(raw.debug.find("abc123") == std::string::npos &&
@@ -360,7 +363,9 @@ RUN_TEST(
                     raw.debug.find("json-password") == std::string::npos &&
                     raw.debug.find("json-token") == std::string::npos &&
                     raw.debug.find("escaped-json-password") == std::string::npos &&
-                    raw.debug.find("escaped-json-token") == std::string::npos,
+                    raw.debug.find("escaped-json-token") == std::string::npos &&
+                    raw.debug.find("raw-cookie-secret") == std::string::npos &&
+                    raw.debug.find("json-cookie-secret") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
