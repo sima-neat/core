@@ -1103,7 +1103,9 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
                      elapsed_ns_since(ensure_start));
       pipeline_internal::release_realtime_frame_credits(realtime_credits,
                                                         "pipeline-input-build-failed");
-      request_stop(callbacks, build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
+      if (!stop_requested(callbacks)) {
+        request_stop(callbacks, build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
+      }
       return false;
     }
     atomic_add_max(telemetry.router_ensure_build_ns, telemetry.router_ensure_build_max_ns,

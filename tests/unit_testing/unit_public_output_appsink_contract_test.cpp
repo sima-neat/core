@@ -356,6 +356,27 @@ RUN_TEST(
                   "direct public sink did not close after its queued sample drained");
         }
 
+        // A public push can be inside synchronous lazy-pipeline construction, where no queue can
+        // wake it. close_input() bounds that wait and defers producer completion to the guard that
+        // eventually leaves the build path.
+        {
+          simaai::neat::runtime::RunCore core;
+          core.closed.store(true, std::memory_order_release);
+          core.graph_execution_ = std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
+          require(core.graph_begin_public_push(), "lazy-build fixture input was already closed");
+          const auto close_started = std::chrono::steady_clock::now();
+          core.graph_close_public_input();
+          const auto close_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - close_started);
+          require(close_elapsed < std::chrono::milliseconds(1000),
+                  "close_input waited indefinitely for a public lazy build");
+          require(!core.graph_execution_->public_ingress_completion_forwarded,
+                  "close_input forwarded completion while a public build was still active");
+          core.graph_end_public_push();
+          require(core.graph_execution_->public_ingress_completion_forwarded,
+                  "last public build did not forward deferred input completion");
+        }
+
         GraphSinkQueue reserved_latest_queue(1);
         require(enqueue_graph_sink_output(reserved_latest_queue, latest, sink_message(40, 40), 0) ==
                     FusedEncodedOutputEnqueueResult::Enqueued,

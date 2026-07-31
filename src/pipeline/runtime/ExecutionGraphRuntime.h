@@ -384,6 +384,7 @@ struct ExecutionGraphRuntime {
   std::condition_variable public_ingress_cv;
   bool public_ingress_closed = false;
   std::size_t public_pushes_inflight = 0;
+  bool public_ingress_completion_forwarded = false;
   mutable std::mutex close_provenance_mu;
   std::unordered_map<simaai::neat::graph::NodeId, PullError> source_close_details_by_sink;
   std::unordered_set<simaai::neat::graph::NodeId> application_closed_sinks;

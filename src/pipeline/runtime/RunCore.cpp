@@ -689,12 +689,23 @@ void RunCore::graph_end_public_push() {
   if (!graph_execution_) {
     return;
   }
-  std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
-  if (graph_execution_->public_pushes_inflight > 0U) {
-    --graph_execution_->public_pushes_inflight;
+  bool forward_completion = false;
+  {
+    std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
+    if (graph_execution_->public_pushes_inflight > 0U) {
+      --graph_execution_->public_pushes_inflight;
+    }
+    if (graph_execution_->public_pushes_inflight == 0U) {
+      graph_execution_->public_ingress_cv.notify_all();
+      if (graph_execution_->public_ingress_closed &&
+          !graph_execution_->public_ingress_completion_forwarded) {
+        graph_execution_->public_ingress_completion_forwarded = true;
+        forward_completion = true;
+      }
+    }
   }
-  if (graph_execution_->public_pushes_inflight == 0U) {
-    graph_execution_->public_ingress_cv.notify_all();
+  if (forward_completion) {
+    graph_forward_public_input_completion();
   }
 }
 
@@ -712,13 +723,42 @@ void RunCore::graph_close_public_input() {
   }
   auto& execution = *graph_execution_;
   {
-    std::unique_lock<std::mutex> lock(execution.public_ingress_mu);
+    std::lock_guard<std::mutex> lock(execution.public_ingress_mu);
     if (execution.public_ingress_closed) {
       return;
     }
     execution.public_ingress_closed = true;
-    execution.public_ingress_cv.wait(lock, [&] { return execution.public_pushes_inflight == 0U; });
   }
+  // Wake public pushes waiting for another thread's lazy pipeline build. A thread actively inside
+  // GStreamer construction cannot be interrupted safely, so close_input() bounds its own wait and
+  // lets the last push forward producer completion after that build returns.
+  for (const auto& pipeline : execution.pipelines) {
+    if (pipeline) {
+      pipeline->transport.cv.notify_all();
+    }
+  }
+
+  constexpr auto kInflightCloseWait = std::chrono::milliseconds(250);
+  bool forward_completion = false;
+  {
+    std::unique_lock<std::mutex> lock(execution.public_ingress_mu);
+    execution.public_ingress_cv.wait_for(lock, kInflightCloseWait,
+                                         [&] { return execution.public_pushes_inflight == 0U; });
+    if (execution.public_pushes_inflight == 0U && !execution.public_ingress_completion_forwarded) {
+      execution.public_ingress_completion_forwarded = true;
+      forward_completion = true;
+    }
+  }
+  if (forward_completion) {
+    graph_forward_public_input_completion();
+  }
+}
+
+void RunCore::graph_forward_public_input_completion() {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
 
   std::unordered_set<simaai::neat::graph::NodeId> completed_direct_sources;
   for (const auto& endpoint : execution.public_ingress_endpoints) {
@@ -784,7 +824,8 @@ bool RunCore::graph_sink_closed(simaai::neat::graph::NodeId node_id) const {
 }
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
-                                          bool allow_startup_preflight) {
+                                          bool allow_startup_preflight,
+                                          bool cancel_on_public_input_close) {
   const auto ensure_start_ns = std::chrono::steady_clock::now();
   const auto total_start = pipeline_internal::build_timing_now();
   ExecutionGraphRuntime& execution = graph_execution();
@@ -796,6 +837,9 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
 
   auto& pipe = *execution.pipelines[index];
   auto& tel = pipe.transport.telemetry;
+  const auto public_close_cancelled = [&] {
+    return cancel_on_public_input_close && graph_public_input_closed();
+  };
   tel.ensure_build_calls.fetch_add(1, std::memory_order_relaxed);
   auto record_total = [&tel, ensure_start_ns]() {
     atomic_add_max(tel.ensure_build_total_ns, tel.ensure_build_total_max_ns,
@@ -809,6 +853,13 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     if (err)
       *err = "GraphRun: stopped";
     tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
+    record_total();
+    return false;
+  }
+  if (public_close_cancelled()) {
+    if (err) {
+      *err = "GraphRun: input closed";
+    }
     record_total();
     return false;
   }
@@ -832,7 +883,8 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     if (pipe.transport.building) {
       const auto wait_start = std::chrono::steady_clock::now();
       pipe.transport.cv.wait(lock, [&] {
-        return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested();
+        return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested() ||
+               public_close_cancelled();
       });
       atomic_add_max(tel.ensure_build_wait_ns, tel.ensure_build_wait_max_ns,
                      elapsed_ns_since(wait_start));
@@ -840,8 +892,9 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
         record_total();
         return true;
       }
-      if (err)
-        *err = "GraphRun: stopped";
+      if (err) {
+        *err = public_close_cancelled() ? "GraphRun: input closed" : "GraphRun: stopped";
+      }
       tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
       record_total();
       return false;
@@ -906,9 +959,17 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
         "seg=" + std::to_string(pipe.seg.id));
     pipe.transport.cv.notify_all();
     record_total();
+    if (public_close_cancelled()) {
+      if (err) {
+        *err = "GraphRun: input closed";
+      }
+      return false;
+    }
     return true;
   } catch (const NeatError& e) {
-    set_terminal_error(e);
+    if (!public_close_cancelled()) {
+      set_terminal_error(e);
+    }
     build_error = e.what();
   } catch (const std::exception& e) {
     build_error = e.what();
@@ -1012,7 +1073,7 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
       };
       callbacks.ensure_pipeline_built = [this](std::size_t index, const Sample& seed,
                                                std::string* err) {
-        return ensure_graph_pipeline_built(index, seed, err);
+        return ensure_graph_pipeline_built(index, seed, err, false, true);
       };
       callbacks.sanitize_pipeline_input = [this](std::size_t index, Sample& next) {
         graph_sanitize_pipeline_input(index, next);
@@ -1045,7 +1106,10 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
     }
 
     std::string build_err;
-    if (!ensure_graph_pipeline_built(it_pipe->second, sample, &build_err)) {
+    if (!ensure_graph_pipeline_built(it_pipe->second, sample, &build_err, false, true)) {
+      if (graph_public_input_closed()) {
+        return false;
+      }
       graph_request_stop(build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
       return false;
     }
