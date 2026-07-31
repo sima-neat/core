@@ -42,7 +42,7 @@ env:
 jobs:
   resolve-vulcan-config:
     name: Resolve Vulcan Config
-    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@feat/compiler-cache
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
 
@@ -232,7 +232,7 @@ jobs:
       - resolve-compiler-cache
       - detect-changes
       - code-hygiene
-    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@feat/compiler-cache
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
     with:
       vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       sdk_cache: ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
