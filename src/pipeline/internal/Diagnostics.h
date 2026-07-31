@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/GraphReport.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 
 #include <atomic>
 #include <cstdint>
@@ -248,13 +249,17 @@ struct DiagCtx {
 
   void push_bus(const std::string& type, const std::string& src, const std::string& detail) {
     std::lock_guard<std::mutex> lk(bus_mu);
-    bus.push_back(BusMessage{type, src, detail, now_us()});
+    bus.push_back(BusMessage{type, src, redact_gst_credentials(detail), now_us()});
   }
 
   GraphReport snapshot_basic() const {
     GraphReport rep;
-    rep.pipeline_string = pipeline_string;
+    const std::string report_pipeline = redact_gst_credentials(pipeline_string);
+    rep.pipeline_string = report_pipeline;
     rep.nodes = node_reports;
+    for (NodeReport& node : rep.nodes) {
+      node.backend_fragment = redact_gst_credentials(std::move(node.backend_fragment));
+    }
 
     {
       std::lock_guard<std::mutex> lk(bus_mu);
@@ -268,7 +273,7 @@ struct DiagCtx {
       rep.boundaries.push_back(b->snapshot());
     }
 
-    rep.repro_gst_launch = "gst-launch-1.0 -v '" + pipeline_string + "'";
+    rep.repro_gst_launch = "gst-launch-1.0 -v '" + report_pipeline + "'";
     rep.has_build_adaptation = has_build_adaptation;
     if (has_build_adaptation) {
       rep.build_adaptation = build_adaptation;

@@ -80,12 +80,13 @@ namespace {
 std::string pipeline_snippet(const std::string& pipeline, std::size_t max_chars = 220) {
   if (pipeline.empty())
     return "<empty>";
-  std::string out = pipeline.substr(0, std::min(max_chars, pipeline.size()));
+  const std::string report_pipeline = pipeline_internal::redact_gst_credentials(pipeline);
+  std::string out = report_pipeline.substr(0, std::min(max_chars, report_pipeline.size()));
   for (char& c : out) {
     if (c == '\n' || c == '\r' || c == '\t')
       c = ' ';
   }
-  if (out.size() < pipeline.size())
+  if (out.size() < report_pipeline.size())
     out += "...";
   return out;
 }
@@ -120,7 +121,7 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
       const runtime::ExecutionGraphPlan plan =
           runtime::compile_public_graph(*this, RunOptions{}, std::nullopt);
       (void)plan;
-      rep.pipeline_string = describe_backend(false);
+      rep.pipeline_string = pipeline_internal::redact_gst_credentials(describe_backend(false));
       rep.repro_note =
           "validate: connected Graph endpoint topology compiled to ExecutionGraphPlan.";
       return rep;
@@ -196,8 +197,8 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
     compile_input.processcvu = opt_.processcvu;
     session_build_compile_contracts(&br, validate_nodes, compile_input, "Graph::validate", nullptr);
   }
-  rep.pipeline_string = br.pipeline_string;
-  enforce_mla_pipeline_guard("Graph::validate", rep.pipeline_string, this);
+  rep.pipeline_string = pipeline_internal::redact_gst_credentials(br.pipeline_string);
+  enforce_mla_pipeline_guard("Graph::validate", br.pipeline_string, this);
 
   GstElement* pipeline = nullptr;
   try {
@@ -269,7 +270,6 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
 
   // snapshot_basic already snapshots boundaries atomics -> BoundaryFlowStats.
   rep = br.diag->snapshot_basic();
-  rep.pipeline_string = br.pipeline_string;
 
   rep.repro_note =
       sample ? "validate: preroll OK (PAUSED)."
@@ -347,8 +347,8 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     session_build_compile_contracts(&br, validate_nodes, compile_input, "Graph::validate(input)",
                                     nullptr);
   }
-  rep.pipeline_string = br.pipeline_string;
-  enforce_mla_pipeline_guard("Graph::validate(input)", rep.pipeline_string, this);
+  rep.pipeline_string = pipeline_internal::redact_gst_credentials(br.pipeline_string);
+  enforce_mla_pipeline_guard("Graph::validate(input)", br.pipeline_string, this);
 
   GstElement* pipeline = nullptr;
   try {
@@ -550,7 +550,6 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
     gst_sample_unref(sample);
 
   rep = br.diag->snapshot_basic();
-  rep.pipeline_string = br.pipeline_string;
 
   rep.repro_note = sample ? "validate(input): preroll OK (PAUSED)."
                           : "validate(input): preroll timed out in PAUSED.";

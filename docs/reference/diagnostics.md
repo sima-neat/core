@@ -56,7 +56,9 @@ Framework errors use stable code families:
 Production messages intentionally omit GStreamer internals. Plugin debug
 verbosity adds the raw GError domain/code, element factory, message, and
 structured plugin details. Credentials and common URL secret parameters are
-redacted before either form is stored.
+redacted before either form is stored. Report-facing pipeline strings, Node
+fragments, reproducer commands, and serialized JSON are redacted without
+changing the executable pipeline held internally.
 
 ## Programmatic handling
 

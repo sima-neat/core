@@ -580,7 +580,7 @@ NormalizedDiagnostic invalid_h264(RawGstError raw) {
 NormalizedDiagnostic plugin_missing(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kPluginMissing, "gstreamer.plugin_missing",
-           "A required GStreamer element or codec plugin is not installed.");
+           "A required GStreamer element is not installed, or a required codec plugin is missing.");
   std::string component =
       find_detail(out.raw, {"missing-plugin", "missing_plugin", "element", "codec"}).value_or("");
   if (component.empty())
@@ -824,6 +824,10 @@ RawGstError parse_gst_error_message(GstMessage* message) {
     }
   }
   return out;
+}
+
+std::string redact_gst_credentials(std::string text) {
+  return redact_uri_credentials(std::move(text));
 }
 
 std::string sanitize_gst_diagnostic_text(std::string text) {

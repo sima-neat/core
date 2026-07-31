@@ -5,6 +5,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/gst/InputStreamInternal.h"
+#include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
 #include "pipeline/runtime/RunCore.h"
@@ -495,5 +496,48 @@ RUN_TEST(
                 "a typed stream upgrade should retain the specific error code");
         require(state.terminal_error->report->error_code == error_codes::kMediaCaps,
                 "a typed stream upgrade should retain the GraphReport");
+      }
+
+      {
+        constexpr const char* kPipelineSecret = "pipeline-password";
+        constexpr const char* kQuerySecret = "query-token";
+        constexpr const char* kBusSecret = "bus-password";
+        DiagCtx diag;
+        diag.pipeline_string =
+            "rtspsrc location=\"rtsp://camera:pipeline-password@example.test/live?"
+            "access_token=query-token\" ! fakesink";
+        NodeReport node;
+        node.backend_fragment = diag.pipeline_string;
+        diag.node_reports.push_back(std::move(node));
+        diag.push_bus("ELEMENT", "rtspsrc0", "password=(string)\"bus-password\"");
+
+        const GraphReport report = diag.snapshot_basic();
+        require(diag.pipeline_string.find(kPipelineSecret) != std::string::npos,
+                "report redaction must not change the executable pipeline");
+        require(report.pipeline_string.find(kPipelineSecret) == std::string::npos &&
+                    report.pipeline_string.find(kQuerySecret) == std::string::npos &&
+                    report.repro_gst_launch.find(kPipelineSecret) == std::string::npos &&
+                    report.repro_gst_launch.find(kQuerySecret) == std::string::npos &&
+                    report.nodes.front().backend_fragment.find(kPipelineSecret) ==
+                        std::string::npos &&
+                    report.bus.front().detail.find(kBusSecret) == std::string::npos,
+                "report-facing pipeline, node, bus, and repro fields must redact credentials");
+
+        GraphReport manually_populated;
+        manually_populated.pipeline_string = diag.pipeline_string;
+        manually_populated.repro_note = "password=serialized-password";
+        const std::string json = manually_populated.to_json();
+        require(json.find(kPipelineSecret) == std::string::npos &&
+                    json.find(kQuerySecret) == std::string::npos &&
+                    json.find("serialized-password") == std::string::npos,
+                "GraphReport JSON serialization must provide a final redaction boundary");
+
+        const GraphReport utility_report =
+            error_util::make_report(error_codes::kRuntimeElementFailed, "password=summary-password",
+                                    diag.pipeline_string, "token=hint-token");
+        require(utility_report.pipeline_string.find(kPipelineSecret) == std::string::npos &&
+                    utility_report.repro_note.find("summary-password") == std::string::npos &&
+                    utility_report.repro_note.find("hint-token") == std::string::npos,
+                "generic report construction must redact report-facing credentials");
       }
     }));

@@ -1,6 +1,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 
 namespace simaai::neat::pipeline_internal::error_util {
 namespace {
@@ -59,11 +60,11 @@ GraphReport make_report(std::string_view code, std::string_view summary,
                         std::string_view pipeline_string, std::string_view hint) {
   GraphReport rep;
   rep.error_code = to_owned(code);
-  rep.pipeline_string = to_owned(pipeline_string);
+  rep.pipeline_string = redact_gst_credentials(to_owned(pipeline_string));
   if (!rep.pipeline_string.empty()) {
     rep.repro_gst_launch = "gst-launch-1.0 -v '" + rep.pipeline_string + "'";
   }
-  rep.repro_note = append_hint(summary, hint);
+  rep.repro_note = redact_gst_credentials(append_hint(summary, hint));
   return rep;
 }
 
