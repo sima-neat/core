@@ -396,6 +396,19 @@ RUN_TEST(
                 "bare session fields must be redacted: " + session);
         require_contains(session, "session='<redacted>' session_count=2",
                          "session redaction must preserve non-secret session metadata");
+
+        const std::string aws = redact_gst_credentials(
+            "https://example.test/input?X-Amz-Signature=aws-signature-value&"
+            "X-Amz-Security-Token=aws-session-value&X-Amz-Algorithm=AWS4-HMAC-SHA256");
+        require(aws.find("aws-signature-value") == std::string::npos &&
+                    aws.find("aws-session-value") == std::string::npos,
+                "AWS signed-URL credentials must be redacted: " + aws);
+        require_contains(aws, "X-Amz-Signature=<redacted>",
+                         "AWS signature redaction should retain the parameter name");
+        require_contains(aws, "X-Amz-Security-Token=<redacted>",
+                         "AWS session-token redaction should retain the parameter name");
+        require_contains(aws, "X-Amz-Algorithm=AWS4-HMAC-SHA256",
+                         "AWS redaction should preserve non-secret signing metadata");
       }
 
       {
@@ -599,6 +612,14 @@ RUN_TEST(
                 "third-party bracketed text must not replace a stable framework code");
         require_contains(third_party_error.message, "[runtime.element_failed]",
                          "third-party bracketed text should be decorated with the supplied code");
+
+        PullError undeclared_error;
+        error_util::set_pull_error(&undeclared_error, error_codes::kRuntimeElementFailed,
+                                   "[infra.dispatcher_unavailble] arbitrary exception");
+        require(undeclared_error.code == error_codes::kRuntimeElementFailed,
+                "undeclared framework-looking prefixes must not replace a canonical code");
+        require_contains(undeclared_error.message, "[runtime.element_failed]",
+                         "undeclared prefixes should be decorated with the supplied code");
       }
 
       {

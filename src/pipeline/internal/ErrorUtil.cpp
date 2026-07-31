@@ -20,15 +20,52 @@ std::optional<std::string> leading_error_code(std::string_view message) {
 }
 
 bool is_framework_error_code(std::string_view code) {
-  static constexpr std::string_view families[] = {
-      "misconfig.", "build.", "runtime.", "io.", "codec.", "resource.", "infra.", "internal.",
+  static constexpr std::string_view known_codes[] = {
+      error_codes::kPipelineShape,
+      error_codes::kCaps,
+      error_codes::kInputShape,
+      error_codes::kRuntimeAbiMismatch,
+      error_codes::kGraphElementName,
+      error_codes::kMediaCaps,
+      error_codes::kMediaFormat,
+      error_codes::kInputCapacity,
+      error_codes::kTensorDtypeMissing,
+      error_codes::kOptionOutOfRange,
+      error_codes::kParseLaunch,
+      error_codes::kPipelineSyntax,
+      error_codes::kPluginMissing,
+      error_codes::kPropertyInvalid,
+      error_codes::kRuntimePull,
+      error_codes::kRuntimeElementFailed,
+      error_codes::kOutputTimeout,
+      error_codes::kUnexpectedEos,
+      error_codes::kIoParse,
+      error_codes::kIoOpen,
+      error_codes::kFileNotFound,
+      error_codes::kPermissionDenied,
+      error_codes::kRtspConnectionFailed,
+      error_codes::kCameraNotFound,
+      error_codes::kModelNotFound,
+      error_codes::kSourceEnded,
+      error_codes::kInvalidH264Stream,
+      error_codes::kDecodeFailed,
+      error_codes::kEncodeFailed,
+      error_codes::kMemoryAllocationFailed,
+      error_codes::kDeviceMemoryExhausted,
+      error_codes::kOutputPoolExhausted,
+      error_codes::kBufferTooSmall,
+      error_codes::kDiskFull,
+      error_codes::kDispatcherUnavailable,
+      error_codes::kAcceleratorExecutionFailed,
+      error_codes::kInternalPluginFailure,
+      error_codes::kDispatcherUnavailableLegacy,
   };
-  for (const std::string_view family : families) {
-    if (code.rfind(family, 0) == 0) {
+  for (const std::string_view known : known_codes) {
+    if (code == known) {
       return true;
     }
   }
-  return code == error_codes::kDispatcherUnavailableLegacy;
+  return false;
 }
 
 std::optional<std::string> leading_framework_error_code(std::string_view message) {
