@@ -221,39 +221,6 @@ RUN_TEST(
                   "a refused self-overlapping extraction must leave the source intact");
         }
 
-        // An auxiliary .json a model pack happens to ship must not fail an otherwise valid load,
-        // while a malformed contract file still must.
-        {
-          const fs::path aux_dir =
-              fs::path(sima_test::make_temp_dir("model_archive_dir_aux")) / "pkg";
-          fs::copy(flat, aux_dir, fs::copy_options::recursive);
-          std::ofstream(aux_dir / "build_report.json") << "{ this is not json";
-
-          ModelArchiveLoaderOptions tolerant;
-          tolerant.reject_unsupported_file_types = false;
-          const ModelArchiveManifest aux =
-              ModelArchiveLoader::inspect_directory(aux_dir.string(), tolerant);
-          require(aux.has_pipeline_sequence,
-                  "an unparsable auxiliary JSON should not fail a valid model directory");
-
-          // Strict callers (security and unit defaults) still reject it.
-          require_model_archive_error(
-              [&]() { (void)ModelArchiveLoader::inspect_directory(aux_dir.string()); },
-              ModelArchiveErrorClass::SchemaError,
-              "strict options should still reject unparsable auxiliary JSON");
-
-          const fs::path bad_contract =
-              fs::path(sima_test::make_temp_dir("model_archive_dir_contract")) / "pkg";
-          fs::copy(flat, bad_contract, fs::copy_options::recursive);
-          std::ofstream(bad_contract / "pipeline_sequence.json") << "{ broken";
-          require_model_archive_error(
-              [&]() {
-                (void)ModelArchiveLoader::inspect_directory(bad_contract.string(), tolerant);
-              },
-              ModelArchiveErrorClass::SchemaError,
-              "a malformed contract file must fail even for tolerant callers");
-        }
-
         // A source entry that cannot be read must fail the extraction rather than produce a
         // truncated .elf or .so that later gets marked ready. Skipped when the effective user can
         // read regardless of mode, which is the case as root.

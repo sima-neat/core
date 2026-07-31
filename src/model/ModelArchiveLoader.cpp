@@ -1244,18 +1244,6 @@ void validate_version_json(const json& j) {
 // Relative extraction destination for an archive entry, under the package root's
 // {etc,lib,share}/<filename> layout. Entries are flattened to basename, so distinct
 // source paths can collide here (detected in validate_archive / extract_destination_for).
-// The files whose contents define the model contract. Everything else with a .json extension is
-// an auxiliary artifact as far as loading is concerned.
-bool is_model_contract_json(const std::string& base) {
-  if (base == "pipeline_sequence.json" || base == "manifest.json" || base == "mpk_manifest.json" ||
-      base == "mpk.json") {
-    return true;
-  }
-  constexpr std::string_view suffix = "_mpk.json";
-  return base.size() > suffix.size() &&
-         base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0;
-}
-
 fs::path extract_destination_rel(const TarEntry& entry) {
   const std::string ext = fs::path(entry.normalized_path).extension().string();
   const fs::path name = fs::path(entry.normalized_path).filename();
@@ -1352,23 +1340,11 @@ ArchiveContents validate_entries(ModelArchiveManifest seed, std::vector<TarEntry
   for (const auto& entry : out.entries) {
     if (entry.entry_class != EntryClass::Json)
       continue;
-    const std::string base = fs::path(entry.normalized_path).filename().string();
-    const bool contract_json = is_model_contract_json(base);
     const std::vector<std::uint8_t> bytes = read_entry_bytes(entry);
 
-    json parsed;
-    try {
-      parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
-    } catch (const ModelArchiveError&) {
-      // A contract file must parse. Anything else is an auxiliary artifact a model pack happens to
-      // ship (build reports and the like); callers that already tolerate auxiliary file types
-      // tolerate unparsable auxiliary JSON too, rather than failing an otherwise valid model.
-      if (contract_json || opt.reject_unsupported_file_types) {
-        throw;
-      }
-      continue;
-    }
+    json parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
 
+    const std::string base = fs::path(entry.normalized_path).filename().string();
     if (base == "pipeline_sequence.json") {
       try {
         validate_pipeline_sequence_json(parsed);
