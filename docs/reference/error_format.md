@@ -56,4 +56,9 @@ detail='caps_parse_failed=true'
 
 - `hint` is intended to be human‑actionable.
 - `detail` captures machine‑oriented context for debugging.
-- `NeatError::what()` includes both the GStreamer message and the debug string.
+- By default, `NeatError::what()` contains the normalized error code, user-facing
+  context, corrective actions, and diagnostic ID. It omits the raw GStreamer
+  message and debug string.
+- Enabling GStreamer debug verbosity appends redacted technical details to
+  `NeatError::what()` and `GraphReport.repro_note`. `NeatError::report()` remains
+  the structured interface for diagnostics.

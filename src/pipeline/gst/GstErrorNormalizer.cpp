@@ -134,15 +134,16 @@ std::string truncate(std::string value, std::size_t max_bytes = 4096) {
 }
 
 bool sensitive_detail_name(std::string_view name) {
-  const std::string lower = lower_copy(std::string(name));
-  if (lower == "key" || lower == "sig")
+  std::string normalized = lower_copy(std::string(name));
+  std::replace(normalized.begin(), normalized.end(), '_', '-');
+  if (normalized == "key" || normalized == "sig")
     return true;
   static constexpr std::string_view markers[] = {
       "password",      "passwd",  "token",  "secret",     "signature",   "credential",
       "authorization", "api-key", "apikey", "access-key", "private-key",
   };
   for (std::string_view marker : markers) {
-    if (lower.find(marker) != std::string::npos)
+    if (normalized.find(marker) != std::string::npos)
       return true;
   }
   return false;
