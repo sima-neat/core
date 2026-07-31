@@ -143,6 +143,18 @@ RUN_TEST(
       require(read_file(output / "etc" / "0_process_mla.json") == rewritten,
               "a refused extract must leave the existing output untouched");
 
+      const fs::path destination_staged_output = work / "destination_staged";
+      {
+        sima_test::ScopedEnvVar tmpdir("TMPDIR", (work / "missing_tmpdir").string());
+        require(run_cli({"extract", fixture.tar_path, "--output",
+                         destination_staged_output.string()}) == 0,
+                "extract should stage beside --output without requiring TMPDIR");
+      }
+      require(fs::is_directory(destination_staged_output / "share"),
+              "destination-staged extract should publish a complete package");
+      require(!has_staging_residue(work),
+              "destination-staged extract left a staging directory behind");
+
       const auto malformed = sima_test::make_malformed_model_archive_fixture("cli_malformed");
       const fs::path failed_output = work / "failed";
       require(run_cli({"extract", malformed.tar_path, "--output", failed_output.string()}) != 0,

@@ -771,15 +771,15 @@ install_host_model_archive_helper() {
   fi
 
   local -a helpers=()
-  mapfile -t helpers < <(find . -maxdepth 1 -type f -name 'neat-model-archive-*-linux-amd64' | sort)
-  if [[ "${#helpers[@]}" -eq 0 ]]; then
-    log "No amd64 model archive helper in this bundle; neat model is unavailable in this SDK."
-    return 0
+  append_matching_files helpers "." 'neat-model-archive-*-linux-amd64'
+  if [[ "${#helpers[@]}" -ne 1 ]]; then
+    echo "Expected exactly one amd64 model archive helper in ${NEAT_INSTALL_MANIFEST}; found ${#helpers[@]}." >&2
+    exit 1
   fi
 
   local dest_dir="/usr/local/lib/sima-neat"
   run_sudo mkdir -p "${dest_dir}"
-  run_sudo install -m 0755 "${helpers[-1]}" "${dest_dir}/neat-model-archive"
+  run_sudo install -m 0755 "${helpers[0]}" "${dest_dir}/neat-model-archive"
   log "Installed host-native model archive helper ${dest_dir}/neat-model-archive"
 }
 
