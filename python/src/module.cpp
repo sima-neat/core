@@ -4675,8 +4675,10 @@ NB_MODULE(_pyneat_core, m) {
       .def("__repr__", &simaai::neat::ResolvedPreprocessPlan::to_debug_string);
 
   nb::class_<simaai::neat::Model>(m, "Model")
-      .def(nb::init<const std::string&>(), "model_path"_a)
-      .def(nb::init<const std::string&, const simaai::neat::Model::Options&>(), "model_path"_a,
+      // std::filesystem::path, not std::string: the caster routes through PyOS_FSPath, so str and
+      // os.PathLike both work. Same as the GenAI constructors above.
+      .def(nb::init<std::filesystem::path>(), "model_path"_a)
+      .def(nb::init<std::filesystem::path, const simaai::neat::Model::Options&>(), "model_path"_a,
            "options"_a)
       .def("preprocess", &simaai::neat::Model::preprocess)
       .def("inference", &simaai::neat::Model::inference)
