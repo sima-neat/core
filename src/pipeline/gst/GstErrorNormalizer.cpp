@@ -58,9 +58,24 @@ std::string value_to_string(const GValue* value) {
 }
 
 std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line_value) {
-  while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) &&
-         value[begin] != '\r' && value[begin] != '\n') {
-    ++begin;
+  const auto skip_inline_space = [&]() {
+    while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) &&
+           value[begin] != '\r' && value[begin] != '\n') {
+      ++begin;
+    }
+  };
+  skip_inline_space();
+  static constexpr std::string_view string_annotations[] = {
+      "(string)",
+      "(gchararray)",
+  };
+  for (const std::string_view annotation : string_annotations) {
+    if (begin + annotation.size() <= value.size() &&
+        lower_copy(value.substr(begin, annotation.size())) == annotation) {
+      begin += annotation.size();
+      skip_inline_space();
+      break;
+    }
   }
   if (begin >= value.size())
     return begin;
