@@ -175,6 +175,7 @@ struct RunCore {
   std::string last_error() const;
   std::optional<PullError> last_error_detail() const;
   std::string diagnostics_summary() const;
+  std::optional<PullError> wait_for_report_bearing_error(std::chrono::milliseconds timeout) const;
 
   ExecutionGraphRuntime& graph_execution();
   const ExecutionGraphRuntime& graph_execution() const;

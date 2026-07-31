@@ -202,7 +202,7 @@ public:
                           const GraphLinkOptions& options);
   void set_producer_count(std::size_t count) noexcept;
   void producer_done();
-  void start(DispatchFn dispatch, StopFn stop, ErrorFn error, CompleteFn complete);
+  void start(DispatchFn dispatch, StopFn stop, ErrorFn error, CompleteFn complete = {});
   void close();
   void join();
   Stats stats() const;

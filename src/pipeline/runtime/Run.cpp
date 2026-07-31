@@ -640,6 +640,19 @@ std::optional<PullError> runtime::RunCore::last_error_detail() const {
   return pipeline.stream.last_error_detail();
 }
 
+std::optional<PullError>
+runtime::RunCore::wait_for_report_bearing_error(std::chrono::milliseconds timeout) const {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::max(timeout, std::chrono::milliseconds::zero());
+  std::optional<PullError> detail = last_error_detail();
+  while ((!detail.has_value() || !detail->report.has_value()) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    detail = last_error_detail();
+  }
+  return detail;
+}
+
 std::string runtime::RunCore::diagnostics_summary() const {
   if (graph_execution_)
     return last_error();

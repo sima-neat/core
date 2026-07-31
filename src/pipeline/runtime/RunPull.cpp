@@ -70,6 +70,7 @@ bool attach_public_holder_loan_or_error(runtime::RunCore& core, Sample& sample,
 }
 
 constexpr auto kPullWaitPollQuantum = std::chrono::milliseconds(50);
+constexpr auto kPullErrorSettleTimeout = std::chrono::milliseconds(250);
 
 PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
                                               simaai::neat::graph::NodeId node_id, int timeout_ms,
@@ -470,6 +471,7 @@ bool runtime::RunCore::attach_public_output_loan(Sample& sample, std::string* er
 }
 
 PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
+  const auto pull_started_at = std::chrono::steady_clock::now();
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
     pipeline_internal::error_util::set_pull_error(err, code, message);
@@ -513,18 +515,32 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   }
   auto diag = st->pipeline.stream.diag_ctx();
   const auto handle_stream_error = [&](const std::string& msg) {
-    const std::optional<PullError> typed = st->last_error_detail();
-    if (typed.has_value()) {
+    std::optional<PullError> typed = st->last_error_detail();
+    if (typed.has_value() && !typed->report.has_value()) {
+      auto settle_timeout = kPullErrorSettleTimeout;
+      if (timeout_ms >= 0) {
+        const auto elapsed = std::chrono::steady_clock::now() - pull_started_at;
+        settle_timeout = std::min(settle_timeout,
+                                  std::max(std::chrono::milliseconds::zero(),
+                                           std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::milliseconds(timeout_ms) - elapsed)));
+      }
+      typed = st->wait_for_report_bearing_error(settle_timeout);
+    }
+    if (typed.has_value() && typed->report.has_value()) {
       if (err)
         *err = *typed;
       return PullStatus::Error;
     }
     GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
     std::string code = rep.error_code;
+    if (code.empty() && typed.has_value()) {
+      code = typed->code;
+    }
     if (code.empty()) {
       code = error_codes::kRuntimeElementFailed;
     }
-    std::string note = msg;
+    std::string note = typed.has_value() && !typed->message.empty() ? typed->message : msg;
     rep.error_code = code;
     rep.repro_note = note;
     pipeline_internal::error_util::set_pull_error(err, std::move(code), std::move(note),

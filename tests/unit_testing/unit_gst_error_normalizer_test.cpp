@@ -849,6 +849,33 @@ RUN_TEST(
       }
 
       {
+        auto direct = std::make_shared<runtime::RunCore>();
+        PullError placeholder;
+        error_util::set_pull_error(&placeholder, error_codes::kRuntimeElementFailed,
+                                   "InputStream::push: appsrc push failed");
+        direct->set_terminal_error(std::move(placeholder));
+
+        std::thread bus_error([direct]() {
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+          GraphReport report;
+          report.error_code = error_codes::kMediaCaps;
+          report.repro_note = "The input caps do not match the downstream stage.";
+          PullError typed;
+          error_util::set_pull_error(&typed, report.error_code, report.repro_note,
+                                     std::move(report));
+          direct->set_terminal_error(std::move(typed));
+        });
+        const std::optional<PullError> settled =
+            direct->wait_for_report_bearing_error(std::chrono::milliseconds(250));
+        bus_error.join();
+
+        require(settled.has_value() && settled->report.has_value(),
+                "a direct pull should wait for the report-bearing bus error");
+        require(settled->code == error_codes::kMediaCaps,
+                "a direct pull should retain the normalized bus error code");
+      }
+
+      {
         constexpr const char* kPipelineSecret = "pipeline-password";
         constexpr const char* kQuerySecret = "query-token";
         constexpr const char* kBusSecret = "bus-password";
