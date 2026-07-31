@@ -187,7 +187,9 @@ struct RunCore {
   void graph_request_stop(const NeatError& err);
   void graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
                                         std::string fallback_error);
+  void graph_source_pipeline_closed(PullError detail);
   std::optional<PullError> graph_last_error_detail() const;
+  std::optional<PullError> graph_close_detail() const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                    bool allow_startup_preflight = false);
   bool graph_dispatch_to_stage_group(std::size_t group_index, simaai::neat::graph::PortId port,
@@ -263,6 +265,7 @@ struct RunCore {
 
   std::string error;
   std::optional<PullError> terminal_error_detail;
+  std::optional<PullError> terminal_close_detail;
   std::string diag_sysinfo;
   std::unique_ptr<PowerMonitor> power_monitor;
   std::shared_ptr<void> graph_verbose_guard;

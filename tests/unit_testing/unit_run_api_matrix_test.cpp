@@ -143,6 +143,47 @@ RUN_TEST(
                          run_api_case("source_eos_message", "normal EOS needs clear context"));
       }
 
+      // Connected graphs execute a finite source in a child pipeline. Drain every source producer
+      // and preserve the same source-ended closure after all queued graph outputs are consumed.
+      {
+        Graph source_graph;
+        const auto source =
+            nodes::Custom("videotestsrc is-live=true num-buffers=3 pattern=black ! "
+                          "video/x-raw,format=RGB,width=64,height=48,framerate=30/1",
+                          InputRole::Source);
+        const auto output_a = nodes::Output("source_a", OutputOptions::EveryFrame(4));
+        const auto output_b = nodes::Output("source_b", OutputOptions::EveryFrame(4));
+        source_graph.connect(source, output_a);
+        source_graph.connect(source, output_b);
+        Run graph_run = source_graph.build();
+
+        const auto drain_named_source = [&](std::string_view name) {
+          Sample output;
+          PullError err;
+          std::size_t output_count = 0;
+          PullStatus status = PullStatus::Timeout;
+          for (int attempt = 0; attempt < 5; ++attempt) {
+            status = graph_run.pull(name, 1000, output, &err);
+            if (status != PullStatus::Ok) {
+              break;
+            }
+            ++output_count;
+          }
+          require(output_count > 0,
+                  run_api_case("graph_source_eos_output",
+                               std::string(name) + " should receive finite-source output"));
+          require(status == PullStatus::Closed,
+                  run_api_case("graph_source_eos_status",
+                               std::string(name) + " should close after queued output; status=" +
+                                   std::to_string(static_cast<int>(status)) + " code=" + err.code));
+          require(err.code == error_codes::kSourceEnded,
+                  run_api_case("graph_source_eos_code",
+                               std::string(name) + " should preserve source-ended"));
+        };
+        drain_named_source("source_a");
+        drain_named_source("source_b");
+      }
+
       // A push-backed pipeline that reaches EOS while its public input is still open must expose
       // the stable unexpected-EOS code. Do not infer this from input/output counts: valid
       // rate-changing pipelines may intentionally drop or duplicate buffers.

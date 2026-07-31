@@ -1660,16 +1660,29 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           pull_logs++;
         }
         const auto pull_start = std::chrono::steady_clock::now();
-        auto sample_opt = pipe.run_core
-                              ? pipe.run_core->pull_optional(core->graph_options.pull_timeout_ms)
-                              : std::optional<Sample>{};
+        Sample sample;
+        PullError pull_error;
+        const PullStatus pull_status =
+            pipe.run_core
+                ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error)
+                : PullStatus::Closed;
         pipe.transport.telemetry.pull_thread_pull_calls.fetch_add(1, std::memory_order_relaxed);
         atomic_add_max(pipe.transport.telemetry.pull_thread_pull_ns,
                        pipe.transport.telemetry.pull_thread_pull_max_ns,
                        elapsed_ns_since(pull_start));
-        if (!sample_opt.has_value()) {
+        if (pull_status != PullStatus::Ok) {
           pipe.transport.telemetry.pull_thread_pull_miss.fetch_add(1, std::memory_order_relaxed);
-          emit_diag("empty");
+          emit_diag(pull_status == PullStatus::Timeout ? "empty" : "closed");
+          if (pull_status == PullStatus::Error) {
+            core->graph_request_stop(std::move(pull_error));
+            return;
+          }
+          if (pull_status == PullStatus::Closed) {
+            if (pipe.seg.boundary.source_like && pull_error.code == error_codes::kSourceEnded) {
+              core->graph_source_pipeline_closed(std::move(pull_error));
+            }
+            return;
+          }
           if (simaai::neat::graph::graph_debug_enabled()) {
             const std::string err = pipe.run_core ? pipe.run_core->last_error() : std::string{};
             if (!err.empty()) {
@@ -1686,7 +1699,6 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
           continue;
         }
-        Sample sample = *sample_opt;
         last_output = std::chrono::steady_clock::now();
         emit_diag("sample");
         if (env_bool("SIMA_GRAPH_PRE_RESTORE_DEBUG", false)) {
@@ -1904,6 +1916,14 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
 
 void start_pipeline_threads(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
+  std::size_t source_pipeline_count = 0;
+  for (const auto& rt : execution.pipelines) {
+    if (rt && rt->seg.boundary.source_like && !rt->seg.boundary.direct_graph_source &&
+        rt->transport.has_output) {
+      ++source_pipeline_count;
+    }
+  }
+  execution.source_pipelines_remaining.store(source_pipeline_count, std::memory_order_release);
   for (std::size_t i = 0; i < execution.pipelines.size(); ++i) {
     auto& rt = *execution.pipelines[i];
     build_source_pipeline_if_needed(core, rt);

@@ -455,9 +455,48 @@ void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& p
   graph_request_stop(fallback_error.empty() ? "GraphRun: pipeline push failed" : fallback_error);
 }
 
+void RunCore::graph_source_pipeline_closed(PullError detail) {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& remaining = graph_execution_->source_pipelines_remaining;
+  std::size_t expected = remaining.load(std::memory_order_acquire);
+  while (expected != 0U &&
+         !remaining.compare_exchange_weak(expected, expected - 1U, std::memory_order_acq_rel,
+                                          std::memory_order_acquire)) {
+  }
+  if (expected == 0U || expected != 1U) {
+    return;
+  }
+
+  if (detail.code.empty()) {
+    detail.code = error_codes::kSourceEnded;
+  }
+  if (detail.message.empty()) {
+    detail.message = "Run::pull: input source reached end of stream";
+  }
+  detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
+  {
+    std::lock_guard<std::mutex> lock(error_mu);
+    terminal_close_detail = std::move(detail);
+  }
+  // Every source producer has drained its child output before reaching this point. Closing graph
+  // sinks preserves already queued samples while waking public pulls once those samples drain.
+  for (auto& sink : graph_execution_->sinks) {
+    if (sink.second) {
+      sink.second->close();
+    }
+  }
+}
+
 std::optional<PullError> RunCore::graph_last_error_detail() const {
   std::lock_guard<std::mutex> lock(error_mu);
   return terminal_error_detail;
+}
+
+std::optional<PullError> RunCore::graph_close_detail() const {
+  std::lock_guard<std::mutex> lock(error_mu);
+  return terminal_close_detail;
 }
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
