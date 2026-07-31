@@ -4972,8 +4972,41 @@ NB_MODULE(_pyneat_core, m) {
   m.attr("ERROR_PIPELINE_SHAPE") = simaai::neat::error_codes::kPipelineShape;
   m.attr("ERROR_CAPS") = simaai::neat::error_codes::kCaps;
   m.attr("ERROR_INPUT_SHAPE") = simaai::neat::error_codes::kInputShape;
+  m.attr("ERROR_RUNTIME_ABI_MISMATCH") = simaai::neat::error_codes::kRuntimeAbiMismatch;
+  m.attr("ERROR_GRAPH_ELEMENT_NAME") = simaai::neat::error_codes::kGraphElementName;
+  m.attr("ERROR_MEDIA_CAPS") = simaai::neat::error_codes::kMediaCaps;
+  m.attr("ERROR_MEDIA_FORMAT") = simaai::neat::error_codes::kMediaFormat;
+  m.attr("ERROR_INPUT_CAPACITY") = simaai::neat::error_codes::kInputCapacity;
+  m.attr("ERROR_TENSOR_DTYPE_MISSING") = simaai::neat::error_codes::kTensorDtypeMissing;
+  m.attr("ERROR_OPTION_OUT_OF_RANGE") = simaai::neat::error_codes::kOptionOutOfRange;
   m.attr("ERROR_PARSE_LAUNCH") = simaai::neat::error_codes::kParseLaunch;
+  m.attr("ERROR_PIPELINE_SYNTAX") = simaai::neat::error_codes::kPipelineSyntax;
+  m.attr("ERROR_PLUGIN_MISSING") = simaai::neat::error_codes::kPluginMissing;
+  m.attr("ERROR_PROPERTY_INVALID") = simaai::neat::error_codes::kPropertyInvalid;
   m.attr("ERROR_RUNTIME_PULL") = simaai::neat::error_codes::kRuntimePull;
+  m.attr("ERROR_RUNTIME_ELEMENT_FAILED") = simaai::neat::error_codes::kRuntimeElementFailed;
+  m.attr("ERROR_OUTPUT_TIMEOUT") = simaai::neat::error_codes::kOutputTimeout;
+  m.attr("ERROR_UNEXPECTED_EOS") = simaai::neat::error_codes::kUnexpectedEos;
   m.attr("ERROR_IO_PARSE") = simaai::neat::error_codes::kIoParse;
   m.attr("ERROR_IO_OPEN") = simaai::neat::error_codes::kIoOpen;
+  m.attr("ERROR_FILE_NOT_FOUND") = simaai::neat::error_codes::kFileNotFound;
+  m.attr("ERROR_PERMISSION_DENIED") = simaai::neat::error_codes::kPermissionDenied;
+  m.attr("ERROR_RTSP_CONNECTION_FAILED") = simaai::neat::error_codes::kRtspConnectionFailed;
+  m.attr("ERROR_CAMERA_NOT_FOUND") = simaai::neat::error_codes::kCameraNotFound;
+  m.attr("ERROR_MODEL_NOT_FOUND") = simaai::neat::error_codes::kModelNotFound;
+  m.attr("ERROR_SOURCE_ENDED") = simaai::neat::error_codes::kSourceEnded;
+  m.attr("ERROR_INVALID_H264_STREAM") = simaai::neat::error_codes::kInvalidH264Stream;
+  m.attr("ERROR_DECODE_FAILED") = simaai::neat::error_codes::kDecodeFailed;
+  m.attr("ERROR_ENCODE_FAILED") = simaai::neat::error_codes::kEncodeFailed;
+  m.attr("ERROR_MEMORY_ALLOCATION_FAILED") = simaai::neat::error_codes::kMemoryAllocationFailed;
+  m.attr("ERROR_DEVICE_MEMORY_EXHAUSTED") = simaai::neat::error_codes::kDeviceMemoryExhausted;
+  m.attr("ERROR_OUTPUT_POOL_EXHAUSTED") = simaai::neat::error_codes::kOutputPoolExhausted;
+  m.attr("ERROR_BUFFER_TOO_SMALL") = simaai::neat::error_codes::kBufferTooSmall;
+  m.attr("ERROR_DISK_FULL") = simaai::neat::error_codes::kDiskFull;
+  m.attr("ERROR_DISPATCHER_UNAVAILABLE") = simaai::neat::error_codes::kDispatcherUnavailable;
+  m.attr("ERROR_ACCELERATOR_EXECUTION_FAILED") =
+      simaai::neat::error_codes::kAcceleratorExecutionFailed;
+  m.attr("ERROR_DISPATCHER_UNAVAILABLE_LEGACY") =
+      simaai::neat::error_codes::kDispatcherUnavailableLegacy;
+  m.attr("ERROR_INTERNAL_PLUGIN_FAILURE") = simaai::neat::error_codes::kInternalPluginFailure;
 }

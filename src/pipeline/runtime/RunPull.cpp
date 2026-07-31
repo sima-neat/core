@@ -699,6 +699,32 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
     return handle_stream_error(late_err);
   }
 
+  const auto inputs_pushed = st->inputs_pushed.load(std::memory_order_relaxed);
+  const auto outputs_done = st->outputs_pulled.load(std::memory_order_relaxed) +
+                            st->outputs_dropped.load(std::memory_order_relaxed);
+  if (st->pipeline.supports_push && st->pipeline.stream.reached_eos() &&
+      outputs_done < inputs_pushed) {
+    GraphReport report = diag ? diag->snapshot_basic() : GraphReport{};
+    report.error_code = error_codes::kUnexpectedEos;
+    report.repro_note =
+        "The pipeline reached end of stream before producing all expected outputs.\n\n"
+        "Expected output: one output for each accepted input (" +
+        std::to_string(inputs_pushed) +
+        " accepted)\n"
+        "Received output: " +
+        std::to_string(outputs_done) +
+        " before end of stream\n\n"
+        "How to fix:\n"
+        "- Keep the input source and upstream pipeline open until every accepted input is "
+        "processed.\n"
+        "- Check that the configured input data is complete and valid.\n\n"
+        "Diagnostic ID: runtime.unexpected_eos";
+    pipeline_internal::error_util::set_pull_error(err, report.error_code, report.repro_note,
+                                                  std::move(report));
+    stop();
+    return PullStatus::Error;
+  }
+
   if (is_done) {
     set_terminal_error(error_codes::kRuntimePull, "Run::pull: stream closed");
     stop();

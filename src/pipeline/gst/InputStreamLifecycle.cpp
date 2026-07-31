@@ -87,6 +87,10 @@ bool InputStream::running() const {
   return state_ && state_->running.load();
 }
 
+bool InputStream::reached_eos() const {
+  return state_ && state_->eos_seen.load();
+}
+
 std::string InputStream::last_error() const {
   if (!state_)
     return {};
@@ -199,6 +203,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
   state_->callback = std::move(on_output);
   state_->stop_requested.store(false);
   state_->worker_done.store(false);
+  state_->eos_seen.store(false);
   state_->teardown_on_exit.store(false);
   state_->use_callbacks = inputstream_use_appsink_callbacks_enabled();
   state_->cb_eos.store(false);
@@ -282,6 +287,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             sink_eos = gst_app_sink_is_eos(GST_APP_SINK(st->appsink));
           }
           if (eos_seen || sink_eos) {
+            st->eos_seen.store(true);
             if (eos_debug_enabled()) {
               const char* pipeline_name =
                   st->pipeline ? gst_element_get_name(st->pipeline) : "<null>";

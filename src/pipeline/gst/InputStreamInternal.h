@@ -103,6 +103,7 @@ struct InputStream::State {
   std::atomic<bool> running{false};
   std::atomic<bool> stop_requested{false};
   std::atomic<bool> worker_done{true};
+  std::atomic<bool> eos_seen{false};
   std::atomic<bool> teardown_on_exit{false};
   bool use_callbacks = false;
   std::mutex cb_mu;

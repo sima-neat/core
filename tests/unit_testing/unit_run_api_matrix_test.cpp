@@ -1,6 +1,7 @@
 #ifndef SIMA_NEAT_INTERNAL
 #define SIMA_NEAT_INTERNAL 1
 #endif
+#include "nodes/common/Caps.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
@@ -49,6 +50,28 @@ simaai::neat::Run make_async_rgb_run_with_copy_input(const simaai::neat::Tensor&
   return graph.build(TensorList{seed}, run_opt);
 }
 
+simaai::neat::Run make_async_drop_run(const simaai::neat::Tensor& seed) {
+  using namespace simaai::neat;
+
+  Graph graph;
+  InputOptions src_opt;
+  src_opt.payload_type = PayloadType::Image;
+  src_opt.format = FormatTag::RGB;
+  src_opt.memory_policy = InputMemoryPolicy::SystemMemory;
+  src_opt.max_width = 96;
+  src_opt.max_height = 96;
+  src_opt.max_depth = 3;
+  graph.add(nodes::Input(src_opt));
+  // Graph::build() sends one preflight sample. Let that sample through, then force EOS when the
+  // first runtime input reaches the stage.
+  graph.add(nodes::Custom("identity eos-after=2"));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(8)));
+
+  RunOptions run_opt;
+  run_opt.advanced.copy_input = true;
+  return graph.build(TensorList{seed}, run_opt);
+}
+
 } // namespace
 
 RUN_TEST(
@@ -84,6 +107,27 @@ RUN_TEST(
         require(closed_tensors.empty(),
                 run_api_case("closed_pull_tensors",
                              "Run::pull_tensors should return empty on closed run"));
+      }
+
+      // A push-backed pipeline that reaches EOS with accepted work still outstanding must
+      // expose the stable unexpected-EOS code rather than a generic closed-stream result.
+      {
+        Run eos_run = make_async_drop_run(seed);
+        require(eos_run.push(TensorList{seed}),
+                run_api_case("unexpected_eos_push", "test input should be accepted"));
+        eos_run.close_input();
+
+        Sample tmp;
+        PullError err;
+        const PullStatus status = eos_run.pull(1000, tmp, &err);
+        require(status == PullStatus::Error,
+                run_api_case("unexpected_eos_status", "premature EOS should be an error"));
+        require(err.code == error_codes::kUnexpectedEos,
+                run_api_case("unexpected_eos_code", "premature EOS code mismatch"));
+        require(err.report.has_value() && err.report->error_code == error_codes::kUnexpectedEos,
+                run_api_case("unexpected_eos_report", "premature EOS report code mismatch"));
+        require_contains(err.message, "How to fix:",
+                         run_api_case("unexpected_eos_action", "premature EOS needs an action"));
       }
 
       // Active async matrix.

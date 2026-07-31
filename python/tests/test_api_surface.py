@@ -1378,8 +1378,48 @@ def test_output_stage_api_parity_guards_supported_call_surface():
 
 
 def test_error_code_constants_present():
-  assert isinstance(pyneat.ERROR_PIPELINE_SHAPE, str)
-  assert isinstance(pyneat.ERROR_RUNTIME_PULL, str)
+  expected = {
+    "ERROR_PIPELINE_SHAPE": "misconfig.pipeline_shape",
+    "ERROR_CAPS": "misconfig.caps",
+    "ERROR_INPUT_SHAPE": "misconfig.input_shape",
+    "ERROR_RUNTIME_ABI_MISMATCH": "misconfig.runtime_abi_mismatch",
+    "ERROR_GRAPH_ELEMENT_NAME": "misconfig.graph_element_name",
+    "ERROR_MEDIA_CAPS": "misconfig.media_caps",
+    "ERROR_MEDIA_FORMAT": "misconfig.media_format",
+    "ERROR_INPUT_CAPACITY": "misconfig.input_capacity",
+    "ERROR_TENSOR_DTYPE_MISSING": "misconfig.tensor_dtype_missing",
+    "ERROR_OPTION_OUT_OF_RANGE": "misconfig.option_out_of_range",
+    "ERROR_PARSE_LAUNCH": "build.parse_launch",
+    "ERROR_PIPELINE_SYNTAX": "build.pipeline_syntax",
+    "ERROR_PLUGIN_MISSING": "build.plugin_missing",
+    "ERROR_PROPERTY_INVALID": "build.property_invalid",
+    "ERROR_RUNTIME_PULL": "runtime.pull",
+    "ERROR_RUNTIME_ELEMENT_FAILED": "runtime.element_failed",
+    "ERROR_OUTPUT_TIMEOUT": "runtime.output_timeout",
+    "ERROR_UNEXPECTED_EOS": "runtime.unexpected_eos",
+    "ERROR_IO_PARSE": "io.parse",
+    "ERROR_IO_OPEN": "io.open",
+    "ERROR_FILE_NOT_FOUND": "io.file_not_found",
+    "ERROR_PERMISSION_DENIED": "io.permission_denied",
+    "ERROR_RTSP_CONNECTION_FAILED": "io.rtsp_connection_failed",
+    "ERROR_CAMERA_NOT_FOUND": "io.camera_not_found",
+    "ERROR_MODEL_NOT_FOUND": "io.model_not_found",
+    "ERROR_SOURCE_ENDED": "io.source_ended",
+    "ERROR_INVALID_H264_STREAM": "codec.invalid_h264_stream",
+    "ERROR_DECODE_FAILED": "codec.decode_failed",
+    "ERROR_ENCODE_FAILED": "codec.encode_failed",
+    "ERROR_MEMORY_ALLOCATION_FAILED": "resource.memory_allocation_failed",
+    "ERROR_DEVICE_MEMORY_EXHAUSTED": "resource.device_memory_exhausted",
+    "ERROR_OUTPUT_POOL_EXHAUSTED": "resource.output_pool_exhausted",
+    "ERROR_BUFFER_TOO_SMALL": "resource.buffer_too_small",
+    "ERROR_DISK_FULL": "resource.disk_full",
+    "ERROR_DISPATCHER_UNAVAILABLE": "infra.dispatcher_unavailable",
+    "ERROR_ACCELERATOR_EXECUTION_FAILED": "infra.accelerator_execution_failed",
+    "ERROR_DISPATCHER_UNAVAILABLE_LEGACY": "DispatcherUnavailable",
+    "ERROR_INTERNAL_PLUGIN_FAILURE": "internal.plugin_failure",
+  }
+  for name, value in expected.items():
+    assert getattr(pyneat, name) == value
 
 
 def test_memory_and_image_type_aliases_present():
