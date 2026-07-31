@@ -542,19 +542,29 @@ RUN_TEST(
       }
 
       {
-        InputStream::State state;
-        set_stream_error(state, "InputStream::push: appsrc push failed");
+        auto state = std::make_shared<InputStream::State>();
+        set_stream_error(*state, "InputStream::push: appsrc push failed");
+
+        bool placeholder_had_report = false;
+        try {
+          throw_push_failed_with_last_error("InputStream::push", state);
+        } catch (const NeatError&) {
+          placeholder_had_report = true;
+        } catch (const std::runtime_error&) {
+        }
+        require(!placeholder_had_report,
+                "a reportless push placeholder must remain upgradeable by a later bus report");
 
         GraphReport report;
         report.error_code = error_codes::kMediaCaps;
         report.repro_note = "The input caps do not match the downstream stage.";
-        set_stream_error(state, report.error_code, report.repro_note, report);
+        set_stream_error(*state, report.error_code, report.repro_note, report);
 
-        require(state.terminal_error.has_value() && state.terminal_error->report.has_value(),
+        require(state->terminal_error.has_value() && state->terminal_error->report.has_value(),
                 "a typed stream error should replace an earlier reportless push failure");
-        require(state.terminal_error->code == error_codes::kMediaCaps,
+        require(state->terminal_error->code == error_codes::kMediaCaps,
                 "a typed stream upgrade should retain the specific error code");
-        require(state.terminal_error->report->error_code == error_codes::kMediaCaps,
+        require(state->terminal_error->report->error_code == error_codes::kMediaCaps,
                 "a typed stream upgrade should retain the GraphReport");
       }
 

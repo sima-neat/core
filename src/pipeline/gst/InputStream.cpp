@@ -259,12 +259,17 @@ std::string format_push_failure_error(const InputStream::State& st, const char* 
     terminal_error = st->terminal_error;
   }
   if (terminal_error.has_value()) {
-    GraphReport report = terminal_error->report.value_or(GraphReport{});
-    if (report.error_code.empty())
-      report.error_code = terminal_error->code;
-    if (report.repro_note.empty())
-      report.repro_note = terminal_error->message;
-    throw NeatError(terminal_error->message, std::move(report));
+    if (terminal_error->report.has_value()) {
+      GraphReport report = std::move(*terminal_error->report);
+      if (report.error_code.empty())
+        report.error_code = terminal_error->code;
+      if (report.repro_note.empty())
+        report.repro_note = terminal_error->message;
+      throw NeatError(terminal_error->message, std::move(report));
+    }
+    // Keep a push placeholder reportless. The output worker may shortly observe the
+    // underlying bus error and replace it with a specific, report-bearing diagnostic.
+    throw std::runtime_error(terminal_error->message);
   }
 
   std::ostringstream oss;
@@ -278,11 +283,8 @@ std::string format_push_failure_error(const InputStream::State& st, const char* 
       oss << ": appsrc rejected buffer";
     }
   }
-  GraphReport report =
-      pipeline_internal::error_util::make_report(error_codes::kRuntimeElementFailed, oss.str());
-  throw NeatError(
-      pipeline_internal::error_util::decorate_error(report.error_code, report.repro_note),
-      std::move(report));
+  throw std::runtime_error(
+      pipeline_internal::error_util::decorate_error(error_codes::kRuntimeElementFailed, oss.str()));
 }
 
 void log_push_refcount(const char* where, GstBuffer* buffer) {
