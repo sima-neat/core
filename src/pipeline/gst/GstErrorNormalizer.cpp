@@ -86,6 +86,41 @@ std::string redact_uri_credentials(std::string value) {
       pos = begin + std::string("<redacted>").size();
     }
   }
+
+  static constexpr std::string_view header_secrets[] = {
+      "authorization", "proxy-authorization", "password", "passwd",  "token",
+      "secret",        "signature",           "sig",      "api-key", "apikey",
+  };
+  for (std::string_view marker : header_secrets) {
+    std::size_t pos = 0;
+    while ((pos = lower_copy(value).find(marker, pos)) != std::string::npos) {
+      if (pos > 0 && (std::isalnum(static_cast<unsigned char>(value[pos - 1])) ||
+                      value[pos - 1] == '_' || value[pos - 1] == '-')) {
+        pos += marker.size();
+        continue;
+      }
+      std::size_t separator = pos + marker.size();
+      while (separator < value.size() &&
+             std::isspace(static_cast<unsigned char>(value[separator])) &&
+             value[separator] != '\r' && value[separator] != '\n') {
+        ++separator;
+      }
+      if (separator >= value.size() || (value[separator] != ':' && value[separator] != '=')) {
+        pos += marker.size();
+        continue;
+      }
+      std::size_t begin = separator + 1;
+      while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) &&
+             value[begin] != '\r' && value[begin] != '\n') {
+        ++begin;
+      }
+      const bool authorization = marker.find("authorization") != std::string_view::npos;
+      const std::size_t end = authorization ? value.find_first_of("\r\n", begin)
+                                            : value.find_first_of("&,; \t\r\n'\"", begin);
+      value.replace(begin, (end == std::string::npos ? value.size() : end) - begin, "<redacted>");
+      pos = begin + std::string("<redacted>").size();
+    }
+  }
   return value;
 }
 
@@ -858,9 +893,10 @@ std::string render_diagnostic_body(const NormalizedDiagnostic& diagnostic,
 }
 
 int diagnostic_priority(const NormalizedDiagnostic& diagnostic) {
-  const auto structured_id = diagnostic.raw.details.find("neat-diagnostic-id");
-  if (structured_id != diagnostic.raw.details.end() && !structured_id->second.empty())
+  if (find_detail(diagnostic.raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"})
+          .has_value()) {
     return 200;
+  }
 
   if (diagnostic.error_code.rfind("resource.", 0) == 0 ||
       diagnostic.error_code.rfind("io.", 0) == 0 || diagnostic.error_code.rfind("codec.", 0) == 0 ||

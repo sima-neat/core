@@ -211,6 +211,16 @@ RUN_TEST(
 
       {
         RawGstError raw =
+            raw_error("neatprocesscvu", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
+                      "The input tensor does not match the expected input contract.");
+        raw.details["diagnostic_id"] = "neatprocesscvu.input_contract_mismatch";
+        const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
+        require(diagnostic_priority(diagnostic) == 200,
+                "accepted structured diagnostic-id aliases should receive root-cause priority");
+      }
+
+      {
+        RawGstError raw =
             raw_error("otherplugin", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                       "Direct graph input 'input_tensor' segment 'input_tensor' is too small: "
                       "required=602112 actual=150528");
@@ -231,7 +241,9 @@ RUN_TEST(
             "password", G_TYPE_STRING, "hunter2", "auth-token", G_TYPE_STRING, "do-not-store",
             "sig", G_TYPE_STRING, "signed-secret", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
-            GST_OBJECT(source), error, "debug path token=do-not-leak", details);
+            GST_OBJECT(source), error,
+            "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2",
+            details);
         g_error_free(error);
 
         const RawGstError raw = parse_gst_error_message(message);
@@ -243,6 +255,9 @@ RUN_TEST(
                     raw.details.at("sig") == "<redacted>",
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
+        require(raw.debug.find("abc123") == std::string::npos &&
+                    raw.debug.find("hunter2") == std::string::npos,
+                "raw parser should redact header-style and colon-separated credentials");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);
 
