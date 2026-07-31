@@ -163,60 +163,56 @@ public:
     const auto t0 =
         timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::unique_lock<std::mutex> lock(mu_);
-    if (closed_) {
-      push_closed_count_.fetch_add(1, std::memory_order_relaxed);
-      return false;
-    }
-    if (cancel_requested()) {
-      record_push_wait(t0, timing);
-      return false;
-    }
-    if (capacity_ > 0) {
-      const auto poll =
-          std::chrono::milliseconds(cancellation_poll_ms > 0 ? cancellation_poll_ms : 1);
-      if (timeout_ms < 0) {
-        while (!closed_ && !has_capacity_locked()) {
-          if (cancel_requested()) {
-            record_push_wait(t0, timing);
-            return false;
-          }
-          cv_not_full_.wait_for(lock, poll, [&] { return closed_ || has_capacity_locked(); });
-        }
-      } else {
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-        while (!closed_ && !has_capacity_locked()) {
-          if (cancel_requested()) {
-            record_push_wait(t0, timing);
-            return false;
-          }
-          const auto now = std::chrono::steady_clock::now();
-          if (now >= deadline) {
-            record_push_wait(t0, timing);
-            push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
-            return false;
-          }
-          auto wake_at = now + poll;
-          if (wake_at > deadline) {
-            wake_at = deadline;
-          }
-          cv_not_full_.wait_until(lock, wake_at, [&] { return closed_ || has_capacity_locked(); });
-        }
+    const auto poll =
+        std::chrono::milliseconds(cancellation_poll_ms > 0 ? cancellation_poll_ms : 1);
+    const auto deadline =
+        timeout_ms < 0 ? std::chrono::steady_clock::time_point::max()
+                       : std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    const auto cancellation_requested_without_queue_lock = [&]() {
+      lock.unlock();
+      bool requested = false;
+      try {
+        requested = static_cast<bool>(cancel_requested());
+      } catch (...) {
+        lock.lock();
+        throw;
       }
+      lock.lock();
+      return requested;
+    };
+
+    for (;;) {
       if (closed_) {
         record_push_wait(t0, timing);
         push_closed_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
-      if (cancel_requested()) {
+      if (cancellation_requested_without_queue_lock()) {
         record_push_wait(t0, timing);
         return false;
       }
-      if (!has_capacity_locked()) {
+      // The predicate may inspect or mutate this queue while the mutex is released.
+      // Recheck all queue state after reacquiring it rather than assuming the prior
+      // capacity/closed observations still hold.
+      if (closed_) {
+        record_push_wait(t0, timing);
+        push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
+      if (has_capacity_locked()) {
+        break;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
         record_push_wait(t0, timing);
         push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
+      auto wake_at = now + poll;
+      if (wake_at > deadline) {
+        wake_at = deadline;
+      }
+      cv_not_full_.wait_until(lock, wake_at, [&] { return closed_ || has_capacity_locked(); });
     }
     record_push_wait(t0, timing);
     queue_.push_back(QueueEntry{std::move(item), timing ? std::chrono::steady_clock::now()
