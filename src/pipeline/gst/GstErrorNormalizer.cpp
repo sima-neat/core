@@ -343,6 +343,30 @@ NormalizedDiagnostic resource_not_found(RawGstError raw) {
   return out;
 }
 
+bool remote_source(const RawGstError& raw) {
+  if (raw.factory_name == "rtspsrc" || contains_ci(raw.factory_name, "http") ||
+      contains_ci(raw.factory_name, "soup")) {
+    return true;
+  }
+  const std::string source =
+      find_detail(raw, {"source-identity", "source_identity", "location"}).value_or("");
+  return contains_ci(source, "rtsp://") || contains_ci(source, "http://") ||
+         contains_ci(source, "https://");
+}
+
+NormalizedDiagnostic authentication_failed(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kIoOpen, "gstreamer.authentication_failed",
+           "The remote source rejected the supplied credentials.");
+  add_fact(out, "Source",
+           find_detail(out.raw, {"source-identity", "source_identity", "location"}).value_or(""));
+  out.actions = {
+      "Verify the username, password, token, or other credentials configured for the source.",
+      "Confirm that the account is allowed to access the requested stream or resource.",
+  };
+  return out;
+}
+
 NormalizedDiagnostic rtsp_connection_failed(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kRtspConnectionFailed, "gstreamer.rtsp_connection_failed",
@@ -659,6 +683,10 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if (raw.factory_name == "filesrc" && raw.domain_name == "gst-resource-error-quark" &&
       raw.code == GST_RESOURCE_ERROR_NOT_FOUND) {
     return file_not_found(std::move(raw));
+  }
+  if (raw.domain_name == "gst-resource-error-quark" &&
+      raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED && remote_source(raw)) {
+    return authentication_failed(std::move(raw));
   }
   if (raw.factory_name == "rtspsrc" &&
       (contains_ci(text, "failed to connect") || contains_ci(text, "could not open resource"))) {

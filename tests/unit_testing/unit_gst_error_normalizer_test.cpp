@@ -119,6 +119,21 @@ RUN_TEST(
       }
 
       {
+        RawGstError raw = raw_error("souphttpsrc", "gst-resource-error-quark",
+                                    GST_RESOURCE_ERROR_NOT_AUTHORIZED, "Unauthorized");
+        raw.details["location"] = "https://example.test/private-stream";
+        const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
+        require_code(diagnostic, error_codes::kIoOpen);
+        require(diagnostic.diagnostic_id == "gstreamer.authentication_failed",
+                "remote authorization failures should use an authentication diagnostic");
+        const std::string text = render_diagnostic_body(diagnostic, false);
+        require_contains(text, "Verify the username, password, token",
+                         "remote authorization failures should provide credential guidance");
+        require(text.find("application user") == std::string::npos,
+                "remote authorization failures must not recommend local file permissions");
+      }
+
+      {
         RawGstError raw =
             raw_error("neatargmax", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                       "invalid option field=axis reason=out_of_range option_value=5 rank=4");
