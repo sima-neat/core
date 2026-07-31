@@ -224,39 +224,63 @@ std::string redact_uri_credentials(std::string value) {
       "proxy-authorization",
       "proxy_authorization",
       "authorization",
+      "proxyauthorization",
       "credentials",
       "credential",
       "access-token",
       "access_token",
+      "accesstoken",
       "refresh-token",
       "refresh_token",
+      "refreshtoken",
       "auth-token",
       "auth_token",
+      "authtoken",
       "id-token",
       "id_token",
+      "idtoken",
+      "api-token",
+      "api_token",
+      "apitoken",
+      "oauth-token",
+      "oauth_token",
+      "oauthtoken",
+      "csrf-token",
+      "csrf_token",
+      "csrftoken",
       "x-amz-security-token",
       "x_amz_security_token",
+      "xamzsecuritytoken",
       "x-amz-signature",
       "x_amz_signature",
+      "xamzsignature",
       "x-goog-signature",
       "x_goog_signature",
+      "xgoogsignature",
       "client-secret",
       "client_secret",
+      "clientsecret",
       "api-secret",
       "api_secret",
+      "apisecret",
       "access-key",
       "access_key",
+      "accesskey",
       "private-key",
       "private_key",
+      "privatekey",
       "api-key",
       "api_key",
       "apikey",
       "user-pw",
       "user_pw",
+      "userpw",
       "set-cookie",
       "set_cookie",
+      "setcookie",
       "session-cookie",
       "session_cookie",
+      "sessioncookie",
       "cookie",
       "session-id",
       "session_id",
@@ -338,29 +362,85 @@ std::string truncate(std::string value, std::size_t max_bytes = 4096) {
 }
 
 bool sensitive_detail_name(std::string_view name) {
-  std::string normalized = lower_copy(std::string(name));
-  std::replace(normalized.begin(), normalized.end(), '_', '-');
-  if (normalized == "key" || normalized == "sig" || normalized == "session" ||
-      normalized == "sessionid" || normalized == "jwt" || normalized == "bearer" ||
-      normalized == "pass")
-    return true;
+  std::string normalized;
+  normalized.reserve(name.size() + 4U);
+  for (std::size_t i = 0; i < name.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(name[i]);
+    if (c == '_') {
+      normalized.push_back('-');
+      continue;
+    }
+    if (std::isupper(c) && i > 0) {
+      const unsigned char previous = static_cast<unsigned char>(name[i - 1]);
+      if (std::islower(previous) || std::isdigit(previous)) {
+        normalized.push_back('-');
+      }
+    }
+    normalized.push_back(static_cast<char>(std::tolower(c)));
+  }
+
+  static constexpr std::string_view exact_names[] = {
+      "key", "sig", "signature", "session", "jwt", "bearer", "pass", "pw", "pwd", "token",
+  };
+  for (const std::string_view exact_name : exact_names) {
+    if (normalized == exact_name) {
+      return true;
+    }
+  }
+
+  static constexpr std::string_view sensitive_aliases[] = {
+      "session-id",
+      "sessionid",
+      "proxy-authorization",
+      "access-token",
+      "refresh-token",
+      "auth-token",
+      "id-token",
+      "api-token",
+      "oauth-token",
+      "csrf-token",
+      "x-amz-security-token",
+      "x-amz-signature",
+      "x-goog-signature",
+      "client-secret",
+      "api-secret",
+      "access-key",
+      "private-key",
+      "api-key",
+      "apikey",
+      "user-pw",
+      "set-cookie",
+      "session-cookie",
+  };
+  for (const std::string_view alias : sensitive_aliases) {
+    std::size_t pos = 0;
+    while ((pos = normalized.find(alias, pos)) != std::string::npos) {
+      const bool begins_at_boundary = pos == 0 || normalized[pos - 1U] == '-';
+      const std::size_t end = pos + alias.size();
+      const bool ends_at_boundary = end == normalized.size() || normalized[end] == '-';
+      if (begins_at_boundary && ends_at_boundary) {
+        return true;
+      }
+      pos = end;
+    }
+  }
+
+  static constexpr std::string_view sensitive_tokens[] = {
+      "passphrase",  "password",      "passwd", "secret", "credential",
+      "credentials", "authorization", "cookie", "pw",     "pwd",
+  };
   for (std::size_t begin = 0; begin <= normalized.size();) {
     const std::size_t end = normalized.find('-', begin);
     const std::string_view token(normalized.data() + begin,
                                  (end == std::string::npos ? normalized.size() : end) - begin);
-    if (token == "pw" || token == "pwd")
-      return true;
+    for (const std::string_view sensitive_token : sensitive_tokens) {
+      if (token == sensitive_token) {
+        return true;
+      }
+    }
     if (end == std::string::npos)
       break;
     begin = end + 1;
-  }
-  static constexpr std::string_view markers[] = {
-      "passphrase",    "password", "passwd", "token",      "secret",      "signature", "credential",
-      "authorization", "api-key",  "apikey", "access-key", "private-key", "cookie",    "session-id",
-  };
-  for (std::string_view marker : markers) {
-    if (normalized.find(marker) != std::string::npos)
-      return true;
   }
   return false;
 }

@@ -505,7 +505,12 @@ RUN_TEST(
             "private-secret", "user-pw", G_TYPE_STRING, "rtsp-secret", "user_pw", G_TYPE_STRING,
             "rtsp-secret-underscore", "set-cookie", G_TYPE_STRING, "sessionid=structured-secret",
             "passphrase", G_TYPE_STRING, "structured-srt-secret", "pass", G_TYPE_STRING,
-            "structured-pass-secret", "compass", G_TYPE_STRING, "north", nullptr);
+            "structured-pass-secret", "accessToken", G_TYPE_STRING, "camel-access-secret",
+            "refreshToken", G_TYPE_STRING, "camel-refresh-secret", "authToken", G_TYPE_STRING,
+            "camel-auth-secret", "clientSecret", G_TYPE_STRING, "camel-client-secret",
+            "neat_auth_token", G_TYPE_STRING, "prefixed-auth-secret", "dtype_token", G_TYPE_STRING,
+            "UInt8", "model_signature", G_TYPE_STRING, "sha256:model-metadata", "aws_access_key_id",
+            G_TYPE_STRING, "structured-aws-key", "compass", G_TYPE_STRING, "north", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error,
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
@@ -514,6 +519,10 @@ RUN_TEST(
             "json={\"password\":\"json-password\",\"access_token\":\"json-token\"} "
             "escaped={\\\"password\\\":\\\"escaped-json-password\\\","
             "\\\"access_token\\\":\\\"escaped-json-token\\\"} "
+            "camel={\"accessToken\":\"camel-json-access\","
+            "\"refreshToken\":\"camel-json-refresh\","
+            "\"authToken\":\"camel-json-auth\",\"clientSecret\":\"camel-json-client\"} "
+            "metadata={\"dtype_token\":\"UInt8\",\"model_signature\":\"sha256:metadata\"} "
             "Cookie: sessionid=raw-cookie-secret\n{\"session_cookie\":\"json-cookie-secret\"} "
             "password=(string)\"typed password secret\" "
             "credential='raw credential secret' "
@@ -536,7 +545,16 @@ RUN_TEST(
                     raw.details.at("user_pw") == "<redacted>" &&
                     raw.details.at("set-cookie") == "<redacted>" &&
                     raw.details.at("passphrase") == "<redacted>" &&
-                    raw.details.at("pass") == "<redacted>" && raw.details.at("compass") == "north",
+                    raw.details.at("pass") == "<redacted>" &&
+                    raw.details.at("accessToken") == "<redacted>" &&
+                    raw.details.at("refreshToken") == "<redacted>" &&
+                    raw.details.at("authToken") == "<redacted>" &&
+                    raw.details.at("clientSecret") == "<redacted>" &&
+                    raw.details.at("neat_auth_token") == "<redacted>" &&
+                    raw.details.at("aws_access_key_id") == "<redacted>" &&
+                    raw.details.at("dtype_token") == "UInt8" &&
+                    raw.details.at("model_signature") == "sha256:model-metadata" &&
+                    raw.details.at("compass") == "north",
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         require(raw.debug.find("abc123") == std::string::npos &&
@@ -549,6 +567,10 @@ RUN_TEST(
                     raw.debug.find("json-token") == std::string::npos &&
                     raw.debug.find("escaped-json-password") == std::string::npos &&
                     raw.debug.find("escaped-json-token") == std::string::npos &&
+                    raw.debug.find("camel-json-access") == std::string::npos &&
+                    raw.debug.find("camel-json-refresh") == std::string::npos &&
+                    raw.debug.find("camel-json-auth") == std::string::npos &&
+                    raw.debug.find("camel-json-client") == std::string::npos &&
                     raw.debug.find("raw-cookie-secret") == std::string::npos &&
                     raw.debug.find("json-cookie-secret") == std::string::npos &&
                     raw.debug.find("typed password secret") == std::string::npos &&
@@ -558,6 +580,10 @@ RUN_TEST(
                     raw.debug.find("extension-auth-secret") == std::string::npos &&
                     raw.debug.find("srt-passphrase-secret") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
+        require_contains(raw.debug, "\"dtype_token\":\"UInt8\"",
+                         "non-secret token-suffixed metadata should remain available");
+        require_contains(raw.debug, "\"model_signature\":\"sha256:metadata\"",
+                         "non-secret signature metadata should remain available");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
         require_contains(raw.debug, "\"access_token\":\"<redacted>\"",
