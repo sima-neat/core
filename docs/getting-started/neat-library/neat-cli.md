@@ -66,7 +66,8 @@ neat update
 
 These commands run on Modalix and in AMD64 or ARM64 Neat SDKs.
 
-Validate a compiled model archive with the same archive checks used by `Model`:
+Validate a compiled model archive with the same archive and MPK contract checks
+used by `Model`:
 
 <ShellCommand prompt="sdk-or-devkit">
 neat model validate yolo_v8s_mpk.tar.gz
@@ -76,15 +77,16 @@ neat model validate yolo_v8s_mpk.tar.gz
 yolo_v8s_mpk: valid model archive (7 entries, 162.4 MiB extracted)
 ```
 
-A rejected archive prints the loader error and exits nonzero. Validation does not
-run inference or check model output.
+A rejected archive prints the loader error and exits nonzero. This includes a
+missing or malformed `*_mpk.json`. Validation temporarily extracts the package
+and removes it afterward; it does not run inference or check model output.
 
 ```text
 neat-model-archive: invalid_archive: failed to decompress archive: yolo_v8s_mpk.tar.gz
 ```
 
-Extract the archive into the package layout accepted by the loader's directory
-fast path:
+Validate and extract the archive into the package layout accepted by the loader's
+directory fast path:
 
 <ShellCommand prompt="sdk-or-devkit">
 neat model extract yolo_v8s_mpk.tar.gz --output ./yolo_v8s_pkg

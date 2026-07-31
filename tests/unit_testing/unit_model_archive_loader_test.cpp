@@ -226,8 +226,8 @@ RUN_TEST(
       // Exactly the entries validation classified as extractable, and nothing else.
       require(extracted_file_set(fs::path(first.package_root)) ==
                   std::vector<std::string>{"etc/0_preproc.json", "etc/0_process_mla.json",
-                                           "etc/pipeline_sequence.json", "lib/model.so",
-                                           "share/model.elf"},
+                                           "etc/basic_valid_mpk.json", "etc/pipeline_sequence.json",
+                                           "lib/model.so", "share/model.elf"},
               "extracted file set should be exactly the archive's classified entries");
 
       // Baked into the JSON configs, so absolute even when the caller names the root relatively.

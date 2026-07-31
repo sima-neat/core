@@ -354,6 +354,11 @@ jobs:
               if neat model validate /tmp/model-archive-fixtures/invalid/truncated_archive.tar.gz; then
                 exit 1
               fi
+              for invalid in missing_mpk_contract malformed_mpk_contract; do
+                if neat model validate "/tmp/model-archive-fixtures/invalid/${invalid}.tar.gz"; then
+                  exit 1
+                fi
+              done
               TMPDIR=/does-not-exist neat model extract "${archive}" --output /tmp/extracted-model
               test -d /tmp/extracted-model/etc
               test -d /tmp/extracted-model/lib
@@ -437,6 +442,11 @@ jobs:
           if neat model validate _work/model-archive-fixtures/invalid/truncated_archive.tar.gz; then
             exit 1
           fi
+          for invalid in missing_mpk_contract malformed_mpk_contract; do
+            if neat model validate "_work/model-archive-fixtures/invalid/${invalid}.tar.gz"; then
+              exit 1
+            fi
+          done
           TMPDIR=/does-not-exist neat model extract "${archive}" \
             --output _work/extracted-model
           test -d _work/extracted-model/etc

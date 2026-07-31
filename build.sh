@@ -2630,6 +2630,7 @@ build_amd64_model_archive_helper_if_possible() {
     -I "${SCRIPT_DIR}/src" -I "${helper_root}/usr/include" \
     "${SCRIPT_DIR}/tools/model_archive_cli/main.cpp" \
     "${SCRIPT_DIR}/src/model/ModelArchiveLoader.cpp" \
+    "${SCRIPT_DIR}/src/pipeline/internal/sima/MpkContract.cpp" \
     -L "${helper_root}/usr/lib/x86_64-linux-gnu" -lz -o "${output}"
 }
 

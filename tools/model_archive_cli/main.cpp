@@ -6,6 +6,7 @@
  * command runs anywhere the Core package is installed without pulling in the GStreamer runtime.
  */
 #include "model/internal/ModelArchiveLoader.h"
+#include "pipeline/internal/sima/MpkContract.h"
 
 #include <cstdlib> // mkdtemp
 
@@ -25,6 +26,7 @@ using simaai::neat::internal::ModelArchiveLoader;
 using simaai::neat::internal::ModelArchiveLoaderOptions;
 using simaai::neat::internal::ModelArchiveManifest;
 using simaai::neat::internal::rewrite_model_paths;
+using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 
 namespace {
 
@@ -43,6 +45,22 @@ void print_usage(std::ostream& out) {
   out << "Usage:\n"
          "  neat model validate <archive.tar.gz>\n"
          "  neat model extract <archive.tar.gz> --output <directory>\n";
+}
+
+fs::path create_staging_directory(const fs::path& parent) {
+  std::string staging_template = (parent / ".neat-model-archive.XXXXXX").string();
+  if (::mkdtemp(staging_template.data()) == nullptr) {
+    throw std::runtime_error("failed to create staging directory under " + parent.string());
+  }
+  return staging_template;
+}
+
+void require_mpk_contract(const fs::path& package_root) {
+  std::string error;
+  if (!load_mpk_contract_from_pack_root(package_root.string(), &error).has_value()) {
+    throw ModelArchiveError(simaai::neat::internal::ModelArchiveErrorClass::SchemaError,
+                            "schema_error: invalid MPK contract: " + error);
+  }
 }
 
 /// ModelArchiveError prefixes what() with the error class and most loader messages name the class
@@ -65,7 +83,22 @@ std::uint64_t extracted_bytes(const ModelArchiveManifest& manifest) {
 }
 
 void validate(const std::string& archive) {
-  const auto manifest = ModelArchiveLoader::inspect(archive, runtime_parity_options());
+  const fs::path staging = create_staging_directory(fs::temp_directory_path());
+  ModelArchiveManifest manifest;
+  try {
+    ModelArchiveLoaderOptions opt = runtime_parity_options();
+    opt.staging_base = staging.string();
+    const auto extracted = ModelArchiveLoader::extract(archive, staging.string(), opt);
+    rewrite_model_paths(extracted.etc_dir, extracted.package_root);
+    require_mpk_contract(extracted.package_root);
+    manifest = extracted.manifest;
+  } catch (...) {
+    std::error_code ec;
+    fs::remove_all(staging, ec);
+    throw;
+  }
+  std::error_code ec;
+  fs::remove_all(staging, ec);
   // Reports the extracted size because that, not the entry count, decides whether `extract` fits.
   std::cout << manifest.package_name << ": valid model archive (" << manifest.entries.size()
             << " entries, " << std::fixed << std::setprecision(1)
@@ -88,11 +121,7 @@ void extract(const std::string& archive, const std::string& output) {
 
   // Staging shares the destination filesystem, so publication is a rename and a reader never
   // observes a partial package at the requested path.
-  std::string staging_template = (parent / ".neat-model-archive.XXXXXX").string();
-  if (::mkdtemp(staging_template.data()) == nullptr) {
-    throw std::runtime_error("failed to create staging directory under " + parent.string());
-  }
-  const fs::path staging(staging_template);
+  const fs::path staging = create_staging_directory(parent);
 
   ModelArchiveLoaderOptions opt = runtime_parity_options();
   // Inflate beside the destination too. The snapshot is the size of the extracted package, and
@@ -104,6 +133,7 @@ void extract(const std::string& archive, const std::string& output) {
     // Anchored at the published root, not at staging, so the JSON never names a path that stops
     // existing at the rename below.
     rewrite_model_paths(extracted.etc_dir, package_root.string());
+    require_mpk_contract(extracted.package_root);
     fs::rename(extracted.package_root, package_root);
   } catch (...) {
     std::error_code ec;

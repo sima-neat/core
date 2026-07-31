@@ -185,6 +185,53 @@ def _base_valid_entries() -> List[dict]:
             }
         ]
     }
+    mpk_contract = {
+        "name": "basic_valid",
+        "model_path": "model.elf",
+        "input_nodes": [
+            {
+                "name": "preproc_0",
+                "type": "buffer",
+                "size": 9216,
+                "dtype": "int8",
+                "shape": [1, 48, 64, 3],
+            }
+        ],
+        "plugins": [
+            {
+                "name": "mla_0",
+                "pluginId": "processmla",
+                "sequence": 2,
+                "processor": "MLA",
+                "config_params": {
+                    "kernel": "infer",
+                    "desired_batch_size": 1,
+                    "actual_batch_size": 1,
+                    "input_types": [{"scalar": "int8", "shape": [1, 48, 64, 3]}],
+                    "output_types": [{"scalar": "int8", "shape": [1, 48, 64, 3]}],
+                },
+                "input_nodes": [
+                    {
+                        "name": "preproc_0",
+                        "type": "buffer",
+                        "size": 9216,
+                        "dtype": "int8",
+                        "shape": [1, 48, 64, 3],
+                    }
+                ],
+                "output_nodes": [
+                    {
+                        "name": "mla_0/output_0",
+                        "type": "buffer",
+                        "size": 9216,
+                        "dtype": "int8",
+                        "shape": [1, 48, 64, 3],
+                    }
+                ],
+                "resources": {"executable": "model.elf"},
+            }
+        ],
+    }
 
     return [
         {"type": "dir", "name": "etc"},
@@ -231,6 +278,11 @@ def _base_valid_entries() -> List[dict]:
         },
         {
             "type": "file",
+            "name": "etc/basic_valid_mpk.json",
+            "data": json.dumps(mpk_contract, sort_keys=True, separators=(",", ":")),
+        },
+        {
+            "type": "file",
             "name": "share/model.elf",
             "data": b"\x7fELF\x02\x01\x01\x00fixture_elf_payload",
         },
@@ -244,6 +296,17 @@ def _base_valid_entries() -> List[dict]:
 
 def _fixture_specs() -> List[FixtureSpec]:
     valid = _base_valid_entries()
+    missing_mpk_contract = [
+        e for e in copy.deepcopy(valid) if not e["name"].endswith("_mpk.json")
+    ]
+    malformed_mpk_contract = copy.deepcopy(valid)
+    for entry in malformed_mpk_contract:
+        if entry["name"].endswith("_mpk.json"):
+            entry["data"] = json.dumps(
+                {"name": "malformed", "plugins": "not-an-array"},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
 
     multi = copy.deepcopy(valid)
     seq = {
@@ -528,6 +591,8 @@ def _fixture_specs() -> List[FixtureSpec]:
         FixtureSpec("valid/destination_collision.tar.gz", "two entries flatten to same extraction destination (warn by default)", destination_collision),
         FixtureSpec("valid/basic_valid.tar.gz", "baseline valid package (.tar.gz)", valid),
         FixtureSpec("valid/multi_stage_valid.tar.gz", "valid package with multi-stage inference", multi),
+        FixtureSpec("invalid/missing_mpk_contract.tar.gz", "model package missing *_mpk.json", missing_mpk_contract),
+        FixtureSpec("invalid/malformed_mpk_contract.tar.gz", "model package has invalid *_mpk.json contract", malformed_mpk_contract),
         FixtureSpec("invalid/missing_pipeline_sequence.tar.gz", "missing required pipeline_sequence.json", missing_pipeline),
         FixtureSpec("invalid/schema_error_sequence.tar.gz", "invalid JSON in pipeline_sequence.json", schema_error),
         FixtureSpec("invalid/unsupported_version.tar.gz", "manifest version not supported", unsupported_version),

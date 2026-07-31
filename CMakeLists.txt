@@ -1055,6 +1055,7 @@ target_link_libraries(sima_neat_static PRIVATE ZLIB::ZLIB)
 add_executable(neat_model_archive
   ${CMAKE_CURRENT_SOURCE_DIR}/tools/model_archive_cli/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/src/model/ModelArchiveLoader.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal/sima/MpkContract.cpp
 )
 set_target_properties(neat_model_archive PROPERTIES OUTPUT_NAME neat-model-archive)
 target_compile_definitions(neat_model_archive PRIVATE SIMA_NEAT_INTERNAL=1)
