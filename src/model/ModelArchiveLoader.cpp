@@ -816,14 +816,19 @@ public:
   }
 
 private:
-  // Called at a member boundary. Skips an all-zero tail, which a gzip member can never start with
-  // (its first byte is 0x1f), so consuming zeros cannot swallow real data. True when a nonzero byte
-  // remains and must begin another member; inflate reports it if it does not.
+  // Called at a member boundary. A nonzero byte may begin an adjacent member. A zero begins
+  // terminal padding, so every byte through EOF must then remain zero, matching gzip's
+  // trailing-data rule.
   bool more_member_data() {
+    bool padding = false;
     for (;;) {
       while (zs_.avail_in > 0) {
-        if (*zs_.next_in != 0)
-          return true;
+        if (*zs_.next_in != 0) {
+          if (padding)
+            failed_ = true;
+          return !padding;
+        }
+        padding = true;
         ++zs_.next_in;
         --zs_.avail_in;
       }

@@ -638,10 +638,13 @@ def _build_fixture_tree(out_root: Path) -> Dict[str, dict]:
     multi_member_path = out_root / multi_member_rel
     plain_tar = gzip.decompress((out_root / "valid/basic_valid.tar.gz").read_bytes())
     split_at = len(plain_tar) // 2
+    member_boundary = 0
     with multi_member_path.open("wb") as raw:
-        for part in (plain_tar[:split_at], plain_tar[split_at:]):
+        for index, part in enumerate((plain_tar[:split_at], plain_tar[split_at:])):
             with gzip.GzipFile(fileobj=raw, mode="wb", mtime=FIXED_MTIME) as gz:
                 gz.write(part)
+            if index == 0:
+                member_boundary = raw.tell()
     generated[multi_member_rel] = {
         "intent": "valid archive delivered as two concatenated gzip members",
         "path": multi_member_rel,
@@ -671,6 +674,20 @@ def _build_fixture_tree(out_root: Path) -> Dict[str, dict]:
         "path": zero_pad_rel,
         "sha256": _sha256(zero_pad_path),
         "size_bytes": zero_pad_path.stat().st_size,
+    }
+
+    # invalid/zero_between_members.tar.gz (padding ends the stream; another member cannot follow)
+    zero_between_rel = "invalid/zero_between_members.tar.gz"
+    zero_between_path = out_root / zero_between_rel
+    multi_member_bytes = multi_member_path.read_bytes()
+    zero_between_path.write_bytes(
+        multi_member_bytes[:member_boundary] + b"\0" * 512 + multi_member_bytes[member_boundary:]
+    )
+    generated[zero_between_rel] = {
+        "intent": "zero padding followed by another gzip member",
+        "path": zero_between_rel,
+        "sha256": _sha256(zero_between_path),
+        "size_bytes": zero_between_path.stat().st_size,
     }
 
     # invalid/empty_archive.tar.gz (no gzip member at all)

@@ -131,9 +131,10 @@ RUN_TEST(
       }
 
       // Decoder parity with the `gzip -dc` subprocess this replaced, measured on GNU gzip 1.12:
-      // trailing garbage exits 2 and an empty file exits 1, so both have always been rejected.
+      // trailing data exits 2 and an empty file exits 1, so all have always been rejected.
       for (const char* rejected :
-           {"invalid/trailing_garbage.tar.gz", "invalid/empty_archive.tar.gz"}) {
+           {"invalid/trailing_garbage.tar.gz", "invalid/zero_between_members.tar.gz",
+            "invalid/empty_archive.tar.gz"}) {
         const fs::path fixture = sima_test::model_archive_fixture_path(rejected);
         require(fs::exists(fixture),
                 std::string("missing ") + rejected +

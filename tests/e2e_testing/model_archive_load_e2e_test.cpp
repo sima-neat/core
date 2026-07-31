@@ -79,6 +79,18 @@ RUN_TEST("model_archive_load_e2e_test", ([] {
            require(first_files == package_file_set(second_root),
                    "both same-basename packages should hold the same extracted file set");
 
+           // Reusing an extracted package needs no snapshot or output capacity. A later space
+           // shortage must not invalidate an in-process cache hit.
+           {
+             const std::uintmax_t available = fs::space(first_root).available;
+             sima_test::ScopedEnvVar space_check("SIMA_NEAT_SPACE_CHECK", "1");
+             sima_test::ScopedEnvVar oversized_reserve("SIMA_MPK_EXTRACT_MIN_FREE_BYTES",
+                                                       std::to_string(available + 1));
+             simaai::neat::Model cached(first_copy.string());
+             require(package_root_of(cached) == first_root,
+                     "a cached archive should load without reserving extraction space");
+           }
+
            if (const char* configured_base = std::getenv("SIMA_MPK_EXTRACT_ROOT");
                configured_base && *configured_base) {
              std::error_code relative_ec;

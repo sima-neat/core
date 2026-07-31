@@ -1135,23 +1135,22 @@ static std::string extract_and_organize(const std::string& tar_path,
   opt.reject_unsupported_file_types = false;
   opt.require_pipeline_sequence = false;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
-  // Selected here rather than in the callback below, because the snapshot is written before the
-  // manifest that sizes the extraction. The base is pinned by this first call, so it must carry a
-  // real requirement: passing zero would skip the free-space probe entirely (see
-  // dir_has_available_space) and leave the manifest-sized call below able only to fail. The
-  // compressed size is the largest bound knowable before decoding.
-  std::error_code archive_size_ec;
-  const std::uint64_t archive_bytes = fs::file_size(tar_path, archive_size_ec);
-  opt.staging_base =
-      modelpack_output_root(cleanup_extracted_model_data,
-                            (archive_size_ec ? 0ULL : archive_bytes) + opt.min_output_free_bytes);
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
     auto& cache = modelpack_extract_cache();
     const auto found = cache.find(cache_key);
     if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
+      (void)modelpack_output_root(cleanup_extracted_model_data, 0);
       return found->second;
     }
+
+    // The snapshot is written before the manifest sizes the extraction. Pin its base using the
+    // compressed size, the largest bound knowable before decoding.
+    std::error_code archive_size_ec;
+    const std::uint64_t archive_bytes = fs::file_size(tar_path, archive_size_ec);
+    opt.staging_base =
+        modelpack_output_root(cleanup_extracted_model_data,
+                              (archive_size_ec ? 0ULL : archive_bytes) + opt.min_output_free_bytes);
 
     // Chosen through a callback because the root is sized from the manifest, which the loader
     // only has after validating — and validating twice is what this avoids.
