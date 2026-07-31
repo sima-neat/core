@@ -170,8 +170,8 @@ jobs:
       compiler_cache_bucket: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_bucket }}
       compiler_cache_aws_region: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_aws_region }}
       compiler_cache_key_prefix: ${{ format('{0}/sccache-v1/arm64/{1}/{2}', needs.resolve-vulcan-config.outputs.compiler_cache_key_prefix, needs.resolve-vulcan-config.outputs.sdk_cache, inputs.build_mode || 'standard') }}
-      compiler_cache_role_arn: ${{ github.ref_type == 'branch' && (github.ref_name == 'develop' || github.ref_name == 'main' || github.ref_name == 'perf/enable-sccache') && needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn || needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}
-      compiler_cache_rw_mode: ${{ github.ref_type == 'branch' && (github.ref_name == 'develop' || github.ref_name == 'main' || github.ref_name == 'perf/enable-sccache') && 'READ_WRITE' || 'READ_ONLY' }}
+      compiler_cache_role_arn: ${{ github.ref_type == 'branch' && (github.ref_name == 'develop' || github.ref_name == 'main') && needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn || needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}
+      compiler_cache_rw_mode: ${{ github.ref_type == 'branch' && (github.ref_name == 'develop' || github.ref_name == 'main') && 'READ_WRITE' || 'READ_ONLY' }}
       build_command: |
         set -euo pipefail
 
