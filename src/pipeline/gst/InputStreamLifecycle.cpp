@@ -3,6 +3,7 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/internal/CpuVisibleSample.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 
 namespace simaai::neat {
 InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
@@ -433,8 +434,13 @@ void InputStream::start(std::function<void(Sample)> on_output) {
       }
       GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
       report.error_code = error_codes::kInternalPluginFailure;
-      report.repro_note =
-          "A Neat pipeline stage failed unexpectedly.\n\n"
+      report.repro_note = "A Neat pipeline stage failed while processing output data.";
+      const std::string cause = pipeline_internal::sanitize_gst_diagnostic_text(e.what());
+      if (!cause.empty()) {
+        report.repro_note += "\n\nCause: " + cause;
+      }
+      report.repro_note +=
+          "\n\n"
           "How to fix:\n"
           "- Stop and restart the pipeline.\n"
           "- Confirm that the pipeline uses supported plugins and a compatible MPK.\n\n"

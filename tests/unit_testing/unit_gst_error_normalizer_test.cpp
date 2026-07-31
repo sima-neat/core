@@ -119,6 +119,22 @@ RUN_TEST(
       }
 
       {
+        const NormalizedDiagnostic allocation = classify_gst_error(
+            raw_error("neatmodel", "gst-resource-error-quark", GST_RESOURCE_ERROR_NO_SPACE_LEFT,
+                      "Output allocation failed"));
+        require_code(allocation, error_codes::kDeviceMemoryExhausted);
+        require(allocation.diagnostic_id == "gstreamer.memory_allocation_exhausted",
+                "plugin allocation failures must not be classified as full storage");
+
+        const NormalizedDiagnostic storage = classify_gst_error(
+            raw_error("filesink", "gst-resource-error-quark", GST_RESOURCE_ERROR_NO_SPACE_LEFT,
+                      "No space left on device"));
+        require_code(storage, error_codes::kDiskFull);
+        require(storage.diagnostic_id == "gstreamer.storage_full",
+                "filesystem output failures should retain the disk-full diagnostic");
+      }
+
+      {
         RawGstError raw = raw_error("souphttpsrc", "gst-resource-error-quark",
                                     GST_RESOURCE_ERROR_NOT_AUTHORIZED, "Unauthorized");
         raw.details["location"] = "https://example.test/private-stream";
@@ -144,6 +160,15 @@ RUN_TEST(
                          "argmax error should report the configured axis");
         require_contains(text, "Valid axis range: -4 through 3",
                          "argmax error should report the valid range");
+      }
+
+      {
+        const NormalizedDiagnostic diagnostic =
+            classify_gst_error(raw_error("customstage", "gst-stream-error-quark",
+                                         GST_STREAM_ERROR_FORMAT, "Input format is not supported"));
+        require_code(diagnostic, error_codes::kMediaCaps);
+        require(diagnostic.diagnostic_id == "gstreamer.caps_incompatible",
+                "documented stream-format failures should use the caps diagnostic");
       }
 
       {

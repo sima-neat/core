@@ -462,6 +462,19 @@ NormalizedDiagnostic device_memory_exhausted(RawGstError raw) {
   return out;
 }
 
+NormalizedDiagnostic allocation_exhausted(RawGstError raw) {
+  NormalizedDiagnostic out = base(
+      std::move(raw), error_codes::kDeviceMemoryExhausted, "gstreamer.memory_allocation_exhausted",
+      "The pipeline could not allocate enough memory for a required buffer.");
+  add_fact(out, "Allocator", find_detail(out.raw, {"allocator"}).value_or(""));
+  out.actions = {
+      "Reduce the number or resolution of simultaneous streams.",
+      "Reduce buffer or queue depth where the application permits it.",
+      "Stop other pipelines using device memory and retry.",
+  };
+  return out;
+}
+
 NormalizedDiagnostic output_pool_exhausted(RawGstError raw) {
   const std::string plugin = find_detail(raw, {"plugin"}).value_or("gstreamer");
   NormalizedDiagnostic out =
@@ -750,16 +763,24 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       return out;
     }
     if (raw.code == GST_RESOURCE_ERROR_NO_SPACE_LEFT) {
-      NormalizedDiagnostic out =
-          base(std::move(raw), error_codes::kDiskFull, "gstreamer.storage_full",
-               "The output resource does not have enough free space.");
-      out.actions = {"Free space on the destination or choose another output location."};
-      return out;
+      const bool storage_failure = contains_ci(raw.factory_name, "filesink") ||
+                                   contains_ci(raw.factory_name, "splitmuxsink") ||
+                                   contains_ci(text, "no space left on device") ||
+                                   contains_ci(text, "disk full");
+      if (storage_failure) {
+        NormalizedDiagnostic out =
+            base(std::move(raw), error_codes::kDiskFull, "gstreamer.storage_full",
+                 "The output resource does not have enough free space.");
+        out.actions = {"Free space on the destination or choose another output location."};
+        return out;
+      }
+      return allocation_exhausted(std::move(raw));
     }
   }
 
   if ((raw.domain_name == "gst-core-error-quark" &&
        (raw.code == GST_CORE_ERROR_NEGOTIATION || raw.code == GST_CORE_ERROR_CAPS)) ||
+      (raw.domain_name == "gst-stream-error-quark" && raw.code == GST_STREAM_ERROR_FORMAT) ||
       contains_ci(text, "not-negotiated") || contains_ci(text, "caps negotiation failed")) {
     return media_caps(std::move(raw));
   }
