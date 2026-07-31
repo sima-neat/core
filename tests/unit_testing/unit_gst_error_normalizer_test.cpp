@@ -211,10 +211,10 @@ RUN_TEST(
         g_object_set(source, "location", "/data/input.mp4", nullptr);
         GError* error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND,
                                             "Resource not found.");
-        GstStructure* details =
-            gst_structure_new("neat-error-details", "neat-diagnostic-id", G_TYPE_STRING,
-                              "gstreamer.file_not_found", "password", G_TYPE_STRING, "hunter2",
-                              "auth-token", G_TYPE_STRING, "do-not-store", nullptr);
+        GstStructure* details = gst_structure_new(
+            "neat-error-details", "neat-diagnostic-id", G_TYPE_STRING, "gstreamer.file_not_found",
+            "password", G_TYPE_STRING, "hunter2", "auth-token", G_TYPE_STRING, "do-not-store",
+            "sig", G_TYPE_STRING, "signed-secret", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error, "debug path token=do-not-leak", details);
         g_error_free(error);
@@ -224,7 +224,8 @@ RUN_TEST(
         require(raw.details.at("source-identity") == "/data/input.mp4",
                 "raw parser should capture the configured source identity");
         require(raw.details.at("password") == "<redacted>" &&
-                    raw.details.at("auth-token") == "<redacted>",
+                    raw.details.at("auth-token") == "<redacted>" &&
+                    raw.details.at("sig") == "<redacted>",
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
