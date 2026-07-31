@@ -409,6 +409,16 @@ RUN_TEST(
                          "AWS session-token redaction should retain the parameter name");
         require_contains(aws, "X-Amz-Algorithm=AWS4-HMAC-SHA256",
                          "AWS redaction should preserve non-secret signing metadata");
+
+        const std::string google = redact_gst_credentials(
+            "https://storage.googleapis.test/input?X-Goog-Signature=google-signature-value&"
+            "X-Goog-Algorithm=GOOG4-RSA-SHA256");
+        require(google.find("google-signature-value") == std::string::npos,
+                "Google signed-URL signatures must be redacted: " + google);
+        require_contains(google, "X-Goog-Signature=<redacted>",
+                         "Google signature redaction should retain the parameter name");
+        require_contains(google, "X-Goog-Algorithm=GOOG4-RSA-SHA256",
+                         "Google redaction should preserve non-secret signing metadata");
       }
 
       {

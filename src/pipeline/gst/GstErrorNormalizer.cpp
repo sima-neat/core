@@ -205,6 +205,8 @@ std::string redact_uri_credentials(std::string value) {
       "x_amz_security_token",
       "x-amz-signature",
       "x_amz_signature",
+      "x-goog-signature",
+      "x_goog_signature",
       "client-secret",
       "client_secret",
       "api-secret",
