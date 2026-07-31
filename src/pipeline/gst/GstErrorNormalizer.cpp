@@ -142,6 +142,19 @@ bool looks_like_basic_credentials(const std::string& value, std::size_t begin) {
   return has_user_password_separator;
 }
 
+bool requires_exact_field_boundary(std::string_view marker) {
+  if (!marker.empty() && marker.back() == '=')
+    marker.remove_suffix(1);
+  return marker == "key" || marker == "token" || marker == "signature" || marker == "sig" ||
+         marker == "session";
+}
+
+bool disallowed_preceding_field_character(char c, std::string_view marker) {
+  const unsigned char value = static_cast<unsigned char>(c);
+  return std::isalnum(value) ||
+         (requires_exact_field_boundary(marker) && (value == '_' || value == '-'));
+}
+
 std::string redact_uri_credentials(std::string value) {
   std::size_t search_from = 0;
   while (true) {
@@ -161,17 +174,14 @@ std::string redact_uri_credentials(std::string value) {
 
   static constexpr std::string_view sensitive[] = {
       "credential=", "credentials=", "passphrase=", "token=", "key=", "secret=",
-      "password=",   "signature=",   "sig=",        "pw=",    "pwd=",
+      "password=",   "signature=",   "session=",    "sig=",   "pw=",  "pwd=",
   };
   for (std::string_view marker : sensitive) {
     std::size_t pos = 0;
     while ((pos = lower_copy(value).find(marker, pos)) != std::string::npos) {
-      if (marker == "key=" && pos > 0) {
-        const unsigned char preceding = static_cast<unsigned char>(value[pos - 1]);
-        if (std::isalnum(preceding) || preceding == '_' || preceding == '-') {
-          pos += marker.size();
-          continue;
-        }
+      if (pos > 0 && disallowed_preceding_field_character(value[pos - 1], marker)) {
+        pos += marker.size();
+        continue;
       }
       pos = redact_secret_value(value, pos + marker.size(), false);
     }
@@ -212,6 +222,7 @@ std::string redact_uri_credentials(std::string value) {
       "session-id",
       "session_id",
       "sessionid",
+      "session",
       "basic",
       "bearer",
       "jwt",
@@ -222,13 +233,14 @@ std::string redact_uri_credentials(std::string value) {
       "secret",
       "signature",
       "sig",
+      "key",
       "pwd",
       "pw",
   };
   for (std::string_view marker : header_secrets) {
     std::size_t pos = 0;
     while ((pos = lower_copy(value).find(marker, pos)) != std::string::npos) {
-      if (pos > 0 && std::isalnum(static_cast<unsigned char>(value[pos - 1]))) {
+      if (pos > 0 && disallowed_preceding_field_character(value[pos - 1], marker)) {
         pos += marker.size();
         continue;
       }

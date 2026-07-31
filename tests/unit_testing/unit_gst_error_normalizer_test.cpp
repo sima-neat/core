@@ -377,6 +377,25 @@ RUN_TEST(
         require(keys.find("direct-key-secret") == std::string::npos &&
                     keys.find("api-key-secret") == std::string::npos,
                 "standalone and explicit API key values must remain redacted: " + keys);
+
+        const std::string tokens = redact_gst_credentials(
+            "dtype_token=FP32 observed_token=UInt8 model_signature=v2 tensor_sig=layout "
+            "access_token=access-secret token=direct-token signature=direct-signature");
+        require_contains(tokens,
+                         "dtype_token=FP32 observed_token=UInt8 model_signature=v2 "
+                         "tensor_sig=layout",
+                         "non-secret fields ending in token or signature must retain values");
+        require(tokens.find("access-secret") == std::string::npos &&
+                    tokens.find("direct-token") == std::string::npos &&
+                    tokens.find("direct-signature") == std::string::npos,
+                "explicit and standalone authentication values must remain redacted: " + tokens);
+
+        const std::string session =
+            redact_gst_credentials("session='session-secret' session_count=2");
+        require(session.find("session-secret") == std::string::npos,
+                "bare session fields must be redacted: " + session);
+        require_contains(session, "session='<redacted>' session_count=2",
+                         "session redaction must preserve non-secret session metadata");
       }
 
       {
