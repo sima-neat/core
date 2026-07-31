@@ -65,11 +65,27 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
   if (begin >= value.size())
     return begin;
 
-  const char quote = (value[begin] == '\'' || value[begin] == '"') ? value[begin] : '\0';
-  const std::size_t content_begin = quote == '\0' ? begin : begin + 1;
-  const std::size_t end =
-      quote != '\0' ? value.find(quote, content_begin)
-                    : value.find_first_of(line_value ? "\r\n" : "&,; \t\r\n'\"", content_begin);
+  const bool escaped_quote = begin + 1 < value.size() && value[begin] == '\\' &&
+                             (value[begin + 1] == '\'' || value[begin + 1] == '"');
+  const char quote = escaped_quote
+                         ? value[begin + 1]
+                         : ((value[begin] == '\'' || value[begin] == '"') ? value[begin] : '\0');
+  const std::size_t content_begin = quote == '\0' ? begin : begin + (escaped_quote ? 2U : 1U);
+  std::size_t end = std::string::npos;
+  if (escaped_quote) {
+    std::size_t candidate = content_begin;
+    while ((candidate = value.find('\\', candidate)) != std::string::npos) {
+      if (candidate + 1 < value.size() && value[candidate + 1] == quote) {
+        end = candidate;
+        break;
+      }
+      ++candidate;
+    }
+  } else if (quote != '\0') {
+    end = value.find(quote, content_begin);
+  } else {
+    end = value.find_first_of(line_value ? "\r\n" : "&,; \t\r\n'\"", content_begin);
+  }
   value.replace(content_begin, (end == std::string::npos ? value.size() : end) - content_begin,
                 "<redacted>");
   return content_begin + std::string("<redacted>").size();
@@ -147,8 +163,13 @@ std::string redact_uri_credentials(std::string value) {
       std::size_t separator = pos + marker.size();
       const char key_quote =
           pos > 0 && (value[pos - 1] == '\'' || value[pos - 1] == '"') ? value[pos - 1] : '\0';
-      if (key_quote != '\0' && separator < value.size() && value[separator] == key_quote) {
-        ++separator;
+      if (key_quote != '\0' && separator < value.size()) {
+        if (value[separator] == key_quote) {
+          ++separator;
+        } else if (value[separator] == '\\' && separator + 1 < value.size() &&
+                   value[separator + 1] == key_quote) {
+          separator += 2;
+        }
       }
       while (separator < value.size() &&
              std::isspace(static_cast<unsigned char>(value[separator])) &&

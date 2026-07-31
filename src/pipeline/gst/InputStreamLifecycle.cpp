@@ -305,13 +305,16 @@ void InputStream::start(std::function<void(Sample)> on_output) {
                 if (inputstream_dot_on_timeout_enabled()) {
                   pipeline_internal::maybe_dump_dot(st->pipeline, "inputstream_timeout");
                 }
-                set_stream_error(
-                    *st, error_codes::kOutputTimeout,
+                const std::string timeout_message =
                     "No output was received before the input-stream timeout expired.\n\n"
                     "How to fix:\n"
                     "- Verify that the source is still producing frames.\n"
                     "- Increase the timeout if this delay is expected.\n\n"
-                    "Diagnostic ID: runtime.output_timeout");
+                    "Diagnostic ID: runtime.output_timeout";
+                GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+                report.error_code = error_codes::kOutputTimeout;
+                report.repro_note = timeout_message;
+                set_stream_error(*st, report.error_code, timeout_message, std::move(report));
                 st->stop_requested.store(true);
                 break;
               }

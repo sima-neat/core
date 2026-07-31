@@ -16,7 +16,9 @@ These are the recommended domains/codes used across plugins:
 
 - Config parsing/validation: `GST_RESOURCE_ERROR_SETTINGS`
 - File missing: `GST_RESOURCE_ERROR_NOT_FOUND`
-- Dispatcher unavailable: `GST_RESOURCE_ERROR_BUSY` (or `GST_RESOURCE_ERROR_NOT_FOUND`)
+- Dispatcher unavailable: `GST_RESOURCE_ERROR_BUSY`; use
+  `GST_RESOURCE_ERROR_NOT_FOUND` only with a dispatcher-specific diagnostic ID
+  or structured dispatcher field
 - Allocation failures: `GST_RESOURCE_ERROR_NO_SPACE_LEFT`
 - Caps/negotiation errors: `GST_STREAM_ERROR_FORMAT`
 - Runtime processing failures: `GST_STREAM_ERROR_FAILED`

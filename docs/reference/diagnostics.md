@@ -34,7 +34,7 @@ Framework errors use stable code families:
 | `misconfig.option_out_of_range` | A stage option is invalid for the current tensor | Choose a value in the range shown by the diagnostic |
 | `build.parse_launch` | `gst_parse_launch` failed | Validate fragment syntax and plugin availability |
 | `build.pipeline_syntax` | Custom GStreamer fragment syntax is invalid | Correct and validate the fragment with `gst-launch-1.0` |
-| `build.plugin_missing` | A required GStreamer element is not installed | Install/replace it and check with `gst-inspect-1.0` |
+| `build.plugin_missing` | A required GStreamer element or codec plugin is not installed | Install/replace it and check with `gst-inspect-1.0` |
 | `build.property_invalid` | An element property is unknown or invalid | Check the property name and value with `gst-inspect-1.0` |
 | `runtime.pull` | Runtime pull/timeout/closed-output failure | Check sink output production, queue pressure, and upstream errors |
 | `runtime.element_failed` | A stage failed without a more specific mapping | Correct the reported stage and its upstream input |

@@ -331,7 +331,9 @@ RUN_TEST(
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
             "api_key='quoted-api-secret' password=\"quoted-password\" user-pw='rtsp-password' "
             "user_pw=rtsp-password-underscore pw=short-password pwd='short-password-d' "
-            "json={\"password\":\"json-password\",\"access_token\":\"json-token\"}",
+            "json={\"password\":\"json-password\",\"access_token\":\"json-token\"} "
+            "escaped={\\\"password\\\":\\\"escaped-json-password\\\","
+            "\\\"access_token\\\":\\\"escaped-json-token\\\"}",
             details);
         g_error_free(error);
 
@@ -356,12 +358,16 @@ RUN_TEST(
                     raw.debug.find("rtsp-password") == std::string::npos &&
                     raw.debug.find("short-password") == std::string::npos &&
                     raw.debug.find("json-password") == std::string::npos &&
-                    raw.debug.find("json-token") == std::string::npos,
+                    raw.debug.find("json-token") == std::string::npos &&
+                    raw.debug.find("escaped-json-password") == std::string::npos &&
+                    raw.debug.find("escaped-json-token") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
         require_contains(raw.debug, "\"access_token\":\"<redacted>\"",
                          "JSON credential fields should retain structure without their values");
+        require_contains(raw.debug, "\\\"access_token\\\":\\\"<redacted>\\\"",
+                         "escaped JSON credential fields should retain escaped structure");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);
 
