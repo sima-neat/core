@@ -185,6 +185,8 @@ struct RunCore {
   void graph_request_stop(const std::string& err);
   void graph_request_stop(PullError err);
   void graph_request_stop(const NeatError& err);
+  void graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
+                                        std::string fallback_error);
   std::optional<PullError> graph_last_error_detail() const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                    bool allow_startup_preflight = false);

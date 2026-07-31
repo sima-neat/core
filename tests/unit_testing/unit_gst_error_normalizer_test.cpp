@@ -14,7 +14,9 @@
 
 #include <gst/gst.h>
 
+#include <chrono>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -757,6 +759,34 @@ RUN_TEST(
                 "a typed stream upgrade should retain the specific error code");
         require(state->terminal_error->report->error_code == error_codes::kMediaCaps,
                 "a typed stream upgrade should retain the GraphReport");
+      }
+
+      {
+        auto parent = std::make_shared<runtime::RunCore>();
+        auto child = std::make_shared<runtime::RunCore>();
+        PullError placeholder;
+        error_util::set_pull_error(&placeholder, error_codes::kRuntimeElementFailed,
+                                   "InputStream::push: appsrc push failed");
+        child->set_terminal_error(std::move(placeholder));
+
+        std::thread bus_error([child]() {
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+          GraphReport report;
+          report.error_code = error_codes::kMediaCaps;
+          report.repro_note = "The input caps do not match the downstream stage.";
+          PullError typed;
+          error_util::set_pull_error(&typed, report.error_code, report.repro_note,
+                                     std::move(report));
+          child->set_terminal_error(std::move(typed));
+        });
+        parent->graph_request_stop_from_pipeline(child, "GraphRun: pipeline push failed");
+        bus_error.join();
+
+        const std::optional<PullError> propagated = parent->graph_last_error_detail();
+        require(propagated.has_value() && propagated->report.has_value(),
+                "a graph push failure should wait for the child bus report");
+        require(propagated->code == error_codes::kMediaCaps,
+                "a graph push failure should propagate the normalized child error");
       }
 
       {

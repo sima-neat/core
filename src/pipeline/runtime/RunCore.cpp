@@ -28,6 +28,7 @@
 #include <span>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace simaai::neat::graph {
@@ -430,6 +431,28 @@ void RunCore::graph_request_stop(PullError detail) {
 void RunCore::graph_request_stop(const NeatError& err) {
   set_terminal_error(err);
   graph_signal_stop();
+}
+
+void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
+                                               std::string fallback_error) {
+  // An appsrc flow failure can precede the terminal GStreamer bus message. Give the child
+  // InputStream worker a bounded window to replace its reportless push placeholder with the
+  // normalized, report-bearing bus error before stopping the parent graph.
+  constexpr auto kErrorSettleTimeout = std::chrono::milliseconds(250);
+  constexpr auto kErrorPollInterval = std::chrono::milliseconds(5);
+  const auto deadline = std::chrono::steady_clock::now() + kErrorSettleTimeout;
+  while (pipeline_core) {
+    const std::optional<PullError> detail = pipeline_core->last_error_detail();
+    if (detail.has_value() && detail->report.has_value()) {
+      graph_request_stop(*detail);
+      return;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      break;
+    }
+    std::this_thread::sleep_for(kErrorPollInterval);
+  }
+  graph_request_stop(fallback_error.empty() ? "GraphRun: pipeline push failed" : fallback_error);
 }
 
 std::optional<PullError> RunCore::graph_last_error_detail() const {
