@@ -148,9 +148,11 @@ RUN_TEST(
                       "Required model resource not found");
         missing_model.details["model_path"] = "/models/missing.mpk";
         const NormalizedDiagnostic model = classify_gst_error(std::move(missing_model));
-        require_code(model, error_codes::kIoOpen);
-        require(model.diagnostic_id == "gstreamer.resource_not_found",
-                "ambiguous NOT_FOUND errors must require dispatcher-specific evidence");
+        require_code(model, error_codes::kModelNotFound);
+        require(model.diagnostic_id == "gstreamer.model_not_found",
+                "structured model paths should select the model-specific mapping");
+        require_contains(render_diagnostic_body(model, false), "Model: /models/missing.mpk",
+                         "model-not-found errors should identify the requested archive");
 
         const NormalizedDiagnostic camera_busy =
             classify_gst_error(raw_error("v4l2src", "gst-resource-error-quark",

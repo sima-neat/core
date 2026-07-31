@@ -602,6 +602,19 @@ NormalizedDiagnostic resource_not_found(RawGstError raw) {
   return out;
 }
 
+NormalizedDiagnostic model_not_found(RawGstError raw) {
+  NormalizedDiagnostic out =
+      base(std::move(raw), error_codes::kModelNotFound, "gstreamer.model_not_found",
+           "The requested model archive does not exist.");
+  add_fact(out, "Model",
+           find_structured_detail(out.raw, {"model-path", "model_path"}).value_or(""));
+  out.actions = {
+      "Correct the model archive path.",
+      "Confirm that the model archive is installed and readable by the application.",
+  };
+  return out;
+}
+
 bool remote_source(const RawGstError& raw) {
   if (raw.factory_name == "rtspsrc" || contains_ci(raw.factory_name, "http") ||
       contains_ci(raw.factory_name, "soup")) {
@@ -1036,6 +1049,10 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   if (raw.domain_name == "gst-resource-error-quark") {
     if (raw.code == GST_RESOURCE_ERROR_SETTINGS)
       return configuration_invalid(std::move(raw));
+    if (raw.code == GST_RESOURCE_ERROR_NOT_FOUND &&
+        find_structured_detail(raw, {"model-path", "model_path"}).has_value()) {
+      return model_not_found(std::move(raw));
+    }
     if (raw.code == GST_RESOURCE_ERROR_NOT_FOUND)
       return resource_not_found(std::move(raw));
     const bool permission_text = contains_ci(text, "permission denied") ||
