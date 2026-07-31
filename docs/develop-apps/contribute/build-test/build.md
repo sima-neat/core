@@ -127,6 +127,10 @@ Install dependencies without building core:
 - Extras package (`*extras.tar.gz`) is generated on Linux full builds unless `--no-dist` is used.
 - Python wheel (`dist/*.whl`) is generated when Python build is enabled.
 
+The Python wheel packages the `_pyneat_core` extension produced by the main
+CMake build. Wheel creation does not configure or compile a second CMake tree,
+so the library, DEBs, extras archive, and wheel share one compilation.
+
 ## Build Profiles & CMake Options
 
 The framework's top-level `CMakeLists.txt` exposes a handful of options that
