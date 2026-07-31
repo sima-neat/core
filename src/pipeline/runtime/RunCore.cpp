@@ -698,6 +698,14 @@ void RunCore::graph_end_public_push() {
   }
 }
 
+bool RunCore::graph_public_input_closed() const {
+  if (!graph_execution_) {
+    return true;
+  }
+  std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
+  return graph_execution_->public_ingress_closed;
+}
+
 void RunCore::graph_close_public_input() {
   if (!graph_execution_) {
     return;
@@ -1003,7 +1011,9 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
         graph_sanitize_pipeline_input(index, next);
       };
       callbacks.request_stop = [this](const std::string& err) { graph_request_stop(err); };
-      callbacks.stop_requested = [this] { return graph_stop_requested(); };
+      callbacks.stop_requested = [this] {
+        return graph_stop_requested() || graph_public_input_closed();
+      };
 
       EdgeRouterDispatchOptions dispatch_options;
       dispatch_options.sanitize_pipeline_input_before_enqueue = true;

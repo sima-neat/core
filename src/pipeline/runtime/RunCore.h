@@ -196,6 +196,7 @@ struct RunCore {
   void graph_target_producer_completed(const DownstreamTarget& target);
   bool graph_begin_public_push();
   void graph_end_public_push();
+  bool graph_public_input_closed() const;
   void graph_close_public_input();
   void graph_mark_downstream_close_provenance(simaai::neat::graph::NodeId producer_node,
                                               const PullError* source_close_detail);

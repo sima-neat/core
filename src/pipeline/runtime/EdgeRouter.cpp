@@ -966,10 +966,21 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
   bool dropped_incoming = false;
   const OutputOptions* output_options = sink_it->second->output_options();
   if (output_options) {
-    const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : -1;
-    const auto result = enqueue_graph_sink_output(
-        *sink_it->second, *output_options, RuntimeSinkQueueMsg{std::move(sample), edge_index},
-        output_timeout_ms);
+    RuntimeSinkQueueMsg message{std::move(sample), edge_index};
+    FusedEncodedOutputEnqueueResult result = FusedEncodedOutputEnqueueResult::Overflow;
+    if (!output_options->drop && options.request_stop_on_backpressure) {
+      // EveryFrame applies lossless backpressure, but use bounded waits so graph stop and
+      // concurrent close_input() can cancel a public push that has not entered the sink queue.
+      constexpr int kCancellationPollMs = 50;
+      do {
+        result = enqueue_graph_sink_output(*sink_it->second, *output_options, std::move(message),
+                                           kCancellationPollMs);
+      } while (result == FusedEncodedOutputEnqueueResult::Overflow && !stop_requested(callbacks));
+    } else {
+      const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : 0;
+      result = enqueue_graph_sink_output(*sink_it->second, *output_options, std::move(message),
+                                         output_timeout_ms);
+    }
     dropped_incoming = result == FusedEncodedOutputEnqueueResult::DroppedIncoming;
     enqueued = result == FusedEncodedOutputEnqueueResult::Enqueued ||
                result == FusedEncodedOutputEnqueueResult::ReplacedOldest || dropped_incoming;
