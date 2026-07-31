@@ -215,7 +215,9 @@ int inputstream_stop_timeout_ms() {
 void set_stream_error(InputStream::State& st, std::string code, std::string msg,
                       std::optional<GraphReport> report) {
   std::lock_guard<std::mutex> lock(st.error_mu);
-  if (st.terminal_error.has_value())
+  const bool typed_upgrade = report.has_value() && (!st.terminal_error.has_value() ||
+                                                    !st.terminal_error->report.has_value());
+  if (st.terminal_error.has_value() && !typed_upgrade)
     return;
   PullError error;
   error.code = std::move(code);

@@ -498,6 +498,8 @@ if (TARGET unit_gst_error_normalizer_test)
   # This test intentionally instantiates a system GStreamer element to verify
   # message-source parsing. Do not let its plugin scan race other CTest
   # processes using the shared registry cache.
+  target_include_directories(unit_gst_error_normalizer_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/pipeline/internal)
   set_tests_properties(unit_gst_error_normalizer_test PROPERTIES RUN_SERIAL TRUE)
 endif()
 

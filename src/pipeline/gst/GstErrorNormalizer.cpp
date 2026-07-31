@@ -57,6 +57,24 @@ std::string value_to_string(const GValue* value) {
   return out;
 }
 
+std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line_value) {
+  while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) &&
+         value[begin] != '\r' && value[begin] != '\n') {
+    ++begin;
+  }
+  if (begin >= value.size())
+    return begin;
+
+  const char quote = (value[begin] == '\'' || value[begin] == '"') ? value[begin] : '\0';
+  const std::size_t content_begin = quote == '\0' ? begin : begin + 1;
+  const std::size_t end =
+      quote != '\0' ? value.find(quote, content_begin)
+                    : value.find_first_of(line_value ? "\r\n" : "&,; \t\r\n'\"", content_begin);
+  value.replace(content_begin, (end == std::string::npos ? value.size() : end) - content_begin,
+                "<redacted>");
+  return content_begin + std::string("<redacted>").size();
+}
+
 std::string redact_uri_credentials(std::string value) {
   std::size_t search_from = 0;
   while (true) {
@@ -80,10 +98,7 @@ std::string redact_uri_credentials(std::string value) {
   for (std::string_view marker : sensitive) {
     std::size_t pos = 0;
     while ((pos = lower_copy(value).find(marker, pos)) != std::string::npos) {
-      const std::size_t begin = pos + marker.size();
-      const std::size_t end = value.find_first_of("& \t\r\n'\"", begin);
-      value.replace(begin, (end == std::string::npos ? value.size() : end) - begin, "<redacted>");
-      pos = begin + std::string("<redacted>").size();
+      pos = redact_secret_value(value, pos + marker.size(), false);
     }
   }
 
@@ -115,10 +130,7 @@ std::string redact_uri_credentials(std::string value) {
         ++begin;
       }
       const bool authorization = marker.find("authorization") != std::string_view::npos;
-      const std::size_t end = authorization ? value.find_first_of("\r\n", begin)
-                                            : value.find_first_of("&,; \t\r\n'\"", begin);
-      value.replace(begin, (end == std::string::npos ? value.size() : end) - begin, "<redacted>");
-      pos = begin + std::string("<redacted>").size();
+      pos = redact_secret_value(value, begin, authorization);
     }
   }
   return value;

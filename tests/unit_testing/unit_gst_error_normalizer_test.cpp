@@ -4,6 +4,7 @@
 
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
+#include "pipeline/gst/InputStreamInternal.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
 #include "pipeline/runtime/RunCore.h"
@@ -302,7 +303,8 @@ RUN_TEST(
             "rtsp-secret-underscore", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error,
-            "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2",
+            "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
+            "api_key='quoted-api-secret' password=\"quoted-password\"",
             details);
         g_error_free(error);
 
@@ -321,8 +323,12 @@ RUN_TEST(
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         require(raw.debug.find("abc123") == std::string::npos &&
-                    raw.debug.find("hunter2") == std::string::npos,
-                "raw parser should redact header-style and colon-separated credentials");
+                    raw.debug.find("hunter2") == std::string::npos &&
+                    raw.debug.find("quoted-api-secret") == std::string::npos &&
+                    raw.debug.find("quoted-password") == std::string::npos,
+                "raw parser should redact header-style, colon-separated, and quoted credentials");
+        require_contains(raw.debug, "api_key='<redacted>'",
+                         "quoted credential redaction should preserve only the quote delimiters");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);
 
@@ -424,5 +430,22 @@ RUN_TEST(
         require(worker_error->report.has_value() &&
                     worker_error->report->error_code == error_codes::kInputShape,
                 "linear input workers should retain the original error report");
+      }
+
+      {
+        InputStream::State state;
+        set_stream_error(state, "InputStream::push: appsrc push failed");
+
+        GraphReport report;
+        report.error_code = error_codes::kMediaCaps;
+        report.repro_note = "The input caps do not match the downstream stage.";
+        set_stream_error(state, report.error_code, report.repro_note, report);
+
+        require(state.terminal_error.has_value() && state.terminal_error->report.has_value(),
+                "a typed stream error should replace an earlier reportless push failure");
+        require(state.terminal_error->code == error_codes::kMediaCaps,
+                "a typed stream upgrade should retain the specific error code");
+        require(state.terminal_error->report->error_code == error_codes::kMediaCaps,
+                "a typed stream upgrade should retain the GraphReport");
       }
     }));
