@@ -69,34 +69,14 @@ Supported `build.sh` options:
 
 ## Compiler Cache
 
-`build.sh` enables `sccache` automatically for C and C++ compilation. When
-`sccache` is not already installed, the script downloads a pinned,
-checksum-verified binary once and stores it below the user cache directory.
-The compiled-object cache is outside `build/`, so it remains available after
-`--clean`.
+`build.sh` enables `sccache` automatically, and its cache remains available
+after `--clean`. Local builds use a user-local disk cache. Vulcan adds a private
+encrypted S3 cache populated by `develop` and `main` and consumed read-only by
+other refs.
 
-The default local cache is:
-
-```text
-~/.cache/sima-neat/sccache
-```
-
-Control it with:
-
-```bash
-SIMANEAT_SCCACHE=off ./build.sh --all --clean
-SCCACHE_CACHE_SIZE=20G ./build.sh --all
-SCCACHE_DIR=/mnt/nvme/sccache ./build.sh --all
-```
-
-`SIMANEAT_SCCACHE=on` makes installation/configuration failures fatal.
-The default `auto` mode reports a warning and continues without caching if the
-tool cannot be installed. At the end of a cached build, `build.sh` prints the
-sccache hit/miss statistics.
-
-Vulcan builds add the encrypted shared S3 cache as a second cache level.
-`develop` and `main` use it read-write; other branches use it read-only.
-Set `SIMANEAT_SCCACHE=off` for a cache-independent reproducibility build.
+See the [Neat sccache Cheatsheet](/develop-apps/contribute/sccache) for local
+controls, cloud access rules, cache namespaces, statistics, verification, and
+troubleshooting.
 
 ## Typical Builds
 
