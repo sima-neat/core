@@ -707,7 +707,7 @@ void drain_bus(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag, const
                           ? GST_OBJECT_NAME(GST_MESSAGE_SRC(msg))
                           : "<unknown>";
 
-    std::string line = gst_message_to_string(msg);
+    std::string line = sanitize_gst_diagnostic_text(gst_message_to_string(msg));
     if (diag)
       diag->push_bus(gst_message_type_get_name(t), src ? src : "<unknown>", line);
     if (eos_seen && t == GST_MESSAGE_EOS) {

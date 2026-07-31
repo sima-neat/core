@@ -24,6 +24,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/OutputTensorOverride.h"
 #include "pipeline/internal/SimaaiMemory.h"
@@ -1826,7 +1827,7 @@ void drain_bus_into_diag(GstElement* pipeline, const std::shared_ptr<DiagCtx>& d
 
   const GstMessageType mask = static_cast<GstMessageType>(GST_MESSAGE_ANY & ~GST_MESSAGE_ERROR);
   while (GstMessage* msg = gst_bus_pop_filtered(bus, mask)) {
-    std::string line = gst_message_to_string(msg);
+    std::string line = pipeline_internal::sanitize_gst_diagnostic_text(gst_message_to_string(msg));
     const char* src = (GST_MESSAGE_SRC(msg) && GST_IS_OBJECT(GST_MESSAGE_SRC(msg)))
                           ? GST_OBJECT_NAME(GST_MESSAGE_SRC(msg))
                           : "<unknown>";
