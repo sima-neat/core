@@ -455,38 +455,157 @@ void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& p
   graph_request_stop(fallback_error.empty() ? "GraphRun: pipeline push failed" : fallback_error);
 }
 
-void RunCore::graph_source_pipeline_closed(PullError detail) {
+void RunCore::graph_target_producer_completed(const DownstreamTarget& target) {
   if (!graph_execution_) {
     return;
   }
-  auto& remaining = graph_execution_->source_pipelines_remaining;
-  std::size_t expected = remaining.load(std::memory_order_acquire);
-  while (expected != 0U &&
-         !remaining.compare_exchange_weak(expected, expected - 1U, std::memory_order_acq_rel,
-                                          std::memory_order_acquire)) {
+  auto& execution = *graph_execution_;
+  const auto decrement_to_zero = [](std::atomic<std::size_t>& remaining) {
+    std::size_t expected = remaining.load(std::memory_order_acquire);
+    while (expected != 0U &&
+           !remaining.compare_exchange_weak(expected, expected - 1U, std::memory_order_acq_rel,
+                                            std::memory_order_acquire)) {
+    }
+    return expected == 1U;
+  };
+
+  switch (target.kind) {
+  case DownstreamTarget::Kind::StageGroup: {
+    if (target.index >= execution.stage_groups.size()) {
+      return;
+    }
+    auto& group = execution.stage_groups[target.index];
+    if (!decrement_to_zero(group.producers_remaining)) {
+      return;
+    }
+    for (const std::size_t stage_index : group.instances) {
+      if (stage_index < execution.stages.size() && execution.stages[stage_index]) {
+        execution.stages[stage_index]->inbox.close();
+      }
+    }
+    return;
   }
-  if (expected == 0U || expected != 1U) {
+  case DownstreamTarget::Kind::PipelineInput: {
+    if (target.index >= execution.pipelines.size() || !execution.pipelines[target.index]) {
+      return;
+    }
+    auto& transport = execution.pipelines[target.index]->transport;
+    if (decrement_to_zero(transport.producers_remaining) && transport.input_queue) {
+      transport.input_queue->close();
+    }
+    return;
+  }
+  case DownstreamTarget::Kind::GraphSink: {
+    const auto sink = execution.sinks.find(static_cast<simaai::neat::graph::NodeId>(target.index));
+    if (sink != execution.sinks.end() && sink->second) {
+      sink->second->producer_done();
+    }
+    return;
+  }
+  case DownstreamTarget::Kind::RealtimeLatestLink:
+    if (target.index < execution.realtime_links.size() && execution.realtime_links[target.index]) {
+      execution.realtime_links[target.index]->producer_done();
+    }
+    return;
+  }
+}
+
+void RunCore::graph_producer_completed(simaai::neat::graph::NodeId producer_node) {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+  bool has_downstream = false;
+  for (const auto& [key, targets] : execution.adjacency) {
+    (void)key;
+    for (const auto& target : targets) {
+      if (target.edge_index == invalid_edge_index() ||
+          target.edge_index >= execution.plan.edges.size() ||
+          execution.plan.edges[target.edge_index].from != producer_node) {
+        continue;
+      }
+      has_downstream = true;
+      graph_target_producer_completed(target);
+    }
+  }
+
+  if (has_downstream) {
+    return;
+  }
+  const auto sink = execution.sinks.find(producer_node);
+  if (sink != execution.sinks.end() && sink->second) {
+    sink->second->producer_done();
+  }
+}
+
+void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
+                                       std::optional<PullError> close_detail) {
+  if (!graph_execution_ || pipeline_index >= graph_execution_->pipelines.size() ||
+      !graph_execution_->pipelines[pipeline_index]) {
+    return;
+  }
+  auto& pipe = *graph_execution_->pipelines[pipeline_index];
+  if (pipe.transport.completion_forwarded.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
 
-  if (detail.code.empty()) {
-    detail.code = error_codes::kSourceEnded;
-  }
-  if (detail.message.empty()) {
-    detail.message = "Run::pull: input source reached end of stream";
-  }
-  detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
-  {
+  if (close_detail.has_value()) {
+    PullError detail = std::move(*close_detail);
+    if (detail.code.empty()) {
+      detail.code = error_codes::kSourceEnded;
+    }
+    if (detail.message.empty()) {
+      detail.message = "Run::pull: input source reached end of stream";
+    }
+    detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
     std::lock_guard<std::mutex> lock(error_mu);
-    terminal_close_detail = std::move(detail);
-  }
-  // Every source producer has drained its child output before reaching this point. Closing graph
-  // sinks preserves already queued samples while waking public pulls once those samples drain.
-  for (auto& sink : graph_execution_->sinks) {
-    if (sink.second) {
-      sink.second->close();
+    if (!terminal_close_detail.has_value()) {
+      terminal_close_detail = std::move(detail);
     }
   }
+
+  // Encoded Outputs fused into a source segment bypass the ordinary edge router, but the source
+  // still owns their producer lifetime.
+  if (pipe.seg.fused_realtime_ingress.has_value()) {
+    for (const auto& branch : pipe.seg.fused_realtime_ingress->branches) {
+      if (!branch.encoded_output.has_value()) {
+        continue;
+      }
+      const auto sink = graph_execution_->sinks.find(branch.encoded_output->sink_node);
+      if (sink != graph_execution_->sinks.end() && sink->second) {
+        sink->second->producer_done();
+      }
+    }
+  }
+
+  pipe.transport.cv.notify_all();
+  if (!pipe.seg.node_ids.empty()) {
+    graph_producer_completed(pipe.seg.node_ids.back());
+  }
+}
+
+void RunCore::graph_stage_worker_completed(std::size_t group_index) {
+  if (!graph_execution_ || group_index >= graph_execution_->stage_groups.size()) {
+    return;
+  }
+  auto& group = graph_execution_->stage_groups[group_index];
+  std::size_t expected = group.workers_remaining.load(std::memory_order_acquire);
+  while (expected != 0U &&
+         !group.workers_remaining.compare_exchange_weak(
+             expected, expected - 1U, std::memory_order_acq_rel, std::memory_order_acquire)) {
+  }
+  if (expected != 1U || group.completion_forwarded.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  graph_producer_completed(group.node_id);
+}
+
+void RunCore::graph_realtime_link_completed(std::size_t link_index) {
+  if (!graph_execution_ || link_index >= graph_execution_->realtime_links.size() ||
+      !graph_execution_->realtime_links[link_index]) {
+    return;
+  }
+  graph_target_producer_completed(graph_execution_->realtime_links[link_index]->downstream());
 }
 
 std::optional<PullError> RunCore::graph_last_error_detail() const {
@@ -497,6 +616,14 @@ std::optional<PullError> RunCore::graph_last_error_detail() const {
 std::optional<PullError> RunCore::graph_close_detail() const {
   std::lock_guard<std::mutex> lock(error_mu);
   return terminal_close_detail;
+}
+
+bool RunCore::graph_sink_closed(simaai::neat::graph::NodeId node_id) const {
+  if (!graph_execution_) {
+    return false;
+  }
+  const auto sink = graph_execution_->sinks.find(node_id);
+  return sink != graph_execution_->sinks.end() && sink->second && sink->second->closed();
 }
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,

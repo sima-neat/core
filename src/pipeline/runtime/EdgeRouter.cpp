@@ -410,7 +410,7 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
   }
   {
     std::lock_guard<std::mutex> lock(mu_);
-    if (closed_) {
+    if (closed_ || finishing_) {
       credits_to_release = pipeline_internal::realtime_frame_credits_for_sample(sample);
       release_mode = "graph-realtime-offer-closed";
     } else {
@@ -480,10 +480,32 @@ void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::s
   configure_global_credit_limit_locked_();
 }
 
-void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error) {
+void RealtimeLatestLink::set_producer_count(std::size_t count) noexcept {
+  producers_remaining_.store(count, std::memory_order_release);
+}
+
+void RealtimeLatestLink::producer_done() {
+  std::size_t expected = producers_remaining_.load(std::memory_order_acquire);
+  while (expected != 0U && !producers_remaining_.compare_exchange_weak(expected, expected - 1U,
+                                                                       std::memory_order_acq_rel,
+                                                                       std::memory_order_acquire)) {
+  }
+  if (expected != 1U) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    finishing_ = true;
+  }
+  cv_.notify_all();
+}
+
+void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error,
+                               CompleteFn complete) {
   dispatch_ = std::move(dispatch);
   stop_ = std::move(stop);
   error_ = std::move(error);
+  complete_ = std::move(complete);
   worker_ = std::thread([this] { run_(); });
 }
 
@@ -669,8 +691,16 @@ void RealtimeLatestLink::run_() {
     std::string selected_key;
     {
       std::unique_lock<std::mutex> lock(mu_);
-      cv_.wait(lock, [&] { return closed_ || (stop_ && stop_()) || !ready_.empty(); });
+      cv_.wait(lock,
+               [&] { return closed_ || finishing_ || (stop_ && stop_()) || !ready_.empty(); });
       if ((closed_ || (stop_ && stop_())) && ready_.empty()) {
+        return;
+      }
+      if (finishing_ && ready_.empty()) {
+        lock.unlock();
+        if (!completion_forwarded_.exchange(true, std::memory_order_acq_rel) && complete_) {
+          complete_();
+        }
         return;
       }
 

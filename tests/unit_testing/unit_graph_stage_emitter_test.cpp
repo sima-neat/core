@@ -1,7 +1,9 @@
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
+#include "nodes/common/Caps.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
 #include "test_main.h"
@@ -111,17 +113,23 @@ private:
 
 class PassThroughStage final : public simaai::neat::graph::StageExecutor {
 public:
+  explicit PassThroughStage(int delay_ms = 0) : delay_ms_(delay_ms) {}
+
   void set_ports(const simaai::neat::graph::StagePorts& ports) override {
     out_ = ports.out_port("out");
   }
 
   void on_input(simaai::neat::graph::StageMsg&& msg,
                 std::vector<simaai::neat::graph::StageOutMsg>& out) override {
+    if (delay_ms_ > 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms_));
+    }
     out.push_back(
         simaai::neat::graph::StageOutMsg{.out_port = out_, .sample = std::move(msg.sample)});
   }
 
 private:
+  int delay_ms_ = 0;
   simaai::neat::graph::PortId out_ = simaai::neat::graph::kInvalidPort;
 };
 
@@ -140,12 +148,14 @@ make_blocking_emitter_node(const std::shared_ptr<StreamState>& state) {
                                      std::move(outputs), "streamer");
 }
 
-std::shared_ptr<simaai::neat::graph::Node> make_pass_node() {
+std::shared_ptr<simaai::neat::graph::Node> make_pass_node(int delay_ms = 0) {
   using simaai::neat::OutputSpec;
   using simaai::neat::graph::PortDesc;
   using simaai::neat::graph::nodes::StageNode;
 
-  StageNode::StageExecutorFactory factory = [] { return std::make_unique<PassThroughStage>(); };
+  StageNode::StageExecutorFactory factory = [delay_ms] {
+    return std::make_unique<PassThroughStage>(delay_ms);
+  };
   std::vector<PortDesc> inputs = {PortDesc{.name = "in", .spec = OutputSpec{}}};
   std::vector<PortDesc> outputs = {PortDesc{.name = "out", .spec = OutputSpec{}}};
   return std::make_shared<StageNode>("PassThrough", std::move(factory), std::move(inputs),
@@ -180,6 +190,38 @@ void release_stage(const std::shared_ptr<StreamState>& state) {
 } // namespace
 
 RUN_TEST("unit_graph_stage_emitter_test", [] {
+  // A finite source can finish while an asynchronous stage still owns accepted work. The graph
+  // output must remain open until that stage drains and forwards every sample.
+  {
+    simaai::neat::Graph graph;
+    const auto source = graph.append_pipeline_vertex_for_internal_graph_(
+        simaai::neat::nodes::Custom("videotestsrc num-buffers=4 pattern=black ! "
+                                    "video/x-raw,format=RGB,width=64,height=48,framerate=30/1",
+                                    simaai::neat::InputRole::Source));
+    const auto stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node(30));
+    const auto output = add_output_endpoint(graph, "drained");
+    connect_runtime(graph, source, "out", stage, "in");
+    connect_runtime(graph, stage, "out", output, "in");
+
+    simaai::neat::Run run = graph.build();
+    simaai::neat::Sample sample;
+    simaai::neat::PullError error;
+    simaai::neat::PullStatus status = simaai::neat::PullStatus::Timeout;
+    std::size_t outputs = 0;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+      status = run.pull("drained", 1000, sample, &error);
+      if (status != simaai::neat::PullStatus::Ok) {
+        break;
+      }
+      ++outputs;
+    }
+    require(outputs == 4U, "finite source tail was dropped before async stage drain");
+    require(status == simaai::neat::PullStatus::Closed,
+            "finite source graph did not close after async stage drain");
+    require(error.code == simaai::neat::error_codes::kSourceEnded,
+            "finite source graph lost source-ended closure after async stage drain");
+  }
+
   {
     simaai::neat::Graph graph;
     const auto input = add_input_endpoint(graph, "in");

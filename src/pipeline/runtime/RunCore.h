@@ -187,9 +187,15 @@ struct RunCore {
   void graph_request_stop(const NeatError& err);
   void graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
                                         std::string fallback_error);
-  void graph_source_pipeline_closed(PullError detail);
+  void graph_pipeline_completed(std::size_t pipeline_index,
+                                std::optional<PullError> close_detail = std::nullopt);
+  void graph_stage_worker_completed(std::size_t group_index);
+  void graph_realtime_link_completed(std::size_t link_index);
+  void graph_producer_completed(simaai::neat::graph::NodeId producer_node);
+  void graph_target_producer_completed(const DownstreamTarget& target);
   std::optional<PullError> graph_last_error_detail() const;
   std::optional<PullError> graph_close_detail() const;
+  bool graph_sink_closed(simaai::neat::graph::NodeId node_id) const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                    bool allow_startup_preflight = false);
   bool graph_dispatch_to_stage_group(std::size_t group_index, simaai::neat::graph::PortId port,

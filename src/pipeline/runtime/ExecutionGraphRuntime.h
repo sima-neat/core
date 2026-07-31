@@ -72,6 +72,21 @@ public:
     return has_output_options_ ? &output_options_ : nullptr;
   }
 
+  void set_producer_count(std::size_t count) noexcept {
+    producers_remaining_.store(count, std::memory_order_release);
+  }
+
+  void producer_done() {
+    std::size_t expected = producers_remaining_.load(std::memory_order_acquire);
+    while (expected != 0U &&
+           !producers_remaining_.compare_exchange_weak(
+               expected, expected - 1U, std::memory_order_acq_rel, std::memory_order_acquire)) {
+    }
+    if (expected == 1U) {
+      close();
+    }
+  }
+
 private:
   friend FusedEncodedOutputEnqueueResult
   enqueue_graph_sink_output(GraphSinkQueue&, const OutputOptions&, RuntimeSinkQueueMsg&&, int);
@@ -80,6 +95,7 @@ private:
   std::mutex latest_enqueue_mu_;
   bool has_output_options_ = false;
   OutputOptions output_options_{};
+  std::atomic<std::size_t> producers_remaining_{0};
 };
 
 inline FusedEncodedOutputEnqueueResult enqueue_graph_sink_output(GraphSinkQueue& queue,
@@ -154,6 +170,7 @@ public:
       std::function<bool(const DownstreamTarget&, simaai::neat::Sample&&, std::size_t)>;
   using StopFn = std::function<bool()>;
   using ErrorFn = std::function<void(const std::string&)>;
+  using CompleteFn = std::function<void()>;
 
   struct Stats {
     std::uint64_t offered = 0;
@@ -183,7 +200,9 @@ public:
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
                           const GraphLinkOptions& options);
-  void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
+  void set_producer_count(std::size_t count) noexcept;
+  void producer_done();
+  void start(DispatchFn dispatch, StopFn stop, ErrorFn error, CompleteFn complete);
   void close();
   void join();
   Stats stats() const;
@@ -215,6 +234,7 @@ private:
   DispatchFn dispatch_;
   StopFn stop_;
   ErrorFn error_;
+  CompleteFn complete_;
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::unordered_map<std::string, Pending> pending_;
@@ -228,7 +248,10 @@ private:
   int credit_limit_per_stream_ = 0;
   int credit_limit_global_ = 0;
   bool closed_ = false;
+  bool finishing_ = false;
   std::thread worker_;
+  std::atomic<std::size_t> producers_remaining_{0};
+  std::atomic<bool> completion_forwarded_{false};
   std::atomic<std::uint64_t> offered_{0};
   std::atomic<std::uint64_t> scheduled_{0};
   std::atomic<std::uint64_t> overwritten_{0};
@@ -297,6 +320,7 @@ struct StageRuntime {
   };
 
   simaai::neat::graph::NodeId node_id = simaai::neat::graph::kInvalidNode;
+  std::size_t group_index = static_cast<std::size_t>(-1);
   RuntimeStageEmitter emitter;
   std::unique_ptr<simaai::neat::graph::StageExecutor> exec;
   simaai::neat::graph::runtime::BlockingQueue<RuntimeStageQueueMsg> inbox;
@@ -313,19 +337,27 @@ struct StageGroup {
   StageNodeOptions options;
   std::vector<std::size_t> instances;
   std::atomic<std::size_t> rr{0};
+  std::atomic<std::size_t> producers_remaining{0};
+  std::atomic<std::size_t> workers_remaining{0};
+  std::atomic<bool> completion_forwarded{false};
 
   StageGroup() = default;
   StageGroup(const StageGroup&) = delete;
   StageGroup& operator=(const StageGroup&) = delete;
   StageGroup(StageGroup&& other) noexcept
       : node_id(other.node_id), options(other.options), instances(std::move(other.instances)),
-        rr(other.rr.load()) {}
+        rr(other.rr.load()), producers_remaining(other.producers_remaining.load()),
+        workers_remaining(other.workers_remaining.load()),
+        completion_forwarded(other.completion_forwarded.load()) {}
   StageGroup& operator=(StageGroup&& other) noexcept {
     if (this != &other) {
       node_id = other.node_id;
       options = other.options;
       instances = std::move(other.instances);
       rr.store(other.rr.load());
+      producers_remaining.store(other.producers_remaining.load());
+      workers_remaining.store(other.workers_remaining.load());
+      completion_forwarded.store(other.completion_forwarded.load());
     }
     return *this;
   }
@@ -349,7 +381,6 @@ struct ExecutionGraphRuntime {
   std::atomic<bool> message_trace_enabled{false};
   std::atomic<std::uint64_t> trace_run_id_hash{0};
   std::atomic<std::uint64_t> trace_graph_id_hash{0};
-  std::atomic<std::size_t> source_pipelines_remaining{0};
   std::unordered_map<simaai::neat::graph::NodeId, std::shared_ptr<GraphSinkQueue>> sinks;
 
   // Graph-wide decoder admission state.  A dense multi-decoder graph reserves
