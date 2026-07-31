@@ -256,6 +256,34 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
             "application-driven graph close should use runtime.pull closure");
   }
 
+  // A downstream pipeline may still be lazy when application ingress closes. Completion must
+  // wake a pull that is waiting for that pipeline to build so the closed sink is observed.
+  {
+    simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "lazy_input");
+    const auto stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node());
+    const auto lazy_pipeline =
+        graph.append_pipeline_vertex_for_internal_graph_(simaai::neat::nodes::Custom("identity"));
+    const auto output = add_output_endpoint(graph, "lazy_output");
+    connect_runtime(graph, input, "out", stage, "in");
+    connect_runtime(graph, stage, "out", lazy_pipeline, "in");
+    connect_runtime(graph, lazy_pipeline, "out", output, "in");
+
+    simaai::neat::Run run = graph.build();
+    run.close_input();
+    simaai::neat::Sample sample;
+    simaai::neat::PullError error;
+    const auto pull_started = std::chrono::steady_clock::now();
+    require(run.pull("lazy_output", 100, sample, &error) == simaai::neat::PullStatus::Closed,
+            "pull did not observe closure of an unbuilt downstream pipeline");
+    const auto pull_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - pull_started);
+    require(pull_elapsed < std::chrono::milliseconds(1000),
+            "pull waited for the lazy pipeline build timeout after completion");
+    require(error.code == simaai::neat::error_codes::kRuntimePull,
+            "lazy application-driven close should use runtime.pull closure");
+  }
+
   // Closure details are per output branch. A finite source ending must not relabel a separate
   // application-pushed branch when close_input() drains that branch normally.
   {

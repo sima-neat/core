@@ -1386,11 +1386,13 @@ std::optional<RuntimeSinkQueueMsg> graph_pull_msg_impl(RunCore& core,
             lock, std::chrono::steady_clock::now() + std::chrono::milliseconds(build_timeout_ms),
             [&] {
               return pipe.transport.built.load(std::memory_order_acquire) ||
+                     pipe.transport.completion_forwarded.load(std::memory_order_acquire) ||
                      core.graph_stop_requested();
             });
       } else {
         pipe.transport.cv.wait(lock, [&] {
           return pipe.transport.built.load(std::memory_order_acquire) ||
+                 pipe.transport.completion_forwarded.load(std::memory_order_acquire) ||
                  core.graph_stop_requested();
         });
       }
