@@ -108,6 +108,40 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
   return content_begin + std::string("<redacted>").size();
 }
 
+bool looks_like_basic_credentials(const std::string& value, std::size_t begin) {
+  const std::size_t end = value.find_first_of("&,; \t\r\n'\"", begin);
+  const std::string token = value.substr(begin, end == std::string::npos ? end : end - begin);
+  if (token.size() < 4 || token.size() % 4 == 1)
+    return false;
+
+  std::size_t padding = 0;
+  for (std::size_t i = 0; i < token.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(token[i]);
+    if (c == '=') {
+      padding = token.size() - i;
+      if (padding > 2)
+        return false;
+      for (; i < token.size(); ++i) {
+        if (token[i] != '=')
+          return false;
+      }
+      break;
+    }
+    if (!std::isalnum(c) && c != '+' && c != '/')
+      return false;
+  }
+
+  if (padding != 0 && token.size() % 4 != 0)
+    return false;
+  gsize decoded_size = 0;
+  guchar* decoded = g_base64_decode(token.c_str(), &decoded_size);
+  const bool has_user_password_separator =
+      decoded && std::find(decoded, decoded + decoded_size, static_cast<guchar>(':')) !=
+                     decoded + decoded_size;
+  g_free(decoded);
+  return has_user_password_separator;
+}
+
 std::string redact_uri_credentials(std::string value) {
   std::size_t search_from = 0;
   while (true) {
@@ -171,6 +205,7 @@ std::string redact_uri_credentials(std::string value) {
       "session-id",
       "session_id",
       "sessionid",
+      "basic",
       "bearer",
       "jwt",
       "passphrase",
@@ -209,8 +244,10 @@ std::string redact_uri_credentials(std::string value) {
       }
       const bool has_separator =
           separator < value.size() && (value[separator] == ':' || value[separator] == '=');
-      const bool standalone_scheme = key_quote == '\0' && (marker == "bearer" || marker == "jwt") &&
-                                     separator > marker_end && !has_separator;
+      const bool standalone_scheme =
+          key_quote == '\0' && separator > marker_end && !has_separator &&
+          (marker == "bearer" || marker == "jwt" ||
+           (marker == "basic" && looks_like_basic_credentials(value, separator)));
       if (!has_separator && !standalone_scheme) {
         pos += marker.size();
         continue;

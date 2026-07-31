@@ -358,6 +358,16 @@ RUN_TEST(
                 "standalone bearer credentials must be redacted: " + standalone);
         require_contains(standalone, "Bearer <redacted> trailing=visible",
                          "standalone bearer redaction should preserve surrounding text");
+
+        const std::string basic = redact_gst_credentials("Basic dXNlcjpwYXNz trailing=visible");
+        require(basic.find("dXNlcjpwYXNz") == std::string::npos,
+                "standalone Basic credentials must be redacted: " + basic);
+        require_contains(basic, "Basic <redacted> trailing=visible",
+                         "standalone Basic redaction should preserve surrounding text");
+
+        const std::string ordinary = redact_gst_credentials("A basic configuration is required");
+        require(ordinary == "A basic configuration is required",
+                "ordinary uses of basic must not be treated as credentials");
       }
 
       {
