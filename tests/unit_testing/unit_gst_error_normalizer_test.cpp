@@ -137,10 +137,19 @@ RUN_TEST(
                                          GST_RESOURCE_ERROR_BUSY, "Accelerator resource is busy"));
         require_code(busy, error_codes::kDispatcherUnavailable);
 
-        const NormalizedDiagnostic missing = classify_gst_error(
-            raw_error("simaaiboxdecode", "gst-resource-error-quark", GST_RESOURCE_ERROR_NOT_FOUND,
-                      "Required runtime resource not found"));
+        const NormalizedDiagnostic missing =
+            classify_gst_error(raw_error("simaaiboxdecode", "gst-resource-error-quark",
+                                         GST_RESOURCE_ERROR_NOT_FOUND, "dispatcher_code=17"));
         require_code(missing, error_codes::kDispatcherUnavailable);
+
+        RawGstError missing_model =
+            raw_error("neatmodel", "gst-resource-error-quark", GST_RESOURCE_ERROR_NOT_FOUND,
+                      "Required model resource not found");
+        missing_model.details["model_path"] = "/models/missing.mpk";
+        const NormalizedDiagnostic model = classify_gst_error(std::move(missing_model));
+        require_code(model, error_codes::kIoOpen);
+        require(model.diagnostic_id == "gstreamer.resource_not_found",
+                "ambiguous NOT_FOUND errors must require dispatcher-specific evidence");
 
         const NormalizedDiagnostic camera_busy =
             classify_gst_error(raw_error("v4l2src", "gst-resource-error-quark",
@@ -304,7 +313,8 @@ RUN_TEST(
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error,
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
-            "api_key='quoted-api-secret' password=\"quoted-password\"",
+            "api_key='quoted-api-secret' password=\"quoted-password\" user-pw='rtsp-password' "
+            "user_pw=rtsp-password-underscore pw=short-password pwd='short-password-d'",
             details);
         g_error_free(error);
 
@@ -325,7 +335,9 @@ RUN_TEST(
         require(raw.debug.find("abc123") == std::string::npos &&
                     raw.debug.find("hunter2") == std::string::npos &&
                     raw.debug.find("quoted-api-secret") == std::string::npos &&
-                    raw.debug.find("quoted-password") == std::string::npos,
+                    raw.debug.find("quoted-password") == std::string::npos &&
+                    raw.debug.find("rtsp-password") == std::string::npos &&
+                    raw.debug.find("short-password") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");

@@ -93,7 +93,7 @@ std::string redact_uri_credentials(std::string value) {
   }
 
   static constexpr std::string_view sensitive[] = {
-      "token=", "key=", "secret=", "password=", "signature=", "sig=",
+      "token=", "key=", "secret=", "password=", "signature=", "sig=", "pw=", "pwd=",
   };
   for (std::string_view marker : sensitive) {
     std::size_t pos = 0;
@@ -391,12 +391,14 @@ NormalizedDiagnostic file_not_found(RawGstError raw) {
 NormalizedDiagnostic resource_not_found(RawGstError raw) {
   NormalizedDiagnostic out =
       base(std::move(raw), error_codes::kIoOpen, "gstreamer.resource_not_found",
-           "The requested input resource could not be found.");
-  add_fact(out, "Source",
-           find_detail(out.raw, {"source-identity", "source_identity", "location"}).value_or(""));
+           "The requested resource could not be found.");
+  add_fact(out, "Resource",
+           find_detail(out.raw, {"source-identity", "source_identity", "location", "model-path",
+                                 "model_path", "config-path", "config_path", "path"})
+               .value_or(""));
   out.actions = {
-      "Verify the source address, path, and resource name.",
-      "Confirm that the remote service or device exposes the requested resource.",
+      "Verify the resource address, path, and name.",
+      "Confirm that the resource exists and is available to the application.",
   };
   return out;
 }
@@ -412,11 +414,13 @@ bool remote_source(const RawGstError& raw) {
          contains_ci(source, "https://");
 }
 
-bool accelerator_plugin_context(const RawGstError& raw) {
+bool accelerator_plugin_name(const RawGstError& raw) {
   const std::string plugin = find_detail(raw, {"plugin"}).value_or(raw.factory_name);
   const std::string lower = lower_copy(plugin);
-  if (lower.rfind("neat", 0) == 0 || lower.rfind("sima", 0) == 0)
-    return true;
+  return lower.rfind("neat", 0) == 0 || lower.rfind("sima", 0) == 0;
+}
+
+bool dispatcher_specific_context(const RawGstError& raw) {
   return find_detail(raw, {"dispatcher-err", "dispatcher_err", "dispatcher-error",
                            "dispatcher_error", "dispatcher-code", "dispatcher_code",
                            "dispatcher-target", "dispatcher_target"})
@@ -733,8 +737,10 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   const std::string reason =
       find_detail(raw, {"neat-reason", "neat_reason", "reason"}).value_or("");
   const bool documented_dispatcher_error =
-      raw.domain_name == "gst-resource-error-quark" && accelerator_plugin_context(raw) &&
-      (raw.code == GST_RESOURCE_ERROR_BUSY || raw.code == GST_RESOURCE_ERROR_NOT_FOUND);
+      raw.domain_name == "gst-resource-error-quark" &&
+      ((raw.code == GST_RESOURCE_ERROR_BUSY &&
+        (accelerator_plugin_name(raw) || dispatcher_specific_context(raw))) ||
+       (raw.code == GST_RESOURCE_ERROR_NOT_FOUND && dispatcher_specific_context(raw)));
 
   if (diagnostic_id == "neatprocesscvu.input_envelope_exceeded" ||
       contains_ci(text, "envelope violation")) {
