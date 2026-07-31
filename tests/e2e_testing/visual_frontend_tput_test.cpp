@@ -2,6 +2,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 #include "gst/GstHelpers.h"
+#include "pipeline/ErrorCodes.h"
 #include "test_utils.h"
 
 #include <neat.h>
@@ -1362,7 +1363,7 @@ BenchCase make_feature_histogram_batch_guard_case(int width, int height, int num
   c.node = simaai::neat::nodes::FeatureHistogram(opt);
   c.expected_outputs = {{opt.output_name, {opt.batch_size, 256}, simaai::neat::TensorDType::Int32}};
   c.expect_runtime_failure = true;
-  c.expected_error_substring = "not-negotiated";
+  c.expected_error_substring = simaai::neat::error_codes::kMediaCaps;
   return c;
 }
 
