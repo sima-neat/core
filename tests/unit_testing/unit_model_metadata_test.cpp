@@ -139,9 +139,8 @@ RUN_TEST(
       }
 
       {
-        // A malformed metadata.json is rejected by the strict archive loader; that failure now
-        // surfaces as a structured NeatError carrying an io.* error_code (visible in the
-        // decorated message), instead of a flat std::runtime_error.
+        // Auxiliary JSON does not block model construction, but explicitly reading malformed
+        // metadata surfaces a structured NeatError carrying an io.* error_code.
         const auto fixture =
             make_metadata_fixture("model_metadata_malformed", true, "{ not valid json ");
         bool threw_neaterror = false;
@@ -162,6 +161,7 @@ RUN_TEST(
         try {
           Model model(
               make_metadata_fixture("model_metadata_malformed_rt", true, "{ also bad ").tar_path);
+          (void)model.metadata();
         } catch (const std::runtime_error&) {
           caught_as_runtime = true;
         }

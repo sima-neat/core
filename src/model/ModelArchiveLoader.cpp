@@ -1393,10 +1393,12 @@ fs::path extract_destination_for(const fs::path& package_root, const TarEntry& e
 }
 
 void append_model_path(json& cfg, const std::string& package_root) {
-  if (cfg.contains("simaai__params") && cfg["simaai__params"].contains("model_path")) {
+  if (cfg.contains("simaai__params") && cfg["simaai__params"].contains("model_path") &&
+      cfg["simaai__params"]["model_path"].is_string()) {
     const std::string model_path = cfg["simaai__params"]["model_path"];
     cfg["simaai__params"]["model_path"] = package_root + "/share/" + model_path;
-  } else if (cfg.contains("model_info") && cfg["model_info"].contains("path")) {
+  } else if (cfg.contains("model_info") && cfg["model_info"].contains("path") &&
+             cfg["model_info"]["path"].is_string()) {
     const std::string model_info_path = cfg["model_info"]["path"];
     cfg["model_info"]["path"] = package_root + "/lib/" + model_info_path;
   }

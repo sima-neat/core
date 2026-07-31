@@ -303,7 +303,11 @@ def _fixture_specs() -> List[FixtureSpec]:
     auxiliary_json_ignored = copy.deepcopy(valid)
     auxiliary_json_ignored.extend(
         [
-            {"type": "file", "name": "etc/build_report.json", "data": '{"value":1,"value":2}'},
+            {
+                "type": "file",
+                "name": "etc/build_report.json",
+                "data": '{"value":1,"value":2,"simaai__params":{"model_path":7}}',
+            },
             {"type": "file", "name": "etc/manifest.json", "data": '{"version":2}'},
         ]
     )

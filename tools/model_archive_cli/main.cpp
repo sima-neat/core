@@ -90,7 +90,6 @@ void validate(const std::string& archive) {
     ModelArchiveLoaderOptions opt = runtime_parity_options();
     opt.staging_base = staging.string();
     const auto extracted = ModelArchiveLoader::extract(archive, staging.string(), opt);
-    rewrite_model_paths(extracted.etc_dir, extracted.package_root);
     require_mpk_contract(extracted.package_root);
     manifest = extracted.manifest;
   } catch (...) {
