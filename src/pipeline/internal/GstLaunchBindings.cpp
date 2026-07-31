@@ -45,32 +45,39 @@ std::string canonical_assignment_value(std::string_view raw, char* quote) {
     *quote = '"';
     raw.remove_prefix(1U);
     raw.remove_suffix(1U);
-  } else if (raw.size() >= 2U && raw.front() == '\'' && raw.back() == '\'') {
-    // gst_parse_split_assignment() does not strip single quotes. Preserve them as part of the
-    // actual string-property value while still recording the lexical form for lossless rewriting.
-    *quote = '\'';
   }
   return unescape_value(raw);
 }
 
-std::size_t scan_quoted(std::string_view text, std::size_t begin, char quote, bool* complete) {
-  std::size_t i = begin + 1U;
-  while (i < text.size()) {
-    if (text[i] == '\\') {
-      if (i + 1U >= text.size()) {
-        *complete = false;
-        return text.size();
-      }
+// Match GStreamer's parse.l `_string` maximal-munch behavior. Both quote characters can group a
+// lexer token across whitespace, but gst_parse_split_assignment() strips only paired double
+// quotes. If no closing quote exists, the ordinary `_char+` alternative wins and the opening
+// quote is just a literal character. Likewise, a contiguous suffix can make `_char+` longer than
+// an otherwise paired quoted candidate.
+std::size_t scan_unquoted_candidate(std::string_view text, std::size_t begin) {
+  std::size_t i = begin;
+  while (i < text.size() && !ascii_space(text[i])) {
+    if (text[i] == '\\' && i + 1U < text.size()) {
       i += 2U;
-      continue;
+    } else {
+      ++i;
     }
-    if (text[i] == quote) {
+  }
+  return i;
+}
+
+std::optional<std::size_t> scan_paired_quote_candidate(std::string_view text, std::size_t begin) {
+  if (begin >= text.size() || (text[begin] != '"' && text[begin] != '\'')) {
+    return std::nullopt;
+  }
+  const char quote = text[begin];
+  for (std::size_t i = begin + 1U; i < text.size(); ++i) {
+    // parse.l accepts a quote immediately preceded by a backslash as part of the quoted token.
+    if (text[i] == quote && text[i - 1U] != '\\') {
       return i + 1U;
     }
-    ++i;
   }
-  *complete = false;
-  return text.size();
+  return std::nullopt;
 }
 
 std::size_t scan_value(std::string_view text, std::size_t begin, bool* complete) {
@@ -78,22 +85,11 @@ std::size_t scan_value(std::string_view text, std::size_t begin, bool* complete)
     *complete = false;
     return begin;
   }
-  if (text[begin] == '"' || text[begin] == '\'') {
-    return scan_quoted(text, begin, text[begin], complete);
+  const std::size_t unquoted_end = scan_unquoted_candidate(text, begin);
+  if (const auto quoted_end = scan_paired_quote_candidate(text, begin)) {
+    return std::max(unquoted_end, *quoted_end);
   }
-  std::size_t i = begin;
-  while (i < text.size() && !ascii_space(text[i])) {
-    if (text[i] == '\\') {
-      if (i + 1U >= text.size()) {
-        *complete = false;
-        return text.size();
-      }
-      i += 2U;
-      continue;
-    }
-    ++i;
-  }
-  return i;
+  return unquoted_end;
 }
 
 bool begins_protocol_url(std::string_view text, std::size_t begin, std::size_t* scheme_end) {
@@ -116,22 +112,7 @@ std::size_t skip_url(std::string_view text, std::size_t begin, bool* complete) {
   if (!begins_protocol_url(text, begin, &scheme_end)) {
     return begin;
   }
-  if (scheme_end < text.size() && (text[scheme_end] == '"' || text[scheme_end] == '\'')) {
-    return scan_quoted(text, scheme_end, text[scheme_end], complete);
-  }
-  std::size_t i = scheme_end;
-  while (i < text.size() && !ascii_space(text[i])) {
-    if (text[i] == '\\') {
-      if (i + 1U >= text.size()) {
-        *complete = false;
-        return text.size();
-      }
-      i += 2U;
-      continue;
-    }
-    ++i;
-  }
-  return i;
+  return scheme_end < text.size() ? scan_value(text, scheme_end, complete) : scheme_end;
 }
 
 bool looks_like_caps_start(std::string_view text, std::size_t begin) {
@@ -164,8 +145,6 @@ std::optional<std::size_t> caps_link_end(std::string_view text, std::size_t oper
   if (!looks_like_caps_start(text, body)) {
     return std::nullopt;
   }
-  bool in_double = false;
-  bool in_single = false;
   int paren_depth = 0;
   int bracket_depth = 0;
   int brace_depth = 0;
@@ -177,17 +156,6 @@ std::optional<std::size_t> caps_link_end(std::string_view text, std::size_t oper
         return text.size();
       }
       ++i;
-      continue;
-    }
-    if (text[i] == '"' && !in_single) {
-      in_double = !in_double;
-      continue;
-    }
-    if (text[i] == '\'' && !in_double) {
-      in_single = !in_single;
-      continue;
-    }
-    if (in_double || in_single) {
       continue;
     }
     switch (text[i]) {
@@ -232,7 +200,7 @@ std::optional<std::size_t> caps_link_end(std::string_view text, std::size_t oper
       return i + 1U;
     }
   }
-  if (in_double || in_single || paren_depth != 0 || bracket_depth != 0 || brace_depth != 0) {
+  if (paren_depth != 0 || bracket_depth != 0 || brace_depth != 0) {
     *complete = false;
   }
   return text.size();
@@ -244,10 +212,9 @@ struct Replacement {
 };
 
 std::string encode_replacement(std::string_view replacement, char quote) {
-  const bool needs_double_quotes = quote == '"' || quote == '\'' ||
-                                   std::any_of(replacement.begin(), replacement.end(), [](char c) {
-                                     return ascii_space(c) || c == '!' || c == ';';
-                                   });
+  const bool needs_double_quotes =
+      quote == '"' || std::any_of(replacement.begin(), replacement.end(),
+                                  [](char c) { return ascii_space(c) || c == '!' || c == ';'; });
   if (needs_double_quotes) {
     // Single quotes are literal characters in a Gst launch assignment, not string delimiters.
     // Emit mapped canonical values with Gst's real (double-quote) quoting so a rewritten value
@@ -328,12 +295,7 @@ Analysis analyze(std::string_view launch) {
     }
 
     if (launch[i] == '"' || launch[i] == '\'') {
-      const std::size_t begin = i;
-      i = scan_quoted(launch, i, launch[i], &result.complete);
-      if (!result.complete) {
-        result.diagnostics.push_back(
-            Diagnostic{.span = {begin, launch.size()}, .message = "unterminated quoted token"});
-      }
+      i = scan_value(launch, i, &result.complete);
       continue;
     }
 

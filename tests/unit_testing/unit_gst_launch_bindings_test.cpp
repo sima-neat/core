@@ -44,6 +44,32 @@ RUN_TEST(
       }
 
       {
+        const Analysis unmatched_single = analyze("identity name='source ! fakesink");
+        const auto single_names = explicit_name_bindings(unmatched_single);
+        require(unmatched_single.complete && single_names.size() == 1U &&
+                    single_names.front()->canonical_value == "'source",
+                "an unmatched apostrophe must remain a literal assignment character");
+
+        const Analysis unmatched_double = analyze("identity name=\"source ! fakesink");
+        const auto double_names = explicit_name_bindings(unmatched_double);
+        require(unmatched_double.complete && double_names.size() == 1U &&
+                    double_names.front()->canonical_value == "\"source",
+                "an unmatched double quote must fall back to GStreamer's unquoted token");
+
+        const Analysis single_with_space = analyze("identity name='single literal' ! fakesink");
+        const auto spaced_names = explicit_name_bindings(single_with_space);
+        require(single_with_space.complete && spaced_names.size() == 1U &&
+                    spaced_names.front()->canonical_value == "'single literal'",
+                "paired apostrophes must group whitespace while remaining literal in the value");
+
+        const Analysis contiguous_suffix = analyze("identity name=\"foo\"bar ! fakesink");
+        const auto suffix_names = explicit_name_bindings(contiguous_suffix);
+        require(contiguous_suffix.complete && suffix_names.size() == 1U &&
+                    suffix_names.front()->canonical_value == "\"foo\"bar",
+                "GStreamer's longer unquoted candidate must win over an early closing quote");
+      }
+
+      {
         const std::string launch =
             "fakesrc location=\"https://host/path?name=url\" ! "
             "video/x-raw(memory:DMABuf),format=(string){NV12,I420},name=caps_only;"
@@ -63,6 +89,15 @@ RUN_TEST(
         require(analysis.complete, "multi-structure caps should analyze completely");
         require(explicit_name_bindings(analysis).empty(),
                 "whitespace-separated fields in later caps structures must stay opaque");
+      }
+
+      {
+        const Analysis analysis =
+            analyze("fakesrc ! video/x-raw,format='NV12 ! identity name=after_caps");
+        const auto names = explicit_name_bindings(analysis);
+        require(analysis.complete && names.size() == 1U &&
+                    names.front()->canonical_value == "after_caps",
+                "an apostrophe in caps must not hide GStreamer's unescaped link operator");
       }
 
       {
@@ -173,11 +208,10 @@ RUN_TEST(
       }
 
       {
-        const Analysis malformed = analyze("identity name=\"unterminated");
-        require(!malformed.complete, "unterminated quoted assignment must be incomplete");
-        const RewriteResult unchanged =
-            rewrite("identity name=\"unterminated", malformed, {{"x", "y"}});
-        require(!unchanged.complete && unchanged.text == "identity name=\"unterminated",
+        const Analysis malformed = analyze("identity name=");
+        require(!malformed.complete, "an assignment without a value must be incomplete");
+        const RewriteResult unchanged = rewrite("identity name=", malformed, {{"x", "y"}});
+        require(!unchanged.complete && unchanged.text == "identity name=",
                 "incomplete syntax must never be partially rewritten");
       }
 

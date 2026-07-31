@@ -799,6 +799,11 @@ Status: implemented end to end in the working tree on July 31, 2026.
 - The private launch binding analyzer/editor, native one-parse tree audit, provenance ledger,
   deterministic framework names, RTSP precheck, and structured lazy failure carrier are wired into
   the production materialization paths. No explicit `validate()` call is required.
+- The binding analyzer follows GStreamer's `_string` longest-match behavior: paired apostrophes may
+  group a token but remain literal in the property value, while unmatched quotes fall back to the
+  ordinary token alternative. Differential tests compare these edge cases with native parsing.
+- Eager seeded connected builds retain the original typed `NeatError` and materialized launch
+  string instead of flattening it through the generic graph-start error wrapper.
 - Public C++ and Python signatures are unchanged. The ARM64 `Graph` layout remains pinned at 688
   bytes, and the public header-surface gate passes.
 - The complete ARM64 build, including the Python extension, passes.
@@ -806,4 +811,4 @@ Status: implemented end to end in the working tree on July 31, 2026.
 - The focused DevKit acceptance matrix passes 18 of 18 executables, including composition
   rollback, lexer/audit, seeded/source/one-shot/eager/lazy/fused/RTSP integration, structured
   failures, save/load, naming, API layout, and header surface.
-- The DevKit Python API-surface suite passes 49 tests with 17 environment-dependent skips.
+- The DevKit Python API-surface suite passes 50 tests with 18 environment-dependent skips.

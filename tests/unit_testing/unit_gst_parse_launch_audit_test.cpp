@@ -71,10 +71,14 @@ RUN_TEST(
           const char* assignment;
           const char* expected;
         };
-        static constexpr std::array<DifferentialCase, 3> kCases = {{
+        static constexpr std::array<DifferentialCase, 7> kCases = {{
             {"name=plain_differential", "plain_differential"},
             {"name=\"double\\ quoted\"", "double quoted"},
             {"name=escaped\\ value", "escaped value"},
+            {"name='single literal'", "'single literal'"},
+            {"name='single_unmatched", "'single_unmatched"},
+            {"name=\"double_unmatched", "\"double_unmatched"},
+            {"name=\"double\"suffix", "\"double\"suffix"},
         }};
         for (std::size_t i = 0; i < kCases.size(); ++i) {
           const std::string launch = std::string("identity ") + kCases[i].assignment +
@@ -140,8 +144,8 @@ RUN_TEST(
           }
         } catch (const NeatError& error) {
           threw = true;
-          require(error.report().error_code == error_codes::kParseLaunch,
-                  "native plugin/syntax failures should remain parse-launch errors");
+          require(error.report().error_code == error_codes::kPluginMissing,
+                  "a missing factory should retain the normalized plugin-missing error");
         }
         require(threw, "a missing factory must fail through native parsing");
       }

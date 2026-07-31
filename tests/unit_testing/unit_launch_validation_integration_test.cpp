@@ -42,7 +42,9 @@ simaai::neat::Graph make_connected_collision_graph() {
 void require_pipeline_shape(const simaai::neat::NeatError& error, const std::string& context) {
   require(error.report().error_code == simaai::neat::error_codes::kPipelineShape,
           context + " should preserve misconfig.pipeline_shape");
-  require(!error.report().pipeline_string.empty(), context + " should preserve the final launch");
+  require(!error.report().pipeline_string.empty(),
+          context + " should preserve the final launch; error=" + error.what() +
+              "; report=" + error.report().to_json());
 }
 
 } // namespace
