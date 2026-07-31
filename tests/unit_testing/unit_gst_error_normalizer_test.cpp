@@ -368,6 +368,15 @@ RUN_TEST(
         const std::string ordinary = redact_gst_credentials("A basic configuration is required");
         require(ordinary == "A basic configuration is required",
                 "ordinary uses of basic must not be treated as credentials");
+
+        const std::string keys =
+            redact_gst_credentials("current_key=video/x-raw new_key=tensor key=direct-key-secret "
+                                   "api_key=api-key-secret");
+        require_contains(keys, "current_key=video/x-raw new_key=tensor",
+                         "non-secret fields ending in key must retain their values");
+        require(keys.find("direct-key-secret") == std::string::npos &&
+                    keys.find("api-key-secret") == std::string::npos,
+                "standalone and explicit API key values must remain redacted: " + keys);
       }
 
       {

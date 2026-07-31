@@ -166,6 +166,13 @@ std::string redact_uri_credentials(std::string value) {
   for (std::string_view marker : sensitive) {
     std::size_t pos = 0;
     while ((pos = lower_copy(value).find(marker, pos)) != std::string::npos) {
+      if (marker == "key=" && pos > 0) {
+        const unsigned char preceding = static_cast<unsigned char>(value[pos - 1]);
+        if (std::isalnum(preceding) || preceding == '_' || preceding == '-') {
+          pos += marker.size();
+          continue;
+        }
+      }
       pos = redact_secret_value(value, pos + marker.size(), false);
     }
   }
