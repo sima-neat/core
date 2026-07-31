@@ -430,6 +430,15 @@ RUN_TEST(
                          "Google signature redaction should retain the parameter name");
         require_contains(google, "X-Goog-Algorithm=GOOG4-RSA-SHA256",
                          "Google redaction should preserve non-secret signing metadata");
+
+        const std::string contact_url = "https://api.example.test?email=user@example.test#support";
+        require(redact_gst_credentials(contact_url) == contact_url,
+                "query and fragment at-signs must not be mistaken for URI userinfo");
+
+        const std::string userinfo =
+            redact_gst_credentials("https://user:password@example.test?email=user@example.test");
+        require_contains(userinfo, "https://<redacted>@example.test?email=user@example.test",
+                         "URI userinfo should be redacted without changing the query");
       }
 
       {

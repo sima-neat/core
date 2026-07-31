@@ -162,7 +162,7 @@ std::string redact_uri_credentials(std::string value) {
     if (scheme == std::string::npos)
       break;
     const std::size_t authority = scheme + 3;
-    const std::size_t slash = value.find_first_of("/ \t\r\n", authority);
+    const std::size_t slash = value.find_first_of("/?# \t\r\n", authority);
     const std::size_t at = value.find('@', authority);
     if (at != std::string::npos && (slash == std::string::npos || at < slash)) {
       value.replace(authority, at - authority, "<redacted>");
