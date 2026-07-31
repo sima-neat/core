@@ -79,13 +79,13 @@ static void require_resolution_fields(const std::string& err) {
   require_contains(err, "fallback_chain=", "missing fallback_chain field");
 }
 
-static void require_production_error(const std::string& err, const std::string& stage) {
-  require_contains(err, "[runtime.element_failed]", "expected the generic runtime fallback code");
-  require_contains(err, "A pipeline stage stopped while processing data.",
-                   "expected a plain-language failure title");
+static void require_configuration_error(const std::string& err, const std::string& stage) {
+  require_contains(err, "[io.parse]", "expected the configuration error code");
+  require_contains(err, "The reported pipeline stage configuration is invalid.",
+                   "expected a plain-language configuration failure title");
   require_contains(err, "Stage: " + stage, "expected the failing stage");
   require_contains(err, "How to fix:", "expected actionable user guidance");
-  require_contains(err, "Diagnostic ID: gstreamer.unclassified_element_failure",
+  require_contains(err, "Diagnostic ID: gstreamer.configuration_invalid",
                    "expected a stable diagnostic id");
   require(err.find("GST ERROR") == std::string::npos,
           "production error should not expose a raw GST ERROR dump");
@@ -274,9 +274,7 @@ static void test_processmla_failure() {
   });
 
   maybe_dump_error("processmla", err);
-  require_production_error(err, "mla_fail");
-  require_contains(err, "Reason: Missing typed stage config payload",
-                   "expected the plugin's concise reason");
+  require_configuration_error(err, "mla_fail");
 }
 
 static void test_boxdecode_failure() {
@@ -312,8 +310,7 @@ static void test_boxdecode_failure() {
   });
 
   maybe_dump_error("boxdecode", err);
-  require_production_error(err, "box_fail");
-  require_contains(err, "Missing", "expected manifest-context failure");
+  require_configuration_error(err, "box_fail");
 }
 
 static void test_boxdecode_missing_manifest_context_failure() {

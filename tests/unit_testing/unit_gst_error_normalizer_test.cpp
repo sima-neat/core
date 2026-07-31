@@ -351,12 +351,18 @@ RUN_TEST(
                 "escaped quoted redaction must remove embedded escaped delimiters");
         require_contains(escaped, R"(password=\"<redacted>\")",
                          "escaped quoted fields should preserve their structural delimiters");
+
+        const std::string standalone =
+            redact_gst_credentials("Bearer standalone-value trailing=visible");
+        require(standalone.find("standalone-value") == std::string::npos,
+                "standalone bearer credentials must be redacted: " + standalone);
+        require_contains(standalone, "Bearer <redacted> trailing=visible",
+                         "standalone bearer redaction should preserve surrounding text");
       }
 
       {
-        GstElement* source = gst_element_factory_make("filesrc", "input_file");
-        require(source != nullptr, "filesrc must be available for parser test");
-        g_object_set(source, "location", "/data/input.mp4", nullptr);
+        GstElement* source = gst_pipeline_new("input_file");
+        require(source != nullptr, "pipeline object must be available for parser test");
         GError* error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND,
                                             "Resource not found.");
         GstStructure* details = gst_structure_new(
@@ -386,9 +392,7 @@ RUN_TEST(
         g_error_free(error);
 
         const RawGstError raw = parse_gst_error_message(message);
-        require(raw.factory_name == "filesrc", "raw parser should capture the element factory");
-        require(raw.details.at("source-identity") == "/data/input.mp4",
-                "raw parser should capture the configured source identity");
+        require(raw.source_name == "input_file", "raw parser should capture the source name");
         require(raw.details.at("password") == "<redacted>" &&
                     raw.details.at("auth-token") == "<redacted>" &&
                     raw.details.at("sig") == "<redacted>" &&
@@ -439,7 +443,9 @@ RUN_TEST(
         require_contains(raw.debug, "passphrase=<redacted>",
                          "SRT passphrases should retain only their parameter names");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
-        require_code(diagnostic, error_codes::kFileNotFound);
+        require_code(diagnostic, error_codes::kIoOpen);
+        require(diagnostic.diagnostic_id == "gstreamer.resource_not_found",
+                "resource errors without a source factory should use the generic mapping");
 
         gst_message_unref(message);
         gst_object_unref(source);
@@ -474,8 +480,34 @@ RUN_TEST(
         require_code(diagnostic, error_codes::kRuntimeElementFailed);
         require(diagnostic.diagnostic_id == "gstreamer.unclassified_element_failure",
                 "unknown errors should use the explicit fallback diagnostic");
-        require_contains(render_diagnostic_body(diagnostic, true), "Technical details:",
-                         "debug rendering should include raw technical context");
+        const std::string production = render_diagnostic_body(diagnostic, false);
+        require(production.find("opaque failure") == std::string::npos,
+                "generic production errors must not echo raw plugin messages");
+        const std::string debug = render_diagnostic_body(diagnostic, true);
+        require_contains(
+            debug, "Technical details:", "debug rendering should include raw technical context");
+        require_contains(debug, "opaque failure",
+                         "debug rendering should retain the raw plugin message");
+      }
+
+      {
+        RawGstError raw = raw_error("mystage", "gst-library-error-quark", GST_LIBRARY_ERROR_FAILED,
+                                    "opaque failure");
+        raw.details["reason"] = "Validated plugin reason";
+        const std::string production = render_diagnostic_body(classify_gst_error(raw), false);
+        require_contains(production, "Reason: Validated plugin reason",
+                         "generic production errors should retain vetted structured reasons");
+      }
+
+      {
+        const NormalizedDiagnostic diagnostic =
+            classify_gst_error(raw_error("mystage", "gst-library-error-quark",
+                                         GST_LIBRARY_ERROR_FAILED, "reason=UntrustedRawReason"));
+        const std::string production = render_diagnostic_body(diagnostic, false);
+        require(production.find("UntrustedRawReason") == std::string::npos,
+                "raw reason fields must remain out of production diagnostics");
+        require_contains(render_diagnostic_body(diagnostic, true), "UntrustedRawReason",
+                         "debug rendering should retain raw reason fields");
       }
 
       {

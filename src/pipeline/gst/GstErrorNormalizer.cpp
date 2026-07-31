@@ -190,7 +190,8 @@ std::string redact_uri_credentials(std::string value) {
         pos += marker.size();
         continue;
       }
-      std::size_t separator = pos + marker.size();
+      const std::size_t marker_end = pos + marker.size();
+      std::size_t separator = marker_end;
       const char key_quote =
           pos > 0 && (value[pos - 1] == '\'' || value[pos - 1] == '"') ? value[pos - 1] : '\0';
       if (key_quote != '\0' && separator < value.size()) {
@@ -206,11 +207,15 @@ std::string redact_uri_credentials(std::string value) {
              value[separator] != '\r' && value[separator] != '\n') {
         ++separator;
       }
-      if (separator >= value.size() || (value[separator] != ':' && value[separator] != '=')) {
+      const bool has_separator =
+          separator < value.size() && (value[separator] == ':' || value[separator] == '=');
+      const bool standalone_scheme = key_quote == '\0' && (marker == "bearer" || marker == "jwt") &&
+                                     separator > marker_end && !has_separator;
+      if (!has_separator && !standalone_scheme) {
         pos += marker.size();
         continue;
       }
-      std::size_t begin = separator + 1;
+      std::size_t begin = standalone_scheme ? separator : separator + 1;
       while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) &&
              value[begin] != '\r' && value[begin] != '\n') {
         ++begin;
@@ -291,13 +296,20 @@ bool safe_production_reason(const std::string& reason) {
          lower.find(".cpp") == std::string::npos && lower.find(".c:") == std::string::npos;
 }
 
-std::optional<std::string> find_detail(const RawGstError& raw,
-                                       std::initializer_list<std::string_view> keys) {
+std::optional<std::string> find_structured_detail(const RawGstError& raw,
+                                                  std::initializer_list<std::string_view> keys) {
   for (std::string_view key : keys) {
     auto it = raw.details.find(std::string(key));
     if (it != raw.details.end() && !it->second.empty())
       return it->second;
   }
+  return std::nullopt;
+}
+
+std::optional<std::string> find_detail(const RawGstError& raw,
+                                       std::initializer_list<std::string_view> keys) {
+  if (const std::optional<std::string> value = find_structured_detail(raw, keys))
+    return value;
 
   const std::string text = combined_raw(raw);
   for (std::string_view key : keys) {
@@ -534,6 +546,10 @@ NormalizedDiagnostic configuration_invalid(RawGstError raw) {
            "The reported pipeline stage configuration is invalid.");
   add_fact(out, "Configuration",
            find_detail(out.raw, {"config-path", "config_path", "path"}).value_or(""));
+  const std::string reason =
+      find_structured_detail(out.raw, {"neat-reason", "neat_reason", "reason"}).value_or("");
+  if (safe_production_reason(reason))
+    add_fact(out, "Reason", reason);
   out.actions = {
       "Correct the configuration for the reported stage.",
       "Validate the configuration syntax and values before starting the pipeline.",
@@ -844,7 +860,7 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
   const std::string diagnostic_id =
       find_detail(raw, {"neat-diagnostic-id", "neat_diagnostic_id", "diagnostic_id"}).value_or("");
   const std::string reason =
-      find_detail(raw, {"neat-reason", "neat_reason", "reason"}).value_or("");
+      find_structured_detail(raw, {"neat-reason", "neat_reason", "reason"}).value_or("");
   const bool documented_dispatcher_error =
       raw.domain_name == "gst-resource-error-quark" &&
       ((raw.code == GST_RESOURCE_ERROR_BUSY &&
@@ -995,8 +1011,6 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
            "A pipeline stage stopped while processing data.");
   if (safe_production_reason(reason))
     add_fact(out, "Reason", reason);
-  else if (safe_production_reason(out.raw.message))
-    add_fact(out, "Reason", out.raw.message);
   out.actions = {
       "Correct the configuration of the reported stage and its upstream input.",
       "Restart the pipeline after correcting the first upstream failure.",
