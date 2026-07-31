@@ -1173,6 +1173,7 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
     out.entries.push_back(std::move(entry));
   }
 
+  bool has_mpk_manifest = false;
   for (const auto& entry : out.entries) {
     if (entry.entry_class != EntryClass::Json)
       continue;
@@ -1183,12 +1184,18 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
          base.compare(base.size() - mpk_suffix.size(), mpk_suffix.size(), mpk_suffix) != 0)) {
       continue;
     }
+    has_mpk_manifest = true;
     const std::vector<std::uint8_t> bytes =
         read_tar_entry(snapshot.tar_path(), entry.raw_path, opt.max_entry_bytes);
 
     (void)parse_json_entry_strict(bytes, entry.normalized_path, opt);
   }
 
+  if (!has_mpk_manifest) {
+    throw_archive(ModelArchiveErrorClass::SchemaError,
+                  "schema_error: strict MPK contract required: archive contains no mpk.json or "
+                  "*_mpk.json");
+  }
   if (opt.require_model_binary && !out.manifest.has_model_binary) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: archive missing model binary artifacts (*.elf or *.so)");

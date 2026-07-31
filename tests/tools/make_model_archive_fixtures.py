@@ -325,6 +325,7 @@ def _fixture_specs() -> List[FixtureSpec]:
     )
 
     missing_pipeline = [e for e in copy.deepcopy(valid) if e["name"] != "etc/pipeline_sequence.json"]
+    missing_mpk = [e for e in copy.deepcopy(valid) if e["name"] != "etc/model_mpk.json"]
 
     malformed_auxiliary_json = copy.deepcopy(valid)
     for e in malformed_auxiliary_json:
@@ -433,6 +434,7 @@ def _fixture_specs() -> List[FixtureSpec]:
         FixtureSpec("valid/missing_pipeline_sequence.tar.gz", "pipeline_sequence.json is optional", missing_pipeline),
         FixtureSpec("valid/malformed_auxiliary_json.tar.gz", "malformed auxiliary JSON remains opaque", malformed_auxiliary_json),
         FixtureSpec("valid/unsupported_auxiliary_version.tar.gz", "auxiliary manifest version remains opaque", unsupported_auxiliary_version),
+        FixtureSpec("invalid/missing_mpk.tar.gz", "model archive has no MPK manifest", missing_mpk),
         FixtureSpec("invalid/path_traversal.tar.gz", "drive-prefix path traversal entry", path_traversal),
         FixtureSpec("invalid/absolute_path.tar.gz", "absolute path entry", absolute_path),
         FixtureSpec("invalid/mixed_separator_traversal.tar.gz", "mixed separator traversal entry", mixed_sep),

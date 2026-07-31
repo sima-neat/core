@@ -170,6 +170,14 @@ RUN_TEST(
                     " should remain loadable when auxiliary JSON is absent or malformed");
       }
 
+      require_model_archive_error(
+          [&]() {
+            (void)ModelArchiveLoader::inspect(
+                sima_test::model_archive_fixture_path("invalid/missing_mpk.tar.gz").string());
+          },
+          ModelArchiveErrorClass::SchemaError,
+          "archive without MPK manifest should fail with schema_error");
+
       ModelArchiveLoaderOptions tiny;
       tiny.max_archive_bytes = 1024ULL * 1024ULL;
       tiny.max_entry_bytes = 512ULL;
