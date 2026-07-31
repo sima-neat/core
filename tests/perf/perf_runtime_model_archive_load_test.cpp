@@ -51,7 +51,6 @@ int main() {
     // leaving the snapshot on TMPDIR would measure a filesystem pair no real load uses.
     simaai::neat::internal::ModelArchiveLoaderOptions opt;
     opt.reject_unsupported_file_types = false;
-    opt.require_pipeline_sequence = false;
     opt.staging_base = scratch.string();
 
     // Warm the page cache so the first sample measures the decoder rather than the first read of

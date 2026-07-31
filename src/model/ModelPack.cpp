@@ -1053,11 +1053,7 @@ static std::string extract_and_organize(const std::string& tar_path,
 
   simaai::neat::internal::ModelArchiveLoaderOptions opt;
   // Runtime model packs may include auxiliary build/report artifacts.
-  // Keep strict type validation in security/unit tests (default options),
-  // but allow these extras in ModelPack runtime extraction.
   opt.reject_unsupported_file_types = false;
-  opt.require_pipeline_sequence = false;
-  opt.validate_mpk_json_only = true;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());

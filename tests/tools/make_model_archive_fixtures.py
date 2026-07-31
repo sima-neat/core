@@ -190,6 +190,7 @@ def _base_valid_entries() -> List[dict]:
         {"type": "dir", "name": "etc"},
         {"type": "dir", "name": "lib"},
         {"type": "dir", "name": "share"},
+        {"type": "file", "name": "etc/model_mpk.json", "data": '{"plugins":[]}'},
         {
             "type": "file",
             "name": "etc/pipeline_sequence.json",
@@ -325,112 +326,19 @@ def _fixture_specs() -> List[FixtureSpec]:
 
     missing_pipeline = [e for e in copy.deepcopy(valid) if e["name"] != "etc/pipeline_sequence.json"]
 
-    schema_error = copy.deepcopy(valid)
-    for e in schema_error:
+    malformed_auxiliary_json = copy.deepcopy(valid)
+    for e in malformed_auxiliary_json:
         if e["name"] == "etc/pipeline_sequence.json":
             e["data"] = "{ invalid_json "
 
-    unsupported_version = copy.deepcopy(valid)
-    unsupported_version.append(
+    unsupported_auxiliary_version = copy.deepcopy(valid)
+    unsupported_auxiliary_version.append(
         {
             "type": "file",
             "name": "etc/manifest.json",
             "data": json.dumps({"version": 999, "name": "unsupported"}, sort_keys=True, separators=(",", ":")),
         }
     )
-
-    duplicate_names = copy.deepcopy(valid)
-    dup_seq = {
-        "pipelines": [
-            {
-                "sequence": [
-                    {
-                        "sequence_id": 1,
-                        "name": "stage_dup",
-                        "pluginId": "processcvu",
-                        "configPath": "0_preproc.json",
-                        "processor": "CVU",
-                        "kernel": "preproc",
-                        "input": "decoder",
-                    },
-                    {
-                        "sequence_id": 2,
-                        "name": "stage_dup",
-                        "pluginId": "processmla",
-                        "configPath": "0_process_mla.json",
-                        "processor": "MLA",
-                        "kernel": "infer",
-                        "input": "stage_dup",
-                    },
-                ]
-            }
-        ]
-    }
-    for e in duplicate_names:
-        if e["name"] == "etc/pipeline_sequence.json":
-            e["data"] = json.dumps(dup_seq, sort_keys=True, separators=(",", ":"))
-
-    unknown_kernel = copy.deepcopy(valid)
-    unk_seq = {
-        "pipelines": [
-            {
-                "sequence": [
-                    {
-                        "sequence_id": 1,
-                        "name": "preproc_0",
-                        "pluginId": "processcvu",
-                        "configPath": "0_preproc.json",
-                        "processor": "CVU",
-                        "kernel": "preproc",
-                        "input": "decoder",
-                    },
-                    {
-                        "sequence_id": 2,
-                        "name": "mystage",
-                        "pluginId": "processmla",
-                        "configPath": "0_process_mla.json",
-                        "processor": "MLA",
-                        "kernel": "unknown_kernel_type",
-                        "input": "preproc_0",
-                    },
-                ]
-            }
-        ]
-    }
-    for e in unknown_kernel:
-        if e["name"] == "etc/pipeline_sequence.json":
-            e["data"] = json.dumps(unk_seq, sort_keys=True, separators=(",", ":"))
-
-    invalid_dep = copy.deepcopy(valid)
-    bad_dep_seq = {
-        "pipelines": [
-            {
-                "sequence": [
-                    {
-                        "sequence_id": 1,
-                        "name": "preproc_0",
-                        "pluginId": "processcvu",
-                        "configPath": "0_preproc.json",
-                        "processor": "CVU",
-                        "kernel": "preproc",
-                        "input": "nonexistent_stage",
-                    },
-                    {
-                        "sequence_id": 2,
-                        "name": "mla_0",
-                        "pluginId": "processmla",
-                        "configPath": "0_process_mla.json",
-                        "processor": "MLA",
-                        "kernel": "infer",
-                        "input": "preproc_0",
-                    },
-                ]
-            }
-        ]
-    }
-    for e in invalid_dep:
-        if e["name"] == "etc/pipeline_sequence.json":
-            e["data"] = json.dumps(bad_dep_seq, sort_keys=True, separators=(",", ":"))
 
     # Use a Windows-style drive-prefix entry (no '..', no leading '/') so the
     # GNU tar listing does not strip-and-warn (which exits the tar -tvzf subprocess
@@ -497,23 +405,18 @@ def _fixture_specs() -> List[FixtureSpec]:
     for _ in range(256):
         deep_obj = {"n": deep_obj}
     for e in json_deep_nesting_256:
-        if e["name"] == "etc/pipeline_sequence.json":
+        if e["name"] == "etc/model_mpk.json":
             e["data"] = json.dumps(deep_obj, separators=(",", ":"))
 
     json_duplicate_keys_top = copy.deepcopy(valid)
     for e in json_duplicate_keys_top:
-        if e["name"] == "etc/pipeline_sequence.json":
-            e["data"] = '{"pipelines":[],"pipelines":[{"sequence":[{"sequence_id":1,"name":"mla_0","pluginId":"processmla","configPath":"0_process_mla.json","processor":"MLA","kernel":"infer","input":"decoder"}]}]}'
+        if e["name"] == "etc/model_mpk.json":
+            e["data"] = '{"plugins":[],"plugins":[]}'
 
     json_duplicate_keys_nested = copy.deepcopy(valid)
     for e in json_duplicate_keys_nested:
-        if e["name"] == "etc/pipeline_sequence.json":
-            e["data"] = '{"pipelines":[{"sequence":[{"sequence_id":1,"name":"dup_kernel","pluginId":"processmla","configPath":"0_process_mla.json","processor":"MLA","kernel":"infer","kernel":"unknown_kernel_type","input":"decoder"}]}]}'
-
-    json_huge_numeric_sequence_id = copy.deepcopy(valid)
-    for e in json_huge_numeric_sequence_id:
-        if e["name"] == "etc/pipeline_sequence.json":
-            e["data"] = '{"pipelines":[{"sequence":[{"sequence_id":9223372036854775807,"name":"mla_0","pluginId":"processmla","configPath":"0_process_mla.json","processor":"MLA","kernel":"infer","input":"decoder"}]}]}'
+        if e["name"] == "etc/model_mpk.json":
+            e["data"] = '{"plugins":[{"name":"a","name":"b"}]}'
 
     # Two distinct entries that flatten to the same extraction destination
     # (a/collide.json and b/collide.json both -> etc/collide.json). Otherwise a valid
@@ -527,12 +430,9 @@ def _fixture_specs() -> List[FixtureSpec]:
         FixtureSpec("valid/destination_collision.tar.gz", "two entries flatten to same extraction destination (warn by default)", destination_collision),
         FixtureSpec("valid/basic_valid.tar.gz", "baseline valid package (.tar.gz)", valid),
         FixtureSpec("valid/multi_stage_valid.tar.gz", "valid package with multi-stage inference", multi),
-        FixtureSpec("invalid/missing_pipeline_sequence.tar.gz", "missing required pipeline_sequence.json", missing_pipeline),
-        FixtureSpec("invalid/schema_error_sequence.tar.gz", "invalid JSON in pipeline_sequence.json", schema_error),
-        FixtureSpec("invalid/unsupported_version.tar.gz", "manifest version not supported", unsupported_version),
-        FixtureSpec("invalid/duplicate_stage_names.tar.gz", "duplicate stage names in sequence", duplicate_names),
-        FixtureSpec("invalid/unknown_kernel.tar.gz", "unknown kernel in sequence", unknown_kernel),
-        FixtureSpec("invalid/invalid_dependency.tar.gz", "sequence input references unknown stage", invalid_dep),
+        FixtureSpec("valid/missing_pipeline_sequence.tar.gz", "pipeline_sequence.json is optional", missing_pipeline),
+        FixtureSpec("valid/malformed_auxiliary_json.tar.gz", "malformed auxiliary JSON remains opaque", malformed_auxiliary_json),
+        FixtureSpec("valid/unsupported_auxiliary_version.tar.gz", "auxiliary manifest version remains opaque", unsupported_auxiliary_version),
         FixtureSpec("invalid/path_traversal.tar.gz", "drive-prefix path traversal entry", path_traversal),
         FixtureSpec("invalid/absolute_path.tar.gz", "absolute path entry", absolute_path),
         FixtureSpec("invalid/mixed_separator_traversal.tar.gz", "mixed separator traversal entry", mixed_sep),
@@ -545,10 +445,9 @@ def _fixture_specs() -> List[FixtureSpec]:
         FixtureSpec("invalid/unicode_confusable_dotdot.tar.gz", "unicode confusable dot traversal", unicode_confusable_dotdot),
         FixtureSpec("invalid/duplicate_header_same_path.tar.gz", "duplicate tar header for same path", duplicate_header_same_path),
         FixtureSpec("invalid/duplicate_header_safe_then_traversal.tar.gz", "duplicate header using alternate raw path form", duplicate_header_safe_then_traversal),
-        FixtureSpec("invalid/json_deep_nesting_256.tar.gz", "pipeline_sequence exceeds JSON depth limit", json_deep_nesting_256),
-        FixtureSpec("invalid/json_duplicate_keys_top.tar.gz", "duplicate keys in top-level pipeline_sequence object", json_duplicate_keys_top),
-        FixtureSpec("invalid/json_duplicate_keys_nested.tar.gz", "duplicate keys in nested stage entry", json_duplicate_keys_nested),
-        FixtureSpec("invalid/json_huge_numeric_sequence_id.tar.gz", "oversized numeric field in sequence entry", json_huge_numeric_sequence_id),
+        FixtureSpec("invalid/json_deep_nesting_256.tar.gz", "MPK JSON exceeds depth limit", json_deep_nesting_256),
+        FixtureSpec("invalid/json_duplicate_keys_top.tar.gz", "duplicate keys in top-level MPK object", json_duplicate_keys_top),
+        FixtureSpec("invalid/json_duplicate_keys_nested.tar.gz", "duplicate keys in nested MPK object", json_duplicate_keys_nested),
     ]
 
 
