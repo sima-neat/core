@@ -5,6 +5,7 @@
 #include "builder/Node.h"
 #include "gst/GstInit.h"
 #include "graphs/Fragments.h"
+#include "nodes/common/Caps.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/CameraInput.h"
@@ -19,6 +20,8 @@
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
@@ -340,20 +343,45 @@ RUN_TEST(
       require_contains(pipeline, "defer-output-invalidate=true",
                        "fused ProcessMLA must receive the public deferred-cache-sync option");
 
-      const std::string queue = "queue max-size-buffers=4 max-size-bytes=0 max-size-time=0";
-      require(count_occurrences(pipeline, queue) == 3U,
+      const std::string queue_properties = "max-size-buffers=4 max-size-bytes=0 max-size-time=0";
+      require(count_occurrences(pipeline, queue_properties) == 3U,
               "fused async depth must insert exactly mux-to-CVU, CVU-to-MLA, and "
               "MLA-to-decode queues");
       require_contains(pipeline,
-                       "stream-inflight-limits=\"4\" max-inflight-total=4 ! " + queue +
-                           " ! neatprocesscvu",
+                       "stream-inflight-limits=\"4\" max-inflight-total=4 ! queue "
+                       "name=queue_neat_fused_stage_0 " +
+                           queue_properties + " ! neatprocesscvu",
                        "first fused queue must decouple the mux from ProcessCVU");
-      require_contains(pipeline, "num-buffers=4 ! " + queue + " ! neatprocessmla",
+      require_contains(pipeline,
+                       "num-buffers=4 ! queue name=queue_neat_fused_stage_1 " + queue_properties +
+                           " ! neatprocessmla",
                        "second fused queue must decouple ProcessCVU from ProcessMLA");
-      require_contains(pipeline, "defer-output-invalidate=true ! " + queue + " ! neatboxdecode",
+      require_contains(pipeline,
+                       "defer-output-invalidate=true ! queue name=queue_neat_fused_stage_2 " +
+                           queue_properties + " ! neatboxdecode",
                        "third fused queue must decouple ProcessMLA from decode");
       require_contains(pipeline, "neatboxdecode name=n0_boxdecode ! appsink name=n0_output",
                        "terminal Output must stay directly connected to decode");
+
+      {
+        auto colliding_consumer = make_consumer_nodes();
+        colliding_consumer.insert(
+            colliding_consumer.begin(),
+            simaai::neat::nodes::Custom("identity name=queue_neat_fused_stage_0"));
+        const std::string colliding_pipeline =
+            simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
+                colliding_consumer, options);
+        bool threw = false;
+        try {
+          simaai::neat::session_build_validate_explicit_launch_names_or_throw(
+              colliding_pipeline, "fused-name-integration-test");
+        } catch (const simaai::neat::NeatError& error) {
+          threw = true;
+          require(error.report().error_code == simaai::neat::error_codes::kPipelineShape,
+                  "fused final-string collision should preserve the shape error code");
+        }
+        require(threw, "fused framework/Custom name collisions must fail at final materialization");
+      }
       require(pipeline.find("leaky=") == std::string::npos,
               "fused consumer-stage queues must be non-leaky so terminal loan release "
               "cannot be skipped");
@@ -430,7 +458,7 @@ RUN_TEST(
       const std::string no_queue_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               make_consumer_nodes(), no_consumer_queues);
-      require(no_queue_pipeline.find("queue max-size-buffers=") == std::string::npos,
+      require(no_queue_pipeline.find("queue name=queue_neat_fused_stage_") == std::string::npos,
               "async_queue_depth=0 must preserve the fused single-chain behavior");
 
       const auto reordered_timing =
@@ -597,8 +625,7 @@ RUN_TEST(
                        "fused mux must receive public per-link admission limits");
       require_contains(composed_pipeline, "max-inflight-total=2",
                        "fused mux must apply the strictest public mux-wide admission limit");
-      const std::string composed_queue =
-          "queue max-size-buffers=3 max-size-bytes=0 max-size-time=0";
+      const std::string composed_queue = "max-size-buffers=3 max-size-bytes=0 max-size-time=0";
       require(count_occurrences(composed_pipeline, composed_queue) == 3U,
               "actual composed fused graph must render the three selected stage queues");
       require(composed_pipeline.find(composed_queue + " ! appsink") == std::string::npos,
@@ -1092,12 +1119,12 @@ RUN_TEST(
               *direct_video_fused->fused_realtime_ingress, direct_video_fused->nodes,
               direct_video_fused->route_options);
       const std::string lossless_decoder_queue =
-          " ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! neatdecoder";
+          "max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! neatdecoder";
       const std::string leaky_video_queue =
-          "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! "
+          "max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! "
           "h264parse";
       const std::string lossless_video_queue =
-          "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! h264parse";
+          "max-size-buffers=1 max-size-bytes=0 max-size-time=0 ! h264parse";
       require(count_occurrences(direct_video_pipeline, lossless_decoder_queue) == 2U,
               "a queue-less encoded prefix must retain one lossless decoder queue per stream");
       require(count_occurrences(direct_video_pipeline, lossless_video_queue) == 1U,
@@ -1106,8 +1133,7 @@ RUN_TEST(
               "a realtime-latest VideoSender edge must retain one-AU replacement");
       require(count_occurrences(
                   direct_video_pipeline,
-                  "queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream") ==
-                  1U,
+                  "max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream") == 1U,
               "latest mux input must not add a second decoded-EV buffer per stream");
 
       // RtspEncodedInput normally ends its encoded prefix in the framework's

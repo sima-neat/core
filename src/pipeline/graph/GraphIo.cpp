@@ -1575,6 +1575,7 @@ Graph Graph::load(const std::string& path) {
 
     const auto& nodes = *it_nodes->second.arr;
     graph.composition_->vertices.reserve(nodes.size());
+    graph.composition_->pipeline_vertex_by_identity.reserve(nodes.size());
     for (std::size_t idx = 0; idx < nodes.size(); ++idx) {
       const auto& n = nodes[idx];
       if (n.type != JsonValue::Type::Object || !n.obj) {
@@ -1631,7 +1632,7 @@ Graph Graph::load(const std::string& path) {
         node = std::make_shared<ConfiguredNode>(kind, label, fragment, std::move(elements));
       }
 
-      graph.composition_->vertices.push_back(node);
+      graph.composition_->append_unlinked_pipeline_vertex(node, "Graph::load");
       graph.groups_.push_back(Graph::GroupMeta{
           .start = idx,
           .end = idx + 1U,

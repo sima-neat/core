@@ -7,6 +7,7 @@
  */
 #include "pipeline/Graph.h"
 #include "GraphDetail.h"
+#include "internal/GraphBuildInternal.h"
 
 #include "gst/GstInit.h"
 #include "gst/GstParseLaunch.h"
@@ -424,18 +425,35 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
   }
 
   const NameTransform name_transform = make_name_transform(opt_);
+  std::vector<LaunchNameOrigin> name_origins;
   std::ostringstream ss;
   for (size_t i = 0; i < nodes.size(); ++i) {
     if (i)
       ss << " ! ";
     NodeFragment frag = make_node_fragment(nodes[i], static_cast<int>(i), name_transform);
+    for (const auto& name : frag.element_names) {
+      name_origins.push_back(LaunchNameOrigin{
+          .kind = LaunchNameOrigin::Kind::NodeFragment,
+          .name = name,
+          .node_index = static_cast<int>(i),
+          .node_kind = nodes[i] ? nodes[i]->kind() : "",
+          .role = "RTSP Node fragment",
+      });
+    }
     ss << frag.fragment;
   }
   std::string launch = ss.str();
   const std::string pay_token = "rtph264pay";
   const size_t pay_pos = launch.find(pay_token);
   if (pay_pos != std::string::npos) {
-    const std::string caps = "capsfilter name=rtsp_h264_capsfix caps=\"video/x-h264,parsed=true,"
+    const std::string capsfix_name = apply_name_transform(name_transform, "rtsp_h264_capsfix");
+    name_origins.push_back(LaunchNameOrigin{
+        .kind = LaunchNameOrigin::Kind::RtspHelper,
+        .name = capsfix_name,
+        .role = "injected H.264 caps filter",
+    });
+    const std::string caps = "capsfilter name=" + capsfix_name +
+                             " caps=\"video/x-h264,parsed=true,"
                              "stream-format=(string)byte-stream,alignment=(string)au,"
                              "width=(int)" +
                              std::to_string(src_img->enc_w()) + ",height=(int)" +
@@ -444,6 +462,8 @@ RtspServerHandle Graph::run_rtsp(const RtspServerOptions& opt) {
     launch.insert(pay_pos, caps + " ! ");
   }
   last_pipeline_ = "( " + launch + " )";
+  session_build_validate_explicit_launch_names_or_throw(last_pipeline_, "Graph::run_rtsp",
+                                                        name_origins);
 
   auto guard = guard_;
 
