@@ -71,10 +71,9 @@ migration guidance for applications that matched the previous coarse codes.
 Production messages intentionally omit GStreamer internals. Plugin debug
 verbosity adds the raw GError domain/code, element factory, message, and
 structured plugin details. Recognized credentials and URL secret parameters—including URI
-userinfo, `auth`, `playback-token`, `hdnts`, and `stream-key`—are redacted before either form is
-stored. Report-facing pipeline strings, Node
-fragments, reproducer commands, and serialized JSON are redacted without
-changing the executable pipeline held internally.
+userinfo, `auth`, `playback-token`, `hdnts`, `stream-key`, and `tkn`—are redacted before either
+form is stored. Report-facing pipeline strings, Node fragments, reproducer commands, and
+serialized JSON are redacted without changing the executable pipeline held internally.
 
 ## Programmatic handling
 

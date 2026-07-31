@@ -78,7 +78,7 @@ received-layout=(string)HWC, received-dtype=(string)UInt8;
   `NeatError::what()` and `GraphReport.repro_note`. `NeatError::report()` remains
   the structured interface for diagnostics.
 - `NEAT_LOG_LEVEL=debug` is not a Neat Library setting.
-- URI userinfo and recognized credential fields—including `auth`, `playback-token`, `hdnts`, and
-  `stream-key`—are redacted in report-facing pipeline strings, reproducer commands, structured
-  details, and JSON. Review a support bundle for deployment-specific paths and media addresses
-  before sharing it.
+- URI userinfo and recognized credential fields—including `auth`, `playback-token`, `hdnts`,
+  `stream-key`, and `tkn`—are redacted in report-facing pipeline strings, reproducer commands,
+  structured details, and JSON. Review a support bundle for deployment-specific paths and media
+  addresses before sharing it.

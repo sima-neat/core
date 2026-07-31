@@ -508,6 +508,15 @@ RUN_TEST(
         require_contains(streaming, "mode=live",
                          "stream redaction should preserve non-secret parameters");
 
+        const std::string browser_vscode = redact_gst_credentials(
+            "https://127.0.0.1:10000/?tkn=browser-vscode-secret&folder=/workspace");
+        require(browser_vscode.find("browser-vscode-secret") == std::string::npos,
+                "browser VS Code access tokens must be redacted: " + browser_vscode);
+        require_contains(browser_vscode, "tkn=<redacted>",
+                         "browser VS Code token parameters should retain only their names");
+        require_contains(browser_vscode, "folder=/workspace",
+                         "browser VS Code redaction should preserve non-secret parameters");
+
         const std::string contact_url = "https://api.example.test?email=user@example.test#support";
         require(redact_gst_credentials(contact_url) == contact_url,
                 "query and fragment at-signs must not be mistaken for URI userinfo");

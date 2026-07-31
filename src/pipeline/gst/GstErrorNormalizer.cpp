@@ -456,7 +456,7 @@ bool sensitive_detail_name(std::string_view name) {
   }
 
   static constexpr std::string_view exact_names[] = {
-      "auth", "hdnts",  "key",  "sig", "signature", "session",
+      "auth", "hdnts",  "key",  "sig", "signature", "session", "tkn",
       "jwt",  "bearer", "pass", "pw",  "pwd",       "token",
   };
   for (const std::string_view exact_name : exact_names) {
