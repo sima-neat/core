@@ -42,7 +42,7 @@ env:
 jobs:
   resolve-vulcan-config:
     name: Resolve Vulcan Config
-    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@feat/compiler-cache
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
 
@@ -137,6 +137,9 @@ jobs:
         run: |
           ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
 
+      - name: Test sccache configuration
+        run: bash scripts/ci/test_sccache_config.sh
+
   resolve-test-runner:
     name: Resolve Test Runner
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
@@ -151,7 +154,7 @@ jobs:
       - resolve-vulcan-config
       - detect-changes
       - code-hygiene
-    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@feat/compiler-cache
     with:
       vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       sdk_cache: ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
@@ -163,6 +166,12 @@ jobs:
       artifact_name: neat-core-dist
       artifact_path: dist/*
       artifact_retention_days: 3
+      use_github_environment: false
+      compiler_cache_bucket: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_bucket }}
+      compiler_cache_aws_region: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_aws_region }}
+      compiler_cache_key_prefix: ${{ format('{0}/sccache-v1/arm64/{1}/{2}', needs.resolve-vulcan-config.outputs.compiler_cache_key_prefix, needs.resolve-vulcan-config.outputs.sdk_cache, inputs.build_mode || 'standard') }}
+      compiler_cache_role_arn: ${{ github.ref_type == 'branch' && (github.ref_name == 'develop' || github.ref_name == 'main') && needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn || needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}
+      compiler_cache_rw_mode: ${{ github.ref_type == 'branch' && (github.ref_name == 'develop' || github.ref_name == 'main') && 'READ_WRITE' || 'READ_ONLY' }}
       build_command: |
         set -euo pipefail
 
@@ -195,6 +204,17 @@ jobs:
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
+          -e SIMANEAT_SCCACHE=on \
+          -e SIMANEAT_SCCACHE_ZERO_STATS=ON \
+          -e SCCACHE_BUCKET \
+          -e SCCACHE_REGION \
+          -e SCCACHE_S3_KEY_PREFIX \
+          -e SCCACHE_S3_RW_MODE \
+          -e AWS_ACCESS_KEY_ID \
+          -e AWS_SECRET_ACCESS_KEY \
+          -e AWS_SESSION_TOKEN \
+          -e AWS_REGION \
+          -e AWS_DEFAULT_REGION \
           -e GITHUB_HEAD_REF="${{ github.head_ref }}" \
           -e GITHUB_REF_NAME="${{ github.ref_name }}" \
           -e GITHUB_REF_TYPE="${{ github.ref_type }}" \

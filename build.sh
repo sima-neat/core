@@ -78,6 +78,10 @@ NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa Neat extras (tutorials/tests)}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 SIMANEAT_BOOTSTRAP_SIMA_CLI="${SIMANEAT_BOOTSTRAP_SIMA_CLI:-auto}"
+SIMANEAT_SCCACHE="${SIMANEAT_SCCACHE:-auto}"
+
+# shellcheck source=scripts/configure_sccache.sh
+source "${REPO_ROOT}/scripts/configure_sccache.sh"
 
 # ------------------------------------------------------------------------------
 # System dependencies
@@ -293,6 +297,13 @@ Environment:
                  Vulcan environment used for dependency artifact installs.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
+  SIMANEAT_SCCACHE=auto|on|off
+                 Enable the persistent compiler cache. auto bootstraps a pinned,
+                 checksum-verified sccache binary when needed.
+  SCCACHE_DIR=~/.cache/sima-neat/sccache
+                 Persistent local compiler-cache directory.
+  SCCACHE_CACHE_SIZE=10G
+                 Maximum local compiler-cache size.
 
 Examples:
   ./build.sh
@@ -1808,6 +1819,7 @@ print_build_config() {
   echo "Strict warns   : ${STRICT_WARNINGS}"
   echo "Build dir      : ${BUILD_DIR}"
   echo "Build jobs     : ${BUILD_JOBS}"
+  echo "sccache        : ${SIMANEAT_SCCACHE_ACTIVE:-OFF}"
   echo "eLxr SDK       : ${ELXR_SDK}"
   echo "Neat LLiMa     : ${INSTALL_NEAT_LLIMA}"
   if [[ "${ELXR_SDK}" == "ON" ]]; then
@@ -1842,6 +1854,13 @@ configure_cmake() {
     -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
     -DFUZZING="${BUILD_FUZZ}"
   )
+
+  if [[ "${SIMANEAT_SCCACHE_ACTIVE:-OFF}" == "ON" ]]; then
+    cmake_args+=(
+      -DCMAKE_C_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
+      -DCMAKE_CXX_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
+    )
+  fi
 
   if [[ -f "${NEAT_PACKAGE_BUILDINFO_JSON}" ]]; then
     local buildinfo_json_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
@@ -2943,6 +2962,11 @@ main() {
 
   detect_build_jobs
   configure_fuzz_toolchain_if_needed
+  if [[ "${DOCS_ONLY}" == "ON" ]]; then
+    SIMANEAT_SCCACHE_ACTIVE=OFF
+  else
+    simaneat_configure_sccache "${REPO_ROOT}"
+  fi
   generate_platform_version_artifacts
   print_build_config
   clean_build_dir_if_requested
@@ -2964,6 +2988,7 @@ main() {
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested
+  simaneat_show_sccache_stats
 }
 
 main "$@"
