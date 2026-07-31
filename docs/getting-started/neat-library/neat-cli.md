@@ -85,7 +85,8 @@ rejected archive prints the reason and exits nonzero:
 neat-model-archive: invalid_archive: failed to decompress archive: yolo_v8s_mpk.tar.gz
 ```
 
-To unpack an archive into the package layout the runtime uses, run:
+To unpack an archive into the package layout the runtime uses, so that loading it
+skips extraction, run:
 
 <ShellCommand prompt="sdk-or-devkit">
 neat model extract yolo_v8s_mpk.tar.gz --output ./yolo_v8s_pkg
@@ -95,15 +96,30 @@ neat model extract yolo_v8s_mpk.tar.gz --output ./yolo_v8s_pkg
 once the command succeeds. The command refuses to run if that path already
 exists, and a failed run leaves nothing behind.
 
-Pass the produced directory to `Model` in place of the archive to skip
-extraction on every load:
+Pass the produced directory to `Model` in place of the archive:
 
 ```cpp
 simaai::neat::Model yolo("./yolo_v8s_pkg", opt);
 ```
 
-Loading the archive directly costs a fresh extraction in every process that does
-it. Loading the extracted directory does not, which is where the time goes.
+This is the faster way to load a model, and the reason to extract one at all.
+Constructing a `Model` from an archive decompresses, validates, organizes and
+path-rewrites it first. Constructing from an extracted directory does none of
+that — the package is loaded in place.
+
+The saving is per process, not per load. Within one process the extraction is
+reused, so only the first archive load pays for it. A new process starts over.
+Applications that load a model once at startup therefore gain the most. On a
+Modalix DevKit, loading a 163 MiB YOLO26-L package:
+
+| Input | First load in a process | Later loads |
+| --- | --- | --- |
+| `.tar.gz` archive | 2.49 s | 0.01 s |
+| extracted directory | 0.01 s (0.27 s cold cache) | 0.01 s |
+
+Treat the figures as an illustration — they scale with model size and with the
+machine. Whether the package sits on eMMC or NVMe makes no measurable
+difference.
 
 Only a directory produced by `neat model extract` works this way. Unpacking the
 archive yourself with `tar -xzf` produces a different layout that `Model` does
