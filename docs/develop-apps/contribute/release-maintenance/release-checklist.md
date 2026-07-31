@@ -126,6 +126,7 @@ Configure GitHub repository settings:
   - `runtime_codec_mjpeg_decode`
   - `runtime_codec_h264_decode`
   - `runtime_codec_h265_decode`
+  - `runtime_model_archive_load`
 - Every perf run publishes per-scenario result files in `build-perf-gate/perf_results/`.
 - Each result must include:
   - `scenario_id`

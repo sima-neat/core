@@ -4589,7 +4589,14 @@ struct Model::Impl {
              /*queue_leaky=*/{}, options.name_suffix,
              to_internal_terminal_policy(options.inference_terminal),
              options.cleanup_extracted_model_data) {
-    pipeline_internal::ux::emit_line(options.verbose, "Model loaded");
+    // Names where the package was extracted. Callers debugging load time or eMMC wear need to see
+    // which filesystem the automatic selection landed on, and it is not otherwise reported.
+    const std::string package_root = std::filesystem::path(pack.etc_dir()).parent_path().string();
+    pipeline_internal::ux::emit_line(
+        options.verbose,
+        "Model loaded: " + std::filesystem::path(package_root).filename().string() +
+            " (package storage: " + internal::modelpack_storage_label(package_root) +
+            ", root: " + package_root + ")");
     pipeline_internal::ux::ScopedVerboseContext verbose_ctx(options.verbose);
     auto verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(options.verbose);
     const auto processcvu_pre_stage_selected = [&]() -> std::optional<bool> {

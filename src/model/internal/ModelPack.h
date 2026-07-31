@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iosfwd>
 #include <memory>
 #include <optional>
 #include <string>
@@ -28,6 +29,14 @@ class Mat;
 }
 
 namespace simaai::neat::internal {
+
+/// NVMe model-store candidates parsed from `/proc/mounts` content, in file order. Separated from
+/// the file read so the mount-option filtering is testable without a real NVMe device.
+std::vector<std::string> nvme_model_bases_from_mounts(std::istream& mounts);
+
+/// Device class backing `path`, for load diagnostics: "NVMe", "eMMC", or the `/proc/mounts` device
+/// name when it is neither. Names where the package was extracted, not where inference runs.
+std::string modelpack_storage_label(const std::string& path);
 
 enum class PipelineType : std::uint8_t { Preproc, Quant, Tess, QuantTess, CastTess, Cast };
 
