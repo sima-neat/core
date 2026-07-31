@@ -1296,13 +1296,13 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
     }
   }
 
-  if (raw.domain_name == "gst-stream-error-quark" && raw.code == GST_STREAM_ERROR_FORMAT) {
-    return media_format(std::move(raw));
-  }
   if ((raw.domain_name == "gst-core-error-quark" &&
        (raw.code == GST_CORE_ERROR_NEGOTIATION || raw.code == GST_CORE_ERROR_CAPS)) ||
       contains_ci(text, "not-negotiated") || contains_ci(text, "caps negotiation failed")) {
     return media_caps(std::move(raw));
+  }
+  if (raw.domain_name == "gst-stream-error-quark" && raw.code == GST_STREAM_ERROR_FORMAT) {
+    return media_format(std::move(raw));
   }
   if (raw.domain_name == "gst-stream-error-quark" && raw.code == GST_STREAM_ERROR_DECODE) {
     NormalizedDiagnostic out =

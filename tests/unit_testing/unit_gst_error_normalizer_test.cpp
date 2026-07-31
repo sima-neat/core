@@ -257,6 +257,16 @@ RUN_TEST(
       }
 
       {
+        const NormalizedDiagnostic diagnostic = classify_gst_error(
+            raw_error("neatdecoder", "gst-stream-error-quark", GST_STREAM_ERROR_FORMAT,
+                      "Caps negotiation failed: width mismatch"));
+        require_code(diagnostic, error_codes::kMediaCaps);
+        require(diagnostic.diagnostic_id == "gstreamer.caps_incompatible",
+                "explicit caps-negotiation failures should outrank the generic stream-format "
+                "domain");
+      }
+
+      {
         const NormalizedDiagnostic diagnostic =
             classify_gst_error(raw_error("capsfilter", "gst-core-error-quark",
                                          GST_CORE_ERROR_NEGOTIATION, "Caps negotiation failed"));
