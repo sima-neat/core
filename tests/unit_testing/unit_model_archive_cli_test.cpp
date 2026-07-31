@@ -28,8 +28,28 @@ ModelArchiveLoaderOptions runtime_parity_options() {
   return opt;
 }
 
+/// The build-tree path is compiled in, but CI installs the package and runs this test from the
+/// extras tarball on another machine, where that path does not exist. Fall back to the command the
+/// Core package installs, so the packaged run exercises the shipped helper.
+const std::string& helper_path() {
+  static const std::string resolved = [] {
+    const char* override_path = std::getenv("NEAT_MODEL_ARCHIVE_BIN");
+    if (override_path && *override_path) {
+      return std::string(override_path);
+    }
+    if (fs::exists(NEAT_MODEL_ARCHIVE_BIN)) {
+      return std::string(NEAT_MODEL_ARCHIVE_BIN);
+    }
+    const std::string installed = "/usr/bin/neat-model-archive";
+    require(fs::exists(installed), "neat-model-archive found at neither " +
+                                       std::string(NEAT_MODEL_ARCHIVE_BIN) + " nor " + installed);
+    return installed;
+  }();
+  return resolved;
+}
+
 int run_cli(const std::vector<std::string>& args) {
-  std::string cmd = sima_test::model_archive_shell_quote(NEAT_MODEL_ARCHIVE_BIN);
+  std::string cmd = sima_test::model_archive_shell_quote(helper_path());
   for (const auto& arg : args) {
     cmd += " " + sima_test::model_archive_shell_quote(arg);
   }
