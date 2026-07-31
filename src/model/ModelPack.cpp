@@ -1053,10 +1053,7 @@ static std::string extract_and_organize(const std::string& tar_path,
 
   simaai::neat::internal::ModelArchiveLoaderOptions opt;
   // Runtime model packs may include auxiliary build/report artifacts.
-  // Keep strict type validation in security/unit tests (default options),
-  // but allow these extras in ModelPack runtime extraction.
   opt.reject_unsupported_file_types = false;
-  opt.require_pipeline_sequence = false;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
@@ -3771,9 +3768,8 @@ std::vector<std::string> nvme_model_bases_from_mounts(std::istream& mounts) {
   return out;
 }
 
-// Longest matching mount point wins, which is how the kernel resolves the path. The device is
-// reported verbatim when it is neither NVMe nor eMMC, because /proc/mounts names the rootfs
-// "/dev/root" on some images and guessing a friendly label from that would be a fabrication.
+// Longest matching mount point wins, which is how the kernel resolves the path. Modalix exposes
+// its eMMC root filesystem as either /dev/mmcblk* or /dev/root.
 std::string modelpack_storage_label(const std::string& path) {
   std::ifstream mounts("/proc/mounts");
   std::string device, mount_point, rest, best_device;
@@ -3792,7 +3788,7 @@ std::string modelpack_storage_label(const std::string& path) {
   }
   if (best_device.rfind("/dev/nvme", 0) == 0)
     return "NVMe";
-  if (best_device.rfind("/dev/mmcblk", 0) == 0)
+  if (best_device == "/dev/root" || best_device.rfind("/dev/mmcblk", 0) == 0)
     return "eMMC";
   return best_device.empty() ? "unknown" : best_device;
 }

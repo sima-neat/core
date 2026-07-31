@@ -51,10 +51,8 @@ struct ModelArchiveEntry {
 struct ModelArchiveManifest {
   std::string archive_path;
   std::string package_name;
-  std::string version = "1";
   std::uint64_t archive_size_bytes = 0;
 
-  bool has_pipeline_sequence = false;
   bool has_model_binary = false;
 
   std::vector<ModelArchiveEntry> entries;
@@ -73,7 +71,6 @@ struct ModelArchiveLoaderOptions {
   // Filesystem for the inflated snapshot. Empty stages under TMPDIR.
   std::string staging_base;
 
-  bool require_pipeline_sequence = true;
   bool require_model_binary = true;
   bool reject_unsupported_file_types = true;
   bool reject_duplicate_json_keys = true;

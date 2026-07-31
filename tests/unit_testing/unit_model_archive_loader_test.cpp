@@ -71,8 +71,6 @@ RUN_TEST(
               "missing model archive fixtures; run tests/tools/make_model_archive_fixtures.py");
 
       const ModelArchiveManifest manifest = ModelArchiveLoader::inspect(valid.string());
-      require(manifest.has_pipeline_sequence,
-              "ModelArchiveLoader::inspect should detect pipeline_sequence.json");
       require(manifest.has_model_binary,
               "ModelArchiveLoader::inspect should detect model binary payload");
       require(!manifest.entries.empty(),
@@ -162,22 +160,23 @@ RUN_TEST(
           ModelArchiveErrorClass::OutputStorageUnavailable,
           "insufficient extraction space should fail with output_storage_unavailable");
 
-      require_model_archive_error(
-          [&]() {
-            (void)ModelArchiveLoader::inspect(
-                sima_test::model_archive_fixture_path("invalid/missing_pipeline_sequence.tar.gz")
-                    .string());
-          },
-          ModelArchiveErrorClass::SchemaError, "missing pipeline sequence should be schema_error");
+      for (const char* opaque_auxiliary_json :
+           {"valid/missing_pipeline_sequence.tar.gz", "valid/malformed_auxiliary_json.tar.gz",
+            "valid/unsupported_auxiliary_version.tar.gz"}) {
+        const ModelArchiveManifest auxiliary = ModelArchiveLoader::inspect(
+            sima_test::model_archive_fixture_path(opaque_auxiliary_json).string());
+        require(auxiliary.has_model_binary,
+                std::string(opaque_auxiliary_json) +
+                    " should remain loadable when auxiliary JSON is absent or malformed");
+      }
 
       require_model_archive_error(
           [&]() {
             (void)ModelArchiveLoader::inspect(
-                sima_test::model_archive_fixture_path("invalid/unsupported_version.tar.gz")
-                    .string());
+                sima_test::model_archive_fixture_path("invalid/missing_mpk.tar.gz").string());
           },
-          ModelArchiveErrorClass::UnsupportedVersion,
-          "unsupported version fixture should fail with unsupported_version");
+          ModelArchiveErrorClass::SchemaError,
+          "archive without MPK manifest should fail with schema_error");
 
       ModelArchiveLoaderOptions tiny;
       tiny.max_archive_bytes = 1024ULL * 1024ULL;
@@ -226,8 +225,8 @@ RUN_TEST(
       // Exactly the entries validation classified as extractable, and nothing else.
       require(extracted_file_set(fs::path(first.package_root)) ==
                   std::vector<std::string>{"etc/0_preproc.json", "etc/0_process_mla.json",
-                                           "etc/pipeline_sequence.json", "lib/model.so",
-                                           "share/model.elf"},
+                                           "etc/model_mpk.json", "etc/pipeline_sequence.json",
+                                           "lib/model.so", "share/model.elf"},
               "extracted file set should be exactly the archive's classified entries");
 
       // Baked into the JSON configs, so absolute even when the caller names the root relatively.

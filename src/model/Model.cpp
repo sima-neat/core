@@ -4596,7 +4596,7 @@ struct Model::Impl {
         options.verbose,
         "Model loaded: " + std::filesystem::path(package_root).filename().string() +
             " (package storage: " + internal::modelpack_storage_label(package_root) +
-            ", root: " + package_root + ")");
+            ", runtime package path: " + package_root + ")");
     pipeline_internal::ux::ScopedVerboseContext verbose_ctx(options.verbose);
     auto verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(options.verbose);
     const auto processcvu_pre_stage_selected = [&]() -> std::optional<bool> {

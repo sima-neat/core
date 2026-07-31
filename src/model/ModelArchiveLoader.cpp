@@ -367,71 +367,6 @@ EntryClass classify_entry(char type, const std::string& normalized_path,
   return EntryClass::Directory;
 }
 
-std::string lower_copy(std::string s) {
-  for (char& c : s) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  return s;
-}
-
-// Canonical allow-list shared by loader validation and pipeline sequence validation.
-bool is_supported_kernel_local(const std::string& kernel) {
-  static const std::unordered_set<std::string> kSupportedKernels = {
-      "preproc",    "quant",     "tess",          "tessellate",    "quanttess",
-      "cast",       "infer",     "mla",           "detessdequant", "detessellate",
-      "dequantize", "boxdecode", "buffer_concat",
-  };
-  return kSupportedKernels.find(lower_copy(kernel)) != kSupportedKernels.end();
-}
-
-std::string require_nonempty_string(const json& obj, const char* key) {
-  if (!obj.contains(key) || !obj[key].is_string()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  std::string("schema_error: pipeline_sequence stage missing string field '") +
-                      key + "'");
-  }
-  const std::string value = obj[key].get<std::string>();
-  if (value.empty()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  std::string("schema_error: pipeline_sequence stage has empty field '") + key +
-                      "'");
-  }
-  return value;
-}
-
-void ensure_safe_config_path(const std::string& path) {
-  std::string normalized = path;
-  for (char& c : normalized) {
-    if (c == '\\')
-      c = '/';
-  }
-
-  if (normalized.empty()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence stage has empty configPath");
-  }
-  if (normalized.front() == '/') {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence configPath must be relative");
-  }
-  if (normalized.size() >= 2 && std::isalpha(static_cast<unsigned char>(normalized[0])) &&
-      normalized[1] == ':') {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence configPath must not use drive prefix");
-  }
-
-  std::stringstream ss(normalized);
-  std::string segment;
-  while (std::getline(ss, segment, '/')) {
-    if (segment.empty() || segment == ".")
-      continue;
-    if (segment == "..") {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: pipeline_sequence configPath must not traverse parent");
-    }
-  }
-}
-
 TarEntry parse_tar_line(const std::string& line, const ModelArchiveLoaderOptions& opt,
                         bool reject_unsupported_file_types) {
   std::istringstream iss(line);
@@ -1144,106 +1079,6 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
   return total;
 }
 
-void validate_pipeline_sequence_json(const json& j) {
-  if (!j.is_object()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence.json must be a JSON object");
-  }
-  if (!j.contains("pipelines") || !j["pipelines"].is_array() || j["pipelines"].empty()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence.json missing non-empty 'pipelines' array");
-  }
-  const auto& first = j["pipelines"][0];
-  if (!first.is_object() || !first.contains("sequence") || !first["sequence"].is_array() ||
-      first["sequence"].empty()) {
-    throw_archive(
-        ModelArchiveErrorClass::SchemaError,
-        "schema_error: pipeline_sequence.json first pipeline missing non-empty 'sequence'");
-  }
-
-  const auto& seq = first["sequence"];
-  std::unordered_set<std::string> seen_names;
-  seen_names.reserve(seq.size());
-
-  for (const auto& stage : seq) {
-    if (!stage.is_object()) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: pipeline_sequence stage entry must be an object");
-    }
-
-    if (!stage.contains("sequence_id") || !stage["sequence_id"].is_number_integer()) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: pipeline_sequence stage missing integer field 'sequence_id'");
-    }
-    std::int64_t sequence_id = 0;
-    try {
-      sequence_id = stage["sequence_id"].get<std::int64_t>();
-    } catch (const std::exception& e) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    std::string("schema_error: invalid sequence_id: ") + e.what());
-    }
-    if (sequence_id <= 0 || sequence_id > std::numeric_limits<int>::max()) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: sequence_id must be in range [1, INT_MAX]");
-    }
-
-    const std::string name = require_nonempty_string(stage, "name");
-    (void)require_nonempty_string(stage, "pluginId");
-    const std::string config_path = require_nonempty_string(stage, "configPath");
-    (void)require_nonempty_string(stage, "processor");
-    const std::string kernel = require_nonempty_string(stage, "kernel");
-
-    ensure_safe_config_path(config_path);
-
-    if (!seen_names.insert(name).second) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: duplicate stage name in pipeline_sequence: " + name);
-    }
-    if (!is_supported_kernel_local(kernel)) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: unsupported kernel in pipeline_sequence: " + kernel);
-    }
-
-    if (stage.contains("input")) {
-      if (stage["input"].is_string()) {
-        (void)stage["input"].get<std::string>();
-      } else if (stage["input"].is_array()) {
-        for (const auto& dep_json : stage["input"]) {
-          if (!dep_json.is_string()) {
-            throw_archive(ModelArchiveErrorClass::SchemaError,
-                          "schema_error: stage input array must contain only strings");
-          }
-          (void)dep_json.get<std::string>();
-        }
-      } else {
-        throw_archive(ModelArchiveErrorClass::SchemaError,
-                      "schema_error: stage input must be string or array of strings");
-      }
-    }
-  }
-}
-
-void validate_version_json(const json& j) {
-  if (!j.is_object() || !j.contains("version")) {
-    return;
-  }
-
-  std::string version;
-  if (j["version"].is_number_integer()) {
-    version = std::to_string(j["version"].get<int>());
-  } else if (j["version"].is_string()) {
-    version = j["version"].get<std::string>();
-  } else {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: manifest version must be string or integer");
-  }
-
-  if (version != "1") {
-    throw_archive(ModelArchiveErrorClass::UnsupportedVersion,
-                  "unsupported_version: manifest version is not supported: " + version);
-  }
-}
-
 // Relative extraction destination for an archive entry, under the package root's
 // {etc,lib,share}/<filename> layout. Entries are flattened to basename, so distinct
 // source paths can collide here (detected in validate_archive / extract_destination_for).
@@ -1284,7 +1119,6 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
   std::unordered_set<std::string> seen_paths;
   std::unordered_map<std::string, std::string> seen_destinations; // rel-dest -> source path
   std::size_t total_json_bytes = 0;
-  std::size_t json_file_count = 0;
 
   for (const auto& line : listing) {
     TarEntry entry = parse_tar_line(line, opt, opt.reject_unsupported_file_types);
@@ -1319,7 +1153,6 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
     }
 
     if (entry.entry_class == EntryClass::Json) {
-      ++json_file_count;
       total_json_bytes += static_cast<std::size_t>(entry.size_bytes);
       if (total_json_bytes > opt.max_total_json_bytes) {
         throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
@@ -1340,38 +1173,28 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
     out.entries.push_back(std::move(entry));
   }
 
+  bool has_mpk_manifest = false;
   for (const auto& entry : out.entries) {
     if (entry.entry_class != EntryClass::Json)
       continue;
+    const std::string base = fs::path(entry.normalized_path).filename().string();
+    constexpr std::string_view mpk_suffix = "_mpk.json";
+    if (base != "mpk.json" &&
+        (base.size() <= mpk_suffix.size() ||
+         base.compare(base.size() - mpk_suffix.size(), mpk_suffix.size(), mpk_suffix) != 0)) {
+      continue;
+    }
+    has_mpk_manifest = true;
     const std::vector<std::uint8_t> bytes =
         read_tar_entry(snapshot.tar_path(), entry.raw_path, opt.max_entry_bytes);
 
-    json parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
-
-    const std::string base = fs::path(entry.normalized_path).filename().string();
-    if (base == "pipeline_sequence.json") {
-      try {
-        validate_pipeline_sequence_json(parsed);
-        out.manifest.has_pipeline_sequence = true;
-      } catch (const ModelArchiveError&) {
-        if (opt.require_pipeline_sequence) {
-          throw;
-        }
-        // Runtime extraction can tolerate legacy/partial pipeline_sequence JSON.
-      }
-    }
-    if (base == "manifest.json" || base == "mpk_manifest.json") {
-      validate_version_json(parsed);
-    }
+    (void)parse_json_entry_strict(bytes, entry.normalized_path, opt);
   }
 
-  if (opt.require_pipeline_sequence && !out.manifest.has_pipeline_sequence) {
+  if (!has_mpk_manifest) {
     throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: required pipeline_sequence.json is missing");
-  }
-  if (json_file_count == 0) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: archive contains no JSON configuration files");
+                  "schema_error: strict MPK contract required: archive contains no mpk.json or "
+                  "*_mpk.json");
   }
   if (opt.require_model_binary && !out.manifest.has_model_binary) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
