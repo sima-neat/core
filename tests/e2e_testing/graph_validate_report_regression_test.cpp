@@ -105,14 +105,14 @@ RUN_TEST(
         opt.enforce_names = false;
         const GraphReport rep = broken_parse.validate(opt);
 
-        require(rep.error_code == error_codes::kParseLaunch,
-                "validate(parse failure): expected build.parse_launch error code");
+        require(rep.error_code == error_codes::kPluginMissing,
+                "validate(parse failure): expected build.plugin_missing error code");
         require(!rep.pipeline_string.empty(),
                 "validate(parse failure): expected non-empty pipeline string");
         require(!rep.repro_note.empty(),
                 "validate(parse failure): missing parse-launch failure diagnostic");
-        require_contains(rep.repro_note, "gst_parse_launch failed",
-                         "validate(parse failure): missing parse-launch failure diagnostic");
+        require_contains(rep.repro_note, "required GStreamer element is not installed",
+                         "validate(parse failure): missing actionable plugin diagnostic");
         require_contains(rep.repro_gst_launch, "gst-launch-1.0 -v",
                          "validate(parse failure): missing gst-launch reproduction command");
       }

@@ -8,6 +8,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/runtime/EdgeRouter.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
 #include "pipeline/runtime/RunCore.h"
 #include "test_main.h"
@@ -71,6 +72,17 @@ AppSinkProperties configured_appsink_properties(const simaai::neat::InputStreamO
   g_object_get(G_OBJECT(sink), "max-buffers", &max_buffers, "drop", &drop, "sync", &sync, nullptr);
   gst_object_unref(sink);
   return AppSinkProperties{static_cast<int>(max_buffers), drop != FALSE, sync != FALSE};
+}
+
+template <class Predicate> bool wait_until(Predicate&& predicate, int timeout_ms) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return predicate();
 }
 
 void require_appsink_properties(const simaai::neat::InputStreamOptions& options,
@@ -234,6 +246,136 @@ RUN_TEST(
         require(blocked_result.load(std::memory_order_acquire) ==
                     FusedEncodedOutputEnqueueResult::Closed,
                 "closing GraphSinkQueue did not wake its EveryFrame producer");
+
+        // A direct public Input owns an in-flight push until EdgeRouter admits it. If the
+        // EveryFrame sink is full, close_input() must cancel that wait before waiting for the
+        // public producer count, while preserving the sample already in the queue.
+        {
+          using simaai::neat::graph::NodeId;
+          using simaai::neat::graph::PortId;
+          using simaai::neat::runtime::DownstreamTarget;
+          using simaai::neat::runtime::EdgePlan;
+          using simaai::neat::runtime::EdgeRouterOptions;
+          using simaai::neat::runtime::Endpoint;
+          using simaai::neat::runtime::ExecutionGraphRuntime;
+          using simaai::neat::runtime::PipelineSegmentRuntime;
+          using simaai::neat::runtime::RunCore;
+
+          constexpr NodeId kInputNode = 0;
+          constexpr NodeId kSinkNode = 1;
+          constexpr PortId kPort = 0;
+          constexpr std::size_t kEdgeIndex = 0;
+          const auto adjacency_key = [](NodeId node, PortId port) {
+            return (static_cast<std::uint64_t>(node) << 32U) | static_cast<std::uint64_t>(port);
+          };
+
+          RunCore core;
+          // This fixture owns no runtime threads. Skip general RunCore teardown and let its graph
+          // storage destruct normally after the focused producer/queue assertions.
+          core.closed.store(true, std::memory_order_release);
+          core.graph_execution_ = std::make_unique<ExecutionGraphRuntime>();
+          auto& execution = *core.graph_execution_;
+          execution.plan.edges.push_back(
+              EdgePlan{.from = kInputNode, .from_port = kPort, .to = kSinkNode, .to_port = kPort});
+          execution.adjacency[adjacency_key(kInputNode, kPort)].push_back(
+              DownstreamTarget{DownstreamTarget::Kind::GraphSink, kSinkNode, kPort, kEdgeIndex});
+
+          auto input_pipeline = std::make_unique<PipelineSegmentRuntime>();
+          input_pipeline->seg.node_ids = {kInputNode};
+          input_pipeline->seg.output_edges = {kEdgeIndex};
+          input_pipeline->seg.boundary.direct_graph_source = true;
+          execution.node_to_pipeline.emplace(kInputNode, 0U);
+          execution.pipelines.push_back(std::move(input_pipeline));
+          execution.public_ingress_endpoints.push_back(
+              Endpoint{Endpoint::Kind::PipelineInput, kInputNode, kPort, 0U});
+
+          auto public_sink = std::make_shared<GraphSinkQueue>(1, &every_frame);
+          public_sink->set_producer_count(1);
+          execution.sinks.emplace(kSinkNode, public_sink);
+
+          EdgeRouterOptions blocking_options;
+          blocking_options.push_timeout_ms = 100;
+          blocking_options.request_stop_on_backpressure = true;
+          simaai::neat::Sample queued_sample;
+          queued_sample.frame_id = 50;
+          require(core.graph_begin_public_push(), "direct public input was already closed");
+          require(core.graph_push(kInputNode, kPort, true, queued_sample, blocking_options),
+                  "direct public input rejected the first sink sample");
+          core.graph_end_public_push();
+
+          std::atomic<bool> direct_push_started{false};
+          std::atomic<bool> direct_push_done{false};
+          std::atomic<bool> direct_push_result{true};
+          std::thread direct_push([&] {
+            const bool admitted = core.graph_begin_public_push();
+            direct_push_started.store(true, std::memory_order_release);
+            simaai::neat::Sample blocked_sample;
+            blocked_sample.frame_id = 51;
+            const bool pushed = admitted && core.graph_push(kInputNode, kPort, true, blocked_sample,
+                                                            blocking_options);
+            if (admitted) {
+              core.graph_end_public_push();
+            }
+            direct_push_result.store(pushed, std::memory_order_release);
+            direct_push_done.store(true, std::memory_order_release);
+          });
+          const bool direct_push_did_start =
+              wait_until([&] { return direct_push_started.load(std::memory_order_acquire); }, 500);
+          if (!direct_push_did_start) {
+            public_sink->close();
+            direct_push.join();
+            require(false, "direct public push thread did not start");
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          const bool direct_push_blocked = !direct_push_done.load(std::memory_order_acquire);
+
+          std::atomic<bool> close_done{false};
+          std::thread close_input([&] {
+            core.graph_close_public_input();
+            close_done.store(true, std::memory_order_release);
+          });
+          const bool close_unblocked =
+              wait_until([&] { return close_done.load(std::memory_order_acquire); }, 1000);
+          if (!close_unblocked) {
+            public_sink->close();
+          }
+          close_input.join();
+          direct_push.join();
+
+          require(direct_push_blocked,
+                  "direct EveryFrame push did not block on the full public sink");
+          require(close_unblocked, "close_input deadlocked behind a blocked direct public push");
+          require(!direct_push_result.load(std::memory_order_acquire),
+                  "close_input did not cancel the blocked direct public push");
+          RuntimeSinkQueueMsg preserved;
+          require(public_sink->pop(preserved, 0),
+                  "close_input dropped the sample already queued in the public sink");
+          require(preserved.sample.frame_id == 50,
+                  "close_input replaced the sample already queued in the public sink");
+          require(!public_sink->pop(preserved, 0) && public_sink->closed(),
+                  "direct public sink did not close after its queued sample drained");
+        }
+
+        // A public push can be inside synchronous lazy-pipeline construction, where no queue can
+        // wake it. close_input() bounds that wait and defers producer completion to the guard that
+        // eventually leaves the build path.
+        {
+          simaai::neat::runtime::RunCore core;
+          core.closed.store(true, std::memory_order_release);
+          core.graph_execution_ = std::make_unique<simaai::neat::runtime::ExecutionGraphRuntime>();
+          require(core.graph_begin_public_push(), "lazy-build fixture input was already closed");
+          const auto close_started = std::chrono::steady_clock::now();
+          core.graph_close_public_input();
+          const auto close_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - close_started);
+          require(close_elapsed < std::chrono::milliseconds(1000),
+                  "close_input waited indefinitely for a public lazy build");
+          require(!core.graph_execution_->public_ingress_completion_forwarded,
+                  "close_input forwarded completion while a public build was still active");
+          core.graph_end_public_push();
+          require(core.graph_execution_->public_ingress_completion_forwarded,
+                  "last public build did not forward deferred input completion");
+        }
 
         GraphSinkQueue reserved_latest_queue(1);
         require(enqueue_graph_sink_output(reserved_latest_queue, latest, sink_message(40, 40), 0) ==

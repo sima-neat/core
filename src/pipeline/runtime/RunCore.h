@@ -27,6 +27,10 @@ namespace simaai::neat::graph {
 struct GraphRunStats;
 }
 
+namespace simaai::neat {
+class NeatError;
+}
+
 namespace simaai::neat::runtime {
 
 struct ExecutionGraphPlan;
@@ -169,18 +173,44 @@ struct RunCore {
   InputStreamStats input_stats() const;
   RunDiagSnapshot diag_snapshot() const;
   std::string last_error() const;
+  std::optional<PullError> last_error_detail() const;
   std::string diagnostics_summary() const;
+  std::optional<PullError> wait_for_report_bearing_error(std::chrono::milliseconds timeout) const;
 
   ExecutionGraphRuntime& graph_execution();
   const ExecutionGraphRuntime& graph_execution() const;
   bool graph_stop_requested() const;
   void graph_signal_stop();
+  void set_terminal_error(PullError err);
+  void set_terminal_error(const NeatError& err);
   void graph_request_stop(const std::string& err);
+  void graph_request_stop(PullError err);
+  void graph_request_stop(const NeatError& err);
+  void graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
+                                        std::string fallback_error);
+  void graph_pipeline_completed(std::size_t pipeline_index,
+                                std::optional<PullError> close_detail = std::nullopt);
+  void graph_stage_worker_completed(std::size_t group_index);
+  void graph_realtime_link_completed(std::size_t link_index);
+  void graph_producer_completed(simaai::neat::graph::NodeId producer_node);
+  void graph_target_producer_completed(const DownstreamTarget& target);
+  bool graph_begin_public_push();
+  void graph_end_public_push();
+  bool graph_public_input_closed() const;
+  void graph_close_public_input();
+  void graph_forward_public_input_completion();
+  void graph_mark_downstream_close_provenance(simaai::neat::graph::NodeId producer_node,
+                                              const PullError* source_close_detail);
+  std::optional<PullError> graph_last_error_detail() const;
+  std::optional<PullError> graph_close_detail(simaai::neat::graph::NodeId sink_node) const;
+  bool graph_sink_closed(simaai::neat::graph::NodeId node_id) const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
-                                   bool allow_startup_preflight = false);
+                                   bool allow_startup_preflight = false,
+                                   bool cancel_on_public_input_close = false);
   bool graph_dispatch_to_stage_group(std::size_t group_index, simaai::neat::graph::PortId port,
                                      Sample&& sample, std::size_t edge_index,
-                                     const EdgeRouterOptions& options);
+                                     const EdgeRouterOptions& options,
+                                     bool cancel_on_public_input_close = false);
   bool graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::graph::PortId port,
                   bool has_port, const Sample& sample, const EdgeRouterOptions& options);
   void record_graph_sample_entry(std::string_view endpoint, const Sample& sample,
@@ -250,6 +280,7 @@ struct RunCore {
   std::atomic<std::int64_t> next_public_graph_input_seq{0};
 
   std::string error;
+  std::optional<PullError> terminal_error_detail;
   std::string diag_sysinfo;
   std::unique_ptr<PowerMonitor> power_monitor;
   std::shared_ptr<void> graph_verbose_guard;

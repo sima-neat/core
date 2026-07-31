@@ -410,7 +410,7 @@ bool RealtimeLatestLink::offer(simaai::neat::Sample&& sample, std::size_t edge_i
   }
   {
     std::lock_guard<std::mutex> lock(mu_);
-    if (closed_) {
+    if (closed_ || finishing_) {
       credits_to_release = pipeline_internal::realtime_frame_credits_for_sample(sample);
       release_mode = "graph-realtime-offer-closed";
     } else {
@@ -480,10 +480,32 @@ void RealtimeLatestLink::add_edge_stream_id(std::size_t edge_index, const std::s
   configure_global_credit_limit_locked_();
 }
 
-void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error) {
+void RealtimeLatestLink::set_producer_count(std::size_t count) noexcept {
+  producers_remaining_.store(count, std::memory_order_release);
+}
+
+void RealtimeLatestLink::producer_done() {
+  std::size_t expected = producers_remaining_.load(std::memory_order_acquire);
+  while (expected != 0U && !producers_remaining_.compare_exchange_weak(expected, expected - 1U,
+                                                                       std::memory_order_acq_rel,
+                                                                       std::memory_order_acquire)) {
+  }
+  if (expected != 1U) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    finishing_ = true;
+  }
+  cv_.notify_all();
+}
+
+void RealtimeLatestLink::start(DispatchFn dispatch, StopFn stop, ErrorFn error,
+                               CompleteFn complete) {
   dispatch_ = std::move(dispatch);
   stop_ = std::move(stop);
   error_ = std::move(error);
+  complete_ = std::move(complete);
   worker_ = std::thread([this] { run_(); });
 }
 
@@ -669,8 +691,16 @@ void RealtimeLatestLink::run_() {
     std::string selected_key;
     {
       std::unique_lock<std::mutex> lock(mu_);
-      cv_.wait(lock, [&] { return closed_ || (stop_ && stop_()) || !ready_.empty(); });
+      cv_.wait(lock,
+               [&] { return closed_ || finishing_ || (stop_ && stop_()) || !ready_.empty(); });
       if ((closed_ || (stop_ && stop_())) && ready_.empty()) {
+        return;
+      }
+      if (finishing_ && ready_.empty()) {
+        lock.unlock();
+        if (!completion_forwarded_.exchange(true, std::memory_order_acq_rel) && complete_) {
+          complete_();
+        }
         return;
       }
 
@@ -936,10 +966,21 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
   bool dropped_incoming = false;
   const OutputOptions* output_options = sink_it->second->output_options();
   if (output_options) {
-    const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : -1;
-    const auto result = enqueue_graph_sink_output(
-        *sink_it->second, *output_options, RuntimeSinkQueueMsg{std::move(sample), edge_index},
-        output_timeout_ms);
+    RuntimeSinkQueueMsg message{std::move(sample), edge_index};
+    FusedEncodedOutputEnqueueResult result = FusedEncodedOutputEnqueueResult::Overflow;
+    if (!output_options->drop && options.request_stop_on_backpressure) {
+      // EveryFrame applies lossless backpressure, but graph stop and concurrent close_input()
+      // must be able to cancel a public push that has not entered the sink queue.
+      const bool pushed = sink_it->second->push_interruptible(
+          std::move(message), -1, [&] { return stop_requested(callbacks); });
+      result = pushed ? FusedEncodedOutputEnqueueResult::Enqueued
+                      : (sink_it->second->closed() ? FusedEncodedOutputEnqueueResult::Closed
+                                                   : FusedEncodedOutputEnqueueResult::Overflow);
+    } else {
+      const int output_timeout_ms = output_options->drop ? options.push_timeout_ms : 0;
+      result = enqueue_graph_sink_output(*sink_it->second, *output_options, std::move(message),
+                                         output_timeout_ms);
+    }
     dropped_incoming = result == FusedEncodedOutputEnqueueResult::DroppedIncoming;
     enqueued = result == FusedEncodedOutputEnqueueResult::Enqueued ||
                result == FusedEncodedOutputEnqueueResult::ReplacedOldest || dropped_incoming;
@@ -1062,7 +1103,9 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
                      elapsed_ns_since(ensure_start));
       pipeline_internal::release_realtime_frame_credits(realtime_credits,
                                                         "pipeline-input-build-failed");
-      request_stop(callbacks, build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
+      if (!stop_requested(callbacks)) {
+        request_stop(callbacks, build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
+      }
       return false;
     }
     atomic_add_max(telemetry.router_ensure_build_ns, telemetry.router_ensure_build_max_ns,
@@ -1097,13 +1140,12 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       trace_args = make_trace_graph_message_args(runtime_, target.edge_index, sample);
       trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
     }
+    RuntimePipelineQueueMsg queued{std::move(sample), target.edge_index, sanitized_before_enqueue};
     const bool pushed =
         dispatch_options.drop_pipeline_input_when_full
-            ? input_queue->try_push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index,
-                                                            sanitized_before_enqueue})
-            : input_queue->push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index,
-                                                        sanitized_before_enqueue},
-                                options.push_timeout_ms);
+            ? input_queue->try_push(std::move(queued))
+            : input_queue->push_interruptible(std::move(queued), options.push_timeout_ms,
+                                              [&] { return stop_requested(callbacks); });
     if (!pushed) {
       if (trace) {
         trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);

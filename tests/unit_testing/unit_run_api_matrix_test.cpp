@@ -1,6 +1,7 @@
 #ifndef SIMA_NEAT_INTERNAL
 #define SIMA_NEAT_INTERNAL 1
 #endif
+#include "nodes/common/Caps.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
@@ -49,6 +50,28 @@ simaai::neat::Run make_async_rgb_run_with_copy_input(const simaai::neat::Tensor&
   return graph.build(TensorList{seed}, run_opt);
 }
 
+simaai::neat::Run make_async_drop_run(const simaai::neat::Tensor& seed) {
+  using namespace simaai::neat;
+
+  Graph graph;
+  InputOptions src_opt;
+  src_opt.payload_type = PayloadType::Image;
+  src_opt.format = FormatTag::RGB;
+  src_opt.memory_policy = InputMemoryPolicy::SystemMemory;
+  src_opt.max_width = 96;
+  src_opt.max_height = 96;
+  src_opt.max_depth = 3;
+  graph.add(nodes::Input(src_opt));
+  // Graph::build() sends one preflight sample. Let that sample through, then force EOS when the
+  // first runtime input reaches the stage.
+  graph.add(nodes::Custom("identity eos-after=2"));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(8)));
+
+  RunOptions run_opt;
+  run_opt.advanced.copy_input = true;
+  return graph.build(TensorList{seed}, run_opt);
+}
+
 } // namespace
 
 RUN_TEST(
@@ -84,6 +107,160 @@ RUN_TEST(
         require(closed_tensors.empty(),
                 run_api_case("closed_pull_tensors",
                              "Run::pull_tensors should return empty on closed run"));
+      }
+
+      // A finite source that has produced all queued output ends normally. Keep the Closed
+      // status while exposing the stable source-ended reason to callers.
+      {
+        Graph source_graph;
+        source_graph.custom("videotestsrc is-live=true num-buffers=3 pattern=black",
+                            InputRole::Source);
+        source_graph.add(nodes::CapsRaw("RGB", 64, 48, 30, CapsMemory::SystemMemory));
+        source_graph.add(nodes::Output(OutputOptions::EveryFrame(4)));
+        Run source_run = source_graph.build();
+
+        Sample output;
+        PullError eos_err;
+        std::size_t output_count = 0;
+        PullStatus source_status = PullStatus::Timeout;
+        for (int attempt = 0; attempt < 4; ++attempt) {
+          source_status = source_run.pull(1000, output, &eos_err);
+          if (source_status != PullStatus::Ok) {
+            break;
+          }
+          ++output_count;
+        }
+        require(output_count > 0,
+                run_api_case("source_eos_output",
+                             "finite source should produce output; status=" +
+                                 std::to_string(static_cast<int>(source_status)) +
+                                 " code=" + eos_err.code + " message=" + eos_err.message));
+        require(source_status == PullStatus::Closed,
+                run_api_case("source_eos_status", "finite source should close after its output"));
+        require(eos_err.code == error_codes::kSourceEnded,
+                run_api_case("source_eos_code", "normal source EOS code mismatch"));
+        require_contains(eos_err.message, "end of stream",
+                         run_api_case("source_eos_message", "normal EOS needs clear context"));
+      }
+
+      // Connected graphs execute a finite source in a child pipeline. Drain every source producer
+      // and preserve the same source-ended closure after all queued graph outputs are consumed.
+      {
+        Graph source_graph;
+        const auto source =
+            nodes::Custom("videotestsrc is-live=true num-buffers=3 pattern=black ! "
+                          "video/x-raw,format=RGB,width=64,height=48,framerate=30/1",
+                          InputRole::Source);
+        const auto output_a = nodes::Output("source_a", OutputOptions::EveryFrame(4));
+        const auto output_b = nodes::Output("source_b", OutputOptions::EveryFrame(4));
+        source_graph.connect(source, output_a);
+        source_graph.connect(source, output_b);
+        Run graph_run = source_graph.build();
+
+        const auto drain_named_source = [&](std::string_view name) {
+          Sample output;
+          PullError err;
+          std::size_t output_count = 0;
+          PullStatus status = PullStatus::Timeout;
+          for (int attempt = 0; attempt < 5; ++attempt) {
+            status = graph_run.pull(name, 1000, output, &err);
+            if (status != PullStatus::Ok) {
+              break;
+            }
+            ++output_count;
+          }
+          require(output_count > 0,
+                  run_api_case("graph_source_eos_output",
+                               std::string(name) + " should receive finite-source output"));
+          require(status == PullStatus::Closed,
+                  run_api_case("graph_source_eos_status",
+                               std::string(name) + " should close after queued output; status=" +
+                                   std::to_string(static_cast<int>(status)) + " code=" + err.code));
+          require(err.code == error_codes::kSourceEnded,
+                  run_api_case("graph_source_eos_code",
+                               std::string(name) + " should preserve source-ended"));
+        };
+        drain_named_source("source_a");
+        drain_named_source("source_b");
+      }
+
+      // A push-backed pipeline that reaches EOS while its public input is still open must expose
+      // the stable unexpected-EOS code. Do not infer this from input/output counts: valid
+      // rate-changing pipelines may intentionally drop or duplicate buffers.
+      {
+        Run eos_run = make_async_drop_run(seed);
+        require(eos_run.push(TensorList{seed}),
+                run_api_case("unexpected_eos_push_1", "first test input should be accepted"));
+        require(eos_run.push(TensorList{seed}),
+                run_api_case("unexpected_eos_push_2", "second test input should be accepted"));
+
+        Sample tmp;
+        PullError err;
+        PullStatus status = PullStatus::Timeout;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+          status = eos_run.pull(1000, tmp, &err);
+          if (status != PullStatus::Ok) {
+            break;
+          }
+        }
+        require(status == PullStatus::Error,
+                run_api_case("unexpected_eos_status", "premature EOS should be an error; status=" +
+                                                          std::to_string(static_cast<int>(status)) +
+                                                          " code=" + err.code));
+        require(err.code == error_codes::kUnexpectedEos,
+                run_api_case("unexpected_eos_code", "premature EOS code mismatch"));
+        require(err.report.has_value() && err.report->error_code == error_codes::kUnexpectedEos,
+                run_api_case("unexpected_eos_report", "premature EOS report code mismatch"));
+        require_contains(err.message, "How to fix:",
+                         run_api_case("unexpected_eos_action", "premature EOS needs an action"));
+      }
+
+      // Once the application has closed its input, a lower output count is not evidence of a
+      // failure. This simulates a cardinality-changing element that accepts an input but reaches
+      // normal EOS without forwarding one output per accepted input.
+      {
+        Run cardinality_run = make_async_drop_run(seed);
+        require(cardinality_run.push(TensorList{seed}),
+                run_api_case("cardinality_eos_push", "test input should be accepted"));
+        cardinality_run.close_input();
+
+        Sample tmp;
+        PullError err;
+        PullStatus status = PullStatus::Timeout;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+          status = cardinality_run.pull(1000, tmp, &err);
+          if (status != PullStatus::Ok) {
+            break;
+          }
+        }
+        require(status == PullStatus::Closed,
+                run_api_case("cardinality_eos_status",
+                             "a closed cardinality-changing pipeline should close normally; "
+                             "status=" +
+                                 std::to_string(static_cast<int>(status)) + " code=" + err.code));
+        require(err.code != error_codes::kUnexpectedEos,
+                run_api_case("cardinality_eos_code",
+                             "input/output count differences must not imply unexpected EOS"));
+      }
+
+      // Application-driven EOS on a drained one-to-one push pipeline is normal closure, not a
+      // finite source ending on its own.
+      {
+        Run push_run = sima_test::make_async_rgb_run(seed, 4, 4);
+        require(push_run.push(TensorList{seed}),
+                run_api_case("push_close_input", "test input should be accepted"));
+        Sample output;
+        PullError err;
+        require(push_run.pull(1000, output, &err) == PullStatus::Ok,
+                run_api_case("push_close_output", "accepted input should produce output"));
+        push_run.close_input();
+
+        const PullStatus status = push_run.pull(1000, output, &err);
+        require(status == PullStatus::Closed,
+                run_api_case("push_close_status", "closed push input should drain normally"));
+        require(err.code == error_codes::kRuntimePull,
+                run_api_case("push_close_code",
+                             "application-driven EOS must not use the source-ended code"));
       }
 
       // Active async matrix.

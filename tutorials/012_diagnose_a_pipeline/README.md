@@ -84,14 +84,19 @@ Framework errors use stable code families:
 | Error code | Meaning | Typical fix |
 | --- | --- | --- |
 | `misconfig.pipeline_shape` | Node order/shape contract violation | Ensure `Input()` first for push pipelines and `Output()` last for pull pipelines |
-| `misconfig.caps` | Caps negotiation/override mismatch | Align `caps_override`, format, and downstream caps |
+| `misconfig.caps` | Framework caps-override or adjacent Node contract mismatch | Align `caps_override` and declared Node contracts |
+| `misconfig.media_caps` | Runtime GStreamer media negotiation mismatch | Align format, resolution, and frame rate or insert conversion |
 | `misconfig.input_shape` | Input tensor/frame/sample shape/layout mismatch | Validate width/height/depth, layout, dtype, storage |
-| `build.parse_launch` | `gst_parse_launch` failed | Validate fragment syntax and plugin availability |
-| `runtime.pull` | Runtime pull/timeout/closed-output failure | Check sink output production, queue pressure, and upstream errors |
+| `build.plugin_missing` | A required GStreamer element or codec is unavailable | Install/replace it and verify it with `gst-inspect-1.0` |
+| `build.property_invalid` | A GStreamer property name or value is invalid | Check it with `gst-inspect-1.0 <element>` |
+| `build.pipeline_syntax` | A custom GStreamer fragment has invalid syntax | Correct it and validate it with `gst-launch-1.0` |
+| `runtime.pull` | A pull failed without a more specific cause | Inspect the attached report and first upstream error |
 | `io.parse` | Saved-graph JSON parse/schema failure | Validate JSON and required node fields |
 | `io.open` | Graph save/load file open/read/write failure | Check path existence, permissions, and storage health |
 
 `PullError.code` uses the same taxonomy (not only exception paths).
+This is a short triage list. See the [complete error code catalog](/reference/error-codes), including
+the migration from the previous coarse runtime and build codes.
 
 ### Programmatic handling
 
@@ -104,13 +109,16 @@ try {
   simaai::neat::Sample out;
   simaai::neat::PullError perr;
   const auto st = run.pull(500, out, &perr);
-  if (st == simaai::neat::PullStatus::Error &&
-      perr.code == simaai::neat::error_codes::kRuntimePull) {
-    // runtime pull triage path
+  if (st == simaai::neat::PullStatus::Error) {
+    if (perr.code == simaai::neat::error_codes::kMediaCaps) {
+      // Fix the incompatible upstream/downstream media contract.
+    } else {
+      // Handle another specific code, including future codes, or report it.
+    }
   }
 } catch (const simaai::neat::NeatError& e) {
-  if (e.report().error_code == simaai::neat::error_codes::kParseLaunch) {
-    // build/parse-launch triage path
+  if (e.report().error_code == simaai::neat::error_codes::kPluginMissing) {
+    // Install or replace the missing GStreamer component.
   }
 }
 ```
@@ -123,6 +131,16 @@ Key environment variables (see [Architecture](/develop-apps/contribute/architect
 - `SIMA_GST_ELEMENT_TIMINGS`: per-element timings
 - `SIMA_GST_FLOW_DEBUG`: per-element flow counters
 - `SIMA_GST_ENFORCE_NAMES`: enforce naming contract
+
+For a short run with redacted raw GStreamer context appended to the error, use:
+
+```bash
+SIMA_NEAT_VERBOSE_LEVEL=2 \
+SIMA_NEAT_VERBOSE_TOPICS=gstreamer \
+./your-neat-application
+```
+
+`NEAT_LOG_LEVEL=debug` is not a Neat Library setting.
 
 ### Debug workflow
 

@@ -153,8 +153,8 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 
 | Error | Likely cause |
 | --- | --- |
-| `build.parse_launch` | `libcamerasrc` or `neatcamerabridge` is missing from the runtime plugin set. |
-| `misconfig.caps` / `not-negotiated` | The camera does not support the requested format, resolution, or framerate. |
+| `build.plugin_missing` | `libcamerasrc` or `neatcamerabridge` is missing from the runtime plugin set. |
+| `misconfig.media_caps` / `not-negotiated` | The camera does not support the requested format, resolution, or framerate. |
 | Strict zero-copy error | `allow_cpu_fallback` is false and the camera source does not expose SiMaAI zero-copy properties. |
 | Pull timeout | The camera did not deliver frames, the graph is backpressured, or the camera stack stopped streaming. |
 | Green, purple, or heavily tinted frames | The frame format or model preprocess color conversion is wrong, or the tint already exists in the camera ISP/libcamera output. Validate an `NV12` capture outside Neat first. |

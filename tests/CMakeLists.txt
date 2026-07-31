@@ -312,6 +312,7 @@ set(UNIT_TESTS
   unit_dispatcher_recovery_test
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test
+  unit_gst_error_normalizer_test
   unit_encoded_sample_test
   unit_genai_prompt_builder_test
   unit_genai_image_types_test
@@ -492,6 +493,14 @@ endif()
 if (TARGET unit_plugin_failure_messages_test)
   set_property(TEST unit_plugin_failure_messages_test APPEND PROPERTY
     ENVIRONMENT "GST_REGISTRY_1_0=${CMAKE_BINARY_DIR}/sima_gst_registry_unit_plugin_failure_messages_test_v2.bin")
+endif()
+
+if (TARGET unit_gst_error_normalizer_test)
+  # Keep GStreamer initialization and message construction serialized with the
+  # broader test suite, whose tests may update the shared registry cache.
+  target_include_directories(unit_gst_error_normalizer_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/pipeline/internal)
+  set_tests_properties(unit_gst_error_normalizer_test PROPERTIES RUN_SERIAL TRUE)
 endif()
 
 if (TARGET unit_simaai_allocator_share_test)

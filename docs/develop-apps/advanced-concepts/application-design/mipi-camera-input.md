@@ -248,7 +248,7 @@ The camera gives you frames. The CVU should do the frame math. The CPU should no
 | --- | --- |
 | No camera appears | Confirm the selected `.dtbo`, cable orientation, power cycle, and kernel/libcamera logs. |
 | `libcamerasrc` is missing | Install the matching Neat/runtime camera image or camera packages for the DevKit build. |
-| `misconfig.caps` or `not-negotiated` | Validate the exact `format,width,height,framerate` with `gst-launch-1.0`. Try a known supported mode such as `NV12 1920x1080@30`. |
+| `misconfig.media_caps` or `not-negotiated` | Validate the exact `format,width,height,framerate` with `gst-launch-1.0`. Try a known supported mode such as `NV12 1920x1080@30`. |
 | Strict zero-copy fails | Set `allow_cpu_fallback = true`, or use a camera stack that exposes SiMaAI zero-copy properties. |
 | Output colors look wrong | Confirm the frame is interpreted as `NV12`, not RGB/BGR. If a JPEG produced directly from `libcamerasrc` is also wrong, debug camera ISP/tuning before debugging Neat. |
 | Throughput is low | Remove CPU video conversion/scaling, pull continuously, and use a live-source queue policy that favors freshness. |
