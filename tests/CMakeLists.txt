@@ -400,6 +400,7 @@ set(UNIT_TESTS
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
   unit_model_archive_loader_test
+  unit_model_archive_cli_test
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_jpeg_framing_nodes_test
@@ -487,6 +488,12 @@ endforeach()
 
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+endif()
+
+if (TARGET unit_model_archive_cli_test)
+  add_dependencies(unit_model_archive_cli_test neat_model_archive)
+  target_compile_definitions(unit_model_archive_cli_test PRIVATE
+    NEAT_MODEL_ARCHIVE_BIN="$<TARGET_FILE:neat_model_archive>")
 endif()
 
 if (TARGET unit_plugin_failure_messages_test)

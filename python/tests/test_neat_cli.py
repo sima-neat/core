@@ -1096,3 +1096,74 @@ def test_vulcan_buildinfo_selects_core_update_environment(tmp_path: Path) -> Non
     assert "https://artifacts.neat.paconsultings.com/core/feat%2Fx/abcdef123456/metadata-minimal.json" in calls.read_text(
         encoding="utf-8"
     )
+
+
+def test_help_lists_model_commands(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    proc = run_neat(tmp_path, ["--help"], base_env(tmp_path, bin_dir))
+
+    assert proc.returncode == 0, proc.stderr
+    assert "neat model validate <archive.tar.gz>" in proc.stdout
+    assert "neat model extract <archive.tar.gz> --output <directory>" in proc.stdout
+
+
+def test_model_forwards_arguments_to_the_helper(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.log"
+    helper = tmp_path / "neat-model-archive"
+    write_exe(
+        helper,
+        f"""\
+        #!/usr/bin/env bash
+        echo "$*" >> "{calls}"
+        """,
+    )
+    env = base_env(tmp_path, bin_dir)
+    env["NEAT_MODEL_ARCHIVE_BIN"] = str(helper)
+
+    proc = run_neat(
+        tmp_path,
+        ["model", "extract", "m.tar.gz", "--output", "out dir"],
+        env,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert calls.read_text(encoding="utf-8").strip() == "extract m.tar.gz --output out dir"
+
+
+def test_model_propagates_the_helper_exit_code(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    helper = tmp_path / "neat-model-archive"
+    write_exe(helper, "#!/usr/bin/env bash\nexit 3\n")
+    env = base_env(tmp_path, bin_dir)
+    env["NEAT_MODEL_ARCHIVE_BIN"] = str(helper)
+
+    proc = run_neat(tmp_path, ["model", "validate", "m.tar.gz"], env)
+
+    assert proc.returncode == 3
+
+
+def test_model_reports_a_missing_helper(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    env = base_env(tmp_path, bin_dir)
+    env["NEAT_MODEL_ARCHIVE_BIN"] = str(tmp_path / "absent-helper")
+
+    proc = run_neat(tmp_path, ["model", "validate", "m.tar.gz"], env)
+
+    assert proc.returncode == 1
+    assert "model archive helper not found" in proc.stderr
+
+
+def test_list_remains_unsupported(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    proc = run_neat(tmp_path, ["list"], base_env(tmp_path, bin_dir))
+
+    assert proc.returncode == 1
+    assert "unknown option or command: list" in proc.stderr

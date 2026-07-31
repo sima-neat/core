@@ -297,17 +297,6 @@ static std::array<float, 3> materialize3(const std::vector<float>& v, float defv
   throw std::invalid_argument("mean/stddev must have 0, 1, or 3 values.");
 }
 
-static std::string append_model_paths_if_exists(json& json_data, const std::string& append_path) {
-  if (json_data.contains("simaai__params") && json_data["simaai__params"].contains("model_path")) {
-    std::string model_path = json_data["simaai__params"]["model_path"];
-    json_data["simaai__params"]["model_path"] = append_path + "/share/" + model_path;
-  } else if (json_data.contains("model_info") && json_data["model_info"].contains("path")) {
-    std::string model_info_path = json_data["model_info"]["path"];
-    json_data["model_info"]["path"] = append_path + "/lib/" + model_info_path;
-  }
-  return "";
-}
-
 struct MlaRuntimeProperties {
   std::string model_path;
   int batch_size = 0;
@@ -934,43 +923,6 @@ static bool directory_has_json(const fs::path& dir) {
   return false;
 }
 
-static void write_json_file_atomic(const fs::path& path, const json& value, const char* label) {
-  const std::string payload = value.dump(4);
-  const fs::path parent = path.parent_path().empty() ? fs::path(".") : path.parent_path();
-  std::error_code ec;
-  fs::create_directories(parent, ec);
-  if (ec) {
-    throw std::runtime_error(std::string(label) +
-                             ": output_storage_unavailable: failed to create directory for " +
-                             path.string() + " (" + ec.message() + ")");
-  }
-  const fs::path tmp = parent / (path.filename().string() + ".tmp." +
-                                 std::to_string(static_cast<long long>(::getpid())));
-  {
-    std::ofstream out(tmp, std::ios::out | std::ios::binary | std::ios::trunc);
-    if (!out.is_open()) {
-      throw std::runtime_error(std::string(label) +
-                               ": output_storage_unavailable: failed to open temp config " +
-                               tmp.string());
-    }
-    out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
-    out.flush();
-    if (!out.good()) {
-      fs::remove(tmp, ec);
-      throw std::runtime_error(std::string(label) +
-                               ": output_storage_unavailable: failed writing temp config " +
-                               tmp.string());
-    }
-  }
-  fs::rename(tmp, path, ec);
-  if (ec) {
-    fs::remove(tmp, ec);
-    throw std::runtime_error(std::string(label) +
-                             ": output_storage_unavailable: failed to replace config " +
-                             path.string());
-  }
-}
-
 static bool extracted_layout_ready(const fs::path& package_root) {
   std::error_code ec;
   const fs::path etc_dir = package_root / "etc";
@@ -1077,26 +1029,8 @@ static std::string extract_and_organize(const std::string& tar_path,
         tar_path, (fs::path(process_root) / identity_dir).string(), opt);
     const fs::path target_dir(extracted.package_root);
 
-    // Preserve existing behavior: materialize model-relative paths as absolute paths
-    // anchored at extracted package root.
     try {
-      for (const auto& entry : fs::directory_iterator(extracted.etc_dir)) {
-        if (!entry.is_regular_file())
-          continue;
-        if (entry.path().extension() != ".json")
-          continue;
-        std::ifstream in(entry.path());
-        if (!in.is_open())
-          continue;
-        json cfg;
-        try {
-          in >> cfg;
-        } catch (const std::exception&) {
-          continue;
-        }
-        append_model_paths_if_exists(cfg, target_dir.string());
-        write_json_file_atomic(entry.path(), cfg, "ModelPack");
-      }
+      simaai::neat::internal::rewrite_model_paths(extracted.etc_dir, target_dir.string());
     } catch (...) {
       std::error_code cleanup_ec;
       fs::remove_all(target_dir, cleanup_ec);

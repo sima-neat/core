@@ -75,6 +75,8 @@ usage() {
 Usage:
   neat [status] [--offline] [--json] [--color=auto|always|never]
   neat update [--yes] [--core-only|--insight-only] [--channel <name>] [--tag <latest|sha>] [--color=auto|always|never]
+  neat model validate <archive.tar.gz>
+  neat model extract <archive.tar.gz> --output <directory>
 
 Environment:
   NEAT_ARTIFACTS_BASE_URL  Core artifact index override; otherwise derived from installed buildinfo.json
@@ -94,6 +96,7 @@ Environment:
                            Set to 1 only to allow access without authentication
   OPENVSCODE_WORKSPACE     Browser VS Code workspace path (default: /workspace)
   NEAT_MODEL_COMPILER_DIR  Model Compiler extension directory (default: /sdk-extensions/model-compiler)
+  NEAT_MODEL_ARCHIVE_BIN   neat-model-archive helper path override (default: alongside this script)
   SIMA_CLI_BIN             sima-cli executable path/name override
   SYSROOT                  SDK sysroot path (default: /opt/toolchain/aarch64/modalix)
   NO_COLOR                 Disable color when set
@@ -103,6 +106,20 @@ EOF
 die() {
   echo "${PROGRAM_NAME}: $*" >&2
   exit 1
+}
+
+# The SDK reaches this script through a symlink into the sysroot, so the helper sits beside the
+# resolved script, not beside the invoked name. `neat model --help` and argument errors are the
+# helper's own usage text, which keeps one description of the subcommands.
+run_model_command() {
+  local helper="${NEAT_MODEL_ARCHIVE_BIN:-}"
+  if [[ -z "${helper}" ]]; then
+    local self
+    self="$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")"
+    helper="$(dirname "${self}")/neat-model-archive"
+  fi
+  [[ -x "${helper}" ]] || die "model archive helper not found: ${helper}"
+  exec "${helper}" "$@"
 }
 
 sanitize_channel_key() {
@@ -1523,6 +1540,10 @@ main() {
       update)
         command="update"
         shift
+        ;;
+      model)
+        shift
+        run_model_command "$@"
         ;;
     esac
   fi

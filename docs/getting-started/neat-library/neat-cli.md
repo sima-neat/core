@@ -62,6 +62,43 @@ playbooks from the detected channel, run:
 neat update
 </ShellCommand>
 
+## Model Archives
+
+To check a compiled `.tar.gz` model package before an application tries to load
+it, run:
+
+<ShellCommand prompt="sdk-or-devkit">
+neat model validate yolo_v8s_mpk.tar.gz
+</ShellCommand>
+
+This applies the same archive rules the runtime applies when a `Model` loads the
+same file, so an archive that validates here loads at runtime and one that fails
+here fails there with the same error. It does not run inference, so it says
+nothing about whether the model produces correct results on a given target.
+
+To unpack an archive into the package layout the runtime uses, run:
+
+<ShellCommand prompt="sdk-or-devkit">
+neat model extract yolo_v8s_mpk.tar.gz --output ./yolo_v8s_pkg
+</ShellCommand>
+
+`--output` is the package root itself, and it holds `etc`, `lib`, and `share`
+once the command succeeds. The command refuses to run if that path already
+exists, and a failed run leaves nothing behind. Model paths inside the package
+JSON are rewritten to absolute paths under the output, so moving the directory
+afterwards invalidates it.
+
+Pass the produced directory to `Model` in place of the archive to skip
+extraction on every load:
+
+```cpp
+simaai::neat::Model yolo("./yolo_v8s_pkg", opt);
+```
+
+Only a directory produced by `neat model extract` works this way. Unpacking the
+archive yourself with `tar -xzf` produces a different layout that `Model` does
+not accept.
+
 ## Next Step
 
 Continue to [Compile a Model](/compile-a-model/) to prepare a model for Modalix —
