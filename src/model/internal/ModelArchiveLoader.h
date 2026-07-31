@@ -121,4 +121,10 @@ public:
   static std::uint64_t inflation_count();
 };
 
+/// Rewrites the model reference in every `<etc_dir>/*.json` to an absolute path under
+/// `package_root`. `package_root` is where the package will finally live, which need not be the
+/// parent of `etc_dir`: a caller staging the extraction elsewhere still writes final paths.
+/// Unreadable and unparseable entries are left untouched.
+void rewrite_model_paths(const std::string& etc_dir, const std::string& package_root);
+
 } // namespace simaai::neat::internal

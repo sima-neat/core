@@ -62,6 +62,54 @@ playbooks from the detected channel, run:
 neat update
 </ShellCommand>
 
+## Model Archives
+
+These commands run on Modalix and in AMD64 or ARM64 Neat SDKs.
+
+Validate a compiled model archive with the same archive checks used by `Model`:
+
+<ShellCommand prompt="sdk-or-devkit">
+neat model validate yolo_v8s_mpk.tar.gz
+</ShellCommand>
+
+```text
+yolo_v8s_mpk: valid model archive (7 entries, 162.4 MiB extracted)
+```
+
+A rejected archive prints the loader error and exits nonzero. Validation does not
+run inference or check model output.
+
+```text
+neat-model-archive: invalid_archive: failed to decompress archive: yolo_v8s_mpk.tar.gz
+```
+
+Extract the archive into the package layout accepted by the loader's directory
+fast path:
+
+<ShellCommand prompt="sdk-or-devkit">
+neat model extract yolo_v8s_mpk.tar.gz --output ./yolo_v8s_pkg
+</ShellCommand>
+
+The output contains `etc`, `lib`, and `share`. The command refuses an existing
+output path and removes incomplete output after a failure.
+
+Pass the produced directory to `Model` in place of the archive:
+
+```cpp
+simaai::neat::Model yolo("./yolo_v8s_pkg", opt);
+```
+
+The extracted package is an ordinary user-owned directory. Neat does not make it
+immutable or verify it again. Do not edit or move it; re-extract the archive when
+needed. It can be deleted normally when no longer in use. Loading does not write
+to it, so it may be shared by multiple processes or made read-only.
+
+Model loading reports the selected package location, for example:
+
+```text
+Model loaded: yolo_v8s_mpk (package storage: NVMe, root: /media/nvme/.../yolo_v8s_mpk)
+```
+
 ## Next Step
 
 Continue to [Compile a Model](/compile-a-model/) to prepare a model for Modalix —

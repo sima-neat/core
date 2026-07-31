@@ -75,6 +75,8 @@ usage() {
 Usage:
   neat [status] [--offline] [--json] [--color=auto|always|never]
   neat update [--yes] [--core-only|--insight-only] [--channel <name>] [--tag <latest|sha>] [--color=auto|always|never]
+  neat model validate <archive.tar.gz>
+  neat model extract <archive.tar.gz> --output <directory>
 
 Environment:
   NEAT_ARTIFACTS_BASE_URL  Core artifact index override; otherwise derived from installed buildinfo.json
@@ -1523,6 +1525,12 @@ main() {
       update)
         command="update"
         shift
+        ;;
+      model)
+        shift
+        command -v neat-model-archive >/dev/null 2>&1 ||
+          die "model archive helper not found"
+        exec neat-model-archive "$@"
         ;;
     esac
   fi

@@ -1385,6 +1385,50 @@ fs::path extract_destination_for(const fs::path& package_root, const TarEntry& e
   return package_root / extract_destination_rel(entry);
 }
 
+void append_model_path(json& cfg, const std::string& package_root) {
+  if (cfg.contains("simaai__params") && cfg["simaai__params"].contains("model_path")) {
+    const std::string model_path = cfg["simaai__params"]["model_path"];
+    cfg["simaai__params"]["model_path"] = package_root + "/share/" + model_path;
+  } else if (cfg.contains("model_info") && cfg["model_info"].contains("path")) {
+    const std::string model_info_path = cfg["model_info"]["path"];
+    cfg["model_info"]["path"] = package_root + "/lib/" + model_info_path;
+  }
+}
+
+void write_json_atomic(const fs::path& path, const json& value) {
+  const std::string payload = value.dump(4);
+  const fs::path parent = path.parent_path().empty() ? fs::path(".") : path.parent_path();
+  std::error_code ec;
+  fs::create_directories(parent, ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                  "output_storage_unavailable: failed to create directory for " + path.string() +
+                      " (" + ec.message() + ")");
+  }
+  const fs::path tmp = parent / (path.filename().string() + ".tmp." +
+                                 std::to_string(static_cast<long long>(::getpid())));
+  {
+    std::ofstream out(tmp, std::ios::out | std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) {
+      throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                    "output_storage_unavailable: failed to open temp config " + tmp.string());
+    }
+    out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    out.flush();
+    if (!out.good()) {
+      fs::remove(tmp, ec);
+      throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                    "output_storage_unavailable: failed writing temp config " + tmp.string());
+    }
+  }
+  fs::rename(tmp, path, ec);
+  if (ec) {
+    fs::remove(tmp, ec);
+    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                  "output_storage_unavailable: failed to replace config " + path.string());
+  }
+}
+
 } // namespace
 
 const char* model_archive_error_class_name(ModelArchiveErrorClass code) {
@@ -1499,6 +1543,26 @@ ModelArchiveLoader::extract(const std::string& archive_path,
 
 std::uint64_t ModelArchiveLoader::inflation_count() {
   return inflation_counter().load(std::memory_order_relaxed);
+}
+
+void rewrite_model_paths(const std::string& etc_dir, const std::string& package_root) {
+  for (const auto& entry : fs::directory_iterator(etc_dir)) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".json") {
+      continue;
+    }
+    std::ifstream in(entry.path());
+    if (!in.is_open()) {
+      continue;
+    }
+    json cfg;
+    try {
+      in >> cfg;
+    } catch (const std::exception&) {
+      continue;
+    }
+    append_model_path(cfg, package_root);
+    write_json_atomic(entry.path(), cfg);
+  }
 }
 
 } // namespace simaai::neat::internal

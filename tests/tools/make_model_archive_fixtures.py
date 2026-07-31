@@ -218,6 +218,7 @@ def _base_valid_entries() -> List[dict]:
             "data": json.dumps(
                 {
                     "node_name": "mla_0",
+                    "simaai__params": {"model_path": "model.elf"},
                     "input_buffers": [{"name": "preproc_0"}],
                     "output_width": [64],
                     "output_height": [48],

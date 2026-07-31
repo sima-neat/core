@@ -1050,6 +1050,20 @@ target_include_directories(sima_neat_objects PRIVATE ${ZLIB_INCLUDE_DIRS})
 target_link_libraries(sima_neat PRIVATE ZLIB::ZLIB)
 target_link_libraries(sima_neat_static PRIVATE ZLIB::ZLIB)
 
+# Backs `neat model`. It recompiles the loader instead of linking sima_neat so that inspecting an
+# archive stays possible on a machine with no GStreamer, plugins, or inference hardware.
+add_executable(neat_model_archive
+  ${CMAKE_CURRENT_SOURCE_DIR}/tools/model_archive_cli/main.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/model/ModelArchiveLoader.cpp
+)
+set_target_properties(neat_model_archive PROPERTIES OUTPUT_NAME neat-model-archive)
+target_compile_definitions(neat_model_archive PRIVATE SIMA_NEAT_INTERNAL=1)
+target_include_directories(neat_model_archive PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${ZLIB_INCLUDE_DIRS}
+)
+target_link_libraries(neat_model_archive PRIVATE ZLIB::ZLIB)
+
 if (GST_FOUND)
   target_link_libraries(sima_neat_common INTERFACE ${GST_LIBRARIES})
 endif()
@@ -1381,6 +1395,12 @@ if (SIMANEAT_BUILDINFO_JSON)
     COMPONENT core
   )
 endif()
+
+install(
+  TARGETS neat_model_archive
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT core
+)
 
 install(
   FILES

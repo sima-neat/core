@@ -213,6 +213,7 @@ jobs:
             sima-cli --version
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
+            /workspace/scripts/ci/install_amd64_cross_toolchain.sh
             cd /workspace
             ./build.sh ${CORE_BUILD_ARGS}
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
@@ -276,6 +277,12 @@ jobs:
         test -f dist/neat-install-manifest.txt
         test -f build/resolved_manifest.json
 
+        helper=(dist/neat-model-archive-*-linux-amd64)
+        [[ "${#helper[@]}" -eq 1 ]]
+        for metadata in dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json; do
+          grep -Fq "$(basename "${helper[0]}")" "${metadata}"
+        done
+
         sudo install -m 0644 build/resolved_manifest.json dist/resolved-deps-manifest.json
         ls -lh dist
 
@@ -297,6 +304,63 @@ jobs:
       artifact_glob: "*"
       min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 10 || 11 }}
       publish_manifest: false
+
+  test-amd64-sdk-model-cli:
+    name: Test model CLI in amd64 SDK
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - build
+      - detect-changes
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Download Core package bundle
+        uses: actions/download-artifact@v5
+        with:
+          name: neat-core-dist
+          path: dist
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install and run model commands
+        run: |
+          docker run --rm --platform linux/amd64 \
+            --entrypoint bash \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -w /workspace/dist \
+            ghcr.io/sima-neat/sdk:latest \
+            -lc '
+              set -euo pipefail
+              chmod +x install_neat_framework.sh
+              NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON \
+                NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON \
+                ./install_neat_framework.sh --local
+              python3 /workspace/tests/tools/make_model_archive_fixtures.py \
+                --root /tmp/model-archive-fixtures \
+                --manifest /tmp/model-archive-fixtures/fixtures_manifest.json
+              archive=/tmp/model-archive-fixtures/valid/basic_valid.tar.gz
+              neat model validate "${archive}"
+              if neat model validate /tmp/model-archive-fixtures/invalid/truncated_archive.tar.gz; then
+                exit 1
+              fi
+              TMPDIR=/does-not-exist neat model extract "${archive}" --output /tmp/extracted-model
+              test -d /tmp/extracted-model/etc
+              test -d /tmp/extracted-model/lib
+              test -d /tmp/extracted-model/share
+              grep -Fq /tmp/extracted-model/share/model.elf \
+                /tmp/extracted-model/etc/0_process_mla.json
+            '
 
   test-devkit:
     name: Test Core on DevKit
@@ -360,6 +424,24 @@ jobs:
             echo "Artifact installation attempt ${attempt} failed; retrying in ${delay}s." >&2
             sleep "${delay}"
           done
+
+      - name: Run model commands on AArch64 board
+        run: |
+          set -euo pipefail
+          dpkg -L sima-neat | grep -qx '/usr/bin/neat-model-archive'
+          python3 tests/tools/make_model_archive_fixtures.py \
+            --root _work/model-archive-fixtures \
+            --manifest _work/model-archive-fixtures/fixtures_manifest.json
+          archive=_work/model-archive-fixtures/valid/basic_valid.tar.gz
+          neat model validate "${archive}"
+          if neat model validate _work/model-archive-fixtures/invalid/truncated_archive.tar.gz; then
+            exit 1
+          fi
+          TMPDIR=/does-not-exist neat model extract "${archive}" \
+            --output _work/extracted-model
+          test -d _work/extracted-model/etc
+          test -d _work/extracted-model/lib
+          test -d _work/extracted-model/share
 
       - name: Locate installed extras content
         run: |

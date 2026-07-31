@@ -2411,6 +2411,7 @@ stage_package_artifacts_to_dist() {
     dist/simaai-common*.deb \
     dist/appcomplex_*.deb \
     dist/sima-lmm-*.deb \
+    dist/neat-model-archive-*-linux-amd64 \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
@@ -2536,6 +2537,7 @@ write_install_manifest() {
   append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
   append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-dev.deb'
   append_dist_manifest_matches "${manifest_path}" '*.whl'
+  append_dist_manifest_matches "${manifest_path}" 'neat-model-archive-*-linux-amd64'
 
   echo "Built install manifest: ${manifest_path}"
 }
@@ -2598,6 +2600,37 @@ collect_single_dist_artifact() {
   fi
 
   out_ref="${matches[0]}"
+}
+
+# The Core DEB carries an AArch64 helper for the board and an AArch64 SDK. An amd64 SDK cannot
+# execute that binary, so it needs a host-native build of the same two translation units. It is
+# produced here, before metadata generation, so it inherits the release version and checksum from
+# the same commit. Skipped when the cross toolchain is absent, which keeps developer builds
+# unchanged; CI provisions it.
+build_amd64_model_archive_helper_if_possible() {
+  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" || "${OS_NAME}" == "Darwin" ]]; then
+    return 0
+  fi
+  local helper_root="${NEAT_AMD64_HELPER_ROOT:-/opt/neat-amd64-helper}"
+  if ! command -v x86_64-linux-gnu-g++ >/dev/null 2>&1 ||
+     [[ ! -f "${helper_root}/usr/include/nlohmann/json.hpp" ||
+        ! -f "${helper_root}/usr/include/zlib.h" ||
+        ! -e "${helper_root}/usr/lib/x86_64-linux-gnu/libz.so" ]]; then
+    echo "Skipping amd64 model archive helper (cross compiler or dependencies unavailable)."
+    return 0
+  fi
+
+  local version output
+  version="$(compute_neat_package_version)"
+  output="dist/neat-model-archive-${version}-linux-amd64"
+
+  echo "Building amd64 model archive helper: ${output}"
+  mkdir -p dist
+  x86_64-linux-gnu-g++ -std=c++20 -O2 -DSIMA_NEAT_INTERNAL=1 \
+    -I "${SCRIPT_DIR}/src" -I "${helper_root}/usr/include" \
+    "${SCRIPT_DIR}/tools/model_archive_cli/main.cpp" \
+    "${SCRIPT_DIR}/src/model/ModelArchiveLoader.cpp" \
+    -L "${helper_root}/usr/lib/x86_64-linux-gnu" -lz -o "${output}"
 }
 
 generate_package_metadata_if_requested() {
@@ -2693,6 +2726,7 @@ generate_package_metadata_if_requested() {
     --exclude ".sh" \
     --exclude ".txt" \
     --exclude ".json" \
+    --exclude "neat-model-archive-" \
     --download-compatible-files-only \
     --variant pyneat \
     "${package_compatibility_args[@]}"
@@ -2707,6 +2741,7 @@ generate_package_metadata_if_requested() {
     --exclude ".sh" \
     --exclude ".txt" \
     --exclude ".json" \
+    --exclude "neat-model-archive-" \
     --variant extras
 
   WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
@@ -2831,6 +2866,11 @@ install_artifacts_into_current_environment_if_requested() {
 
   local -a staged_files=()
   collect_install_artifact_files staged_files
+  local sdk_file
+  for sdk_file in dist/neat-model-archive-*-linux-amd64 "dist/${NEAT_INSTALL_MANIFEST}"; do
+    [[ -e "${sdk_file}" ]] || continue
+    staged_files+=("${sdk_file}")
+  done
   local artifact_stage
   artifact_stage="$(mktemp -d "/tmp/sima-neat-install.XXXXXX")"
 
@@ -2959,6 +2999,7 @@ main() {
   build_extras_archive_if_requested
   stage_package_artifacts_to_dist
   write_dist_package_contract_manifest_fields
+  build_amd64_model_archive_helper_if_possible
   write_install_manifest
   generate_package_metadata_if_requested
   print_artifact_summary
