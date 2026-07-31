@@ -249,7 +249,8 @@ struct DiagCtx {
 
   void push_bus(const std::string& type, const std::string& src, const std::string& detail) {
     std::lock_guard<std::mutex> lk(bus_mu);
-    bus.push_back(BusMessage{type, src, redact_gst_credentials(detail), now_us()});
+    bus.push_back(BusMessage{redact_gst_credentials(type), redact_gst_credentials(src),
+                             redact_gst_credentials(detail), now_us()});
   }
 
   GraphReport snapshot_basic() const {
@@ -258,7 +259,12 @@ struct DiagCtx {
     rep.pipeline_string = report_pipeline;
     rep.nodes = node_reports;
     for (NodeReport& node : rep.nodes) {
+      node.kind = redact_gst_credentials(std::move(node.kind));
+      node.user_label = redact_gst_credentials(std::move(node.user_label));
       node.backend_fragment = redact_gst_credentials(std::move(node.backend_fragment));
+      for (std::string& element : node.elements) {
+        element = redact_gst_credentials(std::move(element));
+      }
     }
 
     {
@@ -270,13 +276,36 @@ struct DiagCtx {
     for (const auto& b : boundaries) {
       if (!b)
         continue;
-      rep.boundaries.push_back(b->snapshot());
+      BoundaryFlowStats boundary = b->snapshot();
+      boundary.boundary_name = redact_gst_credentials(std::move(boundary.boundary_name));
+      rep.boundaries.push_back(std::move(boundary));
     }
 
     rep.repro_gst_launch = "gst-launch-1.0 -v '" + report_pipeline + "'";
     rep.has_build_adaptation = has_build_adaptation;
     if (has_build_adaptation) {
       rep.build_adaptation = build_adaptation;
+      BuildAdaptationSummary& adaptation = rep.build_adaptation;
+      adaptation.shape_policy = redact_gst_credentials(std::move(adaptation.shape_policy));
+      adaptation.dynamic_capability =
+          redact_gst_credentials(std::move(adaptation.dynamic_capability));
+      adaptation.seed_width_origin =
+          redact_gst_credentials(std::move(adaptation.seed_width_origin));
+      adaptation.seed_height_origin =
+          redact_gst_credentials(std::move(adaptation.seed_height_origin));
+      adaptation.seed_depth_origin =
+          redact_gst_credentials(std::move(adaptation.seed_depth_origin));
+      adaptation.max_width_origin = redact_gst_credentials(std::move(adaptation.max_width_origin));
+      adaptation.max_height_origin =
+          redact_gst_credentials(std::move(adaptation.max_height_origin));
+      adaptation.max_depth_origin = redact_gst_credentials(std::move(adaptation.max_depth_origin));
+      adaptation.byte_guard_origin =
+          redact_gst_credentials(std::move(adaptation.byte_guard_origin));
+      for (BuildAdaptationAction& action : adaptation.actions) {
+        action.target = redact_gst_credentials(std::move(action.target));
+        action.detail = redact_gst_credentials(std::move(action.detail));
+        action.reason = redact_gst_credentials(std::move(action.reason));
+      }
     }
     // rep.repro_env filled by caller if desired
     return rep;

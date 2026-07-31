@@ -643,6 +643,7 @@ NormalizedDiagnostic base(RawGstError raw, const char* code, std::string id, std
   out.error_code = code;
   out.diagnostic_id = std::move(id);
   out.title = std::move(title);
+  raw.source_name = redact_gst_credentials(std::move(raw.source_name));
   out.stage = raw.source_name;
   out.raw = std::move(raw);
   return out;
@@ -1121,7 +1122,7 @@ RawGstError parse_gst_error_message(GstMessage* message) {
 
   if (GST_MESSAGE_SRC(message) && GST_IS_OBJECT(GST_MESSAGE_SRC(message))) {
     const char* source_name = GST_OBJECT_NAME(GST_MESSAGE_SRC(message));
-    out.source_name = source_name ? source_name : "";
+    out.source_name = redact_gst_credentials(source_name ? source_name : "");
     if (GST_IS_ELEMENT(GST_MESSAGE_SRC(message))) {
       GstElementFactory* factory = gst_element_get_factory(GST_ELEMENT(GST_MESSAGE_SRC(message)));
       if (factory) {
@@ -1454,7 +1455,9 @@ std::string render_diagnostic_body(const NormalizedDiagnostic& diagnostic,
       out << "\n" << key << ": " << value;
     }
   }
-  return out.str();
+  // This is the final boundary for both the default exception text and optional verbose
+  // GStreamer context. Keep it defensive even though capture paths redact known raw fields.
+  return redact_gst_credentials(out.str());
 }
 
 int diagnostic_priority(const NormalizedDiagnostic& diagnostic) {

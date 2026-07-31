@@ -531,7 +531,8 @@ RUN_TEST(
       }
 
       {
-        GstElement* source = gst_pipeline_new("input_file");
+        constexpr const char* kSourceNameSecret = "source-name-secret";
+        GstElement* source = gst_pipeline_new("auth=source-name-secret");
         require(source != nullptr, "pipeline object must be available for parser test");
         GError* error = g_error_new_literal(GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND,
                                             "Resource not found.");
@@ -589,7 +590,11 @@ RUN_TEST(
         g_error_free(error);
 
         const RawGstError raw = parse_gst_error_message(message);
-        require(raw.source_name == "input_file", "raw parser should capture the source name");
+        require(raw.source_name.find(kSourceNameSecret) == std::string::npos,
+                "raw parser must redact credentials embedded in the source name: " +
+                    raw.source_name);
+        require_contains(raw.source_name, "auth=<redacted>",
+                         "raw parser should preserve a useful redacted source name");
         require(raw.details.at("password") == "<redacted>" &&
                     raw.details.at("auth-token") == "<redacted>" &&
                     raw.details.at("sig") == "<redacted>" &&
@@ -985,15 +990,21 @@ RUN_TEST(
         constexpr const char* kPlaybackSecret = "playback-secret";
         constexpr const char* kHdntsSecret = "hdnts-secret";
         constexpr const char* kStreamKeySecret = "stream-secret";
+        constexpr const char* kUserLabelSecret = "user-label-secret";
+        constexpr const char* kElementNameSecret = "element-name-secret";
+        constexpr const char* kBusSourceSecret = "bus-source-secret";
         DiagCtx diag;
         diag.pipeline_string =
             "rtspsrc location=\"rtsp://camera:pipeline-password@example.test/live?"
             "access_token=query-token&auth=auth-secret&playback-token=playback-secret&"
             "hdnts=exp=1~hmac=hdnts-secret\" stream-key=stream-secret ! fakesink";
         NodeReport node;
+        node.user_label = std::string("camera auth=") + kUserLabelSecret;
         node.backend_fragment = diag.pipeline_string;
+        node.elements.push_back(std::string("auth=") + kElementNameSecret);
         diag.node_reports.push_back(std::move(node));
-        diag.push_bus("ELEMENT", "rtspsrc0", "password=(string)\"bus-password\"");
+        diag.push_bus("ELEMENT", std::string("rtspsrc0 auth=") + kBusSourceSecret,
+                      "password=(string)\"bus-password\"");
 
         const GraphReport report = diag.snapshot_basic();
         require(diag.pipeline_string.find(kPipelineSecret) != std::string::npos,
@@ -1016,8 +1027,22 @@ RUN_TEST(
                 report.nodes.front().backend_fragment.find(kPlaybackSecret) == std::string::npos &&
                 report.nodes.front().backend_fragment.find(kHdntsSecret) == std::string::npos &&
                 report.nodes.front().backend_fragment.find(kStreamKeySecret) == std::string::npos &&
+                report.nodes.front().user_label.find(kUserLabelSecret) == std::string::npos &&
+                report.nodes.front().elements.front().find(kElementNameSecret) ==
+                    std::string::npos &&
+                report.bus.front().src.find(kBusSourceSecret) == std::string::npos &&
                 report.bus.front().detail.find(kBusSecret) == std::string::npos,
             "report-facing pipeline, node, bus, and repro fields must redact credentials");
+
+        RawGstError source_name_raw = raw_error("identity", "gst-stream-error-quark",
+                                                GST_STREAM_ERROR_FAILED, "An element failed.");
+        source_name_raw.source_name = std::string("camera auth=") + kBusSourceSecret;
+        const std::string rendered_source =
+            render_diagnostic_body(classify_gst_error(std::move(source_name_raw)), false);
+        require(rendered_source.find(kBusSourceSecret) == std::string::npos,
+                "default diagnostic text must redact credentials in stage names");
+        require_contains(rendered_source, "Stage: camera auth=<redacted>",
+                         "default diagnostic text should keep a useful redacted stage name");
 
         GraphReport manually_populated;
         manually_populated.pipeline_string = diag.pipeline_string;
