@@ -80,12 +80,19 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
   if (begin >= value.size())
     return begin;
 
-  const bool escaped_quote = begin + 1 < value.size() && value[begin] == '\\' &&
-                             (value[begin + 1] == '\'' || value[begin + 1] == '"');
+  std::size_t opening_escape_count = 0;
+  while (begin + opening_escape_count < value.size() &&
+         value[begin + opening_escape_count] == '\\') {
+    ++opening_escape_count;
+  }
+  const std::size_t escaped_quote_pos = begin + opening_escape_count;
+  const bool escaped_quote = opening_escape_count > 0 && escaped_quote_pos < value.size() &&
+                             (value[escaped_quote_pos] == '\'' || value[escaped_quote_pos] == '"');
   const char quote = escaped_quote
-                         ? value[begin + 1]
+                         ? value[escaped_quote_pos]
                          : ((value[begin] == '\'' || value[begin] == '"') ? value[begin] : '\0');
-  const std::size_t content_begin = quote == '\0' ? begin : begin + (escaped_quote ? 2U : 1U);
+  const std::size_t content_begin =
+      quote == '\0' ? begin : (escaped_quote ? escaped_quote_pos + 1U : begin + 1U);
   std::size_t end = std::string::npos;
   if (quote != '\0') {
     std::size_t candidate = content_begin;
@@ -93,9 +100,10 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
       std::size_t backslashes = 0;
       for (std::size_t i = candidate; i > content_begin && value[i - 1] == '\\'; --i)
         ++backslashes;
-      const bool closing = escaped_quote ? backslashes % 4U == 1U : backslashes % 2U == 0U;
+      const bool closing =
+          escaped_quote ? backslashes == opening_escape_count : backslashes % 2U == 0U;
       if (closing) {
-        end = escaped_quote ? candidate - 1U : candidate;
+        end = escaped_quote ? candidate - backslashes : candidate;
         break;
       }
       ++candidate;
@@ -315,9 +323,13 @@ std::string redact_uri_credentials(std::string value) {
       if (key_quote != '\0' && separator < value.size()) {
         if (value[separator] == key_quote) {
           ++separator;
-        } else if (value[separator] == '\\' && separator + 1 < value.size() &&
-                   value[separator + 1] == key_quote) {
-          separator += 2;
+        } else if (value[separator] == '\\') {
+          while (separator < value.size() && value[separator] == '\\') {
+            ++separator;
+          }
+          if (separator < value.size() && value[separator] == key_quote) {
+            ++separator;
+          }
         }
       }
       while (separator < value.size() &&

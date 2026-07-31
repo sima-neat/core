@@ -511,8 +511,7 @@ RUN_TEST(
             "neat_auth_token", G_TYPE_STRING, "prefixed-auth-secret", "dtype_token", G_TYPE_STRING,
             "UInt8", "model_signature", G_TYPE_STRING, "sha256:model-metadata", "aws_access_key_id",
             G_TYPE_STRING, "structured-aws-key", "compass", G_TYPE_STRING, "north", nullptr);
-        GstMessage* message = gst_message_new_error_with_details(
-            GST_OBJECT(source), error,
+        const std::string debug =
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
             "api_key='quoted-api-secret' password=\"quoted-password\" user-pw='rtsp-password' "
             "user_pw=rtsp-password-underscore pw=short-password pwd='short-password-d' "
@@ -529,8 +528,10 @@ RUN_TEST(
             "credentials=(string)\"typed credential secret\" "
             "X-API-Key: extension-api-secret\n"
             "X_Auth_Token: extension-auth-secret "
-            "srt://example.test:9000?passphrase=srt-passphrase-secret",
-            details);
+            "srt://example.test:9000?passphrase=srt-passphrase-secret "
+            R"(multiply={\\\"password\\\":\\\"multiply-password\\\",\\\"accessToken\\\":\\\"multiply-token\\\"})";
+        GstMessage* message =
+            gst_message_new_error_with_details(GST_OBJECT(source), error, debug.c_str(), details);
         g_error_free(error);
 
         const RawGstError raw = parse_gst_error_message(message);
@@ -571,6 +572,8 @@ RUN_TEST(
                     raw.debug.find("camel-json-refresh") == std::string::npos &&
                     raw.debug.find("camel-json-auth") == std::string::npos &&
                     raw.debug.find("camel-json-client") == std::string::npos &&
+                    raw.debug.find("multiply-password") == std::string::npos &&
+                    raw.debug.find("multiply-token") == std::string::npos &&
                     raw.debug.find("raw-cookie-secret") == std::string::npos &&
                     raw.debug.find("json-cookie-secret") == std::string::npos &&
                     raw.debug.find("typed password secret") == std::string::npos &&
@@ -584,6 +587,8 @@ RUN_TEST(
                          "non-secret token-suffixed metadata should remain available");
         require_contains(raw.debug, "\"model_signature\":\"sha256:metadata\"",
                          "non-secret signature metadata should remain available");
+        require_contains(raw.debug, R"(\\\"password\\\":\\\"<redacted>\\\")",
+                         "multiply escaped credential fields should retain redacted structure");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
         require_contains(raw.debug, "\"access_token\":\"<redacted>\"",
