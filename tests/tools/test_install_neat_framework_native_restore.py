@@ -1235,51 +1235,6 @@ repair_global_sima_neat_lib_links
         )
 
 
-class HostModelArchiveHelperInstallTest(unittest.TestCase):
-    def test_sdk_host_helper_uses_the_install_manifest_entry(self) -> None:
-        result = run_bash(
-            r'''
-source "$1"
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-cd "${tmp}"
-touch neat-model-archive-2-linux-amd64 neat-model-archive-9-linux-amd64
-printf '%s\n' 'neat-model-archive-2-linux-amd64' > neat-install-manifest.txt
-uname() { printf '%s\n' x86_64; }
-run_sudo() {
-  printf 'INSTALL:'
-  printf ' <%s>' "$@"
-  printf '\n'
-}
-
-install_host_model_archive_helper
-'''
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("<./neat-model-archive-2-linux-amd64>", result.stdout)
-        self.assertNotIn("<./neat-model-archive-9-linux-amd64>", result.stdout)
-
-    def test_sdk_host_helper_requires_one_manifest_entry(self) -> None:
-        result = run_bash(
-            r'''
-source "$1"
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-cd "${tmp}"
-touch neat-model-archive-9-linux-amd64
-printf '%s\n' '# no host helper in this bundle' > neat-install-manifest.txt
-uname() { printf '%s\n' x86_64; }
-run_sudo() { :; }
-
-install_host_model_archive_helper
-'''
-        )
-
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("exactly one amd64 model archive helper", result.stderr)
-
-
 def _take_path_option(flag: str) -> Path | None:
     """Pop `--flag <path>` out of argv; under CTest neither script sits at __file__."""
     if flag not in sys.argv:

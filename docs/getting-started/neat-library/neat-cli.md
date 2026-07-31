@@ -64,11 +64,9 @@ neat update
 
 ## Model Archives
 
-Both commands below run on Modalix and in the Neat SDK, on either SDK
-architecture.
+These commands run on Modalix and in AMD64 or ARM64 Neat SDKs.
 
-To check a compiled `.tar.gz` model package before an application tries to load
-it, run:
+Validate a compiled model archive with the same archive checks used by `Model`:
 
 <ShellCommand prompt="sdk-or-devkit">
 neat model validate yolo_v8s_mpk.tar.gz
@@ -78,26 +76,22 @@ neat model validate yolo_v8s_mpk.tar.gz
 yolo_v8s_mpk: valid model archive (7 entries, 162.4 MiB extracted)
 ```
 
-This applies the same archive rules the runtime applies when a `Model` loads the
-same file, so an archive that validates here loads at runtime and one that fails
-here fails there with the same error. It does not run inference, so it says
-nothing about whether the model produces correct results on a given target. A
-rejected archive prints the reason and exits nonzero:
+A rejected archive prints the loader error and exits nonzero. Validation does not
+run inference or check model output.
 
 ```text
 neat-model-archive: invalid_archive: failed to decompress archive: yolo_v8s_mpk.tar.gz
 ```
 
-To unpack an archive into the package layout the runtime uses, so that loading it
-skips extraction, run:
+Extract the archive into the package layout accepted by the loader's directory
+fast path:
 
 <ShellCommand prompt="sdk-or-devkit">
 neat model extract yolo_v8s_mpk.tar.gz --output ./yolo_v8s_pkg
 </ShellCommand>
 
-`--output` is the package root itself, and it holds `etc`, `lib`, and `share`
-once the command succeeds. The command refuses to run if that path already
-exists, and a failed run leaves nothing behind.
+The output contains `etc`, `lib`, and `share`. The command refuses an existing
+output path and removes incomplete output after a failure.
 
 Pass the produced directory to `Model` in place of the archive:
 
@@ -105,49 +99,16 @@ Pass the produced directory to `Model` in place of the archive:
 simaai::neat::Model yolo("./yolo_v8s_pkg", opt);
 ```
 
-This is the faster way to load a model, and the reason to extract one at all.
-Constructing a `Model` from an archive decompresses, validates, organizes and
-path-rewrites it first. Constructing from an extracted directory does none of
-that — the package is loaded in place.
+The extracted package is an ordinary user-owned directory. Neat does not make it
+immutable or verify it again. Do not edit or move it; re-extract the archive when
+needed. It can be deleted normally when no longer in use. Loading does not write
+to it, so it may be shared by multiple processes or made read-only.
 
-The saving is per process, not per load. Within one process the extraction is
-reused, so only the first archive load pays for it. A new process starts over.
-Applications that load a model once at startup therefore gain the most. On a
-Modalix DevKit, loading a 163 MiB YOLO26-L package:
+Model loading reports the selected package location, for example:
 
-| Input | First load in a process | Later loads |
-| --- | --- | --- |
-| `.tar.gz` archive | 2.49 s | 0.01 s |
-| extracted directory | 0.01 s (0.27 s cold cache) | 0.01 s |
-
-Treat the figures as an illustration — they scale with model size and with the
-machine. Whether the package sits on eMMC or NVMe makes no measurable
-difference.
-
-Only a directory produced by `neat model extract` works this way. Unpacking the
-archive yourself with `tar -xzf` produces a different layout that `Model` does
-not accept.
-
-Extraction inflates the archive next to `--output` rather than under `TMPDIR`,
-so a small or differently-mounted temporary filesystem does not limit the
-package size you can extract.
-
-### Keeping an extracted package valid
-
-The output is a plain directory that you own, so delete it with `rm -rf` when you
-no longer want it. Nothing else refers to it.
-
-Keeping it correct is your responsibility. Neat does not verify a package after
-extraction: it checks that `etc`, `lib`, and `share` are present and that `etc`
-holds configuration, and it does not re-check the contents against the archive.
-Editing a config, deleting or truncating a model binary, or moving the directory
-will not be reported when the `Model` is constructed — the paths written into the
-package JSON are absolute, so a moved package points at files that are no longer
-there, and the failure surfaces later. Re-run `neat model extract` instead of
-editing or relocating an extracted package.
-
-Loading never writes into the package, so one package can back several processes
-and can be kept read-only.
+```text
+Model loaded: yolo_v8s_mpk (package storage: NVMe, root: /media/nvme/.../yolo_v8s_mpk)
+```
 
 ## Next Step
 

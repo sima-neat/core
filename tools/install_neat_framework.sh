@@ -762,11 +762,16 @@ ensure_sdk_neat_cli_symlink() {
   log "Created SDK neat command symlink ${link} -> ${target}"
 }
 
-# An amd64 SDK cannot execute the AArch64 helper the Core DEB installs into the sysroot, so the
-# host-native build is placed outside the sysroot. It is deliberately not cached with the DEBs:
-# the cache is what gets forwarded to the board, which must keep the AArch64 helper.
-install_host_model_archive_helper() {
+# Install the helper for the SDK host. The board receives its AArch64 helper from the Core DEB.
+install_sdk_model_archive_helper() {
+  local dest="/usr/local/bin/neat-model-archive"
   if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
+    local helper="${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/bin/neat-model-archive"
+    [[ -x "${helper}" ]] || {
+      echo "Missing AArch64 model archive helper: ${helper}" >&2
+      exit 1
+    }
+    run_sudo ln -sfn "${helper}" "${dest}"
     return 0
   fi
 
@@ -777,10 +782,8 @@ install_host_model_archive_helper() {
     exit 1
   fi
 
-  local dest_dir="/usr/local/lib/sima-neat"
-  run_sudo mkdir -p "${dest_dir}"
-  run_sudo install -m 0755 "${helpers[0]}" "${dest_dir}/neat-model-archive"
-  log "Installed host-native model archive helper ${dest_dir}/neat-model-archive"
+  run_sudo install -m 0755 "${helpers[0]}" "${dest}"
+  log "Installed host-native model archive helper ${dest}"
 }
 
 cache_install_artifacts_in_sysroot() {
@@ -2446,7 +2449,7 @@ ensure_platform_compatible
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
   ensure_sdk_neat_cli_symlink
-  install_host_model_archive_helper
+  install_sdk_model_archive_helper
   install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
   deploy_artifacts_to_paired_devkit_if_configured
 else
