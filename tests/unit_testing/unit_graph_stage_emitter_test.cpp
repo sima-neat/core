@@ -222,6 +222,40 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
             "finite source graph lost source-ended closure after async stage drain");
   }
 
+  // The public graph ingress is also a producer. close_input() must reject later pushes, then
+  // release that producer only after pushes already in flight have entered the graph so accepted
+  // stage work drains before the output closes.
+  {
+    simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "in");
+    const auto stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node(20));
+    const auto output = add_output_endpoint(graph, "closed_input");
+    connect_runtime(graph, input, "out", stage, "in");
+    connect_runtime(graph, stage, "out", output, "in");
+
+    simaai::neat::Run run = graph.build();
+    for (int i = 0; i < 4; ++i) {
+      require(run.push("in", make_text_sample("prompt", "queued-" + std::to_string(i))),
+              "push-backed graph rejected input before close_input");
+    }
+    run.close_input();
+    require(!run.push("in", make_text_sample("prompt", "late")),
+            "push-backed graph accepted input after close_input");
+
+    simaai::neat::Sample sample;
+    simaai::neat::PullError error;
+    for (int i = 0; i < 4; ++i) {
+      require(run.pull("closed_input", 1000, sample, &error) == simaai::neat::PullStatus::Ok,
+              "push-backed graph dropped accepted stage work during close_input");
+      require(sample_text(sample) == "queued-" + std::to_string(i),
+              "push-backed graph changed accepted stage output ordering");
+    }
+    require(run.pull("closed_input", 1000, sample, &error) == simaai::neat::PullStatus::Closed,
+            "push-backed graph output did not close after ingress drain");
+    require(error.code == simaai::neat::error_codes::kRuntimePull,
+            "application-driven graph close should use runtime.pull closure");
+  }
+
   {
     simaai::neat::Graph graph;
     const auto input = add_input_endpoint(graph, "in");

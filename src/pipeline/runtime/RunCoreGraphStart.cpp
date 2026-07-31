@@ -1335,6 +1335,43 @@ void initialize_completion_tracking(const std::shared_ptr<RunCore>& core) {
     }
   };
 
+  const auto add_public_ingress = [&](const Endpoint& endpoint) {
+    const bool already_present =
+        std::any_of(execution.public_ingress_endpoints.begin(),
+                    execution.public_ingress_endpoints.end(), [&](const Endpoint& existing) {
+                      return existing.kind == endpoint.kind && existing.node == endpoint.node &&
+                             existing.port == endpoint.port && existing.segment == endpoint.segment;
+                    });
+    if (!already_present) {
+      execution.public_ingress_endpoints.push_back(endpoint);
+    }
+  };
+  execution.public_ingress_endpoints.clear();
+  for (const auto& [name, endpoint] : execution.plan.named_inputs) {
+    (void)name;
+    add_public_ingress(endpoint);
+  }
+  if (execution.plan.default_input.has_value()) {
+    add_public_ingress(*execution.plan.default_input);
+  }
+
+  for (const auto& endpoint : execution.public_ingress_endpoints) {
+    const auto stage = execution.node_to_stage_group.find(endpoint.node);
+    if (stage != execution.node_to_stage_group.end()) {
+      add_target_producer(DownstreamTarget{DownstreamTarget::Kind::StageGroup, stage->second,
+                                           endpoint.port, invalid_edge_index()});
+      continue;
+    }
+    const auto pipeline = execution.node_to_pipeline.find(endpoint.node);
+    if (pipeline == execution.node_to_pipeline.end() ||
+        pipeline->second >= execution.pipelines.size() || !execution.pipelines[pipeline->second] ||
+        execution.pipelines[pipeline->second]->seg.boundary.direct_graph_source) {
+      continue;
+    }
+    add_target_producer(DownstreamTarget{DownstreamTarget::Kind::PipelineInput, pipeline->second,
+                                         endpoint.port, invalid_edge_index()});
+  }
+
   for (const auto& [key, targets] : execution.adjacency) {
     (void)key;
     for (const auto& target : targets) {

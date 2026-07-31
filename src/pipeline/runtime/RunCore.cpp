@@ -602,6 +602,72 @@ void RunCore::graph_realtime_link_completed(std::size_t link_index) {
   graph_target_producer_completed(graph_execution_->realtime_links[link_index]->downstream());
 }
 
+bool RunCore::graph_begin_public_push() {
+  if (!graph_execution_) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
+  if (graph_execution_->public_ingress_closed) {
+    return false;
+  }
+  ++graph_execution_->public_pushes_inflight;
+  return true;
+}
+
+void RunCore::graph_end_public_push() {
+  if (!graph_execution_) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
+  if (graph_execution_->public_pushes_inflight > 0U) {
+    --graph_execution_->public_pushes_inflight;
+  }
+  if (graph_execution_->public_pushes_inflight == 0U) {
+    graph_execution_->public_ingress_cv.notify_all();
+  }
+}
+
+void RunCore::graph_close_public_input() {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+  {
+    std::unique_lock<std::mutex> lock(execution.public_ingress_mu);
+    if (execution.public_ingress_closed) {
+      return;
+    }
+    execution.public_ingress_closed = true;
+    execution.public_ingress_cv.wait(lock, [&] { return execution.public_pushes_inflight == 0U; });
+  }
+
+  std::unordered_set<simaai::neat::graph::NodeId> completed_direct_sources;
+  for (const auto& endpoint : execution.public_ingress_endpoints) {
+    const auto stage = execution.node_to_stage_group.find(endpoint.node);
+    if (stage != execution.node_to_stage_group.end()) {
+      graph_target_producer_completed(DownstreamTarget{
+          DownstreamTarget::Kind::StageGroup, stage->second, endpoint.port, invalid_edge_index()});
+      continue;
+    }
+
+    const auto pipeline = execution.node_to_pipeline.find(endpoint.node);
+    if (pipeline == execution.node_to_pipeline.end() ||
+        pipeline->second >= execution.pipelines.size() || !execution.pipelines[pipeline->second]) {
+      continue;
+    }
+    const auto& runtime = *execution.pipelines[pipeline->second];
+    if (runtime.seg.boundary.direct_graph_source) {
+      if (completed_direct_sources.insert(endpoint.node).second) {
+        graph_producer_completed(endpoint.node);
+      }
+      continue;
+    }
+    graph_target_producer_completed(DownstreamTarget{DownstreamTarget::Kind::PipelineInput,
+                                                     pipeline->second, endpoint.port,
+                                                     invalid_edge_index()});
+  }
+}
+
 std::optional<PullError> RunCore::graph_last_error_detail() const {
   std::lock_guard<std::mutex> lock(error_mu);
   return terminal_error_detail;

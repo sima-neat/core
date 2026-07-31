@@ -108,10 +108,14 @@ PullStatus pull_graph_output_with_public_loan(runtime::RunCore& core,
         pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull, graph_err);
         return PullStatus::Error;
       }
-      if (const std::optional<PullError> closed = core.graph_close_detail();
-          closed.has_value() && core.graph_sink_closed(node_id)) {
-        if (err) {
-          *err = *closed;
+      if (core.graph_sink_closed(node_id)) {
+        if (const std::optional<PullError> closed = core.graph_close_detail(); closed.has_value()) {
+          if (err) {
+            *err = *closed;
+          }
+        } else {
+          pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                                        label + ": stream closed");
         }
         return PullStatus::Closed;
       }

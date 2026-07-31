@@ -377,6 +377,14 @@ struct ExecutionGraphRuntime {
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_stage_group;
   std::unordered_set<simaai::neat::graph::NodeId> direct_sink_nodes;
 
+  // Public graph ingress participates in the same producer-drain protocol as graph edges. Track
+  // endpoint aliases once and gate close_input() against public pushes already in flight.
+  std::vector<Endpoint> public_ingress_endpoints;
+  mutable std::mutex public_ingress_mu;
+  std::condition_variable public_ingress_cv;
+  bool public_ingress_closed = false;
+  std::size_t public_pushes_inflight = 0;
+
   std::unordered_map<std::uint64_t, std::vector<DownstreamTarget>> adjacency;
   std::atomic<bool> message_trace_enabled{false};
   std::atomic<std::uint64_t> trace_run_id_hash{0};

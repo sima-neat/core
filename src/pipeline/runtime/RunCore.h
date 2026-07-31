@@ -194,6 +194,9 @@ struct RunCore {
   void graph_realtime_link_completed(std::size_t link_index);
   void graph_producer_completed(simaai::neat::graph::NodeId producer_node);
   void graph_target_producer_completed(const DownstreamTarget& target);
+  bool graph_begin_public_push();
+  void graph_end_public_push();
+  void graph_close_public_input();
   std::optional<PullError> graph_last_error_detail() const;
   std::optional<PullError> graph_close_detail() const;
   bool graph_sink_closed(simaai::neat::graph::NodeId node_id) const;
