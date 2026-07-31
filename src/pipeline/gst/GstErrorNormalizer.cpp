@@ -441,6 +441,18 @@ bool sensitive_detail_name(std::string_view name) {
     normalized.push_back(static_cast<char>(std::tolower(c)));
   }
 
+  // Environment variables conventionally use upper snake case. Redact arbitrary *_TOKEN values
+  // in that namespace while retaining lower-case descriptive metadata such as dtype_token and
+  // observed_token.
+  const bool has_letter =
+      std::any_of(name.begin(), name.end(), [](unsigned char c) { return std::isalpha(c); });
+  const bool upper_environment_name =
+      has_letter &&
+      std::none_of(name.begin(), name.end(), [](unsigned char c) { return std::islower(c); });
+  if (upper_environment_name && normalized.ends_with("-token")) {
+    return true;
+  }
+
   static constexpr std::string_view exact_names[] = {
       "key", "sig", "signature", "session", "jwt", "bearer", "pass", "pw", "pwd", "token",
   };
@@ -462,6 +474,8 @@ bool sensitive_detail_name(std::string_view name) {
       "oauth-token",
       "csrf-token",
       "session-token",
+      "github-token",
+      "openvscode-server-token",
       "x-amz-security-token",
       "x-amz-signature",
       "x-goog-signature",
