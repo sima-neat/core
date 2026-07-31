@@ -87,17 +87,19 @@ std::size_t redact_secret_value(std::string& value, std::size_t begin, bool line
                          : ((value[begin] == '\'' || value[begin] == '"') ? value[begin] : '\0');
   const std::size_t content_begin = quote == '\0' ? begin : begin + (escaped_quote ? 2U : 1U);
   std::size_t end = std::string::npos;
-  if (escaped_quote) {
+  if (quote != '\0') {
     std::size_t candidate = content_begin;
-    while ((candidate = value.find('\\', candidate)) != std::string::npos) {
-      if (candidate + 1 < value.size() && value[candidate + 1] == quote) {
-        end = candidate;
+    while ((candidate = value.find(quote, candidate)) != std::string::npos) {
+      std::size_t backslashes = 0;
+      for (std::size_t i = candidate; i > content_begin && value[i - 1] == '\\'; --i)
+        ++backslashes;
+      const bool closing = escaped_quote ? backslashes % 4U == 1U : backslashes % 2U == 0U;
+      if (closing) {
+        end = escaped_quote ? candidate - 1U : candidate;
         break;
       }
       ++candidate;
     }
-  } else if (quote != '\0') {
-    end = value.find(quote, content_begin);
   } else {
     end = value.find_first_of(line_value ? "\r\n" : "&,; \t\r\n'\"", content_begin);
   }

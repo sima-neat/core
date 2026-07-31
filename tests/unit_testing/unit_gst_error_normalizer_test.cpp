@@ -334,6 +334,26 @@ RUN_TEST(
       }
 
       {
+        const std::string quoted =
+            redact_gst_credentials(R"(password="abc\"def" token=following-token)");
+        require(quoted.find("abc") == std::string::npos &&
+                    quoted.find("def") == std::string::npos &&
+                    quoted.find("following-token") == std::string::npos,
+                "quoted redaction must skip escaped delimiters and remove the complete value");
+        require_contains(quoted, R"(password="<redacted>")",
+                         "ordinary quoted fields should preserve their delimiters");
+
+        const std::string escaped =
+            redact_gst_credentials(R"(password=\"abc\\\"def\" token=following-token)");
+        require(escaped.find("abc") == std::string::npos &&
+                    escaped.find("def") == std::string::npos &&
+                    escaped.find("following-token") == std::string::npos,
+                "escaped quoted redaction must remove embedded escaped delimiters");
+        require_contains(escaped, R"(password=\"<redacted>\")",
+                         "escaped quoted fields should preserve their structural delimiters");
+      }
+
+      {
         GstElement* source = gst_element_factory_make("filesrc", "input_file");
         require(source != nullptr, "filesrc must be available for parser test");
         g_object_set(source, "location", "/data/input.mp4", nullptr);
