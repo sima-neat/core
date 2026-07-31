@@ -47,6 +47,8 @@ struct TarEntry {
 struct ArchiveContents {
   std::vector<TarEntry> entries;
   ModelArchiveManifest manifest;
+  // Set only for a directory source, so materialize() can refuse an overlapping output root.
+  fs::path source_dir;
 };
 
 std::string shell_quote(const std::string& value) {
@@ -1242,6 +1244,18 @@ void validate_version_json(const json& j) {
 // Relative extraction destination for an archive entry, under the package root's
 // {etc,lib,share}/<filename> layout. Entries are flattened to basename, so distinct
 // source paths can collide here (detected in validate_archive / extract_destination_for).
+// The files whose contents define the model contract. Everything else with a .json extension is
+// an auxiliary artifact as far as loading is concerned.
+bool is_model_contract_json(const std::string& base) {
+  if (base == "pipeline_sequence.json" || base == "manifest.json" || base == "mpk_manifest.json" ||
+      base == "mpk.json") {
+    return true;
+  }
+  constexpr std::string_view suffix = "_mpk.json";
+  return base.size() > suffix.size() &&
+         base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 fs::path extract_destination_rel(const TarEntry& entry) {
   const std::string ext = fs::path(entry.normalized_path).extension().string();
   const fs::path name = fs::path(entry.normalized_path).filename();
@@ -1338,11 +1352,23 @@ ArchiveContents validate_entries(ModelArchiveManifest seed, std::vector<TarEntry
   for (const auto& entry : out.entries) {
     if (entry.entry_class != EntryClass::Json)
       continue;
+    const std::string base = fs::path(entry.normalized_path).filename().string();
+    const bool contract_json = is_model_contract_json(base);
     const std::vector<std::uint8_t> bytes = read_entry_bytes(entry);
 
-    json parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
+    json parsed;
+    try {
+      parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
+    } catch (const ModelArchiveError&) {
+      // A contract file must parse. Anything else is an auxiliary artifact a model pack happens to
+      // ship (build reports and the like); callers that already tolerate auxiliary file types
+      // tolerate unparsable auxiliary JSON too, rather than failing an otherwise valid model.
+      if (contract_json || opt.reject_unsupported_file_types) {
+        throw;
+      }
+      continue;
+    }
 
-    const std::string base = fs::path(entry.normalized_path).filename().string();
     if (base == "pipeline_sequence.json") {
       try {
         validate_pipeline_sequence_json(parsed);
@@ -1508,12 +1534,14 @@ ArchiveContents validate_directory(const fs::path& source_dir,
       seed.archive_size_bytes += entry.size_bytes;
   }
 
-  return validate_entries(
+  ArchiveContents out = validate_entries(
       std::move(seed), std::move(entries),
       [&source_dir, &opt](const TarEntry& entry) {
         return read_directory_entry(source_dir, entry, opt.max_entry_bytes);
       },
       opt);
+  out.source_dir = source_dir;
+  return out;
 }
 
 fs::path extract_destination_for(const fs::path& package_root, const TarEntry& entry) {
@@ -1565,6 +1593,10 @@ void copy_directory_entry_to_file(const fs::path& source, const fs::path& dst,
     }
     written += n;
   }
+  if (in.bad()) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed reading model directory entry: " + source.string());
+  }
   errno = 0;
   out.close();
   if (!out) {
@@ -1597,6 +1629,22 @@ ModelArchiveExtractResult materialize(ArchiveContents validated,
   }
 
   const fs::path package_root = root / validated.manifest.package_name;
+  // package_root is cleared below. If the source lives at or under it, that clear would delete the
+  // input this load is reading, and extract_directory promises never to write to its source.
+  if (!validated.source_dir.empty()) {
+    const fs::path source = fs::weakly_canonical(validated.source_dir, ec);
+    ec.clear();
+    const fs::path target = fs::weakly_canonical(package_root, ec);
+    ec.clear();
+    const std::string source_str = source.generic_string();
+    const std::string target_str = target.generic_string();
+    if (source_str == target_str || source_str.rfind(target_str + "/", 0) == 0 ||
+        target_str.rfind(source_str + "/", 0) == 0) {
+      throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                    "output_storage_unavailable: extraction output " + target_str +
+                        " overlaps the source directory " + source_str);
+    }
+  }
   fs::remove_all(package_root, ec);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,

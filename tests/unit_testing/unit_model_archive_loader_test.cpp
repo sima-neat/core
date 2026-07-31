@@ -195,6 +195,92 @@ RUN_TEST(
                     extracted_file_set(from_dir.package_root),
                 "re-ingesting an etc/lib/share tree should preserve its file set");
 
+        // Extraction clears <root>/<package name> before copying. When the root contains the
+        // source, that path is the source itself, so this must be refused rather than deleting the
+        // caller's tree. Every other test here extracts into a fresh root, which is why this case
+        // needs its own assertion.
+        {
+          const std::vector<std::string> before = extracted_file_set(flat);
+          require(!before.empty(), "flat source should have files before the overlap check");
+          require_model_archive_error(
+              [&]() {
+                (void)ModelArchiveLoader::extract_directory(flat.string(),
+                                                            flat.parent_path().string());
+              },
+              ModelArchiveErrorClass::OutputStorageUnavailable,
+              "extracting into the source's parent should be refused");
+          require(extracted_file_set(flat) == before,
+                  "a refused overlapping extraction must leave the source intact");
+
+          // The source nested under the output package root is the same hazard.
+          require_model_archive_error(
+              [&]() { (void)ModelArchiveLoader::extract_directory(flat.string(), flat.string()); },
+              ModelArchiveErrorClass::OutputStorageUnavailable,
+              "extracting into the source itself should be refused");
+          require(extracted_file_set(flat) == before,
+                  "a refused self-overlapping extraction must leave the source intact");
+        }
+
+        // An auxiliary .json a model pack happens to ship must not fail an otherwise valid load,
+        // while a malformed contract file still must.
+        {
+          const fs::path aux_dir =
+              fs::path(sima_test::make_temp_dir("model_archive_dir_aux")) / "pkg";
+          fs::copy(flat, aux_dir, fs::copy_options::recursive);
+          std::ofstream(aux_dir / "build_report.json") << "{ this is not json";
+
+          ModelArchiveLoaderOptions tolerant;
+          tolerant.reject_unsupported_file_types = false;
+          const ModelArchiveManifest aux =
+              ModelArchiveLoader::inspect_directory(aux_dir.string(), tolerant);
+          require(aux.has_pipeline_sequence,
+                  "an unparsable auxiliary JSON should not fail a valid model directory");
+
+          // Strict callers (security and unit defaults) still reject it.
+          require_model_archive_error(
+              [&]() { (void)ModelArchiveLoader::inspect_directory(aux_dir.string()); },
+              ModelArchiveErrorClass::SchemaError,
+              "strict options should still reject unparsable auxiliary JSON");
+
+          const fs::path bad_contract =
+              fs::path(sima_test::make_temp_dir("model_archive_dir_contract")) / "pkg";
+          fs::copy(flat, bad_contract, fs::copy_options::recursive);
+          std::ofstream(bad_contract / "pipeline_sequence.json") << "{ broken";
+          require_model_archive_error(
+              [&]() {
+                (void)ModelArchiveLoader::inspect_directory(bad_contract.string(), tolerant);
+              },
+              ModelArchiveErrorClass::SchemaError,
+              "a malformed contract file must fail even for tolerant callers");
+        }
+
+        // A source entry that cannot be read must fail the extraction rather than produce a
+        // truncated .elf or .so that later gets marked ready. Skipped when the effective user can
+        // read regardless of mode, which is the case as root.
+        {
+          const fs::path unreadable =
+              fs::path(sima_test::make_temp_dir("model_archive_dir_unreadable")) / "pkg";
+          fs::copy(flat, unreadable, fs::copy_options::recursive);
+          const fs::path victim = unreadable / "share" / "model.elf";
+          if (fs::exists(victim)) {
+            fs::permissions(victim, fs::perms::none, fs::perm_options::replace);
+            std::ifstream probe(victim, std::ios::binary);
+            if (!probe.is_open()) {
+              require_model_archive_error(
+                  [&]() {
+                    (void)ModelArchiveLoader::extract_directory(
+                        unreadable.string(),
+                        sima_test::make_temp_dir("model_archive_dir_unreadable_out"));
+                  },
+                  ModelArchiveErrorClass::InvalidArchive,
+                  "an unreadable source entry should fail the extraction");
+            }
+            probe.close();
+            fs::permissions(victim, fs::perms::owner_read | fs::perms::owner_write,
+                            fs::perm_options::replace);
+          }
+        }
+
         // Symlinks and special files can redirect a copy out of the package.
         const fs::path link_dir =
             fs::path(sima_test::make_temp_dir("model_archive_dir_link")) / "pkg";
