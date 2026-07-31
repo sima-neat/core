@@ -1022,6 +1022,31 @@ RUN_TEST(
         GraphReport manually_populated;
         manually_populated.pipeline_string = diag.pipeline_string;
         manually_populated.repro_note = "password=serialized-password";
+        constexpr const char* kArbitraryFieldSecret = "arbitrary-field-secret";
+        const std::string arbitrary_secret = std::string("auth=") + kArbitraryFieldSecret;
+        manually_populated.error_code = arbitrary_secret;
+        manually_populated.nodes.push_back(NodeReport{
+            0, arbitrary_secret, arbitrary_secret, arbitrary_secret, {arbitrary_secret}});
+        manually_populated.bus.push_back(
+            BusMessage{arbitrary_secret, arbitrary_secret, arbitrary_secret, 0});
+        BoundaryFlowStats boundary;
+        boundary.boundary_name = arbitrary_secret;
+        manually_populated.boundaries.push_back(std::move(boundary));
+        manually_populated.caps_dump = arbitrary_secret;
+        manually_populated.dot_paths.push_back(arbitrary_secret);
+        manually_populated.repro_env = arbitrary_secret;
+        manually_populated.has_build_adaptation = true;
+        manually_populated.build_adaptation.shape_policy = arbitrary_secret;
+        manually_populated.build_adaptation.dynamic_capability = arbitrary_secret;
+        manually_populated.build_adaptation.seed_width_origin = arbitrary_secret;
+        manually_populated.build_adaptation.seed_height_origin = arbitrary_secret;
+        manually_populated.build_adaptation.seed_depth_origin = arbitrary_secret;
+        manually_populated.build_adaptation.max_width_origin = arbitrary_secret;
+        manually_populated.build_adaptation.max_height_origin = arbitrary_secret;
+        manually_populated.build_adaptation.max_depth_origin = arbitrary_secret;
+        manually_populated.build_adaptation.byte_guard_origin = arbitrary_secret;
+        manually_populated.build_adaptation.actions.push_back(
+            BuildAdaptationAction{arbitrary_secret, false, arbitrary_secret, arbitrary_secret});
         const std::string json = manually_populated.to_json();
         require(json.find(kPipelineSecret) == std::string::npos &&
                     json.find(kQuerySecret) == std::string::npos &&
@@ -1029,8 +1054,10 @@ RUN_TEST(
                     json.find(kPlaybackSecret) == std::string::npos &&
                     json.find(kHdntsSecret) == std::string::npos &&
                     json.find(kStreamKeySecret) == std::string::npos &&
-                    json.find("serialized-password") == std::string::npos,
-                "GraphReport JSON serialization must provide a final redaction boundary");
+                    json.find("serialized-password") == std::string::npos &&
+                    json.find(kArbitraryFieldSecret) == std::string::npos,
+                "GraphReport JSON serialization must redact every string value at the final "
+                "boundary");
 
         const GraphReport utility_report =
             error_util::make_report(error_codes::kRuntimeElementFailed, "password=summary-password",

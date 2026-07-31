@@ -49,11 +49,10 @@ std::string json_escape(const std::string& s) {
 }
 
 void append_quoted(std::ostringstream& oss, const std::string& s) {
-  oss << '"' << json_escape(s) << '"';
-}
-
-void append_redacted_quoted(std::ostringstream& oss, const std::string& s) {
-  append_quoted(oss, pipeline_internal::redact_gst_credentials(s));
+  // Treat serialization as the final safety boundary. GraphReport is a public aggregate, so
+  // callers can populate any string field directly without passing through the normal report
+  // builders that redact pipeline-derived values.
+  oss << '"' << json_escape(pipeline_internal::redact_gst_credentials(s)) << '"';
 }
 
 } // namespace
@@ -63,7 +62,7 @@ std::string GraphReport::to_json() const {
   oss << "{";
 
   oss << "\"pipeline_string\":";
-  append_redacted_quoted(oss, pipeline_string);
+  append_quoted(oss, pipeline_string);
   oss << ",";
 
   oss << "\"error_code\":";
@@ -84,7 +83,7 @@ std::string GraphReport::to_json() const {
     append_quoted(oss, n.user_label);
     oss << ",";
     oss << "\"backend_fragment\":";
-    append_redacted_quoted(oss, n.backend_fragment);
+    append_quoted(oss, n.backend_fragment);
     oss << ",";
     oss << "\"elements\":[";
     for (std::size_t j = 0; j < n.elements.size(); ++j) {
@@ -110,7 +109,7 @@ std::string GraphReport::to_json() const {
     append_quoted(oss, b.src);
     oss << ",";
     oss << "\"detail\":";
-    append_redacted_quoted(oss, b.detail);
+    append_quoted(oss, b.detail);
     oss << ",";
     oss << "\"wall_time_us\":" << b.wall_time_us;
     oss << "}";
@@ -139,7 +138,7 @@ std::string GraphReport::to_json() const {
   oss << "],";
 
   oss << "\"caps_dump\":";
-  append_redacted_quoted(oss, caps_dump);
+  append_quoted(oss, caps_dump);
   oss << ",";
 
   oss << "\"dot_paths\":[";
@@ -151,15 +150,15 @@ std::string GraphReport::to_json() const {
   oss << "],";
 
   oss << "\"repro_gst_launch\":";
-  append_redacted_quoted(oss, repro_gst_launch);
+  append_quoted(oss, repro_gst_launch);
   oss << ",";
 
   oss << "\"repro_env\":";
-  append_redacted_quoted(oss, repro_env);
+  append_quoted(oss, repro_env);
   oss << ",";
 
   oss << "\"repro_note\":";
-  append_redacted_quoted(oss, repro_note);
+  append_quoted(oss, repro_note);
   oss << ",";
 
   oss << "\"has_build_adaptation\":" << (has_build_adaptation ? "true" : "false") << ",";
@@ -215,10 +214,10 @@ std::string GraphReport::to_json() const {
     oss << ",";
     oss << "\"applied\":" << (a.applied ? "true" : "false") << ",";
     oss << "\"detail\":";
-    append_redacted_quoted(oss, a.detail);
+    append_quoted(oss, a.detail);
     oss << ",";
     oss << "\"reason\":";
-    append_redacted_quoted(oss, a.reason);
+    append_quoted(oss, a.reason);
     oss << "}";
   }
   oss << "]";
