@@ -143,25 +143,63 @@ RUN_TEST(
                          run_api_case("source_eos_message", "normal EOS needs clear context"));
       }
 
-      // A push-backed pipeline that reaches EOS with accepted work still outstanding must
-      // expose the stable unexpected-EOS code rather than a generic closed-stream result.
+      // A push-backed pipeline that reaches EOS while its public input is still open must expose
+      // the stable unexpected-EOS code. Do not infer this from input/output counts: valid
+      // rate-changing pipelines may intentionally drop or duplicate buffers.
       {
         Run eos_run = make_async_drop_run(seed);
         require(eos_run.push(TensorList{seed}),
-                run_api_case("unexpected_eos_push", "test input should be accepted"));
-        eos_run.close_input();
+                run_api_case("unexpected_eos_push_1", "first test input should be accepted"));
+        require(eos_run.push(TensorList{seed}),
+                run_api_case("unexpected_eos_push_2", "second test input should be accepted"));
 
         Sample tmp;
         PullError err;
-        const PullStatus status = eos_run.pull(1000, tmp, &err);
+        PullStatus status = PullStatus::Timeout;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+          status = eos_run.pull(1000, tmp, &err);
+          if (status != PullStatus::Ok) {
+            break;
+          }
+        }
         require(status == PullStatus::Error,
-                run_api_case("unexpected_eos_status", "premature EOS should be an error"));
+                run_api_case("unexpected_eos_status", "premature EOS should be an error; status=" +
+                                                          std::to_string(static_cast<int>(status)) +
+                                                          " code=" + err.code));
         require(err.code == error_codes::kUnexpectedEos,
                 run_api_case("unexpected_eos_code", "premature EOS code mismatch"));
         require(err.report.has_value() && err.report->error_code == error_codes::kUnexpectedEos,
                 run_api_case("unexpected_eos_report", "premature EOS report code mismatch"));
         require_contains(err.message, "How to fix:",
                          run_api_case("unexpected_eos_action", "premature EOS needs an action"));
+      }
+
+      // Once the application has closed its input, a lower output count is not evidence of a
+      // failure. This simulates a cardinality-changing element that accepts an input but reaches
+      // normal EOS without forwarding one output per accepted input.
+      {
+        Run cardinality_run = make_async_drop_run(seed);
+        require(cardinality_run.push(TensorList{seed}),
+                run_api_case("cardinality_eos_push", "test input should be accepted"));
+        cardinality_run.close_input();
+
+        Sample tmp;
+        PullError err;
+        PullStatus status = PullStatus::Timeout;
+        for (int attempt = 0; attempt < 3; ++attempt) {
+          status = cardinality_run.pull(1000, tmp, &err);
+          if (status != PullStatus::Ok) {
+            break;
+          }
+        }
+        require(status == PullStatus::Closed,
+                run_api_case("cardinality_eos_status",
+                             "a closed cardinality-changing pipeline should close normally; "
+                             "status=" +
+                                 std::to_string(static_cast<int>(status)) + " code=" + err.code));
+        require(err.code != error_codes::kUnexpectedEos,
+                run_api_case("cardinality_eos_code",
+                             "input/output count differences must not imply unexpected EOS"));
       }
 
       // Active async matrix.

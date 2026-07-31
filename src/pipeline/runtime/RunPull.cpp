@@ -699,25 +699,23 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
     return handle_stream_error(late_err);
   }
 
-  const auto inputs_pushed = st->inputs_pushed.load(std::memory_order_relaxed);
-  const auto outputs_done = st->outputs_pulled.load(std::memory_order_relaxed) +
-                            st->outputs_dropped.load(std::memory_order_relaxed);
-  if (st->pipeline.supports_push && st->pipeline.stream.reached_eos() &&
-      outputs_done < inputs_pushed) {
+  bool input_was_closed = false;
+  {
+    std::lock_guard<std::mutex> input_lock(st->pipeline.in_mu);
+    input_was_closed = st->pipeline.input_closed;
+  }
+  if (st->pipeline.supports_push && st->pipeline.stream.reached_eos() && !input_was_closed) {
     GraphReport report = diag ? diag->snapshot_basic() : GraphReport{};
     report.error_code = error_codes::kUnexpectedEos;
     report.repro_note =
-        "The pipeline reached end of stream before producing all expected outputs.\n\n"
-        "Expected output: one output for each accepted input (" +
-        std::to_string(inputs_pushed) +
-        " accepted)\n"
-        "Received output: " +
-        std::to_string(outputs_done) +
-        " before end of stream\n\n"
+        "The push-backed pipeline reached end of stream before the application closed its "
+        "input.\n\n"
+        "Expected: The pipeline remains open until Run::close_input() is called.\n"
+        "Received: End of stream while the input was still open.\n\n"
         "How to fix:\n"
-        "- Keep the input source and upstream pipeline open until every accepted input is "
-        "processed.\n"
-        "- Check that the configured input data is complete and valid.\n\n"
+        "- Check the source and upstream elements for a premature end-of-stream condition.\n"
+        "- Keep the upstream pipeline open until the application has finished pushing input, "
+        "then call Run::close_input().\n\n"
         "Diagnostic ID: runtime.unexpected_eos";
     pipeline_internal::error_util::set_pull_error(err, report.error_code, report.repro_note,
                                                   std::move(report));
