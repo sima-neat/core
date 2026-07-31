@@ -390,6 +390,7 @@ set(UNIT_TESTS
   unit_mla_boundary_output_contract_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
+  unit_modelpack_mount_selection_test
   unit_model_stage_fragments_test
   unit_modalix_contract_preflight_test
   unit_mpk_graph_dump_test

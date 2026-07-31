@@ -785,31 +785,25 @@ static bool system_mount_point(const std::string& mount_point) {
   return mount_point == "/";
 }
 
-// Automatic selection accepts only a local NVMe data volume. Matching the block device keeps NFS
-// and every other network filesystem out without maintaining an fstype allow-list, and a read-only
-// or system mount is never a model store.
-static std::vector<fs::path> nvme_model_bases() {
-  std::vector<fs::path> out;
-  std::ifstream mounts("/proc/mounts");
-  std::string device, mount_point, fstype, options, rest;
-  while (mounts >> device >> mount_point >> fstype >> options) {
-    std::getline(mounts, rest);
-    if (device.rfind("/dev/nvme", 0) != 0)
-      continue;
-    // Mount points are octal-escaped ("\040" for space); skip rather than decode, which falls
-    // through to the next candidate instead of creating a directory with a literal backslash.
-    if (mount_point.find('\\') != std::string::npos)
-      continue;
-    if (system_mount_point(mount_point))
-      continue;
-    // vfat/EFI partitions cannot hold a model package's permissions or sizes.
-    if (fstype == "vfat" || fstype == "msdos" || fstype == "iso9660")
-      continue;
-    if (options == "ro" || options.rfind("ro,", 0) == 0)
-      continue;
-    out.push_back(fs::path(mount_point) / "simaai/coprocessing/models");
+// Exact token match over a comma-separated /proc/mounts option list. Substring matching would
+// confuse "ro" with "relatime" and is blind to any option that is not listed first.
+static bool mount_has_option(const std::string& options, const std::string& option) {
+  for (std::size_t pos = 0; pos <= options.size();) {
+    const std::size_t end = options.find(',', pos);
+    const std::size_t len = (end == std::string::npos ? options.size() : end) - pos;
+    if (options.compare(pos, len, option) == 0)
+      return true;
+    if (end == std::string::npos)
+      break;
+    pos = end + 1;
   }
-  return out;
+  return false;
+}
+
+// Defined outside this anonymous namespace so the mount filtering is reachable from its test.
+static std::vector<std::string> nvme_model_bases() {
+  std::ifstream mounts("/proc/mounts");
+  return nvme_model_bases_from_mounts(mounts);
 }
 
 // Selects and pins the per-process extraction root. Capacity is deliberately not a criterion: an
@@ -864,7 +858,7 @@ static std::string modelpack_output_root(bool cleanup_enabled_request) {
       reason.clear();
       if (is_writable_dir(nvme_base, &reason))
         return nvme_base;
-      rejected.push_back(nvme_base.string() + " (" + reason + ")");
+      rejected.push_back(nvme_base + " (" + reason + ")");
     }
 
     const fs::path preferred(kDefaultBaseOutputDir);
@@ -3747,6 +3741,61 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
 }
 
 } // namespace
+
+// Automatic selection accepts only a local NVMe data volume. Matching the block device keeps NFS
+// and every other network filesystem out without maintaining an fstype allow-list, and a read-only
+// or system mount is never a model store.
+std::vector<std::string> nvme_model_bases_from_mounts(std::istream& mounts) {
+  std::vector<std::string> out;
+  std::string device, mount_point, fstype, options, rest;
+  while (mounts >> device >> mount_point >> fstype >> options) {
+    std::getline(mounts, rest);
+    if (device.rfind("/dev/nvme", 0) != 0)
+      continue;
+    // Mount points are octal-escaped ("\040" for space); skip rather than decode, which falls
+    // through to the next candidate instead of creating a directory with a literal backslash.
+    if (mount_point.find('\\') != std::string::npos)
+      continue;
+    if (system_mount_point(mount_point))
+      continue;
+    // vfat/EFI partitions cannot hold a model package's permissions or sizes.
+    if (fstype == "vfat" || fstype == "msdos" || fstype == "iso9660")
+      continue;
+    // Eligibility, not capacity: a read-only mount cannot hold the package, and a noexec mount
+    // cannot load a .so extracted into lib/. Both fall through to the next candidate, unlike a
+    // full NVMe, which fails the load.
+    if (mount_has_option(options, "ro") || mount_has_option(options, "noexec"))
+      continue;
+    out.push_back((fs::path(mount_point) / "simaai/coprocessing/models").string());
+  }
+  return out;
+}
+
+// Longest matching mount point wins, which is how the kernel resolves the path. The device is
+// reported verbatim when it is neither NVMe nor eMMC, because /proc/mounts names the rootfs
+// "/dev/root" on some images and guessing a friendly label from that would be a fabrication.
+std::string modelpack_storage_label(const std::string& path) {
+  std::ifstream mounts("/proc/mounts");
+  std::string device, mount_point, rest, best_device;
+  std::size_t best_len = 0;
+  while (mounts >> device >> mount_point) {
+    std::getline(mounts, rest);
+    if (mount_point.find('\\') != std::string::npos)
+      continue;
+    const std::string prefix = (mount_point == "/") ? "/" : mount_point + "/";
+    if (path != mount_point && path.rfind(prefix, 0) != 0)
+      continue;
+    if (mount_point.size() >= best_len) {
+      best_len = mount_point.size();
+      best_device = device;
+    }
+  }
+  if (best_device.rfind("/dev/nvme", 0) == 0)
+    return "NVMe";
+  if (best_device.rfind("/dev/mmcblk", 0) == 0)
+    return "eMMC";
+  return best_device.empty() ? "unknown" : best_device;
+}
 
 ModelPack::ModelPack(const std::string& tar_gz) {
   init(tar_gz);
