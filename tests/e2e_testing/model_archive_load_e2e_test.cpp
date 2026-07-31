@@ -9,8 +9,12 @@
 #include "test_utils.h"
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -46,110 +50,184 @@ fs::path copy_archive_as(const std::string& source, const fs::path& dir,
   return target;
 }
 
+std::vector<unsigned char> read_all_bytes(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  require(in.is_open(), "failed to open " + path.string());
+  return std::vector<unsigned char>(std::istreambuf_iterator<char>(in),
+                                    std::istreambuf_iterator<char>());
+}
+
+// Writes `data` as a gzip stream of stored deflate blocks: valid gzip that is larger than the
+// bytes it inflates to. Built here rather than with `gzip`, whose compression levels start at 1.
+void write_stored_gzip(const fs::path& out, const std::vector<unsigned char>& data) {
+  static const std::array<std::uint32_t, 256> kCrcTable = [] {
+    std::array<std::uint32_t, 256> table{};
+    for (std::uint32_t i = 0; i < 256; ++i) {
+      std::uint32_t c = i;
+      for (int bit = 0; bit < 8; ++bit)
+        c = (c & 1U) ? (0xEDB88320U ^ (c >> 1)) : (c >> 1);
+      table[i] = c;
+    }
+    return table;
+  }();
+  std::uint32_t crc = 0xFFFFFFFFU;
+  for (const unsigned char byte : data)
+    crc = kCrcTable[(crc ^ byte) & 0xFFU] ^ (crc >> 8);
+  crc ^= 0xFFFFFFFFU;
+
+  std::ofstream os(out, std::ios::binary | std::ios::trunc);
+  require(os.is_open(), "failed to create " + out.string());
+  const unsigned char header[10] = {0x1F, 0x8B, 0x08, 0, 0, 0, 0, 0, 0, 0xFF};
+  os.write(reinterpret_cast<const char*>(header), sizeof header);
+
+  std::size_t offset = 0;
+  do {
+    const std::uint16_t len =
+        static_cast<std::uint16_t>(std::min<std::size_t>(data.size() - offset, 0xFFFFU));
+    const std::uint16_t nlen = static_cast<std::uint16_t>(~len);
+    const unsigned char block[5] = {
+        static_cast<unsigned char>(offset + len >= data.size() ? 1 : 0),
+        static_cast<unsigned char>(len & 0xFFU), static_cast<unsigned char>(len >> 8),
+        static_cast<unsigned char>(nlen & 0xFFU), static_cast<unsigned char>(nlen >> 8)};
+    os.write(reinterpret_cast<const char*>(block), sizeof block);
+    os.write(reinterpret_cast<const char*>(data.data() + offset),
+             static_cast<std::streamsize>(len));
+    offset += len;
+  } while (offset < data.size());
+
+  for (const std::uint32_t value : {crc, static_cast<std::uint32_t>(data.size())}) {
+    for (int byte = 0; byte < 4; ++byte)
+      os.put(static_cast<char>((value >> (8 * byte)) & 0xFFU));
+  }
+  os.close();
+  require(os.good(), "failed to finalize " + out.string());
+}
+
 } // namespace
 
-RUN_TEST("model_archive_load_e2e_test", ([] {
-           const std::string archive = sima_test::resolve_resnet50_tar();
-           if (archive.empty()) {
-             // Registered in the long lane, where an unreachable modelzoo is an environment gap
-             // rather than a regression in the extraction path this test covers.
-             skip_test_exception(
-                 "ResNet50 model pack not found; set SIMA_MODEL_TAR or SIMA_RESNET50_TAR");
-           }
+RUN_TEST(
+    "model_archive_load_e2e_test", ([] {
+      const std::string archive = sima_test::resolve_resnet50_tar();
+      if (archive.empty()) {
+        // Registered in the long lane, where an unreachable modelzoo is an environment gap
+        // rather than a regression in the extraction path this test covers.
+        skip_test_exception(
+            "ResNet50 model pack not found; set SIMA_MODEL_TAR or SIMA_RESNET50_TAR");
+      }
 
-           const fs::path scratch = fs::path(sima_test::make_temp_dir("model_archive_load_e2e"));
+      const fs::path scratch = fs::path(sima_test::make_temp_dir("model_archive_load_e2e"));
 
-           // Two archives that differ only in directory. Distinct package roots is the assertion: a
-           // basename-keyed directory gives both the same path, and the second extraction deletes
-           // the first model's files while that model is still alive.
-           const fs::path first_copy = copy_archive_as(archive, scratch / "a", "model_pack.tar.gz");
-           const fs::path second_copy =
-               copy_archive_as(archive, scratch / "b", "model_pack.tar.gz");
+      // Two archives that differ only in directory. Distinct package roots is the assertion: a
+      // basename-keyed directory gives both the same path, and the second extraction deletes
+      // the first model's files while that model is still alive.
+      const fs::path first_copy = copy_archive_as(archive, scratch / "a", "model_pack.tar.gz");
+      const fs::path second_copy = copy_archive_as(archive, scratch / "b", "model_pack.tar.gz");
 
-           simaai::neat::Model first(first_copy.string());
-           simaai::neat::Model second(second_copy.string());
-           const std::string first_root = package_root_of(first);
-           const std::string second_root = package_root_of(second);
-           require(first_root != second_root,
-                   "archives sharing a basename must not share a package directory");
+      simaai::neat::Model first(first_copy.string());
+      simaai::neat::Model second(second_copy.string());
+      const std::string first_root = package_root_of(first);
+      const std::string second_root = package_root_of(second);
+      require(first_root != second_root,
+              "archives sharing a basename must not share a package directory");
 
-           const std::vector<std::string> first_files = package_file_set(first_root);
-           require(!first_files.empty(),
-                   "first package should contain files after the second load");
-           require(first_files == package_file_set(second_root),
-                   "both same-basename packages should hold the same extracted file set");
+      const std::vector<std::string> first_files = package_file_set(first_root);
+      require(!first_files.empty(), "first package should contain files after the second load");
+      require(first_files == package_file_set(second_root),
+              "both same-basename packages should hold the same extracted file set");
 
-           // Reusing an extracted package needs no snapshot or output capacity. A later space
-           // shortage must not invalidate an in-process cache hit.
-           {
-             const std::uintmax_t available = fs::space(first_root).available;
-             sima_test::ScopedEnvVar space_check("SIMA_NEAT_SPACE_CHECK", "1");
-             sima_test::ScopedEnvVar oversized_reserve("SIMA_MPK_EXTRACT_MIN_FREE_BYTES",
-                                                       std::to_string(available + 1));
-             simaai::neat::Model cached(first_copy.string());
-             require(package_root_of(cached) == first_root,
-                     "a cached archive should load without reserving extraction space");
-           }
+      // Reusing an extracted package needs no snapshot or output capacity. A later space
+      // shortage must not invalidate an in-process cache hit.
+      {
+        const std::uintmax_t available = fs::space(first_root).available;
+        sima_test::ScopedEnvVar space_check("SIMA_NEAT_SPACE_CHECK", "1");
+        sima_test::ScopedEnvVar oversized_reserve("SIMA_MPK_EXTRACT_MIN_FREE_BYTES",
+                                                  std::to_string(available + 1));
+        simaai::neat::Model cached(first_copy.string());
+        require(package_root_of(cached) == first_root,
+                "a cached archive should load without reserving extraction space");
+      }
 
-           if (const char* configured_base = std::getenv("SIMA_MPK_EXTRACT_ROOT");
-               configured_base && *configured_base) {
-             std::error_code relative_ec;
-             const fs::path relative =
-                 fs::relative(fs::path(first_root), fs::absolute(configured_base), relative_ec);
-             require(!relative_ec && !relative.empty() && *relative.begin() != "..",
-                     "archive extraction should stay under SIMA_MPK_EXTRACT_ROOT");
-           }
+      // A .tar.gz bounds its inflated size in neither direction, so no capacity requirement
+      // can be derived from it before decoding. A stored archive is larger than the tar it
+      // inflates to, which is the case any compressed-size precheck gets wrong: it must load
+      // exactly like the compressed form it was rebuilt from.
+      {
+        const fs::path stored_dir = scratch / "stored";
+        fs::create_directories(stored_dir);
+        const fs::path plain_tar = stored_dir / "pack.tar";
+        require(
+            std::system(("gzip -dc '" + archive + "' > '" + plain_tar.string() + "'").c_str()) == 0,
+            "failed to inflate the reference archive");
 
-           // Concurrent loads of one archive under default options: the extraction mutex serializes
-           // them, so the first extracts and the rest resolve through the in-process cache.
-           const fs::path shared_copy =
-               copy_archive_as(archive, scratch / "shared", "shared.tar.gz");
-           constexpr int kThreads = 4;
-           std::vector<std::string> roots(kThreads);
-           std::vector<std::string> failures(kThreads);
-           std::vector<std::thread> workers;
-           for (int i = 0; i < kThreads; ++i) {
-             workers.emplace_back([&, i]() {
-               try {
-                 simaai::neat::Model model(shared_copy.string());
-                 roots[i] = package_root_of(model);
-               } catch (const std::exception& e) {
-                 failures[i] = e.what();
-               }
-             });
-           }
-           for (auto& worker : workers) {
-             worker.join();
-           }
-           for (int i = 0; i < kThreads; ++i) {
-             require(failures[i].empty(),
-                     "concurrent load " + std::to_string(i) + " threw: " + failures[i]);
-             require(roots[i] == roots[0],
-                     "concurrent loads of one archive should converge on a single package");
-           }
-           require(!package_file_set(roots[0]).empty(), "the converged package should hold files");
+        const fs::path stored = stored_dir / "stored_pack.tar.gz";
+        write_stored_gzip(stored, read_all_bytes(plain_tar));
+        require(fs::file_size(stored) > fs::file_size(plain_tar),
+                "a stored archive should be larger than the tar it inflates to");
 
-           // The direct-directory contract is structural: an etc/lib/share package is accepted in
-           // place without copying or ownership transfer. Copying the first package makes this a
-           // caller-owned directory rather than another path inside Core's process root.
-           const fs::path organized = scratch / "organized";
-           fs::copy(first_root, organized, fs::copy_options::recursive);
-           const std::vector<std::string> organized_before = package_file_set(organized);
+        simaai::neat::Model from_stored(stored.string());
+        require(package_file_set(package_root_of(from_stored)) == first_files,
+                "a stored archive should produce the same package as its compressed form");
+        fs::remove(plain_tar);
+      }
 
-           simaai::neat::Model from_organized(organized.string());
-           require(package_root_of(from_organized) == organized.string(),
-                   "an organized model package should load directly from the supplied directory");
-           require(package_file_set(organized) == organized_before,
-                   "direct model loading must not modify the supplied package");
+      if (const char* configured_base = std::getenv("SIMA_MPK_EXTRACT_ROOT");
+          configured_base && *configured_base) {
+        std::error_code relative_ec;
+        const fs::path relative =
+            fs::relative(fs::path(first_root), fs::absolute(configured_base), relative_ec);
+        require(!relative_ec && !relative.empty() && *relative.begin() != "..",
+                "archive extraction should stay under SIMA_MPK_EXTRACT_ROOT");
+      }
 
-           simaai::neat::Model::Options keep_opt;
-           keep_opt.cleanup_extracted_model_data = false;
-           simaai::neat::Model kept_organized(organized.string(), keep_opt);
-           require(package_root_of(kept_organized) == organized.string(),
-                   "cleanup policy must not change direct-directory ownership");
-           require(package_file_set(organized) == organized_before,
-                   "cleanup-disabled direct loading must not modify the supplied package");
+      // Concurrent loads of one archive under default options: the extraction mutex serializes
+      // them, so the first extracts and the rest resolve through the in-process cache.
+      const fs::path shared_copy = copy_archive_as(archive, scratch / "shared", "shared.tar.gz");
+      constexpr int kThreads = 4;
+      std::vector<std::string> roots(kThreads);
+      std::vector<std::string> failures(kThreads);
+      std::vector<std::thread> workers;
+      for (int i = 0; i < kThreads; ++i) {
+        workers.emplace_back([&, i]() {
+          try {
+            simaai::neat::Model model(shared_copy.string());
+            roots[i] = package_root_of(model);
+          } catch (const std::exception& e) {
+            failures[i] = e.what();
+          }
+        });
+      }
+      for (auto& worker : workers) {
+        worker.join();
+      }
+      for (int i = 0; i < kThreads; ++i) {
+        require(failures[i].empty(),
+                "concurrent load " + std::to_string(i) + " threw: " + failures[i]);
+        require(roots[i] == roots[0],
+                "concurrent loads of one archive should converge on a single package");
+      }
+      require(!package_file_set(roots[0]).empty(), "the converged package should hold files");
 
-           std::error_code cleanup_ec;
-           fs::remove_all(scratch, cleanup_ec);
-         }));
+      // The direct-directory contract is structural: an etc/lib/share package is accepted in
+      // place without copying or ownership transfer. Copying the first package makes this a
+      // caller-owned directory rather than another path inside Core's process root.
+      const fs::path organized = scratch / "organized";
+      fs::copy(first_root, organized, fs::copy_options::recursive);
+      const std::vector<std::string> organized_before = package_file_set(organized);
+
+      simaai::neat::Model from_organized(organized.string());
+      require(package_root_of(from_organized) == organized.string(),
+              "an organized model package should load directly from the supplied directory");
+      require(package_file_set(organized) == organized_before,
+              "direct model loading must not modify the supplied package");
+
+      simaai::neat::Model::Options keep_opt;
+      keep_opt.cleanup_extracted_model_data = false;
+      simaai::neat::Model kept_organized(organized.string(), keep_opt);
+      require(package_root_of(kept_organized) == organized.string(),
+              "cleanup policy must not change direct-directory ownership");
+      require(package_file_set(organized) == organized_before,
+              "cleanup-disabled direct loading must not modify the supplied package");
+
+      std::error_code cleanup_ec;
+      fs::remove_all(scratch, cleanup_ec);
+    }));

@@ -100,10 +100,6 @@ static bool env_enabled_local(const char* name, bool default_value) {
          std::strcmp(v, "off") != 0 && std::strcmp(v, "OFF") != 0;
 }
 
-static bool modelpack_space_check_enabled() {
-  return env_enabled_local("SIMA_NEAT_SPACE_CHECK", true);
-}
-
 static std::uint64_t parse_env_u64_bytes(const char* key, std::uint64_t fallback) {
   const char* raw = std::getenv(key);
   if (!raw || !*raw)
@@ -119,62 +115,6 @@ static std::uint64_t parse_env_u64_bytes(const char* key, std::uint64_t fallback
 
 static std::uint64_t modelpack_extract_free_reserve_bytes() {
   return parse_env_u64_bytes("SIMA_MPK_EXTRACT_MIN_FREE_BYTES", kDefaultExtractFreeReserveBytes);
-}
-
-static bool checked_add_u64_local(std::uint64_t a, std::uint64_t b, std::uint64_t* out) {
-  if (!out)
-    return false;
-  if (a > std::numeric_limits<std::uint64_t>::max() - b)
-    return false;
-  *out = a + b;
-  return true;
-}
-
-static std::uint64_t
-required_modelpack_extract_bytes(const simaai::neat::internal::ModelArchiveManifest& manifest,
-                                 std::uint64_t reserve_bytes) {
-  std::uint64_t required = reserve_bytes;
-  for (const auto& entry : manifest.entries) {
-    if (entry.type != '-')
-      continue;
-    if (!checked_add_u64_local(required, entry.size_bytes, &required)) {
-      throw std::runtime_error("ModelPack: size_limit_exceeded: extracted archive size plus "
-                               "free-space reserve overflows uint64");
-    }
-  }
-  return required;
-}
-
-static std::string format_bytes(std::uint64_t bytes) {
-  std::ostringstream oss;
-  constexpr double kMiB = 1024.0 * 1024.0;
-  constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
-  if (bytes >= static_cast<std::uint64_t>(kGiB)) {
-    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kGiB) << " GiB)";
-  } else if (bytes >= static_cast<std::uint64_t>(kMiB)) {
-    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kMiB) << " MiB)";
-  } else {
-    oss << bytes << " bytes";
-  }
-  return oss.str();
-}
-
-static bool dir_has_available_space(const fs::path& dir, std::uint64_t required_available_bytes,
-                                    std::uint64_t* available_out = nullptr) {
-  if (!modelpack_space_check_enabled() || required_available_bytes == 0) {
-    return true;
-  }
-  std::error_code ec;
-  const auto space = fs::space(dir, ec);
-  if (ec)
-    return false;
-  const std::uint64_t available =
-      space.available > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())
-          ? std::numeric_limits<std::uint64_t>::max()
-          : static_cast<std::uint64_t>(space.available);
-  if (available_out)
-    *available_out = available;
-  return available >= required_available_bytes;
 }
 
 static bool processcvu_family_is_fused_local(std::string family) {
@@ -872,8 +812,13 @@ static std::vector<fs::path> nvme_model_bases() {
   return out;
 }
 
-static std::string modelpack_output_root(bool cleanup_enabled_request,
-                                         std::uint64_t required_available_bytes) {
+// Selects and pins the per-process extraction root. Capacity is deliberately not a criterion: an
+// archive's inflated size cannot be derived from its compressed size, so any pre-inflation space
+// requirement would be a guess. The loader enforces the real budget per chunk while inflating and
+// again from the manifest before extracting. Selection therefore asks only whether a candidate is
+// writable, which makes an eligible NVMe unconditional: a full one fails the load rather than
+// silently moving hundreds of megabytes of writes onto eMMC.
+static std::string modelpack_output_root(bool cleanup_enabled_request) {
   if (!modelpack_cleanup_enabled_for_request(cleanup_enabled_request)) {
     modelpack_process_cleanup_enabled_storage() = false;
   }
@@ -897,14 +842,6 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
     out << "ok";
     out.close();
     fs::remove(probe, ec);
-    std::uint64_t available = 0;
-    if (!dir_has_available_space(dir, required_available_bytes, &available)) {
-      if (reason) {
-        *reason = "insufficient free space: required=" + format_bytes(required_available_bytes) +
-                  " available=" + format_bytes(available);
-      }
-      return false;
-    }
     return true;
   };
 
@@ -951,15 +888,11 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
     rejected.push_back(cwd_base.string() + " (" + reason + ")");
 
     std::ostringstream oss;
-    oss << "ModelPack: output_storage_unavailable: no usable extraction root";
-    if (required_available_bytes > 0) {
-      oss << " with required free space " << format_bytes(required_available_bytes);
-    }
-    oss << ". Tried:";
+    oss << "ModelPack: output_storage_unavailable: no writable extraction root. Tried:";
     for (const auto& item : rejected) {
       oss << " [" << item << "]";
     }
-    oss << ". Set SIMA_MPK_EXTRACT_ROOT to a filesystem with enough space or clean /data and /tmp.";
+    oss << ". Set SIMA_MPK_EXTRACT_ROOT to a writable filesystem with enough space.";
     throw std::runtime_error(oss.str());
   };
 
@@ -984,10 +917,6 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
       return true;
     }();
     (void)registered;
-  } else if (!dir_has_available_space(fs::path(root), required_available_bytes)) {
-    throw std::runtime_error("ModelPack: output_storage_unavailable: selected extraction root "
-                             "does not have enough free space: " +
-                             root + " required=" + format_bytes(required_available_bytes));
   }
   if (!modelpack_process_cleanup_enabled_storage()) {
     mark_modelpack_process_root_keep(root);
@@ -1137,32 +1066,21 @@ static std::string extract_and_organize(const std::string& tar_path,
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
+    // Applied on every path, including a cache hit, so the cleanup policy a caller asks for is
+    // honoured whether or not this load is the one that extracts.
+    const std::string process_root = modelpack_output_root(cleanup_extracted_model_data);
+
     auto& cache = modelpack_extract_cache();
     const auto found = cache.find(cache_key);
     if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
-      (void)modelpack_output_root(cleanup_extracted_model_data, 0);
       return found->second;
     }
 
-    // The snapshot is written before the manifest sizes the extraction. Pin its base using the
-    // compressed size, the largest bound knowable before decoding.
-    std::error_code archive_size_ec;
-    const std::uint64_t archive_bytes = fs::file_size(tar_path, archive_size_ec);
-    opt.staging_base =
-        modelpack_output_root(cleanup_extracted_model_data,
-                              (archive_size_ec ? 0ULL : archive_bytes) + opt.min_output_free_bytes);
-
-    // Chosen through a callback because the root is sized from the manifest, which the loader
-    // only has after validating — and validating twice is what this avoids.
+    // One filesystem holds the inflated snapshot and the package, so the loader's free-space
+    // budget covers both coexisting.
+    opt.staging_base = process_root;
     const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
-        tar_path,
-        [&](const simaai::neat::internal::ModelArchiveManifest& manifest) {
-          const std::string process_root = modelpack_output_root(
-              cleanup_extracted_model_data,
-              required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes));
-          return (fs::path(process_root) / identity_dir).string();
-        },
-        opt);
+        tar_path, (fs::path(process_root) / identity_dir).string(), opt);
     const fs::path target_dir(extracted.package_root);
 
     // Preserve existing behavior: materialize model-relative paths as absolute paths

@@ -132,14 +132,21 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 - `SIMA_MLA_NEXT_CPU=<domain>` — override MLA next_cpu.
 - `SIMA_MPK_EXTRACT_ROOT=<dir>` — base directory for model-archive loading. Resolved to an absolute
   path once per process, so paths rewritten into extracted JSON never depend on the working
-  directory. Authoritative: if it is unwritable or below the free-space reserve, loading fails
-  rather than falling back. When unset, the base is the first usable candidate of a mounted NVMe
-  filesystem, `/data`, `TMPDIR`, then the working directory. An NVMe candidate must be a writable
-  `/dev/nvme*` block device on a data mount: root, `/boot`, `/efi` and other system mounts are
-  excluded, as are vfat/ISO filesystems. Those checks apply to NVMe discovery; the existing `/data`,
-  `TMPDIR`, and working-directory fallbacks retain their normal filesystem placement. NVMe is
-  preferred for capacity and eMMC write wear, not speed — decode is CPU bound and placement does
-  not change load time.
+  directory. Authoritative: if it is not writable, loading fails rather than falling back. When
+  unset, the base is the first writable candidate of a mounted NVMe filesystem, `/data`, `TMPDIR`,
+  then the working directory. An NVMe candidate must be a writable `/dev/nvme*` block device on a
+  data mount: root, `/boot`, `/efi` and other system mounts are excluded, as are vfat/ISO
+  filesystems. Those checks apply to NVMe discovery; the `/data`, `TMPDIR`, and working-directory
+  fallbacks retain their normal filesystem placement. NVMe is preferred for capacity, predictable
+  placement, and avoiding eMMC writes. It is not a decode speedup: this variable selects where
+  output is written, and decode is CPU bound.
+
+  Selection is by writability, not free space. A `.tar.gz` bounds its inflated size in neither
+  direction, so no capacity requirement is knowable before decoding; space is enforced per chunk
+  while inflating and again from the manifest before extracting. An eligible NVMe is therefore
+  used unconditionally, and one without room fails the load with `output_storage_unavailable`
+  rather than falling back to eMMC. Free space on that filesystem, or `SIMA_MPK_EXTRACT_ROOT`
+  pointing elsewhere, is the fix.
 - `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — delete per-process extracted model-archive data on normal exit (default `1`).
   With cleanup on, each process extracts into its own `proc_<pid>` root and removes it at exit. With
   cleanup off, that process root is kept for inspection and excluded from stale-root garbage
