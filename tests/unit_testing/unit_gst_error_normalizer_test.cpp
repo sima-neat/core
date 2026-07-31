@@ -510,7 +510,8 @@ RUN_TEST(
             "camel-auth-secret", "clientSecret", G_TYPE_STRING, "camel-client-secret",
             "neat_auth_token", G_TYPE_STRING, "prefixed-auth-secret", "dtype_token", G_TYPE_STRING,
             "UInt8", "model_signature", G_TYPE_STRING, "sha256:model-metadata", "aws_access_key_id",
-            G_TYPE_STRING, "structured-aws-key", "compass", G_TYPE_STRING, "north", nullptr);
+            G_TYPE_STRING, "structured-aws-key", "awsSecretAccessKey", G_TYPE_STRING,
+            "structured-aws-secret", "compass", G_TYPE_STRING, "north", nullptr);
         const std::string debug =
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
             "api_key='quoted-api-secret' password=\"quoted-password\" user-pw='rtsp-password' "
@@ -521,6 +522,8 @@ RUN_TEST(
             "camel={\"accessToken\":\"camel-json-access\","
             "\"refreshToken\":\"camel-json-refresh\","
             "\"authToken\":\"camel-json-auth\",\"clientSecret\":\"camel-json-client\"} "
+            "aws={\"SecretAccessKey\":\"camel-aws-secret\","
+            "\"awsSecretAccessKey\":\"camel-prefixed-aws-secret\"} "
             "metadata={\"dtype_token\":\"UInt8\",\"model_signature\":\"sha256:metadata\"} "
             "Cookie: sessionid=raw-cookie-secret\n{\"session_cookie\":\"json-cookie-secret\"} "
             "password=(string)\"typed password secret\" "
@@ -553,6 +556,7 @@ RUN_TEST(
                     raw.details.at("clientSecret") == "<redacted>" &&
                     raw.details.at("neat_auth_token") == "<redacted>" &&
                     raw.details.at("aws_access_key_id") == "<redacted>" &&
+                    raw.details.at("awsSecretAccessKey") == "<redacted>" &&
                     raw.details.at("dtype_token") == "UInt8" &&
                     raw.details.at("model_signature") == "sha256:model-metadata" &&
                     raw.details.at("compass") == "north",
@@ -572,6 +576,8 @@ RUN_TEST(
                     raw.debug.find("camel-json-refresh") == std::string::npos &&
                     raw.debug.find("camel-json-auth") == std::string::npos &&
                     raw.debug.find("camel-json-client") == std::string::npos &&
+                    raw.debug.find("camel-aws-secret") == std::string::npos &&
+                    raw.debug.find("camel-prefixed-aws-secret") == std::string::npos &&
                     raw.debug.find("multiply-password") == std::string::npos &&
                     raw.debug.find("multiply-token") == std::string::npos &&
                     raw.debug.find("raw-cookie-secret") == std::string::npos &&

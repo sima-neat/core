@@ -163,6 +163,31 @@ bool disallowed_preceding_field_character(char c, std::string_view marker) {
          (requires_exact_field_boundary(marker) && (value == '_' || value == '-'));
 }
 
+bool sensitive_detail_name(std::string_view name);
+
+std::string field_name_before_separator(const std::string& value, std::size_t separator) {
+  std::size_t end = separator;
+  while (end > 0 && std::isspace(static_cast<unsigned char>(value[end - 1U])) &&
+         value[end - 1U] != '\r' && value[end - 1U] != '\n') {
+    --end;
+  }
+  if (end > 0 && (value[end - 1U] == '\'' || value[end - 1U] == '"')) {
+    --end;
+    while (end > 0 && value[end - 1U] == '\\') {
+      --end;
+    }
+  }
+  std::size_t begin = end;
+  while (begin > 0) {
+    const unsigned char c = static_cast<unsigned char>(value[begin - 1U]);
+    if (!std::isalnum(c) && c != '_' && c != '-') {
+      break;
+    }
+    --begin;
+  }
+  return value.substr(begin, end - begin);
+}
+
 std::optional<std::size_t> find_uri_authority_start(const std::string& value,
                                                     std::size_t search_from) {
   std::size_t colon = search_from;
@@ -210,6 +235,22 @@ std::string redact_uri_credentials(std::string value) {
       search_from = authority + std::string("<redacted>@").size();
     } else {
       search_from = authority;
+    }
+  }
+
+  // Parse ordinary key/value fields before applying the alias-oriented fallbacks below. This
+  // preserves the original string positions while allowing camelCase and multiply escaped JSON
+  // keys to share the structured-detail sensitivity rules.
+  std::size_t separator = 0;
+  while ((separator = value.find_first_of(":=", separator)) != std::string::npos) {
+    const std::string field_name = field_name_before_separator(value, separator);
+    if (!field_name.empty() && sensitive_detail_name(field_name)) {
+      const std::string normalized_name = lower_copy(field_name);
+      const bool line_value = normalized_name.find("authorization") != std::string::npos ||
+                              normalized_name.find("cookie") != std::string::npos;
+      separator = redact_secret_value(value, separator + 1U, line_value);
+    } else {
+      ++separator;
     }
   }
 
@@ -274,6 +315,12 @@ std::string redact_uri_credentials(std::string value) {
       "access-key",
       "access_key",
       "accesskey",
+      "secret-access-key",
+      "secret_access_key",
+      "secretaccesskey",
+      "aws-secret-access-key",
+      "aws_secret_access_key",
+      "awssecretaccesskey",
       "private-key",
       "private_key",
       "privatekey",
@@ -417,6 +464,8 @@ bool sensitive_detail_name(std::string_view name) {
       "client-secret",
       "api-secret",
       "access-key",
+      "secret-access-key",
+      "aws-secret-access-key",
       "private-key",
       "api-key",
       "apikey",
