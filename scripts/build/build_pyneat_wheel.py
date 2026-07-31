@@ -9,9 +9,16 @@ import csv
 import hashlib
 import io
 import sys
-import tomllib
 import zipfile
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9 and 3.10 compatibility
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        from pip._vendor import tomli as tomllib
 
 
 def wheel_name_component(value: str) -> str:
@@ -23,14 +30,13 @@ def record_digest(data: bytes) -> str:
     return "sha256=" + base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def metadata(project: dict[str, object], license_path: str) -> bytes:
+def metadata(project: dict[str, object]) -> bytes:
     lines = [
         "Metadata-Version: 2.3",
         f"Name: {project['name']}",
         f"Version: {project['version']}",
         f"Summary: {project['description']}",
         f"Requires-Python: {project['requires-python']}",
-        f"License-File: {license_path}",
     ]
     for author in project.get("authors", []):
         if isinstance(author, dict) and author.get("name"):
@@ -74,7 +80,7 @@ def build_wheel(
         if source.is_file() and (source.suffix == ".py" or source.name == "py.typed"):
             entries[f"pyneat/{source.relative_to(package_root).as_posix()}"] = source.read_bytes()
     entries[f"pyneat/{extension.name}"] = extension.read_bytes()
-    entries[f"{dist_info}/METADATA"] = metadata(project, license_archive_path)
+    entries[f"{dist_info}/METADATA"] = metadata(project)
     entries[f"{dist_info}/WHEEL"] = (
         "Wheel-Version: 1.0\n"
         "Generator: sima-neat build_pyneat_wheel.py\n"

@@ -9,6 +9,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
+from packaging.metadata import Metadata
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "build" / "build_pyneat_wheel.py"
@@ -67,6 +69,9 @@ torch = ["torch>=2.3.0"]
                 self.assertIn(f"pyneat/{extension.name}", names)
                 self.assertIn("pyneat/__init__.py", names)
                 metadata = archive.read("pyneat-1.2.3.dist-info/METADATA").decode()
+                Metadata.from_email(metadata.encode(), validate=True)
+                self.assertIn("Metadata-Version: 2.3", metadata)
+                self.assertNotIn("License-File:", metadata)
                 self.assertIn("Requires-Dist: numpy>=1.24,<2", metadata)
                 self.assertIn(
                     'Requires-Dist: torch>=2.3.0; extra == "torch"',

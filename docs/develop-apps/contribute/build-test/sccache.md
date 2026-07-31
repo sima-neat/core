@@ -19,8 +19,9 @@ normally and inspect the cache statistics printed at the end.
 | Build | Cache levels | Writes | Survives `--clean` |
 |---|---|---|---|
 | Local | User-local disk | Local disk | Yes |
-| Vulcan `develop` or `main` | Runner-local disk, then S3 | Local disk and S3 | S3 does |
-| Vulcan feature branch or tag | Runner-local disk, then shared S3 | No persistent shared writes | Reads the S3 cache populated by `develop`/`main` |
+| Vulcan `develop` or `main` | Runner-local disk, then protected-branch S3 | Local disk and its protected S3 namespace | S3 does |
+| Vulcan feature branch push | Runner-local disk, then branch S3 | Local disk and its isolated branch namespace | Until branch deletion |
+| Vulcan tag or non-direct ref | Runner-local disk, then closest protected S3 | Local disk only | No persistent runner state |
 
 The supported entry point is always:
 
@@ -119,12 +120,16 @@ s3://sima-neat-compiler-cache-production/
       <architecture>/
         <sdk-cache>/
           <build-mode>/
+            develop/
+              branches/<encoded-feature-branch>/
+            main/
+              branches/<encoded-feature-branch>/
 ```
 
 For example:
 
 ```text
-core/sccache-v1/arm64/sdk-develop/standard/
+core/sccache-v1/arm64/sdk-develop/standard/develop/
 ```
 
 The namespace deliberately includes:
@@ -133,6 +138,7 @@ The namespace deliberately includes:
 - architecture: prevents arm64 and x86-64 compiler outputs from mixing
 - SDK cache identity: prevents incompatible SDK/toolchain outputs from mixing
 - build mode: keeps standard and fuzz instrumentation separate
+- protected base branch: prevents `develop` and `main` from writing the same namespace
 
 The S3 bucket is private, encrypted with its own KMS key, and separate from the
 artifact bucket. It has no CloudFront distribution because compiler cache
@@ -143,17 +149,27 @@ days.
 
 | Git ref | OIDC role | S3 mode |
 |---|---|---|
-| Exact `refs/heads/develop` | Writer | `READ_WRITE` |
-| Exact `refs/heads/main` | Writer | `READ_WRITE` |
-| Other branches and tags | Reader | `READ_ONLY` |
+| Exact `refs/heads/develop` | Protected writer | `READ_WRITE` in `develop/` |
+| Exact `refs/heads/main` | Protected writer | `READ_WRITE` in `main/` |
+| Direct feature-branch push | Branch writer | `READ_WRITE` below `<base>/branches/<branch>/` |
+| Tag or non-direct ref | Reader | `READ_ONLY` from the selected protected baseline |
 
-Feature branches cannot poison the shared cache. They consume compatible
-entries published by successful `develop` and `main` compilations. AWS
-credentials are short-lived GitHub OIDC credentials; no long-lived AWS key is
-stored in GitHub or the SDK container.
+On its first build, a feature branch copies the cache from the closest protected
+Git ancestor (`develop` or `main`) into its own namespace. The build then reads
+and writes only that branch namespace. Subsequent builds reuse it until GitHub's
+branch-deletion event removes every architecture, SDK, and build-mode namespace
+for that branch. Feature branches cannot write into either protected cache.
 
-An empty S3 bucket is expected before the first writable `develop` or `main`
-build. A feature-branch build alone does not populate it.
+Automatic ancestry detection compares the merge-base distance to `develop` and
+`main`. A reusable or manually dispatched workflow can set
+`cache_base_branch=develop|main` when an exceptional branch needs an explicit
+baseline. AWS credentials are short-lived GitHub OIDC credentials; no
+long-lived AWS key is stored in GitHub or the SDK container.
+
+An empty protected namespace is expected before its first writable protected
+branch build. A feature branch can still populate its own namespace, but it
+will receive no initial cache hits when its selected protected baseline is
+empty.
 
 ## Reading Build Statistics
 
@@ -187,9 +203,9 @@ architecture, build mode, or materially changed source tree. Judge the cache
 with a second build of the same commit and configuration.
 
 When any level is read-only, `sccache` v0.16 can report attempted stores as
-write errors even though the read-only build succeeds. For feature branches,
-confirm that the remote cache is labeled `READ_ONLY` and focus on hits, read
-errors, cache errors, and compilation failures.
+write errors even though the read-only build succeeds. This applies to tags and
+other non-direct contexts. Direct feature-branch pushes should report
+`READ_WRITE`; investigate write errors in those builds.
 
 ## Quick Verification
 
@@ -240,7 +256,9 @@ cache errors.
 
 ### Vulcan shows zero remote hits
 
-- Confirm a writable `develop` or `main` build has populated the same prefix.
+- Confirm the selected `develop` or `main` baseline has been populated.
+- For a feature branch, confirm the log reports the expected base branch and
+  its encoded branch-specific prefix.
 - Compare architecture, SDK cache identity, and build mode.
 - Confirm the log shows the expected bucket and prefix.
 - Treat a cold namespace as normal; compare two identical builds.

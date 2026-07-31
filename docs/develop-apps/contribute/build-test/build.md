@@ -70,9 +70,10 @@ Supported `build.sh` options:
 ## Compiler Cache
 
 `build.sh` enables `sccache` automatically, and its cache remains available
-after `--clean`. Local builds use a user-local disk cache. Vulcan adds a private
-encrypted S3 cache populated by `develop` and `main` and consumed read-only by
-other refs.
+after `--clean`. Local builds use a user-local disk cache. Vulcan gives
+`develop` and `main` separate protected caches; a feature branch seeds an
+isolated writable cache from its closest protected base and keeps it until the
+branch is deleted.
 
 See the [Neat sccache Cheatsheet](/develop-apps/contribute/sccache) for local
 controls, cloud access rules, cache namespaces, statistics, verification, and

@@ -89,6 +89,7 @@ jobs:
 
           for prefix in "${prefixes[@]}"; do
             case "${prefix}" in
+              "${branch_root}/branches/${encoded_branch}/") ;;
               "${branch_root}/"*/branches/"${encoded_branch}/") ;;
               *)
                 echo "Refusing to delete unexpected compiler-cache prefix: ${prefix}" >&2

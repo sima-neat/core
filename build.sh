@@ -1862,6 +1862,13 @@ configure_cmake() {
       -DCMAKE_C_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
       -DCMAKE_CXX_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
     )
+  else
+    # CMake retains launcher values in an existing build tree. Clear them
+    # explicitly so SIMANEAT_SCCACHE=off is honored without requiring --clean.
+    cmake_args+=(
+      -DCMAKE_C_COMPILER_LAUNCHER=
+      -DCMAKE_CXX_COMPILER_LAUNCHER=
+    )
   fi
 
   if [[ -f "${NEAT_PACKAGE_BUILDINFO_JSON}" ]]; then
@@ -1990,7 +1997,11 @@ build_docs_only_if_requested() {
 build_targets() {
   # For dev-only builds, avoid building tests/tutorials by targeting core lib.
   if [[ "${BUILD_TESTS}" == "OFF" && "${BUILD_TUTORIALS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
-    cmake --build "${BUILD_DIR}" --target sima_neat_libraries -j"${BUILD_JOBS}"
+    local -a targets=(sima_neat_libraries)
+    if [[ "${BUILD_PYTHON}" == "ON" ]]; then
+      targets+=(_pyneat_core)
+    fi
+    cmake --build "${BUILD_DIR}" --target "${targets[@]}" -j"${BUILD_JOBS}"
   else
     cmake --build "${BUILD_DIR}" -j"${BUILD_JOBS}"
   fi
@@ -2154,12 +2165,13 @@ import sysconfig
 from pathlib import Path
 
 extension = Path(sys.argv[1]).name
-match = re.search(r"\.cpython-(\d+)-", extension)
+match = re.search(r"\.cpython-(\d+)([a-z]*)-", extension)
 if not match:
     raise SystemExit(f"Cannot determine CPython ABI from extension name: {extension}")
 python_tag = f"cp{match.group(1)}"
+abi_tag = f"{python_tag}{match.group(2)}"
 platform_tag = sysconfig.get_platform().replace("-", "_").replace(".", "_")
-print(python_tag, python_tag, platform_tag)
+print(python_tag, abi_tag, platform_tag)
 PY
     )
   fi

@@ -15,6 +15,11 @@ on:
         required: false
         default: "standard"
         type: string
+      cache_base_branch:
+        description: "Compiler-cache baseline: auto, develop, or main"
+        required: false
+        default: "auto"
+        type: string
   workflow_dispatch:
     inputs:
       build_mode:
@@ -25,6 +30,15 @@ on:
         options:
           - standard
           - fuzz
+      cache_base_branch:
+        description: "Compiler-cache baseline"
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - develop
+          - main
 
 permissions:
   actions: write
@@ -56,72 +70,27 @@ jobs:
       seed_key_prefix: ${{ steps.resolve.outputs.seed_key_prefix }}
       role_arn: ${{ steps.resolve.outputs.role_arn }}
       rw_mode: ${{ steps.resolve.outputs.rw_mode }}
+      base_branch: ${{ steps.resolve.outputs.base_branch }}
 
     steps:
+      - name: Checkout cache resolver
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Resolve cache namespace and access
         id: resolve
         shell: bash
-        env:
-          BASE_KEY_PREFIX: ${{ format('{0}/sccache-v1/arm64/{1}/{2}', needs.resolve-vulcan-config.outputs.compiler_cache_key_prefix, needs.resolve-vulcan-config.outputs.sdk_cache, inputs.build_mode || 'standard') }}
-          READER_ROLE_ARN: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}
-          PROTECTED_WRITER_ROLE_ARN: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn }}
-          BRANCH_WRITER_ROLE_ARN: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_branch_writer_role_arn }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import os
-          from urllib.parse import quote
-
-          base = os.environ["BASE_KEY_PREFIX"].rstrip("/")
-          ref_name = os.environ["GITHUB_REF_NAME"]
-          ref_type = os.environ["GITHUB_REF_TYPE"]
-          event_name = os.environ["GITHUB_EVENT_NAME"]
-          protected = ref_type == "branch" and ref_name in {"develop", "main"}
-          direct_branch = ref_type == "branch" and event_name != "pull_request"
-
-          if protected:
-              key_prefix = base
-              seed_key_prefix = ""
-              role_arn = os.environ["PROTECTED_WRITER_ROLE_ARN"] or os.environ["READER_ROLE_ARN"]
-              rw_mode = "READ_WRITE" if os.environ["PROTECTED_WRITER_ROLE_ARN"] else "READ_ONLY"
-              if role_arn and rw_mode == "READ_ONLY":
-                  print("::warning::Protected compiler-cache writer role is unavailable; "
-                        "using the shared cache read-only.")
-          elif direct_branch:
-              encoded_ref = quote(ref_name, safe="")
-              branch_writer_role = os.environ["BRANCH_WRITER_ROLE_ARN"]
-              if branch_writer_role:
-                  key_prefix = f"{base}/branches/{encoded_ref}"
-                  seed_key_prefix = base
-                  role_arn = branch_writer_role
-                  rw_mode = "READ_WRITE"
-              else:
-                  key_prefix = base
-                  seed_key_prefix = ""
-                  role_arn = os.environ["READER_ROLE_ARN"]
-                  rw_mode = "READ_ONLY"
-                  if role_arn:
-                      print("::warning::Branch compiler-cache writer role is unavailable; "
-                            "using the shared cache read-only.")
-          else:
-              key_prefix = base
-              seed_key_prefix = ""
-              role_arn = os.environ["READER_ROLE_ARN"]
-              rw_mode = "READ_ONLY"
-
-          if not role_arn:
-              key_prefix = ""
-              seed_key_prefix = ""
-              rw_mode = "READ_ONLY"
-              print(f"::warning::Compiler-cache role is unavailable for {ref_type=} "
-                    f"{ref_name=}; continuing with remote compiler caching disabled.")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"key_prefix={key_prefix}\n")
-              out.write(f"seed_key_prefix={seed_key_prefix}\n")
-              out.write(f"role_arn={role_arn}\n")
-              out.write(f"rw_mode={rw_mode}\n")
-          PY
+          python3 scripts/ci/resolve_compiler_cache.py \
+            --base-key-prefix '${{ format('{0}/sccache-v1/arm64/{1}/{2}', needs.resolve-vulcan-config.outputs.compiler_cache_key_prefix, needs.resolve-vulcan-config.outputs.sdk_cache, inputs.build_mode || 'standard') }}' \
+            --reader-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}' \
+            --protected-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn }}' \
+            --branch-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_branch_writer_role_arn }}' \
+            --base-branch '${{ inputs.cache_base_branch || 'auto' }}' \
+            --repo "${GITHUB_WORKSPACE}" \
+            --github-output "${GITHUB_OUTPUT}"
 
   detect-changes:
     name: Detect Changes
