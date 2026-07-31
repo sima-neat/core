@@ -354,6 +354,22 @@ def test_public_graph_connect_no_runtime_port_overload():
   assert not hasattr(pyneat.Graph, "connect_port")
 
 
+def test_model_accepts_os_pathlike():
+  # Both constructors take any os.PathLike, so callers need no str() conversion.
+  # Equal mpk_json_path proves the path reaches ModelPack identically either way.
+  model_path = _strict_yolo_model_path()
+  assert hasattr(model_path, "__fspath__")
+
+  from_path = pyneat.Model(model_path)
+  from_str = pyneat.Model(str(model_path))
+  assert from_path.info().mpk_json_path == from_str.info().mpk_json_path
+
+  # Overload resolution only; a missing archive keeps this off the load path.
+  _assert_not_type_error(
+      lambda: pyneat.Model(model_path.with_name("nonexistent.tar.gz"), pyneat.ModelOptions())
+  )
+
+
 def test_model_graph_fragment_and_direct_graph_add():
   model = pyneat.Model(str(_strict_yolo_model_path()))
 

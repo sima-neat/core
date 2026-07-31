@@ -52,8 +52,9 @@ def main(argv: list[str]) -> int:
 
   # CORE LOGIC
   # The three-line Neat story:
+  # Model accepts a pathlib.Path directly, as well as a str.
   # STEP load-model
-  model = pyneat.Model(str(args.model), build_options(224))
+  model = pyneat.Model(args.model, build_options(224))
   # END STEP
   # STEP prepare-input
   image = load_image(args.image, size=224)
