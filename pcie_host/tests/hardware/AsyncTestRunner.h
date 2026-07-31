@@ -38,10 +38,8 @@ void run_async_workers(Cancel&& cancel, Producer&& producer, Consumer&& consumer
     }
   };
 
-  auto producer_future =
-      std::async(std::launch::async, [&] { run(producer); });
-  auto consumer_future =
-      std::async(std::launch::async, [&] { run(consumer); });
+  auto producer_future = std::async(std::launch::async, [&] { run(producer); });
+  auto consumer_future = std::async(std::launch::async, [&] { run(consumer); });
 
   producer_future.get();
   consumer_future.get();

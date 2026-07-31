@@ -200,8 +200,7 @@ TensorList bbox_tensor_from_output_payload(const std::shared_ptr<MappedSample>& 
 }
 
 TensorList tensors_from_output_sample(const std::shared_ptr<MappedSample>& owner,
-                                      const PcieModelFacts& facts,
-                                      const bool expects_bbox_output) {
+                                      const PcieModelFacts& facts, const bool expects_bbox_output) {
   if (expects_bbox_output || (owner && sample_has_bbox_caps(owner->sample))) {
     return bbox_tensor_from_output_payload(owner);
   }
@@ -359,8 +358,7 @@ void HostPcieChannel::stop_locked() {
       GstBus* bus = gst_element_get_bus(pipeline_);
       if (bus) {
         GstMessage* message = gst_bus_timed_pop_filtered(
-            bus, 10 * GST_SECOND,
-            static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
+            bus, 10 * GST_SECOND, static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
         if (message) {
           gst_message_unref(message);
         }
@@ -451,9 +449,7 @@ bool HostPcieChannel::wait_and_reserve_inflight() {
     return !stop_requested_.load();
   }
   std::unique_lock<std::mutex> lock(inflight_mutex_);
-  inflight_cv_.wait(lock, [&] {
-    return inflight_ < max_inflight_ || stop_requested_.load();
-  });
+  inflight_cv_.wait(lock, [&] { return inflight_ < max_inflight_ || stop_requested_.load(); });
   if (stop_requested_.load()) {
     return false;
   }
@@ -509,8 +505,7 @@ std::optional<std::int32_t> HostPcieChannel::request_id_from_buffer(GstBuffer* b
   }
 
   guint64 request_id = 0;
-  if (!structure ||
-      !gst_structure_get_uint64(structure, "frame-identifier", &request_id)) {
+  if (!structure || !gst_structure_get_uint64(structure, "frame-identifier", &request_id)) {
     return std::nullopt;
   }
   if (request_id > std::numeric_limits<std::uint32_t>::max()) {

@@ -71,11 +71,10 @@ std::string require_value(int argc, char** argv, int& index, const char* name) {
 }
 
 void usage(const char* executable) {
-  std::cerr
-      << "usage: " << executable
-      << " [--model model.tar.gz] [--card-host host] [--card-id n] [--user user]"
-         " [--queue n] [--readiness-timeout-ms ms] [--pull-timeout-ms ms]"
-         " [--lifecycle-cycles n] [--lifetime-iterations n]\n";
+  std::cerr << "usage: " << executable
+            << " [--model model.tar.gz] [--card-host host] [--card-id n] [--user user]"
+               " [--queue n] [--readiness-timeout-ms ms] [--pull-timeout-ms ms]"
+               " [--lifecycle-cycles n] [--lifetime-iterations n]\n";
 }
 
 Args parse_args(int argc, char** argv) {
@@ -114,8 +113,7 @@ Args parse_args(int argc, char** argv) {
     throw std::runtime_error("model path does not exist or is not a regular file: " + args.model);
   }
   if (args.queue < 0 || args.queue > 5 || args.readiness_timeout_ms <= 0 ||
-      args.pull_timeout_ms <= 0 || args.lifecycle_cycles < 3 ||
-      args.lifetime_iterations <= 0) {
+      args.pull_timeout_ms <= 0 || args.lifecycle_cycles < 3 || args.lifetime_iterations <= 0) {
     throw std::runtime_error(
         "queue must be in range 0..5, timeouts must be positive, lifecycle cycles must be at "
         "least 3, and lifetime iterations must be positive");
@@ -182,8 +180,7 @@ std::vector<std::int64_t> contiguous_strides(const std::vector<std::int64_t>& sh
   return strides;
 }
 
-std::size_t dense_size(const std::vector<std::int64_t>& shape,
-                       const pcie::TensorDType dtype) {
+std::size_t dense_size(const std::vector<std::int64_t>& shape, const pcie::TensorDType dtype) {
   std::size_t size = dtype_bytes(dtype);
   for (const std::int64_t dim : shape) {
     if (dim <= 0) {
@@ -216,9 +213,9 @@ pcie::TensorList make_inputs(const pcie::ModelInfo& info,
     const pcie::TensorInfo& spec = info.inputs[index];
     pcie::Tensor tensor;
     tensor.dtype = dtype_from_fact(spec.dtype);
-    tensor.shape =
-        spec.shape.empty() ? std::vector<std::int64_t>{static_cast<std::int64_t>(spec.size_bytes)}
-                           : spec.shape;
+    tensor.shape = spec.shape.empty()
+                       ? std::vector<std::int64_t>{static_cast<std::int64_t>(spec.size_bytes)}
+                       : spec.shape;
     tensor.strides_bytes = contiguous_strides(tensor.shape, dtype_bytes(tensor.dtype));
     const std::size_t size =
         spec.size_bytes != 0 ? spec.size_bytes : dense_size(tensor.shape, tensor.dtype);
@@ -239,9 +236,9 @@ pcie::TensorList make_inputs(const pcie::ModelInfo& info,
 
 void validate_outputs(const pcie::TensorList& outputs,
                       const std::vector<pcie::TensorInfo>& expected) {
-  require(outputs.size() == expected.size(),
-          "output count mismatch: got " + std::to_string(outputs.size()) +
-              " expected " + std::to_string(expected.size()));
+  require(outputs.size() == expected.size(), "output count mismatch: got " +
+                                                 std::to_string(outputs.size()) + " expected " +
+                                                 std::to_string(expected.size()));
   for (std::size_t index = 0; index < expected.size(); ++index) {
     if (!expected[index].name.empty()) {
       require(outputs[index].route.name == expected[index].name,
@@ -378,8 +375,8 @@ void test_timeout_and_backpressure(pcie::Model& model, const pcie::ModelInfo& in
   }
 }
 
-void test_queue_ownership(pcie::Model& owner, pcie::Model& contender,
-                          const pcie::ModelInfo& info, const Args& args) {
+void test_queue_ownership(pcie::Model& owner, pcie::Model& contender, const pcie::ModelInfo& info,
+                          const Args& args) {
   std::cout << "[scenario] queue ownership and failed contender cleanup\n";
   bool queue_busy = false;
   try {
@@ -409,8 +406,7 @@ void test_unique_buffer_lifetime(pcie::Model& model, const pcie::ModelInfo& info
   std::cout << "[scenario] unique input ownership for " << args.lifetime_iterations
             << " iteration(s)\n";
   auto destroyed = std::make_shared<std::atomic_int>(0);
-  const int expected_destroyed =
-      args.lifetime_iterations * static_cast<int>(info.inputs.size());
+  const int expected_destroyed = args.lifetime_iterations * static_cast<int>(info.inputs.size());
 
   pcie::test::run_async_workers(
       [&] { model.close(); },

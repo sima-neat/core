@@ -763,6 +763,33 @@ you need deep diagnostics.
 
 ---
 
+## PCIe host runtime boundary
+
+The separately packaged PCIe host API has two public levels:
+
+* `pcie::Model` is the source-compatible convenience API for one model.
+* `pcie::Runtime` is a card-scoped multi-model coordinator intended to support a thin OAAX C ABI adapter.
+
+The runtime exposes logical model IDs, caller-provided request IDs, nonblocking
+enqueue, retrieve-from-any-model, batch load, independent unload, and
+idempotent cleanup. Hardware queue IDs remain an implementation detail. The
+current Modalix implementation assigns exactly one loaded model to each of the
+six PCIe queues and continues to transfer model archives over the virtual
+Ethernet SSH/SCP control path.
+
+Inference request correlation uses the signed 32-bit OAAX request ID encoded
+in `GstSimaHostMeta.frame-id` across the PCIe/card round trip. The bit pattern
+is opaque and must be restored unchanged in the public completion. The runtime
+owns the model-to-queue registry and aggregates each queue's results; the
+card-side `pcie-pipeline-builder` remains one process and one model graph per
+queue.
+
+The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
+native API. OAAX ownership rules, status codes, and last-error storage belong
+in that adapter instead of the C++ API.
+
+---
+
 ## How to extend the library
 
 ### Adding a new Node

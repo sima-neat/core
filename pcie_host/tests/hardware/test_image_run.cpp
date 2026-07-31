@@ -131,9 +131,8 @@ Args parse_args(int argc, char** argv) {
   if (!std::filesystem::is_regular_file(args.image)) {
     throw std::runtime_error("image path does not exist or is not a regular file: " + args.image);
   }
-  if (args.max_inflight < 0 || args.max_inflight > 256 ||
-      args.readiness_timeout_ms <= 0 || args.pull_timeout_ms <= 0 || args.sync_iterations < 0 ||
-      args.iterations < 0) {
+  if (args.max_inflight < 0 || args.max_inflight > 256 || args.readiness_timeout_ms <= 0 ||
+      args.pull_timeout_ms <= 0 || args.sync_iterations < 0 || args.iterations < 0) {
     throw std::runtime_error(
         "max-inflight must be in range 0..256, timeouts must be positive, and iterations must be "
         "non-negative");

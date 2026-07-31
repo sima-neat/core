@@ -51,8 +51,7 @@ public:
 
   ModelId load(std::string model_path, ModelOptions options, const int readiness_timeout_ms) {
     std::vector<ModelConfig> configs;
-    configs.push_back(
-        ModelConfig{.path = std::move(model_path), .options = std::move(options)});
+    configs.push_back(ModelConfig{.path = std::move(model_path), .options = std::move(options)});
     return load_models(configs, readiness_timeout_ms).front();
   }
 

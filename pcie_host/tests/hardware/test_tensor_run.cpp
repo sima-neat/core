@@ -126,9 +126,9 @@ Args parse_args(int argc, char** argv) {
   if (!std::filesystem::is_regular_file(args.model)) {
     throw std::runtime_error("model path does not exist or is not a regular file: " + args.model);
   }
-  if (args.max_inflight < 0 || args.max_inflight > 256 ||
-      args.readiness_timeout_ms <= 0 || args.pull_timeout_ms <= 0 ||
-      args.burst_iterations < 0 || args.sync_iterations < 0 || args.iterations < 0) {
+  if (args.max_inflight < 0 || args.max_inflight > 256 || args.readiness_timeout_ms <= 0 ||
+      args.pull_timeout_ms <= 0 || args.burst_iterations < 0 || args.sync_iterations < 0 ||
+      args.iterations < 0) {
     throw std::runtime_error(
         "max-inflight must be in range 0..256, timeouts must be positive, and iterations must be "
         "non-negative");
@@ -448,8 +448,7 @@ int main(int argc, char** argv) {
                 return;
               }
               if (iteration == 1 || iteration % 10 == 0 || iteration == args.burst_iterations) {
-                std::cout << "burst producer " << iteration << "/" << args.burst_iterations
-                          << "\n";
+                std::cout << "burst producer " << iteration << "/" << args.burst_iterations << "\n";
               }
               if (!model.push(inputs)) {
                 throw std::runtime_error("burst push returned false at iteration " +

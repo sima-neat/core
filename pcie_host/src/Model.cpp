@@ -125,8 +125,7 @@ public:
       remote_started_ = true;
       (void)remote_.wait_ready(connection_.queue, readiness_timeout_ms);
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
-      channel_.configure(facts_, connection_.queue, connection_.card_id,
-                         connection_.max_inflight,
+      channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode);
       state_ = State::Ready;
     } catch (...) {
@@ -320,7 +319,7 @@ TensorList Model::run(const TensorList& tensors, const int timeout_ms) {
 }
 
 bool internal::RuntimeModelAccess::try_push(Model& model, const std::int32_t request_id,
-                                           const TensorList& tensors) {
+                                            const TensorList& tensors) {
   return model.impl_->try_push(request_id, tensors);
 }
 

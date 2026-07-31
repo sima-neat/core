@@ -570,10 +570,7 @@ NB_MODULE(_pyneatpcie_core, m) {
       .def("running", &pcie::Model::running)
       .def("close", &pcie::Model::close)
       .def(
-          "__enter__",
-          [](pcie::Model& model) -> pcie::Model& {
-            return model;
-          },
+          "__enter__", [](pcie::Model& model) -> pcie::Model& { return model; },
           nb::rv_policy::reference_internal)
       .def(
           "__exit__",
@@ -644,18 +641,15 @@ NB_MODULE(_pyneatpcie_core, m) {
           "image"_a, "timeout_ms"_a = -1, "format"_a = pcie::PixelFormat::BGR);
 
   nb::class_<pcie::Runtime>(m, "Runtime")
-      .def(nb::init<pcie::ConnectionOptions>(),
-           "connection"_a = pcie::ConnectionOptions{})
+      .def(nb::init<pcie::ConnectionOptions>(), "connection"_a = pcie::ConnectionOptions{})
       .def(
           "load",
           [](pcie::Runtime& runtime, std::string model_path, pcie::ModelOptions options,
              const int readiness_timeout_ms) {
             nb::gil_scoped_release release;
-            return runtime.load(std::move(model_path), std::move(options),
-                                readiness_timeout_ms);
+            return runtime.load(std::move(model_path), std::move(options), readiness_timeout_ms);
           },
-          "model_path"_a, "options"_a = pcie::ModelOptions{},
-          "readiness_timeout_ms"_a = 180000)
+          "model_path"_a, "options"_a = pcie::ModelOptions{}, "readiness_timeout_ms"_a = 180000)
       .def(
           "load_models",
           [](pcie::Runtime& runtime, const std::vector<pcie::ModelConfig>& models,
@@ -666,8 +660,8 @@ NB_MODULE(_pyneatpcie_core, m) {
           "models"_a, "readiness_timeout_ms"_a = 180000)
       .def(
           "try_enqueue",
-          [](pcie::Runtime& runtime, const pcie::ModelId model_id,
-             const pcie::RequestId request_id, nb::object tensors) {
+          [](pcie::Runtime& runtime, const pcie::ModelId model_id, const pcie::RequestId request_id,
+             nb::object tensors) {
             pcie::TensorList list = tensor_list_from_python(tensors);
             nb::gil_scoped_release release;
             return runtime.try_enqueue(model_id, request_id, list);
@@ -686,23 +680,18 @@ NB_MODULE(_pyneatpcie_core, m) {
           "timeout_ms"_a = -1)
       .def(
           "unload",
-          [](pcie::Runtime& runtime, const pcie::ModelId model_id,
-             const int drain_timeout_ms) {
+          [](pcie::Runtime& runtime, const pcie::ModelId model_id, const int drain_timeout_ms) {
             nb::gil_scoped_release release;
             runtime.unload(model_id, drain_timeout_ms);
           },
           "model_id"_a, "drain_timeout_ms"_a = 30000)
+      .def("close",
+           [](pcie::Runtime& runtime) {
+             nb::gil_scoped_release release;
+             runtime.close();
+           })
       .def(
-          "close",
-          [](pcie::Runtime& runtime) {
-            nb::gil_scoped_release release;
-            runtime.close();
-          })
-      .def(
-          "__enter__",
-          [](pcie::Runtime& runtime) -> pcie::Runtime& {
-            return runtime;
-          },
+          "__enter__", [](pcie::Runtime& runtime) -> pcie::Runtime& { return runtime; },
           nb::rv_policy::reference_internal)
       .def(
           "__exit__",
