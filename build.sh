@@ -1841,8 +1841,10 @@ clean_build_dir_if_requested() {
 configure_cmake() {
   # Configure once; subsequent steps reuse this build tree.
   local -a cmake_args=(
+    -U "SKBUILD_*"
     -S . -B "${BUILD_DIR}"
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    -DCMAKE_INSTALL_PREFIX=/usr/local
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
