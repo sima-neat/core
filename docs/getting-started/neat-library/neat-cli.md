@@ -71,10 +71,19 @@ it, run:
 neat model validate yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
+```text
+yolo_v8s_mpk: valid model archive (7 entries, 162.4 MiB extracted)
+```
+
 This applies the same archive rules the runtime applies when a `Model` loads the
 same file, so an archive that validates here loads at runtime and one that fails
 here fails there with the same error. It does not run inference, so it says
-nothing about whether the model produces correct results on a given target.
+nothing about whether the model produces correct results on a given target. A
+rejected archive prints the reason and exits nonzero:
+
+```text
+neat-model-archive: invalid_archive: failed to decompress archive: yolo_v8s_mpk.tar.gz
+```
 
 To unpack an archive into the package layout the runtime uses, run:
 
@@ -84,9 +93,7 @@ neat model extract yolo_v8s_mpk.tar.gz --output ./yolo_v8s_pkg
 
 `--output` is the package root itself, and it holds `etc`, `lib`, and `share`
 once the command succeeds. The command refuses to run if that path already
-exists, and a failed run leaves nothing behind. Model paths inside the package
-JSON are rewritten to absolute paths under the output, so moving the directory
-afterwards invalidates it.
+exists, and a failed run leaves nothing behind.
 
 Pass the produced directory to `Model` in place of the archive to skip
 extraction on every load:
@@ -95,9 +102,29 @@ extraction on every load:
 simaai::neat::Model yolo("./yolo_v8s_pkg", opt);
 ```
 
+Loading the archive directly costs a fresh extraction in every process that does
+it. Loading the extracted directory does not, which is where the time goes.
+
 Only a directory produced by `neat model extract` works this way. Unpacking the
 archive yourself with `tar -xzf` produces a different layout that `Model` does
 not accept.
+
+### Keeping an extracted package valid
+
+The output is a plain directory that you own, so delete it with `rm -rf` when you
+no longer want it. Nothing else refers to it.
+
+Keeping it correct is your responsibility. Neat does not verify a package after
+extraction: it checks that `etc`, `lib`, and `share` are present and that `etc`
+holds configuration, and it does not re-check the contents against the archive.
+Editing a config, deleting or truncating a model binary, or moving the directory
+will not be reported when the `Model` is constructed — the paths written into the
+package JSON are absolute, so a moved package points at files that are no longer
+there, and the failure surfaces later. Re-run `neat model extract` instead of
+editing or relocating an extracted package.
+
+Loading never writes into the package, so one package can back several processes
+and can be kept read-only.
 
 ## Next Step
 

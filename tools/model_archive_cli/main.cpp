@@ -9,7 +9,9 @@
 
 #include <cstdlib> // mkdtemp
 
+#include <cstdint>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -17,9 +19,11 @@
 
 namespace fs = std::filesystem;
 
+using simaai::neat::internal::model_archive_error_class_name;
 using simaai::neat::internal::ModelArchiveError;
 using simaai::neat::internal::ModelArchiveLoader;
 using simaai::neat::internal::ModelArchiveLoaderOptions;
+using simaai::neat::internal::ModelArchiveManifest;
 using simaai::neat::internal::rewrite_model_paths;
 
 namespace {
@@ -41,10 +45,32 @@ void print_usage(std::ostream& out) {
          "  neat model extract <archive.tar.gz> --output <directory>\n";
 }
 
+/// ModelArchiveError prefixes what() with the error class and most loader messages name the class
+/// as well. Collapse the pair so the reported class reads once.
+std::string error_line(const ModelArchiveError& e) {
+  const std::string prefix = std::string(model_archive_error_class_name(e.code())) + ": ";
+  std::string text = e.what();
+  const bool doubled = text.compare(0, prefix.size(), prefix) == 0 &&
+                       text.compare(prefix.size(), prefix.size(), prefix) == 0;
+  return doubled ? text.substr(prefix.size()) : text;
+}
+
+/// Directory entries carry no payload, so summing every entry gives what extraction will occupy.
+std::uint64_t extracted_bytes(const ModelArchiveManifest& manifest) {
+  std::uint64_t total = 0;
+  for (const auto& entry : manifest.entries) {
+    total += entry.size_bytes;
+  }
+  return total;
+}
+
 void validate(const std::string& archive) {
   const auto manifest = ModelArchiveLoader::inspect(archive, runtime_parity_options());
-  std::cout << manifest.package_name << ": valid model archive, " << manifest.entries.size()
-            << " entries\n";
+  // Reports the extracted size because that, not the entry count, decides whether `extract` fits.
+  std::cout << manifest.package_name << ": valid model archive (" << manifest.entries.size()
+            << " entries, " << std::fixed << std::setprecision(1)
+            << static_cast<double>(extracted_bytes(manifest)) / (1024.0 * 1024.0)
+            << " MiB extracted)\n";
 }
 
 void extract(const std::string& archive, const std::string& output) {
@@ -104,8 +130,8 @@ int main(int argc, char** argv) {
       return 0;
     }
   } catch (const ModelArchiveError& e) {
-    // what() already carries the error class, which is the CLI's contract with the runtime.
-    std::cerr << kProgram << ": " << e.what() << "\n";
+    // The class stays in the message: it is the CLI's contract with the runtime loader.
+    std::cerr << kProgram << ": " << error_line(e) << "\n";
     return 1;
   } catch (const std::exception& e) {
     std::cerr << kProgram << ": " << e.what() << "\n";
