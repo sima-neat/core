@@ -513,7 +513,9 @@ RUN_TEST(
             "model_signature", G_TYPE_STRING, "sha256:model-metadata", "aws_access_key_id",
             G_TYPE_STRING, "structured-aws-key", "awsSecretAccessKey", G_TYPE_STRING,
             "structured-aws-secret", "OPENVSCODE_SERVER_TOKEN", G_TYPE_STRING,
-            "structured-openvscode-secret", "compass", G_TYPE_STRING, "north", nullptr);
+            "structured-openvscode-secret", "AWSAccessKeyId", G_TYPE_STRING,
+            "structured-acronym-aws-key", "AWSSecretAccessKey", G_TYPE_STRING,
+            "structured-acronym-aws-secret", "compass", G_TYPE_STRING, "north", nullptr);
         const std::string debug =
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
             "api_key='quoted-api-secret' password=\"quoted-password\" user-pw='rtsp-password' "
@@ -528,7 +530,9 @@ RUN_TEST(
             "\"session_token\":\"underscore-session-secret\","
             "\"session-token\":\"hyphen-session-secret\"} "
             "aws={\"SecretAccessKey\":\"camel-aws-secret\","
-            "\"awsSecretAccessKey\":\"camel-prefixed-aws-secret\"} "
+            "\"awsSecretAccessKey\":\"camel-prefixed-aws-secret\","
+            "\"AWSAccessKeyId\":\"acronym-aws-key\","
+            "\"AWSSecretAccessKey\":\"acronym-aws-secret\"} "
             "OPENVSCODE_SERVER_TOKEN=raw-openvscode-secret "
             "GITHUB_TOKEN=raw-github-secret "
             "metadata={\"dtype_token\":\"UInt8\",\"model_signature\":\"sha256:metadata\"} "
@@ -566,6 +570,8 @@ RUN_TEST(
                     raw.details.at("aws_access_key_id") == "<redacted>" &&
                     raw.details.at("awsSecretAccessKey") == "<redacted>" &&
                     raw.details.at("OPENVSCODE_SERVER_TOKEN") == "<redacted>" &&
+                    raw.details.at("AWSAccessKeyId") == "<redacted>" &&
+                    raw.details.at("AWSSecretAccessKey") == "<redacted>" &&
                     raw.details.at("dtype_token") == "UInt8" &&
                     raw.details.at("model_signature") == "sha256:model-metadata" &&
                     raw.details.at("compass") == "north",
@@ -590,6 +596,8 @@ RUN_TEST(
                     raw.debug.find("hyphen-session-secret") == std::string::npos &&
                     raw.debug.find("camel-aws-secret") == std::string::npos &&
                     raw.debug.find("camel-prefixed-aws-secret") == std::string::npos &&
+                    raw.debug.find("acronym-aws-key") == std::string::npos &&
+                    raw.debug.find("acronym-aws-secret") == std::string::npos &&
                     raw.debug.find("raw-openvscode-secret") == std::string::npos &&
                     raw.debug.find("raw-github-secret") == std::string::npos &&
                     raw.debug.find("multiply-password") == std::string::npos &&

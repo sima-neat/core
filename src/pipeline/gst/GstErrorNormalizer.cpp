@@ -434,7 +434,9 @@ bool sensitive_detail_name(std::string_view name) {
     }
     if (std::isupper(c) && i > 0) {
       const unsigned char previous = static_cast<unsigned char>(name[i - 1]);
-      if (std::islower(previous) || std::isdigit(previous)) {
+      const bool starts_word_after_acronym = std::isupper(previous) && i + 1U < name.size() &&
+                                             std::islower(static_cast<unsigned char>(name[i + 1U]));
+      if (std::islower(previous) || std::isdigit(previous) || starts_word_after_acronym) {
         normalized.push_back('-');
       }
     }
