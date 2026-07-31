@@ -193,6 +193,25 @@ RUN_TEST(
       }
 
       {
+        const NormalizedDiagnostic write = classify_gst_error(
+            raw_error("filesink", "gst-resource-error-quark", GST_RESOURCE_ERROR_OPEN_WRITE,
+                      "Could not open output: Permission denied"));
+        require_code(write, error_codes::kPermissionDenied);
+        require_contains(render_diagnostic_body(write, false), "Required access: write",
+                         "write-side permission errors should identify required write access");
+
+        const NormalizedDiagnostic read_write = classify_gst_error(
+            raw_error("v4l2sink", "gst-resource-error-quark", GST_RESOURCE_ERROR_OPEN_READ_WRITE,
+                      "Could not open device: Operation not permitted"));
+        require_code(read_write, error_codes::kPermissionDenied);
+        const std::string text = render_diagnostic_body(read_write, false);
+        require_contains(text, "Required access: read and write",
+                         "read/write permission errors should identify both access modes");
+        require(text.find("input resource") == std::string::npos,
+                "permission diagnostics should not describe write resources as inputs");
+      }
+
+      {
         RawGstError raw =
             raw_error("neatargmax", "gst-stream-error-quark", GST_STREAM_ERROR_FAILED,
                       "invalid option field=axis reason=out_of_range option_value=5 rank=4");
@@ -339,7 +358,9 @@ RUN_TEST(
             "Cookie: sessionid=raw-cookie-secret\n{\"session_cookie\":\"json-cookie-secret\"} "
             "password=(string)\"typed password secret\" "
             "credential='raw credential secret' "
-            "credentials=(string)\"typed credential secret\"",
+            "credentials=(string)\"typed credential secret\" "
+            "X-API-Key: extension-api-secret\n"
+            "X_Auth_Token: extension-auth-secret",
             details);
         g_error_free(error);
 
@@ -372,7 +393,9 @@ RUN_TEST(
                     raw.debug.find("json-cookie-secret") == std::string::npos &&
                     raw.debug.find("typed password secret") == std::string::npos &&
                     raw.debug.find("raw credential secret") == std::string::npos &&
-                    raw.debug.find("typed credential secret") == std::string::npos,
+                    raw.debug.find("typed credential secret") == std::string::npos &&
+                    raw.debug.find("extension-api-secret") == std::string::npos &&
+                    raw.debug.find("extension-auth-secret") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
@@ -386,6 +409,10 @@ RUN_TEST(
                          "credential aliases should redact quoted raw values");
         require_contains(raw.debug, "credentials=(string)\"<redacted>\"",
                          "plural credential aliases should redact typed raw values");
+        require_contains(raw.debug, "X-API-Key: <redacted>",
+                         "prefixed API key headers should retain only their field names");
+        require_contains(raw.debug, "X_Auth_Token: <redacted>",
+                         "prefixed auth token headers should retain only their field names");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);
 

@@ -183,8 +183,7 @@ std::string redact_uri_credentials(std::string value) {
   for (std::string_view marker : header_secrets) {
     std::size_t pos = 0;
     while ((pos = lower_copy(value).find(marker, pos)) != std::string::npos) {
-      if (pos > 0 && (std::isalnum(static_cast<unsigned char>(value[pos - 1])) ||
-                      value[pos - 1] == '_' || value[pos - 1] == '-')) {
+      if (pos > 0 && std::isalnum(static_cast<unsigned char>(value[pos - 1]))) {
         pos += marker.size();
         continue;
       }
@@ -921,14 +920,29 @@ NormalizedDiagnostic classify_gst_error(RawGstError raw) {
       return configuration_invalid(std::move(raw));
     if (raw.code == GST_RESOURCE_ERROR_NOT_FOUND)
       return resource_not_found(std::move(raw));
-    if (raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED ||
-        (raw.code == GST_RESOURCE_ERROR_OPEN_READ && contains_ci(text, "permission denied"))) {
+    const bool permission_text = contains_ci(text, "permission denied") ||
+                                 contains_ci(text, "operation not permitted") ||
+                                 contains_ci(text, "access denied");
+    const bool permission_open_error =
+        permission_text &&
+        (raw.code == GST_RESOURCE_ERROR_OPEN_READ || raw.code == GST_RESOURCE_ERROR_OPEN_WRITE ||
+         raw.code == GST_RESOURCE_ERROR_OPEN_READ_WRITE);
+    if (raw.code == GST_RESOURCE_ERROR_NOT_AUTHORIZED || permission_open_error) {
+      std::string required_access = "access";
+      if (raw.code == GST_RESOURCE_ERROR_OPEN_READ)
+        required_access = "read";
+      else if (raw.code == GST_RESOURCE_ERROR_OPEN_WRITE)
+        required_access = "write";
+      else if (raw.code == GST_RESOURCE_ERROR_OPEN_READ_WRITE)
+        required_access = "read and write";
       NormalizedDiagnostic out =
           base(std::move(raw), error_codes::kPermissionDenied, "gstreamer.permission_denied",
-               "The input resource could not be opened with the required permissions.");
+               "The resource could not be opened with the required permissions.");
+      add_fact(out, "Required access", required_access);
       out.actions = {
-          "Confirm that the application user can read the file or device.",
-          "Correct the source permissions and retry.",
+          "Confirm that the application user has " + required_access +
+              " permission for the file or device.",
+          "Correct the resource permissions and retry.",
       };
       return out;
     }
