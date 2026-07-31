@@ -2600,6 +2600,33 @@ collect_single_dist_artifact() {
   out_ref="${matches[0]}"
 }
 
+# The Core DEB carries an AArch64 helper for the board and an AArch64 SDK. An amd64 SDK cannot
+# execute that binary, so it needs a host-native build of the same two translation units. It is
+# produced here, before metadata generation, so it inherits the release version and checksum from
+# the same commit. Skipped when the cross toolchain is absent, which keeps developer builds
+# unchanged; CI provisions it.
+build_amd64_model_archive_helper_if_possible() {
+  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" || "${OS_NAME}" == "Darwin" ]]; then
+    return 0
+  fi
+  if ! command -v x86_64-linux-gnu-g++ >/dev/null 2>&1; then
+    echo "Skipping amd64 model archive helper (x86_64-linux-gnu-g++ not available)."
+    return 0
+  fi
+
+  local version output
+  version="$(compute_neat_package_version)"
+  output="dist/neat-model-archive-${version}-linux-amd64"
+
+  echo "Building amd64 model archive helper: ${output}"
+  mkdir -p dist
+  x86_64-linux-gnu-g++ -std=c++20 -O2 -DSIMA_NEAT_INTERNAL=1 \
+    -I "${SCRIPT_DIR}/src" \
+    "${SCRIPT_DIR}/tools/model_archive_cli/main.cpp" \
+    "${SCRIPT_DIR}/src/model/ModelArchiveLoader.cpp" \
+    -lz -o "${output}"
+}
+
 generate_package_metadata_if_requested() {
   if [[ "${SKIP_DIST}" == "ON" ]]; then
     echo
@@ -2693,6 +2720,7 @@ generate_package_metadata_if_requested() {
     --exclude ".sh" \
     --exclude ".txt" \
     --exclude ".json" \
+    --exclude "neat-model-archive-" \
     --download-compatible-files-only \
     --variant pyneat \
     "${package_compatibility_args[@]}"
@@ -2707,6 +2735,7 @@ generate_package_metadata_if_requested() {
     --exclude ".sh" \
     --exclude ".txt" \
     --exclude ".json" \
+    --exclude "neat-model-archive-" \
     --variant extras
 
   WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
@@ -2960,6 +2989,7 @@ main() {
   stage_package_artifacts_to_dist
   write_dist_package_contract_manifest_fields
   write_install_manifest
+  build_amd64_model_archive_helper_if_possible
   generate_package_metadata_if_requested
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested

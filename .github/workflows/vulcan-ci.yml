@@ -213,6 +213,7 @@ jobs:
             sima-cli --version
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
+            /workspace/scripts/ci/install_amd64_cross_toolchain.sh
             cd /workspace
             ./build.sh ${CORE_BUILD_ARGS}
             if [[ "${CORE_BUILD_ARGS}" == *"--all"* ]]; then
@@ -275,6 +276,29 @@ jobs:
         test -f dist/install_neat_framework.sh
         test -f dist/neat-install-manifest.txt
         test -f build/resolved_manifest.json
+
+        # The amd64 SDK helper is the one artifact here not built for the board. Read the ELF
+        # header directly rather than shelling out, so the check does not depend on binutils
+        # being present wherever this step runs.
+        python3 - <<'PY'
+        from pathlib import Path
+
+        helpers = sorted(Path("dist").glob("neat-model-archive-*-linux-amd64"))
+        if len(helpers) != 1:
+            raise SystemExit(f"expected exactly one amd64 helper in dist, got {helpers!r}")
+
+        header = helpers[0].read_bytes()[:20]
+        e_machine = int.from_bytes(header[18:20], "little")
+        if header[:4] != b"\x7fELF" or e_machine != 0x3E:
+            raise SystemExit(f"{helpers[0]} is not an x86-64 ELF (e_machine=0x{e_machine:x})")
+
+        # It must ship with a checksum in the release metadata, and must not leak into the
+        # variants that describe only the wheel or only the extras payload.
+        for variant, expected in (("metadata-all", True), ("metadata-pyneat", False), ("metadata-extras", False)):
+            present = "neat-model-archive-" in Path(f"dist/{variant}.json").read_text(encoding="utf-8")
+            if present is not expected:
+                raise SystemExit(f"{variant}.json amd64 helper presence={present}, expected {expected}")
+        PY
 
         sudo install -m 0644 build/resolved_manifest.json dist/resolved-deps-manifest.json
         ls -lh dist
@@ -360,6 +384,24 @@ jobs:
             echo "Artifact installation attempt ${attempt} failed; retrying in ${delay}s." >&2
             sleep "${delay}"
           done
+
+      - name: Verify the board received only the AArch64 model archive helper
+        run: |
+          set -euo pipefail
+          # The board runs the helper from the Core DEB. The amd64 SDK helper is published in the
+          # same bundle, so prove installation never routes it here.
+          dpkg -L sima-neat | grep -qx '/usr/bin/neat-model-archive'
+          python3 -c "
+          import sys
+          h = open('/usr/bin/neat-model-archive','rb').read(20)
+          m = int.from_bytes(h[18:20],'little')
+          sys.exit(0 if h[:4]==b'\x7fELF' and m==0xB7 else f'not AArch64: e_machine=0x{m:x}')
+          "
+          test ! -e /usr/local/lib/sima-neat/neat-model-archive
+          if find . -maxdepth 1 -type f -name 'neat-model-archive-*-linux-amd64' | grep -q .; then
+            echo "amd64 helper was downloaded to the board install directory." >&2
+            exit 1
+          fi
 
       - name: Locate installed extras content
         run: |

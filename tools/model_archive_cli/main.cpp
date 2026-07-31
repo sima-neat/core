@@ -94,9 +94,13 @@ void extract(const std::string& archive, const std::string& output) {
   }
   const fs::path staging(staging_template);
 
+  ModelArchiveLoaderOptions opt = runtime_parity_options();
+  // Inflate beside the destination too. The snapshot is the size of the extracted package, and
+  // TMPDIR is routinely a smaller filesystem than the one holding --output.
+  opt.staging_base = staging.string();
+
   try {
-    const auto extracted =
-        ModelArchiveLoader::extract(archive, staging.string(), runtime_parity_options());
+    const auto extracted = ModelArchiveLoader::extract(archive, staging.string(), opt);
     // Anchored at the published root, not at staging, so the JSON never names a path that stops
     // existing at the rename below.
     rewrite_model_paths(extracted.etc_dir, package_root.string());

@@ -1167,3 +1167,83 @@ def test_list_remains_unsupported(tmp_path: Path) -> None:
 
     assert proc.returncode == 1
     assert "unknown option or command: list" in proc.stderr
+
+
+def run_neat_copy(tmp_path: Path, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Runs a copy of the script so the adjacent-helper lookup resolves inside tmp_path."""
+    local_neat = tmp_path / "neat"
+    local_neat.write_text(NEAT.read_text(encoding="utf-8"), encoding="utf-8")
+    local_neat.chmod(0o755)
+    merged = os.environ.copy()
+    merged.update(env)
+    merged.setdefault("NO_COLOR", "1")
+    return subprocess.run(
+        [str(local_neat), *args],
+        cwd=REPO_ROOT,
+        env=merged,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+
+def fake_uname(bin_dir: Path, machine: str) -> None:
+    write_exe(
+        bin_dir / "uname",
+        f"""\
+        #!/usr/bin/env bash
+        echo "{machine}"
+        """,
+    )
+
+
+def test_amd64_selects_the_host_native_helper(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uname(bin_dir, "x86_64")
+    calls = tmp_path / "calls.log"
+    host_helper = tmp_path / "host-helper"
+    write_exe(host_helper, f'#!/usr/bin/env bash\necho "host $*" >> "{calls}"\n')
+    # An adjacent aarch64 helper is present and must be ignored on this machine.
+    write_exe(tmp_path / "neat-model-archive", f'#!/usr/bin/env bash\necho "adjacent $*" >> "{calls}"\n')
+    env = base_env(tmp_path, bin_dir)
+    env["NEAT_HOST_MODEL_ARCHIVE_BIN"] = str(host_helper)
+
+    proc = run_neat_copy(tmp_path, ["model", "validate", "m.tar.gz"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert calls.read_text(encoding="utf-8").strip() == "host validate m.tar.gz"
+
+
+def test_aarch64_selects_the_adjacent_core_package_helper(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uname(bin_dir, "aarch64")
+    calls = tmp_path / "calls.log"
+    write_exe(tmp_path / "neat-model-archive", f'#!/usr/bin/env bash\necho "adjacent $*" >> "{calls}"\n')
+    host_helper = tmp_path / "host-helper"
+    write_exe(host_helper, f'#!/usr/bin/env bash\necho "host $*" >> "{calls}"\n')
+    env = base_env(tmp_path, bin_dir)
+    env["NEAT_HOST_MODEL_ARCHIVE_BIN"] = str(host_helper)
+
+    proc = run_neat_copy(tmp_path, ["model", "validate", "m.tar.gz"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert calls.read_text(encoding="utf-8").strip() == "adjacent validate m.tar.gz"
+
+
+def test_amd64_without_a_host_helper_names_the_machine(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uname(bin_dir, "x86_64")
+    # The adjacent aarch64 helper exists but must never be executed on this machine.
+    write_exe(tmp_path / "neat-model-archive", "#!/usr/bin/env bash\nexit 0\n")
+    env = base_env(tmp_path, bin_dir)
+    env["NEAT_HOST_MODEL_ARCHIVE_BIN"] = str(tmp_path / "absent-host-helper")
+
+    proc = run_neat_copy(tmp_path, ["model", "validate", "m.tar.gz"], env)
+
+    assert proc.returncode == 1
+    assert "model archive helper not found" in proc.stderr
+    assert "x86_64" in proc.stderr

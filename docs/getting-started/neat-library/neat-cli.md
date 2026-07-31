@@ -64,6 +64,9 @@ neat update
 
 ## Model Archives
 
+Both commands below run on Modalix and in the Neat SDK, on either SDK
+architecture.
+
 To check a compiled `.tar.gz` model package before an application tries to load
 it, run:
 
@@ -124,6 +127,10 @@ difference.
 Only a directory produced by `neat model extract` works this way. Unpacking the
 archive yourself with `tar -xzf` produces a different layout that `Model` does
 not accept.
+
+Extraction inflates the archive next to `--output` rather than under `TMPDIR`,
+so a small or differently-mounted temporary filesystem does not limit the
+package size you can extract.
 
 ### Keeping an extracted package valid
 
