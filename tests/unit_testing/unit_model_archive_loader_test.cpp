@@ -43,6 +43,11 @@ void write_empty_file(const std::filesystem::path& path) {
   out << "not an archive";
 }
 
+std::string read_file_bytes(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 std::vector<std::string> extracted_file_set(const std::filesystem::path& package_root) {
   namespace fs = std::filesystem;
   std::vector<std::string> files;
@@ -87,6 +92,66 @@ RUN_TEST(
           ModelArchiveLoader::extract(valid.string(), out_root);
       require(second.package_root == first.package_root,
               "ModelArchiveLoader::extract should be deterministic for same archive/root");
+
+      // A decoder that stops at the first end-of-stream marker truncates this silently rather
+      // than failing, so assert equality with the single-member extraction, not just success.
+      const fs::path multi_member =
+          sima_test::model_archive_fixture_path("valid/multi_member_valid.tar.gz");
+      require(fs::exists(multi_member), "missing multi_member_valid fixture; run "
+                                        "tests/tools/make_model_archive_fixtures.py");
+      const std::string multi_root = sima_test::make_temp_dir("model_archive_loader_multi_member");
+      const ModelArchiveExtractResult multi =
+          ModelArchiveLoader::extract(multi_member.string(), multi_root);
+      const std::vector<std::string> multi_files = extracted_file_set(multi.package_root);
+      require(multi_files == extracted_file_set(first.package_root),
+              "concatenated-member archive should extract the same file set as basic_valid");
+      for (const auto& rel : multi_files) {
+        require(read_file_bytes(fs::path(multi.package_root) / rel) ==
+                    read_file_bytes(fs::path(first.package_root) / rel),
+                "concatenated-member archive content differs for " + rel);
+      }
+
+      // An all-zero tail is block padding, which gzip 1.12 decompresses with exit 0. Rejecting it
+      // would drop archives the subprocess decoder loaded, so assert it extracts, not merely that
+      // it is accepted.
+      const fs::path zero_padded =
+          sima_test::model_archive_fixture_path("valid/zero_padded_valid.tar.gz");
+      require(fs::exists(zero_padded), "missing zero_padded_valid fixture; run "
+                                       "tests/tools/make_model_archive_fixtures.py");
+      const std::string padded_root = sima_test::make_temp_dir("model_archive_loader_zero_padded");
+      const ModelArchiveExtractResult padded =
+          ModelArchiveLoader::extract(zero_padded.string(), padded_root);
+      const std::vector<std::string> padded_files = extracted_file_set(padded.package_root);
+      require(padded_files == extracted_file_set(first.package_root),
+              "zero-padded archive should extract the same file set as basic_valid");
+      for (const auto& rel : padded_files) {
+        require(read_file_bytes(fs::path(padded.package_root) / rel) ==
+                    read_file_bytes(fs::path(first.package_root) / rel),
+                "zero-padded archive content differs for " + rel);
+      }
+
+      // Decoder parity with the `gzip -dc` subprocess this replaced, measured on GNU gzip 1.12:
+      // trailing garbage exits 2 and an empty file exits 1, so both have always been rejected.
+      for (const char* rejected :
+           {"invalid/trailing_garbage.tar.gz", "invalid/empty_archive.tar.gz"}) {
+        const fs::path fixture = sima_test::model_archive_fixture_path(rejected);
+        require(fs::exists(fixture),
+                std::string("missing ") + rejected +
+                    " fixture; run tests/tools/make_model_archive_fixtures.py");
+        require_model_archive_error([&]() { (void)ModelArchiveLoader::inspect(fixture.string()); },
+                                    ModelArchiveErrorClass::InvalidArchive,
+                                    std::string(rejected) + " should fail with invalid_archive");
+      }
+
+      // One inflation per load is the #653 guarantee. Timing cannot prove it, so assert the count
+      // directly.
+      {
+        const std::uint64_t before = ModelArchiveLoader::inflation_count();
+        (void)ModelArchiveLoader::extract(valid.string(),
+                                          sima_test::make_temp_dir("model_archive_inflation"));
+        require(ModelArchiveLoader::inflation_count() == before + 1,
+                "one archive extract should inflate exactly once");
+      }
 
       const std::string low_space_root = sima_test::make_temp_dir("model_archive_loader_low_space");
       ModelArchiveLoaderOptions low_space;

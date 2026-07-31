@@ -13,3 +13,9 @@ endif()
 
 add_executable(install_smoke_app main.cpp)
 target_link_libraries(install_smoke_app PRIVATE SimaNeat::sima_neat)
+
+# The static target carries its dependencies in its link interface instead of absorbing them, so it
+# is the one that exposes an unresolvable imported target or a build-host absolute path in the
+# exported config. Linking only the shared target leaves both failures untested.
+add_executable(install_smoke_static_app main.cpp)
+target_link_libraries(install_smoke_static_app PRIVATE SimaNeat::sima_neat_static)

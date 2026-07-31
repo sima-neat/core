@@ -70,6 +70,8 @@ struct ModelArchiveLoaderOptions {
   std::size_t max_entries = 2048;
   std::size_t max_json_depth = 64;
   std::uint64_t min_output_free_bytes = 16ULL * 1024ULL * 1024ULL;
+  // Filesystem for the inflated snapshot. Empty stages under TMPDIR.
+  std::string staging_base;
 
   bool require_pipeline_sequence = true;
   bool require_model_binary = true;
@@ -98,7 +100,7 @@ struct ModelArchiveExtractResult {
 using ChooseModelArchiveOutputRoot = std::function<std::string(const ModelArchiveManifest&)>;
 
 /// Reads .tar.gz model archives. Every entry point, inspect() included, inflates the archive
-/// once into a staging copy under TMPDIR and so needs temp space for the inflated size.
+/// once into a staging copy and so needs temp space for the inflated size.
 class ModelArchiveLoader {
 public:
   static ModelArchiveManifest inspect(const std::string& archive_path,
@@ -113,6 +115,10 @@ public:
   static ModelArchiveExtractResult extract(const std::string& archive_path,
                                            const ChooseModelArchiveOutputRoot& choose_output_root,
                                            const ModelArchiveLoaderOptions& opt = {});
+
+  /// Total archive inflations performed by this process. #653 made one load cost exactly one
+  /// inflation; a regression to repeated passes is otherwise only visible as elapsed time.
+  static std::uint64_t inflation_count();
 };
 
 } // namespace simaai::neat::internal
