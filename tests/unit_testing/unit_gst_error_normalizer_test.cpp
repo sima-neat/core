@@ -48,6 +48,7 @@ RUN_TEST(
         RawGstError raw = raw_error("filesrc", "gst-resource-error-quark",
                                     GST_RESOURCE_ERROR_NOT_FOUND, "Resource not found.");
         raw.details["source-identity"] = "/data/missing.mp4";
+        raw.debug = "gstfilesrc.c: /data/missing.mp4: No such file or directory";
         const NormalizedDiagnostic diagnostic = classify_gst_error(std::move(raw));
         require_code(diagnostic, error_codes::kFileNotFound);
         require(diagnostic.diagnostic_id == "gstreamer.file_not_found",
@@ -212,7 +213,8 @@ RUN_TEST(
                                             "Resource not found.");
         GstStructure* details =
             gst_structure_new("neat-error-details", "neat-diagnostic-id", G_TYPE_STRING,
-                              "gstreamer.file_not_found", nullptr);
+                              "gstreamer.file_not_found", "password", G_TYPE_STRING, "hunter2",
+                              "auth-token", G_TYPE_STRING, "do-not-store", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error, "debug path token=do-not-leak", details);
         g_error_free(error);
@@ -221,6 +223,9 @@ RUN_TEST(
         require(raw.factory_name == "filesrc", "raw parser should capture the element factory");
         require(raw.details.at("source-identity") == "/data/input.mp4",
                 "raw parser should capture the configured source identity");
+        require(raw.details.at("password") == "<redacted>" &&
+                    raw.details.at("auth-token") == "<redacted>",
+                "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);

@@ -98,6 +98,19 @@ std::string truncate(std::string value, std::size_t max_bytes = 4096) {
   return value;
 }
 
+bool sensitive_detail_name(std::string_view name) {
+  const std::string lower = lower_copy(std::string(name));
+  static constexpr std::string_view markers[] = {
+      "password",      "passwd",  "token",  "secret",     "signature",   "credential",
+      "authorization", "api-key", "apikey", "access-key", "private-key",
+  };
+  for (std::string_view marker : markers) {
+    if (lower.find(marker) != std::string::npos)
+      return true;
+  }
+  return false;
+}
+
 std::string combined_raw(const RawGstError& raw) {
   std::string out = raw.message;
   if (!raw.debug.empty()) {
@@ -305,9 +318,8 @@ NormalizedDiagnostic dtype_missing(RawGstError raw) {
 NormalizedDiagnostic file_not_found(RawGstError raw) {
   NormalizedDiagnostic out = base(std::move(raw), error_codes::kFileNotFound,
                                   "gstreamer.file_not_found", "The input file does not exist.");
-  std::string path = quoted_subject(combined_raw(out.raw), "No such file");
-  if (path.empty())
-    path = find_detail(out.raw, {"source-identity", "source_identity", "path"}).value_or("");
+  const std::string path =
+      find_detail(out.raw, {"source-identity", "source_identity", "path"}).value_or("");
   add_fact(out, "Path", path);
   out.actions = {
       "Correct the file path.",
@@ -579,7 +591,11 @@ RawGstError parse_gst_error_message(GstMessage* message) {
       const char* name = gst_structure_nth_field_name(details, i);
       if (!name)
         continue;
-      out.details.emplace(name, truncate(value_to_string(gst_structure_get_value(details, name))));
+      const std::string value =
+          sensitive_detail_name(name)
+              ? "<redacted>"
+              : truncate(value_to_string(gst_structure_get_value(details, name)));
+      out.details.emplace(name, value);
     }
   }
   return out;
