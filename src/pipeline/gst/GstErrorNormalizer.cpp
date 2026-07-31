@@ -126,8 +126,8 @@ std::string redact_uri_credentials(std::string value) {
   }
 
   static constexpr std::string_view sensitive[] = {
-      "credential=", "credentials=", "token=", "key=", "secret=",
-      "password=",   "signature=",   "sig=",   "pw=",  "pwd=",
+      "credential=", "credentials=", "passphrase=", "token=", "key=", "secret=",
+      "password=",   "signature=",   "sig=",        "pw=",    "pwd=",
   };
   for (std::string_view marker : sensitive) {
     std::size_t pos = 0;
@@ -173,6 +173,7 @@ std::string redact_uri_credentials(std::string value) {
       "sessionid",
       "bearer",
       "jwt",
+      "passphrase",
       "password",
       "passwd",
       "token",
@@ -248,8 +249,8 @@ bool sensitive_detail_name(std::string_view name) {
     begin = end + 1;
   }
   static constexpr std::string_view markers[] = {
-      "password", "passwd", "token",      "secret",      "signature", "credential", "authorization",
-      "api-key",  "apikey", "access-key", "private-key", "cookie",    "session-id",
+      "passphrase",    "password", "passwd", "token",      "secret",      "signature", "credential",
+      "authorization", "api-key",  "apikey", "access-key", "private-key", "cookie",    "session-id",
   };
   for (std::string_view marker : markers) {
     if (normalized.find(marker) != std::string::npos)

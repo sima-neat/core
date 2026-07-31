@@ -366,7 +366,7 @@ RUN_TEST(
             "access_key", G_TYPE_STRING, "access-secret", "private_key", G_TYPE_STRING,
             "private-secret", "user-pw", G_TYPE_STRING, "rtsp-secret", "user_pw", G_TYPE_STRING,
             "rtsp-secret-underscore", "set-cookie", G_TYPE_STRING, "sessionid=structured-secret",
-            nullptr);
+            "passphrase", G_TYPE_STRING, "structured-srt-secret", nullptr);
         GstMessage* message = gst_message_new_error_with_details(
             GST_OBJECT(source), error,
             "debug path token=do-not-leak Authorization: Bearer abc123\npassword: hunter2 "
@@ -380,7 +380,8 @@ RUN_TEST(
             "credential='raw credential secret' "
             "credentials=(string)\"typed credential secret\" "
             "X-API-Key: extension-api-secret\n"
-            "X_Auth_Token: extension-auth-secret",
+            "X_Auth_Token: extension-auth-secret "
+            "srt://example.test:9000?passphrase=srt-passphrase-secret",
             details);
         g_error_free(error);
 
@@ -396,7 +397,8 @@ RUN_TEST(
                     raw.details.at("private_key") == "<redacted>" &&
                     raw.details.at("user-pw") == "<redacted>" &&
                     raw.details.at("user_pw") == "<redacted>" &&
-                    raw.details.at("set-cookie") == "<redacted>",
+                    raw.details.at("set-cookie") == "<redacted>" &&
+                    raw.details.at("passphrase") == "<redacted>",
                 "raw parser should redact values whose structured field names are sensitive");
         require_contains(raw.debug, "token=<redacted>", "raw parser should redact credentials");
         require(raw.debug.find("abc123") == std::string::npos &&
@@ -415,7 +417,8 @@ RUN_TEST(
                     raw.debug.find("raw credential secret") == std::string::npos &&
                     raw.debug.find("typed credential secret") == std::string::npos &&
                     raw.debug.find("extension-api-secret") == std::string::npos &&
-                    raw.debug.find("extension-auth-secret") == std::string::npos,
+                    raw.debug.find("extension-auth-secret") == std::string::npos &&
+                    raw.debug.find("srt-passphrase-secret") == std::string::npos,
                 "raw parser should redact header-style, colon-separated, and quoted credentials");
         require_contains(raw.debug, "api_key='<redacted>'",
                          "quoted credential redaction should preserve only the quote delimiters");
@@ -433,6 +436,8 @@ RUN_TEST(
                          "prefixed API key headers should retain only their field names");
         require_contains(raw.debug, "X_Auth_Token: <redacted>",
                          "prefixed auth token headers should retain only their field names");
+        require_contains(raw.debug, "passphrase=<redacted>",
+                         "SRT passphrases should retain only their parameter names");
         const NormalizedDiagnostic diagnostic = classify_gst_error(raw);
         require_code(diagnostic, error_codes::kFileNotFound);
 
