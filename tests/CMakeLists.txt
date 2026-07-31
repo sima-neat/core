@@ -494,6 +494,13 @@ if (TARGET unit_plugin_failure_messages_test)
     ENVIRONMENT "GST_REGISTRY_1_0=${CMAKE_BINARY_DIR}/sima_gst_registry_unit_plugin_failure_messages_test_v2.bin")
 endif()
 
+if (TARGET unit_gst_error_normalizer_test)
+  # This test intentionally instantiates a system GStreamer element to verify
+  # message-source parsing. Do not let its plugin scan race other CTest
+  # processes using the shared registry cache.
+  set_tests_properties(unit_gst_error_normalizer_test PROPERTIES RUN_SERIAL TRUE)
+endif()
+
 if (TARGET unit_simaai_allocator_share_test)
   target_link_libraries(unit_simaai_allocator_share_test PRIVATE ${CMAKE_DL_LIBS})
 endif()
