@@ -2124,6 +2124,22 @@ build_python_wheel_if_requested() {
   local pyproject_path="${REPO_ROOT}/pyproject.toml"
   local pyproject_backup
   local pyneat_package_version
+  local wheel_build_dir
+  local wheel_cmake_generator
+
+  if [[ "${BUILD_DIR}" == /* ]]; then
+    wheel_build_dir="${BUILD_DIR}"
+  else
+    wheel_build_dir="${REPO_ROOT}/${BUILD_DIR}"
+  fi
+  wheel_cmake_generator="$(
+    sed -n 's/^CMAKE_GENERATOR:INTERNAL=//p' "${BUILD_DIR}/CMakeCache.txt" | head -1
+  )"
+  if [[ -z "${wheel_cmake_generator}" ]]; then
+    echo "ERROR: unable to determine the CMake generator from ${BUILD_DIR}/CMakeCache.txt." >&2
+    exit 1
+  fi
+  echo "Reusing configured CMake build tree for wheel: ${wheel_build_dir}"
 
   # Use isolated venv if python-build module is missing on the host.
   if ! python3 -m build --version >/dev/null 2>&1; then
@@ -2209,9 +2225,13 @@ PY
       _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
         PYTHONPATH="${backend_pythonpath}${PYTHONPATH:+:${PYTHONPATH}}" \
         CMAKE_ARGS="${wheel_cmake_args}" \
-        CMAKE_GENERATOR="Unix Makefiles" \
+        CMAKE_GENERATOR="${wheel_cmake_generator}" \
         CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build --wheel --outdir dist --no-isolation
+        "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build \
+          --wheel \
+          --outdir dist \
+          --no-isolation \
+          -Cbuild-dir="${wheel_build_dir}"
       mapfile -t built_wheels < <(find dist -maxdepth 1 -type f -name 'pyneat-*.whl' | sort)
       if [[ "${#built_wheels[@]}" -ne 1 ]]; then
         echo "ERROR: expected exactly one pyneat wheel, found ${#built_wheels[@]}." >&2
@@ -2225,8 +2245,12 @@ PY
         --platform-tag "${ELXR_WHEEL_HOST_PLATFORM//-/_}" \
         "${built_wheels[0]}"
     else
-      CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${wheel_python}" -m build --wheel --outdir dist
+      CMAKE_GENERATOR="${wheel_cmake_generator}" \
+        CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
+        "${wheel_python}" -m build \
+          --wheel \
+          --outdir dist \
+          -Cbuild-dir="${wheel_build_dir}"
     fi
     echo "Built wheel(s):"
     ls -lh dist/*.whl
@@ -2977,10 +3001,12 @@ main() {
   build_targets
   copy_test_images
   build_docs_if_requested
-  build_python_wheel_if_requested
   run_install_sanity_check
   build_deb_if_requested
   build_extras_archive_if_requested
+  # The wheel backend reconfigures the shared CMake tree for its staging path,
+  # so all other CMake/CPack consumers must finish before this step.
+  build_python_wheel_if_requested
   stage_package_artifacts_to_dist
   write_dist_package_contract_manifest_fields
   write_install_manifest
