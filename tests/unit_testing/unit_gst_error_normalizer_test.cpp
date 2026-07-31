@@ -334,6 +334,17 @@ RUN_TEST(
       }
 
       {
+        const std::string long_utf8 = std::string(16383, 'a') + "\xF0\x9F\x98\x80" + "tail";
+        const std::string sanitized = sanitize_gst_diagnostic_text(long_utf8);
+        require(g_utf8_validate(sanitized.c_str(), static_cast<gssize>(sanitized.size()), nullptr),
+                "diagnostic truncation must preserve valid UTF-8");
+        require_contains(sanitized, "...<truncated>",
+                         "oversized diagnostics should retain the truncation marker");
+        require(sanitized.find("\xF0\x9F\x98\x80") == std::string::npos,
+                "a code point crossing the limit must be removed as a whole");
+      }
+
+      {
         const std::string quoted =
             redact_gst_credentials(R"(password="abc\"def" token=following-token)");
         require(quoted.find("abc") == std::string::npos &&

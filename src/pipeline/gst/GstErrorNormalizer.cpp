@@ -294,7 +294,11 @@ std::string truncate(std::string value, std::size_t max_bytes = 4096) {
   value = redact_uri_credentials(std::move(value));
   if (value.size() <= max_bytes)
     return value;
-  value.resize(max_bytes);
+  std::size_t boundary = max_bytes;
+  while (boundary > 0 && (static_cast<unsigned char>(value[boundary]) & 0xC0U) == 0x80U) {
+    --boundary;
+  }
+  value.resize(boundary);
   value += "...<truncated>";
   return value;
 }
