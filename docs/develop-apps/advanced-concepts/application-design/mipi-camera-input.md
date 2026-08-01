@@ -227,10 +227,10 @@ Leave `decode_type` unset and keep `mla_only = true` when you want raw MLA tenso
 
 | Mode | Use when | Behavior |
 | --- | --- | --- |
-| Strict zero-copy | Your `libcamerasrc` exposes SiMaAI camera zero-copy properties. | Neat requests device/SiMaAI camera buffers and fails if the source cannot provide them. |
-| Adaptive fallback | You want the graph to run on current camera stacks. | Neat accepts OS/libcamera buffers, copies them into pooled SiMaAI memory for CVU/MLA handoff, and passes through SiMaAI buffers when the source already provides them. |
+| Strict zero-copy | Your `libcamerasrc` exposes SiMaAI camera zero-copy properties and the memory library supports DMA-BUF export. | Neat requests device/SiMaAI camera buffers and fails if the source cannot provide them. |
+| Adaptive fallback (explicit opt-in) | You need compatibility with a camera stack that cannot export device buffers. | Neat accepts OS/libcamera buffers, copies them into pooled SiMaAI memory for CVU/MLA handoff, and passes through SiMaAI buffers when the source already provides them. |
 
-For current Modalix DevKit images, set `camera.allow_cpu_fallback = true` unless you have confirmed that your `libcamerasrc` exposes SiMaAI zero-copy properties. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
+Strict zero-copy is the framework default. It requires both a `libcamerasrc` that exposes the SiMaAI zero-copy properties and a memory library that supports DMA-BUF export. Set `camera.allow_cpu_fallback = true` only as an explicit compatibility escape hatch. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
 
 ## Keep preprocessing on CVU/EV74
 
@@ -248,7 +248,7 @@ The camera gives you frames. The CVU should do the frame math. The CPU should no
 | --- | --- |
 | No camera appears | Confirm the selected `.dtbo`, cable orientation, power cycle, and kernel/libcamera logs. |
 | `libcamerasrc` is missing | Install the matching Neat/runtime camera image or camera packages for the DevKit build. |
-| `misconfig.caps` or `not-negotiated` | Validate the exact `format,width,height,framerate` with `gst-launch-1.0`. Try a known supported mode such as `NV12 1920x1080@30`. |
+| `misconfig.media_caps` or `not-negotiated` | Validate the exact `format,width,height,framerate` with `gst-launch-1.0`. Try a known supported mode such as `NV12 1920x1080@30`. |
 | Strict zero-copy fails | Set `allow_cpu_fallback = true`, or use a camera stack that exposes SiMaAI zero-copy properties. |
 | Output colors look wrong | Confirm the frame is interpreted as `NV12`, not RGB/BGR. If a JPEG produced directly from `libcamerasrc` is also wrong, debug camera ISP/tuning before debugging Neat. |
 | Throughput is low | Remove CPU video conversion/scaling, pull continuously, and use a live-source queue policy that favors freshness. |

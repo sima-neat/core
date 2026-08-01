@@ -5,12 +5,25 @@
 
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
+#include <gst/gst.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace simaai::neat {
+struct GraphOptions;
+struct GraphLinkOptions;
 class Node;
+struct Sample;
 struct InputOptions;
+namespace runtime {
+struct FusedRealtimeIngress;
+} // namespace runtime
 } // namespace simaai::neat
 
 namespace simaai::neat::session_test {
@@ -22,5 +35,38 @@ bool apply_auto_memory_policy_from_downstream_for_test(
     InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& nodes);
 int parse_sdp_fps_for_rtp_payload_for_test(const char* sdp_text, int payload_type,
                                            const char* encoding_name);
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options);
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
+    const std::vector<GraphLinkOptions>& link_options);
+std::string render_fused_realtime_consumer_pipeline_for_test(
+    const std::vector<std::shared_ptr<Node>>& consumer_nodes, const GraphOptions& options,
+    const std::vector<GraphLinkOptions>& link_options, bool enable_terminal_loans);
+std::string
+render_fused_realtime_pipeline_for_test(const runtime::FusedRealtimeIngress& ingress,
+                                        const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+                                        const GraphOptions& options);
+GstBuffer* make_fused_terminal_probe_buffer_writable_for_test(GstPadProbeInfo* info);
+Sample make_fused_encoded_output_sample_for_test(GstBuffer* buffer, GstCaps* caps,
+                                                 const std::string& stream_id,
+                                                 bool copy_output = false);
+std::string fused_encoded_output_tap_name_for_test(const GraphOptions& options,
+                                                   std::size_t branch_index);
+std::size_t attach_fused_encoded_output_probe_for_test(
+    GstElement* pipeline, const runtime::FusedRealtimeIngress& ingress, const GraphOptions& options,
+    const std::function<void(const Sample&)>& observe, bool copy_output = false);
+std::optional<std::size_t>
+find_fused_decoder_timing_match_for_test(const std::vector<std::uint64_t>& pending_pts,
+                                         std::optional<std::uint64_t> output_pts);
+std::size_t
+attach_fused_decoder_timing_probes_for_test(GstElement* pipeline,
+                                            const runtime::FusedRealtimeIngress& ingress);
+std::optional<std::string>
+fused_raw_input_credit_boundary_for_test(const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+                                         const GraphOptions& options);
+std::size_t attach_fused_raw_input_credit_probe_for_test(
+    GstElement* pipeline, const std::vector<std::shared_ptr<Node>>& consumer_nodes,
+    const GraphOptions& options, std::uint64_t mux_namespace);
 
 } // namespace simaai::neat::session_test

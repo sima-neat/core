@@ -59,7 +59,8 @@ simaai::neat::Tensor make_ambiguous_layout_tensor_chw(int w, int h, int c) {
 }
 
 bool has_expected_oversize_error(const std::string& s) {
-  return (s.find("exceeds effective max") != std::string::npos) ||
+  return (s.find("exceeds configured capacity") != std::string::npos) ||
+         (s.find("exceeds effective max") != std::string::npos) ||
          (s.find("input_exceeds_effective_max") != std::string::npos) ||
          (s.find("shape_change_requires_rebuild") != std::string::npos);
 }

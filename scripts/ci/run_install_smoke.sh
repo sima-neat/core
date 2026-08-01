@@ -24,6 +24,22 @@ echo "[install-smoke] installing to ${INSTALL_PREFIX}..."
 cmake --install "${BUILD_DIR}" --prefix "${INSTALL_PREFIX}" --component core
 cmake --install "${BUILD_DIR}" --prefix "${INSTALL_PREFIX}" --component dev
 
+EXPECTED_ABI="$(sed -n 's/^set(SimaNeat_ABI_VERSION "\([0-9][0-9]*\)")$/\1/p' \
+  "${BUILD_DIR}/SimaNeatConfig.cmake")"
+if [[ ! "${EXPECTED_ABI}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[install-smoke] failed to read a valid public ABI from SimaNeatConfig.cmake." >&2
+  exit 1
+fi
+if [[ ! -L "${INSTALL_PREFIX}/lib/libsima_neat.so.${EXPECTED_ABI}" ]]; then
+  echo "[install-smoke] missing libsima_neat.so.${EXPECTED_ABI} SONAME link." >&2
+  exit 1
+fi
+LINKER_TARGET="$(readlink "${INSTALL_PREFIX}/lib/libsima_neat.so")"
+if [[ "$(basename "${LINKER_TARGET}")" != "libsima_neat.so.${EXPECTED_ABI}" ]]; then
+  echo "[install-smoke] libsima_neat.so targets '${LINKER_TARGET}', expected ABI ${EXPECTED_ABI}." >&2
+  exit 1
+fi
+
 echo "[install-smoke] configuring downstream consumer..."
 cmake -S tests/install_smoke -B "${CONSUMER_BUILD_DIR}" \
   -DCMAKE_PREFIX_PATH="${INSTALL_PREFIX}" \
@@ -34,5 +50,18 @@ cmake --build "${CONSUMER_BUILD_DIR}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
 
 echo "[install-smoke] running downstream consumer..."
 "${CONSUMER_BUILD_DIR}/install_smoke_app"
+
+echo "[install-smoke] running statically linked downstream consumer..."
+"${CONSUMER_BUILD_DIR}/install_smoke_static_app"
+
+# A baked-in build-host path still links on the build host, so only an explicit check catches it.
+# Scoped to zlib: SIMANEAT_HTTPLIB_LIBRARY comes from find_library and exports an absolute path the
+# same way, which predates this check and needs its own imported target to fix.
+echo "[install-smoke] checking zlib is exported relocatably..."
+if grep -nE '"[^"]*libz\.(so|a)[^"]*"' \
+    "${INSTALL_PREFIX}/lib/cmake/SimaNeat/SimaNeatTargets.cmake"; then
+  echo "[install-smoke] exported targets carry an absolute zlib path; link ZLIB::ZLIB and resolve it with find_dependency(ZLIB) instead." >&2
+  exit 1
+fi
 
 echo "[install-smoke] passed."

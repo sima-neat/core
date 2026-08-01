@@ -40,6 +40,9 @@ void runtime::RunCore::close_input() {
     st->pipeline.input_closed = true;
   }
   st->pipeline.in_cv.notify_all();
+  if (st->graph_execution_) {
+    st->graph_close_public_input();
+  }
 }
 
 void Run::close_input() {

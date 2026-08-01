@@ -30,6 +30,10 @@ If you choose the SDK path, confirm your host meets the
 install the SDK. SDK installation applies compatible defaults, so you only need
 the Compatibility reference when you want to pin exact versions, upgrade
 components independently, or troubleshoot a version mismatch.
+
+**SDK-only fast path (no DevKit):** install the SDK, then go straight to
+[Compile a Model](/compile-a-model/). Configure SDK, DevKit Sync, the Neat
+Library, and PyNeat are optional side-trips you can skip until you pair a DevKit.
 :::
 
 <div class="overview-link-columns">

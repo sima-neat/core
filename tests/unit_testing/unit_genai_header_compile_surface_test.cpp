@@ -28,21 +28,36 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
                    "header surface");
 
            GenAITask task = GenAITask::VisionLanguage;
+           ASRTask asr_task = ASRTask::Translate;
            GenerationRequest request;
            request.prompt = std::string{"hello"};
            GenerationResult result;
            result.text = "world";
+           result.no_speech_prob = 0.1F;
+           result.avg_logprob = -0.2F;
            GenerationMetrics metrics;
            TokenSample token;
            token.text = "tok";
+           token.no_speech_prob = 0.3F;
+           token.avg_logprob = -0.4F;
            ChatMessage message{"user", "hello"};
            ImageList images;
            VisionLanguageOptions vision_language_options;
            SpeechTranscriberOptions speech_transcriber_options;
+           require(request.language == "auto",
+                   "GenerationRequest should default to automatic language detection");
+           require(request.asr_task == ASRTask::Transcribe,
+                   "GenerationRequest should default to transcription");
+           require(speech_transcriber_options.language == "auto",
+                   "SpeechTranscriberOptions should default to automatic language detection");
+           require(speech_transcriber_options.task == ASRTask::Transcribe,
+                   "SpeechTranscriberOptions should default to transcription");
            GenAIServerOptions genai_server_options;
            genai_server_options.port = 9998;
            request.audio_file = std::filesystem::path{"audio.wav"};
            request.language = "en";
+           request.asr_task = asr_task;
+           speech_transcriber_options.task = asr_task;
            request.tools = Json::array(
                {{{"type", "function"},
                  {"function", {{"name", "lookup"}, {"parameters", {{"type", "object"}}}}}}});
@@ -98,6 +113,7 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            }
 
            (void)task;
+           (void)asr_task;
            (void)request;
            (void)result;
            (void)metrics;

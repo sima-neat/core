@@ -12,8 +12,8 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-import perf_schema as schema
-import run_perf_matrix
+import perf_schema as schema  # noqa: E402
+import run_perf_matrix  # noqa: E402
 
 
 def write_json(path: Path, payload: dict[str, object]) -> None:
@@ -88,9 +88,9 @@ class PerfMatrixFailfastTest(unittest.TestCase):
     def test_run_scenario_copies_power_payload_to_run_meta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            build_dir = root / "build"
+            executable_dir = root / "prebuilt-tests"
             results_dir = root / "results"
-            exe = build_dir / "tests" / "fake_power_perf"
+            exe = executable_dir / "fake_power_perf"
             exe.parent.mkdir(parents=True)
             exe.write_text(
                 "#!/usr/bin/env python3\n"
@@ -140,7 +140,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             )
             result = run_perf_matrix.run_scenario(
                 repo_root=root,
-                build_dir=build_dir,
+                executable_dir=executable_dir,
                 results_dir=results_dir,
                 profile=profile,
                 spec=run_perf_matrix.ScenarioSpec("runtime_session_sync_rgb", "fake_power_perf"),

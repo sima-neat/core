@@ -6,6 +6,7 @@
 #pragma once
 
 #include "pipeline/Graph.h"
+#include "nodes/groups/RtspCodec.h"
 
 #include <string>
 
@@ -25,13 +26,19 @@ struct VideoSenderEncoderOptions {
 class VideoSenderOptions {
 public:
   static VideoSenderOptions H264RtpUdpFromRaw(int width, int height, int fps);
-  static VideoSenderOptions H264RtpUdpFromEncoded();
+  [[deprecated("use Passthrough(RtspCodec::H264)")]] static VideoSenderOptions
+  H264RtpUdpFromEncoded();
+
+  /// Forward already-encoded frames of `codec` as RTP over UDP without
+  /// re-encoding. Throws `std::invalid_argument` for codecs the sender cannot
+  /// packetize.
+  static VideoSenderOptions Passthrough(RtspCodec codec);
 
   bool is_raw_input() const {
     return input_kind_ == InputKind::Raw;
   }
   bool is_encoded_input() const {
-    return input_kind_ == InputKind::EncodedH264;
+    return input_kind_ == InputKind::Encoded;
   }
   int width() const {
     return width_;
@@ -55,14 +62,19 @@ public:
   VideoSenderEncoderOptions encoder{};
 
 private:
-  enum class InputKind { Raw, EncodedH264 };
+  enum class InputKind { Raw, Encoded };
 
   VideoSenderOptions() = default;
 
-  InputKind input_kind_ = InputKind::EncodedH264;
+  InputKind input_kind_ = InputKind::Encoded;
+  /// Codec of the encoded stream; meaningless when `input_kind_` is `Raw`,
+  /// which is always H.264 because that is the only encoder path.
+  RtspCodec codec_ = RtspCodec::H264;
   int width_ = 0;
   int height_ = 0;
   int fps_ = 0;
+
+  friend simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);
 };
 
 simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);

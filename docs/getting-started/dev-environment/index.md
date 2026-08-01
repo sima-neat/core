@@ -25,7 +25,17 @@ center of the SDK workflow.
 <div class="overview-section-label">Start here</div>
 
 Start with SDK installation. Use the other SDK topics when you need to change
-settings, add Model Compiler later, or understand DevKit Sync behavior.
+settings, add Model Compiler later, understand DevKit Sync behavior, or prepare
+offline packages for restricted networks.
+
+:::tip SDK-only happy path
+If you installed the SDK and have not paired a DevKit, you only need two steps:
+[Install the Environment](/getting-started/dev-environment/install-the-environment/),
+then [Compile a Model](/compile-a-model/) — model compilation runs entirely in the
+SDK. Configure SDK, DevKit Sync, Install Model Compiler (it is offered during
+setup), and the Neat Library and PyNeat pages are optional side-trips; visit them
+only when you need them or once you pair a DevKit.
+:::
 
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
@@ -34,6 +44,7 @@ settings, add Model Compiler later, or understand DevKit Sync behavior.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/getting-started/dev-environment/install-the-environment/"><strong>Install the Environment</strong><span>Install and set up the SDK package that matches your DevKit software version.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/dev-environment/devkit-sync/"><strong>DevKit Sync</strong><span>Understand workspace sharing, pairing updates, rsync fallback, and <code>dk</code> command execution.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/dev-environment/offline-installation/"><strong>Offline Installation</strong><span>Download SDK and Model Compiler packages for restricted network environments.</span></a></li>
     </ul>
   </section>
 </div>
@@ -42,8 +53,12 @@ To change SDK settings after installation, such as workspace location or DevKit
 pairing, see
 [Configure SDK](/getting-started/dev-environment/configure-sdk/).
 
-To install Model Compiler after SDK setup, see
+Model Compiler is offered during SDK setup. To install it later, pin a specific
+version, or use a standalone host, see
 [Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
+
+For hosts that cannot download packages directly, see
+[Offline Installation](/getting-started/dev-environment/offline-installation/).
 
 ## What's Included
 
@@ -69,9 +84,9 @@ permissions.
 
 | Host OS | CPU | RAM | Free disk | Admin / sudo |
 | --- | --- | --- | --- | --- |
-| Ubuntu 22.04 / 24.04 (`x86_64` or `aarch64`) | 4 cores min | 16 GB min | 100 GB | `sudo` for SDK install (`sima-cli`, Docker, SDK image), NFS install/config, and shared-network/firewall setup |
+| Ubuntu 22.04 / 24.04 (`x86_64` or `arm64`) | 4 cores min | 16 GB min | 100 GB | `sudo` for SDK install (`sima-cli`, Docker, SDK image), NFS install/config, and shared-network/firewall setup |
 | Windows 11 via WSL (`x86_64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install in WSL (Docker, `sima-cli`), WSL networking, and NFS firewall rules |
-| macOS 15.5+ Apple Silicon (`aarch64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install (Homebrew, Colima, `sima-cli`), Full Disk Access (`nfsd`), and Internet Sharing |
+| macOS 15.5+ Apple Silicon (`arm64`) | 4 cores min | 16 GB min | 100 GB | Administrator for SDK install (Homebrew, Colima, `sima-cli`), Full Disk Access (`nfsd`), and Internet Sharing |
 
 :::note GenAI model compilation needs more
 Compiling GenAI models with LLiMa is far heavier than the base SDK: 128 GB RAM
@@ -83,10 +98,25 @@ See [GenAI setup](/genai-llima/setup/) for the full requirements.
 
 | Platform | Arch | SDK | Model Compiler |
 | --- | --- | --- | --- |
-| Ubuntu 22.04 and 24.04 through Docker Engine | x86_64 | Yes | Yes |
-| Windows 11 through WSL and Docker Engine | x86_64 | Yes | Yes |
-| Ubuntu 22.04 and 24.04 through Docker Engine | aarch64 | Yes | Yes with 2.1.2 or above |
-| macOS 15.5 or above through Colima | aarch64 | Yes | Yes with 2.1.2 or above, must install within the Neat SDK |
+| Ubuntu 22.04 and 24.04 through Docker Engine | `x86_64` | Yes | Yes |
+| Windows 11 through WSL and Docker Engine | `x86_64` | Yes | Yes |
+| Ubuntu 22.04 and 24.04 through Docker Engine | `arm64` | Yes | Model Compiler 2.1.2 and later |
+| macOS 15.5 or above through Colima | `arm64` | Yes | Model Compiler 2.1.2 and later; install it inside the Neat SDK |
+
+:::note Architecture names
+`arm64` and `aarch64` are the same 64-bit Arm architecture — macOS reports it as
+`arm64`, Linux reports it as `aarch64`. Likewise, `x86_64` and `amd64` are the same
+architecture. Run `uname -m` on your host (or inside the SDK) to see which one you
+have. The Model Compiler install commands use `arm64` and `amd64` — see
+[Install Model Compiler](/getting-started/dev-environment/install-model-compiler/).
+:::
+
+:::note Installing a specific version
+Standard installation pulls the current supported defaults. The `release-2.1`
+channel used on the [Install the Environment](/getting-started/dev-environment/install-the-environment/)
+page always tracks the latest 2.1 patch release. To pin an exact SDK, Neat Library,
+or Model Compiler version, see the [Compatibility Guide](/getting-started/compatibility/).
+:::
 
 ## Tools in the SDK
 

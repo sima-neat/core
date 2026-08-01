@@ -121,7 +121,7 @@ Lower the threshold only as far as you need to catch weak detections, and cap th
 
 ## Running inference
 
-### 9. `misconfig.caps … Internal data stream error … reason not-negotiated (-4)`
+### 9. `misconfig.media_caps … Internal data stream error … reason not-negotiated (-4)`
 
 :::info Cause
 For raw-image input, the preprocess stage wasn't enabled / the input kind wasn't declared, so caps can't negotiate between the appsrc and the first stage.
@@ -159,11 +159,11 @@ Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs
 ### 12. `CameraInput strict zero-copy requires a libcamerasrc with simaai-zero-copy`
 
 :::info Cause
-`CameraInputOptions::allow_cpu_fallback` is false, so Neat requires a camera source that exposes SiMaAI/device zero-copy support. The installed `libcamerasrc` does not advertise the properties Neat needs for that strict path.
+`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the required properties or the installed memory library cannot export its allocation as a DMA-BUF.
 :::
 
 :::tip Fix
-Use adaptive mode unless you have confirmed the zero-copy camera stack is installed:
+Keep strict zero-copy when the coherent camera and memory packages are installed. If you must run against a camera stack without DMA-BUF export, opt into the compatibility bridge explicitly:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -187,7 +187,7 @@ camera.allow_cpu_fallback = True
 Adaptive mode still hands downstream CVU/MLA stages SiMaAI memory. It only copies at the camera bridge when the upstream camera buffer is not already usable by EV74.
 :::
 
-### 13. `misconfig.caps … libcamerasrc … not-negotiated (-4)`
+### 13. `misconfig.media_caps … libcamerasrc … not-negotiated (-4)`
 
 :::info Cause
 The requested camera caps do not match a mode the camera stack can produce, or the board overlay/driver did not expose the camera correctly.
@@ -430,13 +430,16 @@ read the message for specifics.
 | `io.open` | A file or device path couldn't be opened — missing file, permission denied, or kernel device absent (e.g. `/dev/rpmsg*`). |
 | `io.parse` | JSON/config parse error — typically a bad MPK contract or per-stage config. |
 | `misconfig.pipeline_shape` | Pipeline geometry is wrong — bad sink count, a cycle, or a missing terminal `Output`. |
-| `misconfig.caps` | Caps/format negotiation failed between adjacent elements (resolution, format, framerate, layout). |
+| `misconfig.caps` | A caps override or adjacent Node contract failed framework validation before streaming. |
+| `misconfig.media_caps` | Runtime GStreamer negotiation failed between adjacent media stages. |
 | `misconfig.input_shape` | Input tensor violates the model's contract (rank, spatial dims, channel count). |
 | `misconfig.runtime_abi_mismatch` | Framework/runtime plugin ABI mismatch — usually mixed `pyneat` and runtime artifacts. |
-| `build.parse_launch` | `gst_parse_launch` couldn't parse the generated pipeline string (missing plugin/property). |
-| `runtime.pull` | A runtime-side error during `pull` — downstream EOS, bus error, or appsink failure. |
+| `build.plugin_missing` | A required GStreamer element or codec plugin is unavailable. |
+| `build.property_invalid` | A GStreamer element property name or value is invalid. |
+| `build.pipeline_syntax` | A custom GStreamer fragment has invalid syntax. |
+| `build.parse_launch` | A `gst_parse_launch` failure could not be classified more specifically. |
+| `runtime.pull` | A pull failed without a more specific upstream/root-cause code. |
 | `infra.dispatcher_unavailable` | An MLA/EV74/A65 dispatcher couldn't be acquired — firmware not loaded, missing license, or hardware fault. No CPU fallback. |
 
-<!-- NOTE for maintainers: reference/error-codes.md documents io.not_found / mpk.* / plan.* / caps.* families that are NOT in include/pipeline/ErrorCodes.h. That doc is out of sync with the code — reconcile separately. This table reflects the actual constants. -->
-
-These nine are the full set in [`ErrorCodes.h`](/reference/cppapi/files/include-pipeline-errorcodes-h).
+This is a short troubleshooting map. Use the [complete error code catalog](/reference/error-codes)
+for every code and the C++/Python constant names.

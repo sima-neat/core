@@ -1,6 +1,7 @@
 #include "genai/GenAITypes.h"
 #include "genai/GenAIModel.h"
 #include "genai/VisionLanguageModel.h"
+#include "genai_test_utils.h"
 #include "pipeline/TensorCore.h"
 #include "test_utils.h"
 
@@ -16,35 +17,16 @@
 // Exercises direct VisionLanguageModel image generation against a real LLiMa
 // VLM using tests/images/people.jpg.
 // Model fixture:
-//   hf download simaai/Qwen3-VL-2B-Instruct-GPTQ-a16w4 --local-dir <model-dir>
-//   export SIMA_TEST_LLIMA_VLM_MODEL=<model-dir>
+//   export LLIMA_MODELS_PATH=/media/nvme/llima/models
+//   export SIMA_TEST_LLIMA_VLM_MODEL=LFM2.5-VL-450M-a16w4
+//   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 
 namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_VLM_MODEL";
 constexpr const char* kPrompt = "Describe this image in a short phrase.";
-constexpr const char* kExpectedText =
-    "A skier soars through the air above a snowy slope, with spectators watching below.";
-
-bool has_llima_vlm_config(const fs::path& model_dir) {
-  std::error_code ec;
-  return fs::is_regular_file(model_dir / "devkit" / "vlm_config.json", ec) && !ec;
-}
-
-std::string trim_env_value(const char* value) {
-  if (value == nullptr) {
-    return {};
-  }
-
-  std::string out(value);
-  const auto first = out.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    return {};
-  }
-  const auto last = out.find_last_not_of(" \t\r\n");
-  return out.substr(first, last - first + 1);
-}
+constexpr const char* kExpectedText = "Skier in the air.";
 
 std::string trim_text(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -56,20 +38,8 @@ std::string trim_text(std::string value) {
 }
 
 fs::path resolve_model_dir() {
-  const std::string env_model_dir = trim_env_value(std::getenv(kModelEnv));
-  if (env_model_dir.empty()) {
-    skip_long_test_exception("set " + std::string(kModelEnv) +
-                             " to an existing LLiMa VLM model directory");
-  }
-
-  fs::path model_dir(env_model_dir);
-  if (has_llima_vlm_config(model_dir)) {
-    return model_dir;
-  }
-
-  skip_long_test_exception(std::string(kModelEnv) +
-                           " does not point to a LLiMa VLM model directory: " + model_dir.string());
-  return {};
+  return simaai::neat::test::resolve_genai_model_dir(
+      kModelEnv, simaai::neat::test::kDefaultVlmModelName, "LLiMa VLM", "devkit/vlm_config.json");
 }
 
 fs::path resolve_image_path(const fs::path& repo_root) {
@@ -120,7 +90,7 @@ int main(int argc, char** argv) {
 
     {
       simaai::neat::genai::VisionLanguageModel model(model_dir);
-      require(model.accepts_image(), "Qwen3-VL model should accept image input");
+      require(model.accepts_image(), "VLM model should accept image input");
 
       simaai::neat::genai::GenerationRequest cv_request;
       cv_request.prompt = std::string{kPrompt};

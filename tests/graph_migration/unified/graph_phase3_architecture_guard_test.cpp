@@ -185,6 +185,7 @@ RUN_TEST(
                       run_core_graph_start);
       require_present(run_core_graph_start_text, "start_graph_plan", run_core_graph_start);
       require_present(run_core_graph_start_text, "EdgeRouter", run_core_graph_start);
+      require_absent(run_core_graph_start_text, "graph-pipeline-output", run_core_graph_start);
 
       const std::string run_core_graph_stop_text =
           strip_cpp_comments(read_text(run_core_graph_stop));

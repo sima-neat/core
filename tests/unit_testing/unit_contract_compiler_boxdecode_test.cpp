@@ -110,6 +110,30 @@ RUN_TEST(
       require(compiled_user_classes.payload.num_classes == 42,
               "compiled payload should preserve explicit user num_classes override");
 
+      BoxDecodeStaticContract probability_domain = contract;
+      probability_domain.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+      probability_domain.score_activation = BoxDecodeScoreActivation::Identity;
+      resolve_grouped_yolo_dfl_score_domain(&probability_domain);
+      require(probability_domain.decode_type_option ==
+                      BoxDecodeTypeOption::GroupedByRoleProbability &&
+                  probability_domain.score_activation == BoxDecodeScoreActivation::Identity,
+              "grouped YOLO DFL probability heads must not be forced through sigmoid");
+
+      BoxDecodeStaticContract logit_domain = contract;
+      logit_domain.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+      logit_domain.score_activation = BoxDecodeScoreActivation::Sigmoid;
+      resolve_grouped_yolo_dfl_score_domain(&logit_domain);
+      require(logit_domain.decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit &&
+                  logit_domain.score_activation == BoxDecodeScoreActivation::Sigmoid,
+              "grouped YOLO DFL logit heads must preserve sigmoid activation");
+
+      BoxDecodeStaticContract explicit_probability = contract;
+      explicit_probability.decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
+      explicit_probability.score_activation = BoxDecodeScoreActivation::Sigmoid;
+      resolve_grouped_yolo_dfl_score_domain(&explicit_probability);
+      require(explicit_probability.score_activation == BoxDecodeScoreActivation::Identity,
+              "explicit grouped probability option must override inferred activation");
+
       BoxDecodeStaticContract packed_yolov5_contract;
       packed_yolov5_contract.decode_type = BoxDecodeType::YoloV5;
       packed_yolov5_contract.input_dtype = "INT8";

@@ -16,6 +16,10 @@ namespace simaai::neat::runtime {
 struct EdgeRouterOptions {
   std::size_t edge_queue = 0;
   int push_timeout_ms = 0;
+  // Blocking push() treats a timeout as a fatal graph backpressure error.
+  // Non-blocking try_push() must only report false so callers can retry; a
+  // transient full queue must not permanently stop the Run.
+  bool request_stop_on_backpressure = true;
 };
 
 struct EdgeRouterDispatchOptions {

@@ -41,8 +41,10 @@
 #include "nodes/sima/SimaDecode.h"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <span>
@@ -75,7 +77,7 @@ struct FragmentBoundaryHints;
 struct FragmentPlan;
 struct Provenance;
 ExecutionGraphPlan compile_public_graph(const Graph& graph, const RunOptions& opt,
-                                        std::optional<Sample> seed);
+                                        std::optional<Sample> seed = std::nullopt);
 } // namespace runtime
 #endif
 
@@ -369,6 +371,16 @@ public:
    * `build(inputs, ...)` so caps can be derived from the actual input.
    */
   Run build(const RunOptions& opt = {});
+  /**
+   * @brief Preserve the established `build({})` default-options idiom.
+   *
+   * The seeded `build(...)` overloads also accept an empty braced value, so
+   * `build({})` is otherwise ambiguous. This exact empty-list compatibility
+   * shim forwards to the established RunOptions overload.
+   */
+  Run build(std::initializer_list<std::nullptr_t>) {
+    return build(RunOptions{});
+  }
 
   /// Returns the GStreamer launch string from the most recent `build()` call.
   const std::string& last_pipeline() const {
@@ -438,6 +450,7 @@ private:
   /// Drop the built pipeline (if any) and any cached runner. Tears down GStreamer
   /// resources via RAII; safe to call when there is no built state. Never throws.
   void invalidate_built_() noexcept;
+  Run build_source_internal_(const RunOptions& opt);
 
   /// Shared "build a source-mode pipeline to PAUSED" body for `build(RunOptions)`
   /// and `build_cached_source()`. Validates, materializes, compiles, attaches all

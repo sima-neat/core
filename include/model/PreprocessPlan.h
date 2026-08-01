@@ -233,9 +233,9 @@ struct PreprocessOptions {
   InputKind kind = InputKind::Auto; ///< Whether inputs are images or pre-shaped tensors.
   AutoFlag enable = AutoFlag::Auto; ///< Master switch — set `Off` to skip preprocess entirely.
 
-  int input_max_width = 0;  ///< Upper bound on input width (px); `0` = no bound.
-  int input_max_height = 0; ///< Upper bound on input height (px); `0` = no bound.
-  int input_max_depth = 0;  ///< Upper bound on input channel count; `0` = no bound.
+  int input_max_width = 0;  ///< Input-width capacity; `0` uses the image default (1920 px).
+  int input_max_height = 0; ///< Input-height capacity; `0` uses the image default (1080 px).
+  int input_max_depth = 0;  ///< Channel capacity; `0` infers it from the input image format.
 
   ResizeSpec resize;                ///< Resize / letterbox / crop intent.
   ColorConvertSpec color_convert;   ///< Color-format conversion intent.

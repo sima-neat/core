@@ -40,38 +40,45 @@ def main(argv: list[str]) -> int:
   # STEP build-combine-graph
   graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.ByFrame)
   expected = args.streams * args.frames
-  run_options = pyneat.RunOptions()
-  # This tutorial intentionally pushes the whole deterministic batch before
-  # pulling joined bundles. Size the bounded graph queues for that batch so the
-  # example demonstrates Combine(ByFrame) rather than producer backpressure.
-  # Production live-stream code should usually pull concurrently instead of
-  # growing queues this way.
-  run_options.queue_depth = max(run_options.queue_depth, expected)
-  run = graph.build(run_options)
+  run = graph.build()
   # END STEP
   # END CORE LOGIC
 
-  # STEP push-streams
+  received = 0
+  first_fields = -1
   for frame in range(args.frames):
     for sid in range(args.streams):
       logical_frame = frame * args.streams + sid
+
+      # STEP push-streams
       if not run.push("left", [make_rgb_sample(str(sid), logical_frame)]):
         raise RuntimeError(f"left push failed: {run.last_error()}")
       if not run.push("right", [make_rgb_sample(str(sid), logical_frame)]):
         raise RuntimeError(f"right push failed: {run.last_error()}")
-  # END STEP
+      # END STEP
 
-  # STEP pull-bundles
-  received = 0
-  for _ in range(expected):
-    if run.pull("combined", 2000) is not None:
+      # STEP pull-bundles
+      bundle = run.pull("combined", 2000)
+      if bundle is None:
+        raise RuntimeError(f"timed out waiting for combined output: {run.last_error()}")
+      fields = len(bundle.fields)
+      if fields != 2:
+        raise RuntimeError("joined bundle should contain two fields")
+      if first_fields < 0:
+        first_fields = fields
       received += 1
+      if received <= 4:
+        print(f"bundle stream={bundle.stream_id} fields={fields}")
+      # END STEP
+
   run.close()
-  # END STEP
 
   if received != expected:
     raise RuntimeError(f"expected={expected} received={received}")
-  print(f"expected={expected} received={received}")
+  if first_fields != 2:
+    raise RuntimeError("join should emit a two-field bundle")
+  print(f"received={received} fields={first_fields}")
+  print("[OK] 015_run_multiple_streams")
   return 0
 
 

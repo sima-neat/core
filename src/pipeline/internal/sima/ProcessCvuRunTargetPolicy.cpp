@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -117,6 +118,34 @@ struct ExplicitProcessCvuTarget {
   std::string run_target;
   std::string source;
 };
+
+[[noreturn]] void throw_unsupported_explicit_target(const std::string& requested_target,
+                                                    const ProcessCvuBackendCapabilities& caps,
+                                                    const std::string& requested_source,
+                                                    std::string_view stage_identity) {
+  std::string supported;
+  if (caps.supports_ev74) {
+    supported = "EV74";
+  }
+  if (caps.supports_a65) {
+    if (!supported.empty()) {
+      supported += ", ";
+    }
+    supported += "A65";
+  }
+  if (supported.empty()) {
+    supported = "none";
+  }
+
+  std::string message = "processcvu stage";
+  if (!stage_identity.empty()) {
+    message += " '" + std::string(stage_identity) + "'";
+  }
+  message += " cannot run on explicitly requested target " + requested_target +
+             " (source=" + requested_source + "). Supported target(s): " + supported +
+             ". Use AUTO or a supported target.";
+  throw std::invalid_argument(message);
+}
 
 std::optional<ExplicitProcessCvuTarget>
 explicit_prepost_target(const ProcessCvuStagePayload& payload, const ProcessCvuOptions& options,
@@ -277,18 +306,9 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
       decision.effective_run_target = "A65";
       decision.resolved_exec_backend = ProcessCvuResolvedExecBackend::A65;
       decision.reason = "requested_a65_supported:" + requested_source;
-      decision.used_fallback = false;
-    } else if (caps.supports_ev74) {
-      decision.effective_run_target = "EV74";
-      decision.resolved_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
-      decision.reason = "requested_a65_unsupported_fallback_to_ev74:" + requested_source;
-      decision.used_fallback = true;
     } else {
-      decision.effective_run_target =
-          normalize_processcvu_run_target_token_no_env(caps.auto_run_target);
-      decision.resolved_exec_backend = caps.auto_exec_backend;
-      decision.reason = "requested_a65_unsupported_auto_fallback:" + requested_source;
-      decision.used_fallback = true;
+      throw_unsupported_explicit_target(decision.requested_run_target, caps, requested_source,
+                                        stage_identity);
     }
     return decision;
   }
@@ -298,18 +318,9 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
       decision.effective_run_target = "EV74";
       decision.resolved_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
       decision.reason = "requested_ev74_supported:" + requested_source;
-      decision.used_fallback = false;
-    } else if (caps.supports_a65) {
-      decision.effective_run_target = "A65";
-      decision.resolved_exec_backend = ProcessCvuResolvedExecBackend::A65;
-      decision.reason = "requested_ev74_unsupported_fallback_to_a65:" + requested_source;
-      decision.used_fallback = true;
     } else {
-      decision.effective_run_target =
-          normalize_processcvu_run_target_token_no_env(caps.auto_run_target);
-      decision.resolved_exec_backend = caps.auto_exec_backend;
-      decision.reason = "requested_ev74_unsupported_auto_fallback:" + requested_source;
-      decision.used_fallback = true;
+      throw_unsupported_explicit_target(decision.requested_run_target, caps, requested_source,
+                                        stage_identity);
     }
     return decision;
   }
@@ -329,7 +340,6 @@ resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
     decision.resolved_exec_backend = caps.auto_exec_backend;
     decision.reason = (caps.reason.empty() ? "auto_policy" : caps.reason) + ":" + requested_source;
   }
-  decision.used_fallback = false;
   return decision;
 }
 

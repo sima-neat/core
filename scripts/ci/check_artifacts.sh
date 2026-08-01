@@ -69,6 +69,11 @@ PY
     echo "ERROR: deps/manifest.json must define a non-empty package-version." >&2
     fail=1
   fi
+  abi_version="$(sed -n 's/.*"abi-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"
+  if [[ ! "${abi_version}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: deps/manifest.json abi-version must be a positive integer." >&2
+    fail=1
+  fi
 fi
 
 echo "[repo-hygiene] checking tracked binary artifacts in source paths..."

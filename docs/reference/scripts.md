@@ -43,7 +43,7 @@ cd website && yarn start           # preview the site
 | `route_refactor_validation.sh` | A targeted route-planner regression check (called by CI). |
 | `install_neat_plugins.sh` | Install the framework's GStreamer plugins to the system plugin directory. |
 | `install_codex_skill.sh` | Install the Codex CLI's NEAT skill (developer convenience). |
-| `fix_devkit_runtime.sh` | Patch a fresh devkit's runtime libs / paths. |
+| `fix_devkit_runtime.sh` | Patch a fresh devkit's runtime libs / paths and restart the coprocessors. Only boots the M4 while `simaai-appcomplex.service` is running. |
 | `sync_neatdecoder.sh` / `use_neatdecoder.sh` | Switch between bundled and external decoder builds. |
 
 ### `core/scripts/ci/`, `core/scripts/dev/`, `core/scripts/release/`

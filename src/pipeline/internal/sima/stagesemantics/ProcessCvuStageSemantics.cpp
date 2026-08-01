@@ -5275,21 +5275,21 @@ const MpkPluginIoContract* find_pre_mla_boundary_stage_local(const MpkContract& 
 // (IFM pack for packer-style models, MLA itself for native multi-IFM models).
 // Falls back to the resolver's natural (suffix-based) ordering if any branch
 // key is missing or none of the branch keys aligns with the boundary keys.
-void reorder_pre_mla_siblings_by_boundary_local(const MpkContract& contract,
+bool reorder_pre_mla_siblings_by_boundary_local(const MpkContract& contract,
                                                 std::vector<PreMlaSiblingStage>* siblings) {
   if (siblings == nullptr || siblings->size() <= 1U) {
-    return;
+    return false;
   }
   const auto* boundary = find_pre_mla_boundary_stage_local(contract);
   if (boundary == nullptr) {
-    return;
+    return false;
   }
   std::vector<std::string> branch_keys;
   branch_keys.reserve(siblings->size());
   for (const auto& sib : *siblings) {
     const auto* anchor = sib.tess ? sib.tess : (sib.quant ? sib.quant : sib.cast);
     if (!anchor || anchor->output_tensors.empty() || anchor->output_tensors.front().name.empty()) {
-      return;
+      return false;
     }
     branch_keys.push_back(anchor->output_tensors.front().name);
   }
@@ -5299,13 +5299,22 @@ void reorder_pre_mla_siblings_by_boundary_local(const MpkContract& contract,
     boundary_keys.push_back(it.name);
   }
   if (auto perm = reorder_indices_by_mla_boundary_local(branch_keys, boundary_keys)) {
+    bool order_changed = false;
+    for (std::size_t i = 0; i < perm->size(); ++i) {
+      if ((*perm)[i] != i) {
+        order_changed = true;
+        break;
+      }
+    }
     std::vector<PreMlaSiblingStage> reordered;
     reordered.reserve(perm->size());
     for (auto idx : *perm) {
       reordered.push_back((*siblings)[idx]);
     }
     *siblings = std::move(reordered);
+    return order_changed;
   }
+  return false;
 }
 
 // Forward declarations of helpers that live further down in this file but are
@@ -5536,7 +5545,8 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   }
   // Reorder siblings to match the MLA-boundary input order. Mirrors the
   // detessdequant path's reorder against mla_published_outputs.
-  reorder_pre_mla_siblings_by_boundary_local(contract, &siblings);
+  const bool branch_order_reordered =
+      reorder_pre_mla_siblings_by_boundary_local(contract, &siblings);
   const auto* boundary = find_pre_mla_boundary_stage_local(contract);
   if (boundary == nullptr) {
     throw std::runtime_error(
@@ -5625,6 +5635,65 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
   entries.reserve(count);
   std::uint64_t packed_input_offset = 0U;
   std::uint64_t packed_output_offset = 0U;
+
+  // Branch descriptors are emitted in MLA-boundary order, while the packed
+  // parent input is laid out in public ingress order. Resolve each branch's
+  // read offset by source ingress identity; use sequential offsets only when
+  // the boundary order did not reorder the branches.
+  std::vector<std::int64_t> branch_ingress_byte_offsets;
+  {
+    const auto ingress_index_for_name = [&](const std::string& name) -> int {
+      for (std::size_t k = 0; k < contract.ingress_tensors.size(); ++k) {
+        if (!contract.ingress_tensors[k].name.empty() && contract.ingress_tensors[k].name == name) {
+          return static_cast<int>(k);
+        }
+      }
+      return -1;
+    };
+    if (!contract.ingress_tensors.empty()) {
+      // Resolve, per branch, which ingress tensor it consumes (by name) and how
+      // many bytes that ingress region occupies. The ingress-order byte offset
+      // is then the sum of the sizes of the branches whose ingress tensor is
+      // declared earlier — independent of contract.ingress_tensors[].size_bytes,
+      // which is not always populated on the top-level ingress list.
+      std::vector<int> ingress_index(count, -1);
+      std::vector<std::uint64_t> branch_size(count, 0U);
+      bool all_mapped = true;
+      for (std::size_t i = 0; i < count; ++i) {
+        const auto* upstream =
+            pre_mla_branch_upstream_input_tensor_local(*boundary, siblings[i], i);
+        if (upstream == nullptr || upstream->name.empty() || upstream->size_bytes == 0U) {
+          all_mapped = false;
+          break;
+        }
+        const int idx = ingress_index_for_name(upstream->name);
+        if (idx < 0) {
+          all_mapped = false;
+          break;
+        }
+        ingress_index[i] = idx;
+        branch_size[i] = static_cast<std::uint64_t>(upstream->size_bytes);
+      }
+      if (all_mapped) {
+        std::vector<std::int64_t> resolved(count, 0);
+        for (std::size_t i = 0; i < count; ++i) {
+          std::uint64_t offset = 0U;
+          for (std::size_t j = 0; j < count; ++j) {
+            if (ingress_index[j] < ingress_index[i]) {
+              offset += branch_size[j];
+            }
+          }
+          resolved[i] = static_cast<std::int64_t>(offset);
+        }
+        branch_ingress_byte_offsets = std::move(resolved);
+      }
+    }
+  }
+  if (branch_order_reordered && branch_ingress_byte_offsets.empty()) {
+    throw std::runtime_error(
+        "processcvu MPK pre-MLA multi-io route reordered branches by MLA boundary "
+        "but could not resolve every branch to public ingress order");
+  }
 
   for (std::size_t i = 0; i < count; ++i) {
     const auto& branch = branch_runtimes[i];
@@ -5746,7 +5815,9 @@ ProcessCvuCanonicalCompileInputs build_processcvu_mpk_pre_mla_multi_io_compile_i
     entry.input_tensor = &input_tensor_contract;
     entry.input_dtype = normalize_dtype_token_local(input_dtype);
     entry.input_layout.clear();
-    entry.input_byte_offset = static_cast<std::int64_t>(packed_input_offset);
+    entry.input_byte_offset = !branch_ingress_byte_offsets.empty()
+                                  ? branch_ingress_byte_offsets[i]
+                                  : static_cast<std::int64_t>(packed_input_offset);
     packed_input_offset += packed_input_sizes.back();
     entry.output_tensor = &output_tensor_contract;
     entry.output_physical_name =

@@ -27,11 +27,13 @@ struct FanOutOptions {
 };
 
 /**
- * @brief Stage executor that duplicates each incoming sample to multiple output ports.
+ * @brief Stage executor that shallow-fans each incoming sample to multiple output ports.
  *
- * Receives a sample on its single input port and emits a copy on every output port listed
- * in `FanOutOptions::outputs`. Used to fan a single stream out to multiple downstream
- * consumers in the runtime graph.
+ * Receives a sample on its single input port and emits a `Sample` value for every output port
+ * listed in `FanOutOptions::outputs`. Tensor storage, GStreamer holders, and other payload
+ * backing memory remain shared; this is tee-style fan-out, not a deep payload copy. Downstream
+ * stages that need to mutate payload metadata must make that mutation explicit before sharing or
+ * materialize a private writable payload themselves.
  *
  * @see FanOutNode
  * @see StageExecutor

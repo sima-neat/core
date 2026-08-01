@@ -13,12 +13,15 @@ ROOT = Path(__file__).resolve().parents[2]
 _MODEL_PATH_CACHE: dict[str, Path | None] = {}
 
 try:
-  from _platform_version_generated import PLATFORM_VERSION as MODELZOO_PLATFORM_VERSION
+  from _platform_version_generated import MODELZOO_VERSION as MODELZOO_PLATFORM_VERSION
 except Exception:
   manifest = ROOT / "deps" / "manifest.json"
   try:
+    manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
     MODELZOO_PLATFORM_VERSION = (
-        json.loads(manifest.read_text(encoding="utf-8")).get("platform-version", "") or "2.0.0"
+        manifest_data.get("modelzoo-version")
+        or manifest_data.get("platform-version")
+        or "2.0.0"
     )
   except Exception:
     MODELZOO_PLATFORM_VERSION = "2.0.0"
@@ -132,4 +135,3 @@ def strict_model_tar_path(name: str) -> Path:
   if not has_strict_mpk_json(path):
     pytest.fail(f"real model fixture lacks required *_mpk.json strict contract: {path}")
   return path
-

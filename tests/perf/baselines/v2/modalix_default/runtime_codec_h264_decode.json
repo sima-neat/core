@@ -1,11 +1,11 @@
 {
   "scenario_id": "runtime_codec_h264_decode",
   "model_id": "synthetic_h264_1280x720",
-  "pipeline_id": "app_boundary_h264parse_sima_h264_decode_1280x720",
+  "pipeline_id": "app_boundary_h264parse_neatdecoder_zero_copy_1280x720",
   "run_mode": "codec_h264_decode",
   "iterations": 1000,
   "metrics_thresholds": {
-    "throughput_min": 10.0,
+    "throughput_min": 450.0,
     "p50_max": 0.0,
     "p95_max": 0.0,
     "startup_max": 20000.0,

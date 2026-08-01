@@ -2,10 +2,13 @@
 #include "InputStreamInternal.h"
 
 #include "pipeline/GraphOptions.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/EncodedSampleUtil.h"
+#include "pipeline/NeatError.h"
 #include "InputStreamUtil.h"
 
 #include "pipeline/internal/CapsBridge.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -209,9 +212,26 @@ int inputstream_stop_timeout_ms() {
   return inputstream_debug_flags().stop_timeout_ms;
 }
 
-void set_stream_error(InputStream::State& st, const std::string& msg) {
+void set_stream_error(InputStream::State& st, std::string code, std::string msg,
+                      std::optional<GraphReport> report) {
   std::lock_guard<std::mutex> lock(st.error_mu);
-  st.error = msg;
+  const bool typed_upgrade = report.has_value() && (!st.terminal_error.has_value() ||
+                                                    !st.terminal_error->report.has_value());
+  if (st.terminal_error.has_value() && !typed_upgrade)
+    return;
+  PullError error;
+  error.code = std::move(code);
+  error.message = pipeline_internal::error_util::decorate_error(error.code, std::move(msg));
+  if (report.has_value()) {
+    if (report->error_code.empty())
+      report->error_code = error.code;
+    error.report = std::move(report);
+  }
+  st.terminal_error = std::move(error);
+}
+
+void set_stream_error(InputStream::State& st, const std::string& msg) {
+  set_stream_error(st, error_codes::kRuntimeElementFailed, msg);
 }
 
 std::string format_push_failure_error(const InputStream::State& st, const char* where,
@@ -233,21 +253,38 @@ std::string format_push_failure_error(const InputStream::State& st, const char* 
 [[noreturn]] void throw_push_failed_with_last_error(const char* where,
                                                     const std::shared_ptr<InputStream::State>& st) {
   const char* tag = where ? where : "InputStream::push";
+  std::optional<PullError> terminal_error;
+  if (st) {
+    std::lock_guard<std::mutex> lock(st->error_mu);
+    terminal_error = st->terminal_error;
+  }
+  if (terminal_error.has_value()) {
+    if (terminal_error->report.has_value()) {
+      GraphReport report = std::move(*terminal_error->report);
+      if (report.error_code.empty())
+        report.error_code = terminal_error->code;
+      if (report.repro_note.empty())
+        report.repro_note = terminal_error->message;
+      throw NeatError(terminal_error->message, std::move(report));
+    }
+    // Keep a push placeholder reportless. The output worker may shortly observe the
+    // underlying bus error and replace it with a specific, report-bearing diagnostic.
+    throw std::runtime_error(terminal_error->message);
+  }
+
   std::ostringstream oss;
   oss << tag << ": push failed";
   if (!st) {
     oss << " (stream state unavailable)";
   } else {
-    std::lock_guard<std::mutex> lock(st->error_mu);
-    if (!st->error.empty()) {
-      oss << ": " << st->error;
-    } else if (st->stop_requested.load(std::memory_order_relaxed)) {
+    if (st->stop_requested.load(std::memory_order_relaxed)) {
       oss << ": stream is stopping";
     } else {
       oss << ": appsrc rejected buffer";
     }
   }
-  throw std::runtime_error(oss.str());
+  throw std::runtime_error(
+      pipeline_internal::error_util::decorate_error(error_codes::kRuntimeElementFailed, oss.str()));
 }
 
 void log_push_refcount(const char* where, GstBuffer* buffer) {
@@ -405,11 +442,26 @@ GstFlowReturn appsink_new_sample(GstAppSink* sink, gpointer user_data) {
     return GST_FLOW_OK;
 
   {
-    std::lock_guard<std::mutex> lock(st->cb_mu);
+    std::unique_lock<std::mutex> lock(st->cb_mu);
     if (st->cb_queue_max > 0 && st->cb_queue.size() >= st->cb_queue_max) {
-      log_appsink_sample_refs("drop", sample, st->cb_queue.size());
-      gst_sample_unref(sample);
-      return GST_FLOW_OK;
+      if (st->opt.explicit_public_output_options && !st->opt.appsink_drop) {
+        st->cb_cv.wait(lock, [&] {
+          return st->stop_requested.load() || st->cb_queue.size() < st->cb_queue_max;
+        });
+        if (st->stop_requested.load()) {
+          gst_sample_unref(sample);
+          return GST_FLOW_FLUSHING;
+        }
+      } else if (st->opt.explicit_public_output_options) {
+        GstSample* oldest = st->cb_queue.front();
+        st->cb_queue.pop_front();
+        log_appsink_sample_refs("replace", oldest, st->cb_queue.size());
+        gst_sample_unref(oldest);
+      } else {
+        log_appsink_sample_refs("drop", sample, st->cb_queue.size());
+        gst_sample_unref(sample);
+        return GST_FLOW_OK;
+      }
     }
     log_appsink_sample_refs("queue", sample, st->cb_queue.size());
     st->cb_queue.push_back(sample);
@@ -666,7 +718,7 @@ BuiltBuffer build_buffer_with_fill(
       msg << where << ": input exceeds allocated buffer size" << " (required=" << required_bytes
           << ", allocated=" << st.alloc_bytes << "). "
           << "Fix: increase RunAdvancedOptions::max_input_bytes or "
-          << "Model::Options::input_max_* limits.";
+          << "Model::Options::preprocess.input_max_* limits.";
       throw std::runtime_error(msg.str());
     }
     gst_buffer_resize(buf, 0, required_bytes);
@@ -695,6 +747,18 @@ BuiltBuffer build_buffer_with_fill(
   if (record_timings)
     t_copy_end = std::chrono::steady_clock::now();
 
+  buf = attach_simaai_meta_inplace(buf, st.src_opt, st.pool_guard, where, frame_id_override,
+                                   stream_id_override, buffer_name_override);
+  if (!buf) {
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":attach_meta_fail").c_str());
+    }
+    throw std::runtime_error(std::string(where) + ": failed to attach GstSimaMeta");
+  }
+  // Attach the common metadata envelope before applying payload-specific
+  // metadata. attach_simaai_meta_inplace() may create a writable buffer view;
+  // applying GstVideoMeta/preprocess metadata first would leave those metas on
+  // the old buffer when the writable envelope is created.
   if (prepare) {
     try {
       prepare(&buf);
@@ -704,15 +768,6 @@ BuiltBuffer build_buffer_with_fill(
       }
       throw;
     }
-  }
-
-  buf = attach_simaai_meta_inplace(buf, st.src_opt, st.pool_guard, where, frame_id_override,
-                                   stream_id_override, buffer_name_override);
-  if (!buf) {
-    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
-      release_input_buffer(buf, (std::string(tag) + ":attach_meta_fail").c_str());
-    }
-    throw std::runtime_error(std::string(where) + ": failed to attach GstSimaMeta");
   }
   update_simaai_meta_fields(buf, frame_id_override, input_seq_override, orig_input_seq_override,
                             stream_id_override, buffer_name_override, timing_override.pts_ns);
@@ -779,7 +834,7 @@ void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* wh
     msg << tag << ": input exceeds max_input_bytes" << " (required=" << bytes
         << ", max_input_bytes=" << st.max_input_bytes_guard
         << "). Fix: increase RunAdvancedOptions::max_input_bytes or raise "
-        << "Model::Options::input_max_width/input_max_height/input_max_depth.";
+        << "Model::Options::preprocess.input_max_width/input_max_height/input_max_depth.";
     throw std::runtime_error(msg.str());
   }
 

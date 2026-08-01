@@ -29,13 +29,23 @@ bool element_property_exists(const char* factory, const char* property_name) {
   if (!f) {
     return false;
   }
-  const GType element_type = gst_element_factory_get_element_type(f);
+  // A factory discovered from the registry can still have an invalid element
+  // type until its plugin feature is loaded.  Querying that lazy factory made
+  // capability detection depend on call order (the first CameraInput could
+  // miss a property that the second one observed).  Load the feature before
+  // inspecting the class so every caller sees the same property surface.
+  GstPluginFeature* loaded_feature = gst_plugin_feature_load(GST_PLUGIN_FEATURE(f));
+  GstElementFactory* loaded_factory = loaded_feature ? GST_ELEMENT_FACTORY(loaded_feature) : f;
+  const GType element_type = gst_element_factory_get_element_type(loaded_factory);
   bool found = false;
   if (element_type != G_TYPE_INVALID) {
     if (auto* klass = G_OBJECT_CLASS(g_type_class_ref(element_type)); klass) {
       found = g_object_class_find_property(klass, property_name) != nullptr;
       g_type_class_unref(klass);
     }
+  }
+  if (loaded_feature) {
+    gst_object_unref(loaded_feature);
   }
   gst_object_unref(f);
   return found;

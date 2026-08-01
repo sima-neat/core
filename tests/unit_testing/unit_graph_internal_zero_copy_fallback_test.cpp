@@ -213,6 +213,16 @@ RUN_TEST(
                 "producer should see capacity only after reserved slot release");
       }
 
+      {
+        simaai::neat::graph::runtime::BlockingQueue<int> cancellation_queue(1);
+        require(cancellation_queue.push_interruptible(1, 0,
+                                                      [&] { return cancellation_queue.closed(); }),
+                "interruptible push cancellation predicates may safely inspect their queue");
+        int queued = 0;
+        require(cancellation_queue.pop(queued, 0) && queued == 1,
+                "interruptible push should preserve the item after a queue-inspecting predicate");
+      }
+
       constexpr simaai::neat::graph::NodeId kSinkNode = 7;
       auto graph_core = std::make_shared<simaai::neat::runtime::RunCore>();
       graph_core->graph_execution_ =
@@ -569,9 +579,10 @@ RUN_TEST(
           simaai::neat::graph::kInvalidPort,
           0U,
       };
-      ::setenv("SIMA_GRAPH_REALTIME_CREDIT_MAX_INFLIGHT_PER_STREAM", "1", 1);
+      simaai::neat::GraphLinkOptions realtime_credit_options;
+      realtime_credit_options.max_inflight_per_stream = 1;
       simaai::neat::runtime::RealtimeLatestLink realtime_link(
-          realtime_target, simaai::neat::GraphLinkOptions{}, "credit_stream");
+          realtime_target, realtime_credit_options, "credit_stream");
       std::mutex realtime_mu;
       std::condition_variable realtime_cv;
       std::vector<std::int64_t> dispatched_frames;

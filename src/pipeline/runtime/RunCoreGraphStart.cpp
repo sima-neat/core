@@ -33,6 +33,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -50,7 +51,6 @@ bool has_output_appsink(std::span<const std::shared_ptr<simaai::neat::Node>> nod
 bool has_internal_source(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 void maybe_force_copy_for_backpressure(Sample& sample, std::size_t qsize, const char* where,
                                        std::size_t seg_id);
-InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 bool is_encoded_sample(const Sample& sample);
 std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string* err);
 
@@ -66,6 +66,10 @@ using simaai::neat::graph::StageMsg;
 using simaai::neat::graph::StageOutMsg;
 using simaai::neat::pipeline_internal::env_bool;
 using simaai::neat::pipeline_internal::env_int;
+
+bool realtime_by_stream_policy(GraphLinkPolicy policy) {
+  return policy == GraphLinkPolicy::RealtimeLatestByStream;
+}
 
 std::string gst_double_quote(std::string value) {
   std::string out;
@@ -273,6 +277,8 @@ const char* sima_decode_type_debug_name(simaai::neat::SimaDecodeType type) {
     return "jpeg";
   case simaai::neat::SimaDecodeType::MJPEG:
     return "mjpeg";
+  case simaai::neat::SimaDecodeType::H265:
+    return "h265";
   }
   return "unknown";
 }
@@ -367,9 +373,23 @@ std::uint32_t positive_u32_or_zero(int value) {
   return value > 0 ? static_cast<std::uint32_t>(value) : 0U;
 }
 
+constexpr bool decode_type_uses_video_admission(simaai::neat::SimaDecodeType type) {
+  return type == simaai::neat::SimaDecodeType::H264 || type == simaai::neat::SimaDecodeType::H265;
+}
+
+constexpr std::uint32_t decoder_admission_codec(simaai::neat::SimaDecodeType type) {
+  return type == simaai::neat::SimaDecodeType::H265 ? pipeline_internal::kDecoderAdmissionCodecH265
+                                                    : pipeline_internal::kDecoderAdmissionCodecH264;
+}
+
+static_assert(decoder_admission_codec(simaai::neat::SimaDecodeType::H264) ==
+              pipeline_internal::kDecoderAdmissionCodecH264);
+static_assert(decoder_admission_codec(simaai::neat::SimaDecodeType::H265) ==
+              pipeline_internal::kDecoderAdmissionCodecH265);
+
 bool decoder_candidate_uses_zero_copy_output(const DecoderAdmissionCandidate& candidate) {
   const auto& opt = candidate.options;
-  if (opt.type != simaai::neat::SimaDecodeType::H264 || !opt.raw_output) {
+  if (!decode_type_uses_video_admission(opt.type) || !opt.raw_output) {
     return false;
   }
   if (!opt.out_format.empty() && opt.out_format.tag != simaai::neat::FormatTag::NV12) {
@@ -410,7 +430,7 @@ void collect_decoder_candidate_from_node(
     ExecutionGraphRuntime& execution, std::size_t pipeline_index, std::size_t node_index,
     const std::shared_ptr<simaai::neat::Node>& node, simaai::neat::graph::NodeId runtime_node,
     const OutputSpec& decoder_output_spec, bool fused_branch, std::size_t fused_branch_index,
-    std::vector<DecoderAdmissionCandidate>& candidates, std::size_t* auto_h264_decoders,
+    std::vector<DecoderAdmissionCandidate>& candidates, std::size_t* admission_decoder_count,
     std::size_t* missing_shape_decoders) {
   (void)execution;
   const auto* dec = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
@@ -418,11 +438,11 @@ void collect_decoder_candidate_from_node(
     return;
   }
   const auto& opt = dec->options();
-  if (opt.type != simaai::neat::SimaDecodeType::H264) {
+  if (!decode_type_uses_video_admission(opt.type)) {
     return;
   }
-  if (auto_h264_decoders) {
-    ++(*auto_h264_decoders);
+  if (admission_decoder_count) {
+    ++(*admission_decoder_count);
   }
 
   const std::uint32_t explicit_width = positive_u32_or_zero(opt.dec_width);
@@ -476,10 +496,10 @@ void collect_decoder_candidate_from_node(
 
 bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
                                           std::vector<DecoderAdmissionCandidate>& candidates,
-                                          std::size_t* auto_h264_decoders,
+                                          std::size_t* admission_decoder_count,
                                           std::size_t* missing_shape_decoders) {
-  if (auto_h264_decoders) {
-    *auto_h264_decoders = 0;
+  if (admission_decoder_count) {
+    *admission_decoder_count = 0;
   }
   if (missing_shape_decoders) {
     *missing_shape_decoders = 0;
@@ -502,7 +522,7 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
       collect_decoder_candidate_from_node(
           execution, pipeline_index, node_index, runtime->nodes[node_index],
           runtime_node_for_materialized_decoder(*runtime, node_index), decoder_spec,
-          /*fused_branch=*/false, static_cast<std::size_t>(-1), candidates, auto_h264_decoders,
+          /*fused_branch=*/false, static_cast<std::size_t>(-1), candidates, admission_decoder_count,
           missing_shape_decoders);
     }
 
@@ -520,8 +540,8 @@ bool collect_decoder_admission_candidates(ExecutionGraphRuntime& execution,
                                         node_index, {});
           collect_decoder_candidate_from_node(
               execution, pipeline_index, node_index, branch.nodes[node_index], branch.source_node,
-              decoder_spec, /*fused_branch=*/true, branch_index, candidates, auto_h264_decoders,
-              missing_shape_decoders);
+              decoder_spec, /*fused_branch=*/true, branch_index, candidates,
+              admission_decoder_count, missing_shape_decoders);
         }
       }
     }
@@ -744,26 +764,26 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
   }
 
   std::vector<DecoderAdmissionCandidate> candidates;
-  std::size_t auto_h264_decoders = 0;
+  std::size_t admission_decoder_count = 0;
   std::size_t missing_shape_decoders = 0;
-  collect_decoder_admission_candidates(execution, candidates, &auto_h264_decoders,
+  collect_decoder_admission_candidates(execution, candidates, &admission_decoder_count,
                                        &missing_shape_decoders);
-  if (auto_h264_decoders <= 1) {
+  if (admission_decoder_count <= 1) {
     return;
   }
   if (missing_shape_decoders > 0) {
     const std::string msg =
         "RunCore::start(graph): automatic decoder admission requires decoded width/height for "
-        "each H.264 decoder in a multi-decoder graph; missing shape for " +
-        std::to_string(missing_shape_decoders) + " of " + std::to_string(auto_h264_decoders) +
+        "each H.264/H.265 decoder in a multi-decoder graph; missing shape for " +
+        std::to_string(missing_shape_decoders) + " of " + std::to_string(admission_decoder_count) +
         " decoder(s).";
     if (env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {
       throw std::runtime_error(msg);
     }
     if (decoder_plan_debug_enabled()) {
       std::fprintf(stderr,
-                   "[DECPLAN] admission_skip reason=missing_shape auto_h264=%zu missing=%zu\n",
-                   auto_h264_decoders, missing_shape_decoders);
+                   "[DECPLAN] admission_skip reason=missing_shape automatic=%zu missing=%zu\n",
+                   admission_decoder_count, missing_shape_decoders);
     }
     return;
   }
@@ -779,7 +799,7 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     const auto& candidate = candidates[i];
     pipeline_internal::DecoderAdmissionStreamRequest stream;
     stream.stream_index = static_cast<std::uint32_t>(i);
-    stream.codec = 101;       // Decoder daemon admission protocol AVC/H.264 id.
+    stream.codec = decoder_admission_codec(candidate.options.type);
     stream.stream_mode = 202; // Align-split input mode used by parser/depay paths.
     stream.width = candidate.width;
     stream.height = candidate.height;
@@ -1013,13 +1033,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
 
     if (seg.boundary.needs_input && !seg.boundary.source_like &&
         !simaai::neat::graph::has_input_appsrc(seg.nodes)) {
-      InputOptions opt_src;
-      if (seg.boundary_hints.has_value() && !seg.boundary_hints->ingress_inputs.empty()) {
-        opt_src = seg.boundary_hints->ingress_inputs.front();
-      } else {
-        opt_src = simaai::neat::graph::input_opts_from_spec(seg.input_spec, seg.input_complete);
-      }
-      nodes.insert(nodes.begin(), simaai::neat::nodes::Input(opt_src));
+      nodes.insert(nodes.begin(), simaai::neat::nodes::Input(injected_boundary_input_options(seg)));
       injected_input = true;
     }
 
@@ -1083,7 +1097,7 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
           continue;
         }
         const auto& link = execution.plan.edges[edge_index].link_options;
-        if (link.policy == GraphLinkPolicy::RealtimeLatestByStream) {
+        if (realtime_by_stream_policy(link.policy)) {
           realtime_input = true;
         }
       }
@@ -1107,7 +1121,7 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.stage_groups.reserve(execution.plan.stage_nodes.size());
   for (const auto& st : execution.plan.stage_nodes) {
-    if (!st.node) {
+    if (!st.node || st.consumed_by_fused_realtime_ingress) {
       continue;
     }
 
@@ -1129,6 +1143,7 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
     for (int i = 0; i < opt_node.instances; ++i) {
       auto rt = std::make_unique<StageRuntime>(capacity);
       rt->node_id = st.node_id;
+      rt->group_index = group_index;
       rt->exec = st.node->factory()();
       for (const auto& port : st.node->input_ports()) {
         const PortId pid = intern_runtime_port(execution, port.name);
@@ -1170,6 +1185,43 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   std::vector<bool> has_out(runtime_node_count(execution.plan), false);
   std::unordered_map<std::string, std::size_t> realtime_link_by_target;
+  std::unordered_set<NodeId> consumed_fused_nodes;
+  std::unordered_map<NodeId, OutputOptions> fused_encoded_output_options;
+  for (const auto& segment : execution.plan.pipeline_segments) {
+    if (segment.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(segment.node_ids.begin(), segment.node_ids.end());
+    }
+    if (!segment.fused_realtime_ingress.has_value()) {
+      continue;
+    }
+    for (const auto& branch : segment.fused_realtime_ingress->branches) {
+      if (branch.encoded_output.has_value() &&
+          branch.encoded_output->sink_node != graph::kInvalidNode) {
+        fused_encoded_output_options.emplace(branch.encoded_output->sink_node,
+                                             branch.encoded_output->options);
+      }
+    }
+  }
+
+  const auto terminal_output_options_for = [&](NodeId id) -> const OutputOptions* {
+    for (const auto& segment : execution.plan.pipeline_segments) {
+      for (std::size_t local = 0; local < segment.nodes.size(); ++local) {
+        if (attributed_runtime_node_for_segment_node(segment, local) != id) {
+          continue;
+        }
+        const auto* output = dynamic_cast<const simaai::neat::Output*>(segment.nodes[local].get());
+        if (output) {
+          return &output->options();
+        }
+      }
+    }
+    return nullptr;
+  };
+  for (const auto& stage : execution.plan.stage_nodes) {
+    if (stage.consumed_by_fused_realtime_ingress) {
+      consumed_fused_nodes.insert(stage.node_id);
+    }
+  }
 
   const auto downstream_target_for = [&](const EdgePlan& e,
                                          std::size_t eidx) -> std::optional<DownstreamTarget> {
@@ -1221,7 +1273,7 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
         it = realtime_link_by_target.find(key);
       } else if (it->second < execution.realtime_links.size() &&
                  execution.realtime_links[it->second]) {
-        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id);
+        execution.realtime_links[it->second]->add_edge_stream_id(eidx, e.stream_id, e.link_options);
       }
       outs.push_back(DownstreamTarget{DownstreamTarget::Kind::RealtimeLatestLink, it->second,
                                       e.to_port, eidx});
@@ -1233,8 +1285,135 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
 
   for (NodeId id = 0; id < has_out.size(); ++id) {
     if (!has_out[id]) {
-      execution.sinks[id] = std::make_shared<GraphSinkQueue>(core->graph_options.edge_queue);
+      const auto encoded = fused_encoded_output_options.find(id);
+      // Source/decoder/fan-out/VideoSender nodes absorbed into fused ingress
+      // are executed inside the target pipeline and are not graph sinks.  The
+      // only consumed node that still owns a sink queue is an explicit encoded
+      // Output, whose queue is fed by the graph-scoped fused dispatcher.
+      if (consumed_fused_nodes.find(id) != consumed_fused_nodes.end() &&
+          encoded == fused_encoded_output_options.end()) {
+        continue;
+      }
+      std::size_t capacity = core->graph_options.edge_queue;
+      const OutputOptions* output_options = encoded != fused_encoded_output_options.end()
+                                                ? &encoded->second
+                                                : terminal_output_options_for(id);
+      if (output_options) {
+        capacity = output_options->max_buffers <= 0
+                       ? 0U
+                       : static_cast<std::size_t>(output_options->max_buffers);
+      }
+      execution.sinks[id] = std::make_shared<GraphSinkQueue>(capacity, output_options);
     }
+  }
+}
+
+void initialize_completion_tracking(const std::shared_ptr<RunCore>& core) {
+  auto& execution = core->graph_execution();
+  std::vector<std::size_t> pipeline_producers(execution.pipelines.size(), 0U);
+  std::vector<std::size_t> stage_producers(execution.stage_groups.size(), 0U);
+  std::vector<std::size_t> realtime_producers(execution.realtime_links.size(), 0U);
+  std::unordered_map<NodeId, std::size_t> sink_producers;
+
+  const auto add_target_producer = [&](const DownstreamTarget& target) {
+    switch (target.kind) {
+    case DownstreamTarget::Kind::PipelineInput:
+      if (target.index < pipeline_producers.size()) {
+        ++pipeline_producers[target.index];
+      }
+      break;
+    case DownstreamTarget::Kind::StageGroup:
+      if (target.index < stage_producers.size()) {
+        ++stage_producers[target.index];
+      }
+      break;
+    case DownstreamTarget::Kind::GraphSink:
+      ++sink_producers[static_cast<NodeId>(target.index)];
+      break;
+    case DownstreamTarget::Kind::RealtimeLatestLink:
+      break;
+    }
+  };
+
+  const auto add_public_ingress = [&](const Endpoint& endpoint) {
+    const bool already_present =
+        std::any_of(execution.public_ingress_endpoints.begin(),
+                    execution.public_ingress_endpoints.end(), [&](const Endpoint& existing) {
+                      return existing.kind == endpoint.kind && existing.node == endpoint.node &&
+                             existing.port == endpoint.port && existing.segment == endpoint.segment;
+                    });
+    if (!already_present) {
+      execution.public_ingress_endpoints.push_back(endpoint);
+    }
+  };
+  execution.public_ingress_endpoints.clear();
+  for (const auto& [name, endpoint] : execution.plan.named_inputs) {
+    (void)name;
+    add_public_ingress(endpoint);
+  }
+  if (execution.plan.default_input.has_value()) {
+    add_public_ingress(*execution.plan.default_input);
+  }
+
+  for (const auto& endpoint : execution.public_ingress_endpoints) {
+    const auto stage = execution.node_to_stage_group.find(endpoint.node);
+    if (stage != execution.node_to_stage_group.end()) {
+      add_target_producer(DownstreamTarget{DownstreamTarget::Kind::StageGroup, stage->second,
+                                           endpoint.port, invalid_edge_index()});
+      continue;
+    }
+    const auto pipeline = execution.node_to_pipeline.find(endpoint.node);
+    if (pipeline == execution.node_to_pipeline.end() ||
+        pipeline->second >= execution.pipelines.size() || !execution.pipelines[pipeline->second] ||
+        execution.pipelines[pipeline->second]->seg.boundary.direct_graph_source) {
+      continue;
+    }
+    add_target_producer(DownstreamTarget{DownstreamTarget::Kind::PipelineInput, pipeline->second,
+                                         endpoint.port, invalid_edge_index()});
+  }
+
+  for (const auto& [key, targets] : execution.adjacency) {
+    (void)key;
+    for (const auto& target : targets) {
+      if (target.kind == DownstreamTarget::Kind::RealtimeLatestLink) {
+        if (target.index < realtime_producers.size()) {
+          ++realtime_producers[target.index];
+        }
+        continue;
+      }
+      add_target_producer(target);
+    }
+  }
+
+  // A realtime scheduler drains all of its upstream edges before it completes. Count that
+  // scheduler as one producer of its downstream target, independent of its fan-in cardinality.
+  for (std::size_t i = 0; i < execution.realtime_links.size(); ++i) {
+    if (!execution.realtime_links[i]) {
+      continue;
+    }
+    execution.realtime_links[i]->set_producer_count(realtime_producers[i]);
+    add_target_producer(execution.realtime_links[i]->downstream());
+  }
+
+  for (std::size_t i = 0; i < execution.pipelines.size(); ++i) {
+    if (execution.pipelines[i]) {
+      execution.pipelines[i]->transport.producers_remaining.store(pipeline_producers[i],
+                                                                  std::memory_order_release);
+    }
+  }
+  for (std::size_t i = 0; i < execution.stage_groups.size(); ++i) {
+    auto& group = execution.stage_groups[i];
+    group.producers_remaining.store(stage_producers[i], std::memory_order_release);
+    group.workers_remaining.store(group.instances.size(), std::memory_order_release);
+  }
+  for (auto& [node_id, sink] : execution.sinks) {
+    if (!sink) {
+      continue;
+    }
+    const auto count = sink_producers.find(node_id);
+    // A sink without an explicit GraphSink edge is owned by its terminal runtime node (or by a
+    // fused encoded source branch), so it still has exactly one producer.
+    sink->set_producer_count(count == sink_producers.end() ? 1U : count->second);
   }
 }
 
@@ -1314,6 +1493,7 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           flag.store(true);
         }
       } done_guard{st.worker_done};
+      bool input_drained = false;
       while (!core->graph_stop_requested()) {
         RuntimeStageQueueMsg queued;
         const auto pop_start = std::chrono::steady_clock::now();
@@ -1321,6 +1501,10 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           st.telemetry.mailbox_pop_miss.fetch_add(1, std::memory_order_relaxed);
           atomic_add_max(st.telemetry.mailbox_pop_wait_ns, st.telemetry.mailbox_pop_wait_max_ns,
                          elapsed_ns_since(pop_start));
+          if (st.inbox.closed()) {
+            input_drained = true;
+            break;
+          }
           continue;
         }
         st.telemetry.mailbox_pop_calls.fetch_add(1, std::memory_order_relaxed);
@@ -1349,6 +1533,12 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           st.telemetry.on_input_calls.fetch_add(1, std::memory_order_relaxed);
           atomic_add_max(st.telemetry.on_input_ns, st.telemetry.on_input_max_ns,
                          elapsed_ns_since(exec_start));
+        } catch (const NeatError& e) {
+          const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
+          release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
+                                                  "stage-on-input-exception");
+          core->graph_request_stop(e);
+          break;
         } catch (const std::exception& e) {
           const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
           release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
@@ -1377,13 +1567,17 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           }
         }
       }
+      if (input_drained && !core->graph_stop_requested()) {
+        core->graph_stage_worker_completed(st.group_index);
+      }
     });
   }
 }
 
 void start_realtime_links(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
-  for (auto& link : execution.realtime_links) {
+  for (std::size_t i = 0; i < execution.realtime_links.size(); ++i) {
+    auto& link = execution.realtime_links[i];
     if (!link) {
       continue;
     }
@@ -1412,7 +1606,8 @@ void start_realtime_links(const std::shared_ptr<RunCore>& core) {
                                            router_callbacks, dispatch_options);
         },
         [core] { return core->graph_stop_requested(); },
-        [core](const std::string& err) { core->graph_request_stop(err); });
+        [core](const std::string& err) { core->graph_request_stop(err); },
+        [core, i] { core->graph_realtime_link_completed(i); });
   }
 }
 
@@ -1435,6 +1630,51 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    const std::weak_ptr<RunCore> weak_core = core;
+    start_opt.fused_encoded_output_dispatch =
+        [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
+                    std::string* error) {
+          const auto locked = weak_core.lock();
+          if (!locked || locked->graph_stop_requested()) {
+            if (error) {
+              *error = "graph stopped before encoded Output dispatch";
+            }
+            return FusedEncodedOutputDispatchResult::Stopping;
+          }
+          auto& execution = locked->graph_execution();
+          const auto sink = execution.sinks.find(output.sink_node);
+          if (sink == execution.sinks.end() || !sink->second) {
+            if (error) {
+              *error = "encoded Output sink is unavailable";
+            }
+            locked->graph_request_stop("fused encoded Output sink is unavailable");
+            return FusedEncodedOutputDispatchResult::Failed;
+          }
+
+          // Preserve OutputOptions exactly: Latest replaces its oldest queued
+          // AU without blocking, while EveryFrame applies backpressure until
+          // Run::pull() makes room. Closing the queue wakes blocked producers.
+          const auto enqueue =
+              enqueue_fused_encoded_output(*sink->second, output.options, std::move(sample));
+          if (enqueue == FusedEncodedOutputEnqueueResult::Enqueued ||
+              enqueue == FusedEncodedOutputEnqueueResult::ReplacedOldest ||
+              enqueue == FusedEncodedOutputEnqueueResult::DroppedIncoming) {
+            return FusedEncodedOutputDispatchResult::Delivered;
+          }
+          if (enqueue == FusedEncodedOutputEnqueueResult::Closed) {
+            if (error) {
+              *error = "encoded Output queue closed during graph stop";
+            }
+            return FusedEncodedOutputDispatchResult::Stopping;
+          }
+
+          const std::string reason = "encoded Output queue overflowed unexpectedly";
+          if (error) {
+            *error = reason;
+          }
+          locked->graph_request_stop(reason);
+          return FusedEncodedOutputDispatchResult::Failed;
+        };
     rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
     rt.transport.built.store(true, std::memory_order_release);
   }
@@ -1460,11 +1700,14 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
     {
       std::unique_lock<std::mutex> lock(pipe.transport.mu);
       pipe.transport.cv.wait(lock, [&] {
-        return pipe.transport.built.load(std::memory_order_acquire) || core->graph_stop_requested();
+        return pipe.transport.built.load(std::memory_order_acquire) ||
+               pipe.transport.completion_forwarded.load(std::memory_order_acquire) ||
+               core->graph_stop_requested();
       });
     }
 
-    if (core->graph_stop_requested()) {
+    if (core->graph_stop_requested() ||
+        pipe.transport.completion_forwarded.load(std::memory_order_acquire)) {
       if (simaai::neat::graph::graph_debug_enabled()) {
         std::fprintf(stderr, "[GRAPH] pipeline_pull_thread_stop_before_ready seg=%zu\n",
                      static_cast<std::size_t>(pipe.seg.id));
@@ -1540,16 +1783,31 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           pull_logs++;
         }
         const auto pull_start = std::chrono::steady_clock::now();
-        auto sample_opt = pipe.run_core
-                              ? pipe.run_core->pull_optional(core->graph_options.pull_timeout_ms)
-                              : std::optional<Sample>{};
+        Sample sample;
+        PullError pull_error;
+        const PullStatus pull_status =
+            pipe.run_core
+                ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error)
+                : PullStatus::Closed;
         pipe.transport.telemetry.pull_thread_pull_calls.fetch_add(1, std::memory_order_relaxed);
         atomic_add_max(pipe.transport.telemetry.pull_thread_pull_ns,
                        pipe.transport.telemetry.pull_thread_pull_max_ns,
                        elapsed_ns_since(pull_start));
-        if (!sample_opt.has_value()) {
+        if (pull_status != PullStatus::Ok) {
           pipe.transport.telemetry.pull_thread_pull_miss.fetch_add(1, std::memory_order_relaxed);
-          emit_diag("empty");
+          emit_diag(pull_status == PullStatus::Timeout ? "empty" : "closed");
+          if (pull_status == PullStatus::Error) {
+            core->graph_request_stop(std::move(pull_error));
+            return;
+          }
+          if (pull_status == PullStatus::Closed) {
+            if (pipe.seg.boundary.source_like) {
+              core->graph_pipeline_completed(i, std::move(pull_error));
+            } else {
+              core->graph_pipeline_completed(i);
+            }
+            return;
+          }
           if (simaai::neat::graph::graph_debug_enabled()) {
             const std::string err = pipe.run_core ? pipe.run_core->last_error() : std::string{};
             if (!err.empty()) {
@@ -1566,7 +1824,6 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
           continue;
         }
-        Sample sample = *sample_opt;
         last_output = std::chrono::steady_clock::now();
         emit_diag("sample");
         if (env_bool("SIMA_GRAPH_PRE_RESTORE_DEBUG", false)) {
@@ -1586,11 +1843,9 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
         }
         core->graph_restore_stream_id_if_needed(i, sample);
-        /*
-         * Do not release realtime/mux credits at this intermediate pull boundary.
-         * The routed Sample can still be queued by a downstream realtime link, stage,
-         * or graph sink, so terminal/drop paths own the release.
-         */
+        // A pipeline output is an internal forwarding boundary, not final consumption. Keep
+        // realtime and holder credits attached until a terminal pull, drop, or closed sink owns
+        // the corresponding release.
         simaai::neat::graph::log_first_decoded_once(sample, pipe.seg.id);
         if (simaai::neat::graph::graph_debug_enabled()) {
           simaai::neat::graph::graph_debug_sample("pipeline_pull", sample);
@@ -1630,6 +1885,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
                        pipe.transport.telemetry.pull_thread_route_max_ns,
                        elapsed_ns_since(route_start));
       }
+    } catch (const NeatError& e) {
+      core->graph_request_stop(e);
     } catch (const std::exception& e) {
       core->graph_request_stop(e.what());
     }
@@ -1654,7 +1911,18 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
         atomic_add_max(pipe.transport.telemetry.push_thread_pop_wait_ns,
                        pipe.transport.telemetry.push_thread_pop_wait_max_ns,
                        elapsed_ns_since(pop_start));
-        continue;
+        if (!pipe.transport.input_queue->closed()) {
+          continue;
+        }
+        if (pipe.transport.built.load(std::memory_order_acquire) && pipe.run_core) {
+          pipe.run_core->close_input();
+          if (!pipe.transport.has_output) {
+            core->graph_pipeline_completed(i);
+          }
+        } else {
+          core->graph_pipeline_completed(i);
+        }
+        return;
       }
       pipe.transport.telemetry.push_thread_pop_calls.fetch_add(1, std::memory_order_relaxed);
       atomic_add_max(pipe.transport.telemetry.push_thread_pop_wait_ns,
@@ -1772,7 +2040,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
                        static_cast<int>(::getpid()));
           std::raise(SIGSTOP);
         }
-        core->graph_request_stop("GraphRun: pipeline push failed");
+        core->graph_request_stop_from_pipeline(pipe.run_core, "GraphRun: pipeline push failed");
         return;
       }
       if (!pipe.transport.has_output) {
@@ -1830,6 +2098,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
     step_start = pipeline_internal::build_timing_now();
     build_adjacency_and_sinks(core);
     const auto adjacency_us = pipeline_internal::build_timing_us(step_start);
+    initialize_completion_tracking(core);
     step_start = pipeline_internal::build_timing_now();
     prebuild_complete_pipeline_segments(core, opt.seed.has_value());
     const auto prebuild_complete_us = pipeline_internal::build_timing_us(step_start);

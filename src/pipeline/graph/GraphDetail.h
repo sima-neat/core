@@ -307,6 +307,9 @@ struct BuildResult {
   std::shared_ptr<CompiledPipelineContracts> compiled_contracts;
   std::optional<pipeline_internal::sima::SimaPluginStaticManifest> rendered_manifest;
   std::vector<std::string> model_source_paths;
+  // Fused-only ownership contract: true when the consumer creates replacement
+  // GstBuffers rather than forwarding/copying arbitrary lifecycle GstMeta.
+  bool fused_consumer_replaces_buffers = false;
   // Compile + render diagnostics from session_build_compile_contracts. Carried
   // forward so the wrapper throws in parse_pipeline_or_throw can include the
   // specific failure messages (which `render_manifest_from_compiled_contracts`

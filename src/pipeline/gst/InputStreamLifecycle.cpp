@@ -1,6 +1,9 @@
 #include "InputStreamInternal.h"
 
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/CpuVisibleSample.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 
 namespace simaai::neat {
 InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
@@ -84,11 +87,22 @@ bool InputStream::running() const {
   return state_ && state_->running.load();
 }
 
+bool InputStream::reached_eos() const {
+  return state_ && state_->eos_seen.load();
+}
+
 std::string InputStream::last_error() const {
   if (!state_)
     return {};
   std::lock_guard<std::mutex> lock(state_->error_mu);
-  return state_->error;
+  return state_->terminal_error.has_value() ? state_->terminal_error->message : std::string{};
+}
+
+std::optional<PullError> InputStream::last_error_detail() const {
+  if (!state_)
+    return std::nullopt;
+  std::lock_guard<std::mutex> lock(state_->error_mu);
+  return state_->terminal_error;
 }
 
 InputStreamStats InputStream::stats() const {
@@ -189,10 +203,14 @@ void InputStream::start(std::function<void(Sample)> on_output) {
   state_->callback = std::move(on_output);
   state_->stop_requested.store(false);
   state_->worker_done.store(false);
+  state_->eos_seen.store(false);
   state_->teardown_on_exit.store(false);
   state_->use_callbacks = inputstream_use_appsink_callbacks_enabled();
   state_->cb_eos.store(false);
-  state_->cb_queue_max = std::max<std::size_t>(1, state_->opt.appsink_max_buffers);
+  state_->cb_queue_max =
+      state_->opt.explicit_public_output_options && state_->opt.appsink_max_buffers <= 0
+          ? 0U
+          : std::max<std::size_t>(1, state_->opt.appsink_max_buffers);
   state_->running.store(true);
 
   auto st = state_;
@@ -233,6 +251,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             if (!st->cb_queue.empty()) {
               sample = st->cb_queue.front();
               st->cb_queue.pop_front();
+              st->cb_cv.notify_one();
             } else if (st->cb_eos.load()) {
               eos_seen = true;
             }
@@ -268,6 +287,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             sink_eos = gst_app_sink_is_eos(GST_APP_SINK(st->appsink));
           }
           if (eos_seen || sink_eos) {
+            st->eos_seen.store(true);
             if (eos_debug_enabled()) {
               const char* pipeline_name =
                   st->pipeline ? gst_element_get_name(st->pipeline) : "<null>";
@@ -291,8 +311,16 @@ void InputStream::start(std::function<void(Sample)> on_output) {
                 if (inputstream_dot_on_timeout_enabled()) {
                   pipeline_internal::maybe_dump_dot(st->pipeline, "inputstream_timeout");
                 }
-                std::lock_guard<std::mutex> lock(st->error_mu);
-                st->error = "InputStream::start: timeout waiting for output";
+                const std::string timeout_message =
+                    "No output was received before the input-stream timeout expired.\n\n"
+                    "How to fix:\n"
+                    "- Verify that the source is still producing frames.\n"
+                    "- Increase the timeout if this delay is expected.\n\n"
+                    "Diagnostic ID: runtime.output_timeout";
+                GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+                report.error_code = error_codes::kOutputTimeout;
+                report.repro_note = timeout_message;
+                set_stream_error(*st, report.error_code, timeout_message, std::move(report));
                 st->stop_requested.store(true);
                 break;
               }
@@ -400,12 +428,43 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         if (cb)
           cb(std::move(out));
       }
+    } catch (const NeatError& e) {
+      if (pipeline_or_graph_debug_enabled()) {
+        std::fprintf(stderr, "[INPUTSTREAM] worker_error: %s\n", e.what());
+      }
+      const GraphReport& source_report = e.report();
+      const std::string code = source_report.error_code.empty()
+                                   ? std::string(error_codes::kInternalPluginFailure)
+                                   : source_report.error_code;
+      set_stream_error(*st, code, e.what(), source_report);
     } catch (const std::exception& e) {
       if (pipeline_or_graph_debug_enabled()) {
         std::fprintf(stderr, "[INPUTSTREAM] worker_error: %s\n", e.what());
       }
-      std::lock_guard<std::mutex> lock(st->error_mu);
-      st->error = e.what();
+      GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+      report.error_code = error_codes::kInternalPluginFailure;
+      report.repro_note = "A Neat pipeline stage failed while processing output data.";
+      const std::string cause = pipeline_internal::sanitize_gst_diagnostic_text(e.what());
+      if (!cause.empty()) {
+        report.repro_note += "\n\nCause: " + cause;
+      }
+      report.repro_note +=
+          "\n\n"
+          "How to fix:\n"
+          "- Stop and restart the pipeline.\n"
+          "- Confirm that the pipeline uses supported plugins and a compatible MPK.\n\n"
+          "Diagnostic ID: neat.internal_plugin_failure";
+      set_stream_error(*st, report.error_code, report.repro_note, std::move(report));
+    } catch (...) {
+      GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+      report.error_code = error_codes::kInternalPluginFailure;
+      report.repro_note =
+          "A Neat pipeline stage failed unexpectedly.\n\n"
+          "How to fix:\n"
+          "- Stop and restart the pipeline.\n"
+          "- Confirm that the pipeline uses supported plugins and a compatible MPK.\n\n"
+          "Diagnostic ID: neat.unknown_plugin_failure";
+      set_stream_error(*st, report.error_code, report.repro_note, std::move(report));
     }
     st->running.store(false);
     if (st->teardown_on_exit.load() && st->pipeline) {
@@ -513,19 +572,27 @@ void InputStream::stop() {
       std::fprintf(stderr, "[INPUTSTREAM] stop: appsrc block=false\n");
     }
   }
-  const bool stop_flush = inputstream_stop_flush_enabled();
+  // Source/live pipelines request bounded synchronous teardown.  Do not send
+  // FLUSH_START ahead of their NULL transition: source elements may interpret
+  // that event as a runtime restart request and race the state change.  Keep
+  // the legacy pre-flush for deferred/appsrc teardown paths.
+  const bool stop_flush =
+      inputstream_stop_flush_enabled() && !state_->opt.prefer_synchronous_teardown;
   if (stop_flush && pipeline_ref) {
     if (stop_trace_enabled()) {
       std::fprintf(stderr, "[STOP] InputStream::stop flush state=%p pipeline=%p\n",
                    static_cast<void*>(state_.get()), static_cast<void*>(pipeline_ref));
     }
+    // A queue can still have a buffer in flight when teardown begins.  Keep
+    // the pipeline flushing until the NULL state transition: FLUSH_STOP would
+    // reset downstream segments and allow that stale buffer to reach an RTP
+    // payloader/depayloader with an undefined segment.
     const int flush_timeout_ms = inputstream_stop_flush_timeout_ms();
     if (flush_timeout_ms <= 0) {
       GstCallGuard guard(*state_);
       gst_element_send_event(pipeline_ref, gst_event_new_flush_start());
-      gst_element_send_event(pipeline_ref, gst_event_new_flush_stop(TRUE));
       if (inputstream_debug_enabled() || graph_debug_enabled()) {
-        std::fprintf(stderr, "[INPUTSTREAM] stop: flush_start/stop sent\n");
+        std::fprintf(stderr, "[INPUTSTREAM] stop: flush_start sent\n");
       }
     } else {
       auto done = std::make_shared<std::atomic<bool>>(false);
@@ -534,7 +601,6 @@ void InputStream::stop() {
       std::thread flush_thread([flush_pipeline, st, done]() {
         GstCallGuard guard(*st);
         gst_element_send_event(flush_pipeline, gst_event_new_flush_start());
-        gst_element_send_event(flush_pipeline, gst_event_new_flush_stop(TRUE));
         gst_object_unref(flush_pipeline);
         done->store(true, std::memory_order_relaxed);
       });

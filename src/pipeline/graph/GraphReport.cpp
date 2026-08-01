@@ -1,5 +1,7 @@
 #include "pipeline/GraphReport.h"
 
+#include "pipeline/internal/GstErrorNormalizer.h"
+
 #include <sstream>
 
 namespace simaai::neat {
@@ -47,7 +49,10 @@ std::string json_escape(const std::string& s) {
 }
 
 void append_quoted(std::ostringstream& oss, const std::string& s) {
-  oss << '"' << json_escape(s) << '"';
+  // Treat serialization as the final safety boundary. GraphReport is a public aggregate, so
+  // callers can populate any string field directly without passing through the normal report
+  // builders that redact pipeline-derived values.
+  oss << '"' << json_escape(pipeline_internal::redact_gst_credentials(s)) << '"';
 }
 
 } // namespace

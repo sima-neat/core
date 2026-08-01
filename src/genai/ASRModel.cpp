@@ -12,6 +12,19 @@
 #include <utility>
 
 namespace simaai::neat::genai {
+namespace {
+
+const char* asr_task_name(ASRTask task) {
+  switch (task) {
+  case ASRTask::Transcribe:
+    return "transcribe";
+  case ASRTask::Translate:
+    return "translate";
+  }
+  throw std::invalid_argument("Unsupported ASR task");
+}
+
+} // namespace
 
 struct ASRModel::Impl {
   explicit Impl(std::filesystem::path model_dir_in)
@@ -28,7 +41,7 @@ struct ASRModel::Impl {
     }
 
     internal::ensure_llima_runtime_connected();
-    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root, true);
+    whisper_model = std::make_unique<simaai::llima::WhisperModel>(info.root);
   }
 
   GenerationResult run(const GenerationRequest& request) {
@@ -36,19 +49,23 @@ struct ASRModel::Impl {
     load();
 
     std::lock_guard<std::mutex> run_lock(run_mutex);
-    const std::string language = request.language.empty() ? "en" : request.language;
-    std::string text;
+    const std::string language = request.language.empty() ? "auto" : request.language;
+    const char* task = asr_task_name(request.asr_task);
+    simaai::llima::WhisperModel::TranscriptionResult transcription;
     if (request.audio_file.has_value()) {
-      text = whisper_model->run_model(*request.audio_file, language);
+      transcription = whisper_model->run_model(*request.audio_file, language, task);
     } else {
       const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
-      text = whisper_model->run_model_from_pcm(
+      transcription = whisper_model->run_model_from_pcm(
           std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
-          language);
+          language, task);
     }
 
     GenerationResult result;
-    result.text = std::move(text);
+    result.text = std::move(transcription.text);
+    result.language = std::move(transcription.language);
+    result.no_speech_prob = transcription.no_speech_prob;
+    result.avg_logprob = transcription.avg_logprob;
     result.finish_reason = "stop";
     return result;
   }
@@ -91,7 +108,7 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
           ~CallbackGuard() {
             if (model && model->whisper_model) {
               model->whisper_model->set_info_callback([](const std::string&, double) {});
-              model->whisper_model->set_text_callback([](const std::string&, bool) {});
+              model->whisper_model->set_text_callback([](const std::string&, bool, bool) {});
             }
           }
         } callback_guard{model};
@@ -101,21 +118,24 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
               producer.record_metric(metric, value);
             });
         model->whisper_model->set_text_callback(
-            [&producer](const std::string& text, bool stream_end) {
+            [&producer](const std::string& text, bool stream_end, bool) {
               producer.record_text(text, stream_end);
             });
 
-        const std::string language = request.language.empty() ? "en" : request.language;
+        const std::string language = request.language.empty() ? "auto" : request.language;
+        const char* task = asr_task_name(request.asr_task);
+        simaai::llima::WhisperModel::TranscriptionResult transcription;
         if (request.audio_file.has_value()) {
-          (void)model->whisper_model->run_model(*request.audio_file, language);
+          transcription = model->whisper_model->run_model(*request.audio_file, language, task);
         } else {
           const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
-          (void)model->whisper_model->run_model_from_pcm(
+          transcription = model->whisper_model->run_model_from_pcm(
               std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
-              language);
+              language, task);
         }
         producer.finish(producer.cancelled() ? "interrupted" : "stop",
-                        std::optional<std::uint32_t>(0));
+                        std::optional<std::uint32_t>(0), transcription.language,
+                        transcription.no_speech_prob, transcription.avg_logprob);
       },
       [model = impl_] {
         if (model && model->whisper_model) {

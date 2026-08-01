@@ -14,6 +14,8 @@
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/internal/BuildTiming.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/internal/UxLogging.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
@@ -700,27 +702,28 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
   const bool had_pipeline = (pipeline != nullptr);
   const bool parse_error = (err != nullptr) || !had_pipeline || !GST_IS_BIN(pipeline);
 
-  std::string msg;
-  if (err && err->message) {
-    msg = err->message;
-  }
-  if (err)
-    g_error_free(err);
-
   if (parse_error) {
+    pipeline_internal::NormalizedDiagnostic diagnostic =
+        pipeline_internal::classify_gst_parse_error(err, build.pipeline_string);
+    if (!err && had_pipeline) {
+      diagnostic.title = "GStreamer returned an invalid pipeline root.";
+      diagnostic.actions = {
+          "Check the custom pipeline fragment and ensure it creates a complete pipeline.",
+      };
+    }
+    if (err)
+      g_error_free(err);
     if (had_pipeline) {
       gst_object_unref(pipeline);
     }
-    if (msg.empty()) {
-      msg = had_pipeline ? "parser returned non-bin root element" : "unknown";
-    }
     session_build_throw_session_error_simple(
-        error_codes::kParseLaunch,
-        std::string(where ? where : "Graph::build") + ": gst_parse_launch failed: " + msg +
-            "\nPipeline:\n" + build.pipeline_string,
-        "Validate pipeline fragments and plugin availability (gst-inspect-1.0).",
-        build.pipeline_string);
+        diagnostic.error_code,
+        pipeline_internal::render_diagnostic_body(
+            diagnostic, pipeline_internal::ux::should_emit_gstreamer_for_current_context()),
+        "", build.pipeline_string);
   }
+  if (err)
+    g_error_free(err);
 
   using namespace simaai::neat::pipeline_internal::sima;
   ManifestBuildDiagnostics manifest_diag;

@@ -53,7 +53,102 @@ struct RuntimeSinkQueueMsg {
   std::size_t edge_index = invalid_edge_index();
 };
 
-using GraphSinkQueue = simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg>;
+enum class FusedEncodedOutputEnqueueResult {
+  Enqueued,
+  ReplacedOldest,
+  DroppedIncoming,
+  Overflow,
+  Closed,
+};
+
+class GraphSinkQueue final
+    : public simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg> {
+public:
+  explicit GraphSinkQueue(std::size_t capacity = 0, const OutputOptions* output_options = nullptr)
+      : BlockingQueue(capacity), has_output_options_(output_options != nullptr),
+        output_options_(output_options ? *output_options : OutputOptions{}) {}
+
+  const OutputOptions* output_options() const noexcept {
+    return has_output_options_ ? &output_options_ : nullptr;
+  }
+
+  void set_producer_count(std::size_t count) noexcept {
+    producers_remaining_.store(count, std::memory_order_release);
+  }
+
+  void producer_done() {
+    std::size_t expected = producers_remaining_.load(std::memory_order_acquire);
+    while (expected != 0U &&
+           !producers_remaining_.compare_exchange_weak(
+               expected, expected - 1U, std::memory_order_acq_rel, std::memory_order_acquire)) {
+    }
+    if (expected == 1U) {
+      close();
+    }
+  }
+
+private:
+  friend FusedEncodedOutputEnqueueResult
+  enqueue_graph_sink_output(GraphSinkQueue&, const OutputOptions&, RuntimeSinkQueueMsg&&, int);
+  friend FusedEncodedOutputEnqueueResult
+  enqueue_fused_encoded_output(GraphSinkQueue&, const OutputOptions&, Sample&&);
+  std::mutex latest_enqueue_mu_;
+  bool has_output_options_ = false;
+  OutputOptions output_options_{};
+  std::atomic<std::size_t> producers_remaining_{0};
+};
+
+inline FusedEncodedOutputEnqueueResult enqueue_graph_sink_output(GraphSinkQueue& queue,
+                                                                 const OutputOptions& options,
+                                                                 RuntimeSinkQueueMsg&& message,
+                                                                 int timeout_ms) {
+  if (!options.drop) {
+    // Match Output/Appsink EveryFrame semantics: a bounded full queue applies
+    // backpressure until Run::pull() makes room (or graph teardown closes it).
+    if (queue.push(std::move(message), timeout_ms)) {
+      return FusedEncodedOutputEnqueueResult::Enqueued;
+    }
+    return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                          : FusedEncodedOutputEnqueueResult::Overflow;
+  }
+
+  // Multiple fused live sources may publish concurrently to one named Latest
+  // output. Serialize only the replace sequence; the queue itself remains
+  // independently safe for its consumer and for ordinary single-step pushes.
+  std::lock_guard<std::mutex> enqueue_lock(queue.latest_enqueue_mu_);
+  if (queue.try_push(std::move(message))) {
+    return FusedEncodedOutputEnqueueResult::Enqueued;
+  }
+  if (queue.closed()) {
+    return FusedEncodedOutputEnqueueResult::Closed;
+  }
+
+  RuntimeSinkQueueMsg discarded;
+  const bool replaced = queue.pop(discarded, 0);
+  if (replaced) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(discarded.sample,
+                                                                 "graph-sink-latest-replace");
+  }
+  if (queue.try_push(std::move(message))) {
+    return replaced ? FusedEncodedOutputEnqueueResult::ReplacedOldest
+                    : FusedEncodedOutputEnqueueResult::Enqueued;
+  }
+  if (!queue.closed()) {
+    pipeline_internal::release_realtime_frame_credits_for_sample(message.sample,
+                                                                 "graph-sink-latest-drop-incoming");
+    return FusedEncodedOutputEnqueueResult::DroppedIncoming;
+  }
+  return queue.closed() ? FusedEncodedOutputEnqueueResult::Closed
+                        : FusedEncodedOutputEnqueueResult::Overflow;
+}
+
+/** Queue policy used by graph-scoped encoded Outputs. */
+inline FusedEncodedOutputEnqueueResult
+enqueue_fused_encoded_output(GraphSinkQueue& queue, const OutputOptions& options, Sample&& sample) {
+  return enqueue_graph_sink_output(
+      queue, options,
+      RuntimeSinkQueueMsg{.sample = std::move(sample), .edge_index = invalid_edge_index()}, -1);
+}
 
 struct DownstreamTarget {
   enum class Kind {
@@ -75,6 +170,7 @@ public:
       std::function<bool(const DownstreamTarget&, simaai::neat::Sample&&, std::size_t)>;
   using StopFn = std::function<bool()>;
   using ErrorFn = std::function<void(const std::string&)>;
+  using CompleteFn = std::function<void()>;
 
   struct Stats {
     std::uint64_t offered = 0;
@@ -102,7 +198,11 @@ public:
 
   bool offer(simaai::neat::Sample&& sample, std::size_t edge_index);
   void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id);
-  void start(DispatchFn dispatch, StopFn stop, ErrorFn error);
+  void add_edge_stream_id(std::size_t edge_index, const std::string& stream_id,
+                          const GraphLinkOptions& options);
+  void set_producer_count(std::size_t count) noexcept;
+  void producer_done();
+  void start(DispatchFn dispatch, StopFn stop, ErrorFn error, CompleteFn complete = {});
   void close();
   void join();
   Stats stats() const;
@@ -124,7 +224,9 @@ private:
   };
 
   std::string key_for_(const simaai::neat::Sample& sample, std::size_t edge_index) const;
+  void recompute_admission_options_locked_();
   pipeline_internal::RealtimeFrameCreditLanePtr credit_lane_for_key_locked_(const std::string& key);
+  void configure_global_credit_limit_locked_();
   void run_();
 
   DownstreamTarget downstream_;
@@ -132,18 +234,24 @@ private:
   DispatchFn dispatch_;
   StopFn stop_;
   ErrorFn error_;
+  CompleteFn complete_;
   mutable std::mutex mu_;
   std::condition_variable cv_;
   std::unordered_map<std::string, Pending> pending_;
   std::unordered_map<std::string, pipeline_internal::RealtimeFrameCreditLanePtr> credit_lanes_;
   pipeline_internal::RealtimeFrameCreditLanePtr global_credit_lane_;
+  std::unordered_set<std::size_t> edge_indices_;
   std::unordered_map<std::size_t, std::string> stream_id_by_edge_;
+  std::unordered_map<std::size_t, GraphLinkOptions> link_options_by_edge_;
   std::deque<std::string> ready_;
   std::uint64_t credit_namespace_ = 0;
   int credit_limit_per_stream_ = 0;
   int credit_limit_global_ = 0;
   bool closed_ = false;
+  bool finishing_ = false;
   std::thread worker_;
+  std::atomic<std::size_t> producers_remaining_{0};
+  std::atomic<bool> completion_forwarded_{false};
   std::atomic<std::uint64_t> offered_{0};
   std::atomic<std::uint64_t> scheduled_{0};
   std::atomic<std::uint64_t> overwritten_{0};
@@ -212,6 +320,7 @@ struct StageRuntime {
   };
 
   simaai::neat::graph::NodeId node_id = simaai::neat::graph::kInvalidNode;
+  std::size_t group_index = static_cast<std::size_t>(-1);
   RuntimeStageEmitter emitter;
   std::unique_ptr<simaai::neat::graph::StageExecutor> exec;
   simaai::neat::graph::runtime::BlockingQueue<RuntimeStageQueueMsg> inbox;
@@ -228,19 +337,27 @@ struct StageGroup {
   StageNodeOptions options;
   std::vector<std::size_t> instances;
   std::atomic<std::size_t> rr{0};
+  std::atomic<std::size_t> producers_remaining{0};
+  std::atomic<std::size_t> workers_remaining{0};
+  std::atomic<bool> completion_forwarded{false};
 
   StageGroup() = default;
   StageGroup(const StageGroup&) = delete;
   StageGroup& operator=(const StageGroup&) = delete;
   StageGroup(StageGroup&& other) noexcept
       : node_id(other.node_id), options(other.options), instances(std::move(other.instances)),
-        rr(other.rr.load()) {}
+        rr(other.rr.load()), producers_remaining(other.producers_remaining.load()),
+        workers_remaining(other.workers_remaining.load()),
+        completion_forwarded(other.completion_forwarded.load()) {}
   StageGroup& operator=(StageGroup&& other) noexcept {
     if (this != &other) {
       node_id = other.node_id;
       options = other.options;
       instances = std::move(other.instances);
       rr.store(other.rr.load());
+      producers_remaining.store(other.producers_remaining.load());
+      workers_remaining.store(other.workers_remaining.load());
+      completion_forwarded.store(other.completion_forwarded.load());
     }
     return *this;
   }
@@ -259,6 +376,18 @@ struct ExecutionGraphRuntime {
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_pipeline;
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_stage_group;
   std::unordered_set<simaai::neat::graph::NodeId> direct_sink_nodes;
+
+  // Public graph ingress participates in the same producer-drain protocol as graph edges. Track
+  // endpoint aliases once and gate close_input() against public pushes already in flight.
+  std::vector<Endpoint> public_ingress_endpoints;
+  mutable std::mutex public_ingress_mu;
+  std::condition_variable public_ingress_cv;
+  bool public_ingress_closed = false;
+  std::size_t public_pushes_inflight = 0;
+  bool public_ingress_completion_forwarded = false;
+  mutable std::mutex close_provenance_mu;
+  std::unordered_map<simaai::neat::graph::NodeId, PullError> source_close_details_by_sink;
+  std::unordered_set<simaai::neat::graph::NodeId> application_closed_sinks;
 
   std::unordered_map<std::uint64_t, std::vector<DownstreamTarget>> adjacency;
   std::atomic<bool> message_trace_enabled{false};

@@ -63,6 +63,11 @@ InputStreamOptions::ResolvedShapeLimits resolve_shape_limits(const InputOptions&
 std::optional<std::string>
 validate_shape_limits(const InputStreamOptions::ResolvedShapeLimits& limits);
 
+// Stable, actionable diagnostics shared by graph preflight and runtime input admission.
+std::string shape_limit_exceeded_message(const std::string& where, const std::string& dimension,
+                                         int actual, int limit);
+std::string shape_limit_fix_hint(const std::string& dimension, int required_minimum);
+
 int default_depth_for_image_format(const std::string& fmt, int fallback = -1);
 
 std::size_t default_elastic_input_bytes_guard();

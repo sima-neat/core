@@ -89,6 +89,7 @@ struct CapKey {
   TensorDType dtype = TensorDType::UInt8;
   TensorLayout layout = TensorLayout::Unknown;
   std::vector<int64_t> shape;
+  bool tensor_envelope_transport = false;
   std::size_t caps_hash = 0;
 
   bool operator==(const CapKey& other) const {
@@ -99,7 +100,8 @@ struct CapKey {
       return media_type == other.media_type && format == other.format && width == other.width &&
              height == other.height && fps_n == other.fps_n && fps_d == other.fps_d;
     case SampleMediaKind::Tensor:
-      return dtype == other.dtype && shape == other.shape;
+      return dtype == other.dtype && shape == other.shape &&
+             tensor_envelope_transport == other.tensor_envelope_transport;
     case SampleMediaKind::Encoded:
       return caps_hash == other.caps_hash;
     }

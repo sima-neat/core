@@ -266,16 +266,44 @@ runtime/build/IO paths map terminal failures into stable code families:
 - `misconfig.pipeline_shape`
 - `misconfig.caps`
 - `misconfig.input_shape`
+- `misconfig.input_capacity`
+- `misconfig.media_caps`
+- `misconfig.tensor_dtype_missing`
+- `misconfig.option_out_of_range`
 - `build.parse_launch`
+- `build.pipeline_syntax`
+- `build.plugin_missing`
+- `build.property_invalid`
 - `runtime.pull`
+- `runtime.element_failed`
+- `runtime.output_timeout`
 - `io.parse`
 - `io.open`
+- `io.file_not_found`
+- `io.permission_denied`
+- `io.rtsp_connection_failed`
+- `io.camera_not_found`
+- `codec.*`, `resource.*`, `infra.*`, and `internal.*`
 
-`GraphReport.repro_note` is the human-facing summary and must include enough
-context to reproduce (offending value, node/element context, or hint).
+GStreamer errors pass through one internal parser, classifier, and renderer.
+Classification prefers a versioned Neat diagnostic ID, then the native
+GStreamer domain/code and element factory, then narrow compatibility mappings
+for older plugins. Unknown failures use `runtime.element_failed`; they are not
+reported as `misconfig.media_caps` unless negotiation actually failed. When a pipeline
+posts several errors, the most specific root cause is rendered and every error
+is retained in the bus log.
+
+`GraphReport.repro_note` is the human-facing summary. Production rendering
+contains a plain-language cause, relevant observed/expected values, concrete
+user actions, and a stable diagnostic ID. Raw plugin strings, source locations,
+and GStreamer domain/code are debug-only. The bracketed public code is added
+once when the `NeatError` is constructed.
 `GraphReport.bus` is the source of truth for plugin/runtime error details.
 For build(input) flows, `GraphReport.build_adaptation` records the resolved shape policy/capability, origins for seed/max limits, byte-guard origin, and applied/skipped adaptation actions.
 For non-throwing runtime pulls, `PullError.code` uses the same taxonomy.
+Input-stream worker failures retain the typed error code and report across the
+worker-thread boundary, so `Run::pull()` and the Python exception translator
+surface the same `NeatError`.
 
 Support triage order is:
 1. bucket by `error_code`
@@ -407,18 +435,19 @@ Additionally, runtime paths may verify required plugins are present:
 - `require_element("appsink", ...)`, etc.
 
 ### Building pipelines
-A `Graph` is built by adding `Node` objects:
+A `Graph` is built by adding `Node` objects and reusable Graph fragments. Use a
+codec-aware fragment for RTSP so the source is depacketized and parsed before
+decode:
 
 ```cpp
-simaai::neat::Graph graph;
-simaai::neat::SimaDecodeOptions decode_options;
-decode_options.type = simaai::neat::SimaDecodeType::H264;
-decode_options.raw_output = false;
+simaai::neat::nodes::groups::RtspDecodedInputOptions source;
+source.url = "rtsp://example/live";
+source.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+source.source_fps = 30;
 
-graph.add(simaai::neat::nodes::RTSPInput("rtsp://example/live"))
-     .add(simaai::neat::nodes::SimaDecode(decode_options))
-     .add(simaai::neat::nodes::CapsNV12SysMem(-1, -1, -1))
-     .add(simaai::neat::nodes::Output());
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
+graph.add(simaai::neat::nodes::Output());
 ```
 
 Internally:
@@ -442,6 +471,63 @@ Internally:
 
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
+
+### Realtime fan-in lowering
+
+Applications describe realtime edges with ordinary `Graph::connect(...)` and
+materialize them with ordinary `Graph::build(...)`. `GraphLinkOptions` carries
+the latest-by-stream policy, stream identity, a reserved queue-depth field, and
+optional raw-frame admission limits. Latest-by-stream lowering always keeps one
+pending sample per stream.
+
+The execution-graph compiler, not the application, decides whether live
+multi-source fan-in can be fused into one GStreamer pipeline. Eligible private,
+inputless source branches are lowered with their by-stream mux and consumer so
+decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
+latest-by-stream topology remains segmented. Nested already-fused source
+segments remain ineligible until their branches can be preserved recursively.
+
+### Internal boundary timing
+
+One logical `Graph` can lower into several GStreamer pipeline segments. Core
+injects an `appsrc` at each internal boundary between them.
+
+**An injected boundary transports the timeline it was handed and never authors a
+timestamp. Only a public, application-owned `Input` authors one.**
+
+`appsrc` stamps from its own segment's running time, so a boundary that authors
+a timestamp gives each leg of a fan-out a different clock. Video RTP then stops
+agreeing with model-output metadata describing the same frame, and no
+application can correct it: lowering consumes the app-declared `Input` nodes, so
+`InputOptions` set by the application never reach the injected boundary.
+
+When adding a segment-materialization path:
+
+* Build the injected options with `injected_boundary_input_options(...)`, which
+  is the single home for this invariant.
+* Keep `is_live = true`. Clearing it stalls live segments.
+* Leave the public `InputOptions::do_timestamp` default alone, so a pushed
+  `cv::Mat` carrying no PTS still receives one at ingress.
+
+Boundaries forward the retained `GstBuffer` zero-copy, so a timestamp that
+already exists survives the crossing. Declining to author one can never remove
+it.
+
+### Input-contract specialization
+
+Some compound pipeline Nodes have more than one safe backend representation.
+The graph compiler specializes those Nodes from a statically established
+`OutputSpec`; it does not mutate the public Graph or infer a permanent topology
+from the first runtime sample. A `Derived` or `Authoritative` contract may
+select an optimized representation. `Hint`, unknown format/memory, or a missing
+backend capability selects the conservative representation.
+
+For example, raw `VideoSender` omits its NV12 conversion only for a stable NV12
+contract in system or SiMaAI memory and when `neatencoder` advertises its
+read-only `input-layout-aware=true` capability. `OutputSpec` does not currently
+carry plane strides and offsets, so no memory domain bypasses that capability
+gate. An absent or false capability is treated as unsupported so Core remains
+safe with older Internals packages.
 
 ### Parsing & launch
 

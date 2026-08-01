@@ -33,6 +33,12 @@ A release is blocked unless all conditions below are true:
    - `docs/develop-apps/contribute/release-checklist.md`
 15. Release metadata is complete:
    - `project(SimaNeat VERSION x.y.z)` updated in `CMakeLists.txt`
+   - `package-version` and `platform-version` updated in `deps/manifest.json` when required
+   - `modelzoo-version` explicitly selects the validated Model Zoo release when it differs from
+     `platform-version`; if omitted, Model Zoo resolution defaults to `platform-version`
+   - `abi-version` in `deps/manifest.json` is incremented whenever a public C++ type layout or
+     exported binary contract changes incompatibly; all C++ applications and Python bindings are
+     rebuilt against that ABI
    - `CHANGELOG.md` has `## [x.y.z]` entry
    - release notes prepared in the release/tag body
 
@@ -119,6 +125,8 @@ Configure GitHub repository settings:
   - `runtime_graph_join_bundle`
   - `runtime_codec_mjpeg_decode`
   - `runtime_codec_h264_decode`
+  - `runtime_codec_h265_decode`
+  - `runtime_model_archive_load`
 - Every perf run publishes per-scenario result files in `build-perf-gate/perf_results/`.
 - Each result must include:
   - `scenario_id`

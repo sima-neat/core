@@ -25,10 +25,29 @@ Run the installer from the environment where you build or run Neat applications:
 Install `sima-cli` in the environment where you plan to install the Neat Library.
 Use the [sima-cli installation guide](/tools/sima-cli/).
 
-Before you begin:
+Create an account at [community.sima.ai](https://community.sima.ai) to access
+SiMa.ai assets such as precompiled models for testing.
 
-- Make sure the environment running the installer can download SiMa.ai artifacts.
-- We recommend creating an account at [community.sima.ai](https://community.sima.ai) to access assets such as precompiled models for testing.
+Authenticate the environment so the installer can download SiMa.ai artifacts. See
+[sima-cli login](/tools/sima-cli/login/) for details.
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli login
+</ShellCommand>
+
+Confirm the environment can reach the SiMa.ai artifacts host:
+
+<ShellCommand prompt="sdk-or-devkit">
+curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
+</ShellCommand>
+
+Printing `artifacts reachable` means the host is reachable. A `curl` error such as
+a timeout, connection refused, or "could not resolve host" means outbound access
+is blocked — check your host network, proxy, or firewall (see
+[Neat SDK Networking](/tools/sima-cli/sdk-networking/) and the
+[host setup notes](/reference/elxr-sdk-host-setup/ubuntu)), or use
+[Offline Installation](/getting-started/dev-environment/offline-installation) if
+the machine cannot reach SiMa.ai services directly.
 
 ## Install the Neat Library
 
@@ -105,6 +124,10 @@ For custom Python virtual environments, see
 [Install PyNeat](/getting-started/neat-library/pyneat/).
 
 ## Source Builds
+
+Build from source when you need an unreleased change, a custom build
+configuration, or you are contributing to the Neat Library. Most users should
+use the packaged install above instead.
 
 If you prefer building from source, follow the
 [Build](/develop-apps/contribute/build) guide.

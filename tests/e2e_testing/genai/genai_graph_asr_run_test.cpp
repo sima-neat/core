@@ -1,10 +1,11 @@
 #include "genai/ASRModel.h"
 #include "genai/GraphFragments.h"
+#include "genai_test_utils.h"
 #include "pipeline/Graph.h"
 #include "pipeline/Run.h"
 #include "test_utils.h"
 
-#include <cstdlib>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <cctype>
@@ -12,70 +13,28 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <system_error>
-#include <unistd.h>
 #include <vector>
 
 // Exercises graph ASR transcription from audio_path and PCM audio samples
-// against a real LLiMa Whisper model when SIMA_TEST_LLIMA_ASR_MODEL is set.
+// against a real LLiMa ASR model.
+// Model fixture:
+//   export LLIMA_MODELS_PATH=/media/nvme/llima/models
+//   export SIMA_TEST_LLIMA_ASR_MODEL=whisper-small-a16w8
+//   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 
 namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_ASR_MODEL";
 constexpr const char* kExpectedTranscript = "tell me a joke please";
-
-std::string shell_quote(const fs::path& path) {
-  std::string out = "'";
-  for (char c : path.string()) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out += c;
-    }
-  }
-  out += "'";
-  return out;
-}
-
-bool command_exists(const char* command) {
-  std::string cmd = "command -v ";
-  cmd += command;
-  cmd += " >/dev/null 2>&1";
-  return std::system(cmd.c_str()) == 0;
-}
-
-std::string trim_env_value(const char* value) {
-  if (value == nullptr) {
-    return {};
-  }
-  std::string out(value);
-  const auto first = out.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    return {};
-  }
-  const auto last = out.find_last_not_of(" \t\r\n");
-  return out.substr(first, last - first + 1);
-}
-
-bool has_llima_whisper_config(const fs::path& model_dir) {
-  std::error_code ec;
-  return fs::is_regular_file(model_dir / "devkit" / "whisper_config.json", ec) && !ec;
-}
+constexpr const char* kExpectedTranslation = "please tell me a joke";
 
 fs::path resolve_model_dir() {
-  const std::string env_model_dir = trim_env_value(std::getenv(kModelEnv));
-  if (env_model_dir.empty()) {
-    skip_long_test_exception(std::string(kModelEnv) + " is not set");
-  }
-  fs::path model_dir(env_model_dir);
-  if (!has_llima_whisper_config(model_dir)) {
-    skip_long_test_exception(std::string(kModelEnv) +
-                             " does not point to a LLiMa Whisper model directory");
-  }
-  return model_dir;
+  return simaai::neat::test::resolve_genai_model_dir(kModelEnv,
+                                                     simaai::neat::test::kDefaultAsrModelName,
+                                                     "LLiMa ASR", "devkit/whisper_config.json");
 }
 
 fs::path audio_fixture(const char* repo_root_arg) {
@@ -87,29 +46,32 @@ fs::path audio_fixture(const char* repo_root_arg) {
   return path;
 }
 
-std::vector<float> decode_fixture_to_pcm(const fs::path& wav_path) {
-  if (!command_exists("ffmpeg")) {
-    skip_long_test_exception("missing ffmpeg command for ASR PCM fixture conversion");
+fs::path german_audio_fixture(const char* repo_root_arg) {
+  fs::path path = fs::path(repo_root_arg) / "tests/assets/genai/audio_de.wav";
+  std::error_code ec;
+  if (!fs::is_regular_file(path, ec)) {
+    throw std::runtime_error("missing German ASR audio fixture: " + path.string());
   }
-  const fs::path raw_path =
-      fs::temp_directory_path() /
-      ("neat-genai-graph-asr-pcm-" + std::to_string(static_cast<long long>(::getpid())) + ".raw");
-  std::ostringstream cmd;
-  cmd << "ffmpeg -v error -y -i " << shell_quote(wav_path) << " -ac 1 -ar 16000 -f f32le "
-      << shell_quote(raw_path);
-  if (std::system(cmd.str().c_str()) != 0) {
-    skip_long_test_exception("ffmpeg failed to convert ASR fixture to PCM");
-  }
+  return path;
+}
 
-  std::ifstream in(raw_path, std::ios::binary);
+fs::path pcm_fixture(const char* repo_root_arg) {
+  fs::path path = fs::path(repo_root_arg) / "tests/assets/genai/audio_16k_mono_f32le.raw";
+  std::error_code ec;
+  if (!fs::is_regular_file(path, ec)) {
+    throw std::runtime_error("missing ASR PCM fixture: " + path.string());
+  }
+  return path;
+}
+
+std::vector<float> read_pcm_fixture(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
   if (!in) {
-    throw std::runtime_error("failed to read converted ASR PCM fixture");
+    throw std::runtime_error("failed to read ASR PCM fixture: " + path.string());
   }
   std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  std::error_code ec;
-  fs::remove(raw_path, ec);
   if (bytes.empty() || bytes.size() % sizeof(float) != 0U) {
-    throw std::runtime_error("converted ASR PCM fixture has invalid size");
+    throw std::runtime_error("ASR PCM fixture has invalid size: " + path.string());
   }
 
   std::vector<float> pcm(bytes.size() / sizeof(float));
@@ -193,8 +155,19 @@ std::string sample_text(const simaai::neat::Sample& sample) {
   throw std::runtime_error("sample is not text");
 }
 
+std::string bundle_field_text(const simaai::neat::Sample& bundle, const std::string& name) {
+  require(bundle.kind == simaai::neat::SampleKind::Bundle, "bundle sample expected");
+  for (const auto& field : bundle.fields) {
+    if (field.port_name == name || field.stream_label == name) {
+      return sample_text(field);
+    }
+  }
+  throw std::runtime_error("missing bundle field: " + name);
+}
+
 struct GraphOutputs {
   std::string tokens;
+  simaai::neat::Sample done;
   std::string error;
   bool saw_done = false;
   bool saw_error = false;
@@ -208,7 +181,13 @@ GraphOutputs pull_graph_outputs(simaai::neat::Run& run, bool stop_on_error = fal
       continue;
     }
     if (auto sample = run.pull("done", 10)) {
+      outputs.done = *sample;
       outputs.saw_done = true;
+      if (outputs.tokens.empty()) {
+        if (auto trailing_token = run.pull("tokens", 500)) {
+          outputs.tokens += sample_text(*trailing_token);
+        }
+      }
       break;
     }
     if (auto sample = run.pull("error", 10)) {
@@ -222,6 +201,18 @@ GraphOutputs pull_graph_outputs(simaai::neat::Run& run, bool stop_on_error = fal
   return outputs;
 }
 
+void require_asr_metadata(const GraphOutputs& outputs, const std::string& label,
+                          const std::string& expected_language = "en") {
+  require(bundle_field_text(outputs.done, "language") == expected_language,
+          label + " should report detected language " + expected_language);
+  const double no_speech_prob = std::stod(bundle_field_text(outputs.done, "no_speech_prob"));
+  require(std::isfinite(no_speech_prob), label + " no_speech_prob should be finite");
+  require(no_speech_prob >= 0.0 && no_speech_prob <= 1.0,
+          label + " no_speech_prob should be within [0, 1]");
+  const double avg_logprob = std::stod(bundle_field_text(outputs.done, "avg_logprob"));
+  require(std::isfinite(avg_logprob), label + " avg_logprob should be finite");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -231,17 +222,20 @@ int main(int argc, char** argv) {
     }
     const fs::path model_dir = resolve_model_dir();
     const fs::path audio_path = audio_fixture(argv[1]);
-    const std::vector<float> pcm = decode_fixture_to_pcm(audio_path);
+    const fs::path german_audio_path = german_audio_fixture(argv[1]);
+    const fs::path pcm_path = pcm_fixture(argv[1]);
+    const std::vector<float> pcm = read_pcm_fixture(pcm_path);
 
     std::cout << "GENAI_GRAPH_ASR model_dir=" << model_dir << "\n";
     std::cout << "GENAI_GRAPH_ASR audio=" << audio_path << "\n";
+    std::cout << "GENAI_GRAPH_ASR pcm=" << pcm_path << "\n";
 
     auto model = std::make_shared<simaai::neat::genai::ASRModel>(model_dir);
     require(model->accepts_audio(), "ASR model should accept audio");
 
     simaai::neat::Graph graph;
     graph.add(simaai::neat::genai::graphs::SpeechTranscriber(
-        model, simaai::neat::genai::SpeechTranscriberOptions{.language = "en"},
+        model, simaai::neat::genai::SpeechTranscriberOptions{.language = "auto"},
         "speech_transcriber"));
 
     simaai::neat::Run run = graph.build();
@@ -254,6 +248,7 @@ int main(int argc, char** argv) {
     std::cout << "GENAI_GRAPH_ASR_FILE text=\n" << file_outputs.tokens << "\n";
     require(normalize_transcript(file_outputs.tokens) == kExpectedTranscript,
             "ASR graph audio_path transcript mismatch: " + trim_text(file_outputs.tokens));
+    require_asr_metadata(file_outputs, "ASR graph audio_path");
 
     require(run.push("audio", make_audio_input(pcm, 2)), "Run::push audio failed");
     const GraphOutputs pcm_outputs = pull_graph_outputs(run);
@@ -262,6 +257,7 @@ int main(int argc, char** argv) {
     std::cout << "GENAI_GRAPH_ASR_PCM text=\n" << pcm_outputs.tokens << "\n";
     require(normalize_transcript(pcm_outputs.tokens) == kExpectedTranscript,
             "ASR graph PCM transcript mismatch: " + trim_text(pcm_outputs.tokens));
+    require_asr_metadata(pcm_outputs, "ASR graph PCM");
 
     require(run.push("audio", make_invalid_audio_input()), "Run::push invalid audio failed");
     const GraphOutputs error_outputs = pull_graph_outputs(run, true);
@@ -274,21 +270,23 @@ int main(int argc, char** argv) {
     sync_graph.add(simaai::neat::genai::graphs::SpeechTranscriber(
         model,
         simaai::neat::genai::SpeechTranscriberOptions{
-            .language = "en",
+            .language = "auto",
+            .task = simaai::neat::genai::ASRTask::Translate,
             .streaming = false,
         },
         "speech_transcriber_sync"));
 
     simaai::neat::Run sync_run = sync_graph.build();
-    require(sync_run.push("audio_path", make_audio_path_input(audio_path, 3)),
+    require(sync_run.push("audio_path", make_audio_path_input(german_audio_path, 3)),
             "Run::push sync audio_path failed");
     const GraphOutputs sync_outputs = pull_graph_outputs(sync_run);
     require(sync_outputs.saw_done, "ASR graph sync audio_path did not emit done");
     require(!sync_outputs.saw_error,
             "ASR graph sync audio_path emitted error: " + sync_outputs.error);
-    std::cout << "GENAI_GRAPH_ASR_SYNC_FILE text=\n" << sync_outputs.tokens << "\n";
-    require(normalize_transcript(sync_outputs.tokens) == kExpectedTranscript,
-            "ASR graph sync audio_path transcript mismatch: " + trim_text(sync_outputs.tokens));
+    std::cout << "GENAI_GRAPH_ASR_TRANSLATION_FILE text=\n" << sync_outputs.tokens << "\n";
+    require(normalize_transcript(sync_outputs.tokens) == kExpectedTranslation,
+            "ASR graph German-to-English translation mismatch: " + trim_text(sync_outputs.tokens));
+    require_asr_metadata(sync_outputs, "ASR graph translation audio_path", "de");
     sync_run.stop();
 
     std::cout << "[OK] genai_graph_asr_run_test passed\n";

@@ -8,6 +8,10 @@ ROOT_FREE_SPACE_THRESHOLD_MB=500
 EV74_FIRMWARE_INSTALLER="/usr/libexec/sima-neat-firmware/install.sh"
 EV74_FIRMWARE_TARGET="/lib/firmware/modalix-cvu-fw"
 EV74_FIRMWARE_SHA_FILE="/usr/share/sima-neat-firmware/modalix-cvu-fw.sha256"
+DISPATCHER_GLOBAL_LIB_DIR="${NEAT_RECOVERY_DISPATCHER_GLOBAL_LIB_DIR:-/usr/lib/aarch64-linux-gnu}"
+DISPATCHER_QUARANTINE_DIR="${NEAT_RECOVERY_DISPATCHER_QUARANTINE_DIR:-/var/lib/sima-neat/quarantine/dispatcher}"
+RECOVERY_STEP_TIMEOUT_SECONDS="${NEAT_RECOVERY_STEP_TIMEOUT_SECONDS:-120}"
+RECOVERY_STEP_KILL_GRACE_SECONDS="${NEAT_RECOVERY_STEP_KILL_GRACE_SECONDS:-10}"
 
 if [[ $# -gt 0 ]]; then
   pass="$1"
@@ -18,8 +22,17 @@ run_step() {
   local label="$1"
   shift
   printf "[recovery] %s...\n" "$label"
-  printf '%s\n' "$pass" | sudo -S -p '' "$@"
+  printf '%s\n' "$pass" | timeout \
+    --foreground \
+    --kill-after="${RECOVERY_STEP_KILL_GRACE_SECONDS}s" \
+    "${RECOVERY_STEP_TIMEOUT_SECONDS}s" \
+    sudo -S -p '' "$@"
   local rc=$?
+  if [[ "$rc" -eq 124 || "$rc" -eq 137 ]]; then
+    printf "[recovery] %s timed out after %ss (kill grace %ss)\n" \
+      "$label" "$RECOVERY_STEP_TIMEOUT_SECONDS" "$RECOVERY_STEP_KILL_GRACE_SECONDS" >&2
+    exit "$rc"
+  fi
   printf "[recovery] %s rc=%d\n" "$label" "$rc"
   return $rc
 }
@@ -113,35 +126,51 @@ cleanup_tmp_sima_if_root_low_space() {
   '
 }
 
-repair_stale_global_dispatcher_lib() {
-  local global_lib="/usr/lib/aarch64-linux-gnu/libneatdispatchercore.so"
-  local runtime_lib="/usr/lib/aarch64-linux-gnu/neat/runtime/libneatdispatchercore.so"
+quarantine_stale_global_dispatcher_libs() {
+  local candidate owner destination timestamp
+  local -a candidates=()
 
-  if [[ ! -e "${runtime_lib}" ]]; then
-    printf "[recovery] dispatcher lib repair skipped: runtime lib not found at %s\n" "${runtime_lib}"
+  if [[ ! -d "${DISPATCHER_GLOBAL_LIB_DIR}" ]]; then
+    printf "[recovery] dispatcher quarantine skipped: loader directory not found at %s\n" \
+      "${DISPATCHER_GLOBAL_LIB_DIR}"
     return 0
   fi
 
-  if [[ -L "${global_lib}" && "$(readlink -f "${global_lib}")" == "${runtime_lib}" ]]; then
-    printf "[recovery] dispatcher lib repair skipped: %s already points at runtime lib\n" "${global_lib}"
+  mapfile -t candidates < <(
+    find "${DISPATCHER_GLOBAL_LIB_DIR}" -maxdepth 1 -mindepth 1 \
+      -name 'libneatdispatchercore.so*' -print | sort
+  )
+  if [[ "${#candidates[@]}" -eq 0 ]]; then
+    printf "[recovery] dispatcher quarantine skipped: no global dispatcher paths found\n"
     return 0
   fi
 
-  if [[ -e "${global_lib}" ]]; then
-    if dpkg-query -S "${global_lib}" >/dev/null 2>&1; then
-      printf "[recovery] dispatcher lib repair skipped: %s is package-owned\n" "${global_lib}"
-      return 0
+  # Refuse the complete migration before moving anything when another package
+  # owns one of these paths. Its package must perform the ownership transition.
+  for candidate in "${candidates[@]}"; do
+    owner="$(dpkg-query -S "${candidate}" 2>/dev/null || true)"
+    if [[ -n "${owner}" ]]; then
+      printf "[recovery] refusing package-owned global dispatcher path %s: %s\n" \
+        "${candidate}" "${owner}" >&2
+      return 1
     fi
+  done
 
-    local backup="${global_lib}.bak-$(date -u +%Y%m%dT%H%M%SZ)"
-    run_step "quarantine stale unowned ${global_lib}" mv -f "${global_lib}" "${backup}"
-  fi
+  run_step "create dispatcher quarantine" mkdir -p "${DISPATCHER_QUARANTINE_DIR}" || return 1
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  for candidate in "${candidates[@]}"; do
+    destination="${DISPATCHER_QUARANTINE_DIR}/$(basename "${candidate}")"
+    if [[ -e "${destination}" || -L "${destination}" ]]; then
+      destination="${destination}.${timestamp}.$$"
+    fi
+    run_step "quarantine stale unowned ${candidate}" \
+      mv -f -- "${candidate}" "${destination}" || return 1
+  done
 
-  if [[ ! -e "${global_lib}" ]]; then
-    run_step "link ${global_lib} to packaged runtime lib" ln -s "${runtime_lib}" "${global_lib}"
-  fi
+  run_step "refresh dynamic loader cache" ldconfig || return 1
+  printf "[recovery] quarantined %d global dispatcher path(s); no global alias was created\n" \
+    "${#candidates[@]}"
 }
-
 empty_coprocessing() {
   if [[ "${TARGET_COPROCESSING_DIR}" != "/data/simaai/coprocessing" ]]; then
     printf "[recovery] empty coprocessing skipped: unexpected target %s\n" "${TARGET_COPROCESSING_DIR}"
@@ -167,26 +196,70 @@ stop_runtime_services() {
   run_optional_service_step \
     "stop simaai-pipeline-manager.service" stop simaai-pipeline-manager.service
   run_optional_service_step "stop rctd.service" stop rctd.service
-  run_optional_service_step "stop simaai-appcomplex.service" stop simaai-appcomplex.service
-  run_step "terminate stale runtime processes" pkill -TERM -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
+  run_step "terminate stale runtime processes" pkill -TERM -f '(/usr/bin/)?(simaai_pipeline_handler_new|rctd)( |$)'
   sleep 1
-  run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
+  run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(simaai_pipeline_handler_new|rctd)( |$)'
 }
 
-repair_stale_global_dispatcher_lib
+# Booting the M4 while mlashmcomplex is dead blocks the write in uninterruptible
+# sleep, where the step timeout cannot reach it and only the watchdog recovers
+# the board. Refuse rather than hang. Matching on the process name keeps a shell
+# whose own command line mentions mlashmcomplex from reporting a false positive.
+ensure_appcomplex_before_remoteproc() {
+  if ! systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
+    printf "[recovery] appcomplex precondition skipped: systemd unit simaai-appcomplex.service is not installed on this devkit image\n"
+    return 0
+  fi
+
+  pgrep -x mlashmcomplex >/dev/null 2>&1 && return 0
+
+  printf "[recovery] simaai-appcomplex.service is down before the remoteproc cycle; restoring it first\n"
+  run_optional_service_step \
+    "clear simaai-appcomplex.service start-limit state" reset-failed simaai-appcomplex.service
+  run_optional_service_step \
+    "start simaai-appcomplex.service" start simaai-appcomplex.service
+
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    pgrep -x mlashmcomplex >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+
+  printf "[recovery] refusing to boot the M4: simaai-appcomplex.service did not come up\n" >&2
+  return 1
+}
+
+recover_devkit_runtime() {
+  stop_runtime_services
+  empty_coprocessing
+  cleanup_tmp_sima_if_root_low_space
+  ensure_appcomplex_before_remoteproc || return 1
+  run_step "remoteproc0 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state'
+  run_step "remoteproc1 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc1/state'
+  run_step "remoteproc1 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
+  run_step "remoteproc0 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
+  run_step "remoteproc status" sh -c 'for rp in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do echo "$rp: $(cat $rp/name) state=$(cat $rp/state)"; done'
+  # init_mla_memory needs /dev/m4_lp_mbox, which appcomplex holds while it runs.
+  run_optional_service_step "stop simaai-appcomplex.service" stop simaai-appcomplex.service
+  run_step "terminate stale appcomplex processes" pkill -TERM -f '(/usr/bin/)?mlashmcomplex( |$)'
+  sleep 1
+  run_step "kill stale appcomplex processes" pkill -KILL -f '(/usr/bin/)?mlashmcomplex( |$)'
+  run_step "init_mla_memory" /usr/bin/init_mla_memory.sh
+  run_optional_service_step "restart simaai-appcomplex.service" restart simaai-appcomplex.service
+  run_optional_service_step \
+    "restart simaai-pipeline-manager.service" restart simaai-pipeline-manager.service
+  run_optional_service_step "restart rctd.service" restart rctd.service
+}
+
+if [[ "${NEAT_RECOVERY_FUNCTIONS_ONLY:-OFF}" == "ON" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+if ! quarantine_stale_global_dispatcher_libs; then
+  exit 1
+fi
 if ! activate_staged_ev74_firmware_if_needed; then
   exit 1
 fi
-stop_runtime_services
-empty_coprocessing
-cleanup_tmp_sima_if_root_low_space
-run_step "remoteproc0 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state'
-run_step "remoteproc1 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc1/state'
-run_step "remoteproc1 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
-run_step "remoteproc0 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
-run_step "remoteproc status" sh -c 'for rp in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do echo "$rp: $(cat $rp/name) state=$(cat $rp/state)"; done'
-run_step "init_mla_memory" /usr/bin/init_mla_memory.sh
-run_optional_service_step "restart simaai-appcomplex.service" restart simaai-appcomplex.service
-run_optional_service_step \
-  "restart simaai-pipeline-manager.service" restart simaai-pipeline-manager.service
-run_optional_service_step "restart rctd.service" restart rctd.service
+recover_devkit_runtime
+exit $?

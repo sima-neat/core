@@ -39,6 +39,7 @@
 #include "nodes/io/UdpOutput.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/CastTess.h"

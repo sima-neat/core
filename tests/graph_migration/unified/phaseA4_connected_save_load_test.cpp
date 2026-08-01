@@ -89,4 +89,35 @@ RUN_TEST("graph_migration_phaseA4_connected_save_load_test", [] {
             "loaded combine field order/name mismatch for right");
     run.close();
   }
+
+  {
+    simaai::neat::Graph rr = simaai::neat::graphs::Combine({"left", "right"}, "combined",
+                                                           simaai::neat::CombinePolicy::RoundRobin);
+    const std::filesystem::path path = tmp_path("connected_round_robin_save_load.neat.json");
+    std::filesystem::remove(path);
+    rr.save(path.string());
+    require_file_contains(path, "\"combine_policy\":\"RoundRobin\"",
+                          "connected save RoundRobin CombinePolicy");
+
+    simaai::neat::Graph loaded = simaai::neat::Graph::load(path.string());
+    require(loaded.describe().find("combine=RoundRobin") != std::string::npos,
+            "loaded connected graph should preserve RoundRobin CombinePolicy");
+
+    simaai::neat::Run run = loaded.build();
+    simaai::neat::Sample left = graph_phase3_test::make_tensor_sample(910, "");
+    simaai::neat::Sample right = graph_phase3_test::make_tensor_sample(911, "");
+    require(run.push("left", left), "loaded round-robin left push failed: " + run.last_error());
+    require(run.push("right", right), "loaded round-robin right push failed: " + run.last_error());
+    auto first = run.pull("combined", 5000);
+    require(first.has_value(), "loaded round-robin first pull timed out: " + run.last_error());
+    auto second = run.pull("combined", 5000);
+    require(second.has_value(), "loaded round-robin second pull timed out: " + run.last_error());
+    require(first->kind != simaai::neat::SampleKind::Bundle,
+            "loaded round-robin should forward original samples");
+    require(second->kind != simaai::neat::SampleKind::Bundle,
+            "loaded round-robin should forward original samples");
+    require(first->stream_id == "left", "loaded round-robin left stream_id mismatch");
+    require(second->stream_id == "right", "loaded round-robin right stream_id mismatch");
+    run.close();
+  }
 });

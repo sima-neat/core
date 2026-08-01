@@ -1,0 +1,17 @@
+{
+  "scenario_id": "runtime_model_archive_load",
+  "model_id": "modelzoo_resnet_50_mpk",
+  "pipeline_id": "archive_inflate_validate_extract_cold",
+  "run_mode": "model_archive_cold_load",
+  "iterations": 10,
+  "metrics_thresholds": {
+    "throughput_min": 2.8,
+    "p50_max": 380.0,
+    "p95_max": 480.0,
+    "startup_max": 700.0,
+    "rss_peak_kb_max": 120000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  }
+}

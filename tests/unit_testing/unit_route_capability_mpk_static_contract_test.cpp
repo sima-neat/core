@@ -57,6 +57,10 @@ RUN_TEST(
 
         Model::Options explicit_boxdecode;
         explicit_boxdecode.decode_type = BoxDecodeType::YoloV8;
+        // This legacy MPK does not declare whether grouped DFL class scores
+        // are probabilities or logits.  Keep the production ambiguity guard
+        // strict and make the fixture's known score domain explicit.
+        explicit_boxdecode.decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
         Model explicit_model(raw_yolo_bf16.string(), explicit_boxdecode);
         require(ModelAccess::has_model_managed_stage(explicit_model, StageNodeKind::BoxDecode),
                 "explicit decode_type should select a model-managed BoxDecode stage");
