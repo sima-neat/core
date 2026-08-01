@@ -118,6 +118,16 @@ The same values are available in both language APIs:
 | `io.model_not_found` | The requested model archive does not exist. | Correct the model path and confirm that the archive is installed. |
 | `io.source_ended` | An input source reaches its normal end. | Stop consuming that source or provide additional input if the application expects more data. |
 
+## Pipeline materialization failures
+
+| Code | When raised | What to do |
+| --- | --- | --- |
+| `misconfig.pipeline_shape` | Pipeline topology is invalid, or final element names are duplicate, ambiguous, or missing after GStreamer construction. | Give every explicit element a unique short name within its materialized segment. Keep `name=` declarations and named-pad references synchronized. |
+| `build.parse_launch` | GStreamer cannot parse or construct the final launch string because syntax, a plugin, or a property is invalid. | Inspect `GraphReport::pipeline_string`; verify the fragment with `gst-launch-1.0` and the plugin with `gst-inspect-1.0`. |
+
+These checks are automatic during `Graph::build()`. For input-dependent connected segments, the
+same code and `GraphReport` can surface when the first input materializes the segment.
+
 ## Codec failures
 
 | Code | When raised | What to do |

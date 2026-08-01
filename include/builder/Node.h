@@ -69,6 +69,9 @@ inline const char* node_caps_behavior_name(NodeCapsBehavior behavior) {
  *
  * A Node is a typed wrapper over a GStreamer fragment. It exposes a small set of pure-virtual
  * methods that the Graph uses to stitch fragments together into a deterministic pipeline.
+ * One Node object represents one logical vertex within a Graph composition. Reuse the object in
+ * `Graph::connect()` to fan out from that vertex; construct another Node object when you need a
+ * second vertex of the same type.
  *
  * **Minimum implementation**: override `kind()`, `caps_behavior()`, `backend_fragment()`, and
  * `element_names()`. The other methods have sensible defaults.
@@ -119,7 +122,8 @@ public:
    * @brief Lists the deterministic element names this Node will create.
    *
    * Used by `Graph::describe()`, the `repro_gst_launch` reproducer, and anywhere the
-   * framework needs a stable handle to specific elements.
+   * framework needs a stable handle to specific elements. Return every explicit `name=` binding
+   * emitted by `backend_fragment()`; final build-time launch validation remains authoritative.
    */
   virtual std::vector<std::string> element_names(int node_index) const = 0;
 

@@ -1863,9 +1863,15 @@ int session_build_async_queue2_depth(int requested_depth) {
   }();
   return cached_env_or_default;
 }
-std::string session_build_async_queue2_fragment(int requested_depth) {
+std::string session_build_async_queue2_fragment(int requested_depth,
+                                                std::string_view element_name) {
   const int depth = session_build_async_queue2_depth(requested_depth);
-  return "queue max-size-buffers=" + std::to_string(depth) + " max-size-bytes=0 max-size-time=0";
+  std::string fragment = "queue";
+  if (!element_name.empty()) {
+    fragment += " name=" + std::string(element_name);
+  }
+  return fragment + " max-size-buffers=" + std::to_string(depth) +
+         " max-size-bytes=0 max-size-time=0";
 }
 
 static bool fragment_segment_uses_factory(std::string_view segment, std::string_view factory) {
@@ -2881,7 +2887,16 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
         want_queue2 = false;
       }
       if (want_queue2) {
-        ss << " ! " << session_build_async_queue2_fragment(requested_queue_depth) << " ! ";
+        const std::string queue_name =
+            apply_name_transform(name_transform, "queue_neat_async_" + std::to_string(i - 1U));
+        br.framework_name_origins.push_back(LaunchNameOrigin{
+            .kind = LaunchNameOrigin::Kind::Queue,
+            .name = queue_name,
+            .node_index = static_cast<int>(i - 1U),
+            .role = "async inter-node queue",
+        });
+        ss << " ! " << session_build_async_queue2_fragment(requested_queue_depth, queue_name)
+           << " ! ";
       } else {
         ss << " ! ";
       }
@@ -3548,6 +3563,9 @@ void enforce_names_contract(GstElement* pipeline, const BuildResult& br) {
   for (const auto& b : br.diag->boundaries) {
     if (b)
       allowed.insert(b->boundary_name);
+  }
+  for (const auto& origin : br.framework_name_origins) {
+    allowed.insert(origin.name);
   }
   if (!br.appsink_name.empty()) {
     allowed.insert(br.appsink_name);

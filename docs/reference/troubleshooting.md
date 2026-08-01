@@ -429,7 +429,7 @@ read the message for specifics.
 |---|---|
 | `io.open` | A file or device path couldn't be opened — missing file, permission denied, or kernel device absent (e.g. `/dev/rpmsg*`). |
 | `io.parse` | JSON/config parse error — typically a bad MPK contract or per-stage config. |
-| `misconfig.pipeline_shape` | Pipeline geometry is wrong — bad sink count, a cycle, or a missing terminal `Output`. |
+| `misconfig.pipeline_shape` | Pipeline geometry or final name integrity is wrong — for example, a bad sink count, cycle, missing terminal `Output`, or duplicate element name. |
 | `misconfig.caps` | A caps override or adjacent Node contract failed framework validation before streaming. |
 | `misconfig.media_caps` | Runtime GStreamer negotiation failed between adjacent media stages. |
 | `misconfig.input_shape` | Input tensor violates the model's contract (rank, spatial dims, channel count). |

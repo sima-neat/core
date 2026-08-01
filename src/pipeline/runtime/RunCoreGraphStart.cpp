@@ -1472,8 +1472,19 @@ void prebuild_seeded_default_input_segment(const std::shared_ptr<RunCore>& core,
         "RunCore::start(graph): seeded default input does not resolve to a pipeline segment");
   }
   std::string build_err;
-  if (!core->ensure_graph_pipeline_built(endpoint->segment, *seed, &build_err,
-                                         allow_startup_preflight)) {
+  PullError current_failure;
+  if (!core->ensure_graph_pipeline_built(
+          endpoint->segment, *seed, &build_err, allow_startup_preflight,
+          /*cancel_on_public_input_close=*/false, &current_failure)) {
+    // Preserve only the typed failure produced by this segment build. The graph-global terminal
+    // error can belong to a different segment prebuilt earlier and is intentionally not consulted.
+    if (current_failure.report.has_value()) {
+      GraphReport report = std::move(*current_failure.report);
+      const std::string message = current_failure.message.empty()
+                                      ? "[" + report.error_code + "] " + report.repro_note
+                                      : std::move(current_failure.message);
+      throw NeatError(message, std::move(report));
+    }
     throw std::runtime_error(build_err.empty()
                                  ? "RunCore::start(graph): seeded default input build failed"
                                  : "RunCore::start(graph): " + build_err);

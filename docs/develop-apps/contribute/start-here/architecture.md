@@ -452,11 +452,16 @@ graph.add(simaai::neat::nodes::Output());
 
 Internally:
 
-1. The Graph asks each Node for `backend_fragment(i)` and concatenates fragments with `!`
-2. Optionally inserts **boundary markers** between nodes:
+1. The Graph enforces one Node object per logical composition vertex. Repeated `connect()` calls
+   can reuse that indexed vertex for fan-out.
+2. A composition mutation commits as one unit or rolls back completely.
+3. The Graph asks each Node for `backend_fragment(i)` and concatenates fragments with `!`.
+4. It optionally inserts **boundary markers** between nodes:
 
    * `identity name=sima_b<i> silent=true`
-3. Builds a `DiagCtx`:
+5. It analyzes exact `name=` bindings, parses once with GStreamer, and inventories the constructed
+   object tree. Duplicate or missing names fail before downstream configuration.
+6. It builds a `DiagCtx`:
 
    * `node_reports` for reproducibility
    * `boundaries` as `BoundaryFlowCounters` (atomics)
@@ -730,7 +735,16 @@ Deterministic element names are a core design principle because they enable:
 **Node authors must ensure**:
 
 * fragments include stable `name=` fields when elements must be retrievable
-* `element_names()` matches exactly what the fragment creates
+* `element_names()` returns every explicit element name the fragment creates
+* declarations and named-pad references stay synchronized
+
+Name integrity is part of `build()` and does not depend on an earlier `validate()` call. Names are
+unique across one materialized pipeline segment because framework lookups use recursive short
+names. Separately parsed connected segments may reuse the same name. The framework rejects
+collisions instead of renaming them because names can participate in pad and routing expressions.
+
+Input-dependent connected segments can materialize on the first input. Their build failure is
+therefore reported on the first `push()` or `pull()`, with the original `GraphReport` preserved.
 
 ---
 
@@ -762,6 +776,13 @@ Validation exists to catch issues earlier than runtime:
 
 * `validate()` can parse and preroll (PAUSED) to detect negotiation stalls
 * `contracts/` provides structured validators for "pipeline correctness"
+
+Mandatory final launch-name checks also run in the ordinary build path. `ValidateOptions` controls
+additional validation work, not whether name integrity is enforced.
+
+For connected Graphs, `validate()` compiles endpoint topology but does not fabricate launch strings
+for input-dependent segments. Each segment receives the mandatory check when its real input
+contract is available and the segment materializes.
 
 The intended behavior:
 
