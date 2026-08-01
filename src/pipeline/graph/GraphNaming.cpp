@@ -20,7 +20,7 @@
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/DispatcherRecovery.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
-#include "pipeline/internal/GstLaunchBindings.h"
+#include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/SimaaiGuard.h"
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -133,7 +133,7 @@ std::vector<std::string> apply_name_transform(const NameTransform& t,
 
 std::string rewrite_fragment_names(const std::string& fragment,
                                    const std::unordered_map<std::string, std::string>& mapping) {
-  using namespace pipeline_internal::gst_launch;
+  using namespace gst::launch;
   static constexpr std::string_view kAliasProperties[] = {"stage-id", "op-buff-name"};
   const Analysis analysis = analyze(fragment);
   return rewrite(fragment, analysis, mapping, kAliasProperties).text;
@@ -145,9 +145,9 @@ NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
   if (!node)
     return out;
   const std::string original_fragment = node->backend_fragment(index);
-  const auto analysis = pipeline_internal::gst_launch::analyze(original_fragment);
+  const auto analysis = gst::launch::analyze(original_fragment);
   std::vector<std::string> base_names = node->element_names(index);
-  for (const auto* binding : pipeline_internal::gst_launch::explicit_name_bindings(analysis)) {
+  for (const auto* binding : gst::launch::explicit_name_bindings(analysis)) {
     if (std::find(base_names.begin(), base_names.end(), binding->canonical_value) ==
         base_names.end()) {
       base_names.push_back(binding->canonical_value);
@@ -169,9 +169,8 @@ NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
     out.element_names.push_back(std::move(renamed));
   }
   out.fragment = rewrite_fragment_names(original_fragment, mapping);
-  const auto rewritten_analysis = pipeline_internal::gst_launch::analyze(out.fragment);
-  for (const auto* binding :
-       pipeline_internal::gst_launch::explicit_name_bindings(rewritten_analysis)) {
+  const auto rewritten_analysis = gst::launch::analyze(out.fragment);
+  for (const auto* binding : gst::launch::explicit_name_bindings(rewritten_analysis)) {
     if (std::find(out.element_names.begin(), out.element_names.end(), binding->canonical_value) ==
         out.element_names.end()) {
       out.element_names.push_back(binding->canonical_value);

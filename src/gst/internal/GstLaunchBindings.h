@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace simaai::neat::pipeline_internal::gst_launch {
+namespace simaai::neat::gst::launch {
 
 struct ByteSpan {
   std::size_t begin = 0;
@@ -73,4 +73,4 @@ RewriteResult rewrite(std::string_view launch, const Analysis& analysis, const N
 RewriteResult rewrite_assignment_values(std::string_view launch, const Analysis& analysis,
                                         std::span<const AssignmentValueReplacement> replacements);
 
-} // namespace simaai::neat::pipeline_internal::gst_launch
+} // namespace simaai::neat::gst::launch

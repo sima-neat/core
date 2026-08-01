@@ -215,7 +215,7 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
       failure.repro_gst_launch = "gst-launch-1.0 -v '" + failure.pipeline_string + "'";
     }
     if (failure.nodes.empty() && br.diag) {
-      failure.nodes = br.diag->node_reports;
+      failure.nodes = br.diag->snapshot_basic().nodes;
     }
     return failure;
 
@@ -375,7 +375,7 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
       failure.repro_gst_launch = "gst-launch-1.0 -v '" + failure.pipeline_string + "'";
     }
     if (failure.nodes.empty() && br.diag) {
-      failure.nodes = br.diag->node_reports;
+      failure.nodes = br.diag->snapshot_basic().nodes;
     }
     return failure;
 

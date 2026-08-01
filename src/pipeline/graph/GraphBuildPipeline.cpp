@@ -13,7 +13,7 @@
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
-#include "pipeline/internal/GstLaunchBindings.h"
+#include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/GstErrorNormalizer.h"
 #include "pipeline/internal/UxLogging.h"
@@ -22,7 +22,7 @@
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
 #include <gst/SimaPluginStaticManifestAbi.h>
-#include "pipeline/internal/GstParseLaunch.h"
+#include "gst/internal/GstParseLaunch.h"
 #include <neat/PreparedRuntimeBridge.h>
 
 #include <algorithm>
@@ -697,8 +697,7 @@ static void dump_mla_contract_debug(
   }
 }
 
-using ExplicitBindingIndex =
-    std::unordered_map<std::string, const pipeline_internal::gst_launch::Assignment*>;
+using ExplicitBindingIndex = std::unordered_map<std::string, const gst::launch::Assignment*>;
 
 const char* launch_name_origin_kind(LaunchNameOrigin::Kind kind) {
   switch (kind) {
@@ -790,13 +789,10 @@ std::string describe_launch_name_origins(std::string_view name,
   return found ? out.str() : "unknown/generated (no matching rendered metadata)";
 }
 
-ExplicitBindingIndex
-validate_explicit_bindings_or_throw(const pipeline_internal::gst_launch::Analysis& binding_analysis,
-                                    const std::string& pipeline, const char* where,
-                                    const BuildResult* build = nullptr,
-                                    std::span<const LaunchNameOrigin> extra_origins = {}) {
-  const auto explicit_bindings =
-      pipeline_internal::gst_launch::explicit_name_bindings(binding_analysis);
+ExplicitBindingIndex validate_explicit_bindings_or_throw(
+    const gst::launch::Analysis& binding_analysis, const std::string& pipeline, const char* where,
+    const BuildResult* build = nullptr, std::span<const LaunchNameOrigin> extra_origins = {}) {
+  const auto explicit_bindings = gst::launch::explicit_name_bindings(binding_analysis);
   auto origins = launch_name_origin_ledger(build);
   origins.insert(origins.end(), extra_origins.begin(), extra_origins.end());
   ExplicitBindingIndex explicit_by_name;
@@ -831,7 +827,7 @@ validate_explicit_bindings_or_throw(const pipeline_internal::gst_launch::Analysi
 
 static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   const auto timing_start = pipeline_internal::build_timing_now();
-  const auto binding_analysis = pipeline_internal::gst_launch::analyze(build.pipeline_string);
+  const auto binding_analysis = gst::launch::analyze(build.pipeline_string);
   ExplicitBindingIndex explicit_by_name;
   if (binding_analysis.complete) {
     explicit_by_name =
@@ -2667,7 +2663,7 @@ GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, cons
 void session_build_validate_explicit_launch_names_or_throw(
     std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins) {
   const std::string owned_pipeline(pipeline);
-  const auto analysis = pipeline_internal::gst_launch::analyze(owned_pipeline);
+  const auto analysis = gst::launch::analyze(owned_pipeline);
   (void)validate_explicit_bindings_or_throw(analysis, owned_pipeline, where, nullptr, origins);
   if (!analysis.complete) {
     session_build_throw_session_error_simple(

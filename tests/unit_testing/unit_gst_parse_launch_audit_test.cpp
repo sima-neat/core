@@ -1,10 +1,10 @@
 #include "gst/GstInit.h"
-#include "pipeline/internal/GstParseLaunch.h"
+#include "gst/internal/GstParseLaunch.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/graph/internal/GraphBuildInternal.h"
-#include "pipeline/internal/GstLaunchBindings.h"
+#include "gst/internal/GstLaunchBindings.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -83,8 +83,8 @@ RUN_TEST(
         for (std::size_t i = 0; i < kCases.size(); ++i) {
           const std::string launch = std::string("identity ") + kCases[i].assignment +
                                      " identity name=differential_companion_" + std::to_string(i);
-          const auto analysis = pipeline_internal::gst_launch::analyze(launch);
-          const auto bindings = pipeline_internal::gst_launch::explicit_name_bindings(analysis);
+          const auto analysis = gst::launch::analyze(launch);
+          const auto bindings = gst::launch::explicit_name_bindings(analysis);
           require(analysis.complete && !bindings.empty() &&
                       bindings.front()->canonical_value == kCases[i].expected,
                   "binding analyzer canonicalization disagreed with the differential fixture");
@@ -98,6 +98,21 @@ RUN_TEST(
                   "binding analyzer canonicalization disagreed with target GStreamer");
           gst_object_unref(pipeline);
         }
+      }
+
+      {
+        const std::string launch =
+            "fakesrc ! application/x-test,field=(string)\"a\\!b\",name=caps_only ! "
+            "identity name=after_caps ! fakesink";
+        const auto analysis = gst::launch::analyze(launch);
+        const auto bindings = gst::launch::explicit_name_bindings(analysis);
+        require(analysis.complete && bindings.size() == 1U &&
+                    bindings.front()->canonical_value == "after_caps",
+                "escaped caps delimiters and caps fields must remain in the native link token");
+        GstElement* pipeline = parse(launch);
+        require(pipeline != nullptr,
+                "target GStreamer must accept the escaped caps-delimiter differential fixture");
+        gst_object_unref(pipeline);
       }
 
       {

@@ -300,14 +300,14 @@ message-text-dependent, and unsuitable for an embeddable library.
 Add a private, clean-room lexical utility:
 
 ```text
-src/pipeline/internal/GstLaunchBindings.h
-src/pipeline/internal/GstLaunchBindings.cpp
+src/gst/internal/GstLaunchBindings.h
+src/gst/GstLaunchBindings.cpp
 ```
 
 Suggested interface:
 
 ```cpp
-namespace simaai::neat::pipeline_internal::gst_launch {
+namespace simaai::neat::gst::launch {
 
 struct ByteSpan {
   std::size_t begin = 0;
@@ -350,7 +350,7 @@ RewriteResult rewrite(
     const NameMapping& mapping,
     std::span<const std::string_view> alias_properties);
 
-} // namespace simaai::neat::pipeline_internal::gst_launch
+} // namespace simaai::neat::gst::launch
 ```
 
 This layer is not a GStreamer grammar or topology parser. It recognizes only the documented lexical
@@ -395,7 +395,7 @@ differential tests against every supported target GStreamer version.
 Use the existing neutral files:
 
 ```text
-src/pipeline/internal/GstParseLaunch.h
+src/gst/internal/GstParseLaunch.h
 src/gst/GstParseLaunch.cpp
 ```
 
@@ -602,10 +602,10 @@ current `BuildResult`. Do not rewrite every structured failure as `kParseLaunch`
 
 ### Launch analysis, parse, and rewriting
 
-- `src/pipeline/internal/GstLaunchBindings.h`
-- `src/pipeline/internal/GstLaunchBindings.cpp`
+- `src/gst/internal/GstLaunchBindings.h`
+- `src/gst/GstLaunchBindings.cpp`
   - Add the pure lexical analysis and lossless editor.
-- `src/pipeline/internal/GstParseLaunch.h`
+- `src/gst/internal/GstParseLaunch.h`
 - `src/gst/GstParseLaunch.cpp`
   - Fill the existing neutral parse wrapper and recursive object inventory.
 - `src/pipeline/graph/GraphNaming.cpp`
@@ -799,6 +799,8 @@ Status: implemented end to end in the working tree on July 31, 2026.
 - The private launch binding analyzer/editor, native one-parse tree audit, provenance ledger,
   deterministic framework names, RTSP precheck, and structured lazy failure carrier are wired into
   the production materialization paths. No explicit `validate()` call is required.
+- Launch grammar and native parse helpers live under the neutral `gst/` layer; `nodes/` and `gst/`
+  do not acquire reverse dependencies on the `pipeline/` orchestrator.
 - The binding analyzer follows GStreamer's `_string` longest-match behavior: paired apostrophes may
   group a token but remain literal in the property value, while unmatched quotes fall back to the
   ordinary token alternative. Differential tests compare these edge cases with native parsing.

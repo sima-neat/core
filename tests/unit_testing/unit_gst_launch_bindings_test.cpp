@@ -1,6 +1,6 @@
 #include "nodes/common/Caps.h"
 #include "pipeline/graph/GraphDetail.h"
-#include "pipeline/internal/GstLaunchBindings.h"
+#include "gst/internal/GstLaunchBindings.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -16,7 +16,7 @@
 
 RUN_TEST(
     "unit_gst_launch_bindings_test", ([] {
-      using namespace simaai::neat::pipeline_internal::gst_launch;
+      using namespace simaai::neat::gst::launch;
 
       {
         const std::string launch = "identity name=plain ! identity name = \"quoted\" ! "
@@ -98,6 +98,16 @@ RUN_TEST(
         require(analysis.complete && names.size() == 1U &&
                     names.front()->canonical_value == "after_caps",
                 "an apostrophe in caps must not hide GStreamer's unescaped link operator");
+      }
+
+      {
+        const Analysis analysis =
+            analyze("fakesrc ! application/x-test,field=(string)\"a\\!b\",name=caps_only ! "
+                    "identity name=after_caps");
+        const auto names = explicit_name_bindings(analysis);
+        require(analysis.complete && names.size() == 1U &&
+                    names.front()->canonical_value == "after_caps",
+                "an escaped caps delimiter must remain inside the caps link token");
       }
 
       {

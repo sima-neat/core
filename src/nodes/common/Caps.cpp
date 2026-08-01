@@ -4,7 +4,7 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TempJsonFileUtil.h"
-#include "pipeline/internal/GstLaunchBindings.h"
+#include "gst/internal/GstLaunchBindings.h"
 
 #include <nlohmann/json.hpp>
 
@@ -27,7 +27,7 @@ public:
       : fragment_(std::move(fragment)), role_(role) {
     if (fragment_.empty())
       fragment_ = "identity silent=true";
-    const auto analysis = simaai::neat::pipeline_internal::gst_launch::analyze(fragment_);
+    const auto analysis = simaai::neat::gst::launch::analyze(fragment_);
     has_config_json_ =
         std::any_of(analysis.assignments.begin(), analysis.assignments.end(),
                     [](const auto& assignment) { return assignment.key == "config"; });
@@ -60,7 +60,7 @@ public:
     if (!has_config_json_ || upstream_names.empty() || upstream_names[0].empty()) {
       return false;
     }
-    using namespace simaai::neat::pipeline_internal::gst_launch;
+    using namespace simaai::neat::gst::launch;
     const Analysis analysis = analyze(fragment_);
     if (!analysis.complete)
       return false;
@@ -108,9 +108,8 @@ public:
 
   std::string backend_fragment(int node_index) const override {
     const std::string frag = trim_(fragment_);
-    const auto analysis = simaai::neat::pipeline_internal::gst_launch::analyze(frag);
-    const bool has_name =
-        !simaai::neat::pipeline_internal::gst_launch::explicit_name_bindings(analysis).empty();
+    const auto analysis = simaai::neat::gst::launch::analyze(frag);
+    const bool has_name = !simaai::neat::gst::launch::explicit_name_bindings(analysis).empty();
     const bool looks_complex = analysis.has_topology_syntax || !analysis.complete;
 
     if (has_name || looks_complex)
@@ -124,10 +123,9 @@ public:
 
   std::vector<std::string> element_names(int node_index) const override {
     const std::string frag = trim_(fragment_);
-    const auto analysis = simaai::neat::pipeline_internal::gst_launch::analyze(frag);
+    const auto analysis = simaai::neat::gst::launch::analyze(frag);
     std::vector<std::string> names;
-    for (const auto* binding :
-         simaai::neat::pipeline_internal::gst_launch::explicit_name_bindings(analysis)) {
+    for (const auto* binding : simaai::neat::gst::launch::explicit_name_bindings(analysis)) {
       names.push_back(binding->canonical_value);
     }
     if (!names.empty()) {

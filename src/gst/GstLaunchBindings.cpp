@@ -1,4 +1,4 @@
-#include "pipeline/internal/GstLaunchBindings.h"
+#include "gst/internal/GstLaunchBindings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -6,7 +6,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace simaai::neat::pipeline_internal::gst_launch {
+namespace simaai::neat::gst::launch {
 namespace {
 
 bool ascii_space(char c) {
@@ -150,6 +150,8 @@ std::optional<std::size_t> caps_link_end(std::string_view text, std::size_t oper
   int brace_depth = 0;
   const char closing_operator = text[operator_pos];
   for (std::size_t i = body; i < text.size(); ++i) {
+    // Match GStreamer's `_capschar`: quotes are ordinary caps characters and do not hide an
+    // unescaped `!` or `;`; a backslash escapes exactly the following character.
     if (text[i] == '\\') {
       if (i + 1U >= text.size()) {
         *complete = false;
@@ -460,4 +462,4 @@ RewriteResult rewrite_assignment_values(std::string_view launch, const Analysis&
   return apply_replacements(launch, analysis, std::move(encoded));
 }
 
-} // namespace simaai::neat::pipeline_internal::gst_launch
+} // namespace simaai::neat::gst::launch

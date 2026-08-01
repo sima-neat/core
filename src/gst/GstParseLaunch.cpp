@@ -1,4 +1,4 @@
-#include "pipeline/internal/GstParseLaunch.h"
+#include "gst/internal/GstParseLaunch.h"
 
 #include <glib-object.h>
 
