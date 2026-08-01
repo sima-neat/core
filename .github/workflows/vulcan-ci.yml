@@ -703,7 +703,7 @@ jobs:
           else
             ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
-              --label-exclude "perf|llima" \
+              --label-exclude "perf|llima|long" \
               -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \

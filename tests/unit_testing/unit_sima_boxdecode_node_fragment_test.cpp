@@ -221,6 +221,27 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            require(managed_fragment.find("original-height=") == std::string::npos,
                    "model-managed boxdecode should let metadata drive original height");
 
+           // A resize assertion may fill in missing external provenance, but it must not relabel
+           // an active model transform. Otherwise the decoder would invert the wrong geometry.
+           simaai::neat::Model::Options letterbox_opt = managed_opt;
+           letterbox_opt.preprocess.resize.enable = simaai::neat::AutoFlag::On;
+           letterbox_opt.preprocess.resize.mode = simaai::neat::ResizeMode::Letterbox;
+           letterbox_opt.preprocess.resize.width = 640;
+           letterbox_opt.preprocess.resize.height = 640;
+           simaai::neat::Model letterbox_model(tar_path, letterbox_opt);
+           bool conflicting_resize_override_rejected = false;
+           try {
+             (void)simaai::neat::nodes::SimaBoxDecode(
+                 letterbox_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "",
+                 std::nullopt, std::nullopt, 0, 0, 0, 0, simaai::neat::ResizeMode::Stretch);
+           } catch (const std::exception& e) {
+             conflicting_resize_override_rejected = true;
+             require_contains(e.what(), "conflicts with the active preprocess resize mode",
+                              "resize-plan conflict should have an actionable diagnostic");
+           }
+           require(conflicting_resize_override_rejected,
+                   "an explicit Stretch override must not mask an active Letterbox resize");
+
            auto standalone_node =
                simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,
                                                   100, "manual_boxdecode", 1280, 720, 640, 640);

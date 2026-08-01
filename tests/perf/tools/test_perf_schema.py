@@ -69,6 +69,24 @@ def valid_component_row() -> dict[str, object]:
 
 
 class PerfSchemaTest(unittest.TestCase):
+    def test_expected_result_scenarios_follow_selected_lane(self) -> None:
+        self.assertEqual(
+            schema.expected_result_scenario_ids(include_long=False),
+            schema.STANDARD_SCENARIO_IDS,
+        )
+        self.assertEqual(
+            schema.expected_result_scenario_ids(include_long=True),
+            schema.STANDARD_SCENARIO_IDS + schema.LONG_SCENARIO_IDS,
+        )
+        self.assertNotIn(
+            "ssd_mobilenet_boxdecode",
+            schema.expected_result_scenario_ids(include_long=False),
+        )
+        self.assertIn(
+            "ssd_mobilenet_boxdecode",
+            schema.expected_result_scenario_ids(include_long=True),
+        )
+
     def test_parse_profile_ok(self) -> None:
         profile = schema.parse_profile(valid_profile_dict())
         self.assertEqual(profile.modalix_profile_id, "modalix_default")

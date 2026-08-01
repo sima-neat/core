@@ -179,7 +179,9 @@ public:
    *                             (`Stretch`/`Letterbox`/`Crop`). Use when running the model
    *                             without an upstream `Preproc` stage and the per-buffer
    *                             `preproc_resize_mode` meta isn't being written by an
-   *                             upstream element. When set, the contract drops
+   *                             upstream element. If this route performs preprocessing, the
+   *                             override must match its resolved resize mode. When set, the
+   *                             contract drops
    *                             `preproc_resize_mode` from the required-meta list so buffers
    *                             flow through cleanly; otherwise the value is sourced from
    *                             per-buffer `GstSimaaiPreprocessMeta` as before.

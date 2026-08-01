@@ -508,7 +508,7 @@ void reject_wrong_ssd_model_frame(BoxDecodeType decode_type, int expected_width,
   }
 }
 
-const char* ssd_resize_mode_token(ResizeMode mode) {
+const char* resize_mode_token_local(ResizeMode mode) {
   switch (mode) {
   case ResizeMode::Stretch:
     return "stretch";
@@ -520,8 +520,23 @@ const char* ssd_resize_mode_token(ResizeMode mode) {
   return "unknown";
 }
 
-// The decoder inverts a stretch remap, so reject other resize modes at build time.
-// `override_mode` wins over `plan_mode` (the model's resolved resize).
+void reject_conflicting_resize_mode_override(const std::optional<ResizeMode>& override_mode,
+                                             const std::optional<ResizeMode>& active_plan_mode,
+                                             const char* where) {
+  if (!override_mode.has_value() || !active_plan_mode.has_value() ||
+      *override_mode == *active_plan_mode) {
+    return;
+  }
+  throw std::invalid_argument(
+      std::string(where) + ": resize_mode_override='" + resize_mode_token_local(*override_mode) +
+      "' conflicts with the active preprocess resize mode '" +
+      resize_mode_token_local(*active_plan_mode) +
+      "'. An override may provide provenance when preprocessing is external, but it cannot "
+      "relabel a resize that the model route actually performs.");
+}
+
+// The decoder inverts a stretch remap, so reject other resize modes at build time. A caller must
+// first reject a disagreement when both the override and an active model plan are present.
 void reject_non_stretch_ssd_resize(BoxDecodeType decode_type,
                                    const std::optional<ResizeMode>& override_mode,
                                    const std::optional<ResizeMode>& plan_mode, const char* where) {
@@ -535,7 +550,7 @@ void reject_non_stretch_ssd_resize(BoxDecodeType decode_type,
         ": SSD box decode requires a stretch (anisotropic) preprocessing resize. "
         "Both supported prepared profiles (SSD300-v1 and SSD-Mobile-300-v1) are configured "
         "with stretch and the on-device decoder inverts a stretch remap, so a '" +
-        ssd_resize_mode_token(*effective) +
+        resize_mode_token_local(*effective) +
         "' resize would misplace boxes. Set ResizeMode::Stretch (or remove the "
         "letterbox/crop override).");
   }
@@ -781,12 +796,14 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   // Enforce the SSD resize and model-frame invariants before finalizing the contract.
   {
     const bool resize_runs = resolved.enabled && resolved.effective.resize.enable != AutoFlag::Off;
-    // An explicit override is always authoritative; the plan mode only describes a resize
-    // that actually runs.
+    // The plan mode describes only a resize that actually runs. An override may supply missing
+    // provenance, but it cannot contradict a transform performed by this route.
     std::optional<ResizeMode> plan_resize;
     if (resize_runs) {
       plan_resize = resolved.effective.resize.mode;
     }
+    reject_conflicting_resize_mode_override(resize_mode_override, plan_resize,
+                                            "SimaBoxDecode(Model)");
     reject_non_stretch_ssd_resize(compiled_contract.payload.decode_type, resize_mode_override,
                                   plan_resize, "SimaBoxDecode(Model)");
     // Head geometry alone does not pin the model frame; the recipe does. Resize dims may be

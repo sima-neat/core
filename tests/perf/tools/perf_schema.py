@@ -70,7 +70,7 @@ DEFAULT_EMPTY_METRICS: dict[str, float] = {
     "output_drop_count": 0.0,
 }
 
-REQUIRED_SCENARIO_IDS = (
+STANDARD_SCENARIO_IDS = (
     "runtime_session_sync_rgb",
     "runtime_session_async_rgb",
     "runtime_graph_fanout",
@@ -79,8 +79,19 @@ REQUIRED_SCENARIO_IDS = (
     "runtime_codec_h264_decode",
     "runtime_codec_h265_decode",
     "runtime_model_archive_load",
+)
+
+LONG_SCENARIO_IDS = (
     "ssd_mobilenet_boxdecode",
 )
+
+# Baseline packages contain every registered scenario, while a result directory
+# contains only the lane selected by the runner.
+REQUIRED_SCENARIO_IDS = STANDARD_SCENARIO_IDS + LONG_SCENARIO_IDS
+
+
+def expected_result_scenario_ids(include_long: bool) -> tuple[str, ...]:
+    return REQUIRED_SCENARIO_IDS if include_long else STANDARD_SCENARIO_IDS
 
 
 @dataclass(frozen=True)
