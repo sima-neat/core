@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,12 +46,16 @@ def _exercise_composite_graph_lifecycle() -> None:
 
 
 def test_composite_graph_close_releases_python_bindings() -> None:
+  env = os.environ.copy()
+  env.pop("GST_PLUGIN_SYSTEM_PATH_1_0", None)
+
   result = subprocess.run(
       [sys.executable, str(Path(__file__).resolve()), "--child"],
       check=False,
       capture_output=True,
       text=True,
       timeout=120,
+      env=env,
   )
 
   assert result.returncode == 0, result.stderr
