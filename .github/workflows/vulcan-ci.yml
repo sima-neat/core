@@ -78,6 +78,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Run build-tooling tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_venv="${RUNNER_TEMP}/build-tooling-tests"
+          python3 -m venv "${test_venv}"
+          "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging
+          "${test_venv}/bin/python" -m pytest -q \
+            tests/test_build_pyneat_wheel.py \
+            tests/test_resolve_compiler_cache.py
+
       - name: Resolve cache namespace and access
         id: resolve
         shell: bash
