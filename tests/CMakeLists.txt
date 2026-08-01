@@ -591,6 +591,26 @@ if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLAC
   set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
     RESOURCE_LOCK "accelerator-device;udp")
   set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+
+  foreach(shape_case IN ITEMS "680;382" "672;384" "642;480")
+    list(GET shape_case 0 shape_width)
+    list(GET shape_case 1 shape_height)
+    set(shape_test_name
+      "video_sender_shape_${shape_width}x${shape_height}_e2e_test")
+    add_test(NAME ${shape_test_name}
+      COMMAND video_sender_adaptive_ingress_e2e_test
+        --scenario system_nv12_tight
+        --width ${shape_width}
+        --height ${shape_height})
+    simaneat_append_ctest_env(${shape_test_name})
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      LABELS "strict;long;e2e;codec;video_sender;arbitrary_shape;real_media")
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      RESOURCE_LOCK "accelerator-device;udp")
+    set_tests_properties(${shape_test_name} PROPERTIES TIMEOUT 120)
+  endforeach()
 endif()
 
 

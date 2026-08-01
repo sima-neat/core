@@ -28,6 +28,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -52,8 +53,13 @@ using simaai::neat::InputMemoryPolicy;
 using simaai::neat::Sample;
 using simaai::neat::Tensor;
 
-constexpr int kWidth = 640;
-constexpr int kHeight = 360;
+struct TestGeometry {
+  int width = 640;
+  int height = 360;
+};
+
+TestGeometry g_geometry;
+
 constexpr int kFps = 30;
 constexpr int kFramesPerScenario = 6;
 constexpr int kMinimumDecodedFrames = 3;
@@ -210,7 +216,13 @@ GstVideoFormat video_format(FormatTag format) {
   }
 }
 
-std::string raw_caps(FormatTag format, int width = kWidth, int height = kHeight) {
+std::string raw_caps(FormatTag format, int width = -1, int height = -1) {
+  if (width <= 0) {
+    width = g_geometry.width;
+  }
+  if (height <= 0) {
+    height = g_geometry.height;
+  }
   std::ostringstream caps;
   caps << "video/x-raw,format=(string)" << gst_format(format) << ",width=(int)" << width
        << ",height=(int)" << height << ",framerate=(fraction)" << kFps << "/1";
@@ -400,7 +412,8 @@ RawFrame load_real_image(const std::string& path) {
   const std::string context = "real-image fixture";
   auto pipeline = parse_pipeline("filesrc name=source ! jpegdec ! videoconvert ! videoscale ! "
                                  "video/x-raw,format=RGB,width=" +
-                                     std::to_string(kWidth) + ",height=" + std::to_string(kHeight) +
+                                     std::to_string(g_geometry.width) +
+                                     ",height=" + std::to_string(g_geometry.height) +
                                      ",pixel-aspect-ratio=1/1 ! "
                                      "appsink name=sink sync=false max-buffers=1 drop=false",
                                  context);
@@ -630,7 +643,7 @@ public:
             codec.parser + " ! " + decoder +
             " ! videoconvert ! "
             "video/x-raw,format=RGB,width=" +
-            std::to_string(kWidth) + ",height=" + std::to_string(kHeight) +
+            std::to_string(g_geometry.width) + ",height=" + std::to_string(g_geometry.height) +
             " ! appsink name=sink sync=false max-buffers=32 drop=false",
         context_);
     sink_.reset(required_element(pipeline_.get(), "sink", context_));
@@ -803,17 +816,17 @@ void run_encoded_sender_scenario(const std::string& name, const EncodedCodec& co
     decode.type = codec.decoder_type;
     decode.out_format = FormatTag::NV12;
     decode.raw_output = true;
-    decode.dec_width = kWidth;
-    decode.dec_height = kHeight;
+    decode.dec_width = g_geometry.width;
+    decode.dec_height = g_geometry.height;
     decode.dec_fps = kFps;
     graph.add(simaai::neat::nodes::SimaDecode(std::move(decode)));
     // Native decode contracts are deliberately hints. Pin the observed native
     // NV12 boundary so this E2E exercises the adaptive direct ingress too.
-    graph.add(
-        simaai::neat::nodes::CapsRaw("NV12", kWidth, kHeight, kFps, simaai::neat::CapsMemory::Any));
+    graph.add(simaai::neat::nodes::CapsRaw("NV12", g_geometry.width, g_geometry.height, kFps,
+                                           simaai::neat::CapsMemory::Any));
 
-    auto sender =
-        simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(kWidth, kHeight, kFps);
+    auto sender = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
+        g_geometry.width, g_geometry.height, kFps);
     sender.encoder.bitrate_kbps = 4000;
     sender.host = "127.0.0.1";
     sender.video_port_base = port;
@@ -873,7 +886,7 @@ std::uint64_t fnv1a(GstBuffer* buffer) {
 MappedPlaneLayout decoder_padded_layout(FormatTag format) {
   constexpr int kLumaStride = 768;
   constexpr int kStorageHeight = 384;
-  MappedPlaneLayout layout = tight_layout(format, kWidth, kHeight);
+  MappedPlaneLayout layout = tight_layout(format, g_geometry.width, g_geometry.height);
   layout.strides[0] = kLumaStride;
   layout.offsets[0] = 0;
   if (format == FormatTag::NV12) {
@@ -941,8 +954,8 @@ void run_plugin_padded_scenario(const std::string& name, const RawFrame& input,
   const std::string context = name + " plugin pipeline";
   auto pipeline = parse_pipeline(
       "appsrc name=source is-live=false format=time block=true caps=\"" + raw_caps(input.format) +
-          "\" ! neatencoder enc-width=" + std::to_string(kWidth) +
-          " enc-height=" + std::to_string(kHeight) + " enc-frame-rate=" + std::to_string(kFps) +
+          "\" ! neatencoder enc-width=" + std::to_string(g_geometry.width) + " enc-height=" +
+          std::to_string(g_geometry.height) + " enc-frame-rate=" + std::to_string(kFps) +
           " enc-bitrate=4000 enc-fmt=" + encoder_format +
           " enc-ip-mode=async ! h264parse config-interval=1 ! "
           "rtph264pay pt=96 config-interval=1 timestamp-offset=0 ! "
@@ -1013,8 +1026,8 @@ simaai::neat::Graph input_graph(const RawScenario& scenario) {
   simaai::neat::InputOptions input;
   input.payload_type = simaai::neat::PayloadType::Image;
   input.format = scenario.format;
-  input.width = kWidth;
-  input.height = kHeight;
+  input.width = g_geometry.width;
+  input.height = g_geometry.height;
   input.fps_n = kFps;
   input.fps_d = 1;
   input.block = true;
@@ -1028,8 +1041,8 @@ simaai::neat::Graph input_graph(const RawScenario& scenario) {
 }
 
 simaai::neat::Graph sender_graph(const RawScenario& scenario, int port) {
-  auto options =
-      simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(kWidth, kHeight, kFps);
+  auto options = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
+      g_geometry.width, g_geometry.height, kFps);
   options.host = "127.0.0.1";
   options.video_port_base = port;
   options.encoder.bitrate_kbps = 4000;
@@ -1190,6 +1203,32 @@ std::string scenario_filter_from_args(int argc, char** argv) {
   return {};
 }
 
+int positive_int_arg(int argc, char** argv, const char* flag, int default_value) {
+  for (int index = 1; index + 1 < argc; ++index) {
+    if (std::string(argv[index]) != flag) {
+      continue;
+    }
+    std::size_t consumed = 0;
+    const std::string value_text = argv[index + 1];
+    const long value = std::stol(value_text, &consumed, 10);
+    if (consumed != value_text.size() || value <= 0 || value > std::numeric_limits<int>::max()) {
+      throw std::invalid_argument(std::string(flag) + " must be a positive integer");
+    }
+    return static_cast<int>(value);
+  }
+  return default_value;
+}
+
+TestGeometry geometry_from_args(int argc, char** argv) {
+  TestGeometry geometry;
+  geometry.width = positive_int_arg(argc, argv, "--width", geometry.width);
+  geometry.height = positive_int_arg(argc, argv, "--height", geometry.height);
+  if ((geometry.width & 1) != 0 || (geometry.height & 1) != 0) {
+    throw std::invalid_argument("accepted raw 4:2:0 E2E geometry must have even width and height");
+  }
+  return geometry;
+}
+
 int run_aggregate_scenarios(int argc, char** argv) {
   int failures = 0;
   int skipped = 0;
@@ -1284,6 +1323,11 @@ int main(int argc, char** argv) {
     }
     std::abort();
   });
+  try {
+    g_geometry = geometry_from_args(argc, argv);
+  } catch (const std::exception& error) {
+    return fail_test(error.what());
+  }
   if (scenario_filter_from_args(argc, argv).empty()) {
     return run_aggregate_scenarios(argc, argv);
   }
@@ -1292,6 +1336,7 @@ int main(int argc, char** argv) {
     const bool layout_aware = encoder_supports_layout_aware_input();
     const std::string image_path = image_path_from_args(argc, argv);
     const std::string scenario_filter = scenario_filter_from_args(argc, argv);
+    std::cout << "[INFO] test_geometry=" << g_geometry.width << "x" << g_geometry.height << "\n";
     require(std::filesystem::is_regular_file(image_path),
             "missing real-image fixture: " + image_path);
 

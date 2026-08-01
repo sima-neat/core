@@ -34,6 +34,23 @@ the H.264 encoder directly when the installed encoder advertises
 `input-layout-aware=true`. RGB, BGR, grayscale, I420, unknown memory/layouts,
 and inputs without a reliable format contract retain one conversion to NV12.
 
+### Raw frame geometry and layout
+
+`width` and `height` are the visible image dimensions. They do not need to be
+multiples of 8, 16, or 32. For the NV12 and I420 4:2:0 formats, both dimensions
+must be positive and even; the active codec, profile, level, and hardware define
+the remaining minimum and maximum limits. For example, `680x382`, `672x384`,
+and `642x480` are valid shapes when the installed encoder accepts them.
+
+Hardware storage alignment is separate from visible geometry. Neat preserves
+the requested dimensions in caps and allocates or stages into encoder surfaces
+with the pitch and storage height required by the hardware. A raw buffer with a
+custom physical layout must carry `GstVideoMeta` with authoritative plane
+offsets and strides. Without that metadata, the negotiated GStreamer layout is
+used; property-driven file input must contain exactly one tightly packed frame
+per buffer. Invalid, truncated, or unsupported layouts fail synchronously
+instead of being partially copied.
+
 ```cpp
 simaai::neat::Graph graph;
 const int channel = 0;
