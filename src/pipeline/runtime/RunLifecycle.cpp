@@ -344,6 +344,16 @@ void runtime::RunCore::close() {
     };
     log_diag(*st);
   }
+  if (st->graph_execution_) {
+    // stop_graph() has joined the graph workers. Close each materialized child
+    // now so its InputStream releases callbacks and cannot retain its RunCore.
+    for (auto& pipe : st->graph_execution_->pipelines) {
+      if (pipe && pipe->run_core) {
+        pipe->run_core->close();
+        pipe->run_core.reset();
+      }
+    }
+  }
   st->pipeline.stream.close();
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::close end\n");
