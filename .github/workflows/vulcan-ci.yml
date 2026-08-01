@@ -15,6 +15,11 @@ on:
         required: false
         default: "standard"
         type: string
+      cache_base_branch:
+        description: "Compiler-cache baseline: auto, develop, or main"
+        required: false
+        default: "auto"
+        type: string
   workflow_dispatch:
     inputs:
       build_mode:
@@ -25,6 +30,15 @@ on:
         options:
           - standard
           - fuzz
+      cache_base_branch:
+        description: "Compiler-cache baseline"
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - develop
+          - main
 
 permissions:
   actions: write
@@ -45,6 +59,49 @@ jobs:
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
+
+  resolve-compiler-cache:
+    name: Resolve Compiler Cache
+    needs:
+      - resolve-vulcan-config
+    runs-on: ubuntu-latest
+    outputs:
+      key_prefix: ${{ steps.resolve.outputs.key_prefix }}
+      seed_key_prefix: ${{ steps.resolve.outputs.seed_key_prefix }}
+      role_arn: ${{ steps.resolve.outputs.role_arn }}
+      rw_mode: ${{ steps.resolve.outputs.rw_mode }}
+      base_branch: ${{ steps.resolve.outputs.base_branch }}
+
+    steps:
+      - name: Checkout cache resolver
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run build-tooling tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_venv="${RUNNER_TEMP}/build-tooling-tests"
+          python3 -m venv "${test_venv}"
+          "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging
+          "${test_venv}/bin/python" -m pytest -q \
+            tests/test_build_pyneat_wheel.py \
+            tests/test_resolve_compiler_cache.py
+
+      - name: Resolve cache namespace and access
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/resolve_compiler_cache.py \
+            --base-key-prefix '${{ format('{0}/sccache-v1/arm64/{1}/{2}', needs.resolve-vulcan-config.outputs.compiler_cache_key_prefix, needs.resolve-vulcan-config.outputs.sdk_cache, inputs.build_mode || 'standard') }}' \
+            --reader-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_reader_role_arn }}' \
+            --protected-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_writer_role_arn }}' \
+            --branch-writer-role-arn '${{ needs.resolve-vulcan-config.outputs.compiler_cache_branch_writer_role_arn }}' \
+            --base-branch '${{ inputs.cache_base_branch || 'auto' }}' \
+            --repo "${GITHUB_WORKSPACE}" \
+            --github-output "${GITHUB_OUTPUT}"
 
   detect-changes:
     name: Detect Changes
@@ -137,6 +194,9 @@ jobs:
         run: |
           ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
 
+      - name: Test sccache configuration
+        run: bash scripts/ci/test_sccache_config.sh
+
   resolve-test-runner:
     name: Resolve Test Runner
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
@@ -149,6 +209,7 @@ jobs:
     if: ${{ always() && !failure() && !cancelled() }}
     needs:
       - resolve-vulcan-config
+      - resolve-compiler-cache
       - detect-changes
       - code-hygiene
     uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
@@ -163,6 +224,13 @@ jobs:
       artifact_name: neat-core-dist
       artifact_path: dist/*
       artifact_retention_days: 3
+      use_github_environment: false
+      compiler_cache_bucket: ${{ needs.resolve-compiler-cache.outputs.role_arn != '' && needs.resolve-vulcan-config.outputs.compiler_cache_bucket || '' }}
+      compiler_cache_aws_region: ${{ needs.resolve-vulcan-config.outputs.compiler_cache_aws_region }}
+      compiler_cache_key_prefix: ${{ needs.resolve-compiler-cache.outputs.key_prefix }}
+      compiler_cache_seed_key_prefix: ${{ needs.resolve-compiler-cache.outputs.seed_key_prefix }}
+      compiler_cache_role_arn: ${{ needs.resolve-compiler-cache.outputs.role_arn }}
+      compiler_cache_rw_mode: ${{ needs.resolve-compiler-cache.outputs.rw_mode }}
       build_command: |
         set -euo pipefail
 
@@ -195,6 +263,18 @@ jobs:
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
+          -e SIMANEAT_SCCACHE=on \
+          -e SIMANEAT_SCCACHE_ZERO_STATS=ON \
+          -e SIMANEAT_SCCACHE_STARTUP_FAIL_OPEN=ON \
+          -e SCCACHE_BUCKET \
+          -e SCCACHE_REGION \
+          -e SCCACHE_S3_KEY_PREFIX \
+          -e SCCACHE_S3_RW_MODE \
+          -e AWS_ACCESS_KEY_ID \
+          -e AWS_SECRET_ACCESS_KEY \
+          -e AWS_SESSION_TOKEN \
+          -e AWS_REGION \
+          -e AWS_DEFAULT_REGION \
           -e GITHUB_HEAD_REF="${{ github.head_ref }}" \
           -e GITHUB_REF_NAME="${{ github.ref_name }}" \
           -e GITHUB_REF_TYPE="${{ github.ref_type }}" \
@@ -425,6 +505,21 @@ jobs:
             printf 'PYTEST_DIR=%s\n' "${PYTEST_DIR}"
             printf 'TUTORIALS_PYTEST_DIR=%s\n' "${TUTORIALS_PYTEST_DIR}"
           } >> "${GITHUB_ENV}"
+
+      - name: Smoke-test installed PyNeat wheel
+        run: |
+          set -euo pipefail
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected installed PyNeat Python environment under ${PYNEAT_HOME}." >&2
+            exit 1
+          fi
+          "${PYTHON_BIN}" -c \
+            'import pyneat; import pyneat._pyneat_core; print(f"Imported pyneat from {pyneat.__file__}")'
 
       - name: Rebase CTest paths to runner workspace
         run: |
