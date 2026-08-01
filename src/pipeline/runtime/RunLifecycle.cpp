@@ -77,72 +77,7 @@ void runtime::RunCore::stop() {
   st->pipeline.out_cv.notify_all();
   st->pipeline.stream.stop_async();
   // Stop the underlying stream first to unblock any appsrc push waiting on downstream.
-  const int stream_stop_timeout_ms =
-      std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", 2000));
-  const int stream_stop_timeout_ms_2 = stream_stop_timeout_ms;
-  if (stream_stop_timeout_ms <= 0) {
-    st->pipeline.stream.stop();
-  } else {
-    struct StopCtx {
-      std::atomic<bool> done{false};
-    };
-    auto ctx = std::make_shared<StopCtx>();
-    std::thread stop_thread([st, ctx]() {
-      try {
-        st->pipeline.stream.stop();
-      } catch (const std::exception& e) {
-        if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
-            pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
-          std::fprintf(stderr, "[PIPELINE] stop stream error: %s\n", e.what());
-        }
-      }
-      ctx->done.store(true, std::memory_order_relaxed);
-    });
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(stream_stop_timeout_ms);
-    while (!ctx->done.load(std::memory_order_relaxed)) {
-      if (std::chrono::steady_clock::now() >= deadline)
-        break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (ctx->done.load(std::memory_order_relaxed)) {
-      stop_thread.join();
-    } else {
-      if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
-          pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
-        std::fprintf(stderr,
-                     "[PIPELINE] stop: stream.stop did not exit within %dms; forcing stop\n",
-                     stream_stop_timeout_ms);
-      }
-      st->pipeline.stream.stop_async();
-      if (stream_stop_timeout_ms_2 > 0) {
-        const auto extra_deadline =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(stream_stop_timeout_ms_2);
-        while (!ctx->done.load(std::memory_order_relaxed)) {
-          if (std::chrono::steady_clock::now() >= extra_deadline)
-            break;
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-      }
-      if (ctx->done.load(std::memory_order_relaxed)) {
-        stop_thread.join();
-      } else {
-        const int waited_ms = stream_stop_timeout_ms + stream_stop_timeout_ms_2;
-        if (abort_on_hung_stop_threads()) {
-          std::fprintf(stderr,
-                       "[PIPELINE] stop: stream.stop did not exit after %dms; aborting "
-                       "(SIMA_PIPELINE_ABORT_ON_HUNG_STOP_THREADS=1)\n",
-                       waited_ms);
-          std::terminate();
-        }
-        std::fprintf(stderr,
-                     "[PIPELINE] stop: stream.stop did not exit after %dms; detaching "
-                     "stop thread and continuing\n",
-                     waited_ms);
-        stop_thread.detach();
-      }
-    }
-  }
+  st->pipeline.stream.stop();
   if (st->pipeline.input_thread.joinable()) {
     const int timeout_ms =
         std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", 2000));
@@ -344,15 +279,11 @@ void runtime::RunCore::close() {
     };
     log_diag(*st);
   }
-  if (st->graph_execution_ &&
-      !st->graph_execution_->has_detached_workers.load(std::memory_order_acquire)) {
-    // Joined workers no longer access child cores, so release their InputStream
-    // callbacks. Detached workers retain graph-owned children until they exit.
+  if (st->graph_execution_) {
     for (auto& pipe : st->graph_execution_->pipelines) {
       if (pipe && pipe->run_core) {
         pipe->retained_diag = pipe->run_core->pipeline.stream.diag_ctx();
         pipe->run_core->close();
-        pipe->run_core.reset();
       }
     }
   }

@@ -169,8 +169,10 @@ void collect_graph_node_metrics(
     if (!pipe) {
       continue;
     }
-    const auto diag =
-        pipe->run_core ? pipe->run_core->pipeline.stream.diag_ctx() : pipe->retained_diag;
+    auto diag = pipe->run_core ? pipe->run_core->pipeline.stream.diag_ctx() : nullptr;
+    if (!diag) {
+      diag = pipe->retained_diag;
+    }
     if (!diag) {
       continue;
     }

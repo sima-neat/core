@@ -372,8 +372,6 @@ struct ExecutionGraphRuntime {
   std::vector<std::unique_ptr<StageRuntime>> stages;
   std::vector<StageGroup> stage_groups;
   std::vector<std::unique_ptr<RealtimeLatestLink>> realtime_links;
-  // Detached workers still access graph-owned pipeline children after stop() returns.
-  std::atomic<bool> has_detached_workers{false};
 
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_pipeline;
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_stage_group;

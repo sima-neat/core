@@ -52,7 +52,6 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            using namespace simaai::neat;
 
            EnvVarGuard input_stop_1("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "200");
-           EnvVarGuard stream_stop_1("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", "200");
 
            const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x3A);
            Run run = sima_test::make_async_rgb_run(seed, 128, 128);
