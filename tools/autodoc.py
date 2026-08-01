@@ -730,7 +730,33 @@ def promote_index_file(source: Dict, dst_section: Path) -> None:
             f"index_file '{configured}' conflicts with existing index.md"
         )
     if source_path != index_path:
+        promoted_source = source_path.resolve()
         source_path.replace(index_path)
+
+        def rewrite_target(target: str, page: Path) -> str:
+            if target.startswith(("http:", "https:", "/", "#")):
+                return target
+            match = re.match(r"^([^?#]*)([?#]?)(.*)$", target)
+            if match is None:
+                return target
+            path_part, separator, suffix = match.groups()
+            if not path_part or (page.parent / path_part).resolve() != promoted_source:
+                return target
+            rewritten = os.path.relpath(index_path, page.parent).replace(os.sep, "/")
+            return f"{rewritten}{separator}{suffix}"
+
+        for page in dst_section.rglob("*"):
+            if page.suffix.lower() not in {".md", ".mdx"}:
+                continue
+            text = page.read_text(encoding="utf-8")
+
+            def rewrite_link(match: re.Match[str]) -> str:
+                target = rewrite_target(match.group("target"), page)
+                return f"{match.group('prefix')}{target}{match.group('suffix')}"
+
+            text = MARKDOWN_TARGET_RE.sub(rewrite_link, text)
+            text = HTML_HREF_TARGET_RE.sub(rewrite_link, text)
+            page.write_text(text, encoding="utf-8")
 
 
 def write_root_index_file(
