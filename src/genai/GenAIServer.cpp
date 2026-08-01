@@ -199,14 +199,14 @@ bool json_bool(const nlohmann::json& body, const char* key, bool default_value =
   return default_value;
 }
 
-bool request_enable_thinking(const nlohmann::json& body) {
+bool request_enable_thinking(const nlohmann::json& body, bool ollama = false) {
+  if (ollama) {
+    return json_bool(body, "think", false);
+  }
   bool enable_thinking = json_bool(body, "enable_thinking", false);
   if (body.contains("chat_template_kwargs") && body.at("chat_template_kwargs").is_object()) {
     enable_thinking =
         json_bool(body.at("chat_template_kwargs"), "enable_thinking", enable_thinking);
-  }
-  if (body.contains("options") && body.at("options").is_object()) {
-    enable_thinking = json_bool(body.at("options"), "enable_thinking", enable_thinking);
   }
   return enable_thinking;
 }
@@ -215,13 +215,16 @@ std::string choice_finish_reason(const std::string& finish_reason) {
   return finish_reason.empty() ? "stop" : finish_reason;
 }
 
-nlohmann::json chat_message_response(const GenerationResult& result) {
+nlohmann::json chat_message_response(const GenerationResult& result, bool ollama = false) {
   nlohmann::json message = {{"role", "assistant"}};
   if (!result.tool_calls.empty()) {
     message["content"] = nullptr;
     message["tool_calls"] = result.tool_calls;
   } else {
     message["content"] = result.text;
+  }
+  if (!result.reasoning.empty()) {
+    message[ollama ? "thinking" : "reasoning_content"] = result.reasoning;
   }
   return message;
 }
@@ -241,7 +244,8 @@ GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_s
 std::string chat_chunk(const std::string& model_name, const std::string& completion_id,
                        std::uint64_t created, const std::string& text,
                        const std::optional<std::string>& finish_reason = std::nullopt,
-                       const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                       const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                       bool reasoning = false) {
   nlohmann::json chunk;
   chunk["id"] = completion_id;
   chunk["object"] = "chat.completion.chunk";
@@ -265,7 +269,7 @@ std::string chat_chunk(const std::string& model_name, const std::string& complet
     choice["delta"] = nlohmann::json::object();
     choice["finish_reason"] = *finish_reason;
   } else {
-    choice["delta"] = {{"content", text}};
+    choice["delta"] = {{reasoning ? "reasoning_content" : "content", text}};
     choice["finish_reason"] = nullptr;
   }
   chunk["choices"] = nlohmann::json::array({choice});
@@ -402,10 +406,15 @@ std::string audio_chunk(ASRTask task, const std::string& text, bool finished,
 
 std::string ollama_chat_line(const std::string& model_name, const std::string& text, bool done,
                              const std::optional<std::string>& finish_reason = std::nullopt,
-                             const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                             const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                             bool reasoning = false) {
   nlohmann::json body;
   body["model"] = model_name;
   body["message"] = {{"role", "assistant"}, {"content", done ? "" : text}};
+  if (!done && reasoning) {
+    body["message"]["content"] = "";
+    body["message"]["thinking"] = text;
+  }
   body["done"] = done;
   if (done) {
     body["done_reason"] = finish_reason.value_or("stop");
@@ -426,10 +435,14 @@ std::string ollama_chat_line(const std::string& model_name, const std::string& t
 
 std::string ollama_generate_line(const std::string& model_name, const std::string& text, bool done,
                                  const std::optional<std::string>& finish_reason = std::nullopt,
-                                 const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                                 const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                                 bool reasoning = false) {
   nlohmann::json body;
   body["model"] = model_name;
-  body["response"] = done ? "" : text;
+  body["response"] = done || reasoning ? "" : text;
+  if (!done && reasoning) {
+    body["thinking"] = text;
+  }
   body["done"] = done;
   if (done) {
     body["done_reason"] = finish_reason.value_or("stop");
@@ -1102,7 +1115,7 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
-      request.enable_thinking = request_enable_thinking(body);
+      request.enable_thinking = request_enable_thinking(body, true);
       request.messages = parse_chat_messages(body);
       if (const auto error = apply_tool_options(body, request)) {
         set_error(res, *error, 400);
@@ -1120,7 +1133,7 @@ struct GenAIServer::Impl {
       } else {
         const auto result = model->run(request);
         set_json(res, {{"model", model_name},
-                       {"message", chat_message_response(result)},
+                       {"message", chat_message_response(result, true)},
                        {"done", true},
                        {"done_reason", choice_finish_reason(result.finish_reason)},
                        {"eval_count", result.metrics.generated_tokens}});
@@ -1155,7 +1168,7 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
-      request.enable_thinking = request_enable_thinking(body);
+      request.enable_thinking = request_enable_thinking(body, true);
       request.messages.push_back(std::move(message));
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1168,11 +1181,15 @@ struct GenAIServer::Impl {
         handle_ollama_generate_stream(res, model_name, std::move(model), std::move(request));
       } else {
         const auto result = model->run(request);
-        set_json(res, {{"model", model_name},
-                       {"response", result.text},
-                       {"done", true},
-                       {"done_reason", choice_finish_reason(result.finish_reason)},
-                       {"eval_count", result.metrics.generated_tokens}});
+        nlohmann::json response = {{"model", model_name},
+                                   {"response", result.text},
+                                   {"done", true},
+                                   {"done_reason", choice_finish_reason(result.finish_reason)},
+                                   {"eval_count", result.metrics.generated_tokens}};
+        if (!result.reasoning.empty()) {
+          response["thinking"] = result.reasoning;
+        }
+        set_json(res, std::move(response));
       }
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
@@ -1211,8 +1228,10 @@ struct GenAIServer::Impl {
                                                       sample->tool_calls, metrics));
                 continue;
               }
-              const auto chunk = chat_chunk(model_name, completion_id, created, sample->text,
-                                            std::nullopt, metrics);
+              const bool reasoning = !sample->reasoning.empty();
+              const auto chunk = chat_chunk(model_name, completion_id, created,
+                                            reasoning ? sample->reasoning : sample->text,
+                                            std::nullopt, metrics, reasoning);
               write_sink(sink, chunk);
             }
             const auto done =
@@ -1313,8 +1332,10 @@ struct GenAIServer::Impl {
                 pending_tool_metrics = sample->metrics;
                 continue;
               }
-              write_sink(sink, ollama_chat_line(model_name, sample->text, false, std::nullopt,
-                                                sample->metrics));
+              const bool reasoning = !sample->reasoning.empty();
+              write_sink(sink,
+                         ollama_chat_line(model_name, reasoning ? sample->reasoning : sample->text,
+                                          false, std::nullopt, sample->metrics, reasoning));
             }
             write_sink(sink, ollama_chat_line(model_name, "", true, "stop"));
           } catch (const std::exception& e) {
@@ -1345,8 +1366,10 @@ struct GenAIServer::Impl {
                 sink.done();
                 return true;
               }
-              write_sink(sink, ollama_generate_line(model_name, sample->text, false, std::nullopt,
-                                                    sample->metrics));
+              const bool reasoning = !sample->reasoning.empty();
+              write_sink(sink, ollama_generate_line(
+                                   model_name, reasoning ? sample->reasoning : sample->text, false,
+                                   std::nullopt, sample->metrics, reasoning));
             }
             write_sink(sink, ollama_generate_line(model_name, "", true, "stop"));
           } catch (const std::exception& e) {

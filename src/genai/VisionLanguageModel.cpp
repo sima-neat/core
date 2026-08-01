@@ -5,6 +5,7 @@
 #include <sima_lmm/image_processor.hpp>
 #include <sima_lmm/language_model.hpp>
 #include <sima_lmm/mla_model.hpp>
+#include <sima_lmm/reasoning_parser.hpp>
 #include <sima_lmm/text_streamer.hpp>
 #include <sima_lmm/tool_call_parser.hpp>
 #include <sima_lmm/utils.hpp>
@@ -349,6 +350,7 @@ struct VisionLanguageModel::Impl {
         [this](const std::string& metric, double value) { record_metric(metric, value); },
         [](const std::string&, bool, bool) {});
     tool_call_format = simaai::llima::tool_call_format_for_model(cfg.model_type);
+    reasoning_format = simaai::llima::reasoning_format_for_model(cfg.model_type);
     preserved_tool_call_tokens = simaai::llima::resolve_tool_call_special_tokens(
         tool_call_format, *vlm_helper->get_tokenizer());
     text_streamer->set_preserved_token_ids(preserved_tool_call_tokens);
@@ -380,10 +382,21 @@ struct VisionLanguageModel::Impl {
     }
 
     result.metrics.generated_tokens = static_cast<std::uint32_t>(output_token_ids->size());
-    result.text = parse_tools ? simaai::llima::decode_tool_call_output(*vlm_helper->get_tokenizer(),
-                                                                       output_token_ids.value(),
-                                                                       preserved_tool_call_tokens)
-                              : vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
+    const auto preserved_tokens = structural_tokens(request);
+    const auto decoded =
+        preserved_tokens.empty()
+            ? vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true)
+            : simaai::llima::decode_tool_call_output(*vlm_helper->get_tokenizer(),
+                                                     output_token_ids.value(), preserved_tokens);
+    simaai::llima::ReasoningStreamParser reasoning_parser(reasoning_format, request.enable_thinking,
+                                                          prompt_opens_reasoning(request));
+    for (auto& event : reasoning_parser.add(decoded, true)) {
+      if (event.reasoning) {
+        result.reasoning += event.text;
+      } else {
+        result.text += event.text;
+      }
+    }
     if (parse_tools) {
       auto tool_calls = simaai::llima::try_parse_tool_calls(
           tool_call_format, result.text, tool_names_from_definitions(request.tools));
@@ -397,7 +410,9 @@ struct VisionLanguageModel::Impl {
   }
 
   std::optional<std::vector<uint32_t>> generate_tokens(const GenerationRequest& request) {
-    text_streamer->set_tool_call_enabled(internal::tool_calls_enabled(request));
+    auto preserved_tokens = structural_tokens(request);
+    text_streamer->set_preserved_token_ids(preserved_tokens);
+    text_streamer->set_tool_call_enabled(!preserved_tokens.empty());
     simaai::llima::ChronoTimer timer_ttft{true};
     auto prepared = prepare_input(request);
     auto vision_ofm_maps = language_model->create_input_buffers(prepared.input_token_ids);
@@ -406,6 +421,30 @@ struct VisionLanguageModel::Impl {
     const auto max_total_tokens =
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
     return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens);
+  }
+
+  bool prompt_opens_reasoning(const GenerationRequest& request) const {
+    return reasoning_format == simaai::llima::ReasoningFormat::Gemma4 &&
+           !request.messages.empty() && request.messages.back().role == "tool";
+  }
+
+  simaai::llima::PreservedToolCallTokens structural_tokens(const GenerationRequest& request) const {
+    simaai::llima::PreservedToolCallTokens tokens;
+    if (internal::tool_calls_enabled(request)) {
+      tokens = preserved_tool_call_tokens;
+    }
+    if (request.enable_thinking && reasoning_format != simaai::llima::ReasoningFormat::None) {
+      for (const auto marker : simaai::llima::reasoning_special_tokens(reasoning_format)) {
+        try {
+          tokens.emplace_back(vlm_helper->get_tokenizer()->token_to_id(std::string(marker)),
+                              marker);
+        } catch (const std::exception&) {
+          throw std::runtime_error("Reasoning token '" + std::string(marker) +
+                                   "' is missing from the tokenizer");
+        }
+      }
+    }
+    return tokens;
   }
 
   struct PreparedInput {
@@ -569,6 +608,7 @@ struct VisionLanguageModel::Impl {
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
   std::unique_ptr<simaai::llima::TextStreamer> text_streamer;
   simaai::llima::ToolCallFormat tool_call_format = simaai::llima::ToolCallFormat::GenericJson;
+  simaai::llima::ReasoningFormat reasoning_format = simaai::llima::ReasoningFormat::None;
   simaai::llima::PreservedToolCallTokens preserved_tool_call_tokens;
   std::unique_ptr<simaai::llima::LanguageModel> language_model;
   std::unique_ptr<simaai::llima::ImageProcessor> image_processor;
@@ -651,6 +691,9 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
         const bool parse_tools = internal::tool_calls_enabled(request);
         simaai::llima::ToolCallStreamParser tool_parser(model->tool_call_format,
                                                         tool_names_from_definitions(request.tools));
+        simaai::llima::ReasoningStreamParser reasoning_parser(
+            model->reasoning_format, request.enable_thinking,
+            model->prompt_opens_reasoning(request));
         bool emitted_tool_calls = false;
         auto handle_tool_parser_events =
             [&producer,
@@ -670,13 +713,23 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
               }
             };
         model->text_streamer->set_text_callback(
-            [&producer, parse_tools, &tool_parser,
+            [&producer, parse_tools, &reasoning_parser, &tool_parser,
              &handle_tool_parser_events](const std::string& text, bool stream_end, bool) {
-              if (parse_tools) {
-                handle_tool_parser_events(tool_parser.add(text, stream_end));
-                return;
+              for (auto& event : reasoning_parser.add(text, stream_end)) {
+                if (event.reasoning) {
+                  TokenSample sample;
+                  sample.reasoning = std::move(event.text);
+                  sample.metrics = producer.current_metrics();
+                  producer.push(std::move(sample));
+                } else if (parse_tools) {
+                  handle_tool_parser_events(tool_parser.add(event.text, false));
+                } else {
+                  producer.record_text(event.text, false);
+                }
               }
-              producer.record_text(text, stream_end);
+              if (stream_end) {
+                producer.record_text("", true);
+              }
             });
         auto output_token_ids = model->generate_tokens(request);
         std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";

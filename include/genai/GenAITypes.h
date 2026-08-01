@@ -129,6 +129,8 @@ struct GenerationResult {
   /// Mean log probability over generated ASR tokens.
   std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
+  /// Model reasoning, when thinking was enabled and the model emitted it.
+  std::string reasoning;
 };
 
 struct TokenSample {
@@ -143,6 +145,8 @@ struct TokenSample {
   /// Mean log probability over generated ASR tokens, set on the final sample.
   std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
+  /// Reasoning fragment; mutually exclusive with text for generated samples.
+  std::string reasoning;
 };
 
 class GenerationStream {
