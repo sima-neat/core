@@ -188,8 +188,16 @@
       "mount": "tools/sentinel",
       "sidebar_position": 5,
       "index_file": "README.md",
+      "root_index_file": "README.md",
+      "root_index_link_prefix": "docs/",
+      "link_rewrites": [
+        {
+          "from": "docs/README.md",
+          "to": "#documentation"
+        }
+      ],
       "files_order": [
-        "README",
+        "index",
         "measurement-model",
         "reports",
         "run-comparison",

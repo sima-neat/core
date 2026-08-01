@@ -733,6 +733,54 @@ def promote_index_file(source: Dict, dst_section: Path) -> None:
         source_path.replace(index_path)
 
 
+def write_root_index_file(
+    source: Dict,
+    staging: Path,
+    dst_section: Path,
+    link_rewrites: List[Tuple[str, str]],
+) -> bool:
+    """Use a repository-root Markdown file as the mounted section landing page.
+
+    Detailed documentation can remain under ``docs_subpath`` while installation
+    and quick-start material from the repository README becomes ``index.md``.
+    Relative links rooted at ``root_index_link_prefix`` are rebased to the
+    mounted documentation directory.
+    """
+    configured = str(source.get("root_index_file", "")).strip()
+    if not configured:
+        return False
+
+    relative = Path(configured)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise OSError(f"root_index_file must stay within the source repository: {configured}")
+    source_path = staging / relative
+    if not source_path.is_file():
+        raise OSError(f"root_index_file '{configured}' was not found")
+
+    text = source_path.read_text(encoding="utf-8")
+    text = inject_frontmatter(text, "index", 1, str(source.get("title", "")).strip() or None)
+    text = rewrite_configured_link_targets(text, link_rewrites)
+
+    link_prefix = str(source.get("root_index_link_prefix", "")).strip().lstrip("./")
+    if link_prefix:
+        if not link_prefix.endswith("/"):
+            link_prefix += "/"
+
+        def rebase_target(target: str) -> str:
+            if target.startswith(link_prefix):
+                return target[len(link_prefix):]
+            return target
+
+        def rebase_markdown(match: re.Match[str]) -> str:
+            return f"{match.group('prefix')}{rebase_target(match.group('target'))}{match.group('suffix')}"
+
+        text = MARKDOWN_TARGET_RE.sub(rebase_markdown, text)
+        text = HTML_HREF_TARGET_RE.sub(rebase_markdown, text)
+
+    (dst_section / "index.md").write_text(text, encoding="utf-8")
+    return True
+
+
 def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Path) -> Tuple[bool, str]:
     key = source["key"]
     repo = source["repo"]
@@ -791,6 +839,7 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
         write_category_json(dst_section, title, sidebar_position)
         write_group_categories(dst_section, landing)
         maybe_write_landing_page(source, src_docs, dst_section, title)
+        write_root_index_file(source, staging, dst_section, link_rewrites)
         group_commands = source.get("group_commands")
         if group_commands:
             regroup_command_pages(dst_section, group_commands)
