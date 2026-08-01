@@ -6,7 +6,7 @@ sidebar_position: 0
 # Tools
 
 The SiMa.ai tools you use alongside Neat: the `sima-cli` command line, Insight,
-and the Model Zoo. For SDK setup, see the
+Sentinel, and the Model Zoo. For SDK setup, see the
 [Neat SDK](/getting-started/dev-environment/).
 
 Use these tools to install software, retrieve model artifacts, inspect
@@ -20,6 +20,7 @@ application behavior, and manage common DevKit workflows.
       <li><a class="overview-link-card" href="/tools/sima-cli/"><strong>sima-cli</strong><span>Install and update packages, manage SDK environments, access model artifacts, and work with DevKits.</span></a></li>
       <li><a class="overview-link-card" href="/tools/model-zoo/"><strong>Model Zoo</strong><span>Use precompiled and quantized model artifacts for Neat and GenAI workflows.</span></a></li>
       <li><a class="overview-link-card" href="/tools/insight/"><strong>Insight</strong><span>Inspect workspace files, media sources, stream delivery, and application output from a browser.</span></a></li>
+      <li><a class="overview-link-card" href="/tools/sentinel/"><strong>Sentinel</strong><span>Monitor DevKit power, thermals, CPU, memory, storage, and network activity, then record and compare workload runs.</span></a></li>
     </ul>
   </section>
 </div>

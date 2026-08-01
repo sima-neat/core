@@ -706,6 +706,33 @@ def maybe_write_landing_page(source: Dict, src_docs: Path, dst_section: Path, ti
              source["key"], len(modules), len(landing.get("groups", [])))
 
 
+def promote_index_file(source: Dict, dst_section: Path) -> None:
+    """Promote a source landing document to the mounted section's index.md.
+
+    Some repositories keep their documentation landing page as README.md.
+    ``index_file`` lets the manifest expose that page at the canonical mounted
+    section route without requiring a duplicate source document.
+    """
+    configured = str(source.get("index_file", "")).strip()
+    if not configured:
+        return
+
+    relative = Path(configured)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise OSError(f"index_file must stay within docs_subpath: {configured}")
+    source_path = dst_section / relative
+    if not source_path.is_file():
+        raise OSError(f"index_file '{configured}' was not copied")
+
+    index_path = dst_section / "index.md"
+    if source_path != index_path and index_path.exists():
+        raise OSError(
+            f"index_file '{configured}' conflicts with existing index.md"
+        )
+    if source_path != index_path:
+        source_path.replace(index_path)
+
+
 def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Path) -> Tuple[bool, str]:
     key = source["key"]
     repo = source["repo"]
@@ -760,6 +787,7 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
             restructure_api,
             link_rewrites,
         )
+        promote_index_file(source, dst_section)
         write_category_json(dst_section, title, sidebar_position)
         write_group_categories(dst_section, landing)
         maybe_write_landing_page(source, src_docs, dst_section, title)
