@@ -55,7 +55,6 @@ struct ComponentIdentity {
   const char* backend;
   const char* phase;
   const char* kernel_name;
-  const char* stage_name;
 };
 
 std::vector<const simaai::neat::MeasurePluginLatencyWithPercentiles*>
@@ -65,8 +64,8 @@ select_exact_component_rows(const simaai::neat::MeasureReportWithPluginPercentil
   for (const auto& row : report.plugin_latency) {
     const auto& metric = row.metric;
     if (metric.backend == identity.backend && metric.phase == identity.phase &&
-        metric.kernel_name == identity.kernel_name && metric.stage_name == identity.stage_name &&
-        metric.gst_element_name == identity.stage_name && !metric.plugin_instance_id.empty()) {
+        metric.kernel_name == identity.kernel_name && !metric.stage_name.empty() &&
+        metric.stage_name == metric.gst_element_name && !metric.plugin_instance_id.empty()) {
       matches.push_back(&row);
     }
   }
@@ -198,10 +197,13 @@ int main(int argc, char** argv) {
       throw std::runtime_error("SSD BoxDecode plugin latency was not collected (status=" +
                                report.plugin_latency_status + ")");
     }
+    // Graph construction applies its per-run name transform (for example, `boxdecode_1`) to the
+    // element and stage. Select the stable tracepoint identity and then require exactly one row;
+    // requiring stage_name == gst_element_name still rejects malformed or cross-node attribution.
     constexpr ComponentIdentity kBackendComponent{"boxdecode_backend", "A65", "Run",
-                                                  "boxdecode_backend", "boxdecode"};
+                                                  "boxdecode_backend"};
     constexpr ComponentIdentity kExclusiveComponent{"boxdecode_plugin_exclusive", "A65", "Exec",
-                                                    "boxdecode_plugin_exclusive", "boxdecode"};
+                                                    "boxdecode_plugin_exclusive"};
     auto backend_rows = select_exact_component_rows(measured, kBackendComponent);
     auto exclusive_rows = select_exact_component_rows(measured, kExclusiveComponent);
     validate_component_selection(kBackendComponent, backend_rows);
