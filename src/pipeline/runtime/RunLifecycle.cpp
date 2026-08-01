@@ -350,6 +350,7 @@ void runtime::RunCore::close() {
     // callbacks. Detached workers retain graph-owned children until they exit.
     for (auto& pipe : st->graph_execution_->pipelines) {
       if (pipe && pipe->run_core) {
+        pipe->retained_diag = pipe->run_core->pipeline.stream.diag_ctx();
         pipe->run_core->close();
         pipe->run_core.reset();
       }
