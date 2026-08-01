@@ -181,6 +181,8 @@ simaneat_show_sccache_stats() {
   if [[ "${SIMANEAT_SCCACHE_ACTIVE:-OFF}" == "ON" ]]; then
     echo
     echo "sccache statistics:"
-    "${SIMANEAT_SCCACHE_BIN}" --show-stats
+    if ! "${SIMANEAT_SCCACHE_BIN}" --show-stats; then
+      simaneat_sccache_warn "Unable to read sccache statistics; the completed build is unaffected."
+    fi
   fi
 }

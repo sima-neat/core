@@ -52,7 +52,17 @@ def detect_base_branch(repo: Path) -> str:
         except (subprocess.CalledProcessError, ValueError):
             continue
         distances[branch] = distance
+    if not distances:
+        return ""
     return choose_base_branch(distances)
+
+
+def resolve_base_branch(requested_base_branch: str, repo: Path) -> str:
+    if requested_base_branch == "auto":
+        return detect_base_branch(repo)
+    if requested_base_branch in PROTECTED_BRANCHES:
+        return requested_base_branch
+    raise ValueError("cache base branch must be auto, develop, or main")
 
 
 def resolve(
@@ -77,12 +87,9 @@ def resolve(
         return Resolution(f"{root}/{ref_name}", "", role, mode, ref_name)
 
     if direct_branch:
-        if requested_base_branch == "auto":
-            base_branch = detect_base_branch(repo)
-        elif requested_base_branch in PROTECTED_BRANCHES:
-            base_branch = requested_base_branch
-        else:
-            raise ValueError("cache base branch must be auto, develop, or main")
+        base_branch = resolve_base_branch(requested_base_branch, repo)
+        if not base_branch:
+            return Resolution("", "", "", "READ_ONLY", "")
 
         if branch_writer_role_arn:
             encoded_ref = quote(ref_name, safe="")
@@ -98,12 +105,9 @@ def resolve(
 
     # Tags and non-direct contexts cannot own a persistent branch cache, but they can
     # still read from the closest compatible protected baseline.
-    if requested_base_branch == "auto":
-        base_branch = detect_base_branch(repo)
-    elif requested_base_branch in PROTECTED_BRANCHES:
-        base_branch = requested_base_branch
-    else:
-        raise ValueError("cache base branch must be auto, develop, or main")
+    base_branch = resolve_base_branch(requested_base_branch, repo)
+    if not base_branch:
+        return Resolution("", "", "", "READ_ONLY", "")
     return Resolution(f"{root}/{base_branch}", "", reader_role_arn, "READ_ONLY", base_branch)
 
 
@@ -133,7 +137,8 @@ def main() -> int:
     if not resolution.role_arn:
         resolution = Resolution("", "", "", "READ_ONLY", resolution.base_branch)
         print(
-            "::warning::Compiler-cache role is unavailable; remote caching is disabled.",
+            "::warning::Compiler-cache namespace or role is unavailable; "
+            "remote caching is disabled.",
             file=sys.stderr,
         )
     elif resolution.rw_mode == "READ_ONLY":

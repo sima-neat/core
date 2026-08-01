@@ -72,6 +72,16 @@ class ResolveCompilerCacheTests(unittest.TestCase):
     def test_equal_ancestry_defaults_to_develop(self):
         self.assertEqual(MODULE.choose_base_branch({"develop": 0, "main": 0}), "develop")
 
+    @mock.patch.object(MODULE, "detect_base_branch", return_value="")
+    def test_unrelated_history_disables_remote_cache(self, detect):
+        result = self.resolve(requested_base_branch="auto")
+        self.assertEqual(result.key_prefix, "")
+        self.assertEqual(result.seed_key_prefix, "")
+        self.assertEqual(result.role_arn, "")
+        self.assertEqual(result.rw_mode, "READ_ONLY")
+        self.assertEqual(result.base_branch, "")
+        detect.assert_called_once_with(ROOT)
+
     @mock.patch.object(MODULE, "detect_base_branch", return_value="main")
     def test_auto_base_uses_git_detection(self, detect):
         result = self.resolve(requested_base_branch="auto")

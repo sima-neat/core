@@ -16,7 +16,12 @@ case "${1:-}" in
       exit 1
     fi
     ;;
-  --show-stats) ;;
+  --show-stats)
+    if [[ "${FAKE_SCCACHE_SHOW_STATS_FAILURE:-OFF}" == "ON" ]]; then
+      echo "simulated sccache statistics failure" >&2
+      exit 1
+    fi
+    ;;
   *) echo "unexpected fake sccache argument: ${1:-}" >&2; exit 1 ;;
 esac
 SCCACHE
@@ -87,6 +92,17 @@ fi
   [[ "${SCCACHE_MULTILEVEL_CHAIN}" == "disk,s3" ]]
   [[ "${SCCACHE_MULTILEVEL_WRITE_ERROR_POLICY}" == "l0" ]]
   [[ "${SCCACHE_S3_USE_SSL}" == "true" ]]
+)
+
+(
+  export HOME="${temp_root}/home"
+  export PATH="${temp_root}/bin:${PATH}"
+  export SIMANEAT_SCCACHE_ACTIVE=ON
+  export SIMANEAT_SCCACHE_BIN="${temp_root}/bin/sccache"
+  export FAKE_SCCACHE_SHOW_STATS_FAILURE=ON
+  # shellcheck source=scripts/configure_sccache.sh
+  source "${repo_root}/scripts/configure_sccache.sh"
+  simaneat_show_sccache_stats
 )
 
 if (

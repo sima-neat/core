@@ -60,14 +60,17 @@ jobs:
 
           test -n "${encoded_branch}"
           branch_root="${CACHE_KEY_PREFIX}/sccache-v1"
+          listing_file="$(mktemp)"
+          prefixes_file="$(mktemp)"
+          trap 'rm -f "${listing_file}" "${prefixes_file}"' EXIT
 
-          mapfile -t prefixes < <(
-            aws s3api list-objects-v2 \
-              --bucket "${CACHE_BUCKET}" \
-              --prefix "${branch_root}/" \
-              --query "Contents[].Key" \
-              --output json |
-              python3 -c '
+          aws s3api list-objects-v2 \
+            --bucket "${CACHE_BUCKET}" \
+            --prefix "${branch_root}/" \
+            --query "Contents[].Key" \
+            --output json >"${listing_file}"
+
+          python3 -c '
           import json
           import sys
 
@@ -79,8 +82,8 @@ jobs:
                   prefixes.add(key[: marker + len(needle)])
           for prefix in sorted(prefixes):
               print(prefix)
-          ' "${encoded_branch}"
-          )
+          ' "${encoded_branch}" <"${listing_file}" >"${prefixes_file}"
+          mapfile -t prefixes <"${prefixes_file}"
 
           if [[ "${#prefixes[@]}" -eq 0 ]]; then
             echo "No compiler cache found for deleted branch '${DELETED_BRANCH}'."

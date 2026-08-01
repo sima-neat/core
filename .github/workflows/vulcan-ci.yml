@@ -506,6 +506,21 @@ jobs:
             printf 'TUTORIALS_PYTEST_DIR=%s\n' "${TUTORIALS_PYTEST_DIR}"
           } >> "${GITHUB_ENV}"
 
+      - name: Smoke-test installed PyNeat wheel
+        run: |
+          set -euo pipefail
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected installed PyNeat Python environment under ${PYNEAT_HOME}." >&2
+            exit 1
+          fi
+          "${PYTHON_BIN}" -c \
+            'import pyneat; import pyneat._pyneat_core; print(f"Imported pyneat from {pyneat.__file__}")'
+
       - name: Rebase CTest paths to runner workspace
         run: |
           EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
