@@ -829,8 +829,9 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
     reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width, recipe_height,
                                  resolved_model_width, resolved_model_height,
                                  "the model-dimension override", "SimaBoxDecode(Model)");
-    // Nothing else pins the frame on a manual-post route, so fall back to the MLA ingress.
-    if (!resize_runs && resolved_model_width <= 0) {
+    // Decoder dimension overrides do not change the packaged inference ingress. Every manual/no-
+    // resize SSD route must therefore agree with both the selected recipe and the MLA contract.
+    if (!resize_runs) {
       reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width,
                                    recipe_height, resolved.mla_contract.width,
                                    resolved.mla_contract.height, "the model MLA contract",
