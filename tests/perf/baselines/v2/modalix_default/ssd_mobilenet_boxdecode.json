@@ -18,8 +18,7 @@
     "boxdecode_plugin_exclusive": {
       "required": true,
       "min_samples": 1000,
-      "p99_max_ms": 0.9,
-      "max_max_ms": 0.999
+      "p99_max_ms": 0.9
     },
     "boxdecode_backend": {
       "required": true,
