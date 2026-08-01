@@ -101,6 +101,14 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             run_perf_matrix.SCENARIOS,
             run_perf_matrix.STANDARD_SCENARIOS + run_perf_matrix.LONG_SCENARIOS,
         )
+        self.assertEqual(
+            tuple(spec.scenario_id for spec in run_perf_matrix.STANDARD_SCENARIOS),
+            schema.STANDARD_SCENARIO_IDS,
+        )
+        self.assertEqual(
+            tuple(spec.scenario_id for spec in run_perf_matrix.LONG_SCENARIOS),
+            schema.LONG_SCENARIO_IDS,
+        )
 
     def test_only_skippable_scenario_honors_return_code_77(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

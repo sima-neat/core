@@ -693,6 +693,10 @@ jobs:
 
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           SKIP_REGEX='^(unit_dispatcher_watchdog_test)$'
+          E2E_LABEL_EXCLUDE='perf|llima'
+          if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
+            E2E_LABEL_EXCLUDE+='|long'
+          fi
           if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
             echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"
             ctest --test-dir "${TEST_DIR}" \
@@ -703,7 +707,7 @@ jobs:
           else
             ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
-              --label-exclude "perf|llima|long" \
+              --label-exclude "${E2E_LABEL_EXCLUDE}" \
               -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
