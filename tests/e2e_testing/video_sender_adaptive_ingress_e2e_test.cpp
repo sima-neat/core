@@ -883,25 +883,60 @@ std::uint64_t fnv1a(GstBuffer* buffer) {
   return hash;
 }
 
-MappedPlaneLayout decoder_padded_layout(FormatTag format) {
-  constexpr int kLumaStride = 768;
-  constexpr int kStorageHeight = 384;
-  MappedPlaneLayout layout = tight_layout(format, g_geometry.width, g_geometry.height);
-  layout.strides[0] = kLumaStride;
+int checked_align_up(int value, int alignment, const char* field) {
+  require(value > 0 && alignment > 0, std::string(field) + " must be positive");
+  const int remainder = value % alignment;
+  if (remainder == 0) {
+    return value;
+  }
+  const int increment = alignment - remainder;
+  require(value <= std::numeric_limits<int>::max() - increment,
+          std::string(field) + " alignment overflow");
+  return value + increment;
+}
+
+std::size_t plane_end(const MappedPlaneLayout& layout, guint plane) {
+  require(plane < layout.plane_count, "plane index exceeds the mapped layout");
+  require(layout.rows[plane] > 0 && layout.row_bytes[plane] > 0 &&
+              layout.strides[plane] >= layout.row_bytes[plane],
+          "mapped plane has invalid rows, row bytes, or stride");
+
+  const std::size_t row_bytes = static_cast<std::size_t>(layout.row_bytes[plane]);
+  require(layout.offsets[plane] <= std::numeric_limits<std::size_t>::max() - row_bytes,
+          "mapped plane offset overflows its address range");
+  const std::size_t first_row_end = layout.offsets[plane] + row_bytes;
+  const std::size_t remaining_rows = static_cast<std::size_t>(layout.rows[plane] - 1);
+  const std::size_t stride = static_cast<std::size_t>(layout.strides[plane]);
+  require(remaining_rows <= (std::numeric_limits<std::size_t>::max() - first_row_end) / stride,
+          "mapped plane extent overflows its address range");
+  return first_row_end + remaining_rows * stride;
+}
+
+MappedPlaneLayout decoder_padded_layout(FormatTag format, int width, int height) {
+  // Preserve the original 640x360 fixture layout (768x384) while allowing the
+  // visible geometry to vary independently from decoder-style storage.
+  constexpr int kLumaStrideAlignment = 256;
+  constexpr int kStorageHeightAlignment = 32;
+  const int luma_stride = checked_align_up(width, kLumaStrideAlignment, "luma stride");
+  const int storage_height =
+      checked_align_up(height, kStorageHeightAlignment, "luma storage height");
+
+  MappedPlaneLayout layout = tight_layout(format, width, height);
+  layout.strides[0] = luma_stride;
   layout.offsets[0] = 0;
   if (format == FormatTag::NV12) {
-    layout.strides[1] = kLumaStride;
-    layout.offsets[1] = static_cast<std::size_t>(kLumaStride) * kStorageHeight;
+    layout.strides[1] = luma_stride;
+    layout.offsets[1] = static_cast<std::size_t>(luma_stride) * storage_height;
     layout.total_bytes =
-        layout.offsets[1] + static_cast<std::size_t>(kLumaStride) * (kStorageHeight / 2);
+        layout.offsets[1] + static_cast<std::size_t>(luma_stride) * (storage_height / 2);
     return layout;
   }
   if (format == FormatTag::I420) {
-    const int chroma_stride = kLumaStride / 2;
-    const int chroma_storage_height = kStorageHeight / 2;
+    const int chroma_stride = luma_stride / 2;
+    const int chroma_storage_height = storage_height / 2;
     layout.strides[1] = chroma_stride;
     layout.strides[2] = chroma_stride;
-    layout.offsets[1] = static_cast<std::size_t>(kLumaStride) * kStorageHeight;
+    layout.offsets[1] = static_cast<std::size_t>(luma_stride) * storage_height;
     layout.offsets[2] =
         layout.offsets[1] + static_cast<std::size_t>(chroma_stride) * chroma_storage_height;
     layout.total_bytes =
@@ -913,7 +948,19 @@ MappedPlaneLayout decoder_padded_layout(FormatTag format) {
 
 GstBuffer* make_decoder_padded_buffer(const RawFrame& frame, GstAllocator* allocator) {
   const MappedPlaneLayout source = tight_layout(frame.format, frame.width, frame.height);
-  const MappedPlaneLayout destination = decoder_padded_layout(frame.format);
+  const MappedPlaneLayout destination =
+      decoder_padded_layout(frame.format, frame.width, frame.height);
+  require(destination.plane_count == source.plane_count,
+          "decoder-style source and destination plane counts differ");
+  for (guint plane = 0; plane < destination.plane_count; ++plane) {
+    require(destination.rows[plane] == source.rows[plane] &&
+                destination.row_bytes[plane] == source.row_bytes[plane],
+            "decoder-style source and destination visible planes differ");
+    require(plane_end(source, plane) <= frame.bytes.size(),
+            "decoder-style source plane exceeds its input frame");
+    require(plane_end(destination, plane) <= destination.total_bytes,
+            "decoder-style destination plane exceeds its allocation");
+  }
   GstBuffer* buffer =
       gst_buffer_new_allocate(allocator, static_cast<gsize>(destination.total_bytes), nullptr);
   require(buffer != nullptr, "failed to allocate decoder-style padded input");
