@@ -246,6 +246,7 @@ public:
   int top_k_internal() const;
   int original_width_internal() const;
   int original_height_internal() const;
+  std::shared_ptr<Node> retargeted_for_model_internal(const Model& model) const;
   BoxDecodeTypeOption decode_type_option_internal() const;
   const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>&
   model_semantics_internal() const;

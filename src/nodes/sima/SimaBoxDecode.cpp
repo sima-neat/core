@@ -1057,6 +1057,23 @@ int SimaBoxDecode::original_height_internal() const {
   return opt_ ? opt_->original_height : 0;
 }
 
+std::shared_ptr<Node> SimaBoxDecode::retargeted_for_model_internal(const Model& model) const {
+  if (!opt_) {
+    throw std::logic_error("SimaBoxDecode: cannot retarget an uninitialized node");
+  }
+  const auto route_tess_needed = opt_->model_route_flags.has_value()
+                                     ? std::optional<bool>(opt_->model_route_flags->tess_needed)
+                                     : std::nullopt;
+  const auto route_quant_needed = opt_->model_route_flags.has_value()
+                                      ? std::optional<bool>(opt_->model_route_flags->quant_needed)
+                                      : std::nullopt;
+  return std::make_shared<SimaBoxDecode>(
+      model, opt_->decode_type, opt_->detection_threshold, opt_->nms_iou_threshold, opt_->top_k,
+      opt_->element_name, route_tess_needed, route_quant_needed, opt_->original_width,
+      opt_->original_height, /*model_width=*/0, /*model_height=*/0, opt_->resize_mode_override,
+      opt_->decode_type_option);
+}
+
 BoxDecodeTypeOption SimaBoxDecode::decode_type_option_internal() const {
   return opt_ ? opt_->decode_type_option : BoxDecodeTypeOption::Auto;
 }
