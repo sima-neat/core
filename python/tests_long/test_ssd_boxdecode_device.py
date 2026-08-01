@@ -41,14 +41,12 @@ def _ssd_tar():
   return _ssd_mobilenet_tar()
 
 
-def _people_image():
+def _zidane_image():
   override = os.environ.get("SIMA_TEST_IMAGE", "")
   candidates = [Path(override)] if override else []
   for root in (Path.cwd(), *Path.cwd().parents):
     candidates.extend(
       (
-        root / "tests/images/people.jpg",
-        root / "images/people.jpg",
         root / "tmp/coco_sample.jpg",
       )
     )
@@ -63,8 +61,16 @@ def _people_image():
       image = cv2.imread(str(candidate), cv2.IMREAD_COLOR)
       if image is None:
         raise AssertionError(f"failed to decode SSD test image: {candidate}")
+      height, width = image.shape[:2]
+      assert (width, height) == (1280, 720), (
+        "SSD MobileNet golden boxes require the 1280x720 Zidane fixture; "
+        f"got {width}x{height} from {candidate}"
+      )
       return image
-  pytest.skip("missing SSD people image; set SIMA_TEST_IMAGE")
+  pytest.skip(
+    "missing 1280x720 Zidane SSD fixture; set SIMA_TEST_IMAGE or stage "
+    "tmp/coco_sample.jpg"
+  )
 
 
 def _ssd_options(resize_mode, num_classes=0):
@@ -144,7 +150,7 @@ def test_ssd_mobilenet_full_python_pipeline_matches_people_golden():
       "prepared MobileNet SSD pack not staged; set SIMA_SSD_MOBILENET_TAR"
     )
 
-  image = _people_image()
+  image = _zidane_image()
   height, width = image.shape[:2]
   model = pyneat.Model(
     str(tar), _ssd_options(pyneat.ResizeMode.Stretch, num_classes=91)
