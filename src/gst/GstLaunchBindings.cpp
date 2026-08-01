@@ -29,12 +29,20 @@ bool protocol_char(char c) {
 std::string unescape_value(std::string_view value) {
   std::string out;
   out.reserve(value.size());
+  bool in_quotes = false;
   for (std::size_t i = 0; i < value.size(); ++i) {
-    if (value[i] == '\\' && i + 1U < value.size()) {
+    if (value[i] == '\\' && !in_quotes) {
+      if (i + 1U >= value.size()) {
+        // gst_parse_unescape() drops a dangling escape at the end of a value.
+        break;
+      }
       out.push_back(value[++i]);
-    } else {
-      out.push_back(value[i]);
+      continue;
     }
+    if (value[i] == '"' && (!in_quotes || i == 0U || value[i - 1U] != '\\')) {
+      in_quotes = !in_quotes;
+    }
+    out.push_back(value[i]);
   }
   return out;
 }
@@ -71,13 +79,20 @@ std::optional<std::size_t> scan_paired_quote_candidate(std::string_view text, st
     return std::nullopt;
   }
   const char quote = text[begin];
+  std::optional<std::size_t> last_candidate;
   for (std::size_t i = begin + 1U; i < text.size(); ++i) {
-    // parse.l accepts a quote immediately preceded by a backslash as part of the quoted token.
-    if (text[i] == quote && text[i - 1U] != '\\') {
-      return i + 1U;
+    if (text[i] != quote) {
+      continue;
     }
+    last_candidate = i + 1U;
+    if (text[i - 1U] != '\\') {
+      // An unescaped quote cannot belong to parse.l's quoted body, so it is the forced end.
+      return last_candidate;
+    }
+    // `\\<quote>` may either be the body alternative or the closing quote: keep it as a valid
+    // end, but continue so Flex-style maximal munch can select a later closing quote.
   }
-  return std::nullopt;
+  return last_candidate;
 }
 
 std::size_t scan_value(std::string_view text, std::size_t begin, bool* complete) {

@@ -71,7 +71,7 @@ RUN_TEST(
           const char* assignment;
           const char* expected;
         };
-        static constexpr std::array<DifferentialCase, 7> kCases = {{
+        static constexpr std::array<DifferentialCase, 11> kCases = {{
             {"name=plain_differential", "plain_differential"},
             {"name=\"double\\ quoted\"", "double quoted"},
             {"name=escaped\\ value", "escaped value"},
@@ -79,6 +79,10 @@ RUN_TEST(
             {"name='single_unmatched", "'single_unmatched"},
             {"name=\"double_unmatched", "\"double_unmatched"},
             {"name=\"double\"suffix", "\"double\"suffix"},
+            {R"gst(name="foo bar\")gst", "foo bar"},
+            {R"gst(name="foo bar\\")gst", R"gst(foo bar\)gst"},
+            {R"gst(name="foo \" inner")gst", R"gst(foo " inner)gst"},
+            {R"gst(name="foo \\" inner")gst", R"gst(foo \" inner)gst"},
         }};
         for (std::size_t i = 0; i < kCases.size(); ++i) {
           const std::string launch = std::string("identity ") + kCases[i].assignment +
