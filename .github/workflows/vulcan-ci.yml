@@ -408,6 +408,12 @@ jobs:
             exit 1
           fi
           echo "Using pytest dir: ${PYTEST_DIR}"
+          PYTEST_LONG_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests_long"
+          if [[ ! -d "${PYTEST_LONG_DIR}" ]]; then
+            echo "Installed long Python tests not found at ${PYTEST_LONG_DIR}" >&2
+            exit 1
+          fi
+          echo "Using long pytest dir: ${PYTEST_LONG_DIR}"
           TUTORIALS_PYTEST_DIR="${EXTRAS_PREFIX}/share/sima-neat/tests/tutorials"
           if [[ ! -d "${TUTORIALS_PYTEST_DIR}" ]]; then
             echo "Installed tutorial pytest tests not found at ${TUTORIALS_PYTEST_DIR}" >&2
@@ -423,6 +429,7 @@ jobs:
           printf '%s\n' "${GST_REGISTRY_DIR}" > _work/gst_registry_dir.txt
           {
             printf 'PYTEST_DIR=%s\n' "${PYTEST_DIR}"
+            printf 'PYTEST_LONG_DIR=%s\n' "${PYTEST_LONG_DIR}"
             printf 'TUTORIALS_PYTEST_DIR=%s\n' "${TUTORIALS_PYTEST_DIR}"
           } >> "${GITHUB_ENV}"
 
@@ -738,6 +745,7 @@ jobs:
           export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
           export SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME=1
           "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
+          SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q "${PYTEST_LONG_DIR}"
           "${PYTHON_BIN}" -m pytest -q "${TUTORIALS_PYTEST_DIR}"
 
       - name: Cleanup test workspace tmp artifacts

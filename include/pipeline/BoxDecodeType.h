@@ -31,21 +31,17 @@ namespace simaai::neat {
  * 32-channel mask-coefficient heads, and a trailing mask prototype.
  * `YoloV26Pose` uses the same raw l/t/r/b bbox heads, 1-channel pose scores,
  * and 51-channel keypoint heads.
- * `Ssd` supports three SSD recipes (not a generic SSD decoder), validated against the
- * box-decode head geometry at compile time. These three recipes cover four models --
- * SSD300, SSD-MobileNet v1, v2 and v3:
+ * `Ssd` selects one of two prepared SSD contracts (not a generic SSD decoder), resolved from the
+ * complete ordered box-decode head geometry at compile time:
  *  - SSD300: feats {38,19,10,5,3,1}, priors-per-cell {4,6,6,6,4,4}, 300x300, softmax.
- *  - SSD-MobileNetV2-COCO: feats {19,10,5,3,2,1}, priors-per-cell {3,6,6,6,6,6}, 300x300,
- *    per-class sigmoid. Covers SSD-MobileNet v1 and v2 (identical head geometry).
- *  - SSD-MobileNetV3-COCO: feats {20,10,5,3,2,1}, priors-per-cell {3,6,6,6,6,6}, 320x320,
- *    per-class sigmoid (same anchor generator as v2 at a 320 input).
+ *  - SSD-Mobile-300: feats {19,10,5,3,2,1}, priors-per-cell {3,6,6,6,6,6}, 300x300,
+ *    per-class sigmoid.
  * All use grouped per-level localization heads (depth = 4 * priors-per-cell) paired with
  * class-confidence heads (depth = num_classes * priors-per-cell), and require a stretch
  * preprocessing resize; any other head set, model frame or resize is rejected.
  *
- * SSD `num_classes` contract: the class count is always derived from the
- * confidence-head depth. An explicit value may only narrow the reported range
- * (`<=` the encoded depth); a larger value is rejected rather than warned about.
+ * SSD `num_classes` is always derived from the confidence-head depth. The SSD300 recipe permits a
+ * contiguous prefix selection; the SSD-Mobile-300 recipe requires the exact encoded class count.
  *
  * @ingroup pipeline
  */
@@ -74,7 +70,7 @@ enum class BoxDecodeType : std::int32_t {
   YoloV26Seg = 19,  ///< YOLO26 segmentation heads.
   YoloV6 = 20,      ///< YOLOv6 raw l/t/r/b distance heads.
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
-  Ssd = 22,         ///< SSD detection, three recipes (SSD300 + MobileNet v1/v2/v3).
+  Ssd = 22, ///< SSD family token, resolved internally to an exact supported prepared signature.
 };
 
 /**
@@ -242,6 +238,11 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   }
 }
 
+/// @brief True iff @p type selects the SSD decode family.
+constexpr bool box_decode_type_is_ssd_family(BoxDecodeType type) {
+  return type == BoxDecodeType::Ssd;
+}
+
 /// @brief True iff @p type is a segmentation variant (carries a mask head).
 constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   switch (type) {
@@ -335,11 +336,11 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "YOLOX raw-head contract: interleaved [bbox_i, obj_logit_i, class_logit_i] "
            "heads with raw xywh boxes, objectness logits, and class logits.";
   case BoxDecodeType::Ssd:
-    return "SSD contract (three recipes only): per-level grouped localization heads "
-           "(depth=4*priors-per-cell) paired with class-confidence heads "
-           "(depth=num_classes*priors-per-cell). SSD300 (feats {38,19,10,5,3,1}) uses softmax; "
-           "SSD-MobileNetV2-COCO (feats {19,10,5,3,2,1}, MobileNet v1/v2) and "
-           "SSD-MobileNetV3-COCO (feats {20,10,5,3,2,1}, 320x320) use per-class sigmoid.";
+    return "SSD contract (two prepared profiles only): per-level grouped "
+           "localization heads (depth=4*priors-per-cell) paired with class-confidence heads "
+           "(depth=num_classes*priors-per-cell). The complete ordered signature resolves "
+           "internally to SSD300-v1 (softmax) or SSD-Mobile-300-v1 (sigmoid); every other "
+           "signature is rejected.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

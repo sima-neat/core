@@ -258,20 +258,63 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
                              "preproc_resize_mode") != standalone_req->required_fields.end(),
                    "manual boxdecode should preserve non-geometry preprocess requirements");
 
-           // A raw SSD node is stretch-only: it must assert stretch (emit resize-mode=stretch)
-           // and drop the preproc_resize_mode requirement so it cannot consume a letterbox mode.
+           // A raw SSD node must not manufacture preprocessing evidence. Without an explicit
+           // assertion it consumes resize mode from upstream metadata.
            auto ssd_node =
                simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100,
                                                   "ssd_manual", 1280, 720, 300, 300);
            const auto* ssd_box = dynamic_cast<const simaai::neat::SimaBoxDecode*>(ssd_node.get());
            require(ssd_box != nullptr, "raw SSD boxdecode factory should return a concrete node");
-           require_contains(ssd_box->backend_fragment(0), "resize-mode=stretch",
-                            "raw SSD boxdecode must assert a stretch resize");
+           require(ssd_box->backend_fragment(0).find("resize-mode=") == std::string::npos,
+                   "raw SSD boxdecode must not invent a resize-mode override");
            const auto ssd_req = ssd_box->preprocess_meta_requirement();
-           require(!ssd_req.has_value() ||
+           require(ssd_req.has_value() &&
                        std::find(ssd_req->required_fields.begin(), ssd_req->required_fields.end(),
-                                 "preproc_resize_mode") == ssd_req->required_fields.end(),
-                   "raw SSD boxdecode must drop the preproc_resize_mode requirement");
+                                 "preproc_resize_mode") != ssd_req->required_fields.end(),
+                   "raw SSD boxdecode must require upstream resize-mode metadata");
+
+           // External preprocessing may be asserted explicitly, but SSD accepts only Stretch.
+           auto asserted_ssd_node = simaai::neat::nodes::SimaBoxDecode(
+               simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual_asserted", 1280, 720,
+               300, 300, simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt,
+               std::nullopt, simaai::neat::ResizeMode::Stretch);
+           const auto* asserted_ssd_box =
+               dynamic_cast<const simaai::neat::SimaBoxDecode*>(asserted_ssd_node.get());
+           require(asserted_ssd_box != nullptr, "asserted raw SSD node must be concrete");
+           require_contains(asserted_ssd_box->backend_fragment(0), "resize-mode=stretch",
+                            "explicit SSD Stretch assertion must reach the backend fragment");
+           const auto asserted_ssd_req = asserted_ssd_box->preprocess_meta_requirement();
+           require(asserted_ssd_req.has_value(),
+                   "an SSD geometry assertion must preserve unrelated preprocess requirements");
+           require(std::find(asserted_ssd_req->required_fields.begin(),
+                             asserted_ssd_req->required_fields.end(),
+                             "preproc_resize_mode") == asserted_ssd_req->required_fields.end(),
+                   "the explicit SSD Stretch assertion should discharge resize-mode metadata");
+           require(std::find(asserted_ssd_req->required_fields.begin(),
+                             asserted_ssd_req->required_fields.end(),
+                             "preproc_color_in") != asserted_ssd_req->required_fields.end(),
+                   "a resize assertion must not discharge color metadata");
+           require(std::find(asserted_ssd_req->required_fields.begin(),
+                             asserted_ssd_req->required_fields.end(),
+                             "preproc_normalize") != asserted_ssd_req->required_fields.end(),
+                   "a resize assertion must not discharge normalization metadata");
+           require(std::find(asserted_ssd_req->required_fields.begin(),
+                             asserted_ssd_req->required_fields.end(),
+                             "preproc_quantize") != asserted_ssd_req->required_fields.end(),
+                   "a resize assertion must not discharge quantization metadata");
+
+           bool rejected_letterbox = false;
+           try {
+             (void)simaai::neat::nodes::SimaBoxDecode(
+                 simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual_letterbox", 1280,
+                 720, 300, 300, simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt,
+                 std::nullopt, simaai::neat::ResizeMode::Letterbox);
+           } catch (const std::exception& e) {
+             rejected_letterbox = true;
+             require_contains(e.what(), "requires a stretch",
+                              "raw SSD letterbox rejection should explain the requirement");
+           }
+           require(rejected_letterbox, "raw SSD must reject an explicit Letterbox assertion");
 
            bool threw_partial_model_dims = false;
            try {

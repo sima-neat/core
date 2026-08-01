@@ -163,13 +163,17 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
-| `BoxDecodeType::Ssd` | `ssd` | SSD detection — three recipes covering SSD300 and SSD-MobileNet v1/v2/v3 |
+| `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300 or SSD-Mobile-300 contract, selected from ordered head geometry |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | R-CNN proposal stage |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet detection |
 
-`BoxDecodeType::Unspecified` is an unset sentinel and fails before runtime. Always choose a concrete type.
+`BoxDecodeType::Unspecified` is an unset sentinel and fails before runtime. SSD recipe identity is
+an internal Core contract (`ssd300-v1` or `ssd-mobile-300-v1`), not another public decode type or
+backend token. Core resolves it before lowering, while the installed object decoder continues to
+receive its supported `ssd` family token and selects the corresponding fixed implementation from
+the already validated head geometry.
 
 ## Choosing the right type
 
@@ -192,24 +196,18 @@ Advanced tensor-contract rules:
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
 - `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
-- `Ssd` is **not** a generic SSD decoder. It supports exactly **three recipes**,
-  covering **four models** (SSD300 and SSD-MobileNet v1/v2/v3), and the box-decode
-  head geometry is validated against them at compile time — any other head set is
-  rejected with a clear error rather than silently decoded:
+- `Ssd` is **not** a generic SSD decoder. It resolves exactly **two prepared profiles**
+  from the complete ordered loc/conf H/W/C signature at compile time. Any other
+  head set or order is rejected with an error that prints the observed and supported
+  signatures:
   - **SSD300** (`dboxes300_coco`): 300×300 input, feature maps
     `{38,19,10,5,3,1}`, priors-per-cell `{4,6,6,6,4,4}`, confidence channel order
     `class*A + anchor`, class scores via **softmax** over the class dimension
     (background at index 0 included).
-  - **SSD-MobileNetV2-COCO** (`ssd_anchor_generator`): 300×300 input, feature
+  - **SSD-Mobile-300-v1** (`ssd_anchor_generator`): 300×300 input, feature
     maps `{19,10,5,3,2,1}`, priors-per-cell `{3,6,6,6,6,6}`, confidence channel
     order `anchor*C + class`, class scores via per-class **sigmoid** (background
-    ignored). Covers **SSD-MobileNet v1 and v2** — both export identical head
-    geometry.
-  - **SSD-MobileNetV3-COCO** (`ssd_anchor_generator` at 320): 320×320 input,
-    feature maps `{20,10,5,3,2,1}`, priors-per-cell `{3,6,6,6,6,6}`, same
-    anchor-major layout and per-class **sigmoid** as v2. The anchor generator is
-    identical to v2 (min_scale 0.2, max_scale 0.95); only the 320 input changes
-    the level-0 grid (20 vs 19) and the pixel projection.
+    ignored).
 
   All recipes use grouped per-level localization heads (depth =
   `4 * priors-per-cell`) paired with class-confidence heads (depth =
@@ -219,28 +217,30 @@ Advanced tensor-contract rules:
   decoder), and the grouped-by-role layout is selected automatically — leave
   `decode_type_option` as `Auto`. A non-grouped layout token is rejected.
 
-  The **model frame is part of the recipe** (SSD300/v1/v2 are 300×300, v3 is
-  320×320), not just the head geometry:
+  The **model frame is part of the profile** (both verified profiles are 300×300),
+  not just the head geometry:
   a resolved preprocess resize target or model-dimension override of any other
   size is rejected at build time, because the prior tables and the stretch
   back-projection are only valid at that frame.
 
-  **`num_classes` contract.** The class count is always derived from the
+  Raw/standalone `SimaBoxDecode` construction never invents a resize mode. Keep
+  the upstream `Preproc` metadata requirement, or use the explicit raw overload
+  to assert externally performed `ResizeMode::Stretch`; Letterbox and Crop are
+  rejected.
+
+  **`num_classes` contract.** The encoded class count is always derived from the
   confidence-head depth (`conf_depth / priors-per-cell`, background at index 0
-  included). An explicit `num_classes` may only **narrow** the reported range —
-  it must be `<=` the encoded depth, and the runtime clamps the reported
-  foreground channels accordingly. A value **larger** than the encoded depth is a
-  contract error and is rejected at build time; the heads cannot supply those
-  classes. Leave it unset to use the full encoded depth.
+  included). SSD300-v1 permits a contiguous prefix selection such as the prepared
+  81-to-8 route; SSD-Mobile-300-v1 requires the exact encoded count. An invalid
+  selection is rejected at build time. Leave it unset to use the profile default.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
 - `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do
   not route them through a YOLO decode type.
 - `*-seg` decode types produce box-leading output plus task-specific mask data.
 
-If a custom model pack cannot infer class count or head order, fix the model
-archive contract or set the explicit decode options documented above. Guessing
-from tensor shape is brittle and hard to debug.
+If a custom model pack does not match either complete ordered signature, prepare a
+new explicitly supported profile rather than weakening the matcher.
 
 ## Python note
 

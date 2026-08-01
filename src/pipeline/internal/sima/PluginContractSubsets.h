@@ -26,6 +26,7 @@
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 
 #include <optional>
@@ -204,12 +205,13 @@ struct BoxDecodeContractSubset {
   std::vector<sima_ev_shape_desc> slice_shapes;
   std::vector<int> tensor_storage_kind;
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
+  stagesemantics::SsdRecipeId ssd_recipe_id = stagesemantics::SsdRecipeId::Unknown;
+  stagesemantics::SsdClassSelection ssd_class_selection;
   bool tess_needed = false;
   bool quant_needed = false;
   std::optional<BoxDecodeTypeOption> decode_type_option;
   BoxDecodeScoreActivation score_activation = BoxDecodeScoreActivation::Unknown;
   int num_classes = 0;
-  int ssd_model_frame = 0;
 };
 
 // Phase 3a (Option A++): public wrappers around the per-frame normalization

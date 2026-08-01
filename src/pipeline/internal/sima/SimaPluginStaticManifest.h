@@ -29,6 +29,7 @@
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/internal/sima/DTypeSource.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
+#include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 #include <ev/ev_tensor_abi.h>
 
 #include <cstdint>
@@ -377,6 +378,8 @@ struct ProcessMlaStagePayload {
 /// BoxDecode stage payload — decode flavor, NMS / topK params, slice geometry.
 struct BoxDecodeStagePayload {
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
+  stagesemantics::SsdRecipeId ssd_recipe_id = stagesemantics::SsdRecipeId::Unknown;
+  stagesemantics::SsdClassSelection ssd_class_selection;
   std::optional<BoxDecodeTypeOption> decode_type_option;
   BoxDecodeScoreActivation score_activation = BoxDecodeScoreActivation::Unknown;
   std::string input_dtype;
@@ -387,8 +390,7 @@ struct BoxDecodeStagePayload {
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
   int topk = 0;
-  int num_classes = 0;
-  int ssd_model_frame = 0; ///< Recipe-required SSD square frame (0 = non-SSD / unconstrained).
+  int num_classes = 0; ///< Legacy runtime value; SSD uses selected_count.
   std::vector<sima_ev_shape_desc> slice_shapes;
   std::vector<int> tensor_storage_kind;
 };

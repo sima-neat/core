@@ -1,0 +1,30 @@
+{
+  "scenario_id": "ssd_mobilenet_boxdecode",
+  "model_id": "ssd_mobilenet_v2_heads_mpk",
+  "pipeline_id": "bgr_stretch300_mla_ssd_boxdecode",
+  "run_mode": "sync",
+  "iterations": 1000,
+  "metrics_thresholds": {
+    "throughput_min": 99.0,
+    "p50_max": 10.1,
+    "p95_max": 10.4,
+    "startup_max": 1600.0,
+    "rss_peak_kb_max": 260000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  },
+  "component_latency_thresholds": {
+    "boxdecode_plugin_exclusive": {
+      "required": true,
+      "min_samples": 1000,
+      "p99_max_ms": 0.9,
+      "max_max_ms": 0.999
+    },
+    "boxdecode_backend": {
+      "required": true,
+      "min_samples": 1000,
+      "p99_max_ms": 0.7
+    }
+  }
+}

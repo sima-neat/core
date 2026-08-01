@@ -1,6 +1,7 @@
 #include "TraceAttribution.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace simaai::neat::pipeline_internal {
 namespace {
@@ -121,26 +122,41 @@ void inherit_plugin_node_identity(MeasurePluginLatency* plugin, const GraphNodeM
   }
 }
 
-void attribute_plugin_latency_to_nodes(const std::vector<GraphNodeMetrics>& nodes,
-                                       std::vector<MeasurePluginLatency>* attributed,
-                                       std::vector<MeasurePluginLatency>* unattributed) {
+void attribute_plugin_latency_to_nodes(
+    const std::vector<GraphNodeMetrics>& nodes, std::vector<MeasurePluginLatency>* attributed,
+    std::vector<MeasurePluginLatencyPercentiles>* percentiles,
+    std::vector<MeasurePluginLatency>* unattributed,
+    std::vector<MeasurePluginLatencyPercentiles>* unattributed_percentiles) {
   if (!attributed) {
     return;
   }
+  if (!percentiles || percentiles->size() != attributed->size()) {
+    throw std::logic_error(
+        "plugin latency percentile sidecars must align with attributed timing rows");
+  }
   std::vector<MeasurePluginLatency> kept;
+  std::vector<MeasurePluginLatencyPercentiles> kept_percentiles;
   kept.reserve(attributed->size());
-  for (MeasurePluginLatency plugin : *attributed) {
+  kept_percentiles.reserve(percentiles->size());
+  for (std::size_t index = 0; index < attributed->size(); ++index) {
+    MeasurePluginLatency plugin = std::move(attributed->at(index));
+    MeasurePluginLatencyPercentiles stats = percentiles->at(index);
     PluginAttributionResult result = attribute_plugin_latency(plugin, nodes);
     plugin.attribution_source = result.attribution_source;
     plugin.mapping_error = result.mapping_error;
     if (result.node) {
       inherit_plugin_node_identity(&plugin, *result.node);
       kept.push_back(std::move(plugin));
+      kept_percentiles.push_back(stats);
     } else if (unattributed) {
       unattributed->push_back(std::move(plugin));
+      if (unattributed_percentiles) {
+        unattributed_percentiles->push_back(stats);
+      }
     }
   }
   *attributed = std::move(kept);
+  *percentiles = std::move(kept_percentiles);
 }
 
 } // namespace simaai::neat::pipeline_internal

@@ -35,6 +35,7 @@ SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_codec_h264_decode", "perf_runtime_codec_h264_decode_test"),
     ScenarioSpec("runtime_codec_h265_decode", "perf_runtime_codec_h265_decode_test"),
     ScenarioSpec("runtime_model_archive_load", "perf_runtime_model_archive_load_test"),
+    ScenarioSpec("ssd_mobilenet_boxdecode", "perf_ssd_mobilenet_boxdecode_test"),
 )
 
 
@@ -232,6 +233,23 @@ def run_scenario(
 
     combined_output = (proc.stdout or "") + "\n" + (proc.stderr or "")
     if proc.returncode != 0:
+        harness_reason = schema.classify_perf_harness_failure(combined_output)
+        if harness_reason is not None:
+            return build_result(
+                scenario_id=spec.scenario_id,
+                modalix_profile_id=profile.modalix_profile_id,
+                status=schema.ResultStatus.FAIL,
+                failure_class=schema.FailureClass.HARNESS_ERROR,
+                reason_code=harness_reason,
+                metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+                run_meta={
+                    "phase": "run",
+                    "executable": str(exe_path),
+                    "exit_code": proc.returncode,
+                    "stdout_tail": proc.stdout[-800:] if proc.stdout else "",
+                    "stderr_tail": proc.stderr[-800:] if proc.stderr else "",
+                },
+            )
         reason = schema.classify_env_failure(proc.returncode, combined_output, timed_out=False)
         return build_result(
             scenario_id=spec.scenario_id,
@@ -279,12 +297,6 @@ def run_scenario(
 
     try:
         metrics = schema.parse_metrics_payload(payload_raw, context=f"payload:{spec.scenario_id}")
-        power = schema.parse_optional_power_payload(
-            payload_raw, context=f"payload:{spec.scenario_id}"
-        )
-        measure_report = schema.parse_optional_measure_report_payload(
-            payload_raw, context=f"payload:{spec.scenario_id}"
-        )
     except schema.SchemaError as exc:
         return build_result(
             scenario_id=spec.scenario_id,
@@ -296,22 +308,80 @@ def run_scenario(
             run_meta={"phase": "parse_output", "error": str(exc)},
         )
 
+    try:
+        power = schema.parse_optional_power_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
+        measure_report = schema.parse_optional_measure_report_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
+        component_latency = schema.parse_optional_component_latency_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
+    except schema.SchemaError as exc:
+        return build_result(
+            scenario_id=spec.scenario_id,
+            modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.FAIL,
+            failure_class=schema.FailureClass.HARNESS_ERROR,
+            reason_code=schema.ReasonCode.HARNESS_SCHEMA_INVALID,
+            metrics=metrics,
+            run_meta={"phase": "parse_output", "error": str(exc)},
+        )
+
     run_meta = {"phase": "compare", "executable": str(exe_path), "iterations": scenario_iters}
     if power is not None:
         run_meta["power"] = power
     if measure_report is not None:
         run_meta["measure_report"] = measure_report
+    if component_latency or baseline.component_latency_thresholds:
+        run_meta["component_latency"] = schema.component_latency_to_json_dict(component_latency)
+
+    component_failures = schema.compare_component_latency(component_latency, baseline)
+    if component_failures:
+        run_meta["component_latency_failures"] = [
+            schema.component_failure_to_json_dict(failure) for failure in component_failures
+        ]
+    harness_failures = [
+        failure
+        for failure in component_failures
+        if failure.failure_class == schema.FailureClass.HARNESS_ERROR
+    ]
+    if harness_failures:
+        return build_result(
+            scenario_id=spec.scenario_id,
+            modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.FAIL,
+            failure_class=schema.FailureClass.HARNESS_ERROR,
+            reason_code=harness_failures[0].reason_code,
+            metrics=metrics,
+            run_meta=run_meta,
+        )
 
     regressions = schema.compare_metrics(metrics, baseline)
-    if regressions:
+    component_regressions = [
+        failure
+        for failure in component_failures
+        if failure.failure_class == schema.FailureClass.REGRESSION
+    ]
+    if component_regressions or regressions:
+        primary_reason = (
+            component_regressions[0].reason_code if component_regressions else regressions[0]
+        )
         return build_result(
             scenario_id=spec.scenario_id,
             modalix_profile_id=profile.modalix_profile_id,
             status=schema.ResultStatus.FAIL,
             failure_class=schema.FailureClass.REGRESSION,
-            reason_code=regressions[0],
+            reason_code=primary_reason,
             metrics=metrics,
-            run_meta={**run_meta, "regression_reasons": [reason.value for reason in regressions]},
+            run_meta={
+                **run_meta,
+                "regression_reasons": [
+                    *[failure.reason_code.value for failure in component_regressions],
+                    *[reason.value for reason in regressions],
+                ],
+            },
         )
 
     return build_result(

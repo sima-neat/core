@@ -43,7 +43,7 @@ std::string box_decode_type_token_string(BoxDecodeType type);
 
 /// True when a user-requested decode type can safely consume a contract derived from MPK facts.
 ///
-/// `Unspecified` means "use the contract as-is".  Concrete requests are intentionally exact
+/// `Unspecified` means "use the contract as-is". Concrete requests are intentionally exact
 /// matches: using a detection decoder on a segmentation/pose topology silently corrupts tensor
 /// interpretation, so callers should fail early with a diagnostic instead of overriding the MPK.
 bool box_decode_type_matches_requested_contract(BoxDecodeType contract_type,

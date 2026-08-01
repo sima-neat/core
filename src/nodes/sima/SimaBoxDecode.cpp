@@ -11,9 +11,9 @@
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
+#include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include <algorithm>
-#include <array>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -424,13 +424,13 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
   filtered.reserve(fields.size());
   const bool has_original_override = has_explicit_dimension_pair(original_width, original_height);
   const bool has_model_override = has_explicit_dimension_pair(model_width, model_height);
-  // resize_mode_override is the customer's explicit "I did my own preproc"
-  // signal — by definition there is no upstream Preproc stage to emit
-  // per-buffer GstSimaaiPreprocessMeta, so the *entire* preproc_* family of
-  // required meta fields (color_in/out, axis_perm, normalize, quantize,
-  // tessellate, affine_*) must be dropped together. Geometry fields are
-  // still gated on the corresponding dimension overrides above so callers
-  // can opt into per-field relaxation without flipping the whole switch.
+  // A resize-mode override is evidence only for the declared resize policy. If
+  // both endpoint frames are also explicit, Stretch determines the affine
+  // transform as well. It does not prove color conversion, axis permutation,
+  // normalization, quantization, or tessellation, so those facts must continue
+  // to come from upstream metadata.
+  const bool has_complete_geometry_proof =
+      has_resize_mode_override && has_original_override && has_model_override;
   for (const auto& field : fields) {
     if (field == "preproc_original_width" && has_original_override) {
       continue;
@@ -445,21 +445,16 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
          field == "preproc_pad_top" || field == "preproc_pad_bottom")) {
       continue;
     }
-    if (has_resize_mode_override) {
-      // resize_mode lives in this bucket plus all the non-geometry semantic
-      // fields below; they all originate from the same upstream Preproc
-      // emitter, which is absent in the manual-preproc composition.
-      if (field == "preproc_resize_mode" || field == "preproc_color_in" ||
-          field == "preproc_color_out" || field == "preproc_axis_perm" ||
-          field == "preproc_normalize" || field == "preproc_quantize" ||
-          field == "preproc_tessellate" || field == "preproc_affine_m00" ||
-          field == "preproc_affine_m01" || field == "preproc_affine_m02" ||
-          field == "preproc_affine_m10" || field == "preproc_affine_m11" ||
-          field == "preproc_affine_m12" || field == "preproc_affine_scale_x" ||
-          field == "preproc_affine_scale_y" || field == "preproc_affine_offset_x" ||
-          field == "preproc_affine_offset_y") {
-        continue;
-      }
+    if (has_resize_mode_override && field == "preproc_resize_mode") {
+      continue;
+    }
+    if (has_complete_geometry_proof &&
+        (field == "preproc_affine_m00" || field == "preproc_affine_m01" ||
+         field == "preproc_affine_m02" || field == "preproc_affine_m10" ||
+         field == "preproc_affine_m11" || field == "preproc_affine_m12" ||
+         field == "preproc_affine_scale_x" || field == "preproc_affine_scale_y" ||
+         field == "preproc_affine_offset_x" || field == "preproc_affine_offset_y")) {
+      continue;
     }
     filtered.push_back(field);
   }
@@ -497,49 +492,19 @@ void apply_raw_yolov6_yolox_compiled_payload_overrides(CompiledBoxDecodeContract
   }
 }
 
-void apply_ssd_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
-  if (!compiled || compiled->payload.decode_type != BoxDecodeType::Ssd) {
+void reject_wrong_ssd_model_frame(BoxDecodeType decode_type, int expected_width,
+                                  int expected_height, int width, int height, const char* source,
+                                  const char* where) {
+  if (!box_decode_type_is_ssd_family(decode_type) || width <= 0 || height <= 0 ||
+      expected_width <= 0 || expected_height <= 0) {
     return;
   }
-  // Activation is recipe-specific and resolved upstream; fall back only when unset.
-  if (compiled->payload.score_activation ==
-      pipeline_internal::sima::BoxDecodeScoreActivation::Unknown) {
-    compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Softmax;
-  }
-  // SSD heads are validated and bound grouped-by-role; reject any other layout.
-  if (!compiled->payload.decode_type_option.has_value() ||
-      *compiled->payload.decode_type_option == BoxDecodeTypeOption::Auto) {
-    compiled->payload.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
-  } else if (*compiled->payload.decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+  if (width != expected_width || height != expected_height) {
     throw std::invalid_argument(
-        std::string("SimaBoxDecode: SSD supports only the grouped-by-role head layout, but got '") +
-        box_decode_type_option_token(*compiled->payload.decode_type_option) +
-        "'. Use BoxDecodeTypeOption::Auto or GroupedByRole.");
-  }
-}
-
-// Square frames the SSD recipes support (SSD300/V2 = 300, V3 = 320).
-constexpr std::array<int, 2> kSupportedSsdFrames = {300, 320};
-
-// `expected` is the recipe-required square frame; 0 means the recipe is not resolved here,
-// so require membership in the supported set instead of an exact match.
-void reject_wrong_ssd_model_frame(BoxDecodeType decode_type, int expected, int width, int height,
-                                  const char* source, const char* where) {
-  if (decode_type != BoxDecodeType::Ssd || width <= 0 || height <= 0) {
-    return;
-  }
-  const bool ok = expected > 0 ? (width == expected && height == expected)
-                               : (width == height &&
-                                  std::find(kSupportedSsdFrames.begin(), kSupportedSsdFrames.end(),
-                                            width) != kSupportedSsdFrames.end());
-  if (!ok) {
-    throw std::invalid_argument(std::string(where) + ": SSD box decode requires a " +
-                                (expected > 0
-                                     ? std::to_string(expected) + "x" + std::to_string(expected) +
-                                           " model frame for the resolved recipe"
-                                     : std::string("300x300 or 320x320 model frame")) +
-                                " (the prior tables assume it), but " + source + " resolved to " +
-                                std::to_string(width) + "x" + std::to_string(height) + ".");
+        std::string(where) + ": SSD box decode profile '" + box_decode_type_token(decode_type) +
+        "' requires a " + std::to_string(expected_width) + "x" + std::to_string(expected_height) +
+        " model frame (the prior table assumes it), but " + source + " resolved to " +
+        std::to_string(width) + "x" + std::to_string(height) + ".");
   }
 }
 
@@ -560,7 +525,7 @@ const char* ssd_resize_mode_token(ResizeMode mode) {
 void reject_non_stretch_ssd_resize(BoxDecodeType decode_type,
                                    const std::optional<ResizeMode>& override_mode,
                                    const std::optional<ResizeMode>& plan_mode, const char* where) {
-  if (decode_type != BoxDecodeType::Ssd) {
+  if (!box_decode_type_is_ssd_family(decode_type)) {
     return;
   }
   const std::optional<ResizeMode> effective = override_mode.has_value() ? override_mode : plan_mode;
@@ -568,7 +533,7 @@ void reject_non_stretch_ssd_resize(BoxDecodeType decode_type,
     throw std::invalid_argument(
         std::string(where) +
         ": SSD box decode requires a stretch (anisotropic) preprocessing resize. "
-        "All three recipes (SSD300, SSD-MobileNetV2-COCO, SSD-MobileNetV3-COCO) are trained "
+        "Both supported prepared profiles (SSD300-v1 and SSD-Mobile-300-v1) are configured "
         "with stretch and the on-device decoder inverts a stretch remap, so a '" +
         ssd_resize_mode_token(*effective) +
         "' resize would misplace boxes. Set ResizeMode::Stretch (or remove the "
@@ -692,21 +657,28 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
                              int original_width, int original_height, int model_width,
                              int model_height, BoxDecodeTypeOption decode_type_option,
                              std::optional<BoxDecodeSourceStorage> source_storage,
-                             std::optional<bool> detess, std::optional<bool> dequant) {
+                             std::optional<bool> detess, std::optional<bool> dequant)
+    : SimaBoxDecode(decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,
+                    original_width, original_height, model_width, model_height, decode_type_option,
+                    source_storage, detess, dequant, std::nullopt) {}
+
+SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold,
+                             double nms_iou_threshold, int top_k, const std::string& element_name,
+                             int original_width, int original_height, int model_width,
+                             int model_height, BoxDecodeTypeOption decode_type_option,
+                             std::optional<BoxDecodeSourceStorage> source_storage,
+                             std::optional<bool> detess, std::optional<bool> dequant,
+                             std::optional<ResizeMode> resize_mode_override) {
   validate_dimension_override_pair(original_width, original_height, "original dimensions",
                                    "SimaBoxDecode");
   validate_dimension_override_pair(model_width, model_height, "model dimensions", "SimaBoxDecode");
   auto opt = std::make_unique<BoxDecodeOptionsInternal>(options_from_customer(
       decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
       original_height, model_width, model_height, decode_type_option));
-  // Early guard: no recipe is resolved yet, so require a supported SSD frame. The exact
-  // per-recipe check runs in compile_node_contract() once the heads are known.
-  reject_wrong_ssd_model_frame(opt->decode_type, /*expected=*/0, opt->model_width,
-                               opt->model_height, "the model dimensions", "SimaBoxDecode");
-  // SSD is stretch-only and a raw node cannot see the upstream preproc, so assert stretch
-  // instead of consuming a possibly non-stretch resize mode that would misplace boxes.
-  if (opt->decode_type == BoxDecodeType::Ssd && !opt->resize_mode_override.has_value()) {
-    opt->resize_mode_override = ResizeMode::Stretch;
+  reject_non_stretch_ssd_resize(opt->decode_type, resize_mode_override, std::nullopt,
+                                "SimaBoxDecode");
+  opt->resize_mode_override = resize_mode_override;
+  if (resize_mode_override.has_value()) {
     opt->required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
         default_preprocess_meta_required_fields(), opt->original_width, opt->original_height,
         opt->model_width, opt->model_height, /*has_resize_mode_override=*/true);
@@ -765,11 +737,17 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   if (decode_type != BoxDecodeType::Unspecified) {
     validate_requested_boxdecode_contract_type_local(compiled_contract.payload.decode_type,
                                                      decode_type, "SimaBoxDecode(Model)");
-    compiled_contract.payload.decode_type = decode_type;
+    if (decode_type != BoxDecodeType::Ssd) {
+      compiled_contract.payload.decode_type = decode_type;
+    }
   }
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
+    if (box_decode_type_is_ssd_family(compiled_contract.payload.decode_type) &&
+        decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+      throw std::invalid_argument("SimaBoxDecode(Model): resolved SSD profiles support only "
+                                  "BoxDecodeTypeOption::Auto or GroupedByRole");
+    }
     compiled_contract.payload.decode_type_option = decode_type_option;
-    // SSD is unaffected: apply_ssd_compiled_payload_overrides() rejects these options.
     if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleProbability ||
         decode_type_option == BoxDecodeTypeOption::InterleavedByHeadProbability) {
       compiled_contract.payload.score_activation =
@@ -782,7 +760,6 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
   apply_raw_yolov6_yolox_compiled_payload_overrides(&compiled_contract);
-  apply_ssd_compiled_payload_overrides(&compiled_contract);
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
   }
@@ -814,23 +791,43 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
                                   plan_resize, "SimaBoxDecode(Model)");
     // Head geometry alone does not pin the model frame; the recipe does. Resize dims may be
     // inferred from the MLA ingress, so fall back to it when the plan omits them.
-    const int recipe_frame = compiled_contract.payload.ssd_model_frame;
+    const auto* ssd_recipe = pipeline_internal::sima::stagesemantics::find_ssd_recipe_descriptor(
+        compiled_contract.payload.ssd_recipe_id);
+    if (box_decode_type_is_ssd_family(compiled_contract.payload.decode_type) && !ssd_recipe) {
+      throw std::invalid_argument(
+          "SimaBoxDecode(Model): SSD compatibility selector reached resize validation without "
+          "resolving an exact supported ordered head signature");
+    }
+    const int recipe_width = ssd_recipe ? ssd_recipe->model_width : 0;
+    const int recipe_height = ssd_recipe ? ssd_recipe->model_height : 0;
     if (resize_runs) {
       const int resize_w = resolved.effective.resize.width > 0 ? resolved.effective.resize.width
                                                                : resolved.mla_contract.width;
       const int resize_h = resolved.effective.resize.height > 0 ? resolved.effective.resize.height
                                                                 : resolved.mla_contract.height;
-      reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_frame, resize_w,
-                                   resize_h, "the preprocess resize plan", "SimaBoxDecode(Model)");
+      reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width,
+                                   recipe_height, resize_w, resize_h, "the preprocess resize plan",
+                                   "SimaBoxDecode(Model)");
     }
-    reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_frame,
+    reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width, recipe_height,
                                  resolved_model_width, resolved_model_height,
                                  "the model-dimension override", "SimaBoxDecode(Model)");
     // Nothing else pins the frame on a manual-post route, so fall back to the MLA ingress.
     if (!resize_runs && resolved_model_width <= 0) {
-      reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_frame,
-                                   resolved.mla_contract.width, resolved.mla_contract.height,
-                                   "the model MLA contract", "SimaBoxDecode(Model)");
+      reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width,
+                                   recipe_height, resolved.mla_contract.width,
+                                   resolved.mla_contract.height, "the model MLA contract",
+                                   "SimaBoxDecode(Model)");
+    }
+    if (ssd_recipe && !resize_runs && !resize_mode_override.has_value() &&
+        has_explicit_dimension_pair(resolved_original_width, resolved_original_height) &&
+        (resolved_original_width != recipe_width || resolved_original_height != recipe_height)) {
+      throw std::invalid_argument(
+          "SimaBoxDecode(Model): SSD source geometry differs from the " +
+          std::to_string(recipe_width) + "x" + std::to_string(recipe_height) +
+          " model frame, but the route has no preprocess resize and no explicit resize-mode "
+          "assertion. Provide ResizeMode::Stretch for truthful external preprocessing; "
+          "Letterbox/Crop are not supported.");
     }
   }
   opt->resize_mode_override = resize_mode_override;
@@ -851,7 +848,7 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   opt->original_height = resolved_original_height;
   opt->model_width = resolved_model_width;
   opt->model_height = resolved_model_height;
-  if (decode_type != BoxDecodeType::Unspecified)
+  if (decode_type != BoxDecodeType::Unspecified && decode_type != BoxDecodeType::Ssd)
     opt->decode_type = decode_type;
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
     opt->decode_type_option = decode_type_option;
@@ -891,12 +888,13 @@ SimaBoxDecode::SimaBoxDecode(
       required_preprocess_meta_fields, route_flags, model_semantics, expect_resize,
       expect_normalize, expect_quantize, expect_tessellate, original_width, original_height,
       model_width, model_height, decode_type_option));
-  // Resolve the exact recipe frame from the head geometry when available; else require a
-  // supported SSD frame.
-  const int expected_frame =
+  // Resolve the exact recipe frame from the complete ordered head geometry. Unsupported SSD
+  // signatures throw here rather than reaching the backend with an unconstrained frame.
+  const auto expected_frame =
       pipeline_internal::sima::stagesemantics::ssd_expected_model_frame(contract);
-  reject_wrong_ssd_model_frame(opt->decode_type, expected_frame, opt->model_width,
-                               opt->model_height, "the model dimensions", "SimaBoxDecode");
+  reject_wrong_ssd_model_frame(opt->decode_type, expected_frame.width, expected_frame.height,
+                               opt->model_width, opt->model_height, "the model dimensions",
+                               "SimaBoxDecode");
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt->decode_type)) {
     throw std::invalid_argument(
         "SimaBoxDecode: decode_type is required and cannot be BoxDecodeType::Unspecified. "
@@ -994,9 +992,11 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
             opt_->top_k, /*num_classes=*/0, opt_->required_preprocess_meta_fields);
     // The heads now pin the SSD recipe frame; reject a caller model_width/height that
     // contradicts it so the backend never emits the wrong frame.
-    reject_wrong_ssd_model_frame(finalized_contract.decode_type, finalized_contract.ssd_model_frame,
-                                 opt_->model_width, opt_->model_height, "the model dimensions",
-                                 "SimaBoxDecode");
+    const auto expected_frame =
+        pipeline_internal::sima::stagesemantics::ssd_expected_model_frame(finalized_contract);
+    reject_wrong_ssd_model_frame(finalized_contract.decode_type, expected_frame.width,
+                                 expected_frame.height, opt_->model_width, opt_->model_height,
+                                 "the model dimensions", "SimaBoxDecode");
     const auto compiled =
         pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(
             finalized_contract);
@@ -1192,6 +1192,18 @@ SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_
       decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
       original_height, model_width, model_height, decode_type_option, source_storage, detess,
       dequant);
+}
+
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
+              int top_k, const std::string& element_name, int original_width, int original_height,
+              int model_width, int model_height, BoxDecodeTypeOption decode_type_option,
+              std::optional<BoxDecodeSourceStorage> source_storage, std::optional<bool> detess,
+              std::optional<bool> dequant, std::optional<ResizeMode> resize_mode_override) {
+  return std::make_shared<simaai::neat::SimaBoxDecode>(
+      decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
+      original_height, model_width, model_height, decode_type_option, source_storage, detess,
+      dequant, resize_mode_override);
 }
 
 std::shared_ptr<simaai::neat::Node>

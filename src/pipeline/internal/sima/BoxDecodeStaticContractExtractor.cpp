@@ -800,9 +800,9 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
       decode_type_is_yolov26_family_local(decode_type)) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type == BoxDecodeType::Ssd) {
-    // Placeholder only: the recipe-specific activation is fixed downstream.
-    return BoxDecodeScoreActivation::Softmax;
+  if (box_decode_type_is_ssd_family(decode_type)) {
+    // The exact ordered head signature resolves the recipe-specific activation downstream.
+    return BoxDecodeScoreActivation::Unknown;
   }
   set_error(error_message,
             "boxdecode inferred input tensors require explicit class score activation semantics");
@@ -2414,9 +2414,13 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       }
     }
   }
-  if (boxdecode_stage &&
-      parse_box_decode_type_token(boxdecode_stage->decode_type) == BoxDecodeType::Ssd) {
-    out.decode_type = BoxDecodeType::Ssd;
+  if (boxdecode_stage) {
+    const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
+    if (parsed_type.has_value() && box_decode_type_is_ssd_family(*parsed_type)) {
+      out.decode_type = *parsed_type;
+    }
+  }
+  if (boxdecode_stage && box_decode_type_is_ssd_family(out.decode_type)) {
     if (const auto parsed_option =
             parse_box_decode_type_option_token(boxdecode_stage->decode_type_option);
         parsed_option.has_value()) {

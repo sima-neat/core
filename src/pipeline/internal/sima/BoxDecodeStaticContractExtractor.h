@@ -25,6 +25,7 @@
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 
 #include <cstdint>
 #include <optional>
@@ -83,6 +84,9 @@ struct BoxDecodePhysicalInputStaticContract {
  */
 struct BoxDecodeStaticContract {
   BoxDecodeType decode_type = BoxDecodeType::Unspecified; ///< Box-decode flavor (YOLO/SSD/etc.).
+  stagesemantics::SsdRecipeId ssd_recipe_id =
+      stagesemantics::SsdRecipeId::Unknown; ///< Exact prepared SSD contract, Core-side only.
+  stagesemantics::SsdClassSelection ssd_class_selection; ///< Encoded and selected SSD classes.
   BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto; ///< Decode-type sub-option.
   BoxDecodeScoreActivation score_activation =
       BoxDecodeScoreActivation::Unknown; ///< Score activation kind.
@@ -94,8 +98,7 @@ struct BoxDecodeStaticContract {
   int topk = 0;                         ///< Max detections retained.
   double detection_threshold = 0.0;     ///< Score cutoff before NMS.
   double nms_iou_threshold = 0.0;       ///< IoU threshold used by NMS.
-  int num_classes = 0;                  ///< Number of class scores per anchor.
-  int ssd_model_frame = 0;              ///< Recipe-required SSD square frame (0 = non-SSD).
+  int num_classes = 0; ///< Legacy runtime value; SSD uses ssd_class_selection.selected_count.
 
   std::vector<BoxDecodeTensorStaticContract> tensors; ///< Per-input tensor specs.
   std::vector<std::string> tensor_names; ///< Logical tensor names (parallel to `tensors`).

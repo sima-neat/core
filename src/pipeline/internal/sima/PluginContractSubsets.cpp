@@ -2007,6 +2007,8 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   subset.slice_shapes.reserve(contract.tensors.size());
   subset.tensor_storage_kind.reserve(contract.tensors.size());
   subset.decode_type = contract.decode_type;
+  subset.ssd_recipe_id = contract.ssd_recipe_id;
+  subset.ssd_class_selection = contract.ssd_class_selection;
   subset.tess_needed = contract.tess_needed;
   subset.quant_needed = contract.quant_needed;
   if (contract.decode_type_option != BoxDecodeTypeOption::Auto) {
@@ -2014,7 +2016,6 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   }
   subset.score_activation = contract.score_activation;
   subset.num_classes = contract.num_classes;
-  subset.ssd_model_frame = contract.ssd_model_frame;
 
   auto fill_shape_desc = [](const std::vector<int>& shape, sima_ev_shape_desc* out) -> bool {
     if (!out || shape.empty() || shape.size() > SIMA_EV_MAX_RANK) {
@@ -2123,6 +2124,17 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
             "facts for stage '" +
             stage_name + "'");
       }
+    }
+  }
+  if (box_decode_type_is_ssd_family(subset.decode_type)) {
+    const auto& selection = subset.ssd_class_selection;
+    if (selection.encoded_count <= 0 || selection.selected_count <= 0 ||
+        selection.selected_count > selection.encoded_count ||
+        subset.num_classes != selection.selected_count) {
+      throw std::invalid_argument(
+          "plugin contract subset 'boxdecode' carries an inconsistent SSD encoded/selected "
+          "class contract for stage '" +
+          stage_name + "'");
     }
   }
 }

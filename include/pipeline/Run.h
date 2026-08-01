@@ -555,6 +555,29 @@ struct MeasureReport {
   std::string to_json(int indent = 2) const;
 };
 
+#ifdef SIMA_NEAT_INTERNAL
+/** Framework-internal percentile sidecar that preserves MeasurePluginLatency's stable ABI. */
+struct MeasurePluginLatencyPercentiles {
+  double p50_ms = 0.0;
+  double p95_ms = 0.0;
+  double p99_ms = 0.0;
+  bool available = false;
+};
+
+/** Framework-internal plugin timing row with retained per-call percentile statistics. */
+struct MeasurePluginLatencyWithPercentiles {
+  MeasurePluginLatency metric;
+  MeasurePluginLatencyPercentiles percentiles;
+};
+
+/** Framework-internal measured report used by exact component performance gates. */
+struct MeasureReportWithPluginPercentiles {
+  MeasureReport report;
+  std::vector<MeasurePluginLatencyWithPercentiles> plugin_latency;
+  std::vector<MeasurePluginLatencyWithPercentiles> plugin_latency_unattributed;
+};
+#endif
+
 /**
  * @brief Observation scope for measuring an application-owned push/pull interval.
  *
@@ -572,6 +595,10 @@ public:
   MeasureScope& operator=(const MeasureScope&) = delete;
 
   MeasureReport stop();
+#ifdef SIMA_NEAT_INTERNAL
+  /// Stop and return percentile sidecars without changing the stable MeasureReport ABI.
+  MeasureReportWithPluginPercentiles stop_with_plugin_percentiles();
+#endif
   bool stopped() const;
 
 private:

@@ -2,12 +2,11 @@
 #define SIMA_NEAT_INTERNAL 1
 #endif
 /**
- * @example ssd300_contract_e2e_test.cpp
+ * @example ssd_contract_integration_test
  * Device-free coverage of the SSD box-decode contract path down to the compiled
- * payload: all three recipes and fail-fast rejection of everything else.
+ * payload: both verified recipes and fail-fast rejection of everything else.
  *   SSD300          -- feats {38,19,10,5,3,1}, priors {4,6,6,6,4,4} -> softmax, 300
- *   SSD-MobileNetV2 -- feats {19,10,5,3,2,1}, priors {3,6,6,6,6,6} -> sigmoid, 300 (v1/v2)
- *   SSD-MobileNetV3 -- feats {20,10,5,3,2,1}, priors {3,6,6,6,6,6} -> sigmoid, 320
+ *   SSD-Mobile-300  -- feats {19,10,5,3,2,1}, priors {3,6,6,6,6,6} -> sigmoid, 300
  * Needs no model pack or dispatcher, so it is registered STRICT and must fail
  * (not skip) on any regression.
  */
@@ -54,15 +53,18 @@ BoxDecodeStaticContract grouped_ssd_contract(const std::vector<int>& feats,
 // Drive one recipe all the way to the compiled payload the runtime consumes.
 void check_recipe_compiles(const std::string& name, const std::vector<int>& feats,
                            const std::vector<int>& priors, int num_classes,
+                           SsdRecipeId expected_recipe,
                            BoxDecodeScoreActivation expected_activation) {
-  // V3 (level 0 == 20) is a 320px recipe; SSD300 and V2 are 300px.
-  const int expected_frame = (feats.front() == 20) ? 320 : 300;
+  constexpr int expected_frame = 300;
   const BoxDecodeStaticContract contract = grouped_ssd_contract(feats, priors, num_classes);
   const auto finalized = finalize_boxdecode_static_contract(
       contract, BoxDecodeType::Ssd, std::nullopt, std::nullopt, BoxDecodeTypeOption::Auto, 0.30,
       0.60, 100, /*num_classes=*/0, {"orig_width", "orig_height"});
-  require(finalized.decode_type == BoxDecodeType::Ssd, name + ": decode type must be SSD");
-  require(finalized.ssd_model_frame == expected_frame, name + ": recipe model frame mismatch");
+  require(finalized.decode_type == BoxDecodeType::Ssd, name + ": stable SSD family type mismatch");
+  require(finalized.ssd_recipe_id == expected_recipe, name + ": resolved recipe mismatch");
+  const auto frame = ssd_expected_model_frame(finalized);
+  require(frame.width == expected_frame && frame.height == expected_frame,
+          name + ": recipe model frame mismatch");
   require(finalized.score_activation == expected_activation,
           name + ": score activation must match the recipe contract");
   require(finalized.decode_type_option == BoxDecodeTypeOption::GroupedByRole,
@@ -72,7 +74,8 @@ void check_recipe_compiles(const std::string& name, const std::vector<int>& feat
   // The compiled payload is what reaches the on-device decoder.
   const auto compiled = build_boxdecode_compiled_contract(finalized);
   require(compiled.payload.decode_type == BoxDecodeType::Ssd,
-          name + ": compiled decode type must be SSD");
+          name + ": compiled SSD family type mismatch");
+  require(compiled.payload.ssd_recipe_id == expected_recipe, name + ": compiled recipe mismatch");
   require(compiled.payload.score_activation == expected_activation,
           name + ": compiled score activation must match the recipe");
   require(compiled.payload.decode_type_option.has_value() &&
@@ -80,8 +83,6 @@ void check_recipe_compiles(const std::string& name, const std::vector<int>& feat
           name + ": compiled layout must be grouped-by-role");
   require(compiled.payload.num_classes == num_classes,
           name + ": compiled class count must be carried");
-  require(compiled.payload.ssd_model_frame == expected_frame,
-          name + ": compiled model frame must be carried");
   std::cout << "[ssd300-contract] " << name << " OK: activation="
             << (expected_activation == BoxDecodeScoreActivation::Softmax ? "softmax" : "sigmoid")
             << " classes=" << compiled.payload.num_classes << "\n";
@@ -132,27 +133,22 @@ void expect_conf_geometry_rejected(const std::string& name, const std::vector<in
 
 int main() {
   try {
-    // All three recipes must compile with their recipe-specific activation.
+    // Both verified recipes must compile with their recipe-specific activation.
     check_recipe_compiles("ssd300", {38, 19, 10, 5, 3, 1}, {4, 6, 6, 6, 4, 4}, 81,
-                          BoxDecodeScoreActivation::Softmax);
+                          SsdRecipeId::Ssd300V1, BoxDecodeScoreActivation::Softmax);
     check_recipe_compiles("ssd_mobilenet_v2", {19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91,
-                          BoxDecodeScoreActivation::Sigmoid);
-    check_recipe_compiles("ssd_mobilenet_v3", {20, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91,
-                          BoxDecodeScoreActivation::Sigmoid);
+                          SsdRecipeId::SsdMobile300V1, BoxDecodeScoreActivation::Sigmoid);
 
     // ssd_expected_model_frame() drives the hand-built compile-time frame check: it resolves
-    // the recipe from the heads and returns its required frame (0 when non-SSD/unresolved).
-    require(ssd_expected_model_frame(
-                grouped_ssd_contract({38, 19, 10, 5, 3, 1}, {4, 6, 6, 6, 4, 4}, 81)) == 300,
+    // the recipe from the heads and returns its required frame.
+    const auto ssd300_frame = ssd_expected_model_frame(
+        grouped_ssd_contract({38, 19, 10, 5, 3, 1}, {4, 6, 6, 6, 4, 4}, 81));
+    require(ssd300_frame.width == 300 && ssd300_frame.height == 300,
             "SSD300 heads must resolve to a 300 frame");
-    require(ssd_expected_model_frame(
-                grouped_ssd_contract({19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91)) == 300,
+    const auto mobile_frame = ssd_expected_model_frame(
+        grouped_ssd_contract({19, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91));
+    require(mobile_frame.width == 300 && mobile_frame.height == 300,
             "MobileNetV2 heads must resolve to a 300 frame");
-    require(ssd_expected_model_frame(
-                grouped_ssd_contract({20, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91)) == 320,
-            "MobileNetV3 heads must resolve to a 320 frame");
-    require(ssd_expected_model_frame(grouped_ssd_contract({64, 32, 16, 8}, {6, 6, 6, 6}, 21)) == 0,
-            "non-recipe SSD heads must resolve to frame 0 (unconstrained)");
     std::cout << "[ssd300-contract] recipe model-frame resolution OK\n";
 
     // Model-managed (MPK subset) route must carry the same SSD300 contract.
@@ -160,6 +156,9 @@ int main() {
       BoxDecodeStaticContract contract =
           grouped_ssd_contract({38, 19, 10, 5, 3, 1}, {4, 6, 6, 6, 4, 4}, 81);
       apply_ssd_model_managed_contract_defaults(&contract);
+      require(contract.decode_type == BoxDecodeType::Ssd &&
+                  contract.ssd_recipe_id == SsdRecipeId::Ssd300V1,
+              "model-managed SSD300 must resolve an exact recipe");
       require(contract.score_activation == BoxDecodeScoreActivation::Softmax,
               "model-managed SSD300 must resolve to softmax");
       require(contract.num_classes == 81, "model-managed SSD300 must infer 81 classes");
@@ -196,6 +195,7 @@ int main() {
     // Fail fast: generic / wrong-prior SSD head sets are rejected, not decoded.
     expect_rejected("generic_4_level", {64, 32, 16, 8}, {6, 6, 6, 6}, 21);
     expect_rejected("ssd300_wrong_priors", {38, 19, 10, 5, 3, 1}, {6, 6, 6, 6, 6, 6}, 81);
+    expect_rejected("unverified_mobilenet_v3", {20, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91);
 
     // A recipe-shaped loc signature is not sufficient; without valid conf heads the
     // payload would reach the runtime with num_classes=0.
@@ -206,7 +206,7 @@ int main() {
                                   {4, 6, 6, 6, 4, 4},
                                   {81 * 4, 81 * 6, 81 * 6, 91 * 6, 81 * 4, 81 * 4});
 
-    std::cout << "[OK] ssd300_contract_e2e_test passed\n";
+    std::cout << "[OK] ssd_contract_integration_test passed\n";
     return 0;
   } catch (const std::exception& e) {
     // Strict, resource-free test: any failure is a real failure, never a skip.
