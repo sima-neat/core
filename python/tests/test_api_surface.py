@@ -202,6 +202,18 @@ def test_graph_pythonic_add_and_describe():
   assert text
 
 
+def test_graph_rejects_duplicate_node_identity_atomically():
+  node = pyneat.nodes.video_scale()
+  graph = pyneat.Graph()
+  graph.add(node)
+  before = graph.describe_backend()
+
+  with pytest.raises(RuntimeError, match="already exists"):
+    graph.add(node)
+
+  assert graph.describe_backend() == before
+
+
 def test_graph_combine_round_robin_surface():
   graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.RoundRobin)
   assert isinstance(graph, pyneat.Graph)

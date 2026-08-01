@@ -209,13 +209,14 @@ struct RtspServerOptions {
  * @brief Options for `Graph::validate()`.
  *
  * Validation runs structural contracts; with `parse_launch=true` it also asks GStreamer to
- * parse the generated pipeline string (catches plugin-availability issues). With
- * `enforce_names=true` it confirms no unnamed/foreign elements snuck in via raw `custom()`.
+ * parse the generated pipeline string (catches plugin-availability issues). Final launch-name
+ * integrity is mandatory during every build, independent of these options. With
+ * `enforce_names=true`, validation additionally checks Node ownership/attribution for elements.
  * @ingroup diagnostics
  */
 struct ValidateOptions {
   bool parse_launch = true;  ///< Build the GStreamer pipeline string and verify element naming.
-  bool enforce_names = true; ///< Reject pipelines containing unnamed or non-NEAT-named elements.
+  bool enforce_names = true; ///< Check optional element ownership; integrity is always enforced.
 };
 
 /**
