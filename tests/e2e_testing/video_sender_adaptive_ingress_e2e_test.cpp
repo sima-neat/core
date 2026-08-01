@@ -752,10 +752,14 @@ std::vector<Sample> generate_access_units(const EncodedCodec& codec, const RawFr
   GstElement* sink = required_element(pipeline.get(), "sink", context);
   start_pipeline(pipeline.get(), context);
 
+  const MappedPlaneLayout rgb_layout = tight_layout(FormatTag::RGB, rgb.width, rgb.height);
+  require(rgb.bytes.size() == rgb_layout.total_bytes,
+          context + ": input does not match its tight video layout");
   for (int frame_index = 0; frame_index < kFramesPerScenario; ++frame_index) {
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, rgb.bytes.size(), nullptr);
     require(buffer != nullptr, context + ": failed to allocate raw input");
     gst_buffer_fill(buffer, 0, rgb.bytes.data(), rgb.bytes.size());
+    add_video_meta(buffer, FormatTag::RGB, rgb.width, rgb.height, rgb_layout, context);
     GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(frame_index) * GST_SECOND / kFps;
     GST_BUFFER_DTS(buffer) = GST_BUFFER_PTS(buffer);
     GST_BUFFER_DURATION(buffer) = GST_SECOND / kFps;
