@@ -5,6 +5,12 @@ on:
     - cron: "0 4 * * 1"
   workflow_dispatch: {}
 
+permissions:
+  actions: write
+  contents: read
+  id-token: write
+  packages: read
+
 jobs:
   long-tests:
     name: long-tests
@@ -33,3 +39,11 @@ jobs:
             --label-regex "long" \
             --output-on-failure \
             --no-tests=error
+
+  modalix-python-long-tests:
+    name: modalix-python-long-tests
+    uses: ./.github/workflows/vulcan-ci.yml
+    with:
+      build_mode: standard
+      run_long_tests: true
+    secrets: inherit
