@@ -344,9 +344,10 @@ void runtime::RunCore::close() {
     };
     log_diag(*st);
   }
-  if (st->graph_execution_) {
-    // stop_graph() has joined the graph workers. Close each materialized child
-    // now so its InputStream releases callbacks and cannot retain its RunCore.
+  if (st->graph_execution_ &&
+      !st->graph_execution_->has_detached_workers.load(std::memory_order_acquire)) {
+    // Joined workers no longer access child cores, so release their InputStream
+    // callbacks. Detached workers retain graph-owned children until they exit.
     for (auto& pipe : st->graph_execution_->pipelines) {
       if (pipe && pipe->run_core) {
         pipe->run_core->close();
