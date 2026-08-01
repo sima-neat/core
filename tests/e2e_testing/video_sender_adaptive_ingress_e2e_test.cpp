@@ -371,6 +371,20 @@ MappedPlaneLayout tight_layout(FormatTag format, int width, int height, int row_
   return layout;
 }
 
+void add_video_meta(GstBuffer* buffer, FormatTag format, int width, int height,
+                    const MappedPlaneLayout& layout, const std::string& context) {
+  gsize offsets[GST_VIDEO_MAX_PLANES] = {};
+  gint strides[GST_VIDEO_MAX_PLANES] = {};
+  for (guint plane = 0; plane < layout.plane_count; ++plane) {
+    offsets[plane] = layout.offsets[plane];
+    strides[plane] = layout.strides[plane];
+  }
+  require(gst_buffer_add_video_meta_full(buffer, GST_VIDEO_FRAME_FLAG_NONE, video_format(format),
+                                         static_cast<guint>(width), static_cast<guint>(height),
+                                         layout.plane_count, offsets, strides) != nullptr,
+          context + ": failed to attach GstVideoMeta");
+}
+
 RawFrame tight_frame_from_sample(GstSample* sample, FormatTag expected,
                                  const std::string& context) {
   require(sample != nullptr, context + ": missing sample");
@@ -448,9 +462,13 @@ RawFrame convert_frame(const RawFrame& input, FormatTag output_format) {
   GstElement* sink = required_element(pipeline.get(), "sink", context);
   start_pipeline(pipeline.get(), context);
 
+  const MappedPlaneLayout input_layout = tight_layout(input.format, input.width, input.height);
+  require(input.bytes.size() == input_layout.total_bytes,
+          context + ": input does not match its tight video layout");
   GstBuffer* buffer = gst_buffer_new_allocate(nullptr, input.bytes.size(), nullptr);
   require(buffer != nullptr, context + ": failed to allocate input buffer");
   gst_buffer_fill(buffer, 0, input.bytes.data(), input.bytes.size());
+  add_video_meta(buffer, input.format, input.width, input.height, input_layout, context);
   GST_BUFFER_PTS(buffer) = 0;
   GST_BUFFER_DURATION(buffer) = GST_SECOND / kFps;
   require(gst_app_src_push_buffer(GST_APP_SRC(source), buffer) == GST_FLOW_OK,
@@ -493,17 +511,8 @@ Tensor tensor_from_frame(const RawFrame& frame, int row_padding,
   }
   gst_buffer_unmap(buffer, &map);
 
-  gsize offsets[GST_VIDEO_MAX_PLANES] = {};
-  gint strides[GST_VIDEO_MAX_PLANES] = {};
-  for (guint plane = 0; plane < destination_layout.plane_count; ++plane) {
-    offsets[plane] = destination_layout.offsets[plane];
-    strides[plane] = destination_layout.strides[plane];
-  }
-  require(gst_buffer_add_video_meta_full(
-              buffer, GST_VIDEO_FRAME_FLAG_NONE, video_format(frame.format),
-              static_cast<guint>(frame.width), static_cast<guint>(frame.height),
-              destination_layout.plane_count, offsets, strides) != nullptr,
-          "failed to attach real-frame GstVideoMeta");
+  add_video_meta(buffer, frame.format, frame.width, frame.height, destination_layout,
+                 "real-frame buffer");
 
   GstCaps* caps = gst_caps_from_string(raw_caps(frame.format, frame.width, frame.height).c_str());
   require(caps != nullptr, "failed to create real-frame caps");
