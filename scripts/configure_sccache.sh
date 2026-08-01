@@ -159,7 +159,15 @@ simaneat_configure_sccache() {
   export SIMANEAT_SCCACHE_ACTIVE=ON
 
   if [[ "${SIMANEAT_SCCACHE_ZERO_STATS:-OFF}" == "ON" ]]; then
-    "${sccache_bin}" --zero-stats >/dev/null
+    if ! "${sccache_bin}" --zero-stats >/dev/null; then
+      if [[ "${SIMANEAT_SCCACHE_STARTUP_FAIL_OPEN:-OFF}" == "ON" ]]; then
+        simaneat_sccache_warn "sccache failed to start; continuing without compiler caching."
+        export SIMANEAT_SCCACHE_ACTIVE=OFF
+        return 0
+      fi
+      echo "ERROR: sccache failed to start." >&2
+      return 1
+    fi
   fi
 
   echo "sccache enabled: $("${sccache_bin}" --version)"

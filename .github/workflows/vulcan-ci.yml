@@ -254,6 +254,7 @@ jobs:
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
           -e SIMANEAT_SCCACHE=on \
           -e SIMANEAT_SCCACHE_ZERO_STATS=ON \
+          -e SIMANEAT_SCCACHE_STARTUP_FAIL_OPEN=ON \
           -e SCCACHE_BUCKET \
           -e SCCACHE_REGION \
           -e SCCACHE_S3_KEY_PREFIX \

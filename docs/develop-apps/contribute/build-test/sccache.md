@@ -171,6 +171,13 @@ branch build. A feature branch can still populate its own namespace, but it
 will receive no initial cache hits when its selected protected baseline is
 empty.
 
+Vulcan explicitly probes `sccache` startup before configuring CMake. If the
+S3, KMS, network, or temporary credentials prevent the cache server from
+starting, the workflow prints a warning and compiles without `sccache`. Remote
+cache availability is therefore an optimization and cannot block compilation.
+The runner-local cache is not used as a fallback because Vulcan runners are
+ephemeral. Local developer builds retain their normal persistent disk cache.
+
 ## Reading Build Statistics
 
 Every cached build ends with output similar to:

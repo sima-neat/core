@@ -10,7 +10,13 @@ cat >"${temp_root}/bin/sccache" <<'SCCACHE'
 #!/usr/bin/env bash
 case "${1:-}" in
   --version) echo "sccache 0.test" ;;
-  --zero-stats|--show-stats) ;;
+  --zero-stats)
+    if [[ "${FAKE_SCCACHE_ZERO_STATS_FAILURE:-OFF}" == "ON" ]]; then
+      echo "simulated sccache startup failure" >&2
+      exit 1
+    fi
+    ;;
+  --show-stats) ;;
   *) echo "unexpected fake sccache argument: ${1:-}" >&2; exit 1 ;;
 esac
 SCCACHE
@@ -20,6 +26,33 @@ chmod +x "${temp_root}/bin/sccache"
   export HOME="${temp_root}/home"
   export PATH="${temp_root}/bin:${PATH}"
   export SIMANEAT_SCCACHE=off
+  # shellcheck source=scripts/configure_sccache.sh
+  source "${repo_root}/scripts/configure_sccache.sh"
+  simaneat_configure_sccache "${repo_root}"
+  [[ "${SIMANEAT_SCCACHE_ACTIVE}" == "OFF" ]]
+)
+
+if (
+  export HOME="${temp_root}/home"
+  export PATH="${temp_root}/bin:${PATH}"
+  export SIMANEAT_SCCACHE=on
+  export SIMANEAT_SCCACHE_ZERO_STATS=ON
+  export FAKE_SCCACHE_ZERO_STATS_FAILURE=ON
+  # shellcheck source=scripts/configure_sccache.sh
+  source "${repo_root}/scripts/configure_sccache.sh"
+  simaneat_configure_sccache "${repo_root}"
+); then
+  echo "Expected sccache startup failure to remain fatal by default." >&2
+  exit 1
+fi
+
+(
+  export HOME="${temp_root}/home"
+  export PATH="${temp_root}/bin:${PATH}"
+  export SIMANEAT_SCCACHE=on
+  export SIMANEAT_SCCACHE_ZERO_STATS=ON
+  export SIMANEAT_SCCACHE_STARTUP_FAIL_OPEN=ON
+  export FAKE_SCCACHE_ZERO_STATS_FAILURE=ON
   # shellcheck source=scripts/configure_sccache.sh
   source "${repo_root}/scripts/configure_sccache.sh"
   simaneat_configure_sccache "${repo_root}"
