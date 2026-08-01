@@ -313,7 +313,8 @@ void apply_raw_yolov6_yolox_contract_overrides_local(BoxDecodeStaticContract* co
 }
 
 void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticContract* contract) {
-  if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown) {
+  if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown ||
+      box_decode_type_is_ssd_family(contract->decode_type)) {
     return;
   }
   bool saw_prob_tensor = false;

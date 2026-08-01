@@ -1,4 +1,5 @@
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
@@ -154,6 +155,57 @@ RUN_TEST(
                 std::string(c.name) + ": descriptor confidence order mismatch");
         require(descriptor->encoded_class_count == c.num_classes,
                 std::string(c.name) + ": descriptor encoded class count mismatch");
+      }
+
+      // Tensor names describe a head's semantic role, not an SSD recipe's score domain.
+      // In particular, graph surgery may leave SSD300 confidence outputs named class_logit_*;
+      // exact geometry must still select the recipe-authoritative softmax activation.
+      {
+        CompiledNodeContract upstream;
+        upstream.processmla.emplace();
+        const std::vector<int> feat = {38, 19, 10, 5, 3, 1};
+        const std::vector<int> priors = {4, 6, 6, 6, 4, 4};
+        auto add_output = [&](int side, int channels, const std::string& name) {
+          const auto index =
+              static_cast<int>(upstream.processmla->runtime_contract.logical_outputs.size());
+          upstream.processmla->runtime_contract.logical_outputs.push_back(LogicalTensorStaticSpec{
+              .logical_index = index,
+              .backend_output_index = index,
+              .physical_index = index,
+              .output_slot = index,
+              .tensor_index = index,
+              .size_bytes = static_cast<std::uint64_t>(side) * side * channels * 2U,
+              .shape = {side, side, channels},
+              .dtype = "BF16",
+              .layout = "HWC",
+              .logical_name = name,
+              .backend_name = name,
+              .segment_name = name});
+        };
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          add_output(feat[i], 4 * priors[i], "bbox_" + std::to_string(i));
+        }
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          add_output(feat[i], 81 * priors[i], "class_logit_" + std::to_string(i));
+        }
+
+        BoxDecodeStandaloneContractOverrides overrides;
+        overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+        std::string error;
+        const auto extracted = build_boxdecode_static_contract_from_compiled_upstream(
+            upstream, BoxDecodeType::Ssd, overrides, &error);
+        require(extracted.has_value(),
+                "SSD300 class-logit contract extraction must succeed: " + error);
+        require(extracted->score_activation == BoxDecodeScoreActivation::Unknown,
+                "generic class-logit name inference must not preempt SSD recipe resolution");
+
+        const auto finalized = finalize_boxdecode_static_contract(
+            *extracted, BoxDecodeType::Ssd, std::nullopt, std::nullopt, BoxDecodeTypeOption::Auto,
+            0.40, 0.45, 200, /*num_classes=*/0, {"orig_width", "orig_height"});
+        require(finalized.ssd_recipe_id == SsdRecipeId::Ssd300V1,
+                "SSD300 class-logit heads must resolve by exact geometry");
+        require(finalized.score_activation == BoxDecodeScoreActivation::Softmax,
+                "SSD300 class-logit names must not override recipe softmax");
       }
 
       // Prepared MLA tensors may have padded physical channel storage. Resolution must use
