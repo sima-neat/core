@@ -77,6 +77,17 @@ def write_fake_perf(executable: Path, payload: dict[str, object]) -> None:
 
 
 class PerfMatrixFailfastTest(unittest.TestCase):
+    def test_ssd_scenario_is_weekly_only(self) -> None:
+        standard_ids = {spec.scenario_id for spec in run_perf_matrix.STANDARD_SCENARIOS}
+        long_ids = {spec.scenario_id for spec in run_perf_matrix.LONG_SCENARIOS}
+
+        self.assertNotIn("ssd_mobilenet_boxdecode", standard_ids)
+        self.assertIn("ssd_mobilenet_boxdecode", long_ids)
+        self.assertEqual(
+            run_perf_matrix.SCENARIOS,
+            run_perf_matrix.STANDARD_SCENARIOS + run_perf_matrix.LONG_SCENARIOS,
+        )
+
     def test_missing_baseline_emits_harness_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

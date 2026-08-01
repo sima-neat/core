@@ -26,7 +26,7 @@ class ScenarioSpec:
     target: str
 
 
-SCENARIOS: tuple[ScenarioSpec, ...] = (
+STANDARD_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_session_sync_rgb", "perf_runtime_graph_sync_rgb_test"),
     ScenarioSpec("runtime_session_async_rgb", "perf_runtime_graph_async_rgb_test"),
     ScenarioSpec("runtime_graph_fanout", "perf_runtime_graph_fanout_test"),
@@ -35,8 +35,13 @@ SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_codec_h264_decode", "perf_runtime_codec_h264_decode_test"),
     ScenarioSpec("runtime_codec_h265_decode", "perf_runtime_codec_h265_decode_test"),
     ScenarioSpec("runtime_model_archive_load", "perf_runtime_model_archive_load_test"),
+)
+
+LONG_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("ssd_mobilenet_boxdecode", "perf_ssd_mobilenet_boxdecode_test"),
 )
+
+SCENARIOS: tuple[ScenarioSpec, ...] = STANDARD_SCENARIOS + LONG_SCENARIOS
 
 
 def utc_now() -> str:
@@ -441,6 +446,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scenario-timeout-sec", type=int, default=int(os.getenv("SIMA_PERF_SCENARIO_TIMEOUT_SEC", "180")))
     parser.add_argument("--iterations", type=int, default=None)
     parser.add_argument(
+        "--include-long",
+        action="store_true",
+        help="Include fixture-dependent long scenarios (weekly/device lanes only).",
+    )
+    parser.add_argument(
         "--failfast-only",
         action="store_true",
         help="Run preflight only (used by unit tests for fail-fast behavior).",
@@ -463,6 +473,7 @@ def main() -> int:
     for stale in results_dir.glob("*.json"):
         stale.unlink(missing_ok=True)
 
+    selected_scenarios = SCENARIOS if args.include_long else STANDARD_SCENARIOS
     profile, baseline_map, preflight_failed = preflight_baselines(profile_dir, results_dir, SCENARIOS)
 
     if preflight_failed:
@@ -497,11 +508,14 @@ def main() -> int:
         )
         preflight_dir = executable_dir
     else:
-        build_targets = ["unit_modalix_contract_preflight_test", *[spec.target for spec in SCENARIOS]]
+        build_targets = [
+            "unit_modalix_contract_preflight_test",
+            *[spec.target for spec in selected_scenarios],
+        ]
         ok, build_error = configure_and_build(repo_root, build_dir, build_targets)
         if not ok:
             results: list[schema.PerfResult] = []
-            for spec in SCENARIOS:
+            for spec in selected_scenarios:
                 result = build_result(
                     scenario_id=spec.scenario_id,
                     modalix_profile_id=profile.modalix_profile_id,
@@ -542,7 +556,7 @@ def main() -> int:
         return 1
 
     all_results: list[schema.PerfResult] = []
-    for spec in SCENARIOS:
+    for spec in selected_scenarios:
         baseline = baseline_map[spec.scenario_id]
         result = run_scenario(
             repo_root=repo_root,
