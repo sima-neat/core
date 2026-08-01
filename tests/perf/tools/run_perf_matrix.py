@@ -24,6 +24,10 @@ import perf_schema as schema  # noqa: E402
 class ScenarioSpec:
     scenario_id: str
     target: str
+    allow_skip: bool = False
+
+
+SKIP_RETURN_CODE = 77
 
 
 STANDARD_SCENARIOS: tuple[ScenarioSpec, ...] = (
@@ -38,7 +42,11 @@ STANDARD_SCENARIOS: tuple[ScenarioSpec, ...] = (
 )
 
 LONG_SCENARIOS: tuple[ScenarioSpec, ...] = (
-    ScenarioSpec("ssd_mobilenet_boxdecode", "perf_ssd_mobilenet_boxdecode_test"),
+    ScenarioSpec(
+        "ssd_mobilenet_boxdecode",
+        "perf_ssd_mobilenet_boxdecode_test",
+        allow_skip=True,
+    ),
 )
 
 SCENARIOS: tuple[ScenarioSpec, ...] = STANDARD_SCENARIOS + LONG_SCENARIOS
@@ -237,6 +245,22 @@ def run_scenario(
         )
 
     combined_output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    if proc.returncode == SKIP_RETURN_CODE and spec.allow_skip:
+        return build_result(
+            scenario_id=spec.scenario_id,
+            modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.SKIP,
+            failure_class=None,
+            reason_code=None,
+            metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+            run_meta={
+                "phase": "skip",
+                "executable": str(exe_path),
+                "exit_code": proc.returncode,
+                "stdout_tail": proc.stdout[-800:] if proc.stdout else "",
+                "stderr_tail": proc.stderr[-800:] if proc.stderr else "",
+            },
+        )
     if proc.returncode != 0:
         harness_reason = schema.classify_perf_harness_failure(combined_output)
         if harness_reason is not None:

@@ -47,6 +47,7 @@ class ReasonCode(str, Enum):
 class ResultStatus(str, Enum):
     PASS = "PASS"
     FAIL = "FAIL"
+    SKIP = "SKIP"
 
 
 METRIC_KEYS = (
@@ -530,8 +531,10 @@ def parse_perf_result(data: Mapping[str, Any], context: str = "perf_result") -> 
                 f"{context}.reason_code: invalid enum value '{data['reason_code']}'"
             ) from exc
 
-    if status == ResultStatus.PASS and (failure_class is not None or reason_code is not None):
-        _raise(context, "PASS result must have null failure_class and reason_code")
+    if status in {ResultStatus.PASS, ResultStatus.SKIP} and (
+        failure_class is not None or reason_code is not None
+    ):
+        _raise(context, f"{status.value} result must have null failure_class and reason_code")
     if status == ResultStatus.FAIL and (failure_class is None or reason_code is None):
         _raise(context, "FAIL result must have non-null failure_class and reason_code")
 

@@ -76,6 +76,18 @@ def write_fake_perf(executable: Path, payload: dict[str, object]) -> None:
     executable.chmod(0o755)
 
 
+def write_fake_exit(executable: Path, return_code: int) -> None:
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        f"print('fake exit {return_code}', file=sys.stderr)\n"
+        f"raise SystemExit({return_code})\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+
+
 class PerfMatrixFailfastTest(unittest.TestCase):
     def test_ssd_scenario_is_weekly_only(self) -> None:
         standard_ids = {spec.scenario_id for spec in run_perf_matrix.STANDARD_SCENARIOS}
@@ -83,10 +95,69 @@ class PerfMatrixFailfastTest(unittest.TestCase):
 
         self.assertNotIn("ssd_mobilenet_boxdecode", standard_ids)
         self.assertIn("ssd_mobilenet_boxdecode", long_ids)
+        self.assertTrue(run_perf_matrix.LONG_SCENARIOS[0].allow_skip)
+        self.assertTrue(all(not spec.allow_skip for spec in run_perf_matrix.STANDARD_SCENARIOS))
         self.assertEqual(
             run_perf_matrix.SCENARIOS,
             run_perf_matrix.STANDARD_SCENARIOS + run_perf_matrix.LONG_SCENARIOS,
         )
+
+    def test_only_skippable_scenario_honors_return_code_77(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable_dir = root / "tests"
+            executable = executable_dir / "fake_skip"
+            write_fake_exit(executable, run_perf_matrix.SKIP_RETURN_CODE)
+            profile = schema.PerfProfile("modalix", "board", "sdk", "cc", "gst", "bundle")
+            baseline = component_baseline()
+
+            skipped = run_perf_matrix.run_scenario(
+                repo_root=root,
+                executable_dir=executable_dir,
+                results_dir=root / "results",
+                profile=profile,
+                spec=run_perf_matrix.ScenarioSpec(
+                    "ssd_mobilenet_boxdecode", executable.name, allow_skip=True
+                ),
+                baseline=baseline,
+                timeout_sec=10,
+                iterations_override=None,
+            )
+            self.assertEqual(skipped.status, schema.ResultStatus.SKIP)
+            self.assertIsNone(skipped.failure_class)
+            self.assertEqual(skipped.run_meta["phase"], "skip")
+            self.assertEqual(skipped.run_meta["exit_code"], run_perf_matrix.SKIP_RETURN_CODE)
+
+            strict = run_perf_matrix.run_scenario(
+                repo_root=root,
+                executable_dir=executable_dir,
+                results_dir=root / "results",
+                profile=profile,
+                spec=run_perf_matrix.ScenarioSpec(
+                    "ssd_mobilenet_boxdecode", executable.name
+                ),
+                baseline=baseline,
+                timeout_sec=10,
+                iterations_override=None,
+            )
+            self.assertEqual(strict.status, schema.ResultStatus.FAIL)
+            self.assertEqual(strict.failure_class, schema.FailureClass.ENV_BROKEN)
+
+            write_fake_exit(executable, 1)
+            non_skip_failure = run_perf_matrix.run_scenario(
+                repo_root=root,
+                executable_dir=executable_dir,
+                results_dir=root / "results",
+                profile=profile,
+                spec=run_perf_matrix.ScenarioSpec(
+                    "ssd_mobilenet_boxdecode", executable.name, allow_skip=True
+                ),
+                baseline=baseline,
+                timeout_sec=10,
+                iterations_override=None,
+            )
+            self.assertEqual(non_skip_failure.status, schema.ResultStatus.FAIL)
+            self.assertEqual(non_skip_failure.failure_class, schema.FailureClass.ENV_BROKEN)
 
     def test_missing_baseline_emits_harness_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
