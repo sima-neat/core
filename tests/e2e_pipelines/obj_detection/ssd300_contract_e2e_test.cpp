@@ -4,9 +4,10 @@
 /**
  * @example ssd_contract_integration_test
  * Device-free coverage of the SSD box-decode contract path down to the compiled
- * payload: both verified recipes and fail-fast rejection of everything else.
+ * payload: all verified recipes and fail-fast rejection of everything else.
  *   SSD300          -- feats {38,19,10,5,3,1}, priors {4,6,6,6,4,4} -> softmax, 300
  *   SSD-Mobile-300  -- feats {19,10,5,3,2,1}, priors {3,6,6,6,6,6} -> sigmoid, 300
+ *   SSD-Mobile-320  -- feats {20,10,5,3,2,1}, priors {3,6,6,6,6,6} -> sigmoid, 320
  * Needs no model pack or dispatcher, so it is registered STRICT and must fail
  * (not skip) on any regression.
  */

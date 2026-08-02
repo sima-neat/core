@@ -558,8 +558,9 @@ void reject_non_stretch_ssd_resize(BoxDecodeType decode_type,
     throw std::invalid_argument(
         std::string(where) +
         ": SSD box decode requires a stretch (anisotropic) preprocessing resize. "
-        "Both supported prepared profiles (SSD300-v1 and SSD-Mobile-300-v1) are configured "
-        "with stretch and the on-device decoder inverts a stretch remap, so a '" +
+        "All supported prepared profiles (SSD300-v1, SSD-Mobile-300-v1, and "
+        "SSD-Mobile-320-v1) are configured with stretch and the on-device decoder inverts a "
+        "stretch remap, so a '" +
         resize_mode_token_local(*effective) +
         "' resize would misplace boxes. Set ResizeMode::Stretch (or remove the "
         "letterbox/crop override).");

@@ -163,7 +163,7 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
-| `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300 or SSD-Mobile-300 contract, selected from ordered head geometry |
+| `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300, SSD-Mobile-300, or SSD-Mobile-320 contract, selected from ordered head geometry |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | R-CNN proposal stage |

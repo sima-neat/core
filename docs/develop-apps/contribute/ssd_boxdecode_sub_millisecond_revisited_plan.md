@@ -9,7 +9,7 @@
 ## Implementation result
 
 The Core and Internals changes described below are implemented in the paired worktrees. The final
-optimized runtime keeps the stable `ssd` ABI token and selects only from the two exact ordered
+optimized runtime keeps the stable `ssd` ABI token and selects only from the three exact ordered
 prepared-head signatures. Unknown geometry and activation/profile conflicts fail configuration
 with the observed level shapes; no model checksum or name is consulted.
 

@@ -338,11 +338,11 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "YOLOX raw-head contract: interleaved [bbox_i, obj_logit_i, class_logit_i] "
            "heads with raw xywh boxes, objectness logits, and class logits.";
   case BoxDecodeType::Ssd:
-    return "SSD contract (two prepared profiles only): per-level grouped "
+    return "SSD contract (three prepared profiles only): per-level grouped "
            "localization heads (depth=4*priors-per-cell) paired with class-confidence heads "
            "(depth=num_classes*priors-per-cell). The complete ordered signature resolves "
-           "internally to SSD300-v1 (softmax) or SSD-Mobile-300-v1 (sigmoid); every other "
-           "signature is rejected.";
+           "internally to SSD300-v1 (softmax @300), SSD-Mobile-300-v1 (sigmoid @300), or "
+           "SSD-Mobile-320-v1 (sigmoid @320); every other signature is rejected.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:
