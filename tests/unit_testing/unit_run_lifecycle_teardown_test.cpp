@@ -13,11 +13,14 @@
 #include <gst/app/gstappsink.h>
 #include <gst/gst.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -100,6 +103,26 @@ GstElement* find_appsink(GstElement* pipeline) {
   return appsink;
 }
 
+bool input_dequeued_after(simaai::neat::runtime::RunCore& core, std::uint64_t enqueued_before) {
+  if (core.inputs_enqueued.load(std::memory_order_acquire) <= enqueued_before) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(core.pipeline.in_mu);
+  return core.pipeline.in_queue.empty();
+}
+
+template <class Predicate>
+bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return predicate();
+}
+
 void detached_stream_stop_retains_runtime_until_cleanup() {
   using namespace simaai::neat;
 
@@ -133,8 +156,8 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   run.close();
   const int close_ms = sima_test::elapsed_ms(close_started_at, std::chrono::steady_clock::now());
   auto retained_core = weak_core.lock();
-  const bool stop_was_detached =
-      retained_core && retained_core->stream_stop_detached.load(std::memory_order_acquire);
+  // The run's handle is gone, yet the RunCore lives: cleanup was deferred, not inline.
+  const bool runtime_retained_past_close = retained_core != nullptr;
   retained_core.reset();
 
   {
@@ -151,7 +174,7 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   gst_object_unref(appsink);
 
   require(close_ms < 1000, "Run::close must remain bounded when stream teardown blocks");
-  require(stop_was_detached,
+  require(runtime_retained_past_close,
           "detached stream teardown must retain its RunCore until the blocked work exits");
   require(weak_core.expired(), "retained RunCore was not released after teardown completed");
 }
@@ -183,7 +206,9 @@ void detached_stream_close_keeps_measurement_reads_safe() {
   }
 
   run.close();
-  require(core->stream_stop_detached.load(std::memory_order_acquire),
+  // The concurrency assertions below are vacuous unless teardown deferred, so pin the owner.
+  require(core->stream_close_state.load(std::memory_order_acquire) ==
+              runtime::InputStreamCloseState::StreamStopThreadOwns,
           "measurement teardown: stream stop was not detached");
 
   std::atomic<bool> start{false};
@@ -230,6 +255,125 @@ void detached_stream_close_keeps_measurement_reads_safe() {
   if (measurement_error) {
     std::rethrow_exception(measurement_error);
   }
+}
+
+// Force the ownership handoff without blocking stream stop: latency_mu holds the input thread
+// after dequeue and before stream.push(), while the stop path never takes that mutex. Drain
+// first because on_output shares latency_mu and would stall stream stop instead.
+void input_thread_timeout_hands_off_stream_close() {
+  using namespace simaai::neat;
+
+  EnvVarGuard input_stop_timeout("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "50");
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x6D);
+  Run run = sima_test::make_async_rgb_run(seed, 8, 8);
+  auto core = std::const_pointer_cast<runtime::RunCore>(run_internal::core(run));
+
+  require(run.try_push(TensorList{seed}), "input thread handoff: warmup push failed");
+  (void)run.pull(2000);
+
+  std::unique_lock<std::mutex> timing_lock(core->latency_mu);
+  const std::uint64_t enqueued_before = core->inputs_enqueued.load(std::memory_order_acquire);
+  require(run.try_push(TensorList{seed}), "input thread handoff: wedging push failed");
+  require(wait_until([&] { return input_dequeued_after(*core, enqueued_before); },
+                     std::chrono::seconds(3)),
+          "input thread handoff: input was not dequeued before teardown");
+
+  const auto close_started_at = std::chrono::steady_clock::now();
+  run.close();
+  const int close_ms = sima_test::elapsed_ms(close_started_at, std::chrono::steady_clock::now());
+
+  require(close_ms < 2000, "Run::close must stay bounded when the input thread is detached");
+  // This state is the proof that close() skipped teardown; the pipeline handle is not,
+  // because InputStream::stop() clears it on the normal path too.
+  require(core->stream_close_state.load(std::memory_order_acquire) ==
+              runtime::InputStreamCloseState::InputThreadOwns,
+          "close ownership was not transferred to the detached input thread");
+  require(core->pipeline.stream.can_push(),
+          "RunCore closed the InputStream after handing ownership to the input thread");
+
+  timing_lock.unlock();
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (core->stream_close_state.load(std::memory_order_acquire) !=
+             runtime::InputStreamCloseState::Closed &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  require(core->stream_close_state.load(std::memory_order_acquire) ==
+              runtime::InputStreamCloseState::Closed,
+          "the detached input thread never completed the close it owned");
+  // Race-free only because the acquire load above pairs with the closer's release store.
+  require(core->pipeline.stream.pipeline_handle() == nullptr,
+          "InputStream close state reached Closed without releasing the GStreamer pipeline");
+}
+
+// Same handoff under an active MeasureScope: a child that detaches closes its own stream
+// during stop_graph(), so its diag context must already have been snapshotted or the
+// measurement loses every per-node metric.
+void composite_child_handoff_preserves_measurement_node_metrics() {
+  using namespace simaai::neat;
+
+  EnvVarGuard input_stop_timeout("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "50");
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x7E);
+  Graph source("image");
+  source.add(nodes::Input("image"));
+  Graph sink("output");
+  sink.add(nodes::Output("output", OutputOptions::EveryFrame(8)));
+  Graph graph;
+  graph.connect(source, sink);
+
+  Run run = graph.build(TensorList{seed});
+  MeasureScope scope = run.start_measurement(/*include_plugin_latency=*/false);
+  require(run.push("image", TensorList{seed}), "composite handoff: measured push failed");
+  require(run.pull("output", 4000).has_value(), "composite handoff: measured pull failed");
+
+  auto core = run_internal::core(run);
+  require(core->graph_execution_ != nullptr, "composite handoff: run is not composite");
+
+  // Wedge every child after dequeue and before stream.push().
+  std::vector<std::unique_lock<std::mutex>> child_locks;
+  std::vector<std::shared_ptr<runtime::RunCore>> children;
+  std::vector<std::uint64_t> enqueued_before;
+  for (auto& pipe : core->graph_execution_->pipelines) {
+    if (pipe && pipe->run_core) {
+      children.push_back(pipe->run_core);
+      enqueued_before.push_back(pipe->run_core->inputs_enqueued.load(std::memory_order_acquire));
+      child_locks.emplace_back(pipe->run_core->latency_mu);
+    }
+  }
+  require(!children.empty(), "composite handoff: no built child pipelines");
+  require(run.push("image", TensorList{seed}), "composite handoff: wedging push failed");
+  require(wait_until(
+              [&] {
+                for (std::size_t i = 0; i < children.size(); ++i) {
+                  if (input_dequeued_after(*children[i], enqueued_before[i])) {
+                    return true;
+                  }
+                }
+                return false;
+              },
+              std::chrono::seconds(3)),
+          "composite handoff: no child dequeued the wedged input");
+
+  run.close();
+
+  const bool any_child_detached =
+      std::any_of(children.begin(), children.end(), [](const auto& child) {
+        return child->stream_close_state.load(std::memory_order_acquire) ==
+               runtime::InputStreamCloseState::InputThreadOwns;
+      });
+  child_locks.clear();
+
+  const MeasureReport report = scope.stop();
+  require(any_child_detached,
+          "composite handoff: no child input thread was detached, so the metric-retention "
+          "path was never exercised");
+  require(!report.node_metrics.empty(),
+          "a child that detached its input thread must not cost the active MeasureScope its "
+          "per-node metrics");
 }
 
 } // namespace
@@ -319,4 +463,6 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
 
            detached_stream_stop_retains_runtime_until_cleanup();
            detached_stream_close_keeps_measurement_reads_safe();
+           input_thread_timeout_hands_off_stream_close();
+           composite_child_handoff_preserves_measurement_node_metrics();
          }));

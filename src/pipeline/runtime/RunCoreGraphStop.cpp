@@ -225,6 +225,11 @@ void RunCore::stop_graph() {
     }
     try {
       if (pipe->run_core) {
+        // Snapshot first: a child that detaches its input thread closes its own stream,
+        // nulling diag_ctx() before an active MeasureScope can read it.
+        if (!pipe->retained_diag) {
+          pipe->retained_diag = pipe->run_core->pipeline.stream.diag_ctx();
+        }
         pipe->run_core->close_input();
         pipe->run_core->stop();
       }
