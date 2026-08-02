@@ -414,9 +414,15 @@ jobs:
       # successfully upgraded and the authentication preflight passes.
       - name: Update sima-cli on test runner
         run: |
-          sima-cli version
-          sima-cli selfupdate
-          sima-cli version
+          sima_cli_bin="$(command -v sima-cli)"
+          sima_cli_python="$(dirname "${sima_cli_bin}")/python"
+          if [[ ! -x "${sima_cli_python}" ]]; then
+            echo "Unable to locate the Python interpreter used by sima-cli: ${sima_cli_python}" >&2
+            exit 1
+          fi
+          "${sima_cli_python}" -m pip install --upgrade --no-input sima-cli
+          "${sima_cli_python}" -c \
+            'from importlib.metadata import version; print("sima-cli " + version("sima-cli"))'
 
       - name: Verify sima-cli authentication
         run: scripts/ci/check_sima_cli_session.sh
