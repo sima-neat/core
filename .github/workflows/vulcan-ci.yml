@@ -410,6 +410,14 @@ jobs:
           clean: true
           fetch-depth: 0
 
+      # Temporary runner repair: remove after the self-hosted Modalix runner has
+      # successfully upgraded and the authentication preflight passes.
+      - name: Update sima-cli on test runner
+        run: |
+          sima-cli version
+          sima-cli selfupdate
+          sima-cli version
+
       - name: Verify sima-cli authentication
         run: scripts/ci/check_sima_cli_session.sh
 
