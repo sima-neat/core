@@ -6,6 +6,51 @@
 #include "pipeline/internal/GstErrorNormalizer.h"
 
 namespace simaai::neat {
+namespace {
+
+void release_input_stream_resources_once(InputStream::State& state) {
+  if (state.resources_released.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  state.lifetime_token.reset();
+  if (state.pending_buffer) {
+    release_input_buffer(state.pending_buffer, "InputStream::close:pending_buffer");
+    state.pending_buffer = nullptr;
+    state.pending_spec.reset();
+    state.pending_alloc_ns = 0;
+    state.pending_map_ns = 0;
+    state.pending_copy_ns = 0;
+  }
+  if (state.reusable_buffer) {
+    release_input_buffer(state.reusable_buffer, "InputStream::close:reusable_buffer");
+    state.reusable_buffer = nullptr;
+    state.reusable_bytes = 0;
+  }
+  if (state.current_caps) {
+    gst_caps_unref(state.current_caps);
+    state.current_caps = nullptr;
+  }
+  if (state.appsrc) {
+    gst_object_unref(state.appsrc);
+    state.appsrc = nullptr;
+  }
+  if (state.appsink) {
+    gst_object_unref(state.appsink);
+    state.appsink = nullptr;
+  }
+  if (state.pipeline) {
+    if (!state.teardown_started.exchange(true)) {
+      GstElement* pipeline = state.pipeline;
+      state.pipeline = nullptr;
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.prefer_synchronous_teardown);
+    } else {
+      state.pipeline = nullptr;
+    }
+  }
+}
+
+} // namespace
+
 InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
                                 const SampleSpec& spec, const InputOptions& src_opt,
                                 const InputStreamOptions& opt, std::shared_ptr<DiagCtx> diag,
@@ -477,7 +522,10 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.prefer_synchronous_teardown);
       }
     }
-    st->worker_done.store(true);
+    st->worker_done.store(true, std::memory_order_release);
+    if (st->close_requested.load(std::memory_order_acquire)) {
+      release_input_stream_resources_once(*st);
+    }
   });
 }
 
@@ -715,40 +763,12 @@ void InputStream::close() {
     std::fprintf(stderr, "[STOP] InputStream::close begin\n");
   }
   stop();
-  state_->lifetime_token.reset();
-  if (state_->pending_buffer) {
-    release_input_buffer(state_->pending_buffer, "InputStream::close:pending_buffer");
-    state_->pending_buffer = nullptr;
-    state_->pending_spec.reset();
-    state_->pending_alloc_ns = 0;
-    state_->pending_map_ns = 0;
-    state_->pending_copy_ns = 0;
-  }
-  if (state_->reusable_buffer) {
-    release_input_buffer(state_->reusable_buffer, "InputStream::close:reusable_buffer");
-    state_->reusable_buffer = nullptr;
-    state_->reusable_bytes = 0;
-  }
-  if (state_->current_caps) {
-    gst_caps_unref(state_->current_caps);
-    state_->current_caps = nullptr;
-  }
-  if (state_->appsrc) {
-    gst_object_unref(state_->appsrc);
-    state_->appsrc = nullptr;
-  }
-  if (state_->appsink) {
-    gst_object_unref(state_->appsink);
-    state_->appsink = nullptr;
-  }
-  if (state_->pipeline) {
-    if (!state_->teardown_started.exchange(true)) {
-      GstElement* pipeline = state_->pipeline;
-      state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
-    } else {
-      state_->pipeline = nullptr;
-    }
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return;
+  state->close_requested.store(true, std::memory_order_release);
+  if (state->worker_done.load(std::memory_order_acquire)) {
+    release_input_stream_resources_once(*state);
   }
   std::atomic_store_explicit(&state_, std::shared_ptr<State>{}, std::memory_order_release);
   if (stop_trace_enabled()) {
