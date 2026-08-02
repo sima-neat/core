@@ -1323,7 +1323,7 @@ verify_memory_transaction_preservation() {
 
 install_local_simaai_memory_transaction() {
   local simulation_log
-  local -a apt_args=(apt-get install -y --reinstall --no-remove)
+  local -a apt_args=(apt-get install -y --reinstall --allow-downgrades --no-remove)
 
   collect_local_simaai_memory_debs || return 1
   validate_local_simaai_memory_payload || return 1
