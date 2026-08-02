@@ -31,17 +31,19 @@ namespace simaai::neat {
  * 32-channel mask-coefficient heads, and a trailing mask prototype.
  * `YoloV26Pose` uses the same raw l/t/r/b bbox heads, 1-channel pose scores,
  * and 51-channel keypoint heads.
- * `Ssd` selects one of two prepared SSD contracts (not a generic SSD decoder), resolved from the
+ * `Ssd` selects one of three prepared SSD contracts (not a generic SSD decoder), resolved from the
  * complete ordered box-decode head geometry at compile time:
  *  - SSD300: feats {38,19,10,5,3,1}, priors-per-cell {4,6,6,6,4,4}, 300x300, softmax.
  *  - SSD-Mobile-300: feats {19,10,5,3,2,1}, priors-per-cell {3,6,6,6,6,6}, 300x300,
+ *    per-class sigmoid.
+ *  - SSD-Mobile-320: feats {20,10,5,3,2,1}, priors-per-cell {3,6,6,6,6,6}, 320x320,
  *    per-class sigmoid.
  * All use grouped per-level localization heads (depth = 4 * priors-per-cell) paired with
  * class-confidence heads (depth = num_classes * priors-per-cell), and require a stretch
  * preprocessing resize; any other head set, model frame or resize is rejected.
  *
  * SSD `num_classes` is always derived from the confidence-head depth. The SSD300 recipe permits a
- * contiguous prefix selection; the SSD-Mobile-300 recipe requires the exact encoded class count.
+ * contiguous prefix selection; both SSD-Mobile recipes require the exact encoded class count.
  *
  * @ingroup pipeline
  */

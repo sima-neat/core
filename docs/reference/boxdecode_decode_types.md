@@ -196,7 +196,7 @@ Advanced tensor-contract rules:
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
 - `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
-- `Ssd` is **not** a generic SSD decoder. It resolves exactly **two prepared profiles**
+- `Ssd` is **not** a generic SSD decoder. It resolves exactly **three prepared profiles**
   from the complete ordered loc/conf H/W/C signature at compile time. Any other
   head set or order is rejected with an error that prints the observed and supported
   signatures:
@@ -208,6 +208,10 @@ Advanced tensor-contract rules:
     maps `{19,10,5,3,2,1}`, priors-per-cell `{3,6,6,6,6,6}`, confidence channel
     order `anchor*C + class`, class scores via per-class **sigmoid** (background
     ignored).
+  - **SSD-Mobile-320-v1** (`ssd_anchor_generator`): 320×320 input, feature
+    maps `{20,10,5,3,2,1}`, priors-per-cell `{3,6,6,6,6,6}`, confidence channel
+    order `anchor*C + class`, class scores via per-class **sigmoid** (background
+    ignored).
 
   All recipes use grouped per-level localization heads (depth =
   `4 * priors-per-cell`) paired with class-confidence heads (depth =
@@ -217,9 +221,9 @@ Advanced tensor-contract rules:
   decoder), and the grouped-by-role layout is selected automatically — leave
   `decode_type_option` as `Auto`. A non-grouped layout token is rejected.
 
-  The **model frame is part of the profile** (both verified profiles are 300×300),
-  not just the head geometry:
-  a resolved preprocess resize target or model-dimension override of any other
+  The **model frame is part of the profile**, not just the head geometry. SSD300-v1
+  and SSD-Mobile-300-v1 require 300×300; SSD-Mobile-320-v1 requires 320×320. A
+  resolved preprocess resize target or model-dimension override of any other
   size is rejected at build time, because the prior tables and the stretch
   back-projection are only valid at that frame.
 
@@ -231,8 +235,9 @@ Advanced tensor-contract rules:
   **`num_classes` contract.** The encoded class count is always derived from the
   confidence-head depth (`conf_depth / priors-per-cell`, background at index 0
   included). SSD300-v1 permits a contiguous prefix selection such as the prepared
-  81-to-8 route; SSD-Mobile-300-v1 requires the exact encoded count. An invalid
-  selection is rejected at build time. Leave it unset to use the profile default.
+  81-to-8 route; both SSD-Mobile profiles require the exact encoded count. An
+  invalid selection is rejected at build time. Leave it unset to use the profile
+  default.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
 - `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do
