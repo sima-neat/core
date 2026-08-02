@@ -551,8 +551,25 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
         stop_with_error(e, nullptr);
       }
     }
+    // Settle the handoff before publishing input_thread_done: whichever side wins this
+    // exchange is the sole closer.
+    auto expected = runtime::InputStreamCloseState::RunCoreOwnsWhileInputRunning;
+    const bool owns_close =
+        !st->stream_close_state.compare_exchange_strong(
+            expected, runtime::InputStreamCloseState::RunCoreOwnsAfterInputFinished,
+            std::memory_order_acq_rel) &&
+        expected == runtime::InputStreamCloseState::InputThreadOwns;
+
     st->pipeline.input_thread_done.store(true);
     st->pipeline.out_cv.notify_all();
+
+    if (owns_close) {
+      // close() timed out here and skipped teardown, leaving this the last user. Close the
+      // stream directly; RunCore::close() latched `closed` on its way through.
+      st->pipeline.stream.close();
+      st->stream_close_state.store(runtime::InputStreamCloseState::Closed,
+                                   std::memory_order_release);
+    }
   });
 
   return st;
