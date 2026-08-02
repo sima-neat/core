@@ -27,12 +27,24 @@ constexpr std::array<SsdLevelSpec, 6> kSsdMobile300V1Levels = {{
     {1, 1, 24, 546},
 }};
 
-constexpr std::array<SsdRecipeDescriptor, 2> kSsdRecipes = {{
+constexpr std::array<SsdLevelSpec, 6> kSsdMobile320V1Levels = {{
+    {20, 20, 12, 273},
+    {10, 10, 24, 546},
+    {5, 5, 24, 546},
+    {3, 3, 24, 546},
+    {2, 2, 24, 546},
+    {1, 1, 24, 546},
+}};
+
+constexpr std::array<SsdRecipeDescriptor, 3> kSsdRecipes = {{
     {SsdRecipeId::Ssd300V1, kSsd300V1Levels, 300, 300, ResizeMode::Stretch,
      BoxDecodeScoreActivation::Softmax, SsdLocalizationChannelOrder::AnchorMajorCoordinates,
      SsdConfidenceChannelOrder::ClassMajorAnchors, 0, 81,
      SsdClassCountPolicy::AllowPrefixNarrowing},
     {SsdRecipeId::SsdMobile300V1, kSsdMobile300V1Levels, 300, 300, ResizeMode::Stretch,
+     BoxDecodeScoreActivation::Sigmoid, SsdLocalizationChannelOrder::AnchorMajorCoordinates,
+     SsdConfidenceChannelOrder::AnchorMajorClasses, 0, 91, SsdClassCountPolicy::Exact},
+    {SsdRecipeId::SsdMobile320V1, kSsdMobile320V1Levels, 320, 320, ResizeMode::Stretch,
      BoxDecodeScoreActivation::Sigmoid, SsdLocalizationChannelOrder::AnchorMajorCoordinates,
      SsdConfidenceChannelOrder::AnchorMajorClasses, 0, 91, SsdClassCountPolicy::Exact},
 }};

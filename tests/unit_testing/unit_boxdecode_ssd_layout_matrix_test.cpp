@@ -58,12 +58,13 @@ const std::vector<int> kValidSsd300Conf = {324, 486, 486, 486, 324, 324};
 
 } // namespace
 
-// Exercises the SSD box-decode contract layer: two recipes only, validated against
+// Exercises the SSD box-decode contract layer: exact prepared recipes, validated against
 // the grouped loc/conf head geometry with a recipe-specific activation matching the
 // internals runtime. Covers class-count inference, softmax vs sigmoid, the
 // grouped-by-role default, and fail-fast rejection of other geometry.
 //   SSD300          -- feats {38,19,10,5,3,1}, priors {4,6,6,6,4,4}, softmax
 //   SSD-MobileNetV2 -- feats {19,10,5,3,2,1}, priors {3,6,6,6,6,6}, sigmoid
+//   SSD-MobileNetV3 -- feats {20,10,5,3,2,1}, priors {3,6,6,6,6,6}, sigmoid
 RUN_TEST(
     "unit_boxdecode_ssd_layout_matrix_test", ([] {
       using namespace simaai::neat;
@@ -105,6 +106,14 @@ RUN_TEST(
            {3, 6, 6, 6, 6, 6},
            91,
            SsdRecipeId::SsdMobile300V1,
+           BoxDecodeScoreActivation::Sigmoid,
+           SsdConfidenceChannelOrder::AnchorMajorClasses},
+          // SSD-MobileNetV3-COCO: 320 input and a 20x20 first feature level.
+          {"ssd_mobilenet_v3",
+           {20, 10, 5, 3, 2, 1},
+           {3, 6, 6, 6, 6, 6},
+           91,
+           SsdRecipeId::SsdMobile320V1,
            BoxDecodeScoreActivation::Sigmoid,
            SsdConfidenceChannelOrder::AnchorMajorClasses},
       };
