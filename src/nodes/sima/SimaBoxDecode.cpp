@@ -419,16 +419,20 @@ void validate_dimension_override_pair(int width, int height, const char* label,
 std::vector<std::string>
 filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, int original_width,
                                        int original_height, int model_width, int model_height,
-                                       bool has_resize_mode_override = false) {
+                                       bool has_resize_mode_override = false,
+                                       bool require_independent_preprocess_provenance = false) {
   std::vector<std::string> filtered;
   filtered.reserve(fields.size());
   const bool has_original_override = has_explicit_dimension_pair(original_width, original_height);
   const bool has_model_override = has_explicit_dimension_pair(model_width, model_height);
-  // A resize-mode override is evidence only for the declared resize policy. If
-  // both endpoint frames are also explicit, Stretch determines the affine
-  // transform as well. It does not prove color conversion, axis permutation,
-  // normalization, quantization, or tessellation, so those facts must continue
-  // to come from upstream metadata.
+  // Strict SSD recipes treat a resize-mode override as evidence only for the
+  // declared resize policy. If both endpoint frames are also explicit, Stretch
+  // determines the affine transform as well. It does not prove color conversion,
+  // axis permutation, normalization, quantization, or tessellation, so those
+  // facts must continue to come from upstream metadata. Other decoder families
+  // retain the established external-preprocessing contract: the complete
+  // geometry plus resize override discharges the preproc metadata bucket because
+  // there is deliberately no upstream Preproc element to emit it.
   const bool has_complete_geometry_proof =
       has_resize_mode_override && has_original_override && has_model_override;
   for (const auto& field : fields) {
@@ -446,6 +450,12 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
       continue;
     }
     if (has_resize_mode_override && field == "preproc_resize_mode") {
+      continue;
+    }
+    if (has_complete_geometry_proof && !require_independent_preprocess_provenance &&
+        (field == "preproc_color_in" || field == "preproc_color_out" ||
+         field == "preproc_axis_perm" || field == "preproc_normalize" ||
+         field == "preproc_quantize" || field == "preproc_tessellate")) {
       continue;
     }
     if (has_complete_geometry_proof &&
@@ -696,7 +706,9 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
   if (resize_mode_override.has_value()) {
     opt->required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
         default_preprocess_meta_required_fields(), opt->original_width, opt->original_height,
-        opt->model_width, opt->model_height, /*has_resize_mode_override=*/true);
+        opt->model_width, opt->model_height, /*has_resize_mode_override=*/true,
+        /*require_independent_preprocess_provenance=*/
+        box_decode_type_is_ssd_family(opt->decode_type));
   }
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt->decode_type)) {
     throw std::invalid_argument(
@@ -851,7 +863,8 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   opt->resize_mode_override = resize_mode_override;
   opt->required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
       resolved.meta_contract.required_fields, resolved_original_width, resolved_original_height,
-      resolved_model_width, resolved_model_height, resize_mode_override.has_value());
+      resolved_model_width, resolved_model_height, resize_mode_override.has_value(),
+      box_decode_type_is_ssd_family(compiled_contract.payload.decode_type));
   if (opt->compiled_contract) {
     auto updated = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
     updated->runtime_contract.required_preprocess_meta_fields =
