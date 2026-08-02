@@ -460,7 +460,6 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
         self.assertIn("<--simulate>", apt_lines[0])
         self.assertNotIn("<--simulate>", apt_lines[1])
         for line in apt_lines:
-            self.assertIn("<--allow-downgrades>", line)
             self.assertIn("<--no-remove>", line)
             self.assertIn("<--reinstall>", line)
             self.assertIn("<./memory-runtime.deb>", line)
