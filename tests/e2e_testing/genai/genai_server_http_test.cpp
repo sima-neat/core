@@ -219,8 +219,7 @@ void reject_unsupported_thinking(int port) {
         {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})},
         {"think", true},
         {"stream", true}}},
-      {"/api/generate",
-       {{"model", "llm"}, {"prompt", "Hello"}, {"think", true}, {"stream", true}}},
+      {"/api/generate", {{"model", "llm"}, {"prompt", "Hello"}, {"think", true}, {"stream", true}}},
   };
 
   for (const auto& [path, request] : requests) {
