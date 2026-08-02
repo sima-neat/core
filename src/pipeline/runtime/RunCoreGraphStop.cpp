@@ -371,6 +371,7 @@ void RunCore::stop_graph() {
                        "[GRAPH] stop_timeout stage_index=%zu node=%zu timeout_ms=%d; detaching\n",
                        i, static_cast<std::size_t>(st->node_id), stop_timeout_ms);
         }
+        execution.has_detached_workers.store(true, std::memory_order_release);
         st->worker.detach();
       }
     }
@@ -404,6 +405,7 @@ void RunCore::stop_graph() {
                        "[GRAPH] stop_timeout seg=%zu where=pull.join timeout_ms=%d; detaching\n",
                        static_cast<std::size_t>(pipe->seg.id), stop_timeout_ms);
         }
+        execution.has_detached_workers.store(true, std::memory_order_release);
         pipe->transport.pull_thread.detach();
       }
     }
@@ -425,6 +427,7 @@ void RunCore::stop_graph() {
                        "[GRAPH] stop_timeout seg=%zu where=push.join timeout_ms=%d; detaching\n",
                        static_cast<std::size_t>(pipe->seg.id), stop_timeout_ms);
         }
+        execution.has_detached_workers.store(true, std::memory_order_release);
         pipe->transport.push_thread.detach();
       }
     }

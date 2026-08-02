@@ -135,7 +135,7 @@ struct RunCoreStartOptions {
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
 };
 
-struct RunCore {
+struct RunCore : std::enable_shared_from_this<RunCore> {
   static std::shared_ptr<RunCore> start(ExecutionGraphPlan plan, RunCoreStartOptions opt);
   static std::shared_ptr<RunCore> create_graph_compat();
   static std::shared_ptr<RunCore> start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -299,6 +299,7 @@ struct RunCore {
   mutable std::mutex error_mu;
   bool latency_init = false;
   std::atomic<bool> stop_requested{false};
+  std::atomic<bool> stream_stop_detached{false};
   std::atomic<bool> closed{false};
   bool diag_enabled = false;
   std::atomic<bool> diag_logged{false};

@@ -893,53 +893,29 @@ void stop_and_unref_no_flush(GstElement*& e, bool prefer_synchronous) {
     return;
   }
 
-  const bool async_only = !prefer_synchronous && env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
-  struct TeardownTask {
-    std::atomic<bool> done{false};
-  };
-  auto task = std::make_shared<TeardownTask>();
-  std::thread teardown_thread([local, prefer_synchronous, async_only, timeout_ms, task]() {
-    const auto teardown_started_at = std::chrono::steady_clock::now();
-    const GstStateChangeReturn begin_result = begin_teardown(local, /*flush=*/false);
-    if (!async_only) {
-      int wait_timeout_ms = timeout_ms;
-      if (prefer_synchronous) {
-        // gst_element_set_state() can itself synchronously execute each
-        // rtspsrc PAUSED -> READY wait. Charge that time to the one computed
-        // budget instead of allowing the subsequent get_state() wait to spend
-        // the full budget a second time.
-        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now() - teardown_started_at)
-                                    .count();
-        wait_timeout_ms = elapsed_ms >= timeout_ms ? 0 : timeout_ms - static_cast<int>(elapsed_ms);
-      }
-      const TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
-      if (result.status == TeardownStatus::Complete) {
-        task->done.store(true, std::memory_order_release);
-        return;
-      }
-      warn_incomplete_teardown(local, result, timeout_ms);
-    }
-    enqueue_teardown(local, /*flush=*/false);
-    task->done.store(true, std::memory_order_release);
-  });
+  const auto teardown_started_at = std::chrono::steady_clock::now();
+  const GstStateChangeReturn begin_result = begin_teardown(local, /*flush=*/false);
 
-  const int caller_timeout_ms = async_only ? 0 : timeout_ms;
-  const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(caller_timeout_ms);
-  while (!task->done.load(std::memory_order_acquire) &&
-         std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  if (task->done.load(std::memory_order_acquire)) {
-    teardown_thread.join();
-  } else {
-    if (!async_only) {
-      std::cerr << "[WARN] stop_and_unref(): teardown call exceeded " << caller_timeout_ms
-                << "ms; continuing in background.\n";
+  const bool async_only = !prefer_synchronous && env_bool("SIMA_GST_TEARDOWN_ASYNC", false);
+  if (!async_only) {
+    int wait_timeout_ms = timeout_ms;
+    if (prefer_synchronous) {
+      // gst_element_set_state() can itself synchronously execute each
+      // rtspsrc PAUSED -> READY wait. Charge that time to the one computed
+      // budget instead of allowing the subsequent get_state() wait to spend
+      // the full budget a second time.
+      const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - teardown_started_at)
+                                  .count();
+      wait_timeout_ms = elapsed_ms >= timeout_ms ? 0 : timeout_ms - static_cast<int>(elapsed_ms);
     }
-    teardown_thread.detach();
+    const TeardownResult result = finish_teardown(local, begin_result, wait_timeout_ms);
+    if (result.status == TeardownStatus::Complete)
+      return;
+    warn_incomplete_teardown(local, result, timeout_ms);
   }
+
+  enqueue_teardown(local, /*flush=*/false);
 }
 
 } // namespace simaai::neat::pipeline_internal
