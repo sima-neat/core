@@ -13,6 +13,7 @@
 #include <gst/app/gstappsink.h>
 #include <gst/gst.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -308,6 +309,73 @@ void input_thread_timeout_hands_off_stream_close() {
           "InputStream close state reached Closed without releasing the GStreamer pipeline");
 }
 
+// Same handoff under an active MeasureScope: a child that detaches closes its own stream
+// during stop_graph(), so its diag context must already have been snapshotted or the
+// measurement loses every per-node metric.
+void composite_child_handoff_preserves_measurement_node_metrics() {
+  using namespace simaai::neat;
+
+  EnvVarGuard input_stop_timeout("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "50");
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x7E);
+  Graph source("image");
+  source.add(nodes::Input("image"));
+  Graph sink("output");
+  sink.add(nodes::Output("output", OutputOptions::EveryFrame(8)));
+  Graph graph;
+  graph.connect(source, sink);
+
+  Run run = graph.build(TensorList{seed});
+  MeasureScope scope = run.start_measurement(/*include_plugin_latency=*/false);
+  require(run.push("image", TensorList{seed}), "composite handoff: measured push failed");
+  require(run.pull("output", 4000).has_value(), "composite handoff: measured pull failed");
+
+  auto core = run_internal::core(run);
+  require(core->graph_execution_ != nullptr, "composite handoff: run is not composite");
+
+  // Wedge every child after dequeue and before stream.push().
+  std::vector<std::unique_lock<std::mutex>> child_locks;
+  std::vector<std::shared_ptr<runtime::RunCore>> children;
+  std::vector<std::uint64_t> enqueued_before;
+  for (auto& pipe : core->graph_execution_->pipelines) {
+    if (pipe && pipe->run_core) {
+      children.push_back(pipe->run_core);
+      enqueued_before.push_back(pipe->run_core->inputs_enqueued.load(std::memory_order_acquire));
+      child_locks.emplace_back(pipe->run_core->latency_mu);
+    }
+  }
+  require(!children.empty(), "composite handoff: no built child pipelines");
+  require(run.push("image", TensorList{seed}), "composite handoff: wedging push failed");
+  require(wait_until(
+              [&] {
+                for (std::size_t i = 0; i < children.size(); ++i) {
+                  if (input_dequeued_after(*children[i], enqueued_before[i])) {
+                    return true;
+                  }
+                }
+                return false;
+              },
+              std::chrono::seconds(3)),
+          "composite handoff: no child dequeued the wedged input");
+
+  run.close();
+
+  const bool any_child_detached =
+      std::any_of(children.begin(), children.end(), [](const auto& child) {
+        return child->stream_close_state.load(std::memory_order_acquire) ==
+               runtime::InputStreamCloseState::InputThreadOwns;
+      });
+  child_locks.clear();
+
+  const MeasureReport report = scope.stop();
+  require(any_child_detached,
+          "composite handoff: no child input thread was detached, so the metric-retention "
+          "path was never exercised");
+  require(!report.node_metrics.empty(),
+          "a child that detached its input thread must not cost the active MeasureScope its "
+          "per-node metrics");
+}
+
 } // namespace
 
 RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
@@ -396,4 +464,5 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            detached_stream_stop_retains_runtime_until_cleanup();
            detached_stream_close_keeps_measurement_reads_safe();
            input_thread_timeout_hands_off_stream_close();
+           composite_child_handoff_preserves_measurement_node_metrics();
          }));

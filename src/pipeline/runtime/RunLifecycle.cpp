@@ -393,6 +393,19 @@ void runtime::RunCore::close() {
     };
     log_diag(*st);
   }
+  if (st->graph_execution_ &&
+      !st->graph_execution_->has_detached_workers.load(std::memory_order_acquire)) {
+    // Joined workers no longer access child cores, so release their InputStream
+    // callbacks. Detached workers retain graph-owned children until they exit.
+    // stop_graph() already snapshotted each child's diag context, so an active
+    // MeasureScope survives these releases.
+    for (auto& pipe : st->graph_execution_->pipelines) {
+      if (pipe && pipe->run_core) {
+        pipe->run_core->close();
+        pipe->run_core.reset();
+      }
+    }
+  }
   st->pipeline.stream.close();
   st->stream_close_state.store(runtime::InputStreamCloseState::Closed, std::memory_order_release);
   if (stop_trace_enabled()) {
