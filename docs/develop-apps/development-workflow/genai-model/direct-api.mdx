@@ -336,6 +336,10 @@ fragment = neat.genai.graphs.vision_language(model, options, "vlm")
 - Use either direct images or cached images, not both.
 - ASR requests use audio fields, not text or image fields.
 
+Set `GenerationRequest.enable_thinking` for reasoning models like Qwen3 or Gemma 4
+E2B/E4B to enable reasoning. Complete results keep reasoning in `GenerationResult.reasoning` and the final answer in `GenerationResult.text`;
+streamed `TokenSample` objects likewise use `reasoning` and `text`.
+
 These rules let Neat fail early with a clear request error instead of sending an
 ambiguous prompt to the runtime.
 

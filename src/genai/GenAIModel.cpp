@@ -54,6 +54,11 @@ bool GenAIModel::accepts_audio() const {
   return impl_->info.accepts_audio;
 }
 
+bool GenAIModel::supports_thinking() const {
+  const auto* model = std::get_if<VisionLanguageModel>(&impl_->model);
+  return model && model->supports_thinking();
+}
+
 std::string GenAIModel::model_id() const {
   return internal::model_id_from_path(impl_->info.root);
 }

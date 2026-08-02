@@ -32,8 +32,12 @@ public:
   GenerationStream stream(const GenerationRequest& request);
 
 private:
+  bool supports_thinking() const;
+
   struct Impl;
   std::unique_ptr<Impl> impl_;
+
+  friend class GenAIServer;
 };
 
 } // namespace simaai::neat::genai
