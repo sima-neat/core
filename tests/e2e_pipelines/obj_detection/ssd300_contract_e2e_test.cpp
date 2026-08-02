@@ -55,8 +55,7 @@ BoxDecodeStaticContract grouped_ssd_contract(const std::vector<int>& feats,
 void check_recipe_compiles(const std::string& name, const std::vector<int>& feats,
                            const std::vector<int>& priors, int num_classes,
                            SsdRecipeId expected_recipe,
-                           BoxDecodeScoreActivation expected_activation,
-                           int expected_frame) {
+                           BoxDecodeScoreActivation expected_activation, int expected_frame) {
   const BoxDecodeStaticContract contract = grouped_ssd_contract(feats, priors, num_classes);
   const auto finalized = finalize_boxdecode_static_contract(
       contract, BoxDecodeType::Ssd, std::nullopt, std::nullopt, BoxDecodeTypeOption::Auto, 0.30,
@@ -202,8 +201,7 @@ int main() {
     // Fail fast: generic / wrong-prior SSD head sets are rejected, not decoded.
     expect_rejected("generic_4_level", {64, 32, 16, 8}, {6, 6, 6, 6}, 21);
     expect_rejected("ssd300_wrong_priors", {38, 19, 10, 5, 3, 1}, {6, 6, 6, 6, 6, 6}, 81);
-    expect_rejected("unverified_mobilenet_shape", {20, 10, 5, 3, 2, 1}, {6, 6, 6, 6, 6, 6},
-                    91);
+    expect_rejected("unverified_mobilenet_shape", {20, 10, 5, 3, 2, 1}, {6, 6, 6, 6, 6, 6}, 91);
 
     // A recipe-shaped loc signature is not sufficient; without valid conf heads the
     // payload would reach the runtime with num_classes=0.
