@@ -17,9 +17,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <exception>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -154,6 +156,82 @@ void detached_stream_stop_retains_runtime_until_cleanup() {
   require(weak_core.expired(), "retained RunCore was not released after teardown completed");
 }
 
+void detached_stream_close_keeps_measurement_reads_safe() {
+  using namespace simaai::neat;
+
+  EnvVarGuard stream_stop_timeout("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", "100");
+  EnvVarGuard input_stop_timeout("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "100");
+  EnvVarGuard stop_flush("SIMA_INPUTSTREAM_STOP_FLUSH", "0");
+  EnvVarGuard synchronous_teardown("SIMA_GST_TEARDOWN_DEFER_NO_FLUSH", "0");
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x5C);
+  Run run = sima_test::make_async_rgb_run(seed, 8, 8);
+  MeasureScope measurement = run.start_measurement(/*include_plugin_latency=*/false);
+  auto core = run_internal::core(run);
+  GstElement* appsink = find_appsink(core->pipeline.stream.pipeline_handle());
+  require(appsink != nullptr, "measurement teardown: missing appsink");
+  GstPad* sink_pad = gst_element_get_static_pad(appsink, "sink");
+  require(sink_pad != nullptr, "measurement teardown: missing appsink sink pad");
+
+  BlockingProbe probe;
+  gst_pad_add_probe(sink_pad, GST_PAD_PROBE_TYPE_BUFFER, block_pipeline_output, &probe, nullptr);
+  require(run.try_push(TensorList{seed}), "measurement teardown: push failed");
+  {
+    std::unique_lock<std::mutex> lock(probe.mu);
+    require(probe.cv.wait_for(lock, std::chrono::seconds(2), [&] { return probe.entered; }),
+            "measurement teardown: blocking probe was not reached");
+  }
+
+  run.close();
+  require(core->stream_stop_detached.load(std::memory_order_acquire),
+          "measurement teardown: stream stop was not detached");
+
+  std::atomic<bool> start{false};
+  std::atomic<bool> keep_reading{true};
+  std::vector<std::thread> readers;
+  for (int i = 0; i < 4; ++i) {
+    readers.emplace_back([&] {
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+      while (keep_reading.load(std::memory_order_acquire)) {
+        (void)core->input_stats();
+        (void)core->diag_snapshot();
+      }
+    });
+  }
+  std::exception_ptr measurement_error;
+  std::thread stop_measurement([&] {
+    while (!start.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+    }
+    try {
+      (void)measurement.stop();
+    } catch (...) {
+      measurement_error = std::current_exception();
+    }
+  });
+
+  start.store(true, std::memory_order_release);
+  {
+    std::lock_guard<std::mutex> lock(probe.mu);
+    probe.released = true;
+  }
+  probe.cv.notify_all();
+
+  stop_measurement.join();
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  keep_reading.store(false, std::memory_order_release);
+  for (auto& reader : readers) {
+    reader.join();
+  }
+  gst_object_unref(sink_pad);
+  gst_object_unref(appsink);
+  if (measurement_error) {
+    std::rethrow_exception(measurement_error);
+  }
+}
+
 } // namespace
 
 RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
@@ -240,4 +318,5 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            (void)pulls.load(std::memory_order_relaxed);
 
            detached_stream_stop_retains_runtime_until_cleanup();
+           detached_stream_close_keeps_measurement_reads_safe();
          }));

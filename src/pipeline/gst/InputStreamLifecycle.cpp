@@ -107,28 +107,29 @@ std::optional<PullError> InputStream::last_error_detail() const {
 
 InputStreamStats InputStream::stats() const {
   InputStreamStats out;
-  if (!state_)
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
     return out;
-  out.push_count = state_->push_count.load();
-  out.push_failures = state_->push_failures.load();
-  out.pull_count = state_->pull_count.load();
-  out.poll_count = state_->poll_count.load();
-  out.dropped_frames = state_->dropped_frames.load();
-  out.renegotiations = state_->renegotiations.load();
-  out.alloc_grows = state_->alloc_grows.load();
-  out.growth_blocked = state_->growth_blocked.load();
-  out.renegotiation_blocked = state_->renegotiation_blocked.load();
+  out.push_count = state->push_count.load();
+  out.push_failures = state->push_failures.load();
+  out.pull_count = state->pull_count.load();
+  out.poll_count = state->poll_count.load();
+  out.dropped_frames = state->dropped_frames.load();
+  out.renegotiations = state->renegotiations.load();
+  out.alloc_grows = state->alloc_grows.load();
+  out.growth_blocked = state->growth_blocked.load();
+  out.renegotiation_blocked = state->renegotiation_blocked.load();
   const auto avg_us = [](std::uint64_t total_ns, std::uint64_t count) -> double {
     if (count == 0)
       return 0.0;
     return static_cast<double>(total_ns) / static_cast<double>(count) / 1000.0;
   };
-  out.avg_alloc_us = avg_us(state_->alloc_ns.load(), out.push_count);
-  out.avg_map_us = avg_us(state_->map_ns.load(), out.push_count);
-  out.avg_copy_us = avg_us(state_->copy_ns.load(), out.push_count);
-  out.avg_push_us = avg_us(state_->push_ns.load(), out.push_count);
-  out.avg_pull_wait_us = avg_us(state_->pull_wait_ns.load(), out.pull_count);
-  out.avg_decode_us = avg_us(state_->decode_ns.load(), out.pull_count);
+  out.avg_alloc_us = avg_us(state->alloc_ns.load(), out.push_count);
+  out.avg_map_us = avg_us(state->map_ns.load(), out.push_count);
+  out.avg_copy_us = avg_us(state->copy_ns.load(), out.push_count);
+  out.avg_push_us = avg_us(state->push_ns.load(), out.push_count);
+  out.avg_pull_wait_us = avg_us(state->pull_wait_ns.load(), out.pull_count);
+  out.avg_decode_us = avg_us(state->decode_ns.load(), out.pull_count);
   return out;
 }
 
@@ -163,9 +164,10 @@ std::string InputStream::diagnostics_summary() const {
 }
 
 std::shared_ptr<DiagCtx> InputStream::diag_ctx() const {
-  if (!state_)
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
     return {};
-  return state_->diag;
+  return state->diag;
 }
 
 GstElement* InputStream::pipeline_handle() const {
@@ -748,7 +750,7 @@ void InputStream::close() {
       state_->pipeline = nullptr;
     }
   }
-  state_.reset();
+  std::atomic_store_explicit(&state_, std::shared_ptr<State>{}, std::memory_order_release);
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] InputStream::close end\n");
   }
