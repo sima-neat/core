@@ -996,6 +996,15 @@ struct GenAIServer::Impl {
     return true;
   }
 
+  bool require_thinking_capability(const GenAIModel& model, const GenerationRequest& request,
+                                   httplib::Response& res) const {
+    if (request.enable_thinking && !GenAIServer::model_supports_thinking(model)) {
+      set_error(res, "Thinking is not supported for this model", 400);
+      return false;
+    }
+    return true;
+  }
+
   void handle_stop(const httplib::Request& req, httplib::Response& res) {
     set_cors(res);
     try {
@@ -1028,6 +1037,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
       request.messages = parse_chat_messages(body);
       if (const auto error = apply_tool_options(body, request)) {
         set_error(res, *error, 400);
@@ -1076,6 +1088,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
       request.prompt = completion_prompt(body);
       if (const auto max_tokens = json_u32(body, {"max_tokens", "max_completion_tokens"})) {
         request.max_new_tokens = *max_tokens;
@@ -1116,6 +1131,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body, true);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
       request.messages = parse_chat_messages(body);
       if (const auto error = apply_tool_options(body, request)) {
         set_error(res, *error, 400);
@@ -1169,6 +1187,9 @@ struct GenAIServer::Impl {
 
       GenerationRequest request;
       request.enable_thinking = request_enable_thinking(body, true);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
       request.messages.push_back(std::move(message));
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1603,6 +1624,10 @@ GenAIServer::~GenAIServer() {
   if (impl_) {
     impl_->stop();
   }
+}
+
+bool GenAIServer::model_supports_thinking(const GenAIModel& model) {
+  return model.supports_thinking();
 }
 
 GenAIServer::GenAIServer(GenAIServer&&) noexcept = default;

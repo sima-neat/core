@@ -366,6 +366,7 @@ struct VisionLanguageModel::Impl {
 
   GenerationResult run(const GenerationRequest& request) {
     internal::validate_text_generation_request(request);
+    validate_thinking_request(request);
 
     auto active_run = ActiveRunGuard::acquire(*this);
     reset_metrics();
@@ -407,6 +408,12 @@ struct VisionLanguageModel::Impl {
     }
     result.finish_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
     return result;
+  }
+
+  void validate_thinking_request(const GenerationRequest& request) const {
+    if (request.enable_thinking && reasoning_format == simaai::llima::ReasoningFormat::None) {
+      throw std::invalid_argument("Thinking is not supported for this model");
+    }
   }
 
   std::optional<std::vector<uint32_t>> generate_tokens(const GenerationRequest& request) {
@@ -638,6 +645,10 @@ bool VisionLanguageModel::accepts_image() const {
   return impl_->info.accepts_image;
 }
 
+bool VisionLanguageModel::supports_thinking() const {
+  return impl_->reasoning_format != simaai::llima::ReasoningFormat::None;
+}
+
 std::string VisionLanguageModel::model_id() const {
   return internal::model_id_from_path(impl_->info.root);
 }
@@ -671,6 +682,7 @@ GenerationResult VisionLanguageModel::run(const GenerationRequest& request) {
 
 GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
   internal::validate_text_generation_request(request);
+  impl_->validate_thinking_request(request);
   return GenerationStream(
       [model = impl_, request](GenerationStream::Producer& producer) {
         struct CallbackGuard {
@@ -728,16 +740,16 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
                 }
               }
               if (stream_end) {
+                if (parse_tools) {
+                  handle_tool_parser_events(tool_parser.add("", true));
+                }
                 producer.record_text("", true);
               }
             });
         auto output_token_ids = model->generate_tokens(request);
         std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
-        if (parse_tools && output_token_ids.has_value()) {
-          handle_tool_parser_events(tool_parser.add("", true));
-          if (emitted_tool_calls) {
-            finish_reason = "tool_calls";
-          }
+        if (parse_tools && output_token_ids.has_value() && emitted_tool_calls) {
+          finish_reason = "tool_calls";
         }
         const auto generated_tokens =
             output_token_ids.has_value()

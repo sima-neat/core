@@ -43,6 +43,8 @@ public:
   void stop();
 
 private:
+  static bool model_supports_thinking(const GenAIModel& model);
+
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
