@@ -264,7 +264,7 @@ native_modalix_restore_specs specs
 
 
 class SimaaiMemoryTransactionTest(unittest.TestCase):
-    def test_collect_accepts_versioned_self_provider_for_palette_compatibility(self) -> None:
+    def test_collect_accepts_required_version_from_multiple_self_providers(self) -> None:
         result = run_bash(
             r'''
 source "$1"
@@ -274,7 +274,7 @@ runtime="${tmp}/simaai-memory-lib_2.1.1-0neat1_arm64.deb"
 dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}" other.deb)
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4373'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -285,10 +285,10 @@ dpkg-deb() {
     *:Version) printf '%s\n' 2.1.1-0neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1~pre4373)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1~pre4373)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
       printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'
@@ -306,7 +306,7 @@ printf 'DEV=%s\n' "${SIMAAI_MEMORY_DEV_DEB}"
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ACTUAL=2.1.1-0neat1", result.stdout)
-        self.assertIn("COMPAT=2.1.1", result.stdout)
+        self.assertIn("COMPAT=2.1.1~pre4373", result.stdout)
         self.assertIn("simaai-memory-lib_2.1.1-0neat1_arm64.deb", result.stdout)
         self.assertIn("simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb", result.stdout)
 
@@ -429,7 +429,7 @@ verify_installed_simaai_memory_payload
             "do not match bundled 2.1.1-0neat1", result.stderr
         )
 
-    def test_isolated_transaction_simulates_then_installs_only_local_paths(self) -> None:
+    def test_dependency_closed_transaction_includes_bundled_exact_dependents(self) -> None:
         result = run_bash(
             r'''
 source "$1"
@@ -462,8 +462,10 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
         for line in apt_lines:
             self.assertIn("<--no-remove>", line)
             self.assertIn("<--reinstall>", line)
+            self.assertIn("<--allow-downgrades>", line)
             self.assertIn("<./memory-runtime.deb>", line)
             self.assertIn("<./memory-dev.deb>", line)
+            self.assertIn("<./neat-runtime.deb>", line)
             self.assertNotIn("simaai-memory-lib=", line)
             self.assertNotIn("--fix-broken", line)
             self.assertNotIn("--force-overwrite", line)
