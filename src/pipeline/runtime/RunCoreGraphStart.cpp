@@ -1143,6 +1143,7 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
     for (int i = 0; i < opt_node.instances; ++i) {
       auto rt = std::make_unique<StageRuntime>(capacity);
       rt->node_id = st.node_id;
+      rt->group_index = group_index;
       rt->exec = st.node->factory()();
       for (const auto& port : st.node->input_ports()) {
         const PortId pid = intern_runtime_port(execution, port.name);
@@ -1307,6 +1308,115 @@ void build_adjacency_and_sinks(const std::shared_ptr<RunCore>& core) {
   }
 }
 
+void initialize_completion_tracking(const std::shared_ptr<RunCore>& core) {
+  auto& execution = core->graph_execution();
+  std::vector<std::size_t> pipeline_producers(execution.pipelines.size(), 0U);
+  std::vector<std::size_t> stage_producers(execution.stage_groups.size(), 0U);
+  std::vector<std::size_t> realtime_producers(execution.realtime_links.size(), 0U);
+  std::unordered_map<NodeId, std::size_t> sink_producers;
+
+  const auto add_target_producer = [&](const DownstreamTarget& target) {
+    switch (target.kind) {
+    case DownstreamTarget::Kind::PipelineInput:
+      if (target.index < pipeline_producers.size()) {
+        ++pipeline_producers[target.index];
+      }
+      break;
+    case DownstreamTarget::Kind::StageGroup:
+      if (target.index < stage_producers.size()) {
+        ++stage_producers[target.index];
+      }
+      break;
+    case DownstreamTarget::Kind::GraphSink:
+      ++sink_producers[static_cast<NodeId>(target.index)];
+      break;
+    case DownstreamTarget::Kind::RealtimeLatestLink:
+      break;
+    }
+  };
+
+  const auto add_public_ingress = [&](const Endpoint& endpoint) {
+    const bool already_present =
+        std::any_of(execution.public_ingress_endpoints.begin(),
+                    execution.public_ingress_endpoints.end(), [&](const Endpoint& existing) {
+                      return existing.kind == endpoint.kind && existing.node == endpoint.node &&
+                             existing.port == endpoint.port && existing.segment == endpoint.segment;
+                    });
+    if (!already_present) {
+      execution.public_ingress_endpoints.push_back(endpoint);
+    }
+  };
+  execution.public_ingress_endpoints.clear();
+  for (const auto& [name, endpoint] : execution.plan.named_inputs) {
+    (void)name;
+    add_public_ingress(endpoint);
+  }
+  if (execution.plan.default_input.has_value()) {
+    add_public_ingress(*execution.plan.default_input);
+  }
+
+  for (const auto& endpoint : execution.public_ingress_endpoints) {
+    const auto stage = execution.node_to_stage_group.find(endpoint.node);
+    if (stage != execution.node_to_stage_group.end()) {
+      add_target_producer(DownstreamTarget{DownstreamTarget::Kind::StageGroup, stage->second,
+                                           endpoint.port, invalid_edge_index()});
+      continue;
+    }
+    const auto pipeline = execution.node_to_pipeline.find(endpoint.node);
+    if (pipeline == execution.node_to_pipeline.end() ||
+        pipeline->second >= execution.pipelines.size() || !execution.pipelines[pipeline->second] ||
+        execution.pipelines[pipeline->second]->seg.boundary.direct_graph_source) {
+      continue;
+    }
+    add_target_producer(DownstreamTarget{DownstreamTarget::Kind::PipelineInput, pipeline->second,
+                                         endpoint.port, invalid_edge_index()});
+  }
+
+  for (const auto& [key, targets] : execution.adjacency) {
+    (void)key;
+    for (const auto& target : targets) {
+      if (target.kind == DownstreamTarget::Kind::RealtimeLatestLink) {
+        if (target.index < realtime_producers.size()) {
+          ++realtime_producers[target.index];
+        }
+        continue;
+      }
+      add_target_producer(target);
+    }
+  }
+
+  // A realtime scheduler drains all of its upstream edges before it completes. Count that
+  // scheduler as one producer of its downstream target, independent of its fan-in cardinality.
+  for (std::size_t i = 0; i < execution.realtime_links.size(); ++i) {
+    if (!execution.realtime_links[i]) {
+      continue;
+    }
+    execution.realtime_links[i]->set_producer_count(realtime_producers[i]);
+    add_target_producer(execution.realtime_links[i]->downstream());
+  }
+
+  for (std::size_t i = 0; i < execution.pipelines.size(); ++i) {
+    if (execution.pipelines[i]) {
+      execution.pipelines[i]->transport.producers_remaining.store(pipeline_producers[i],
+                                                                  std::memory_order_release);
+    }
+  }
+  for (std::size_t i = 0; i < execution.stage_groups.size(); ++i) {
+    auto& group = execution.stage_groups[i];
+    group.producers_remaining.store(stage_producers[i], std::memory_order_release);
+    group.workers_remaining.store(group.instances.size(), std::memory_order_release);
+  }
+  for (auto& [node_id, sink] : execution.sinks) {
+    if (!sink) {
+      continue;
+    }
+    const auto count = sink_producers.find(node_id);
+    // A sink without an explicit GraphSink edge is owned by its terminal runtime node (or by a
+    // fused encoded source branch), so it still has exactly one producer.
+    sink->set_producer_count(count == sink_producers.end() ? 1U : count->second);
+  }
+}
+
 void prebuild_complete_pipeline_segments(const std::shared_ptr<RunCore>& core, bool has_seed) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   const auto& default_input = execution.plan.default_input;
@@ -1362,8 +1472,19 @@ void prebuild_seeded_default_input_segment(const std::shared_ptr<RunCore>& core,
         "RunCore::start(graph): seeded default input does not resolve to a pipeline segment");
   }
   std::string build_err;
-  if (!core->ensure_graph_pipeline_built(endpoint->segment, *seed, &build_err,
-                                         allow_startup_preflight)) {
+  PullError current_failure;
+  if (!core->ensure_graph_pipeline_built(
+          endpoint->segment, *seed, &build_err, allow_startup_preflight,
+          /*cancel_on_public_input_close=*/false, &current_failure)) {
+    // Preserve only the typed failure produced by this segment build. The graph-global terminal
+    // error can belong to a different segment prebuilt earlier and is intentionally not consulted.
+    if (current_failure.report.has_value()) {
+      GraphReport report = std::move(*current_failure.report);
+      const std::string message = current_failure.message.empty()
+                                      ? "[" + report.error_code + "] " + report.repro_note
+                                      : std::move(current_failure.message);
+      throw NeatError(message, std::move(report));
+    }
     throw std::runtime_error(build_err.empty()
                                  ? "RunCore::start(graph): seeded default input build failed"
                                  : "RunCore::start(graph): " + build_err);
@@ -1383,6 +1504,7 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           flag.store(true);
         }
       } done_guard{st.worker_done};
+      bool input_drained = false;
       while (!core->graph_stop_requested()) {
         RuntimeStageQueueMsg queued;
         const auto pop_start = std::chrono::steady_clock::now();
@@ -1390,6 +1512,10 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           st.telemetry.mailbox_pop_miss.fetch_add(1, std::memory_order_relaxed);
           atomic_add_max(st.telemetry.mailbox_pop_wait_ns, st.telemetry.mailbox_pop_wait_max_ns,
                          elapsed_ns_since(pop_start));
+          if (st.inbox.closed()) {
+            input_drained = true;
+            break;
+          }
           continue;
         }
         st.telemetry.mailbox_pop_calls.fetch_add(1, std::memory_order_relaxed);
@@ -1418,6 +1544,12 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           st.telemetry.on_input_calls.fetch_add(1, std::memory_order_relaxed);
           atomic_add_max(st.telemetry.on_input_ns, st.telemetry.on_input_max_ns,
                          elapsed_ns_since(exec_start));
+        } catch (const NeatError& e) {
+          const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
+          release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
+                                                  "stage-on-input-exception");
+          core->graph_request_stop(e);
+          break;
         } catch (const std::exception& e) {
           const auto emitted_realtime_credits = st.emitter.end_input_credit_tracking();
           release_unforwarded_stage_input_credits(input_realtime_credits, emitted_realtime_credits,
@@ -1446,13 +1578,17 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           }
         }
       }
+      if (input_drained && !core->graph_stop_requested()) {
+        core->graph_stage_worker_completed(st.group_index);
+      }
     });
   }
 }
 
 void start_realtime_links(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
-  for (auto& link : execution.realtime_links) {
+  for (std::size_t i = 0; i < execution.realtime_links.size(); ++i) {
+    auto& link = execution.realtime_links[i];
     if (!link) {
       continue;
     }
@@ -1481,7 +1617,8 @@ void start_realtime_links(const std::shared_ptr<RunCore>& core) {
                                            router_callbacks, dispatch_options);
         },
         [core] { return core->graph_stop_requested(); },
-        [core](const std::string& err) { core->graph_request_stop(err); });
+        [core](const std::string& err) { core->graph_request_stop(err); },
+        [core, i] { core->graph_realtime_link_completed(i); });
   }
 }
 
@@ -1574,11 +1711,14 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
     {
       std::unique_lock<std::mutex> lock(pipe.transport.mu);
       pipe.transport.cv.wait(lock, [&] {
-        return pipe.transport.built.load(std::memory_order_acquire) || core->graph_stop_requested();
+        return pipe.transport.built.load(std::memory_order_acquire) ||
+               pipe.transport.completion_forwarded.load(std::memory_order_acquire) ||
+               core->graph_stop_requested();
       });
     }
 
-    if (core->graph_stop_requested()) {
+    if (core->graph_stop_requested() ||
+        pipe.transport.completion_forwarded.load(std::memory_order_acquire)) {
       if (simaai::neat::graph::graph_debug_enabled()) {
         std::fprintf(stderr, "[GRAPH] pipeline_pull_thread_stop_before_ready seg=%zu\n",
                      static_cast<std::size_t>(pipe.seg.id));
@@ -1654,16 +1794,31 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           pull_logs++;
         }
         const auto pull_start = std::chrono::steady_clock::now();
-        auto sample_opt = pipe.run_core
-                              ? pipe.run_core->pull_optional(core->graph_options.pull_timeout_ms)
-                              : std::optional<Sample>{};
+        Sample sample;
+        PullError pull_error;
+        const PullStatus pull_status =
+            pipe.run_core
+                ? pipe.run_core->pull(core->graph_options.pull_timeout_ms, sample, &pull_error)
+                : PullStatus::Closed;
         pipe.transport.telemetry.pull_thread_pull_calls.fetch_add(1, std::memory_order_relaxed);
         atomic_add_max(pipe.transport.telemetry.pull_thread_pull_ns,
                        pipe.transport.telemetry.pull_thread_pull_max_ns,
                        elapsed_ns_since(pull_start));
-        if (!sample_opt.has_value()) {
+        if (pull_status != PullStatus::Ok) {
           pipe.transport.telemetry.pull_thread_pull_miss.fetch_add(1, std::memory_order_relaxed);
-          emit_diag("empty");
+          emit_diag(pull_status == PullStatus::Timeout ? "empty" : "closed");
+          if (pull_status == PullStatus::Error) {
+            core->graph_request_stop(std::move(pull_error));
+            return;
+          }
+          if (pull_status == PullStatus::Closed) {
+            if (pipe.seg.boundary.source_like) {
+              core->graph_pipeline_completed(i, std::move(pull_error));
+            } else {
+              core->graph_pipeline_completed(i);
+            }
+            return;
+          }
           if (simaai::neat::graph::graph_debug_enabled()) {
             const std::string err = pipe.run_core ? pipe.run_core->last_error() : std::string{};
             if (!err.empty()) {
@@ -1680,7 +1835,6 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
           }
           continue;
         }
-        Sample sample = *sample_opt;
         last_output = std::chrono::steady_clock::now();
         emit_diag("sample");
         if (env_bool("SIMA_GRAPH_PRE_RESTORE_DEBUG", false)) {
@@ -1742,6 +1896,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
                        pipe.transport.telemetry.pull_thread_route_max_ns,
                        elapsed_ns_since(route_start));
       }
+    } catch (const NeatError& e) {
+      core->graph_request_stop(e);
     } catch (const std::exception& e) {
       core->graph_request_stop(e.what());
     }
@@ -1766,7 +1922,18 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
         atomic_add_max(pipe.transport.telemetry.push_thread_pop_wait_ns,
                        pipe.transport.telemetry.push_thread_pop_wait_max_ns,
                        elapsed_ns_since(pop_start));
-        continue;
+        if (!pipe.transport.input_queue->closed()) {
+          continue;
+        }
+        if (pipe.transport.built.load(std::memory_order_acquire) && pipe.run_core) {
+          pipe.run_core->close_input();
+          if (!pipe.transport.has_output) {
+            core->graph_pipeline_completed(i);
+          }
+        } else {
+          core->graph_pipeline_completed(i);
+        }
+        return;
       }
       pipe.transport.telemetry.push_thread_pop_calls.fetch_add(1, std::memory_order_relaxed);
       atomic_add_max(pipe.transport.telemetry.push_thread_pop_wait_ns,
@@ -1884,7 +2051,7 @@ void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_
                        static_cast<int>(::getpid()));
           std::raise(SIGSTOP);
         }
-        core->graph_request_stop("GraphRun: pipeline push failed");
+        core->graph_request_stop_from_pipeline(pipe.run_core, "GraphRun: pipeline push failed");
         return;
       }
       if (!pipe.transport.has_output) {
@@ -1942,6 +2109,7 @@ std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartO
     step_start = pipeline_internal::build_timing_now();
     build_adjacency_and_sinks(core);
     const auto adjacency_us = pipeline_internal::build_timing_us(step_start);
+    initialize_completion_tracking(core);
     step_start = pipeline_internal::build_timing_now();
     prebuild_complete_pipeline_segments(core, opt.seed.has_value());
     const auto prebuild_complete_us = pipeline_internal::build_timing_us(step_start);

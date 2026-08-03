@@ -3,6 +3,7 @@
 
 #include "internal/InputStream.h"
 #include "pipeline/RunExport.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
@@ -448,6 +449,29 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
   st->pipeline.input_thread = std::thread([st]() {
     const bool input_thread_timing = run_input_thread_timing_enabled();
     int input_thread_timing_count = 0;
+    const auto stop_with_error = [&st](const std::exception& e, const NeatError* typed_error) {
+      if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
+          pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
+        std::fprintf(stderr, "[PIPELINE] input_thread_error: %s\n", e.what());
+      }
+      if (typed_error) {
+        st->set_terminal_error(*typed_error);
+      } else {
+        std::lock_guard<std::mutex> lock(st->error_mu);
+        st->error = e.what();
+      }
+      st->stop_requested.store(true);
+      st->pipeline.out_cv.notify_all();
+    };
+    const auto discard_pending_input_timing = [&st]() {
+      if (!st->pipeline.supports_pull) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(st->latency_mu);
+      if (!st->pipeline.pending_times.empty()) {
+        st->pipeline.pending_times.pop_back();
+      }
+    };
     while (true) {
       InputItem item;
       std::size_t q_after_pop = 0;
@@ -507,21 +531,13 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                 static_cast<long long>(push_ns));
           }
         }
+      } catch (const NeatError& e) {
+        discard_pending_input_timing();
+        stop_with_error(e, &e);
+        break;
       } catch (const std::exception& e) {
-        if (st->pipeline.supports_pull) {
-          std::lock_guard<std::mutex> lock(st->latency_mu);
-          if (!st->pipeline.pending_times.empty()) {
-            st->pipeline.pending_times.pop_back();
-          }
-        }
-        if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
-            pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
-          std::fprintf(stderr, "[PIPELINE] input_thread_error: %s\n", e.what());
-        }
-        std::lock_guard<std::mutex> lock(st->error_mu);
-        st->error = e.what();
-        st->stop_requested.store(true);
-        st->pipeline.out_cv.notify_all();
+        discard_pending_input_timing();
+        stop_with_error(e, nullptr);
         break;
       }
     }
@@ -529,11 +545,10 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     if (!st->stop_requested.load() && st->pipeline.input_closed) {
       try {
         st->pipeline.stream.signal_eos();
+      } catch (const NeatError& e) {
+        stop_with_error(e, &e);
       } catch (const std::exception& e) {
-        std::lock_guard<std::mutex> lock(st->error_mu);
-        st->error = e.what();
-        st->stop_requested.store(true);
-        st->pipeline.out_cv.notify_all();
+        stop_with_error(e, nullptr);
       }
     }
     st->pipeline.input_thread_done.store(true);
@@ -612,6 +627,30 @@ std::string runtime::RunCore::last_error() const {
   if (graph_execution_)
     return {};
   return pipeline.stream.last_error();
+}
+
+std::optional<PullError> runtime::RunCore::last_error_detail() const {
+  {
+    std::lock_guard<std::mutex> lock(error_mu);
+    if (terminal_error_detail.has_value())
+      return terminal_error_detail;
+  }
+  if (graph_execution_)
+    return std::nullopt;
+  return pipeline.stream.last_error_detail();
+}
+
+std::optional<PullError>
+runtime::RunCore::wait_for_report_bearing_error(std::chrono::milliseconds timeout) const {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::max(timeout, std::chrono::milliseconds::zero());
+  std::optional<PullError> detail = last_error_detail();
+  while ((!detail.has_value() || !detail->report.has_value()) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    detail = last_error_detail();
+  }
+  return detail;
 }
 
 std::string runtime::RunCore::diagnostics_summary() const {

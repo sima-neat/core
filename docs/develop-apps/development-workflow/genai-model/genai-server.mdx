@@ -1,0 +1,276 @@
+---
+title: GenAI Server
+description: Serve LLM, VLM, and ASR models through Neat HTTP endpoints
+sidebar_position: 2
+slug: /develop-apps/development-workflow/genai-model/genai-server
+---
+
+# GenAI Server
+
+Use `GenAIServer` when a browser, UI, service, or remote client should call one
+or more GenAI models over HTTP. The server owns model registration, request
+routing, streaming responses, and cancellation. For application logic that
+runs in the same process as the model, use the
+[direct GenAI APIs](/develop-apps/development-workflow/genai-model/direct-api).
+
+## Create and start a server
+
+The server binds to `0.0.0.0:9998` by default. Register each deployed LLiMa
+model directory with a stable served name before starting the server:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat/genai.h>
+
+int main() {
+  simaai::neat::genai::GenAIServer server;
+  server.add_model(
+      "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
+      "llm");
+  server.add_model(
+      "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+      "vlm");
+  server.serve();
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+server = neat.genai.GenAIServer()
+server.add_model(
+    "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
+    "llm",
+)
+server.add_model(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+    "vlm",
+)
+server.start()
+try:
+    input("Press Enter to stop the server\n")
+finally:
+    server.stop()
+```
+
+</CodeTab>
+</CodeTabs>
+
+In C++, use `serve()` for a blocking foreground server. Use `start()` and
+`stop()` when your C++ or Python application manages the server lifetime.
+Configure `GenAIServerOptions` when the default host or port is not appropriate.
+Calling `stop()` also removes every registered model; add the models again
+before restarting the same server object.
+
+`GenAIServer` does not provide authentication or TLS termination, and it allows
+CORS requests from any origin. Bind it only to a trusted interface or place it
+behind a network layer that provides the required access control and encryption.
+
+## Discover served models
+
+List registered model names before sending a generation request:
+
+```bash
+curl http://<modalix-ip>:9998/v1/models
+```
+
+The response uses the OpenAI model-list shape:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "llm", "object": "model", "owned_by": "simaai"},
+    {"id": "vlm", "object": "model", "owned_by": "simaai"}
+  ]
+}
+```
+
+Every generation and audio request must use one of these served names in its
+`model` field.
+
+## Endpoints
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/models` | List registered served model names. |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat, including text, images, tools, and streaming. |
+| `POST` | `/v1/completions` | OpenAI-compatible prompt completion. |
+| `POST` | `/v1/audio/transcriptions` | Transcribe multipart audio input. |
+| `POST` | `/v1/audio/translations` | Translate multipart speech into English. |
+| `POST` | `/api/chat` | Ollama-compatible chat; streams NDJSON by default. |
+| `POST` | `/api/generate` | Ollama-compatible prompt generation; streams NDJSON by default. |
+| `POST` | `/stop` | Cancel active streams for one model or for all models. |
+
+The compatibility aliases `/audio/transcriptions` and `/audio/translations`
+are also accepted. Prefer the `/v1/audio/...` routes in new clients.
+
+Compatibility refers to the routes and response shapes implemented by
+`GenAIServer`; it does not imply support for every field in the upstream OpenAI
+or Ollama APIs. The supported request fields are described below.
+
+## OpenAI-compatible requests
+
+Send `model` and `messages` to the chat endpoint. Set `stream` to `true` for
+Server-Sent Events; it defaults to `false`:
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Explain an API gateway in one sentence."}
+    ],
+    "max_tokens": 64,
+    "stream": false
+  }'
+```
+
+`/v1/chat/completions` accepts `max_tokens` or `max_completion_tokens`,
+`tools`, and `tool_choice` in addition to `model`, `messages`, and `stream`.
+Tool definitions use OpenAI's function-tool shape. `tool_choice` supports
+`"auto"` and `"none"`; omitting it or setting it to `null` leaves the default
+tool behavior in place.
+
+`/v1/completions` accepts a `prompt` string or an array of strings, plus
+`model`, `max_tokens` or `max_completion_tokens`, and `stream`, which defaults
+to `false`. When `prompt` is an array, the server joins its string entries with
+newline characters and runs one completion request.
+
+For VLM requests, an OpenAI chat `image_url` content part must contain a base64
+data URI such as `data:image/jpeg;base64,...`. Image decoding requires a Neat
+build with OpenCV support.
+
+## Ollama-compatible requests
+
+Use `/api/chat` for message history or `/api/generate` for a prompt:
+
+```bash
+curl http://<modalix-ip>:9998/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "prompt": "Give me three API design tips.",
+    "options": {"num_predict": 96},
+    "stream": false
+  }'
+```
+
+Both Ollama-compatible endpoints stream newline-delimited JSON by default. Set
+`stream` to `false` for one complete JSON response. `/api/chat` also accepts
+`tools` and `tool_choice`. For VLM requests, put raw base64 image strings in
+each `/api/chat` message's `images` array or in the top-level `images` array
+for `/api/generate`.
+
+## Reasoning models
+
+Reasoning Models like Qwen3 or Gemma 4 E2B/E4B can return reasoning separately from the
+final answer. For an OpenAI-compatible request, set `enable_thinking` at the
+top level:
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "enable_thinking": true,
+    "max_tokens": 256,
+    "stream": false
+  }'
+```
+
+The non-streaming response places reasoning in
+`choices[0].message.reasoning_content` and the final answer in
+`choices[0].message.content`. With `stream: true`, chunks use
+`choices[0].delta.reasoning_content` and `choices[0].delta.content`.
+
+For an Ollama-compatible request, use `think`:
+
+```bash
+curl http://<modalix-ip>:9998/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "think": true,
+    "options": {"num_predict": 256},
+    "stream": false
+  }'
+```
+
+`/api/chat` returns reasoning in `message.thinking` and the final answer in
+`message.content`. `/api/generate` accepts the same top-level `think` field and
+returns reasoning in top-level `thinking` and the answer in `response`.
+
+Reasoning fields are omitted when empty. They are output-only: incoming
+`reasoning_content` or `thinking` fields are not replayed as conversation
+history.
+
+## Audio requests
+
+Audio endpoints accept multipart form data with a served ASR model name and an
+audio file. `language` defaults to `auto`, and `stream` defaults to `false`:
+
+```bash
+curl http://<modalix-ip>:9998/v1/audio/transcriptions \
+  -F model=asr \
+  -F file=@speech.wav \
+  -F language=auto \
+  -F stream=false
+```
+
+Use `/v1/audio/translations` with the same form fields to translate speech into
+English. Both routes support `stream=true`. Results include the generated text,
+detected language, and ASR confidence probes when the model provides them.
+
+## Streaming and cancellation
+
+OpenAI-compatible chat, completion, and audio streams use
+`text/event-stream`, emit `data:` events, and finish with `data: [DONE]`.
+Ollama-compatible streams use `application/x-ndjson`. Streaming responses
+include `ttft` and `tps` when available. Generated-token counts use
+`generated_tokens` in OpenAI-compatible streams and `eval_count` in
+Ollama-compatible streams.
+
+Cancel active streams for one served model:
+
+```bash
+curl http://<modalix-ip>:9998/stop \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llm"}'
+```
+
+Omit `model` to cancel all active streams. This HTTP route cancels active
+streaming generation; it does not cancel synchronous requests or stop the
+server process. Call `server.stop()` from the owning application to stop a
+server started with `server.start()`.
+
+## Errors
+
+Explicit endpoint validation failures return HTTP 400, including a missing
+`model`, invalid tool configuration, an incompatible model capability, or a
+missing multipart audio `file`. An unknown served model returns HTTP 404.
+Before a response stream is established, exceptions raised while parsing a
+request or running a model return HTTP 500.
+
+Before streaming starts, failures use the JSON envelope
+`{"error":{"message":"...","type":"invalid_request_error"}}`. After a
+streaming response has started, failures are emitted in the endpoint's SSE or
+NDJSON stream instead of changing the HTTP status.
+
+## Next steps
+
+- Follow [Serve GenAI Models](/tutorials/serve-genai-models) for a complete C++ and Python walkthrough.
+- Use the [direct GenAI APIs](/develop-apps/development-workflow/genai-model/direct-api) for in-process calls.
+- Prepare and benchmark model directories with [GenAI with LLiMa](/genai-llima/).

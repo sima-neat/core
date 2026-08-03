@@ -153,6 +153,10 @@ private:
  * Graphs are **non-copyable** but **movable**. They are not thread-safe — build a Graph on
  * one thread, then hand the resulting `Run` to wherever it's needed.
  *
+ * Each Node object can appear at most once in one Graph composition. Composition mutations are
+ * atomic: an invalid add/import/connect leaves the Graph unchanged. `build()` automatically
+ * validates final GStreamer element names; calling `validate()` first is optional.
+ *
  * @see Run for the runtime handle this produces
  * @see Model — the simplified entry point that wraps a Graph for users who don't need
  *      composition flexibility
@@ -195,6 +199,7 @@ public:
    * @brief Append a single Node to the Graph.
    * @param node Shared pointer (typically returned by a Node factory like
    * `sima::nodes::common::Queue()`).
+   * Adding the same Node object twice is rejected. Create a distinct object for a distinct vertex.
    * @return `*this` to allow chaining.
    */
   Graph& add(std::shared_ptr<Node> node);
@@ -217,6 +222,8 @@ public:
    * endpoint. All overloads lower through the same
    * ExecutionGraphPlan/RunCore path, preserving named endpoints for diagnostics, save/load,
    * visualization, and named `Run::push()` / `Run::pull()`.
+   * Passing a Node already present in this Graph reuses its vertex, which supports fan-out without
+   * duplicating the logical Node.
    */
   Graph& connect(std::string_view from_endpoint, std::string_view to_endpoint);
   Graph& connect(const Graph& from, const Graph& to);
@@ -247,7 +254,9 @@ public:
    *
    * Useful for one-off experiments, third-party plugins NEAT doesn't wrap, or GStreamer
    * features (`tee`, `selector`, dynamic pads) that are awkward to model as Nodes. The
-   * trade-off: you lose deterministic naming for the spliced fragment. Use sparingly.
+   * Give each explicitly named element a unique short name within the final materialized pipeline
+   * segment. The build path validates this automatically and rewrites declarations together with
+   * named-pad references when a Graph name transform applies. It does not auto-rename collisions.
    *
    * @param fragment Raw GStreamer launch string (e.g., `"identity silent=false ! videocrop ..."`).
    * @return `*this` to allow chaining.
@@ -322,7 +331,9 @@ public:
    *
    * Runs all built-in contracts (NonEmptyPipeline, NoNullNodes, SinkLastForRun, etc.) and
    * returns a structured `GraphReport`. Cheaper than `build()` because it doesn't instantiate
-   * GStreamer state. Useful in unit tests and CI.
+   * GStreamer state. Useful in unit tests and CI. For a connected Graph, this call validates
+   * endpoint topology; each real pipeline segment receives mandatory launch validation when it
+   * materializes.
    *
    * @return `GraphReport` carrying any contract failures, with `error_code` and `repro_note`.
    */
@@ -369,6 +380,9 @@ public:
    * Use this for source pipelines (Graphs whose first Node is a producer like `RTSPInput`
    * or `StillImageInput` — no `push()` from user code needed). Push pipelines should prefer
    * `build(inputs, ...)` so caps can be derived from the actual input.
+   * Final launch-name integrity is always checked. Input-dependent connected segments may be
+   * materialized later, so their structured build error can surface on the first `push()` or
+   * `pull()` instead of this call.
    */
   Run build(const RunOptions& opt = {});
   /**
@@ -396,6 +410,7 @@ private:
   // `CompositionGraph` in the internal detail header.
   struct BuiltState;
   struct CompositionGraph;
+  struct CompositionMutation;
   enum class CompositionEdgeKind {
     ImplicitLinear,
     RuntimePort,
@@ -496,7 +511,7 @@ private:
   uint64_t built_version_ = 0;
   std::shared_ptr<const pipeline_internal::InputRouteProcessor> input_route_processor_;
 
-  void mark_composition_changed();
+  void mark_composition_changed() noexcept;
   std::pair<std::size_t, std::size_t> append_linear_fragment_(const Graph& fragment,
                                                               const char* where);
   std::pair<std::size_t, std::size_t> import_composition_fragment_(const Graph& fragment,

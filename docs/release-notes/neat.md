@@ -27,6 +27,11 @@ Release notes for the SiMa.ai Neat Library.
   `pyneat.VideoSenderOptions.passthrough(codec)`. H.265 uses RTP payload type 98
   by default; H.264 keeps 96. `H264RtpUdpFromEncoded()` is deprecated in favor
   of `Passthrough(RtspCodec::H264)`.
+- Raw `VideoSender` input now omits its format conversion automatically for
+  proven NV12 in system or SiMaAI memory when the installed encoder advertises
+  `input-layout-aware=true`. Other raw formats, unknown memory/layouts, and
+  inputs without a reliable format contract retain the existing conversion to
+  NV12. The `H264RtpUdpFromRaw(...)` C++ and Python APIs are unchanged.
 - RTSP inputs select the RTP payload type with a single codec-neutral
   `payload_type` field on `RtspEncodedInputOptions` and
   `RtspDecodedInputOptions`: `-1` selects the codec default (96 for H.264/H.265,
@@ -41,6 +46,17 @@ Release notes for the SiMa.ai Neat Library.
   JSON messages. Update Insight to a version with metadata chunk reassembly
   before or together with this Neat Library version; older Insight versions
   continue to support unchanged JSON payloads up to 1200 bytes.
+
+### Graph construction and validation
+
+- Graph composition now treats one Node object as one logical vertex. Duplicate insertion and
+  overlapping fragment imports fail atomically, while repeated `connect()` calls reuse an existing
+  Node for fan-out.
+- Every materialized pipeline segment now validates final GStreamer names during `build()`; an
+  explicit `validate()` call is not required. Duplicate or dropped names fail with
+  `misconfig.pipeline_shape` instead of producing a truncated pipeline.
+- Custom fragments now report all explicit names and transform named-pad references together with
+  declarations. Name collisions are rejected rather than auto-renamed.
 
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |

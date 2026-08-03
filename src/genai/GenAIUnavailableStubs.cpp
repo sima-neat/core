@@ -42,6 +42,9 @@ bool GenAIModel::accepts_image() const {
 bool GenAIModel::accepts_audio() const {
   throw_genai_unavailable();
 }
+bool GenAIModel::supports_thinking() const {
+  throw_genai_unavailable();
+}
 std::string GenAIModel::model_id() const {
   throw_genai_unavailable();
 }
@@ -109,6 +112,9 @@ VisionLanguageModel::~VisionLanguageModel() = default;
 VisionLanguageModel::VisionLanguageModel(VisionLanguageModel&&) noexcept = default;
 VisionLanguageModel& VisionLanguageModel::operator=(VisionLanguageModel&&) noexcept = default;
 bool VisionLanguageModel::accepts_image() const {
+  throw_genai_unavailable();
+}
+bool VisionLanguageModel::supports_thinking() const {
   throw_genai_unavailable();
 }
 std::string VisionLanguageModel::model_id() const {

@@ -1,6 +1,6 @@
 ## Summary
 
-Describe what changed and why.
+Describe what changed and why. Link related issues with `Fixes #<issue>`.
 
 ## Change Type
 

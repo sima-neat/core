@@ -270,6 +270,16 @@ Sample stamp_public_graph_ingress_sample(runtime::RunCore& core, const Sample& i
 bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpoint& endpoint,
                                     std::string_view endpoint_name, const Sample& msgs,
                                     bool block) {
+  if (!core.graph_begin_public_push()) {
+    return false;
+  }
+  struct PublicPushGuard {
+    runtime::RunCore& core;
+    ~PublicPushGuard() {
+      core.graph_end_public_push();
+    }
+  } public_push_guard{core};
+
   for (const auto& msg : msgs) {
     enforce_public_sample_push_transferable(msg, "Run::push");
     Sample stamped = stamp_public_graph_ingress_sample(core, msg, endpoint_name);

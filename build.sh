@@ -75,9 +75,13 @@ NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
 NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
 NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
-NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (tutorials/tests)}"
+NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa Neat extras (tutorials/tests)}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 SIMANEAT_BOOTSTRAP_SIMA_CLI="${SIMANEAT_BOOTSTRAP_SIMA_CLI:-auto}"
+SIMANEAT_SCCACHE="${SIMANEAT_SCCACHE:-auto}"
+
+# shellcheck source=scripts/configure_sccache.sh
+source "${REPO_ROOT}/scripts/configure_sccache.sh"
 
 # ------------------------------------------------------------------------------
 # System dependencies
@@ -293,6 +297,13 @@ Environment:
                  Vulcan environment used for dependency artifact installs.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
+  SIMANEAT_SCCACHE=auto|on|off
+                 Enable the persistent compiler cache. auto bootstraps a pinned,
+                 checksum-verified sccache binary when needed.
+  SCCACHE_DIR=~/.cache/sima-neat/sccache
+                 Persistent local compiler-cache directory.
+  SCCACHE_CACHE_SIZE=10G
+                 Maximum local compiler-cache size.
 
 Examples:
   ./build.sh
@@ -1808,6 +1819,7 @@ print_build_config() {
   echo "Strict warns   : ${STRICT_WARNINGS}"
   echo "Build dir      : ${BUILD_DIR}"
   echo "Build jobs     : ${BUILD_JOBS}"
+  echo "sccache        : ${SIMANEAT_SCCACHE_ACTIVE:-OFF}"
   echo "eLxr SDK       : ${ELXR_SDK}"
   echo "Neat LLiMa     : ${INSTALL_NEAT_LLIMA}"
   if [[ "${ELXR_SDK}" == "ON" ]]; then
@@ -1829,8 +1841,10 @@ clean_build_dir_if_requested() {
 configure_cmake() {
   # Configure once; subsequent steps reuse this build tree.
   local -a cmake_args=(
+    -U "SKBUILD_*"
     -S . -B "${BUILD_DIR}"
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    -DCMAKE_INSTALL_PREFIX=/usr/local
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
@@ -1842,6 +1856,20 @@ configure_cmake() {
     -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
     -DFUZZING="${BUILD_FUZZ}"
   )
+
+  if [[ "${SIMANEAT_SCCACHE_ACTIVE:-OFF}" == "ON" ]]; then
+    cmake_args+=(
+      -DCMAKE_C_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
+      -DCMAKE_CXX_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
+    )
+  else
+    # CMake retains launcher values in an existing build tree. Clear them
+    # explicitly so SIMANEAT_SCCACHE=off is honored without requiring --clean.
+    cmake_args+=(
+      -DCMAKE_C_COMPILER_LAUNCHER=
+      -DCMAKE_CXX_COMPILER_LAUNCHER=
+    )
+  fi
 
   if [[ -f "${NEAT_PACKAGE_BUILDINFO_JSON}" ]]; then
     local buildinfo_json_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
@@ -1969,7 +1997,11 @@ build_docs_only_if_requested() {
 build_targets() {
   # For dev-only builds, avoid building tests/tutorials by targeting core lib.
   if [[ "${BUILD_TESTS}" == "OFF" && "${BUILD_TUTORIALS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
-    cmake --build "${BUILD_DIR}" --target sima_neat_libraries -j"${BUILD_JOBS}"
+    local -a targets=(sima_neat_libraries)
+    if [[ "${BUILD_PYTHON}" == "ON" ]]; then
+      targets+=(_pyneat_core)
+    fi
+    cmake --build "${BUILD_DIR}" --target "${targets[@]}" -j"${BUILD_JOBS}"
   else
     cmake --build "${BUILD_DIR}" -j"${BUILD_JOBS}"
   fi
@@ -2101,124 +2133,60 @@ build_python_wheel_if_requested() {
     exit 1
   fi
 
-  local wheel_python="python3"
-  local pyproject_path="${REPO_ROOT}/pyproject.toml"
-  local pyproject_backup
   local pyneat_package_version
-
-  # Use isolated venv if python-build module is missing on the host.
-  if ! python3 -m build --version >/dev/null 2>&1; then
-    local venv_dir="${BUILD_DIR}/.wheel-venv"
-    echo "Python 'build' module not found; creating isolated venv at ${venv_dir}..."
-    if ! python3 -m venv "${venv_dir}"; then
-      echo "ERROR: failed to create venv. Install python3-venv and retry."
-      exit 1
-    fi
-    wheel_python="${venv_dir}/bin/python"
-    "${wheel_python}" -m pip install --upgrade pip build
-  fi
+  local python_tag
+  local abi_tag
+  local platform_tag
+  local -a extension_candidates=()
 
   pyneat_package_version="$(compute_neat_package_version)"
   echo "Using pyneat package version: ${pyneat_package_version}"
 
-  pyproject_backup="$(mktemp)"
-  cp "${pyproject_path}" "${pyproject_backup}"
-  restore_pyneat_pyproject() {
-    if [[ -n "${pyproject_backup:-}" && -f "${pyproject_backup}" ]]; then
-      cp "${pyproject_backup}" "${pyproject_path}"
-      rm -f "${pyproject_backup}"
-    fi
-  }
+  mapfile -t extension_candidates < <(
+    find "${BUILD_DIR}/python" -maxdepth 1 -type f -name '_pyneat_core*.so' | sort
+  )
+  if [[ "${#extension_candidates[@]}" -ne 1 ]]; then
+    echo "ERROR: expected exactly one prebuilt pyneat extension, found ${#extension_candidates[@]}." >&2
+    printf '  %s\n' "${extension_candidates[@]}" >&2
+    exit 1
+  fi
 
-  python3 - "${pyproject_path}" "${pyneat_package_version}" <<'PY'
+  if [[ "${ELXR_SDK}" == "ON" ]]; then
+    local py_abi="${ELXR_TARGET_PYTHON_VERSION/./}"
+    python_tag="cp${py_abi}"
+    abi_tag="cp${py_abi}"
+    platform_tag="${ELXR_WHEEL_HOST_PLATFORM//-/_}"
+  else
+    read -r python_tag abi_tag platform_tag < <(
+      python3 - "${extension_candidates[0]}" <<'PY'
 import re
 import sys
+import sysconfig
 from pathlib import Path
 
-path = Path(sys.argv[1])
-version = sys.argv[2]
-text = path.read_text(encoding="utf-8")
-updated, count = re.subn(
-    r'(?m)^version = "[^"]*"$',
-    f'version = "{version}"',
-    text,
-    count=1,
-)
-if count != 1:
-    raise SystemExit(f"Failed to update version in {path}")
-path.write_text(updated, encoding="utf-8")
+extension = Path(sys.argv[1]).name
+match = re.search(r"\.cpython-(\d+)([a-z]*)-", extension)
+if not match:
+    raise SystemExit(f"Cannot determine CPython ABI from extension name: {extension}")
+python_tag = f"cp{match.group(1)}"
+abi_tag = f"{python_tag}{match.group(2)}"
+platform_tag = sysconfig.get_platform().replace("-", "_").replace(".", "_")
+print(python_tag, abi_tag, platform_tag)
 PY
-
-  local wheel_build_status=0
-  set +e
-  (
-    set -e
-    rm -rf dist
-    if [[ "${ELXR_SDK}" == "ON" ]]; then
-      echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
-      echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja wheel
-      local py_abi
-      local py_triplet
-      local pyneat_ext_suffix
-      py_abi="${ELXR_TARGET_PYTHON_VERSION/./}"
-      py_triplet="$(elxr_ext_platform_triplet)"
-      pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
-      echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
-      local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
-      if [[ -n "${SYSROOT:-}" ]]; then
-        wheel_cmake_args+=" -DPython_INCLUDE_DIR=${ELXR_TARGET_PYTHON_INCLUDE_DIR}"
-        wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
-        wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
-        wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
-        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=ON"
-      fi
-      # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
-      # (notably ninja), which are not executable on the host container.
-      # Build without isolation and force Makefiles to keep host tools executable.
-      local backend_pythonpath
-      backend_pythonpath="$("${wheel_python}" - <<'PY'
-import sysconfig
-print(sysconfig.get_paths()["purelib"])
-PY
-)"
-      _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
-        PYTHONPATH="${backend_pythonpath}${PYTHONPATH:+:${PYTHONPATH}}" \
-        CMAKE_ARGS="${wheel_cmake_args}" \
-        CMAKE_GENERATOR="Unix Makefiles" \
-        CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build --wheel --outdir dist --no-isolation
-      mapfile -t built_wheels < <(find dist -maxdepth 1 -type f -name 'pyneat-*.whl' | sort)
-      if [[ "${#built_wheels[@]}" -ne 1 ]]; then
-        echo "ERROR: expected exactly one pyneat wheel, found ${#built_wheels[@]}." >&2
-        printf '  %s\n' "${built_wheels[@]}" >&2
-        exit 1
-      fi
-      "${wheel_python}" -m wheel tags \
-        --remove \
-        --python-tag "cp${py_abi}" \
-        --abi-tag "cp${py_abi}" \
-        --platform-tag "${ELXR_WHEEL_HOST_PLATFORM//-/_}" \
-        "${built_wheels[0]}"
-    else
-      CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${wheel_python}" -m build --wheel --outdir dist
-    fi
-    echo "Built wheel(s):"
-    ls -lh dist/*.whl
-  )
-  wheel_build_status=$?
-  set -e
-
-  restore_pyneat_pyproject
-  if [[ "${wheel_build_status}" -ne 0 ]]; then
-    exit "${wheel_build_status}"
+    )
   fi
+
+  rm -rf dist
+  python3 scripts/build/build_pyneat_wheel.py \
+    --project-root "${REPO_ROOT}" \
+    --extension "${extension_candidates[0]}" \
+    --output-dir "${REPO_ROOT}/dist" \
+    --version "${pyneat_package_version}" \
+    --python-tag "${python_tag}" \
+    --abi-tag "${abi_tag}" \
+    --platform-tag "${platform_tag}"
+  echo "Built wheel from the existing CMake extension:"
+  ls -lh dist/*.whl
 }
 
 run_install_sanity_check() {
@@ -2943,6 +2911,11 @@ main() {
 
   detect_build_jobs
   configure_fuzz_toolchain_if_needed
+  if [[ "${DOCS_ONLY}" == "ON" ]]; then
+    SIMANEAT_SCCACHE_ACTIVE=OFF
+  else
+    simaneat_configure_sccache "${REPO_ROOT}"
+  fi
   generate_platform_version_artifacts
   print_build_config
   clean_build_dir_if_requested
@@ -2953,10 +2926,12 @@ main() {
   build_targets
   copy_test_images
   build_docs_if_requested
-  build_python_wheel_if_requested
   run_install_sanity_check
   build_deb_if_requested
   build_extras_archive_if_requested
+  # The wheel backend reconfigures the shared CMake tree for its staging path,
+  # so all other CMake/CPack consumers must finish before this step.
+  build_python_wheel_if_requested
   stage_package_artifacts_to_dist
   write_dist_package_contract_manifest_fields
   write_install_manifest
@@ -2964,6 +2939,7 @@ main() {
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested
+  simaneat_show_sccache_stats
 }
 
 main "$@"

@@ -196,10 +196,59 @@ stop_runtime_services() {
   run_optional_service_step \
     "stop simaai-pipeline-manager.service" stop simaai-pipeline-manager.service
   run_optional_service_step "stop rctd.service" stop rctd.service
-  run_optional_service_step "stop simaai-appcomplex.service" stop simaai-appcomplex.service
-  run_step "terminate stale runtime processes" pkill -TERM -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
+  run_step "terminate stale runtime processes" pkill -TERM -f '(/usr/bin/)?(simaai_pipeline_handler_new|rctd)( |$)'
   sleep 1
-  run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
+  run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(simaai_pipeline_handler_new|rctd)( |$)'
+}
+
+# Booting the M4 while mlashmcomplex is dead blocks the write in uninterruptible
+# sleep, where the step timeout cannot reach it and only the watchdog recovers
+# the board. Refuse rather than hang. Matching on the process name keeps a shell
+# whose own command line mentions mlashmcomplex from reporting a false positive.
+ensure_appcomplex_before_remoteproc() {
+  if ! systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
+    printf "[recovery] appcomplex precondition skipped: systemd unit simaai-appcomplex.service is not installed on this devkit image\n"
+    return 0
+  fi
+
+  pgrep -x mlashmcomplex >/dev/null 2>&1 && return 0
+
+  printf "[recovery] simaai-appcomplex.service is down before the remoteproc cycle; restoring it first\n"
+  run_optional_service_step \
+    "clear simaai-appcomplex.service start-limit state" reset-failed simaai-appcomplex.service
+  run_optional_service_step \
+    "start simaai-appcomplex.service" start simaai-appcomplex.service
+
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    pgrep -x mlashmcomplex >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+
+  printf "[recovery] refusing to boot the M4: simaai-appcomplex.service did not come up\n" >&2
+  return 1
+}
+
+recover_devkit_runtime() {
+  stop_runtime_services
+  empty_coprocessing
+  cleanup_tmp_sima_if_root_low_space
+  ensure_appcomplex_before_remoteproc || return 1
+  run_step "remoteproc0 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state'
+  run_step "remoteproc1 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc1/state'
+  run_step "remoteproc1 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
+  run_step "remoteproc0 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
+  run_step "remoteproc status" sh -c 'for rp in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do echo "$rp: $(cat $rp/name) state=$(cat $rp/state)"; done'
+  # init_mla_memory needs /dev/m4_lp_mbox, which appcomplex holds while it runs.
+  run_optional_service_step "stop simaai-appcomplex.service" stop simaai-appcomplex.service
+  run_step "terminate stale appcomplex processes" pkill -TERM -f '(/usr/bin/)?mlashmcomplex( |$)'
+  sleep 1
+  run_step "kill stale appcomplex processes" pkill -KILL -f '(/usr/bin/)?mlashmcomplex( |$)'
+  run_step "init_mla_memory" /usr/bin/init_mla_memory.sh
+  run_optional_service_step "restart simaai-appcomplex.service" restart simaai-appcomplex.service
+  run_optional_service_step \
+    "restart simaai-pipeline-manager.service" restart simaai-pipeline-manager.service
+  run_optional_service_step "restart rctd.service" restart rctd.service
 }
 
 if [[ "${NEAT_RECOVERY_FUNCTIONS_ONLY:-OFF}" == "ON" ]]; then
@@ -212,16 +261,5 @@ fi
 if ! activate_staged_ev74_firmware_if_needed; then
   exit 1
 fi
-stop_runtime_services
-empty_coprocessing
-cleanup_tmp_sima_if_root_low_space
-run_step "remoteproc0 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state'
-run_step "remoteproc1 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc1/state'
-run_step "remoteproc1 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
-run_step "remoteproc0 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
-run_step "remoteproc status" sh -c 'for rp in /sys/class/remoteproc/remoteproc0 /sys/class/remoteproc/remoteproc1; do echo "$rp: $(cat $rp/name) state=$(cat $rp/state)"; done'
-run_step "init_mla_memory" /usr/bin/init_mla_memory.sh
-run_optional_service_step "restart simaai-appcomplex.service" restart simaai-appcomplex.service
-run_optional_service_step \
-  "restart simaai-pipeline-manager.service" restart simaai-pipeline-manager.service
-run_optional_service_step "restart rctd.service" restart rctd.service
+recover_devkit_runtime
+exit $?

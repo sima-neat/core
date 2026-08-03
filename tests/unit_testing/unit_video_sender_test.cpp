@@ -60,13 +60,14 @@ RUN_TEST(
         opt.encoder.level = "4.1";
 
         const auto graph = VideoSender(opt);
-        require_in_order(
-            graph.describe(),
-            {"CapsRaw", "VideoConvert", "CapsRaw", "H264EncodeSima", "H264Parse", "H264Packetize",
-             "UdpOutput"},
-            "VideoSender raw path should include caps, convert, caps, encode, parse, pay, udp");
+        require_in_order(graph.describe(),
+                         {"VideoSenderRawIngress[convert_to_nv12]", "H264EncodeSima", "H264Parse",
+                          "H264Packetize", "UdpOutput"},
+                         "standalone VideoSender should retain its safe raw-ingress fallback");
 
         const std::string backend = graph.describe_backend();
+        require(backend.find("videoconvert") != std::string::npos,
+                "standalone VideoSender should retain one safe format converter");
         require_contains(backend, "caps=\"video/x-raw,width=1280,height=720,framerate=30/1\"",
                          "VideoSender input raw caps mismatch");
         require_contains(backend,

@@ -28,6 +28,20 @@ struct FusedRealtimeIngress;
 
 namespace simaai::neat::session_test {
 
+enum class CompositionFailurePoint {
+  None,
+  PipelineVertexAppended,
+  EndpointEdgesReplaced,
+  BeforeConnectionEdgeAppend,
+};
+
+// Deterministic exception injection for strong-guarantee composition tests. The hook is internal,
+// process-global, and one-shot; production code has no public control surface for it.
+void arm_composition_failure_for_test(CompositionFailurePoint point,
+                                      std::size_t successful_hits_before_failure = 0U);
+void clear_composition_failure_for_test() noexcept;
+void maybe_throw_composition_failure_for_test(CompositionFailurePoint point);
+
 void reset_rendered_manifests();
 std::vector<pipeline_internal::sima::SimaPluginStaticManifest> get_rendered_manifests();
 void record_rendered_manifest(const pipeline_internal::sima::SimaPluginStaticManifest& manifest);

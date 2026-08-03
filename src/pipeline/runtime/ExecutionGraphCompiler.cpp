@@ -1,5 +1,6 @@
 #include "ExecutionGraphPlan.h"
 
+#include "builder/internal/InputSpecSpecialization.h"
 #include "graph/Compiler.h"
 #include "graph/Graph.h"
 #include "graph/GraphRun.h"
@@ -18,6 +19,7 @@
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/CapsStringUtil.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 
@@ -1078,9 +1080,23 @@ OutputSpec input_options_to_output_spec(const InputOptions& opt) {
   spec.width = opt.width;
   spec.height = opt.height;
   spec.depth = opt.depth;
+  spec.fps_num = opt.fps_n;
+  spec.fps_den = opt.fps_d > 0 ? opt.fps_d : 1;
   if (spec.depth <= 0 && opt.max_depth > 0) {
     spec.depth = opt.max_depth;
   }
+  if (opt.memory_policy == InputMemoryPolicy::SystemMemory ||
+      (!opt.use_simaai_pool && opt.memory_policy == InputMemoryPolicy::Auto)) {
+    spec.memory = "SystemMemory";
+  } else if (opt.memory_policy == InputMemoryPolicy::Ev74 ||
+             opt.memory_policy == InputMemoryPolicy::Dms0 ||
+             opt.memory_policy == InputMemoryPolicy::Auto) {
+    // Match Input::output_spec(): Auto with the default SiMa pool is a stable
+    // SimaAI memory contract; the legacy false flag was handled above.
+    spec.memory = "SimaAI";
+  }
+  spec.certainty = SpecCertainty::Authoritative;
+  spec.note = "Explicit fragment input options";
   return spec;
 }
 
@@ -2481,13 +2497,58 @@ void apply_public_fragment_metadata(
     }
 
     segment.boundary_hints = *fragment->boundary_hints;
+    const bool input_is_stable = segment.input_spec.certainty == SpecCertainty::Derived ||
+                                 segment.input_spec.certainty == SpecCertainty::Authoritative;
     if (segment.boundary.needs_input && !segment.boundary_hints->ingress_inputs.empty() &&
-        !segment.input_complete) {
+        (!segment.input_complete || !input_is_stable)) {
       const InputOptions& ingress = segment.boundary_hints->ingress_inputs.front();
       segment.input_spec = input_options_to_output_spec(ingress);
       segment.input_complete = input_options_complete(ingress);
     }
   }
+}
+
+bool plan_has_input_spec_specializer(const ExecutionGraphPlan& plan) {
+  return std::any_of(
+      plan.pipeline_segments.begin(), plan.pipeline_segments.end(), [](const auto& segment) {
+        return std::any_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
+          return node &&
+                 dynamic_cast<const simaai::neat::internal::InputSpecSpecializer*>(node.get());
+        });
+      });
+}
+
+void specialize_pipeline_segments(
+    ExecutionGraphPlan* plan,
+    const simaai::neat::internal::InputSpecSpecializationContext& context) {
+  if (!plan) {
+    return;
+  }
+  for (auto& segment : plan->pipeline_segments) {
+    OutputSpec stable_input;
+    if (!plan->linear_compat) {
+      stable_input = segment.boundary.source_like ? OutputSpec{} : segment.input_spec;
+    } else if (segment.boundary_hints.has_value() &&
+               !segment.boundary_hints->ingress_inputs.empty()) {
+      stable_input = input_options_to_output_spec(segment.boundary_hints->ingress_inputs.front());
+    }
+    // Linear input_spec can describe only the first build seed. Starting from
+    // unknown excludes it while still allowing explicit Input/Caps Nodes in
+    // the segment to establish stable facts.
+    auto specialized =
+        simaai::neat::internal::specialize_nodes_for_input(segment.nodes, stable_input, context);
+    segment.nodes = std::move(specialized.nodes);
+    segment.output_spec = std::move(specialized.output_spec);
+    segment.output_complete = output_spec_complete(segment.output_spec);
+  }
+}
+
+void specialize_pipeline_segments_with_discovered_context(ExecutionGraphPlan* plan) {
+  if (!plan || !plan_has_input_spec_specializer(*plan)) {
+    return;
+  }
+  const auto context = pipeline_internal::discover_input_spec_specialization_context();
+  specialize_pipeline_segments(plan, context);
 }
 
 const InputOptions* ingress_options_for_segment_edge(const ExecutionGraphPlan& plan,
@@ -2598,6 +2659,12 @@ void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& p
 } // namespace
 
 namespace session_test {
+
+void specialize_input_specs_for_test(
+    ExecutionGraphPlan* plan,
+    const simaai::neat::internal::InputSpecSpecializationContext& context) {
+  specialize_pipeline_segments(plan, context);
+}
 
 bool fused_realtime_source_segment_eligible_for_test(bool already_fused) {
   PipelineSegmentPlan segment;
@@ -2772,6 +2839,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_lowered_link_policies(lowering.lowered_edges, &plan);
     apply_normalized_link_policies(normalized, lowering.runtime_node_for_vertex, &plan);
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
+    specialize_pipeline_segments_with_discovered_context(&plan);
     validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
     // Fusion is an execution-plan lowering, not a public build mode. Eligible live
@@ -2820,6 +2888,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   graph_range_by_node[runtime_id] = {0U, view.vertices.size()};
   std::vector<graph::NodeId> runtime_node_for_vertex(view.vertices.size(), runtime_id);
   apply_public_fragment_metadata(view, graph_range_by_node, &plan);
+  specialize_pipeline_segments_with_discovered_context(&plan);
   resolve_single_pipeline_endpoints(&plan);
   if (plan.default_input.has_value() && !view.vertices.empty()) {
     std::string name = explicit_public_endpoint_name(view.vertices.front());

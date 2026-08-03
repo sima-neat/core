@@ -1,7 +1,6 @@
 #include "nodes/groups/VideoSender.h"
 
-#include "nodes/common/Caps.h"
-#include "nodes/common/VideoConvert.h"
+#include "nodes/groups/internal/VideoSenderRawIngress.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Packetize.h"
@@ -134,14 +133,10 @@ VideoSenderOptions VideoSenderOptions::Passthrough(RtspCodec codec) {
 
 simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
-  nodes.reserve(opt.is_raw_input() ? 7 : 3);
+  nodes.reserve(opt.is_raw_input() ? 5 : 3);
 
   if (opt.is_raw_input()) {
-    nodes.push_back(
-        nodes::CapsRaw("", opt.width(), opt.height(), opt.fps(), simaai::neat::CapsMemory::Any));
-    nodes.push_back(nodes::VideoConvert());
-    nodes.push_back(nodes::CapsRaw("NV12", opt.width(), opt.height(), opt.fps(),
-                                   simaai::neat::CapsMemory::Any));
+    nodes.push_back(internal::VideoSenderRawIngress(opt.width(), opt.height(), opt.fps()));
     nodes.push_back(nodes::H264EncodeSima(opt.width(), opt.height(), opt.fps(),
                                           opt.encoder.bitrate_kbps, opt.encoder.profile,
                                           opt.encoder.level));

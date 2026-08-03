@@ -65,6 +65,25 @@ struct BenchmarkReport {
 };
 
 /**
+ * @brief Options for `Model::benchmark()` synthetic inputs and measurement.
+ *
+ * BoxDecode routes need source-image geometry to map detections from model coordinates back to
+ * source coordinates. Set `original_width` and `original_height` together to benchmark a specific
+ * source geometry. When they are omitted, the benchmark infers geometry from the resolved
+ * preprocess and model ingress contracts, preserving the behavior of `benchmark(num_samples)`.
+ * Per-run benchmark geometry takes precedence over deprecated model-construction BoxDecode hints.
+ */
+struct BenchmarkOptions {
+  int num_samples = 100; ///< Number of measured synthetic inputs; must be greater than zero.
+  std::optional<int> original_width;  ///< Synthetic source-image width, in pixels.
+  std::optional<int> original_height; ///< Synthetic source-image height, in pixels.
+  /// Resize policy used to map the source geometry to the model input. When omitted, use the
+  /// resolved preprocess policy, or stretch when the model route has no resize stage.
+  std::optional<ResizeMode> resize_mode;
+  bool include_plugin_latency = false; ///< Include per-plugin latency collection.
+};
+
+/**
  * @brief Loaded form of a compiled model archive; the simplified entry point to run inference on
  * Modalix.
  *
@@ -610,10 +629,16 @@ public:
    * measures single-flight latency and async logical-inference throughput separately, prints a
    * compact summary, and returns headline metrics.
    */
+  BenchmarkReport benchmark(const BenchmarkOptions& options);
   BenchmarkReport benchmark(int num_samples = 100, bool include_plugin_latency = false);
   BenchmarkReport benchmark(bool include_plugin_latency);
 
 private:
+  Runner build_with_model_options(const simaai::neat::TensorList& inputs,
+                                  const Model::RouteOptions& opt,
+                                  const simaai::neat::RunOptions& run_opt,
+                                  const Model::Options& model_opt);
+
   friend struct internal::ModelAccess;
   struct Impl;
   std::unique_ptr<Impl> impl_;

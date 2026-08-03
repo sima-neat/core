@@ -375,11 +375,15 @@ def test_genai_value_types_and_text_sample_helpers():
   assert sample.to_text() == "What is NEAT?"
 
   result = pyneat.GenerationResult()
+  result.reasoning = "thinking"
   result.tool_calls = req.messages[0].tool_calls
+  assert result.reasoning == "thinking"
   assert result.tool_calls[0]["id"] == "call_0"
 
   token = pyneat.TokenSample()
+  token.reasoning = "thinking"
   token.tool_calls = req.messages[0].tool_calls
+  assert token.reasoning == "thinking"
   assert token.tool_calls[0]["function"]["arguments"] == "{}"
 
   result = pyneat.GenerationResult()

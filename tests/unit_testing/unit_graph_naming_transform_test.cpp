@@ -1,10 +1,15 @@
+#include "gst/GstInit.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/PipelineBuild.h"
 #include "pipeline/graph/GraphDetail.h"
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 RUN_TEST("unit_graph_naming_transform_test", ([] {
@@ -72,4 +77,40 @@ RUN_TEST("unit_graph_naming_transform_test", ([] {
            const std::string backend = graph.describe_backend(false);
            require_contains(backend, "x_mysink_y",
                             "describe_backend should include transformed appsink element name");
+
+           gst_init_once();
+           GError* parse_error = nullptr;
+           GstElement* pipeline = gst_parse_launch(
+               "identity name=owned ! identity name=orphan ! fakesink name=sink", &parse_error);
+           if (!pipeline) {
+             const std::string message =
+                 parse_error && parse_error->message ? parse_error->message : "unknown parse error";
+             if (parse_error) {
+               g_error_free(parse_error);
+             }
+             throw std::runtime_error("naming-contract fixture failed to parse: " + message);
+           }
+           if (parse_error) {
+             g_error_free(parse_error);
+           }
+
+           BuildResult build_result;
+           build_result.diag = std::make_shared<pipeline_internal::DiagCtx>();
+           NodeReport node_report;
+           node_report.elements = {"owned", "sink"};
+           build_result.diag->node_reports.push_back(std::move(node_report));
+
+           bool rejected_orphan = false;
+           try {
+             enforce_names_contract(pipeline, build_result);
+           } catch (const NeatError& error) {
+             rejected_orphan = true;
+             require(error.report().error_code == error_codes::kGraphElementName,
+                     "naming ownership violations should use graph-element-name code");
+             require_contains(error.what(), "orphan",
+                              "naming ownership violation should identify the element");
+           }
+           gst_element_set_state(pipeline, GST_STATE_NULL);
+           gst_object_unref(pipeline);
+           require(rejected_orphan, "naming contract should reject an unowned graph element");
          }));

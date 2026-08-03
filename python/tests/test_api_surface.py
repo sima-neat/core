@@ -202,6 +202,18 @@ def test_graph_pythonic_add_and_describe():
   assert text
 
 
+def test_graph_rejects_duplicate_node_identity_atomically():
+  node = pyneat.nodes.video_scale()
+  graph = pyneat.Graph()
+  graph.add(node)
+  before = graph.describe_backend()
+
+  with pytest.raises(RuntimeError, match="already exists"):
+    graph.add(node)
+
+  assert graph.describe_backend() == before
+
+
 def test_graph_combine_round_robin_surface():
   graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.RoundRobin)
   assert isinstance(graph, pyneat.Graph)
@@ -354,6 +366,22 @@ def test_public_graph_connect_no_runtime_port_overload():
   assert not hasattr(pyneat.Graph, "connect_port")
 
 
+def test_model_accepts_os_pathlike():
+  # Both constructors take any os.PathLike, so callers need no str() conversion.
+  # Equal mpk_json_path proves the path reaches ModelPack identically either way.
+  model_path = _strict_yolo_model_path()
+  assert hasattr(model_path, "__fspath__")
+
+  from_path = pyneat.Model(model_path)
+  from_str = pyneat.Model(str(model_path))
+  assert from_path.info().mpk_json_path == from_str.info().mpk_json_path
+
+  # Overload resolution only; a missing archive keeps this off the load path.
+  _assert_not_type_error(
+      lambda: pyneat.Model(model_path.with_name("nonexistent.tar.gz"), pyneat.ModelOptions())
+  )
+
+
 def test_model_graph_fragment_and_direct_graph_add():
   model = pyneat.Model(str(_strict_yolo_model_path()))
 
@@ -384,6 +412,28 @@ def test_model_option_structs_are_mutable():
   assert opt.boxdecode_original_width == 1280
   assert opt.boxdecode_original_height == 720
   assert opt.boxdecode_resize_mode == pyneat.ResizeMode.Letterbox
+
+
+def test_benchmark_options_are_mutable():
+  opt = pyneat.BenchmarkOptions()
+
+  assert opt.num_samples == 100
+  assert opt.original_width is None
+  assert opt.original_height is None
+  assert opt.resize_mode is None
+  assert opt.include_plugin_latency is False
+
+  opt.num_samples = 7
+  opt.original_width = 1920
+  opt.original_height = 1080
+  opt.resize_mode = pyneat.ResizeMode.Letterbox
+  opt.include_plugin_latency = True
+
+  assert opt.num_samples == 7
+  assert opt.original_width == 1920
+  assert opt.original_height == 1080
+  assert opt.resize_mode == pyneat.ResizeMode.Letterbox
+  assert opt.include_plugin_latency is True
 
 
 def test_input_stage_option_structs_expose_expected_fields():
@@ -1356,8 +1406,48 @@ def test_output_stage_api_parity_guards_supported_call_surface():
 
 
 def test_error_code_constants_present():
-  assert isinstance(pyneat.ERROR_PIPELINE_SHAPE, str)
-  assert isinstance(pyneat.ERROR_RUNTIME_PULL, str)
+  expected = {
+    "ERROR_PIPELINE_SHAPE": "misconfig.pipeline_shape",
+    "ERROR_CAPS": "misconfig.caps",
+    "ERROR_INPUT_SHAPE": "misconfig.input_shape",
+    "ERROR_RUNTIME_ABI_MISMATCH": "misconfig.runtime_abi_mismatch",
+    "ERROR_GRAPH_ELEMENT_NAME": "misconfig.graph_element_name",
+    "ERROR_MEDIA_CAPS": "misconfig.media_caps",
+    "ERROR_MEDIA_FORMAT": "misconfig.media_format",
+    "ERROR_INPUT_CAPACITY": "misconfig.input_capacity",
+    "ERROR_TENSOR_DTYPE_MISSING": "misconfig.tensor_dtype_missing",
+    "ERROR_OPTION_OUT_OF_RANGE": "misconfig.option_out_of_range",
+    "ERROR_PARSE_LAUNCH": "build.parse_launch",
+    "ERROR_PIPELINE_SYNTAX": "build.pipeline_syntax",
+    "ERROR_PLUGIN_MISSING": "build.plugin_missing",
+    "ERROR_PROPERTY_INVALID": "build.property_invalid",
+    "ERROR_RUNTIME_PULL": "runtime.pull",
+    "ERROR_RUNTIME_ELEMENT_FAILED": "runtime.element_failed",
+    "ERROR_OUTPUT_TIMEOUT": "runtime.output_timeout",
+    "ERROR_UNEXPECTED_EOS": "runtime.unexpected_eos",
+    "ERROR_IO_PARSE": "io.parse",
+    "ERROR_IO_OPEN": "io.open",
+    "ERROR_FILE_NOT_FOUND": "io.file_not_found",
+    "ERROR_PERMISSION_DENIED": "io.permission_denied",
+    "ERROR_RTSP_CONNECTION_FAILED": "io.rtsp_connection_failed",
+    "ERROR_CAMERA_NOT_FOUND": "io.camera_not_found",
+    "ERROR_MODEL_NOT_FOUND": "io.model_not_found",
+    "ERROR_SOURCE_ENDED": "io.source_ended",
+    "ERROR_INVALID_H264_STREAM": "codec.invalid_h264_stream",
+    "ERROR_DECODE_FAILED": "codec.decode_failed",
+    "ERROR_ENCODE_FAILED": "codec.encode_failed",
+    "ERROR_MEMORY_ALLOCATION_FAILED": "resource.memory_allocation_failed",
+    "ERROR_DEVICE_MEMORY_EXHAUSTED": "resource.device_memory_exhausted",
+    "ERROR_OUTPUT_POOL_EXHAUSTED": "resource.output_pool_exhausted",
+    "ERROR_BUFFER_TOO_SMALL": "resource.buffer_too_small",
+    "ERROR_DISK_FULL": "resource.disk_full",
+    "ERROR_DISPATCHER_UNAVAILABLE": "infra.dispatcher_unavailable",
+    "ERROR_ACCELERATOR_EXECUTION_FAILED": "infra.accelerator_execution_failed",
+    "ERROR_DISPATCHER_UNAVAILABLE_LEGACY": "DispatcherUnavailable",
+    "ERROR_INTERNAL_PLUGIN_FAILURE": "internal.plugin_failure",
+  }
+  for name, value in expected.items():
+    assert getattr(pyneat, name) == value
 
 
 def test_memory_and_image_type_aliases_present():

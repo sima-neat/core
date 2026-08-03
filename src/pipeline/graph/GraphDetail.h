@@ -36,7 +36,9 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -176,8 +178,11 @@ struct Graph::CompositionGraph {
     VertexId end = kInvalid;
   };
   std::unordered_map<std::uint64_t, ImportedFragment> imported_fragments;
-  std::unordered_map<const Node*, ImportedFragment> imported_nodes;
   std::unordered_map<std::string, ImportedFragment> imported_models;
+  // Complete derived index for non-null pipeline vertices. Runtime vertices and
+  // compatibility null entries deliberately do not participate.
+  std::unordered_map<const Node*, VertexId> pipeline_vertex_by_identity;
+  CompositionMutation* active_mutation = nullptr;
 
   bool empty() const noexcept {
     return vertices.empty();
@@ -187,8 +192,16 @@ struct Graph::CompositionGraph {
     return vertices.size();
   }
 
+  std::optional<VertexId> find_pipeline_vertex(const Node* node) const noexcept;
+  void preflight_pipeline_vertices(std::span<const CompositionVertex> incoming,
+                                   std::string_view operation) const;
+  void preflight_pipeline_nodes(std::span<const NodePtr> incoming,
+                                std::string_view operation) const;
   VertexId append_vertex(NodePtr node);
+  VertexId append_unlinked_pipeline_vertex(NodePtr node, std::string_view operation);
   VertexId append_runtime_vertex(RuntimeNodePtr node);
+  VertexId append_unlinked_runtime_vertex(RuntimeNodePtr node);
+  void verify_identity_index_or_throw(std::string_view operation) const;
   void recompute_unique_tail() noexcept;
   void connect_runtime_port(VertexId from, VertexId to, std::string from_port, std::string to_port,
                             GraphLinkOptions link_options = {});
@@ -203,6 +216,37 @@ struct Graph::CompositionGraph {
   bool has_runtime_vertices() const noexcept;
 };
 
+// Strong-exception-safety guard for public composition mutations. Most state is append-only, so
+// rollback uses logical size/scalar checkpoints. Connect operations opt into one edge-vector
+// before-image because endpoint promotion and realtime fan-in can modify existing edges.
+struct Graph::CompositionMutation {
+  explicit CompositionMutation(Graph& owner);
+  ~CompositionMutation() noexcept;
+
+  CompositionMutation(const CompositionMutation&) = delete;
+  CompositionMutation& operator=(const CompositionMutation&) = delete;
+
+  void before_edge_write(std::size_t edge_index);
+  void replace_edges(std::vector<CompositionEdge> replacement);
+  void commit() noexcept;
+
+private:
+  Graph& owner_;
+  bool committed_ = false;
+  bool composition_was_null_ = false;
+  std::size_t vertices_size_ = 0;
+  std::size_t edges_size_ = 0;
+  std::size_t fragments_size_ = 0;
+  std::size_t named_fragments_size_ = 0;
+  std::size_t groups_size_ = 0;
+  CompositionGraph::VertexId tail_ = CompositionGraph::kInvalid;
+  bool endpoint_mode_ = false;
+  std::shared_ptr<const pipeline_internal::InputRouteProcessor> input_route_processor_;
+  std::vector<std::pair<std::size_t, CompositionEdge>> changed_edges_;
+  std::unordered_set<std::size_t> changed_edge_indices_;
+  std::optional<std::vector<CompositionEdge>> replaced_edges_;
+};
+
 // =====================================================================================
 // BuildResult: from Node list → pipeline string + diag + sink name
 // =====================================================================================
@@ -212,6 +256,26 @@ enum class RunInputKind {
   Mat = 0,
   Tensor,
   Sample,
+};
+
+struct LaunchNameOrigin {
+  enum class Kind {
+    NodeFragment,
+    Boundary,
+    Queue,
+    Tap,
+    AppSrc,
+    AppSink,
+    Mux,
+    RtspHelper,
+    Unknown,
+  };
+
+  Kind kind = Kind::Unknown;
+  std::string name;
+  int node_index = -1;
+  std::string node_kind;
+  std::string role;
 };
 
 /**
@@ -307,6 +371,10 @@ struct BuildResult {
   std::shared_ptr<CompiledPipelineContracts> compiled_contracts;
   std::optional<pipeline_internal::sima::SimaPluginStaticManifest> rendered_manifest;
   std::vector<std::string> model_source_paths;
+  // Name provenance for build-owned scaffolding that is not represented by a public Node.
+  // Node-fragment origins are derived from DiagCtx::node_reports at the final parse boundary so
+  // they describe the exact post-transform fragment.
+  std::vector<LaunchNameOrigin> framework_name_origins;
   // Fused-only ownership contract: true when the consumer creates replacement
   // GstBuffers rather than forwarding/copying arbitrary lifecycle GstMeta.
   bool fused_consumer_replaces_buffers = false;

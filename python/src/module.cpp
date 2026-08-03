@@ -2107,6 +2107,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
       .def_rw("asr_task", &simaai::neat::genai::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
+      .def_rw("enable_thinking", &simaai::neat::genai::GenerationRequest::enable_thinking)
       .def_prop_rw(
           "tools",
           [](const simaai::neat::genai::GenerationRequest& request) {
@@ -2127,6 +2128,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::GenerationResult>(m, "GenerationResult")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::GenerationResult::text)
+      .def_rw("reasoning", &simaai::neat::genai::GenerationResult::reasoning)
       .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
       .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
       .def_rw("language", &simaai::neat::genai::GenerationResult::language)
@@ -2144,6 +2146,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::TokenSample>(m, "TokenSample")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::TokenSample::text)
+      .def_rw("reasoning", &simaai::neat::genai::TokenSample::reasoning)
       .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
       .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
       .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
@@ -4414,6 +4417,14 @@ NB_MODULE(_pyneat_core, m) {
       .def("close_input", &simaai::neat::Model::Runner::close_input)
       .def("close", &simaai::neat::Model::Runner::close);
 
+  nb::class_<simaai::neat::BenchmarkOptions>(m, "BenchmarkOptions")
+      .def(nb::init<>())
+      .def_rw("num_samples", &simaai::neat::BenchmarkOptions::num_samples)
+      .def_rw("original_width", &simaai::neat::BenchmarkOptions::original_width)
+      .def_rw("original_height", &simaai::neat::BenchmarkOptions::original_height)
+      .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode)
+      .def_rw("include_plugin_latency", &simaai::neat::BenchmarkOptions::include_plugin_latency);
+
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
       .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
@@ -4667,8 +4678,10 @@ NB_MODULE(_pyneat_core, m) {
       .def("__repr__", &simaai::neat::ResolvedPreprocessPlan::to_debug_string);
 
   nb::class_<simaai::neat::Model>(m, "Model")
-      .def(nb::init<const std::string&>(), "model_path"_a)
-      .def(nb::init<const std::string&, const simaai::neat::Model::Options&>(), "model_path"_a,
+      // std::filesystem::path, not std::string: the caster routes through PyOS_FSPath, so str and
+      // os.PathLike both work. Same as the GenAI constructors above.
+      .def(nb::init<std::filesystem::path>(), "model_path"_a)
+      .def(nb::init<std::filesystem::path, const simaai::neat::Model::Options&>(), "model_path"_a,
            "options"_a)
       .def("preprocess", &simaai::neat::Model::preprocess)
       .def("inference", &simaai::neat::Model::inference)
@@ -4771,7 +4784,11 @@ NB_MODULE(_pyneat_core, m) {
            static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int, bool)>(
                &simaai::neat::Model::benchmark),
            "num_samples"_a = 100, "include_plugin_latency"_a = false,
-           nb::call_guard<nb::gil_scoped_release>());
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark",
+           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
+               const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),
+           "options"_a, nb::call_guard<nb::gil_scoped_release>());
 
   // from-Model constructors for the CVU-atom options (registered here, after Model — pulls tile
   // geometry / quant params / model-managed buffer counts so the standalone nodes are actually
@@ -4960,8 +4977,41 @@ NB_MODULE(_pyneat_core, m) {
   m.attr("ERROR_PIPELINE_SHAPE") = simaai::neat::error_codes::kPipelineShape;
   m.attr("ERROR_CAPS") = simaai::neat::error_codes::kCaps;
   m.attr("ERROR_INPUT_SHAPE") = simaai::neat::error_codes::kInputShape;
+  m.attr("ERROR_RUNTIME_ABI_MISMATCH") = simaai::neat::error_codes::kRuntimeAbiMismatch;
+  m.attr("ERROR_GRAPH_ELEMENT_NAME") = simaai::neat::error_codes::kGraphElementName;
+  m.attr("ERROR_MEDIA_CAPS") = simaai::neat::error_codes::kMediaCaps;
+  m.attr("ERROR_MEDIA_FORMAT") = simaai::neat::error_codes::kMediaFormat;
+  m.attr("ERROR_INPUT_CAPACITY") = simaai::neat::error_codes::kInputCapacity;
+  m.attr("ERROR_TENSOR_DTYPE_MISSING") = simaai::neat::error_codes::kTensorDtypeMissing;
+  m.attr("ERROR_OPTION_OUT_OF_RANGE") = simaai::neat::error_codes::kOptionOutOfRange;
   m.attr("ERROR_PARSE_LAUNCH") = simaai::neat::error_codes::kParseLaunch;
+  m.attr("ERROR_PIPELINE_SYNTAX") = simaai::neat::error_codes::kPipelineSyntax;
+  m.attr("ERROR_PLUGIN_MISSING") = simaai::neat::error_codes::kPluginMissing;
+  m.attr("ERROR_PROPERTY_INVALID") = simaai::neat::error_codes::kPropertyInvalid;
   m.attr("ERROR_RUNTIME_PULL") = simaai::neat::error_codes::kRuntimePull;
+  m.attr("ERROR_RUNTIME_ELEMENT_FAILED") = simaai::neat::error_codes::kRuntimeElementFailed;
+  m.attr("ERROR_OUTPUT_TIMEOUT") = simaai::neat::error_codes::kOutputTimeout;
+  m.attr("ERROR_UNEXPECTED_EOS") = simaai::neat::error_codes::kUnexpectedEos;
   m.attr("ERROR_IO_PARSE") = simaai::neat::error_codes::kIoParse;
   m.attr("ERROR_IO_OPEN") = simaai::neat::error_codes::kIoOpen;
+  m.attr("ERROR_FILE_NOT_FOUND") = simaai::neat::error_codes::kFileNotFound;
+  m.attr("ERROR_PERMISSION_DENIED") = simaai::neat::error_codes::kPermissionDenied;
+  m.attr("ERROR_RTSP_CONNECTION_FAILED") = simaai::neat::error_codes::kRtspConnectionFailed;
+  m.attr("ERROR_CAMERA_NOT_FOUND") = simaai::neat::error_codes::kCameraNotFound;
+  m.attr("ERROR_MODEL_NOT_FOUND") = simaai::neat::error_codes::kModelNotFound;
+  m.attr("ERROR_SOURCE_ENDED") = simaai::neat::error_codes::kSourceEnded;
+  m.attr("ERROR_INVALID_H264_STREAM") = simaai::neat::error_codes::kInvalidH264Stream;
+  m.attr("ERROR_DECODE_FAILED") = simaai::neat::error_codes::kDecodeFailed;
+  m.attr("ERROR_ENCODE_FAILED") = simaai::neat::error_codes::kEncodeFailed;
+  m.attr("ERROR_MEMORY_ALLOCATION_FAILED") = simaai::neat::error_codes::kMemoryAllocationFailed;
+  m.attr("ERROR_DEVICE_MEMORY_EXHAUSTED") = simaai::neat::error_codes::kDeviceMemoryExhausted;
+  m.attr("ERROR_OUTPUT_POOL_EXHAUSTED") = simaai::neat::error_codes::kOutputPoolExhausted;
+  m.attr("ERROR_BUFFER_TOO_SMALL") = simaai::neat::error_codes::kBufferTooSmall;
+  m.attr("ERROR_DISK_FULL") = simaai::neat::error_codes::kDiskFull;
+  m.attr("ERROR_DISPATCHER_UNAVAILABLE") = simaai::neat::error_codes::kDispatcherUnavailable;
+  m.attr("ERROR_ACCELERATOR_EXECUTION_FAILED") =
+      simaai::neat::error_codes::kAcceleratorExecutionFailed;
+  m.attr("ERROR_DISPATCHER_UNAVAILABLE_LEGACY") =
+      simaai::neat::error_codes::kDispatcherUnavailableLegacy;
+  m.attr("ERROR_INTERNAL_PLUGIN_FAILURE") = simaai::neat::error_codes::kInternalPluginFailure;
 }

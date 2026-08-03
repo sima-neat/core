@@ -107,9 +107,11 @@ add_custom_target(prepare_perf_codec_fixtures
   VERBATIM
 )
 
-# Keep installer package-recovery behavior in the normal CTest/DevKit gate.
-# Copy both files below the build tests root so the Vulcan extras path rebasing
-# also makes this test self-contained on the ARM64 runner.
+# Keep installer package-recovery and devkit-recovery behavior in the normal
+# CTest/DevKit gate. Copy every file the test sources below the build tests root
+# so the Vulcan extras path rebasing also makes this test self-contained on the
+# ARM64 runner, and pass each script path explicitly: the test cannot derive
+# them from its own location once it runs from the build tree.
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools")
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_install_neat_framework_native_restore.py"
@@ -121,11 +123,17 @@ configure_file(
   "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
   COPYONLY
 )
+configure_file(
+  "${CMAKE_SOURCE_DIR}/scripts/fix_devkit_runtime.sh"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/fix_devkit_runtime.sh"
+  COPYONLY
+)
 add_test(
   NAME unit_install_neat_framework_native_restore_test
   COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_BINARY_DIR}/tools/test_install_neat_framework_native_restore.py"
           --installer "${CMAKE_CURRENT_BINARY_DIR}/tools/install_neat_framework.sh"
+          --recovery "${CMAKE_CURRENT_BINARY_DIR}/tools/fix_devkit_runtime.sh"
 )
 set_tests_properties(
   unit_install_neat_framework_native_restore_test
@@ -304,6 +312,7 @@ set(UNIT_TESTS
   unit_dispatcher_recovery_test
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test
+  unit_gst_error_normalizer_test
   unit_encoded_sample_test
   unit_genai_prompt_builder_test
   unit_genai_image_types_test
@@ -312,6 +321,7 @@ set(UNIT_TESTS
   unit_genai_text_tensor_test
   unit_node_metadata_sender_test
   unit_video_sender_test
+  unit_video_sender_adaptive_ingress_test
   unit_env_util_profile_test
   unit_framestream_test
   unit_move_semantics_proof_test
@@ -337,11 +347,14 @@ set(UNIT_TESTS
   unit_groups_test
   unit_gst_helpers_test
   unit_gst_init_guard_test
+  unit_gst_launch_bindings_test
+  unit_gst_parse_launch_audit_test
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
   unit_latest_mux_fairness_test
   unit_latest_mux_periodic_fairness_test
   unit_latest_mux_backpressure_test
+  unit_launch_validation_integration_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
   unit_http_mjpeg_decoded_group_test
@@ -381,6 +394,7 @@ set(UNIT_TESTS
   unit_mla_boundary_output_contract_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
+  unit_modelpack_mount_selection_test
   unit_model_stage_fragments_test
   unit_modalix_contract_preflight_test
   unit_mpk_graph_dump_test
@@ -484,6 +498,14 @@ if (TARGET unit_plugin_failure_messages_test)
     ENVIRONMENT "GST_REGISTRY_1_0=${CMAKE_BINARY_DIR}/sima_gst_registry_unit_plugin_failure_messages_test_v2.bin")
 endif()
 
+if (TARGET unit_gst_error_normalizer_test)
+  # Keep GStreamer initialization and message construction serialized with the
+  # broader test suite, whose tests may update the shared registry cache.
+  target_include_directories(unit_gst_error_normalizer_test
+    PRIVATE ${CMAKE_SOURCE_DIR}/src/pipeline/internal)
+  set_tests_properties(unit_gst_error_normalizer_test PROPERTIES RUN_SERIAL TRUE)
+endif()
+
 if (TARGET unit_simaai_allocator_share_test)
   target_link_libraries(unit_simaai_allocator_share_test PRIVATE ${CMAKE_DL_LIBS})
 endif()
@@ -560,6 +582,20 @@ foreach(test ${E2E_TESTS})
   endif()
 endforeach()
 
+add_pipeline_test_long(
+  video_sender_adaptive_ingress_e2e_test
+  SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/video_sender_adaptive_ingress_e2e_test.cpp
+)
+
+if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
+    LABELS "e2e;codec;video_sender;real_media;long")
+  set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
+    RESOURCE_LOCK "accelerator-device;udp")
+  set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+endif()
+
 
 add_pipeline_test(
   decoder_quality_compare_test
@@ -606,6 +642,15 @@ add_pipeline_test_long(
 
 if (NOT modelzoo_bulk_models_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST modelzoo_bulk_models_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
+endif()
+
+add_pipeline_test_long(
+  model_archive_load_e2e_test
+  e2e_testing/model_archive_load_e2e_test.cpp
+)
+
+if (NOT model_archive_load_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST model_archive_load_e2e_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
 endif()
 
 add_pipeline_test(
@@ -693,6 +738,18 @@ if (SimaLMM_FOUND)
     set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
     set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   endif()
+
+  add_pipeline_test_long(
+    genai_server_reasoning_http_test
+    e2e_testing/genai/genai_server_reasoning_http_test.cpp
+  )
+  target_link_libraries(genai_server_reasoning_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+
+  if (NOT genai_server_reasoning_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY
+      LABELS "e2e;genai;llima;server;reasoning;long")
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
 endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -768,6 +825,7 @@ set(PERF_TARGETS
   perf_runtime_codec_mjpeg_decode_test
   perf_runtime_codec_h264_decode_test
   perf_runtime_codec_h265_decode_test
+  perf_runtime_model_archive_load_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -1520,6 +1578,21 @@ if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLI
   set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
 endif()
 
+add_pipeline_test_long(
+  yolov8_boxdecode_model_benchmark_test
+  e2e_pipelines/obj_detection/yolov8_boxdecode_model_benchmark_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT yolov8_boxdecode_model_benchmark_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_boxdecode_model_benchmark_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;boxdecode;benchmark;metrics")
+  set_property(TEST yolov8_boxdecode_model_benchmark_test
+    APPEND PROPERTY RESOURCE_LOCK "perf-device")
+endif()
+
 add_pipeline_test(
   sync_yolov8_test
   e2e_pipelines/obj_detection/sync_yolov8_test.cpp
@@ -2106,6 +2179,11 @@ install(
 install(
   FILES "${CMAKE_SOURCE_DIR}/tests/assets/genai/audio_16k_mono_f32le.raw"
   DESTINATION share/sima-neat/test-assets/tests/assets/genai
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tests/assets/preproc_dynamic/ilena_488.jpg"
+  DESTINATION share/sima-neat/test-assets/tests/assets/preproc_dynamic
   COMPONENT extras
 )
 

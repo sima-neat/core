@@ -2,9 +2,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <zlib.h>
+
 #include <unistd.h> // mkdtemp
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cerrno>
 #include <cctype>
@@ -364,71 +367,6 @@ EntryClass classify_entry(char type, const std::string& normalized_path,
   return EntryClass::Directory;
 }
 
-std::string lower_copy(std::string s) {
-  for (char& c : s) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  return s;
-}
-
-// Canonical allow-list shared by loader validation and pipeline sequence validation.
-bool is_supported_kernel_local(const std::string& kernel) {
-  static const std::unordered_set<std::string> kSupportedKernels = {
-      "preproc",    "quant",     "tess",          "tessellate",    "quanttess",
-      "cast",       "infer",     "mla",           "detessdequant", "detessellate",
-      "dequantize", "boxdecode", "buffer_concat",
-  };
-  return kSupportedKernels.find(lower_copy(kernel)) != kSupportedKernels.end();
-}
-
-std::string require_nonempty_string(const json& obj, const char* key) {
-  if (!obj.contains(key) || !obj[key].is_string()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  std::string("schema_error: pipeline_sequence stage missing string field '") +
-                      key + "'");
-  }
-  const std::string value = obj[key].get<std::string>();
-  if (value.empty()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  std::string("schema_error: pipeline_sequence stage has empty field '") + key +
-                      "'");
-  }
-  return value;
-}
-
-void ensure_safe_config_path(const std::string& path) {
-  std::string normalized = path;
-  for (char& c : normalized) {
-    if (c == '\\')
-      c = '/';
-  }
-
-  if (normalized.empty()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence stage has empty configPath");
-  }
-  if (normalized.front() == '/') {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence configPath must be relative");
-  }
-  if (normalized.size() >= 2 && std::isalpha(static_cast<unsigned char>(normalized[0])) &&
-      normalized[1] == ':') {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence configPath must not use drive prefix");
-  }
-
-  std::stringstream ss(normalized);
-  std::string segment;
-  while (std::getline(ss, segment, '/')) {
-    if (segment.empty() || segment == ".")
-      continue;
-    if (segment == "..") {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: pipeline_sequence configPath must not traverse parent");
-    }
-  }
-}
-
 TarEntry parse_tar_line(const std::string& line, const ModelArchiveLoaderOptions& opt,
                         bool reject_unsupported_file_types) {
   std::istringstream iss(line);
@@ -708,16 +646,17 @@ ModelArchiveErrorClass write_error_class_for_path(int saved_errno, const fs::pat
 
 // mkdtemp, not create_directories: it creates the directory atomically at 0700 and fails on an
 // existing name, so a pre-created symlink on a shared /tmp cannot capture the staging path.
-fs::path make_staging_dir() {
+fs::path make_staging_dir(const std::string& configured_base) {
   std::error_code ec;
-  // No fallback to /tmp: TMPDIR naming an unusable directory is a deliberate choice of staging
-  // filesystem that failed, and quietly staging on the rootfs instead could fill it.
-  const fs::path configured = fs::temp_directory_path(ec);
+  // No fallback to /tmp: an unusable staging base is a deliberate choice of filesystem that
+  // failed, and quietly staging on the rootfs instead could fill it.
+  const fs::path configured =
+      configured_base.empty() ? fs::temp_directory_path(ec) : fs::path(configured_base);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                  "temporary directory for archive staging is unusable (" + ec.message() + ")");
+                  "TMPDIR is unusable for archive staging (" + ec.message() + ")");
   }
-  // Absolute, because temp_directory_path returns a relative TMPDIR verbatim: the snapshot
+  // Absolute, because a relative base is used verbatim: the snapshot
   // outlives a caller callback that may chdir, and both the tar reads and the destructor's
   // cleanup would then resolve against the wrong directory and leak the staging copy.
   const fs::path staging_base = fs::absolute(configured, ec);
@@ -740,7 +679,130 @@ fs::path make_staging_dir() {
   return fs::path(buf.data());
 }
 
+// Both inflate buffers. Sized by measurement; bounded by uInt, the limit on one inflate call.
+constexpr std::size_t kInflateBufferBytes = 1024UL * 1024UL;
+static_assert(kInflateBufferBytes <= std::numeric_limits<uInt>::max(),
+              "inflate buffers are handed to zlib as uInt");
+
+// In-process gzip decoder, matching what `gzip -dc` accepts. Concatenated members are one logical
+// stream, so stopping at the first end-of-stream marker would silently truncate a valid archive.
+// An all-zero tail is block padding and ends the stream cleanly; nonzero trailing bytes are an
+// error, as gzip reports with exit 2.
+class GzipInflater {
+public:
+  explicit GzipInflater(const std::string& path) : in_(::fopen(path.c_str(), "rb")) {
+    if (in_ != nullptr && ::inflateInit2(&zs_, 16 + MAX_WBITS) == Z_OK) {
+      stream_open_ = true;
+    }
+  }
+
+  ~GzipInflater() {
+    if (stream_open_)
+      ::inflateEnd(&zs_);
+    if (in_ != nullptr)
+      ::fclose(in_);
+  }
+
+  GzipInflater(const GzipInflater&) = delete;
+  GzipInflater& operator=(const GzipInflater&) = delete;
+
+  bool ready() const noexcept {
+    return in_ != nullptr && stream_open_;
+  }
+
+  // Corrupt, truncated, or trailing bytes beginning no member. Separates failure from a clean end.
+  bool failed() const noexcept {
+    return failed_;
+  }
+
+  // Up to `size` bytes, 0 at end of stream. A short result does not mean the stream ended.
+  std::size_t read(char* dst, std::size_t size) {
+    size = std::min(size, kInflateBufferBytes);
+    while (!done_ && !failed_) {
+      // Input ended with no end-of-stream marker: truncated.
+      if (zs_.avail_in == 0 && !refill()) {
+        failed_ = true;
+        break;
+      }
+      zs_.next_out = reinterpret_cast<Bytef*>(dst);
+      zs_.avail_out = static_cast<uInt>(size);
+      const int rc = ::inflate(&zs_, Z_NO_FLUSH);
+      const std::size_t produced = size - zs_.avail_out;
+
+      if (rc == Z_STREAM_END) {
+        if (more_member_data()) {
+          if (::inflateReset(&zs_) != Z_OK) {
+            failed_ = true;
+            break;
+          }
+        } else {
+          done_ = !failed_; // a clean end of input, not a read error mid-archive
+        }
+      } else if (rc != Z_OK && rc != Z_BUF_ERROR) {
+        // Z_BUF_ERROR means no progress was possible, which the refill above resolves.
+        failed_ = true;
+        break;
+      }
+
+      if (produced > 0)
+        return produced;
+    }
+    return 0;
+  }
+
+private:
+  // Called at a member boundary. A nonzero byte may begin an adjacent member. A zero begins
+  // terminal padding, so every byte through EOF must then remain zero, matching gzip's
+  // trailing-data rule.
+  bool more_member_data() {
+    bool padding = false;
+    for (;;) {
+      while (zs_.avail_in > 0) {
+        if (*zs_.next_in != 0) {
+          if (padding)
+            failed_ = true;
+          return !padding;
+        }
+        padding = true;
+        ++zs_.next_in;
+        --zs_.avail_in;
+      }
+      if (!refill())
+        return false;
+    }
+  }
+
+  // False at end of input; sets failed() only for a read error.
+  bool refill() {
+    if (input_eof_)
+      return false;
+    const std::size_t n = ::fread(inbuf_.data(), 1, inbuf_.size(), in_);
+    if (n == 0) {
+      if (::ferror(in_) != 0)
+        failed_ = true;
+      input_eof_ = true;
+      return false;
+    }
+    zs_.next_in = inbuf_.data();
+    zs_.avail_in = static_cast<uInt>(n);
+    return true;
+  }
+
+  FILE* in_ = nullptr;
+  z_stream zs_{};
+  bool stream_open_ = false;
+  bool failed_ = false;
+  bool done_ = false;
+  bool input_eof_ = false;
+  std::vector<unsigned char> inbuf_ = std::vector<unsigned char>(kInflateBufferBytes);
+};
+
 // The inflated size is unknown up front, so both guards are enforced as the bytes stream past.
+std::atomic<std::uint64_t>& inflation_counter() {
+  static std::atomic<std::uint64_t> count{0};
+  return count;
+}
+
 void inflate_archive_to_file(const std::string& archive_path, const fs::path& out_path,
                              const ModelArchiveLoaderOptions& opt) {
   const bool space_checked = opt.check_output_free_space && output_space_check_enabled();
@@ -770,20 +832,17 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
     budget = *room;
   }
 
-  // Redirected, not an argument: a path starting with '-' would parse as a gzip option.
-  const std::string cmd = std::string("gzip -dc < ") + shell_quote(archive_path) + " 2>/dev/null";
-
-  FILE* pipe = ::popen(cmd.c_str(), "r");
-  if (!pipe) {
+  GzipInflater inflater(archive_path);
+  if (!inflater.ready()) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to open gzip decompression pipe");
+                  "invalid_archive: failed to open archive for decompression: " + archive_path);
   }
+  inflation_counter().fetch_add(1, std::memory_order_relaxed);
 
   errno = 0;
   std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
   if (!out.is_open()) {
     const int saved_errno = errno;
-    ::pclose(pipe);
     std::string msg = "failed to open archive staging file: " + out_path.string();
     if (saved_errno != 0) {
       msg += " (" + std::string(std::strerror(saved_errno)) + ")";
@@ -794,97 +853,86 @@ void inflate_archive_to_file(const std::string& archive_path, const fs::path& ou
   constexpr std::uint64_t kBudgetRefreshInterval = 64ULL * 1024ULL * 1024ULL;
   std::uint64_t since_refresh = 0;
 
-  std::array<char, 65536> buf{};
+  std::vector<char> buf(kInflateBufferBytes);
   std::uint64_t total = 0;
 
   while (true) {
-    const std::size_t n = ::fread(buf.data(), 1, buf.size(), pipe);
-    if (n > 0) {
-      total += static_cast<std::uint64_t>(n);
-      if (total > opt.max_inflated_archive_bytes) {
-        ::pclose(pipe);
-        throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
-                      "size_limit_exceeded: inflated archive exceeds configured maximum size");
-      }
+    const std::size_t n = inflater.read(buf.data(), buf.size());
+    if (n == 0)
+      break;
 
-      if (space_checked) {
-        // Exhausting the budget is re-measured rather than fatal: another writer may have freed
-        // space since the last look.
-        if (n > budget) {
-          const auto room = room_before_reserve();
-          if (!room) {
-            ::pclose(pipe);
-            throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                          "unable to determine free space for archive staging: " +
-                              staging_dir.string());
-          }
-          budget = *room;
-        }
-        if (n > budget) {
-          ::pclose(pipe);
-          std::ostringstream oss;
-          oss << "insufficient free space inflating model archive"
-              << " path=" << staging_dir.string() << " inflated=" << format_bytes(total - n)
-              << " reserve=" << format_bytes(opt.min_output_free_bytes)
-              << " writable=" << format_bytes(budget)
-              << " hint=set TMPDIR to a filesystem with enough space";
-          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
-        }
-        budget -= n;
-        since_refresh += n;
-        // Only ever tightens: our buffered writes may not be visible to fs::space yet, so a
-        // larger number would over-credit us.
-        if (since_refresh >= kBudgetRefreshInterval) {
-          const auto room = room_before_reserve();
-          if (!room) {
-            ::pclose(pipe);
-            throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
-                          "unable to determine free space for archive staging: " +
-                              staging_dir.string());
-          }
-          budget = std::min(budget, *room);
-          since_refresh = 0;
-        }
-      }
+    total += static_cast<std::uint64_t>(n);
+    if (total > opt.max_inflated_archive_bytes) {
+      throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                    "size_limit_exceeded: inflated archive exceeds configured maximum size");
+    }
 
-      errno = 0;
-      out.write(buf.data(), static_cast<std::streamsize>(n));
-      if (!out.good()) {
-        const int saved_errno = errno;
-        ::pclose(pipe);
-        std::string msg = "failed writing archive staging file: " + out_path.string();
-        if (saved_errno != 0) {
-          msg += " (" + std::string(std::strerror(saved_errno)) + ")";
+    if (space_checked) {
+      // Exhausting the budget is re-measured rather than fatal: another writer may have freed
+      // space since the last look.
+      if (n > budget) {
+        const auto room = room_before_reserve();
+        if (!room) {
+          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                        "unable to determine free space for archive staging: " +
+                            staging_dir.string());
         }
-        throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
+        budget = *room;
+      }
+      if (n > budget) {
+        std::ostringstream oss;
+        oss << "insufficient free space inflating model archive" << " path=" << staging_dir.string()
+            << " inflated=" << format_bytes(total - n)
+            << " reserve=" << format_bytes(opt.min_output_free_bytes) << " writable="
+            << format_bytes(budget)
+            // Model loading stages under the extraction base, so naming TMPDIR would send the
+            // caller to a variable that no longer selects this filesystem.
+            << " hint=set " << (opt.staging_base.empty() ? "TMPDIR" : "SIMA_MPK_EXTRACT_ROOT")
+            << " to a filesystem with enough space";
+        throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
+      }
+      budget -= n;
+      since_refresh += n;
+      // Only ever tightens: our buffered writes may not be visible to fs::space yet, so a
+      // larger number would over-credit us.
+      if (since_refresh >= kBudgetRefreshInterval) {
+        const auto room = room_before_reserve();
+        if (!room) {
+          throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                        "unable to determine free space for archive staging: " +
+                            staging_dir.string());
+        }
+        budget = std::min(budget, *room);
+        since_refresh = 0;
       }
     }
 
-    if (n < buf.size()) {
-      if (::feof(pipe))
-        break;
-      if (::ferror(pipe)) {
-        ::pclose(pipe);
-        throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                      "invalid_archive: failed reading decompressed archive bytes");
+    errno = 0;
+    out.write(buf.data(), static_cast<std::streamsize>(n));
+    if (!out.good()) {
+      const int saved_errno = errno;
+      std::string msg = "failed writing archive staging file: " + out_path.string();
+      if (saved_errno != 0) {
+        msg += " (" + std::string(std::strerror(saved_errno)) + ")";
       }
+      throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
     }
+  }
+
+  // Before the flush: a decode failure is about the archive, not the staging filesystem.
+  if (inflater.failed()) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to decompress archive: " + archive_path);
   }
 
   errno = 0;
   out.close();
   if (!out.good()) {
     const int saved_errno = errno;
-    ::pclose(pipe);
     throw_archive(write_error_class_for_path(saved_errno, out_path),
                   "failed to flush archive staging file: " + out_path.string());
   }
 
-  const int rc = ::pclose(pipe);
-  if (rc != 0) {
-    throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to decompress archive: " + archive_path);
-  }
   if (total == 0) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
                   "invalid_archive: archive decompressed to zero bytes: " + archive_path);
@@ -944,7 +992,7 @@ ArchiveSnapshot::ArchiveSnapshot(const std::string& archive_path,
                   "size_limit_exceeded: archive exceeds configured maximum size");
   }
 
-  dir_ = make_staging_dir();
+  dir_ = make_staging_dir(opt.staging_base);
   tar_path_ = (dir_ / "archive.tar").string();
 
   // The compressed size is not a lower bound for the inflated size, so there is nothing to
@@ -1031,106 +1079,6 @@ std::uint64_t stream_tar_entry_to_file(const std::string& tar_path,
   return total;
 }
 
-void validate_pipeline_sequence_json(const json& j) {
-  if (!j.is_object()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence.json must be a JSON object");
-  }
-  if (!j.contains("pipelines") || !j["pipelines"].is_array() || j["pipelines"].empty()) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: pipeline_sequence.json missing non-empty 'pipelines' array");
-  }
-  const auto& first = j["pipelines"][0];
-  if (!first.is_object() || !first.contains("sequence") || !first["sequence"].is_array() ||
-      first["sequence"].empty()) {
-    throw_archive(
-        ModelArchiveErrorClass::SchemaError,
-        "schema_error: pipeline_sequence.json first pipeline missing non-empty 'sequence'");
-  }
-
-  const auto& seq = first["sequence"];
-  std::unordered_set<std::string> seen_names;
-  seen_names.reserve(seq.size());
-
-  for (const auto& stage : seq) {
-    if (!stage.is_object()) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: pipeline_sequence stage entry must be an object");
-    }
-
-    if (!stage.contains("sequence_id") || !stage["sequence_id"].is_number_integer()) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: pipeline_sequence stage missing integer field 'sequence_id'");
-    }
-    std::int64_t sequence_id = 0;
-    try {
-      sequence_id = stage["sequence_id"].get<std::int64_t>();
-    } catch (const std::exception& e) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    std::string("schema_error: invalid sequence_id: ") + e.what());
-    }
-    if (sequence_id <= 0 || sequence_id > std::numeric_limits<int>::max()) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: sequence_id must be in range [1, INT_MAX]");
-    }
-
-    const std::string name = require_nonempty_string(stage, "name");
-    (void)require_nonempty_string(stage, "pluginId");
-    const std::string config_path = require_nonempty_string(stage, "configPath");
-    (void)require_nonempty_string(stage, "processor");
-    const std::string kernel = require_nonempty_string(stage, "kernel");
-
-    ensure_safe_config_path(config_path);
-
-    if (!seen_names.insert(name).second) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: duplicate stage name in pipeline_sequence: " + name);
-    }
-    if (!is_supported_kernel_local(kernel)) {
-      throw_archive(ModelArchiveErrorClass::SchemaError,
-                    "schema_error: unsupported kernel in pipeline_sequence: " + kernel);
-    }
-
-    if (stage.contains("input")) {
-      if (stage["input"].is_string()) {
-        (void)stage["input"].get<std::string>();
-      } else if (stage["input"].is_array()) {
-        for (const auto& dep_json : stage["input"]) {
-          if (!dep_json.is_string()) {
-            throw_archive(ModelArchiveErrorClass::SchemaError,
-                          "schema_error: stage input array must contain only strings");
-          }
-          (void)dep_json.get<std::string>();
-        }
-      } else {
-        throw_archive(ModelArchiveErrorClass::SchemaError,
-                      "schema_error: stage input must be string or array of strings");
-      }
-    }
-  }
-}
-
-void validate_version_json(const json& j) {
-  if (!j.is_object() || !j.contains("version")) {
-    return;
-  }
-
-  std::string version;
-  if (j["version"].is_number_integer()) {
-    version = std::to_string(j["version"].get<int>());
-  } else if (j["version"].is_string()) {
-    version = j["version"].get<std::string>();
-  } else {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: manifest version must be string or integer");
-  }
-
-  if (version != "1") {
-    throw_archive(ModelArchiveErrorClass::UnsupportedVersion,
-                  "unsupported_version: manifest version is not supported: " + version);
-  }
-}
-
 // Relative extraction destination for an archive entry, under the package root's
 // {etc,lib,share}/<filename> layout. Entries are flattened to basename, so distinct
 // source paths can collide here (detected in validate_archive / extract_destination_for).
@@ -1171,7 +1119,6 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
   std::unordered_set<std::string> seen_paths;
   std::unordered_map<std::string, std::string> seen_destinations; // rel-dest -> source path
   std::size_t total_json_bytes = 0;
-  std::size_t json_file_count = 0;
 
   for (const auto& line : listing) {
     TarEntry entry = parse_tar_line(line, opt, opt.reject_unsupported_file_types);
@@ -1206,7 +1153,6 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
     }
 
     if (entry.entry_class == EntryClass::Json) {
-      ++json_file_count;
       total_json_bytes += static_cast<std::size_t>(entry.size_bytes);
       if (total_json_bytes > opt.max_total_json_bytes) {
         throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
@@ -1227,38 +1173,28 @@ ArchiveContents validate_archive(const ArchiveSnapshot& snapshot,
     out.entries.push_back(std::move(entry));
   }
 
+  bool has_mpk_manifest = false;
   for (const auto& entry : out.entries) {
     if (entry.entry_class != EntryClass::Json)
       continue;
+    const std::string base = fs::path(entry.normalized_path).filename().string();
+    constexpr std::string_view mpk_suffix = "_mpk.json";
+    if (base != "mpk.json" &&
+        (base.size() <= mpk_suffix.size() ||
+         base.compare(base.size() - mpk_suffix.size(), mpk_suffix.size(), mpk_suffix) != 0)) {
+      continue;
+    }
+    has_mpk_manifest = true;
     const std::vector<std::uint8_t> bytes =
         read_tar_entry(snapshot.tar_path(), entry.raw_path, opt.max_entry_bytes);
 
-    json parsed = parse_json_entry_strict(bytes, entry.normalized_path, opt);
-
-    const std::string base = fs::path(entry.normalized_path).filename().string();
-    if (base == "pipeline_sequence.json") {
-      try {
-        validate_pipeline_sequence_json(parsed);
-        out.manifest.has_pipeline_sequence = true;
-      } catch (const ModelArchiveError&) {
-        if (opt.require_pipeline_sequence) {
-          throw;
-        }
-        // Runtime extraction can tolerate legacy/partial pipeline_sequence JSON.
-      }
-    }
-    if (base == "manifest.json" || base == "mpk_manifest.json") {
-      validate_version_json(parsed);
-    }
+    (void)parse_json_entry_strict(bytes, entry.normalized_path, opt);
   }
 
-  if (opt.require_pipeline_sequence && !out.manifest.has_pipeline_sequence) {
+  if (!has_mpk_manifest) {
     throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: required pipeline_sequence.json is missing");
-  }
-  if (json_file_count == 0) {
-    throw_archive(ModelArchiveErrorClass::SchemaError,
-                  "schema_error: archive contains no JSON configuration files");
+                  "schema_error: strict MPK contract required: archive contains no mpk.json or "
+                  "*_mpk.json");
   }
   if (opt.require_model_binary && !out.manifest.has_model_binary) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,
@@ -1382,6 +1318,10 @@ ModelArchiveLoader::extract(const std::string& archive_path,
   out.share_dir = (package_root / "share").string();
   out.manifest = std::move(validated.manifest);
   return out;
+}
+
+std::uint64_t ModelArchiveLoader::inflation_count() {
+  return inflation_counter().load(std::memory_order_relaxed);
 }
 
 } // namespace simaai::neat::internal

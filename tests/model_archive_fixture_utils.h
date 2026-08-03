@@ -192,7 +192,7 @@ inline ModelArchiveFixture make_malformed_model_archive_fixture(const std::strin
   return make_model_archive_fixture(
       tag,
       {
-          {"etc/bad.json", "{ \"node_name\": \"bad\", \"input_buffers\": [ "},
+          {"etc/bad_mpk.json", "{ \"node_name\": \"bad\", \"input_buffers\": [ "},
       },
       true);
 }

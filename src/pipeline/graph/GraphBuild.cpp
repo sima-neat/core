@@ -24,6 +24,7 @@
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/OutputTensorOverride.h"
 #include "pipeline/internal/SimaaiMemory.h"
@@ -1826,7 +1827,7 @@ void drain_bus_into_diag(GstElement* pipeline, const std::shared_ptr<DiagCtx>& d
 
   const GstMessageType mask = static_cast<GstMessageType>(GST_MESSAGE_ANY & ~GST_MESSAGE_ERROR);
   while (GstMessage* msg = gst_bus_pop_filtered(bus, mask)) {
-    std::string line = gst_message_to_string(msg);
+    std::string line = pipeline_internal::sanitize_gst_diagnostic_text(gst_message_to_string(msg));
     const char* src = (GST_MESSAGE_SRC(msg) && GST_IS_OBJECT(GST_MESSAGE_SRC(msg)))
                           ? GST_OBJECT_NAME(GST_MESSAGE_SRC(msg))
                           : "<unknown>";
@@ -1838,62 +1839,7 @@ void drain_bus_into_diag(GstElement* pipeline, const std::shared_ptr<DiagCtx>& d
 
 void throw_if_bus_error_local(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
                               const char* where) {
-  if (!pipeline)
-    return;
-  GstBus* bus = gst_element_get_bus(pipeline);
-  if (!bus)
-    return;
-
-  GstMessage* msg = gst_bus_pop_filtered(bus, GST_MESSAGE_ERROR);
-  if (!msg) {
-    gst_object_unref(bus);
-    return;
-  }
-
-  // Always record something helpful in the bus log.
-  std::string line = gst_message_to_string(msg);
-  const char* src = (GST_MESSAGE_SRC(msg) && GST_IS_OBJECT(GST_MESSAGE_SRC(msg)))
-                        ? GST_OBJECT_NAME(GST_MESSAGE_SRC(msg))
-                        : "<unknown>";
-
-  if (diag) {
-    diag->push_bus(gst_message_type_get_name(GST_MESSAGE_TYPE(msg)), src ? src : "<unknown>", line);
-  }
-
-  // Prefer structured error parsing (better than generic stringify).
-  GError* e = nullptr;
-  gchar* dbg = nullptr;
-  gst_message_parse_error(msg, &e, &dbg);
-
-  const std::string err_msg = (e && e->message) ? e->message : "unknown";
-  const std::string dbg_msg = (dbg) ? dbg : "";
-
-  if (e)
-    g_error_free(e);
-  if (dbg)
-    g_free(dbg);
-
-  gst_message_unref(msg);
-  gst_object_unref(bus);
-
-  maybe_dump_dot(pipeline, std::string(where) + "_error");
-
-  GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
-  rep.error_code = error_codes::kCaps;
-  std::ostringstream note;
-  note << "where=" << (where ? where : "Graph::build") << " code=" << rep.error_code
-       << " summary=GST ERROR" << " details=element='" << (src ? src : "<unknown>") << "' error='"
-       << err_msg << "'";
-  if (!dbg_msg.empty()) {
-    note << " gst_debug='" << dbg_msg << "'";
-  }
-  rep.repro_note = note.str();
-  const std::string boundary = boundary_summary_local(diag);
-  if (!boundary.empty()) {
-    rep.repro_note += "\n" + boundary;
-  }
-  rep.repro_note += "\nHint: inspect caps negotiation and offending element diagnostics.";
-  throw NeatError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
+  pipeline_internal::throw_if_bus_error(pipeline, diag, where);
 }
 
 bool should_insert_boundaries_for_mode(const char* mode_key, bool def_val) {
@@ -1917,9 +1863,15 @@ int session_build_async_queue2_depth(int requested_depth) {
   }();
   return cached_env_or_default;
 }
-std::string session_build_async_queue2_fragment(int requested_depth) {
+std::string session_build_async_queue2_fragment(int requested_depth,
+                                                std::string_view element_name) {
   const int depth = session_build_async_queue2_depth(requested_depth);
-  return "queue max-size-buffers=" + std::to_string(depth) + " max-size-bytes=0 max-size-time=0";
+  std::string fragment = "queue";
+  if (!element_name.empty()) {
+    fragment += " name=" + std::string(element_name);
+  }
+  return fragment + " max-size-buffers=" + std::to_string(depth) +
+         " max-size-bytes=0 max-size-time=0";
 }
 
 static bool fragment_segment_uses_factory(std::string_view segment, std::string_view factory) {
@@ -2935,7 +2887,16 @@ BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
         want_queue2 = false;
       }
       if (want_queue2) {
-        ss << " ! " << session_build_async_queue2_fragment(requested_queue_depth) << " ! ";
+        const std::string queue_name =
+            apply_name_transform(name_transform, "queue_neat_async_" + std::to_string(i - 1U));
+        br.framework_name_origins.push_back(LaunchNameOrigin{
+            .kind = LaunchNameOrigin::Kind::Queue,
+            .name = queue_name,
+            .node_index = static_cast<int>(i - 1U),
+            .role = "async inter-node queue",
+        });
+        ss << " ! " << session_build_async_queue2_fragment(requested_queue_depth, queue_name)
+           << " ! ";
       } else {
         ss << " ! ";
       }
@@ -3615,6 +3576,9 @@ void enforce_names_contract(GstElement* pipeline, const BuildResult& br) {
     if (b)
       allowed.insert(b->boundary_name);
   }
+  for (const auto& origin : br.framework_name_origins) {
+    allowed.insert(origin.name);
+  }
   if (!br.appsink_name.empty()) {
     allowed.insert(br.appsink_name);
   }
@@ -3638,8 +3602,9 @@ void enforce_names_contract(GstElement* pipeline, const BuildResult& br) {
 
       if (!internal_ok && allowed.find(n) == allowed.end()) {
         gst_iterator_free(it);
+        g_value_unset(&item);
         GraphReport rep = br.diag->snapshot_basic();
-        rep.error_code = error_codes::kPipelineShape;
+        rep.error_code = error_codes::kGraphElementName;
         rep.repro_note = "NamingContractViolation: element '" + n +
                          "' is not owned by any node.\n"
                          "Fix: ensure every fragment uses deterministic names and "

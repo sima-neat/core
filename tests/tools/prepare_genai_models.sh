@@ -6,6 +6,12 @@ DEFAULT_TEXT_MODEL="Qwen2.5-0.5B-Instruct-GPTQ-a16w4"
 DEFAULT_VLM_MODEL="LFM2.5-VL-450M-a16w4"
 DEFAULT_ASR_MODEL="whisper-small-a16w8"
 DEFAULT_ASR_REPO="florianvoss/whisper-small-a16w8"
+DEFAULT_REASONING_QWEN_MODEL="Qwen3-0.6B-GPTQ-a16w4"
+DEFAULT_REASONING_QWEN_REPO="simaai/Qwen3-0.6B-GPTQ-a16w4"
+DEFAULT_REASONING_QWEN_REVISION="964b272f2b62a434b10b0c14f605016fd285ca5e"
+DEFAULT_REASONING_GEMMA_MODEL="Gemma-4-E2B-it-GPTQ-a16w4"
+DEFAULT_REASONING_GEMMA_REPO="simaai/gemma4-E2B-it"
+DEFAULT_REASONING_GEMMA_REVISION="f1dfb195259b9f7ea1f317242b7879e1d5f0427b"
 
 usage() {
   cat <<EOF
@@ -19,6 +25,10 @@ Environment:
   SIMA_TEST_LLIMA_VLM_MODEL      VLM model name. Default: ${DEFAULT_VLM_MODEL}
   SIMA_TEST_LLIMA_ASR_MODEL      ASR model name. Default: ${DEFAULT_ASR_MODEL}
   SIMA_TEST_LLIMA_ASR_REPO       ASR Hugging Face repo. Default: ${DEFAULT_ASR_REPO}
+  SIMA_TEST_LLIMA_REASONING_QWEN_MODEL
+                                  Qwen reasoning model. Default: ${DEFAULT_REASONING_QWEN_MODEL}
+  SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL
+                                  Gemma reasoning model. Default: ${DEFAULT_REASONING_GEMMA_MODEL}
 
 The SIMA_TEST_LLIMA_*_MODEL values must be model directory names under
 LLIMA_MODELS_PATH, not absolute paths and not Hugging Face repo ids.
@@ -45,11 +55,16 @@ download_model() {
   local repo_id="$2"
   local model_name="$3"
   local expected_config="$4"
+  local revision="${5:-}"
   local target_dir="${LLIMA_MODELS_PATH}/${model_name}"
 
   mkdir -p "${target_dir}"
   echo "[genai-models] ${label}: synchronizing ${repo_id} to ${target_dir}"
-  hf download "${repo_id}" --local-dir "${target_dir}"
+  local args=("${repo_id}" --local-dir "${target_dir}")
+  if [[ -n "${revision}" ]]; then
+    args+=(--revision "${revision}")
+  fi
+  hf download "${args[@]}"
 
   if [[ ! -f "${target_dir}/${expected_config}" ]]; then
     echo "ERROR: downloaded ${label} model is missing ${expected_config}: ${target_dir}" >&2
@@ -78,10 +93,14 @@ SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-${DEFAULT_TEXT_MODEL}}
 SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-${DEFAULT_VLM_MODEL}}"
 SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-${DEFAULT_ASR_MODEL}}"
 SIMA_TEST_LLIMA_ASR_REPO="${SIMA_TEST_LLIMA_ASR_REPO:-${DEFAULT_ASR_REPO}}"
+SIMA_TEST_LLIMA_REASONING_QWEN_MODEL="${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL:-${DEFAULT_REASONING_QWEN_MODEL}}"
+SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL="${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL:-${DEFAULT_REASONING_GEMMA_MODEL}}"
 
 validate_model_name "SIMA_TEST_LLIMA_TEXT_MODEL" "${SIMA_TEST_LLIMA_TEXT_MODEL}"
 validate_model_name "SIMA_TEST_LLIMA_VLM_MODEL" "${SIMA_TEST_LLIMA_VLM_MODEL}"
 validate_model_name "SIMA_TEST_LLIMA_ASR_MODEL" "${SIMA_TEST_LLIMA_ASR_MODEL}"
+validate_model_name "SIMA_TEST_LLIMA_REASONING_QWEN_MODEL" "${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}"
+validate_model_name "SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL" "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
 
 mkdir -p "${LLIMA_MODELS_PATH}"
 
@@ -94,5 +113,13 @@ download_model \
 download_model \
   "asr" "${SIMA_TEST_LLIMA_ASR_REPO}" "${SIMA_TEST_LLIMA_ASR_MODEL}" \
   "devkit/whisper_config.json"
+download_model \
+  "Qwen reasoning" "${DEFAULT_REASONING_QWEN_REPO}" \
+  "${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}" "devkit/vlm_config.json" \
+  "${DEFAULT_REASONING_QWEN_REVISION}"
+download_model \
+  "Gemma reasoning" "${DEFAULT_REASONING_GEMMA_REPO}" \
+  "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}" "devkit/vlm_config.json" \
+  "${DEFAULT_REASONING_GEMMA_REVISION}"
 
 echo "[genai-models] ready under ${LLIMA_MODELS_PATH}"

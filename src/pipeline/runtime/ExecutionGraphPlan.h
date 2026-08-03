@@ -35,7 +35,10 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 
 namespace simaai::neat {
 class Graph;
+namespace internal {
+class InputSpecSpecializationContext;
 }
+} // namespace simaai::neat
 
 namespace simaai::neat::runtime {
 
@@ -351,6 +354,9 @@ ExecutionGraphPlan compile_graph_run_plan(const graph::Graph& graph,
                                           const graph::GraphRunOptions& opt);
 
 namespace session_test {
+
+void specialize_input_specs_for_test(ExecutionGraphPlan* plan,
+                                     const internal::InputSpecSpecializationContext& context);
 
 bool fused_realtime_source_segment_eligible_for_test(bool already_fused);
 

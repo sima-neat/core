@@ -318,3 +318,7 @@ int main() {
   std::cout << "[OK] unit_graph_api_surface_test passed\n";
   return 0;
 }
+// Released ARM64 public-object layout. Graph's composition implementation is pimpl-backed; new
+// invariants must stay behind that pointer rather than growing the customer-visible object.
+static_assert(sizeof(simaai::neat::Graph) == 688U,
+              "Graph public object layout changed; run ABI review");

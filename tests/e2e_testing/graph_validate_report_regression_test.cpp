@@ -5,6 +5,8 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <opencv2/core.hpp>
+
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -96,7 +98,9 @@ RUN_TEST(
       // Parse/launch failure path should include deterministic repro diagnostics.
       {
         Graph broken_parse;
-        broken_parse.custom("thiselementdoesnotexist definitely=true", InputRole::Source);
+        broken_parse.custom(
+            "thiselementdoesnotexist location=rtsp://user:secret@example.test/stream",
+            InputRole::Source);
         broken_parse.custom(
             "appsink name=mysink emit-signals=false sync=false max-buffers=1 drop=true");
 
@@ -105,16 +109,42 @@ RUN_TEST(
         opt.enforce_names = false;
         const GraphReport rep = broken_parse.validate(opt);
 
-        require(rep.error_code == error_codes::kParseLaunch,
-                "validate(parse failure): expected build.parse_launch error code");
+        require(rep.error_code == error_codes::kPluginMissing,
+                "validate(parse failure): expected build.plugin_missing error code");
         require(!rep.pipeline_string.empty(),
                 "validate(parse failure): expected non-empty pipeline string");
         require(!rep.repro_note.empty(),
                 "validate(parse failure): missing parse-launch failure diagnostic");
-        require_contains(rep.repro_note, "gst_parse_launch failed",
-                         "validate(parse failure): missing parse-launch failure diagnostic");
+        require_contains(rep.repro_note, "required GStreamer element is not installed",
+                         "validate(parse failure): missing actionable plugin diagnostic");
         require_contains(rep.repro_gst_launch, "gst-launch-1.0 -v",
                          "validate(parse failure): missing gst-launch reproduction command");
+        require(!rep.nodes.empty(),
+                "validate(parse failure): expected node attribution in the report");
+        require(rep.to_json().find("user:secret") == std::string::npos,
+                "validate(parse failure): report must redact node credentials");
+      }
+
+      // The input-taking validation overload must apply the same node-report redaction.
+      {
+        Graph broken_parse;
+        broken_parse.add(nodes::Input());
+        broken_parse.custom(
+            "thiselementdoesnotexist location=rtsp://user:secret@example.test/stream");
+        broken_parse.add(nodes::Output(OutputOptions::Latest()));
+
+        ValidateOptions opt;
+        opt.parse_launch = true;
+        opt.enforce_names = false;
+        const cv::Mat input(2, 2, CV_8UC3, cv::Scalar(0, 0, 0));
+        const GraphReport rep = broken_parse.validate(opt, input);
+
+        require(rep.error_code == error_codes::kPluginMissing,
+                "validate(input parse failure): expected build.plugin_missing error code");
+        require(!rep.nodes.empty(),
+                "validate(input parse failure): expected node attribution in the report");
+        require(rep.to_json().find("user:secret") == std::string::npos,
+                "validate(input parse failure): report must redact node credentials");
       }
 
       // Live source validate() should time out in PAUSED and report deterministically.
