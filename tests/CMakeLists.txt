@@ -1657,7 +1657,7 @@ add_pipeline_test_long(
 
 if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST ssd_mobilenet_e2e_test
-    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;accuracy")
+    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;accuracy;modalix-only")
 endif()
 
 # Device-free SSD contract coverage. No SKIP_RETURN_CODE: it must fail, never skip.

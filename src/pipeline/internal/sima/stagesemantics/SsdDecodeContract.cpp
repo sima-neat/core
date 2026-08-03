@@ -268,6 +268,27 @@ const SsdRecipeDescriptor* find_ssd_recipe_descriptor(SsdRecipeId id) {
   return nullptr;
 }
 
+void validate_ssd_model_frames(const SsdRecipeDescriptor& recipe,
+                               std::span<const SsdModelFrameObservation> observations,
+                               std::string_view where) {
+  for (const auto& observation : observations) {
+    if (observation.width <= 0 || observation.height <= 0) {
+      continue;
+    }
+    if (observation.width == recipe.model_width && observation.height == recipe.model_height) {
+      continue;
+    }
+    const std::string source =
+        observation.source.empty() ? "a frame contract" : std::string(observation.source);
+    throw std::invalid_argument(
+        std::string(where) + ": SSD box decode profile '" + ssd_recipe_id_token(recipe.id) +
+        "' requires a " + std::to_string(recipe.model_width) + "x" +
+        std::to_string(recipe.model_height) + " model frame (the prior table assumes it), but " +
+        source + " resolved to " + std::to_string(observation.width) + "x" +
+        std::to_string(observation.height) + ".");
+  }
+}
+
 const SsdRecipeDescriptor& resolve_ssd_recipe_descriptor(const BoxDecodeStaticContract& contract) {
   if (!box_decode_type_is_ssd_family(contract.decode_type)) {
     throw std::invalid_argument("SSD BoxDecode resolver requires an SSD-family decode type");

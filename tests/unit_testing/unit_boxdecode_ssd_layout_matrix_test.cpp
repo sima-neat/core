@@ -9,6 +9,7 @@
 #include "test_utils.h"
 
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -588,4 +589,25 @@ RUN_TEST(
       require(std::string(box_decode_type_contract_summary(BoxDecodeType::Ssd)).find("SSD") !=
                   std::string::npos,
               "Ssd contract summary missing SSD description");
+
+      const auto* ssd300_recipe = find_ssd_recipe_descriptor(SsdRecipeId::Ssd300V1);
+      require(ssd300_recipe != nullptr, "SSD300 recipe descriptor must exist");
+      const std::array<SsdModelFrameObservation, 3> matching_frames = {
+          {{300, 300, "the preprocess resize plan"},
+           {300, 300, "the model MLA contract"},
+           {300, 300, "the model-dimension override"}}};
+      validate_ssd_model_frames(*ssd300_recipe, matching_frames, "SSD frame test");
+
+      const std::array<SsdModelFrameObservation, 2> mismatched_mla = {
+          {{300, 300, "the preprocess resize plan"}, {640, 640, "the model MLA contract"}}};
+      bool mismatched_mla_rejected = false;
+      try {
+        validate_ssd_model_frames(*ssd300_recipe, mismatched_mla, "SSD frame test");
+      } catch (const std::exception& e) {
+        mismatched_mla_rejected = true;
+        require_contains(e.what(), "the model MLA contract resolved to 640x640",
+                         "SSD MLA mismatch must identify the inference-side contract");
+      }
+      require(mismatched_mla_rejected,
+              "an explicit recipe-sized resize must not bypass a mismatched MLA ingress");
     }));

@@ -14,6 +14,7 @@
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -830,25 +831,23 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
     }
     const int recipe_width = ssd_recipe ? ssd_recipe->model_width : 0;
     const int recipe_height = ssd_recipe ? ssd_recipe->model_height : 0;
-    if (resize_runs) {
-      const int resize_w = resolved.effective.resize.width > 0 ? resolved.effective.resize.width
-                                                               : resolved.mla_contract.width;
-      const int resize_h = resolved.effective.resize.height > 0 ? resolved.effective.resize.height
-                                                                : resolved.mla_contract.height;
-      reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width,
-                                   recipe_height, resize_w, resize_h, "the preprocess resize plan",
-                                   "SimaBoxDecode(Model)");
-    }
-    reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width, recipe_height,
-                                 resolved_model_width, resolved_model_height,
-                                 "the model-dimension override", "SimaBoxDecode(Model)");
-    // Decoder dimension overrides do not change the packaged inference ingress. Every manual/no-
-    // resize SSD route must therefore agree with both the selected recipe and the MLA contract.
-    if (!resize_runs) {
-      reject_wrong_ssd_model_frame(compiled_contract.payload.decode_type, recipe_width,
-                                   recipe_height, resolved.mla_contract.width,
-                                   resolved.mla_contract.height, "the model MLA contract",
-                                   "SimaBoxDecode(Model)");
+    if (ssd_recipe) {
+      const int resize_w =
+          resize_runs ? (resolved.effective.resize.width > 0 ? resolved.effective.resize.width
+                                                             : resolved.mla_contract.width)
+                      : 0;
+      const int resize_h =
+          resize_runs ? (resolved.effective.resize.height > 0 ? resolved.effective.resize.height
+                                                              : resolved.mla_contract.height)
+                      : 0;
+      const std::array<pipeline_internal::sima::stagesemantics::SsdModelFrameObservation, 3>
+          frame_contracts = {
+              {{resize_w, resize_h, "the preprocess resize plan"},
+               {resolved.mla_contract.width, resolved.mla_contract.height,
+                "the model MLA contract"},
+               {resolved_model_width, resolved_model_height, "the model-dimension override"}}};
+      pipeline_internal::sima::stagesemantics::validate_ssd_model_frames(
+          *ssd_recipe, frame_contracts, "SimaBoxDecode(Model)");
     }
     if (ssd_recipe && !resize_runs && !resize_mode_override.has_value() &&
         has_explicit_dimension_pair(resolved_original_width, resolved_original_height) &&

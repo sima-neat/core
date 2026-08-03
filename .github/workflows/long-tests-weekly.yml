@@ -37,6 +37,7 @@ jobs:
         run: |
           ctest --test-dir build-long-tests \
             --label-regex "long" \
+            --label-exclude "modalix-only" \
             --output-on-failure \
             --no-tests=error
 

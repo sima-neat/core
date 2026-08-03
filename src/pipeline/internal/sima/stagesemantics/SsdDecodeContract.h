@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 
 namespace simaai::neat::pipeline_internal::sima::stagesemantics {
 
@@ -55,11 +56,22 @@ struct SsdRecipeDescriptor {
   SsdClassCountPolicy class_count_policy = SsdClassCountPolicy::Exact;
 };
 
+struct SsdModelFrameObservation {
+  int width = 0;
+  int height = 0;
+  std::string_view source;
+};
+
 /// Return the descriptor keyed by a resolved Core-side recipe ID, or nullptr for Unknown.
 const SsdRecipeDescriptor* find_ssd_recipe_descriptor(SsdRecipeId id);
 
 /// Resolve and validate the complete ordered prepared-head signature. Throws on any mismatch.
 const SsdRecipeDescriptor& resolve_ssd_recipe_descriptor(const BoxDecodeStaticContract& contract);
+
+/// Validate every available preprocessing/inference frame against the selected recipe.
+void validate_ssd_model_frames(const SsdRecipeDescriptor& recipe,
+                               std::span<const SsdModelFrameObservation> observations,
+                               std::string_view where);
 
 /// Human-readable ordered signature used by diagnostics and tests.
 std::string ssd_observed_signature(const BoxDecodeStaticContract& contract);
