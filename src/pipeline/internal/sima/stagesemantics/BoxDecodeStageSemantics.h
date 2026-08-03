@@ -26,6 +26,8 @@ struct BoxDecodeCompiledContractOptions {
   double nms_iou_threshold = 0.0;
   int topk = 0;
   int num_classes = 0;
+  /// Explicit SuperPoint overlay. Unset preserves all MPK subset fields verbatim.
+  std::optional<SuperPointStaticContract> superpoint;
   bool model_owned_flags = false;
   std::optional<bool> quant_contract_required;
   std::vector<std::string> required_preprocess_meta_fields;

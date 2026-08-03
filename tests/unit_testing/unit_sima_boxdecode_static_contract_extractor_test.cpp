@@ -657,6 +657,108 @@ RUN_TEST(
       require(extracted_packed_parent_bypass->physical_inputs[1].byte_offset == 1747200,
               "raw-parent bypass physical input should preserve the second packed head offset");
 
+      // AFE emits cblock=false outputs as tiled HWC with C16 padding. The
+      // logical C65 detector therefore occupies 60*80*80 bytes in the shared
+      // MLA carrier, and the descriptor must begin after that physical span.
+      MpkContract superpoint_hwc_parent = packed_parent_mpk;
+      auto& hwc_mla = superpoint_hwc_parent.plugins[0];
+      hwc_mla.output_tensors[0].mpk_shape = {1, 1612800};
+      hwc_mla.output_tensors[0].size_bytes = 1612800U;
+      hwc_mla.quant = MpkQuantContract{{4.0, 0.25}, {0, 0}, -1};
+
+      auto& hwc_unpack = superpoint_hwc_parent.plugins[1];
+      hwc_unpack.output_tensors[0].name = "detector";
+      hwc_unpack.output_tensors[0].mpk_shape = {1, 384000};
+      hwc_unpack.output_tensors[0].logical_shape = {60, 80, 65};
+      hwc_unpack.output_tensors[0].size_bytes = 384000U;
+      hwc_unpack.output_tensors[0].byte_offset = 0;
+      hwc_unpack.output_tensors[0].source_byte_offset = 0;
+      hwc_unpack.output_tensors[1].name = "descriptor";
+      hwc_unpack.output_tensors[1].mpk_shape = {1, 1228800};
+      hwc_unpack.output_tensors[1].logical_shape = {60, 80, 256};
+      hwc_unpack.output_tensors[1].size_bytes = 1228800U;
+      hwc_unpack.output_tensors[1].byte_offset = 0;
+      hwc_unpack.output_tensors[1].source_byte_offset = 0;
+
+      const std::array<const char*, 2> hwc_names = {"detector", "descriptor"};
+      const std::array<int, 2> hwc_channels = {65, 256};
+      const std::array<std::size_t, 2> hwc_sizes = {384000U, 1228800U};
+      for (std::size_t i = 0; i < 2U; ++i) {
+        auto& detess = superpoint_hwc_parent.plugins[2U + i];
+        detess.name = std::string("superpoint_detess_") + std::to_string(i);
+        detess.kernel = "detessellation_transform";
+        detess.slice_shape = {80, 1, hwc_channels[i]};
+        detess.frame_shape = {1, 60, 80, hwc_channels[i]};
+        detess.frame_type = "INT8";
+        detess.has_cblock = true;
+        detess.cblock = false;
+        detess.has_align_c16 = true;
+        detess.align_c16 = true;
+        detess.input_tensors = {MpkTensorContract{
+            .tensor_index = 0,
+            .name = hwc_names[i],
+            .dtype = "INT8",
+            .mpk_shape = {1, static_cast<std::int64_t>(hwc_sizes[i])},
+            .shape_semantics = MpkShapeSemantics::PackedExtent,
+            .size_bytes = hwc_sizes[i],
+            .logical_shape = {60, 80, hwc_channels[i]},
+        }};
+        detess.output_tensors = {MpkTensorContract{
+            .tensor_index = 0,
+            .name = std::string(hwc_names[i]) + "_detess",
+            .dtype = "INT8",
+            .mpk_shape = {60, 80, hwc_channels[i]},
+            .shape_semantics = MpkShapeSemantics::Geometry,
+            .size_bytes = static_cast<std::size_t>(60 * 80 * hwc_channels[i]),
+            .logical_shape = {60, 80, hwc_channels[i]},
+        }};
+        auto& edge = superpoint_hwc_parent.edges[1U + i];
+        edge.tensor_name = hwc_names[i];
+        edge.dst_plugin = detess.name;
+      }
+
+      MpkPluginIoContract hwc_boxdecode;
+      hwc_boxdecode.name = "boxdecode_superpoint";
+      hwc_boxdecode.kernel = "boxdecode";
+      hwc_boxdecode.decode_type = "superpoint";
+      hwc_boxdecode.superpoint.schema_version = 0;
+      hwc_boxdecode.superpoint.descriptor_dim = 256;
+      hwc_boxdecode.input_tensors = {
+          superpoint_hwc_parent.plugins[2].output_tensors[0],
+          superpoint_hwc_parent.plugins[3].output_tensors[0],
+      };
+      superpoint_hwc_parent.plugins.push_back(std::move(hwc_boxdecode));
+      for (std::size_t i = 0; i < 2U; ++i) {
+        superpoint_hwc_parent.edges.push_back(MpkContractEdge{
+            .src_plugin_index = 2U + i,
+            .src_output_index = 0,
+            .dst_plugin_index = 4U,
+            .dst_input_index = static_cast<int>(i),
+            .src_plugin = superpoint_hwc_parent.plugins[2U + i].name,
+            .dst_plugin = "boxdecode_superpoint",
+            .tensor_name = superpoint_hwc_parent.plugins[2U + i].output_tensors[0].name,
+        });
+      }
+
+      const auto extracted_superpoint_hwc = build_boxdecode_static_contract_from_mpk(
+          superpoint_hwc_parent, make_flags(true, true), &error);
+      require(extracted_superpoint_hwc.has_value(),
+              "cblock=false SuperPoint route should extract tiled-HWC source facts: " + error);
+      require(extracted_superpoint_hwc->decode_type == simaai::neat::BoxDecodeType::SuperPoint &&
+                  extracted_superpoint_hwc->tensors.size() == 2U,
+              "cblock=false SuperPoint route should retain both semantic heads");
+      require(extracted_superpoint_hwc->tensors[0].source_storage_kind ==
+                      BoxDecodeSourceStorageKind::PackedHwcC16 &&
+                  extracted_superpoint_hwc->tensors[1].source_storage_kind ==
+                      BoxDecodeSourceStorageKind::PackedHwcC16,
+              "cblock=false align_c16 sources should publish PackedHwcC16 storage");
+      require(extracted_superpoint_hwc->tensors[0].source_byte_offset == 0 &&
+                  extracted_superpoint_hwc->tensors[1].source_byte_offset == 384000,
+              "shared SuperPoint parent offsets must use the padded detector byte span");
+      require(extracted_superpoint_hwc->tensors[0].source_size_bytes == 384000U &&
+                  extracted_superpoint_hwc->tensors[1].source_size_bytes == 1228800U,
+              "cblock=false SuperPoint heads must preserve physical source spans");
+
       // Stage-by-stage storage regression: direct route has full-frame detess slice but the source
       // is still packed/cblock. This is the YOLO26-pose INT8 direct failure mode.
       MpkContract direct_int8_mpk;
@@ -986,4 +1088,52 @@ RUN_TEST(
       require(!extracted_dense_slice_subset->logical_inputs.empty() &&
                   extracted_dense_slice_subset->logical_inputs[0].size_bytes == 102400U,
               "dense HWC slice subset should publish physical source byte span");
+
+      // AFE single-MLA packages can expose logical dense heads directly from
+      // MLA with no unpack/detess stage. The exact shape*dtype byte count is an
+      // authoritative dense-storage fact; packed rank-2 MLA carriers remain
+      // rejected by dense_hwc_source_fact_from_mpk_tensor_local().
+      MpkContract direct_dense_mpk;
+      MpkPluginIoContract direct_dense_mla;
+      direct_dense_mla.name = "MLA_0";
+      direct_dense_mla.sequence = 1;
+      direct_dense_mla.processor = "MLA";
+      direct_dense_mla.kernel = "mla";
+      direct_dense_mla.canonical_output_dtype = "BF16";
+      direct_dense_mla.output_tensors.push_back(MpkTensorContract{
+          .tensor_index = 0,
+          .physical_index = 0,
+          .name = "detector",
+          .dtype = "BF16",
+          .mpk_shape = {1, 60, 80, 65},
+          .shape_semantics = MpkShapeSemantics::Geometry,
+          .size_bytes = 60U * 80U * 65U * 2U,
+          .logical_shape = {1, 60, 80, 65},
+      });
+      direct_dense_mla.output_tensors.push_back(MpkTensorContract{
+          .tensor_index = 1,
+          .physical_index = 1,
+          .name = "descriptor",
+          .dtype = "BF16",
+          .mpk_shape = {1, 60, 80, 256},
+          .shape_semantics = MpkShapeSemantics::Geometry,
+          .size_bytes = 60U * 80U * 256U * 2U,
+          .logical_shape = {1, 60, 80, 256},
+      });
+      direct_dense_mpk.plugins.push_back(std::move(direct_dense_mla));
+
+      const auto extracted_direct_dense = build_boxdecode_static_contract_from_mpk(
+          direct_dense_mpk, make_flags(false, false), &error);
+      require(extracted_direct_dense.has_value(),
+              "direct dense MLA route should extract storage facts: " + error);
+      require(extracted_direct_dense->tensors.size() == 2U,
+              "direct dense MLA route should preserve both heads");
+      require(extracted_direct_dense->tensors[0].source_storage_kind ==
+                      BoxDecodeSourceStorageKind::DenseHwcPhysical &&
+                  extracted_direct_dense->tensors[1].source_storage_kind ==
+                      BoxDecodeSourceStorageKind::DenseHwcPhysical,
+              "direct dense MLA outputs should use DenseHwcPhysical storage");
+      require(extracted_direct_dense->tensors[0].input_shape == std::vector<int>({60, 80, 65}) &&
+                  extracted_direct_dense->tensors[1].input_shape == std::vector<int>({60, 80, 256}),
+              "direct dense MLA outputs should preserve SuperPoint head geometry");
     }));
