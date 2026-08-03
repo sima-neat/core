@@ -1181,7 +1181,8 @@ remove_local_simaai_memory_debs_from_general_transaction() {
 collect_simaai_memory_transaction_debs() {
   local out_array_name="$1"
   local -n out_array="${out_array_name}"
-  local deb package depends pre_depends relations runtime_version dev_version
+  local deb package version depends pre_depends relations runtime_version dev_version
+  local selected_deb required_version changed
   local -A seen=()
 
   out_array=()
@@ -1216,6 +1217,34 @@ collect_simaai_memory_transaction_debs() {
       out_array+=("${deb}")
       seen["${deb}"]=1
     fi
+  done
+
+  # Keep every selected local package satisfiable without relying on a matching
+  # repository publication. Exact local dependencies form a small transitive
+  # closure (for example, sima-neat-dev -> sima-neat and
+  # neat-runtime -> neat-common). Non-exact dependencies remain APT's job.
+  changed=1
+  while [[ "${changed}" -eq 1 ]]; do
+    changed=0
+    for selected_deb in "${out_array[@]}"; do
+      depends="$(dpkg-deb -f "${selected_deb}" Depends 2>/dev/null || true)"
+      pre_depends="$(dpkg-deb -f "${selected_deb}" Pre-Depends 2>/dev/null || true)"
+      relations="${depends}, ${pre_depends}"
+      for deb in "${DEBS[@]}"; do
+        [[ -f "${deb}" && -z "${seen[${deb}]+x}" ]] || continue
+        package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+        version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
+        [[ -n "${package}" && -n "${version}" ]] || continue
+        required_version="$(
+          exact_dependency_version_from_relations "${package}" <<<"${relations}" || true
+        )"
+        if [[ "${required_version}" == "${version}" ]]; then
+          out_array+=("${deb}")
+          seen["${deb}"]=1
+          changed=1
+        fi
+      done
+    done
   done
 }
 

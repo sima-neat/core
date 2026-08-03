@@ -439,9 +439,10 @@ runtime="${tmp}/memory-runtime.deb"
 dev="${tmp}/memory-dev.deb"
 dependent="${tmp}/neat-runtime.deb"
 replacement="${tmp}/neat-common.deb"
+base="${tmp}/neat-base.deb"
 pending="${tmp}/neat-appcomplex.deb"
-touch "${runtime}" "${dev}" "${dependent}" "${replacement}" "${pending}"
-DEBS=("${runtime}" "${dev}" "${dependent}" "${replacement}" "${pending}")
+touch "${runtime}" "${dev}" "${dependent}" "${replacement}" "${base}" "${pending}"
+DEBS=("${runtime}" "${dev}" "${dependent}" "${replacement}" "${base}" "${pending}")
 collect_local_simaai_memory_debs() {
   SIMAAI_MEMORY_RUNTIME_DEB="${runtime}"
   SIMAAI_MEMORY_DEV_DEB="${dev}"
@@ -461,10 +462,15 @@ dpkg-deb() {
       printf '%s\n' 'neat-common (= 0.4.0), simaai-memory-lib (= 2.1.1-0neat3)'
       ;;
     neat-common.deb:Package) printf '%s\n' neat-common ;;
-    neat-common.deb:Depends) : ;;
+    neat-common.deb:Depends) printf '%s\n' 'neat-base (= 0.4.0)' ;;
+    neat-base.deb:Package) printf '%s\n' neat-base ;;
+    neat-base.deb:Depends) : ;;
     neat-appcomplex.deb:Package) printf '%s\n' neat-appcomplex ;;
     neat-appcomplex.deb:Depends)
       printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat3)'
+      ;;
+    neat-runtime.deb:Version|neat-common.deb:Version|neat-base.deb:Version|neat-appcomplex.deb:Version)
+      printf '%s\n' 0.4.0
       ;;
     *:Pre-Depends) : ;;
     *) return 2 ;;
@@ -493,7 +499,8 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
             self.assertIn("memory-runtime.deb>", line)
             self.assertIn("memory-dev.deb>", line)
             self.assertIn("neat-runtime.deb>", line)
-            self.assertNotIn("neat-common.deb>", line)
+            self.assertIn("neat-common.deb>", line)
+            self.assertIn("neat-base.deb>", line)
             self.assertNotIn("neat-appcomplex.deb>", line)
             self.assertNotIn("simaai-memory-lib=", line)
             self.assertNotIn("--fix-broken", line)
