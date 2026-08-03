@@ -264,6 +264,46 @@ native_modalix_restore_specs specs
 
 
 class SimaaiMemoryTransactionTest(unittest.TestCase):
+    def test_collect_accepts_matching_version_among_multiple_self_provides(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+runtime="${tmp}/simaai-memory-lib_2.1.1-0neat4_arm64.deb"
+dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb"
+touch "${runtime}" "${dev}"
+DEBS=("${runtime}" "${dev}")
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4373'; }
+board_debian_architecture() { printf '%s\n' arm64; }
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  file="$(basename "$2")"
+  case "${file}:$3" in
+    simaai-memory-lib_2.1.1-0neat4_arm64.deb:Package) printf '%s\n' simaai-memory-lib ;;
+    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
+    *:Version) printf '%s\n' 2.1.1-0neat4 ;;
+    *:Architecture) printf '%s\n' arm64 ;;
+    simaai-memory-lib_2.1.1-0neat4_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1~pre4373)'
+      ;;
+    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1~pre4373)'
+      ;;
+    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Depends)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat4)'
+      ;;
+    *) return 2 ;;
+  esac
+}
+collect_local_simaai_memory_debs
+printf 'COMPAT=%s\n' "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("COMPAT=2.1.1~pre4373", result.stdout)
+
     def test_collect_accepts_versioned_self_provider_for_palette_compatibility(self) -> None:
         result = run_bash(
             r'''

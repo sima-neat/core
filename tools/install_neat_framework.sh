@@ -1037,7 +1037,7 @@ PY
 }
 
 collect_local_simaai_memory_debs() {
-  local deb package arch depends provides provided_version dev_runtime_version board_arch
+  local deb package arch depends provides dev_runtime_version board_arch
   local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
 
   for deb in "${DEBS[@]}"; do
@@ -1086,15 +1086,15 @@ collect_local_simaai_memory_debs() {
   done
 
   provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${provides}" || true)"
-  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
+  if ! relation_field_provides_exact_version \
+    "${provides}" simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}"; then
     echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
 
   provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${provides}" || true)"
-  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
+  if ! relation_field_provides_exact_version \
+    "${provides}" simaai-memory-lib-dev "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}"; then
     echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
