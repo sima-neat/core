@@ -541,13 +541,15 @@ touch "${runtime}" "${dev}" "${dependent}" "${replacement}"
 DEBS=("${runtime}" "${dev}" "${dependent}" "${replacement}")
 SIMAAI_MEMORY_DEBS=("${runtime}" "${dev}")
 SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat3
+installed_memory_version=2.1.1-0neat2
+installed_memory_pin=2.1.1~pre4040
 deb_package_is_installed() { [[ "$1" == neat-runtime ]]; }
 deb_package_installed_version() {
-  [[ "$1" == simaai-memory-lib ]] && printf '%s\n' 2.1.1-0neat2
+  [[ "$1" == simaai-memory-lib ]] && printf '%s\n' "${installed_memory_version}"
 }
 dpkg-query() {
   [[ "$1" == -W && "$3" == neat-runtime ]] || return 2
-  printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040)'
+  printf 'simaai-memory-lib (= %s)\n' "${installed_memory_pin}"
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -564,18 +566,23 @@ dpkg-deb() {
   esac
 }
 collect_simaai_memory_transaction_debs transaction
-printf 'TRANSACTION:'; printf ' <%s>' "${transaction[@]}"; printf '\n'
+printf 'COMPAT:'; printf ' <%s>' "${transaction[@]}"; printf '\n'
+installed_memory_version=2.1.1-0neat3
+installed_memory_pin=2.1.1-0neat3
+collect_simaai_memory_transaction_debs transaction
+printf 'SAME:'; printf ' <%s>' "${transaction[@]}"; printf '\n'
 '''
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        transaction = next(
-            line for line in result.stdout.splitlines() if line.startswith("TRANSACTION:")
-        )
-        self.assertIn("memory-runtime.deb>", transaction)
-        self.assertIn("memory-dev.deb>", transaction)
-        self.assertNotIn("neat-runtime.deb>", transaction)
-        self.assertNotIn("neat-common.deb>", transaction)
+        for prefix in ("COMPAT:", "SAME:"):
+            transaction = next(
+                line for line in result.stdout.splitlines() if line.startswith(prefix)
+            )
+            self.assertIn("memory-runtime.deb>", transaction)
+            self.assertIn("memory-dev.deb>", transaction)
+            self.assertNotIn("neat-runtime.deb>", transaction)
+            self.assertNotIn("neat-common.deb>", transaction)
 
     def test_isolated_transaction_rejects_simulated_removal_before_real_apt(self) -> None:
         result = run_bash(

@@ -1231,9 +1231,11 @@ collect_simaai_memory_transaction_debs() {
         <<<"${installed_relations}" || true
     )"
     if [[ ( -n "${installed_runtime_version}" &&
+            "${installed_runtime_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" &&
             "${installed_runtime_pin}" == "${installed_runtime_version}" &&
             "${runtime_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ) ||
           ( -n "${installed_dev_version}" &&
+            "${installed_dev_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" &&
             "${installed_dev_pin}" == "${installed_dev_version}" &&
             "${dev_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ) ]]; then
       out_array+=("${deb}")
