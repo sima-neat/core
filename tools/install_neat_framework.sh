@@ -1178,6 +1178,47 @@ remove_local_simaai_memory_debs_from_general_transaction() {
   DEBS=("${remaining[@]}")
 }
 
+collect_simaai_memory_transaction_debs() {
+  local out_array_name="$1"
+  local -n out_array="${out_array_name}"
+  local deb package depends pre_depends relations runtime_version dev_version
+  local -A seen=()
+
+  out_array=()
+  for deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
+    out_array+=("${deb}")
+    seen["${deb}"]=1
+  done
+
+  # Replacing memory alone would break already-installed Neat packages whose
+  # dependency names the previous private revision. Install the corresponding
+  # bundled revisions alongside memory, but do not pull unrelated DEBs into
+  # this zero-removal transaction: the later general transaction validates
+  # intentional package-identity replacements such as neat-common replacing
+  # simaai-common.
+  for deb in "${DEBS[@]}"; do
+    [[ -f "${deb}" && -z "${seen[${deb}]+x}" ]] || continue
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    [[ -n "${package}" ]] || continue
+    deb_package_is_installed "${package}" || continue
+
+    depends="$(dpkg-deb -f "${deb}" Depends 2>/dev/null || true)"
+    pre_depends="$(dpkg-deb -f "${deb}" Pre-Depends 2>/dev/null || true)"
+    relations="${depends}, ${pre_depends}"
+    runtime_version="$(
+      exact_dependency_version_from_relations simaai-memory-lib <<<"${relations}" || true
+    )"
+    dev_version="$(
+      exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${relations}" || true
+    )"
+    if [[ "${runtime_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ||
+          "${dev_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
+      out_array+=("${deb}")
+      seen["${deb}"]=1
+    fi
+  done
+}
+
 snapshot_memory_transaction_guard_state() {
   local ota_owner
   SIMAAI_MEMORY_PREINSTALL_PACKAGES="$(mktemp /tmp/sima-neat-memory-packages-before-XXXXXX)"
@@ -1329,7 +1370,7 @@ install_local_simaai_memory_transaction() {
   collect_local_simaai_memory_debs || return 1
   validate_local_simaai_memory_payload || return 1
   snapshot_memory_transaction_guard_state || return 1
-  transaction_debs=("${DEBS[@]}")
+  collect_simaai_memory_transaction_debs transaction_debs
   simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
 

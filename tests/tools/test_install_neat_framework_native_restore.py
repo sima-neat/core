@@ -429,20 +429,47 @@ verify_installed_simaai_memory_payload
             "do not match bundled 2.1.1-0neat1", result.stderr
         )
 
-    def test_dependency_closed_transaction_includes_bundled_exact_dependents(self) -> None:
+    def test_dependency_closed_transaction_includes_installed_exact_dependents(self) -> None:
         result = run_bash(
             r'''
 source "$1"
-DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+runtime="${tmp}/memory-runtime.deb"
+dev="${tmp}/memory-dev.deb"
+dependent="${tmp}/neat-runtime.deb"
+replacement="${tmp}/neat-common.deb"
+pending="${tmp}/neat-appcomplex.deb"
+touch "${runtime}" "${dev}" "${dependent}" "${replacement}" "${pending}"
+DEBS=("${runtime}" "${dev}" "${dependent}" "${replacement}" "${pending}")
 collect_local_simaai_memory_debs() {
-  SIMAAI_MEMORY_RUNTIME_DEB=./memory-runtime.deb
-  SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
+  SIMAAI_MEMORY_RUNTIME_DEB="${runtime}"
+  SIMAAI_MEMORY_DEV_DEB="${dev}"
   SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
+  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat3
 }
 validate_local_simaai_memory_payload() { :; }
 snapshot_memory_transaction_guard_state() { :; }
 verify_installed_simaai_memory_payload() { :; }
 verify_memory_transaction_preservation() { :; }
+deb_package_is_installed() { [[ "$1" == neat-runtime ]]; }
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$(basename "$2"):$3" in
+    neat-runtime.deb:Package) printf '%s\n' neat-runtime ;;
+    neat-runtime.deb:Depends)
+      printf '%s\n' 'neat-common (= 0.4.0), simaai-memory-lib (= 2.1.1-0neat3)'
+      ;;
+    neat-common.deb:Package) printf '%s\n' neat-common ;;
+    neat-common.deb:Depends) : ;;
+    neat-appcomplex.deb:Package) printf '%s\n' neat-appcomplex ;;
+    neat-appcomplex.deb:Depends)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat3)'
+      ;;
+    *:Pre-Depends) : ;;
+    *) return 2 ;;
+  esac
+}
 run_sudo() {
   printf 'APT:'
   printf ' <%s>' "$@"
@@ -463,14 +490,16 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
             self.assertIn("<--no-remove>", line)
             self.assertIn("<--reinstall>", line)
             self.assertIn("<--allow-downgrades>", line)
-            self.assertIn("<./memory-runtime.deb>", line)
-            self.assertIn("<./memory-dev.deb>", line)
-            self.assertIn("<./neat-runtime.deb>", line)
+            self.assertIn("memory-runtime.deb>", line)
+            self.assertIn("memory-dev.deb>", line)
+            self.assertIn("neat-runtime.deb>", line)
+            self.assertNotIn("neat-common.deb>", line)
+            self.assertNotIn("neat-appcomplex.deb>", line)
             self.assertNotIn("simaai-memory-lib=", line)
             self.assertNotIn("--fix-broken", line)
             self.assertNotIn("--force-overwrite", line)
         self.assertIn("COMPLETE=1", result.stdout)
-        self.assertIn("REMAINING: <./neat-runtime.deb>", result.stdout)
+        self.assertIn("neat-runtime.deb>", result.stdout)
 
     def test_isolated_transaction_rejects_simulated_removal_before_real_apt(self) -> None:
         result = run_bash(

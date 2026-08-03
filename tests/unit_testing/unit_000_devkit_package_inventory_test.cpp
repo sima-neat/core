@@ -116,7 +116,27 @@ void require_versioned_provide(const std::string& package, const std::string& pr
   const std::string provides =
       run_capture("dpkg-query -W -f='${Provides}' " + shell_quote(package) + " 2>/dev/null");
   const std::string expected = provided_name + " (= " + provided_version + ")";
-  require(provides == expected, package + " should provide " + expected + ", got: " + provides);
+  bool found = false;
+  std::size_t begin = 0;
+  while (begin <= provides.size()) {
+    const std::size_t end = provides.find(',', begin);
+    const std::string relation = provides.substr(begin, end - begin);
+    std::istringstream words(relation);
+    std::string word;
+    std::string normalized;
+    while (words >> word) {
+      normalized += (normalized.empty() ? "" : " ") + word;
+    }
+    if (normalized == expected) {
+      found = true;
+      break;
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    begin = end + 1;
+  }
+  require(found, package + " should provide " + expected + ", got: " + provides);
 }
 
 } // namespace
