@@ -230,6 +230,26 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             self.assertEqual(result.failure_class, schema.FailureClass.HARNESS_ERROR)
             self.assertEqual(result.reason_code, schema.ReasonCode.HARNESS_SCHEMA_INVALID)
 
+    def test_preflight_reports_only_selected_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile_dir = root / "profile"
+            results_dir = root / "results"
+            write_json(profile_dir / "profile.json", {"modalix_profile_id": "broken"})
+
+            _, _, failed = run_perf_matrix.preflight_baselines(
+                profile_dir,
+                results_dir,
+                run_perf_matrix.SCENARIOS,
+                run_perf_matrix.STANDARD_SCENARIOS,
+            )
+            self.assertTrue(failed)
+            emitted = {path.stem for path in results_dir.glob("*.json")}
+            self.assertEqual(
+                emitted,
+                {spec.scenario_id for spec in run_perf_matrix.STANDARD_SCENARIOS},
+            )
+
     def test_run_scenario_copies_power_payload_to_run_meta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

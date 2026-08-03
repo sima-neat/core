@@ -91,13 +91,15 @@ def preflight_baselines(
     profile_dir: Path,
     results_dir: Path,
     scenarios: tuple[ScenarioSpec, ...] = SCENARIOS,
+    result_scenarios: tuple[ScenarioSpec, ...] | None = None,
 ) -> tuple[schema.PerfProfile | None, dict[str, schema.ScenarioBaseline], bool]:
     results_dir.mkdir(parents=True, exist_ok=True)
+    report_specs = scenarios if result_scenarios is None else result_scenarios
 
     try:
         profile, baseline_map = schema.validate_baseline_directory(profile_dir)
     except schema.SchemaError as exc:
-        for spec in scenarios:
+        for spec in report_specs:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id="unknown",
@@ -113,7 +115,7 @@ def preflight_baselines(
     expected = {spec.scenario_id for spec in scenarios}
     extras = sorted(set(baseline_map.keys()) - expected)
     if extras:
-        for spec in scenarios:
+        for spec in report_specs:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
@@ -128,7 +130,7 @@ def preflight_baselines(
 
     missing = [spec.scenario_id for spec in scenarios if spec.scenario_id not in baseline_map]
     if missing:
-        for spec in scenarios:
+        for spec in report_specs:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
@@ -498,10 +500,15 @@ def main() -> int:
         stale.unlink(missing_ok=True)
 
     selected_scenarios = SCENARIOS if args.include_long else STANDARD_SCENARIOS
-    profile, baseline_map, preflight_failed = preflight_baselines(profile_dir, results_dir, SCENARIOS)
+    profile, baseline_map, preflight_failed = preflight_baselines(
+        profile_dir, results_dir, SCENARIOS, selected_scenarios
+    )
 
     if preflight_failed:
-        results = [schema.load_perf_result(scenario_result_path(results_dir, s.scenario_id)) for s in SCENARIOS]
+        results = [
+            schema.load_perf_result(scenario_result_path(results_dir, s.scenario_id))
+            for s in selected_scenarios
+        ]
         print_summary(results)
         return 1
 
@@ -509,7 +516,7 @@ def main() -> int:
 
     if args.failfast_only:
         results = []
-        for spec in SCENARIOS:
+        for spec in selected_scenarios:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
@@ -564,7 +571,7 @@ def main() -> int:
             timed_out=False,
         )
         results = []
-        for spec in SCENARIOS:
+        for spec in selected_scenarios:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
