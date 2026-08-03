@@ -90,6 +90,7 @@ install_build_deps() {
     libgstreamer1.0-dev
     libgstreamer-plugins-base1.0-dev
     nlohmann-json3-dev
+    zlib1g-dev
   )
   if [[ "${BUILD_TESTS}" == "ON" ]]; then
     packages+=(libopencv-dev)

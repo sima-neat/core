@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -66,6 +67,53 @@ const char* pixel_format_caps_name(const PixelFormat format) {
     break;
   }
   return nullptr;
+}
+
+const char* tensor_dtype_caps_name(const TensorDType dtype) {
+  switch (dtype) {
+  case TensorDType::UInt8:
+    return "EVXX_UINT8";
+  case TensorDType::Int8:
+    return "EVXX_INT8";
+  case TensorDType::Int16:
+    return "EVXX_INT16";
+  case TensorDType::Int32:
+    return "EVXX_INT32";
+  case TensorDType::BFloat16:
+    return "EVXX_BFLOAT16";
+  case TensorDType::Float32:
+    return "EVXX_FLOAT32";
+  case TensorDType::UInt16:
+  case TensorDType::Float64:
+    break;
+  }
+  throw std::runtime_error("PCIe tensor-set caps do not support this input dtype");
+}
+
+std::string tensor_set_caps_for_primary_tensor(const Tensor& tensor) {
+  if (tensor.shape.empty()) {
+    throw std::runtime_error("PCIe tensor-set caps require a non-empty primary tensor shape");
+  }
+
+  const char* dtype = tensor_dtype_caps_name(tensor.dtype);
+  std::ostringstream caps;
+  caps << "application/vnd.simaai.tensor, format=(string)" << dtype << ", dtype=(string)" << dtype
+       << ", rank=(int)" << tensor.shape.size();
+  for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
+    if (tensor.shape[i] <= 0 || tensor.shape[i] > std::numeric_limits<int>::max()) {
+      throw std::runtime_error("PCIe tensor-set caps require positive 32-bit shape dimensions");
+    }
+    caps << ", dim" << i << "=(int)" << tensor.shape[i];
+  }
+  caps << ", shape=(string)\"";
+  for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
+    if (i != 0U) {
+      caps << ',';
+    }
+    caps << tensor.shape[i];
+  }
+  caps << "\", representation=(string)tensor-set, storage=(string)tensorbuffer";
+  return caps.str();
 }
 
 std::pair<std::int64_t, std::int64_t> image_height_width(const Tensor& tensor) {
@@ -245,6 +293,10 @@ std::string HostPcieChannel::tensor_set_caps() {
 }
 
 std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
+  if (tensors.empty()) {
+    throw std::runtime_error("PCIe payload requires at least one tensor");
+  }
+
   std::optional<ImageSpec> image;
   for (const auto& tensor : tensors) {
     const std::optional<ImageSpec> current = tensor_image_spec(tensor);
@@ -258,7 +310,7 @@ std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
   }
 
   if (!image.has_value()) {
-    return tensor_set_caps();
+    return tensor_set_caps_for_primary_tensor(tensors.front());
   }
   if (tensors.size() != 1U) {
     throw std::runtime_error("PCIe raw image transport cannot mix image and tensor payloads");
@@ -321,10 +373,27 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
   g_signal_connect(appsink_, "new-sample", G_CALLBACK(on_new_sample_static), this);
 
   gst_bin_add_many(GST_BIN(pipeline_), appsrc_, queue_element_, pciehost_, appsink_, nullptr);
-  if (!gst_element_link(appsrc_, queue_element_) || !gst_element_link(queue_element_, pciehost_) ||
-      !gst_element_link(pciehost_, appsink_)) {
+  if (!gst_element_link(appsrc_, queue_element_)) {
     stop_locked();
     throw std::runtime_error("failed to link host PCIe pipeline");
+  }
+
+  GstPad* queue_src = gst_element_get_static_pad(queue_element_, "src");
+  GstPad* appsink_sink = gst_element_get_static_pad(appsink_, "sink");
+  pciehost_sink_pad_ = gst_element_request_pad_simple(pciehost_, "sink_0");
+  pciehost_src_pad_ = gst_element_request_pad_simple(pciehost_, "src_0");
+  const bool pads_linked = queue_src && appsink_sink && pciehost_sink_pad_ && pciehost_src_pad_ &&
+                           gst_pad_link(queue_src, pciehost_sink_pad_) == GST_PAD_LINK_OK &&
+                           gst_pad_link(pciehost_src_pad_, appsink_sink) == GST_PAD_LINK_OK;
+  if (queue_src) {
+    gst_object_unref(queue_src);
+  }
+  if (appsink_sink) {
+    gst_object_unref(appsink_sink);
+  }
+  if (!pads_linked) {
+    stop_locked();
+    throw std::runtime_error("failed to link explicit neatpciehost sink_0/src_0 pads");
   }
 
   if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
@@ -371,6 +440,16 @@ void HostPcieChannel::stop_locked() {
     if (state_change == GST_STATE_CHANGE_ASYNC) {
       (void)gst_element_get_state(pipeline_, nullptr, nullptr, 5 * GST_SECOND);
     }
+    if (pciehost_ && pciehost_sink_pad_) {
+      gst_element_release_request_pad(pciehost_, pciehost_sink_pad_);
+      gst_object_unref(pciehost_sink_pad_);
+    }
+    if (pciehost_ && pciehost_src_pad_) {
+      gst_element_release_request_pad(pciehost_, pciehost_src_pad_);
+      gst_object_unref(pciehost_src_pad_);
+    }
+    pciehost_sink_pad_ = nullptr;
+    pciehost_src_pad_ = nullptr;
     gst_object_unref(pipeline_);
   }
   pipeline_ = nullptr;
@@ -378,6 +457,8 @@ void HostPcieChannel::stop_locked() {
   queue_element_ = nullptr;
   pciehost_ = nullptr;
   appsink_ = nullptr;
+  pciehost_sink_pad_ = nullptr;
+  pciehost_src_pad_ = nullptr;
   caps_.clear();
   {
     std::lock_guard<std::mutex> inflight_lock(inflight_mutex_);
@@ -537,7 +618,7 @@ bool HostPcieChannel::push_prepared_payload(const std::int32_t request_id,
     gst_buffer_unref(buffer);
     throw;
   }
-  if (caps_ == tensor_set_caps()) {
+  if (caps_.find("representation=(string)tensor-set") != std::string::npos) {
     try {
       attach_tensor_set_meta(buffer, payload.spans);
     } catch (...) {

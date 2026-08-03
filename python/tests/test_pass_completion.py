@@ -15,14 +15,30 @@ def test_phase4_leftover_nodes():
   assert isinstance(pyneat.nodes.h264_caps_fixup(), pyneat.Node)
   assert isinstance(pyneat.nodes.h264_encode_sw(bitrate_kbps=2000), pyneat.Node)
   src_opt = pyneat.PCIeSrcOptions()
-  src_opt.format = "NV12"
-  src_opt.width = 1920
-  assert src_opt.width == 1920
+  src_opt.queue = 2
+  src_opt.buffer_size = 1_000_000
+  assert src_opt.queue == 2
+  assert src_opt.buffer_size == 1_000_000
   assert isinstance(pyneat.nodes.pcie_src(src_opt), pyneat.Node)
   sink_opt = pyneat.PCIeSinkOptions()
-  sink_opt.data_buf_name = "overlay"
-  sink_opt.use_multi_buffers = True
-  assert sink_opt.use_multi_buffers is True
+  sink_opt.queue = 2
+  sink_opt.transmit_kpi = True
+  assert sink_opt.queue == 2
+  assert sink_opt.transmit_kpi is True
+  for removed_field in (
+      "data_buf_name",
+      "data_buffer_size",
+      "num_buffers",
+      "param_buf_name",
+      "param_buffer_size",
+      "use_multi_buffers",
+      "sync",
+      "async_state",
+      "max_lateness_ns",
+      "processing_deadline_ns",
+      "qos",
+  ):
+    assert not hasattr(sink_opt, removed_field)
   assert isinstance(pyneat.nodes.pcie_sink(sink_opt), pyneat.Node)
 
 

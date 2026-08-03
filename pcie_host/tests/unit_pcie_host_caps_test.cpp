@@ -26,8 +26,22 @@ int main() {
 
     simaai::neat::pcie::Tensor tensor;
     tensor.shape = {1, 2, 3};
-    require(pcie_internal::HostPcieChannel::caps_for_tensors({tensor}) == tensor_caps,
-            "plain tensor must use tensor-set caps");
+    const std::string concrete_tensor_caps =
+        pcie_internal::HostPcieChannel::caps_for_tensors({tensor});
+    require(concrete_tensor_caps ==
+                "application/vnd.simaai.tensor, format=(string)EVXX_UINT8, "
+                "dtype=(string)EVXX_UINT8, rank=(int)3, dim0=(int)1, dim1=(int)2, "
+                "dim2=(int)3, shape=(string)\"1,2,3\", "
+                "representation=(string)tensor-set, storage=(string)tensorbuffer",
+            "plain tensor must use concrete tensor-set caps: " + concrete_tensor_caps);
+
+    bool rejected_empty_payload = false;
+    try {
+      (void)pcie_internal::HostPcieChannel::caps_for_tensors({});
+    } catch (const std::runtime_error&) {
+      rejected_empty_payload = true;
+    }
+    require(rejected_empty_payload, "empty tensor payload must be rejected");
 
     simaai::neat::pcie::Tensor image;
     image.dtype = simaai::neat::pcie::TensorDType::UInt8;

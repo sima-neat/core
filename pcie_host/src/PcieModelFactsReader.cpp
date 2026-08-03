@@ -230,7 +230,6 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
   // archived_compile_script.*.py. Match ModelPack's runtime extraction policy:
   // keep the loader defaults strict for tests, but tolerate these extras here.
   loader_options.reject_unsupported_file_types = false;
-  loader_options.require_pipeline_sequence = false;
   const auto extracted =
       simaai::neat::internal::ModelArchiveLoader::extract(model_path, temp.path(), loader_options);
 

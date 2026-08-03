@@ -57,6 +57,8 @@ private:
   GstElement* queue_element_ = nullptr;
   GstElement* pciehost_ = nullptr;
   GstElement* appsink_ = nullptr;
+  GstPad* pciehost_sink_pad_ = nullptr;
+  GstPad* pciehost_src_pad_ = nullptr;
 
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};

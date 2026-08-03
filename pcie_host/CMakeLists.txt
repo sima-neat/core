@@ -48,6 +48,7 @@ get_filename_component(SIMA_NEAT_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSO
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
+find_package(ZLIB REQUIRED)
 find_package(nlohmann_json QUIET)
 if (NOT TARGET nlohmann_json::nlohmann_json)
   message(FATAL_ERROR
@@ -94,6 +95,7 @@ target_link_directories(sima_neat_pcie_host PRIVATE ${GST_LIBRARY_DIRS})
 target_link_libraries(sima_neat_pcie_host PRIVATE
   ${GST_LIBRARIES}
   Threads::Threads
+  ZLIB::ZLIB
   $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>
 )
 if (NOT SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR)
@@ -283,7 +285,7 @@ set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_NAME "sima-pcie-host-dev")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_SECTION "libdevel")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_DEPENDS
-  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev"
+  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, zlib1g-dev"
 )
 set(CPACK_DEBIAN_DEVELOPMENT_DESCRIPTION
   "Headers, static library, and CMake package files for the NEAT PCIe host API.")
