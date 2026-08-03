@@ -3,6 +3,7 @@
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "test_main.h"
 
+#include <array>
 #include <cstdlib>
 
 RUN_TEST(
@@ -550,4 +551,252 @@ RUN_TEST(
           BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {});
       require(finalized_yolox.num_classes == 80,
               "YOLOX should infer class count from class heads while ignoring objectness");
+
+      // Named-node precedence is sentinel-aware: Auto/-1 inherit Model choices, while concrete
+      // wire-format selections remain node-owned.
+      SuperPointOptions inherited_options;
+      inherited_options.profile = SuperPointProfile::MagicLeapDemoV1;
+      inherited_options.nms_radius = 2;
+      inherited_options.border_margin = 0;
+      inherited_options.descriptor_output_dtype = TensorDType::Int8;
+      inherited_options.output_format = SuperPointOutputFormat::LegacyA65InterleavedV0;
+      const SuperPointOptions default_node_options;
+      require(default_node_options.profile == SuperPointProfile::Auto,
+              "public Auto sentinel must remain available for Model/MPK inheritance");
+      require(parse_superpoint_profile_token("a65-v1") == SuperPointProfile::A65V1 &&
+                  !parse_superpoint_profile_token("legacy-a65-v1").has_value() &&
+                  std::string(superpoint_profile_token(SuperPointProfile::A65V1)) == "a65-v1",
+              "A65V1 token/name contract changed or deprecated profile alias leaked");
+      const auto inherited_merge =
+          merge_superpoint_node_options(inherited_options, default_node_options);
+      require(inherited_merge.profile == SuperPointProfile::MagicLeapDemoV1 &&
+                  inherited_merge.nms_radius == 2 && inherited_merge.border_margin == 0,
+              "node Auto/-1 options must not erase explicit Model profile/spatial options");
+      require(inherited_merge.descriptor_output_dtype == TensorDType::Float32 &&
+                  inherited_merge.output_format == SuperPointOutputFormat::FeaturePointsV1,
+              "node descriptor dtype/output format are concrete selections, not sentinels");
+      SuperPointOptions explicit_node_options;
+      explicit_node_options.profile = SuperPointProfile::A65V1;
+      explicit_node_options.nms_radius = 0;
+      explicit_node_options.border_margin = 1;
+      const auto explicit_merge =
+          merge_superpoint_node_options(inherited_options, explicit_node_options);
+      require(explicit_merge.profile == SuperPointProfile::A65V1 &&
+                  explicit_merge.nms_radius == 0 && explicit_merge.border_margin == 1,
+              "explicit node profile/spatial options must override Model options and preserve "
+              "radius zero");
+
+      auto make_superpoint_contract = [] {
+        BoxDecodeStaticContract sp;
+        sp.decode_type = BoxDecodeType::SuperPoint;
+        sp.input_dtype = "FP32";
+        sp.topk = 600;
+        sp.superpoint.schema_version = 1;
+        sp.superpoint.profile = SuperPointProfile::LightGlueV1;
+        sp.superpoint.profile_from_mpk = true;
+        sp.superpoint.fingerprint_profile = SuperPointProfile::LightGlueV1;
+        sp.superpoint.profile_fingerprint =
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        sp.superpoint.detector_tensor_id = "semi";
+        sp.superpoint.descriptor_tensor_id = "desc";
+        sp.superpoint.detector_representation = "raw-logits-65";
+        sp.superpoint.descriptor_representation = "coarse-pre-l2";
+        sp.superpoint.descriptor_dim = 256;
+        BoxDecodeTensorStaticContract detector;
+        detector.input_shape = {60, 80, 65};
+        detector.slice_shape = detector.input_shape;
+        detector.data_type = "FP32";
+        detector.layout = "HWC";
+        detector.logical_name = "semi";
+        detector.backend_name = "semi";
+        detector.source_segment_name = "semi";
+        detector.source_logical_output_index = 0;
+        detector.source_output_slot = 0;
+        detector.source_size_bytes = 60U * 80U * 65U * 4U;
+        detector.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+        detector.role = BoxDecodeTensorRole::DetectorLogits;
+        BoxDecodeTensorStaticContract descriptor = detector;
+        descriptor.input_shape = {60, 80, 256};
+        descriptor.slice_shape = descriptor.input_shape;
+        descriptor.logical_name = "desc";
+        descriptor.backend_name = "desc";
+        descriptor.source_segment_name = "desc";
+        descriptor.source_logical_output_index = 1;
+        descriptor.source_output_slot = 1;
+        descriptor.source_size_bytes = 60U * 80U * 256U * 4U;
+        descriptor.role = BoxDecodeTensorRole::DescriptorGrid;
+        sp.tensors = {detector, descriptor};
+        sp.tensor_names = {"semi", "desc"};
+        sp.dq_scale = {1.0, 1.0};
+        sp.dq_zp = {0, 0};
+        return sp;
+      };
+
+      const auto valid_superpoint = build_boxdecode_compiled_contract(make_superpoint_contract());
+      require(valid_superpoint.payload.superpoint.profile == SuperPointProfile::LightGlueV1 &&
+                  valid_superpoint.payload.superpoint.nms_radius == 4 &&
+                  valid_superpoint.payload.superpoint.border_margin == 4 &&
+                  valid_superpoint.payload.detection_threshold == 5.0e-4 &&
+                  valid_superpoint.payload.topk == 600 && valid_superpoint.payload.num_classes == 0,
+              "valid schema-v1 SuperPoint contract must preserve profile and apply defaults");
+
+      auto valid_packed_geometry = make_superpoint_contract();
+      valid_packed_geometry.tensors[0].slice_shape = {12, 4, 65};
+      valid_packed_geometry.tensors[1].slice_shape = {12, 16, 64};
+      valid_packed_geometry.tensors[0].source_storage_kind =
+          BoxDecodeSourceStorageKind::PackedCBlock;
+      valid_packed_geometry.tensors[1].source_storage_kind =
+          BoxDecodeSourceStorageKind::PackedCBlock;
+      const auto compiled_packed_geometry =
+          build_boxdecode_compiled_contract(valid_packed_geometry);
+      require(compiled_packed_geometry.runtime_contract.logical_inputs[1].shape ==
+                  std::vector<std::int64_t>({60, 80, 256}),
+              "packed SuperPoint descriptor must keep its full C256 logical frame when the "
+              "physical tile is C64");
+      require(compiled_packed_geometry.payload.slice_shapes[1].sizes[2] == 64,
+              "packed SuperPoint descriptor must retain the authoritative C64 tile geometry");
+
+      struct SuperPointDTypeCase {
+        const char* token;
+        std::size_t bytes;
+        TensorDType output_dtype;
+      };
+      const std::array dtype_cases = {
+          SuperPointDTypeCase{"INT8", 1U, TensorDType::Int8},
+          SuperPointDTypeCase{"BF16", 2U, TensorDType::BFloat16},
+          SuperPointDTypeCase{"FP32", 4U, TensorDType::Float32},
+      };
+      const std::array storage_cases = {
+          BoxDecodeSourceStorageKind::DenseHwcPhysical,
+          BoxDecodeSourceStorageKind::PackedCBlock,
+          BoxDecodeSourceStorageKind::PackedHwcC16,
+      };
+      for (const auto& input_dtype : dtype_cases) {
+        for (const auto storage : storage_cases) {
+          for (const auto& output_dtype : dtype_cases) {
+            auto matrix_contract = make_superpoint_contract();
+            matrix_contract.input_dtype = input_dtype.token;
+            matrix_contract.superpoint.descriptor_output_dtype = output_dtype.output_dtype;
+            for (auto& tensor : matrix_contract.tensors) {
+              tensor.data_type = input_dtype.token;
+              tensor.source_storage_kind = storage;
+              tensor.source_size_bytes = static_cast<std::size_t>(tensor.input_shape[0]) *
+                                         static_cast<std::size_t>(tensor.input_shape[1]) *
+                                         static_cast<std::size_t>(tensor.input_shape[2]) *
+                                         input_dtype.bytes;
+            }
+            if (storage != BoxDecodeSourceStorageKind::DenseHwcPhysical) {
+              matrix_contract.tensors[0].slice_shape = {12, 4, 65};
+              matrix_contract.tensors[1].slice_shape = {12, 16, 64};
+            }
+
+            const auto matrix_compiled = build_boxdecode_compiled_contract(matrix_contract);
+            require(
+                matrix_compiled.payload.input_dtype == input_dtype.token &&
+                    matrix_compiled.payload.tensor_storage_kind.size() == 2U &&
+                    matrix_compiled.payload.tensor_storage_kind[0] == static_cast<int>(storage) &&
+                    matrix_compiled.payload.tensor_storage_kind[1] == static_cast<int>(storage) &&
+                    matrix_compiled.payload.superpoint.descriptor_output_dtype ==
+                        output_dtype.output_dtype,
+                "SuperPoint INT8/BF16/FP32 dense/tessellated contract matrix changed");
+          }
+        }
+      }
+
+      auto manual_schema0 = make_superpoint_contract();
+      manual_schema0.superpoint.schema_version = 0;
+      manual_schema0.superpoint.profile_from_mpk = false;
+      manual_schema0.superpoint.fingerprint_profile = SuperPointProfile::Auto;
+      manual_schema0.superpoint.profile_fingerprint.clear();
+      manual_schema0.superpoint.detector_tensor_id.clear();
+      manual_schema0.superpoint.descriptor_tensor_id.clear();
+      manual_schema0.superpoint.detector_representation.clear();
+      manual_schema0.superpoint.descriptor_representation.clear();
+      const auto compiled_manual_schema0 = build_boxdecode_compiled_contract(manual_schema0);
+      require(compiled_manual_schema0.payload.superpoint.detector_representation ==
+                      "raw-logits-65" &&
+                  compiled_manual_schema0.payload.superpoint.descriptor_representation ==
+                      "coarse-pre-l2" &&
+                  compiled_manual_schema0.payload.superpoint.representations_defaulted,
+              "manual/schema-0 SuperPoint contracts must publish canonical runtime "
+              "representations with default provenance");
+
+      auto default_profile_schema0 = manual_schema0;
+      default_profile_schema0.superpoint.profile = SuperPointProfile::Auto;
+      default_profile_schema0.topk = 0;
+      default_profile_schema0.detection_threshold = 0.0;
+      const auto compiled_default_profile =
+          build_boxdecode_compiled_contract(default_profile_schema0);
+      require(compiled_default_profile.payload.superpoint.profile == SuperPointProfile::A65V1 &&
+                  compiled_default_profile.payload.superpoint.nms_radius == 4 &&
+                  compiled_default_profile.payload.superpoint.border_margin == 0 &&
+                  compiled_default_profile.payload.topk == 600 &&
+                  compiled_default_profile.payload.detection_threshold == 0.1,
+              "unresolved schema-0 SuperPoint contract must select the complete A65V1 "
+              "default policy");
+
+      auto magic_defaults_schema0 = manual_schema0;
+      magic_defaults_schema0.superpoint.profile = SuperPointProfile::MagicLeapDemoV1;
+      magic_defaults_schema0.topk = 0;
+      magic_defaults_schema0.detection_threshold = 0.0;
+      const auto compiled_magic_defaults =
+          build_boxdecode_compiled_contract(magic_defaults_schema0);
+      require(compiled_magic_defaults.payload.detection_threshold == 0.015 &&
+                  compiled_magic_defaults.payload.topk == 600 &&
+                  compiled_magic_defaults.payload.superpoint.nms_radius == 4 &&
+                  compiled_magic_defaults.payload.superpoint.border_margin == 4,
+              "MagicLeapDemoV1 profile defaults changed");
+
+      auto require_superpoint_rejection = [&](BoxDecodeStaticContract invalid,
+                                              const std::string& diagnostic) {
+        bool rejected = false;
+        try {
+          (void)build_boxdecode_compiled_contract(invalid);
+        } catch (const std::invalid_argument& e) {
+          rejected = std::string(e.what()).find(diagnostic) != std::string::npos;
+        }
+        require(rejected, "malformed SuperPoint contract did not fail with expected diagnostic: " +
+                              diagnostic);
+      };
+      auto bad_fingerprint = make_superpoint_contract();
+      bad_fingerprint.superpoint.profile_fingerprint = "sha256:not-a-digest";
+      require_superpoint_rejection(std::move(bad_fingerprint), "64 hexadecimal");
+      auto missing_fingerprint = make_superpoint_contract();
+      missing_fingerprint.superpoint.profile_fingerprint.clear();
+      require_superpoint_rejection(std::move(missing_fingerprint), "requires profile_fingerprint");
+      auto bad_representation = make_superpoint_contract();
+      bad_representation.superpoint.detector_representation = "probabilities-64";
+      require_superpoint_rejection(std::move(bad_representation),
+                                   "unsupported detector_representation");
+      auto mismatched_fingerprint = make_superpoint_contract();
+      mismatched_fingerprint.superpoint.profile = SuperPointProfile::MagicLeapDemoV1;
+      mismatched_fingerprint.superpoint.profile_from_mpk = false;
+      require_superpoint_rejection(std::move(mismatched_fingerprint), "re-stamp the MPK");
+      auto unknown_schema = make_superpoint_contract();
+      unknown_schema.superpoint.schema_version = 2;
+      require_superpoint_rejection(std::move(unknown_schema), "supported versions");
+      auto bad_tensor_id = make_superpoint_contract();
+      bad_tensor_id.superpoint.detector_tensor_id = "missing-semi";
+      require_superpoint_rejection(std::move(bad_tensor_id), "does not match an input tensor");
+      auto bad_geometry = make_superpoint_contract();
+      bad_geometry.tensors[1].input_shape[0] = 59;
+      require_superpoint_rejection(std::move(bad_geometry), "coarse H/W geometry");
+      auto bad_input_dtype = make_superpoint_contract();
+      bad_input_dtype.tensors[1].data_type = "UINT8";
+      require_superpoint_rejection(std::move(bad_input_dtype), "input dtypes");
+      auto duplicate_roles = manual_schema0;
+      duplicate_roles.tensors[1].role = BoxDecodeTensorRole::DetectorLogits;
+      require_superpoint_rejection(std::move(duplicate_roles), "duplicate explicit roles");
+
+      BoxDecodeStaticContract paper_superpoint;
+      paper_superpoint.decode_type = BoxDecodeType::SuperPoint;
+      paper_superpoint.superpoint.profile = SuperPointProfile::PaperBicubicV1;
+      bool paper_profile_rejected = false;
+      try {
+        (void)build_boxdecode_compiled_contract(paper_superpoint);
+      } catch (const std::invalid_argument& e) {
+        paper_profile_rejected = std::string(e.what()).find("reserved") != std::string::npos;
+      }
+      require(paper_profile_rejected,
+              "PaperBicubicV1 must fail contract compilation until production-defined");
     }));

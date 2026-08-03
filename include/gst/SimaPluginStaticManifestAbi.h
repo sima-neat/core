@@ -332,6 +332,25 @@ typedef struct SimaPluginProcessMlaStagePayload {
   guint dispatcher_output_sizes_len;
 } SimaPluginProcessMlaStagePayload;
 
+typedef struct SimaPluginSuperPointStagePayloadV1 {
+  guint struct_version;
+  gint profile;
+  gint output_format;
+  gint descriptor_output_dtype;
+  gint nms_radius;
+  gint border_margin;
+  gint cell_stride;
+  gint descriptor_stride;
+  gint descriptor_dim;
+  const gchar* profile_fingerprint;
+  const gchar* detector_tensor_id;
+  const gchar* descriptor_tensor_id;
+  const gchar* detector_representation;
+  const gchar* descriptor_representation;
+  const gint* tensor_roles;
+  guint tensor_roles_len;
+} SimaPluginSuperPointStagePayloadV1;
+
 typedef struct SimaPluginBoxDecodeStagePayload {
   const gchar* decode_type;
   const gchar* decode_type_option;
@@ -349,6 +368,7 @@ typedef struct SimaPluginBoxDecodeStagePayload {
   gint quant_contract_required;
   const gint* tensor_storage_kind;
   guint tensor_storage_kind_len;
+  const SimaPluginSuperPointStagePayloadV1* superpoint;
 } SimaPluginBoxDecodeStagePayload;
 
 typedef struct SimaPluginDetessDequantStagePayload {
