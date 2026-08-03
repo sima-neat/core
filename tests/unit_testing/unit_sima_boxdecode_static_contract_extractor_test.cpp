@@ -933,6 +933,9 @@ RUN_TEST(
       slice_stage.sequence = 3;
       slice_stage.kernel = "slice_transform";
       slice_stage.slice_begin = {0, 0, 0, 0};
+      slice_stage.slice_end = {1, 80, 80, 1};
+      slice_stage.slice_shape = {1, 80, 80, 1};
+      slice_stage.out_shape_raw = {1, 80, 80, 1};
       slice_stage.input_tensors.push_back(MpkTensorContract{
           .tensor_index = 0,
           .name = "score_head_dense",
@@ -945,7 +948,9 @@ RUN_TEST(
       slice_stage.output_tensors.push_back(MpkTensorContract{
           .tensor_index = 0,
           .name = "class_logit_0",
-          .dtype = "INT8",
+          // Current compiler slice nodes omit dtype aliases. Logical geometry must come from
+          // the slice declaration rather than falling back to the C16-padded source depth.
+          .dtype = "",
           .mpk_shape = {1, 80, 80, 1},
           .shape_semantics = MpkShapeSemantics::Geometry,
           .size_bytes = 6400,
@@ -986,4 +991,14 @@ RUN_TEST(
       require(!extracted_dense_slice_subset->logical_inputs.empty() &&
                   extracted_dense_slice_subset->logical_inputs[0].size_bytes == 102400U,
               "dense HWC slice subset should publish physical source byte span");
+
+      auto conflicting_slice_mpk = dense_slice_mpk;
+      conflicting_slice_mpk.plugins[2].slice_end = {1, 80, 80, 2};
+      error.clear();
+      const auto conflicting_slice = build_boxdecode_static_contract_from_mpk(
+          conflicting_slice_mpk, make_flags(false, false), &error);
+      require(!conflicting_slice.has_value(),
+              "slice output shape conflicting with begin/end must reject");
+      require_contains(error, "conflicts with its begin/end extent",
+                       "slice conflict should identify the malformed MPK declaration");
     }));

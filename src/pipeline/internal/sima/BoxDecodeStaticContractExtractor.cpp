@@ -1389,6 +1389,65 @@ bool slice_begin_is_zero_or_empty_local(const MpkPluginIoContract& stage) {
                      [](std::int64_t v) { return v == 0; });
 }
 
+bool logical_slice_hwc_from_stage_local(const MpkPluginIoContract& stage,
+                                        std::array<int, 3>* out_hwc, std::string* error_message) {
+  if (!out_hwc) {
+    return false;
+  }
+
+  // A slice plugin's declared output geometry is independent of its tensor dtype. In
+  // particular, MLA slice nodes emitted by Model Compiler can omit dtype aliases even though
+  // their input/output byte spans and shapes are complete. Requiring a dtype here causes the
+  // physical C16-aligned input depth to leak into the logical BoxDecode contract.
+  std::vector<std::int64_t> declared_shape =
+      !stage.slice_shape.empty() ? stage.slice_shape : stage.out_shape_raw;
+  if (declared_shape.empty() && !stage.slice_end.empty()) {
+    declared_shape = stage.slice_end;
+    if (!stage.slice_begin.empty()) {
+      if (stage.slice_begin.size() != declared_shape.size()) {
+        set_error(error_message, "boxdecode dense slice begin/end ranks do not match");
+        return false;
+      }
+      for (std::size_t i = 0; i < declared_shape.size(); ++i) {
+        declared_shape[i] -= stage.slice_begin[i];
+      }
+    }
+  }
+
+  int h = 0;
+  int w = 0;
+  int c = 0;
+  if (!dims_from_mpk_shape_for_input_nhwc_local(declared_shape, &h, &w, &c)) {
+    set_error(error_message, "boxdecode dense slice has an invalid declared output shape");
+    return false;
+  }
+
+  if (!stage.slice_end.empty()) {
+    if (!stage.slice_begin.empty() && stage.slice_begin.size() != stage.slice_end.size()) {
+      set_error(error_message, "boxdecode dense slice begin/end ranks do not match");
+      return false;
+    }
+    std::vector<std::int64_t> extent = stage.slice_end;
+    if (!stage.slice_begin.empty()) {
+      for (std::size_t i = 0; i < extent.size(); ++i) {
+        extent[i] -= stage.slice_begin[i];
+      }
+    }
+    int extent_h = 0;
+    int extent_w = 0;
+    int extent_c = 0;
+    if (!dims_from_mpk_shape_for_input_nhwc_local(extent, &extent_h, &extent_w, &extent_c) ||
+        extent_h != h || extent_w != w || extent_c != c) {
+      set_error(error_message,
+                "boxdecode dense slice output shape conflicts with its begin/end extent");
+      return false;
+    }
+  }
+
+  *out_hwc = {h, w, c};
+  return true;
+}
+
 std::string tensor_dtype_token_local(const MpkTensorContract* tensor) {
   if (!tensor) {
     return {};
@@ -1821,10 +1880,33 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
         return std::nullopt;
       }
       std::array<int, 3> slice_hwc{};
-      std::uint64_t ignored_size = 0U;
-      std::string ignored_dtype;
-      if (dense_hwc_source_fact_from_mpk_tensor_local(output_tensor, &slice_hwc, &ignored_size,
-                                                      &ignored_dtype)) {
+      const bool has_stage_slice_geometry =
+          !stage.slice_shape.empty() || !stage.out_shape_raw.empty() || !stage.slice_end.empty();
+      bool has_logical_slice = false;
+      if (has_stage_slice_geometry) {
+        if (!logical_slice_hwc_from_stage_local(stage, &slice_hwc, error_message)) {
+          return std::nullopt;
+        }
+        has_logical_slice = true;
+      } else {
+        // Compatibility for older hand-authored MPKs that describe the slice only on the
+        // output tensor. Unlike current compiler output this path necessarily needs dtype to
+        // prove that the tensor shape agrees with its byte extent.
+        std::uint64_t ignored_size = 0U;
+        std::string ignored_dtype;
+        has_logical_slice = dense_hwc_source_fact_from_mpk_tensor_local(
+            output_tensor, &slice_hwc, &ignored_size, &ignored_dtype);
+      }
+      if (has_logical_slice) {
+        if (facts.dense_source_hwc.has_value()) {
+          const auto& physical_hwc = *facts.dense_source_hwc;
+          if (slice_hwc[0] > physical_hwc[0] || slice_hwc[1] > physical_hwc[1] ||
+              slice_hwc[2] > physical_hwc[2]) {
+            set_error(error_message,
+                      "boxdecode dense slice output exceeds its physical HWC source");
+            return std::nullopt;
+          }
+        }
         if (!assign_unique_slice_local(&facts.logical_slice_hwc, slice_hwc, error_message,
                                        "boxdecode MPK branch has conflicting logical slice "
                                        "facts")) {
