@@ -1,7 +1,6 @@
 {
   "internals": {
-    "branch": "fix/526-codec-valid-encoder-shapes",
-    "spec": "efe28dce6fd9"
+    "policy": "snap"
   },
   "llima": {
     "policy": "snap"
