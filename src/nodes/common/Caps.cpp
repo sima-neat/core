@@ -4,9 +4,11 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TempJsonFileUtil.h"
+#include "gst/internal/GstLaunchBindings.h"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
@@ -25,7 +27,10 @@ public:
       : fragment_(std::move(fragment)), role_(role) {
     if (fragment_.empty())
       fragment_ = "identity silent=true";
-    has_config_json_ = fragment_.find("config=") != std::string::npos;
+    const auto analysis = simaai::neat::gst::launch::analyze(fragment_);
+    has_config_json_ =
+        std::any_of(analysis.assignments.begin(), analysis.assignments.end(),
+                    [](const auto& assignment) { return assignment.key == "config"; });
   }
   ~CustomNode() override {
     for (const auto& path : temp_paths_) {
@@ -55,36 +60,57 @@ public:
     if (!has_config_json_ || upstream_names.empty() || upstream_names[0].empty()) {
       return false;
     }
-    const std::vector<std::string> paths = extract_config_paths(fragment_);
-    if (paths.empty())
+    using namespace simaai::neat::gst::launch;
+    const Analysis analysis = analyze(fragment_);
+    if (!analysis.complete)
       return false;
+    std::vector<AssignmentValueReplacement> replacements;
+    const std::size_t created_start = temp_paths_.size();
     bool changed = false;
-    for (size_t i = 0; i < paths.size(); ++i) {
-      const std::string& path = paths[i];
+    std::size_t config_index = 0;
+    for (const auto& assignment : analysis.assignments) {
+      if (assignment.key != "config")
+        continue;
+      const std::string& path = assignment.canonical_value;
       if (path.empty())
         continue;
-      const std::string& name =
-          (i < upstream_names.size()) ? upstream_names[i] : upstream_names.back();
+      const std::string& name = (config_index < upstream_names.size())
+                                    ? upstream_names[config_index]
+                                    : upstream_names.back();
+      ++config_index;
       if (name.empty())
         continue;
       nlohmann::json j = load_json_file(path, "CustomNode");
       if (!simaai::neat::set_input_buffer_name_if_exists(j, name))
         continue;
       const std::string new_path = write_json_temp(j);
-      replace_all(fragment_, path, new_path);
+      replacements.push_back(AssignmentValueReplacement{
+          .value_span = assignment.value_span,
+          .canonical_value = new_path,
+          .quote = assignment.quote,
+      });
       temp_paths_.push_back(new_path);
       changed = true;
+    }
+    if (changed) {
+      const RewriteResult rewritten = rewrite_assignment_values(fragment_, analysis, replacements);
+      if (!rewritten.complete) {
+        for (std::size_t i = created_start; i < temp_paths_.size(); ++i) {
+          std::remove(temp_paths_[i].c_str());
+        }
+        temp_paths_.resize(created_start);
+        return false;
+      }
+      fragment_ = rewritten.text;
     }
     return changed;
   }
 
   std::string backend_fragment(int node_index) const override {
     const std::string frag = trim_(fragment_);
-
-    const bool has_name = (frag.find("name=") != std::string::npos);
-    const bool looks_complex = (frag.find('!') != std::string::npos) ||
-                               (frag.find('(') != std::string::npos) ||
-                               (frag.find(')') != std::string::npos);
+    const auto analysis = simaai::neat::gst::launch::analyze(frag);
+    const bool has_name = !simaai::neat::gst::launch::explicit_name_bindings(analysis).empty();
+    const bool looks_complex = analysis.has_topology_syntax || !analysis.complete;
 
     if (has_name || looks_complex)
       return frag;
@@ -97,33 +123,16 @@ public:
 
   std::vector<std::string> element_names(int node_index) const override {
     const std::string frag = trim_(fragment_);
-
-    const size_t pos = frag.find("name=");
-    if (pos != std::string::npos) {
-      size_t i = pos + 5;
-      while (i < frag.size() && std::isspace(static_cast<unsigned char>(frag[i])))
-        i++;
-
-      if (i < frag.size() && frag[i] == '"') {
-        i++;
-        size_t j = i;
-        while (j < frag.size() && frag[j] != '"')
-          j++;
-        if (j > i)
-          return {frag.substr(i, j - i)};
-      } else {
-        size_t j = i;
-        while (j < frag.size() && !std::isspace(static_cast<unsigned char>(frag[j])))
-          j++;
-        if (j > i)
-          return {frag.substr(i, j - i)};
-      }
-      return {};
+    const auto analysis = simaai::neat::gst::launch::analyze(frag);
+    std::vector<std::string> names;
+    for (const auto* binding : simaai::neat::gst::launch::explicit_name_bindings(analysis)) {
+      names.push_back(binding->canonical_value);
+    }
+    if (!names.empty()) {
+      return names;
     }
 
-    const bool looks_complex = (frag.find('!') != std::string::npos) ||
-                               (frag.find('(') != std::string::npos) ||
-                               (frag.find(')') != std::string::npos);
+    const bool looks_complex = analysis.has_topology_syntax || !analysis.complete;
     if (looks_complex)
       return {};
 
@@ -133,49 +142,6 @@ public:
   }
 
 private:
-  static void replace_all(std::string& s, const std::string& from, const std::string& to) {
-    if (from.empty())
-      return;
-    size_t pos = 0;
-    while ((pos = s.find(from, pos)) != std::string::npos) {
-      s.replace(pos, from.size(), to);
-      pos += to.size();
-    }
-  }
-
-  static std::vector<std::string> extract_config_paths(const std::string& frag) {
-    std::vector<std::string> paths;
-    size_t pos = 0;
-    while ((pos = frag.find("config=", pos)) != std::string::npos) {
-      size_t i = pos + 7;
-      while (i < frag.size() && std::isspace(static_cast<unsigned char>(frag[i])))
-        i++;
-      if (i >= frag.size())
-        break;
-      std::string path;
-      if (frag[i] == '"') {
-        size_t j = i + 1;
-        while (j < frag.size() && frag[j] != '"')
-          j++;
-        if (j > i + 1)
-          path = frag.substr(i + 1, j - i - 1);
-        pos = (j < frag.size()) ? j + 1 : j;
-      } else {
-        size_t j = i;
-        while (j < frag.size() && !std::isspace(static_cast<unsigned char>(frag[j])) &&
-               frag[j] != '!') {
-          j++;
-        }
-        if (j > i)
-          path = frag.substr(i, j - i);
-        pos = j;
-      }
-      if (!path.empty())
-        paths.push_back(path);
-    }
-    return paths;
-  }
-
   static nlohmann::json load_json_file(const std::string& path, const char* label) {
     std::ifstream in(path);
     if (!in.is_open()) {

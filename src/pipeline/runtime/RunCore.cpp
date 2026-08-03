@@ -306,6 +306,15 @@ void copy_encoded_pipeline_input_to_cpu_if_needed(const PipelineSegmentRuntime& 
   }
 }
 
+PullError pull_error_from_neat_error(const NeatError& error) {
+  PullError detail;
+  detail.code = error.report().error_code.empty() ? std::string(error_codes::kInternalPluginFailure)
+                                                  : error.report().error_code;
+  detail.message = error.what();
+  detail.report = error.report();
+  return detail;
+}
+
 } // namespace
 
 void initialize_run_identity(RunCore& core) {
@@ -412,12 +421,7 @@ void RunCore::set_terminal_error(PullError detail) {
 }
 
 void RunCore::set_terminal_error(const NeatError& err) {
-  PullError detail;
-  detail.code = err.report().error_code.empty() ? std::string(error_codes::kInternalPluginFailure)
-                                                : err.report().error_code;
-  detail.message = err.what();
-  detail.report = err.report();
-  set_terminal_error(std::move(detail));
+  set_terminal_error(pull_error_from_neat_error(err));
 }
 
 void RunCore::graph_request_stop(PullError detail) {
@@ -825,7 +829,11 @@ bool RunCore::graph_sink_closed(simaai::neat::graph::NodeId node_id) const {
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                           bool allow_startup_preflight,
-                                          bool cancel_on_public_input_close) {
+                                          bool cancel_on_public_input_close,
+                                          PullError* current_failure) {
+  if (current_failure) {
+    *current_failure = {};
+  }
   const auto ensure_start_ns = std::chrono::steady_clock::now();
   const auto total_start = pipeline_internal::build_timing_now();
   ExecutionGraphRuntime& execution = graph_execution();
@@ -967,11 +975,18 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     }
     return true;
   } catch (const NeatError& e) {
+    PullError detail = pull_error_from_neat_error(e);
+    if (current_failure) {
+      *current_failure = detail;
+    }
     if (!public_close_cancelled()) {
-      set_terminal_error(e);
+      set_terminal_error(std::move(detail));
     }
     build_error = e.what();
   } catch (const std::exception& e) {
+    if (current_failure) {
+      current_failure->message = e.what();
+    }
     build_error = e.what();
   }
   {

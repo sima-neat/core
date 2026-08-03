@@ -47,6 +47,17 @@ Release notes for the SiMa.ai Neat Library.
   before or together with this Neat Library version; older Insight versions
   continue to support unchanged JSON payloads up to 1200 bytes.
 
+### Graph construction and validation
+
+- Graph composition now treats one Node object as one logical vertex. Duplicate insertion and
+  overlapping fragment imports fail atomically, while repeated `connect()` calls reuse an existing
+  Node for fan-out.
+- Every materialized pipeline segment now validates final GStreamer names during `build()`; an
+  explicit `validate()` call is not required. Duplicate or dropped names fail with
+  `misconfig.pipeline_shape` instead of producing a truncated pipeline.
+- Custom fragments now report all explicit names and transform named-pad references together with
+  declarations. Name collisions are rejected rather than auto-renamed.
+
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |
 | 0.3.0 | 2.1.2.3 | [Neat Library 0.3.0](https://github.com/sima-neat/core/releases/tag/v0.3.0) |

@@ -9,6 +9,7 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
 
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -72,7 +73,8 @@ RunOptions session_build_apply_run_defaults(const RunOptions& opt, const GraphOp
 RunOptions session_build_resolve_build_opt(RunMode mode, const RunOptions& opt);
 bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& opt);
 int session_build_async_queue2_depth(int requested_depth = 0);
-std::string session_build_async_queue2_fragment(int requested_depth = 0);
+std::string session_build_async_queue2_fragment(int requested_depth = 0,
+                                                std::string_view element_name = {});
 std::string session_build_apply_fast_path_options_to_fragment(std::string fragment,
                                                               const GraphOptions* sess_opt);
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
@@ -100,6 +102,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
+void session_build_validate_explicit_launch_names_or_throw(
+    std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins = {});
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);
 void session_build_attach_debug_detess_input_probes(GstElement* pipeline);
 void session_build_attach_debug_appsink_probes(GstElement* pipeline);

@@ -20,6 +20,7 @@
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/DispatcherRecovery.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
+#include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/SimaaiGuard.h"
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -132,93 +133,10 @@ std::vector<std::string> apply_name_transform(const NameTransform& t,
 
 std::string rewrite_fragment_names(const std::string& fragment,
                                    const std::unordered_map<std::string, std::string>& mapping) {
-  if (mapping.empty())
-    return fragment;
-  std::string out;
-  out.reserve(fragment.size());
-
-  bool in_single = false;
-  bool in_double = false;
-  size_t i = 0;
-  while (i < fragment.size()) {
-    char c = fragment[i];
-    if (c == '\'' && !in_double) {
-      in_single = !in_single;
-      out.push_back(c);
-      ++i;
-      continue;
-    }
-    if (c == '"' && !in_single) {
-      in_double = !in_double;
-      out.push_back(c);
-      ++i;
-      continue;
-    }
-    auto rewrite_key = [&](const char* key) -> bool {
-      const size_t key_len = std::strlen(key);
-      if (fragment.compare(i, key_len, key) != 0)
-        return false;
-      bool boundary = (i == 0);
-      if (!boundary) {
-        char prev = fragment[i - 1];
-        boundary = std::isspace(static_cast<unsigned char>(prev)) || prev == '!' || prev == ';';
-      }
-      if (!boundary)
-        return false;
-
-      out.append(key);
-      i += key_len;
-      if (i >= fragment.size())
-        return true;
-      char next = fragment[i];
-      if (next == '"' || next == '\'') {
-        char quote = next;
-        out.push_back(quote);
-        ++i;
-        const size_t start = i;
-        while (i < fragment.size() && fragment[i] != quote) {
-          ++i;
-        }
-        const std::string val = fragment.substr(start, i - start);
-        auto it = mapping.find(val);
-        if (it != mapping.end()) {
-          out.append(it->second);
-        } else {
-          out.append(val);
-        }
-        if (i < fragment.size() && fragment[i] == quote) {
-          out.push_back(quote);
-          ++i;
-        }
-      } else {
-        const size_t start = i;
-        while (i < fragment.size()) {
-          char vc = fragment[i];
-          if (std::isspace(static_cast<unsigned char>(vc)) || vc == '!')
-            break;
-          ++i;
-        }
-        const std::string val = fragment.substr(start, i - start);
-        auto it = mapping.find(val);
-        if (it != mapping.end()) {
-          out.append(it->second);
-        } else {
-          out.append(val);
-        }
-      }
-      return true;
-    };
-
-    if (!in_single && !in_double) {
-      if (rewrite_key("name=") || rewrite_key("stage-id=") || rewrite_key("op-buff-name=") ||
-          rewrite_key("next-element=")) {
-        continue;
-      }
-    }
-    out.push_back(c);
-    ++i;
-  }
-  return out;
+  using namespace gst::launch;
+  static constexpr std::string_view kAliasProperties[] = {"stage-id", "op-buff-name"};
+  const Analysis analysis = analyze(fragment);
+  return rewrite(fragment, analysis, mapping, kAliasProperties).text;
 }
 
 NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
@@ -226,10 +144,19 @@ NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
   NodeFragment out;
   if (!node)
     return out;
-  const auto base_names = node->element_names(index);
+  const std::string original_fragment = node->backend_fragment(index);
+  const auto analysis = gst::launch::analyze(original_fragment);
+  std::vector<std::string> base_names = node->element_names(index);
+  for (const auto* binding : gst::launch::explicit_name_bindings(analysis)) {
+    if (std::find(base_names.begin(), base_names.end(), binding->canonical_value) ==
+        base_names.end()) {
+      base_names.push_back(binding->canonical_value);
+    }
+  }
+
   if (!name_transform_enabled(transform)) {
-    out.fragment = node->backend_fragment(index);
-    out.element_names = base_names;
+    out.fragment = original_fragment;
+    out.element_names = std::move(base_names);
     return out;
   }
 
@@ -241,8 +168,14 @@ NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
     mapping.emplace(base, renamed);
     out.element_names.push_back(std::move(renamed));
   }
-  const std::string original_fragment = node->backend_fragment(index);
   out.fragment = rewrite_fragment_names(original_fragment, mapping);
+  const auto rewritten_analysis = gst::launch::analyze(out.fragment);
+  for (const auto* binding : gst::launch::explicit_name_bindings(rewritten_analysis)) {
+    if (std::find(out.element_names.begin(), out.element_names.end(), binding->canonical_value) ==
+        out.element_names.end()) {
+      out.element_names.push_back(binding->canonical_value);
+    }
+  }
   return out;
 }
 

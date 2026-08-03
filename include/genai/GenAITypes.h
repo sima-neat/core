@@ -113,6 +113,7 @@ struct GenerationRequest {
   /// Whisper decoding task. Ignored by non-ASR models.
   ASRTask asr_task = ASRTask::Transcribe;
   std::uint32_t max_new_tokens = 0;
+  bool enable_thinking = false;
   Json tools = Json::array();
   Json tool_choice = nullptr;
 };
@@ -128,6 +129,8 @@ struct GenerationResult {
   /// Mean log probability over generated ASR tokens.
   std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
+  /// Model reasoning, when thinking was enabled and the model emitted it.
+  std::string reasoning;
 };
 
 struct TokenSample {
@@ -142,6 +145,8 @@ struct TokenSample {
   /// Mean log probability over generated ASR tokens, set on the final sample.
   std::optional<float> avg_logprob;
   Json tool_calls = Json::array();
+  /// Reasoning fragment; mutually exclusive with text for generated samples.
+  std::string reasoning;
 };
 
 class GenerationStream {

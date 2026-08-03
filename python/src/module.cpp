@@ -2107,6 +2107,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
       .def_rw("asr_task", &simaai::neat::genai::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
+      .def_rw("enable_thinking", &simaai::neat::genai::GenerationRequest::enable_thinking)
       .def_prop_rw(
           "tools",
           [](const simaai::neat::genai::GenerationRequest& request) {
@@ -2127,6 +2128,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::GenerationResult>(m, "GenerationResult")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::GenerationResult::text)
+      .def_rw("reasoning", &simaai::neat::genai::GenerationResult::reasoning)
       .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
       .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
       .def_rw("language", &simaai::neat::genai::GenerationResult::language)
@@ -2144,6 +2146,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::TokenSample>(m, "TokenSample")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::TokenSample::text)
+      .def_rw("reasoning", &simaai::neat::genai::TokenSample::reasoning)
       .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
       .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
       .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
