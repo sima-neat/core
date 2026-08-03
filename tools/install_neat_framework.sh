@@ -86,6 +86,7 @@ GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
 SIMAAI_MEMORY_DEBS=()
+SIMAAI_MEMORY_PREREQUISITE_DEBS=()
 SIMAAI_MEMORY_RUNTIME_DEB=""
 SIMAAI_MEMORY_DEV_DEB=""
 SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION=""
@@ -1178,6 +1179,28 @@ remove_local_simaai_memory_debs_from_general_transaction() {
   DEBS=("${remaining[@]}")
 }
 
+deb_is_verified_replacement_for_installed_package() {
+  local deb="$1"
+  local conflicts relation package installed_version
+  conflicts="$(dpkg-deb -f "${deb}" Conflicts 2>/dev/null || true)"
+
+  while IFS= read -r relation; do
+    relation="${relation#"${relation%%[![:space:]]*}"}"
+    relation="${relation%"${relation##*[![:space:]]}"}"
+    package="${relation%%[[:space:](]*}"
+    package="${package%%:*}"
+    [[ -n "${package}" ]] || continue
+    deb_package_is_installed "${package}" || continue
+    installed_version="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
+    [[ -n "${installed_version}" ]] || continue
+    if find_verified_bundled_replacement \
+        "${package}" "${installed_version}" "${deb}" >/dev/null; then
+      return 0
+    fi
+  done < <(printf '%s\n' "${conflicts}" | tr ',' '\n')
+  return 1
+}
+
 collect_simaai_memory_transaction_debs() {
   local out_array_name="$1"
   local -n out_array="${out_array_name}"
@@ -1187,6 +1210,7 @@ collect_simaai_memory_transaction_debs() {
   local -A seen=()
 
   out_array=()
+  SIMAAI_MEMORY_PREREQUISITE_DEBS=()
   for deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
     out_array+=("${deb}")
     seen["${deb}"]=1
@@ -1243,10 +1267,10 @@ collect_simaai_memory_transaction_debs() {
     fi
   done
 
-  # Upgrade exact dependencies across package identities that are already
-  # installed (for example, sima-neat-dev -> sima-neat and
-  # neat-runtime -> neat-common). Uninstalled identities and non-exact
-  # dependencies remain APT's job, subject to the zero-removal simulation.
+  # Close exact local dependencies transitively (for example,
+  # sima-neat-dev -> sima-neat and neat-runtime -> neat-common). A missing,
+  # verified identity replacement is installed first; the complete local
+  # closure can then enter the zero-removal memory phase.
   changed=1
   while [[ "${changed}" -eq 1 ]]; do
     changed=0
@@ -1259,18 +1283,68 @@ collect_simaai_memory_transaction_debs() {
         package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
         version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
         [[ -n "${package}" && -n "${version}" ]] || continue
-        deb_package_is_installed "${package}" || continue
         required_version="$(
           exact_dependency_version_from_relations "${package}" <<<"${relations}" || true
         )"
         if [[ "${required_version}" == "${version}" ]]; then
           out_array+=("${deb}")
           seen["${deb}"]=1
+          if ! deb_package_is_installed "${package}" &&
+             deb_is_verified_replacement_for_installed_package "${deb}"; then
+            SIMAAI_MEMORY_PREREQUISITE_DEBS+=("${deb}")
+          fi
           changed=1
         fi
       done
     done
   done
+}
+
+install_simaai_memory_prerequisites() {
+  local simulation_log audit_log
+  local -a apt_args=(
+    apt-get install -y --reinstall --allow-downgrades
+    -o Dpkg::Options::=--force-overwrite
+  )
+
+  if [[ "${#SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  simulation_log="$(mktemp /tmp/sima-neat-memory-prereq-simulation-XXXXXX)"
+  audit_log="$(mktemp /tmp/sima-neat-memory-prereq-dpkg-audit-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${simulation_log}" "${audit_log}")
+
+  log "Simulating missing exact prerequisites for the guarded memory transaction."
+  if ! run_sudo "${apt_args[@]}" --simulate \
+      "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" >"${simulation_log}" 2>&1; then
+    cat "${simulation_log}" >&2
+    echo "APT rejected the guarded memory prerequisite transaction; no packages were changed." >&2
+    return 1
+  fi
+  if grep -Eq \
+      '^Remv[[:space:]]+(sima-neat|sima-neat-dev)(:[^[:space:]]+)?([[:space:]]|$)' \
+      "${simulation_log}"; then
+    cat "${simulation_log}" >&2
+    echo "The guarded memory prerequisite transaction would remove a Core package before its replacement is installed." >&2
+    return 1
+  fi
+  verify_simulated_package_removals \
+    "${simulation_log}" "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" || return 1
+  cat "${simulation_log}"
+
+  log "Installing verified exact prerequisites for the guarded memory transaction."
+  run_sudo "${apt_args[@]}" "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" || return 1
+  verify_memory_guard_palette_and_ota || return 1
+  if ! run_sudo apt-get check; then
+    echo "APT dependency check failed after the guarded memory prerequisites." >&2
+    return 1
+  fi
+  if ! dpkg --audit >"${audit_log}" 2>&1 || [[ -s "${audit_log}" ]]; then
+    echo "dpkg audit failed after the guarded memory prerequisites:" >&2
+    cat "${audit_log}" >&2
+    return 1
+  fi
 }
 
 snapshot_memory_transaction_guard_state() {
@@ -1423,8 +1497,12 @@ install_local_simaai_memory_transaction() {
 
   collect_local_simaai_memory_debs || return 1
   validate_local_simaai_memory_payload || return 1
-  snapshot_memory_transaction_guard_state || return 1
   collect_simaai_memory_transaction_debs transaction_debs
+  snapshot_memory_transaction_guard_state || return 1
+  if [[ "${#SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" -gt 0 ]]; then
+    install_simaai_memory_prerequisites || return 1
+    snapshot_memory_transaction_guard_state || return 1
+  fi
   simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
 

@@ -527,6 +527,116 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
         self.assertIn("COMPLETE=1", result.stdout)
         self.assertIn("neat-runtime.deb>", result.stdout)
 
+    def test_missing_exact_replacement_is_preinstalled_before_memory(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+runtime="${tmp}/memory-runtime.deb"
+dev="${tmp}/memory-dev.deb"
+dependent="${tmp}/neat-runtime.deb"
+replacement="${tmp}/neat-common.deb"
+helper="${tmp}/neat-helper.deb"
+touch "${runtime}" "${dev}" "${dependent}" "${replacement}" "${helper}"
+DEBS=("${runtime}" "${dev}" "${dependent}" "${replacement}" "${helper}")
+common_installed=0
+snapshots=0
+collect_local_simaai_memory_debs() {
+  SIMAAI_MEMORY_RUNTIME_DEB="${runtime}"
+  SIMAAI_MEMORY_DEV_DEB="${dev}"
+  SIMAAI_MEMORY_DEBS=("${runtime}" "${dev}")
+  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat3
+}
+validate_local_simaai_memory_payload() { :; }
+snapshot_memory_transaction_guard_state() {
+  snapshots=$((snapshots + 1))
+  printf 'SNAPSHOT=%s\n' "${snapshots}"
+}
+verify_memory_guard_palette_and_ota() { :; }
+verify_installed_simaai_memory_payload() { :; }
+verify_memory_transaction_preservation() { :; }
+deb_package_is_installed() {
+  [[ "$1" == neat-runtime || "$1" == simaai-common ||
+     ( "$1" == neat-common && "${common_installed}" -eq 1 ) ]]
+}
+deb_package_installed_version() {
+  case "$1" in
+    simaai-memory-lib|simaai-memory-lib-dev) printf '%s\n' 2.1.1-0neat2 ;;
+    simaai-common) printf '%s\n' 2.1.3~pre4040 ;;
+    *) return 1 ;;
+  esac
+}
+dpkg-query() {
+  [[ "$1" == -W ]] || return 2
+  case "$2:$3" in
+    *Depends*:neat-runtime)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat2)'
+      ;;
+    *Version*:simaai-common) printf '%s\n' 2.1.3~pre4040 ;;
+    *) return 2 ;;
+  esac
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$(basename "$2"):$3" in
+    neat-runtime.deb:Package) printf '%s\n' neat-runtime ;;
+    neat-runtime.deb:Version) printf '%s\n' 0.4.0 ;;
+    neat-runtime.deb:Depends)
+      printf '%s\n' 'neat-common (= 0.4.0), neat-helper (= 0.4.0), simaai-memory-lib (= 2.1.1-0neat3)'
+      ;;
+    neat-common.deb:Package) printf '%s\n' neat-common ;;
+    neat-common.deb:Version) printf '%s\n' 0.4.0 ;;
+    neat-common.deb:Depends|*:Pre-Depends) : ;;
+    neat-common.deb:Provides)
+      printf '%s\n' 'simaai-common (= 2.1.3~pre4040)'
+      ;;
+    neat-common.deb:Replaces|neat-common.deb:Conflicts)
+      printf '%s\n' simaai-common
+      ;;
+    neat-helper.deb:Package) printf '%s\n' neat-helper ;;
+    neat-helper.deb:Version) printf '%s\n' 0.4.0 ;;
+    neat-helper.deb:Depends|neat-helper.deb:Conflicts) : ;;
+    *) return 2 ;;
+  esac
+}
+dpkg() { [[ "$1" == --audit ]]; }
+run_sudo() {
+  case " $* " in
+    *' --simulate '*'memory-runtime.deb'*) printf '%s\n' MEMORY_SIMULATION ;;
+    *' --simulate '*'neat-common.deb'*)
+      printf '%s\n' 'Remv simaai-common [2.1.3~pre4040]'
+      ;;
+    *' apt-get check '*) printf '%s\n' APT_CHECK ;;
+    *'memory-runtime.deb'*) printf '%s\n' MEMORY_REAL ;;
+    *'neat-common.deb'*)
+      common_installed=1
+      printf '%s\n' PREREQUISITE_REAL
+      ;;
+    *) return 2 ;;
+  esac
+}
+install_local_simaai_memory_transaction
+printf 'PREREQUISITES:'
+printf ' <%s>' "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}"
+printf '\nCOMPLETE=%s\n' "${SIMAAI_MEMORY_TRANSACTION_COMPLETE}"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SNAPSHOT=1", result.stdout)
+        self.assertIn("SNAPSHOT=2", result.stdout)
+        self.assertIn("PREREQUISITE_REAL", result.stdout)
+        self.assertIn("MEMORY_REAL", result.stdout)
+        prerequisites = next(
+            line
+            for line in result.stdout.splitlines()
+            if line.startswith("PREREQUISITES:")
+        )
+        self.assertIn("neat-common.deb>", prerequisites)
+        self.assertNotIn("neat-helper.deb>", prerequisites)
+        self.assertIn("COMPLETE=1", result.stdout)
+
     def test_platform_compat_pin_does_not_seed_identity_replacement(self) -> None:
         result = run_bash(
             r'''
