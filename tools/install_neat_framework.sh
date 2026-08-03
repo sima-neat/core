@@ -1207,7 +1207,9 @@ collect_simaai_memory_transaction_debs() {
   local deb package version depends pre_depends relations runtime_version dev_version
   local installed_relations installed_runtime_version installed_dev_version
   local installed_runtime_pin installed_dev_pin selected_deb required_version changed
+  local prerequisite_deb memory_deb is_memory prerequisite_changed
   local -A seen=()
+  local -A prerequisite_seen=()
 
   out_array=()
   SIMAAI_MEMORY_PREREQUISITE_DEBS=()
@@ -1298,10 +1300,46 @@ collect_simaai_memory_transaction_debs() {
       done
     done
   done
+
+  for deb in "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}"; do
+    prerequisite_seen["${deb}"]=1
+  done
+  prerequisite_changed=1
+  while [[ "${prerequisite_changed}" -eq 1 ]]; do
+    prerequisite_changed=0
+    for prerequisite_deb in "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}"; do
+      depends="$(dpkg-deb -f "${prerequisite_deb}" Depends 2>/dev/null || true)"
+      pre_depends="$(dpkg-deb -f "${prerequisite_deb}" Pre-Depends 2>/dev/null || true)"
+      relations="${depends}, ${pre_depends}"
+      for deb in "${DEBS[@]}"; do
+        [[ -f "${deb}" && -z "${prerequisite_seen[${deb}]+x}" ]] || continue
+        is_memory=0
+        for memory_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
+          if [[ "${deb}" == "${memory_deb}" ]]; then
+            is_memory=1
+            break
+          fi
+        done
+        [[ "${is_memory}" -eq 0 ]] || continue
+        package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+        version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
+        [[ -n "${package}" && -n "${version}" ]] || continue
+        required_version="$(
+          exact_dependency_version_from_relations "${package}" <<<"${relations}" || true
+        )"
+        if [[ "${required_version}" == "${version}" ]]; then
+          SIMAAI_MEMORY_PREREQUISITE_DEBS+=("${deb}")
+          prerequisite_seen["${deb}"]=1
+          prerequisite_changed=1
+        fi
+      done
+    done
+  done
 }
 
 install_simaai_memory_prerequisites() {
-  local simulation_log audit_log
+  local simulation_log audit_log deb depends pre_depends relations
+  local runtime_version dev_version
   local -a apt_args=(
     apt-get install -y --reinstall --allow-downgrades
     -o Dpkg::Options::=--force-overwrite
@@ -1310,6 +1348,23 @@ install_simaai_memory_prerequisites() {
   if [[ "${#SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" -eq 0 ]]; then
     return 0
   fi
+
+  for deb in "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}"; do
+    depends="$(dpkg-deb -f "${deb}" Depends 2>/dev/null || true)"
+    pre_depends="$(dpkg-deb -f "${deb}" Pre-Depends 2>/dev/null || true)"
+    relations="${depends}, ${pre_depends}"
+    runtime_version="$(
+      exact_dependency_version_from_relations simaai-memory-lib <<<"${relations}" || true
+    )"
+    dev_version="$(
+      exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${relations}" || true
+    )"
+    if [[ "${runtime_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ||
+          "${dev_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
+      echo "Verified replacement prerequisite $(basename "${deb}") depends on the incoming memory revision and cannot be staged before the zero-removal memory transaction." >&2
+      return 1
+    fi
+  done
 
   simulation_log="$(mktemp /tmp/sima-neat-memory-prereq-simulation-XXXXXX)"
   audit_log="$(mktemp /tmp/sima-neat-memory-prereq-dpkg-audit-XXXXXX)"

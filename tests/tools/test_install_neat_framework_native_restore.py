@@ -583,11 +583,12 @@ dpkg-deb() {
     neat-runtime.deb:Package) printf '%s\n' neat-runtime ;;
     neat-runtime.deb:Version) printf '%s\n' 0.4.0 ;;
     neat-runtime.deb:Depends)
-      printf '%s\n' 'neat-common (= 0.4.0), neat-helper (= 0.4.0), simaai-memory-lib (= 2.1.1-0neat3)'
+      printf '%s\n' 'neat-common (= 0.4.0), simaai-memory-lib (= 2.1.1-0neat3)'
       ;;
     neat-common.deb:Package) printf '%s\n' neat-common ;;
     neat-common.deb:Version) printf '%s\n' 0.4.0 ;;
-    neat-common.deb:Depends|*:Pre-Depends) : ;;
+    neat-common.deb:Depends) printf '%s\n' 'neat-helper (= 0.4.0)' ;;
+    *:Pre-Depends) : ;;
     neat-common.deb:Provides)
       printf '%s\n' 'simaai-common (= 2.1.3~pre4040)'
       ;;
@@ -634,8 +635,31 @@ printf '\nCOMPLETE=%s\n' "${SIMAAI_MEMORY_TRANSACTION_COMPLETE}"
             if line.startswith("PREREQUISITES:")
         )
         self.assertIn("neat-common.deb>", prerequisites)
-        self.assertNotIn("neat-helper.deb>", prerequisites)
+        self.assertIn("neat-helper.deb>", prerequisites)
         self.assertIn("COMPLETE=1", result.stdout)
+
+    def test_prerequisite_phase_rejects_incoming_memory_dependency(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat3
+SIMAAI_MEMORY_PREREQUISITE_DEBS=(./replacement.deb)
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat3)' ;;
+    Pre-Depends) : ;;
+    *) return 2 ;;
+  esac
+}
+run_sudo() { printf '%s\n' APT_CALLED; }
+install_simaai_memory_prerequisites
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot be staged", result.stderr)
+        self.assertNotIn("APT_CALLED", result.stdout + result.stderr)
 
     def test_platform_compat_pin_does_not_seed_identity_replacement(self) -> None:
         result = run_bash(
