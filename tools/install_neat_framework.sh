@@ -1182,7 +1182,8 @@ collect_simaai_memory_transaction_debs() {
   local out_array_name="$1"
   local -n out_array="${out_array_name}"
   local deb package version depends pre_depends relations runtime_version dev_version
-  local selected_deb required_version changed
+  local installed_relations installed_runtime_version installed_dev_version
+  local installed_runtime_pin installed_dev_pin selected_deb required_version changed
   local -A seen=()
 
   out_array=()
@@ -1191,12 +1192,18 @@ collect_simaai_memory_transaction_debs() {
     seen["${deb}"]=1
   done
 
-  # Replacing memory alone would break already-installed Neat packages whose
-  # dependency names the previous private revision. Install the corresponding
-  # bundled revisions alongside memory, but do not pull unrelated DEBs into
-  # this zero-removal transaction: the later general transaction validates
-  # intentional package-identity replacements such as neat-common replacing
-  # simaai-common.
+  installed_runtime_version="$(
+    deb_package_installed_version simaai-memory-lib 2>/dev/null || true
+  )"
+  installed_dev_version="$(
+    deb_package_installed_version simaai-memory-lib-dev 2>/dev/null || true
+  )"
+
+  # Replacing memory alone would break installed Neat packages that pin the
+  # outgoing private revision. Upgrade only those packages here. A package
+  # pinned to a stable platform identity remains satisfied by the new memory
+  # package's versioned Provides and must stay in the later general transaction,
+  # where intentional identity replacements are validated.
   for deb in "${DEBS[@]}"; do
     [[ -f "${deb}" && -z "${seen[${deb}]+x}" ]] || continue
     package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
@@ -1212,8 +1219,23 @@ collect_simaai_memory_transaction_debs() {
     dev_version="$(
       exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${relations}" || true
     )"
-    if [[ "${runtime_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ||
-          "${dev_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
+    installed_relations="$(
+      dpkg-query -W -f='${Depends}, ${Pre-Depends}' "${package}" 2>/dev/null || true
+    )"
+    installed_runtime_pin="$(
+      exact_dependency_version_from_relations simaai-memory-lib \
+        <<<"${installed_relations}" || true
+    )"
+    installed_dev_pin="$(
+      exact_dependency_version_from_relations simaai-memory-lib-dev \
+        <<<"${installed_relations}" || true
+    )"
+    if [[ ( -n "${installed_runtime_version}" &&
+            "${installed_runtime_pin}" == "${installed_runtime_version}" &&
+            "${runtime_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ) ||
+          ( -n "${installed_dev_version}" &&
+            "${installed_dev_pin}" == "${installed_dev_version}" &&
+            "${dev_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ) ]]; then
       out_array+=("${deb}")
       seen["${deb}"]=1
     fi
@@ -1235,6 +1257,7 @@ collect_simaai_memory_transaction_debs() {
         package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
         version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
         [[ -n "${package}" && -n "${version}" ]] || continue
+        deb_package_is_installed "${package}" || continue
         required_version="$(
           exact_dependency_version_from_relations "${package}" <<<"${relations}" || true
         )"

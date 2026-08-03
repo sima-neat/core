@@ -453,7 +453,26 @@ validate_local_simaai_memory_payload() { :; }
 snapshot_memory_transaction_guard_state() { :; }
 verify_installed_simaai_memory_payload() { :; }
 verify_memory_transaction_preservation() { :; }
-deb_package_is_installed() { [[ "$1" == neat-runtime ]]; }
+deb_package_is_installed() {
+  [[ "$1" == neat-runtime || "$1" == neat-common || "$1" == neat-base ]]
+}
+deb_package_installed_version() {
+  case "$1" in
+    simaai-memory-lib|simaai-memory-lib-dev) printf '%s\n' 2.1.1-0neat2 ;;
+    *) return 1 ;;
+  esac
+}
+dpkg-query() {
+  [[ "$1" == -W ]] || return 2
+  case "$3" in
+    neat-runtime)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat2)'
+      ;;
+    neat-common) printf '%s\n' 'neat-base (= 0.3.0)' ;;
+    neat-base) : ;;
+    *) return 2 ;;
+  esac
+}
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$(basename "$2"):$3" in
@@ -507,6 +526,56 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
             self.assertNotIn("--force-overwrite", line)
         self.assertIn("COMPLETE=1", result.stdout)
         self.assertIn("neat-runtime.deb>", result.stdout)
+
+    def test_platform_compat_pin_does_not_seed_identity_replacement(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+runtime="${tmp}/memory-runtime.deb"
+dev="${tmp}/memory-dev.deb"
+dependent="${tmp}/neat-runtime.deb"
+replacement="${tmp}/neat-common.deb"
+touch "${runtime}" "${dev}" "${dependent}" "${replacement}"
+DEBS=("${runtime}" "${dev}" "${dependent}" "${replacement}")
+SIMAAI_MEMORY_DEBS=("${runtime}" "${dev}")
+SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat3
+deb_package_is_installed() { [[ "$1" == neat-runtime ]]; }
+deb_package_installed_version() {
+  [[ "$1" == simaai-memory-lib ]] && printf '%s\n' 2.1.1-0neat2
+}
+dpkg-query() {
+  [[ "$1" == -W && "$3" == neat-runtime ]] || return 2
+  printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040)'
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$(basename "$2"):$3" in
+    neat-runtime.deb:Package) printf '%s\n' neat-runtime ;;
+    neat-runtime.deb:Version) printf '%s\n' 0.4.0 ;;
+    neat-runtime.deb:Depends)
+      printf '%s\n' 'neat-common (= 0.4.0), simaai-memory-lib (= 2.1.1-0neat3)'
+      ;;
+    neat-common.deb:Package) printf '%s\n' neat-common ;;
+    neat-common.deb:Version) printf '%s\n' 0.4.0 ;;
+    neat-common.deb:Depends|*:Pre-Depends) : ;;
+    *) return 2 ;;
+  esac
+}
+collect_simaai_memory_transaction_debs transaction
+printf 'TRANSACTION:'; printf ' <%s>' "${transaction[@]}"; printf '\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        transaction = next(
+            line for line in result.stdout.splitlines() if line.startswith("TRANSACTION:")
+        )
+        self.assertIn("memory-runtime.deb>", transaction)
+        self.assertIn("memory-dev.deb>", transaction)
+        self.assertNotIn("neat-runtime.deb>", transaction)
+        self.assertNotIn("neat-common.deb>", transaction)
 
     def test_isolated_transaction_rejects_simulated_removal_before_real_apt(self) -> None:
         result = run_bash(
