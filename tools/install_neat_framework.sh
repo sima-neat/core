@@ -86,7 +86,6 @@ GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
 SIMAAI_MEMORY_DEBS=()
-SIMAAI_MEMORY_PREREQUISITE_DEBS=()
 SIMAAI_MEMORY_RUNTIME_DEB=""
 SIMAAI_MEMORY_DEV_DEB=""
 SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION=""
@@ -1179,229 +1178,6 @@ remove_local_simaai_memory_debs_from_general_transaction() {
   DEBS=("${remaining[@]}")
 }
 
-deb_is_verified_replacement_for_installed_package() {
-  local deb="$1"
-  local conflicts relation package installed_version
-  conflicts="$(dpkg-deb -f "${deb}" Conflicts 2>/dev/null || true)"
-
-  while IFS= read -r relation; do
-    relation="${relation#"${relation%%[![:space:]]*}"}"
-    relation="${relation%"${relation##*[![:space:]]}"}"
-    package="${relation%%[[:space:](]*}"
-    package="${package%%:*}"
-    [[ -n "${package}" ]] || continue
-    deb_package_is_installed "${package}" || continue
-    installed_version="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
-    [[ -n "${installed_version}" ]] || continue
-    if find_verified_bundled_replacement \
-        "${package}" "${installed_version}" "${deb}" >/dev/null; then
-      return 0
-    fi
-  done < <(printf '%s\n' "${conflicts}" | tr ',' '\n')
-  return 1
-}
-
-collect_simaai_memory_transaction_debs() {
-  local out_array_name="$1"
-  local -n out_array="${out_array_name}"
-  local deb package version depends pre_depends relations runtime_version dev_version
-  local installed_relations installed_runtime_version installed_dev_version
-  local installed_runtime_pin installed_dev_pin selected_deb required_version changed
-  local prerequisite_deb memory_deb is_memory prerequisite_changed
-  local -A seen=()
-  local -A prerequisite_seen=()
-
-  out_array=()
-  SIMAAI_MEMORY_PREREQUISITE_DEBS=()
-  for deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
-    out_array+=("${deb}")
-    seen["${deb}"]=1
-  done
-
-  installed_runtime_version="$(
-    deb_package_installed_version simaai-memory-lib 2>/dev/null || true
-  )"
-  installed_dev_version="$(
-    deb_package_installed_version simaai-memory-lib-dev 2>/dev/null || true
-  )"
-
-  # Replacing memory alone would break installed Neat packages that pin the
-  # outgoing private revision. Upgrade only those packages here. A package
-  # pinned to a stable platform identity remains satisfied by the new memory
-  # package's versioned Provides and must stay in the later general transaction,
-  # where intentional identity replacements are validated.
-  for deb in "${DEBS[@]}"; do
-    [[ -f "${deb}" && -z "${seen[${deb}]+x}" ]] || continue
-    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    [[ -n "${package}" ]] || continue
-    deb_package_is_installed "${package}" || continue
-
-    depends="$(dpkg-deb -f "${deb}" Depends 2>/dev/null || true)"
-    pre_depends="$(dpkg-deb -f "${deb}" Pre-Depends 2>/dev/null || true)"
-    relations="${depends}, ${pre_depends}"
-    runtime_version="$(
-      exact_dependency_version_from_relations simaai-memory-lib <<<"${relations}" || true
-    )"
-    dev_version="$(
-      exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${relations}" || true
-    )"
-    installed_relations="$(
-      dpkg-query -W -f='${Depends}, ${Pre-Depends}' "${package}" 2>/dev/null || true
-    )"
-    installed_runtime_pin="$(
-      exact_dependency_version_from_relations simaai-memory-lib \
-        <<<"${installed_relations}" || true
-    )"
-    installed_dev_pin="$(
-      exact_dependency_version_from_relations simaai-memory-lib-dev \
-        <<<"${installed_relations}" || true
-    )"
-    if [[ ( -n "${installed_runtime_version}" &&
-            "${installed_runtime_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" &&
-            "${installed_runtime_pin}" == "${installed_runtime_version}" &&
-            "${runtime_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ) ||
-          ( -n "${installed_dev_version}" &&
-            "${installed_dev_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" &&
-            "${installed_dev_pin}" == "${installed_dev_version}" &&
-            "${dev_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ) ]]; then
-      out_array+=("${deb}")
-      seen["${deb}"]=1
-    fi
-  done
-
-  # Close exact local dependencies transitively (for example,
-  # sima-neat-dev -> sima-neat and neat-runtime -> neat-common). A missing,
-  # verified identity replacement is installed first; the complete local
-  # closure can then enter the zero-removal memory phase.
-  changed=1
-  while [[ "${changed}" -eq 1 ]]; do
-    changed=0
-    for selected_deb in "${out_array[@]}"; do
-      depends="$(dpkg-deb -f "${selected_deb}" Depends 2>/dev/null || true)"
-      pre_depends="$(dpkg-deb -f "${selected_deb}" Pre-Depends 2>/dev/null || true)"
-      relations="${depends}, ${pre_depends}"
-      for deb in "${DEBS[@]}"; do
-        [[ -f "${deb}" && -z "${seen[${deb}]+x}" ]] || continue
-        package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-        version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
-        [[ -n "${package}" && -n "${version}" ]] || continue
-        required_version="$(
-          exact_dependency_version_from_relations "${package}" <<<"${relations}" || true
-        )"
-        if [[ "${required_version}" == "${version}" ]]; then
-          out_array+=("${deb}")
-          seen["${deb}"]=1
-          if ! deb_package_is_installed "${package}" &&
-             deb_is_verified_replacement_for_installed_package "${deb}"; then
-            SIMAAI_MEMORY_PREREQUISITE_DEBS+=("${deb}")
-          fi
-          changed=1
-        fi
-      done
-    done
-  done
-
-  for deb in "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}"; do
-    prerequisite_seen["${deb}"]=1
-  done
-  prerequisite_changed=1
-  while [[ "${prerequisite_changed}" -eq 1 ]]; do
-    prerequisite_changed=0
-    for prerequisite_deb in "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}"; do
-      depends="$(dpkg-deb -f "${prerequisite_deb}" Depends 2>/dev/null || true)"
-      pre_depends="$(dpkg-deb -f "${prerequisite_deb}" Pre-Depends 2>/dev/null || true)"
-      relations="${depends}, ${pre_depends}"
-      for deb in "${DEBS[@]}"; do
-        [[ -f "${deb}" && -z "${prerequisite_seen[${deb}]+x}" ]] || continue
-        is_memory=0
-        for memory_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
-          if [[ "${deb}" == "${memory_deb}" ]]; then
-            is_memory=1
-            break
-          fi
-        done
-        [[ "${is_memory}" -eq 0 ]] || continue
-        package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-        version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
-        [[ -n "${package}" && -n "${version}" ]] || continue
-        required_version="$(
-          exact_dependency_version_from_relations "${package}" <<<"${relations}" || true
-        )"
-        if [[ "${required_version}" == "${version}" ]]; then
-          SIMAAI_MEMORY_PREREQUISITE_DEBS+=("${deb}")
-          prerequisite_seen["${deb}"]=1
-          prerequisite_changed=1
-        fi
-      done
-    done
-  done
-}
-
-install_simaai_memory_prerequisites() {
-  local simulation_log audit_log deb depends pre_depends relations
-  local runtime_version dev_version
-  local -a apt_args=(
-    apt-get install -y --reinstall --allow-downgrades
-    -o Dpkg::Options::=--force-overwrite
-  )
-
-  if [[ "${#SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" -eq 0 ]]; then
-    return 0
-  fi
-
-  for deb in "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}"; do
-    depends="$(dpkg-deb -f "${deb}" Depends 2>/dev/null || true)"
-    pre_depends="$(dpkg-deb -f "${deb}" Pre-Depends 2>/dev/null || true)"
-    relations="${depends}, ${pre_depends}"
-    runtime_version="$(
-      exact_dependency_version_from_relations simaai-memory-lib <<<"${relations}" || true
-    )"
-    dev_version="$(
-      exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${relations}" || true
-    )"
-    if [[ "${runtime_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ||
-          "${dev_version}" == "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
-      echo "Verified replacement prerequisite $(basename "${deb}") depends on the incoming memory revision and cannot be staged before the zero-removal memory transaction." >&2
-      return 1
-    fi
-  done
-
-  simulation_log="$(mktemp /tmp/sima-neat-memory-prereq-simulation-XXXXXX)"
-  audit_log="$(mktemp /tmp/sima-neat-memory-prereq-dpkg-audit-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${simulation_log}" "${audit_log}")
-
-  log "Simulating missing exact prerequisites for the guarded memory transaction."
-  if ! run_sudo "${apt_args[@]}" --simulate \
-      "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" >"${simulation_log}" 2>&1; then
-    cat "${simulation_log}" >&2
-    echo "APT rejected the guarded memory prerequisite transaction; no packages were changed." >&2
-    return 1
-  fi
-  if grep -Eq \
-      '^Remv[[:space:]]+(sima-neat|sima-neat-dev)(:[^[:space:]]+)?([[:space:]]|$)' \
-      "${simulation_log}"; then
-    cat "${simulation_log}" >&2
-    echo "The guarded memory prerequisite transaction would remove a Core package before its replacement is installed." >&2
-    return 1
-  fi
-  verify_simulated_package_removals \
-    "${simulation_log}" "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" || return 1
-  cat "${simulation_log}"
-
-  log "Installing verified exact prerequisites for the guarded memory transaction."
-  run_sudo "${apt_args[@]}" "${SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" || return 1
-  verify_memory_guard_palette_and_ota || return 1
-  if ! run_sudo apt-get check; then
-    echo "APT dependency check failed after the guarded memory prerequisites." >&2
-    return 1
-  fi
-  if ! dpkg --audit >"${audit_log}" 2>&1 || [[ -s "${audit_log}" ]]; then
-    echo "dpkg audit failed after the guarded memory prerequisites:" >&2
-    cat "${audit_log}" >&2
-    return 1
-  fi
-}
-
 snapshot_memory_transaction_guard_state() {
   local ota_owner
   SIMAAI_MEMORY_PREINSTALL_PACKAGES="$(mktemp /tmp/sima-neat-memory-packages-before-XXXXXX)"
@@ -1548,34 +1324,29 @@ verify_memory_transaction_preservation() {
 install_local_simaai_memory_transaction() {
   local simulation_log
   local -a apt_args=(apt-get install -y --reinstall --no-remove --allow-downgrades)
-  local -a transaction_debs=()
 
   collect_local_simaai_memory_debs || return 1
   validate_local_simaai_memory_payload || return 1
-  collect_simaai_memory_transaction_debs transaction_debs
   snapshot_memory_transaction_guard_state || return 1
-  if [[ "${#SIMAAI_MEMORY_PREREQUISITE_DEBS[@]}" -gt 0 ]]; then
-    install_simaai_memory_prerequisites || return 1
-    snapshot_memory_transaction_guard_state || return 1
-  fi
   simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
 
-  log "Simulating dependency-closed local simaai-memory replacement with package removal disabled."
-  if ! run_sudo "${apt_args[@]}" --simulate "${transaction_debs[@]}" >"${simulation_log}" 2>&1; then
+  log "Simulating isolated portable simaai-memory replacement with package removal disabled."
+  if ! run_sudo "${apt_args[@]}" --simulate \
+      "${SIMAAI_MEMORY_DEBS[@]}" >"${simulation_log}" 2>&1; then
     cat "${simulation_log}" >&2
-    echo "APT rejected the dependency-closed local simaai-memory transaction; no packages were changed." >&2
+    echo "APT rejected the isolated portable simaai-memory transaction; no packages were changed." >&2
     return 1
   fi
   cat "${simulation_log}"
   if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
-    echo "APT simulation planned package removal for the dependency-closed simaai-memory transaction; refusing to continue." >&2
+    echo "APT simulation planned package removal for the isolated simaai-memory transaction; refusing to continue." >&2
     grep '^Remv[[:space:]]' "${simulation_log}" >&2
     return 1
   fi
 
-  log "Installing bundled packages in a dependency-closed zero-removal simaai-memory transaction."
-  run_sudo "${apt_args[@]}" "${transaction_debs[@]}" || return 1
+  log "Installing the bundled memory pair in an isolated zero-removal transaction."
+  run_sudo "${apt_args[@]}" "${SIMAAI_MEMORY_DEBS[@]}" || return 1
   verify_installed_simaai_memory_payload || return 1
   verify_memory_transaction_preservation || return 1
   SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
@@ -2315,12 +2086,12 @@ install_debs_on_board() {
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # The memory replacement and its bundled exact dependents are installed as
-  # one dependency-closed, zero-removal transaction. This permits an upgrade
-  # from an older Neat revision without temporarily breaking its exact memory
-  # dependency, while retaining the palette/OTA and package-preservation guard.
+  # The portable memory pair version-Provides every supported platform and
+  # prior private identity, so it can be replaced alone without breaking exact
+  # dependencies. The broader validated transaction upgrades the remaining
+  # packages afterward.
   if ! apt_package_database_is_healthy; then
-    echo "APT package state is unhealthy; refusing the dependency-closed zero-removal simaai-memory replacement." >&2
+    echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
