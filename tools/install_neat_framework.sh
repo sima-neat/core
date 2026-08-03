@@ -1241,10 +1241,10 @@ collect_simaai_memory_transaction_debs() {
     fi
   done
 
-  # Keep every selected local package satisfiable without relying on a matching
-  # repository publication. Exact local dependencies form a small transitive
-  # closure (for example, sima-neat-dev -> sima-neat and
-  # neat-runtime -> neat-common). Non-exact dependencies remain APT's job.
+  # Upgrade exact dependencies across package identities that are already
+  # installed (for example, sima-neat-dev -> sima-neat and
+  # neat-runtime -> neat-common). Uninstalled identities and non-exact
+  # dependencies remain APT's job, subject to the zero-removal simulation.
   changed=1
   while [[ "${changed}" -eq 1 ]]; do
     changed=0
