@@ -95,11 +95,8 @@ int main() {
               "shared packed tensors second offset");
     }
 
-    require_throws(
-        [] {
-          (void)pcie::Tensor::from_vector(std::vector<float>(3), {2, 2});
-        },
-        "from_vector must reject shape/data mismatch");
+    require_throws([] { (void)pcie::Tensor::from_vector(std::vector<float>(3), {2, 2}); },
+                   "from_vector must reject shape/data mismatch");
     require_throws(
         [] {
           std::vector<float> data(4);

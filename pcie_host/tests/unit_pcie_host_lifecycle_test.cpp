@@ -24,8 +24,7 @@ int main() {
       throw std::runtime_error("pcie::Model should load metadata during construction");
     }
 
-    const std::string expected =
-        "PCIe model is not built; call model.build() before run/push/pull";
+    const std::string expected = "PCIe model is not built; call model.build() before run/push/pull";
     bool threw = false;
     try {
       (void)model.push(pcie::Tensor{});
