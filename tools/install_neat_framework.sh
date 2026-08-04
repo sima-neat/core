@@ -965,21 +965,31 @@ print(match.group(1))
 
 exact_dependency_version_from_relations() {
   local dependency="$1"
+  local expected_version="${2:-}"
   python3 -c '
 import re
 import sys
 
 dependency = sys.argv[1]
+expected_version = sys.argv[2] or None
 relations = sys.stdin.read().strip()
-match = re.search(
+matches = re.finditer(
     rf"(?:^|,)\s*{re.escape(dependency)}(?:\:[^\s(,|]+)?\s*"
     rf"\(\s*=\s*([^\s)]+)\s*\)",
     relations,
 )
+match = next(
+    (
+        candidate
+        for candidate in matches
+        if expected_version is None or candidate.group(1) == expected_version
+    ),
+    None,
+)
 if match is None:
     raise SystemExit(1)
 print(match.group(1))
-' "${dependency}"
+' "${dependency}" "${expected_version}"
 }
 
 palette_required_simaai_memory_version() {
@@ -1038,6 +1048,7 @@ PY
 
 collect_local_simaai_memory_debs() {
   local deb package arch depends provides provided_version dev_runtime_version board_arch
+  local private_prefix private_revision previous_private_version=""
   local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
 
   for deb in "${DEBS[@]}"; do
@@ -1075,6 +1086,13 @@ collect_local_simaai_memory_debs() {
     return 1
   fi
   SIMAAI_MEMORY_ACTUAL_VERSION="${runtime_version}"
+  if [[ "${SIMAAI_MEMORY_ACTUAL_VERSION}" =~ ^(.+-0neat)([1-9][0-9]*)$ ]]; then
+    private_prefix="${BASH_REMATCH[1]}"
+    private_revision="${BASH_REMATCH[2]}"
+    if (( private_revision > 1 )); then
+      previous_private_version="${private_prefix}$((private_revision - 1))"
+    fi
+  fi
 
   for deb in "${runtime_deb}" "${dev_deb}"; do
     package="$(dpkg-deb -f "${deb}" Package)"
@@ -1086,17 +1104,35 @@ collect_local_simaai_memory_debs() {
   done
 
   provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${provides}" || true)"
+  provided_version="$(exact_dependency_version_from_relations \
+    simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
   if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
+  if [[ -n "${previous_private_version}" ]]; then
+    provided_version="$(exact_dependency_version_from_relations \
+      simaai-memory-lib "${previous_private_version}" <<<"${provides}" || true)"
+    if [[ "${provided_version}" != "${previous_private_version}" ]]; then
+      echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${previous_private_version}); got ${provides:-<none>}." >&2
+      return 1
+    fi
+  fi
 
   provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${provides}" || true)"
+  provided_version="$(exact_dependency_version_from_relations \
+    simaai-memory-lib-dev "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
   if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
+  fi
+  if [[ -n "${previous_private_version}" ]]; then
+    provided_version="$(exact_dependency_version_from_relations \
+      simaai-memory-lib-dev "${previous_private_version}" <<<"${provides}" || true)"
+    if [[ "${provided_version}" != "${previous_private_version}" ]]; then
+      echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${previous_private_version}); got ${provides:-<none>}." >&2
+      return 1
+    fi
   fi
 
   depends="$(dpkg-deb -f "${dev_deb}" Depends 2>/dev/null || true)"
