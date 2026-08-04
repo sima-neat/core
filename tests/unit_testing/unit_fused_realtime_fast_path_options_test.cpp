@@ -17,6 +17,7 @@
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/H264Packetize.h"
 #include "nodes/sima/H264Parse.h"
+#include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/GraphOptions.h"
@@ -628,6 +629,44 @@ RUN_TEST(
       const std::string composed_queue = "max-size-buffers=3 max-size-bytes=0 max-size-time=0";
       require(count_occurrences(composed_pipeline, composed_queue) == 3U,
               "actual composed fused graph must render the three selected stage queues");
+
+      simaai::neat::Graph pcie_app("named_pcie_fan_in", outer_options);
+      auto pcie_detector = make_composed_consumer_graph();
+      auto pcie_source = simaai::neat::nodes::PCIeSrc({});
+      for (int stream = 1; stream >= 0; --stream) {
+        simaai::neat::Graph decoder("pcie_decoder" + std::to_string(stream));
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        decoder.add(simaai::neat::nodes::Output("detector_frame"));
+        pcie_app.connect(pcie_source, "src_" + std::to_string(stream), decoder);
+
+        simaai::neat::GraphLinkOptions link;
+        link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+        link.stream_id = std::to_string(stream);
+        pcie_app.connect(decoder, pcie_detector, link);
+      }
+      const auto pcie_plan =
+          simaai::neat::runtime::compile_public_graph(pcie_app, composed_run_options);
+      const auto pcie_fused = std::find_if(
+          pcie_plan.pipeline_segments.begin(), pcie_plan.pipeline_segments.end(),
+          [](const auto& segment) { return segment.fused_realtime_ingress.has_value(); });
+      require(pcie_fused != pcie_plan.pipeline_segments.end(),
+              "named PCIe source pads feeding decoders must lower to fused realtime ingress");
+      const auto& pcie_ingress = *pcie_fused->fused_realtime_ingress;
+      require(pcie_ingress.shared_source_nodes.size() == 1U &&
+                  dynamic_cast<const simaai::neat::PCIeSrc*>(
+                      pcie_ingress.shared_source_nodes.front().get()) != nullptr,
+              "PCIe fan-in must render one shared physical source");
+      require(pcie_ingress.branches.size() == 2U &&
+                  pcie_ingress.branches[0].shared_source_pad == "src_0" &&
+                  pcie_ingress.branches[1].shared_source_pad == "src_1",
+              "PCIe branches must be ordered by their contiguous request-pad index");
+      const std::string pcie_pipeline =
+          simaai::neat::session_test::render_fused_realtime_pipeline_for_test(
+              pcie_ingress, pcie_fused->nodes, pcie_fused->route_options);
+      require(count_occurrences(pcie_pipeline, "neatpciesrc") == 1U,
+              "PCIe fan-in must render the shared source exactly once");
+      require_contains(pcie_pipeline, ".src_0 !", "PCIe branch zero must use src_0");
+      require_contains(pcie_pipeline, ".src_1 !", "PCIe branch one must use src_1");
       require(composed_pipeline.find(composed_queue + " ! appsink") == std::string::npos,
               "actual composed fused graph must not queue before its terminal Output");
 

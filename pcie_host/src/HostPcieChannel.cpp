@@ -402,6 +402,18 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
   }
   stop_requested_.store(false);
   running_.store(true);
+  GstBus* bus = gst_element_get_bus(pipeline_);
+  if (!bus) {
+    stop_locked();
+    throw std::runtime_error("failed to get host PCIe pipeline bus");
+  }
+  try {
+    bus_thread_ = std::thread(&HostPcieChannel::monitor_bus, this, bus);
+  } catch (...) {
+    gst_object_unref(bus);
+    stop_locked();
+    throw;
+  }
 }
 
 void HostPcieChannel::request_stop() {
@@ -420,6 +432,9 @@ void HostPcieChannel::stop() {
 void HostPcieChannel::stop_locked() {
   request_stop();
   configured_ = false;
+  if (bus_thread_.joinable()) {
+    bus_thread_.join();
+  }
   if (appsrc_) {
     GstFlowReturn ret = GST_FLOW_OK;
     g_signal_emit_by_name(appsrc_, "end-of-stream", &ret);
@@ -475,6 +490,49 @@ void HostPcieChannel::stop_locked() {
 
 bool HostPcieChannel::is_running() const {
   return running_.load();
+}
+
+void HostPcieChannel::monitor_bus(GstBus* bus) {
+  while (!stop_requested_.load()) {
+    GstMessage* message = gst_bus_timed_pop_filtered(
+        bus, 100 * GST_MSECOND, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+    if (!message) {
+      continue;
+    }
+
+    if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
+      GError* error = nullptr;
+      gchar* detail = nullptr;
+      gst_message_parse_error(message, &error, &detail);
+      std::ostringstream text;
+      text << "PCIe pipeline error";
+      if (GST_MESSAGE_SRC(message)) {
+        text << " from " << GST_OBJECT_NAME(GST_MESSAGE_SRC(message));
+      }
+      if (error && error->message) {
+        text << ": " << error->message;
+      }
+      if (detail && *detail) {
+        text << " (" << detail << ")";
+      }
+      {
+        std::lock_guard<std::mutex> lock(receive_mutex_);
+        if (!receive_error_) {
+          receive_error_ = text.str();
+        }
+      }
+      g_clear_error(&error);
+      g_free(detail);
+      gst_message_unref(message);
+      request_stop();
+      break;
+    }
+
+    gst_message_unref(message);
+    request_stop();
+    break;
+  }
+  gst_object_unref(bus);
 }
 
 bool HostPcieChannel::push(const TensorList& tensors) {

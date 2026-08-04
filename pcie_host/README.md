@@ -73,8 +73,11 @@ is released. Models already present in the runtime are not affected.
 `EnqueueResult::Full` when the model has `max_inflight` accepted requests.
 `retrieve()` returns the next completion from any loaded model. The caller's
 signed 32-bit `RequestId` is attached to `GstSimaHostMeta` as both
-`frame-identifier` and `frame-id`. The PCIe/card round trip preserves the
-32-bit `frame-id`, which is restored unchanged in the completion.
+`frame-identifier` and `frame-id`. The PCIe transport copies an input into
+card-owned memory before releasing the driver request. Card outputs are
+independent DATA messages correlated by the logical 32-bit request ID. The
+round trip preserves the 32-bit `frame-id`, which is restored unchanged in the
+completion.
 
 `unload()` stops accepting work for one model, waits for accepted work to
 complete up to its drain timeout, and then releases that model's queue without

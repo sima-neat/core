@@ -31,6 +31,9 @@ struct PCIeSrcOptions {
   /// Used as the fallback allocation size and encoded-buffer limit.
   /// Default 4 MB matches the `neatpciesrc` default.
   int buffer_size = 4194304;
+
+  /// Per-stream output pool size. Zero keeps the plugin default.
+  int pool_size = 0;
 };
 
 /**

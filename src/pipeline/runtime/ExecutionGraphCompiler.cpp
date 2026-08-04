@@ -14,6 +14,7 @@
 #include "nodes/io/UdpOutput.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/rtp/H265Depacketize.h"
+#include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
@@ -826,8 +827,20 @@ build_runtime_graph_from_connected_public_view(const View& view,
       cur = next;
     }
 
+    std::vector<std::string> output_ports;
+    for (const auto& edge : view.edges) {
+      if (edge.from == cur && !edge.from_port.empty() &&
+          std::find(output_ports.begin(), output_ports.end(), edge.from_port) ==
+              output_ports.end()) {
+        output_ports.push_back(edge.from_port);
+      }
+    }
+    if (output_ports.empty()) {
+      output_ports.push_back("out");
+    }
     auto pipeline_node = std::make_shared<graph::nodes::PipelineNode>(
-        std::move(nodes), "fragment" + std::to_string(start), allow_realtime_fan_in ? 0 : 1);
+        std::move(nodes), "fragment" + std::to_string(start), allow_realtime_fan_in ? 0 : 1,
+        std::move(output_ports));
     const graph::NodeId runtime_id = out.graph.add(std::move(pipeline_node));
     out.graph_range_by_node[runtime_id] = {start, cur + 1U};
     cur = start;
@@ -1806,6 +1819,72 @@ struct EncodedOutputFusionMatch {
   std::size_t encoded_split_node_index = 0;
 };
 
+struct PcieDecodeFusionMatch {
+  std::size_t source_segment = static_cast<std::size_t>(-1);
+  std::size_t decoder_segment = static_cast<std::size_t>(-1);
+  std::size_t source_edge = static_cast<std::size_t>(-1);
+  std::string source_pad;
+};
+
+std::optional<PcieDecodeFusionMatch> match_pcie_decode_fusion_branch(
+    const ExecutionGraphPlan& plan,
+    const std::unordered_map<graph::NodeId, std::size_t>& segment_by_node,
+    std::size_t target_edge_index) {
+  if (target_edge_index >= plan.edges.size()) {
+    return std::nullopt;
+  }
+  const auto& target_edge = plan.edges[target_edge_index];
+  const auto decoder_it = segment_by_node.find(target_edge.from);
+  if (decoder_it == segment_by_node.end() || decoder_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t decoder_index = decoder_it->second;
+  const auto& decoder = plan.pipeline_segments[decoder_index];
+  if (decoder.consumed_by_fused_realtime_ingress || decoder.fused_realtime_ingress.has_value() ||
+      decoder.input_edges.size() != 1U || decoder.output_edges.size() != 1U ||
+      decoder.output_edges.front() != target_edge_index ||
+      std::none_of(decoder.nodes.begin(), decoder.nodes.end(), [](const auto& node) {
+        return dynamic_cast<const simaai::neat::SimaDecode*>(node.get()) != nullptr;
+      })) {
+    return std::nullopt;
+  }
+
+  const std::size_t source_edge_index = decoder.input_edges.front();
+  if (source_edge_index >= plan.edges.size()) {
+    return std::nullopt;
+  }
+  const auto& source_edge = plan.edges[source_edge_index];
+  if (!exact_default_link(source_edge.link_options) || !source_edge.stream_id.empty() ||
+      source_edge.from_port == graph::kInvalidPort ||
+      source_edge.from_port >= plan.port_names.size()) {
+    return std::nullopt;
+  }
+  const std::string& source_pad = plan.port_names[source_edge.from_port];
+  if (source_pad.size() <= 4U || source_pad.rfind("src_", 0) != 0 ||
+      !std::all_of(source_pad.begin() + 4, source_pad.end(),
+                   [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    return std::nullopt;
+  }
+
+  const auto source_it = segment_by_node.find(source_edge.from);
+  if (source_it == segment_by_node.end() || source_it->second >= plan.pipeline_segments.size()) {
+    return std::nullopt;
+  }
+  const std::size_t source_index = source_it->second;
+  const auto& source = plan.pipeline_segments[source_index];
+  if (source.consumed_by_fused_realtime_ingress || source.fused_realtime_ingress.has_value() ||
+      !source.boundary.source_like || !source.input_edges.empty() || source.nodes.size() != 1U ||
+      dynamic_cast<const simaai::neat::PCIeSrc*>(source.nodes.front().get()) == nullptr ||
+      !segment_has_output_edge(source, source_edge_index)) {
+    return std::nullopt;
+  }
+
+  return PcieDecodeFusionMatch{.source_segment = source_index,
+                               .decoder_segment = decoder_index,
+                               .source_edge = source_edge_index,
+                               .source_pad = source_pad};
+}
+
 std::optional<SimaDecodeType> encoded_video_sender_codec(const PipelineSegmentPlan& segment) {
   if (segment.nodes.size() != 3U) {
     return std::nullopt;
@@ -2085,6 +2164,8 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
     std::vector<std::size_t> consumed_edges;
     std::optional<std::size_t> consumed_stage;
     std::vector<std::shared_ptr<Node>> nodes;
+    std::optional<std::size_t> shared_source_segment;
+    std::string shared_source_pad;
     std::optional<FusedRealtimeIngressBranch::EncodedOutput> encoded_output;
     std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
     GraphLinkOptions encoded_sink_link_options;
@@ -2142,33 +2223,71 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
         candidate.output_spec = edge.spec_complete ? edge.spec : source.output_spec;
         candidate.output_complete = edge.spec_complete || source.output_complete;
       } else {
-        const auto encoded_match =
-            match_encoded_output_fusion_branch(*plan, segment_by_node, edge_index);
-        if (!encoded_match.has_value()) {
-          all_realtime = false;
-          break;
+        const auto pcie_match = match_pcie_decode_fusion_branch(*plan, segment_by_node, edge_index);
+        if (pcie_match.has_value()) {
+          const auto& decoder = plan->pipeline_segments[pcie_match->decoder_segment];
+          candidate.source_segment = pcie_match->decoder_segment;
+          candidate.consumed_segments = {pcie_match->source_segment, pcie_match->decoder_segment};
+          candidate.consumed_edges = {pcie_match->source_edge, edge_index};
+          candidate.nodes = decoder.nodes;
+          candidate.shared_source_segment = pcie_match->source_segment;
+          candidate.shared_source_pad = pcie_match->source_pad;
+          candidate.output_spec = edge.spec_complete ? edge.spec : decoder.output_spec;
+          candidate.output_complete = edge.spec_complete || decoder.output_complete;
+        } else {
+          const auto encoded_match =
+              match_encoded_output_fusion_branch(*plan, segment_by_node, edge_index);
+          if (!encoded_match.has_value()) {
+            all_realtime = false;
+            break;
+          }
+          const auto& decoder = plan->pipeline_segments[encoded_match->decoder_segment];
+          candidate.source_segment = encoded_match->decoder_segment;
+          candidate.consumed_segments = {encoded_match->source_segment,
+                                         encoded_match->decoder_segment,
+                                         encoded_match->output_segment};
+          candidate.consumed_edges = encoded_match->consumed_edges;
+          candidate.consumed_stage = encoded_match->fanout_stage;
+          candidate.nodes = encoded_match->branch_nodes;
+          if (encoded_match->encoded_output.sink_node != graph::kInvalidNode) {
+            candidate.encoded_output = encoded_match->encoded_output;
+          }
+          candidate.encoded_sink_nodes = encoded_match->encoded_sink_nodes;
+          candidate.encoded_sink_link_options = encoded_match->encoded_sink_link_options;
+          candidate.encoded_split_node_index = encoded_match->encoded_split_node_index;
+          candidate.output_spec = edge.spec_complete ? edge.spec : decoder.output_spec;
+          candidate.output_complete = edge.spec_complete || decoder.output_complete;
         }
-        const auto& decoder = plan->pipeline_segments[encoded_match->decoder_segment];
-        candidate.source_segment = encoded_match->decoder_segment;
-        candidate.consumed_segments = {encoded_match->source_segment,
-                                       encoded_match->decoder_segment,
-                                       encoded_match->output_segment};
-        candidate.consumed_edges = encoded_match->consumed_edges;
-        candidate.consumed_stage = encoded_match->fanout_stage;
-        candidate.nodes = encoded_match->branch_nodes;
-        if (encoded_match->encoded_output.sink_node != graph::kInvalidNode) {
-          candidate.encoded_output = encoded_match->encoded_output;
-        }
-        candidate.encoded_sink_nodes = encoded_match->encoded_sink_nodes;
-        candidate.encoded_sink_link_options = encoded_match->encoded_sink_link_options;
-        candidate.encoded_split_node_index = encoded_match->encoded_split_node_index;
-        candidate.output_spec = edge.spec_complete ? edge.spec : decoder.output_spec;
-        candidate.output_complete = edge.spec_complete || decoder.output_complete;
       }
       candidates.push_back(std::move(candidate));
     }
     if (!all_realtime || candidates.size() != target.input_edges.size()) {
       continue;
+    }
+
+    const bool all_shared_pcie =
+        !candidates.empty() && std::all_of(candidates.begin(), candidates.end(), [](const auto& c) {
+          return c.shared_source_segment.has_value() && !c.shared_source_pad.empty();
+        });
+    if (all_shared_pcie) {
+      std::vector<std::size_t> order(candidates.size());
+      for (std::size_t i = 0; i < order.size(); ++i) {
+        order[i] = i;
+      }
+      std::sort(order.begin(), order.end(), [&](std::size_t lhs, std::size_t rhs) {
+        return std::stoul(candidates[lhs].shared_source_pad.substr(4)) <
+               std::stoul(candidates[rhs].shared_source_pad.substr(4));
+      });
+      std::vector<BranchCandidate> ordered_candidates;
+      std::vector<std::size_t> ordered_edges;
+      ordered_candidates.reserve(candidates.size());
+      ordered_edges.reserve(target.input_edges.size());
+      for (const std::size_t index : order) {
+        ordered_candidates.push_back(std::move(candidates[index]));
+        ordered_edges.push_back(target.input_edges[index]);
+      }
+      candidates = std::move(ordered_candidates);
+      target.input_edges = std::move(ordered_edges);
     }
 
     // The fused mux addresses branches by stream id.  Unlike the segmented
@@ -2205,7 +2324,37 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       continue;
     }
 
+    std::optional<std::size_t> shared_pcie_source;
+    bool mixed_shared_source_modes = false;
+    for (const auto& candidate : candidates) {
+      if (!candidate.shared_source_segment.has_value()) {
+        mixed_shared_source_modes = mixed_shared_source_modes || shared_pcie_source.has_value();
+        continue;
+      }
+      if (!shared_pcie_source.has_value()) {
+        shared_pcie_source = candidate.shared_source_segment;
+      } else if (*shared_pcie_source != *candidate.shared_source_segment) {
+        mixed_shared_source_modes = true;
+      }
+    }
+    if (shared_pcie_source.has_value() &&
+        std::any_of(candidates.begin(), candidates.end(), [](const auto& candidate) {
+          return !candidate.shared_source_segment.has_value();
+        })) {
+      mixed_shared_source_modes = true;
+    }
+    if (mixed_shared_source_modes) {
+      continue;
+    }
+
     FusedRealtimeIngress fused;
+    if (shared_pcie_source.has_value()) {
+      const auto& source = plan->pipeline_segments[*shared_pcie_source];
+      fused.shared_source_nodes = source.nodes;
+      if (!source.node_ids.empty()) {
+        fused.shared_source_node = source.node_ids.front();
+      }
+    }
     fused.branches.reserve(target.input_edges.size());
     for (std::size_t ordinal = 0; ordinal < target.input_edges.size(); ++ordinal) {
       const std::size_t edge_index = target.input_edges[ordinal];
@@ -2216,6 +2365,7 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
       branch.edge_index = edge_index;
       branch.source_node = edge.from;
       branch.stream_id = (*effective_stream_ids)[ordinal];
+      branch.shared_source_pad = std::move(candidate.shared_source_pad);
       branch.link_options = edge.link_options;
       branch.nodes = std::move(candidate.nodes);
       branch.encoded_output = std::move(candidate.encoded_output);

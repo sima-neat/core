@@ -849,6 +849,16 @@ owns the model-to-queue registry and aggregates each queue's results; the
 card-side `pcie-pipeline-builder` remains one process and one model graph per
 queue.
 
+The card transport carries a separate private request token in the legacy-named
+`GstSimaMeta.pcie-buffer-id` field. It identifies the exact driver request and inflight credit;
+ordinary plugins may forward it unchanged but must not inspect or manufacture
+it. `stream-id` remains the output-routing key, while `frame-id` remains the
+application correlation key. Only `neatpciesink` resolves the request token.
+Successful work returns a DATA response. A decoder drop, flush, restart, or
+downstream failure returns a correlated `NEAT_PCIE_FRAME_RETURN_ERROR`, which
+releases the same host credit and terminates the affected host pipeline with an
+actionable error rather than leaving it blocked.
+
 The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
 native API. OAAX ownership rules, status codes, and last-error storage belong
 in that adapter instead of the C++ API.

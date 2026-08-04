@@ -16,6 +16,9 @@ std::string PCIeSrc::backend_fragment(int node_index) const {
   std::ostringstream ss;
   ss << "neatpciesrc name=n" << node_index << "_pciesrc" << " queue=" << opt_.queue
      << " buffer-size=" << opt_.buffer_size;
+  if (opt_.pool_size > 0) {
+    ss << " pool-size=" << opt_.pool_size;
+  }
   return ss.str();
 }
 

@@ -18,12 +18,14 @@ RUN_TEST("unit_pcie_nodes_test", [] {
     simaai::neat::PCIeSrcOptions opt;
     opt.queue = 2;
     opt.buffer_size = 1000000;
+    opt.pool_size = 4;
 
     auto node = simaai::neat::nodes::PCIeSrc(opt);
     const std::string frag = node->backend_fragment(0);
     require_contains(frag, "neatpciesrc name=n0_pciesrc", "pciesrc fragment name mismatch");
     require_contains(frag, "queue=2", "pciesrc queue mismatch");
     require_contains(frag, "buffer-size=1000000", "pciesrc buffer-size mismatch");
+    require_contains(frag, "pool-size=4", "pciesrc pool-size mismatch");
     require(frag.find("capsfilter") == std::string::npos,
             "pciesrc must use caps received from the host");
 

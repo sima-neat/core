@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include <gst/gst.h>
 
@@ -44,6 +45,7 @@ public:
 private:
   static GstFlowReturn on_new_sample_static(GstElement* sink, gpointer user_data);
   GstFlowReturn on_new_sample(GstElement* sink);
+  void monitor_bus(GstBus* bus);
 
   void start_with_caps(const std::string& caps);
   void stop_locked();
@@ -59,6 +61,7 @@ private:
   GstElement* appsink_ = nullptr;
   GstPad* pciehost_sink_pad_ = nullptr;
   GstPad* pciehost_src_pad_ = nullptr;
+  std::thread bus_thread_;
 
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};

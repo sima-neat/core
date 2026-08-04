@@ -34,17 +34,19 @@ public:
 
   /// Construct from a node vector by move.
   explicit PipelineNode(std::vector<NodePtr> nodes, std::string label = {},
-                        int input_max_in_edges = 1)
-      : nodes_(std::move(nodes)), label_(std::move(label)),
-        input_max_in_edges_(input_max_in_edges) {
+                        int input_max_in_edges = 1,
+                        std::vector<std::string> output_port_names = {"out"})
+      : nodes_(std::move(nodes)), label_(std::move(label)), input_max_in_edges_(input_max_in_edges),
+        output_port_names_(std::move(output_port_names)) {
     init_();
   }
 
   /// Construct from a single builder `Node`.
   explicit PipelineNode(std::shared_ptr<simaai::neat::Node> node, std::string label = {},
-                        int input_max_in_edges = 1)
+                        int input_max_in_edges = 1,
+                        std::vector<std::string> output_port_names = {"out"})
       : nodes_(std::vector<NodePtr>{std::move(node)}), label_(std::move(label)),
-        input_max_in_edges_(input_max_in_edges) {
+        input_max_in_edges_(input_max_in_edges), output_port_names_(std::move(output_port_names)) {
     init_();
   }
 
@@ -75,9 +77,14 @@ public:
     return {PortDesc{.name = "in", .spec = OutputSpec{}, .max_in_edges = input_max_in_edges_}};
   }
 
-  /// Always exposes a single `"out"` port.
+  /// Exposes the configured output ports; ordinary pipeline nodes use only `"out"`.
   std::vector<PortDesc> output_ports() const override {
-    return {PortDesc{.name = "out", .spec = OutputSpec{}}};
+    std::vector<PortDesc> ports;
+    ports.reserve(output_port_names_.size());
+    for (const auto& name : output_port_names_) {
+      ports.push_back(PortDesc{.name = name, .spec = OutputSpec{}});
+    }
+    return ports;
   }
 
   /// Access the wrapped node list.
@@ -122,6 +129,7 @@ private:
   std::string label_;
   std::string kind_;
   int input_max_in_edges_ = 1;
+  std::vector<std::string> output_port_names_;
   bool is_source_like_ = false;
   bool requires_input_ = true;
 };

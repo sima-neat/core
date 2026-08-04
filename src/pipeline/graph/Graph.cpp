@@ -31,6 +31,7 @@
 #include "model/internal/ModelInternal.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/sima/PCIeSrc.h"
 
 #include <gst/gst.h>
 #include <gst/gstdebugutils.h>
@@ -1602,6 +1603,39 @@ Graph& Graph::connect(std::shared_ptr<Node> from, const Graph& to) {
                             ? import_or_reuse_output_collection_fragment_(to, "Graph::connect(to)")
                             : import_or_reuse_composition_fragment_(to, "Graph::connect(to)");
   connect_imported_ranges_(from_range, {}, to_range, to.endpoint_name_, "Graph::connect");
+  mutation.commit();
+  return *this;
+}
+
+Graph& Graph::connect(std::shared_ptr<Node> from, std::string_view from_output, const Graph& to,
+                      const GraphLinkOptions& options) {
+  CompositionMutation mutation(*this);
+  const auto* pcie = dynamic_cast<const PCIeSrc*>(from.get());
+  if (!pcie) {
+    throw std::runtime_error(
+        "Graph::connect(named output): named Node outputs currently require PCIeSrc");
+  }
+  (void)pcie;
+
+  const std::string output = trim_endpoint_name(from_output);
+  if (output.size() <= 4U || output.rfind("src_", 0) != 0 ||
+      !std::all_of(output.begin() + 4, output.end(),
+                   [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    throw std::runtime_error("Graph::connect(named output): PCIeSrc output must be named src_N");
+  }
+
+  const auto from_range =
+      import_or_reuse_node_fragment_(std::move(from), "Graph::connect(named output from)");
+  const auto to_range =
+      import_or_reuse_composition_fragment_(to, "Graph::connect(named output to)");
+  const auto source_candidates =
+      collect_source_endpoint_candidates(*composition_, from_range.first, from_range.second, {});
+  const auto destination_candidates = collect_destination_endpoint_candidates(
+      *composition_, to_range.first, to_range.second, to.endpoint_name_);
+  const FragmentEndpointMatch match =
+      resolve_fragment_endpoint_match_or_throw(source_candidates, destination_candidates, {},
+                                               to.endpoint_name_, "Graph::connect(named output)");
+  composition_->connect_runtime_port(match.from, match.to, output, "in", options);
   mutation.commit();
   return *this;
 }
