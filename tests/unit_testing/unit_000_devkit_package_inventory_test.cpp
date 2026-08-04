@@ -116,7 +116,9 @@ void require_versioned_provide(const std::string& package, const std::string& pr
   const std::string provides =
       run_capture("dpkg-query -W -f='${Provides}' " + shell_quote(package) + " 2>/dev/null");
   const std::string expected = provided_name + " (= " + provided_version + ")";
-  require(provides == expected, package + " should provide " + expected + ", got: " + provides);
+  const std::string relations = ", " + provides + ", ";
+  require(relations.find(", " + expected + ", ") != std::string::npos,
+          package + " should provide " + expected + ", got: " + provides);
 }
 
 } // namespace
@@ -171,6 +173,8 @@ int main() {
     require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4040");
     require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1~pre4040");
     require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1~pre4040");
+    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1-0neat1");
+    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1-0neat1");
 
     require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
             "simaai-ota command should remain available through simaai-palette-modalix");
