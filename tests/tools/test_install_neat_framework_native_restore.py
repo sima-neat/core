@@ -76,6 +76,51 @@ install_debs_on_board
         self.assertNotIn("<--no-remove>", transaction)
         self.assertEqual(transaction.count("<./libcamera_2.1.1_arm64.deb>"), 1)
 
+    def test_board_downgrade_installs_memory_with_dependent_packages(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
+prepare_debs_for_board_install() { :; }
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+collect_local_simaai_memory_debs() {
+  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat2
+  SIMAAI_MEMORY_RUNTIME_DEB=./memory-runtime.deb
+  SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
+  SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
+}
+validate_local_simaai_memory_payload() { :; }
+snapshot_memory_transaction_guard_state() { :; }
+deb_package_installed_version() { printf '%s\n' 2.1.1-0neat4; }
+dpkg() {
+  [[ "$1:$2:$3:$4" == '--compare-versions:2.1.1-0neat4:gt:2.1.1-0neat2' ]]
+}
+run_sudo() {
+  printf 'APT:'
+  printf ' <%s>' "$@"
+  printf '\n'
+}
+complete_board_install_after_packages() { printf 'COMPLETE\n'; }
+
+install_debs_on_board
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
+        self.assertEqual(len(apt_lines), 2, result.stdout)
+        transaction, apt_check = apt_lines
+        self.assertIn("<--allow-downgrades>", transaction)
+        self.assertIn("<./memory-runtime.deb>", transaction)
+        self.assertIn("<./memory-dev.deb>", transaction)
+        self.assertIn("<./neat-runtime.deb>", transaction)
+        self.assertNotIn("<--no-remove>", transaction)
+        self.assertEqual(apt_check, "APT: <apt-get> <check>")
+        self.assertIn("deferring the downgrade to the full package transaction", result.stdout)
+        self.assertIn("COMPLETE", result.stdout)
+
     def test_board_transaction_accepts_exact_identity_preserving_replacement(
         self,
     ) -> None:
@@ -264,7 +309,9 @@ native_modalix_restore_specs specs
 
 
 class SimaaiMemoryTransactionTest(unittest.TestCase):
-    def test_collect_accepts_required_version_from_multiple_self_providers(self) -> None:
+    def test_collect_accepts_platform_compatibility_among_multiple_provides(
+        self,
+    ) -> None:
         result = run_bash(
             r'''
 source "$1"
@@ -274,7 +321,7 @@ runtime="${tmp}/simaai-memory-lib_2.1.1-0neat1_arm64.deb"
 dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}" other.deb)
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4373'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -285,10 +332,10 @@ dpkg-deb() {
     *:Version) printf '%s\n' 2.1.1-0neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1~pre4373)'
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1~pre4373)'
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
       printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'
@@ -306,7 +353,7 @@ printf 'DEV=%s\n' "${SIMAAI_MEMORY_DEV_DEB}"
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ACTUAL=2.1.1-0neat1", result.stdout)
-        self.assertIn("COMPAT=2.1.1~pre4373", result.stdout)
+        self.assertIn("COMPAT=2.1.1", result.stdout)
         self.assertIn("simaai-memory-lib_2.1.1-0neat1_arm64.deb", result.stdout)
         self.assertIn("simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb", result.stdout)
 
@@ -429,72 +476,20 @@ verify_installed_simaai_memory_payload
             "do not match bundled 2.1.1-0neat1", result.stderr
         )
 
-    def test_isolated_transaction_installs_only_portable_memory_pair(self) -> None:
+    def test_isolated_transaction_simulates_then_installs_only_local_paths(self) -> None:
         result = run_bash(
             r'''
 source "$1"
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-runtime="${tmp}/memory-runtime.deb"
-dev="${tmp}/memory-dev.deb"
-dependent="${tmp}/neat-runtime.deb"
-replacement="${tmp}/neat-common.deb"
-base="${tmp}/neat-base.deb"
-pending="${tmp}/neat-appcomplex.deb"
-touch "${runtime}" "${dev}" "${dependent}" "${replacement}" "${base}" "${pending}"
-DEBS=("${runtime}" "${dev}" "${dependent}" "${replacement}" "${base}" "${pending}")
+DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
 collect_local_simaai_memory_debs() {
-  SIMAAI_MEMORY_RUNTIME_DEB="${runtime}"
-  SIMAAI_MEMORY_DEV_DEB="${dev}"
+  SIMAAI_MEMORY_RUNTIME_DEB=./memory-runtime.deb
+  SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
   SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
-  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat4
 }
 validate_local_simaai_memory_payload() { :; }
 snapshot_memory_transaction_guard_state() { :; }
 verify_installed_simaai_memory_payload() { :; }
 verify_memory_transaction_preservation() { :; }
-deb_package_is_installed() {
-  [[ "$1" == neat-runtime || "$1" == neat-common || "$1" == neat-base ]]
-}
-deb_package_installed_version() {
-  case "$1" in
-    simaai-memory-lib|simaai-memory-lib-dev) printf '%s\n' 2.1.1-0neat2 ;;
-    *) return 1 ;;
-  esac
-}
-dpkg-query() {
-  [[ "$1" == -W ]] || return 2
-  case "$3" in
-    neat-runtime)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat2)'
-      ;;
-    neat-common) printf '%s\n' 'neat-base (= 0.3.0)' ;;
-    neat-base) : ;;
-    *) return 2 ;;
-  esac
-}
-dpkg-deb() {
-  [[ "$1" == -f ]] || return 2
-  case "$(basename "$2"):$3" in
-    neat-runtime.deb:Package) printf '%s\n' neat-runtime ;;
-    neat-runtime.deb:Depends)
-      printf '%s\n' 'neat-common (= 0.4.0), simaai-memory-lib (= 2.1.1-0neat4)'
-      ;;
-    neat-common.deb:Package) printf '%s\n' neat-common ;;
-    neat-common.deb:Depends) printf '%s\n' 'neat-base (= 0.4.0)' ;;
-    neat-base.deb:Package) printf '%s\n' neat-base ;;
-    neat-base.deb:Depends) : ;;
-    neat-appcomplex.deb:Package) printf '%s\n' neat-appcomplex ;;
-    neat-appcomplex.deb:Depends)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat4)'
-      ;;
-    neat-runtime.deb:Version|neat-common.deb:Version|neat-base.deb:Version|neat-appcomplex.deb:Version)
-      printf '%s\n' 0.4.0
-      ;;
-    *:Pre-Depends) : ;;
-    *) return 2 ;;
-  esac
-}
 run_sudo() {
   printf 'APT:'
   printf ' <%s>' "$@"
@@ -507,31 +502,20 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        apt_lines = [
-            line for line in result.stdout.splitlines() if line.startswith("APT:")
-        ]
+        apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
         self.assertEqual(len(apt_lines), 2, result.stdout)
         self.assertIn("<--simulate>", apt_lines[0])
         self.assertNotIn("<--simulate>", apt_lines[1])
         for line in apt_lines:
             self.assertIn("<--no-remove>", line)
             self.assertIn("<--reinstall>", line)
-            self.assertIn("<--allow-downgrades>", line)
-            self.assertIn("memory-runtime.deb>", line)
-            self.assertIn("memory-dev.deb>", line)
-            self.assertNotIn("neat-runtime.deb>", line)
-            self.assertNotIn("neat-common.deb>", line)
-            self.assertNotIn("neat-base.deb>", line)
-            self.assertNotIn("neat-appcomplex.deb>", line)
+            self.assertIn("<./memory-runtime.deb>", line)
+            self.assertIn("<./memory-dev.deb>", line)
             self.assertNotIn("simaai-memory-lib=", line)
             self.assertNotIn("--fix-broken", line)
             self.assertNotIn("--force-overwrite", line)
         self.assertIn("COMPLETE=1", result.stdout)
-        remaining = next(
-            line for line in result.stdout.splitlines() if line.startswith("REMAINING:")
-        )
-        self.assertIn("neat-runtime.deb>", remaining)
-        self.assertIn("neat-common.deb>", remaining)
+        self.assertIn("REMAINING: <./neat-runtime.deb>", result.stdout)
 
     def test_isolated_transaction_rejects_simulated_removal_before_real_apt(self) -> None:
         result = run_bash(

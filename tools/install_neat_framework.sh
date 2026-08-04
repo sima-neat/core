@@ -965,21 +965,31 @@ print(match.group(1))
 
 exact_dependency_version_from_relations() {
   local dependency="$1"
+  local expected_version="${2:-}"
   python3 -c '
 import re
 import sys
 
 dependency = sys.argv[1]
+expected_version = sys.argv[2] or None
 relations = sys.stdin.read().strip()
-match = re.search(
+matches = re.finditer(
     rf"(?:^|,)\s*{re.escape(dependency)}(?:\:[^\s(,|]+)?\s*"
     rf"\(\s*=\s*([^\s)]+)\s*\)",
     relations,
 )
+match = next(
+    (
+        candidate
+        for candidate in matches
+        if expected_version is None or candidate.group(1) == expected_version
+    ),
+    None,
+)
 if match is None:
     raise SystemExit(1)
 print(match.group(1))
-' "${dependency}"
+' "${dependency}" "${expected_version}"
 }
 
 palette_required_simaai_memory_version() {
@@ -1037,7 +1047,7 @@ PY
 }
 
 collect_local_simaai_memory_debs() {
-  local deb package arch depends provides dev_runtime_version board_arch
+  local deb package arch depends provides provided_version dev_runtime_version board_arch
   local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
 
   for deb in "${DEBS[@]}"; do
@@ -1086,15 +1096,17 @@ collect_local_simaai_memory_debs() {
   done
 
   provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
-  if ! relation_field_provides_exact_version \
-      "${provides}" simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}"; then
+  provided_version="$(exact_dependency_version_from_relations \
+    simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
+  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
 
   provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
-  if ! relation_field_provides_exact_version \
-      "${provides}" simaai-memory-lib-dev "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}"; then
+  provided_version="$(exact_dependency_version_from_relations \
+    simaai-memory-lib-dev "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
+  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
@@ -1189,7 +1201,7 @@ snapshot_memory_transaction_guard_state() {
   SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
   SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
   if ! deb_package_is_installed simaai-palette-modalix; then
-    log "simaai-palette-modalix is not installed; the guarded memory transaction has no pre-existing palette/OTA state to preserve."
+    log "simaai-palette-modalix is not installed; the isolated memory transaction has no pre-existing palette/OTA state to preserve."
     return 0
   fi
   SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION="$(deb_package_installed_version simaai-palette-modalix)"
@@ -1298,7 +1310,7 @@ verify_memory_transaction_preservation() {
     awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${after}"
   missing="$(comm -23 "${SIMAAI_MEMORY_PREINSTALL_PACKAGES}" "${after}")"
   if [[ -n "${missing}" ]]; then
-    echo "The guarded simaai-memory replacement removed preinstalled packages:" >&2
+    echo "The isolated simaai-memory replacement removed preinstalled packages:" >&2
     while IFS= read -r package; do
       [[ -n "${package}" ]] && printf '  %s\n' "${package}" >&2
     done <<<"${missing}"
@@ -1306,36 +1318,51 @@ verify_memory_transaction_preservation() {
   fi
   verify_memory_guard_palette_and_ota || return 1
   if ! run_sudo apt-get check; then
-    echo "APT dependency check failed after the guarded simaai-memory replacement." >&2
+    echo "APT dependency check failed after the isolated simaai-memory replacement." >&2
     return 1
   fi
   if ! dpkg --audit >"${audit_log}" 2>&1 || [[ -s "${audit_log}" ]]; then
-    echo "dpkg audit failed after the guarded simaai-memory replacement:" >&2
+    echo "dpkg audit failed after the isolated simaai-memory replacement:" >&2
     cat "${audit_log}" >&2
     return 1
   fi
   if [[ "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED:-0}" -eq 1 ]]; then
-    log "Verified the guarded simaai-memory replacement removed no preinstalled packages and preserved simaai-palette-modalix/simaai-ota."
+    log "Verified the isolated simaai-memory replacement removed no preinstalled packages and preserved simaai-palette-modalix/simaai-ota."
   else
-    log "Verified the guarded simaai-memory replacement removed no preinstalled packages; no pre-existing palette/OTA state required preservation."
+    log "Verified the isolated simaai-memory replacement removed no preinstalled packages; no pre-existing palette/OTA state required preservation."
   fi
+}
+
+local_simaai_memory_requires_atomic_downgrade() {
+  local package installed_version
+  for package in simaai-memory-lib simaai-memory-lib-dev; do
+    installed_version="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
+    if [[ -n "${installed_version}" ]] &&
+        dpkg --compare-versions "${installed_version}" gt "${SIMAAI_MEMORY_ACTUAL_VERSION}"; then
+      log "Installed ${package}=${installed_version} is newer than bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}; deferring the downgrade to the full package transaction."
+      return 0
+    fi
+  done
+  return 1
 }
 
 install_local_simaai_memory_transaction() {
   local simulation_log
-  local -a apt_args=(apt-get install -y --reinstall --no-remove --allow-downgrades)
+  local -a apt_args=(apt-get install -y --reinstall --no-remove)
 
   collect_local_simaai_memory_debs || return 1
   validate_local_simaai_memory_payload || return 1
   snapshot_memory_transaction_guard_state || return 1
+  if local_simaai_memory_requires_atomic_downgrade; then
+    return 0
+  fi
   simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
 
-  log "Simulating isolated portable simaai-memory replacement with package removal disabled."
-  if ! run_sudo "${apt_args[@]}" --simulate \
-      "${SIMAAI_MEMORY_DEBS[@]}" >"${simulation_log}" 2>&1; then
+  log "Simulating isolated local simaai-memory replacement with package removal disabled."
+  if ! run_sudo "${apt_args[@]}" --simulate "${SIMAAI_MEMORY_DEBS[@]}" >"${simulation_log}" 2>&1; then
     cat "${simulation_log}" >&2
-    echo "APT rejected the isolated portable simaai-memory transaction; no packages were changed." >&2
+    echo "APT rejected the isolated local simaai-memory transaction; no packages were changed." >&2
     return 1
   fi
   cat "${simulation_log}"
@@ -1345,7 +1372,7 @@ install_local_simaai_memory_transaction() {
     return 1
   fi
 
-  log "Installing the bundled memory pair in an isolated zero-removal transaction."
+  log "Installing bundled simaai-memory runtime/dev packages in an isolated zero-removal transaction."
   run_sudo "${apt_args[@]}" "${SIMAAI_MEMORY_DEBS[@]}" || return 1
   verify_installed_simaai_memory_payload || return 1
   verify_memory_transaction_preservation || return 1
@@ -2086,10 +2113,7 @@ install_debs_on_board() {
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # The portable memory pair version-Provides every supported platform and
-  # prior private identity, so it can be replaced alone without breaking exact
-  # dependencies. The broader validated transaction upgrades the remaining
-  # packages afterward.
+  # Keep the isolated memory replacement away from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
     echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
@@ -2100,9 +2124,7 @@ install_debs_on_board() {
     exit 1
   fi
 
-  # Prefer apt-get for the remaining packages so normal system dependencies can
-  # be resolved. The memory DEBs have been removed from this set; the repository
-  # cannot silently substitute its indistinguishable same-version payload.
+  # Install the remaining packages without allowing memory-payload substitution.
 
   local -a board_install_specs=()
   local -A seen_install_specs=()
@@ -2137,6 +2159,7 @@ install_debs_on_board() {
 
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
+    SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
     complete_board_install_after_packages
     return 0
   fi

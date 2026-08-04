@@ -116,27 +116,9 @@ void require_versioned_provide(const std::string& package, const std::string& pr
   const std::string provides =
       run_capture("dpkg-query -W -f='${Provides}' " + shell_quote(package) + " 2>/dev/null");
   const std::string expected = provided_name + " (= " + provided_version + ")";
-  bool found = false;
-  std::size_t begin = 0;
-  while (begin <= provides.size()) {
-    const std::size_t end = provides.find(',', begin);
-    const std::string relation = provides.substr(begin, end - begin);
-    std::istringstream words(relation);
-    std::string word;
-    std::string normalized;
-    while (words >> word) {
-      normalized += (normalized.empty() ? "" : " ") + word;
-    }
-    if (normalized == expected) {
-      found = true;
-      break;
-    }
-    if (end == std::string::npos) {
-      break;
-    }
-    begin = end + 1;
-  }
-  require(found, package + " should provide " + expected + ", got: " + provides);
+  const std::string relations = ", " + provides + ", ";
+  require(relations.find(", " + expected + ", ") != std::string::npos,
+          package + " should provide " + expected + ", got: " + provides);
 }
 
 } // namespace
@@ -184,17 +166,15 @@ int main() {
     require_package_version("libcamera", "2.1.1+neat1");
     require_package_version("libcamera-tools", "2.1.1+neat1");
     require_package_version("libcamera-dev", "2.1.1+neat1");
-    require_package_version("simaai-memory-lib", "2.1.1-0neat4");
-    require_package_version("simaai-memory-lib-dev", "2.1.1-0neat4");
+    require_package_version("simaai-memory-lib", "2.1.1-0neat2");
+    require_package_version("simaai-memory-lib-dev", "2.1.1-0neat2");
     require_versioned_provide("libcamera", "libcamera", "2.1.3~pre4040");
     require_versioned_provide("libcamera-tools", "libcamera-tools", "2.1.3~pre4040");
     require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4040");
     require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1~pre4040");
     require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1~pre4040");
-    for (const std::string& prior_revision : {"2.1.1-0neat1", "2.1.1-0neat2", "2.1.1-0neat3"}) {
-      require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", prior_revision);
-      require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", prior_revision);
-    }
+    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1-0neat1");
+    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1-0neat1");
 
     require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
             "simaai-ota command should remain available through simaai-palette-modalix");
