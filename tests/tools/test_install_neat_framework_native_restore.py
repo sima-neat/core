@@ -76,6 +76,51 @@ install_debs_on_board
         self.assertNotIn("<--no-remove>", transaction)
         self.assertEqual(transaction.count("<./libcamera_2.1.1_arm64.deb>"), 1)
 
+    def test_board_downgrade_installs_memory_with_dependent_packages(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
+prepare_debs_for_board_install() { :; }
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+collect_local_simaai_memory_debs() {
+  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat2
+  SIMAAI_MEMORY_RUNTIME_DEB=./memory-runtime.deb
+  SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
+  SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
+}
+validate_local_simaai_memory_payload() { :; }
+snapshot_memory_transaction_guard_state() { :; }
+deb_package_installed_version() { printf '%s\n' 2.1.1-0neat4; }
+dpkg() {
+  [[ "$1:$2:$3:$4" == '--compare-versions:2.1.1-0neat4:gt:2.1.1-0neat2' ]]
+}
+run_sudo() {
+  printf 'APT:'
+  printf ' <%s>' "$@"
+  printf '\n'
+}
+complete_board_install_after_packages() { printf 'COMPLETE\n'; }
+
+install_debs_on_board
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
+        self.assertEqual(len(apt_lines), 2, result.stdout)
+        transaction, apt_check = apt_lines
+        self.assertIn("<--allow-downgrades>", transaction)
+        self.assertIn("<./memory-runtime.deb>", transaction)
+        self.assertIn("<./memory-dev.deb>", transaction)
+        self.assertIn("<./neat-runtime.deb>", transaction)
+        self.assertNotIn("<--no-remove>", transaction)
+        self.assertEqual(apt_check, "APT: <apt-get> <check>")
+        self.assertIn("deferring the downgrade to the full package transaction", result.stdout)
+        self.assertIn("COMPLETE", result.stdout)
+
     def test_board_transaction_accepts_exact_identity_preserving_replacement(
         self,
     ) -> None:
@@ -304,7 +349,9 @@ printf 'COMPAT=%s\n' "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("COMPAT=2.1.1~pre4373", result.stdout)
 
-    def test_collect_accepts_versioned_self_provider_for_palette_compatibility(self) -> None:
+    def test_collect_accepts_platform_compatibility_among_multiple_provides(
+        self,
+    ) -> None:
         result = run_bash(
             r'''
 source "$1"
@@ -325,10 +372,10 @@ dpkg-deb() {
     *:Version) printf '%s\n' 2.1.1-0neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
       printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'
