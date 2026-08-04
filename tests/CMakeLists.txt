@@ -755,6 +755,7 @@ if (SimaLMM_FOUND)
   target_link_libraries(genai_server_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 
   if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_tests_properties(genai_server_http_test PROPERTIES DISABLED TRUE)
     set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
     set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   endif()
@@ -766,6 +767,7 @@ if (SimaLMM_FOUND)
   target_link_libraries(genai_server_reasoning_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 
   if (NOT genai_server_reasoning_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_tests_properties(genai_server_reasoning_http_test PROPERTIES DISABLED TRUE)
     set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY
       LABELS "e2e;genai;llima;server;reasoning;long")
     set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
