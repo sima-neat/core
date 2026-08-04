@@ -1333,6 +1333,19 @@ verify_memory_transaction_preservation() {
   fi
 }
 
+local_simaai_memory_requires_atomic_downgrade() {
+  local package installed_version
+  for package in simaai-memory-lib simaai-memory-lib-dev; do
+    installed_version="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
+    if [[ -n "${installed_version}" ]] &&
+        dpkg --compare-versions "${installed_version}" gt "${SIMAAI_MEMORY_ACTUAL_VERSION}"; then
+      log "Installed ${package}=${installed_version} is newer than bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}; deferring the downgrade to the full package transaction."
+      return 0
+    fi
+  done
+  return 1
+}
+
 install_local_simaai_memory_transaction() {
   local simulation_log
   local -a apt_args=(apt-get install -y --reinstall --no-remove)
@@ -1340,6 +1353,9 @@ install_local_simaai_memory_transaction() {
   collect_local_simaai_memory_debs || return 1
   validate_local_simaai_memory_payload || return 1
   snapshot_memory_transaction_guard_state || return 1
+  if local_simaai_memory_requires_atomic_downgrade; then
+    return 0
+  fi
   simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
 
@@ -2143,6 +2159,7 @@ install_debs_on_board() {
 
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
+    SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
     complete_board_install_after_packages
     return 0
   fi
