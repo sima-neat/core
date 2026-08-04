@@ -2162,9 +2162,14 @@ std::optional<bool> resolve_external_boxdecode_tess_needed_local(
     return raw && *raw && std::strcmp(raw, "0") != 0;
   };
   const auto* unpack_stage = get_mla_unpack_stage_io_contract(contract);
-  const bool superpoint_direct_packed = decode_type == BoxDecodeType::SuperPoint && unpack_stage &&
-                                        mla_stage.output_tensors.size() == 1U &&
-                                        logical_outputs.size() > 1U;
+  const bool superpoint_direct_packed =
+      decode_type == BoxDecodeType::SuperPoint && unpack_stage &&
+      mla_stage.output_tensors.size() == 1U && logical_outputs.size() > 1U &&
+      !unpack_stage->output_tensors.empty() &&
+      std::all_of(unpack_stage->output_tensors.begin(), unpack_stage->output_tensors.end(),
+                  [](const MpkTensorContract& tensor) {
+                    return tensor.shape_semantics == MpkShapeSemantics::PackedExtent;
+                  });
   if (bypass_mla_unpack_enabled() || superpoint_direct_packed) {
     const bool packed_single_physical_mla =
         mla_stage.output_tensors.size() == 1U && logical_outputs.size() > 1U;
@@ -2482,6 +2487,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       out.superpoint.descriptor_representation = mpk_sp.descriptor_representation;
       out.superpoint.nms_radius = mpk_sp.nms_radius;
       out.superpoint.border_margin = mpk_sp.border_margin;
+      out.superpoint.nms_radius_from_mpk = mpk_sp.nms_radius >= 0;
+      out.superpoint.border_margin_from_mpk = mpk_sp.border_margin >= 0;
       if (mpk_sp.cell_stride > 0) {
         out.superpoint.cell_stride = mpk_sp.cell_stride;
       }

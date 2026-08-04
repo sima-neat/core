@@ -137,16 +137,9 @@ void apply_model_superpoint_options(pipeline_internal::sima::BoxDecodeStagePaylo
         ": SuperPoint paper-bicubic-v1 is reserved but not production-defined; select "
         "lightglue-v1, magic-leap-demo-v1, or a65-v1");
   }
-  if (requested.profile != SuperPointProfile::Auto) {
-    resolved.profile = requested.profile;
-    resolved.profile_from_mpk = false;
-  }
-  if (requested.nms_radius >= 0) {
-    resolved.nms_radius = requested.nms_radius;
-  }
-  if (requested.border_margin >= 0) {
-    resolved.border_margin = requested.border_margin;
-  }
+  const bool profile_changed =
+      pipeline_internal::sima::apply_superpoint_profile_override(&resolved, requested.profile);
+  pipeline_internal::sima::apply_superpoint_spatial_overrides(&resolved, requested);
   resolved.descriptor_output_dtype = requested.descriptor_output_dtype;
   resolved.output_format = requested.output_format;
   pipeline_internal::sima::resolve_default_superpoint_profile(&resolved);
@@ -172,6 +165,8 @@ void apply_model_superpoint_options(pipeline_internal::sima::BoxDecodeStagePaylo
   if (resolved.border_margin == -1) {
     resolved.border_margin = resolved.profile == SuperPointProfile::A65V1 ? 0 : 4;
   }
+  payload->detection_threshold = pipeline_internal::sima::rebase_superpoint_detection_threshold(
+      profile_changed, resolved.profile, options.score_threshold, payload->detection_threshold);
   if (resolved.nms_radius < 0 || resolved.border_margin < 0 || resolved.cell_stride <= 0 ||
       resolved.descriptor_stride <= 0 || resolved.descriptor_dim <= 0) {
     throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
@@ -8425,16 +8420,10 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   contract->required_preprocess_meta_fields =
       model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields;
   if (contract->decode_type == BoxDecodeType::SuperPoint) {
-    if (opt.superpoint.profile != SuperPointProfile::Auto) {
-      contract->superpoint.profile = opt.superpoint.profile;
-      contract->superpoint.profile_from_mpk = false;
-    }
-    if (opt.superpoint.nms_radius >= 0) {
-      contract->superpoint.nms_radius = opt.superpoint.nms_radius;
-    }
-    if (opt.superpoint.border_margin >= 0) {
-      contract->superpoint.border_margin = opt.superpoint.border_margin;
-    }
+    pipeline_internal::sima::apply_superpoint_profile_override(&contract->superpoint,
+                                                               opt.superpoint.profile);
+    pipeline_internal::sima::apply_superpoint_spatial_overrides(&contract->superpoint,
+                                                                opt.superpoint);
     contract->superpoint.descriptor_output_dtype = opt.superpoint.descriptor_output_dtype;
     contract->superpoint.output_format = opt.superpoint.output_format;
   }

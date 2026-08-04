@@ -654,16 +654,9 @@ void apply_named_superpoint_options(BoxDecodeOptionsInternal* opt, const BoxDeco
   } else if (opt->model_static_contract) {
     resolved = opt->model_static_contract->superpoint;
   }
-  if (options.superpoint.profile != SuperPointProfile::Auto) {
-    resolved.profile = options.superpoint.profile;
-    resolved.profile_from_mpk = false;
-  }
-  if (options.superpoint.nms_radius >= 0) {
-    resolved.nms_radius = options.superpoint.nms_radius;
-  }
-  if (options.superpoint.border_margin >= 0) {
-    resolved.border_margin = options.superpoint.border_margin;
-  }
+  const bool profile_changed = pipeline_internal::sima::apply_superpoint_profile_override(
+      &resolved, options.superpoint.profile);
+  pipeline_internal::sima::apply_superpoint_spatial_overrides(&resolved, options.superpoint);
   resolved.descriptor_output_dtype = options.superpoint.descriptor_output_dtype;
   resolved.output_format = options.superpoint.output_format;
   pipeline_internal::sima::resolve_default_superpoint_profile(&resolved);
@@ -676,12 +669,18 @@ void apply_named_superpoint_options(BoxDecodeOptionsInternal* opt, const BoxDeco
   opt->superpoint.border_margin = resolved.border_margin;
   opt->superpoint.descriptor_output_dtype = resolved.descriptor_output_dtype;
   opt->superpoint.output_format = resolved.output_format;
+  opt->detection_threshold = pipeline_internal::sima::rebase_superpoint_detection_threshold(
+      profile_changed, resolved.profile, options.detection_threshold, opt->detection_threshold);
   if (opt->model_static_contract) {
     opt->model_static_contract->superpoint = resolved;
   }
   if (opt->compiled_contract) {
     auto compiled = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
     compiled->payload.superpoint = resolved;
+    compiled->payload.detection_threshold =
+        pipeline_internal::sima::rebase_superpoint_detection_threshold(
+            profile_changed, resolved.profile, options.detection_threshold,
+            compiled->payload.detection_threshold);
     opt->compiled_contract = std::move(compiled);
   }
 }
@@ -1016,16 +1015,10 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
       }
     }
     if (opt_->decode_type == BoxDecodeType::SuperPoint) {
-      if (opt_->superpoint.profile != SuperPointProfile::Auto) {
-        contract->superpoint.profile = opt_->superpoint.profile;
-        contract->superpoint.profile_from_mpk = false;
-      }
-      if (opt_->superpoint.nms_radius >= 0) {
-        contract->superpoint.nms_radius = opt_->superpoint.nms_radius;
-      }
-      if (opt_->superpoint.border_margin >= 0) {
-        contract->superpoint.border_margin = opt_->superpoint.border_margin;
-      }
+      pipeline_internal::sima::apply_superpoint_profile_override(&contract->superpoint,
+                                                                 opt_->superpoint.profile);
+      pipeline_internal::sima::apply_superpoint_spatial_overrides(&contract->superpoint,
+                                                                  opt_->superpoint);
       contract->superpoint.descriptor_output_dtype = opt_->superpoint.descriptor_output_dtype;
       contract->superpoint.output_format = opt_->superpoint.output_format;
     }

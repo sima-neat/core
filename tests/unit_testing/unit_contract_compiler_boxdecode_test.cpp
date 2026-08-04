@@ -747,6 +747,51 @@ RUN_TEST(
                   compiled_magic_defaults.payload.superpoint.border_margin == 4,
               "MagicLeapDemoV1 profile defaults changed");
 
+      auto profile_override = make_superpoint_contract().superpoint;
+      profile_override.nms_radius = 4;
+      profile_override.border_margin = 4;
+      profile_override.nms_radius_from_mpk = false;
+      profile_override.border_margin_from_mpk = false;
+      require(apply_superpoint_profile_override(&profile_override, SuperPointProfile::A65V1) &&
+                  profile_override.profile == SuperPointProfile::A65V1 &&
+                  profile_override.nms_radius == -1 && profile_override.border_margin == -1,
+              "profile overrides must clear spatial defaults materialized for the old profile");
+      require(rebase_superpoint_detection_threshold(true, SuperPointProfile::A65V1, 0.0, 5.0e-4) ==
+                  0.1,
+              "profile overrides must rebase a defaulted detection threshold");
+
+      auto authored_spatial_override = make_superpoint_contract().superpoint;
+      authored_spatial_override.nms_radius = 7;
+      authored_spatial_override.border_margin = 3;
+      authored_spatial_override.nms_radius_from_mpk = true;
+      authored_spatial_override.border_margin_from_mpk = true;
+      require(apply_superpoint_profile_override(&authored_spatial_override,
+                                                SuperPointProfile::MagicLeapDemoV1) &&
+                  authored_spatial_override.nms_radius == 7 &&
+                  authored_spatial_override.border_margin == 3,
+              "profile overrides must preserve explicitly authored MPK spatial controls");
+
+      auto cached_lightglue_contract = make_superpoint_contract();
+      cached_lightglue_contract.superpoint.schema_version = 0;
+      cached_lightglue_contract.superpoint.profile_fingerprint.clear();
+      cached_lightglue_contract.superpoint.fingerprint_profile = SuperPointProfile::Auto;
+      cached_lightglue_contract.superpoint.nms_radius = 4;
+      cached_lightglue_contract.superpoint.border_margin = 4;
+      BoxDecodeCompiledContractOptions a65_override_options;
+      a65_override_options.decode_type = BoxDecodeType::SuperPoint;
+      a65_override_options.superpoint = SuperPointStaticContract{};
+      a65_override_options.superpoint->profile = SuperPointProfile::A65V1;
+      const auto rebased_a65 = build_boxdecode_compiled_contract_from_subset(
+          plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(
+              cached_lightglue_contract),
+          a65_override_options);
+      require(rebased_a65.payload.superpoint.profile == SuperPointProfile::A65V1 &&
+                  rebased_a65.payload.superpoint.nms_radius == 4 &&
+                  rebased_a65.payload.superpoint.border_margin == 0 &&
+                  rebased_a65.payload.detection_threshold == 0.1,
+              "compiled subset profile overrides must replace cached LightGlue defaults with "
+              "A65 defaults");
+
       auto require_superpoint_rejection = [&](BoxDecodeStaticContract invalid,
                                               const std::string& diagnostic) {
         bool rejected = false;

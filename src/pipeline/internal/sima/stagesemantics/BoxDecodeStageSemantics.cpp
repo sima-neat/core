@@ -998,16 +998,11 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
     auto& resolved = compiled.payload.superpoint;
     if (options.superpoint.has_value()) {
       const auto& requested = *options.superpoint;
-      if (requested.profile != SuperPointProfile::Auto) {
-        resolved.profile = requested.profile;
-        resolved.profile_from_mpk = false;
-      }
-      if (requested.nms_radius >= 0) {
-        resolved.nms_radius = requested.nms_radius;
-      }
-      if (requested.border_margin >= 0) {
-        resolved.border_margin = requested.border_margin;
-      }
+      const bool profile_changed = apply_superpoint_profile_override(&resolved, requested.profile);
+      SuperPointOptions spatial_overrides;
+      spatial_overrides.nms_radius = requested.nms_radius;
+      spatial_overrides.border_margin = requested.border_margin;
+      apply_superpoint_spatial_overrides(&resolved, spatial_overrides);
       resolved.descriptor_output_dtype = requested.descriptor_output_dtype;
       resolved.output_format = requested.output_format;
       if (requested.cell_stride > 0) {
@@ -1038,6 +1033,9 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
       if (requested.schema_version != 0) {
         resolved.schema_version = requested.schema_version;
       }
+      compiled.payload.detection_threshold = rebase_superpoint_detection_threshold(
+          profile_changed, resolved.profile, options.detection_threshold,
+          compiled.payload.detection_threshold);
     }
     resolve_default_superpoint_profile(&resolved);
     canonicalize_schema0_superpoint_representations(&resolved);

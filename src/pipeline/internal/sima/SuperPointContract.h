@@ -34,6 +34,9 @@ struct SuperPointStaticContract {
   std::string detector_representation;
   std::string descriptor_representation;
   bool profile_from_mpk = false;
+  /// Preserve explicitly authored spatial controls when an API profile override is applied.
+  bool nms_radius_from_mpk = false;
+  bool border_margin_from_mpk = false;
   // Profile named by the MPK record whose fingerprint is carried above. This remains unchanged
   // when an API profile override is applied, so stale/mismatched provenance fails closed.
   SuperPointProfile fingerprint_profile = SuperPointProfile::Auto;
@@ -41,6 +44,46 @@ struct SuperPointStaticContract {
   /// canonical raw SuperPoint input representations required by the runtime.
   bool representations_defaulted = false;
 };
+
+/** Apply an explicit profile over a resolved contract.
+ *
+ * A compiled contract may already contain defaults materialized for the old
+ * profile. Reset only those derived values; explicitly authored MPK controls
+ * retain their higher-precedence values.
+ */
+inline bool apply_superpoint_profile_override(SuperPointStaticContract* sp,
+                                              SuperPointProfile profile) {
+  if (!sp || profile == SuperPointProfile::Auto) {
+    return false;
+  }
+  const bool changed = sp->profile != profile;
+  sp->profile = profile;
+  sp->profile_from_mpk = false;
+  if (changed) {
+    if (!sp->nms_radius_from_mpk) {
+      sp->nms_radius = -1;
+    }
+    if (!sp->border_margin_from_mpk) {
+      sp->border_margin = -1;
+    }
+  }
+  return changed;
+}
+
+inline void apply_superpoint_spatial_overrides(SuperPointStaticContract* sp,
+                                               const SuperPointOptions& requested) {
+  if (!sp) {
+    return;
+  }
+  if (requested.nms_radius >= 0) {
+    sp->nms_radius = requested.nms_radius;
+    sp->nms_radius_from_mpk = false;
+  }
+  if (requested.border_margin >= 0) {
+    sp->border_margin = requested.border_margin;
+    sp->border_margin_from_mpk = false;
+  }
+}
 
 inline void canonicalize_schema0_superpoint_representations(SuperPointStaticContract* sp) {
   if (!sp || sp->schema_version != 0) {
@@ -108,6 +151,14 @@ inline double superpoint_default_detection_threshold(SuperPointProfile profile) 
     return 0.0;
   }
   return 0.0;
+}
+
+inline double rebase_superpoint_detection_threshold(bool profile_changed, SuperPointProfile profile,
+                                                    double requested_threshold,
+                                                    double resolved_threshold) {
+  return profile_changed && requested_threshold == 0.0
+             ? superpoint_default_detection_threshold(profile)
+             : resolved_threshold;
 }
 
 inline constexpr int kSuperPointDefaultTopK = 600;

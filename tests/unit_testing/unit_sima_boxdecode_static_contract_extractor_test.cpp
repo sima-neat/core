@@ -626,6 +626,19 @@ RUN_TEST(
       require(extracted_packed_parent->physical_inputs[1].byte_offset == 1747200,
               "packed-parent physical input should preserve the second logical view offset");
 
+      MpkContract dense_unpack_parent = packed_parent_mpk;
+      dense_unpack_parent.plugins.resize(2U);
+      dense_unpack_parent.edges.resize(1U);
+      for (auto& output : dense_unpack_parent.plugins[1].output_tensors) {
+        output.shape_semantics = MpkShapeSemantics::Geometry;
+      }
+      const auto extracted_dense_unpack_parent = build_boxdecode_static_contract_from_mpk(
+          dense_unpack_parent, make_flags(true, false), &error);
+      require(extracted_dense_unpack_parent.has_value(),
+              "dense unpack outputs should remain externally decodable: " + error);
+      require(!extracted_dense_unpack_parent->tess_needed,
+              "dense unpack storage must not be classified as a direct packed route");
+
       setenv("SIMA_BOXDECODE_BYPASS_MLA_UNPACK", "1", 1);
       const auto extracted_packed_parent_bypass = build_boxdecode_static_contract_from_mpk(
           packed_parent_mpk, make_flags(true, true), &error);
