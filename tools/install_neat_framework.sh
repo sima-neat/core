@@ -1048,7 +1048,6 @@ PY
 
 collect_local_simaai_memory_debs() {
   local deb package arch depends provides provided_version dev_runtime_version board_arch
-  local private_prefix private_revision previous_private_version=""
   local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
 
   for deb in "${DEBS[@]}"; do
@@ -1086,13 +1085,6 @@ collect_local_simaai_memory_debs() {
     return 1
   fi
   SIMAAI_MEMORY_ACTUAL_VERSION="${runtime_version}"
-  if [[ "${SIMAAI_MEMORY_ACTUAL_VERSION}" =~ ^(.+-0neat)([1-9][0-9]*)$ ]]; then
-    private_prefix="${BASH_REMATCH[1]}"
-    private_revision="${BASH_REMATCH[2]}"
-    if (( private_revision > 1 )); then
-      previous_private_version="${private_prefix}$((private_revision - 1))"
-    fi
-  fi
 
   for deb in "${runtime_deb}" "${dev_deb}"; do
     package="$(dpkg-deb -f "${deb}" Package)"
@@ -1110,14 +1102,6 @@ collect_local_simaai_memory_debs() {
     echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
-  if [[ -n "${previous_private_version}" ]]; then
-    provided_version="$(exact_dependency_version_from_relations \
-      simaai-memory-lib "${previous_private_version}" <<<"${provides}" || true)"
-    if [[ "${provided_version}" != "${previous_private_version}" ]]; then
-      echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${previous_private_version}); got ${provides:-<none>}." >&2
-      return 1
-    fi
-  fi
 
   provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
   provided_version="$(exact_dependency_version_from_relations \
@@ -1125,14 +1109,6 @@ collect_local_simaai_memory_debs() {
   if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
-  fi
-  if [[ -n "${previous_private_version}" ]]; then
-    provided_version="$(exact_dependency_version_from_relations \
-      simaai-memory-lib-dev "${previous_private_version}" <<<"${provides}" || true)"
-    if [[ "${provided_version}" != "${previous_private_version}" ]]; then
-      echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${previous_private_version}); got ${provides:-<none>}." >&2
-      return 1
-    fi
   fi
 
   depends="$(dpkg-deb -f "${dev_deb}" Depends 2>/dev/null || true)"
@@ -2121,9 +2097,7 @@ install_debs_on_board() {
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # The memory replacement is deliberately isolated from the broader Neat
-  # transaction. It must start from a coherent APT state because --fix-broken
-  # could make an otherwise local reinstall remove unrelated platform packages.
+  # Keep the isolated memory replacement away from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
     echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
@@ -2134,9 +2108,7 @@ install_debs_on_board() {
     exit 1
   fi
 
-  # Prefer apt-get for the remaining packages so normal system dependencies can
-  # be resolved. The memory DEBs have been removed from this set; the repository
-  # cannot silently substitute its indistinguishable same-version payload.
+  # Install the remaining packages without allowing memory-payload substitution.
 
   local -a board_install_specs=()
   local -A seen_install_specs=()
