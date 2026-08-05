@@ -127,4 +127,171 @@ RUN_TEST(
               "legacy inference still infers FP32 internally for now");
       require(inferred_stage.output_tensors.front().dtype_source == DTypeSource::InferredFromSize,
               "element-size-only FP32 inference must be marked as inferred");
+
+      const fs::path semantic_alias_root = make_temp_pack_root("semantic_transport_alias");
+      std::ofstream semantic_alias_out(semantic_alias_root / "semantic_alias_mpk.json");
+      require(semantic_alias_out.is_open(), "failed to open semantic-alias mpk json");
+      semantic_alias_out << R"JSON(
+{
+  "name": "semantic_alias_mpk",
+  "model_path": "semantic_alias.elf",
+  "plugins": [
+    {
+      "name": "MLA_0_ofm_unpack_transform",
+      "sequence": 1,
+      "processor": "EV74",
+      "config_params": {
+        "kernel": "unpack_transform",
+        "params": {
+          "input_shapes": [[1, 16]],
+          "output_shapes": [[1, 1, 1, 4]],
+          "tensor_types": ["float32"]
+        }
+      },
+      "input_nodes": [{ "name": "image", "type": "buffer", "size": 16 }],
+      "output_nodes": [{ "name": "unpack_out_0", "type": "buffer", "size": 16 }]
+    },
+    {
+      "name": "PassThrough",
+      "sequence": 2,
+      "processor": "EV74",
+      "config_params": { "kernel": "pass_through", "params": {} },
+      "input_nodes": [
+        { "name": "unpack_out_0//convDb/Conv_output_0", "type": "buffer", "size": 16,
+          "dtype": "float32", "shape": [1, 1, 1, 4] }
+      ],
+      "output_nodes": [
+        { "name": "pass_through_out_0", "type": "buffer", "size": 16,
+          "dtype": "float32", "shape": [1, 1, 1, 4] }
+      ]
+    }
+  ]
+}
+)JSON";
+      semantic_alias_out.close();
+      std::string semantic_alias_error;
+      const auto semantic_alias_contract =
+          load_mpk_contract_from_pack_root(semantic_alias_root.string(), &semantic_alias_error);
+      require(semantic_alias_contract.has_value(),
+              "AFE semantic tensor decoration should resolve to its exact transport producer: " +
+                  semantic_alias_error);
+      require(semantic_alias_contract->edges.size() == 1U,
+              "semantic transport alias should produce exactly one strict edge");
+      require(semantic_alias_contract->edges.front().src_plugin == "MLA_0_ofm_unpack_transform" &&
+                  semantic_alias_contract->edges.front().dst_plugin == "PassThrough" &&
+                  semantic_alias_contract->edges.front().src_output_index == 0 &&
+                  semantic_alias_contract->edges.front().dst_input_index == 0,
+              "semantic transport alias resolved to the wrong producer or binding");
+      require(semantic_alias_contract->plugins.front().input_tensors.front().shape_semantics ==
+                      simaai::neat::pipeline_internal::sima::MpkShapeSemantics::PackedExtent &&
+                  semantic_alias_contract->plugins.front().output_tensors.front().shape_semantics ==
+                      simaai::neat::pipeline_internal::sima::MpkShapeSemantics::Geometry,
+              "unpack transforms must classify packed inputs and dense geometric outputs");
+
+      const fs::path superpoint_root = make_temp_pack_root("superpoint_schema_v1");
+      const fs::path superpoint_json_path = superpoint_root / "superpoint_mpk.json";
+      std::ofstream superpoint_out(superpoint_json_path);
+      require(superpoint_out.is_open(), "failed to open SuperPoint temp mpk json for write");
+      superpoint_out << R"JSON(
+{
+  "name": "superpoint_mpk",
+  "model_path": "superpoint.elf",
+  "plugins": [
+    {
+      "name": "boxdecode_0",
+      "sequence": 1,
+      "processor": "A65",
+      "config_params": {
+        "kernel": "boxdecode",
+        "params": {
+          "decode_type": "superpoint",
+          "superpoint": {
+            "schema_version": 1,
+            "profile": "lightglue-v1",
+            "profile_fingerprint": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "output_format": "feature-points-v1",
+            "detector_tensor_id": "semi",
+            "descriptor_tensor_id": "desc",
+            "detector_representation": "raw-logits-65",
+            "descriptor_representation": "coarse-pre-l2",
+            "descriptor_output_dtype": "BF16",
+            "nms_radius": 0,
+            "border_margin": 4,
+            "cell_stride": 8,
+            "descriptor_stride": 8,
+            "descriptor_dim": 256
+          }
+        }
+      },
+      "input_nodes": [
+        { "name": "semi", "type": "buffer", "size": 1248000 },
+        { "name": "desc", "type": "buffer", "size": 4915200 }
+      ],
+      "output_nodes": [{ "name": "features", "type": "buffer", "size": 1024 }]
+    }
+  ]
+}
+)JSON";
+      superpoint_out.close();
+      std::string superpoint_error;
+      const auto superpoint_contract =
+          load_mpk_contract_from_pack_root(superpoint_root.string(), &superpoint_error);
+      require(superpoint_contract.has_value(),
+              "SuperPoint schema-v1 mpk should parse successfully: " + superpoint_error);
+      require(superpoint_contract->plugins.size() == 1U, "expected one parsed SuperPoint plugin");
+      const auto& superpoint = superpoint_contract->plugins.front().superpoint;
+      require(superpoint.schema_version == 1 && superpoint.profile == "lightglue-v1",
+              "SuperPoint schema/profile parsing mismatch");
+      require(superpoint.profile_fingerprint.starts_with("sha256:") &&
+                  superpoint.profile_fingerprint.size() == 71U,
+              "SuperPoint fingerprint parsing mismatch");
+      require(superpoint.detector_tensor_id == "semi" && superpoint.descriptor_tensor_id == "desc",
+              "SuperPoint tensor-id parsing mismatch");
+      require(superpoint.detector_representation == "raw-logits-65" &&
+                  superpoint.descriptor_representation == "coarse-pre-l2",
+              "SuperPoint representation parsing mismatch");
+      require(superpoint.descriptor_output_dtype == "BF16" && superpoint.nms_radius == 0 &&
+                  superpoint.border_margin == 4 && superpoint.cell_stride == 8 &&
+                  superpoint.descriptor_stride == 8 && superpoint.descriptor_dim == 256,
+              "SuperPoint numeric field parsing mismatch or radius zero was lost");
+      require(superpoint.validation_error.empty(),
+              "valid SuperPoint integer metadata must not report a parser error");
+
+      const fs::path malformed_sp_root = make_temp_pack_root("superpoint_bad_integer");
+      std::ofstream malformed_sp_out(malformed_sp_root / "malformed_superpoint_mpk.json");
+      require(malformed_sp_out.is_open(), "failed to open malformed SuperPoint mpk json");
+      malformed_sp_out << R"JSON(
+{
+  "name": "malformed_superpoint_mpk",
+  "model_path": "superpoint.elf",
+  "plugins": [{
+    "name": "boxdecode_0",
+    "sequence": 1,
+    "processor": "A65",
+    "config_params": {
+      "kernel": "boxdecode",
+      "params": {
+        "decode_type": "superpoint",
+        "superpoint": {
+          "schema_version": 1.5,
+          "profile": "lightglue-v1"
+        }
+      }
+    },
+    "input_nodes": [{ "name": "semi", "type": "buffer", "size": 1 }],
+    "output_nodes": [{ "name": "features", "type": "buffer", "size": 1 }]
+  }]
+}
+)JSON";
+      malformed_sp_out.close();
+      std::string malformed_sp_error;
+      const auto malformed_sp_contract =
+          load_mpk_contract_from_pack_root(malformed_sp_root.string(), &malformed_sp_error);
+      require(malformed_sp_contract.has_value(),
+              "generic MPK loading should retain malformed SuperPoint metadata for the "
+              "BoxDecode validator: " +
+                  malformed_sp_error);
+      require(malformed_sp_contract->plugins.front().superpoint.validation_error.find(
+                  "schema_version must be an integer") != std::string::npos,
+              "fractional SuperPoint integer metadata must fail closed downstream");
     }));

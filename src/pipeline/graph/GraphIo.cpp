@@ -976,7 +976,12 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
   oss << ",\"decode_type\":" << enum_int(opt.decode_type) << ","
       << "\"score_threshold\":" << opt.score_threshold << ","
       << "\"nms_iou_threshold\":" << opt.nms_iou_threshold << "," << "\"top_k\":" << opt.top_k
-      << "," << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
+      << ",\"superpoint\":{" << "\"profile\":" << enum_int(opt.superpoint.profile) << ","
+      << "\"nms_radius\":" << opt.superpoint.nms_radius << ","
+      << "\"border_margin\":" << opt.superpoint.border_margin << ","
+      << "\"descriptor_output_dtype\":" << enum_int(opt.superpoint.descriptor_output_dtype)
+      << ",\"output_format\":" << enum_int(opt.superpoint.output_format) << "},"
+      << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
       << "\"boxdecode_original_height\":" << opt.boxdecode_original_height << ","
       << "\"boxdecode_resize_mode\":";
   if (opt.boxdecode_resize_mode.has_value()) {
@@ -1031,6 +1036,18 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
   opt.nms_iou_threshold =
       static_cast<float>(double_field(obj, "nms_iou_threshold", opt.nms_iou_threshold));
   opt.top_k = int_field(obj, "top_k", opt.top_k);
+  if (const JsonValue* v = object_field(obj, "superpoint");
+      v && v->type == JsonValue::Type::Object && v->obj) {
+    opt.superpoint.profile = static_cast<SuperPointProfile>(
+        int_field(*v->obj, "profile", enum_int(opt.superpoint.profile)));
+    opt.superpoint.nms_radius = int_field(*v->obj, "nms_radius", opt.superpoint.nms_radius);
+    opt.superpoint.border_margin =
+        int_field(*v->obj, "border_margin", opt.superpoint.border_margin);
+    opt.superpoint.descriptor_output_dtype = static_cast<TensorDType>(int_field(
+        *v->obj, "descriptor_output_dtype", enum_int(opt.superpoint.descriptor_output_dtype)));
+    opt.superpoint.output_format = static_cast<SuperPointOutputFormat>(
+        int_field(*v->obj, "output_format", enum_int(opt.superpoint.output_format)));
+  }
   opt.boxdecode_original_width =
       int_field(obj, "boxdecode_original_width", opt.boxdecode_original_width);
   opt.boxdecode_original_height =
