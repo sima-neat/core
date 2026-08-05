@@ -78,6 +78,7 @@
 #include "pipeline/RunExport.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/FormatSpec.h"
@@ -1565,6 +1566,11 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("format", &simaai::neat::DetectionSpec::format);
 
+  nb::class_<simaai::neat::FeatureSpec>(
+      m, "FeatureSpec", "Feature-extractor output metadata (for example FEATURE_POINTS_V1).")
+      .def(nb::init<>())
+      .def_rw("format", &simaai::neat::FeatureSpec::format);
+
   nb::class_<simaai::neat::PreprocessRoi>(
       m, "PreprocessRoi",
       "Runtime ROI window consumed by Preproc. batch_index selects the source image; "
@@ -1650,6 +1656,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("encoded", &simaai::neat::Semantic::encoded)
       .def_rw("quant", &simaai::neat::Semantic::quant)
       .def_rw("detection", &simaai::neat::Semantic::detection)
+      .def_rw("feature", &simaai::neat::Semantic::feature)
       .def_rw("preprocess", &simaai::neat::Semantic::preprocess);
 
   nb::class_<simaai::neat::Segment>(m, "Segment")
@@ -1955,6 +1962,13 @@ NB_MODULE(_pyneat_core, m) {
       "  RuntimeError: strict=True and a payload is malformed.",
       "bbox_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
       "strict"_a = false);
+
+  nb::class_<simaai::neat::FeaturePointTensors>(m, "FeaturePointTensors")
+      .def_ro("keypoints", &simaai::neat::FeaturePointTensors::keypoints)
+      .def_ro("scores", &simaai::neat::FeaturePointTensors::scores)
+      .def_ro("descriptors", &simaai::neat::FeaturePointTensors::descriptors);
+  m.def("decode_superpoint", &simaai::neat::decode_superpoint, "tensors"_a,
+        "Decode FEATURE_POINTS_V1 or explicitly tagged legacy A65 SuperPoint payloads.");
 
   nb::class_<simaai::neat::PoseDecodeTensors>(m, "PoseDecodeTensors")
       .def(nb::init<>())
@@ -4161,7 +4175,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
-      .value("Centernet", simaai::neat::BoxDecodeType::Centernet);
+      .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
+      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
@@ -4176,6 +4191,34 @@ NB_MODULE(_pyneat_core, m) {
       .value("GroupedByRoleProbability",
              simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability)
       .value("GroupedByRoleLogit", simaai::neat::BoxDecodeTypeOption::GroupedByRoleLogit);
+
+  nb::enum_<simaai::neat::SuperPointProfile>(m, "SuperPointProfile")
+      .value("Auto", simaai::neat::SuperPointProfile::Auto)
+      .value("LightGlueV1", simaai::neat::SuperPointProfile::LightGlueV1)
+      .value("MagicLeapDemoV1", simaai::neat::SuperPointProfile::MagicLeapDemoV1)
+      .value("PaperBicubicV1", simaai::neat::SuperPointProfile::PaperBicubicV1)
+      .value("A65V1", simaai::neat::SuperPointProfile::A65V1);
+
+  nb::enum_<simaai::neat::SuperPointOutputFormat>(m, "SuperPointOutputFormat")
+      .value("FeaturePointsV1", simaai::neat::SuperPointOutputFormat::FeaturePointsV1)
+      .value("LegacyA65InterleavedV0",
+             simaai::neat::SuperPointOutputFormat::LegacyA65InterleavedV0);
+
+  nb::class_<simaai::neat::SuperPointOptions>(m, "SuperPointOptions")
+      .def(nb::init<>())
+      .def_rw("profile", &simaai::neat::SuperPointOptions::profile)
+      .def_rw("nms_radius", &simaai::neat::SuperPointOptions::nms_radius)
+      .def_rw("border_margin", &simaai::neat::SuperPointOptions::border_margin)
+      .def_rw("descriptor_output_dtype", &simaai::neat::SuperPointOptions::descriptor_output_dtype)
+      .def_rw("output_format", &simaai::neat::SuperPointOptions::output_format);
+
+  nb::class_<simaai::neat::BoxDecodeOptions>(m, "BoxDecodeOptions")
+      .def(nb::init<simaai::neat::BoxDecodeType>(), "decode_type"_a)
+      .def_rw("decode_type", &simaai::neat::BoxDecodeOptions::decode_type)
+      .def_rw("detection_threshold", &simaai::neat::BoxDecodeOptions::detection_threshold)
+      .def_rw("nms_iou_threshold", &simaai::neat::BoxDecodeOptions::nms_iou_threshold)
+      .def_rw("top_k", &simaai::neat::BoxDecodeOptions::top_k)
+      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
@@ -4295,6 +4338,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("score_threshold", &simaai::neat::Model::Options::score_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::Model::Options::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
+      .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
@@ -4878,6 +4922,12 @@ NB_MODULE(_pyneat_core, m) {
       "payload_type"_a = 96, "config_interval"_a = 1);
   nodes_mod.def("detess_dequant", &simaai::neat::nodes::DetessDequant,
                 "options"_a = simaai::neat::DetessDequantOptions{});
+  nodes_mod.def(
+      "sima_box_decode",
+      [](const simaai::neat::Model& model, const simaai::neat::BoxDecodeOptions& options) {
+        return simaai::neat::nodes::SimaBoxDecode(model, options);
+      },
+      "model"_a, "options"_a);
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, simaai::neat::BoxDecodeType decode_type,

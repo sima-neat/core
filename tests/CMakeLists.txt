@@ -291,6 +291,7 @@ set(UNIT_TESTS
   unit_dequant_node_fragment_test
   unit_detection_types_bbox_test
   unit_detection_types_boxdecode_payloads_test
+  unit_superpoint_feature_types_test
   unit_detessdequant_output_info_test
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test

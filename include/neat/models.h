@@ -14,5 +14,7 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
+#include "pipeline/BoxDecodeOptions.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/StageRun.h"

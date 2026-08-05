@@ -277,6 +277,12 @@ struct DetectionSpec {
   std::string format;
 };
 
+/** Feature-extractor output metadata (for example SuperPoint feature points). */
+struct FeatureSpec {
+  /// Versioned wire-format token (for example `"FEATURE_POINTS_V1"`).
+  std::string format;
+};
+
 /**
  * @brief One runtime ROI window consumed by preprocessing.
  *
@@ -403,6 +409,7 @@ struct Semantic {
   std::optional<EncodedSpec> encoded;        ///< Set for encoded-stream tensors (H.264, etc.).
   std::optional<QuantSpec> quant;            ///< Set for quantized integer tensors.
   std::optional<DetectionSpec> detection;    ///< Set for detection-decoder outputs (BBOX, etc.).
+  std::optional<FeatureSpec> feature;        ///< Set for feature-extractor outputs.
   std::optional<PreprocessRuntimeMeta>
       preprocess; ///< Set when the tensor was produced by a preprocess stage.
 };

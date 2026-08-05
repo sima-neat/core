@@ -2,6 +2,7 @@
 #include "RunInternal.h"
 
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/internal/EnvUtil.h"
@@ -912,6 +913,7 @@ TensorList Run::pull_tensors_strict(int timeout_ms) {
     // type-honest DetectionSpec slot is the source of truth even when the producing
     // stage only signalled via Sample-level payload_tag / format.
     tag_detection_format_in_sample(out);
+    tag_feature_format_in_sample(out);
     return tensors_from_sample(out, true);
   }
   throw_pull_failure_with_context("Run::run", status, std::move(err), last_error());
@@ -923,6 +925,7 @@ Sample Run::pull_samples_strict(int timeout_ms) {
   const PullStatus status = pull(timeout_ms, sample, &err);
   if (status == PullStatus::Ok) {
     tag_detection_format_in_sample(sample);
+    tag_feature_format_in_sample(sample);
     return Sample{std::move(sample)};
   }
   throw_pull_failure_with_context("Run::run", status, std::move(err), last_error());
