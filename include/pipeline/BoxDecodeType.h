@@ -76,6 +76,7 @@ enum class BoxDecodeType : std::int32_t {
   YoloV6 = 20,      ///< YOLOv6 raw l/t/r/b distance heads.
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
   Ssd = 22, ///< SSD family token, resolved internally to an exact supported prepared signature.
+  SuperPoint = 23, ///< SuperPoint detector-logit and descriptor-grid postprocessing.
 };
 
 /**
@@ -169,6 +170,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolox";
   case BoxDecodeType::Ssd:
     return "ssd";
+  case BoxDecodeType::SuperPoint:
+    return "superpoint";
   case BoxDecodeType::Detr:
     return "detr";
   case BoxDecodeType::EffDet:
@@ -233,6 +236,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloX:
     return true;
   case BoxDecodeType::Ssd:
+  case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -270,6 +274,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
   case BoxDecodeType::Ssd:
+  case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -302,6 +307,7 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
   case BoxDecodeType::Ssd:
+  case BoxDecodeType::SuperPoint:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -347,6 +353,10 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
            "internally to SSD300-v1 (softmax @300), SSD-Mobile-300-v1 (sigmoid @300), "
            "SSD-Mobile-320-v1 (sigmoid @320), or SSDlite-Mobile-320-v1 (softmax @320); every "
            "other signature is rejected.";
+  case BoxDecodeType::SuperPoint:
+    return "SuperPoint contract: one 65-channel coarse detector-logit tensor and one "
+           "coarse descriptor-grid tensor at compatible spatial geometry; numerical semantics "
+           "are selected by an explicit or MPK-authored SuperPoint profile.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

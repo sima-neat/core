@@ -1,7 +1,7 @@
 {
   "internals": {
     "branch": "feat/ssd-recipe-validation-and-coverage",
-    "spec": "0669f4c88122"
+    "spec": "c6a834319f52"
   },
   "llima": {
     "policy": "snap"
@@ -13,5 +13,5 @@
   "platform-version": "2.1.3",
   "modelzoo-version": "2.1.2",
   "platform-package-version": "2.1.3~pre4040",
-  "abi-version": "4"
+  "abi-version": "5"
 }

@@ -268,6 +268,23 @@ struct MpkPluginIoContract {
   // Boxdecode decode-type tokens from MPK params (e.g. "ssd"); empty when not declared.
   std::string decode_type;
   std::string decode_type_option;
+  struct SuperPointContract {
+    int schema_version = 0;
+    std::string profile;
+    std::string profile_fingerprint;
+    std::string output_format;
+    std::string detector_tensor_id;
+    std::string descriptor_tensor_id;
+    std::string detector_representation;
+    std::string descriptor_representation;
+    std::string descriptor_output_dtype;
+    int nms_radius = -1;
+    int border_margin = -1;
+    int cell_stride = 0;
+    int descriptor_stride = 0;
+    int descriptor_dim = 0;
+    std::string validation_error;
+  } superpoint;
   // Canonical processcvu contract decoded from MPK params and tensor contracts.
   // These fields are model-managed source-of-truth and keep raw output rank.
   bool has_canonical_processcvu_contract = false;

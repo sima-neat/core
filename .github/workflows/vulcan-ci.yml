@@ -591,14 +591,29 @@ jobs:
           export SIMA_TEST_LLIMA_TEXT_MODEL="${SIMA_TEST_LLIMA_TEXT_MODEL:-Qwen2.5-0.5B-Instruct-GPTQ-a16w4}"
           export SIMA_TEST_LLIMA_VLM_MODEL="${SIMA_TEST_LLIMA_VLM_MODEL:-LFM2.5-VL-450M-a16w4}"
           export SIMA_TEST_LLIMA_ASR_MODEL="${SIMA_TEST_LLIMA_ASR_MODEL:-whisper-small-a16w8}"
+          export SIMA_TEST_LLIMA_REASONING_QWEN_MODEL="${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL:-Qwen3-0.6B-GPTQ-a16w4}"
+          export SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL="${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL:-Gemma-4-E2B-it-GPTQ-a16w4}"
 
-          "${PREPARE_GENAI_MODELS}"
+          prepare_models_lock="/media/nvme/llima/.prepare-models.lock"
+          flock \
+            --verbose \
+            --wait 1800 \
+            --close \
+            "${prepare_models_lock}" \
+            timeout \
+              --verbose \
+              --signal=TERM \
+              --kill-after=30s \
+              3600 \
+              "${PREPARE_GENAI_MODELS}"
 
           {
             printf 'LLIMA_MODELS_PATH=%s\n' "${LLIMA_MODELS_PATH}"
             printf 'SIMA_TEST_LLIMA_TEXT_MODEL=%s\n' "${SIMA_TEST_LLIMA_TEXT_MODEL}"
             printf 'SIMA_TEST_LLIMA_VLM_MODEL=%s\n' "${SIMA_TEST_LLIMA_VLM_MODEL}"
             printf 'SIMA_TEST_LLIMA_ASR_MODEL=%s\n' "${SIMA_TEST_LLIMA_ASR_MODEL}"
+            printf 'SIMA_TEST_LLIMA_REASONING_QWEN_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}"
+            printf 'SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
           } >> "${GITHUB_ENV}"
 
       - name: Build docs C++ examples from DevKit-installed package
@@ -731,6 +746,8 @@ jobs:
           echo "Using SIMA_TEST_LLIMA_TEXT_MODEL=${SIMA_TEST_LLIMA_TEXT_MODEL}"
           echo "Using SIMA_TEST_LLIMA_VLM_MODEL=${SIMA_TEST_LLIMA_VLM_MODEL}"
           echo "Using SIMA_TEST_LLIMA_ASR_MODEL=${SIMA_TEST_LLIMA_ASR_MODEL}"
+          echo "Using SIMA_TEST_LLIMA_REASONING_QWEN_MODEL=${SIMA_TEST_LLIMA_REASONING_QWEN_MODEL}"
+          echo "Using SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "llima" \
             --timeout 900 \

@@ -104,6 +104,83 @@ void validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
   throw std::runtime_error(oss.str());
 }
 
+void apply_model_superpoint_options(pipeline_internal::sima::BoxDecodeStagePayload* payload,
+                                    const Model::Options& options, const char* context) {
+  if (!payload || payload->decode_type != BoxDecodeType::SuperPoint) {
+    return;
+  }
+  if (options.nms_iou_threshold != 0.0f) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                ": nms_iou_threshold is not applicable to SuperPoint; use "
+                                "Model::Options.superpoint.nms_radius");
+  }
+  auto& resolved = payload->superpoint;
+  const auto& requested = options.superpoint;
+  if (requested.nms_radius < -1 || requested.border_margin < -1) {
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") +
+        ": SuperPoint nms_radius and border_margin must be -1 (profile default) or "
+        "non-negative; zero is valid");
+  }
+  pipeline_internal::sima::SuperPointStaticContract requested_contract;
+  requested_contract.profile = requested.profile;
+  requested_contract.output_format = requested.output_format;
+  requested_contract.descriptor_output_dtype = requested.descriptor_output_dtype;
+  if (const auto metadata_error = pipeline_internal::sima::validate_superpoint_static_metadata(
+          requested_contract, /*require_resolved_profile=*/false)) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") + ": SuperPoint " +
+                                *metadata_error);
+  }
+  if (requested.profile == SuperPointProfile::PaperBicubicV1) {
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") +
+        ": SuperPoint paper-bicubic-v1 is reserved but not production-defined; select "
+        "lightglue-v1, magic-leap-demo-v1, or a65-v1");
+  }
+  const bool profile_changed =
+      pipeline_internal::sima::apply_superpoint_profile_override(&resolved, requested.profile);
+  pipeline_internal::sima::apply_superpoint_spatial_overrides(&resolved, requested);
+  resolved.descriptor_output_dtype = requested.descriptor_output_dtype;
+  resolved.output_format = requested.output_format;
+  pipeline_internal::sima::resolve_default_superpoint_profile(&resolved);
+  if (const auto metadata_error = pipeline_internal::sima::validate_superpoint_static_metadata(
+          resolved, /*require_resolved_profile=*/true)) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") + ": SuperPoint " +
+                                *metadata_error);
+  }
+  if (resolved.profile == SuperPointProfile::PaperBicubicV1) {
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") +
+        ": SuperPoint paper-bicubic-v1 is reserved but not production-defined; select "
+        "lightglue-v1, magic-leap-demo-v1, or a65-v1");
+  }
+  if (resolved.nms_radius < -1 || resolved.border_margin < -1) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                ": SuperPoint radius and border must be -1 (profile default) or "
+                                "non-negative; zero is valid");
+  }
+  if (resolved.nms_radius == -1) {
+    resolved.nms_radius = 4;
+  }
+  if (resolved.border_margin == -1) {
+    resolved.border_margin = resolved.profile == SuperPointProfile::A65V1 ? 0 : 4;
+  }
+  payload->detection_threshold = pipeline_internal::sima::rebase_superpoint_detection_threshold(
+      profile_changed, resolved.profile, options.score_threshold, payload->detection_threshold);
+  if (resolved.nms_radius < 0 || resolved.border_margin < 0 || resolved.cell_stride <= 0 ||
+      resolved.descriptor_stride <= 0 || resolved.descriptor_dim <= 0) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                ": invalid SuperPoint radius, border, stride, or descriptor "
+                                "dimension");
+  }
+  if (resolved.output_format == SuperPointOutputFormat::LegacyA65InterleavedV0 &&
+      (resolved.descriptor_output_dtype != TensorDType::Int8 || resolved.descriptor_dim != 256)) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                ": legacy SuperPoint A65 V0 output requires 256-dimensional "
+                                "INT8 descriptors");
+  }
+}
+
 simaai::neat::GraphOptions
 route_options_from_model_route_options(const Model::RouteOptions& opt,
                                        const Model::Options* model_opt = nullptr);
@@ -8324,6 +8401,7 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
         compiled->payload.ssd_class_selection.selected_count = model.impl_->options.num_classes;
       }
     }
+    apply_model_superpoint_options(&compiled->payload, opt, "Model-managed boxdecode stage");
     return *compiled;
   }
 
@@ -8368,6 +8446,14 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   contract->quant_contract_required = route_flags->quant_contract_required;
   contract->required_preprocess_meta_fields =
       model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields;
+  if (contract->decode_type == BoxDecodeType::SuperPoint) {
+    pipeline_internal::sima::apply_superpoint_profile_override(&contract->superpoint,
+                                                               opt.superpoint.profile);
+    pipeline_internal::sima::apply_superpoint_spatial_overrides(&contract->superpoint,
+                                                                opt.superpoint);
+    contract->superpoint.descriptor_output_dtype = opt.superpoint.descriptor_output_dtype;
+    contract->superpoint.output_format = opt.superpoint.output_format;
+  }
 
   auto finalized = pipeline_internal::sima::stagesemantics::finalize_boxdecode_static_contract(
       *contract, opt.decode_type, std::nullopt, route_flags, opt.decode_type_option,

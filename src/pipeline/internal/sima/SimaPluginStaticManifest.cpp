@@ -925,6 +925,19 @@ public:
     for (std::size_t i = 0; i < manifest_.stages.size(); ++i) {
       const auto& stage = manifest_.stages[i];
       stage_storage_.push_back(build_stage_storage(stage));
+      // build_stage_storage() returns by value. Pointers into vector allocations survive the
+      // move into stage_storage_, but pointers to embedded objects do not. Rebind the nested
+      // SuperPoint payload (and its vector-backed role table) to the stored object before the
+      // accessor can publish it.
+      auto& stored = stage_storage_.back();
+      if (stage.payload_kind == StagePayloadKind::BoxDecode &&
+          stage.boxdecode.decode_type == BoxDecodeType::SuperPoint) {
+        stored.boxdecode_superpoint.tensor_roles =
+            stored.boxdecode_tensor_roles.empty() ? nullptr : stored.boxdecode_tensor_roles.data();
+        stored.boxdecode_superpoint.tensor_roles_len =
+            static_cast<guint>(stored.boxdecode_tensor_roles.size());
+        stored.spec.payload.boxdecode.superpoint = &stored.boxdecode_superpoint;
+      }
       if (!stage.element_name.empty()) {
         stage_by_element_.emplace(stage.element_name, i);
       }
@@ -993,6 +1006,8 @@ private:
     std::vector<gdouble> processcvu_channel_stddev;
     std::vector<sima_ev_shape_desc> boxdecode_slice_shapes;
     std::vector<gint> boxdecode_tensor_storage_kind;
+    std::vector<gint> boxdecode_tensor_roles;
+    SimaPluginSuperPointStagePayloadV1 boxdecode_superpoint{};
     SimaPluginStageSpec spec{};
   };
 
@@ -1763,6 +1778,40 @@ private:
                                                     : out.boxdecode_tensor_storage_kind.data();
       out.spec.payload.boxdecode.tensor_storage_kind_len =
           static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
+      out.spec.payload.boxdecode.superpoint = nullptr;
+      if (stage.boxdecode.decode_type == BoxDecodeType::SuperPoint) {
+        const auto& sp = stage.boxdecode.superpoint;
+        out.boxdecode_superpoint.struct_version = 1U;
+        out.boxdecode_superpoint.profile = static_cast<gint>(sp.profile);
+        out.boxdecode_superpoint.output_format = static_cast<gint>(sp.output_format);
+        out.boxdecode_superpoint.descriptor_output_dtype =
+            static_cast<gint>(sp.descriptor_output_dtype);
+        out.boxdecode_superpoint.nms_radius = sp.nms_radius;
+        out.boxdecode_superpoint.border_margin = sp.border_margin;
+        out.boxdecode_superpoint.cell_stride = sp.cell_stride;
+        out.boxdecode_superpoint.descriptor_stride = sp.descriptor_stride;
+        out.boxdecode_superpoint.descriptor_dim = sp.descriptor_dim;
+        out.boxdecode_superpoint.profile_fingerprint =
+            sp.profile_fingerprint.empty() ? nullptr : sp.profile_fingerprint.c_str();
+        out.boxdecode_superpoint.detector_tensor_id =
+            sp.detector_tensor_id.empty() ? nullptr : sp.detector_tensor_id.c_str();
+        out.boxdecode_superpoint.descriptor_tensor_id =
+            sp.descriptor_tensor_id.empty() ? nullptr : sp.descriptor_tensor_id.c_str();
+        out.boxdecode_superpoint.detector_representation =
+            sp.detector_representation.empty() ? nullptr : sp.detector_representation.c_str();
+        out.boxdecode_superpoint.descriptor_representation =
+            sp.descriptor_representation.empty() ? nullptr : sp.descriptor_representation.c_str();
+        out.boxdecode_tensor_roles.clear();
+        out.boxdecode_tensor_roles.reserve(stage.boxdecode.tensor_roles.size());
+        for (const auto role : stage.boxdecode.tensor_roles) {
+          out.boxdecode_tensor_roles.push_back(static_cast<gint>(role));
+        }
+        out.boxdecode_superpoint.tensor_roles =
+            out.boxdecode_tensor_roles.empty() ? nullptr : out.boxdecode_tensor_roles.data();
+        out.boxdecode_superpoint.tensor_roles_len =
+            static_cast<guint>(out.boxdecode_tensor_roles.size());
+        out.spec.payload.boxdecode.superpoint = &out.boxdecode_superpoint;
+      }
       break;
     case StagePayloadKind::DetessDequant:
       out.spec.payload.detessdequant.reserved = stage.detessdequant.reserved;

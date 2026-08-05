@@ -2006,6 +2006,7 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   subset.input_bindings.reserve(contract.tensors.size());
   subset.slice_shapes.reserve(contract.tensors.size());
   subset.tensor_storage_kind.reserve(contract.tensors.size());
+  subset.tensor_roles.reserve(contract.tensors.size());
   subset.decode_type = contract.decode_type;
   subset.ssd_recipe_id = contract.ssd_recipe_id;
   subset.ssd_class_selection = contract.ssd_class_selection;
@@ -2016,6 +2017,7 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   }
   subset.score_activation = contract.score_activation;
   subset.num_classes = contract.num_classes;
+  subset.superpoint = contract.superpoint;
 
   auto fill_shape_desc = [](const std::vector<int>& shape, sima_ev_shape_desc* out) -> bool {
     if (!out || shape.empty() || shape.size() > SIMA_EV_MAX_RANK) {
@@ -2049,6 +2051,7 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
           "explicitly on SimaBoxDecode (it cannot be inferred from a hand-built upstream)");
     }
     subset.tensor_storage_kind.push_back(static_cast<int>(contract.tensors[i].source_storage_kind));
+    subset.tensor_roles.push_back(contract.tensors[i].role);
   }
   return subset;
 }
@@ -2084,7 +2087,9 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
                           stage_name);
   if (subset.logical_inputs.size() != subset.input_bindings.size() ||
       subset.logical_inputs.size() != subset.slice_shapes.size() ||
-      subset.logical_inputs.size() != subset.tensor_storage_kind.size()) {
+      subset.logical_inputs.size() != subset.tensor_storage_kind.size() ||
+      (!subset.tensor_roles.empty() &&
+       subset.logical_inputs.size() != subset.tensor_roles.size())) {
     throw std::invalid_argument("plugin contract subset 'boxdecode' requires aligned logical "
                                 "inputs, bindings, slice geometry, and tensor storage kinds for "
                                 "stage '" +

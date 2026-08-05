@@ -188,6 +188,8 @@ struct PipelineSegmentRuntime {
   RunOptions run_options;
   std::string last_pipeline;
   std::shared_ptr<RunCore> run_core;
+  // Keeps final child counters available after run_core teardown for an active MeasureScope.
+  std::shared_ptr<pipeline_internal::DiagCtx> retained_diag;
   GraphTransport transport;
 
   InputStream stream;

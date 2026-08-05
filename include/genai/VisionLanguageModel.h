@@ -41,9 +41,12 @@ public:
   GenerationStream stream(const GenerationRequest& request);
 
 private:
+  bool supports_thinking() const;
+
   struct Impl;
   std::shared_ptr<Impl> impl_;
 
+  friend class GenAIModel;
   friend class GenerationStream;
 };
 

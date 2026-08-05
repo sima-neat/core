@@ -30,6 +30,7 @@
 #include "pipeline/internal/sima/DTypeSource.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
+#include "pipeline/internal/sima/SuperPointContract.h"
 #include <ev/ev_tensor_abi.h>
 
 #include <cstdint>
@@ -394,6 +395,8 @@ struct BoxDecodeStagePayload {
   std::vector<sima_ev_shape_desc> slice_shapes;
   std::vector<int> tensor_storage_kind;
   std::string preproc_resize_mode; ///< Validated static resize policy for prepared runtime.
+  SuperPointStaticContract superpoint;
+  std::vector<BoxDecodeTensorRole> tensor_roles;
 };
 
 /// Placeholder payload for quant / dequant / tess / quanttess stages (carries only a reserved field

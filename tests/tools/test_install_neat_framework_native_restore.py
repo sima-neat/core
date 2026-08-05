@@ -402,8 +402,8 @@ class SimaaiMemoryTransactionTest(unittest.TestCase):
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-runtime="${tmp}/simaai-memory-lib_2.1.1-0neat4_arm64.deb"
-dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb"
+runtime="${tmp}/simaai-memory-lib_2.1.1-0neat5_arm64.deb"
+dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}")
 palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4373'; }
@@ -412,18 +412,18 @@ dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   file="$(basename "$2")"
   case "${file}:$3" in
-    simaai-memory-lib_2.1.1-0neat4_arm64.deb:Package) printf '%s\n' simaai-memory-lib ;;
-    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
-    *:Version) printf '%s\n' 2.1.1-0neat4 ;;
+    simaai-memory-lib_2.1.1-0neat5_arm64.deb:Package) printf '%s\n' simaai-memory-lib ;;
+    simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
+    *:Version) printf '%s\n' 2.1.1-0neat5 ;;
     *:Architecture) printf '%s\n' arm64 ;;
-    simaai-memory-lib_2.1.1-0neat4_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1~pre4373)'
+    simaai-memory-lib_2.1.1-0neat5_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1~pre4373), simaai-memory-lib (= 2.1.1-0neat4)'
       ;;
-    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1~pre4373)'
+    simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1~pre4373), simaai-memory-lib-dev (= 2.1.1-0neat4)'
       ;;
-    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Depends)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat4)'
+    simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb:Depends)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat5)'
       ;;
     *) return 2 ;;
   esac

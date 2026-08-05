@@ -359,6 +359,25 @@ otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
 `simaaiboxdecode` elements by default.
 
+##### SuperPoint BoxDecode contract
+
+SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
+families, with these additional invariants:
+
+- The MPK record owns the detector-logits and descriptor-grid tensor identities, storage
+  representations, dtype/shape facts, numerical-profile provenance, and optional explicit NMS and
+  border controls. Core never identifies these roles from tensor values.
+- Core binds exactly one tensor to each role, validates the profile fingerprint and supported
+  representations, applies explicit `Model::Options::superpoint` overrides, and resolves only
+  omitted profile defaults. Changing a profile recomputes its derived defaults while preserving
+  controls explicitly authored by the MPK or API.
+- The versioned static-manifest ABI carries the resolved contract to `simaaiboxdecode`. Plugins
+  borrow manifest pointers only during configuration and must copy any state needed at runtime;
+  Core retains manifest ownership for the pipeline lifetime.
+- Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.
+  `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
+  consumers must not infer either format from buffer size.
+
 ---
 
 ### `contracts/` -- validation rules
