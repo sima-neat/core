@@ -163,16 +163,11 @@ relation_field_provides_exact_version() {
   local field="$1"
   local expected_package="$2"
   local expected_version="$3"
-  local relation
+  local provided_version
 
-  while IFS= read -r relation; do
-    relation="$(printf '%s' "${relation}" |
-      sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
-    if [[ "${relation}" == "${expected_package} (= ${expected_version})" ]]; then
-      return 0
-    fi
-  done < <(printf '%s\n' "${field}" | tr ',' '\n')
-  return 1
+  provided_version="$(exact_dependency_version_from_relations \
+    "${expected_package}" "${expected_version}" <<<"${field}" || true)"
+  [[ "${provided_version}" == "${expected_version}" ]]
 }
 
 find_verified_bundled_replacement() {

@@ -396,6 +396,18 @@ native_modalix_restore_specs specs
 
 
 class SimaaiMemoryTransactionTest(unittest.TestCase):
+    def test_provides_parser_accepts_arch_qualified_exact_version(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+relation_field_provides_exact_version \
+  'other (= 1), simaai-memory-lib:arm64   (  =  2.1.1~pre4373  )' \
+  simaai-memory-lib 2.1.1~pre4373
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_collect_accepts_matching_version_among_multiple_self_provides(self) -> None:
         result = run_bash(
             r'''
