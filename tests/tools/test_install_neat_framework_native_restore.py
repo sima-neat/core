@@ -27,6 +27,29 @@ def run_bash(
 
 
 class NativeModalixRestoreTest(unittest.TestCase):
+    def test_deb_collection_includes_neat_mlart(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+touch \
+  "${tmp}/neat-mlart-modalix_2.1.3~pre4040_arm64.deb" \
+  "${tmp}/neat-runtime_0.4.0_arm64.deb"
+collect_debs_in_install_order "${tmp}" collected
+printf '%s\n' "${collected[@]##*/}"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "neat-mlart-modalix_2.1.3~pre4040_arm64.deb",
+                "neat-runtime_0.4.0_arm64.deb",
+            ],
+        )
+
     def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
         result = run_bash(
             r'''

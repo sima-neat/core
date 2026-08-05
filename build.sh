@@ -2491,6 +2491,7 @@ write_install_manifest() {
   append_dist_manifest_matches "${manifest_path}" 'simaai-common*.deb'
   append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib-dev_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'neat-mlart-modalix_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'libcamera_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'libcamera-dev_*.deb'
   append_dist_manifest_matches "${manifest_path}" 'libcamera-tools_*.deb'
