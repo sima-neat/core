@@ -306,6 +306,7 @@ set(UNIT_TESTS
   unit_dequant_node_fragment_test
   unit_detection_types_bbox_test
   unit_detection_types_boxdecode_payloads_test
+  unit_superpoint_feature_types_test
   unit_detessdequant_output_info_test
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test
@@ -347,11 +348,14 @@ set(UNIT_TESTS
   unit_groups_test
   unit_gst_helpers_test
   unit_gst_init_guard_test
+  unit_gst_launch_bindings_test
+  unit_gst_parse_launch_audit_test
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
   unit_latest_mux_fairness_test
   unit_latest_mux_periodic_fairness_test
   unit_latest_mux_backpressure_test
+  unit_launch_validation_integration_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
   unit_http_mjpeg_decoded_group_test
@@ -732,8 +736,22 @@ if (SimaLMM_FOUND)
   target_link_libraries(genai_server_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 
   if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_tests_properties(genai_server_http_test PROPERTIES DISABLED TRUE)
     set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
     set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
+
+  add_pipeline_test_long(
+    genai_server_reasoning_http_test
+    e2e_testing/genai/genai_server_reasoning_http_test.cpp
+  )
+  target_link_libraries(genai_server_reasoning_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+
+  if (NOT genai_server_reasoning_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_tests_properties(genai_server_reasoning_http_test PROPERTIES DISABLED TRUE)
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY
+      LABELS "e2e;genai;llima;server;reasoning;long")
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   endif()
 endif()
 

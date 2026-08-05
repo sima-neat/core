@@ -67,6 +67,18 @@ Supported `build.sh` options:
 - `--no-node`: Skip Node.js install (docs build may fail if Node is missing).
 - `--install-deps-only`: Install system dependencies and dependency headers, then exit.
 
+## Compiler Cache
+
+`build.sh` enables `sccache` automatically, and its cache remains available
+after `--clean`. Local builds use a user-local disk cache. Vulcan gives
+`develop` and `main` separate protected caches; a feature branch seeds an
+isolated writable cache from its closest protected base and keeps it until the
+branch is deleted.
+
+See the [Neat sccache Cheatsheet](/develop-apps/contribute/sccache) for local
+controls, cloud access rules, cache namespaces, statistics, verification, and
+troubleshooting.
+
 ## Typical Builds
 
 Core library only (default):
@@ -115,6 +127,10 @@ Install dependencies without building core:
 - Neat package artifacts (`*.deb`) are generated on Linux full builds unless `--no-dist` is used.
 - Extras package (`*extras.tar.gz`) is generated on Linux full builds unless `--no-dist` is used.
 - Python wheel (`dist/*.whl`) is generated when Python build is enabled.
+
+The Python wheel packages the `_pyneat_core` extension produced by the main
+CMake build. Wheel creation does not configure or compile a second CMake tree,
+so the library, DEBs, extras archive, and wheel share one compilation.
 
 ## Build Profiles & CMake Options
 

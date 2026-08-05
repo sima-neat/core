@@ -157,6 +157,26 @@ def _assert_not_type_error(call):
     assert not isinstance(exc, TypeError), str(exc)
 
 
+def test_superpoint_named_options_surface():
+  options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.SuperPoint)
+  assert options.decode_type == pyneat.BoxDecodeType.SuperPoint
+  assert options.superpoint.profile == pyneat.SuperPointProfile.Auto
+  assert options.superpoint.nms_radius == -1
+  assert options.superpoint.border_margin == -1
+  assert options.superpoint.output_format == pyneat.SuperPointOutputFormat.FeaturePointsV1
+  assert hasattr(pyneat.SuperPointProfile, "A65V1")
+  assert not hasattr(pyneat.SuperPointProfile, "LegacyA65V1")
+
+  options.detection_threshold = 0.1
+  options.top_k = 600
+  options.superpoint.profile = pyneat.SuperPointProfile.LightGlueV1
+  options.superpoint.nms_radius = 0
+  options.superpoint.descriptor_output_dtype = pyneat.TensorDType.Float32
+  assert options.superpoint.profile == pyneat.SuperPointProfile.LightGlueV1
+  assert options.superpoint.nms_radius == 0
+  assert callable(pyneat.decode_superpoint)
+
+
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
   assert not hasattr(pyneat.Graph, "build_fused_realtime_source")
@@ -200,6 +220,18 @@ def test_graph_pythonic_add_and_describe():
   text = graph.describe_backend()
   assert isinstance(text, str)
   assert text
+
+
+def test_graph_rejects_duplicate_node_identity_atomically():
+  node = pyneat.nodes.video_scale()
+  graph = pyneat.Graph()
+  graph.add(node)
+  before = graph.describe_backend()
+
+  with pytest.raises(RuntimeError, match="already exists"):
+    graph.add(node)
+
+  assert graph.describe_backend() == before
 
 
 def test_graph_combine_round_robin_surface():

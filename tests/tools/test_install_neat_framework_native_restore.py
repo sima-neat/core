@@ -27,6 +27,93 @@ def run_bash(
 
 
 class NativeModalixRestoreTest(unittest.TestCase):
+    def test_installed_neat_mlart_is_replaced_with_platform_package(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./neat-mlart-modalix.deb ./neat-appcomplex.deb ./neat-runtime.deb)
+neat_mlart_installed=1
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$2:$3" in
+    ./neat-mlart-modalix.deb:Package) printf '%s\n' neat-mlart-modalix ;;
+    ./neat-appcomplex.deb:Package) printf '%s\n' neat-appcomplex ;;
+    ./neat-appcomplex.deb:Depends)
+      printf '%s\n' 'simaai-mlart-modalix (= 2.1.3~pre4040)'
+      ;;
+    ./neat-runtime.deb:Package) printf '%s\n' neat-runtime ;;
+    *) return 2 ;;
+  esac
+}
+deb_package_is_installed() {
+  case "$1" in
+    neat-mlart-modalix) [[ "${neat_mlart_installed}" -eq 1 ]] ;;
+    simaai-mlart-modalix) [[ "${neat_mlart_installed}" -eq 0 ]] ;;
+    *) return 1 ;;
+  esac
+}
+deb_package_installed_version() { printf '%s\n' 2.1.3~pre4040; }
+exact_package_install_spec() {
+  [[ "$1:$2" == simaai-mlart-modalix:2.1.3~pre4040 ]]
+  printf '%s\n' 'simaai-mlart-modalix=2.1.3~pre4040'
+}
+run_sudo() {
+  case " $* " in
+    *' --simulate '*) printf '%s\n' 'Remv neat-mlart-modalix [2.1.3]' ;;
+    *)
+      printf 'APT:'
+      printf ' <%s>' "$@"
+      printf '\n'
+      neat_mlart_installed=0
+      ;;
+  esac
+}
+
+restore_native_mlart_if_neat_package_installed
+printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        apt_lines = [
+            line for line in result.stdout.splitlines() if line.startswith("APT:")
+        ]
+        self.assertEqual(len(apt_lines), 1, result.stdout)
+        transaction = apt_lines[0]
+        self.assertIn("<neat-mlart-modalix->", transaction)
+        self.assertIn("<simaai-mlart-modalix=2.1.3~pre4040>", transaction)
+        self.assertIn("<--allow-downgrades>", transaction)
+        self.assertNotIn("<--no-remove>", transaction)
+        self.assertIn(
+            "REMAINING: <./neat-appcomplex.deb> <./neat-runtime.deb>",
+            result.stdout,
+        )
+
+    def test_absent_neat_mlart_skips_platform_package_transaction(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./neat-mlart-modalix.deb ./neat-runtime.deb)
+INSTALLER_TMP_DIRS=("$(mktemp -d)")
+dpkg-deb() {
+  [[ "$1" == -f && "$3" == Package ]] || return 2
+  case "$2" in
+    ./neat-mlart-modalix.deb) printf '%s\n' neat-mlart-modalix ;;
+    ./neat-runtime.deb) printf '%s\n' neat-runtime ;;
+  esac
+}
+deb_package_is_installed() { return 1; }
+run_sudo() { printf '%s\n' UNEXPECTED_APT; return 99; }
+
+restore_native_mlart_if_neat_package_installed
+printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("UNEXPECTED_APT", result.stdout)
+        self.assertIn("REMAINING: <./neat-runtime.deb>", result.stdout)
+
     def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
         result = run_bash(
             r'''
@@ -75,6 +162,51 @@ install_debs_on_board
         self.assertNotIn("simaai-memory-lib", transaction)
         self.assertNotIn("<--no-remove>", transaction)
         self.assertEqual(transaction.count("<./libcamera_2.1.1_arm64.deb>"), 1)
+
+    def test_board_downgrade_installs_memory_with_dependent_packages(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
+prepare_debs_for_board_install() { :; }
+refresh_apt_metadata_for_board_install() { :; }
+stop_board_runtime_before_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+collect_local_simaai_memory_debs() {
+  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat2
+  SIMAAI_MEMORY_RUNTIME_DEB=./memory-runtime.deb
+  SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
+  SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
+}
+validate_local_simaai_memory_payload() { :; }
+snapshot_memory_transaction_guard_state() { :; }
+deb_package_installed_version() { printf '%s\n' 2.1.1-0neat4; }
+dpkg() {
+  [[ "$1:$2:$3:$4" == '--compare-versions:2.1.1-0neat4:gt:2.1.1-0neat2' ]]
+}
+run_sudo() {
+  printf 'APT:'
+  printf ' <%s>' "$@"
+  printf '\n'
+}
+complete_board_install_after_packages() { printf 'COMPLETE\n'; }
+
+install_debs_on_board
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
+        self.assertEqual(len(apt_lines), 2, result.stdout)
+        transaction, apt_check = apt_lines
+        self.assertIn("<--allow-downgrades>", transaction)
+        self.assertIn("<./memory-runtime.deb>", transaction)
+        self.assertIn("<./memory-dev.deb>", transaction)
+        self.assertIn("<./neat-runtime.deb>", transaction)
+        self.assertNotIn("<--no-remove>", transaction)
+        self.assertEqual(apt_check, "APT: <apt-get> <check>")
+        self.assertIn("deferring the downgrade to the full package transaction", result.stdout)
+        self.assertIn("COMPLETE", result.stdout)
 
     def test_board_transaction_accepts_exact_identity_preserving_replacement(
         self,
@@ -264,7 +396,9 @@ native_modalix_restore_specs specs
 
 
 class SimaaiMemoryTransactionTest(unittest.TestCase):
-    def test_collect_accepts_versioned_self_provider_for_palette_compatibility(self) -> None:
+    def test_collect_accepts_platform_compatibility_among_multiple_provides(
+        self,
+    ) -> None:
         result = run_bash(
             r'''
 source "$1"
@@ -285,10 +419,10 @@ dpkg-deb() {
     *:Version) printf '%s\n' 2.1.1-0neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
       printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'

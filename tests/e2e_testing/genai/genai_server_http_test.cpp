@@ -20,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -204,6 +205,34 @@ void request_text_completion(int port) {
   require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
 }
 
+void reject_unsupported_thinking(int port) {
+  const std::vector<std::pair<std::string, Json>> requests = {
+      {"/v1/chat/completions",
+       {{"model", "llm"},
+        {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})},
+        {"enable_thinking", true},
+        {"stream", true}}},
+      {"/v1/completions",
+       {{"model", "llm"}, {"prompt", "Hello"}, {"enable_thinking", true}, {"stream", true}}},
+      {"/api/chat",
+       {{"model", "llm"},
+        {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})},
+        {"think", true},
+        {"stream", true}}},
+      {"/api/generate", {{"model", "llm"}, {"prompt", "Hello"}, {"think", true}, {"stream", true}}},
+  };
+
+  for (const auto& [path, request] : requests) {
+    auto client = make_client(port);
+    const auto response = client.Post(path, request.dump(), "application/json");
+    require(response != nullptr, path + " unsupported-thinking request failed");
+    require(response->status == 400, path + " should reject unsupported thinking with HTTP 400");
+    const Json body = Json::parse(response->body);
+    require(body.at("error").at("message") == "Thinking is not supported for this model",
+            path + " returned an unexpected unsupported-thinking error");
+  }
+}
+
 void request_image_completion(int port, const fs::path& image_path) {
   auto client = make_client(port);
   const std::string data_uri = "data:image/jpeg;base64," + base64_encode(read_file(image_path));
@@ -289,6 +318,7 @@ int main(int argc, char** argv) {
     wait_for_server(port);
 
     require_model_list_contains(port);
+    reject_unsupported_thinking(port);
     request_text_completion(port);
     request_image_completion(port, image_path);
     request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,

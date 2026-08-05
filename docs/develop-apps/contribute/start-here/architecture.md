@@ -359,6 +359,25 @@ otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
 `simaaiboxdecode` elements by default.
 
+##### SuperPoint BoxDecode contract
+
+SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
+families, with these additional invariants:
+
+- The MPK record owns the detector-logits and descriptor-grid tensor identities, storage
+  representations, dtype/shape facts, numerical-profile provenance, and optional explicit NMS and
+  border controls. Core never identifies these roles from tensor values.
+- Core binds exactly one tensor to each role, validates the profile fingerprint and supported
+  representations, applies explicit `Model::Options::superpoint` overrides, and resolves only
+  omitted profile defaults. Changing a profile recomputes its derived defaults while preserving
+  controls explicitly authored by the MPK or API.
+- The versioned static-manifest ABI carries the resolved contract to `simaaiboxdecode`. Plugins
+  borrow manifest pointers only during configuration and must copy any state needed at runtime;
+  Core retains manifest ownership for the pipeline lifetime.
+- Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.
+  `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
+  consumers must not infer either format from buffer size.
+
 ---
 
 ### `contracts/` -- validation rules
@@ -452,11 +471,16 @@ graph.add(simaai::neat::nodes::Output());
 
 Internally:
 
-1. The Graph asks each Node for `backend_fragment(i)` and concatenates fragments with `!`
-2. Optionally inserts **boundary markers** between nodes:
+1. The Graph enforces one Node object per logical composition vertex. Repeated `connect()` calls
+   can reuse that indexed vertex for fan-out.
+2. A composition mutation commits as one unit or rolls back completely.
+3. The Graph asks each Node for `backend_fragment(i)` and concatenates fragments with `!`.
+4. It optionally inserts **boundary markers** between nodes:
 
    * `identity name=sima_b<i> silent=true`
-3. Builds a `DiagCtx`:
+5. It analyzes exact `name=` bindings, parses once with GStreamer, and inventories the constructed
+   object tree. Duplicate or missing names fail before downstream configuration.
+6. It builds a `DiagCtx`:
 
    * `node_reports` for reproducibility
    * `boundaries` as `BoundaryFlowCounters` (atomics)
@@ -730,7 +754,16 @@ Deterministic element names are a core design principle because they enable:
 **Node authors must ensure**:
 
 * fragments include stable `name=` fields when elements must be retrievable
-* `element_names()` matches exactly what the fragment creates
+* `element_names()` returns every explicit element name the fragment creates
+* declarations and named-pad references stay synchronized
+
+Name integrity is part of `build()` and does not depend on an earlier `validate()` call. Names are
+unique across one materialized pipeline segment because framework lookups use recursive short
+names. Separately parsed connected segments may reuse the same name. The framework rejects
+collisions instead of renaming them because names can participate in pad and routing expressions.
+
+Input-dependent connected segments can materialize on the first input. Their build failure is
+therefore reported on the first `push()` or `pull()`, with the original `GraphReport` preserved.
 
 ---
 
@@ -762,6 +795,13 @@ Validation exists to catch issues earlier than runtime:
 
 * `validate()` can parse and preroll (PAUSED) to detect negotiation stalls
 * `contracts/` provides structured validators for "pipeline correctness"
+
+Mandatory final launch-name checks also run in the ordinary build path. `ValidateOptions` controls
+additional validation work, not whether name integrity is enforced.
+
+For connected Graphs, `validate()` compiles endpoint topology but does not fabricate launch strings
+for input-dependent segments. Each segment receives the mandatory check when its real input
+contract is available and the segment materializes.
 
 The intended behavior:
 

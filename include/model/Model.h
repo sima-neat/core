@@ -21,6 +21,7 @@
 #include "model/PreprocessPlan.h"
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/SuperPointTypes.h"
 #include "pipeline/Run.h"
 #include "pipeline/TensorSpec.h"
 
@@ -263,6 +264,8 @@ public:
     float nms_iou_threshold =
         0.0f;      ///< BoxDecode IoU threshold for non-max suppression; 0 disables NMS.
     int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
+    SuperPointOptions
+        superpoint; ///< SuperPoint profile/output options when decode_type is SuperPoint.
     /// Number of classes produced by detection heads. Set this for detection MPKs whose raw
     /// class-head depth cannot be inferred reliably (for example single-class YOLO split heads).
     /// `0` keeps legacy inference / MPK-provided metadata.

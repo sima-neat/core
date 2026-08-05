@@ -227,7 +227,8 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   bool graph_sink_closed(simaai::neat::graph::NodeId node_id) const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                    bool allow_startup_preflight = false,
-                                   bool cancel_on_public_input_close = false);
+                                   bool cancel_on_public_input_close = false,
+                                   PullError* current_failure = nullptr);
   bool graph_dispatch_to_stage_group(std::size_t group_index, simaai::neat::graph::PortId port,
                                      Sample&& sample, std::size_t edge_index,
                                      const EdgeRouterOptions& options,

@@ -204,11 +204,21 @@ GraphReport Graph::validate(const ValidateOptions& opt) const {
   try {
     pipeline = session_build_parse_pipeline_or_throw(br, "Graph::validate");
   } catch (const NeatError& e) {
-    rep.error_code =
-        e.report().error_code.empty() ? error_codes::kParseLaunch : e.report().error_code;
-    rep.repro_note = e.report().repro_note.empty() ? std::string(e.what()) : e.report().repro_note;
-    rep.repro_gst_launch = "gst-launch-1.0 -v '" + rep.pipeline_string + "'";
-    return rep;
+    GraphReport failure = e.report();
+    if (failure.error_code.empty()) {
+      failure.error_code = error_codes::kParseLaunch;
+    }
+    if (failure.pipeline_string.empty()) {
+      failure.pipeline_string = rep.pipeline_string;
+    }
+    if (failure.repro_gst_launch.empty()) {
+      failure.repro_gst_launch = "gst-launch-1.0 -v '" + failure.pipeline_string + "'";
+    }
+    if (failure.nodes.empty() && br.diag) {
+      failure.nodes = br.diag->snapshot_basic().nodes;
+    }
+    return failure;
+
   } catch (const std::exception& e) {
     rep.error_code = error_codes::kParseLaunch;
     rep.repro_note =
@@ -354,11 +364,21 @@ GraphReport Graph::validate(const ValidateOptions& opt, const cv::Mat& input) co
   try {
     pipeline = session_build_parse_pipeline_or_throw(br, "Graph::validate(input)");
   } catch (const NeatError& e) {
-    rep.error_code =
-        e.report().error_code.empty() ? error_codes::kParseLaunch : e.report().error_code;
-    rep.repro_note = e.report().repro_note.empty() ? std::string(e.what()) : e.report().repro_note;
-    rep.repro_gst_launch = "gst-launch-1.0 -v '" + rep.pipeline_string + "'";
-    return rep;
+    GraphReport failure = e.report();
+    if (failure.error_code.empty()) {
+      failure.error_code = error_codes::kParseLaunch;
+    }
+    if (failure.pipeline_string.empty()) {
+      failure.pipeline_string = rep.pipeline_string;
+    }
+    if (failure.repro_gst_launch.empty()) {
+      failure.repro_gst_launch = "gst-launch-1.0 -v '" + failure.pipeline_string + "'";
+    }
+    if (failure.nodes.empty() && br.diag) {
+      failure.nodes = br.diag->snapshot_basic().nodes;
+    }
+    return failure;
+
   } catch (const std::exception& e) {
     rep.error_code = error_codes::kParseLaunch;
     rep.repro_note =
