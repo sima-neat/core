@@ -407,6 +407,9 @@ int infer_yolox_interleaved_class_depth(const BoxDecodeStaticContract& contract)
 // Grouped by role: first half loc (4*A), second half conf (num_classes*A), paired by
 // feature level with one class count across levels.
 int infer_ssd_grouped_class_depth(const BoxDecodeStaticContract& contract) {
+  if (const auto* recipe = find_ssd_recipe_descriptor(contract.ssd_recipe_id)) {
+    return recipe->encoded_class_count;
+  }
   if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return 0;
   }

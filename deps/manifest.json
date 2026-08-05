@@ -1,7 +1,7 @@
 {
   "internals": {
     "branch": "feat/ssd-recipe-validation-and-coverage",
-    "spec": "75de69cc177b"
+    "spec": "0669f4c88122"
   },
   "llima": {
     "policy": "snap"

@@ -148,6 +148,7 @@ RUN_TEST(
       ssd_box.boxdecode.ssd_recipe_id =
           simaai::neat::pipeline_internal::sima::stagesemantics::SsdRecipeId::SsdMobile300V1;
       ssd_box.boxdecode.decode_type_option = simaai::neat::BoxDecodeTypeOption::GroupedByRole;
+      ssd_box.boxdecode.preproc_resize_mode = "stretch";
       manifest.stages.push_back(std::move(ssd_box));
 
       std::string attach_error;
@@ -258,6 +259,9 @@ RUN_TEST(
       require(ssd_box_stage->payload.boxdecode.decode_type != nullptr &&
                   std::string(ssd_box_stage->payload.boxdecode.decode_type) == "ssd",
               "manifest ABI must preserve the backend-compatible SSD family token");
+      require(ssd_box_stage->payload.boxdecode.preproc_resize_mode != nullptr &&
+                  std::string(ssd_box_stage->payload.boxdecode.preproc_resize_mode) == "stretch",
+              "manifest ABI must preserve the validated preprocessing resize mode");
 
       const SimaPluginStageSpec* mla_stage =
           sima_plugin_manifest_stage_by_logical_id(accessor, "stage_mla");

@@ -393,6 +393,7 @@ struct BoxDecodeStagePayload {
   int num_classes = 0; ///< Legacy runtime value; SSD uses selected_count.
   std::vector<sima_ev_shape_desc> slice_shapes;
   std::vector<int> tensor_storage_kind;
+  std::string preproc_resize_mode; ///< Validated static resize policy for prepared runtime.
 };
 
 /// Placeholder payload for quant / dequant / tess / quanttess stages (carries only a reserved field

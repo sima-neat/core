@@ -22,7 +22,9 @@ struct SsdLevelSpec {
 };
 
 enum class SsdLocalizationChannelOrder : std::uint8_t {
-  AnchorMajorCoordinates,
+  CoordinatesMajorAnchors,
+  AnchorMajorTyTxThTw,
+  AnchorMajorDxDyDwDh,
 };
 
 enum class SsdConfidenceChannelOrder : std::uint8_t {
@@ -49,7 +51,7 @@ struct SsdRecipeDescriptor {
   ResizeMode required_resize = ResizeMode::Stretch;
   BoxDecodeScoreActivation activation = BoxDecodeScoreActivation::Unknown;
   SsdLocalizationChannelOrder localization_order =
-      SsdLocalizationChannelOrder::AnchorMajorCoordinates;
+      SsdLocalizationChannelOrder::CoordinatesMajorAnchors;
   SsdConfidenceChannelOrder confidence_order = SsdConfidenceChannelOrder::ClassMajorAnchors;
   int background_class = 0;
   int encoded_class_count = 0;

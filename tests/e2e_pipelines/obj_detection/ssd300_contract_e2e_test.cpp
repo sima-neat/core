@@ -8,6 +8,7 @@
  *   SSD300          -- feats {38,19,10,5,3,1}, priors {4,6,6,6,4,4} -> softmax, 300
  *   SSD-Mobile-300  -- feats {19,10,5,3,2,1}, priors {3,6,6,6,6,6} -> sigmoid, 300
  *   SSD-Mobile-320  -- feats {20,10,5,3,2,1}, priors {3,6,6,6,6,6} -> sigmoid, 320
+ *   TorchVision SSDlite-Mobile-320 -- same feats, priors {6,6,6,6,6,6} -> softmax, 320
  * Needs no model pack or dispatcher, so it is registered STRICT and must fail
  * (not skip) on any regression.
  */
@@ -140,6 +141,9 @@ int main() {
                           SsdRecipeId::SsdMobile300V1, BoxDecodeScoreActivation::Sigmoid, 300);
     check_recipe_compiles("ssd_mobilenet_v3", {20, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91,
                           SsdRecipeId::SsdMobile320V1, BoxDecodeScoreActivation::Sigmoid, 320);
+    check_recipe_compiles("torchvision_ssdlite_mobilenet_v3", {20, 10, 5, 3, 2, 1},
+                          {6, 6, 6, 6, 6, 6}, 91, SsdRecipeId::SsdLiteMobile320V1,
+                          BoxDecodeScoreActivation::Softmax, 320);
 
     // ssd_expected_model_frame() drives the hand-built compile-time frame check: it resolves
     // the recipe from the heads and returns its required frame.
@@ -155,6 +159,10 @@ int main() {
         grouped_ssd_contract({20, 10, 5, 3, 2, 1}, {3, 6, 6, 6, 6, 6}, 91));
     require(mobile_v3_frame.width == 320 && mobile_v3_frame.height == 320,
             "MobileNetV3 heads must resolve to a 320 frame");
+    const auto ssdlite_v3_frame = ssd_expected_model_frame(
+        grouped_ssd_contract({20, 10, 5, 3, 2, 1}, {6, 6, 6, 6, 6, 6}, 91));
+    require(ssdlite_v3_frame.width == 320 && ssdlite_v3_frame.height == 320,
+            "TorchVision SSDlite-MobileNetV3 heads must resolve to a 320 frame");
     std::cout << "[ssd300-contract] recipe model-frame resolution OK\n";
 
     // Model-managed (MPK subset) route must carry the same SSD300 contract.
@@ -201,7 +209,7 @@ int main() {
     // Fail fast: generic / wrong-prior SSD head sets are rejected, not decoded.
     expect_rejected("generic_4_level", {64, 32, 16, 8}, {6, 6, 6, 6}, 21);
     expect_rejected("ssd300_wrong_priors", {38, 19, 10, 5, 3, 1}, {6, 6, 6, 6, 6, 6}, 81);
-    expect_rejected("unverified_mobilenet_shape", {20, 10, 5, 3, 2, 1}, {6, 6, 6, 6, 6, 6}, 91);
+    expect_rejected("unverified_mobilenet_shape", {20, 10, 5, 3, 2, 1}, {4, 6, 6, 6, 6, 6}, 91);
 
     // A recipe-shaped loc signature is not sufficient; without valid conf heads the
     // payload would reach the runtime with num_classes=0.

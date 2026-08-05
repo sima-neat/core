@@ -17,6 +17,7 @@ enum class SsdRecipeId : std::uint8_t {
   Ssd300V1 = 1,
   SsdMobile300V1 = 2,
   SsdMobile320V1 = 3,
+  SsdLiteMobile320V1 = 4,
 };
 
 enum class SsdClassSelectionKind : std::uint8_t {
@@ -41,6 +42,8 @@ constexpr const char* ssd_recipe_id_token(SsdRecipeId id) {
     return "ssd-mobile-300-v1";
   case SsdRecipeId::SsdMobile320V1:
     return "ssd-mobile-320-v1";
+  case SsdRecipeId::SsdLiteMobile320V1:
+    return "ssdlite-mobile-320-v1";
   case SsdRecipeId::Unknown:
   default:
     return "unknown";

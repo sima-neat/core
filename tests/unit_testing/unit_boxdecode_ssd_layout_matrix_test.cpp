@@ -66,6 +66,7 @@ const std::vector<int> kValidSsd300Conf = {324, 486, 486, 486, 324, 324};
 //   SSD300          -- feats {38,19,10,5,3,1}, priors {4,6,6,6,4,4}, softmax
 //   SSD-MobileNetV2 -- feats {19,10,5,3,2,1}, priors {3,6,6,6,6,6}, sigmoid
 //   SSD-MobileNetV3 -- feats {20,10,5,3,2,1}, priors {3,6,6,6,6,6}, sigmoid
+//   TorchVision SSDlite-MobileNetV3 -- same feats, priors {6,6,6,6,6,6}, softmax
 RUN_TEST(
     "unit_boxdecode_ssd_layout_matrix_test", ([] {
       using namespace simaai::neat;
@@ -89,6 +90,7 @@ RUN_TEST(
         int num_classes;         // foreground + background
         SsdRecipeId recipe_id;
         BoxDecodeScoreActivation activation;
+        SsdLocalizationChannelOrder localization_order;
         SsdConfidenceChannelOrder confidence_order;
       };
 
@@ -100,6 +102,7 @@ RUN_TEST(
            81,
            SsdRecipeId::Ssd300V1,
            BoxDecodeScoreActivation::Softmax,
+           SsdLocalizationChannelOrder::CoordinatesMajorAnchors,
            SsdConfidenceChannelOrder::ClassMajorAnchors},
           // SSD-MobileNetV2-COCO: reduced first level (3 priors), sigmoid scores.
           {"ssd_mobilenet_v2",
@@ -108,6 +111,7 @@ RUN_TEST(
            91,
            SsdRecipeId::SsdMobile300V1,
            BoxDecodeScoreActivation::Sigmoid,
+           SsdLocalizationChannelOrder::AnchorMajorTyTxThTw,
            SsdConfidenceChannelOrder::AnchorMajorClasses},
           // SSD-MobileNetV3-COCO: 320 input and a 20x20 first feature level.
           {"ssd_mobilenet_v3",
@@ -116,6 +120,17 @@ RUN_TEST(
            91,
            SsdRecipeId::SsdMobile320V1,
            BoxDecodeScoreActivation::Sigmoid,
+           SsdLocalizationChannelOrder::AnchorMajorTyTxThTw,
+           SsdConfidenceChannelOrder::AnchorMajorClasses},
+          // TorchVision SSDlite-MobileNetV3: six default boxes at every level,
+          // anchor-major confidence rows, and a 91-way softmax.
+          {"torchvision_ssdlite_mobilenet_v3",
+           {20, 10, 5, 3, 2, 1},
+           {6, 6, 6, 6, 6, 6},
+           91,
+           SsdRecipeId::SsdLiteMobile320V1,
+           BoxDecodeScoreActivation::Softmax,
+           SsdLocalizationChannelOrder::AnchorMajorDxDyDwDh,
            SsdConfidenceChannelOrder::AnchorMajorClasses},
       };
 
@@ -161,6 +176,8 @@ RUN_TEST(
                 std::string(c.name) + ": descriptor must require stretch resize");
         require(descriptor->background_class == 0,
                 std::string(c.name) + ": descriptor background class mismatch");
+        require(descriptor->localization_order == c.localization_order,
+                std::string(c.name) + ": descriptor localization order mismatch");
         require(descriptor->confidence_order == c.confidence_order,
                 std::string(c.name) + ": descriptor confidence order mismatch");
         require(descriptor->encoded_class_count == c.num_classes,
@@ -275,6 +292,45 @@ RUN_TEST(
           invalid_depth_rejected = true;
         }
         require(invalid_depth_rejected, "sliced channel depth beyond physical storage must reject");
+      }
+
+      // BF16 tess-off-MLA compiler output can retain transport tile depth in slice_shape even
+      // though input_shape already describes the complete SSD head. The exact physical signature
+      // must recover the recipe while preserving slice_shape as transport geometry for the packed
+      // backend accessor; arbitrary shapes remain unsupported because the fallback still requires
+      // a full registered recipe.
+      {
+        auto transport_tiled_head = [](int side, int semantic_channels,
+                                       int transport_slice_channels) {
+          BoxDecodeTensorStaticContract tensor;
+          tensor.input_shape = {side, side, semantic_channels};
+          tensor.slice_shape = {1, 1, transport_slice_channels};
+          tensor.data_type = "BF16";
+          tensor.layout = "HWC";
+          tensor.source_storage_kind = BoxDecodeSourceStorageKind::PackedCBlock;
+          return tensor;
+        };
+        BoxDecodeStaticContract contract;
+        const std::vector<int> feat = {20, 10, 5, 3, 2, 1};
+        for (int side : feat) {
+          contract.tensors.push_back(transport_tiled_head(side, 24, 16));
+        }
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          const int transport_channels = i < 2U ? 546 : 144;
+          contract.tensors.push_back(transport_tiled_head(feat[i], 546, transport_channels));
+        }
+
+        const auto finalized = finalize_boxdecode_static_contract(
+            contract, BoxDecodeType::Ssd, std::nullopt, std::nullopt, BoxDecodeTypeOption::Auto,
+            0.40, 0.45, 200, /*num_classes=*/0, {"orig_width", "orig_height"});
+        require(finalized.ssd_recipe_id == SsdRecipeId::SsdLiteMobile320V1,
+                "exact input channels must recover the BF16 tess-off-MLA SSDlite recipe");
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          require(finalized.tensors[i].slice_shape.back() == 16,
+                  "SSDlite localization transport tile depth must be preserved");
+          require(finalized.tensors[i + feat.size()].slice_shape.back() == (i < 2U ? 546 : 144),
+                  "SSDlite confidence transport tile depth must be preserved");
+        }
       }
 
       // An MPK cannot override a profile's fixed score domain. In particular, an SSD300
