@@ -58,8 +58,82 @@ opt.top_k = 100;
 | Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
 | Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
 | Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
+| SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | keypoints `[N,2]`, scores `[N]`, descriptors `[N,D]` |
 
 Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
+
+## SuperPoint
+
+SuperPoint remains part of the BoxDecode product surface, but emits feature points rather than
+pretending that they are boxes. The minimal A65-default configuration is:
+
+```cpp
+BoxDecodeOptions options{BoxDecodeType::SuperPoint};
+options.superpoint.descriptor_output_dtype = TensorDType::Float32;
+
+auto decoder = nodes::SimaBoxDecode(model, options);
+```
+
+Python uses the same defaults:
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.SuperPoint)
+options.superpoint.descriptor_output_dtype = pyneat.TensorDType.Float32
+
+decoder = pyneat.nodes.sima_box_decode(model, options=options)
+```
+
+`A65V1` is the default profile. Select another profile explicitly when the
+model requires different numerical behavior; Neat does not infer behavior from
+tensor shapes or values:
+
+| Profile | When to select it | Production status |
+|---|---|---|
+| `LightGlueV1` | LightGlue-compatible detector, NMS, coordinate, and descriptor behavior | Supported |
+| `MagicLeapDemoV1` | The pinned Magic Leap demo behavior | Supported |
+| `A65V1` | Compatibility with the former A65 SuperPoint decoder | Supported; default |
+| `PaperBicubicV1` | Reserved numeric ID for a future fully specified bicubic policy | Rejected until production-defined |
+
+Numerical behavior and output encoding are independent. For example, select A65 numerical
+behavior with the default V1 output:
+
+```cpp
+BoxDecodeOptions options{BoxDecodeType::SuperPoint};
+options.superpoint.profile = SuperPointProfile::A65V1;
+options.superpoint.output_format = SuperPointOutputFormat::FeaturePointsV1;
+```
+
+The legacy byte layout is opt-in and has additional constraints:
+
+```cpp
+options.superpoint.profile = SuperPointProfile::A65V1;
+options.superpoint.output_format = SuperPointOutputFormat::LegacyA65InterleavedV0;
+options.superpoint.descriptor_output_dtype = TensorDType::Int8;
+```
+
+`SuperPointProfile::Auto` first uses authoritative MPK `superpoint.profile` metadata. If neither
+the API, `Model::Options.superpoint.profile`, nor MPK supplies a profile, it resolves to `A65V1`.
+Neat never guesses a profile from tensor shapes, values, filenames, or downstream nodes.
+
+When their public sentinel values are left unchanged, `detection_threshold=0.0`, `top_k=0`,
+`nms_radius=-1`, and `border_margin=-1` resolve from the selected profile. `A65V1` resolves to a
+threshold of `0.1`, Top-K `600`, NMS radius `4`, and border margin `0`. LightGlueV1 and
+MagicLeapDemoV1 use thresholds `0.0005` and `0.015`, respectively; both use Top-K `600`, NMS
+radius `4`, and border margin `4`.
+
+`nms_iou_threshold` does not apply to SuperPoint; use the pixel-radius
+`superpoint.nms_radius`. The default output is the versioned `FEATURE_POINTS_V1` structure-of-arrays
+payload. `LegacyA65InterleavedV0` is an explicit migration format and requires 256-dimensional INT8
+descriptors. Use `decode_superpoint` rather than `decode_bbox` or `BoxDecodeResults`.
+
+Versioned MPK `superpoint` schema v1 records are fail-closed. They must name the profile, distinct
+detector and descriptor tensor IDs, a `sha256:` fingerprint with 64 hexadecimal digits, and the
+supported input representations `raw-logits-65` and `coarse-pre-l2`. Schema 0 remains accepted only
+as a migration/manual record; omitted schema-0 representation fields are canonicalized to those two
+raw-input representations and recorded as defaults in diagnostics. Unknown schema versions or
+representation tokens fail contract compilation.
+If an API profile override conflicts with a fingerprint stamped for a different MPK profile,
+re-stamp the MPK for the selected profile; Neat does not discard or reinterpret that provenance.
 
 ## BBOX wire payload
 
