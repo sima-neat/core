@@ -110,6 +110,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "ssd") {
     return BoxDecodeType::Ssd;
   }
+  if (lower == "superpoint" || lower == "super-point") {
+    return BoxDecodeType::SuperPoint;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }
@@ -121,6 +124,38 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   }
   if (lower == "centernet") {
     return BoxDecodeType::Centernet;
+  }
+  return std::nullopt;
+}
+
+std::optional<SuperPointProfile> parse_superpoint_profile_token(std::string_view token) {
+  const std::string lower = lower_copy_local(token);
+  if (lower.empty() || lower == "auto") {
+    return SuperPointProfile::Auto;
+  }
+  if (lower == "lightglue-v1" || lower == "lightglue_v1") {
+    return SuperPointProfile::LightGlueV1;
+  }
+  if (lower == "magic-leap-demo-v1" || lower == "magicleap-demo-v1" ||
+      lower == "magic_leap_demo_v1") {
+    return SuperPointProfile::MagicLeapDemoV1;
+  }
+  if (lower == "paper-bicubic-v1" || lower == "paper_bicubic_v1") {
+    return SuperPointProfile::PaperBicubicV1;
+  }
+  if (lower == "a65-v1" || lower == "a65_v1") {
+    return SuperPointProfile::A65V1;
+  }
+  return std::nullopt;
+}
+
+std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::string_view token) {
+  const std::string lower = lower_copy_local(token);
+  if (lower.empty() || lower == "feature-points-v1" || lower == "feature_points_v1") {
+    return SuperPointOutputFormat::FeaturePointsV1;
+  }
+  if (lower == "legacy-a65-interleaved-v0" || lower == "legacy_a65_interleaved_v0") {
+    return SuperPointOutputFormat::LegacyA65InterleavedV0;
   }
   return std::nullopt;
 }

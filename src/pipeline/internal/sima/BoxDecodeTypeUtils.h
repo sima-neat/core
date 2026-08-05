@@ -18,6 +18,7 @@
 #endif
 
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/SuperPointTypes.h"
 
 #include <optional>
 #include <string>
@@ -30,6 +31,12 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
 
 /// Parse a token string into a `BoxDecodeTypeOption`; nullopt if unknown.
 std::optional<BoxDecodeTypeOption> parse_box_decode_type_option_token(std::string_view token);
+
+/// Parse a stable SuperPoint numerical-profile token; nullopt if unknown.
+std::optional<SuperPointProfile> parse_superpoint_profile_token(std::string_view token);
+
+/// Parse a stable SuperPoint output-format token; nullopt if unknown.
+std::optional<SuperPointOutputFormat> parse_superpoint_output_format_token(std::string_view token);
 
 /// True when `type` is anything other than `BoxDecodeType::Unspecified`.
 bool is_box_decode_type_specified(BoxDecodeType type);

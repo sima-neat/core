@@ -14,8 +14,9 @@
  */
 #pragma once
 
-#include "pipeline/BoxDecodeType.h"
+#include "pipeline/BoxDecodeOptions.h"
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 
@@ -41,17 +42,8 @@ namespace stages {
  * @ingroup pipeline
  * @see BoxDecodeType
  */
-struct BoxDecodeOptions {
-  // Decode type is explicit by construction; BoxDecode fails fast for Unspecified.
-  /// @brief Construct with an explicit decode family.
-  explicit BoxDecodeOptions(BoxDecodeType type) : decode_type(type) {}
-  /// Default-construction is disabled — `decode_type` must be explicit.
-  BoxDecodeOptions() = delete;
-
-  BoxDecodeType decode_type;        ///< Decode family selection (YOLO, DETR, EffDet, ...).
-  double detection_threshold = 0.0; ///< Minimum class score to keep a detection.
-  double nms_iou_threshold = 0.0;   ///< IoU threshold used by NMS filtering.
-  int top_k = 0;                    ///< Maximum detections to retain (0 = backend default).
+struct BoxDecodeOptions : simaai::neat::BoxDecodeOptions {
+  using simaai::neat::BoxDecodeOptions::BoxDecodeOptions;
 };
 
 /// @brief Extract the tensor list embedded in a single `Sample`.
@@ -95,6 +87,10 @@ Sample BoxDecode(const Sample& inputs, const simaai::neat::Model& model,
  */
 BoxDecodeResultList BoxDecodeResults(const Sample& inputs, const simaai::neat::Model& model,
                                      const BoxDecodeOptions& opt);
+
+/** Run SuperPoint BoxDecode and parse every output as feature-point tensors. */
+FeaturePointTensorList SuperPointResults(const Sample& inputs, const simaai::neat::Model& model,
+                                         const BoxDecodeOptions& opt);
 
 } // namespace stages
 } // namespace simaai::neat
