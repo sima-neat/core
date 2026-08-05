@@ -168,6 +168,7 @@ int main() {
     require_package_version("libcamera-dev", "2.1.1+neat1");
     require_package_version("simaai-memory-lib", "2.1.1-0neat2");
     require_package_version("simaai-memory-lib-dev", "2.1.1-0neat2");
+    require_package_version("simaai-mlart-modalix", "2.1.3~pre4040");
     require_versioned_provide("libcamera", "libcamera", "2.1.3~pre4040");
     require_versioned_provide("libcamera-tools", "libcamera-tools", "2.1.3~pre4040");
     require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4040");
