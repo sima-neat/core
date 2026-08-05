@@ -31,13 +31,18 @@ class NativeModalixRestoreTest(unittest.TestCase):
         result = run_bash(
             r'''
 source "$1"
-DEBS=(./neat-mlart-modalix.deb ./neat-runtime.deb)
+DEBS=(./neat-mlart-modalix.deb ./neat-appcomplex.deb ./neat-runtime.deb)
 neat_mlart_installed=1
 dpkg-deb() {
-  [[ "$1" == -f && "$3" == Package ]] || return 2
-  case "$2" in
-    ./neat-mlart-modalix.deb) printf '%s\n' neat-mlart-modalix ;;
-    ./neat-runtime.deb) printf '%s\n' neat-runtime ;;
+  [[ "$1" == -f ]] || return 2
+  case "$2:$3" in
+    ./neat-mlart-modalix.deb:Package) printf '%s\n' neat-mlart-modalix ;;
+    ./neat-appcomplex.deb:Package) printf '%s\n' neat-appcomplex ;;
+    ./neat-appcomplex.deb:Depends)
+      printf '%s\n' 'simaai-mlart-modalix (= 2.1.3~pre4040)'
+      ;;
+    ./neat-runtime.deb:Package) printf '%s\n' neat-runtime ;;
+    *) return 2 ;;
   esac
 }
 deb_package_is_installed() {
@@ -48,8 +53,6 @@ deb_package_is_installed() {
   esac
 }
 deb_package_installed_version() { printf '%s\n' 2.1.3~pre4040; }
-resolve_package_manifest_path() { printf '%s\n' ./manifest.json; }
-read_manifest_platform_package_version() { printf '%s\n' 2.1.3~pre4040; }
 exact_package_install_spec() {
   [[ "$1:$2" == simaai-mlart-modalix:2.1.3~pre4040 ]]
   printf '%s\n' 'simaai-mlart-modalix=2.1.3~pre4040'
@@ -81,7 +84,10 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
         self.assertIn("<simaai-mlart-modalix=2.1.3~pre4040>", transaction)
         self.assertIn("<--allow-downgrades>", transaction)
         self.assertNotIn("<--no-remove>", transaction)
-        self.assertIn("REMAINING: <./neat-runtime.deb>", result.stdout)
+        self.assertIn(
+            "REMAINING: <./neat-appcomplex.deb> <./neat-runtime.deb>",
+            result.stdout,
+        )
 
     def test_absent_neat_mlart_skips_platform_package_transaction(self) -> None:
         result = run_bash(

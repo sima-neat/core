@@ -430,21 +430,6 @@ print(version.split("+", 1)[0])
 PY
 }
 
-read_manifest_platform_package_version() {
-  python3 - "$1" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-manifest_path = Path(sys.argv[1])
-data = json.loads(manifest_path.read_text(encoding="utf-8"))
-version = str(data["platform-package-version"]).strip()
-if not version:
-    raise SystemExit("platform-package-version must not be empty")
-print(version)
-PY
-}
-
 read_sdk_platform_version() {
   local release_file="$1"
   awk -F'=' '
@@ -1432,6 +1417,26 @@ exact_package_install_spec() {
   return 1
 }
 
+bundled_exact_dependency_version() {
+  local package="$1"
+  local dependency="$2"
+  local deb deb_package depends version
+  for deb in "${DEBS[@]}"; do
+    deb_package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    [[ "${deb_package}" == "${package}" ]] || continue
+    depends="$(dpkg-deb -f "${deb}" Depends 2>/dev/null || true)"
+    version="$(
+      exact_dependency_version_from_relations "${dependency}" <<<"${depends}" || true
+    )"
+    if [[ -n "${version}" ]]; then
+      printf '%s\n' "${version}"
+      return 0
+    fi
+  done
+  echo "Bundled ${package} has no exact dependency on ${dependency}." >&2
+  return 1
+}
+
 remove_local_neat_mlart_from_general_transaction() {
   local deb package
   local -a remaining=()
@@ -1445,15 +1450,14 @@ remove_local_neat_mlart_from_general_transaction() {
 }
 
 restore_native_mlart_if_neat_package_installed() {
-  local manifest_path platform_version platform_spec simulation_log
+  local platform_version platform_spec simulation_log
   local removed installed_version
   local -a apt_args=(apt-get install -y --fix-broken --allow-downgrades)
 
   remove_local_neat_mlart_from_general_transaction
   if deb_package_is_installed neat-mlart-modalix; then
-    manifest_path="$(resolve_package_manifest_path)"
     platform_version="$(
-      read_manifest_platform_package_version "${manifest_path}"
+      bundled_exact_dependency_version neat-appcomplex simaai-mlart-modalix
     )" || return 1
     platform_spec="$(
       exact_package_install_spec simaai-mlart-modalix "${platform_version}"
