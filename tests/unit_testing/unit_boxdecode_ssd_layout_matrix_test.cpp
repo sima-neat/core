@@ -636,15 +636,19 @@ RUN_TEST(
       require(box_decode_type_token_string(BoxDecodeType::Ssd) == "ssd",
               "box_decode_type_token_string(Ssd) mismatch");
       require(!parse_box_decode_type_token("ssd300-v1").has_value() &&
-                  !parse_box_decode_type_token("ssd-mobile-300-v1").has_value(),
+                  !parse_box_decode_type_token("ssd-mobile-300-v1").has_value() &&
+                  !parse_box_decode_type_token("ssd-mobile-320-v1").has_value() &&
+                  !parse_box_decode_type_token("ssdlite-mobile-320-v1").has_value(),
               "Core-side recipe IDs must not be accepted as runtime decode-family tokens");
       require(box_decode_type_is_ssd_family(BoxDecodeType::Ssd), "Ssd must be in the SSD family");
       require(!box_decode_type_is_yolo_family(BoxDecodeType::Ssd), "Ssd must not be a yolo family");
       require(!box_decode_type_is_segmentation(BoxDecodeType::Ssd), "Ssd is not segmentation");
       require(!box_decode_type_is_pose(BoxDecodeType::Ssd), "Ssd is not pose");
-      require(std::string(box_decode_type_contract_summary(BoxDecodeType::Ssd)).find("SSD") !=
-                  std::string::npos,
+      const std::string ssd_summary = box_decode_type_contract_summary(BoxDecodeType::Ssd);
+      require(ssd_summary.find("SSD") != std::string::npos,
               "Ssd contract summary missing SSD description");
+      require(ssd_summary.find("SSDlite-Mobile-320-v1") != std::string::npos,
+              "Ssd contract summary missing the SSDlite-Mobile-320-v1 profile");
 
       const auto* ssd300_recipe = find_ssd_recipe_descriptor(SsdRecipeId::Ssd300V1);
       require(ssd300_recipe != nullptr, "SSD300 recipe descriptor must exist");

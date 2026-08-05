@@ -794,7 +794,8 @@ The intended behavior:
 SSD model packs are validated against a private registry of exact post-surgery head contracts
 during graph compilation. The resolver compares every ordered logical localization and confidence
 H/W/C shape; it does not sort levels, use model names, or accept a generic SSD-like fallback.
-Currently registered recipes are SSD300-v1, SSD-Mobile-300-v1, and SSD-Mobile-320-v1.
+Currently registered recipes are SSD300-v1, SSD-Mobile-300-v1, SSD-Mobile-320-v1, and
+SSDlite-Mobile-320-v1.
 
 The resolved recipe owns score activation, confidence-channel order, background class, allowed
 class selection, required 300x300 or 320x320 model frame, and Stretch preprocessing. Core carries

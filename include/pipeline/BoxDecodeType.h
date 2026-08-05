@@ -31,19 +31,22 @@ namespace simaai::neat {
  * 32-channel mask-coefficient heads, and a trailing mask prototype.
  * `YoloV26Pose` uses the same raw l/t/r/b bbox heads, 1-channel pose scores,
  * and 51-channel keypoint heads.
- * `Ssd` selects one of three prepared SSD contracts (not a generic SSD decoder), resolved from the
+ * `Ssd` selects one of four prepared SSD contracts (not a generic SSD decoder), resolved from the
  * complete ordered box-decode head geometry at compile time:
  *  - SSD300: feats {38,19,10,5,3,1}, priors-per-cell {4,6,6,6,4,4}, 300x300, softmax.
  *  - SSD-Mobile-300: feats {19,10,5,3,2,1}, priors-per-cell {3,6,6,6,6,6}, 300x300,
  *    per-class sigmoid.
  *  - SSD-Mobile-320: feats {20,10,5,3,2,1}, priors-per-cell {3,6,6,6,6,6}, 320x320,
  *    per-class sigmoid.
+ *  - SSDlite-Mobile-320: feats {20,10,5,3,2,1}, priors-per-cell {6,6,6,6,6,6}, 320x320,
+ *    softmax.
  * All use grouped per-level localization heads (depth = 4 * priors-per-cell) paired with
  * class-confidence heads (depth = num_classes * priors-per-cell), and require a stretch
  * preprocessing resize; any other head set, model frame or resize is rejected.
  *
  * SSD `num_classes` is always derived from the confidence-head depth. The SSD300 recipe permits a
- * contiguous prefix selection; both SSD-Mobile recipes require the exact encoded class count.
+ * contiguous prefix selection; both SSD-Mobile recipes and SSDlite-Mobile-320 require the exact
+ * encoded class count.
  *
  * @ingroup pipeline
  */
@@ -338,11 +341,12 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "YOLOX raw-head contract: interleaved [bbox_i, obj_logit_i, class_logit_i] "
            "heads with raw xywh boxes, objectness logits, and class logits.";
   case BoxDecodeType::Ssd:
-    return "SSD contract (three prepared profiles only): per-level grouped "
+    return "SSD contract (four prepared profiles only): per-level grouped "
            "localization heads (depth=4*priors-per-cell) paired with class-confidence heads "
            "(depth=num_classes*priors-per-cell). The complete ordered signature resolves "
-           "internally to SSD300-v1 (softmax @300), SSD-Mobile-300-v1 (sigmoid @300), or "
-           "SSD-Mobile-320-v1 (sigmoid @320); every other signature is rejected.";
+           "internally to SSD300-v1 (softmax @300), SSD-Mobile-300-v1 (sigmoid @300), "
+           "SSD-Mobile-320-v1 (sigmoid @320), or SSDlite-Mobile-320-v1 (softmax @320); every "
+           "other signature is rejected.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:
