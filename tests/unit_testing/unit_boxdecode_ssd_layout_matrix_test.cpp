@@ -235,6 +235,52 @@ RUN_TEST(
                 "SSD300 class-logit names must not override recipe softmax");
       }
 
+      // The standalone sample path must apply the same rule as compiled-upstream extraction.
+      // A sample carries concrete routing names, but those names still do not define an SSD
+      // recipe's score domain.
+      {
+        const std::vector<int> feat = {38, 19, 10, 5, 3, 1};
+        const std::vector<int> priors = {4, 6, 6, 6, 4, 4};
+        TensorList tensors;
+        auto add_tensor = [&](int side, int channels, const std::string& name) {
+          Tensor tensor;
+          tensor.dtype = TensorDType::BFloat16;
+          tensor.layout = TensorLayout::HWC;
+          tensor.shape = {side, side, channels};
+          tensor.storage =
+              make_cpu_owned_storage(static_cast<std::size_t>(side) * side * channels * 2U);
+          tensor.route.logical_index = static_cast<int>(tensors.size());
+          tensor.route.physical_index = tensor.route.logical_index;
+          tensor.route.route_slot = tensor.route.logical_index;
+          tensor.route.name = name;
+          tensors.push_back(std::move(tensor));
+        };
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          add_tensor(feat[i], 4 * priors[i], "bbox_" + std::to_string(i));
+        }
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          add_tensor(feat[i], 81 * priors[i], "class_logit_" + std::to_string(i));
+        }
+
+        BoxDecodeStandaloneContractOverrides overrides;
+        overrides.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
+        std::string error;
+        const auto extracted = build_boxdecode_static_contract_from_sample(
+            sample_from_tensors(tensors), BoxDecodeType::Ssd, std::nullopt, overrides, &error);
+        require(extracted.has_value(),
+                "sample-derived SSD300 class-logit extraction must succeed: " + error);
+        require(extracted->score_activation == BoxDecodeScoreActivation::Unknown,
+                "sample class-logit names must not preempt SSD recipe resolution");
+
+        const auto finalized = finalize_boxdecode_static_contract(
+            *extracted, BoxDecodeType::Ssd, std::nullopt, std::nullopt, BoxDecodeTypeOption::Auto,
+            0.40, 0.45, 200, /*num_classes=*/0, {"orig_width", "orig_height"});
+        require(finalized.ssd_recipe_id == SsdRecipeId::Ssd300V1,
+                "sample-derived SSD300 heads must resolve by exact geometry");
+        require(finalized.score_activation == BoxDecodeScoreActivation::Softmax,
+                "sample-derived SSD300 class-logit names must not override recipe softmax");
+      }
+
       // Prepared MLA tensors may have padded physical channel storage. Resolution must use
       // the logical sliced depth while still requiring the exact logical H/W/C signature.
       {

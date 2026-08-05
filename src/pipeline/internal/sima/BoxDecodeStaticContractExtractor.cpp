@@ -771,6 +771,11 @@ maybe_infer_float_yolov8_score_activation_from_sample_values_local(
 std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_sample_local(
     const TensorList& tensors, BoxDecodeType decode_type,
     const std::optional<InputContract>& input_contract, std::string* error_message) {
+  if (box_decode_type_is_ssd_family(decode_type)) {
+    // SSD score domains belong to exact recipes. Standalone tensor names are routing labels and
+    // must not turn a softmax recipe into sigmoid before geometry-based recipe resolution.
+    return BoxDecodeScoreActivation::Unknown;
+  }
   bool saw_prob_tensor = false;
   bool saw_logit_tensor = false;
   for (std::size_t i = 0; i < tensors.size(); ++i) {
@@ -800,10 +805,6 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
   if (decode_type_is_yolov8_family_local(decode_type) ||
       decode_type_is_yolov26_family_local(decode_type)) {
     return BoxDecodeScoreActivation::Sigmoid;
-  }
-  if (box_decode_type_is_ssd_family(decode_type)) {
-    // The exact ordered head signature resolves the recipe-specific activation downstream.
-    return BoxDecodeScoreActivation::Unknown;
   }
   set_error(error_message,
             "boxdecode inferred input tensors require explicit class score activation semantics");
