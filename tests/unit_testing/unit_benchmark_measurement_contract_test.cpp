@@ -446,6 +446,31 @@ void graph_sample_timing_counters_are_measurement_window_deltas() {
               std::to_string(report.graph_sample_timing_misses));
 }
 
+void composite_close_preserves_active_measurement_node_metrics() {
+  using namespace simaai::neat;
+
+  const Tensor seed = make_rgb_input(0);
+  Graph source("image");
+  source.add(nodes::Input("image"));
+  Graph sink("output");
+  sink.add(nodes::Output("output", OutputOptions::EveryFrame(8)));
+  Graph graph;
+  graph.connect(source, sink);
+
+  Run run = graph.build(TensorList{seed});
+  MeasureScope scope = run.start_measurement(make_fast_measure_options());
+  require(run.push("image", TensorList{make_rgb_input(1)}),
+          "composite measured push should succeed");
+  require_measured_output(run.pull("output", kTimeoutMs), "composite measured pull");
+
+  run.close();
+  const MeasureReport report = scope.stop();
+
+  require(!report.node_metrics.empty(),
+          "closing a composite Run must preserve child node metrics until its active "
+          "MeasureScope stops");
+}
+
 void internal_graph_run_measurement_collects_e2e_latency_and_throughput() {
   using namespace simaai::neat;
 
@@ -593,6 +618,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("logical_batch_throughput", logical_batch_size_controls_inference_throughput);
            run_case("graph_sample_timing_counter_deltas",
                     graph_sample_timing_counters_are_measurement_window_deltas);
+           run_case("composite_close_preserves_active_measurement_node_metrics",
+                    composite_close_preserves_active_measurement_node_metrics);
            run_case("internal_graph_run_measurement",
                     internal_graph_run_measurement_collects_e2e_latency_and_throughput);
            run_case("model_benchmark_projection",
