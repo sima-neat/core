@@ -870,7 +870,7 @@ if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
   )
   simaneat_append_ctest_env(ssd_mobilenet_boxdecode_perf_smoke)
   set_tests_properties(ssd_mobilenet_boxdecode_perf_smoke PROPERTIES
-    LABELS "perf;ssd;boxdecode;metrics;long"
+    LABELS "perf;ssd;boxdecode;metrics;long;modalix-only"
     RESOURCE_LOCK "perf-device"
     SKIP_RETURN_CODE 77
   )
