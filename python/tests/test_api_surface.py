@@ -157,6 +157,26 @@ def _assert_not_type_error(call):
     assert not isinstance(exc, TypeError), str(exc)
 
 
+def test_superpoint_named_options_surface():
+  options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.SuperPoint)
+  assert options.decode_type == pyneat.BoxDecodeType.SuperPoint
+  assert options.superpoint.profile == pyneat.SuperPointProfile.Auto
+  assert options.superpoint.nms_radius == -1
+  assert options.superpoint.border_margin == -1
+  assert options.superpoint.output_format == pyneat.SuperPointOutputFormat.FeaturePointsV1
+  assert hasattr(pyneat.SuperPointProfile, "A65V1")
+  assert not hasattr(pyneat.SuperPointProfile, "LegacyA65V1")
+
+  options.detection_threshold = 0.1
+  options.top_k = 600
+  options.superpoint.profile = pyneat.SuperPointProfile.LightGlueV1
+  options.superpoint.nms_radius = 0
+  options.superpoint.descriptor_output_dtype = pyneat.TensorDType.Float32
+  assert options.superpoint.profile == pyneat.SuperPointProfile.LightGlueV1
+  assert options.superpoint.nms_radius == 0
+  assert callable(pyneat.decode_superpoint)
+
+
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
   assert not hasattr(pyneat.Graph, "build_fused_realtime_source")

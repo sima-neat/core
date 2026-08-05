@@ -1,4 +1,5 @@
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/TensorMath.h"
 
@@ -264,6 +265,10 @@ std::vector<Box> parse_bbox_bytes(const std::vector<uint8_t>& bytes, int img_w, 
 
 BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w, int img_h,
                                    int expected_topk, bool strict) {
+  if (!read_feature_format(tensor).empty()) {
+    throw std::runtime_error(
+        "bbox tensor is a SuperPoint feature payload; use decode_superpoint_tensor");
+  }
   if (!tensor.storage) {
     throw std::runtime_error("bbox tensor missing storage");
   }
@@ -322,6 +327,10 @@ simaai::neat::TensorList decode_bbox(const simaai::neat::TensorList& bbox_tensor
   out.reserve(bbox_tensors.size());
   for (std::size_t i = 0; i < bbox_tensors.size(); ++i) {
     const simaai::neat::Tensor& in = bbox_tensors[i];
+    if (!read_feature_format(in).empty()) {
+      throw std::runtime_error("decode_bbox: input tensor " + std::to_string(i) +
+                               " is a SuperPoint feature payload; use decode_superpoint");
+    }
     const std::string fmt = read_detection_format(in);
     // Prefer the type-honest detection tag. The producer (EV74 box-decode
     // plugin) does not yet stamp it, so fall back to recognizing the canonical
