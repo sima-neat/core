@@ -113,10 +113,25 @@ RUN_TEST(
       require(compiled_user_classes.payload.num_classes == 80,
               "compiled payload should preserve explicit user num_classes override");
 
+      const auto finalized_legacy_override =
+          finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
+                                             std::nullopt, BoxDecodeTypeOption::GroupedByRoleLogit,
+                                             0.25, 0.55, 100, 42, {"orig_width", "orig_height"});
+      require(finalized_legacy_override.num_classes == 42,
+              "pre-YOLO26 decode families should preserve explicit class-count overrides");
+
+      BoxDecodeStaticContract yolov26_contract = contract;
+      yolov26_contract.decode_type = BoxDecodeType::YoloV26;
+      yolov26_contract.tensors[0].slice_shape = {80, 80, 4};
+      yolov26_contract.tensors[0].logical_name = "bbox_0";
+      yolov26_contract.tensors[0].backend_name = "bbox_0";
+      yolov26_contract.tensors[1].logical_name = "class_logit_0";
+      yolov26_contract.tensors[1].backend_name = "class_logit_0";
+
       bool rejected_mismatched_classes = false;
       try {
-        (void)finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
-                                                 std::nullopt,
+        (void)finalize_boxdecode_static_contract(yolov26_contract, BoxDecodeType::YoloV26,
+                                                 std::nullopt, std::nullopt,
                                                  BoxDecodeTypeOption::GroupedByRoleLogit, 0.25,
                                                  0.55, 100, 42, {"orig_width", "orig_height"});
       } catch (const std::invalid_argument& error) {
@@ -127,7 +142,7 @@ RUN_TEST(
                 "class-count mismatch should report configured and inferred values");
       }
       require(rejected_mismatched_classes,
-              "explicit num_classes must not override a contradictory MPK class-head depth");
+              "YOLO26 num_classes must not override a contradictory MPK class-head depth");
 
       BoxDecodeStaticContract probability_domain = contract;
       probability_domain.decode_type_option = BoxDecodeTypeOption::GroupedByRole;

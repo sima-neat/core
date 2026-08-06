@@ -82,9 +82,9 @@ RUN_TEST("unit_boxdecode_ssd_layout_matrix_test", ([] {
              contract.tensors.push_back(head(10, 10, 21 * 6)); // conf head -> infers 21
              auto finalized = finalize_boxdecode_static_contract(
                  contract, BoxDecodeType::Ssd, std::nullopt, std::nullopt,
-                 BoxDecodeTypeOption::Auto, 0.40, 0.45, 200, /*num_classes=*/21,
+                 BoxDecodeTypeOption::Auto, 0.40, 0.45, 200, /*num_classes=*/7,
                  {"orig_width", "orig_height"});
-             require(finalized.num_classes == 21, "explicit ssd num_classes not honored");
+             require(finalized.num_classes == 7, "explicit ssd num_classes override not honored");
            }
 
            // Model-managed (subset) route: a compiled SSD contract built directly from a

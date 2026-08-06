@@ -913,6 +913,11 @@ bool boxdecode_looks_interleaved_yolo_dfl_local(
   return true;
 }
 
+bool boxdecode_has_strict_class_count_local(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV26 || type == BoxDecodeType::YoloV26Pose ||
+         type == BoxDecodeType::YoloV26Seg;
+}
+
 std::string boxdecode_tensor_order_summary_local(
     const pipeline_internal::sima::BoxDecodeStaticContract& contract) {
   std::ostringstream oss;
@@ -8362,7 +8367,8 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
     validate_requested_boxdecode_contract_type(compiled->payload.decode_type, opt.decode_type,
                                                "Model-managed boxdecode stage");
     if (model.impl_->options.num_classes > 0) {
-      if (compiled->payload.num_classes > 0 &&
+      if (boxdecode_has_strict_class_count_local(compiled->payload.decode_type) &&
+          compiled->payload.num_classes > 0 &&
           compiled->payload.num_classes != model.impl_->options.num_classes) {
         throw std::invalid_argument(
             "Model-managed BoxDecode num_classes mismatch: Model::Options.num_classes=" +

@@ -472,6 +472,11 @@ bool decode_type_is_pose_yolo(BoxDecodeType type) {
   return type == BoxDecodeType::YoloV8Pose || type == BoxDecodeType::YoloV26Pose;
 }
 
+bool decode_type_is_yolov26_family(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV26 || type == BoxDecodeType::YoloV26Pose ||
+         type == BoxDecodeType::YoloV26Seg;
+}
+
 bool decode_type_is_packed_yolo(BoxDecodeType type) {
   return type == BoxDecodeType::Yolo || type == BoxDecodeType::YoloV5 ||
          type == BoxDecodeType::YoloV5Seg || type == BoxDecodeType::YoloV7 ||
@@ -550,7 +555,8 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
 
   const int inferred = infer_boxdecode_num_classes_from_contract(contract);
   if (user_num_classes > 0) {
-    if (inferred > 0 && user_num_classes != inferred) {
+    if (decode_type_is_yolov26_family(contract.decode_type) && inferred > 0 &&
+        user_num_classes != inferred) {
       throw std::invalid_argument(
           std::string(context ? context : "BoxDecode") + " num_classes mismatch: configured=" +
           std::to_string(user_num_classes) + " inferred_from_mpk=" + std::to_string(inferred) +
