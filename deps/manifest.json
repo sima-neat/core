@@ -1,10 +1,6 @@
 {
-  "internals": {
-    "policy": "snap"
-  },
-  "llima": {
-    "policy": "snap"
-  },
+  "internals": "v0.3.0",
+  "llima": "v0.3.0",
   "sdk": {
     "channel": "develop"
   },
