@@ -28,6 +28,8 @@ public:
   bool accepts_image() const;
   bool accepts_audio() const;
   std::string model_id() const;
+  void set_lora(const std::string& adapter_name);
+  void unset_lora();
   GenerationResult run(const GenerationRequest& request);
   GenerationStream stream(const GenerationRequest& request);
 

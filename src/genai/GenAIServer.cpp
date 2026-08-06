@@ -765,6 +765,12 @@ struct GenAIServer::Impl {
     http.Post("/stop", [this](const httplib::Request& req, httplib::Response& res) {
       handle_stop(req, res);
     });
+    http.Post("/set_lora", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_lora(req, res, true);
+    });
+    http.Post("/unset_lora", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_lora(req, res, false);
+    });
     auto options_handler = [](const httplib::Request&, httplib::Response& res) {
       set_cors(res);
       res.status = 200;
@@ -779,6 +785,8 @@ struct GenAIServer::Impl {
     http.Options("/api/chat", options_handler);
     http.Options("/api/generate", options_handler);
     http.Options("/stop", options_handler);
+    http.Options("/set_lora", options_handler);
+    http.Options("/unset_lora", options_handler);
   }
 
   static void set_cors(httplib::Response& res) {
@@ -1017,6 +1025,91 @@ struct GenAIServer::Impl {
       set_json(res, {{"status", "stopping"},
                      {"model", model_name.value_or(std::string{"*"})},
                      {"cancelled_streams", cancelled}});
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 500);
+    }
+  }
+
+  std::optional<std::pair<std::string, std::shared_ptr<GenAIModel>>>
+  select_lora_model(const nlohmann::json& body, httplib::Response& res) const {
+    std::string model_name;
+    if (body.contains("model")) {
+      if (!body.at("model").is_string() || body.at("model").get_ref<const std::string&>().empty()) {
+        set_error(res, "LoRA model must be a non-empty string", 400);
+        return std::nullopt;
+      }
+      model_name = body.at("model").get<std::string>();
+    } else {
+      std::lock_guard<std::mutex> lock(registry_mutex);
+      for (const auto& [name, entry] : registry) {
+        if (entry.model->accepts_audio()) {
+          continue;
+        }
+        if (!model_name.empty()) {
+          set_error(res, "LoRA request requires model when multiple eligible models are served",
+                    400);
+          return std::nullopt;
+        }
+        model_name = name;
+      }
+    }
+
+    if (model_name.empty()) {
+      set_error(res, "LoRA request requires a text or vision-language model", 400);
+      return std::nullopt;
+    }
+    auto model = find_model(model_name);
+    if (!model) {
+      set_error(res, "Unknown model: " + model_name, 404);
+      return std::nullopt;
+    }
+    if (!require_text_or_vision_model(*model, model_name, res)) {
+      return std::nullopt;
+    }
+    return std::pair{std::move(model_name), std::move(model)};
+  }
+
+  void handle_lora(const httplib::Request& req, httplib::Response& res, bool enable) {
+    set_cors(res);
+    nlohmann::json body;
+    try {
+      body = parse_json_body(req);
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 400);
+      return;
+    }
+    if (!body.is_object()) {
+      set_error(res, "LoRA request body must be a JSON object", 400);
+      return;
+    }
+
+    std::string adapter_name;
+    if (enable) {
+      if (!body.contains("name") || !body.at("name").is_string()) {
+        set_error(res, "LoRA request requires string name", 400);
+        return;
+      }
+      adapter_name = body.at("name").get<std::string>();
+    }
+
+    auto selected = select_lora_model(body, res);
+    if (!selected.has_value()) {
+      return;
+    }
+    auto& [model_name, model] = *selected;
+    try {
+      if (enable) {
+        model->set_lora(adapter_name);
+      } else {
+        model->unset_lora();
+      }
+      set_json(res, {{"status", "ok"},
+                     {"model", model_name},
+                     {"lora", enable ? nlohmann::json(adapter_name) : nlohmann::json(nullptr)}});
+    } catch (const std::invalid_argument& e) {
+      set_error(res, e.what(), 400);
+    } catch (const std::filesystem::filesystem_error& e) {
+      set_error(res, e.what(), 404);
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
     }

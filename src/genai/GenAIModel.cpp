@@ -63,6 +63,22 @@ std::string GenAIModel::model_id() const {
   return internal::model_id_from_path(impl_->info.package_root);
 }
 
+void GenAIModel::set_lora(const std::string& adapter_name) {
+  auto* model = std::get_if<VisionLanguageModel>(&impl_->model);
+  if (!model) {
+    throw std::invalid_argument("Dynamic LoRA is not supported for ASR models");
+  }
+  model->set_lora(adapter_name);
+}
+
+void GenAIModel::unset_lora() {
+  auto* model = std::get_if<VisionLanguageModel>(&impl_->model);
+  if (!model) {
+    throw std::invalid_argument("Dynamic LoRA is not supported for ASR models");
+  }
+  model->unset_lora();
+}
+
 GenerationResult GenAIModel::run(const GenerationRequest& request) {
   return std::visit([&](auto& model) { return model.run(request); }, impl_->model);
 }
