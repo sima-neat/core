@@ -5,6 +5,8 @@
 
 #include <array>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 RUN_TEST(
     "unit_contract_compiler_boxdecode_test", ([] {
@@ -104,12 +106,28 @@ RUN_TEST(
       const auto finalized_user_classes =
           finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
                                              std::nullopt, BoxDecodeTypeOption::GroupedByRoleLogit,
-                                             0.25, 0.55, 100, 42, {"orig_width", "orig_height"});
-      require(finalized_user_classes.num_classes == 42,
-              "explicit user num_classes should override MPK-inferred class depth");
+                                             0.25, 0.55, 100, 80, {"orig_width", "orig_height"});
+      require(finalized_user_classes.num_classes == 80,
+              "matching explicit num_classes should preserve the MPK class depth");
       const auto compiled_user_classes = build_boxdecode_compiled_contract(finalized_user_classes);
-      require(compiled_user_classes.payload.num_classes == 42,
+      require(compiled_user_classes.payload.num_classes == 80,
               "compiled payload should preserve explicit user num_classes override");
+
+      bool rejected_mismatched_classes = false;
+      try {
+        (void)finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
+                                                 std::nullopt,
+                                                 BoxDecodeTypeOption::GroupedByRoleLogit, 0.25,
+                                                 0.55, 100, 42, {"orig_width", "orig_height"});
+      } catch (const std::invalid_argument& error) {
+        rejected_mismatched_classes = true;
+        require(std::string(error.what())
+                        .find("num_classes mismatch: configured=42 inferred_from_mpk=80") !=
+                    std::string::npos,
+                "class-count mismatch should report configured and inferred values");
+      }
+      require(rejected_mismatched_classes,
+              "explicit num_classes must not override a contradictory MPK class-head depth");
 
       BoxDecodeStaticContract probability_domain = contract;
       probability_domain.decode_type_option = BoxDecodeTypeOption::GroupedByRole;

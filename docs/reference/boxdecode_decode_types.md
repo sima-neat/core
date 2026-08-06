@@ -211,6 +211,9 @@ non-empty or positive value.
 | `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
 | `top_k` | `0` | Preserve packaged top-K. |
 | `top_k` | `> 0` | Override the maximum kept detections. |
+| `num_classes` | `0` | Use the class-head depth inferred from the MPK. |
+| `num_classes` | positive integer matching the MPK | Use the explicit class count. This is required when the MPK cannot infer a split single-class head reliably. |
+| `num_classes` | positive integer contradicting the MPK | Fail before pipeline construction and report both values. A class-count mismatch is a model contract error, not an override. |
 
 `detection_threshold` is the name used by the BoxDecode node/stage
 constructors. `ModelOptions.score_threshold` is the model-route option that

@@ -8364,13 +8364,13 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
     if (model.impl_->options.num_classes > 0) {
       if (compiled->payload.num_classes > 0 &&
           compiled->payload.num_classes != model.impl_->options.num_classes) {
-        std::fprintf(
-            stderr,
-            "[WARN] BoxDecode num_classes mismatch: user=%d inferred_from_mpk=%d "
-            "decode_type=%s. Using user value.\n",
-            model.impl_->options.num_classes, compiled->payload.num_classes,
-            pipeline_internal::sima::box_decode_type_token_string(compiled->payload.decode_type)
-                .c_str());
+        throw std::invalid_argument(
+            "Model-managed BoxDecode num_classes mismatch: Model::Options.num_classes=" +
+            std::to_string(model.impl_->options.num_classes) + " but the MPK class-head depth is " +
+            std::to_string(compiled->payload.num_classes) + " for decode_type=" +
+            pipeline_internal::sima::box_decode_type_token_string(compiled->payload.decode_type) +
+            ". Set Model::Options.num_classes=" + std::to_string(compiled->payload.num_classes) +
+            " to match the model, or leave it 0 to use MPK inference.");
       }
       compiled->payload.num_classes = model.impl_->options.num_classes;
     }

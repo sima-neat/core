@@ -551,11 +551,12 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
   const int inferred = infer_boxdecode_num_classes_from_contract(contract);
   if (user_num_classes > 0) {
     if (inferred > 0 && user_num_classes != inferred) {
-      std::fprintf(stderr,
-                   "[WARN] %s num_classes mismatch: user=%d inferred_from_mpk=%d decode_type=%s. "
-                   "Using user value.\n",
-                   context ? context : "BoxDecode", user_num_classes, inferred,
-                   box_decode_type_token(contract.decode_type));
+      throw std::invalid_argument(
+          std::string(context ? context : "BoxDecode") + " num_classes mismatch: configured=" +
+          std::to_string(user_num_classes) + " inferred_from_mpk=" + std::to_string(inferred) +
+          " decode_type=" + box_decode_type_token(contract.decode_type) +
+          ". Set num_classes=" + std::to_string(inferred) +
+          " to match the model class-head depth, or leave it 0 to use MPK inference.");
     }
     return user_num_classes;
   }

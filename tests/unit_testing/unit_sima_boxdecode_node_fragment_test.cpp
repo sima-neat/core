@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <stdexcept>
 
 namespace {
 
@@ -209,6 +210,24 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            simaai::neat::Model::Options managed_opt = model_opt;
            managed_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8Seg;
            simaai::neat::Model managed_model(tar_path, managed_opt);
+
+           simaai::neat::Model::Options wrong_class_count_opt = managed_opt;
+           wrong_class_count_opt.num_classes = 1;
+           simaai::neat::Model wrong_class_count_model(tar_path, wrong_class_count_opt);
+           bool class_count_mismatch_rejected = false;
+           try {
+             (void)simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(
+                 wrong_class_count_model, false);
+           } catch (const std::invalid_argument& error) {
+             class_count_mismatch_rejected = true;
+             require_contains(error.what(),
+                              "num_classes mismatch: configured=1 inferred_from_mpk=80",
+                              std::string("model-managed class-count error should report the ") +
+                                  "configured and MPK-inferred values; got: " + error.what());
+           }
+           require(class_count_mismatch_rejected,
+                   "model-managed BoxDecode must reject a class count that contradicts the MPK");
+
            auto managed_node = simaai::neat::nodes::SimaBoxDecode(
                managed_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100);
            const auto* managed_box =
