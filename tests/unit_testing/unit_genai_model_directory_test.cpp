@@ -51,7 +51,7 @@ fs::path write_vlm(const fs::path& root, std::optional<bool> is_draft = std::nul
 
 fs::path write_packaged_vlm(const fs::path& package, const std::string& name,
                             std::optional<bool> is_draft) {
-  return write_vlm(package / name / "sima_files", is_draft);
+  return write_vlm(package / name, is_draft);
 }
 
 void require_throws_contains(const std::function<void()>& fn, const std::string& expected) {
@@ -90,9 +90,6 @@ RUN_TEST(
 
       require_throws_contains([&] { (void)internal::inspect_model_directory(target_root); },
                               "pass its parent directory");
-      require_throws_contains(
-          [&] { (void)internal::inspect_model_directory(target_root.parent_path()); },
-          "pass its parent directory");
       require_throws_contains([&] { (void)internal::inspect_model_directory(draft_root); },
                               "pass its parent directory");
 
