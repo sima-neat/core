@@ -1747,9 +1747,6 @@ private:
               : nullptr;
       out.spec.payload.boxdecode.input_dtype =
           stage.boxdecode.input_dtype.empty() ? nullptr : stage.boxdecode.input_dtype.c_str();
-      out.spec.payload.boxdecode.preproc_resize_mode =
-          stage.boxdecode.preproc_resize_mode.empty() ? nullptr
-                                                      : stage.boxdecode.preproc_resize_mode.c_str();
       out.spec.payload.boxdecode.score_activation =
           static_cast<gint>(stage.boxdecode.score_activation);
       out.spec.payload.boxdecode.tess_needed = stage.boxdecode.tess_needed ? 1 : 0;

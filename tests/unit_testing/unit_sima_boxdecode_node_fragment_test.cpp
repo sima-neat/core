@@ -192,6 +192,58 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
                    "default Model route must not auto-select BoxDecode from inferred MPK "
                    "topology");
 
+           // YOLO defines the established preprocessing-metadata contract. SSD and
+           // SuperPoint must consume geometry through the same neatobjectdecode path rather
+           // than inventing family-specific width/height sources.
+           auto metadata_yolo = simaai::neat::nodes::SimaBoxDecode(
+               simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45, 100, "metadata_yolo");
+           auto metadata_ssd = simaai::neat::nodes::SimaBoxDecode(
+               simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "metadata_ssd");
+           simaai::neat::BoxDecodeOptions superpoint_options(
+               simaai::neat::BoxDecodeType::SuperPoint);
+           superpoint_options.superpoint.profile = simaai::neat::SuperPointProfile::A65V1;
+           auto metadata_superpoint = simaai::neat::nodes::SimaBoxDecode(
+               superpoint_options, "metadata_superpoint");
+
+           const auto* metadata_yolo_box =
+               dynamic_cast<const simaai::neat::SimaBoxDecode*>(metadata_yolo.get());
+           const auto* metadata_ssd_box =
+               dynamic_cast<const simaai::neat::SimaBoxDecode*>(metadata_ssd.get());
+           const auto* metadata_superpoint_box =
+               dynamic_cast<const simaai::neat::SimaBoxDecode*>(metadata_superpoint.get());
+           require(metadata_yolo_box && metadata_ssd_box && metadata_superpoint_box,
+                   "all BoxDecode families must use concrete SimaBoxDecode nodes");
+           require_contains(metadata_yolo_box->backend_fragment(0), "neatobjectdecode",
+                            "YOLO must use the shared ObjectDecode plugin");
+           require_contains(metadata_ssd_box->backend_fragment(0), "neatobjectdecode",
+                            "SSD must use the shared ObjectDecode plugin");
+           require_contains(metadata_superpoint_box->backend_fragment(0), "neatobjectdecode",
+                            "SuperPoint must use the shared ObjectDecode plugin");
+
+           const auto yolo_geometry_req = metadata_yolo_box->preprocess_meta_requirement();
+           const auto ssd_geometry_req = metadata_ssd_box->preprocess_meta_requirement();
+           const auto superpoint_geometry_req =
+               metadata_superpoint_box->preprocess_meta_requirement();
+           require(yolo_geometry_req && ssd_geometry_req && superpoint_geometry_req,
+                   "metadata-driven BoxDecode families must require preprocessing metadata");
+           require(yolo_geometry_req->required_fields == ssd_geometry_req->required_fields,
+                   "SSD must preserve YOLO's preprocessing metadata contract");
+           require(yolo_geometry_req->required_fields ==
+                       superpoint_geometry_req->required_fields,
+                   "SuperPoint must preserve YOLO's preprocessing metadata contract");
+           for (const char* geometry_field : {
+                    "preproc_original_width", "preproc_original_height",
+                    "preproc_resized_width", "preproc_resized_height",
+                    "preproc_scaled_width", "preproc_scaled_height", "preproc_pad_left",
+                    "preproc_pad_right", "preproc_pad_top", "preproc_pad_bottom",
+                    "preproc_resize_mode"}) {
+             require(std::find(yolo_geometry_req->required_fields.begin(),
+                               yolo_geometry_req->required_fields.end(), geometry_field) !=
+                         yolo_geometry_req->required_fields.end(),
+                     std::string("shared BoxDecode preprocessing contract is missing '") +
+                         geometry_field + "'");
+           }
+
            simaai::neat::Model::Options mismatched_opt = model_opt;
            mismatched_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
            simaai::neat::Model mismatched_model(tar_path, mismatched_opt);

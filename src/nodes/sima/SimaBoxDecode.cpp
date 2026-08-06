@@ -1007,8 +1007,6 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
       box_decode_type_is_ssd_family(compiled_contract.payload.decode_type));
   if (opt->compiled_contract) {
     auto updated = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
-    updated->payload.preproc_resize_mode =
-        effective_resize_mode ? resize_mode_token_local(*effective_resize_mode) : "";
     updated->runtime_contract.required_preprocess_meta_fields =
         opt->required_preprocess_meta_fields;
     opt->compiled_contract = updated;
