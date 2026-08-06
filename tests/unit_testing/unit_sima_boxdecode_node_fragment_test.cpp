@@ -230,12 +230,12 @@ RUN_TEST(
               "SuperPoint must preserve YOLO's preprocessing metadata contract");
       for (const char* geometry_field :
            {"preproc_original_width", "preproc_original_height", "preproc_resized_width",
-            "preproc_resized_height", "preproc_scaled_width", "preproc_scaled_height",
-            "preproc_pad_left", "preproc_pad_right", "preproc_pad_top", "preproc_pad_bottom",
-            "preproc_resize_mode", "preproc_affine_m00", "preproc_affine_m01",
-            "preproc_affine_m02", "preproc_affine_m10", "preproc_affine_m11",
-            "preproc_affine_m12", "preproc_affine_scale_x", "preproc_affine_scale_y",
-            "preproc_affine_offset_x", "preproc_affine_offset_y"}) {
+            "preproc_resized_height", "preproc_scaled_width",    "preproc_scaled_height",
+            "preproc_pad_left",       "preproc_pad_right",       "preproc_pad_top",
+            "preproc_pad_bottom",     "preproc_resize_mode",     "preproc_affine_m00",
+            "preproc_affine_m01",     "preproc_affine_m02",      "preproc_affine_m10",
+            "preproc_affine_m11",     "preproc_affine_m12",      "preproc_affine_scale_x",
+            "preproc_affine_scale_y", "preproc_affine_offset_x", "preproc_affine_offset_y"}) {
         require(std::find(yolo_geometry_req->required_fields.begin(),
                           yolo_geometry_req->required_fields.end(),
                           geometry_field) != yolo_geometry_req->required_fields.end(),
