@@ -555,16 +555,8 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
 
   const int inferred = infer_boxdecode_num_classes_from_contract(contract);
   if (user_num_classes > 0) {
-    if (decode_type_is_yolov26_family(contract.decode_type) && inferred > 0 &&
-        user_num_classes != inferred) {
-      throw std::invalid_argument(
-          std::string(context ? context : "BoxDecode") + " num_classes mismatch: configured=" +
-          std::to_string(user_num_classes) + " inferred_from_mpk=" + std::to_string(inferred) +
-          " decode_type=" + box_decode_type_token(contract.decode_type) +
-          ". Set num_classes=" + std::to_string(inferred) +
-          " to match the model class-head depth, or leave it 0 to use MPK inference.");
-    }
-    return user_num_classes;
+    return resolve_boxdecode_num_classes_override(contract.decode_type, inferred, user_num_classes,
+                                                  context);
   }
   return inferred;
 }
@@ -864,6 +856,24 @@ void populate_boxdecode_node_contract_common(
 }
 
 } // namespace
+
+int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferred_num_classes,
+                                           int requested_num_classes, const char* context) {
+  if (requested_num_classes <= 0) {
+    return inferred_num_classes;
+  }
+  if (decode_type_is_yolov26_family(decode_type) && inferred_num_classes > 0 &&
+      requested_num_classes != inferred_num_classes) {
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") +
+        " num_classes mismatch: configured=" + std::to_string(requested_num_classes) +
+        " inferred_from_mpk=" + std::to_string(inferred_num_classes) +
+        " decode_type=" + box_decode_type_token(decode_type) +
+        ". Set num_classes=" + std::to_string(inferred_num_classes) +
+        " to match the model class-head depth, or leave it 0 to use MPK inference.");
+  }
+  return requested_num_classes;
+}
 
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract) {
   if (!contract) {

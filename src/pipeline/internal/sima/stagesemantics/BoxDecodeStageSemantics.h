@@ -42,6 +42,12 @@ void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract);
 // lowering. No-op for non-SSD decode types.
 void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
 
+/// Resolve an explicit class-count override against an inferred decoder contract. YOLO26 family
+/// layouts reject contradictory positive values; other families preserve their existing override
+/// behavior. A non-positive override selects the inferred value.
+int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferred_num_classes,
+                                           int requested_num_classes, const char* context);
+
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
     const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
     const std::optional<ModelBoxdecodeSemantics>& model_semantics,

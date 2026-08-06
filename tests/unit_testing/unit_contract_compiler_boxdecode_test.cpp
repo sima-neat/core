@@ -367,6 +367,23 @@ RUN_TEST(
       require(compiled_yolo26.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
               "YOLO26 compiled payload should preserve sigmoid activation");
 
+      bool rejected_model_managed_classes = false;
+      try {
+        (void)resolve_boxdecode_num_classes_override(
+            compiled_yolo26.payload.decode_type, compiled_yolo26.payload.num_classes,
+            /*requested_num_classes=*/42, "Model-managed BoxDecode");
+      } catch (const std::invalid_argument& error) {
+        rejected_model_managed_classes = true;
+        const std::string message = error.what();
+        require(message.find("configured=42") != std::string::npos &&
+                    message.find("inferred_from_mpk=80") != std::string::npos &&
+                    message.find("decode_type=yolo26") != std::string::npos,
+                "model-managed compiled-contract mismatch should report both class counts and "
+                "the decoder family");
+      }
+      require(rejected_model_managed_classes,
+              "model-managed YOLO26 compiled contracts must reject contradictory class counts");
+
       BoxDecodeStaticContract yolo26_pose_contract = yolo26_contract;
       yolo26_pose_contract.tensors.clear();
       yolo26_pose_contract.tensor_names.clear();

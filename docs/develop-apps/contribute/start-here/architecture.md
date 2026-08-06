@@ -359,6 +359,16 @@ otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
 `simaaiboxdecode` elements by default.
 
+##### YOLO26 BoxDecode class-count contract
+
+For model-managed YOLO26 detection, pose, and segmentation routes, the MPK class-head depth is the
+authoritative class count. `Model::Options::num_classes = 0` selects that inferred value. A positive
+value must match it; a contradiction fails during contract construction and reports the configured
+value, the MPK-derived value, and the decode type. This prevents an invalid class count from being
+used to interpret the grouped raw-head layout. SSD and pre-YOLO26 non-pose YOLO families retain
+their existing explicit-override behavior, while pose and SuperPoint decoders retain their
+family-specific rules.
+
 ##### SuperPoint BoxDecode contract
 
 SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
