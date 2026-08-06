@@ -78,7 +78,7 @@ std::optional<std::filesystem::path> resolve_draft_model(std::filesystem::path& 
     if (!entry.is_directory()) {
       continue;
     }
-    const auto runtime_root = entry.path() / "sima_files";
+    const auto runtime_root = entry.path();
     const auto config_path = runtime_root / "devkit" / "vlm_config.json";
     if (!is_existing_regular_file(config_path)) {
       continue;
