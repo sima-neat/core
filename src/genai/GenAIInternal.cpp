@@ -25,11 +25,20 @@ bool is_existing_regular_file(const std::filesystem::path& path) {
   return std::filesystem::is_regular_file(path, ec);
 }
 
+bool has_vision_model_name(const nlohmann::json& config) {
+  const auto it = config.find("vision_model_name");
+  if (it == config.end()) {
+    return false;
+  }
+  if (it->is_string()) {
+    return !it->get<std::string>().empty();
+  }
+  return it->is_array() && !it->empty();
+}
+
 bool has_vision_capability(const nlohmann::json& config) {
   return config.contains("vm_cfg") && !config.at("vm_cfg").is_null() && config.contains("mm_cfg") &&
-         !config.at("mm_cfg").is_null() && config.contains("vision_model_name") &&
-         config.at("vision_model_name").is_string() &&
-         !config.at("vision_model_name").get<std::string>().empty();
+         !config.at("mm_cfg").is_null() && has_vision_model_name(config);
 }
 
 nlohmann::json parse_json_file(const std::filesystem::path& path) {
