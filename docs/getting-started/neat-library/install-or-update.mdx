@@ -18,6 +18,7 @@ Run the installer from the environment where you build or run Neat applications:
 | Environment | Use this when |
 | --- | --- |
 | Neat SDK | You want to upgrade the Neat Library in the Neat SDK without installing a new SDK version. |
+| ROS2 SDK | You want to compile ROS 2 applications natively on ARM64 with Neat headers and libraries installed in the container's system paths. |
 | DevKit | You want to install or update the runtime directly on the device. |
 
 ## Prerequisites
@@ -56,10 +57,11 @@ under `/media/nvme` to avoid filling the root file system. In the SDK container,
 use a container-local path such as `$HOME/neat`.
 
 Select your environment, then run the steps in order. Install in the **Neat SDK**
-container to cross-compile C++ applications; install on the **DevKit** to set up
-the runtime there, which also provisions PyNeat at `~/pyneat`. The installer
-commands are the same in both places — only the working directory and where you
-run them differ.
+container to cross-compile C++ applications. Install in the **ROS2 SDK** to
+compile natively on ARM64; its Debian packages are installed into `/usr` rather
+than the Neat cross-compilation sysroot. Install on the **DevKit** to set up the
+runtime there, which also provisions PyNeat at `~/pyneat`. The installer command
+is the same in every environment.
 
 <CodeTabs>
 <CodeTab label="Neat SDK" lang="bash">
@@ -76,6 +78,28 @@ and tests:
 
 <ShellCommand prompt="username@neat-sdk-latest">
 sima-cli neat install core@v0.2.2
+</ShellCommand>
+
+</CodeTab>
+
+<CodeTab label="ROS2 SDK" lang="bash">
+
+Confirm that the container identifies itself as the native ROS2 SDK and reports
+the platform version expected by the Neat package:
+
+<ShellCommand prompt="username@ros2-sdk-latest">
+grep -E '^(SDK Type|Platform Version) =' /etc/sdk-release
+</ShellCommand>
+
+Install Neat. The installer verifies `SDK Type = ros2-sdk`, checks the platform
+version and native ARM64 Debian environment, simulates the APT transaction with
+package removal disabled, and then installs the runtime and development packages
+into the container's system paths. PyNeat is not installed because it is a
+DevKit runtime feature:
+
+<ShellCommand prompt="username@ros2-sdk-latest">
+cd $HOME && mkdir -p neat && cd neat
+sima-cli neat install core@release-0.3
 </ShellCommand>
 
 </CodeTab>

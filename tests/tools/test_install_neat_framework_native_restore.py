@@ -25,6 +25,253 @@ def run_bash(
     )
 
 
+class Ros2SdkInstallTest(unittest.TestCase):
+    def test_ros2_sdk_metadata_selects_native_sdk_mode(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+Product Name = SiMa.ai ROS2 SDK
+SDK Type = ros2-sdk
+Platform Version = 2.1.2
+EOF
+export ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+[[ "$(detect_env_mode)" == ros2-sdk ]]
+printf 'ROS2_MODE_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ROS2_MODE_OK", result.stdout)
+
+    def test_existing_elxr_sdk_metadata_keeps_sysroot_mode(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' 'SDK Version = 2.1.2_Palette_SDK_neat_main_deadbeef' > "${tmp}/sdk-release"
+export ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+[[ "$(detect_env_mode)" == elxr-sdk ]]
+printf 'ELXR_MODE_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ELXR_MODE_OK", result.stdout)
+
+    def test_unknown_sdk_metadata_is_not_treated_as_board_or_elxr_sdk(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' 'Product Name = Unknown SDK' > "${tmp}/sdk-release"
+export ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+[[ "$(detect_env_mode)" == unsupported ]]
+printf 'UNKNOWN_REFUSED\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("UNKNOWN_REFUSED", result.stdout)
+
+    def test_explicit_sysroot_remains_available_with_unrecognized_metadata(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' 'Product Name = Unknown SDK' > "${tmp}/sdk-release"
+mkdir -p "${tmp}/sysroot"
+export ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+export SYSROOT="${tmp}/sysroot"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+[[ "$(detect_env_mode)" == elxr-sdk ]]
+printf 'EXPLICIT_SYSROOT_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EXPLICIT_SYSROOT_OK", result.stdout)
+
+    def test_ros2_sdk_platform_version_matches_manifest(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Type = ros2-sdk
+Platform Version = 2.1.2
+Version = main:deadbeef:20260806T225502Z
+EOF
+printf '%s\n' '{"platform-version":"2.1.2+release-0.3.deadbeef"}' > "${tmp}/manifest.json"
+export ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+export NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+ENV_MODE=ros2-sdk
+ensure_platform_compatible
+printf 'PLATFORM_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Platform compatibility verified: 2.1.2", result.stdout)
+        self.assertIn("PLATFORM_OK", result.stdout)
+
+    def test_ros2_sdk_image_version_is_not_used_for_platform_compatibility(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Type = ros2-sdk
+Platform Version = 2.2.0
+Version = 2.1.2
+EOF
+printf '%s\n' '{"platform-version":"2.1.2"}' > "${tmp}/manifest.json"
+export ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+export NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+ENV_MODE=ros2-sdk
+ensure_platform_compatible
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Package platform-version: 2.1.2", result.stderr)
+        self.assertIn("Detected Platform Version: 2.2.0", result.stderr)
+
+    def test_ros2_sdk_uses_zero_removal_native_apt_transaction(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./sima-neat.deb ./sima-neat-dev.deb ./neat-runtime.deb)
+validate_ros2_sdk_native_host() { :; }
+validate_single_sima_neat_package_pair() { :; }
+validate_ros2_sdk_deb_architectures() { :; }
+refresh_apt_metadata_for_board_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+run_sudo() {
+  if [[ " $* " == *" --simulate "* ]]; then
+    printf 'SIMULATION_OK\n'
+    return 0
+  fi
+  printf 'RUN:'
+  printf ' <%s>' "$@"
+  printf '\n'
+}
+repair_global_sima_neat_lib_links() { printf 'REPAIRED_LINKS\n'; }
+verify_global_sima_neat_lib_links() { printf 'VERIFIED_LINKS\n'; }
+verify_ros2_sdk_deb_packages_installed() { printf 'VERIFIED_PACKAGES\n'; }
+install_debs_on_board() { printf 'BOARD_PATH_USED\n'; return 99; }
+install_debs_into_sysroot() { printf 'SYSROOT_PATH_USED\n'; return 99; }
+
+install_debs_in_ros2_sdk
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SIMULATION_OK", result.stdout)
+        self.assertIn("VERIFIED_PACKAGES", result.stdout)
+        self.assertIn("REPAIRED_LINKS", result.stdout)
+        self.assertIn("VERIFIED_LINKS", result.stdout)
+        transaction = next(
+            line for line in result.stdout.splitlines() if line.startswith("RUN:")
+        )
+        self.assertIn("<apt-get>", transaction)
+        self.assertIn("<--no-remove>", transaction)
+        self.assertIn("<--allow-downgrades>", transaction)
+        self.assertIn("<./sima-neat.deb>", transaction)
+        self.assertNotIn("--fix-broken", transaction)
+        self.assertNotIn("BOARD_PATH_USED", result.stdout)
+        self.assertNotIn("SYSROOT_PATH_USED", result.stdout)
+
+    def test_ros2_sdk_rejects_non_arm64_deb(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./sima-neat.deb ./sima-neat-dev.deb)
+dpkg-deb() {
+  case "$2" in
+    ./sima-neat.deb) printf '%s\n' arm64 ;;
+    ./sima-neat-dev.deb) printf '%s\n' amd64 ;;
+    *) return 1 ;;
+  esac
+}
+validate_ros2_sdk_deb_architectures
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be arm64 or all", result.stderr)
+        self.assertIn("./sima-neat-dev.deb", result.stderr)
+
+    def test_ros2_sdk_accepts_native_arm64_debian_bookworm_host(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+cat > "${tmp}/os-release" <<'EOF'
+ID=debian
+VERSION_ID="12"
+VERSION_CODENAME=bookworm
+EOF
+export NEAT_OS_RELEASE_FILE="${tmp}/os-release"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+apt-get() { :; }
+dpkg-deb() { :; }
+dpkg-query() { :; }
+dpkg() {
+  [[ "$1" == --print-architecture ]] && printf '%s\n' arm64
+}
+uname() {
+  [[ "$1" == -m ]] && printf '%s\n' aarch64
+}
+validate_ros2_sdk_native_host
+printf 'NATIVE_HOST_OK\n'
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("NATIVE_HOST_OK", result.stdout)
+
+    def test_ros2_sdk_rejects_non_arm64_host(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+cat > "${tmp}/os-release" <<'EOF'
+ID=debian
+VERSION_ID="12"
+VERSION_CODENAME=bookworm
+EOF
+export NEAT_OS_RELEASE_FILE="${tmp}/os-release"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+apt-get() { :; }
+dpkg-deb() { :; }
+dpkg-query() { :; }
+dpkg() {
+  [[ "$1" == --print-architecture ]] && printf '%s\n' amd64
+}
+uname() {
+  [[ "$1" == -m ]] && printf '%s\n' x86_64
+}
+validate_ros2_sdk_native_host
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires an ARM64 host environment", result.stderr)
+
+
 class NativeModalixRestoreTest(unittest.TestCase):
     def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
         result = run_bash(
