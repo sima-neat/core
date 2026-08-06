@@ -1417,84 +1417,6 @@ exact_package_install_spec() {
   return 1
 }
 
-bundled_exact_dependency_version() {
-  local package="$1"
-  local dependency="$2"
-  local deb deb_package depends version
-  for deb in "${DEBS[@]}"; do
-    deb_package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    [[ "${deb_package}" == "${package}" ]] || continue
-    depends="$(dpkg-deb -f "${deb}" Depends 2>/dev/null || true)"
-    version="$(
-      exact_dependency_version_from_relations "${dependency}" <<<"${depends}" || true
-    )"
-    if [[ -n "${version}" ]]; then
-      printf '%s\n' "${version}"
-      return 0
-    fi
-  done
-  echo "Bundled ${package} has no exact dependency on ${dependency}." >&2
-  return 1
-}
-
-remove_local_neat_mlart_from_general_transaction() {
-  local deb package
-  local -a remaining=()
-  for deb in "${DEBS[@]}"; do
-    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    if [[ "${package}" != "neat-mlart-modalix" ]]; then
-      remaining+=("${deb}")
-    fi
-  done
-  DEBS=("${remaining[@]}")
-}
-
-restore_native_mlart_if_neat_package_installed() {
-  local platform_version platform_spec simulation_log
-  local removed installed_version
-  local -a apt_args=(apt-get install -y --fix-broken --allow-downgrades)
-
-  remove_local_neat_mlart_from_general_transaction
-  if deb_package_is_installed neat-mlart-modalix; then
-    platform_version="$(
-      bundled_exact_dependency_version neat-appcomplex simaai-mlart-modalix
-    )" || return 1
-    platform_spec="$(
-      exact_package_install_spec simaai-mlart-modalix "${platform_version}"
-    )" || return 1
-    simulation_log="$(mktemp /tmp/sima-neat-mlart-apt-simulation-XXXXXX)"
-    INSTALLER_TMP_DIRS+=("${simulation_log}")
-
-    if ! run_sudo "${apt_args[@]}" --simulate \
-        neat-mlart-modalix- "${platform_spec}" >"${simulation_log}" 2>&1; then
-      cat "${simulation_log}" >&2
-      echo "APT cannot replace neat-mlart-modalix with ${platform_spec}." >&2
-      return 1
-    fi
-    while IFS= read -r removed; do
-      if [[ "${removed%%:*}" != "neat-mlart-modalix" ]]; then
-        cat "${simulation_log}" >&2
-        echo "Refusing MLA-RT restoration because APT would also remove ${removed}." >&2
-        return 1
-      fi
-    done < <(awk '$1 == "Remv" {print $2}' "${simulation_log}")
-
-    log "Replacing neat-mlart-modalix with ${platform_spec}."
-    run_sudo "${apt_args[@]}" neat-mlart-modalix- "${platform_spec}" || return 1
-    installed_version="$(
-      deb_package_installed_version simaai-mlart-modalix 2>/dev/null || true
-    )"
-    if deb_package_is_installed neat-mlart-modalix ||
-       ! deb_package_is_installed simaai-mlart-modalix ||
-       [[ "${installed_version}" != "${platform_version}" ]]; then
-      echo "Failed to restore simaai-mlart-modalix=${platform_version}." >&2
-      return 1
-    fi
-  else
-    log "neat-mlart-modalix is not installed; keeping the platform MLA-RT package."
-  fi
-}
-
 native_modalix_repair_is_required() {
   local package version
   for package in simaai-gst-plugins simaai-palette-modalix; do
@@ -2201,11 +2123,6 @@ install_debs_on_board() {
     echo "Failed to install the bundled simaai-memory payload without package removals." >&2
     exit 1
   fi
-  if ! restore_native_mlart_if_neat_package_installed; then
-    echo "Failed to restore the platform MLA-RT package." >&2
-    exit 1
-  fi
-
   # Install the remaining packages without allowing memory-payload substitution.
 
   local -a board_install_specs=()
