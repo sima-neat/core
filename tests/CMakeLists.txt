@@ -316,6 +316,7 @@ set(UNIT_TESTS
   unit_gst_error_normalizer_test
   unit_encoded_sample_test
   unit_genai_prompt_builder_test
+  unit_genai_model_directory_test
   unit_genai_image_types_test
   unit_genai_audio_types_test
   unit_genai_header_compile_surface_test

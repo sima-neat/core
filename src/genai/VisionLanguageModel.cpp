@@ -357,6 +357,17 @@ struct VisionLanguageModel::Impl {
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
         vlm_helper->get_pad_token_id(), *text_streamer);
+    if (info.draft_root.has_value()) {
+      draft_cfg = load_vlm_config(*info.draft_root);
+      draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
+          draft_cfg, *info.draft_root / "devkit", std::nullopt, std::nullopt);
+      draft_text_streamer = std::make_unique<simaai::llima::TextStreamer>(
+          draft_vlm_helper->get_tokenizer(), std::nullopt, std::nullopt);
+      draft_language_model = std::make_unique<simaai::llima::LanguageModel>(
+          *info.draft_root, draft_vlm_helper->get_stop_token_ids(),
+          draft_vlm_helper->get_image_token_id(), draft_vlm_helper->get_pad_token_id(),
+          *draft_text_streamer);
+    }
     if (info.accepts_image) {
       image_processor = make_image_processor(cfg, info.root / "devkit");
       vision_model = std::make_unique<simaai::llima::VisionModel>(info.root);
@@ -427,6 +438,10 @@ struct VisionLanguageModel::Impl {
 
     const auto max_total_tokens =
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
+    if (draft_language_model) {
+      return language_model->run_model_speculative_decoding(
+          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft);
+    }
     return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens);
   }
 
@@ -618,6 +633,10 @@ struct VisionLanguageModel::Impl {
   simaai::llima::ReasoningFormat reasoning_format = simaai::llima::ReasoningFormat::None;
   simaai::llima::PreservedToolCallTokens preserved_tool_call_tokens;
   std::unique_ptr<simaai::llima::LanguageModel> language_model;
+  simaai::llima::VlmConfig draft_cfg;
+  std::unique_ptr<simaai::llima::VlmHelper> draft_vlm_helper;
+  std::unique_ptr<simaai::llima::TextStreamer> draft_text_streamer;
+  std::unique_ptr<simaai::llima::LanguageModel> draft_language_model;
   std::unique_ptr<simaai::llima::ImageProcessor> image_processor;
   std::unique_ptr<simaai::llima::VisionModel> vision_model;
   std::mutex load_mutex;
@@ -650,7 +669,7 @@ bool VisionLanguageModel::supports_thinking() const {
 }
 
 std::string VisionLanguageModel::model_id() const {
-  return internal::model_id_from_path(impl_->info.root);
+  return internal::model_id_from_path(impl_->info.package_root);
 }
 
 std::size_t VisionLanguageModel::cached_image_count() const {
@@ -760,6 +779,9 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
       [model = impl_] {
         if (model && model->language_model) {
           model->language_model->stop_model();
+        }
+        if (model && model->draft_language_model) {
+          model->draft_language_model->stop_model();
         }
       });
 }

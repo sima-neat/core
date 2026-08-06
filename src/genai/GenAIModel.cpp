@@ -18,7 +18,7 @@ struct GenAIModel::Impl {
   static ModelVariant make_model(const internal::ModelDirectoryInfo& info) {
     switch (info.task) {
     case GenAITask::VisionLanguage:
-      return VisionLanguageModel(info.root);
+      return VisionLanguageModel(info.package_root);
     case GenAITask::ASR:
       return ASRModel(info.root);
     }
@@ -60,7 +60,7 @@ bool GenAIModel::supports_thinking() const {
 }
 
 std::string GenAIModel::model_id() const {
-  return internal::model_id_from_path(impl_->info.root);
+  return internal::model_id_from_path(impl_->info.package_root);
 }
 
 GenerationResult GenAIModel::run(const GenerationRequest& request) {

@@ -8,8 +8,9 @@
 #include <spdlog/spdlog.h>
 
 #include <fstream>
-#include <nlohmann/json.hpp>
 #include <mutex>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
 
 namespace simaai::neat::genai::internal {
@@ -44,16 +45,99 @@ nlohmann::json parse_json_file(const std::filesystem::path& path) {
   }
 }
 
+std::optional<bool> speculative_role(const std::filesystem::path& config_path) {
+  const auto config = parse_json_file(config_path);
+  if (!config.contains("lm_cfg") || !config.at("lm_cfg").is_object() ||
+      !config.at("lm_cfg").contains("speculative_decoding_cfg") ||
+      config.at("lm_cfg").at("speculative_decoding_cfg").is_null()) {
+    return std::nullopt;
+  }
+
+  const auto& speculative = config.at("lm_cfg").at("speculative_decoding_cfg");
+  if (!speculative.is_object() ||
+      (speculative.contains("is_draft") && !speculative.at("is_draft").is_boolean())) {
+    throw std::runtime_error("Malformed speculative_decoding_cfg in " + config_path.string());
+  }
+  return speculative.value("is_draft", false);
+}
+
+struct ModelPaths {
+  std::filesystem::path target;
+  std::optional<std::filesystem::path> draft;
+};
+
+ModelPaths resolve_model_paths(const std::filesystem::path& model_root) {
+  for (const auto& runtime_root : {model_root, model_root / "sima_files"}) {
+    const auto config_path = runtime_root / "devkit" / "vlm_config.json";
+    if (!is_existing_regular_file(config_path)) {
+      continue;
+    }
+    if (speculative_role(config_path).has_value()) {
+      throw std::runtime_error(
+          model_root.string() +
+          " is part of a speculative-decoding pair; pass its parent directory so both the "
+          "target and draft models are loaded together");
+    }
+    return {runtime_root, std::nullopt};
+  }
+
+  std::optional<std::filesystem::path> target;
+  std::optional<std::filesystem::path> draft;
+  std::optional<bool> target_role;
+  for (const auto& entry : std::filesystem::directory_iterator(model_root)) {
+    if (!entry.is_directory()) {
+      continue;
+    }
+    auto runtime_root = entry.path() / "sima_files";
+    if (!is_existing_regular_file(runtime_root / "devkit" / "vlm_config.json")) {
+      runtime_root = entry.path();
+    }
+    const auto config_path = runtime_root / "devkit" / "vlm_config.json";
+    if (!is_existing_regular_file(config_path)) {
+      continue;
+    }
+
+    const auto role = speculative_role(config_path);
+    const bool is_draft = role.value_or(false);
+    auto& path = is_draft ? draft : target;
+    if (path.has_value()) {
+      throw std::runtime_error(std::string("Multiple ") + (is_draft ? "draft" : "target") +
+                               " models found under " + model_root.string());
+    }
+    path = runtime_root;
+    if (!is_draft) {
+      target_role = role;
+    }
+  }
+
+  if (!target.has_value() && !draft.has_value()) {
+    return {model_root, std::nullopt};
+  }
+  if (!target.has_value()) {
+    throw std::runtime_error("Speculative-decoding package missing target model: " +
+                             model_root.string());
+  }
+  if (target_role.has_value() != draft.has_value()) {
+    throw std::runtime_error("Speculative-decoding package must contain one target and one draft "
+                             "model: " +
+                             model_root.string());
+  }
+  return {*target, draft};
+}
+
 } // namespace
 
 ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_dir) {
   std::error_code ec;
-  const std::filesystem::path root = std::filesystem::weakly_canonical(model_dir, ec);
-  const std::filesystem::path normalized = ec ? std::filesystem::absolute(model_dir) : root;
+  const std::filesystem::path canonical = std::filesystem::weakly_canonical(model_dir, ec);
+  const std::filesystem::path package_root = ec ? std::filesystem::absolute(model_dir) : canonical;
 
-  if (!is_existing_directory(normalized)) {
-    throw std::runtime_error("GenAI model directory does not exist: " + normalized.string());
+  if (!is_existing_directory(package_root)) {
+    throw std::runtime_error("GenAI model directory does not exist: " + package_root.string());
   }
+
+  const auto paths = resolve_model_paths(package_root);
+  const auto& normalized = paths.target;
 
   const auto devkit_dir = normalized / "devkit";
   if (!is_existing_directory(devkit_dir)) {
@@ -82,7 +166,9 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
   if (has_vlm_config) {
     const nlohmann::json config = parse_json_file(vlm_config);
     ModelDirectoryInfo info;
+    info.package_root = package_root;
     info.root = normalized;
+    info.draft_root = paths.draft;
     info.task = GenAITask::VisionLanguage;
     info.accepts_text = true;
     info.accepts_image = has_vision_capability(config);
@@ -91,6 +177,7 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
 
   (void)parse_json_file(whisper_config);
   ModelDirectoryInfo info;
+  info.package_root = package_root;
   info.root = normalized;
   info.task = GenAITask::ASR;
   info.accepts_audio = true;

@@ -789,7 +789,7 @@ struct GenAIServer::Impl {
 
   std::string add_model(std::filesystem::path model_dir) {
     const auto info = internal::inspect_model_directory(model_dir);
-    return add_model(info.root, default_served_name(info.root));
+    return add_model(info.package_root, default_served_name(info.root));
   }
 
   std::string add_model(std::filesystem::path model_dir, std::string served_name) {
