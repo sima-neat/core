@@ -469,7 +469,10 @@ set(UNIT_TESTS
 )
 
 if (SimaLMM_FOUND)
-  list(APPEND UNIT_TESTS unit_genai_tool_call_parser_test)
+  list(APPEND UNIT_TESTS
+    unit_genai_model_directory_test
+    unit_genai_tool_call_parser_test
+  )
 endif()
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
