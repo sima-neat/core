@@ -47,26 +47,15 @@ nlohmann::json parse_json_file(const std::filesystem::path& path) {
 
 std::optional<bool> speculative_role(const std::filesystem::path& config_path) {
   const auto config = parse_json_file(config_path);
-  if (!config.contains("lm_cfg") || !config.at("lm_cfg").is_object() ||
-      !config.at("lm_cfg").contains("speculative_decoding_cfg") ||
-      config.at("lm_cfg").at("speculative_decoding_cfg").is_null()) {
+  const auto spec = config.value("lm_cfg", nlohmann::json::object())
+                        .value("speculative_decoding_cfg", nlohmann::json{});
+  if (spec.is_null()) {
     return std::nullopt;
   }
-
-  const auto& speculative = config.at("lm_cfg").at("speculative_decoding_cfg");
-  if (!speculative.is_object() ||
-      (speculative.contains("is_draft") && !speculative.at("is_draft").is_boolean())) {
-    throw std::runtime_error("Malformed speculative_decoding_cfg in " + config_path.string());
-  }
-  return speculative.value("is_draft", false);
+  return spec.value("is_draft", false);
 }
 
-struct ModelPaths {
-  std::filesystem::path target;
-  std::optional<std::filesystem::path> draft;
-};
-
-ModelPaths resolve_model_paths(const std::filesystem::path& model_root) {
+std::optional<std::filesystem::path> resolve_draft_model(std::filesystem::path& model_root) {
   for (const auto& runtime_root : {model_root, model_root / "sima_files"}) {
     const auto config_path = runtime_root / "devkit" / "vlm_config.json";
     if (!is_existing_regular_file(config_path)) {
@@ -78,20 +67,18 @@ ModelPaths resolve_model_paths(const std::filesystem::path& model_root) {
           " is part of a speculative-decoding pair; pass its parent directory so both the "
           "target and draft models are loaded together");
     }
-    return {runtime_root, std::nullopt};
+    model_root = runtime_root;
+    return std::nullopt;
   }
 
   std::optional<std::filesystem::path> target;
   std::optional<std::filesystem::path> draft;
-  std::optional<bool> target_role;
+  bool target_is_speculative = false;
   for (const auto& entry : std::filesystem::directory_iterator(model_root)) {
     if (!entry.is_directory()) {
       continue;
     }
-    auto runtime_root = entry.path() / "sima_files";
-    if (!is_existing_regular_file(runtime_root / "devkit" / "vlm_config.json")) {
-      runtime_root = entry.path();
-    }
+    const auto runtime_root = entry.path() / "sima_files";
     const auto config_path = runtime_root / "devkit" / "vlm_config.json";
     if (!is_existing_regular_file(config_path)) {
       continue;
@@ -106,23 +93,24 @@ ModelPaths resolve_model_paths(const std::filesystem::path& model_root) {
     }
     path = runtime_root;
     if (!is_draft) {
-      target_role = role;
+      target_is_speculative = role.has_value();
     }
   }
 
   if (!target.has_value() && !draft.has_value()) {
-    return {model_root, std::nullopt};
+    return std::nullopt;
   }
   if (!target.has_value()) {
     throw std::runtime_error("Speculative-decoding package missing target model: " +
                              model_root.string());
   }
-  if (target_role.has_value() != draft.has_value()) {
+  if (target_is_speculative != draft.has_value()) {
     throw std::runtime_error("Speculative-decoding package must contain one target and one draft "
                              "model: " +
                              model_root.string());
   }
-  return {*target, draft};
+  model_root = *target;
+  return draft;
 }
 
 } // namespace
@@ -136,8 +124,8 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
     throw std::runtime_error("GenAI model directory does not exist: " + package_root.string());
   }
 
-  const auto paths = resolve_model_paths(package_root);
-  const auto& normalized = paths.target;
+  auto normalized = package_root;
+  const auto draft_root = resolve_draft_model(normalized);
 
   const auto devkit_dir = normalized / "devkit";
   if (!is_existing_directory(devkit_dir)) {
@@ -168,7 +156,7 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
     ModelDirectoryInfo info;
     info.package_root = package_root;
     info.root = normalized;
-    info.draft_root = paths.draft;
+    info.draft_root = draft_root;
     info.task = GenAITask::VisionLanguage;
     info.accepts_text = true;
     info.accepts_image = has_vision_capability(config);
