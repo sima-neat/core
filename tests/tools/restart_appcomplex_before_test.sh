@@ -4,7 +4,7 @@ set -euo pipefail
 # TODO: Remove this workaround once CI runners provide MLA-RT with complete
 # BlockAllocator mapping and IRQ-thread teardown.
 echo "[genai-tests] restarting simaai-appcomplex.service for test isolation"
-systemctl restart simaai-appcomplex.service
+sudo -n systemctl restart simaai-appcomplex.service
 
 for _ in {1..30}; do
   if systemctl is-active --quiet simaai-appcomplex.service; then
