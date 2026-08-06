@@ -1,6 +1,5 @@
 #include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
-#include <algorithm>
 #include <array>
 #include <optional>
 #include <sstream>
@@ -119,13 +118,7 @@ struct TensorHwc {
   int channels = 0;
 };
 
-enum class SsdChannelView {
-  LogicalSlice,
-  PhysicalInput,
-};
-
-std::optional<TensorHwc> logical_hwc(const BoxDecodeTensorStaticContract& tensor,
-                                     SsdChannelView channel_view = SsdChannelView::LogicalSlice) {
+std::optional<TensorHwc> authoritative_hwc(const BoxDecodeTensorStaticContract& tensor) {
   if (tensor.input_shape.size() < 3U) {
     return std::nullopt;
   }
@@ -134,6 +127,18 @@ std::optional<TensorHwc> logical_hwc(const BoxDecodeTensorStaticContract& tensor
   const int width = tensor.input_shape[rank - 2U];
   const int physical_channels = tensor.input_shape[rank - 1U];
   if (height <= 0 || width <= 0 || physical_channels <= 0) {
+    return std::nullopt;
+  }
+
+  bool use_logical_slice = false;
+  switch (tensor.source_storage_kind) {
+  case BoxDecodeSourceStorageKind::PackedCBlock:
+  case BoxDecodeSourceStorageKind::PackedHwcC16:
+    break;
+  case BoxDecodeSourceStorageKind::DenseHwcPhysical:
+    use_logical_slice = true;
+    break;
+  case BoxDecodeSourceStorageKind::Unknown:
     return std::nullopt;
   }
 
@@ -146,13 +151,13 @@ std::optional<TensorHwc> logical_hwc(const BoxDecodeTensorStaticContract& tensor
     if (sliced_channels <= 0 || sliced_channels > physical_channels) {
       return std::nullopt;
     }
-    if (channel_view == SsdChannelView::LogicalSlice) {
+    if (use_logical_slice) {
       logical_channels = sliced_channels;
     }
   }
-  // slice_shape H/W describe the packed tensor's tile/stripe geometry (captured SSD heads
-  // commonly use slice_height=1), not a smaller logical feature grid. input_shape H/W are the
-  // complete per-frame grid; only the sliced channel depth removes physical channel padding.
+  // input_shape H/W always describe the complete feature grid. For packed sources input_shape C
+  // is also the complete semantic head and slice_shape is transport tile/stripe geometry. For
+  // dense sources slice_shape C, when present, is the logical view after physical channel padding.
   return TensorHwc{height, width, logical_channels};
 }
 
@@ -198,8 +203,7 @@ struct ObservedSsdSignature {
       ". Expected binding order is loc[0..5] followed by confidence[0..5].");
 }
 
-ObservedSsdSignature observe_ssd_signature(const BoxDecodeStaticContract& contract,
-                                           SsdChannelView channel_view) {
+ObservedSsdSignature observe_ssd_signature(const BoxDecodeStaticContract& contract) {
   if (contract.tensors.size() != 12U) {
     throw_malformed("expected exactly 12 tensors (six localization plus six confidence), got " +
                         std::to_string(contract.tensors.size()),
@@ -210,8 +214,8 @@ ObservedSsdSignature observe_ssd_signature(const BoxDecodeStaticContract& contra
   observed.level_count = contract.tensors.size() / 2U;
   std::optional<int> encoded_classes;
   for (std::size_t i = 0; i < observed.level_count; ++i) {
-    const auto loc = logical_hwc(contract.tensors[i], channel_view);
-    const auto conf = logical_hwc(contract.tensors[i + observed.level_count], channel_view);
+    const auto loc = authoritative_hwc(contract.tensors[i]);
+    const auto conf = authoritative_hwc(contract.tensors[i + observed.level_count]);
     if (!loc.has_value()) {
       throw_malformed("localization tensor " + std::to_string(i) +
                           " does not have a positive logical HWC shape",
@@ -320,96 +324,33 @@ const SsdRecipeDescriptor& resolve_ssd_recipe_descriptor(const BoxDecodeStaticCo
     throw std::invalid_argument("SSD BoxDecode resolver requires an SSD-family decode type");
   }
 
-  std::optional<ObservedSsdSignature> sliced_observed;
-  std::string sliced_error;
-  try {
-    sliced_observed = observe_ssd_signature(contract, SsdChannelView::LogicalSlice);
-  } catch (const std::invalid_argument& ex) {
-    sliced_error = ex.what();
-  }
-
-  // Compiler transport metadata can expose MLA tile depth in slice_shape while input_shape
-  // carries the complete logical head (for example BF16 tess-off-MLA emits slice_depth=16 for a
-  // 24-channel localization head). Prefer the logical slice when it forms an exact registered
-  // recipe; otherwise accept the full input channels only when that complete ordered signature
-  // itself exactly identifies a recipe. This preserves strict shape validation while separating
-  // transport tiling from the model's semantic channel count.
-  std::optional<ObservedSsdSignature> physical_observed;
-  std::string physical_error;
-  try {
-    physical_observed = observe_ssd_signature(contract, SsdChannelView::PhysicalInput);
-  } catch (const std::invalid_argument& ex) {
-    physical_error = ex.what();
-  }
-
-  auto observed_matches = [](const std::optional<ObservedSsdSignature>& observed,
-                             const SsdRecipeDescriptor& recipe) {
-    return observed.has_value() && matches(*observed, recipe);
-  };
-  auto matching_recipe = [&](const std::optional<ObservedSsdSignature>& observed) {
+  const ObservedSsdSignature observed = observe_ssd_signature(contract);
+  auto matching_recipe = [&]() {
     for (const auto& recipe : kSsdRecipes) {
-      if (observed_matches(observed, recipe)) {
+      if (matches(observed, recipe)) {
         return &recipe;
       }
     }
     return static_cast<const SsdRecipeDescriptor*>(nullptr);
   };
   if (const auto* requested = find_ssd_recipe_descriptor(contract.ssd_recipe_id)) {
-    if (observed_matches(sliced_observed, *requested) ||
-        observed_matches(physical_observed, *requested)) {
+    if (matches(observed, *requested)) {
       return *requested;
     }
-    if (!sliced_observed.has_value() && !physical_observed.has_value()) {
-      throw std::invalid_argument(!sliced_error.empty() ? sliced_error : physical_error);
-    }
-    const auto& diagnostic = sliced_observed.has_value() ? *sliced_observed : *physical_observed;
     throw std::invalid_argument(
         "SSD BoxDecode: ordered head signature does not match requested profile '" +
         std::string(ssd_recipe_id_token(requested->id)) + "'. Observed " +
-        format_observed(diagnostic) +
+        format_observed(observed) +
         "; expected loc=" + format_levels(requested->ordered_levels, true) +
         " conf=" + format_levels(requested->ordered_levels, false) + '.');
   }
 
-  const auto* sliced_recipe = matching_recipe(sliced_observed);
-  const auto* physical_recipe = matching_recipe(physical_observed);
-  if (sliced_recipe && physical_recipe && sliced_recipe->id != physical_recipe->id) {
-    const bool all_packed =
-        std::all_of(contract.tensors.begin(), contract.tensors.end(), [](const auto& tensor) {
-          return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
-                 tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16;
-        });
-    const bool all_dense =
-        std::all_of(contract.tensors.begin(), contract.tensors.end(), [](const auto& tensor) {
-          return tensor.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical;
-        });
-    if (all_packed) {
-      return *physical_recipe;
-    }
-    if (all_dense) {
-      return *sliced_recipe;
-    }
-    throw std::invalid_argument(
-        "SSD BoxDecode: ambiguous channel provenance: slice_shape resolves profile '" +
-        std::string(ssd_recipe_id_token(sliced_recipe->id)) +
-        "' while input_shape resolves profile '" +
-        std::string(ssd_recipe_id_token(physical_recipe->id)) +
-        "', and source storage kind is not uniform.");
+  if (const auto* recipe = matching_recipe()) {
+    return *recipe;
   }
-  if (sliced_recipe) {
-    return *sliced_recipe;
-  }
-  if (physical_recipe) {
-    return *physical_recipe;
-  }
-
-  if (!sliced_observed.has_value() && !physical_observed.has_value()) {
-    throw std::invalid_argument(!sliced_error.empty() ? sliced_error : physical_error);
-  }
-  const auto& diagnostic = sliced_observed.has_value() ? *sliced_observed : *physical_observed;
 
   throw std::invalid_argument(
-      "SSD BoxDecode: unsupported ordered head signature. Observed " + format_observed(diagnostic) +
+      "SSD BoxDecode: unsupported ordered head signature. Observed " + format_observed(observed) +
       ". Supported profiles: " + supported_signatures() +
       ". Expected binding order is loc[0..5] followed by confidence[0..5]; levels are not "
       "reordered.");
@@ -425,7 +366,7 @@ std::string ssd_observed_signature(const BoxDecodeStaticContract& contract) {
   loc << "loc=[";
   conf << "conf=[";
   for (std::size_t i = 0; i < contract.tensors.size(); ++i) {
-    const auto shape = logical_hwc(contract.tensors[i]);
+    const auto shape = authoritative_hwc(contract.tensors[i]);
     std::ostringstream* target = i < levels ? &loc : &conf;
     const std::size_t role_index = i < levels ? i : i - levels;
     if (role_index != 0U) {

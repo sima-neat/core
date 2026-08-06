@@ -80,6 +80,7 @@ RUN_TEST(
         t.input_shape = {h, w, c};
         t.data_type = "BF16";
         t.layout = "HWC";
+        t.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
         return t;
       };
 
@@ -290,6 +291,7 @@ RUN_TEST(
           tensor.slice_shape = {side, side, logical_channels};
           tensor.data_type = "BF16";
           tensor.layout = "HWC";
+          tensor.source_storage_kind = BoxDecodeSourceStorageKind::DenseHwcPhysical;
           return tensor;
         };
         BoxDecodeStaticContract contract;
@@ -409,6 +411,58 @@ RUN_TEST(
             0.40, 0.45, 200, /*num_classes=*/0, {"orig_width", "orig_height"});
         require(finalized.ssd_recipe_id == SsdRecipeId::SsdLiteMobile320V1,
                 "PackedHwcC16 recipe selection must use the complete packed frame");
+      }
+
+      // Recipe matching must use the tensor view selected by source_storage_kind even when only
+      // the non-authoritative view happens to match a registered signature. Otherwise malformed
+      // MPK head geometry can pass auto-resolution or an explicit recipe request.
+      {
+        BoxDecodeStaticContract exact_dense;
+        const std::vector<int> feat = {38, 19, 10, 5, 3, 1};
+        const std::vector<int> priors = {4, 6, 6, 6, 4, 4};
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          exact_dense.tensors.push_back(head(feat[i], feat[i], 4 * priors[i]));
+        }
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          exact_dense.tensors.push_back(head(feat[i], feat[i], 81 * priors[i]));
+        }
+
+        auto require_auto_and_requested_reject = [](const BoxDecodeStaticContract& malformed,
+                                                    const char* message) {
+          for (const auto requested : {SsdRecipeId::Unknown, SsdRecipeId::Ssd300V1}) {
+            auto candidate = malformed;
+            candidate.ssd_recipe_id = requested;
+            bool rejected = false;
+            try {
+              (void)finalize_boxdecode_static_contract(candidate, BoxDecodeType::Ssd, std::nullopt,
+                                                       std::nullopt, BoxDecodeTypeOption::Auto,
+                                                       0.40, 0.45, 200, /*num_classes=*/0,
+                                                       {"orig_width", "orig_height"});
+            } catch (const std::exception&) {
+              rejected = true;
+            }
+            require(rejected, message);
+          }
+        };
+
+        auto malformed_packed = exact_dense;
+        for (auto& tensor : malformed_packed.tensors) {
+          tensor.slice_shape = tensor.input_shape;
+          tensor.input_shape.back() += 16;
+          tensor.source_storage_kind = BoxDecodeSourceStorageKind::PackedCBlock;
+        }
+        require_auto_and_requested_reject(
+            malformed_packed,
+            "packed SSD recipe selection must reject a matching non-authoritative slice view");
+
+        auto malformed_dense = exact_dense;
+        for (auto& tensor : malformed_dense.tensors) {
+          tensor.slice_shape = tensor.input_shape;
+        }
+        malformed_dense.tensors.front().slice_shape.back() -= 4;
+        require_auto_and_requested_reject(
+            malformed_dense,
+            "dense SSD recipe selection must reject a matching non-authoritative physical view");
       }
 
       // An MPK cannot override a profile's fixed score domain. In particular, an SSD300
