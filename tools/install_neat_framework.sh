@@ -620,7 +620,6 @@ collect_debs_in_install_order() {
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib-dev_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-mlart-modalix_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'libcamera_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-dev_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-tools_*.deb'

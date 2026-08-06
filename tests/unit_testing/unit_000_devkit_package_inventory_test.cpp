@@ -140,7 +140,6 @@ int main() {
         {"sima-lmm-cli", "neat"},       {"libcamera", "neat"},
         {"libcamera-dev", "neat"},      {"libcamera-tools", "neat"},
         {"simaai-memory-lib", "neat"},  {"simaai-memory-lib-dev", "neat"},
-        {"neat-mlart-modalix", "neat"},
     };
 
     const std::vector<PackageExpectation> native_sima_packages = {
@@ -152,6 +151,7 @@ int main() {
         {"simaai-hpi-modalix", "native-sima"},
         {"simaai-log", "native-sima"},
         {"simaai-logd", "native-sima"},
+        {"simaai-mlart-modalix", "native-sima"},
         {"simaai-parser", "native-sima"},
         {"simaai-pcie-ep", "native-sima"},
         {"simaai-rctd", "native-sima"},
@@ -168,8 +168,7 @@ int main() {
     require_package_version("libcamera-dev", "2.1.1+neat1");
     require_package_version("simaai-memory-lib", "2.1.1-0neat2");
     require_package_version("simaai-memory-lib-dev", "2.1.1-0neat2");
-    require_package_version("neat-mlart-modalix", "2.1.3~pre4040");
-    require_versioned_provide("neat-mlart-modalix", "simaai-mlart-modalix", "2.1.3~pre4040");
+    require_package_version("simaai-mlart-modalix", "2.1.3~pre4040");
     require_versioned_provide("libcamera", "libcamera", "2.1.3~pre4040");
     require_versioned_provide("libcamera-tools", "libcamera-tools", "2.1.3~pre4040");
     require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4040");

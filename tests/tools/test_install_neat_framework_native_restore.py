@@ -27,45 +27,20 @@ def run_bash(
 
 
 class NativeModalixRestoreTest(unittest.TestCase):
-    def test_deb_collection_includes_neat_mlart(self) -> None:
-        result = run_bash(
-            r'''
-source "$1"
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-touch \
-  "${tmp}/neat-mlart-modalix_2.1.3~pre4040_arm64.deb" \
-  "${tmp}/neat-runtime_0.4.0_arm64.deb"
-collect_debs_in_install_order "${tmp}" collected
-printf '%s\n' "${collected[@]##*/}"
-'''
-        )
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            result.stdout.splitlines(),
-            [
-                "neat-mlart-modalix_2.1.3~pre4040_arm64.deb",
-                "neat-runtime_0.4.0_arm64.deb",
-            ],
-        )
-
     def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
         result = run_bash(
             r'''
 source "$1"
 DEBS=(./simaai-memory-lib_2.1.1_arm64.deb \
       ./simaai-memory-lib-dev_2.1.1_arm64.deb \
-      ./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb \
-      ./neat-mlart-modalix.deb ./libcamera_2.1.1_arm64.deb)
+      ./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb ./libcamera_2.1.1_arm64.deb)
 prepare_debs_for_board_install() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 stop_board_runtime_before_install() { :; }
 apt_package_database_is_healthy() { return 0; }
 install_local_simaai_memory_transaction() {
   SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
-  DEBS=(./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb \
-        ./neat-mlart-modalix.deb ./libcamera_2.1.1_arm64.deb)
+  DEBS=(./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb ./libcamera_2.1.1_arm64.deb)
 }
 native_modalix_repair_is_required() { return 0; }
 native_modalix_restore_specs() {
@@ -91,7 +66,6 @@ install_debs_on_board
         for required in (
             "<./neat-gst-plugins_fixed.deb>",
             "<./sima-neat_fixed.deb>",
-            "<./neat-mlart-modalix.deb>",
             "<./libcamera_2.1.1_arm64.deb>",
             "<--allow-downgrades>",
         ):
