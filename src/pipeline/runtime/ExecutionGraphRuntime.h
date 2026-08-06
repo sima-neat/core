@@ -397,9 +397,9 @@ struct ExecutionGraphRuntime {
   std::atomic<std::uint64_t> trace_graph_id_hash{0};
   std::unordered_map<simaai::neat::graph::NodeId, std::shared_ptr<GraphSinkQueue>> sinks;
 
-  // Graph-wide decoder admission state.  A dense multi-decoder graph reserves
-  // and binds decoder daemon leases before any GStreamer fragment is started so
-  // each decoder receives the same automatic pool/tuning decision.
+  // Graph-wide decoder admission state. Each decoder graph reserves and binds
+  // daemon leases before any GStreamer fragment is started so every decoder
+  // receives an automatic pool/tuning decision.
   bool decoder_admission_active = false;
   std::array<std::uint8_t, 16> decoder_admission_group_uuid{};
 };

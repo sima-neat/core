@@ -768,13 +768,13 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
   std::size_t missing_shape_decoders = 0;
   collect_decoder_admission_candidates(execution, candidates, &admission_decoder_count,
                                        &missing_shape_decoders);
-  if (admission_decoder_count <= 1) {
+  if (admission_decoder_count == 0) {
     return;
   }
   if (missing_shape_decoders > 0) {
     const std::string msg =
         "RunCore::start(graph): automatic decoder admission requires decoded width/height for "
-        "each H.264/H.265 decoder in a multi-decoder graph; missing shape for " +
+        "each H.264/H.265 decoder; missing shape for " +
         std::to_string(missing_shape_decoders) + " of " + std::to_string(admission_decoder_count) +
         " decoder(s).";
     if (env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {
@@ -787,7 +787,7 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
     }
     return;
   }
-  if (candidates.size() <= 1) {
+  if (candidates.empty()) {
     return;
   }
 
@@ -833,7 +833,7 @@ void apply_decoder_admission_if_needed(ExecutionGraphRuntime& execution) {
       return;
     }
     throw std::runtime_error(
-        "RunCore::start(graph): decoder admission rejected this multi-decoder graph before "
+        "RunCore::start(graph): decoder admission rejected this decoder graph before "
         "starting hardware decode. " +
         admission.error +
         ". Reduce the number of streams/fps/resolution, stop another decoder workload, or check "

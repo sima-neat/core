@@ -1895,6 +1895,20 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test_long(
+  decoder_multirun_admission_boundary_test
+  e2e_testing/decoder_multirun_admission_boundary_test.cpp
+)
+
+if (NOT decoder_multirun_admission_boundary_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST decoder_multirun_admission_boundary_test
+    APPEND PROPERTY LABELS "e2e;codec;rtsp;regression;lifecycle")
+  set_property(TEST decoder_multirun_admission_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST decoder_multirun_admission_boundary_test
+    APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_tests_properties(decoder_multirun_admission_boundary_test PROPERTIES TIMEOUT 120)
+endif()
+
+add_pipeline_test_long(
   codec_decode_accuracy_test
   e2e_testing/codec_decode_accuracy_test.cpp
 )
