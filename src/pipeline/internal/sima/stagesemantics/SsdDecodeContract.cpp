@@ -376,7 +376,8 @@ const SsdRecipeDescriptor& resolve_ssd_recipe_descriptor(const BoxDecodeStaticCo
   if (sliced_recipe && physical_recipe && sliced_recipe->id != physical_recipe->id) {
     const bool all_packed =
         std::all_of(contract.tensors.begin(), contract.tensors.end(), [](const auto& tensor) {
-          return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock;
+          return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+                 tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16;
         });
     const bool all_dense =
         std::all_of(contract.tensors.begin(), contract.tensors.end(), [](const auto& tensor) {

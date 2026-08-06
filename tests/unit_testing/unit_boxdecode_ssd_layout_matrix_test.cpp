@@ -379,6 +379,38 @@ RUN_TEST(
         }
       }
 
+      // PackedHwcC16 is the cblock=false variant of packed MLA storage. When its channel slice
+      // happens to form the MobileNet-320 signature while the complete packed frame forms the
+      // SSDlite-320 signature, physical input channels remain authoritative just as they are for
+      // PackedCBlock. This reproduces the ambiguous-signature route from MPK extraction.
+      {
+        auto c16_packed_head = [](int side, int physical_channels, int sliced_channels) {
+          BoxDecodeTensorStaticContract tensor;
+          tensor.input_shape = {side, side, physical_channels};
+          tensor.slice_shape = {side, side, sliced_channels};
+          tensor.data_type = "INT8";
+          tensor.layout = "HWC";
+          tensor.source_storage_kind = BoxDecodeSourceStorageKind::PackedHwcC16;
+          return tensor;
+        };
+        BoxDecodeStaticContract contract;
+        const std::vector<int> feat = {20, 10, 5, 3, 2, 1};
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          contract.tensors.push_back(c16_packed_head(feat[i], /*physical_channels=*/24,
+                                                     /*sliced_channels=*/i == 0U ? 12 : 24));
+        }
+        for (std::size_t i = 0; i < feat.size(); ++i) {
+          contract.tensors.push_back(c16_packed_head(feat[i], /*physical_channels=*/546,
+                                                     /*sliced_channels=*/i == 0U ? 273 : 546));
+        }
+
+        const auto finalized = finalize_boxdecode_static_contract(
+            contract, BoxDecodeType::Ssd, std::nullopt, std::nullopt, BoxDecodeTypeOption::Auto,
+            0.40, 0.45, 200, /*num_classes=*/0, {"orig_width", "orig_height"});
+        require(finalized.ssd_recipe_id == SsdRecipeId::SsdLiteMobile320V1,
+                "PackedHwcC16 recipe selection must use the complete packed frame");
+      }
+
       // An MPK cannot override a profile's fixed score domain. In particular, an SSD300
       // signature paired with sigmoid must fail instead of being silently rewritten.
       {
