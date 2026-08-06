@@ -2222,6 +2222,35 @@ verify_ros2_sdk_deb_packages_installed() {
   log "Verified native ROS2 SDK packages are registered with dpkg at the bundled versions."
 }
 
+install_ros2_sdk_tvm_runtime() {
+  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  local source_lib="${sysroot}/usr/lib/libtvm_runtime.so"
+  local target_dir="/usr/lib/aarch64-linux-gnu"
+  local target_lib="${target_dir}/libtvm_runtime.so"
+
+  if [[ -x /sbin/ldconfig ]] &&
+     /sbin/ldconfig -p 2>/dev/null | grep -qE 'libtvm_runtime\.so .* => /(usr/)?lib/'; then
+    log "Native TVM runtime is already available to the dynamic linker."
+    return 0
+  fi
+
+  if [[ ! -f "${source_lib}" ]]; then
+    echo "The ROS2 SDK does not provide the native TVM runtime required by Neat." >&2
+    echo "  Expected: ${source_lib}" >&2
+    return 1
+  fi
+
+  if command -v readelf >/dev/null 2>&1 &&
+     ! readelf -h "${source_lib}" 2>/dev/null | grep -q 'Machine:.*AArch64'; then
+    echo "The ROS2 SDK TVM runtime is not an AArch64 library: ${source_lib}" >&2
+    return 1
+  fi
+
+  run_sudo install -d -m 0755 "${target_dir}"
+  run_sudo install -m 0755 "${source_lib}" "${target_lib}"
+  log "Installed the ROS2 SDK TVM runtime into ${target_lib}."
+}
+
 install_debs_in_ros2_sdk() {
   local simulation_log
   local -a apt_install_args=(
@@ -2259,7 +2288,10 @@ install_debs_in_ros2_sdk() {
   fi
 
   run_sudo "${apt_install_args[@]}" "${DEBS[@]}"
-  if command -v ldconfig >/dev/null 2>&1; then
+  install_ros2_sdk_tvm_runtime || exit 1
+  if [[ -x /sbin/ldconfig ]]; then
+    run_sudo /sbin/ldconfig
+  elif command -v ldconfig >/dev/null 2>&1; then
     run_sudo ldconfig
   fi
   verify_ros2_sdk_deb_packages_installed || exit 1

@@ -171,6 +171,7 @@ run_sudo() {
 repair_global_sima_neat_lib_links() { printf 'REPAIRED_LINKS\n'; }
 verify_global_sima_neat_lib_links() { printf 'VERIFIED_LINKS\n'; }
 verify_ros2_sdk_deb_packages_installed() { printf 'VERIFIED_PACKAGES\n'; }
+install_ros2_sdk_tvm_runtime() { printf 'INSTALLED_TVM_RUNTIME\n'; }
 install_debs_on_board() { printf 'BOARD_PATH_USED\n'; return 99; }
 install_debs_into_sysroot() { printf 'SYSROOT_PATH_USED\n'; return 99; }
 
@@ -181,6 +182,7 @@ install_debs_in_ros2_sdk
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("SIMULATION_OK", result.stdout)
         self.assertIn("VERIFIED_PACKAGES", result.stdout)
+        self.assertIn("INSTALLED_TVM_RUNTIME", result.stdout)
         self.assertIn("REPAIRED_LINKS", result.stdout)
         self.assertIn("VERIFIED_LINKS", result.stdout)
         transaction = next(
@@ -193,6 +195,32 @@ install_debs_in_ros2_sdk
         self.assertNotIn("--fix-broken", transaction)
         self.assertNotIn("BOARD_PATH_USED", result.stdout)
         self.assertNotIn("SYSROOT_PATH_USED", result.stdout)
+
+    def test_ros2_sdk_installs_missing_tvm_runtime_from_matching_sysroot(self) -> None:
+        result = run_bash(
+            r'''
+tmp="$(mktemp -d)"
+mkdir -p "${tmp}/sysroot/usr/lib"
+touch "${tmp}/sysroot/usr/lib/libtvm_runtime.so"
+export SYSROOT="${tmp}/sysroot"
+source "$1"
+INSTALLER_TMP_DIRS=("${tmp}")
+run_sudo() {
+  printf 'RUN:'
+  printf ' <%s>' "$@"
+  printf '\n'
+}
+readelf() { printf '%s\n' '  Machine: AArch64'; }
+install_ros2_sdk_tvm_runtime
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("<install> <-d> <-m> <0755> </usr/lib/aarch64-linux-gnu>", result.stdout)
+        self.assertIn(
+            "<install> <-m> <0755>", result.stdout
+        )
+        self.assertIn("libtvm_runtime.so>", result.stdout)
 
     def test_ros2_sdk_rejects_non_arm64_deb(self) -> None:
         result = run_bash(
