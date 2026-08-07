@@ -44,8 +44,8 @@ fs::path write_vlm(const fs::path& root, std::optional<bool> is_draft = std::nul
 
   nlohmann::json config = {{"model_type", "llm-test"}, {"lm_cfg", nlohmann::json::object()}};
   if (is_draft.has_value()) {
-    config["lm_cfg"]["speculative_decoding_cfg"] = {
-        {"is_draft", *is_draft}, {"speculative_budget", *is_draft ? 5 : 16}};
+    config["lm_cfg"]["speculative_decoding_cfg"] = {{"is_draft", *is_draft},
+                                                    {"speculative_budget", *is_draft ? 5 : 16}};
   }
   if (!vision_model_name.is_null()) {
     config["vm_cfg"] = nlohmann::json::object();
@@ -95,9 +95,8 @@ RUN_TEST(
       require(internal::inspect_model_directory(single_vision_root).accepts_image,
               "single-ELF VLM should accept images");
 
-      const auto multi_vision_root =
-          write_vlm(temp.path() / "multi-vision", std::nullopt,
-                    nlohmann::json::array({"vision_0", "vision_1"}));
+      const auto multi_vision_root = write_vlm(temp.path() / "multi-vision", std::nullopt,
+                                               nlohmann::json::array({"vision_0", "vision_1"}));
       require(internal::inspect_model_directory(multi_vision_root).accepts_image,
               "multi-ELF VLM should accept images");
 
