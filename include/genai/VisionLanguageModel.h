@@ -30,6 +30,8 @@ public:
 
   bool accepts_image() const;
   std::string model_id() const;
+  void set_lora(const std::string& adapter_name);
+  void unset_lora();
   std::size_t cached_image_count() const;
   bool encode(const Tensor& image);
   bool encode(const std::vector<Tensor>& images);
