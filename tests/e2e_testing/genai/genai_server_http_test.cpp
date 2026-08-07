@@ -233,6 +233,26 @@ void reject_unsupported_thinking(int port) {
   }
 }
 
+void validate_lora_requests(int port) {
+  const std::vector<std::pair<std::string, Json>> bad_requests = {
+      {"/set_lora", {{"model", "llm"}, {"name", "../adapter"}}},
+      {"/set_lora", {{"model", "llm"}}},
+      {"/unset_lora", Json::object()},
+      {"/unset_lora", {{"model", "asr"}}},
+  };
+  for (const auto& [path, request] : bad_requests) {
+    auto client = make_client(port);
+    const auto response = client.Post(path, request.dump(), "application/json");
+    require(response != nullptr, path + " validation request failed");
+    require(response->status == 400, path + " should reject invalid LoRA input with HTTP 400");
+  }
+
+  auto client = make_client(port);
+  const auto unknown = client.Post("/unset_lora", R"({"model":"unknown"})", "application/json");
+  require(unknown != nullptr, "/unset_lora unknown-model request failed");
+  require(unknown->status == 404, "/unset_lora should reject an unknown model with HTTP 404");
+}
+
 void request_image_completion(int port, const fs::path& image_path) {
   auto client = make_client(port);
   const std::string data_uri = "data:image/jpeg;base64," + base64_encode(read_file(image_path));
@@ -319,6 +339,7 @@ int main(int argc, char** argv) {
 
     require_model_list_contains(port);
     reject_unsupported_thinking(port);
+    validate_lora_requests(port);
     request_text_completion(port);
     request_image_completion(port, image_path);
     request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,

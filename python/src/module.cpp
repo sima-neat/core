@@ -2202,6 +2202,10 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
       .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
       .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
+      .def("set_lora", &simaai::neat::genai::VisionLanguageModel::set_lora, "adapter_name"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("unset_lora", &simaai::neat::genai::VisionLanguageModel::unset_lora,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
       .def(
           "encode",
@@ -2232,6 +2236,10 @@ NB_MODULE(_pyneat_core, m) {
       .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
       .def("accepts_audio", &simaai::neat::genai::GenAIModel::accepts_audio)
       .def("model_id", &simaai::neat::genai::GenAIModel::model_id)
+      .def("set_lora", &simaai::neat::genai::GenAIModel::set_lora, "adapter_name"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("unset_lora", &simaai::neat::genai::GenAIModel::unset_lora,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,

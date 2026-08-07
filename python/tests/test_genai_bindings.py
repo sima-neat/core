@@ -419,6 +419,9 @@ def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.GenAIServerOptions is pyneat.GenAIServerOptions
   assert pyneat.genai.ImageList is pyneat.ImageList
   assert pyneat.genai.GenerationRequest is pyneat.GenerationRequest
+  for model_type in (pyneat.VisionLanguageModel, pyneat.GenAIModel):
+    assert hasattr(model_type, "set_lora")
+    assert hasattr(model_type, "unset_lora")
   assert hasattr(pyneat.genai.graphs, "vision_language")
   assert hasattr(pyneat.genai.graphs, "speech_transcriber")
   assert not hasattr(pyneat.genai, "nodes")

@@ -94,6 +94,10 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            auto genai_server = static_cast<GenAIServer*>(nullptr);
            auto genai_run = &GenAIModel::run;
            auto genai_stream = &GenAIModel::stream;
+           auto vlm_set_lora = &VisionLanguageModel::set_lora;
+           auto vlm_unset_lora = &VisionLanguageModel::unset_lora;
+           auto genai_set_lora = &GenAIModel::set_lora;
+           auto genai_unset_lora = &GenAIModel::unset_lora;
            bool vision_language_rejected_null = false;
            try {
              (void)graphs::VisionLanguage(nullptr);
@@ -131,4 +135,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)genai_server;
            (void)genai_run;
            (void)genai_stream;
+           (void)vlm_set_lora;
+           (void)vlm_unset_lora;
+           (void)genai_set_lora;
+           (void)genai_unset_lora;
          }));
