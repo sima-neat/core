@@ -237,6 +237,9 @@ void runtime::RunCore::stop() {
     }
     st->pipeline.input_thread.join();
   }
+  if (run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
+    st->decoder_admission.reset();
+  }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::stop end\n");
   }

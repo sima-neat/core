@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/RunDiagnostics.h"
+#include "DecoderAdmission.h"
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
@@ -265,6 +266,7 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   // can still show the customer's Graph::add topology instead of falling back
   // to node-metric order.
   std::unique_ptr<ExecutionGraphPlan> graph_export_plan_;
+  std::unique_ptr<DecoderAdmissionReservation> decoder_admission;
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;

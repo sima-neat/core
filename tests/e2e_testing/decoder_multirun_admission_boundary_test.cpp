@@ -17,8 +17,8 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -33,7 +33,10 @@ constexpr int kFramesPerStream = 5;
 constexpr int kPullTimeoutMs = 20000;
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
-constexpr auto kThroughputWindow = std::chrono::seconds(5);
+constexpr double kMinimumStreamFps = 54.0;
+constexpr double kMinimumAggregateFps = 228.0;
+constexpr auto kWarmupWindow = std::chrono::seconds(10);
+constexpr auto kThroughputWindow = std::chrono::seconds(10);
 
 std::string trim_copy(const std::string& value) {
   const std::size_t start = value.find_first_not_of(" \t\r\n");
@@ -121,10 +124,20 @@ simaai::neat::Graph make_decoder(std::size_t stream_index, int fps) {
   return graph;
 }
 
-simaai::neat::Graph make_single_stream_graph(const std::string& url, std::size_t stream_index,
-                                             int fps) {
-  simaai::neat::Graph graph("single_decoder_" + std::to_string(stream_index));
-  graph.connect(make_source(url, fps), make_decoder(stream_index, fps));
+simaai::neat::Graph make_single_stream_graph(const std::string& url, int fps) {
+  simaai::neat::Graph graph;
+  graph.add(make_source(url, fps));
+
+  simaai::neat::SimaDecodeOptions options;
+  options.type = simaai::neat::SimaDecodeType::H264;
+  options.raw_output = true;
+  options.dec_width = kWidth;
+  options.dec_height = kHeight;
+  options.dec_fps = fps;
+  graph.add(simaai::neat::nodes::SimaDecode(options));
+  graph.add(
+      simaai::neat::nodes::CapsRaw("NV12", kWidth, kHeight, fps, simaai::neat::CapsMemory::Any));
+  graph.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::Latest()));
   return graph;
 }
 
@@ -148,13 +161,21 @@ void require_decoded_frame(const simaai::neat::Sample& sample, const std::string
   require(tensor.storage != nullptr, where + ": decoded tensor has no storage");
 }
 
+simaai::neat::PullStatus pull_output(simaai::neat::Run& run, const std::string& endpoint,
+                                     int timeout_ms, simaai::neat::Sample& sample,
+                                     simaai::neat::PullError* error) {
+  return endpoint.empty() ? run.pull(timeout_ms, sample, error)
+                          : run.pull(endpoint, timeout_ms, sample, error);
+}
+
 simaai::neat::Sample pull_frames(simaai::neat::Run& run, const std::string& endpoint,
                                  const std::string& where) {
   simaai::neat::Sample first_sample;
   for (int frame = 0; frame < kFramesPerStream; ++frame) {
     simaai::neat::Sample sample;
     simaai::neat::PullError error;
-    const simaai::neat::PullStatus status = run.pull(endpoint, kPullTimeoutMs, sample, &error);
+    const simaai::neat::PullStatus status =
+        pull_output(run, endpoint, kPullTimeoutMs, sample, &error);
     require(status == simaai::neat::PullStatus::Ok,
             where + ": pull failed status=" + std::to_string(static_cast<int>(status)) +
                 " error=" + error.message);
@@ -170,15 +191,20 @@ void require_admitted_boundaries(const simaai::neat::Run& run, std::size_t expec
                                  const std::string& where) {
   const auto core = simaai::neat::run_internal::core(run);
   require(core != nullptr, where + ": missing RunCore");
-  const auto& execution = core->graph_execution();
-  require(execution.decoder_admission_active,
+  require(core->decoder_admission && core->decoder_admission->active(),
           where + ": decoder graph started without an admission lease");
 
   std::size_t admitted_decoders = 0;
-  for (const auto& pipeline : execution.pipelines) {
-    require(pipeline != nullptr, where + ": missing pipeline segment");
-    admitted_decoders +=
-        count_occurrences(pipeline->last_pipeline, "decoder-admission-required=true");
+  if (core->graph_execution_) {
+    for (const auto& pipeline : core->graph_execution_->pipelines) {
+      require(pipeline != nullptr, where + ": missing pipeline segment");
+      admitted_decoders +=
+          count_occurrences(pipeline->last_pipeline, "decoder-admission-required=true");
+    }
+  } else {
+    const auto diag = core->pipeline.stream.diag_ctx();
+    require(diag != nullptr, where + ": simple pipeline has no diagnostics");
+    admitted_decoders = count_occurrences(diag->pipeline_string, "decoder-admission-required=true");
   }
 
   require(admitted_decoders == expected_decoders,
@@ -186,24 +212,25 @@ void require_admitted_boundaries(const simaai::neat::Run& run, std::size_t expec
               std::to_string(admitted_decoders));
 }
 
-void require_independent_throughput(std::vector<simaai::neat::Run>& runs,
-                                    const std::vector<int>& fps) {
+double measure_throughput(const std::vector<simaai::neat::Run*>& runs,
+                          const std::vector<std::string>& endpoints, std::chrono::seconds window,
+                          const std::string& label, bool enforce_thresholds) {
   std::array<std::size_t, kStreamCount> frame_counts{};
   std::array<std::string, kStreamCount> errors{};
-  std::atomic<bool> start{false};
-  const auto deadline = std::chrono::steady_clock::now() + kThroughputWindow;
+  const auto start = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+  const auto deadline = start + window;
   std::vector<std::thread> drainers;
   drainers.reserve(kStreamCount);
 
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     drainers.emplace_back([&, i]() {
-      while (!start.load(std::memory_order_acquire)) {
-        std::this_thread::yield();
+      while (std::chrono::steady_clock::now() < start) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
       while (std::chrono::steady_clock::now() < deadline) {
         simaai::neat::Sample sample;
         simaai::neat::PullError error;
-        const auto status = runs[i].pull(output_name(i), 1000, sample, &error);
+        const auto status = pull_output(*runs[i], endpoints[i], 1000, sample, &error);
         if (status == simaai::neat::PullStatus::Timeout) {
           continue;
         }
@@ -216,28 +243,32 @@ void require_independent_throughput(std::vector<simaai::neat::Run>& runs,
     });
   }
 
-  const auto started = std::chrono::steady_clock::now();
-  start.store(true, std::memory_order_release);
   for (auto& drainer : drainers) {
     drainer.join();
   }
-  const double seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+  const double seconds = std::chrono::duration<double>(window).count();
 
   std::size_t total_frames = 0;
-  int expected_fps = 0;
   for (std::size_t i = 0; i < kStreamCount; ++i) {
-    require(errors[i].empty(),
-            "independent throughput stream " + std::to_string(i) + " stopped: " + errors[i]);
+    require(errors[i].empty(), label + " stream " + std::to_string(i) + " stopped: " + errors[i]);
     total_frames += frame_counts[i];
-    expected_fps += fps[i];
+    const double stream_fps = static_cast<double>(frame_counts[i]) / seconds;
+    std::cout << "[INFO] " << label << " stream=" << i << " fps=" << stream_fps << "\n";
+    if (enforce_thresholds) {
+      require(stream_fps >= kMinimumStreamFps,
+              label + " stream " + std::to_string(i) + " regressed: measured " +
+                  std::to_string(stream_fps) + " fps, expected at least " +
+                  std::to_string(kMinimumStreamFps) + " fps");
+    }
   }
   const double aggregate_fps = static_cast<double>(total_frames) / seconds;
-  std::cout << "[INFO] independent decoder throughput=" << aggregate_fps
-            << " fps expected=" << expected_fps << " fps\n";
-  require(aggregate_fps >= static_cast<double>(expected_fps) * 0.80,
-          "independent decoder throughput regressed: measured " + std::to_string(aggregate_fps) +
-              " fps, expected at least 80% of " + std::to_string(expected_fps) + " fps");
+  std::cout << "[INFO] " << label << " aggregate_fps=" << aggregate_fps << "\n";
+  if (enforce_thresholds) {
+    require(aggregate_fps >= kMinimumAggregateFps,
+            label + " aggregate throughput regressed: measured " + std::to_string(aggregate_fps) +
+                " fps, expected at least " + std::to_string(kMinimumAggregateFps) + " fps");
+  }
+  return aggregate_fps;
 }
 
 simaai::neat::Graph branch_leg(const std::string& input, const std::string& output) {
@@ -293,7 +324,7 @@ void run_appsrc_branch_boundary(const simaai::neat::Sample& decoded) {
   run.close();
 }
 
-void run_combined_graph(const std::vector<std::string>& urls, const std::vector<int>& fps) {
+double run_combined_graph(const std::vector<std::string>& urls, const std::vector<int>& fps) {
   simaai::neat::Graph graph("combined_decoder_reference");
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     graph.connect(make_source(urls[i], fps[i]), make_decoder(i, fps[i]));
@@ -304,31 +335,56 @@ void run_combined_graph(const std::vector<std::string>& urls, const std::vector<
     (void)pull_frames(run, output_name(i), "combined stream " + std::to_string(i));
   }
   require_admitted_boundaries(run, kStreamCount, "combined graph");
+  std::vector<simaai::neat::Run*> run_refs(kStreamCount, &run);
+  std::vector<std::string> endpoints;
+  for (std::size_t i = 0; i < kStreamCount; ++i) {
+    endpoints.push_back(output_name(i));
+  }
+  (void)measure_throughput(run_refs, endpoints, kWarmupWindow, "combined warmup", false);
+  const double aggregate =
+      measure_throughput(run_refs, endpoints, kThroughputWindow, "combined", true);
   run.close();
+  return aggregate;
 }
 
-void run_independent_graphs(const std::vector<std::string>& urls, const std::vector<int>& fps) {
+double run_independent_graphs(const std::vector<std::string>& urls, const std::vector<int>& fps) {
   std::vector<simaai::neat::Run> runs;
   runs.reserve(kStreamCount);
   for (std::size_t i = 0; i < kStreamCount; ++i) {
-    simaai::neat::Graph graph = make_single_stream_graph(urls[i], i, fps[i]);
+    simaai::neat::Graph graph = make_single_stream_graph(urls[i], fps[i]);
     runs.push_back(graph.build(run_options()));
   }
 
   simaai::neat::Sample branch_sample;
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     simaai::neat::Sample sample =
-        pull_frames(runs[i], output_name(i), "independent stream " + std::to_string(i));
+        pull_frames(runs[i], {}, "independent stream " + std::to_string(i));
     if (i == 0U) {
       branch_sample = std::move(sample);
     }
     require_admitted_boundaries(runs[i], 1U, "independent graph " + std::to_string(i));
   }
-  require_independent_throughput(runs, fps);
+  std::vector<simaai::neat::Run*> run_refs;
+  std::vector<std::string> endpoints(kStreamCount);
+  for (auto& run : runs) {
+    run_refs.push_back(&run);
+  }
+  (void)measure_throughput(run_refs, endpoints, kWarmupWindow, "independent warmup", false);
+  const double aggregate =
+      measure_throughput(run_refs, endpoints, kThroughputWindow, "independent", true);
   run_appsrc_branch_boundary(branch_sample);
   for (auto& run : runs) {
     run.close();
   }
+  return aggregate;
+}
+
+void run_close_and_rebuild(const std::string& url, int fps) {
+  simaai::neat::Graph graph = make_single_stream_graph(url, fps);
+  simaai::neat::Run run = graph.build(run_options());
+  (void)pull_frames(run, {}, "simple rebuild");
+  require_admitted_boundaries(run, 1U, "simple rebuild");
+  run.close();
 }
 
 } // namespace
@@ -348,11 +404,22 @@ int main() {
     std::vector<int> fps;
     fps.reserve(kStreamCount);
     for (const auto& url : urls) {
-      fps.push_back(sima_test::probe_rtsp_source_fps(url));
+      const int source_fps = sima_test::probe_rtsp_source_fps(url);
+      require(source_fps >= 55,
+              "decoder admission performance test requires ~60 FPS sources; probed " +
+                  std::to_string(source_fps) + " FPS");
+      fps.push_back(source_fps);
     }
 
-    run_combined_graph(urls, fps);
-    run_independent_graphs(urls, fps);
+    const double combined_fps = run_combined_graph(urls, fps);
+    const double independent_fps = run_independent_graphs(urls, fps);
+    const double relative_delta =
+        std::abs(independent_fps - combined_fps) / std::max(independent_fps, combined_fps);
+    require(relative_delta <= 0.05,
+            "independent .add() throughput differs from combined .connect() throughput by more "
+            "than 5%: independent=" +
+                std::to_string(independent_fps) + " combined=" + std::to_string(combined_fps));
+    run_close_and_rebuild(urls.front(), fps.front());
     std::cout << "[OK] decoder_multirun_admission_boundary_test passed\n";
     return 0;
   } catch (const std::exception& e) {
