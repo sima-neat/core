@@ -19,12 +19,14 @@
 #endif
 
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/SuperPointTypes.h"
 #include "pipeline/GraphOptions.h"
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/SuperPointContract.h"
 
 #include <cstdint>
 #include <optional>
@@ -41,6 +43,7 @@ enum class BoxDecodeSourceStorageKind : int {
   Unknown = -1,
   PackedCBlock = 0,
   DenseHwcPhysical = 1,
+  PackedHwcC16 = 2,
 };
 
 /**
@@ -64,6 +67,7 @@ struct BoxDecodeTensorStaticContract {
   std::uint64_t source_size_bytes = 0;  ///< Size in bytes within the source physical buffer.
   BoxDecodeSourceStorageKind source_storage_kind =
       BoxDecodeSourceStorageKind::Unknown; ///< Source byte layout for kernel access.
+  BoxDecodeTensorRole role = BoxDecodeTensorRole::Unknown; ///< Semantic SuperPoint tensor role.
 };
 
 /// Description of one physical input buffer feeding the box-decode stage.
@@ -95,6 +99,7 @@ struct BoxDecodeStaticContract {
   double detection_threshold = 0.0;     ///< Score cutoff before NMS.
   double nms_iou_threshold = 0.0;       ///< IoU threshold used by NMS.
   int num_classes = 0;                  ///< Number of class scores per anchor.
+  SuperPointStaticContract superpoint;  ///< SuperPoint-only semantic/output contract.
 
   std::vector<BoxDecodeTensorStaticContract> tensors; ///< Per-input tensor specs.
   std::vector<std::string> tensor_names; ///< Logical tensor names (parallel to `tensors`).

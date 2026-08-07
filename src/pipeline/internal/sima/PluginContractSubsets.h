@@ -209,6 +209,8 @@ struct BoxDecodeContractSubset {
   std::optional<BoxDecodeTypeOption> decode_type_option;
   BoxDecodeScoreActivation score_activation = BoxDecodeScoreActivation::Unknown;
   int num_classes = 0;
+  SuperPointStaticContract superpoint;
+  std::vector<BoxDecodeTensorRole> tensor_roles;
 };
 
 // Phase 3a (Option A++): public wrappers around the per-frame normalization
