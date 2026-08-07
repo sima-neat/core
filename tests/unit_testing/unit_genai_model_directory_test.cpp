@@ -9,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -36,16 +37,26 @@ private:
   fs::path path_;
 };
 
-fs::path write_vlm(const fs::path& root, std::optional<bool> is_draft = std::nullopt) {
+fs::path write_vlm(const fs::path& root, std::optional<bool> is_draft = std::nullopt,
+                   nlohmann::json vision_model_name = nullptr) {
   fs::create_directories(root / "devkit");
   fs::create_directories(root / "elf_files");
 
   nlohmann::json config = {{"model_type", "llm-test"}, {"lm_cfg", nlohmann::json::object()}};
   if (is_draft.has_value()) {
-    config["lm_cfg"]["speculative_decoding_cfg"] = {{"is_draft", *is_draft},
-                                                    {"speculative_budget", *is_draft ? 5 : 16}};
+    config["lm_cfg"]["speculative_decoding_cfg"] = {
+        {"is_draft", *is_draft}, {"speculative_budget", *is_draft ? 5 : 16}};
   }
-  std::ofstream(root / "devkit" / "vlm_config.json") << config.dump();
+  if (!vision_model_name.is_null()) {
+    config["vm_cfg"] = nlohmann::json::object();
+    config["mm_cfg"] = nlohmann::json::object();
+    config["vision_model_name"] = std::move(vision_model_name);
+  }
+
+  std::ofstream out(root / "devkit" / "vlm_config.json");
+  require(static_cast<bool>(out), "failed to create VLM config");
+  out << config.dump();
+  require(static_cast<bool>(out), "failed to write VLM config");
   return root;
 }
 
@@ -78,6 +89,17 @@ RUN_TEST(
               "normal package root mismatch");
       require(normal.root == normal.package_root, "normal runtime root mismatch");
       require(!normal.draft_root.has_value(), "normal model unexpectedly has a draft");
+
+      const auto single_vision_root =
+          write_vlm(temp.path() / "single-vision", std::nullopt, "vision");
+      require(internal::inspect_model_directory(single_vision_root).accepts_image,
+              "single-ELF VLM should accept images");
+
+      const auto multi_vision_root =
+          write_vlm(temp.path() / "multi-vision", std::nullopt,
+                    nlohmann::json::array({"vision_0", "vision_1"}));
+      require(internal::inspect_model_directory(multi_vision_root).accepts_image,
+              "multi-ELF VLM should accept images");
 
       const auto pair_root = temp.path() / "pair";
       const auto target_root = write_packaged_vlm(pair_root, "target", false);
