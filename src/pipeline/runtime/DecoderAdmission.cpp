@@ -664,6 +664,11 @@ prepare_decoder_admission(ExecutionGraphPlan& plan,
   log_decoder_cma_snapshot("before_admission_request", candidates.size());
   DecoderAdmissionResult admission = backend->admit(streams, false);
   if (!admission.admitted) {
+    if (admission.may_have_committed) {
+      DecoderAdmissionReservation uncertain_admission(
+          backend, admission.group_uuid, candidates.size(), admission.estimated_reserved_bytes);
+      uncertain_admission.release();
+    }
     log_decoder_cma_snapshot("after_admission_rejected", candidates.size());
     if (admission.endpoint_missing &&
         !pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_REQUIRE", false)) {

@@ -24,6 +24,7 @@
 #include <exception>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -148,6 +149,53 @@ bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   return predicate();
+}
+
+void failed_start_releases_admission(bool connected) {
+  using namespace simaai::neat;
+
+  Graph graph;
+  if (connected) {
+    Graph source("image");
+    source.add(nodes::Input("image"));
+    Graph sink("output");
+    sink.add(nodes::Output("output", OutputOptions::EveryFrame(4)));
+    graph.connect(source, sink);
+  } else {
+    graph.add(nodes::Input("image"));
+    graph.add(nodes::Output("output", OutputOptions::EveryFrame(4)));
+  }
+
+  const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x29);
+  const Sample seed_sample = sample_from_tensors(TensorList{seed});
+  RunOptions run_options;
+  run_options.queue_depth = 4;
+  runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(graph, run_options, seed_sample);
+
+  auto backend = std::make_shared<CountingAdmissionBackend>();
+  runtime::RunCoreStartOptions start_options;
+  start_options.run_options = run_options;
+  start_options.mode = RunMode::Async;
+  start_options.seed = seed_sample;
+  start_options.graph_options = runtime::graph_runtime_options_from_run_options(run_options);
+  start_options.decoder_admission = make_admission_reservation(backend);
+  start_options.after_pipeline_start_for_test = [] {
+    throw std::runtime_error("injected failure after pipeline start");
+  };
+
+  bool threw = false;
+  try {
+    (void)runtime::RunCore::start(std::move(plan), std::move(start_options));
+  } catch (const std::exception& error) {
+    threw = true;
+    require(std::string(error.what()).find("injected failure after pipeline start") !=
+                std::string::npos,
+            "startup rollback should preserve the original failure");
+  }
+  require(threw, "startup failure injection did not throw");
+  require(wait_until([&] { return backend->release_count.load(std::memory_order_relaxed) == 1; },
+                     std::chrono::seconds(3)),
+          "failed startup did not release decoder admission after teardown");
 }
 
 void detached_stream_stop_retains_runtime_until_cleanup() {
@@ -516,4 +564,6 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            detached_stream_close_keeps_measurement_reads_safe();
            input_thread_timeout_hands_off_stream_close();
            composite_child_handoff_preserves_measurement_node_metrics();
+           failed_start_releases_admission(false);
+           failed_start_releases_admission(true);
          }));

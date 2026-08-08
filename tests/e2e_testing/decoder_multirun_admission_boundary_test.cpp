@@ -11,6 +11,7 @@
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/Diagnostics.h"
+#include "pipeline/internal/HolderLoanGate.h"
 #include "pipeline/runtime/RunCore.h"
 #include "rtsp_probe_utils.h"
 #include "test_utils.h"
@@ -33,6 +34,7 @@ constexpr int kFramesPerStream = 5;
 constexpr int kPullTimeoutMs = 20000;
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
+constexpr int kBranchFrameCount = 8;
 constexpr double kMinimumStreamRateRatio = 0.90;
 constexpr double kMinimumAggregateRateRatio = 0.95;
 constexpr auto kWarmupWindow = std::chrono::seconds(10);
@@ -284,11 +286,14 @@ simaai::neat::Graph branch_leg(const std::string& input, const std::string& outp
   simaai::neat::Graph graph(input);
   graph.add(simaai::neat::nodes::Input(input));
   graph.add(simaai::neat::nodes::Queue());
-  graph.add(simaai::neat::nodes::Output(output));
+  graph.add(simaai::neat::nodes::Output(output, simaai::neat::OutputOptions::EveryFrame(2)));
   return graph;
 }
 
-void run_appsrc_branch_boundary(const simaai::neat::Sample& decoded) {
+void run_appsrc_branch_boundary(simaai::neat::Run& decoded_source) {
+  // Exercise lossless backpressure rather than the realtime keep-latest safety fallback.
+  setenv("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY", "0", 1);
+
   simaai::neat::Graph source("decoded");
   source.add(simaai::neat::nodes::Input("decoded"));
   source.add(simaai::neat::nodes::Queue());
@@ -300,17 +305,60 @@ void run_appsrc_branch_boundary(const simaai::neat::Sample& decoded) {
   app.connect(branch, branch_leg("model_input", "model_output"));
   app.connect(branch, branch_leg("egress_input", "egress_output"));
 
-  simaai::neat::Run run = app.build(run_options());
-  require(run.push("decoded", simaai::neat::Sample{decoded}),
-          "appsrc branch: decoded-frame push failed: " + run.last_error());
-  for (const std::string endpoint : {"model_output", "egress_output"}) {
-    simaai::neat::Sample sample;
-    simaai::neat::PullError error;
-    const auto status = run.pull(endpoint, kPullTimeoutMs, sample, &error);
-    require(status == simaai::neat::PullStatus::Ok,
-            "appsrc branch: " + endpoint + " pull failed: " + error.message);
-    require_decoded_frame(sample, "appsrc branch " + endpoint);
-  }
+  simaai::neat::RunOptions options = run_options();
+  options.queue_depth = 2;
+  options.overflow_policy = simaai::neat::OverflowPolicy::Block;
+  simaai::neat::Run run = app.build(options);
+
+  std::string producer_error;
+  std::array<std::string, 2> consumer_errors{};
+  const auto consume = [&](std::size_t consumer_index, const std::string& endpoint,
+                           std::chrono::milliseconds delay) {
+    try {
+      std::this_thread::sleep_for(delay);
+      for (int frame = 0; frame < kBranchFrameCount; ++frame) {
+        simaai::neat::Sample sample;
+        simaai::neat::PullError error;
+        const auto status = run.pull(endpoint, kPullTimeoutMs, sample, &error);
+        require(status == simaai::neat::PullStatus::Ok,
+                "appsrc branch: " + endpoint + " pull failed: " + error.message);
+        require_decoded_frame(sample, "appsrc branch " + endpoint);
+        require(sample.frame_id == frame,
+                "appsrc branch: " + endpoint + " frame order changed: expected=" +
+                    std::to_string(frame) + " actual=" + std::to_string(sample.frame_id));
+      }
+    } catch (const std::exception& error) {
+      consumer_errors[consumer_index] = error.what();
+    }
+  };
+
+  std::thread model_consumer(consume, 0U, "model_output", std::chrono::milliseconds(0));
+  std::thread egress_consumer(consume, 1U, "egress_output", std::chrono::milliseconds(75));
+  std::thread producer([&] {
+    try {
+      for (int frame = 0; frame < kBranchFrameCount; ++frame) {
+        simaai::neat::Sample sample;
+        simaai::neat::PullError error;
+        const auto status = decoded_source.pull(kPullTimeoutMs, sample, &error);
+        require(status == simaai::neat::PullStatus::Ok,
+                "decoded-frame pull failed: " + error.message);
+        require_decoded_frame(sample, "appsrc branch source");
+        sample.frame_id = frame;
+        require(run.push("decoded", std::move(sample)),
+                "decoded-frame push failed: " + run.last_error());
+      }
+    } catch (const std::exception& error) {
+      producer_error = error.what();
+    }
+  });
+
+  producer.join();
+  run.close_input();
+  model_consumer.join();
+  egress_consumer.join();
+  require(producer_error.empty(), "appsrc branch: " + producer_error);
+  require(consumer_errors[0].empty(), consumer_errors[0]);
+  require(consumer_errors[1].empty(), consumer_errors[1]);
 
   const auto core = simaai::neat::run_internal::core(run);
   require(core != nullptr, "appsrc branch: missing RunCore");
@@ -323,14 +371,20 @@ void run_appsrc_branch_boundary(const simaai::neat::Sample& decoded) {
     const auto diag = pipeline->run_core ? pipeline->run_core->pipeline.stream.diag_ctx() : nullptr;
     require(diag != nullptr && !diag->boundaries.empty(),
             "appsrc branch: injected segment has no boundary diagnostics");
-    require(diag->boundaries.front()->in_buffers.load() > 0U,
-            "appsrc branch: injected appsrc did not receive a buffer");
-    require(diag->boundaries.back()->out_buffers.load() > 0U,
-            "appsrc branch: injected segment did not forward a buffer");
+    require(diag->boundaries.front()->in_buffers.load() >= kBranchFrameCount,
+            "appsrc branch: injected appsrc did not receive every buffer");
+    require(diag->boundaries.back()->out_buffers.load() >= kBranchFrameCount,
+            "appsrc branch: injected segment did not forward every buffer");
   }
   require(injected_inputs == 2U, "appsrc branch: expected two injected-input legs, got " +
                                      std::to_string(injected_inputs));
   run.close();
+  const auto source_core = simaai::neat::run_internal::core(decoded_source);
+  require(source_core != nullptr && source_core->holder_loan_gate != nullptr,
+          "appsrc branch: decoded source has no zero-copy loan gate");
+  require(source_core->holder_loan_gate->inflight() == 0,
+          "appsrc branch: decoded-frame loans were not released after downstream close");
+  unsetenv("SIMA_PIPELINE_OUTPUT_DROP_ON_ZERO_COPY");
 }
 
 double run_combined_graph(const std::vector<std::string>& urls, const std::vector<int>& fps) {
@@ -361,16 +415,15 @@ double run_independent_graphs(const std::vector<std::string>& urls, const std::v
   runs.reserve(kStreamCount);
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     simaai::neat::Graph graph = make_single_stream_graph(urls[i], fps[i]);
-    runs.push_back(graph.build(run_options()));
+    simaai::neat::RunOptions options = run_options();
+    if (i == 0U) {
+      options.queue_depth = kBranchFrameCount;
+    }
+    runs.push_back(graph.build(options));
   }
 
-  simaai::neat::Sample branch_sample;
   for (std::size_t i = 0; i < kStreamCount; ++i) {
-    simaai::neat::Sample sample =
-        pull_frames(runs[i], {}, "independent stream " + std::to_string(i));
-    if (i == 0U) {
-      branch_sample = std::move(sample);
-    }
+    (void)pull_frames(runs[i], {}, "independent stream " + std::to_string(i));
     require_admitted_boundaries(runs[i], 1U, "independent graph " + std::to_string(i));
   }
   std::vector<simaai::neat::Run*> run_refs;
@@ -381,7 +434,7 @@ double run_independent_graphs(const std::vector<std::string>& urls, const std::v
   (void)measure_throughput(run_refs, endpoints, fps, kWarmupWindow, "independent warmup", false);
   const double aggregate =
       measure_throughput(run_refs, endpoints, fps, kThroughputWindow, "independent", true);
-  run_appsrc_branch_boundary(branch_sample);
+  run_appsrc_branch_boundary(runs.front());
   for (auto& run : runs) {
     run.close();
   }

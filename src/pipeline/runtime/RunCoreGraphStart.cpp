@@ -955,6 +955,7 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
     start_opt.mode = RunMode::Async;
     start_opt.last_pipeline = &rt.last_pipeline;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    start_opt.decoder_admission = core->decoder_admission;
     const std::weak_ptr<RunCore> weak_core = core;
     start_opt.fused_encoded_output_dispatch =
         [weak_core](const FusedRealtimeIngressBranch::EncodedOutput& output, Sample&& sample,
@@ -1001,7 +1002,6 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
           return FusedEncodedOutputDispatchResult::Failed;
         };
     rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
-    rt.run_core->decoder_admission = core->decoder_admission;
     rt.transport.built.store(true, std::memory_order_release);
   }
   rt.transport.cv.notify_all();
@@ -1392,10 +1392,24 @@ void start_pipeline_threads(const std::shared_ptr<RunCore>& core) {
   }
 }
 
-std::shared_ptr<RunCore>
-start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt,
-                 std::unique_ptr<DecoderAdmissionReservation> decoder_admission,
-                 std::uint64_t decoder_admission_us) {
+void rollback_failed_graph_start(const std::shared_ptr<RunCore>& core, const NeatError* error,
+                                 const std::string& message) noexcept {
+  try {
+    if (error) {
+      core->graph_request_stop(*error);
+    } else {
+      core->graph_request_stop(message);
+    }
+  } catch (...) {
+  }
+  try {
+    core->close();
+  } catch (...) {
+  }
+}
+
+std::shared_ptr<RunCore> start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt,
+                                          std::uint64_t decoder_admission_us) {
   const auto total_start = pipeline_internal::build_timing_now();
   if (opt.graph_options.push_timeout_ms < 0) {
     throw_graph_start_error(plan, "RunCore::start(graph): push_timeout_ms must be >= 0");
@@ -1410,7 +1424,7 @@ start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt,
   core->graph_options = std::move(opt.graph_options);
   configure_graph_public_output_loan_gate(core, core->graph_options, opt.mode);
   core->graph_verbose_guard = std::move(opt.graph_verbose_guard);
-  core->decoder_admission = std::move(decoder_admission);
+  core->decoder_admission = opt.decoder_admission;
   core->graph_execution().plan = std::move(plan);
 
   try {
@@ -1443,6 +1457,10 @@ start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt,
     start_pipeline_threads(core);
     const auto start_pipelines_us = pipeline_internal::build_timing_us(step_start);
 
+    if (opt.after_pipeline_start_for_test) {
+      opt.after_pipeline_start_for_test();
+    }
+
     if (core->graph_options.power_monitor.enabled) {
       core->power_monitor =
           std::make_unique<simaai::neat::PowerMonitor>(core->graph_options.power_monitor);
@@ -1468,12 +1486,17 @@ start_graph_plan(ExecutionGraphPlan plan, RunCoreStartOptions opt,
             " edges=" + std::to_string(execution.plan.edges.size()));
 
     return core;
-  } catch (const NeatError&) {
+  } catch (const NeatError& e) {
+    rollback_failed_graph_start(core, &e, e.what());
     throw;
   } catch (const std::exception& e) {
-    throw_graph_start_error(core->graph_execution().plan, e.what());
+    const std::string message = e.what();
+    rollback_failed_graph_start(core, nullptr, message);
+    throw_graph_start_error(core->graph_execution().plan, message);
   } catch (...) {
-    throw_graph_start_error(core->graph_execution().plan, "unknown failure");
+    const std::string message = "unknown failure";
+    rollback_failed_graph_start(core, nullptr, message);
+    throw_graph_start_error(core->graph_execution().plan, message);
   }
 }
 
@@ -1494,17 +1517,18 @@ std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOpt
     throw_graph_start_error(plan, "unknown decoder admission failure");
   }
   const auto decoder_admission_us = pipeline_internal::build_timing_us(admission_start);
+  if (admission.reservation) {
+    opt.decoder_admission = std::move(admission.reservation);
+  }
 
   if (is_simple_linear_plan(plan)) {
     auto export_plan = std::make_unique<ExecutionGraphPlan>(plan);
     auto core = RunCore::start_pipeline_segment(plan.pipeline_segments.front(), std::move(opt));
     core->graph_export_plan_ = std::move(export_plan);
-    core->decoder_admission = std::move(admission.reservation);
     return core;
   }
 
-  return start_graph_plan(std::move(plan), std::move(opt), std::move(admission.reservation),
-                          decoder_admission_us);
+  return start_graph_plan(std::move(plan), std::move(opt), decoder_admission_us);
 }
 
 } // namespace simaai::neat::runtime

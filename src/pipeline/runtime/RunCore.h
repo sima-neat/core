@@ -134,6 +134,8 @@ struct RunCoreStartOptions {
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
+  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
+  std::function<void()> after_pipeline_start_for_test;
 };
 
 // Names the single thread that must call InputStream::close(). Teardown can detach a worker
@@ -167,7 +169,9 @@ struct RunCore : std::enable_shared_from_this<RunCore> {
   start_single_pipeline(InputStream stream, const RunOptions& opt,
                         const InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                         const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,
-                        pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr);
+                        pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr,
+                        std::shared_ptr<DecoderAdmissionReservation> decoder_admission = nullptr,
+                        std::function<void()> after_pipeline_start_for_test = {});
 
   ~RunCore();
 

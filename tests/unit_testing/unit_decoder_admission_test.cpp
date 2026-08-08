@@ -460,6 +460,22 @@ void check_rejections_and_malformed_leases_release() {
 
   {
     auto backend = std::make_shared<FakeBackend>();
+    backend->response.admitted = false;
+    backend->response.may_have_committed = true;
+    backend->response.group_uuid[0] = 17;
+    backend->response.error = "admission response lost";
+    ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+    require_throws_with(
+        [&]() { (void)simaai::neat::runtime::prepare_decoder_admission(plan, backend); },
+        "response lost", "uncertain admission result");
+    require(backend->release_count == 1,
+            "an uncertain admission result must release its possible reservation");
+    require(backend->released_uuid[0] == 17,
+            "uncertain admission cleanup must use the request group UUID");
+  }
+
+  {
+    auto backend = std::make_shared<FakeBackend>();
     backend->auto_leases = false;
     backend->response.admitted = true;
     ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
