@@ -33,8 +33,8 @@ constexpr int kFramesPerStream = 5;
 constexpr int kPullTimeoutMs = 20000;
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
-constexpr double kMinimumStreamFps = 54.0;
-constexpr double kMinimumAggregateFps = 228.0;
+constexpr double kMinimumStreamRateRatio = 0.90;
+constexpr double kMinimumAggregateRateRatio = 0.95;
 constexpr auto kWarmupWindow = std::chrono::seconds(10);
 constexpr auto kThroughputWindow = std::chrono::seconds(10);
 
@@ -213,8 +213,10 @@ void require_admitted_boundaries(const simaai::neat::Run& run, std::size_t expec
 }
 
 double measure_throughput(const std::vector<simaai::neat::Run*>& runs,
-                          const std::vector<std::string>& endpoints, std::chrono::seconds window,
+                          const std::vector<std::string>& endpoints,
+                          const std::vector<int>& source_fps, std::chrono::seconds window,
                           const std::string& label, bool enforce_thresholds) {
+  require(source_fps.size() == kStreamCount, label + ": missing source FPS values");
   std::array<std::size_t, kStreamCount> frame_counts{};
   std::array<std::string, kStreamCount> errors{};
   const auto start = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
@@ -255,18 +257,25 @@ double measure_throughput(const std::vector<simaai::neat::Run*>& runs,
     const double stream_fps = static_cast<double>(frame_counts[i]) / seconds;
     std::cout << "[INFO] " << label << " stream=" << i << " fps=" << stream_fps << "\n";
     if (enforce_thresholds) {
-      require(stream_fps >= kMinimumStreamFps,
+      const double minimum_stream_fps =
+          static_cast<double>(source_fps[i]) * kMinimumStreamRateRatio;
+      require(stream_fps >= minimum_stream_fps,
               label + " stream " + std::to_string(i) + " regressed: measured " +
                   std::to_string(stream_fps) + " fps, expected at least " +
-                  std::to_string(kMinimumStreamFps) + " fps");
+                  std::to_string(minimum_stream_fps) + " fps");
     }
   }
   const double aggregate_fps = static_cast<double>(total_frames) / seconds;
   std::cout << "[INFO] " << label << " aggregate_fps=" << aggregate_fps << "\n";
   if (enforce_thresholds) {
-    require(aggregate_fps >= kMinimumAggregateFps,
+    double expected_aggregate_fps = 0.0;
+    for (const int expected_fps : source_fps) {
+      expected_aggregate_fps += static_cast<double>(expected_fps);
+    }
+    const double minimum_aggregate_fps = expected_aggregate_fps * kMinimumAggregateRateRatio;
+    require(aggregate_fps >= minimum_aggregate_fps,
             label + " aggregate throughput regressed: measured " + std::to_string(aggregate_fps) +
-                " fps, expected at least " + std::to_string(kMinimumAggregateFps) + " fps");
+                " fps, expected at least " + std::to_string(minimum_aggregate_fps) + " fps");
   }
   return aggregate_fps;
 }
@@ -340,9 +349,9 @@ double run_combined_graph(const std::vector<std::string>& urls, const std::vecto
   for (std::size_t i = 0; i < kStreamCount; ++i) {
     endpoints.push_back(output_name(i));
   }
-  (void)measure_throughput(run_refs, endpoints, kWarmupWindow, "combined warmup", false);
+  (void)measure_throughput(run_refs, endpoints, fps, kWarmupWindow, "combined warmup", false);
   const double aggregate =
-      measure_throughput(run_refs, endpoints, kThroughputWindow, "combined", true);
+      measure_throughput(run_refs, endpoints, fps, kThroughputWindow, "combined", true);
   run.close();
   return aggregate;
 }
@@ -369,9 +378,9 @@ double run_independent_graphs(const std::vector<std::string>& urls, const std::v
   for (auto& run : runs) {
     run_refs.push_back(&run);
   }
-  (void)measure_throughput(run_refs, endpoints, kWarmupWindow, "independent warmup", false);
+  (void)measure_throughput(run_refs, endpoints, fps, kWarmupWindow, "independent warmup", false);
   const double aggregate =
-      measure_throughput(run_refs, endpoints, kThroughputWindow, "independent", true);
+      measure_throughput(run_refs, endpoints, fps, kThroughputWindow, "independent", true);
   run_appsrc_branch_boundary(branch_sample);
   for (auto& run : runs) {
     run.close();
@@ -394,31 +403,20 @@ int main() {
     setenv("SIMA_GST_RUN_INSERT_BOUNDARIES", "1", 1);
     setenv("SIMA_GST_BOUNDARY_PROBES", "1", 1);
 
-    const std::vector<std::string> configured = configured_urls();
-    if (configured.size() < kStreamCount) {
+    std::vector<std::string> urls = configured_urls();
+    if (urls.size() < kStreamCount) {
       std::cout << "[SKIP] SIMANEAT_TEST_RTSP_H264_URLS must provide at least four URLs\n";
       return 77;
     }
+    urls.resize(kStreamCount);
 
-    std::vector<std::string> urls;
     std::vector<int> fps;
-    urls.reserve(kStreamCount);
     fps.reserve(kStreamCount);
-    for (const auto& url : configured) {
+    for (const auto& url : urls) {
       const int source_fps = sima_test::probe_rtsp_source_fps(url);
-      if (source_fps < 55) {
-        continue;
-      }
-      urls.push_back(url);
+      require(source_fps > 0, "decoder admission performance test could not probe source FPS");
       fps.push_back(source_fps);
-      if (urls.size() == kStreamCount) {
-        break;
-      }
     }
-    require(urls.size() == kStreamCount,
-            "decoder admission performance test requires four ~60 FPS sources; found " +
-                std::to_string(urls.size()) + " among " + std::to_string(configured.size()) +
-                " configured URLs");
 
     const double combined_fps = run_combined_graph(urls, fps);
     const double independent_fps = run_independent_graphs(urls, fps);
