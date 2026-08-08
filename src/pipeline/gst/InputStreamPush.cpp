@@ -1,4 +1,5 @@
 #include "InputStreamInternal.h"
+#include "gst/GstSampleAttributes.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/SampleUtil.h"
@@ -18,6 +19,10 @@ struct MessageMetaOverrides {
   std::optional<int64_t> frame_id;
   std::optional<std::string> stream_id;
   std::optional<std::string> stream_label;
+  /// Per-frame user attributes travelling with this Sample. Written through the same shared
+  /// helper every other boundary uses, and written unconditionally so a reused destination
+  /// buffer cannot retain a previous frame's values.
+  SampleAttributes attributes;
 };
 
 class DeferredPoolBufferReleaser {
@@ -217,6 +222,7 @@ MessageMetaOverrides message_meta_overrides(const Sample& msg) {
   MessageMetaOverrides out;
   out.frame_id = (msg.frame_id >= 0) ? std::optional<int64_t>(msg.frame_id) : std::nullopt;
   out.stream_id = msg.stream_id.empty() ? std::nullopt : std::optional<std::string>(msg.stream_id);
+  out.attributes = msg.attributes;
   const bool tensor_payload = sample_has_tensor_list(msg);
   if (!tensor_payload) {
     if (!msg.stream_label.empty()) {
@@ -825,7 +831,8 @@ void update_holder_sima_meta_if_needed_or_throw(
     const std::optional<int64_t>& orig_input_seq_override,
     const std::optional<std::string>& stream_id_override,
     const std::optional<std::string>& buffer_name_override,
-    const SampleTimingOverrides& timing_override, const char* where);
+    const SampleTimingOverrides& timing_override, const char* where,
+    const SampleAttributes* attributes = nullptr);
 void write_holder_timing_if_needed_or_throw(GstBuffer** buffer, const SampleSpec* spec,
                                             const SampleTimingOverrides& timing_override,
                                             bool force_meta_timing_update, const char* where);
@@ -912,7 +919,7 @@ void apply_holder_spec_and_meta_or_throw(
                                    std::nullopt, timing_override);
   update_holder_sima_meta_if_needed_or_throw(
       buffer, &spec, need_meta_update, meta.frame_id, input_seq_override, orig_input_seq_override,
-      meta.stream_id, meta.stream_label, timing_override, where);
+      meta.stream_id, meta.stream_label, timing_override, where, &meta.attributes);
   write_holder_timing_if_needed_or_throw(buffer, &spec, timing_override, need_timing_meta_update,
                                          where);
   ensure_raw_preprocess_meta_for_spec(buffer, spec, src_opt, where);
@@ -1339,8 +1346,22 @@ void update_holder_sima_meta_if_needed_or_throw(
     const std::optional<int64_t>& orig_input_seq_override,
     const std::optional<std::string>& stream_id_override,
     const std::optional<std::string>& buffer_name_override,
-    const SampleTimingOverrides& timing_override, const char* where) {
+    const SampleTimingOverrides& timing_override, const char* where,
+    const SampleAttributes* attributes) {
   if (!need_meta_update) {
+    // The holder fast path skips the metadata rewrite when identity already matches, but
+    // attributes still belong to this frame and must not be inherited from the last one.
+    //
+    // Only force the holder writable when something actually has to change: a shared or
+    // zero-copy holder cannot always be made writable, and doing it unconditionally would
+    // turn a no-op push into a hard failure.
+    const bool nothing_to_write = attributes == nullptr || buffer == nullptr ||
+                                  *buffer == nullptr ||
+                                  (attributes->empty() && !gst_internal::has_attributes(*buffer));
+    if (!nothing_to_write) {
+      ensure_holder_metadata_writable_or_throw(buffer, spec, where, "update GstSimaMeta");
+      gst_internal::write_attributes(*buffer, *attributes);
+    }
     return;
   }
   ensure_holder_metadata_writable_or_throw(buffer, spec, where, "update GstSimaMeta");
@@ -1349,6 +1370,9 @@ void update_holder_sima_meta_if_needed_or_throw(
                                  timing_override.pts_ns)) {
     throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
                              ": failed to write GstSimaMeta fields");
+  }
+  if (attributes != nullptr && !(attributes->empty() && !gst_internal::has_attributes(*buffer))) {
+    gst_internal::write_attributes(*buffer, *attributes);
   }
 }
 
@@ -1449,7 +1473,8 @@ bool push_holder_transport(
       buf, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, timing_override);
   update_holder_sima_meta_if_needed_or_throw(
       &buf, metadata_spec, need_meta_update, frame_id_override, input_seq_override,
-      orig_input_seq_override, stream_id_override, buffer_name_override, timing_override, where);
+      orig_input_seq_override, stream_id_override, buffer_name_override, timing_override, where,
+      fail_msg ? &fail_msg->attributes : nullptr);
   write_holder_timing_if_needed_or_throw(&buf, metadata_spec, timing_override,
                                          need_timing_meta_update, where);
   if (metadata_spec) {
@@ -1665,6 +1690,7 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   attach_required_meta(buf, st.src_opt, st.pool_guard, "InputStream::try_push_message(encoded)");
   update_simaai_meta_fields(buf, meta.frame_id, input_seq_override, orig_input_seq_override,
                             meta.stream_id, meta.stream_label, timing_override.pts_ns);
+  gst_internal::write_attributes(buf, meta.attributes);
   if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
     release_input_buffer(buf, "InputStream::try_push_message:encoded_timing_fail");
     throw std::runtime_error(
@@ -1915,6 +1941,7 @@ CpuZeroCopyFastPathResult try_push_message_cpu_owned_zero_copy_fastpath(
       throw std::runtime_error(
           "InputStream::try_push_message(cpu_zc): failed to write GstSimaMeta fields");
     }
+    gst_internal::write_attributes(buf, meta.attributes);
     if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
       throw std::runtime_error(
           "InputStream::try_push_message(cpu_zc): failed to write sample timing metadata");

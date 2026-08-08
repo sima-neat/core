@@ -1,5 +1,6 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/bind_map.h>
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/function.h>
@@ -321,10 +322,10 @@ std::string sample_to_text_for_python(const Sample& sample) {
 // Python they are surfaced as the `Format` enum directly: reads return the underlying
 // FormatTag, writes accept a FormatTag only. Passing a plain string raises TypeError —
 // callers select a value from pyneat.Format (e.g. pyneat.Format.NV12).
-template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::* member) {
   return [member](const C& self) { return (self.*member).tag; };
 }
-template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::* member) {
   return [member](C& self, simaai::neat::FormatTag value) { self.*member = value; };
 }
 
@@ -1852,6 +1853,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("code", &PullError::code)
       .def_rw("report", &PullError::report);
 
+  // Per-frame attributes must behave like a live mapping, not a snapshot: users expect
+  // `sample.attributes["k"] = "v"` to reach the C++ Sample. A plain def_rw over std::map
+  // would convert through a temporary dict and silently drop item assignment, so the map is
+  // bound as its own type and exposed by reference.
+  nb::bind_map<simaai::neat::SampleAttributes>(m, "SampleAttributes");
+
   nb::class_<Sample>(m, "Sample")
       .def(nb::init<>())
       .def_rw("kind", &Sample::kind)
@@ -1880,6 +1887,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("pts_ns", &Sample::pts_ns)
       .def_rw("dts_ns", &Sample::dts_ns)
       .def_rw("duration_ns", &Sample::duration_ns)
+      // Live mapping view: item assignment/erase reaches the owning Sample. Assigning a
+      // whole dict replaces the contents.
+      .def_prop_rw(
+          "attributes", [](Sample& s) -> simaai::neat::SampleAttributes& { return s.attributes; },
+          [](Sample& s, const simaai::neat::SampleAttributes& value) { s.attributes = value; },
+          nb::rv_policy::reference_internal)
       // Phase 1 (plan slice S10): Pythonic sequence protocol over Bundle samples. The raw C++
       // operator[] returns *this for any index on a non-Bundle sample (no bounds error), so
       // __getitem__ is explicitly bounds-checked (and supports negative indices). front()/back()/
@@ -3258,6 +3271,11 @@ NB_MODULE(_pyneat_core, m) {
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
                  "policy"_a = simaai::neat::CombinePolicy::ByFrame);
 
+  nb::class_<simaai::neat::MultipartHeaderCaptureOptions>(m, "MultipartHeaderCaptureOptions")
+      .def(nb::init<>())
+      .def_rw("headers", &simaai::neat::MultipartHeaderCaptureOptions::headers)
+      .def("enabled", &simaai::neat::MultipartHeaderCaptureOptions::enabled);
+
   nb::class_<simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps>(
       m, "HttpMjpegDecodedInputOutputCaps")
       .def(nb::init<>())
@@ -3326,7 +3344,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("use_videorate",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videorate)
       .def_rw("video_rate_fps",
-              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::video_rate_fps);
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::video_rate_fps)
+      .def_rw("header_capture",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::header_capture);
 
   nb::class_<simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps>(
       m, "ImageInputGroupOutputCaps")

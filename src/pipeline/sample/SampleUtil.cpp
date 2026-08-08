@@ -1,5 +1,6 @@
 // src/pipeline/internal/SampleUtil.cpp
 #include "pipeline/internal/SampleUtil.h"
+#include "gst/GstSampleAttributes.h"
 
 #include "InputStreamUtil.h"
 #include "pipeline/internal/GstDataAdapter.h"
@@ -3456,6 +3457,9 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       bundle_input_seq, bundle_orig_input_seq,
       bundle.stream_id.empty() ? std::nullopt : std::optional<std::string>(bundle.stream_id),
       std::optional<std::string>("bundle"));
+  // Bundle policy: outer attributes live on the outer meta, child attributes on their own
+  // buffers. Writing unconditionally also clears anything stale on a reused destination.
+  gst_internal::write_attributes_to_structure(s, bundle.attributes);
 
   if (sample_has_tensor_list(bundle)) {
     gst_structure_remove_field(s, "fields");
@@ -3554,6 +3558,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
           field_input_seq, field_orig_input_seq,
           bundle.stream_id.empty() ? std::nullopt : std::optional<std::string>(bundle.stream_id),
           std::optional<std::string>(buffer_name));
+      gst_internal::write_attributes(buf, field.attributes);
 
       Sample field_with_caps = field;
       field_with_caps.caps_string = spec.caps_string;

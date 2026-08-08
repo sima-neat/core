@@ -59,12 +59,41 @@ int resolve_video_rate_fps(const HttpMjpegDecodedInputOptions& opt, int source_f
   return fps;
 }
 
+// The v1 guarantee covers the default source path only. Silently losing attributes inside an
+// unverified transform would be worse than refusing to build the graph, so reject the shapes
+// whose metadata preservation has not been proven instead of hoping they pass it through.
+void reject_unsupported_capture_topology(const HttpMjpegDecodedInputOptions& opt) {
+  const char* unsupported = nullptr;
+  if (opt.use_videoconvert) {
+    unsupported = "use_videoconvert";
+  } else if (opt.use_videoscale) {
+    unsupported = "use_videoscale";
+  } else if (opt.use_videorate) {
+    unsupported = "use_videorate";
+  } else if (!opt.extra_fragment.empty()) {
+    unsupported = "extra_fragment";
+  }
+  if (unsupported) {
+    throw std::invalid_argument(
+        std::string("HttpMjpegDecodedInput: header_capture does not support ") + unsupported +
+        "; per-frame attributes are only guaranteed through the default decode path, "
+        "Queue/Branch, and materialized Core boundaries");
+  }
+}
+
 } // namespace
 
 simaai::neat::Graph HttpMjpegDecodedInput(const HttpMjpegDecodedInputOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
   const int source_fps = resolve_source_fps(opt);
   const int video_rate_fps = resolve_video_rate_fps(opt, source_fps);
+
+  // Validates and normalizes the allowlist; throws on a malformed configuration.
+  const bool capture_enabled =
+      !simaai::neat::normalize_multipart_header_capture(opt.header_capture).empty();
+  if (capture_enabled) {
+    reject_unsupported_capture_topology(opt);
+  }
 
   const bool force_sync = simaai::neat::pipeline_internal::sync_build_mode();
   if (force_sync && opt.insert_queue && !opt.sync_mode) {
@@ -88,9 +117,15 @@ simaai::neat::Graph HttpMjpegDecodedInput(const HttpMjpegDecodedInputOptions& op
   simaai::neat::MultipartJpegDemuxOptions demux;
   demux.boundary = opt.multipart_boundary;
   demux.single_stream = opt.multipart_single_stream;
+  demux.header_capture = opt.header_capture;
   nodes.push_back(nodes::MultipartJpegDemux(std::move(demux)));
 
-  nodes.push_back(nodes::JpegParse());
+  // The capture element already emits complete, parsed JPEG frames with fixed caps. Keeping
+  // `jpegparse` there would re-frame each buffer, and memory-tagged metadata is not carried
+  // across that re-framing, so the attributes would be lost before the decoder sees them.
+  if (!capture_enabled) {
+    nodes.push_back(nodes::JpegParse());
+  }
 
   if (insert_queue)
     nodes.push_back(nodes::Queue());

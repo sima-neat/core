@@ -170,6 +170,42 @@ int main() {
               "encoded owned output should materialize bytes");
     }
 
+    // Exercise attributes through the public Graph -> Run -> Sample boundary. The owned encoded
+    // output path reconstructs a Sample after copying the payload, so this specifically guards
+    // against losing metadata in field-by-field reconstruction. Reusing the same Run with an
+    // attribute-free frame also proves stale values are cleared rather than inherited.
+    {
+      Graph roundtrip;
+      InputOptions src_opt;
+      src_opt.payload_type = PayloadType::Encoded;
+      src_opt.format = FormatTag::H264;
+      src_opt.caps_override = h264_caps;
+      src_opt.memory_policy = InputMemoryPolicy::SystemMemory;
+      roundtrip.add(nodes::Input(src_opt));
+      roundtrip.add(nodes::Output(OutputOptions::EveryFrame(8)));
+
+      Sample attributed = h264_sample;
+      attributed.attributes = {{"image-channel", "color"}, {"image-index", "41"}};
+
+      RunOptions owned_opt;
+      owned_opt.output_memory = OutputMemory::Owned;
+      Run run = roundtrip.build(Sample{attributed}, owned_opt);
+
+      require(run.push(Sample{attributed}), "attributed encoded Sample push failed");
+      const std::optional<Sample> with_attributes = run.pull(1000);
+      require(with_attributes.has_value(), "attributed encoded Sample pull timed out");
+      require(with_attributes->attributes == attributed.attributes,
+              "Graph/Run owned encoded roundtrip must preserve Sample attributes");
+
+      Sample without_attributes = h264_sample;
+      without_attributes.attributes.clear();
+      require(run.push(Sample{without_attributes}), "attribute-free encoded Sample push failed");
+      const std::optional<Sample> without = run.pull(1000);
+      require(without.has_value(), "attribute-free encoded Sample pull timed out");
+      require(without->attributes.empty(),
+              "attribute-free frame must not inherit attributes from the previous frame");
+    }
+
     {
       GstCaps* caps = gst_caps_from_string(h264_caps.c_str());
       require(caps != nullptr, "failed to parse pooled encoded caps");
