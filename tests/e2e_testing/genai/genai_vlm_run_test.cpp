@@ -139,22 +139,14 @@ int main(int argc, char** argv) {
       require(trim_text(streamed_text) == kExpectedText,
               "GENAI_VLM_STREAM generated unexpected text: " + streamed_text);
 
-      try {
-        require(model.encode(std::vector<cv::Mat>{image_bgr}), "GENAI_VLM_ENCODE failed");
-        require(model.cached_image_count() == 1U, "GENAI_VLM_ENCODE expected one cached image");
+      require(model.encode(std::vector<cv::Mat>{image_bgr}), "GENAI_VLM_ENCODE failed");
+      require(model.cached_image_count() == 1U, "GENAI_VLM_ENCODE expected one cached image");
 
-        simaai::neat::genai::GenerationRequest cached_request;
-        cached_request.prompt = std::string{kPrompt};
-        cached_request.use_cached_images = true;
-        cached_request.max_new_tokens = 48;
-        require_generation_result(model.run(cached_request), "GENAI_VLM_CACHED");
-      } catch (const std::exception& e) {
-        const std::string message = e.what();
-        if (message.find("cached reuse is not supported") == std::string::npos) {
-          throw;
-        }
-        std::cout << "GENAI_VLM_CACHED skipped: " << message << "\n";
-      }
+      simaai::neat::genai::GenerationRequest cached_request;
+      cached_request.prompt = std::string{kPrompt};
+      cached_request.use_cached_images = true;
+      cached_request.max_new_tokens = 48;
+      require_generation_result(model.run(cached_request), "GENAI_VLM_CACHED");
     }
 
     simaai::neat::genai::GenAIModel generic_model(model_dir);
