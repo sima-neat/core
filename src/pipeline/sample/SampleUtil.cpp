@@ -3457,9 +3457,19 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       bundle_input_seq, bundle_orig_input_seq,
       bundle.stream_id.empty() ? std::nullopt : std::optional<std::string>(bundle.stream_id),
       std::optional<std::string>("bundle"));
-  // Bundle policy: outer attributes live on the outer meta, child attributes on their own
-  // buffers. Writing unconditionally also clears anything stale on a reused destination.
-  gst_internal::write_attributes_to_structure(s, bundle.attributes);
+  // Bundle policy: outer attributes live on GstSimaMeta, where every read path expects them;
+  // child attributes remain on their own buffers. Writing unconditionally also clears stale
+  // attributes on a reused destination.
+  if (!gst_internal::write_attributes(sample_buf, bundle.attributes)) {
+    gst_buffer_unref(sample_buf);
+    if (sample_caps) {
+      gst_caps_unref(sample_caps);
+    }
+    if (err) {
+      *err = "Sample outer attributes attach failed";
+    }
+    return {};
+  }
 
   if (sample_has_tensor_list(bundle)) {
     gst_structure_remove_field(s, "fields");
