@@ -156,7 +156,10 @@ struct DetessellateContractSubset {
   std::vector<std::int64_t> input_shape;
   std::vector<std::int64_t> input_transport_shape;
   std::uint64_t input_transport_size_bytes = 0U;
+  /// Authored logical output shape exposed by Neat.
   std::vector<std::int64_t> frame_shape;
+  /// Canonical geometry used to configure the detessellation runtime.
+  std::vector<std::int64_t> runtime_frame_shape;
   std::string frame_type;
   std::vector<std::int64_t> slice_shape;
   bool align_c16 = false;
@@ -178,7 +181,10 @@ struct DetessDequantHeadContractSubset {
   std::vector<std::int64_t> input_transport_shape;
   std::uint64_t input_transport_size_bytes = 0U;
   MpkQuantContract per_head_quant_params;
+  /// Authored logical output shape exposed by Neat.
   std::vector<std::int64_t> frame_shape;
+  /// Canonical geometry used to configure the detessellation runtime.
+  std::vector<std::int64_t> runtime_frame_shape;
   std::string frame_type;
   std::vector<std::int64_t> slice_shape;
   bool align_c16 = false;

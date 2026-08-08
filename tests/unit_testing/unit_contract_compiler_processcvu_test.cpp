@@ -806,6 +806,7 @@ RUN_TEST(
 
         pcs::DetessellateContractSubset detess_subset;
         detess_subset.frame_shape = {1, 300, 4};
+        detess_subset.runtime_frame_shape = detess_subset.frame_shape;
         detess_subset.input_transport_shape = {1, 300, 4};
         detess_subset.input_transport_size_bytes =
             packed_tensor_bytes_for_test({1, 300, 4}, "INT8");
@@ -830,6 +831,7 @@ RUN_TEST(
         head.per_head_quant_params.scales = {0.25};
         head.per_head_quant_params.zero_points = {-7};
         head.frame_shape = {300, 4};
+        head.runtime_frame_shape = head.frame_shape;
         head.frame_type = "INT8";
         head.slice_shape = {4, 4};
         head.output_dtype = "FP32";
@@ -846,6 +848,55 @@ RUN_TEST(
         require(tensor_desc_shape_for_test(detessdequant_runtime.output_tensors.front()) ==
                     std::vector<std::int64_t>({300, 4}),
                 "detessdequant dense output descriptor should preserve authored frame shape");
+
+        pcs::DetessellateContractSubset rank2_detess;
+        rank2_detess.frame_shape = {1, 213};
+        rank2_detess.runtime_frame_shape = {1, 1, 1, 213};
+        rank2_detess.input_transport_shape = {1, 448};
+        rank2_detess.input_transport_size_bytes = 448U;
+        rank2_detess.frame_type = "BF16";
+        rank2_detess.slice_shape = {64};
+        rank2_detess.align_c16 = true;
+        rank2_detess.cblock = true;
+        const auto rank2_detess_runtime = pcs::build_detessellate_runtime_config_from_subsets(
+            {rank2_detess}, {"rank2_detess"}, {"rank2_detess"});
+        require(tensor_desc_shape_for_test(rank2_detess_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 1, 1, 213}),
+                "rank-2 detess input descriptor should use canonical NC runtime geometry");
+        require(tensor_desc_shape_for_test(rank2_detess_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 1, 1, 213}),
+                "rank-2 detess output descriptor should use canonical NC runtime geometry");
+        require(rank2_detess_runtime.runtime_output_logical_shapes ==
+                    std::vector<std::vector<int>>({{1, 213}}),
+                "rank-2 detess output should retain its authored logical shape");
+
+        pcs::DetessDequantHeadContractSubset rank2_head;
+        rank2_head.per_head_input_shape = {1, 1, 1, 213};
+        rank2_head.input_transport_shape = {1, 448};
+        rank2_head.input_transport_size_bytes = 448U;
+        rank2_head.per_head_quant_params.scales = {0.25};
+        rank2_head.per_head_quant_params.zero_points = {-7};
+        rank2_head.frame_shape = {1, 213};
+        rank2_head.runtime_frame_shape = {1, 1, 1, 213};
+        rank2_head.frame_type = "BF16";
+        rank2_head.slice_shape = {64};
+        rank2_head.align_c16 = true;
+        rank2_head.cblock = true;
+        rank2_head.output_dtype = "FP32";
+        pcs::DetessDequantContractSubset rank2_detessdequant;
+        rank2_detessdequant.heads = {rank2_head};
+        const auto rank2_detessdequant_runtime =
+            pcs::build_detessdequant_runtime_config_from_subset(
+                rank2_detessdequant, {"rank2_detessdequant"}, {"rank2_detessdequant"});
+        require(tensor_desc_shape_for_test(rank2_detessdequant_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 1, 213}),
+                "rank-2 detessdequant input descriptor should use canonical per-frame HWC");
+        require(tensor_desc_shape_for_test(rank2_detessdequant_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 1, 1, 213}),
+                "rank-2 detessdequant output descriptor should use canonical NC geometry");
+        require(rank2_detessdequant_runtime.runtime_output_logical_shapes ==
+                    std::vector<std::vector<int>>({{1, 213}}),
+                "rank-2 detessdequant output should retain its authored logical shape");
       }
 
       auto node = nodes::Preproc(make_preproc_options());

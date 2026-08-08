@@ -893,11 +893,12 @@ std::uint64_t round_up_to_multiple_local(const std::uint64_t value, const std::u
 
 std::uint64_t expected_detess_packed_input_size_bytes_local(const MpkPluginIoContract& stage,
                                                             const std::string& dtype) {
-  if (stage.frame_shape.empty() || dtype.empty()) {
+  const auto& runtime_shape = detess_runtime_frame_shape(stage);
+  if (runtime_shape.empty() || dtype.empty()) {
     return 0U;
   }
 
-  std::vector<std::int64_t> shape = stage.frame_shape;
+  std::vector<std::int64_t> shape = runtime_shape;
   if (shape.size() >= 4U && shape.front() == 1) {
     shape.erase(shape.begin());
   }
@@ -948,12 +949,13 @@ canonical_detess_transport_shape_local(const MpkPluginIoContract& stage,
                                        const std::string& dtype_override) {
   const std::string dtype =
       normalize_dtype_local(!stage.frame_type.empty() ? stage.frame_type : dtype_override);
-  if (stage.frame_shape.empty() || dtype.empty()) {
+  const auto& runtime_shape = detess_runtime_frame_shape(stage);
+  if (runtime_shape.empty() || dtype.empty()) {
     throw std::runtime_error("detess transport shape requires frame_shape and frame_type for '" +
                              stage.name + "'");
   }
 
-  std::vector<std::int64_t> shape = stage.frame_shape;
+  std::vector<std::int64_t> shape = runtime_shape;
   if (!shape.empty() && shape.front() == 1 && shape.size() > 1U) {
     shape.erase(shape.begin());
   }
@@ -5098,6 +5100,11 @@ fs::path mpk_graph_output_path_local(const fs::path& package_root, const MpkCont
 
 } // namespace
 
+const std::vector<std::int64_t>&
+detess_runtime_frame_shape(const MpkPluginIoContract& stage) noexcept {
+  return stage.runtime_frame_shape.empty() ? stage.frame_shape : stage.runtime_frame_shape;
+}
+
 std::string render_mpk_graph_markdown(const MpkGraph& graph, const std::string& title) {
   return render_mpk_graph_markdown_local(graph, title);
 }
@@ -5912,6 +5919,175 @@ void graph_mpk_creation(MpkContract* contract) {
   graph_fuser(contract);
 }
 
+namespace {
+
+bool is_detess_stage_local(const MpkPluginIoContract& stage) {
+  const std::string token =
+      canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
+  return token.find("detess") != std::string::npos;
+}
+
+struct DetessFrameCandidate {
+  const char* interpretation = "";
+  std::vector<std::int64_t> runtime_shape;
+  std::uint64_t transport_size_bytes = 0U;
+  std::size_t output_size_bytes = 0U;
+};
+
+bool resolve_rank2_detess_frame_shape_local(MpkPluginIoContract* stage,
+                                            std::string* error_message) {
+  if (!stage || stage->frame_shape.size() != 2U) {
+    return true;
+  }
+  if (stage->input_tensors.empty() || stage->output_tensors.empty()) {
+    if (error_message) {
+      *error_message = "rank-2 detess frame_shape resolution requires input/output tensors for '" +
+                       stage->name + "'";
+    }
+    return false;
+  }
+  if (stage->frame_shape[0] <= 0 || stage->frame_shape[1] <= 0) {
+    if (error_message) {
+      *error_message = "rank-2 detess frame_shape contains non-positive dimensions for '" +
+                       stage->name + "': frame_shape=" + ints_dbg_local(stage->frame_shape);
+    }
+    return false;
+  }
+
+  if (stage->batch_sz_model <= 0 && stage->batch_size <= 0) {
+    if (error_message) {
+      *error_message = "rank-2 detess frame_shape resolution requires explicit batch metadata "
+                       "for '" +
+                       stage->name + "'";
+    }
+    return false;
+  }
+  if ((stage->batch_sz_model > 0 && stage->batch_sz_model != 1) ||
+      (stage->batch_size > 0 && stage->batch_size != 1)) {
+    if (error_message) {
+      *error_message = "rank-2 detess frame_shape currently requires batch=1 for '" + stage->name +
+                       "': desired_batch=" + std::to_string(stage->batch_size) +
+                       " actual_batch=" + std::to_string(stage->batch_sz_model);
+    }
+    return false;
+  }
+  constexpr int batch = 1;
+  const std::uint64_t transport_size_bytes = stage->input_tensors.front().size_bytes;
+  const std::size_t output_size_bytes = stage->output_tensors.front().size_bytes;
+  const std::string transport_dtype = normalize_dtype_local(
+      !stage->frame_type.empty() ? stage->frame_type : stage->input_tensors.front().dtype);
+  const std::string output_dtype = normalize_dtype_local(
+      !stage->output_tensors.front().dtype.empty() ? stage->output_tensors.front().dtype
+                                                   : stage->canonical_output_dtype);
+  if (transport_size_bytes == 0U || output_size_bytes == 0U || transport_dtype.empty() ||
+      output_dtype.empty()) {
+    if (error_message) {
+      *error_message = "rank-2 detess frame_shape resolution requires transport/output bytes "
+                       "and dtypes for '" +
+                       stage->name + "'";
+    }
+    return false;
+  }
+
+  std::vector<DetessFrameCandidate> evaluated_candidates;
+  std::vector<DetessFrameCandidate> matching_candidates;
+  const auto add_candidate = [&](const char* interpretation,
+                                 std::vector<std::int64_t> runtime_shape) {
+    MpkPluginIoContract projected = *stage;
+    projected.runtime_frame_shape = runtime_shape;
+    DetessFrameCandidate candidate;
+    candidate.interpretation = interpretation;
+    candidate.runtime_shape = std::move(runtime_shape);
+    candidate.transport_size_bytes =
+        expected_detess_packed_input_size_bytes_local(projected, transport_dtype);
+    const auto dense_output_size =
+        dense_shape_size_bytes_local(candidate.runtime_shape, output_dtype);
+    candidate.output_size_bytes = dense_output_size.value_or(0U);
+    const bool matches = candidate.transport_size_bytes == transport_size_bytes &&
+                         candidate.output_size_bytes == output_size_bytes;
+    evaluated_candidates.push_back(candidate);
+    if (matches) {
+      const auto duplicate =
+          std::find_if(matching_candidates.begin(), matching_candidates.end(),
+                       [&](const DetessFrameCandidate& existing) {
+                         return existing.runtime_shape == candidate.runtime_shape;
+                       });
+      if (duplicate == matching_candidates.end()) {
+        matching_candidates.push_back(std::move(candidate));
+      }
+    }
+  };
+
+  const auto first = stage->frame_shape[0];
+  const auto second = stage->frame_shape[1];
+  if (first == batch) {
+    add_candidate("NC", {first, 1, 1, second});
+  }
+  add_candidate("HW", {batch, first, second, 1});
+
+  if (matching_candidates.size() == 1U) {
+    stage->runtime_frame_shape = std::move(matching_candidates.front().runtime_shape);
+    return true;
+  }
+
+  if (error_message) {
+    std::ostringstream detail;
+    detail << "rank-2 detess frame_shape resolution "
+           << (matching_candidates.empty() ? "found no matching interpretation" : "is ambiguous")
+           << " for '" << stage->name << "': frame_shape=" << ints_dbg_local(stage->frame_shape)
+           << " batch=" << batch << " transport_bytes=" << transport_size_bytes
+           << " output_bytes=" << output_size_bytes;
+    if (!evaluated_candidates.empty()) {
+      detail << " candidates=";
+      for (std::size_t i = 0; i < evaluated_candidates.size(); ++i) {
+        if (i != 0U) {
+          detail << ';';
+        }
+        const auto& candidate = evaluated_candidates[i];
+        detail << candidate.interpretation << ints_dbg_local(candidate.runtime_shape)
+               << "(transport=" << candidate.transport_size_bytes
+               << ",output=" << candidate.output_size_bytes << ')';
+      }
+    }
+    if (!matching_candidates.empty()) {
+      detail << " matches=";
+      for (std::size_t i = 0; i < matching_candidates.size(); ++i) {
+        if (i != 0U) {
+          detail << ',';
+        }
+        detail << matching_candidates[i].interpretation
+               << ints_dbg_local(matching_candidates[i].runtime_shape);
+      }
+    }
+    *error_message = detail.str();
+  }
+  return false;
+}
+
+bool resolve_detess_frame_shapes_local(MpkContract* contract, std::string* error_message) {
+  if (!contract) {
+    if (error_message) {
+      *error_message = "detess frame_shape resolution requires an MPK contract";
+    }
+    return false;
+  }
+  for (auto& stage : contract->plugins) {
+    if (!is_detess_stage_local(stage) || stage.frame_shape.empty()) {
+      continue;
+    }
+    if (stage.frame_shape.size() == 2U) {
+      if (!resolve_rank2_detess_frame_shape_local(&stage, error_message)) {
+        return false;
+      }
+      continue;
+    }
+    stage.runtime_frame_shape = stage.frame_shape;
+  }
+  return true;
+}
+
+} // namespace
+
 std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& package_root,
                                                             std::string* error_message) {
   if (error_message) {
@@ -6001,6 +6177,7 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     DTypeSource fallback_input_dtype_source = DTypeSource::Unknown;
     DTypeSource fallback_output_dtype_source = DTypeSource::Unknown;
     int config_actual_batch_size = 0;
+    int config_desired_batch_size = 0;
 
     const json* params = nullptr;
     if (plugin.contains("config_params") && plugin["config_params"].is_object()) {
@@ -6012,6 +6189,14 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
         if (cfg.contains(key)) {
           if (const auto batch_model = read_int_local(cfg.at(key)); batch_model.has_value()) {
             config_actual_batch_size = *batch_model;
+            break;
+          }
+        }
+      }
+      for (const char* key : {"desired_batch_size", "batch_size"}) {
+        if (cfg.contains(key)) {
+          if (const auto batch = read_int_local(cfg.at(key)); batch.has_value()) {
+            config_desired_batch_size = *batch;
             break;
           }
         }
@@ -6207,9 +6392,16 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
           plugin["output_nodes"], output_shapes, output_dtypes, fallback_output_dtype,
           output_dtype_source, fallback_output_dtype_source, output_shape_semantics);
     }
-    if (stage.batch_sz_model <= 0 && config_actual_batch_size > 1) {
-      const std::string kernel_token =
-          canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
+    const std::string kernel_token =
+        canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
+    if (kernel_token.find("detess") != std::string::npos && stage.frame_shape.size() == 2U) {
+      if (stage.batch_sz_model <= 0 && config_actual_batch_size > 0) {
+        stage.batch_sz_model = config_actual_batch_size;
+      }
+      if (stage.batch_size <= 0 && config_desired_batch_size > 0) {
+        stage.batch_size = config_desired_batch_size;
+      }
+    } else if (stage.batch_sz_model <= 0 && config_actual_batch_size > 1) {
       if (kernel_token.find("slice") != std::string::npos ||
           kernel_token.find("batchflatten") != std::string::npos) {
         stage.batch_sz_model = config_actual_batch_size;
@@ -6243,6 +6435,14 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     if (error_message) {
       *error_message =
           resolve_error.empty() ? std::string("failed to resolve strict mpk edges") : resolve_error;
+    }
+    return std::nullopt;
+  }
+  if (!resolve_detess_frame_shapes_local(&contract, &resolve_error)) {
+    if (error_message) {
+      *error_message = resolve_error.empty()
+                           ? std::string("failed to resolve detess frame_shape geometry")
+                           : resolve_error;
     }
     return std::nullopt;
   }
