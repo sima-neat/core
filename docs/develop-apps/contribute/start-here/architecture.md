@@ -117,12 +117,6 @@ between implementation options.
 - **The MPK contract is the model source of truth.** Core routing, dtype, shape, quantization, and
   stage decisions must come from `mpk.json` / `*_mpk.json`. Per-stage JSON files are
   plugin-private.
-- **Detess logical rank is separate from MLA geometry.** Core preserves the authored
-  `frame_shape` as the logical output contract. For a rank-2 detess shape, model loading derives
-  either NC or HW runtime geometry only when explicit batch-1 metadata and the declared
-  logical/transport byte spans identify one unique interpretation. Missing, batched, ambiguous, or
-  inconsistent rank-2 contracts fail during loading; canonical rank-3 and rank-4 shapes are used
-  unchanged.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
   Prefer additive changes and deprecation paths over breaking signatures.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
