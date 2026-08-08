@@ -1,10 +1,18 @@
 #include "pipeline/internal/sima/MpkContract.h"
+#include "pipeline/internal/sima/PluginContractSubsets.h"
+#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
+#include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "test_main.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <gst/gst.h>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -16,7 +24,8 @@ std::filesystem::path
 write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& frame_shape,
                      const std::size_t transport_bytes, const std::size_t output_bytes,
                      const int actual_batch = 1, const bool align_c16 = true,
-                     const bool cblock = true, const bool include_detess_batch_metadata = true) {
+                     const bool cblock = true, const bool include_detess_batch_metadata = true,
+                     const std::vector<std::int64_t>& slice_shape = {64}) {
   const auto root = std::filesystem::temp_directory_path() / ("sima_detess_rank2_" + name);
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
@@ -42,7 +51,7 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
                           << "        \"actual_batch_size\": " << actual_batch << ",\n";
   }
 
-  std::ofstream out(root / "model_mpk.json");
+  std::ofstream out(root / "mpk.json");
   require(out.is_open(), "failed to open detess fixture manifest");
   out << R"JSON({
   "name": "detess_rank2_fixture",
@@ -74,7 +83,8 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
  )JSON"
       << detess_batch_metadata.str() << R"JSON(        "kernel": "detessellation_transform",
         "params": {
-          "slice_shape": [64],
+          "slice_shape": )JSON"
+      << shape_json(slice_shape) << R"JSON(,
           "align_c16": )JSON"
       << (align_c16 ? "true" : "false") << R"JSON(,
           "cblock": )JSON"
@@ -193,6 +203,102 @@ std::string reject_fixture(const std::filesystem::path& root) {
   return error;
 }
 
+void ensure_gst_ready() {
+  static bool ready = false;
+  if (ready) {
+    return;
+  }
+  int argc = 0;
+  char** argv = nullptr;
+  gst_init(&argc, &argv);
+  ready = true;
+}
+
+std::vector<std::int64_t> tensor_desc_shape(const sima_ev_tensor_desc& desc) {
+  std::vector<std::int64_t> shape;
+  const auto rank = std::min<std::uint32_t>(desc.shape.rank, SIMA_EV_MAX_RANK);
+  shape.reserve(rank);
+  for (std::uint32_t i = 0; i < rank; ++i) {
+    shape.push_back(desc.shape.sizes[i]);
+  }
+  return shape;
+}
+
+simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest
+make_detess_manifest(const MpkContract& contract) {
+  namespace pcs = simaai::neat::pipeline_internal::sima::plugin_contracts;
+  namespace pss = simaai::neat::pipeline_internal::sima::stagesemantics;
+  using simaai::neat::pipeline_internal::sima::StagePayloadKind;
+  using simaai::neat::pipeline_internal::sima::StageStaticSpec;
+
+  require(contract.plugins.size() == 2U, "prepared-runtime fixture should contain MLA and detess");
+  const auto& detess = contract.plugins[1];
+  require(detess.output_tensors.size() == 1U,
+          "prepared-runtime fixture should contain one detess output");
+  const std::string output_name = detess.output_tensors.front().name;
+  const auto subsets = pcs::extract_detessellate_contract_subsets_from_mpk(contract);
+  require(subsets.size() == 1U, "prepared-runtime fixture should produce one detess subset");
+  const auto runtime =
+      pcs::build_detessellate_runtime_config_from_subsets(subsets, {output_name}, {output_name});
+  const auto compiled = pss::build_processcvu_compiled_contract_from_runtime_config(runtime);
+
+  StageStaticSpec stage;
+  stage.element_name = detess.name;
+  stage.logical_stage_id = detess.name;
+  stage.model_managed_stage = true;
+  stage.plugin_kind = compiled.runtime_contract.plugin_kind;
+  stage.kernel_kind = detess.kernel;
+  stage.payload_kind = StagePayloadKind::ProcessCvu;
+  stage.processcvu = compiled.payload;
+  stage.processcvu.exact_stage_name_or_id = detess.name;
+  stage.logical_inputs = compiled.runtime_contract.logical_inputs;
+  stage.input_bindings = compiled.runtime_contract.input_bindings;
+  stage.physical_inputs = compiled.runtime_contract.physical_inputs;
+  stage.physical_outputs = compiled.runtime_contract.physical_outputs;
+  stage.logical_outputs = compiled.runtime_contract.logical_outputs;
+  stage.output_order = compiled.runtime_contract.output_order;
+  stage.output_quant = compiled.runtime_contract.output_quant;
+
+  simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest manifest;
+  manifest.model_id = contract.model_name;
+  manifest.stages.push_back(std::move(stage));
+  return manifest;
+}
+
+void require_prepared_runtime_geometry(const std::filesystem::path& root,
+                                       const std::vector<std::int64_t>& runtime_shape,
+                                       const std::vector<std::int64_t>& logical_shape,
+                                       const std::uint64_t transport_bytes) {
+  using simaai::neat::pipeline_internal::sima::build_prepared_runtime_context;
+  using simaai::neat::pipeline_internal::sima::PipelineElementSpec;
+
+  ensure_gst_ready();
+  const auto contract = load_fixture(root);
+  const auto manifest = make_detess_manifest(contract);
+  PipelineElementSpec mla_element;
+  mla_element.plugin = "neatprocessmla";
+  mla_element.model_path_property = root.string();
+
+  std::string error;
+  const auto prepared = build_prepared_runtime_context(
+      nullptr, manifest, std::nullopt, {mla_element}, {}, simaai::neat::NameTransform{}, &error);
+  require(prepared.has_value(), "detess prepared runtime should build: " + error);
+  require(prepared->stages.size() == 1U && prepared->stages.front().processcvu.has_value(),
+          "detess prepared runtime should contain one processcvu stage");
+  const auto& detess = *prepared->stages.front().processcvu;
+  require(detess.typed_config.input_tensors.size() == 1U &&
+              tensor_desc_shape(detess.typed_config.input_tensors.front()) == runtime_shape,
+          "prepared detess input descriptor should use resolved runtime geometry");
+  require(detess.typed_config.output_tensors.size() == 1U &&
+              tensor_desc_shape(detess.typed_config.output_tensors.front()) == runtime_shape,
+          "prepared detess output descriptor should use resolved runtime geometry");
+  require(detess.typed_config.input_tensors.front().storage.nbytes == transport_bytes,
+          "prepared detess input descriptor should preserve the packed MLA byte span");
+  require(detess.output_publish_contract.logical_outputs.size() == 1U &&
+              detess.output_publish_contract.logical_outputs.front().shape == logical_shape,
+          "prepared detess output should preserve the authored logical rank");
+}
+
 } // namespace
 
 RUN_TEST(
@@ -277,6 +383,15 @@ RUN_TEST(
       require(two_head_outputs.size() == 2U && two_head_outputs[0].size_bytes == 448U &&
                   two_head_outputs[1].size_bytes == 192U,
               "multi-output MLA boundaries should retain physical output order and byte spans");
+
+      require_prepared_runtime_geometry(write_detess_fixture("prepared_nc", {1, 213}, 448U, 426U),
+                                        {1, 1, 1, 213}, {1, 213}, 448U);
+      require_prepared_runtime_geometry(
+          write_detess_fixture("prepared_hw", {2, 3}, 192U, 12U, 1, true, true, true, {1, 1, 1}),
+          {1, 2, 3, 1}, {2, 3}, 192U);
+      require_prepared_runtime_geometry(write_detess_fixture("prepared_rank4", {1, 2, 3, 7}, 192U,
+                                                             84U, 1, true, true, true, {1, 1, 1}),
+                                        {1, 2, 3, 7}, {1, 2, 3, 7}, 192U);
 
       const auto ambiguous_error =
           reject_fixture(write_detess_fixture("ambiguous", {1, 16}, 32U, 32U, 1, false, false));
