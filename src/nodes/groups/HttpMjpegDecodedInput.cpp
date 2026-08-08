@@ -120,9 +120,9 @@ simaai::neat::Graph HttpMjpegDecodedInput(const HttpMjpegDecodedInputOptions& op
   demux.header_capture = opt.header_capture;
   nodes.push_back(nodes::MultipartJpegDemux(std::move(demux)));
 
-  // The capture element already emits complete, parsed JPEG frames with fixed caps. Keeping
-  // `jpegparse` there would re-frame each buffer, and memory-tagged metadata is not carried
-  // across that re-framing, so the attributes would be lost before the decoder sees them.
+  // The capture element already emits complete, parsed JPEG frames with negotiated caps.
+  // Keeping `jpegparse` there would re-frame each buffer, and memory-tagged metadata is not
+  // carried across that re-framing, so it would be lost before the decoder sees it.
   if (!capture_enabled) {
     nodes.push_back(nodes::JpegParse());
   }

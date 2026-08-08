@@ -31,9 +31,13 @@ struct _GstNeatMultipartJpegDemux {
   GMutex lock;
   gchar* boundary;        ///< Configured boundary override; NULL means auto-detect.
   gchar* capture_headers; ///< Comma-separated normalized allowlist.
+  gboolean single_stream; ///< Keep the first negotiated JPEG caps for a stable stream.
 
   MultipartParser* parser;
   gboolean caps_pushed;
+  gboolean caps_have_dimensions;
+  gint caps_width;
+  gint caps_height;
   /* Timing of the input chunk currently being parsed, carried onto the parts it completes. */
   GstClockTime chunk_pts;
   GstClockTime chunk_dts;
@@ -61,6 +65,7 @@ enum {
   PROP_0,
   PROP_BOUNDARY,
   PROP_CAPTURE_HEADERS,
+  PROP_SINGLE_STREAM,
 };
 
 struct PendingPart {
@@ -78,7 +83,7 @@ GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE(
 GstStaticPadTemplate src_template =
     GST_STATIC_PAD_TEMPLATE("src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS("image/jpeg"));
 
-/// Minimal JPEG SOF scan: enough to advertise fixed output caps without `jpegparse`.
+/// Minimal JPEG SOF scan: enough to advertise output caps without `jpegparse`.
 ///
 /// Returns false when no SOF marker is found; the caller then leaves the dimensions
 /// unspecified rather than guessing.
@@ -152,6 +157,9 @@ void reset_parser_locked(GstNeatMultipartJpegDemux* self) {
   delete self->parser;
   self->parser = new MultipartParser(boundary, capture);
   self->caps_pushed = FALSE;
+  self->caps_have_dimensions = FALSE;
+  self->caps_width = 0;
+  self->caps_height = 0;
 }
 
 void queue_part_locked(GstNeatMultipartJpegDemux* self, std::vector<PendingPart>* pending,
@@ -174,17 +182,29 @@ gboolean push_src_caps_if_needed(GstNeatMultipartJpegDemux* self, const uint8_t*
 
   GstEvent* pending_segment = nullptr;
   g_mutex_lock(&self->lock);
-  if (self->caps_pushed) {
+  if (self->caps_pushed &&
+      (self->single_stream || !have_dims ||
+       (self->caps_have_dimensions && self->caps_width == width && self->caps_height == height))) {
     g_mutex_unlock(&self->lock);
     return TRUE;
   }
+
+  const gboolean old_caps_pushed = self->caps_pushed;
+  const gboolean old_caps_have_dimensions = self->caps_have_dimensions;
+  const gint old_caps_width = self->caps_width;
+  const gint old_caps_height = self->caps_height;
   GstCaps* caps = gst_caps_new_simple("image/jpeg", "parsed", G_TYPE_BOOLEAN, TRUE, nullptr);
   if (have_dims) {
     gst_caps_set_simple(caps, "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, nullptr);
   }
   self->caps_pushed = TRUE;
-  pending_segment = self->pending_segment;
-  self->pending_segment = nullptr;
+  self->caps_have_dimensions = have_dims ? TRUE : FALSE;
+  self->caps_width = have_dims ? width : 0;
+  self->caps_height = have_dims ? height : 0;
+  if (!old_caps_pushed) {
+    pending_segment = self->pending_segment;
+    self->pending_segment = nullptr;
+  }
   g_mutex_unlock(&self->lock);
 
   // Never call downstream while holding the parser lock. Downstream event handlers and probes
@@ -196,7 +216,10 @@ gboolean push_src_caps_if_needed(GstNeatMultipartJpegDemux* self, const uint8_t*
       gst_event_unref(pending_segment);
     }
     g_mutex_lock(&self->lock);
-    self->caps_pushed = FALSE;
+    self->caps_pushed = old_caps_pushed;
+    self->caps_have_dimensions = old_caps_have_dimensions;
+    self->caps_width = old_caps_width;
+    self->caps_height = old_caps_height;
     g_mutex_unlock(&self->lock);
     return FALSE;
   }
@@ -386,6 +409,10 @@ void gst_neat_multipart_jpeg_demux_set_property(GObject* object, guint prop_id, 
     self->capture_headers = g_value_dup_string(value);
     reset_parser_locked(self);
     break;
+  case PROP_SINGLE_STREAM:
+    self->single_stream = g_value_get_boolean(value);
+    reset_parser_locked(self);
+    break;
   default:
     g_mutex_unlock(&self->lock);
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -404,6 +431,9 @@ void gst_neat_multipart_jpeg_demux_get_property(GObject* object, guint prop_id, 
     break;
   case PROP_CAPTURE_HEADERS:
     g_value_set_string(value, self->capture_headers ? self->capture_headers : "");
+    break;
+  case PROP_SINGLE_STREAM:
+    g_value_set_boolean(value, self->single_stream);
     break;
   default:
     g_mutex_unlock(&self->lock);
@@ -459,6 +489,12 @@ void gst_neat_multipart_jpeg_demux_class_init(GstNeatMultipartJpegDemuxClass* kl
           "capture-headers", "Capture headers",
           "Comma-separated, already-normalized part header names to capture as attributes", "",
           static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_SINGLE_STREAM,
+      g_param_spec_boolean(
+          "single-stream", "Single stream",
+          "Keep the first negotiated JPEG caps instead of renegotiating dimension changes", FALSE,
+          static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   gst_element_class_add_static_pad_template(element_class, &sink_template);
   gst_element_class_add_static_pad_template(element_class, &src_template);
@@ -472,8 +508,12 @@ void gst_neat_multipart_jpeg_demux_init(GstNeatMultipartJpegDemux* self) {
   g_mutex_init(&self->lock);
   self->boundary = g_strdup("");
   self->capture_headers = g_strdup("");
+  self->single_stream = FALSE;
   self->parser = nullptr;
   self->caps_pushed = FALSE;
+  self->caps_have_dimensions = FALSE;
+  self->caps_width = 0;
+  self->caps_height = 0;
   self->parts_emitted = 0U;
   self->pending_segment = nullptr;
   self->chunk_pts = GST_CLOCK_TIME_NONE;
@@ -487,7 +527,6 @@ void gst_neat_multipart_jpeg_demux_init(GstNeatMultipartJpegDemux* self) {
   gst_element_add_pad(GST_ELEMENT(self), self->sinkpad);
 
   self->srcpad = gst_pad_new_from_static_template(&src_template, "src");
-  gst_pad_use_fixed_caps(self->srcpad);
   gst_element_add_pad(GST_ELEMENT(self), self->srcpad);
 }
 

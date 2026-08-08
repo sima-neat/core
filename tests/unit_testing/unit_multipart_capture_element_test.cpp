@@ -26,7 +26,7 @@ namespace {
 
 using simaai::neat::SampleAttributes;
 
-/// Minimal JPEG carrying a real SOF0 so the element can advertise fixed output caps, plus a
+/// Minimal JPEG carrying a real SOF0 so the element can advertise output caps, plus a
 /// one-byte marker in the scan data that identifies which frame this is.
 std::string make_marked_jpeg(uint16_t width, uint16_t height, uint8_t marker) {
   std::string jpeg;
@@ -62,14 +62,26 @@ std::string part(const std::string& boundary, const std::vector<std::string>& he
 
 struct Received {
   uint8_t marker = 0;
+  int width = -1;
+  int height = -1;
   SampleAttributes attributes;
 };
+
+void read_sample_caps(GstSample* sample, Received* received) {
+  GstCaps* caps = sample ? gst_sample_get_caps(sample) : nullptr;
+  const GstStructure* structure = caps ? gst_caps_get_structure(caps, 0U) : nullptr;
+  if (structure && received) {
+    (void)gst_structure_get_int(structure, "width", &received->width);
+    (void)gst_structure_get_int(structure, "height", &received->height);
+  }
+}
 
 Received pull_received(GstElement* sink, GstClockTime timeout = 2 * GST_SECOND) {
   GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), timeout);
   require(sample != nullptr, "expected multipart output sample");
 
   Received received;
+  read_sample_caps(sample, &received);
   GstBuffer* buffer = gst_sample_get_buffer(sample);
   if (buffer) {
     GstMapInfo map;
@@ -86,7 +98,8 @@ Received pull_received(GstElement* sink, GstClockTime timeout = 2 * GST_SECOND) 
 }
 
 void run_pipeline(const std::string& stream, const std::string& boundary,
-                  const std::string& capture_headers, std::vector<Received>* out) {
+                  const std::string& capture_headers, std::vector<Received>* out,
+                  bool single_stream = false) {
   simaai::neat::gst_init_once();
   require(simaai::neat::element_exists("neatmultipartjpegdemux"),
           "neatmultipartjpegdemux must be registered by Neat's GStreamer init");
@@ -98,7 +111,7 @@ void run_pipeline(const std::string& stream, const std::string& boundary,
   require(pipeline && src && demux && sink, "capture-test pipeline elements must be creatable");
 
   g_object_set(demux, "boundary", boundary.c_str(), "capture-headers", capture_headers.c_str(),
-               nullptr);
+               "single-stream", single_stream ? TRUE : FALSE, nullptr);
   g_object_set(sink, "sync", FALSE, "emit-signals", FALSE, "max-buffers", 64, nullptr);
 
   gst_bin_add_many(GST_BIN(pipeline), src, demux, sink, nullptr);
@@ -129,6 +142,7 @@ void run_pipeline(const std::string& stream, const std::string& boundary,
     }
     GstBuffer* buffer = gst_sample_get_buffer(sample);
     Received received;
+    read_sample_caps(sample, &received);
     if (buffer) {
       GstMapInfo map;
       if (gst_buffer_map(buffer, &map, GST_MAP_READ) == TRUE) {
@@ -302,6 +316,23 @@ void test_no_capture_configured_emits_no_attributes() {
           "with no allowlist the element must not attach attributes");
 }
 
+void test_dimension_change_renegotiates_caps() {
+  const std::string boundary = "frame";
+  std::string stream;
+  stream += part(boundary, {"Image-Index: 1"}, make_marked_jpeg(64, 48, 0x41));
+  stream += part(boundary, {"Image-Index: 2"}, make_marked_jpeg(96, 72, 0x42));
+  stream += "--" + boundary + "--\r\n";
+
+  std::vector<Received> received;
+  run_pipeline(stream, boundary, "image-index", &received, false);
+
+  require(received.size() == 2U, "dimension-change stream must emit two frames");
+  require(received[0].width == 64 && received[0].height == 48,
+          "first frame must advertise its own JPEG dimensions");
+  require(received[1].width == 96 && received[1].height == 72,
+          "single-stream=false must renegotiate changed JPEG dimensions");
+}
+
 void test_attribute_mutation_rejects_shared_buffers() {
   simaai::neat::gst_init_once();
 
@@ -337,6 +368,7 @@ RUN_TEST("unit_multipart_capture_element", [] {
   test_per_frame_association();
   test_capture_only_selected_headers();
   test_no_capture_configured_emits_no_attributes();
+  test_dimension_change_renegotiates_caps();
   test_reentrant_property_reset_is_safe();
   test_attribute_mutation_rejects_shared_buffers();
 })

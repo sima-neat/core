@@ -41,6 +41,9 @@ std::string MultipartJpegDemux::backend_fragment(int node_index) const {
     ss << " boundary=\"" << opt_.boundary << "\"";
   }
   ss << " capture-headers=\"" << multipart_internal::join_capture_names(capture_) << "\"";
+  if (opt_.single_stream) {
+    ss << " single-stream=true";
+  }
   return ss.str();
 }
 

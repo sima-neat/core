@@ -23,14 +23,15 @@
 #include <unistd.h>
 
 #include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
 
 #include <algorithm>
-#include <iostream>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -226,6 +227,74 @@ int center_luma(GstBuffer* buffer) {
   return count > 0 ? static_cast<int>(total / count) : -1;
 }
 
+/// Decode one input JPEG through the software decoder. This creates the pixel oracle without
+/// consulting the frame attributes whose association the hardware path is meant to prove.
+int decode_reference_luma(const std::string& jpeg) {
+  const std::string launch =
+      "appsrc name=source format=bytes caps=image/jpeg ! jpegdec ! videoconvert ! "
+      "video/x-raw,format=NV12,width=" +
+      std::to_string(kWidth) + ",height=" + std::to_string(kHeight) +
+      " ! appsink name=sink sync=false max-buffers=1";
+
+  GError* error = nullptr;
+  GstElement* pipeline = gst_parse_launch(launch.c_str(), &error);
+  if (error || !pipeline) {
+    const std::string message = error && error->message ? error->message : "unknown";
+    if (error) {
+      g_error_free(error);
+    }
+    if (pipeline) {
+      gst_object_unref(pipeline);
+    }
+    throw std::runtime_error("software reference decode pipeline failed: " + message);
+  }
+
+  GstElement* source = gst_bin_get_by_name(GST_BIN(pipeline), "source");
+  GstElement* sink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
+  if (!source || !sink ||
+      gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+    if (source) {
+      gst_object_unref(source);
+    }
+    if (sink) {
+      gst_object_unref(sink);
+    }
+    gst_element_set_state(pipeline, GST_STATE_NULL);
+    gst_object_unref(pipeline);
+    throw std::runtime_error("software reference decode pipeline could not start");
+  }
+
+  GstBuffer* input = gst_buffer_new_allocate(nullptr, jpeg.size(), nullptr);
+  if (!input || gst_buffer_fill(input, 0U, jpeg.data(), jpeg.size()) != jpeg.size()) {
+    if (input) {
+      gst_buffer_unref(input);
+    }
+    gst_element_set_state(pipeline, GST_STATE_NULL);
+    gst_object_unref(source);
+    gst_object_unref(sink);
+    gst_object_unref(pipeline);
+    throw std::runtime_error("software reference decode input allocation failed");
+  }
+
+  const GstFlowReturn push_flow = gst_app_src_push_buffer(GST_APP_SRC(source), input);
+  const GstFlowReturn eos_flow = gst_app_src_end_of_stream(GST_APP_SRC(source));
+  GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 10 * GST_SECOND);
+  const int luma = sample ? center_luma(gst_sample_get_buffer(sample)) : -1;
+  if (sample) {
+    gst_sample_unref(sample);
+  }
+
+  gst_element_set_state(pipeline, GST_STATE_NULL);
+  gst_object_unref(source);
+  gst_object_unref(sink);
+  gst_object_unref(pipeline);
+
+  if (push_flow != GST_FLOW_OK || eos_flow != GST_FLOW_OK || luma < 0) {
+    throw std::runtime_error("software reference decode produced no usable frame");
+  }
+  return luma;
+}
+
 std::vector<Decoded> drain(GstElement* sink) {
   std::vector<Decoded> frames;
   for (;;) {
@@ -307,18 +376,17 @@ void test_attributes_survive_decode() {
           "neatmultipartjpegdemux must be registered");
 
   std::string body;
+  std::vector<int> reference;
+  reference.reserve(kFrameCount);
   for (int i = 0; i < kFrameCount; ++i) {
     const std::string jpeg = encode_grey_jpeg(grey_for(i));
     require(jpeg.size() > 128U, "encoded JPEG for frame " + std::to_string(i) + " is too small");
+    reference.push_back(decode_reference_luma(jpeg));
     body += build_part(i, jpeg);
   }
   body += "--";
   body += kBoundary;
   body += "--\r\n";
-
-  // Learn the decoded luma for each grey level from the decoder itself rather than assuming
-  // a colour-conversion formula.
-  std::vector<int> reference(kFrameCount, -1);
 
   MjpegServer server;
   require(server.start(body), "localhost MJPEG server must start");
@@ -389,33 +457,6 @@ void test_attributes_survive_decode() {
   gst_object_unref(pipeline);
   server.stop();
 
-  // Build the luma reference from whichever branch delivered every frame, using the
-  // attributes' own index only to label the reference; association is then re-checked
-  // independently against pixels.
-  {
-    std::string dump = "decoded fast=" + std::to_string(fast_frames.size()) +
-                       " slow=" + std::to_string(slow_frames.size());
-    for (std::size_t i = 0; i < fast_frames.size(); ++i) {
-      dump += "\n  fast[" + std::to_string(i) + "] luma=" + std::to_string(fast_frames[i].luma) +
-              " attrs={";
-      for (const auto& [key, value] : fast_frames[i].attributes) {
-        dump += key + "=" + value + ";";
-      }
-      dump += "}";
-    }
-    std::cout << dump << "\n";
-  }
-  require(!fast_frames.empty(), "fast branch produced no decoded frames");
-  for (const Decoded& frame : fast_frames) {
-    const auto it = frame.attributes.find("image-index");
-    if (it == frame.attributes.end()) {
-      continue;
-    }
-    const int index = std::stoi(it->second) - 100;
-    if (index >= 0 && index < kFrameCount) {
-      reference[static_cast<std::size_t>(index)] = frame.luma;
-    }
-  }
   // Every grey level must be distinct enough to identify a frame on its own.
   for (int i = 0; i < kFrameCount; ++i) {
     require(reference[static_cast<std::size_t>(i)] >= 0,
