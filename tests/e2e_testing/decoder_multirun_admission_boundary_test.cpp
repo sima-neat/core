@@ -394,22 +394,31 @@ int main() {
     setenv("SIMA_GST_RUN_INSERT_BOUNDARIES", "1", 1);
     setenv("SIMA_GST_BOUNDARY_PROBES", "1", 1);
 
-    std::vector<std::string> urls = configured_urls();
-    if (urls.size() < kStreamCount) {
+    const std::vector<std::string> configured = configured_urls();
+    if (configured.size() < kStreamCount) {
       std::cout << "[SKIP] SIMANEAT_TEST_RTSP_H264_URLS must provide at least four URLs\n";
       return 77;
     }
-    urls.resize(kStreamCount);
 
+    std::vector<std::string> urls;
     std::vector<int> fps;
+    urls.reserve(kStreamCount);
     fps.reserve(kStreamCount);
-    for (const auto& url : urls) {
+    for (const auto& url : configured) {
       const int source_fps = sima_test::probe_rtsp_source_fps(url);
-      require(source_fps >= 55,
-              "decoder admission performance test requires ~60 FPS sources; probed " +
-                  std::to_string(source_fps) + " FPS");
+      if (source_fps < 55) {
+        continue;
+      }
+      urls.push_back(url);
       fps.push_back(source_fps);
+      if (urls.size() == kStreamCount) {
+        break;
+      }
     }
+    require(urls.size() == kStreamCount,
+            "decoder admission performance test requires four ~60 FPS sources; found " +
+                std::to_string(urls.size()) + " among " + std::to_string(configured.size()) +
+                " configured URLs");
 
     const double combined_fps = run_combined_graph(urls, fps);
     const double independent_fps = run_independent_graphs(urls, fps);
