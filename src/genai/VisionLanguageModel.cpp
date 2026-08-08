@@ -593,7 +593,8 @@ struct VisionLanguageModel::Impl {
       if (data_size != bytes.size()) {
         throw std::runtime_error("Cached image output does not match language input buffer");
       }
-      buffer->upload(bytes.data(), buffer->get_buf_addr_offset(slice.get_buf_begins()), data_size);
+      buffer->upload_raw(bytes.data(), buffer->get_buf_addr_offset(slice.get_buf_begins()),
+                         data_size);
       ++expected_output_idx;
     }
   }
