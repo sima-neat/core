@@ -28,6 +28,10 @@ public:
   bool accepts_image() const;
   bool accepts_audio() const;
   std::string model_id() const;
+  /// Tokens currently resident in the KV cache; 0 for models without one (ASR).
+  std::uint32_t kv_cache_len() const;
+  /// Context window; 0 for models without one (ASR).
+  std::uint32_t max_context_tokens() const;
   GenerationResult run(const GenerationRequest& request);
   GenerationStream stream(const GenerationRequest& request);
 

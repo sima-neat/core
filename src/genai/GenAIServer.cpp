@@ -226,6 +226,36 @@ GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_s
   return metrics;
 }
 
+/// Context accounting, emitted alongside ttft/tps so clients can watch the KV
+/// cache fill and drain. Zero means "not measured", so those keys stay absent.
+void add_token_accounting(nlohmann::json& chunk, const GenerationMetrics& metrics) {
+  if (metrics.prompt_tokens > 0U) {
+    chunk["prompt_tokens"] = metrics.prompt_tokens;
+  }
+  if (metrics.kv_cache_len > 0U) {
+    chunk["kv_cache_len"] = metrics.kv_cache_len;
+  }
+  if (metrics.max_context_tokens > 0U) {
+    chunk["max_context_tokens"] = metrics.max_context_tokens;
+  }
+}
+
+/// OpenAI `usage`, extended with the LLiMa KV-cache gauge. total_tokens is the
+/// context this request occupied; kv_cache_len is what llima actually had
+/// resident. They normally agree -- a disagreement means truncation or a reset.
+nlohmann::json usage_object(const GenerationMetrics& metrics) {
+  nlohmann::json usage = {{"prompt_tokens", metrics.prompt_tokens},
+                          {"completion_tokens", metrics.generated_tokens},
+                          {"total_tokens", metrics.prompt_tokens + metrics.generated_tokens}};
+  if (metrics.kv_cache_len > 0U) {
+    usage["kv_cache_len"] = metrics.kv_cache_len;
+  }
+  if (metrics.max_context_tokens > 0U) {
+    usage["max_context_tokens"] = metrics.max_context_tokens;
+  }
+  return usage;
+}
+
 std::string chat_chunk(const std::string& model_name, const std::string& completion_id,
                        std::uint64_t created, const std::string& text,
                        const std::optional<std::string>& finish_reason = std::nullopt,
@@ -245,6 +275,7 @@ std::string chat_chunk(const std::string& model_name, const std::string& complet
     if (metrics->generated_tokens > 0U) {
       chunk["generated_tokens"] = metrics->generated_tokens;
     }
+    add_token_accounting(chunk, *metrics);
   }
 
   nlohmann::json choice;
@@ -284,6 +315,7 @@ std::string chat_tool_call_chunk(const std::string& model_name, const std::strin
   if (metrics.generated_tokens > 0U) {
     chunk["generated_tokens"] = metrics.generated_tokens;
   }
+  add_token_accounting(chunk, metrics);
   chunk["choices"] = nlohmann::json::array(
       {{{"index", 0}, {"delta", {{"tool_calls", delta_tool_calls}}}, {"finish_reason", nullptr}}});
   return "data: " + chunk.dump() + "\n\n";
@@ -332,6 +364,7 @@ std::string completion_chunk(const std::string& model_name, const std::string& t
     if (metrics->generated_tokens > 0U) {
       chunk["generated_tokens"] = metrics->generated_tokens;
     }
+    add_token_accounting(chunk, *metrics);
   }
 
   nlohmann::json choice;
@@ -408,6 +441,7 @@ std::string ollama_chat_line(const std::string& model_name, const std::string& t
     if (metrics->generated_tokens > 0U) {
       body["eval_count"] = metrics->generated_tokens;
     }
+    add_token_accounting(body, *metrics);
   }
   return body.dump() + "\n";
 }
@@ -432,6 +466,7 @@ std::string ollama_generate_line(const std::string& model_name, const std::strin
     if (metrics->generated_tokens > 0U) {
       body["eval_count"] = metrics->generated_tokens;
     }
+    add_token_accounting(body, *metrics);
   }
   return body.dump() + "\n";
 }
@@ -1028,7 +1063,7 @@ struct GenAIServer::Impl {
                             {{{"index", 0},
                               {"message", message},
                               {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
-                       {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+                       {"usage", usage_object(result.metrics)}});
       }
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
@@ -1067,7 +1102,7 @@ struct GenAIServer::Impl {
                             {{{"index", 0},
                               {"text", result.text},
                               {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
-                       {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+                       {"usage", usage_object(result.metrics)}});
       }
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);

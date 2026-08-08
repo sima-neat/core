@@ -58,6 +58,16 @@ std::string GenAIModel::model_id() const {
   return internal::model_id_from_path(impl_->info.root);
 }
 
+std::uint32_t GenAIModel::kv_cache_len() const {
+  const auto* vlm = std::get_if<VisionLanguageModel>(&impl_->model);
+  return vlm != nullptr ? vlm->kv_cache_len() : 0U;
+}
+
+std::uint32_t GenAIModel::max_context_tokens() const {
+  const auto* vlm = std::get_if<VisionLanguageModel>(&impl_->model);
+  return vlm != nullptr ? vlm->max_context_tokens() : 0U;
+}
+
 GenerationResult GenAIModel::run(const GenerationRequest& request) {
   return std::visit([&](auto& model) { return model.run(request); }, impl_->model);
 }

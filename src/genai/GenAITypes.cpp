@@ -181,6 +181,15 @@ void GenerationStream::Producer::record_metric(const std::string& metric, double
   }
 }
 
+void GenerationStream::Producer::record_token_counts(std::uint32_t prompt_tokens,
+                                                     std::uint32_t kv_cache_len,
+                                                     std::uint32_t max_context_tokens) {
+  std::lock_guard<std::mutex> lock(impl_.metrics_mutex);
+  impl_.metrics.prompt_tokens = prompt_tokens;
+  impl_.metrics.kv_cache_len = kv_cache_len;
+  impl_.metrics.max_context_tokens = max_context_tokens;
+}
+
 void GenerationStream::Producer::record_text(const std::string& text, bool stream_end) {
   if (!text.empty()) {
     TokenSample sample;

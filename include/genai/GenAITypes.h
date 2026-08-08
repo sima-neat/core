@@ -96,6 +96,16 @@ struct ChatMessage {
 
 struct GenerationMetrics {
   std::uint32_t generated_tokens = 0;
+  /// Prompt tokens after chat-template rendering, including image placeholders.
+  std::uint32_t prompt_tokens = 0;
+  /// Tokens resident in the LLiMa KV cache once the run finished. Normally equal
+  /// to prompt_tokens + generated_tokens; a smaller value means the context was
+  /// truncated or the cache was reset, and hitting max_context_tokens means the
+  /// run ran out of room.
+  std::uint32_t kv_cache_len = 0;
+  /// Context window: the most tokens prompt + completion may occupy
+  /// (the model's max_num_tokens). Bounds total_tokens and kv_cache_len alike.
+  std::uint32_t max_context_tokens = 0;
   double time_to_first_token_s = 0.0;
   double tokens_per_second = 0.0;
 };
@@ -194,6 +204,8 @@ private:
   class Producer {
   public:
     void record_metric(const std::string& metric, double value);
+    void record_token_counts(std::uint32_t prompt_tokens, std::uint32_t kv_cache_len,
+                             std::uint32_t max_context_tokens);
     void record_text(const std::string& text, bool stream_end);
     void push(TokenSample sample);
     void finish(std::string finish_reason, std::optional<std::uint32_t> generated_tokens,

@@ -31,6 +31,10 @@ public:
   bool accepts_image() const;
   std::string model_id() const;
   std::size_t cached_image_count() const;
+  /// Tokens currently resident in the LLiMa KV cache. Survives across runs.
+  std::uint32_t kv_cache_len() const;
+  /// Context window: the most tokens prompt + completion may occupy.
+  std::uint32_t max_context_tokens() const;
   bool encode(const Tensor& image);
   bool encode(const std::vector<Tensor>& images);
 #if defined(SIMA_WITH_OPENCV)
