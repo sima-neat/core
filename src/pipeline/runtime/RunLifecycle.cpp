@@ -126,6 +126,7 @@ void runtime::RunCore::stop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
       owner->pipeline.stream.close();
+      owner->decoder_admission.reset();
       owner->stream_close_state.store(runtime::InputStreamCloseState::Closed,
                                       std::memory_order_release);
       ctx->state.store(StopTaskState::Completed, std::memory_order_release);

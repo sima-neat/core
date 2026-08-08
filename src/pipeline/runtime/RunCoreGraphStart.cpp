@@ -1000,6 +1000,7 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
           return FusedEncodedOutputDispatchResult::Failed;
         };
     rt.run_core = RunCore::start_pipeline_segment(rt.seg, std::move(start_opt));
+    rt.run_core->decoder_admission = core->decoder_admission;
     rt.transport.built.store(true, std::memory_order_release);
   }
   rt.transport.cv.notify_all();

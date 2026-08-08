@@ -374,7 +374,8 @@ void RunCore::stop_graph() {
   }
 
   if (!execution.has_detached_workers.load(std::memory_order_acquire)) {
-    decoder_admission.reset();
+    std::atomic_store_explicit(&decoder_admission, std::shared_ptr<DecoderAdmissionReservation>{},
+                               std::memory_order_release);
   }
 
   if (simaai::neat::graph::stop_trace_enabled()) {

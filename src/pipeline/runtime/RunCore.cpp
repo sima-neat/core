@@ -944,8 +944,11 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     start_opt.owner = &pipe;
     start_opt.allow_startup_preflight = allow_startup_preflight;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    auto decoder_reservation =
+        std::atomic_load_explicit(&decoder_admission, std::memory_order_acquire);
     const auto segment_start = pipeline_internal::build_timing_now();
     auto run_core = RunCore::start_pipeline_segment(pipe.seg, std::move(start_opt));
+    run_core->decoder_admission = std::move(decoder_reservation);
     const auto segment_us = pipeline_internal::build_timing_us(segment_start);
     tel.ensure_build_segment_ns.fetch_add(static_cast<std::uint64_t>(segment_us) * 1000ULL,
                                           std::memory_order_relaxed);
