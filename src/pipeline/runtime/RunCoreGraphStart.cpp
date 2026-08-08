@@ -808,7 +808,8 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   for (std::size_t i = 0; i < execution.stages.size(); ++i) {
     auto& rt = *execution.stages[i];
-    rt.worker = std::thread([core, i]() {
+    rt.worker = std::thread([core, i, admission_guard = core->decoder_admission]() {
+      (void)admission_guard;
       auto& execution = core->graph_execution();
       auto& st = *execution.stages[i];
       struct DoneGuard {
@@ -1008,7 +1009,8 @@ void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
 
 void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_t i) {
   auto& pipe = *core->graph_execution().pipelines[i];
-  pipe.transport.pull_thread = std::thread([core, i]() {
+  pipe.transport.pull_thread = std::thread([core, i, admission_guard = core->decoder_admission]() {
+    (void)admission_guard;
     auto& execution = core->graph_execution();
     auto& pipe = *execution.pipelines[i];
     struct DoneGuard {
@@ -1220,7 +1222,8 @@ void start_pipeline_pull_thread(const std::shared_ptr<RunCore>& core, std::size_
 
 void start_pipeline_push_thread(const std::shared_ptr<RunCore>& core, std::size_t i) {
   auto& pipe = *core->graph_execution().pipelines[i];
-  pipe.transport.push_thread = std::thread([core, i]() {
+  pipe.transport.push_thread = std::thread([core, i, admission_guard = core->decoder_admission]() {
+    (void)admission_guard;
     auto& pipe = *core->graph_execution().pipelines[i];
     struct DoneGuard {
       std::atomic<bool>& flag;

@@ -267,6 +267,22 @@ void check_h264_h265_and_release() {
   require(backend->release_count == 1, "reservation release must be idempotent");
 }
 
+void check_shared_reservation_releases_after_last_owner() {
+  auto backend = std::make_shared<FakeBackend>();
+  ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+  auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+  std::shared_ptr<simaai::neat::runtime::DecoderAdmissionReservation> graph_owner =
+      std::move(prepared.reservation);
+  auto detached_worker = graph_owner;
+
+  graph_owner.reset();
+  require(backend->release_count == 0,
+          "a detached graph worker must keep decoder admission reserved");
+  detached_worker.reset();
+  require(backend->release_count == 1,
+          "decoder admission must release after the last detached graph worker exits");
+}
+
 void check_non_video_codecs_are_ignored() {
   auto backend = std::make_shared<FakeBackend>();
   ExecutionGraphPlan plan = ordinary_plan(
@@ -494,6 +510,7 @@ int main() {
     unsetenv("SIMA_DECODER_ADMISSION_DISABLE");
     unsetenv("SIMA_DECODER_ADMISSION_REQUIRE");
     check_h264_h265_and_release();
+    check_shared_reservation_releases_after_last_owner();
     check_non_video_codecs_are_ignored();
     check_fused_branch_is_admitted();
     check_zero_copy_policy_follows_downstream();
