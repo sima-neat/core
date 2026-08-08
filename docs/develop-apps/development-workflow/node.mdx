@@ -157,14 +157,18 @@ The H.265 decoder requires `codec_name=hevc`, `profile=Main`, and
 
 `raw_output` is separate from decoder `zero-copy-output`. Core enables
 `zero-copy-output` during decoder admission when the graph can forward the
-decoder's native NV12 buffer. `RunOptions::output_memory` separately controls
-whether a terminal output shares its backing buffer (`ZeroCopy`) or is copied
-into framework-owned storage (`Owned`).
+decoder's native NV12 buffer. If any downstream branch uses an encoder ingress
+that cannot read the native plane layout, Core admits the decoder without
+zero-copy output so every branch receives a packed frame. `RunOptions::output_memory`
+separately controls whether a terminal output shares its backing buffer
+(`ZeroCopy`) or is copied into framework-owned storage (`Owned`).
 
 Automatic admission for H.264/H.265 requires the decoder width, height, and
 frame rate to be known. Set `dec_width`, `dec_height`, and `dec_fps` directly,
 or provide them through a typed source such as `RtspEncodedInput` with
 `source_fps`. Core does not assume 30 FPS when the source rate is unknown.
+Admission raises an explicit `num_buffers` value when it is below the lease's
+safety floor. Leaving `num_buffers` unset preserves the decoder element default.
 
 Leave `decoder_tuning` empty or set it to `auto` for general streams. Use
 `throughput-low-latency` only for streams encoded without B-frames and with one

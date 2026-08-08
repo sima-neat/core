@@ -3,8 +3,11 @@
 #endif
 
 #include "nodes/sima/SimaDecode.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/graph/internal/GraphTestHooks.h"
 #include "pipeline/runtime/DecoderAdmission.h"
+#include "pipeline/runtime/RunCore.h"
 #include "test_utils.h"
 
 #include <cstdlib>
@@ -26,6 +29,34 @@ using simaai::neat::pipeline_internal::DecoderAdmissionStreamRequest;
 using simaai::neat::runtime::DecoderAdmissionBackend;
 using simaai::neat::runtime::ExecutionGraphPlan;
 using simaai::neat::runtime::PipelineSegmentPlan;
+
+class MarkerNode final : public simaai::neat::Node {
+public:
+  explicit MarkerNode(std::string kind) : kind_(std::move(kind)) {}
+
+  std::string kind() const override {
+    return kind_;
+  }
+
+  simaai::neat::NodeCapsBehavior caps_behavior() const override {
+    return simaai::neat::NodeCapsBehavior::Dynamic;
+  }
+
+  std::string backend_fragment(int node_index) const override {
+    return "identity name=n" + std::to_string(node_index) + "_marker";
+  }
+
+  std::vector<std::string> element_names(int node_index) const override {
+    return {"n" + std::to_string(node_index) + "_marker"};
+  }
+
+private:
+  std::string kind_;
+};
+
+std::shared_ptr<simaai::neat::Node> marker(std::string kind) {
+  return std::make_shared<MarkerNode>(std::move(kind));
+}
 
 class ScopedEnvVar {
 public:
@@ -120,17 +151,74 @@ ExecutionGraphPlan ordinary_plan(const std::vector<SimaDecodeOptions>& options) 
 
 ExecutionGraphPlan fused_plan(const SimaDecodeOptions& options) {
   ExecutionGraphPlan plan;
-  PipelineSegmentPlan segment;
-  segment.id = 7;
+  const auto decoder = simaai::neat::nodes::SimaDecode(options);
+
+  PipelineSegmentPlan consumed;
+  consumed.id = 3;
+  consumed.nodes.push_back(decoder);
+  consumed.node_ids.push_back(3);
+  consumed.consumed_by_fused_realtime_ingress = true;
+  plan.pipeline_segments.push_back(std::move(consumed));
+
+  PipelineSegmentPlan target;
+  target.id = 7;
   simaai::neat::runtime::FusedRealtimeIngress ingress;
   simaai::neat::runtime::FusedRealtimeIngressBranch branch;
   branch.source_node = 3;
-  branch.nodes.push_back(simaai::neat::nodes::SimaDecode(options));
+  branch.nodes.push_back(std::move(decoder));
   ingress.branches.push_back(std::move(branch));
-  segment.fused_realtime_ingress = std::move(ingress);
-  plan.pipeline_segments.push_back(std::move(segment));
+  target.fused_realtime_ingress = std::move(ingress);
+  plan.pipeline_segments.push_back(std::move(target));
   plan.node_labels.resize(4);
   plan.node_labels[3] = "fused_decoder";
+  return plan;
+}
+
+ExecutionGraphPlan encoder_plan(bool layout_aware) {
+  ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+  auto& nodes = plan.pipeline_segments.front().nodes;
+  nodes.push_back(marker(layout_aware ? "VideoSenderRawIngress[direct_nv12]"
+                                      : "VideoSenderRawIngress[convert_to_nv12]"));
+  nodes.push_back(marker("H264EncodeSima"));
+  return plan;
+}
+
+ExecutionGraphPlan branched_encoder_plan() {
+  ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+  auto& source = plan.pipeline_segments.front();
+  source.output_edges = {0};
+
+  simaai::neat::runtime::EdgePlan to_fanout;
+  to_fanout.from = 0;
+  to_fanout.to = 10;
+  plan.edges.push_back(std::move(to_fanout));
+
+  simaai::neat::runtime::StageNodePlan fanout;
+  fanout.node_id = 10;
+  plan.stage_nodes.push_back(std::move(fanout));
+
+  simaai::neat::runtime::EdgePlan to_preproc;
+  to_preproc.from = 10;
+  to_preproc.to = 20;
+  plan.edges.push_back(std::move(to_preproc));
+
+  simaai::neat::runtime::EdgePlan to_encoder;
+  to_encoder.from = 10;
+  to_encoder.to = 30;
+  plan.edges.push_back(std::move(to_encoder));
+
+  PipelineSegmentPlan preproc;
+  preproc.id = 20;
+  preproc.input_edges = {1};
+  preproc.nodes.push_back(marker("Preproc"));
+  plan.pipeline_segments.push_back(std::move(preproc));
+
+  PipelineSegmentPlan encoder;
+  encoder.id = 30;
+  encoder.input_edges = {2};
+  encoder.nodes.push_back(marker("VideoSenderRawIngress[convert_to_nv12]"));
+  encoder.nodes.push_back(marker("H264EncodeSima"));
+  plan.pipeline_segments.push_back(std::move(encoder));
   return plan;
 }
 
@@ -193,12 +281,107 @@ void check_fused_branch_is_admitted() {
   auto backend = std::make_shared<FakeBackend>();
   ExecutionGraphPlan plan = fused_plan(decoder_options());
   auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
-  require(prepared.reservation && backend->requests.size() == 1U,
-          "fused decoder branch should be admitted");
+  require(prepared.eligible_decoders == 1U && prepared.reservation &&
+              backend->requests.size() == 1U,
+          "a decoder copied into a fused branch must be admitted exactly once");
   const auto& node =
-      plan.pipeline_segments.front().fused_realtime_ingress->branches.front().nodes.front();
+      plan.pipeline_segments.back().fused_realtime_ingress->branches.front().nodes.front();
   require_contains(node->backend_fragment(0), "decoder-admission-required=true",
                    "fused decoder should bind the lease into its node");
+}
+
+void check_zero_copy_policy_follows_downstream() {
+  constexpr std::uint32_t zero_copy_policy =
+      simaai::neat::pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
+      simaai::neat::pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
+
+  {
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
+            "terminal raw decoder output should retain zero-copy admission");
+    require_contains(plan.pipeline_segments.front().nodes.front()->backend_fragment(0),
+                     "zero-copy-output=true",
+                     "terminal raw decoder should receive the zero-copy property");
+  }
+
+  {
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = encoder_plan(false);
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(prepared.reservation && backend->requests.front().requested_policy == 0U,
+            "legacy encoder path should request packed decoder output");
+    require(plan.pipeline_segments.front().nodes.front()->backend_fragment(0).find(
+                "zero-copy-output=true") == std::string::npos,
+            "legacy encoder path must not enable decoder zero-copy output");
+  }
+
+  {
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = encoder_plan(true);
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
+            "layout-aware encoder path should retain zero-copy admission");
+  }
+
+  {
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
+    plan.pipeline_segments.front().nodes.push_back(marker("Preproc"));
+    plan.pipeline_segments.front().nodes.push_back(marker("MLA"));
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(prepared.reservation && backend->requests.front().requested_policy == zero_copy_policy,
+            "Preproc and MLA path should retain zero-copy admission");
+  }
+
+  {
+    auto backend = std::make_shared<FakeBackend>();
+    ExecutionGraphPlan plan = branched_encoder_plan();
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(prepared.reservation && backend->requests.front().requested_policy == 0U,
+            "a reachable legacy encoder branch should request packed decoder output");
+  }
+}
+
+void check_output_buffer_floor_preserves_default() {
+  const auto admitted_fragment = [](int configured_buffers) {
+    auto backend = std::make_shared<FakeBackend>();
+    SimaDecodeOptions options = decoder_options();
+    options.num_buffers = configured_buffers;
+    ExecutionGraphPlan plan = ordinary_plan({options});
+    auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan, backend);
+    require(prepared.reservation != nullptr, "buffer-floor case should be admitted");
+    return plan.pipeline_segments.front().nodes.front()->backend_fragment(0);
+  };
+
+  const std::string unspecified = admitted_fragment(-1);
+  require(unspecified.find("num-buffers=") == std::string::npos,
+          "an unspecified output pool must preserve the decoder element default");
+  require_contains(admitted_fragment(4), "num-buffers=6",
+                   "an explicit output pool below the lease floor should be raised");
+  require_contains(admitted_fragment(9), "num-buffers=9",
+                   "an explicit output pool above the lease floor should be preserved");
+}
+
+void check_admission_errors_are_structured() {
+  ScopedEnvVar require_admission("SIMA_DECODER_ADMISSION_REQUIRE", "1");
+  SimaDecodeOptions options = decoder_options();
+  options.dec_fps = 0;
+  ExecutionGraphPlan plan = ordinary_plan({options});
+
+  bool threw = false;
+  try {
+    (void)simaai::neat::runtime::RunCore::start(std::move(plan),
+                                                simaai::neat::runtime::RunCoreStartOptions{});
+  } catch (const simaai::neat::NeatError& error) {
+    threw = true;
+    require(error.report().error_code == simaai::neat::error_codes::kPipelineShape,
+            "admission failure should retain the graph-start error code");
+    require_contains(error.what(), "missing=fps",
+                     "structured admission failure should retain the root cause");
+  }
+  require(threw, "RunCore::start should wrap admission failures as NeatError");
 }
 
 void check_missing_contracts() {
@@ -313,9 +496,12 @@ int main() {
     check_h264_h265_and_release();
     check_non_video_codecs_are_ignored();
     check_fused_branch_is_admitted();
+    check_zero_copy_policy_follows_downstream();
+    check_output_buffer_floor_preserves_default();
     check_missing_contracts();
     check_endpoint_policy();
     check_rejections_and_malformed_leases_release();
+    check_admission_errors_are_structured();
     check_sync_cache_rebuild_order();
     std::cout << "[OK] unit_decoder_admission_test passed\n";
     return 0;

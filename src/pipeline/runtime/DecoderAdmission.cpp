@@ -10,6 +10,7 @@
 #include <span>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 
 namespace simaai::neat::runtime {
@@ -40,6 +41,7 @@ struct DecoderAdmissionCandidate {
   std::uint32_t height = 0;
   std::uint32_t fps_num = 0;
   std::uint32_t fps_den = 1;
+  bool zero_copy_output = false;
   bool fused_branch = false;
   std::size_t fused_branch_index = static_cast<std::size_t>(-1);
 };
@@ -153,8 +155,7 @@ static_assert(decoder_admission_codec(SimaDecodeType::H264) ==
 static_assert(decoder_admission_codec(SimaDecodeType::H265) ==
               pipeline_internal::kDecoderAdmissionCodecH265);
 
-bool decoder_candidate_uses_zero_copy_output(const DecoderAdmissionCandidate& candidate) {
-  const auto& opt = candidate.options;
+bool decoder_options_allow_zero_copy_output(const SimaDecodeOptions& opt) {
   if (!opt.raw_output) {
     return false;
   }
@@ -163,6 +164,84 @@ bool decoder_candidate_uses_zero_copy_output(const DecoderAdmissionCandidate& ca
   }
   const std::string next = upper_copy_ascii(opt.next_element);
   return next.empty() || next == "CVU";
+}
+
+bool nodes_require_packed_decoder_output(std::span<const std::shared_ptr<Node>> nodes,
+                                         std::size_t begin = 0) {
+  bool layout_aware_encoder_ingress = false;
+  for (std::size_t i = begin; i < nodes.size(); ++i) {
+    if (!nodes[i]) {
+      continue;
+    }
+    const std::string kind = nodes[i]->kind();
+    if (kind == "VideoSenderRawIngress[direct_nv12]") {
+      layout_aware_encoder_ingress = true;
+    } else if (kind == "VideoSenderRawIngress[convert_to_nv12]") {
+      return true;
+    } else if (kind == "H264EncodeSima") {
+      if (!layout_aware_encoder_ingress) {
+        return true;
+      }
+      layout_aware_encoder_ingress = false;
+    }
+  }
+  return false;
+}
+
+bool downstream_edge_requires_packed_decoder_output(const ExecutionGraphPlan& plan,
+                                                    std::size_t edge_index,
+                                                    std::unordered_set<std::size_t>& visited) {
+  if (edge_index >= plan.edges.size() || !visited.insert(edge_index).second ||
+      plan.edges[edge_index].consumed_by_fused_realtime_ingress) {
+    return false;
+  }
+
+  for (const auto& segment : plan.pipeline_segments) {
+    if (segment.consumed_by_fused_realtime_ingress ||
+        std::find(segment.input_edges.begin(), segment.input_edges.end(), edge_index) ==
+            segment.input_edges.end()) {
+      continue;
+    }
+    if (nodes_require_packed_decoder_output(segment.nodes)) {
+      return true;
+    }
+    for (const std::size_t output_edge : segment.output_edges) {
+      if (downstream_edge_requires_packed_decoder_output(plan, output_edge, visited)) {
+        return true;
+      }
+    }
+  }
+
+  const graph::NodeId target = plan.edges[edge_index].to;
+  for (std::size_t next = 0; next < plan.edges.size(); ++next) {
+    if (plan.edges[next].from == target &&
+        downstream_edge_requires_packed_decoder_output(plan, next, visited)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool downstream_requires_packed_decoder_output(const ExecutionGraphPlan& plan,
+                                               const DecoderAdmissionCandidate& candidate) {
+  const auto& source = plan.pipeline_segments[candidate.segment_index];
+  if (candidate.fused_branch) {
+    const auto& branch = source.fused_realtime_ingress->branches[candidate.fused_branch_index];
+    if (nodes_require_packed_decoder_output(branch.nodes, candidate.node_index + 1U) ||
+        nodes_require_packed_decoder_output(source.nodes)) {
+      return true;
+    }
+  } else if (nodes_require_packed_decoder_output(source.nodes, candidate.node_index + 1U)) {
+    return true;
+  }
+
+  std::unordered_set<std::size_t> visited_edges;
+  for (const std::size_t edge_index : source.output_edges) {
+    if (downstream_edge_requires_packed_decoder_output(plan, edge_index, visited_edges)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 OutputSpec decoder_local_output_spec(std::span<const std::shared_ptr<Node>> nodes,
@@ -253,17 +332,19 @@ std::vector<DecoderAdmissionCandidate> collect_candidates(const ExecutionGraphPl
   for (std::size_t segment_index = 0; segment_index < plan.pipeline_segments.size();
        ++segment_index) {
     const auto& segment = plan.pipeline_segments[segment_index];
-    for (std::size_t node_index = 0; node_index < segment.nodes.size(); ++node_index) {
-      const auto* decoder = dynamic_cast<const SimaDecode*>(segment.nodes[node_index].get());
-      if (!decoder || !decode_type_uses_video_admission(decoder->options().type)) {
-        continue;
+    if (!segment.consumed_by_fused_realtime_ingress) {
+      for (std::size_t node_index = 0; node_index < segment.nodes.size(); ++node_index) {
+        const auto* decoder = dynamic_cast<const SimaDecode*>(segment.nodes[node_index].get());
+        if (!decoder || !decode_type_uses_video_admission(decoder->options().type)) {
+          continue;
+        }
+        const OutputSpec decoder_spec = decoder_local_output_spec(
+            std::span<const std::shared_ptr<Node>>(segment.nodes.data(), segment.nodes.size()),
+            node_index, segment.input_spec);
+        collect_candidate(segment_index, node_index, segment.nodes[node_index],
+                          attributed_runtime_node_for_segment_node(segment, node_index),
+                          decoder_spec, false, static_cast<std::size_t>(-1), candidates);
       }
-      const OutputSpec decoder_spec = decoder_local_output_spec(
-          std::span<const std::shared_ptr<Node>>(segment.nodes.data(), segment.nodes.size()),
-          node_index, segment.input_spec);
-      collect_candidate(segment_index, node_index, segment.nodes[node_index],
-                        attributed_runtime_node_for_segment_node(segment, node_index), decoder_spec,
-                        false, static_cast<std::size_t>(-1), candidates);
     }
 
     if (!segment.fused_realtime_ingress.has_value()) {
@@ -284,6 +365,10 @@ std::vector<DecoderAdmissionCandidate> collect_candidates(const ExecutionGraphPl
                           decoder_spec, true, branch_index, candidates);
       }
     }
+  }
+  for (auto& candidate : candidates) {
+    candidate.zero_copy_output = decoder_options_allow_zero_copy_output(candidate.options) &&
+                                 !downstream_requires_packed_decoder_output(plan, candidate);
   }
   return candidates;
 }
@@ -417,8 +502,8 @@ std::shared_ptr<Node> make_admitted_decoder(const DecoderAdmissionCandidate& can
   auto opt = candidate.options;
   const int resolved_output_buffers =
       lease.resolved_output_buffers > 0 ? static_cast<int>(lease.resolved_output_buffers) : 0;
-  if (resolved_output_buffers > 0 &&
-      (opt.num_buffers <= 0 || opt.num_buffers < resolved_output_buffers)) {
+  if (resolved_output_buffers > 0 && opt.num_buffers > 0 &&
+      opt.num_buffers < resolved_output_buffers) {
     opt.num_buffers = resolved_output_buffers;
   }
 
@@ -434,7 +519,7 @@ std::shared_ptr<Node> make_admitted_decoder(const DecoderAdmissionCandidate& can
                      : pipeline_internal::decoder_admission_tuning_name(lease.resolved_tuning);
   props.memory_opt = opt.memory_opt || decoder_tuning_uses_memory_opt(props.tuning) ||
                      lease.resolved_tuning == 1U || lease.resolved_tuning == 2U;
-  props.zero_copy_output = decoder_candidate_uses_zero_copy_output(candidate);
+  props.zero_copy_output = candidate.zero_copy_output;
 
   opt.input_buffers = -1;
   opt.decoder_tuning.clear();
@@ -564,7 +649,7 @@ prepare_decoder_admission(ExecutionGraphPlan& plan,
     stream.height = candidate.height;
     stream.fps_num = candidate.fps_num;
     stream.fps_den = candidate.fps_den;
-    if (decoder_candidate_uses_zero_copy_output(candidate)) {
+    if (candidate.zero_copy_output) {
       stream.requested_policy = pipeline_internal::kDecoderAdmissionPolicyZeroCopyOutput |
                                 pipeline_internal::kDecoderAdmissionPolicyNoOutputCopy;
     }

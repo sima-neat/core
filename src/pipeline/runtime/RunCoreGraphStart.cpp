@@ -1479,7 +1479,16 @@ std::shared_ptr<RunCore> RunCore::start(ExecutionGraphPlan plan, RunCoreStartOpt
   gst_init_once();
 
   const auto admission_start = pipeline_internal::build_timing_now();
-  auto admission = prepare_decoder_admission(plan);
+  DecoderAdmissionPreparation admission;
+  try {
+    admission = prepare_decoder_admission(plan);
+  } catch (const NeatError&) {
+    throw;
+  } catch (const std::exception& e) {
+    throw_graph_start_error(plan, e.what());
+  } catch (...) {
+    throw_graph_start_error(plan, "unknown decoder admission failure");
+  }
   const auto decoder_admission_us = pipeline_internal::build_timing_us(admission_start);
 
   if (is_simple_linear_plan(plan)) {
