@@ -613,7 +613,7 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
     return;
   }
   auto& pipe = *graph_execution_->pipelines[pipeline_index];
-  if (pipe.transport.completion_forwarded.exchange(true, std::memory_order_acq_rel)) {
+  if (pipe.transport.completion_started.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   if (close_detail.has_value()) {
@@ -647,10 +647,11 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
     }
   }
 
-  pipe.transport.cv.notify_all();
   if (!pipe.seg.node_ids.empty()) {
     graph_producer_completed(pipe.seg.node_ids.back());
   }
+  pipe.transport.completion_forwarded.store(true, std::memory_order_release);
+  pipe.transport.cv.notify_all();
 }
 
 void RunCore::graph_stage_worker_completed(std::size_t group_index) {
