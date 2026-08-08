@@ -15,6 +15,8 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
+#include <cstring>
 #include <exception>
 #include <fstream>
 #include <limits>
@@ -29,6 +31,8 @@
 
 namespace simaai::neat::genai {
 namespace {
+
+using CachedVisionOutput = std::vector<std::vector<std::byte>>;
 
 cv::Mat require_genai_rgb_image_tensor(const Tensor& image) {
   if (image.dtype != TensorDType::UInt8) {
@@ -481,7 +485,7 @@ struct VisionLanguageModel::Impl {
   struct PreparedInput {
     std::vector<uint32_t> input_token_ids;
     std::vector<std::vector<Eigen::bfloat16>> image_tensors;
-    std::vector<std::vector<Eigen::bfloat16>> cached_image_tensors;
+    std::vector<CachedVisionOutput> cached_vision_outputs;
     std::size_t expected_image_count = 0;
   };
 
@@ -514,7 +518,7 @@ struct VisionLanguageModel::Impl {
       prepared.image_tensors = preprocess_images(*image_processor, built.images);
     }
     if (built.use_cached_images) {
-      prepared.cached_image_tensors = cached;
+      prepared.cached_vision_outputs = cached;
     }
     return prepared;
   }
@@ -536,36 +540,67 @@ struct VisionLanguageModel::Impl {
       vision_model->run_model(image_tensor, &ofm_maps.at(map_idx));
       ++map_idx;
     }
-    for (const auto& cached_tensor : prepared.cached_image_tensors) {
-      upload_cached_image(cached_tensor, ofm_maps.at(map_idx));
+    for (const auto& cached_output : prepared.cached_vision_outputs) {
+      upload_cached_vision_output(cached_output, ofm_maps.at(map_idx));
       ++map_idx;
     }
   }
 
-  static void upload_cached_image(const std::vector<Eigen::bfloat16>& cached_tensor,
-                                  const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
-    if (ofm_map.size() != 1U || !ofm_map.contains(0)) {
-      throw std::runtime_error(
-          "Cached image reuse is not supported for this model's multi-output vision encoder");
-    }
+  static CachedVisionOutput
+  cache_vision_output(const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
+    CachedVisionOutput cached_output;
+    cached_output.reserve(ofm_map.size());
+    for (const auto& [output_idx, slice] : ofm_map) {
+      if (output_idx != cached_output.size()) {
+        throw std::runtime_error("Vision encoder output indexes must be contiguous from zero");
+      }
 
-    const auto& slice = ofm_map.at(0);
-    auto* buffer = slice.get_buf_ptr();
-    if (buffer == nullptr) {
-      throw std::runtime_error("Cached image destination buffer is null");
+      auto* buffer = slice.get_buf_ptr();
+      if (buffer == nullptr || buffer->get_virtual_addr() == nullptr) {
+        throw std::runtime_error("Vision encoder output buffer is unavailable");
+      }
+      const auto data_offset = buffer->get_buf_addr_offset(slice.get_buf_begins());
+      const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
+      buffer->invalidate_cache(data_offset, data_size);
+
+      std::vector<std::byte> bytes(data_size);
+      const auto* source = static_cast<const std::byte*>(buffer->get_virtual_addr()) + data_offset;
+      std::memcpy(bytes.data(), source, data_size);
+      cached_output.push_back(std::move(bytes));
     }
-    const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
-    const auto expected_size = cached_tensor.size() * sizeof(Eigen::bfloat16);
-    if (data_size != expected_size) {
-      throw std::runtime_error("Cached image tensor shape does not match language input buffer");
-    }
-    buffer->upload(cached_tensor.data(), buffer->get_buf_addr_offset(slice.get_buf_begins()),
-                   data_size);
+    return cached_output;
   }
 
-  std::vector<std::vector<Eigen::bfloat16>> cached_images_copy() const {
+  static void
+  upload_cached_vision_output(const CachedVisionOutput& cached_output,
+                              const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
+    if (cached_output.size() != ofm_map.size()) {
+      throw std::runtime_error("Cached image output count does not match language input buffers");
+    }
+
+    std::size_t expected_output_idx = 0;
+    for (const auto& [output_idx, slice] : ofm_map) {
+      if (output_idx != expected_output_idx) {
+        throw std::runtime_error("Language model input indexes must be contiguous from zero");
+      }
+
+      auto* buffer = slice.get_buf_ptr();
+      if (buffer == nullptr) {
+        throw std::runtime_error("Cached image destination buffer is null");
+      }
+      const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
+      const auto& bytes = cached_output[expected_output_idx];
+      if (data_size != bytes.size()) {
+        throw std::runtime_error("Cached image output does not match language input buffer");
+      }
+      buffer->upload(bytes.data(), buffer->get_buf_addr_offset(slice.get_buf_begins()), data_size);
+      ++expected_output_idx;
+    }
+  }
+
+  std::vector<CachedVisionOutput> cached_images_copy() const {
     std::lock_guard<std::mutex> lock(cache_mutex);
-    return cached_image_tensors;
+    return cached_vision_outputs;
   }
 
   bool encode(const std::vector<Tensor>& images) {
@@ -580,32 +615,42 @@ struct VisionLanguageModel::Impl {
     if (!image_processor || !vision_model) {
       throw std::runtime_error("GenAI vision runtime is unavailable for this model");
     }
-    if (!cached_image_reuse_supported()) {
-      throw std::runtime_error(
-          "VisionLanguageModel::encode cached reuse is not supported for this model's "
-          "multi-output vision encoder");
+    if (!cfg.mm_cfg.has_value() || cfg.mm_cfg->mm_tokens_per_image == 0U) {
+      throw std::runtime_error("VisionLanguageModel::encode requires image-token configuration");
+    }
+    const auto image_token_id = vlm_helper->get_image_token_id();
+    if (!image_token_id.has_value()) {
+      throw std::runtime_error("VisionLanguageModel::encode requires an image token ID");
+    }
+    const auto tokens_per_image = static_cast<std::size_t>(cfg.mm_cfg->mm_tokens_per_image);
+    const auto max_token_count = static_cast<std::size_t>(std::numeric_limits<uint16_t>::max());
+    if (images.size() > max_token_count / tokens_per_image) {
+      throw std::runtime_error("VisionLanguageModel::encode image count exceeds LLiMa token limit");
     }
 
     auto image_tensors = preprocess_images(*image_processor, images);
-    std::vector<std::vector<Eigen::bfloat16>> encoded;
+    std::vector<uint32_t> image_token_ids(images.size() * tokens_per_image, *image_token_id);
+    auto ofm_maps = language_model->create_input_buffers(image_token_ids);
+    if (ofm_maps.size() != image_tensors.size()) {
+      throw std::runtime_error("LLiMa language model did not create one output map per image");
+    }
+
+    std::vector<CachedVisionOutput> encoded;
     encoded.reserve(image_tensors.size());
-    for (const auto& image_tensor : image_tensors) {
-      encoded.push_back(vision_model->run_model(image_tensor));
+    for (std::size_t i = 0; i < image_tensors.size(); ++i) {
+      vision_model->run_model(image_tensors[i], &ofm_maps[i]);
+      encoded.push_back(cache_vision_output(ofm_maps[i]));
     }
     {
       std::lock_guard<std::mutex> lock(cache_mutex);
-      cached_image_tensors = std::move(encoded);
+      cached_vision_outputs = std::move(encoded);
     }
     return true;
   }
 
-  bool cached_image_reuse_supported() const {
-    return !cfg.vm_cfg.has_value() || cfg.vm_cfg->deepstack_visual_indexes.empty();
-  }
-
   std::size_t cached_image_count() const {
     std::lock_guard<std::mutex> lock(cache_mutex);
-    return cached_image_tensors.size();
+    return cached_vision_outputs.size();
   }
 
   void configure_run_callbacks() {
@@ -653,7 +698,7 @@ struct VisionLanguageModel::Impl {
   std::condition_variable run_state_cv;
   bool run_active = false;
   mutable std::mutex cache_mutex;
-  std::vector<std::vector<Eigen::bfloat16>> cached_image_tensors;
+  std::vector<CachedVisionOutput> cached_vision_outputs;
   mutable std::mutex metrics_mutex;
   GenerationMetrics metrics;
 };
