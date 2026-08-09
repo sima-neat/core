@@ -367,6 +367,7 @@ endif()
 if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
   pkg_check_modules(GST QUIET
     gstreamer-1.0
+    gstreamer-allocators-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
     gstreamer-sdp-1.0
@@ -379,6 +380,7 @@ if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
 else()
   pkg_check_modules(GST REQUIRED
     gstreamer-1.0
+    gstreamer-allocators-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
     gstreamer-sdp-1.0
@@ -486,6 +488,7 @@ endfunction()
 set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "")
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_internals_target IN ITEMS
+      NeatInternals::DmaBufPool
       NeatInternals::neatprocessmlaruntime
       NeatInternals::PreparedRuntimeBridge
       NeatInternals::neattensorbufferfast
@@ -531,6 +534,8 @@ set(SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES
   $ENV{HOME}/.local/include/simaai
 )
 set(SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES
+  ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/build-required-gst/artifacts/gst-plugins
+  ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/build/artifacts/gst-plugins
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/prepared-runtime-bridge
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/processmla-runtime
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/metadata
@@ -551,6 +556,14 @@ list(APPEND SIMANEAT_NEAT_ALLOCATOR_HINTS
 )
 
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  simaneat_imported_target_location(_simaneat_dmabufpool_imported_location
+    NeatInternals::DmaBufPool)
+  if (_simaneat_dmabufpool_imported_location)
+    set(SIMANEAT_NEAT_DMABUFPOOL_LIB
+      "${_simaneat_dmabufpool_imported_location}"
+      CACHE FILEPATH "NEAT DMA-BUF runtime from exported NeatInternals package" FORCE)
+  endif()
+
   simaneat_imported_target_location(_simaneat_allocator_imported_location
     NeatInternals::Allocator)
   if (_simaneat_allocator_imported_location)
@@ -594,6 +607,15 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       CACHE PATH "NEAT allocator include directory from exported NeatInternals package" FORCE)
   endif()
 
+  simaneat_find_exported_include_dir(_simaneat_dmabuf_include_root
+    NeatInternals::DmaBufPool
+    simaai/neat/internal/dmabuf/DmaBufPool.h)
+  if (_simaneat_dmabuf_include_root)
+    set(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
+      "${_simaneat_dmabuf_include_root}"
+      CACHE PATH "NEAT DMA-BUF include root from exported NeatInternals package" FORCE)
+  endif()
+
   simaneat_find_exported_include_dir(_simaneat_tensorbuffer_include_dir
     NeatInternals::TensorBuffer
     gstsimaaitensorbuffer.h)
@@ -616,6 +638,20 @@ endif()
 find_library(SIMANEAT_NEAT_ALLOCATOR_LIB
   NAMES gstneatallocator
   HINTS ${SIMANEAT_NEAT_ALLOCATOR_HINTS}
+)
+find_library(SIMANEAT_NEAT_DMABUFPOOL_LIB
+  NAMES neatdmabufpool
+  HINTS
+    ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
+    ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+)
+find_path(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
+  NAMES simaai/neat/internal/dmabuf/DmaBufPool.h
+  HINTS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../neat-internals/core/dmabuf/include
+    ${SIMANEAT_ELXR_SYSROOT}/usr/include
+    /usr/include
+    /usr/local/include
 )
 find_path(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
   NAMES gstsimaaiallocator.h
@@ -760,6 +796,10 @@ simaneat_require_dependency(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
   "Required simaai memory headers not found: simaai/simaai_memory.h.")
 simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
   "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h.")
+simaneat_require_dependency(SIMANEAT_NEAT_DMABUFPOOL_LIB
+  "Required NEAT DMA-BUF runtime not found: libneatdmabufpool.so.")
+simaneat_require_dependency(SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT
+  "Required NEAT DMA-BUF headers not found: simaai/neat/internal/dmabuf/DmaBufPool.h.")
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   simaneat_require_dependency(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
     "Prepared-runtime bridge headers not found. Expected an include root containing gst/SimaPreparedRuntimeAbi.h, ev/ev_tensor_abi.h, and neat/PreparedRuntimeBridge.h.")
@@ -981,6 +1021,7 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       "${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
       "${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}"
+      "${SIMANEAT_NEAT_DMABUF_INCLUDE_ROOT}"
       "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}"
       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
     if (_simaneat_neat_include_dir AND
@@ -1065,7 +1106,8 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   target_link_libraries(sima_neat_common INTERFACE
     NeatInternals::Allocator
     NeatInternals::BufferPool
-    NeatInternals::TensorBuffer)
+    NeatInternals::TensorBuffer
+    NeatInternals::DmaBufPool)
 else()
   if (SIMANEAT_NEAT_ALLOCATOR_LIB)
     target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_ALLOCATOR_LIB})
@@ -1075,6 +1117,9 @@ else()
   endif()
   if (SIMANEAT_NEAT_TENSORBUFFER_LIB)
     target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+  endif()
+  if (SIMANEAT_NEAT_DMABUFPOOL_LIB)
+    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_DMABUFPOOL_LIB})
   endif()
 endif()
 if (SIMANEAT_SIMAAIMEM_LIB)

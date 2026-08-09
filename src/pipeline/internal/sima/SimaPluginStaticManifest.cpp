@@ -395,6 +395,7 @@ nlohmann::json to_json(const PhysicalBufferStaticSpec& spec) {
   j["memory_flags"] = spec.memory_flags;
   j["segment_name_id"] = spec.segment_name_id;
   j["segment_name"] = spec.segment_name;
+  j["required_alignment_bytes"] = spec.required_alignment_bytes;
   return j;
 }
 
@@ -473,6 +474,10 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   j["plugin_kind"] = spec.plugin_kind;
   j["kernel_kind"] = spec.kernel_kind;
   j["name_table"] = spec.name_table;
+  if (spec.frame_arena_size_bytes != 0U) {
+    j["frame_arena_size_bytes"] = spec.frame_arena_size_bytes;
+    j["frame_arena_role"] = static_cast<int>(spec.frame_arena_role);
+  }
   if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
       !spec.processcvu.exact_stage_name_or_id.empty()) {
     j["processcvu_exact_stage_name_or_id"] = spec.processcvu.exact_stage_name_or_id;
@@ -526,6 +531,14 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   }
   if (!spec.elf_ofm_symbol_names.empty()) {
     j["elf_ofm_symbol_names"] = spec.elf_ofm_symbol_names;
+  }
+  if (spec.payload_kind == StagePayloadKind::ProcessMla &&
+      spec.processmla.dmabuf_plan_contract) {
+    j["processmla_dmabuf_plan_contract"] = true;
+  }
+  if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
+      spec.processcvu.dmabuf_plan_contract) {
+    j["processcvu_dmabuf_plan_contract"] = true;
   }
 
   if (spec.payload_kind == StagePayloadKind::ProcessCvu && !spec.processcvu.run_target.empty()) {
@@ -604,6 +617,22 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
     read_string_key(stage_j, "logical_stage_id", stage.logical_stage_id);
     read_string_key(stage_j, "plugin_kind", stage.plugin_kind);
     read_string_key(stage_j, "kernel_kind", stage.kernel_kind);
+    if (stage_j.contains("frame_arena_size_bytes") &&
+        stage_j["frame_arena_size_bytes"].is_number_unsigned()) {
+      stage.frame_arena_size_bytes =
+          stage_j["frame_arena_size_bytes"].get<std::uint64_t>();
+    } else if (stage_j.contains("frame_arena_size_bytes") &&
+               stage_j["frame_arena_size_bytes"].is_number_integer()) {
+      const auto raw = stage_j["frame_arena_size_bytes"].get<std::int64_t>();
+      stage.frame_arena_size_bytes =
+          raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+    }
+    int frame_arena_role = static_cast<int>(FrameArenaRole::None);
+    read_int_key(stage_j, "frame_arena_role", frame_arena_role);
+    if (frame_arena_role >= static_cast<int>(FrameArenaRole::None) &&
+        frame_arena_role <= static_cast<int>(FrameArenaRole::ReuseInput)) {
+      stage.frame_arena_role = static_cast<FrameArenaRole>(frame_arena_role);
+    }
     if (stage_j.contains("name_table") && stage_j["name_table"].is_array()) {
       for (const auto& name_j : stage_j["name_table"]) {
         if (name_j.is_string()) {
@@ -720,6 +749,17 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         }
         read_int_key(in_j, "segment_name_id", physical.segment_name_id);
         read_string_key(in_j, "segment_name", physical.segment_name);
+        if (in_j.contains("required_alignment_bytes") &&
+            in_j["required_alignment_bytes"].is_number_unsigned()) {
+          physical.required_alignment_bytes =
+              in_j["required_alignment_bytes"].get<std::uint64_t>();
+        } else if (in_j.contains("required_alignment_bytes") &&
+                   in_j["required_alignment_bytes"].is_number_integer()) {
+          const auto raw =
+              in_j["required_alignment_bytes"].get<std::int64_t>();
+          physical.required_alignment_bytes =
+              raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+        }
         stage.physical_inputs.push_back(std::move(physical));
       }
     }
@@ -756,6 +796,17 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         }
         read_int_key(out_j, "segment_name_id", physical.segment_name_id);
         read_string_key(out_j, "segment_name", physical.segment_name);
+        if (out_j.contains("required_alignment_bytes") &&
+            out_j["required_alignment_bytes"].is_number_unsigned()) {
+          physical.required_alignment_bytes =
+              out_j["required_alignment_bytes"].get<std::uint64_t>();
+        } else if (out_j.contains("required_alignment_bytes") &&
+                   out_j["required_alignment_bytes"].is_number_integer()) {
+          const auto raw =
+              out_j["required_alignment_bytes"].get<std::int64_t>();
+          physical.required_alignment_bytes =
+              raw > 0 ? static_cast<std::uint64_t>(raw) : 0U;
+        }
         stage.physical_outputs.push_back(std::move(physical));
       }
     }
@@ -859,6 +910,10 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
 
     read_bool_key(stage_j, "consumer_keeps_distinct_physical_inputs",
                   stage.consumer_keeps_distinct_physical_inputs);
+    read_bool_key(stage_j, "processmla_dmabuf_plan_contract",
+                  stage.processmla.dmabuf_plan_contract);
+    read_bool_key(stage_j, "processcvu_dmabuf_plan_contract",
+                  stage.processcvu.dmabuf_plan_contract);
     if (stage_j.contains("elf_ifm_symbol_names") && stage_j["elf_ifm_symbol_names"].is_array()) {
       stage.elf_ifm_symbol_names.clear();
       for (const auto& s : stage_j["elf_ifm_symbol_names"]) {
@@ -1273,6 +1328,8 @@ private:
       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
       abi.source_physical_index = physical.source_physical_index;
       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
+      abi.required_alignment_bytes =
+          static_cast<guint64>(physical.required_alignment_bytes);
       out.physical_inputs.push_back(abi);
     }
 
@@ -1288,6 +1345,8 @@ private:
       abi.segment_name = physical.segment_name.empty() ? nullptr : physical.segment_name.c_str();
       abi.source_physical_index = physical.source_physical_index;
       abi.source_byte_offset = static_cast<gint64>(physical.source_byte_offset);
+      abi.required_alignment_bytes =
+          static_cast<guint64>(physical.required_alignment_bytes);
       out.physical_outputs.push_back(abi);
     }
 
@@ -1448,6 +1507,10 @@ private:
         out.required_meta_fields.empty() ? nullptr : out.required_meta_fields.data();
     out.spec.required_preprocess_meta_fields_len =
         static_cast<guint>(out.required_meta_fields.size());
+    out.spec.frame_arena_size_bytes =
+        static_cast<guint64>(stage.frame_arena_size_bytes);
+    out.spec.frame_arena_role =
+        static_cast<SimaPluginFrameArenaRole>(stage.frame_arena_role);
     out.spec.payload_kind = payload_kind_to_abi(stage.payload_kind);
 
     switch (stage.payload_kind) {
@@ -1543,6 +1606,8 @@ private:
       out.spec.payload.processcvu.opt_flags = stage.processcvu.opt_flags;
       out.spec.payload.processcvu.canonical_contract =
           stage.processcvu.canonical_contract ? TRUE : FALSE;
+      out.spec.payload.processcvu.dmabuf_plan_contract =
+          stage.processcvu.dmabuf_plan_contract ? TRUE : FALSE;
       out.spec.payload.processcvu.preproc_single_output_handoff =
           stage.processcvu.preproc_single_output_handoff ? TRUE : FALSE;
       out.spec.payload.processcvu.aspect_ratio = stage.processcvu.aspect_ratio;
@@ -1735,6 +1800,8 @@ private:
               : out.processmla_dispatcher_output_sizes.data();
       out.spec.payload.processmla.dispatcher_output_sizes_len =
           static_cast<guint>(out.processmla_dispatcher_output_sizes.size());
+      out.spec.payload.processmla.dmabuf_plan_contract =
+          stage.processmla.dmabuf_plan_contract ? TRUE : FALSE;
       break;
     case StagePayloadKind::BoxDecode:
       set_boxdecode_decode_type_token_abi_safe(

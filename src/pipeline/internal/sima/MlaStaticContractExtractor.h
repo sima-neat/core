@@ -49,6 +49,8 @@ struct MlaStaticContract {
   std::vector<PhysicalBufferStaticSpec> physical_outputs; ///< Published physical outputs.
   std::vector<LogicalTensorStaticSpec> logical_outputs;   ///< Logical output specs.
   std::vector<QuantStaticSpec> output_quant;              ///< Per-output quant params, if any.
+  std::uint64_t frame_arena_size_bytes = 0;
+  FrameArenaRole frame_arena_role = FrameArenaRole::None;
   // True when this MLA stage's compiled .elf expects N>1 distinct physical
   // input segments (native multi-IFM dispatch, e.g. data.ifm.persistent.input_00
   // / input_01 placeholders). Derived from the absence of an upstream

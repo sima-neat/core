@@ -10,6 +10,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::pipeline_internal::sima {
@@ -128,9 +129,9 @@ bool parse_section_index_after_prefix(const std::string& name, const std::string
     return false;
   }
   if (require_slash_after_index) {
-    return end < name.size() && name[end] == '/';
+    return end < name.size() && name[end] == '/' && name.ends_with(".b0");
   }
-  return end + 2U <= name.size() && name[end] == '.' && name[end + 1U] == 'b';
+  return name.substr(end) == ".b0";
 }
 
 std::optional<std::size_t> parse_ifm_section_index(const std::string& name) {
@@ -156,13 +157,26 @@ std::optional<std::size_t> parse_ofm_section_index(const std::string& name) {
 // `dst` already has a value at that index, prefer the existing one (keeps the
 // first-seen entry on duplicate scan; multi-section ELFs sometimes mention the
 // same logical placeholder in multiple sections).
-void place_at_index(std::vector<std::string>* dst, std::size_t index, const std::string& name) {
+bool place_at_index(std::vector<std::string>* dst, std::size_t index, const std::string& name) {
   if (dst->size() <= index) {
     dst->resize(index + 1U);
   }
   if ((*dst)[index].empty()) {
     (*dst)[index] = name;
+    return true;
   }
+  return false;
+}
+
+MlaElfIoTopologyValidation topology_error(const MlaElfIoTopologyError code, std::string detail,
+                                          const std::size_t expected = 0U,
+                                          const std::size_t actual = 0U) {
+  MlaElfIoTopologyValidation result;
+  result.code = code;
+  result.expected = expected;
+  result.actual = actual;
+  result.detail = std::move(detail);
+  return result;
 }
 
 } // namespace
@@ -245,12 +259,16 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
       continue;
     }
     if (const auto index = parse_ifm_section_index(name); index.has_value()) {
-      place_at_index(&out->ifm_symbol_names, *index, name);
+      if (!place_at_index(&out->ifm_symbol_names, *index, name)) {
+        out->duplicate_ifm_indices.push_back(*index);
+      }
       ++recognized;
       continue;
     }
     if (const auto index = parse_ofm_section_index(name); index.has_value()) {
-      place_at_index(&out->ofm_symbol_names, *index, name);
+      if (!place_at_index(&out->ofm_symbol_names, *index, name)) {
+        out->duplicate_ofm_indices.push_back(*index);
+      }
       ++recognized;
       continue;
     }
@@ -265,16 +283,98 @@ bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTop
   // for the same direction. Prefer the placeholder list (it's strictly more
   // expressive) but flag the inconsistency for diagnostics.
   if (out->monolithic_ifm && !out->ifm_symbol_names.empty()) {
+    out->ifm_layout_conflict = true;
     out->error += "; warning: both monolithic and placeholder IFM sections present";
     out->monolithic_ifm = false;
   }
   if (out->monolithic_ofm && !out->ofm_symbol_names.empty()) {
+    out->ofm_layout_conflict = true;
     out->error += "; warning: both monolithic and placeholder OFM sections present";
     out->monolithic_ofm = false;
   }
 
   out->valid = true;
   return true;
+}
+
+std::size_t mla_elf_ifm_port_count(const MlaElfIoTopology& topology) {
+  return topology.monolithic_ifm ? 1U : topology.ifm_symbol_names.size();
+}
+
+std::size_t mla_elf_ofm_port_count(const MlaElfIoTopology& topology) {
+  return topology.monolithic_ofm ? 1U : topology.ofm_symbol_names.size();
+}
+
+MlaElfIoTopologyValidation validate_mla_elf_io_topology_strict(const MlaElfIoTopology& topology) {
+  if (!topology.valid) {
+    return topology_error(MlaElfIoTopologyError::InvalidTopology,
+                          topology.error.empty() ? "ELF I/O topology is invalid" : topology.error);
+  }
+  if (topology.ifm_layout_conflict ||
+      (topology.monolithic_ifm && !topology.ifm_symbol_names.empty())) {
+    return topology_error(MlaElfIoTopologyError::ConflictingIfmLayouts,
+                          "ELF declares both monolithic and indexed IFM layouts");
+  }
+  if (topology.ofm_layout_conflict ||
+      (topology.monolithic_ofm && !topology.ofm_symbol_names.empty())) {
+    return topology_error(MlaElfIoTopologyError::ConflictingOfmLayouts,
+                          "ELF declares both monolithic and indexed OFM layouts");
+  }
+  if (!topology.duplicate_ifm_indices.empty()) {
+    return topology_error(MlaElfIoTopologyError::DuplicateIfmIndex,
+                          "ELF repeats IFM index " +
+                              std::to_string(topology.duplicate_ifm_indices.front()));
+  }
+  if (!topology.duplicate_ofm_indices.empty()) {
+    return topology_error(MlaElfIoTopologyError::DuplicateOfmIndex,
+                          "ELF repeats OFM index " +
+                              std::to_string(topology.duplicate_ofm_indices.front()));
+  }
+  if (!topology.monolithic_ifm && topology.ifm_symbol_names.empty()) {
+    return topology_error(MlaElfIoTopologyError::MissingIfm, "ELF does not declare an IFM layout");
+  }
+  if (!topology.monolithic_ofm && topology.ofm_symbol_names.empty()) {
+    return topology_error(MlaElfIoTopologyError::MissingOfm, "ELF does not declare an OFM layout");
+  }
+  for (std::size_t index = 0; index < topology.ifm_symbol_names.size(); ++index) {
+    if (topology.ifm_symbol_names[index].empty()) {
+      return topology_error(MlaElfIoTopologyError::NonContiguousIfmIndices,
+                            "ELF is missing IFM index " + std::to_string(index));
+    }
+  }
+  for (std::size_t index = 0; index < topology.ofm_symbol_names.size(); ++index) {
+    if (topology.ofm_symbol_names[index].empty()) {
+      return topology_error(MlaElfIoTopologyError::NonContiguousOfmIndices,
+                            "ELF is missing OFM index " + std::to_string(index));
+    }
+  }
+
+  MlaElfIoTopologyValidation result;
+  result.ok = true;
+  result.code = MlaElfIoTopologyError::None;
+  return result;
+}
+
+MlaElfIoTopologyValidation
+reconcile_mla_elf_io_topology_strict(const MlaElfIoTopology& topology,
+                                     const std::size_t expected_ifm_count,
+                                     const std::size_t expected_ofm_count) {
+  auto result = validate_mla_elf_io_topology_strict(topology);
+  if (!result.ok) {
+    return result;
+  }
+
+  const std::size_t actual_ifm_count = mla_elf_ifm_port_count(topology);
+  if (actual_ifm_count != expected_ifm_count) {
+    return topology_error(MlaElfIoTopologyError::IfmPortCountMismatch,
+                          "MPK/ELF IFM port-count mismatch", expected_ifm_count, actual_ifm_count);
+  }
+  const std::size_t actual_ofm_count = mla_elf_ofm_port_count(topology);
+  if (actual_ofm_count != expected_ofm_count) {
+    return topology_error(MlaElfIoTopologyError::OfmPortCountMismatch,
+                          "MPK/ELF OFM port-count mismatch", expected_ofm_count, actual_ofm_count);
+  }
+  return result;
 }
 
 bool elf_topology_requires_distinct_ifm_segments(const MlaElfIoTopology& topology) {

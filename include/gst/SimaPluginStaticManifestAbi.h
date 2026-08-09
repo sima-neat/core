@@ -27,7 +27,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)21)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)25)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -123,6 +123,12 @@ typedef enum SimaPluginTensorMaterializationKind {
   SIMA_PLUGIN_TENSOR_MATERIALIZATION_BF16_LANE_SPLIT_REPACK = 3
 } SimaPluginTensorMaterializationKind;
 
+typedef enum SimaPluginFrameArenaRole {
+  SIMA_PLUGIN_FRAME_ARENA_NONE = 0,
+  SIMA_PLUGIN_FRAME_ARENA_ALLOCATE = 1,
+  SIMA_PLUGIN_FRAME_ARENA_REUSE_INPUT = 2
+} SimaPluginFrameArenaRole;
+
 typedef struct SimaPluginPhysicalBuffer {
   gint physical_index;
   gint allocator_index;
@@ -133,6 +139,7 @@ typedef struct SimaPluginPhysicalBuffer {
   const gchar* segment_name;
   gint source_physical_index;
   gint64 source_byte_offset;
+  guint64 required_alignment_bytes;
 } SimaPluginPhysicalBuffer;
 
 typedef struct SimaPluginLogicalTensor {
@@ -279,6 +286,10 @@ typedef struct SimaPluginProcessCvuStagePayload {
   gint debug;
   guint32 opt_flags;
   gboolean canonical_contract;
+  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
+   * the strict MPK+ELF execution plan. The plugin must not re-read the
+   * environment or fall back to the dispatcher when this bit is true. */
+  gboolean dmabuf_plan_contract;
   gboolean preproc_single_output_handoff;
 
   /* tri-state values: -1 unset, 0 false, 1 true */
@@ -330,6 +341,9 @@ typedef struct SimaPluginProcessMlaStagePayload {
   guint dispatcher_output_names_len;
   const guint64* dispatcher_output_sizes;
   guint dispatcher_output_sizes_len;
+  /* Core parsed SIMA_NEAT_MEMORY_BACKEND once and proved this stage through
+   * the strict MPK+ELF decoder. The plugin must not re-read the environment. */
+  gboolean dmabuf_plan_contract;
 } SimaPluginProcessMlaStagePayload;
 
 typedef struct SimaPluginSuperPointStagePayloadV1 {
@@ -405,6 +419,9 @@ typedef struct SimaPluginStageSpec {
 
   const gchar* const* required_preprocess_meta_fields;
   guint required_preprocess_meta_fields_len;
+
+  guint64 frame_arena_size_bytes;
+  SimaPluginFrameArenaRole frame_arena_role;
 
   SimaPluginStagePayloadKind payload_kind;
   union {
