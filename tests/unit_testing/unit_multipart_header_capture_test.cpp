@@ -231,6 +231,29 @@ void test_preamble_ignores_boundary_prefix_line() {
           "the real delimiter after the preamble must emit its part");
   require(parts[0].attrs.at("image-index") == "7",
           "the real delimiter must retain its part attributes");
+
+  MultipartParser padded_parser("b", capture);
+  std::vector<Part> padded_parts;
+  const auto sink = [&](const uint8_t* body, std::size_t size, Attrs&& attrs,
+                        MultipartParser::PartTiming) {
+    padded_parts.push_back(
+        Part{std::string(reinterpret_cast<const char*>(body), size), std::move(attrs)});
+    return true;
+  };
+  const std::string padded_prefix = "--b" + std::string(32U, ' ');
+  require(padded_parser.feed(reinterpret_cast<const uint8_t*>(padded_prefix.data()),
+                             padded_prefix.size(), sink, &err, {}),
+          "an opening delimiter split inside transport padding must remain buffered: " + err);
+  const std::string padded_suffix =
+      "\r\nContent-Type: image/jpeg\r\nImage-Index: 8\r\n\r\nPADDED\r\n--b--\r\n";
+  require(padded_parser.feed(reinterpret_cast<const uint8_t*>(padded_suffix.data()),
+                             padded_suffix.size(), sink, &err, {}),
+          "the completed padded opening delimiter must parse: " + err);
+  require(padded_parser.finish(sink, &err),
+          "the padded opening-delimiter stream must finish: " + err);
+  require(padded_parts.size() == 1U && padded_parts[0].body == "PADDED" &&
+              padded_parts[0].attrs.at("image-index") == "8",
+          "the padded opening delimiter must emit the correct part");
 }
 
 void test_malformed_input_is_rejected() {
