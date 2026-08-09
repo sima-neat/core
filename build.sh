@@ -55,6 +55,7 @@ NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
 NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
+NEAT_INTERNALS_REQUIRED_BRANCH=""
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
@@ -871,6 +872,33 @@ raise SystemExit(
 PY
 }
 
+manifest_dependency_required_branch() {
+  local key="$1"
+  local file="$2"
+  python3 - "${key}" "${file}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+key = sys.argv[1]
+manifest_path = Path(sys.argv[2])
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+value = data.get(key)
+if not isinstance(value, dict):
+    raise SystemExit(0)
+
+required = str(value.get("required-branch", "")).strip()
+if not required:
+    raise SystemExit(0)
+if str(value.get("policy", "")).strip().lower() != "snap":
+    raise SystemExit(
+        f"ERROR: {manifest_path} field '{key}.required-branch' is only valid "
+        "with policy 'snap'."
+    )
+print(required)
+PY
+}
+
 current_core_branch() {
   if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
     printf '%s\n' "${GITHUB_HEAD_REF}"
@@ -903,6 +931,7 @@ current_core_tag() {
 
 resolve_neat_internals_ref() {
   NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
+  NEAT_INTERNALS_REQUIRED_BRANCH=""
   if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
     echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
     return 1
@@ -910,6 +939,11 @@ resolve_neat_internals_ref() {
 
   local manifest_spec
   if ! manifest_spec="$(manifest_dependency_spec "internals" "${NEAT_DEPS_MANIFEST}")"; then
+    return 1
+  fi
+  if ! NEAT_INTERNALS_REQUIRED_BRANCH="$(
+      manifest_dependency_required_branch "internals" "${NEAT_DEPS_MANIFEST}"
+    )"; then
     return 1
   fi
 
@@ -935,7 +969,26 @@ resolve_neat_internals_ref() {
   fi
   spec="${spec:-latest}"
 
+  if [[ -n "${NEAT_INTERNALS_REQUIRED_BRANCH}" &&
+        "${branch}" != "${NEAT_INTERNALS_REQUIRED_BRANCH}" ]]; then
+    echo "ERROR: Internals snap is restricted to branch '${NEAT_INTERNALS_REQUIRED_BRANCH}', but Core resolved its current ref as '${branch}'." >&2
+    echo "Build Core and Internals from the same '${NEAT_INTERNALS_REQUIRED_BRANCH}' branch; no develop fallback is permitted for this package contract." >&2
+    return 1
+  fi
+
   NEAT_INTERNALS_REQUESTED_REF="${branch}:${spec}"
+}
+
+validate_neat_internals_resolved_ref() {
+  local resolved_ref="$1"
+  local resolved_branch="${resolved_ref%%:*}"
+
+  if [[ -n "${NEAT_INTERNALS_REQUIRED_BRANCH}" &&
+        "${resolved_branch}" != "${NEAT_INTERNALS_REQUIRED_BRANCH}" ]]; then
+    echo "ERROR: Internals artifact resolver returned branch '${resolved_branch}', expected required matching branch '${NEAT_INTERNALS_REQUIRED_BRANCH}'." >&2
+    echo "Refusing a cross-branch artifact; resolved SHA/spec is provenance only and is not a source pin." >&2
+    return 1
+  fi
 }
 
 resolve_neat_llima_ref() {
@@ -1244,7 +1297,9 @@ fetch_neat_internals_vulcan_artifacts() {
       echo "ERROR: Failed to resolve exact tag-snap internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
     fi
-    if [[ "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" || "${internals_ref}" == "develop:latest" ]]; then
+    if [[ -n "${NEAT_INTERNALS_REQUIRED_BRANCH}" ||
+          "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" ||
+          "${internals_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
     fi
@@ -1273,6 +1328,7 @@ if not ref or not spec:
 print(f"{ref}:{spec}")
 PY
   )"
+  validate_neat_internals_resolved_ref "${resolved_ref}" || exit 1
   NEAT_INTERNALS_RESOLVED_REF="${resolved_ref}"
 
   local -a install_args=(
@@ -2377,6 +2433,11 @@ stage_package_artifacts_to_dist() {
     dist/*-Linux-extras.tar.gz \
     dist/neat-*.deb \
     dist/simaai-common*.deb \
+    dist/simaai-memory-lib_*.deb \
+    dist/simaai-memory-lib-dev_*.deb \
+    dist/libcamera_*.deb \
+    dist/libcamera-dev_*.deb \
+    dist/libcamera-tools_*.deb \
     dist/appcomplex_*.deb \
     dist/sima-lmm-*.deb \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
@@ -2401,7 +2462,12 @@ stage_package_artifacts_to_dist() {
   # The Core package declares an explicit LLiMa ABI range. Fail before
   # publishing/installing a bundle when the copied LLiMa DEBs do not satisfy
   # that range (for example Core 0.2.x combined with LLiMa 0.3.x).
-  python3 "${REPO_ROOT}/tools/validate_neat_package_bundle.py" "${REPO_ROOT}/dist"
+  local package_contract_manifest="${NEAT_DEPS_MANIFEST}"
+  if [[ "${package_contract_manifest}" != /* ]]; then
+    package_contract_manifest="${REPO_ROOT}/${package_contract_manifest}"
+  fi
+  python3 "${REPO_ROOT}/tools/validate_neat_package_bundle.py" \
+    "${REPO_ROOT}/dist" --manifest "${package_contract_manifest}"
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
@@ -2434,10 +2500,16 @@ target_path = Path(sys.argv[2])
 
 source = json.loads(source_path.read_text(encoding="utf-8"))
 platform_version = str(source.get("platform-version", "")).strip()
+platform_package_version = str(source.get("platform-package-version", "")).strip()
+platform_package_contract = source.get("platform-package-contract")
 modelzoo_version = str(source.get("modelzoo-version", "")).strip() or platform_version
 abi_version = str(source.get("abi-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty platform-version in {source_path}")
+if not platform_package_version:
+    raise SystemExit(f"Missing or empty platform-package-version in {source_path}")
+if not isinstance(platform_package_contract, dict) or not platform_package_contract:
+    raise SystemExit(f"Missing or invalid platform-package-contract in {source_path}")
 if not abi_version.isdigit() or int(abi_version) < 1:
     raise SystemExit(f"Missing or invalid abi-version in {source_path}")
 
@@ -2449,12 +2521,14 @@ if not isinstance(target, dict):
     raise SystemExit(f"{target_path} must contain a JSON object")
 
 target["platform-version"] = platform_version
+target["platform-package-version"] = platform_package_version
+target["platform-package-contract"] = platform_package_contract
 target["modelzoo-version"] = modelzoo_version
 target["abi-version"] = abi_version
 target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 
-  echo "Updated dist/manifest.json platform-version, modelzoo-version, and abi-version from ${NEAT_DEPS_MANIFEST}"
+  echo "Updated dist/manifest.json platform, B4586 package contract, modelzoo, and ABI fields from ${NEAT_DEPS_MANIFEST}"
 }
 
 append_dist_manifest_matches() {
@@ -2942,4 +3016,6 @@ main() {
   simaneat_show_sccache_stats
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -27,7 +27,7 @@ def run_bash(
 
 
 class NativeModalixRestoreTest(unittest.TestCase):
-    def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
+    def test_board_install_keeps_platform_overrides_out_of_broad_transaction(self) -> None:
         result = run_bash(
             r'''
 source "$1"
@@ -35,12 +35,15 @@ DEBS=(./simaai-memory-lib_2.1.1_arm64.deb \
       ./simaai-memory-lib-dev_2.1.1_arm64.deb \
       ./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb ./libcamera_2.1.1_arm64.deb)
 prepare_debs_for_board_install() { :; }
+preflight_b4586_board_install() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 stop_board_runtime_before_install() { :; }
 apt_package_database_is_healthy() { return 0; }
-install_local_simaai_memory_transaction() {
+simulate_complete_board_transaction_preflight() { :; }
+install_local_b4586_override_transaction() {
   SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
-  DEBS=(./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb ./libcamera_2.1.1_arm64.deb)
+  LIBCAMERA_TRANSACTION_COMPLETE=1
+  DEBS=(./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb)
 }
 native_modalix_repair_is_required() { return 0; }
 native_modalix_restore_specs() {
@@ -66,15 +69,14 @@ install_debs_on_board
         for required in (
             "<./neat-gst-plugins_fixed.deb>",
             "<./sima-neat_fixed.deb>",
-            "<./libcamera_2.1.1_arm64.deb>",
             "<--allow-downgrades>",
         ):
             self.assertIn(required, transaction)
         self.assertNotIn("<simaai-gst-plugins>", transaction)
         self.assertNotIn("<simaai-palette-modalix=2.1.2>", transaction)
         self.assertNotIn("simaai-memory-lib", transaction)
+        self.assertNotIn("libcamera", transaction)
         self.assertNotIn("<--no-remove>", transaction)
-        self.assertEqual(transaction.count("<./libcamera_2.1.1_arm64.deb>"), 1)
 
     def test_board_downgrade_installs_memory_with_dependent_packages(self) -> None:
         result = run_bash(
@@ -82,20 +84,13 @@ install_debs_on_board
 source "$1"
 DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
 prepare_debs_for_board_install() { :; }
+preflight_b4586_board_install() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 stop_board_runtime_before_install() { :; }
 apt_package_database_is_healthy() { return 0; }
-collect_local_simaai_memory_debs() {
-  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat2
-  SIMAAI_MEMORY_RUNTIME_DEB=./memory-runtime.deb
-  SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
-  SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
-}
-validate_local_simaai_memory_payload() { :; }
-snapshot_memory_transaction_guard_state() { :; }
-deb_package_installed_version() { printf '%s\n' 2.1.1-0neat4; }
-dpkg() {
-  [[ "$1:$2:$3:$4" == '--compare-versions:2.1.1-0neat4:gt:2.1.1-0neat2' ]]
+simulate_complete_board_transaction_preflight() { :; }
+install_local_b4586_override_transaction() {
+  printf '%s\n' 'Installed override is newer; deferring the downgrade to the full package transaction.'
 }
 run_sudo() {
   printf 'APT:'
@@ -317,28 +312,28 @@ class SimaaiMemoryTransactionTest(unittest.TestCase):
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-runtime="${tmp}/simaai-memory-lib_2.1.1-0neat1_arm64.deb"
-dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb"
+runtime="${tmp}/simaai-memory-lib_2.1.1-0neat4_arm64.deb"
+dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}" other.deb)
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4586'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   file="$(basename "$2")"
   case "${file}:$3" in
-    simaai-memory-lib_2.1.1-0neat1_arm64.deb:Package) printf '%s\n' simaai-memory-lib ;;
-    simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
-    *:Version) printf '%s\n' 2.1.1-0neat1 ;;
+    simaai-memory-lib_2.1.1-0neat4_arm64.deb:Package) printf '%s\n' simaai-memory-lib ;;
+    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
+    *:Version) printf '%s\n' 2.1.1-0neat4 ;;
     *:Architecture) printf '%s\n' arm64 ;;
-    simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1)'
+    simaai-memory-lib_2.1.1-0neat4_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4586), simaai-memory-dmabuf-export-abi (= 1)'
       ;;
-    simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1)'
+    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4586)'
       ;;
-    simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
-      printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'
+    simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb:Depends)
+      printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat4)'
       ;;
     *) return 2 ;;
   esac
@@ -352,10 +347,10 @@ printf 'DEV=%s\n' "${SIMAAI_MEMORY_DEV_DEB}"
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("ACTUAL=2.1.1-0neat1", result.stdout)
-        self.assertIn("COMPAT=2.1.1", result.stdout)
-        self.assertIn("simaai-memory-lib_2.1.1-0neat1_arm64.deb", result.stdout)
-        self.assertIn("simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb", result.stdout)
+        self.assertIn("ACTUAL=2.1.1-0neat4", result.stdout)
+        self.assertIn("COMPAT=2.1.1~pre4586", result.stdout)
+        self.assertIn("simaai-memory-lib_2.1.1-0neat4_arm64.deb", result.stdout)
+        self.assertIn("simaai-memory-lib-dev_2.1.1-0neat4_arm64.deb", result.stdout)
 
     def test_collect_rejects_missing_runtime_compatibility_provide(self) -> None:
         result = run_bash(
@@ -367,18 +362,18 @@ runtime="${tmp}/runtime.deb"
 dev="${tmp}/dev.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}")
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4586'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$(basename "$2"):$3" in
     runtime.deb:Package) printf '%s\n' simaai-memory-lib ;;
     dev.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
-    *:Version) printf '%s\n' 2.1.1-0neat1 ;;
+    *:Version) printf '%s\n' 2.1.1-0neat4 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     runtime.deb:Provides) : ;;
-    dev.deb:Provides) printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1)' ;;
-    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat1)' ;;
+    dev.deb:Provides) printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4586)' ;;
+    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat4)' ;;
     *) return 2 ;;
   esac
 }
@@ -388,7 +383,7 @@ collect_local_simaai_memory_debs
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "must provide simaai-memory-lib (= 2.1.1)", result.stderr
+            "must provide simaai-memory-lib (= 2.1.1~pre4586)", result.stderr
         )
 
     def test_collect_rejects_wrong_dev_compatibility_provide(self) -> None:
@@ -401,18 +396,18 @@ runtime="${tmp}/runtime.deb"
 dev="${tmp}/dev.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}")
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4586'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$(basename "$2"):$3" in
     runtime.deb:Package) printf '%s\n' simaai-memory-lib ;;
     dev.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
-    *:Version) printf '%s\n' 2.1.1-0neat1 ;;
+    *:Version) printf '%s\n' 2.1.1-0neat4 ;;
     *:Architecture) printf '%s\n' arm64 ;;
-    runtime.deb:Provides) printf '%s\n' 'simaai-memory-lib (= 2.1.1)' ;;
+    runtime.deb:Provides) printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4586), simaai-memory-dmabuf-export-abi (= 1)' ;;
     dev.deb:Provides) printf '%s\n' 'simaai-memory-lib-dev (= 2.1.0)' ;;
-    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat1)' ;;
+    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat4)' ;;
     *) return 2 ;;
   esac
 }
@@ -422,7 +417,7 @@ collect_local_simaai_memory_debs
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "must provide simaai-memory-lib-dev (= 2.1.1)", result.stderr
+            "must provide simaai-memory-lib-dev (= 2.1.1~pre4586)", result.stderr
         )
 
     def test_payload_validation_records_final_so_hash_and_build_id(self) -> None:

@@ -127,6 +127,11 @@ node = pyneat.nodes.camera_input(opt)
 
 `allow_cpu_fallback = false` is the default and requests strict camera/device zero-copy. The build fails with an actionable error unless the installed `libcamerasrc` exposes the required SiMaAI zero-copy properties and the memory library can export the camera allocation as a DMA-BUF.
 
+For the B4586 integration branch, the kernel, libcamera, and memory overrides
+form one package contract. Contributors should follow the
+[B4586 DMA-BUF package contract](/develop-apps/contribute/b4586-dmabuf-package-contract/)
+instead of installing individual override DEBs.
+
 Set `allow_cpu_fallback = true` explicitly to insert Neat's private adaptive camera memory bridge. The bridge passes through SiMaAI/EV74 buffers when upstream already provides them. Otherwise, it copies the camera frame into a pooled SiMaAI buffer and attaches the metadata downstream stages expect.
 
 The fallback name means the bridge can accept OS/libcamera buffers. It does not mean you should move resize, color conversion, or normalization to the CPU. Keep those operations in model-managed CVU preprocessing whenever the route supports it.

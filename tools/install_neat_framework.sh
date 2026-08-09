@@ -98,6 +98,30 @@ SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=0
 SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
 SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
 SIMAAI_MEMORY_TRANSACTION_COMPLETE=0
+LIBCAMERA_DEBS=()
+LIBCAMERA_RUNTIME_DEB=""
+LIBCAMERA_DEV_DEB=""
+LIBCAMERA_TOOLS_DEB=""
+LIBCAMERA_ACTUAL_VERSION=""
+LIBCAMERA_PAYLOAD_PATH=""
+LIBCAMERA_PAYLOAD_SHA256=""
+LIBCAMERA_PAYLOAD_BUILD_ID=""
+LIBCAMERA_TRANSACTION_COMPLETE=0
+PLATFORM_OVERRIDE_DEBS=()
+B4586_PREFLIGHT_COMPLETE=0
+PLATFORM_GUARD_SNAPSHOT_COMPLETE=0
+B4586_KERNEL_PACKAGE="linux-image-6.18.3-modalix"
+B4586_KERNEL_PACKAGE_VERSION="6.18.3-4586"
+B4586_KERNEL_RELEASE="6.18.3-modalix"
+B4586_KERNEL_BUILD_MARKER="#4586"
+B4586_LIBCAMERA_VERSION="2.1.3+neat1"
+B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION="2.1.3~pre4586"
+B4586_LIBCAMERA_CAPABILITY_NAME="simaai-libcamera-dmabuf-abi"
+B4586_LIBCAMERA_CAPABILITY_VERSION="1"
+B4586_MEMORY_VERSION="2.1.1-0neat4"
+B4586_MEMORY_PLATFORM_COMPAT_VERSION="2.1.1~pre4586"
+B4586_MEMORY_CAPABILITY_NAME="simaai-memory-dmabuf-export-abi"
+B4586_MEMORY_CAPABILITY_VERSION="1"
 
 cleanup_installer_tmp_dirs() {
   local dir
@@ -240,6 +264,35 @@ verify_simulated_package_removals() {
     log "Verified platform package replacements:"
     printf '  %s\n' "${verified_replacements[@]}"
   fi
+}
+
+verify_simulated_preinstalled_package_changes() {
+  local simulation_log="$1"
+  shift
+  local -a install_specs=("$@")
+  local -A allowed_packages=()
+  local spec package
+
+  for spec in "${install_specs[@]}"; do
+    [[ -n "${spec}" ]] || continue
+    if [[ -f "${spec}" ]]; then
+      package="$(dpkg-deb -f "${spec}" Package 2>/dev/null || true)"
+    else
+      package="${spec%%=*}"
+      package="${package%%:*}"
+    fi
+    [[ -n "${package}" ]] && allowed_packages["${package}"]=1
+  done
+
+  while IFS= read -r package; do
+    package="${package%%:*}"
+    [[ -n "${package}" ]] || continue
+    if [[ -z "${allowed_packages[${package}]:-}" ]]; then
+      cat "${simulation_log}" >&2
+      echo "Refusing to install because APT would change preinstalled unrelated package ${package}; only packages supplied by this bundle may be upgraded or downgraded." >&2
+      return 1
+    fi
+  done < <(awk '$1 == "Inst" && $3 ~ /^\[/ {print $2}' "${simulation_log}" | sort -u)
 }
 
 log_green() {
@@ -518,6 +571,125 @@ ensure_platform_compatible() {
   fi
 
   log "Platform compatibility verified: ${actual}"
+}
+
+load_b4586_platform_package_contract() {
+  local manifest_path
+  local -a values=()
+  manifest_path="$(resolve_package_manifest_path)"
+
+  mapfile -t values < <(python3 - "${manifest_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    raise SystemExit(f"missing package manifest: {path}")
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"invalid package manifest JSON: {path}: {exc}")
+
+expected = {
+    "platform-package-version": "2.1.3~pre4586",
+    "platform-package-contract": {
+        "kernel": {
+            "package": "linux-image-6.18.3-modalix",
+            "package-version": "6.18.3-4586",
+            "release": "6.18.3-modalix",
+            "build-marker": "#4586",
+        },
+        "libcamera": {
+            "package-version": "2.1.3+neat1",
+            "platform-compat-version": "2.1.3~pre4586",
+            "capability-name": "simaai-libcamera-dmabuf-abi",
+            "capability-version": "1",
+        },
+        "memory": {
+            "package-version": "2.1.1-0neat4",
+            "platform-compat-version": "2.1.1~pre4586",
+            "capability-name": "simaai-memory-dmabuf-export-abi",
+            "capability-version": "1",
+        },
+    },
+}
+for key, value in expected.items():
+    if data.get(key) != value:
+        raise SystemExit(
+            f"{path}: {key} does not match the reviewed B4586 package contract"
+        )
+
+contract = data["platform-package-contract"]
+kernel = contract["kernel"]
+camera = contract["libcamera"]
+memory = contract["memory"]
+for value in (
+    kernel["package"],
+    kernel["package-version"],
+    kernel["release"],
+    kernel["build-marker"],
+    camera["package-version"],
+    camera["platform-compat-version"],
+    camera["capability-name"],
+    camera["capability-version"],
+    memory["package-version"],
+    memory["platform-compat-version"],
+    memory["capability-name"],
+    memory["capability-version"],
+):
+    print(value)
+PY
+  ) || return 1
+
+  if [[ "${#values[@]}" -ne 12 ]]; then
+    echo "Unable to read the complete B4586 package contract from ${manifest_path}." >&2
+    return 1
+  fi
+  B4586_KERNEL_PACKAGE="${values[0]}"
+  B4586_KERNEL_PACKAGE_VERSION="${values[1]}"
+  B4586_KERNEL_RELEASE="${values[2]}"
+  B4586_KERNEL_BUILD_MARKER="${values[3]}"
+  B4586_LIBCAMERA_VERSION="${values[4]}"
+  B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION="${values[5]}"
+  B4586_LIBCAMERA_CAPABILITY_NAME="${values[6]}"
+  B4586_LIBCAMERA_CAPABILITY_VERSION="${values[7]}"
+  B4586_MEMORY_VERSION="${values[8]}"
+  B4586_MEMORY_PLATFORM_COMPAT_VERSION="${values[9]}"
+  B4586_MEMORY_CAPABILITY_NAME="${values[10]}"
+  B4586_MEMORY_CAPABILITY_VERSION="${values[11]}"
+}
+
+verify_b4586_running_kernel() {
+  local installed_version installed_arch running_release version_text
+
+  if ! deb_package_is_installed "${B4586_KERNEL_PACKAGE}"; then
+    echo "Required B4586 kernel package is not installed: ${B4586_KERNEL_PACKAGE}=${B4586_KERNEL_PACKAGE_VERSION}." >&2
+    return 1
+  fi
+  installed_version="$(deb_package_installed_version "${B4586_KERNEL_PACKAGE}")"
+  if [[ "${installed_version}" != "${B4586_KERNEL_PACKAGE_VERSION}" ]]; then
+    echo "Wrong B4586 kernel package version: installed ${B4586_KERNEL_PACKAGE}=${installed_version:-<missing>}, expected ${B4586_KERNEL_PACKAGE_VERSION}." >&2
+    return 1
+  fi
+  installed_arch="$(dpkg-query -W -f='${Architecture}' "${B4586_KERNEL_PACKAGE}" 2>/dev/null || true)"
+  if [[ "${installed_arch}" != "arm64" ]]; then
+    echo "Wrong B4586 kernel package architecture: ${installed_arch:-<missing>}; expected arm64." >&2
+    return 1
+  fi
+
+  running_release="$(uname -r)"
+  if [[ "${running_release}" != "${B4586_KERNEL_RELEASE}" ]]; then
+    echo "The installed B4586 kernel is not running: uname -r=${running_release}, expected ${B4586_KERNEL_RELEASE}. Reboot into ${B4586_KERNEL_PACKAGE_VERSION} before installing Neat." >&2
+    return 1
+  fi
+  version_text="$(cat /proc/version 2>/dev/null || true)"
+  if [[ " ${version_text} " != *" ${B4586_KERNEL_BUILD_MARKER} "* ]]; then
+    echo "Running kernel ${running_release} does not report B4586 build marker ${B4586_KERNEL_BUILD_MARKER}." >&2
+    return 1
+  fi
+
+  log "Verified running kernel ${running_release} (${B4586_KERNEL_PACKAGE_VERSION}, ${B4586_KERNEL_BUILD_MARKER})."
 }
 
 install_skill_for_agent() {
@@ -992,14 +1164,15 @@ print(match.group(1))
 ' "${dependency}" "${expected_version}"
 }
 
-palette_required_simaai_memory_version() {
+palette_required_package_version() {
+  local dependency="$1"
   local palette_version depends version
   if deb_package_is_installed simaai-palette-modalix; then
     palette_version="$(deb_package_installed_version simaai-palette-modalix)"
     depends="$(dpkg-query -W -f='${Depends}' simaai-palette-modalix 2>/dev/null || true)"
-    version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
+    version="$(exact_dependency_version_from_relations "${dependency}" <<<"${depends}" || true)"
     if [[ -z "${version}" ]]; then
-      echo "Installed simaai-palette-modalix=${palette_version} has no exact simaai-memory-lib dependency." >&2
+      echo "Installed simaai-palette-modalix=${palette_version} has no exact ${dependency} dependency." >&2
       return 1
     fi
     printf '%s\n' "${version}"
@@ -1008,10 +1181,14 @@ palette_required_simaai_memory_version() {
 
   palette_version="$(apt_candidate_version simaai-palette-modalix)"
   if [[ -z "${palette_version}" || "${palette_version}" == "(none)" ]]; then
-    echo "Cannot discover the platform's required simaai-memory-lib revision: simaai-palette-modalix is not installed and has no APT candidate." >&2
+    echo "Cannot discover the platform's required ${dependency} revision: simaai-palette-modalix is not installed and has no APT candidate." >&2
     return 1
   fi
-  apt_exact_dependency_version simaai-palette-modalix "${palette_version}" simaai-memory-lib
+  apt_exact_dependency_version simaai-palette-modalix "${palette_version}" "${dependency}"
+}
+
+palette_required_simaai_memory_version() {
+  palette_required_package_version simaai-memory-lib
 }
 
 board_debian_architecture() {
@@ -1048,6 +1225,7 @@ PY
 
 collect_local_simaai_memory_debs() {
   local deb package arch depends provides provided_version dev_runtime_version board_arch
+  local capability_version
   local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
 
   for deb in "${DEBS[@]}"; do
@@ -1077,6 +1255,10 @@ collect_local_simaai_memory_debs() {
   fi
 
   SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION="$(palette_required_simaai_memory_version)" || return 1
+  if [[ "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" != "${B4586_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
+    echo "The installed/candidate Palette requires simaai-memory-lib=${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}, but this bundle is restricted to B4586 compatibility ${B4586_MEMORY_PLATFORM_COMPAT_VERSION}." >&2
+    return 1
+  fi
   board_arch="$(board_debian_architecture)" || return 1
   runtime_version="$(dpkg-deb -f "${runtime_deb}" Version)"
   dev_version="$(dpkg-deb -f "${dev_deb}" Version)"
@@ -1085,6 +1267,10 @@ collect_local_simaai_memory_debs() {
     return 1
   fi
   SIMAAI_MEMORY_ACTUAL_VERSION="${runtime_version}"
+  if [[ "${SIMAAI_MEMORY_ACTUAL_VERSION}" != "${B4586_MEMORY_VERSION}" ]]; then
+    echo "Bundled simaai-memory-lib has version ${SIMAAI_MEMORY_ACTUAL_VERSION}; expected reviewed B4586 override ${B4586_MEMORY_VERSION}." >&2
+    return 1
+  fi
 
   for deb in "${runtime_deb}" "${dev_deb}"; do
     package="$(dpkg-deb -f "${deb}" Package)"
@@ -1100,6 +1286,13 @@ collect_local_simaai_memory_debs() {
     simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
   if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
+    return 1
+  fi
+  capability_version="$(exact_dependency_version_from_relations \
+    "${B4586_MEMORY_CAPABILITY_NAME}" "${B4586_MEMORY_CAPABILITY_VERSION}" \
+    <<<"${provides}" || true)"
+  if [[ "${capability_version}" != "${B4586_MEMORY_CAPABILITY_VERSION}" ]]; then
+    echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide ${B4586_MEMORY_CAPABILITY_NAME} (= ${B4586_MEMORY_CAPABILITY_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
 
@@ -1172,6 +1365,158 @@ validate_local_simaai_memory_payload() {
   SIMAAI_MEMORY_PAYLOAD_SHA256="$(sha256sum "${payload}" | awk '{print $1}')"
   SIMAAI_MEMORY_PAYLOAD_BUILD_ID="${build_id}"
   log "Validated bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} (provides ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}) payload sha256=${SIMAAI_MEMORY_PAYLOAD_SHA256} build-id=${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}"
+}
+
+collect_local_libcamera_debs() {
+  local deb package arch version provides depends compatible capability board_arch
+  local runtime_deb="" dev_deb="" tools_deb=""
+
+  for deb in "${DEBS[@]}"; do
+    [[ -f "${deb}" ]] || continue
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    case "${package}" in
+      libcamera)
+        [[ -z "${runtime_deb}" ]] || {
+          echo "Artifact contains more than one libcamera runtime DEB." >&2
+          return 1
+        }
+        runtime_deb="${deb}"
+        ;;
+      libcamera-dev)
+        [[ -z "${dev_deb}" ]] || {
+          echo "Artifact contains more than one libcamera-dev DEB." >&2
+          return 1
+        }
+        dev_deb="${deb}"
+        ;;
+      libcamera-tools)
+        [[ -z "${tools_deb}" ]] || {
+          echo "Artifact contains more than one libcamera-tools DEB." >&2
+          return 1
+        }
+        tools_deb="${deb}"
+        ;;
+    esac
+  done
+
+  if [[ -z "${runtime_deb}" || -z "${dev_deb}" || -z "${tools_deb}" ]]; then
+    echo "The B4586 board artifact must bundle exactly one libcamera, libcamera-dev, and libcamera-tools DEB." >&2
+    return 1
+  fi
+
+  compatible="$(palette_required_package_version libcamera)" || return 1
+  if [[ "${compatible}" != "${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}" ]]; then
+    echo "The installed/candidate Palette requires libcamera=${compatible}, but this bundle is restricted to B4586 compatibility ${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}." >&2
+    return 1
+  fi
+  if [[ "$(palette_required_package_version libcamera-tools)" != "${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}" ]]; then
+    echo "The B4586 Palette must require libcamera-tools=${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}." >&2
+    return 1
+  fi
+
+  board_arch="$(board_debian_architecture)" || return 1
+  for deb in "${runtime_deb}" "${dev_deb}" "${tools_deb}"; do
+    package="$(dpkg-deb -f "${deb}" Package)"
+    version="$(dpkg-deb -f "${deb}" Version)"
+    arch="$(dpkg-deb -f "${deb}" Architecture)"
+    if [[ "${version}" != "${B4586_LIBCAMERA_VERSION}" ]]; then
+      echo "Bundled ${package} has version ${version:-<missing>}; expected reviewed B4586 override ${B4586_LIBCAMERA_VERSION}." >&2
+      return 1
+    fi
+    if [[ "${arch}" != "${board_arch}" ]]; then
+      echo "Bundled ${package} has architecture ${arch}; board architecture is ${board_arch}." >&2
+      return 1
+    fi
+    provides="$(dpkg-deb -f "${deb}" Provides 2>/dev/null || true)"
+    compatible="$(exact_dependency_version_from_relations \
+      "${package}" "${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}" \
+      <<<"${provides}" || true)"
+    if [[ "${compatible}" != "${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}" ]]; then
+      echo "Bundled ${package}=${version} must provide ${package} (= ${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
+      return 1
+    fi
+  done
+
+  provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
+  capability="$(exact_dependency_version_from_relations \
+    "${B4586_LIBCAMERA_CAPABILITY_NAME}" "${B4586_LIBCAMERA_CAPABILITY_VERSION}" \
+    <<<"${provides}" || true)"
+  if [[ "${capability}" != "${B4586_LIBCAMERA_CAPABILITY_VERSION}" ]]; then
+    echo "Bundled libcamera=${B4586_LIBCAMERA_VERSION} must provide ${B4586_LIBCAMERA_CAPABILITY_NAME} (= ${B4586_LIBCAMERA_CAPABILITY_VERSION}); got ${provides:-<none>}." >&2
+    return 1
+  fi
+
+  for deb in "${dev_deb}" "${tools_deb}"; do
+    package="$(dpkg-deb -f "${deb}" Package)"
+    depends="$(dpkg-deb -f "${deb}" Depends 2>/dev/null || true)"
+    version="$(exact_dependency_version_from_relations libcamera <<<"${depends}" || true)"
+    if [[ "${version}" != "${B4586_LIBCAMERA_VERSION}" ]]; then
+      echo "Bundled ${package} must depend on libcamera (= ${B4586_LIBCAMERA_VERSION}); got ${depends:-<none>}." >&2
+      return 1
+    fi
+  done
+
+  LIBCAMERA_RUNTIME_DEB="${runtime_deb}"
+  LIBCAMERA_DEV_DEB="${dev_deb}"
+  LIBCAMERA_TOOLS_DEB="${tools_deb}"
+  LIBCAMERA_ACTUAL_VERSION="${B4586_LIBCAMERA_VERSION}"
+  LIBCAMERA_DEBS=("${runtime_deb}" "${dev_deb}" "${tools_deb}")
+}
+
+validate_local_libcamera_payload() {
+  local extract_dir plugin build_id expected_deb_sha actual_deb_sha package_deb strings_file
+  local ipa_signature
+  local -a plugins=() ipa_signatures=() libraries=()
+  extract_dir="$(mktemp -d /tmp/sima-neat-libcamera-payload-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${extract_dir}")
+  dpkg-deb -x "${LIBCAMERA_RUNTIME_DEB}" "${extract_dir}"
+
+  mapfile -t plugins < <(find "${extract_dir}/usr/lib" -type f -name libgstlibcamera.so | sort)
+  mapfile -t libraries < <(find "${extract_dir}/usr/lib" -type f -name 'libcamera.so.*.*' | sort)
+  mapfile -t ipa_signatures < <(find "${extract_dir}/usr/lib" -type f -name ipa_modalix.so.sign | sort)
+  if [[ "${#plugins[@]}" -ne 1 || "${#libraries[@]}" -ne 1 ||
+        "${#ipa_signatures[@]}" -ne 1 ]]; then
+    echo "Bundled libcamera payload must contain one libcamerasrc plugin, one versioned libcamera library, and one Modalix IPA signature." >&2
+    return 1
+  fi
+  plugin="${plugins[0]}"
+  ipa_signature="${ipa_signatures[0]}"
+  if [[ ! -s "${ipa_signature}" ]]; then
+    echo "Bundled libcamera Modalix IPA signature is empty." >&2
+    return 1
+  fi
+  strings_file="$(mktemp /tmp/sima-neat-libcamera-strings-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${strings_file}")
+  strings -a "${plugin}" >"${strings_file}"
+  if ! grep -Fxq 'simaai-zero-copy' "${strings_file}" ||
+     ! grep -Fxq 'simaai-zero-copy-required' "${strings_file}"; then
+    echo "Bundled libcamerasrc payload does not contain the strict SiMaAI zero-copy properties." >&2
+    return 1
+  fi
+  build_id="$(LC_ALL=C readelf -n "${plugin}" 2>/dev/null |
+    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
+  if [[ -z "${build_id}" ]]; then
+    echo "Bundled libcamerasrc payload has no ELF build ID." >&2
+    return 1
+  fi
+
+  for package_deb in "${LIBCAMERA_DEBS[@]}"; do
+    expected_deb_sha="$(artifact_checksum_for_file "${package_deb}")" || return 1
+    if [[ -n "${expected_deb_sha}" ]]; then
+      actual_deb_sha="$(sha256sum "${package_deb}" | awk '{print $1}')"
+      if [[ "${actual_deb_sha}" != "${expected_deb_sha}" ]]; then
+        echo "Bundled $(basename "${package_deb}") checksum does not match package metadata." >&2
+        return 1
+      fi
+    else
+      log "No resources-checksum entry was supplied for $(basename "${package_deb}"); installed payload identity will still be verified against the bundled DEB."
+    fi
+  done
+
+  LIBCAMERA_PAYLOAD_PATH="${plugin#${extract_dir}}"
+  LIBCAMERA_PAYLOAD_SHA256="$(sha256sum "${plugin}" | awk '{print $1}')"
+  LIBCAMERA_PAYLOAD_BUILD_ID="${build_id}"
+  log "Validated bundled libcamera=${LIBCAMERA_ACTUAL_VERSION} (provides ${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION} and ${B4586_LIBCAMERA_CAPABILITY_NAME}=${B4586_LIBCAMERA_CAPABILITY_VERSION}) payload sha256=${LIBCAMERA_PAYLOAD_SHA256} build-id=${LIBCAMERA_PAYLOAD_BUILD_ID}"
 }
 
 remove_local_simaai_memory_debs_from_general_transaction() {
@@ -1267,7 +1612,7 @@ verify_canonical_palette_and_ota_installation() {
 }
 
 verify_installed_simaai_memory_payload() {
-  local installed_version installed_dev_version installed_sha installed_build_id owner
+  local installed_version installed_dev_version installed_sha installed_build_id owner provides
   if ! deb_package_is_installed simaai-memory-lib; then
     echo "simaai-memory-lib is not installed after the isolated replacement." >&2
     return 1
@@ -1298,7 +1643,80 @@ verify_installed_simaai_memory_payload() {
     echo "  installed sha/build-id: ${installed_sha:-<missing>} / ${installed_build_id:-<missing>}" >&2
     return 1
   fi
+  provides="$(dpkg-query -W -f='${Provides}' simaai-memory-lib 2>/dev/null || true)"
+  if ! relation_field_provides_exact_version \
+      "${provides}" "${B4586_MEMORY_CAPABILITY_NAME}" \
+      "${B4586_MEMORY_CAPABILITY_VERSION}"; then
+    echo "Installed simaai-memory-lib is missing ${B4586_MEMORY_CAPABILITY_NAME} (= ${B4586_MEMORY_CAPABILITY_VERSION})." >&2
+    return 1
+  fi
   log "Verified installed simaai-memory-lib payload matches the bundled artifact."
+}
+
+verify_installed_libcamera_payload() {
+  local package installed_version installed_sha installed_build_id owner provides inspect_log
+  local registry_path
+
+  for package in libcamera libcamera-dev libcamera-tools; do
+    if ! deb_package_is_installed "${package}"; then
+      echo "${package} is not installed after the B4586 override transaction." >&2
+      return 1
+    fi
+    installed_version="$(deb_package_installed_version "${package}")"
+    if [[ "${installed_version}" != "${LIBCAMERA_ACTUAL_VERSION}" ]]; then
+      echo "Installed ${package}=${installed_version:-<missing>} does not match bundled ${LIBCAMERA_ACTUAL_VERSION}." >&2
+      return 1
+    fi
+  done
+
+  if [[ ! -f "${LIBCAMERA_PAYLOAD_PATH}" ]]; then
+    echo "Installed libcamerasrc payload is missing: ${LIBCAMERA_PAYLOAD_PATH}" >&2
+    return 1
+  fi
+  owner="$(dpkg-query -S "${LIBCAMERA_PAYLOAD_PATH}" 2>/dev/null || true)"
+  if [[ ! "${owner}" =~ ^libcamera(:[^:[:space:]]+)?:[[:space:]] ]]; then
+    echo "Installed libcamerasrc payload is not owned by libcamera: ${owner:-<unowned>}." >&2
+    return 1
+  fi
+  installed_sha="$(sha256sum "${LIBCAMERA_PAYLOAD_PATH}" | awk '{print $1}')"
+  installed_build_id="$(LC_ALL=C readelf -n "${LIBCAMERA_PAYLOAD_PATH}" 2>/dev/null |
+    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
+  if [[ "${installed_sha}" != "${LIBCAMERA_PAYLOAD_SHA256}" ||
+        "${installed_build_id}" != "${LIBCAMERA_PAYLOAD_BUILD_ID}" ]]; then
+    echo "Installed libcamerasrc payload does not match the bundled artifact." >&2
+    echo "  expected sha/build-id: ${LIBCAMERA_PAYLOAD_SHA256} / ${LIBCAMERA_PAYLOAD_BUILD_ID}" >&2
+    echo "  installed sha/build-id: ${installed_sha:-<missing>} / ${installed_build_id:-<missing>}" >&2
+    return 1
+  fi
+
+  provides="$(dpkg-query -W -f='${Provides}' libcamera 2>/dev/null || true)"
+  if ! relation_field_provides_exact_version \
+      "${provides}" "${B4586_LIBCAMERA_CAPABILITY_NAME}" \
+      "${B4586_LIBCAMERA_CAPABILITY_VERSION}"; then
+    echo "Installed libcamera is missing ${B4586_LIBCAMERA_CAPABILITY_NAME} (= ${B4586_LIBCAMERA_CAPABILITY_VERSION})." >&2
+    return 1
+  fi
+
+  if ! command -v gst-inspect-1.0 >/dev/null 2>&1; then
+    echo "gst-inspect-1.0 is required to verify the installed libcamerasrc contract." >&2
+    return 1
+  fi
+  inspect_log="$(mktemp /tmp/sima-neat-libcamera-inspect-XXXXXX)"
+  registry_path="${inspect_log}.registry"
+  INSTALLER_TMP_DIRS+=("${inspect_log}" "${registry_path}")
+  if ! GST_REGISTRY="${registry_path}" gst-inspect-1.0 libcamerasrc >"${inspect_log}" 2>&1; then
+    cat "${inspect_log}" >&2
+    echo "Installed libcamerasrc could not be inspected after package replacement." >&2
+    return 1
+  fi
+  if ! grep -Eq '^[[:space:]]*simaai-zero-copy[[:space:]]*:' "${inspect_log}" ||
+     ! grep -Eq '^[[:space:]]*simaai-zero-copy-required[[:space:]]*:' "${inspect_log}"; then
+    cat "${inspect_log}" >&2
+    echo "Installed libcamerasrc does not expose both strict SiMaAI zero-copy properties." >&2
+    return 1
+  fi
+
+  log "Verified installed libcamerasrc payload and strict zero-copy properties match the bundled artifact."
 }
 
 verify_memory_transaction_preservation() {
@@ -1380,6 +1798,109 @@ install_local_simaai_memory_transaction() {
   remove_local_simaai_memory_debs_from_general_transaction
 }
 
+preflight_b4586_board_install() {
+  if [[ "${B4586_PREFLIGHT_COMPLETE:-0}" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" == "ON" ]]; then
+    log "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON; skipping the B4586 kernel and override package preflight."
+    B4586_PREFLIGHT_COMPLETE=1
+    return 0
+  fi
+
+  load_b4586_platform_package_contract || return 1
+  verify_b4586_running_kernel || return 1
+  collect_local_simaai_memory_debs || return 1
+  validate_local_simaai_memory_payload || return 1
+  collect_local_libcamera_debs || return 1
+  validate_local_libcamera_payload || return 1
+  PLATFORM_OVERRIDE_DEBS=("${SIMAAI_MEMORY_DEBS[@]}" "${LIBCAMERA_DEBS[@]}")
+  snapshot_memory_transaction_guard_state || return 1
+  PLATFORM_GUARD_SNAPSHOT_COMPLETE=1
+  B4586_PREFLIGHT_COMPLETE=1
+  log "B4586 package preflight passed before any board package or service change."
+}
+
+local_platform_overrides_require_atomic_downgrade() {
+  local package expected installed
+  while IFS=$'\t' read -r package expected; do
+    installed="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
+    if [[ -n "${installed}" ]] && dpkg --compare-versions "${installed}" gt "${expected}"; then
+      log "Installed ${package}=${installed} is newer than bundled ${expected}; deferring all B4586 overrides to the complete package transaction."
+      return 0
+    fi
+  done <<EOF
+simaai-memory-lib	${B4586_MEMORY_VERSION}
+simaai-memory-lib-dev	${B4586_MEMORY_VERSION}
+libcamera	${B4586_LIBCAMERA_VERSION}
+libcamera-dev	${B4586_LIBCAMERA_VERSION}
+libcamera-tools	${B4586_LIBCAMERA_VERSION}
+EOF
+  return 1
+}
+
+remove_local_platform_override_debs_from_general_transaction() {
+  local deb override is_override
+  local -a remaining=()
+  for deb in "${DEBS[@]}"; do
+    is_override=0
+    for override in "${PLATFORM_OVERRIDE_DEBS[@]}"; do
+      if [[ "${deb}" == "${override}" ]]; then
+        is_override=1
+        break
+      fi
+    done
+    [[ "${is_override}" -eq 1 ]] || remaining+=("${deb}")
+  done
+  DEBS=("${remaining[@]}")
+}
+
+install_local_b4586_override_transaction() {
+  local simulation_log
+  local -a apt_args=(apt-get install -y --reinstall --no-remove)
+
+  preflight_b4586_board_install || return 1
+  if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" == "ON" ]]; then
+    # The escape hatch retains the historical isolated memory behavior and
+    # leaves libcamera to the general local-DEB transaction.
+    install_local_simaai_memory_transaction
+    return $?
+  fi
+  if [[ "${PLATFORM_GUARD_SNAPSHOT_COMPLETE:-0}" -ne 1 ]]; then
+    snapshot_memory_transaction_guard_state || return 1
+    PLATFORM_GUARD_SNAPSHOT_COMPLETE=1
+  fi
+  if local_platform_overrides_require_atomic_downgrade; then
+    return 0
+  fi
+
+  simulation_log="$(mktemp /tmp/sima-neat-b4586-apt-simulation-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${simulation_log}")
+  log "Simulating the atomic local B4586 memory/libcamera override transaction."
+  if ! run_sudo "${apt_args[@]}" --simulate "${PLATFORM_OVERRIDE_DEBS[@]}" >"${simulation_log}" 2>&1; then
+    cat "${simulation_log}" >&2
+    echo "APT rejected the atomic B4586 override transaction; no packages were changed." >&2
+    return 1
+  fi
+  cat "${simulation_log}"
+  if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
+    echo "APT simulation planned package removal for the B4586 override transaction; refusing to continue." >&2
+    grep '^Remv[[:space:]]' "${simulation_log}" >&2
+    return 1
+  fi
+  verify_simulated_preinstalled_package_changes \
+    "${simulation_log}" "${PLATFORM_OVERRIDE_DEBS[@]}" || return 1
+
+  log "Installing the bundled B4586 memory and libcamera overrides in one zero-removal transaction."
+  run_sudo "${apt_args[@]}" "${PLATFORM_OVERRIDE_DEBS[@]}" || return 1
+  verify_installed_simaai_memory_payload || return 1
+  verify_installed_libcamera_payload || return 1
+  verify_memory_transaction_preservation || return 1
+  SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
+  LIBCAMERA_TRANSACTION_COMPLETE=1
+  remove_local_platform_override_debs_from_general_transaction
+}
+
 local_deb_for_exact_package() {
   local package="$1"
   local version="$2"
@@ -1432,6 +1953,10 @@ native_modalix_repair_is_required() {
     libcamera libcamera-dev libcamera-tools \
     simaai-memory-lib simaai-memory-lib-dev; do
     version="$(deb_package_installed_version "${package}" || true)"
+    if [[ "${package}" == libcamera* &&
+          "${version}" == "${B4586_LIBCAMERA_VERSION}" ]]; then
+      continue
+    fi
     if [[ "${version}" == *+neat* ]]; then
       return 0
     fi
@@ -1452,9 +1977,13 @@ native_modalix_restore_specs() {
 
   out_array=()
   for package in libcamera libcamera-tools simaai-memory-lib; do
-    # The bundled memory runtime/dev pair is installed and verified in its own
-    # zero-removal transaction. Never let this broader native-repair resolver
-    # substitute the repository's indistinguishable same-version payload.
+    if [[ "${package}" == libcamera* &&
+          "${LIBCAMERA_TRANSACTION_COMPLETE:-0}" -eq 1 ]]; then
+      continue
+    fi
+    # The bundled override set is installed and verified in its own zero-removal
+    # transaction. Never let this broader native-repair resolver substitute a
+    # repository payload after an override is complete.
     if [[ "${package}" == "simaai-memory-lib" &&
           "${SIMAAI_MEMORY_TRANSACTION_COMPLETE:-0}" -eq 1 ]]; then
       continue
@@ -2097,6 +2626,9 @@ complete_board_install_after_packages() {
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
   verify_installed_simaai_memory_payload
+  if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" != "ON" ]]; then
+    verify_installed_libcamera_payload
+  fi
   verify_memory_guard_palette_and_ota
   verify_canonical_palette_and_ota_installation
   activate_board_runtime_after_install
@@ -2105,25 +2637,58 @@ complete_board_install_after_packages() {
   verify_board_runtime_services
 }
 
+simulate_complete_board_transaction_preflight() {
+  local simulation_log
+  local -a apt_install_args=(
+    apt-get install -y --fix-broken --allow-downgrades --reinstall
+    -o Dpkg::Options::=--force-overwrite
+  )
+
+  simulation_log="$(mktemp /tmp/sima-neat-complete-apt-preflight-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${simulation_log}")
+  log "Simulating the complete local package closure before stopping board services."
+  if ! run_sudo "${apt_install_args[@]}" --simulate \
+      "${DEBS[@]}" >"${simulation_log}" 2>&1; then
+    cat "${simulation_log}" >&2
+    echo "APT cannot satisfy the complete bundled Neat package closure; no services or packages were changed." >&2
+    return 1
+  fi
+  if ! verify_simulated_package_removals "${simulation_log}" "${DEBS[@]}"; then
+    return 1
+  fi
+  if ! verify_simulated_preinstalled_package_changes \
+      "${simulation_log}" "${DEBS[@]}"; then
+    return 1
+  fi
+  log "Complete local package closure simulation passed."
+}
+
 install_debs_on_board() {
   prepare_debs_for_board_install
+  if ! preflight_b4586_board_install; then
+    echo "B4586 package preflight failed; no board services or packages were changed." >&2
+    exit 1
+  fi
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
   refresh_apt_metadata_for_board_install
-  stop_board_runtime_before_install
 
-  # Keep the isolated memory replacement away from an unhealthy APT state.
+  # Keep the isolated platform replacement away from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
-    echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
+    echo "APT package state is unhealthy; refusing the atomic zero-removal B4586 override replacement." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
-  if ! install_local_simaai_memory_transaction; then
-    echo "Failed to install the bundled simaai-memory payload without package removals." >&2
+  if ! simulate_complete_board_transaction_preflight; then
     exit 1
   fi
-  # Install the remaining packages without allowing memory-payload substitution.
+  stop_board_runtime_before_install
+  if ! install_local_b4586_override_transaction; then
+    echo "Failed to install the bundled B4586 memory/libcamera overrides without package removals." >&2
+    exit 1
+  fi
+  # Install the remaining packages without allowing override-payload substitution.
 
   local -a board_install_specs=()
   local -A seen_install_specs=()
@@ -2155,10 +2720,15 @@ install_debs_on_board() {
       "${simulation_log}" "${board_install_specs[@]}"; then
     exit 1
   fi
+  if ! verify_simulated_preinstalled_package_changes \
+      "${simulation_log}" "${board_install_specs[@]}"; then
+    exit 1
+  fi
 
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
     SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
+    LIBCAMERA_TRANSACTION_COMPLETE=1
     complete_board_install_after_packages
     return 0
   fi
@@ -2446,6 +3016,12 @@ fi
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
+if [[ "${ENV_MODE}" == "modalix-board" ]]; then
+  if ! preflight_b4586_board_install; then
+    echo "B4586 package preflight failed before Python, package, or service changes." >&2
+    exit 1
+  fi
+fi
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
   ensure_sdk_neat_cli_symlink
