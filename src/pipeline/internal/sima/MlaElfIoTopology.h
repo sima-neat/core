@@ -43,6 +43,13 @@ struct MlaElfIoTopology {
   // Full section names for OFM placeholders, ordered by output index. Empty if
   // monolithic.
   std::vector<std::string> ofm_symbol_names;
+  // Evidence retained for strict consumers.  The legacy parser continues to
+  // prefer indexed symbols when an ELF declares both layouts, but strict
+  // validation rejects that ambiguity instead of silently choosing one.
+  bool ifm_layout_conflict = false;
+  bool ofm_layout_conflict = false;
+  std::vector<std::size_t> duplicate_ifm_indices;
+  std::vector<std::size_t> duplicate_ofm_indices;
   // True when the file was successfully parsed as an ELF and at least one of
   // the four section types above was found. False on parse failure or when
   // the .elf has neither monolithic nor placeholder sections; the topology is
@@ -51,6 +58,33 @@ struct MlaElfIoTopology {
   // Diagnostic context for telemetry / error reporting.
   std::string source_path;
   std::string error;
+};
+
+// Stable, machine-readable failure reasons for the strict topology contract.
+// This API intentionally coexists with the permissive read API above so
+// legacy callers keep their behavior while new static-plan code can fail
+// closed on incomplete or ambiguous ELF evidence.
+enum class MlaElfIoTopologyError {
+  None,
+  InvalidTopology,
+  MissingIfm,
+  MissingOfm,
+  ConflictingIfmLayouts,
+  ConflictingOfmLayouts,
+  DuplicateIfmIndex,
+  DuplicateOfmIndex,
+  NonContiguousIfmIndices,
+  NonContiguousOfmIndices,
+  IfmPortCountMismatch,
+  OfmPortCountMismatch,
+};
+
+struct MlaElfIoTopologyValidation {
+  bool ok = false;
+  MlaElfIoTopologyError code = MlaElfIoTopologyError::InvalidTopology;
+  std::size_t expected = 0;
+  std::size_t actual = 0;
+  std::string detail;
 };
 
 // Parse the ELF section name table at `elf_path` and return the I/O topology.
@@ -63,6 +97,22 @@ struct MlaElfIoTopology {
 // the .shstrtab — it never loads the bulk code/data sections. For a typical
 // ~23 MB SiMa MLA .elf the on-disk read footprint is ~10 KB.
 bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTopology* out);
+
+// Validate that both directions are present, exactly one layout is declared
+// per direction, indexed layouts contain no duplicate or missing slots, and
+// the topology is therefore safe to bind without a fallback heuristic.
+MlaElfIoTopologyValidation validate_mla_elf_io_topology_strict(const MlaElfIoTopology& topology);
+
+// Apply strict validation and then prove that the ELF physical port arity is
+// exactly the arity declared by the MPK MLA operation.
+MlaElfIoTopologyValidation reconcile_mla_elf_io_topology_strict(const MlaElfIoTopology& topology,
+                                                                std::size_t expected_ifm_count,
+                                                                std::size_t expected_ofm_count);
+
+// Physical port counts. Call validate_mla_elf_io_topology_strict first when a
+// result is used for binding; these helpers deliberately perform no fallback.
+std::size_t mla_elf_ifm_port_count(const MlaElfIoTopology& topology);
+std::size_t mla_elf_ofm_port_count(const MlaElfIoTopology& topology);
 
 // True iff the .elf's IFM layout demands per-physical-input dispatch (i.e.
 // there are >=2 placeholder slots and no monolithic data.ifm.b0 carrier).

@@ -59,7 +59,9 @@ LogicalInputStaticSpec mla_logical_input_from_facts(const TensorStaticSpec& tens
       index, tensor.tensor_index >= 0 ? tensor.tensor_index : index,
       physical.physical_index >= 0 ? physical.physical_index : index, tensor.shape, tensor.dtype,
       tensor.layout, logical_name, logical_name, physical.segment_name,
-      std::max<std::int64_t>(0, physical.source_byte_offset));
+      std::max<std::int64_t>(0, physical.source_byte_offset), 0U,
+      tensor.parent_carrier ? TensorMaterializationKind::OffsetView
+                            : TensorMaterializationKind::Direct);
 }
 
 // Returns the firmware-side IFM slot name for input `index`. If the ELF
@@ -177,6 +179,9 @@ build_mla_compiled_contract_from_subset(const plugin_contracts::ProcessMlaContra
     compiled.payload.batch_sz_model = compiled.payload.batch_size;
   }
   compiled.runtime_contract.plugin_kind = "processmla";
+  compiled.runtime_contract.frame_arena_size_bytes =
+      contract.frame_arena_size_bytes;
+  compiled.runtime_contract.frame_arena_role = contract.frame_arena_role;
   compiled.runtime_contract.consumer_keeps_distinct_physical_inputs =
       contract.consumer_keeps_distinct_physical_inputs;
   compiled.runtime_contract.elf_ifm_symbol_names = contract.elf_ifm_symbol_names;
