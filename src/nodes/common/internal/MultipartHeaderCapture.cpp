@@ -221,13 +221,25 @@ std::size_t MultipartParser::find_boundary(std::size_t from, bool* is_closing,
       continue;
     }
 
-    // Two bytes after the delimiter are needed to tell a separator from the closing
-    // delimiter; without them, wait rather than guess.
+    // A boundary token only counts when the rest of its delimiter line is complete:
+    // optional closing "--", optional transport padding, then CRLF. Otherwise payload
+    // bytes such as "\r\n--boundary-junk" would terminate the part early.
     const std::size_t after = at + needle_len;
     if (after + 2U > buf_.size()) {
       return std::string::npos;
     }
     const bool closing = (buf_[after] == '-' && buf_[after + 1U] == '-');
+    std::size_t line_end = after + (closing ? 2U : 0U);
+    while (line_end < buf_.size() && (buf_[line_end] == kSP || buf_[line_end] == kHT)) {
+      ++line_end;
+    }
+    if (line_end + 2U > buf_.size()) {
+      return std::string::npos;
+    }
+    if (buf_[line_end] != kCR || buf_[line_end + 1U] != kLF) {
+      search_from = at + 1U;
+      continue;
+    }
     if (is_closing) {
       *is_closing = closing;
     }
@@ -387,7 +399,7 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
       const std::size_t at = find_boundary(cursor_, &closing, &delim_len, false);
       if (at == std::string::npos) {
         // Keep a tail long enough to match a delimiter split across chunks.
-        const std::size_t keep = delimiter_.size() + 4U;
+        const std::size_t keep = delimiter_.size() + kMultipartHeaderCaptureMaxLineBytes;
         if (buf_.size() - cursor_ > keep) {
           cursor_ = buf_.size() - keep;
           compact();

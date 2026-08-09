@@ -326,6 +326,7 @@ RUN_TEST(
         copy_msg.tensor = seed;
         copy_msg.payload_type = PayloadType::Image;
         copy_msg.format = "RGB";
+        copy_msg.attributes = {{"image-channel", "color"}, {"image-index", "41"}};
         try {
           require(run.try_push(Sample{copy_msg}),
                   run_api_case("active_try_push_sample_copy",
@@ -338,6 +339,9 @@ RUN_TEST(
         require(copy_out.has_value() && !tensors_from_sample(*copy_out, true).empty(),
                 run_api_case("active_try_push_sample_copy_output",
                              "Run::try_push(Sample copy) should produce tensor output"));
+        require(copy_out->attributes == copy_msg.attributes,
+                run_api_case("active_try_push_sample_copy_attributes",
+                             "CPU-copy input must preserve Sample attributes"));
 
         const auto fill = sima_test::fill_try_push_queue_non_blocking(run, seed, 4096);
         require(fill.saw_backpressure,

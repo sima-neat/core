@@ -154,7 +154,8 @@ void test_open_ended_stream_with_absent_header() {
 
 void test_body_containing_delimiter_bytes() {
   const std::vector<std::string> capture = {"image-index"};
-  std::string body("\xFF\xD8--b-not-really\x00 padding-\r\n-", 30);
+  const std::string body = std::string("\xFF\xD8", 2) + "payload\r\n--bJUNK\r\nstill-payload" +
+                           std::string("\xFF\xD9", 2);
   std::string s =
       "--b\r\nContent-Type: image/jpeg\r\nImage-Index: 9\r\n\r\n" + body + "\r\n--b--\r\n";
   for (const std::size_t chunk : {1U, 4U, 512U}) {

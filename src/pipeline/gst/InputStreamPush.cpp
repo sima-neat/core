@@ -544,6 +544,20 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
   };
 }
 
+std::function<void(GstBuffer**)>
+make_copy_prepare_with_attributes(const std::function<void(GstBuffer**)>& prepare,
+                                  SampleAttributes attributes, const char* where) {
+  return [prepare, attributes = std::move(attributes), where](GstBuffer** buffer) {
+    if (prepare) {
+      prepare(buffer);
+    }
+    if (!buffer || !*buffer || !gst_internal::write_attributes(*buffer, attributes)) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::prepare_copy") +
+                               ": failed to write sample attributes");
+    }
+  };
+}
+
 SampleSpec derive_mat_spec_or_throw(const cv::Mat& contiguous, const InputOptions& relaxed) {
   SampleSpec spec;
   const bool float_input = contiguous.depth() == CV_32F && contiguous.channels() > 0;
@@ -2291,10 +2305,12 @@ bool InputStream::try_push_message(const Sample& msg) {
   // try_push_message (covers this copy path too).
 
   const auto fill = make_tensor_copy_fill(input, input_bytes, "InputStream::try_push_message");
+  const std::function<void(GstBuffer**)> copy_prepare = make_copy_prepare_with_attributes(
+      prepare, meta.attributes, "InputStream::try_push_message(copy)");
 
   if (auto admitted = admit_copy_payload_nonpush(
           *st, decision, "InputStream::try_push_message", spec, fill, meta.frame_id, seq.input_seq,
-          seq.orig_input_seq, meta.stream_id, meta.stream_label, timing_override, prepare);
+          seq.orig_input_seq, meta.stream_id, meta.stream_label, timing_override, copy_prepare);
       admitted.has_value()) {
     return *admitted;
   }
@@ -2310,7 +2326,7 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
   const bool pushed = push_with_fill(where, fill, input_bytes, meta.frame_id, seq.input_seq,
                                      seq.orig_input_seq, meta.stream_id, meta.stream_label,
-                                     timing_override, prepare, spec.width, spec.height);
+                                     timing_override, copy_prepare, spec.width, spec.height);
   if (pushed) {
     maybe_drop_holder_after_push(input, "InputStream::try_push_message(copy)");
   }
