@@ -26,7 +26,7 @@ GstStructure* meta_structure(GstBuffer* buffer, bool create) {
 }
 
 gboolean collect_field(GQuark field_id, const GValue* value, gpointer user_data) {
-  auto* out = static_cast<SampleAttributes*>(user_data);
+  auto* out = static_cast<GstSampleAttributes*>(user_data);
   if (G_VALUE_HOLDS_STRING(value)) {
     const gchar* text = g_value_get_string(value);
     (*out)[g_quark_to_string(field_id)] = text ? text : "";
@@ -36,7 +36,8 @@ gboolean collect_field(GQuark field_id, const GValue* value, gpointer user_data)
 
 } // namespace
 
-void read_attributes_from_structure(const GstStructure* meta_structure_in, SampleAttributes* out) {
+void read_attributes_from_structure(const GstStructure* meta_structure_in,
+                                    GstSampleAttributes* out) {
   if (!out) {
     return;
   }
@@ -55,14 +56,14 @@ void read_attributes_from_structure(const GstStructure* meta_structure_in, Sampl
   gst_structure_foreach(nested, collect_field, out);
 }
 
-void read_attributes(GstBuffer* buffer, SampleAttributes* out) {
+void read_attributes(GstBuffer* buffer, GstSampleAttributes* out) {
   if (!out) {
     return;
   }
   read_attributes_from_structure(meta_structure(buffer, false), out);
 }
 
-bool write_attributes_to_structure(GstStructure* target, const SampleAttributes& attributes) {
+bool write_attributes_to_structure(GstStructure* target, const GstSampleAttributes& attributes) {
   if (!target) {
     return false;
   }
@@ -92,7 +93,7 @@ bool write_attributes_to_structure(GstStructure* target, const SampleAttributes&
   return true;
 }
 
-bool write_attributes(GstBuffer* buffer, const SampleAttributes& attributes) {
+bool write_attributes(GstBuffer* buffer, const GstSampleAttributes& attributes) {
   if (!buffer) {
     return false;
   }
@@ -143,7 +144,7 @@ bool copy_attributes(GstBuffer* src, GstBuffer* dst) {
   if (!dst) {
     return false;
   }
-  SampleAttributes attributes;
+  GstSampleAttributes attributes;
   read_attributes(src, &attributes);
   return write_attributes(dst, attributes);
 }

@@ -11,33 +11,36 @@
  */
 #pragma once
 
-#include "pipeline/GraphOptions.h"
-
 #include <gst/gst.h>
 
+#include <map>
+#include <string>
+
 namespace simaai::neat::gst_internal {
+
+using GstSampleAttributes = std::map<std::string, std::string>;
 
 /// Field name of the nested attribute structure inside `GstSimaMeta`.
 inline constexpr const char* kSimaMetaAttributesField = "attributes";
 
 /// Read attributes from `buffer`'s `GstSimaMeta`. Clears `out` first; a buffer with no
 /// meta or no nested structure yields an empty map.
-void read_attributes(GstBuffer* buffer, SampleAttributes* out);
+void read_attributes(GstBuffer* buffer, GstSampleAttributes* out);
 
 /// Read attributes from an existing `GstSimaMeta` structure.
-void read_attributes_from_structure(const GstStructure* meta_structure, SampleAttributes* out);
+void read_attributes_from_structure(const GstStructure* meta_structure, GstSampleAttributes* out);
 
 /// Replace `buffer`'s attributes with `attributes`, adding `GstSimaMeta` if needed.
 ///
 /// Passing an empty map removes the nested structure so a reused destination buffer cannot
 /// retain stale attributes. Returns false when the buffer is not writable or the meta could
 /// not be attached.
-bool write_attributes(GstBuffer* buffer, const SampleAttributes& attributes);
+bool write_attributes(GstBuffer* buffer, const GstSampleAttributes& attributes);
 
 /// Replace the attributes of an existing `GstSimaMeta` structure. Returns false for a null
 /// target, an embedded NUL, or invalid UTF-8, which `G_TYPE_STRING` cannot represent.
 bool write_attributes_to_structure(GstStructure* meta_structure,
-                                   const SampleAttributes& attributes);
+                                   const GstSampleAttributes& attributes);
 
 /// Remove any attributes from `buffer`. Safe when no meta or no attributes are present.
 bool clear_attributes(GstBuffer* buffer);
