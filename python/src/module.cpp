@@ -3841,7 +3841,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::MultipartJpegDemuxOptions>(m, "MultipartJpegDemuxOptions")
       .def(nb::init<>())
       .def_rw("boundary", &simaai::neat::MultipartJpegDemuxOptions::boundary)
-      .def_rw("single_stream", &simaai::neat::MultipartJpegDemuxOptions::single_stream);
+      .def_rw("single_stream", &simaai::neat::MultipartJpegDemuxOptions::single_stream)
+      .def_rw("header_capture", &simaai::neat::MultipartJpegDemuxOptions::header_capture);
   nb::class_<simaai::neat::EncodedCapsFixupOptions>(m, "EncodedCapsFixupOptions")
       .def(nb::init<>())
       .def_rw("media_type", &simaai::neat::EncodedCapsFixupOptions::media_type)
