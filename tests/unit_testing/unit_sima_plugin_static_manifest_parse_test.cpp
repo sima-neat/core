@@ -3,6 +3,7 @@
 #include "test_utils.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
@@ -43,4 +44,38 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
                    "nms-iou-threshold parse mismatch");
            require(elements[3].topk_property.has_value(), "topk property should be parsed");
            require(elements[3].topk_property.value() == 120, "topk parse mismatch");
+
+           SimaPluginStaticManifest alignment_manifest;
+           StageStaticSpec stage;
+           PhysicalBufferStaticSpec input;
+           input.physical_index = 0;
+           input.required_alignment_bytes = 64U;
+           stage.physical_inputs.push_back(input);
+           PhysicalBufferStaticSpec output;
+           output.physical_index = 0;
+           output.required_alignment_bytes = 8192U;
+           stage.physical_outputs.push_back(output);
+           stage.frame_arena_size_bytes = 4U * 1024U * 1024U;
+           stage.frame_arena_role = FrameArenaRole::ReuseInput;
+           alignment_manifest.stages.push_back(std::move(stage));
+
+           std::string parse_error;
+           const auto parsed = parse_manifest_json(
+               serialize_manifest_json(alignment_manifest), &parse_error);
+           require(parsed.has_value(),
+                   "physical alignment manifest must round-trip: " + parse_error);
+           require(parsed->stages.size() == 1U &&
+                       parsed->stages[0].physical_inputs.size() == 1U &&
+                       parsed->stages[0].physical_inputs[0]
+                               .required_alignment_bytes == 64U,
+                   "physical IFM alignment must survive JSON round-trip");
+           require(parsed->stages[0].physical_outputs.size() == 1U &&
+                       parsed->stages[0].physical_outputs[0]
+                               .required_alignment_bytes == 8192U,
+                   "physical OFM alignment must survive JSON round-trip");
+           require(parsed->stages[0].frame_arena_size_bytes ==
+                           4U * 1024U * 1024U &&
+                       parsed->stages[0].frame_arena_role ==
+                           FrameArenaRole::ReuseInput,
+                   "frame-arena size/role must survive JSON round-trip");
          }));

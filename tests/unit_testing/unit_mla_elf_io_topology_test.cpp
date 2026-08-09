@@ -213,6 +213,59 @@ void test_missing_file_fails_cleanly() {
   check(!topology.valid, "missing_file: topology.valid is false");
 }
 
+void test_strict_validation_and_reconciliation() {
+  using namespace simaai::neat::pipeline_internal::sima;
+
+  const auto valid_path =
+      write_minimal_elf("strict_valid", {"data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0",
+                                         "data.ifm.persistent.input_01/MLA_0/placeholder_1_0.b0",
+                                         "data.ofm.persistent.output_00/MLA_0/out0.b0"});
+  MlaElfIoTopology valid;
+  check(read_mla_elf_io_topology(valid_path, &valid), "strict valid: parser returned ok");
+  check(validate_mla_elf_io_topology_strict(valid).ok, "strict valid: validation succeeds");
+  check(reconcile_mla_elf_io_topology_strict(valid, 2U, 1U).ok,
+        "strict valid: exact arity reconciles");
+  const auto mismatch = reconcile_mla_elf_io_topology_strict(valid, 1U, 1U);
+  check(!mismatch.ok && mismatch.code == MlaElfIoTopologyError::IfmPortCountMismatch &&
+            mismatch.expected == 1U && mismatch.actual == 2U,
+        "strict valid: mismatch reports exact IFM counts");
+  std::filesystem::remove(valid_path);
+
+  const auto conflict_path = write_minimal_elf(
+      "strict_conflict",
+      {"data.ifm.b0", "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0", "data.ofm.b0"});
+  MlaElfIoTopology conflict;
+  check(read_mla_elf_io_topology(conflict_path, &conflict),
+        "strict conflict: permissive parser remains compatible");
+  const auto conflict_result = validate_mla_elf_io_topology_strict(conflict);
+  check(!conflict_result.ok && conflict_result.code == MlaElfIoTopologyError::ConflictingIfmLayouts,
+        "strict conflict: ambiguity rejected");
+  std::filesystem::remove(conflict_path);
+
+  const auto gap_path =
+      write_minimal_elf("strict_gap", {"data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0",
+                                       "data.ifm.persistent.input_02/MLA_0/placeholder_2_0.b0",
+                                       "data.ofm.persistent.output_00/MLA_0/out0.b0"});
+  MlaElfIoTopology gap;
+  check(read_mla_elf_io_topology(gap_path, &gap), "strict gap: parser returned ok");
+  const auto gap_result = validate_mla_elf_io_topology_strict(gap);
+  check(!gap_result.ok && gap_result.code == MlaElfIoTopologyError::NonContiguousIfmIndices,
+        "strict gap: missing indexed slot rejected");
+  std::filesystem::remove(gap_path);
+
+  const auto duplicate_path = write_minimal_elf(
+      "strict_duplicate",
+      {"data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0", "data.ifm.persistent.qmla_ifm_0.b0",
+       "data.ofm.persistent.output_00/MLA_0/out0.b0"});
+  MlaElfIoTopology duplicate;
+  check(read_mla_elf_io_topology(duplicate_path, &duplicate),
+        "strict duplicate: parser returned ok");
+  const auto duplicate_result = validate_mla_elf_io_topology_strict(duplicate);
+  check(!duplicate_result.ok && duplicate_result.code == MlaElfIoTopologyError::DuplicateIfmIndex,
+        "strict duplicate: repeated indexed slot rejected");
+  std::filesystem::remove(duplicate_path);
+}
+
 } // namespace
 
 int main() {
@@ -221,6 +274,7 @@ int main() {
   test_monolithic_topology();
   test_unknown_topology_fails_cleanly();
   test_missing_file_fails_cleanly();
+  test_strict_validation_and_reconciliation();
   std::cout << "unit_mla_elf_io_topology_test: PASS\n";
   return 0;
 }
