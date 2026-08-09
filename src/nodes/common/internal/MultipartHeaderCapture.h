@@ -109,6 +109,7 @@ private:
   std::map<std::string, std::string> pending_; ///< Headers for the part being assembled.
   PartTiming feed_timing_;                     ///< Timing of the chunk being consumed.
   PartTiming pending_timing_;                  ///< Timing captured when this body began.
+  bool pending_timing_set_ = false;
   bool buffer_starts_at_line_start_ = true;
   bool saw_any_part_ = false;
 };

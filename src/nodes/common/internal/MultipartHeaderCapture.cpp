@@ -174,6 +174,7 @@ void MultipartParser::reset() {
   pending_.clear();
   feed_timing_ = {};
   pending_timing_ = {};
+  pending_timing_set_ = false;
   buffer_starts_at_line_start_ = true;
   saw_any_part_ = false;
 }
@@ -491,12 +492,17 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
       body_begin_ = body_start;
       scanned_ = body_start;
       cursor_ = body_start;
-      pending_timing_ = feed_timing_;
+      pending_timing_set_ = body_start < buf_.size();
+      pending_timing_ = pending_timing_set_ ? feed_timing_ : PartTiming{};
       state_ = State::Body;
       continue;
     }
 
     case State::Body: {
+      if (!pending_timing_set_ && body_begin_ < buf_.size()) {
+        pending_timing_ = feed_timing_;
+        pending_timing_set_ = true;
+      }
       bool closing = false;
       std::size_t delim_len = 0;
       // Resume the scan where it stopped, backing off enough to catch a split delimiter.

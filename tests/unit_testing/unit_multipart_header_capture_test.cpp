@@ -205,6 +205,23 @@ void test_part_keeps_timing_from_body_start_chunk() {
   require(observed.pts == first_timing.pts && observed.dts == first_timing.dts &&
               observed.duration == first_timing.duration,
           "part timing must come from the chunk where its body began");
+
+  MultipartParser boundary_parser("b", {});
+  observed = {};
+  emitted = 0U;
+  const std::string header_only = "--b\r\nContent-Type: image/jpeg\r\n\r\n";
+  require(boundary_parser.feed(reinterpret_cast<const uint8_t*>(header_only.data()),
+                               header_only.size(), sink, &err, first_timing),
+          "a header-only timed chunk must remain buffered: " + err);
+  require(boundary_parser.feed(reinterpret_cast<const uint8_t*>(second.data()), second.size(), sink,
+                               &err, second_timing),
+          "the body-start timed chunk must parse: " + err);
+  require(boundary_parser.finish(sink, &err),
+          "the boundary-split timed stream must finish: " + err);
+  require(emitted == 1U, "the boundary-split timed stream must emit one part");
+  require(observed.pts == second_timing.pts && observed.dts == second_timing.dts &&
+              observed.duration == second_timing.duration,
+          "timing must wait for the chunk containing the first body byte");
 }
 
 void test_value_trimming() {
