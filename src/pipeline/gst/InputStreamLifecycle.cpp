@@ -42,7 +42,7 @@ void release_input_stream_resources_once(InputStream::State& state) {
     if (!state.teardown_started.exchange(true)) {
       GstElement* pipeline = state.pipeline;
       state.pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.prefer_synchronous_teardown);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.teardown_policy);
     } else {
       state.pipeline = nullptr;
     }
@@ -519,7 +519,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
       if (st->pipeline && !st->teardown_started.exchange(true)) {
         GstElement* pipeline = st->pipeline;
         st->pipeline = nullptr;
-        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.prefer_synchronous_teardown);
+        pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.teardown_policy);
       }
     }
     st->worker_done.store(true, std::memory_order_release);
@@ -627,7 +627,8 @@ void InputStream::stop() {
   // that event as a runtime restart request and race the state change.  Keep
   // the legacy pre-flush for deferred/appsrc teardown paths.
   const bool stop_flush =
-      inputstream_stop_flush_enabled() && !state_->opt.prefer_synchronous_teardown;
+      inputstream_stop_flush_enabled() &&
+      state_->opt.teardown_policy == pipeline_internal::InputStreamTeardownPolicy::Deferred;
   if (stop_flush && pipeline_ref) {
     if (stop_trace_enabled()) {
       std::fprintf(stderr, "[STOP] InputStream::stop flush state=%p pipeline=%p\n",
@@ -704,7 +705,7 @@ void InputStream::stop() {
     if (state_->pipeline && !state_->teardown_started.exchange(true)) {
       GstElement* pipeline = state_->pipeline;
       state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.teardown_policy);
     }
   }
   if (state_->worker.joinable()) {

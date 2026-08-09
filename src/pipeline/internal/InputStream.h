@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/InputStreamStats.h"
+#include "pipeline/internal/InputStreamTeardownPolicy.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"
@@ -111,13 +112,11 @@ struct InputStreamOptions {
   // runtime, so they do not need a public cross-Run loan attached by Run::pull.
   // Public/cross-Run ingress keeps this false and must carry a transferable loan.
   bool allow_graph_internal_zero_copy_input = false;
-  // Source/live pipelines can continue producing buffers while a deferred
-  // no-flush teardown is waiting on the background reaper.  Prefer a bounded
-  // synchronous state transition to NULL for those pipelines so Run::close()
-  // does not return while camera/RTSP/source streaming threads still touch
-  // downstream plugin/runtime state.  Push/appsrc pipelines keep the legacy
-  // deferred no-flush default unless this flag is set explicitly.
-  bool prefer_synchronous_teardown = false;
+  // Source/live pipelines prefer a bounded NULL transition. Driver-backed
+  // appsrc pipelines require NULL because their stop callback owns exact-once
+  // async-job reclamation. Ordinary push/appsrc pipelines remain deferred.
+  pipeline_internal::InputStreamTeardownPolicy teardown_policy =
+      pipeline_internal::InputStreamTeardownPolicy::Deferred;
   DynamicCapability dynamic_capability = DynamicCapability::StaticOnly;
   ShapePolicy shape_policy = ShapePolicy::BoundedDynamic;
   ResolvedShapeLimits shape_limits{};
