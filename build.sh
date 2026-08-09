@@ -2224,8 +2224,14 @@ PY
 run_install_sanity_check() {
   echo
   echo "Running install sanity check..."
-  local install_test_dir="/tmp/sima-neat-install-test"
-  rm -rf "${install_test_dir}"
+  # Fresh directory per run: the fixed path could hold artifacts left by a
+  # previous build. Removed on success, kept on failure for inspection.
+  local install_test_dir=""
+  install_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-install-test.XXXXXX")" || {
+    echo "ERROR: unable to create the install sanity check directory."
+    exit 1
+  }
+  echo "Install sanity check directory: ${install_test_dir}"
   local core_install_dir="${install_test_dir}/core"
   local dev_install_dir="${install_test_dir}/dev"
 
@@ -2294,6 +2300,7 @@ run_install_sanity_check() {
     echo "Refusing to package mismatched core and development packages."
     exit 1
   fi
+  rm -rf "${install_test_dir}"
 }
 
 build_deb_if_requested() {
