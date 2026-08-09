@@ -199,7 +199,7 @@ RUN_TEST(
         PullStatus status = PullStatus::Timeout;
         for (int attempt = 0; attempt < 10; ++attempt) {
           status = eos_run.pull(1000, tmp, &err);
-          if (status != PullStatus::Ok) {
+          if (status == PullStatus::Closed || status == PullStatus::Error) {
             break;
           }
         }
