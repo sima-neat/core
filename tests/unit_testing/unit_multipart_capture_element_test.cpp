@@ -41,9 +41,9 @@ std::string make_marked_jpeg(uint16_t width, uint16_t height, uint8_t marker) {
   push({static_cast<uint8_t>(width >> 8), static_cast<uint8_t>(width & 0xFF)});
   push({0x03}); // 3 components
   push({0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01});
-  push({0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x00}); // SOS
-  jpeg.push_back(static_cast<char>(marker));                    // frame marker inside scan data
-  push({0xFF, 0xD9});                                           // EOI
+  push({0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00}); // SOS
+  jpeg.push_back(static_cast<char>(marker));                          // scan data marker
+  push({0xFF, 0xD9});                                                 // EOI
   return jpeg;
 }
 
@@ -188,6 +188,105 @@ void push_stream(GstElement* src, const std::string& stream) {
   gst_buffer_unmap(buffer, &map);
   require(gst_app_src_push_buffer(GST_APP_SRC(src), buffer) == GST_FLOW_OK,
           "whole-stream appsrc push must succeed");
+}
+
+void set_multipart_caps(GstElement* src, const std::string& boundary) {
+  GstCaps* caps = gst_caps_new_simple("multipart/x-mixed-replace", "boundary", G_TYPE_STRING,
+                                      boundary.c_str(), nullptr);
+  require(caps != nullptr, "multipart caps must allocate");
+  gst_app_src_set_caps(GST_APP_SRC(src), caps);
+  gst_caps_unref(caps);
+}
+
+void require_pipeline_error(const std::string& stream, const std::string& boundary,
+                            const std::string& context) {
+  simaai::neat::gst_init_once();
+
+  GstElement* pipeline = gst_pipeline_new("capture-error-test");
+  GstElement* src = gst_element_factory_make("appsrc", "src");
+  GstElement* demux = gst_element_factory_make("neatmultipartjpegdemux", "demux");
+  GstElement* sink = gst_element_factory_make("fakesink", "sink");
+  require(pipeline && src && demux && sink, context + ": elements must be creatable");
+
+  g_object_set(demux, "boundary", boundary.c_str(), nullptr);
+  g_object_set(sink, "sync", FALSE, nullptr);
+  gst_bin_add_many(GST_BIN(pipeline), src, demux, sink, nullptr);
+  require(gst_element_link_many(src, demux, sink, nullptr) == TRUE,
+          context + ": pipeline must link");
+  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          context + ": pipeline must reach PLAYING");
+
+  push_stream(src, stream);
+  (void)gst_app_src_end_of_stream(GST_APP_SRC(src));
+
+  GstBus* bus = gst_element_get_bus(pipeline);
+  GstMessage* message = gst_bus_timed_pop_filtered(
+      bus, 2 * GST_SECOND, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS));
+  require(message != nullptr, context + ": pipeline must terminate");
+  require(GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR, context + ": expected stream error");
+
+  gst_message_unref(message);
+  gst_object_unref(bus);
+  gst_element_set_state(pipeline, GST_STATE_NULL);
+  gst_object_unref(pipeline);
+}
+
+void test_caps_boundary_refreshes_on_reconnect() {
+  simaai::neat::gst_init_once();
+
+  GstElement* pipeline = gst_pipeline_new("capture-reconnect-test");
+  GstElement* src = gst_element_factory_make("appsrc", "src");
+  GstElement* demux = gst_element_factory_make("neatmultipartjpegdemux", "demux");
+  GstElement* sink = gst_element_factory_make("appsink", "sink");
+  require(pipeline && src && demux && sink, "reconnect elements must be creatable");
+
+  g_object_set(demux, "capture-headers", "image-index", nullptr);
+  g_object_set(sink, "sync", FALSE, "emit-signals", FALSE, "max-buffers", 4, nullptr);
+  gst_bin_add_many(GST_BIN(pipeline), src, demux, sink, nullptr);
+  require(gst_element_link_many(src, demux, sink, nullptr) == TRUE, "reconnect pipeline must link");
+
+  set_multipart_caps(src, "first");
+  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          "reconnect pipeline must reach PLAYING");
+
+  push_stream(src,
+              part("first", {"Image-Index: 1"}, make_marked_jpeg(32, 32, 0x31)) + "--first--\r\n");
+  const Received first = pull_received(sink);
+
+  set_multipart_caps(src, "second");
+  push_stream(src, part("second", {"Image-Index: 2"}, make_marked_jpeg(32, 32, 0x32)) +
+                       "--second--\r\n");
+  (void)gst_app_src_end_of_stream(GST_APP_SRC(src));
+  const Received second = pull_received(sink);
+
+  require(first.marker == 0x31 && first.attributes.at("image-index") == "1",
+          "first connection must use its caps boundary");
+  require(second.marker == 0x32 && second.attributes.at("image-index") == "2",
+          "reconnect must replace the learned caps boundary");
+
+  gchar* configured_boundary = nullptr;
+  g_object_get(demux, "boundary", &configured_boundary, nullptr);
+  require(configured_boundary != nullptr && *configured_boundary == '\0',
+          "caps boundary detection must not mutate the configured boundary property");
+  g_free(configured_boundary);
+
+  gst_element_set_state(pipeline, GST_STATE_NULL);
+  gst_object_unref(pipeline);
+}
+
+void test_malformed_jpeg_parts_fail_the_stream() {
+  const std::string boundary = "bad";
+  std::string truncated = make_marked_jpeg(32, 32, 0x41);
+  truncated.resize(truncated.size() - 2U); // remove EOI
+  require_pipeline_error(part(boundary, {}, truncated) + "--" + boundary + "--\r\n", boundary,
+                         "truncated JPEG");
+
+  const std::string jpeg = make_marked_jpeg(32, 32, 0x42);
+  require_pipeline_error(part(boundary, {}, jpeg + jpeg) + "--" + boundary + "--\r\n", boundary,
+                         "multiple JPEGs in one part");
+
+  require_pipeline_error("--bad\r\nContent-Type: image/jpeg\r\nImage-Index: 1\r\n", boundary,
+                         "unfinished MIME headers at EOS");
 }
 
 void test_reentrant_property_reset_is_safe() {
@@ -369,6 +468,8 @@ RUN_TEST("unit_multipart_capture_element", [] {
   test_capture_only_selected_headers();
   test_no_capture_configured_emits_no_attributes();
   test_dimension_change_renegotiates_caps();
+  test_caps_boundary_refreshes_on_reconnect();
+  test_malformed_jpeg_parts_fail_the_stream();
   test_reentrant_property_reset_is_safe();
   test_attribute_mutation_rejects_shared_buffers();
 })

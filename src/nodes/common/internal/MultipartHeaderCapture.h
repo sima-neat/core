@@ -18,6 +18,9 @@
 
 namespace simaai::neat::multipart_internal {
 
+/// Hard safety limit for one MIME part body. This header is private to Core.
+inline constexpr std::size_t kMultipartJpegMaxPartBytes = 64U * 1024U * 1024U;
+
 /// Normalized, deduplicated, sorted capture allowlist.
 ///
 /// @throws std::invalid_argument on an empty name, a non-token name, a name longer than
@@ -53,7 +56,8 @@ public:
 
   /// @param boundary Boundary token without the leading `--`; empty enables auto-detect.
   /// @param capture Normalized allowlist; may be empty (then no attributes are emitted).
-  MultipartParser(std::string boundary, std::vector<std::string> capture);
+  MultipartParser(std::string boundary, std::vector<std::string> capture,
+                  std::size_t max_part_bytes = kMultipartJpegMaxPartBytes);
 
   /// Feed a chunk. Returns false and sets `err` on a protocol or limit violation.
   bool feed(const uint8_t* data, std::size_t size, const PartSink& sink, std::string* err);
@@ -87,6 +91,7 @@ private:
   std::string boundary_;
   std::string delimiter_; ///< "--" + boundary_, cached once known.
   std::vector<std::string> capture_;
+  std::size_t max_part_bytes_;
   State state_ = State::Preamble;
   std::vector<uint8_t> buf_;
   std::size_t cursor_ = 0;                     ///< Start of unconsumed data in `buf_`.

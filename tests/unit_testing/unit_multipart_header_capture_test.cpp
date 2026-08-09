@@ -155,7 +155,8 @@ void test_open_ended_stream_with_absent_header() {
 void test_body_containing_delimiter_bytes() {
   const std::vector<std::string> capture = {"image-index"};
   std::string body("\xFF\xD8--b-not-really\x00 padding-\r\n-", 30);
-  std::string s = "--b\r\nImage-Index: 9\r\n\r\n" + body + "\r\n--b--\r\n";
+  std::string s =
+      "--b\r\nContent-Type: image/jpeg\r\nImage-Index: 9\r\n\r\n" + body + "\r\n--b--\r\n";
   for (const std::size_t chunk : {1U, 4U, 512U}) {
     bool ok = false;
     std::string err;
@@ -170,7 +171,8 @@ void test_body_containing_delimiter_bytes() {
 
 void test_value_trimming() {
   const std::vector<std::string> capture = {"image-index"};
-  const std::string s = "--b\r\nImage-Index: \t 42 \t\r\n\r\nX\r\n--b--\r\n";
+  const std::string s =
+      "--b\r\nContent-Type: image/jpeg\r\nImage-Index: \t 42 \t\r\n\r\nX\r\n--b--\r\n";
   bool ok = false;
   std::string err;
   const std::vector<Part> parts = parse_all(s, "b", capture, 5U, &ok, &err);
@@ -181,6 +183,16 @@ void test_value_trimming() {
 
 void test_malformed_input_is_rejected() {
   const std::vector<std::string> capture = {"image-index"};
+  require(parse_rejects("--b\r\nImage-Index: 1\r\n\r\nBODY\r\n--b--\r\n", "b", capture),
+          "a JPEG part without Content-Type must be rejected");
+  require(
+      parse_rejects("--b\r\nContent-Type: text/plain\r\nImage-Index: 1\r\n\r\nBODY\r\n--b--\r\n",
+                    "b", capture),
+      "a non-JPEG Content-Type must be rejected");
+  require(parse_rejects("--b\r\nContent-Type: image/jpeg\r\nImage-Index: 1\r\n", "b", capture),
+          "an unfinished header block at EOS must be rejected");
+  require(parse_rejects("--b\r\nContent-Type: image/jpeg\r\n\r\n\r\n--b--\r\n", "b", capture),
+          "an empty JPEG part must be rejected");
   require(
       parse_rejects("--b\r\nImage-Index: 1\r\n Folded: x\r\n\r\nBODY\r\n--b--\r\n", "b", capture),
       "folded header line must be rejected");
@@ -221,6 +233,15 @@ void test_limits_fail_rather_than_truncate() {
   }
   big_block += "\r\nBODY\r\n--b--\r\n";
   require(parse_rejects(big_block, "b", capture), "oversized header block must be rejected");
+
+  MultipartParser parser("b", capture, 8U);
+  const std::string oversized_body =
+      "--b\r\nContent-Type: image/jpeg\r\n\r\n123456789\r\n--b--\r\n";
+  std::string err;
+  const auto sink = [](const uint8_t*, std::size_t, Attrs&&) { return true; };
+  require(!parser.feed(reinterpret_cast<const uint8_t*>(oversized_body.data()),
+                       oversized_body.size(), sink, &err),
+          "a part body larger than the configured hard limit must be rejected");
 }
 
 void test_allowlist_normalization() {
@@ -279,13 +300,14 @@ void test_reset_clears_pending_state() {
     return true;
   };
   std::string err;
-  const std::string head = "--b\r\nImage-Index: 1\r\n\r\nPARTIAL";
+  const std::string head = "--b\r\nContent-Type: image/jpeg\r\nImage-Index: 1\r\n\r\nPARTIAL";
   require(parser.feed(reinterpret_cast<const uint8_t*>(head.data()), head.size(), sink, &err),
           "partial feed must succeed: " + err);
   require(parts.empty(), "an unterminated part must not be emitted");
 
   parser.reset();
-  const std::string fresh = "--b\r\nImage-Index: 7\r\n\r\nNEW\r\n--b--\r\n";
+  const std::string fresh =
+      "--b\r\nContent-Type: image/jpeg\r\nImage-Index: 7\r\n\r\nNEW\r\n--b--\r\n";
   require(parser.feed(reinterpret_cast<const uint8_t*>(fresh.data()), fresh.size(), sink, &err),
           "post-reset feed must succeed: " + err);
   require(parts.size() == 1U, "reset must drop buffered bytes");

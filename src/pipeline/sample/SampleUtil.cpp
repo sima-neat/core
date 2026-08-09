@@ -3568,7 +3568,15 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
           field_input_seq, field_orig_input_seq,
           bundle.stream_id.empty() ? std::nullopt : std::optional<std::string>(bundle.stream_id),
           std::optional<std::string>(buffer_name));
-      gst_internal::write_attributes(buf, field.attributes);
+      if (!gst_internal::write_attributes(buf, field.attributes)) {
+        gst_buffer_unref(buf);
+        gst_buffer_unref(sample_buf);
+        g_value_unset(&list);
+        if (err) {
+          *err = "Sample field attributes attach failed";
+        }
+        return {};
+      }
 
       Sample field_with_caps = field;
       field_with_caps.caps_string = spec.caps_string;

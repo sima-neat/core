@@ -1360,7 +1360,10 @@ void update_holder_sima_meta_if_needed_or_throw(
                                   (attributes->empty() && !gst_internal::has_attributes(*buffer));
     if (!nothing_to_write) {
       ensure_holder_metadata_writable_or_throw(buffer, spec, where, "update GstSimaMeta");
-      gst_internal::write_attributes(*buffer, *attributes);
+      if (!gst_internal::write_attributes(*buffer, *attributes)) {
+        throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                                 ": failed to write sample attributes");
+      }
     }
     return;
   }
@@ -1372,7 +1375,10 @@ void update_holder_sima_meta_if_needed_or_throw(
                              ": failed to write GstSimaMeta fields");
   }
   if (attributes != nullptr && !(attributes->empty() && !gst_internal::has_attributes(*buffer))) {
-    gst_internal::write_attributes(*buffer, *attributes);
+    if (!gst_internal::write_attributes(*buffer, *attributes)) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                               ": failed to write sample attributes");
+    }
   }
 }
 
@@ -1690,7 +1696,11 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   attach_required_meta(buf, st.src_opt, st.pool_guard, "InputStream::try_push_message(encoded)");
   update_simaai_meta_fields(buf, meta.frame_id, input_seq_override, orig_input_seq_override,
                             meta.stream_id, meta.stream_label, timing_override.pts_ns);
-  gst_internal::write_attributes(buf, meta.attributes);
+  if (!gst_internal::write_attributes(buf, meta.attributes)) {
+    release_input_buffer(buf, "InputStream::try_push_message:encoded_attributes_fail");
+    throw std::runtime_error(
+        "InputStream::try_push_message(encoded): failed to write sample attributes");
+  }
   if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
     release_input_buffer(buf, "InputStream::try_push_message:encoded_timing_fail");
     throw std::runtime_error(
@@ -1941,7 +1951,10 @@ CpuZeroCopyFastPathResult try_push_message_cpu_owned_zero_copy_fastpath(
       throw std::runtime_error(
           "InputStream::try_push_message(cpu_zc): failed to write GstSimaMeta fields");
     }
-    gst_internal::write_attributes(buf, meta.attributes);
+    if (!gst_internal::write_attributes(buf, meta.attributes)) {
+      throw std::runtime_error(
+          "InputStream::try_push_message(cpu_zc): failed to write sample attributes");
+    }
     if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
       throw std::runtime_error(
           "InputStream::try_push_message(cpu_zc): failed to write sample timing metadata");

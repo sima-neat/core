@@ -17,6 +17,7 @@ constexpr uint8_t kCR = 0x0D;
 constexpr uint8_t kLF = 0x0A;
 constexpr uint8_t kSP = 0x20;
 constexpr uint8_t kHT = 0x09;
+constexpr std::size_t kFeedSliceBytes = 64U * 1024U;
 
 bool is_token_char(char c) {
   const unsigned char u = static_cast<unsigned char>(c);
@@ -73,6 +74,11 @@ bool is_valid_field_value(const std::string& value) {
     }
   }
   return true;
+}
+
+bool is_jpeg_content_type(const std::string& value) {
+  const std::size_t semicolon = value.find(';');
+  return ascii_lower(trim_sp_ht(value.substr(0U, semicolon))) == "image/jpeg";
 }
 
 } // namespace
@@ -140,8 +146,13 @@ std::vector<std::string> split_capture_names(const std::string& joined) {
   return out;
 }
 
-MultipartParser::MultipartParser(std::string boundary, std::vector<std::string> capture)
-    : boundary_(std::move(boundary)), capture_(std::move(capture)) {
+MultipartParser::MultipartParser(std::string boundary, std::vector<std::string> capture,
+                                 std::size_t max_part_bytes)
+    : boundary_(std::move(boundary)), capture_(std::move(capture)),
+      max_part_bytes_(max_part_bytes) {
+  if (max_part_bytes_ == 0U) {
+    throw std::invalid_argument("multipart maximum part size must be greater than zero");
+  }
   if (!boundary_.empty()) {
     delimiter_ = "--" + boundary_;
   }
@@ -239,6 +250,7 @@ bool MultipartParser::parse_header_block(std::size_t block_begin, std::size_t bl
     return false;
   }
 
+  bool saw_content_type = false;
   std::size_t line_begin = block_begin;
   while (line_begin < block_end) {
     std::size_t line_end = line_begin;
@@ -310,12 +322,27 @@ bool MultipartParser::parse_header_block(std::size_t block_begin, std::size_t bl
     }
 
     const std::string key = ascii_lower(name);
+    if (key == "content-type") {
+      if (!is_jpeg_content_type(value)) {
+        if (err) {
+          *err = "multipart part Content-Type must be image/jpeg";
+        }
+        return false;
+      }
+      saw_content_type = true;
+    }
     if (std::binary_search(capture_.begin(), capture_.end(), key)) {
       // Last value wins for a repeated selected header.
       pending_[key] = value;
     }
 
     line_begin = line_end + 1U;
+  }
+  if (!saw_content_type) {
+    if (err) {
+      *err = "multipart part is missing Content-Type: image/jpeg";
+    }
+    return false;
   }
   return true;
 }
@@ -450,6 +477,12 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
                                      : body_begin_;
       const std::size_t at = find_boundary(resume, &closing, &delim_len, true);
       if (at == std::string::npos) {
+        if (buf_.size() - body_begin_ > max_part_bytes_) {
+          if (err) {
+            *err = "multipart part body exceeds " + std::to_string(max_part_bytes_) + " bytes";
+          }
+          return false;
+        }
         scanned_ = buf_.size();
         return true;
       }
@@ -460,6 +493,12 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
         body_end -= 2U;
       }
       if (body_end > body_begin_) {
+        if (body_end - body_begin_ > max_part_bytes_) {
+          if (err) {
+            *err = "multipart part body exceeds " + std::to_string(max_part_bytes_) + " bytes";
+          }
+          return false;
+        }
         std::map<std::string, std::string> attributes;
         attributes.swap(pending_);
         if (!sink(buf_.data() + body_begin_, body_end - body_begin_, std::move(attributes))) {
@@ -470,7 +509,10 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
         }
         saw_any_part_ = true;
       } else {
-        pending_.clear();
+        if (err) {
+          *err = "multipart JPEG part body is empty";
+        }
+        return false;
       }
       cursor_ = at + delim_len;
       state_ = closing ? State::Epilogue : State::HeaderBlock;
@@ -491,14 +533,29 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
 
 bool MultipartParser::feed(const uint8_t* data, std::size_t size, const PartSink& sink,
                            std::string* err) {
-  if (data != nullptr && size != 0U) {
-    buf_.insert(buf_.end(), data, data + size);
+  if (data == nullptr || size == 0U) {
+    return run(sink, err);
   }
-  return run(sink, err);
+  std::size_t offset = 0U;
+  while (offset < size) {
+    const std::size_t chunk = std::min(kFeedSliceBytes, size - offset);
+    buf_.insert(buf_.end(), data + offset, data + offset + chunk);
+    offset += chunk;
+    if (!run(sink, err)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool MultipartParser::finish(const PartSink& sink, std::string* err) {
   if (!run(sink, err)) {
+    return false;
+  }
+  if (state_ == State::HeaderBlock) {
+    if (err) {
+      *err = "multipart stream ended in an unfinished part header block";
+    }
     return false;
   }
   if (state_ != State::Body) {
@@ -510,6 +567,12 @@ bool MultipartParser::finish(const PartSink& sink, std::string* err) {
     body_end -= 2U;
   }
   if (body_end > body_begin_) {
+    if (body_end - body_begin_ > max_part_bytes_) {
+      if (err) {
+        *err = "multipart part body exceeds " + std::to_string(max_part_bytes_) + " bytes";
+      }
+      return false;
+    }
     std::map<std::string, std::string> attributes;
     attributes.swap(pending_);
     if (!sink(buf_.data() + body_begin_, body_end - body_begin_, std::move(attributes))) {
@@ -519,6 +582,11 @@ bool MultipartParser::finish(const PartSink& sink, std::string* err) {
       return false;
     }
     saw_any_part_ = true;
+  } else {
+    if (err) {
+      *err = "multipart stream ended with an empty JPEG part body";
+    }
+    return false;
   }
   cursor_ = buf_.size();
   state_ = State::Epilogue;

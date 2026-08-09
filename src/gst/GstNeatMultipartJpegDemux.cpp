@@ -29,9 +29,10 @@ struct _GstNeatMultipartJpegDemux {
   GstPad* srcpad;
 
   GMutex lock;
-  gchar* boundary;        ///< Configured boundary override; NULL means auto-detect.
-  gchar* capture_headers; ///< Comma-separated normalized allowlist.
-  gboolean single_stream; ///< Keep the first negotiated JPEG caps for a stable stream.
+  gchar* configured_boundary; ///< Property value; empty means auto-detect per connection.
+  gchar* active_boundary;     ///< Boundary learned from the current upstream caps.
+  gchar* capture_headers;     ///< Comma-separated normalized allowlist.
+  gboolean single_stream;     ///< Keep the first negotiated JPEG caps for a stable stream.
 
   MultipartParser* parser;
   gboolean caps_pushed;
@@ -83,56 +84,109 @@ GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE(
 GstStaticPadTemplate src_template =
     GST_STATIC_PAD_TEMPLATE("src", GST_PAD_SRC, GST_PAD_ALWAYS, GST_STATIC_CAPS("image/jpeg"));
 
-/// Minimal JPEG SOF scan: enough to advertise output caps without `jpegparse`.
-///
-/// Returns false when no SOF marker is found; the caller then leaves the dimensions
-/// unspecified rather than guessing.
-bool scan_jpeg_dimensions(const uint8_t* data, std::size_t size, gint* width, gint* height) {
+bool fail_jpeg(std::string* err, const char* message) {
+  if (err) {
+    *err = message;
+  }
+  return false;
+}
+
+/// Validate exactly one complete JPEG image and return its frame dimensions.
+bool validate_jpeg_frame(const uint8_t* data, std::size_t size, gint* width, gint* height,
+                         std::string* err) {
   if (!data || size < 4U || data[0] != 0xFFU || data[1] != 0xD8U) {
-    return false;
+    return fail_jpeg(err, "JPEG part does not start with SOI");
   }
   std::size_t pos = 2U;
-  while (pos + 3U < size) {
+  bool in_scan = false;
+  bool saw_sof = false;
+  bool saw_sos = false;
+  while (pos < size) {
     if (data[pos] != 0xFFU) {
+      if (in_scan) {
+        ++pos;
+        continue;
+      }
+      return fail_jpeg(err, "JPEG data outside a marker segment");
+    }
+
+    while (pos < size && data[pos] == 0xFFU) {
       ++pos;
+    }
+    if (pos >= size) {
+      return fail_jpeg(err, "JPEG ends inside a marker");
+    }
+    const uint8_t marker = data[pos++];
+    if (marker == 0x00U) {
+      if (!in_scan) {
+        return fail_jpeg(err, "JPEG contains stuffed data outside a scan");
+      }
       continue;
     }
-    const uint8_t marker = data[pos + 1U];
-    if (marker == 0xFFU) {
-      ++pos;
+    if (marker == 0xD9U) {
+      if (!saw_sof || !saw_sos) {
+        return fail_jpeg(err, "JPEG reaches EOI before a complete frame header");
+      }
+      if (pos != size) {
+        return fail_jpeg(err, "multipart part contains data after JPEG EOI");
+      }
+      return true;
+    }
+    if (marker == 0xD8U) {
+      return fail_jpeg(err, "multipart part contains more than one JPEG SOI");
+    }
+    if (marker == 0x01U || (marker >= 0xD0U && marker <= 0xD7U)) {
+      if (marker != 0x01U && !in_scan) {
+        return fail_jpeg(err, "JPEG restart marker appears outside a scan");
+      }
       continue;
     }
-    // Standalone markers carry no length payload.
-    if (marker == 0xD8U || marker == 0x01U || (marker >= 0xD0U && marker <= 0xD7U)) {
-      pos += 2U;
-      continue;
-    }
-    if (marker == 0xD9U || marker == 0xDAU) {
-      return false; // end of image or start of scan: no SOF found
-    }
-    if (pos + 3U >= size) {
-      return false;
+    if (pos + 2U > size) {
+      return fail_jpeg(err, "JPEG segment length is truncated");
     }
     const std::size_t seg_len =
-        (static_cast<std::size_t>(data[pos + 2U]) << 8) | static_cast<std::size_t>(data[pos + 3U]);
-    if (seg_len < 2U || pos + 2U + seg_len > size) {
-      return false;
+        (static_cast<std::size_t>(data[pos]) << 8) | static_cast<std::size_t>(data[pos + 1U]);
+    if (seg_len < 2U || pos + seg_len > size) {
+      return fail_jpeg(err, "JPEG segment exceeds the MIME part");
     }
     // SOF0..SOF15 except the non-frame markers DHT (C4), JPG (C8) and DAC (CC).
     const bool is_sof = (marker >= 0xC0U && marker <= 0xCFU) && marker != 0xC4U &&
                         marker != 0xC8U && marker != 0xCCU;
     if (is_sof) {
-      if (seg_len < 7U) {
-        return false;
+      if (seg_len < 11U) {
+        return fail_jpeg(err, "JPEG SOF segment is too short");
       }
-      const std::size_t p = pos + 4U; // skip marker + length
+      const std::size_t p = pos + 2U; // skip segment length
+      const std::size_t component_count = data[p + 5U];
+      if (component_count == 0U || seg_len != 8U + 3U * component_count) {
+        return fail_jpeg(err, "JPEG SOF component table is malformed");
+      }
       *height = static_cast<gint>((static_cast<gint>(data[p + 1U]) << 8) | data[p + 2U]);
       *width = static_cast<gint>((static_cast<gint>(data[p + 3U]) << 8) | data[p + 4U]);
-      return (*width > 0 && *height > 0);
+      if (*width <= 0 || *height <= 0) {
+        return fail_jpeg(err, "JPEG SOF dimensions are invalid");
+      }
+      saw_sof = true;
     }
-    pos += 2U + seg_len;
+    if (marker == 0xDAU) {
+      if (!saw_sof) {
+        return fail_jpeg(err, "JPEG scan appears before a frame header");
+      }
+      if (seg_len < 8U) {
+        return fail_jpeg(err, "JPEG SOS segment is too short");
+      }
+      const std::size_t scan_component_count = data[pos + 2U];
+      if (scan_component_count == 0U || seg_len != 6U + 2U * scan_component_count) {
+        return fail_jpeg(err, "JPEG SOS component table is malformed");
+      }
+      saw_sos = true;
+      in_scan = true;
+    } else {
+      in_scan = false;
+    }
+    pos += seg_len;
   }
-  return false;
+  return fail_jpeg(err, "JPEG part is missing EOI");
 }
 
 /// Pull a boundary out of an upstream `multipart/x-mixed-replace` caps string.
@@ -153,7 +207,9 @@ void reset_parser_locked(GstNeatMultipartJpegDemux* self) {
   if (self->capture_headers && *self->capture_headers) {
     capture = simaai::neat::multipart_internal::split_capture_names(self->capture_headers);
   }
-  const std::string boundary = self->boundary ? self->boundary : "";
+  const bool configured = self->configured_boundary && *self->configured_boundary;
+  const std::string boundary =
+      configured ? self->configured_boundary : (self->active_boundary ? self->active_boundary : "");
   delete self->parser;
   self->parser = new MultipartParser(boundary, capture);
   self->caps_pushed = FALSE;
@@ -174,16 +230,11 @@ void queue_part_locked(GstNeatMultipartJpegDemux* self, std::vector<PendingPart>
   pending->emplace_back(std::move(part));
 }
 
-gboolean push_src_caps_if_needed(GstNeatMultipartJpegDemux* self, const uint8_t* body,
-                                 std::size_t size) {
-  gint width = 0;
-  gint height = 0;
-  const bool have_dims = scan_jpeg_dimensions(body, size, &width, &height);
-
+gboolean push_src_caps_if_needed(GstNeatMultipartJpegDemux* self, gint width, gint height) {
   GstEvent* pending_segment = nullptr;
   g_mutex_lock(&self->lock);
   if (self->caps_pushed &&
-      (self->single_stream || !have_dims ||
+      (self->single_stream ||
        (self->caps_have_dimensions && self->caps_width == width && self->caps_height == height))) {
     g_mutex_unlock(&self->lock);
     return TRUE;
@@ -194,13 +245,11 @@ gboolean push_src_caps_if_needed(GstNeatMultipartJpegDemux* self, const uint8_t*
   const gint old_caps_width = self->caps_width;
   const gint old_caps_height = self->caps_height;
   GstCaps* caps = gst_caps_new_simple("image/jpeg", "parsed", G_TYPE_BOOLEAN, TRUE, nullptr);
-  if (have_dims) {
-    gst_caps_set_simple(caps, "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, nullptr);
-  }
+  gst_caps_set_simple(caps, "width", G_TYPE_INT, width, "height", G_TYPE_INT, height, nullptr);
   self->caps_pushed = TRUE;
-  self->caps_have_dimensions = have_dims ? TRUE : FALSE;
-  self->caps_width = have_dims ? width : 0;
-  self->caps_height = have_dims ? height : 0;
+  self->caps_have_dimensions = TRUE;
+  self->caps_width = width;
+  self->caps_height = height;
   if (!old_caps_pushed) {
     pending_segment = self->pending_segment;
     self->pending_segment = nullptr;
@@ -234,7 +283,14 @@ gboolean push_src_caps_if_needed(GstNeatMultipartJpegDemux* self, const uint8_t*
 /// Parsing and downstream delivery are deliberately separate phases. This function must be
 /// called without the element lock so downstream callbacks may safely re-enter the element.
 GstFlowReturn emit_part(GstNeatMultipartJpegDemux* self, PendingPart&& part) {
-  if (!push_src_caps_if_needed(self, part.body.data(), part.body.size())) {
+  gint width = 0;
+  gint height = 0;
+  std::string jpeg_error;
+  if (!validate_jpeg_frame(part.body.data(), part.body.size(), &width, &height, &jpeg_error)) {
+    GST_ELEMENT_ERROR(self, STREAM, DECODE, ("Invalid JPEG MIME part"), ("%s", jpeg_error.c_str()));
+    return GST_FLOW_ERROR;
+  }
+  if (!push_src_caps_if_needed(self, width, height)) {
     GST_ERROR_OBJECT(self, "failed to negotiate image/jpeg caps downstream");
     return GST_FLOW_NOT_NEGOTIATED;
   }
@@ -255,7 +311,10 @@ GstFlowReturn emit_part(GstNeatMultipartJpegDemux* self, PendingPart&& part) {
   // side channel that could drift relative to the payload.
   if (!part.attributes.empty() &&
       !simaai::neat::gst_internal::write_attributes(buffer, part.attributes)) {
-    GST_WARNING_OBJECT(self, "failed to attach captured multipart headers");
+    GST_ELEMENT_ERROR(self, STREAM, FAILED, ("Failed to attach multipart frame attributes"),
+                      ("GstSimaMeta attribute write failed"));
+    gst_buffer_unref(buffer);
+    return GST_FLOW_ERROR;
   }
 
   GST_BUFFER_PTS(buffer) = part.pts;
@@ -332,9 +391,10 @@ gboolean gst_neat_multipart_jpeg_demux_sink_event(GstPad* pad, GstObject* parent
     gst_event_parse_caps(event, &caps);
     const std::string detected = boundary_from_caps(caps);
     g_mutex_lock(&self->lock);
-    if (!detected.empty() && (!self->boundary || !*self->boundary)) {
-      g_free(self->boundary);
-      self->boundary = g_strdup(detected.c_str());
+    if ((!self->configured_boundary || !*self->configured_boundary) &&
+        g_strcmp0(self->active_boundary, detected.c_str()) != 0) {
+      g_free(self->active_boundary);
+      self->active_boundary = g_strdup(detected.c_str());
       reset_parser_locked(self);
     }
     g_mutex_unlock(&self->lock);
@@ -376,14 +436,22 @@ gboolean gst_neat_multipart_jpeg_demux_sink_event(GstPad* pad, GstObject* parent
         break;
       }
     }
-    if (!finished && flow == GST_FLOW_OK) {
-      GST_WARNING_OBJECT(self, "multipart stream ended mid-part: %s", err.c_str());
+    if (!finished || flow != GST_FLOW_OK) {
+      if (!finished && flow == GST_FLOW_OK) {
+        GST_ELEMENT_ERROR(self, STREAM, DEMUX, ("Malformed multipart stream at EOS"),
+                          ("%s", err.c_str()));
+      }
+      gst_event_unref(event);
+      return FALSE;
     }
     return gst_pad_push_event(self->srcpad, event);
   }
   case GST_EVENT_FLUSH_STOP: {
     g_mutex_lock(&self->lock);
     // Buffered bytes and any half-assembled part's headers belong to the old segment.
+    if (!self->configured_boundary || !*self->configured_boundary) {
+      g_clear_pointer(&self->active_boundary, g_free);
+    }
     reset_parser_locked(self);
     gst_event_replace(&self->pending_segment, nullptr);
     g_mutex_unlock(&self->lock);
@@ -400,8 +468,9 @@ void gst_neat_multipart_jpeg_demux_set_property(GObject* object, guint prop_id, 
   g_mutex_lock(&self->lock);
   switch (prop_id) {
   case PROP_BOUNDARY:
-    g_free(self->boundary);
-    self->boundary = g_value_dup_string(value);
+    g_free(self->configured_boundary);
+    self->configured_boundary = g_value_dup_string(value);
+    g_clear_pointer(&self->active_boundary, g_free);
     reset_parser_locked(self);
     break;
   case PROP_CAPTURE_HEADERS:
@@ -427,7 +496,7 @@ void gst_neat_multipart_jpeg_demux_get_property(GObject* object, guint prop_id, 
   g_mutex_lock(&self->lock);
   switch (prop_id) {
   case PROP_BOUNDARY:
-    g_value_set_string(value, self->boundary ? self->boundary : "");
+    g_value_set_string(value, self->configured_boundary ? self->configured_boundary : "");
     break;
   case PROP_CAPTURE_HEADERS:
     g_value_set_string(value, self->capture_headers ? self->capture_headers : "");
@@ -448,7 +517,8 @@ void gst_neat_multipart_jpeg_demux_finalize(GObject* object) {
   delete self->parser;
   self->parser = nullptr;
   gst_event_replace(&self->pending_segment, nullptr);
-  g_free(self->boundary);
+  g_free(self->configured_boundary);
+  g_free(self->active_boundary);
   g_free(self->capture_headers);
   g_mutex_clear(&self->lock);
   G_OBJECT_CLASS(gst_neat_multipart_jpeg_demux_parent_class)->finalize(object);
@@ -506,7 +576,8 @@ void gst_neat_multipart_jpeg_demux_class_init(GstNeatMultipartJpegDemuxClass* kl
 
 void gst_neat_multipart_jpeg_demux_init(GstNeatMultipartJpegDemux* self) {
   g_mutex_init(&self->lock);
-  self->boundary = g_strdup("");
+  self->configured_boundary = g_strdup("");
+  self->active_boundary = g_strdup("");
   self->capture_headers = g_strdup("");
   self->single_stream = FALSE;
   self->parser = nullptr;

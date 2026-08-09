@@ -82,6 +82,8 @@ the existing topology and behavior untouched.
 | Header absent from a part | Key is omitted. It is never inherited from a previous frame. |
 | Header present but empty | Preserved as an empty string. |
 | Whitespace | Only surrounding SP/HTAB is trimmed. Values are not otherwise reinterpreted. |
+| MIME type | Every part must declare `Content-Type: image/jpeg` (parameters are allowed). |
+| JPEG payload | A part must contain exactly one complete JPEG from SOI through EOI. Truncated, empty, or concatenated images fail the stream. |
 | Invalid input | Invalid header names, folded header lines, and CR/LF/NUL injection are rejected — the stream errors rather than being normalized into something safe-looking. |
 
 Distinguish "absent" from "empty" with `count()` / `get()` rather than by testing for an
@@ -97,6 +99,7 @@ Parsing fails rather than truncating when any of these is exceeded:
 | `kMultipartHeaderCaptureMaxNameBytes` | 128 bytes per name |
 | `kMultipartHeaderCaptureMaxLineBytes` | 8 KiB per header line |
 | `kMultipartHeaderCaptureMaxBlockBytes` | 64 KiB per part header block |
+| Multipart JPEG body | 64 MiB per MIME part |
 
 A malformed allowlist is rejected at construction with `std::invalid_argument`.
 
@@ -116,6 +119,8 @@ Capture-enabled graphs use a private in-process element that parses part boundar
 part headers in one state machine, so a part's headers are attached to the very buffer
 carrying its bytes; there is no side channel that can drift. That element emits complete,
 parsed JPEG frames, so `jpegparse` is not inserted on the capture-enabled path.
+If attaching the selected attributes fails, the frame is not delivered and the stream
+reports an error.
 
 Through decode, the plugin snapshots the attributes of each accepted encoded picture and
 restores them onto the decoded output the decoder correlates back to it — not onto whichever
