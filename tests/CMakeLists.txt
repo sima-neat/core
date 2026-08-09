@@ -405,6 +405,9 @@ set(UNIT_TESTS
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
+  unit_legacy_afe_mpk_decoder_test
+  unit_frame_slot_arena_plan_test
+  unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
   unit_outputspec_test
   unit_pcie_nodes_test
@@ -497,6 +500,24 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+# Optional frozen-corpus gate. The normal unit target uses synthetic JSON/ELF
+# fixtures and is always available; this integration test is registered only
+# when a developer/CI job explicitly supplies the external official corpus.
+set(SIMANEAT_EVO_MPK_CORPUS_DIR "$ENV{SIMANEAT_EVO_MPK_CORPUS_DIR}" CACHE PATH
+    "Directory containing the 12 frozen official EVO MPK archives")
+if (SIMANEAT_EVO_MPK_CORPUS_DIR)
+  add_test(
+    NAME integration_legacy_afe_evo_corpus_test
+    COMMAND ${Python3_EXECUTABLE}
+      ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_legacy_afe_evo_corpus_test.py
+      --validator $<TARGET_FILE:unit_legacy_afe_mpk_decoder_test>
+      --corpus "${SIMANEAT_EVO_MPK_CORPUS_DIR}"
+  )
+  simaneat_append_ctest_env(integration_legacy_afe_evo_corpus_test)
+  set_tests_properties(integration_legacy_afe_evo_corpus_test PROPERTIES
+    LABELS "integration;model-contract;evo-corpus")
+endif()
 
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
