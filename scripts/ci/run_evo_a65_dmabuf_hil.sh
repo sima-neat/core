@@ -27,7 +27,7 @@ Options:
   --suite smoke|full    Per-candidate smoke or complete release matrix
   --plugin-dir DIR      Candidate Neat GStreamer plugin directory
   --library-path PATH   Candidate colon-separated runtime library path
-  --manage-services 0|1 Stop appcomplex/RPyC during the gate and restore them
+  --manage-services 0|1 Quiesce board services during the gate and restore them
   --plan-only           Print the exact matrix without touching hardware
 
 Optional release locks:
@@ -199,7 +199,13 @@ declare -a restore_services=()
 restore_board_services() {
   local service
   for service in "${restore_services[@]}"; do
-    as_root systemctl start "$service" || true
+    if [[ "$service" == neat-kernel-driver-rollback.service ]]; then
+      # The delayed rollback guard is a long-running oneshot. Restore it
+      # without making evidence sealing wait for its safety delay.
+      as_root systemctl start --no-block "$service" || true
+    else
+      as_root systemctl start "$service" || true
+    fi
   done
 }
 trap restore_board_services EXIT
@@ -207,7 +213,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ "$manage_services" == 1 ]]; then
-  for service in simaai-appcomplex.service simaai-rpyc-server.service; do
+  for service in simaai-appcomplex.service simaai-rpyc-server.service \
+      neat-kernel-driver-rollback.service; do
     if systemctl is-active --quiet "$service"; then
       restore_services+=("$service")
       as_root systemctl stop "$service"
