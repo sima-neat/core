@@ -50,9 +50,17 @@ std::string ascii_lower(std::string value);
  */
 class MultipartParser {
 public:
+  /// Timing carried by the input chunk where a part body begins.
+  struct PartTiming {
+    std::uint64_t pts = UINT64_MAX;
+    std::uint64_t dts = UINT64_MAX;
+    std::uint64_t duration = UINT64_MAX;
+  };
+
   /// Receives one complete part. Return false to abort parsing.
-  using PartSink = std::function<bool(const uint8_t* body, std::size_t size,
-                                      std::map<std::string, std::string>&& attributes)>;
+  using PartSink =
+      std::function<bool(const uint8_t* body, std::size_t size,
+                         std::map<std::string, std::string>&& attributes, PartTiming timing)>;
 
   /// @param boundary Boundary token without the leading `--`; empty enables auto-detect.
   /// @param capture Normalized allowlist; may be empty (then no attributes are emitted).
@@ -60,7 +68,8 @@ public:
                   std::size_t max_part_bytes = kMultipartJpegMaxPartBytes);
 
   /// Feed a chunk. Returns false and sets `err` on a protocol or limit violation.
-  bool feed(const uint8_t* data, std::size_t size, const PartSink& sink, std::string* err);
+  bool feed(const uint8_t* data, std::size_t size, const PartSink& sink, std::string* err,
+            PartTiming timing);
 
   /// Flush a trailing part that ended at end-of-stream rather than at a boundary.
   bool finish(const PartSink& sink, std::string* err);
@@ -98,6 +107,9 @@ private:
   std::size_t body_begin_ = 0;                 ///< Body start once in State::Body.
   std::size_t scanned_ = 0;                    ///< How far the body boundary scan has advanced.
   std::map<std::string, std::string> pending_; ///< Headers for the part being assembled.
+  PartTiming feed_timing_;                     ///< Timing of the chunk being consumed.
+  PartTiming pending_timing_;                  ///< Timing captured when this body began.
+  bool buffer_starts_at_line_start_ = true;
   bool saw_any_part_ = false;
 };
 

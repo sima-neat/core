@@ -65,6 +65,9 @@ struct Received {
   int width = -1;
   int height = -1;
   SampleAttributes attributes;
+  GstClockTime pts = GST_CLOCK_TIME_NONE;
+  GstClockTime dts = GST_CLOCK_TIME_NONE;
+  GstClockTime duration = GST_CLOCK_TIME_NONE;
 };
 
 void read_sample_caps(GstSample* sample, Received* received) {
@@ -84,6 +87,9 @@ Received pull_received(GstElement* sink, GstClockTime timeout = 2 * GST_SECOND) 
   read_sample_caps(sample, &received);
   GstBuffer* buffer = gst_sample_get_buffer(sample);
   if (buffer) {
+    received.pts = GST_BUFFER_PTS(buffer);
+    received.dts = GST_BUFFER_DTS(buffer);
+    received.duration = GST_BUFFER_DURATION(buffer);
     GstMapInfo map;
     if (gst_buffer_map(buffer, &map, GST_MAP_READ) == TRUE) {
       if (map.size >= 3U) {
@@ -123,6 +129,7 @@ void run_pipeline(const std::string& stream, const std::string& boundary,
 
   // Feed the whole stream in small chunks so the element's incremental path is exercised.
   constexpr std::size_t kChunk = 13U;
+  std::size_t chunk_index = 0U;
   for (std::size_t off = 0; off < stream.size(); off += kChunk) {
     const std::size_t n = std::min(kChunk, stream.size() - off);
     GstBuffer* buffer = gst_buffer_new_allocate(nullptr, n, nullptr);
@@ -130,8 +137,12 @@ void run_pipeline(const std::string& stream, const std::string& boundary,
     require(gst_buffer_map(buffer, &map, GST_MAP_WRITE) == TRUE, "chunk buffer must map");
     std::memcpy(map.data, stream.data() + off, n);
     gst_buffer_unmap(buffer, &map);
+    GST_BUFFER_PTS(buffer) = chunk_index * GST_SECOND;
+    GST_BUFFER_DTS(buffer) = chunk_index * GST_SECOND + 1U;
+    GST_BUFFER_DURATION(buffer) = 2U;
     require(gst_app_src_push_buffer(GST_APP_SRC(src), buffer) == GST_FLOW_OK,
             "appsrc push must succeed");
+    ++chunk_index;
   }
   gst_app_src_end_of_stream(GST_APP_SRC(src));
 
@@ -144,6 +155,9 @@ void run_pipeline(const std::string& stream, const std::string& boundary,
     Received received;
     read_sample_caps(sample, &received);
     if (buffer) {
+      received.pts = GST_BUFFER_PTS(buffer);
+      received.dts = GST_BUFFER_DTS(buffer);
+      received.duration = GST_BUFFER_DURATION(buffer);
       GstMapInfo map;
       if (gst_buffer_map(buffer, &map, GST_MAP_READ) == TRUE) {
         // The marker sits immediately before the trailing EOI.
@@ -415,6 +429,28 @@ void test_no_capture_configured_emits_no_attributes() {
           "with no allowlist the element must not attach attributes");
 }
 
+void test_part_timing_comes_from_the_body_start_chunk() {
+  constexpr std::size_t kChunk = 13U;
+  const std::string boundary = "b";
+  const std::string jpeg = make_marked_jpeg(32, 32, 0x67);
+  std::string stream = part(boundary, {}, jpeg);
+  stream += "--" + boundary + "--\r\n";
+  const std::size_t body_begin = stream.find("\r\n\r\n") + 4U;
+  const std::size_t body_chunk = body_begin / kChunk;
+  require(body_begin % kChunk != 0U,
+          "timing fixture body must begin inside a chunk, not on its boundary");
+
+  std::vector<Received> received;
+  run_pipeline(stream, boundary, "", &received);
+  require(received.size() == 1U, "timing stream must emit one frame");
+  require(received[0].pts == body_chunk * GST_SECOND,
+          "output PTS must come from the chunk where the part body began");
+  require(received[0].dts == body_chunk * GST_SECOND + 1U,
+          "output DTS must come from the chunk where the part body began");
+  require(received[0].duration == 2U,
+          "output duration must come from the chunk where the part body began");
+}
+
 void test_dimension_change_renegotiates_caps() {
   const std::string boundary = "frame";
   std::string stream;
@@ -458,6 +494,20 @@ void test_attribute_mutation_rejects_shared_buffers() {
           "attribute clear must succeed after the buffer becomes writable");
   simaai::neat::gst_internal::read_attributes(buffer, &observed);
   require(observed.empty(), "successful clear must remove all attributes");
+
+  require(simaai::neat::gst_internal::write_attributes(buffer, original),
+          "attributes must be restored before invalid-write checks");
+  const SampleAttributes nul_value{{"image-index", std::string("4\0x", 3)}};
+  require(!simaai::neat::gst_internal::write_attributes(buffer, nul_value),
+          "an embedded NUL value must be rejected instead of truncated");
+  simaai::neat::gst_internal::read_attributes(buffer, &observed);
+  require(observed == original, "a rejected NUL value must not mutate existing attributes");
+
+  const SampleAttributes nul_key{{std::string("image\0index", 11), "4"}};
+  require(!simaai::neat::gst_internal::write_attributes(buffer, nul_key),
+          "an embedded NUL key must be rejected instead of truncated");
+  simaai::neat::gst_internal::read_attributes(buffer, &observed);
+  require(observed == original, "a rejected NUL key must not mutate existing attributes");
   gst_buffer_unref(buffer);
 }
 
@@ -467,6 +517,7 @@ RUN_TEST("unit_multipart_capture_element", [] {
   test_per_frame_association();
   test_capture_only_selected_headers();
   test_no_capture_configured_emits_no_attributes();
+  test_part_timing_comes_from_the_body_start_chunk();
   test_dimension_change_renegotiates_caps();
   test_caps_boundary_refreshes_on_reconnect();
   test_malformed_jpeg_parts_fail_the_stream();

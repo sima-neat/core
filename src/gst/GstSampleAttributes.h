@@ -34,8 +34,9 @@ void read_attributes_from_structure(const GstStructure* meta_structure, SampleAt
 /// not be attached.
 bool write_attributes(GstBuffer* buffer, const SampleAttributes& attributes);
 
-/// Replace the attributes of an existing `GstSimaMeta` structure.
-void write_attributes_to_structure(GstStructure* meta_structure,
+/// Replace the attributes of an existing `GstSimaMeta` structure. Returns false for a null
+/// target or an embedded NUL, which `G_TYPE_STRING` cannot represent without truncation.
+bool write_attributes_to_structure(GstStructure* meta_structure,
                                    const SampleAttributes& attributes);
 
 /// Remove any attributes from `buffer`. Safe when no meta or no attributes are present.

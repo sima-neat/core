@@ -13,7 +13,8 @@ decode and hand them back on the `Sample` for the frame they belong to.
 
 `Sample::attributes` is a plain string-to-string map. Neat copies it, keeps it associated
 with its frame, and clears it when a destination buffer is reused. It never parses, merges,
-or reinterprets a value.
+or reinterprets a value. Keys and values containing an embedded NUL byte are rejected because
+the GStreamer string representation cannot preserve them.
 
 ## What is guaranteed
 
@@ -43,7 +44,7 @@ Reading them back:
 
 ```cpp
 simaai::neat::Sample sample;
-if (run.pull(sample, 1000) == simaai::neat::PullStatus::Ok) {
+if (run.pull(1000, sample) == simaai::neat::PullStatus::Ok) {
   const auto it = sample.attributes.find("image-index");
   if (it != sample.attributes.end()) {
     // it->second is the value this frame was sent with.

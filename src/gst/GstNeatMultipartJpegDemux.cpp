@@ -39,10 +39,6 @@ struct _GstNeatMultipartJpegDemux {
   gboolean caps_have_dimensions;
   gint caps_width;
   gint caps_height;
-  /* Timing of the input chunk currently being parsed, carried onto the parts it completes. */
-  GstClockTime chunk_pts;
-  GstClockTime chunk_dts;
-  GstClockTime chunk_duration;
   guint64 parts_emitted;
   /* Caps are only known once a part has been framed, but sticky events must go out as
      stream-start -> caps -> segment. Hold the segment until caps have been pushed. */
@@ -218,15 +214,15 @@ void reset_parser_locked(GstNeatMultipartJpegDemux* self) {
   self->caps_height = 0;
 }
 
-void queue_part_locked(GstNeatMultipartJpegDemux* self, std::vector<PendingPart>* pending,
-                       const uint8_t* body, std::size_t size,
-                       std::map<std::string, std::string>&& attributes) {
+void queue_part_locked(std::vector<PendingPart>* pending, const uint8_t* body, std::size_t size,
+                       std::map<std::string, std::string>&& attributes,
+                       MultipartParser::PartTiming timing) {
   PendingPart part;
   part.body.assign(body, body + size);
   part.attributes = std::move(attributes);
-  part.pts = self->chunk_pts;
-  part.dts = self->chunk_dts;
-  part.duration = self->chunk_duration;
+  part.pts = timing.pts;
+  part.dts = timing.dts;
+  part.duration = timing.duration;
   pending->emplace_back(std::move(part));
 }
 
@@ -347,18 +343,18 @@ GstFlowReturn gst_neat_multipart_jpeg_demux_chain(GstPad* pad, GstObject* parent
   std::string err;
   std::vector<PendingPart> pending;
   g_mutex_lock(&self->lock);
-  self->chunk_pts = GST_BUFFER_PTS(buffer);
-  self->chunk_dts = GST_BUFFER_DTS(buffer);
-  self->chunk_duration = GST_BUFFER_DURATION(buffer);
   if (!self->parser) {
     reset_parser_locked(self);
   }
   auto sink = [&](const uint8_t* body, std::size_t size,
-                  std::map<std::string, std::string>&& attributes) {
-    queue_part_locked(self, &pending, body, size, std::move(attributes));
+                  std::map<std::string, std::string>&& attributes,
+                  MultipartParser::PartTiming timing) {
+    queue_part_locked(&pending, body, size, std::move(attributes), timing);
     return true;
   };
-  const bool ok = self->parser->feed(map.data, map.size, sink, &err);
+  const MultipartParser::PartTiming timing{GST_BUFFER_PTS(buffer), GST_BUFFER_DTS(buffer),
+                                           GST_BUFFER_DURATION(buffer)};
+  const bool ok = self->parser->feed(map.data, map.size, sink, &err, timing);
   g_mutex_unlock(&self->lock);
 
   gst_buffer_unmap(buffer, &map);
@@ -422,8 +418,9 @@ gboolean gst_neat_multipart_jpeg_demux_sink_event(GstPad* pad, GstObject* parent
     g_mutex_lock(&self->lock);
     if (self->parser) {
       auto sink = [&](const uint8_t* body, std::size_t size,
-                      std::map<std::string, std::string>&& attributes) {
-        queue_part_locked(self, &pending, body, size, std::move(attributes));
+                      std::map<std::string, std::string>&& attributes,
+                      MultipartParser::PartTiming timing) {
+        queue_part_locked(&pending, body, size, std::move(attributes), timing);
         return true;
       };
       finished = self->parser->finish(sink, &err);
@@ -587,9 +584,6 @@ void gst_neat_multipart_jpeg_demux_init(GstNeatMultipartJpegDemux* self) {
   self->caps_height = 0;
   self->parts_emitted = 0U;
   self->pending_segment = nullptr;
-  self->chunk_pts = GST_CLOCK_TIME_NONE;
-  self->chunk_dts = GST_CLOCK_TIME_NONE;
-  self->chunk_duration = GST_CLOCK_TIME_NONE;
 
   self->sinkpad = gst_pad_new_from_static_template(&sink_template, "sink");
   gst_pad_set_chain_function(self->sinkpad, gst_neat_multipart_jpeg_demux_chain);

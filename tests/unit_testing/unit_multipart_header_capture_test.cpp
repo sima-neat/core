@@ -26,7 +26,8 @@ std::vector<Part> parse_all(const std::string& stream, const std::string& bounda
                             std::string* err) {
   std::vector<Part> parts;
   MultipartParser parser(boundary, capture);
-  auto sink = [&](const uint8_t* body, std::size_t size, Attrs&& attrs) {
+  auto sink = [&](const uint8_t* body, std::size_t size, Attrs&& attrs,
+                  MultipartParser::PartTiming) {
     parts.push_back(Part{std::string(reinterpret_cast<const char*>(body), size), std::move(attrs)});
     return true;
   };
@@ -34,7 +35,7 @@ std::vector<Part> parse_all(const std::string& stream, const std::string& bounda
   err->clear();
   for (std::size_t off = 0; off < stream.size() && *ok; off += chunk) {
     const std::size_t n = std::min(chunk, stream.size() - off);
-    if (!parser.feed(reinterpret_cast<const uint8_t*>(stream.data() + off), n, sink, err)) {
+    if (!parser.feed(reinterpret_cast<const uint8_t*>(stream.data() + off), n, sink, err, {})) {
       *ok = false;
     }
   }
@@ -170,6 +171,34 @@ void test_body_containing_delimiter_bytes() {
   }
 }
 
+void test_part_keeps_timing_from_body_start_chunk() {
+  MultipartParser parser("b", {});
+  MultipartParser::PartTiming observed;
+  std::size_t emitted = 0U;
+  const auto sink = [&](const uint8_t*, std::size_t, Attrs&&, MultipartParser::PartTiming timing) {
+    observed = timing;
+    ++emitted;
+    return true;
+  };
+  std::string err;
+  const std::string first = "--b\r\nContent-Type: image/jpeg\r\n\r\nPART";
+  const MultipartParser::PartTiming first_timing{11U, 12U, 13U};
+  require(parser.feed(reinterpret_cast<const uint8_t*>(first.data()), first.size(), sink, &err,
+                      first_timing),
+          "the first timed chunk must parse: " + err);
+
+  const std::string second = "END\r\n--b--\r\n";
+  const MultipartParser::PartTiming second_timing{21U, 22U, 23U};
+  require(parser.feed(reinterpret_cast<const uint8_t*>(second.data()), second.size(), sink, &err,
+                      second_timing),
+          "the completing timed chunk must parse: " + err);
+  require(parser.finish(sink, &err), "the timed stream must finish: " + err);
+  require(emitted == 1U, "the timed stream must emit one part");
+  require(observed.pts == first_timing.pts && observed.dts == first_timing.dts &&
+              observed.duration == first_timing.duration,
+          "part timing must come from the chunk where its body began");
+}
+
 void test_value_trimming() {
   const std::vector<std::string> capture = {"image-index"};
   const std::string s =
@@ -208,8 +237,13 @@ void test_malformed_input_is_rejected() {
           "header line without ':' must be rejected");
   require(parse_rejects("--b junk\r\nImage-Index: 1\r\n\r\nBODY\r\n--b--\r\n", "b", capture),
           "trailing bytes on the boundary line must be rejected");
+  require(
+      parse_rejects("prefix--b\r\nContent-Type: image/jpeg\r\n\r\nBODY\r\n--b--\r\n", "b", capture),
+      "an opening boundary in the middle of a preamble line must be rejected");
   require(parse_rejects("--b\nImage-Index: 1\n\nBODY\n--b--\n", "b", capture),
           "bare-LF framing must be rejected");
+  require(parse_rejects("", "b", capture), "EOS before the first multipart part must be rejected");
+  require(parse_rejects("--", "b", capture), "EOS inside the first boundary must be rejected");
 }
 
 void test_limits_fail_rather_than_truncate() {
@@ -239,10 +273,31 @@ void test_limits_fail_rather_than_truncate() {
   const std::string oversized_body =
       "--b\r\nContent-Type: image/jpeg\r\n\r\n123456789\r\n--b--\r\n";
   std::string err;
-  const auto sink = [](const uint8_t*, std::size_t, Attrs&&) { return true; };
+  const auto sink = [](const uint8_t*, std::size_t, Attrs&&, MultipartParser::PartTiming) {
+    return true;
+  };
   require(!parser.feed(reinterpret_cast<const uint8_t*>(oversized_body.data()),
-                       oversized_body.size(), sink, &err),
+                       oversized_body.size(), sink, &err, {}),
           "a part body larger than the configured hard limit must be rejected");
+
+  MultipartParser exact_parser("b", capture, 8U);
+  std::size_t emitted_size = 0U;
+  const auto exact_sink = [&](const uint8_t*, std::size_t size, Attrs&&,
+                              MultipartParser::PartTiming) {
+    emitted_size = size;
+    return true;
+  };
+  const std::string exact_prefix = "--b\r\nContent-Type: image/jpeg\r\n\r\n12345678\r\n--b";
+  require(exact_parser.feed(reinterpret_cast<const uint8_t*>(exact_prefix.data()),
+                            exact_prefix.size(), exact_sink, &err, {}),
+          "a size-compliant body with a split delimiter must not exceed the limit: " + err);
+  const std::string exact_suffix = "--\r\n";
+  require(exact_parser.feed(reinterpret_cast<const uint8_t*>(exact_suffix.data()),
+                            exact_suffix.size(), exact_sink, &err, {}),
+          "the completed split delimiter must parse: " + err);
+  require(exact_parser.finish(exact_sink, &err),
+          "the size-compliant split-delimiter stream must finish: " + err);
+  require(emitted_size == 8U, "framing bytes must not count toward the body-size limit");
 }
 
 void test_allowlist_normalization() {
@@ -296,20 +351,21 @@ void test_reset_clears_pending_state() {
   const std::vector<std::string> capture = {"image-index"};
   MultipartParser parser("b", capture);
   std::vector<Part> parts;
-  auto sink = [&](const uint8_t* body, std::size_t size, Attrs&& attrs) {
+  auto sink = [&](const uint8_t* body, std::size_t size, Attrs&& attrs,
+                  MultipartParser::PartTiming) {
     parts.push_back(Part{std::string(reinterpret_cast<const char*>(body), size), std::move(attrs)});
     return true;
   };
   std::string err;
   const std::string head = "--b\r\nContent-Type: image/jpeg\r\nImage-Index: 1\r\n\r\nPARTIAL";
-  require(parser.feed(reinterpret_cast<const uint8_t*>(head.data()), head.size(), sink, &err),
+  require(parser.feed(reinterpret_cast<const uint8_t*>(head.data()), head.size(), sink, &err, {}),
           "partial feed must succeed: " + err);
   require(parts.empty(), "an unterminated part must not be emitted");
 
   parser.reset();
   const std::string fresh =
       "--b\r\nContent-Type: image/jpeg\r\nImage-Index: 7\r\n\r\nNEW\r\n--b--\r\n";
-  require(parser.feed(reinterpret_cast<const uint8_t*>(fresh.data()), fresh.size(), sink, &err),
+  require(parser.feed(reinterpret_cast<const uint8_t*>(fresh.data()), fresh.size(), sink, &err, {}),
           "post-reset feed must succeed: " + err);
   require(parts.size() == 1U, "reset must drop buffered bytes");
   require(parts[0].body == "NEW", "post-reset body");
@@ -323,6 +379,7 @@ RUN_TEST("unit_multipart_header_capture", [] {
   test_boundary_autodetect();
   test_open_ended_stream_with_absent_header();
   test_body_containing_delimiter_bytes();
+  test_part_keeps_timing_from_body_start_chunk();
   test_value_trimming();
   test_malformed_input_is_rejected();
   test_limits_fail_rather_than_truncate();

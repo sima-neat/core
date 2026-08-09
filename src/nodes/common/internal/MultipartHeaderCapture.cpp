@@ -172,6 +172,9 @@ void MultipartParser::reset() {
   body_begin_ = 0;
   scanned_ = 0;
   pending_.clear();
+  feed_timing_ = {};
+  pending_timing_ = {};
+  buffer_starts_at_line_start_ = true;
   saw_any_part_ = false;
 }
 
@@ -179,6 +182,8 @@ void MultipartParser::compact() {
   if (cursor_ == 0U) {
     return;
   }
+  buffer_starts_at_line_start_ =
+      cursor_ >= 2U && buf_[cursor_ - 2U] == kCR && buf_[cursor_ - 1U] == kLF;
   buf_.erase(buf_.begin(), buf_.begin() + static_cast<std::ptrdiff_t>(cursor_));
   if (body_begin_ >= cursor_) {
     body_begin_ -= cursor_;
@@ -216,7 +221,10 @@ std::size_t MultipartParser::find_boundary(std::size_t from, bool* is_closing,
 
     // RFC 2046: a delimiter line is preceded by CRLF. Requiring it keeps delimiter-like
     // byte sequences inside a compressed payload from terminating the part early.
-    if (require_leading_crlf && !(at >= 2U && buf_[at - 1U] == kLF && buf_[at - 2U] == kCR)) {
+    const bool follows_crlf = at >= 2U && buf_[at - 1U] == kLF && buf_[at - 2U] == kCR;
+    const bool at_stream_line_start = at == 0U && buffer_starts_at_line_start_;
+    if ((require_leading_crlf && !follows_crlf) ||
+        (!require_leading_crlf && !follows_crlf && !at_stream_line_start)) {
       search_from = at + 1U;
       continue;
     }
@@ -478,6 +486,7 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
       body_begin_ = body_start;
       scanned_ = body_start;
       cursor_ = body_start;
+      pending_timing_ = feed_timing_;
       state_ = State::Body;
       continue;
     }
@@ -491,7 +500,12 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
                                      : body_begin_;
       const std::size_t at = find_boundary(resume, &closing, &delim_len, true);
       if (at == std::string::npos) {
-        if (buf_.size() - body_begin_ > max_part_bytes_) {
+        // A split delimiter line is framing, not payload. Permit only one bounded
+        // line of uncertainty; the exact body length is checked once classified.
+        const std::size_t framing_slack =
+            delimiter_.size() + kMultipartHeaderCaptureMaxLineBytes + 6U;
+        const std::size_t buffered = buf_.size() - body_begin_;
+        if (buffered > max_part_bytes_ && buffered - max_part_bytes_ > framing_slack) {
           if (err) {
             *err = "multipart part body exceeds " + std::to_string(max_part_bytes_) + " bytes";
           }
@@ -515,7 +529,8 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
         }
         std::map<std::string, std::string> attributes;
         attributes.swap(pending_);
-        if (!sink(buf_.data() + body_begin_, body_end - body_begin_, std::move(attributes))) {
+        if (!sink(buf_.data() + body_begin_, body_end - body_begin_, std::move(attributes),
+                  pending_timing_)) {
           if (err) {
             *err = "multipart part consumer rejected a part";
           }
@@ -546,10 +561,11 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
 }
 
 bool MultipartParser::feed(const uint8_t* data, std::size_t size, const PartSink& sink,
-                           std::string* err) {
+                           std::string* err, PartTiming timing) {
   if (data == nullptr || size == 0U) {
     return run(sink, err);
   }
+  feed_timing_ = timing;
   std::size_t offset = 0U;
   while (offset < size) {
     const std::size_t chunk = std::min(kFeedSliceBytes, size - offset);
@@ -573,6 +589,12 @@ bool MultipartParser::finish(const PartSink& sink, std::string* err) {
     return false;
   }
   if (state_ != State::Body) {
+    if (!saw_any_part_) {
+      if (err) {
+        *err = "multipart stream ended before a complete JPEG part";
+      }
+      return false;
+    }
     return true;
   }
   // A stream that ends without a closing boundary still delivers its last part.
@@ -589,7 +611,8 @@ bool MultipartParser::finish(const PartSink& sink, std::string* err) {
     }
     std::map<std::string, std::string> attributes;
     attributes.swap(pending_);
-    if (!sink(buf_.data() + body_begin_, body_end - body_begin_, std::move(attributes))) {
+    if (!sink(buf_.data() + body_begin_, body_end - body_begin_, std::move(attributes),
+              pending_timing_)) {
       if (err) {
         *err = "multipart part consumer rejected the final part";
       }

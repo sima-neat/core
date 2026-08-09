@@ -62,15 +62,20 @@ void read_attributes(GstBuffer* buffer, SampleAttributes* out) {
   read_attributes_from_structure(meta_structure(buffer, false), out);
 }
 
-void write_attributes_to_structure(GstStructure* target, const SampleAttributes& attributes) {
+bool write_attributes_to_structure(GstStructure* target, const SampleAttributes& attributes) {
   if (!target) {
-    return;
+    return false;
+  }
+  for (const auto& [key, value] : attributes) {
+    if (key.find('\0') != std::string::npos || value.find('\0') != std::string::npos) {
+      return false;
+    }
   }
   // Always drop the previous value first: a reused destination must never retain stale
   // attributes when the incoming set is smaller or empty.
   gst_structure_remove_field(target, kSimaMetaAttributesField);
   if (attributes.empty()) {
-    return;
+    return true;
   }
   GstStructure* nested = gst_structure_new_empty(kAttributesStructureName);
   for (const auto& [key, value] : attributes) {
@@ -82,6 +87,7 @@ void write_attributes_to_structure(GstStructure* target, const SampleAttributes&
   g_value_init(&value, GST_TYPE_STRUCTURE);
   g_value_take_boxed(&value, nested);
   gst_structure_take_value(target, kSimaMetaAttributesField, &value);
+  return true;
 }
 
 bool write_attributes(GstBuffer* buffer, const SampleAttributes& attributes) {
@@ -104,8 +110,7 @@ bool write_attributes(GstBuffer* buffer, const SampleAttributes& attributes) {
   if (!target) {
     return false;
   }
-  write_attributes_to_structure(target, attributes);
-  return true;
+  return write_attributes_to_structure(target, attributes);
 }
 
 bool has_attributes(GstBuffer* buffer) {
