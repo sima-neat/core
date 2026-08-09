@@ -1,0 +1,192 @@
+name: EVO A65 DMA-BUF HIL
+
+on:
+  workflow_run:
+    workflows:
+      - Vulcan CI
+    types:
+      - completed
+  schedule:
+    - cron: "20 3 * * *"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Qualification depth
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - full
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+  packages: read
+
+concurrency:
+  group: evo-a65-dmabuf-hil-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  gate-definition:
+    name: Validate gate definition
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Validate shell and exact matrices
+        shell: bash
+        run: |
+          set -euo pipefail
+          gate=scripts/ci/run_evo_a65_dmabuf_hil.sh
+          bash -n "${gate}"
+          smoke=$("${gate}" --plan-only --suite smoke | tail -n1)
+          full=$("${gate}" --plan-only --suite full | tail -n1)
+          grep -Fx \
+            'EVO_A65_HIL_PLAN_RESULT status=PASS suite=smoke throughput=32 correctness=8 release=6 total=46' \
+            <<<"${smoke}"
+          grep -Fx \
+            'EVO_A65_HIL_PLAN_RESULT status=PASS suite=full throughput=48 correctness=8 release=24 total=80' \
+            <<<"${full}"
+
+  resolve-vulcan-config:
+    name: Resolve Vulcan config
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
+
+  resolve-test-runner:
+    name: Resolve Modalix runner
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+
+  hil:
+    name: Run placement, parity, and lifecycle gates
+    needs:
+      - gate-definition
+      - resolve-vulcan-config
+      - resolve-test-runner
+    runs-on:
+      group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
+      labels:
+        - self-hosted
+        - Linux
+        - ARM64
+        - modalix
+        - "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"
+    env:
+      CANDIDATE_REF: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+      CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      SIMA_CLI_CHECK_FOR_UPDATE: "0"
+      SIMANEAT_EVO_NATIVE_MPK: ${{ vars.SIMANEAT_EVO_NATIVE_MPK }}
+      SIMANEAT_EVO_PACKED_MPK: ${{ vars.SIMANEAT_EVO_PACKED_MPK }}
+      SIMA_EVO_HIL_EXPECT_KERNEL: ${{ vars.SIMA_EVO_HIL_EXPECT_KERNEL }}
+      SIMA_EVO_HIL_EXPECT_CVU_FIRMWARE_SHA256: ${{ vars.SIMA_EVO_HIL_EXPECT_CVU_FIRMWARE_SHA256 }}
+      SIMA_EVO_HIL_EXPECT_PROCESSCVU_SHA256: ${{ vars.SIMA_EVO_HIL_EXPECT_PROCESSCVU_SHA256 }}
+      SIMA_EVO_HIL_EXPECT_NATIVE_MODEL_SHA256: ${{ vars.SIMA_EVO_HIL_EXPECT_NATIVE_MODEL_SHA256 }}
+      SIMA_EVO_HIL_EXPECT_PACKED_MODEL_SHA256: ${{ vars.SIMA_EVO_HIL_EXPECT_PACKED_MODEL_SHA256 }}
+      VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+          ref: ${{ env.CANDIDATE_SHA }}
+
+      - name: Verify sima-cli authentication
+        run: scripts/ci/check_sima_cli_session.sh
+
+      - name: Clean board and runner storage
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./scripts/cleanup_devkit_storage.sh
+          rm -rf _work
+          mkdir -p _work
+
+      - name: Install the coherent candidate package set
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          short_sha=$(cut -c1-12 <<<"${CANDIDATE_SHA}")
+          package_spec="core@${CANDIDATE_REF}:${short_sha}"
+          echo "Installing ${package_spec} from ${VULCAN_ENV}"
+          for attempt in 1 2 3 4; do
+            if sima-cli install --neat --env "${VULCAN_ENV}" \
+                "${package_spec}" -t all; then
+              exit 0
+            fi
+            [[ "${attempt}" -lt 4 ]] || exit 1
+            sleep "$((attempt * 10))"
+          done
+
+      - name: Locate benchmark and validate models
+        id: inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${SIMANEAT_EVO_NATIVE_MPK}" && -f "${SIMANEAT_EVO_NATIVE_MPK}" ]] || {
+            echo 'Set SIMANEAT_EVO_NATIVE_MPK to the EVO multibuffer INT8 MPK.' >&2
+            exit 1
+          }
+          [[ -n "${SIMANEAT_EVO_PACKED_MPK}" && -f "${SIMANEAT_EVO_PACKED_MPK}" ]] || {
+            echo 'Set SIMANEAT_EVO_PACKED_MPK to the EVO packed/named INT8 MPK.' >&2
+            exit 1
+          }
+          mapfile -t benches < <(
+            find "${GITHUB_WORKSPACE}" /usr/lib/sima-neat \
+              -type f -name evo_tput_bench -perm -u+x -printf '%T@ %p\n' \
+              2>/dev/null | sort -nr | awk '{print $2}'
+          )
+          [[ "${#benches[@]}" -gt 0 ]] || {
+            echo 'Unable to locate installed evo_tput_bench.' >&2
+            exit 1
+          }
+          plugin_dir=/usr/lib/aarch64-linux-gnu/neat/gst-plugins
+          [[ -f "${plugin_dir}/libgstneatprocesscvu.so" ]] || {
+            echo "Candidate ProcessCVU plugin is missing from ${plugin_dir}." >&2
+            exit 1
+          }
+          printf 'bench=%s\n' "${benches[0]}" >>"${GITHUB_OUTPUT}"
+          printf 'plugin_dir=%s\n' "${plugin_dir}" >>"${GITHUB_OUTPUT}"
+
+      - name: Run EVO A65 DMA-BUF HIL gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == schedule ]]; then
+            suite=full
+          elif [[ "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
+            suite='${{ inputs.suite }}'
+          else
+            suite=smoke
+          fi
+          scripts/ci/run_evo_a65_dmabuf_hil.sh \
+            --suite "${suite}" \
+            --bench '${{ steps.inputs.outputs.bench }}' \
+            --native-model "${SIMANEAT_EVO_NATIVE_MPK}" \
+            --packed-model "${SIMANEAT_EVO_PACKED_MPK}" \
+            --plugin-dir '${{ steps.inputs.outputs.plugin_dir }}' \
+            --evidence "${GITHUB_WORKSPACE}/_work/evo-a65-dmabuf-hil" \
+            --manage-services 1
+
+      - name: Upload sealed HIL evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: evo-a65-dmabuf-hil-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _work/evo-a65-dmabuf-hil
+          if-no-files-found: error
+          retention-days: 30
