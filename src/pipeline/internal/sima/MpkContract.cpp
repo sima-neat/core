@@ -250,7 +250,14 @@ MpkShapeSemantics classify_mpk_tensor_shape_semantics_local(const MpkPluginIoCon
     return is_input ? MpkShapeSemantics::PackedExtent : MpkShapeSemantics::Geometry;
   }
   if (kernel.find("unpack") != std::string::npos) {
-    return MpkShapeSemantics::PackedExtent;
+    if (is_input) {
+      return MpkShapeSemantics::PackedExtent;
+    }
+    // AFE uses the same unpack_transform for two distinct boundaries: splitting
+    // a carrier into packed per-head byte extents, and producing dense HWC
+    // tensors. The declared output rank distinguishes those contracts.
+    return stage.out_shape_raw.size() >= 3U ? MpkShapeSemantics::Geometry
+                                            : MpkShapeSemantics::PackedExtent;
   }
   if (kernel.find("slice") != std::string::npos) {
     return MpkShapeSemantics::Geometry;
@@ -940,7 +947,7 @@ canonical_detess_transport_shape_local(const MpkPluginIoContract& stage,
                                        const MpkTensorContract& tensor,
                                        const std::string& dtype_override) {
   const std::string dtype =
-      normalize_dtype_local(dtype_override.empty() ? stage.frame_type : dtype_override);
+      normalize_dtype_local(!stage.frame_type.empty() ? stage.frame_type : dtype_override);
   if (stage.frame_shape.empty() || dtype.empty()) {
     throw std::runtime_error("detess transport shape requires frame_shape and frame_type for '" +
                              stage.name + "'");
@@ -1302,8 +1309,10 @@ void validate_mla_boundary_tensor_contract_local(
       throw std::runtime_error("MLA boundary transport tensor is missing stage metadata for '" +
                                context + "'");
     }
+    const std::string transport_dtype =
+        !boundary_stage->frame_type.empty() ? boundary_stage->frame_type : tensor.dtype;
     const std::uint64_t transport_bytes =
-        expected_detess_packed_input_size_bytes_local(*boundary_stage, tensor.dtype);
+        expected_detess_packed_input_size_bytes_local(*boundary_stage, transport_dtype);
     if (transport_bytes == 0U || transport_bytes != tensor.size_bytes) {
       throw std::runtime_error("MLA boundary transport tensor byte span mismatch for '" + context +
                                "': expected=" + std::to_string(transport_bytes) +
@@ -1317,10 +1326,13 @@ void validate_mla_boundary_tensor_contract_local(
     return;
   }
   const auto dense_bytes = dense_shape_size_bytes_local(tensor.mpk_shape, tensor.dtype);
+  const std::string transport_dtype =
+      boundary_stage != nullptr && !boundary_stage->frame_type.empty() ? boundary_stage->frame_type
+                                                                       : tensor.dtype;
   const bool detess_logical_boundary_preserves_packed_span =
       !transport_view && boundary_stage != nullptr && dense_bytes.has_value() &&
       *dense_bytes <= tensor.size_bytes &&
-      expected_detess_packed_input_size_bytes_local(*boundary_stage, tensor.dtype) ==
+      expected_detess_packed_input_size_bytes_local(*boundary_stage, transport_dtype) ==
           tensor.size_bytes;
   if ((!dense_bytes.has_value() || *dense_bytes != tensor.size_bytes) &&
       !detess_logical_boundary_preserves_packed_span) {
@@ -1624,7 +1636,7 @@ std::optional<fs::path> find_mpk_contract_path(const fs::path& package_root) {
       continue;
     }
     const std::string filename = it->path().filename().string();
-    if (ends_with_local(filename, "_mpk.json")) {
+    if (filename == "mpk.json" || ends_with_local(filename, "_mpk.json")) {
       candidates.push_back(it->path());
     }
   }
@@ -1767,7 +1779,20 @@ bool resolve_contract_edges_strict(MpkContract* contract, std::string* error_mes
       if (input.name.empty()) {
         continue;
       }
-      const auto prod_it = producers_by_tensor_name.find(input.name);
+      auto prod_it = producers_by_tensor_name.find(input.name);
+      bool matched_semantic_alias = false;
+      if (prod_it == producers_by_tensor_name.end()) {
+        // AFE may decorate a transport tensor with its semantic model-output name, for example
+        // "MLA_0_ofm_unpack_transform_1//convDb/Conv_output_0".  The bytes are still produced by
+        // the exact transport tensor before "//".  Keep exact names authoritative and accept the
+        // decorated form only when that transport tensor exists explicitly.
+        const auto delimiter = input.name.find("//");
+        if (delimiter != std::string::npos && delimiter > 0U &&
+            delimiter + 2U < input.name.size()) {
+          prod_it = producers_by_tensor_name.find(input.name.substr(0U, delimiter));
+          matched_semantic_alias = prod_it != producers_by_tensor_name.end();
+        }
+      }
       if (prod_it == producers_by_tensor_name.end()) {
         if (is_session_ingress_input(input, consumer, rank, *contract)) {
           if (mpk_contract_debug_enabled()) {
@@ -1880,10 +1905,10 @@ bool resolve_contract_edges_strict(MpkContract* contract, std::string* error_mes
       if (mpk_contract_debug_enabled()) {
         std::fprintf(stderr,
                      "[mpk-contract] edge_select tensor=%s consumer=%s input=%zu producer=%s "
-                     "output=%d producer_order=%zu consumer_order=%zu candidates=%zu\n",
+                     "output=%d producer_order=%zu consumer_order=%zu candidates=%zu alias=%d\n",
                      input.name.c_str(), mpk_plugin_name_dbg(consumer), ii,
                      mpk_plugin_name_dbg(producer), selected.output_index, selected.order,
-                     consumer_order, candidates.size());
+                     consumer_order, candidates.size(), matched_semantic_alias ? 1 : 0);
       }
 
       if (input.mpk_shape.empty() && !source.mpk_shape.empty()) {
@@ -6028,6 +6053,64 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       stage.decode_type = read_string_alias(*params, {"decode_type", "decode-type"}).value_or("");
       stage.decode_type_option =
           read_string_alias(*params, {"decode_type_option", "decode-type-option"}).value_or("");
+      const json* superpoint = nullptr;
+      if (params->contains("superpoint") && params->at("superpoint").is_object()) {
+        superpoint = &params->at("superpoint");
+      }
+      const json& sp = superpoint ? *superpoint : *params;
+      stage.superpoint.profile =
+          read_string_alias(sp, {"profile", "superpoint_profile", "superpoint-profile"})
+              .value_or("");
+      // Flat profile aliases belong to the parent params, not to an unrelated nested object.
+      if (stage.superpoint.profile.empty() && superpoint) {
+        stage.superpoint.profile =
+            read_string_alias(*params, {"superpoint_profile", "superpoint-profile"}).value_or("");
+      }
+      stage.superpoint.profile_fingerprint =
+          read_string_alias(sp, {"profile_fingerprint", "profile-fingerprint"}).value_or("");
+      stage.superpoint.output_format =
+          read_string_alias(sp, {"output_format", "output-format"}).value_or("");
+      stage.superpoint.detector_tensor_id =
+          read_string_alias(sp, {"detector_tensor_id", "detector-tensor-id"}).value_or("");
+      stage.superpoint.descriptor_tensor_id =
+          read_string_alias(sp, {"descriptor_tensor_id", "descriptor-tensor-id"}).value_or("");
+      stage.superpoint.detector_representation =
+          read_string_alias(sp, {"detector_representation", "detector-representation"})
+              .value_or("");
+      stage.superpoint.descriptor_representation =
+          read_string_alias(sp, {"descriptor_representation", "descriptor-representation"})
+              .value_or("");
+      stage.superpoint.descriptor_output_dtype =
+          read_string_alias(sp, {"descriptor_output_dtype", "descriptor-output-dtype"})
+              .value_or("");
+      auto read_sp_int = [&](const char* key, int fallback) {
+        if (!sp.contains(key)) {
+          return fallback;
+        }
+        const auto& value = sp.at(key);
+        if (!value.is_number_integer() && !value.is_number_unsigned()) {
+          if (stage.superpoint.validation_error.empty()) {
+            stage.superpoint.validation_error =
+                std::string("superpoint.") + key + " must be an integer";
+          }
+          return fallback;
+        }
+        const auto parsed = read_int_local(value);
+        if (!parsed.has_value()) {
+          if (stage.superpoint.validation_error.empty()) {
+            stage.superpoint.validation_error =
+                std::string("superpoint.") + key + " is outside the supported integer range";
+          }
+          return fallback;
+        }
+        return *parsed;
+      };
+      stage.superpoint.schema_version = read_sp_int("schema_version", 0);
+      stage.superpoint.nms_radius = read_sp_int("nms_radius", -1);
+      stage.superpoint.border_margin = read_sp_int("border_margin", -1);
+      stage.superpoint.cell_stride = read_sp_int("cell_stride", 0);
+      stage.superpoint.descriptor_stride = read_sp_int("descriptor_stride", 0);
+      stage.superpoint.descriptor_dim = read_sp_int("descriptor_dim", 0);
       stage.has_canonical_processcvu_contract = true;
       if (!output_shapes.empty()) {
         stage.out_shape_raw = output_shapes.front();
@@ -6791,8 +6874,14 @@ struct MlaBoundaryTensorView {
 
 std::uint64_t boundary_parent_span_bytes_local(const MlaBoundaryTensorView& view) {
   if (view.publish_transport_tensor && view.boundary_stage) {
+    // Detess inputs are byte carriers and are therefore commonly declared as
+    // INT8 even when each packed element is BF16/FP32. frame_type is the
+    // authoritative element width for offsets between unpacked heads.
+    const std::string transport_dtype = !view.boundary_stage->frame_type.empty()
+                                            ? view.boundary_stage->frame_type
+                                            : view.boundary_dtype;
     const std::uint64_t transport_span =
-        expected_detess_packed_input_size_bytes_local(*view.boundary_stage, view.boundary_dtype);
+        expected_detess_packed_input_size_bytes_local(*view.boundary_stage, transport_dtype);
     if (transport_span > 0U) {
       return transport_span;
     }

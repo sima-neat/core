@@ -103,6 +103,13 @@ int main() {
     request.prompt = std::string{"What is the capital of Germany?"};
     request.max_new_tokens = 24;
 
+    auto thinking_request = request;
+    thinking_request.enable_thinking = true;
+    require_throws([&] { (void)model.run(thinking_request); },
+                   "VisionLanguageModel unsupported thinking run");
+    require_throws([&] { (void)model.stream(thinking_request); },
+                   "VisionLanguageModel unsupported thinking stream");
+
     const auto result = model.run(request);
     require(!result.text.empty(), "GenAI LLM e2e expected non-empty generated text");
     const std::string normalized_text = trim_text(result.text);

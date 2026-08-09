@@ -43,6 +43,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <sstream>
@@ -99,10 +100,6 @@ static bool env_enabled_local(const char* name, bool default_value) {
          std::strcmp(v, "off") != 0 && std::strcmp(v, "OFF") != 0;
 }
 
-static bool modelpack_space_check_enabled() {
-  return env_enabled_local("SIMA_NEAT_SPACE_CHECK", true);
-}
-
 static std::uint64_t parse_env_u64_bytes(const char* key, std::uint64_t fallback) {
   const char* raw = std::getenv(key);
   if (!raw || !*raw)
@@ -118,62 +115,6 @@ static std::uint64_t parse_env_u64_bytes(const char* key, std::uint64_t fallback
 
 static std::uint64_t modelpack_extract_free_reserve_bytes() {
   return parse_env_u64_bytes("SIMA_MPK_EXTRACT_MIN_FREE_BYTES", kDefaultExtractFreeReserveBytes);
-}
-
-static bool checked_add_u64_local(std::uint64_t a, std::uint64_t b, std::uint64_t* out) {
-  if (!out)
-    return false;
-  if (a > std::numeric_limits<std::uint64_t>::max() - b)
-    return false;
-  *out = a + b;
-  return true;
-}
-
-static std::uint64_t
-required_modelpack_extract_bytes(const simaai::neat::internal::ModelArchiveManifest& manifest,
-                                 std::uint64_t reserve_bytes) {
-  std::uint64_t required = reserve_bytes;
-  for (const auto& entry : manifest.entries) {
-    if (entry.type != '-')
-      continue;
-    if (!checked_add_u64_local(required, entry.size_bytes, &required)) {
-      throw std::runtime_error("ModelPack: size_limit_exceeded: extracted archive size plus "
-                               "free-space reserve overflows uint64");
-    }
-  }
-  return required;
-}
-
-static std::string format_bytes(std::uint64_t bytes) {
-  std::ostringstream oss;
-  constexpr double kMiB = 1024.0 * 1024.0;
-  constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
-  if (bytes >= static_cast<std::uint64_t>(kGiB)) {
-    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kGiB) << " GiB)";
-  } else if (bytes >= static_cast<std::uint64_t>(kMiB)) {
-    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kMiB) << " MiB)";
-  } else {
-    oss << bytes << " bytes";
-  }
-  return oss.str();
-}
-
-static bool dir_has_available_space(const fs::path& dir, std::uint64_t required_available_bytes,
-                                    std::uint64_t* available_out = nullptr) {
-  if (!modelpack_space_check_enabled() || required_available_bytes == 0) {
-    return true;
-  }
-  std::error_code ec;
-  const auto space = fs::space(dir, ec);
-  if (ec)
-    return false;
-  const std::uint64_t available =
-      space.available > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())
-          ? std::numeric_limits<std::uint64_t>::max()
-          : static_cast<std::uint64_t>(space.available);
-  if (available_out)
-    *available_out = available;
-  return available >= required_available_bytes;
 }
 
 static bool processcvu_family_is_fused_local(std::string family) {
@@ -818,8 +759,60 @@ static void cleanup_modelpack_process_root() {
   fs::remove_all(fs::path(root), ec);
 }
 
-static std::string modelpack_output_root(bool cleanup_enabled_request,
-                                         std::uint64_t required_available_bytes) {
+// Model paths are baked into rewritten JSON, so the selected base must not depend on a later cwd.
+static fs::path canonical_base(const fs::path& base) {
+  std::error_code ec;
+  const fs::path resolved = fs::weakly_canonical(base, ec);
+  if (!ec && !resolved.empty())
+    return resolved;
+  ec.clear();
+  const fs::path absolute = fs::absolute(base, ec);
+  return ec ? base : absolute;
+}
+
+// True for a mount that exists to hold system files rather than data. Filling any of these is the
+// failure automatic selection has to avoid, and none of them is a plausible model store.
+static bool system_mount_point(const std::string& mount_point) {
+  static constexpr const char* kSystemMounts[] = {"/",     "/boot", "/efi",  "/usr",
+                                                  "/var",  "/etc",  "/opt",  "/home",
+                                                  "/root", "/srv",  "/snap", "/recovery"};
+  for (const char* system : kSystemMounts) {
+    // Prefix match so /boot also excludes /boot/efi and /boot/firmware.
+    const std::string base(system);
+    if (mount_point == base || (base != "/" && mount_point.rfind(base + "/", 0) == 0))
+      return true;
+  }
+  return mount_point == "/";
+}
+
+// Exact token match over a comma-separated /proc/mounts option list. Substring matching would
+// confuse "ro" with "relatime" and is blind to any option that is not listed first.
+static bool mount_has_option(const std::string& options, const std::string& option) {
+  for (std::size_t pos = 0; pos <= options.size();) {
+    const std::size_t end = options.find(',', pos);
+    const std::size_t len = (end == std::string::npos ? options.size() : end) - pos;
+    if (options.compare(pos, len, option) == 0)
+      return true;
+    if (end == std::string::npos)
+      break;
+    pos = end + 1;
+  }
+  return false;
+}
+
+// Defined outside this anonymous namespace so the mount filtering is reachable from its test.
+static std::vector<std::string> nvme_model_bases() {
+  std::ifstream mounts("/proc/mounts");
+  return nvme_model_bases_from_mounts(mounts);
+}
+
+// Selects and pins the per-process extraction root. Capacity is deliberately not a criterion: an
+// archive's inflated size cannot be derived from its compressed size, so any pre-inflation space
+// requirement would be a guess. The loader enforces the real budget per chunk while inflating and
+// again from the manifest before extracting. Selection therefore asks only whether a candidate is
+// writable, which makes an eligible NVMe unconditional: a full one fails the load rather than
+// silently moving hundreds of megabytes of writes onto eMMC.
+static std::string modelpack_output_root(bool cleanup_enabled_request) {
   if (!modelpack_cleanup_enabled_for_request(cleanup_enabled_request)) {
     modelpack_process_cleanup_enabled_storage() = false;
   }
@@ -843,14 +836,6 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
     out << "ok";
     out.close();
     fs::remove(probe, ec);
-    std::uint64_t available = 0;
-    if (!dir_has_available_space(dir, required_available_bytes, &available)) {
-      if (reason) {
-        *reason = "insufficient free space: required=" + format_bytes(required_available_bytes) +
-                  " available=" + format_bytes(available);
-      }
-      return false;
-    }
     return true;
   };
 
@@ -868,8 +853,16 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
     }
 
     std::vector<std::string> rejected;
-    const fs::path preferred(kDefaultBaseOutputDir);
     std::string reason;
+    for (const auto& nvme_base : nvme_model_bases()) {
+      reason.clear();
+      if (is_writable_dir(nvme_base, &reason))
+        return nvme_base;
+      rejected.push_back(nvme_base + " (" + reason + ")");
+    }
+
+    const fs::path preferred(kDefaultBaseOutputDir);
+    reason.clear();
     if (is_writable_dir(preferred, &reason))
       return preferred;
     rejected.push_back(preferred.string() + " (" + reason + ")");
@@ -889,15 +882,11 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
     rejected.push_back(cwd_base.string() + " (" + reason + ")");
 
     std::ostringstream oss;
-    oss << "ModelPack: output_storage_unavailable: no usable extraction root";
-    if (required_available_bytes > 0) {
-      oss << " with required free space " << format_bytes(required_available_bytes);
-    }
-    oss << ". Tried:";
+    oss << "ModelPack: output_storage_unavailable: no writable extraction root. Tried:";
     for (const auto& item : rejected) {
       oss << " [" << item << "]";
     }
-    oss << ". Set SIMA_MPK_EXTRACT_ROOT to a filesystem with enough space or clean /data and /tmp.";
+    oss << ". Set SIMA_MPK_EXTRACT_ROOT to a writable filesystem with enough space.";
     throw std::runtime_error(oss.str());
   };
 
@@ -905,7 +894,7 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
   static std::string root;
   std::lock_guard<std::mutex> lock(root_mu);
   if (root.empty()) {
-    const fs::path base = choose_base();
+    const fs::path base = canonical_base(choose_base());
     const fs::path proc_root =
         base / ("proc_" + std::to_string(static_cast<long long>(::getpid())));
     std::error_code ec;
@@ -922,10 +911,6 @@ static std::string modelpack_output_root(bool cleanup_enabled_request,
       return true;
     }();
     (void)registered;
-  } else if (!dir_has_available_space(fs::path(root), required_available_bytes)) {
-    throw std::runtime_error("ModelPack: output_storage_unavailable: selected extraction root "
-                             "does not have enough free space: " +
-                             root + " required=" + format_bytes(required_available_bytes));
   }
   if (!modelpack_process_cleanup_enabled_storage()) {
     mark_modelpack_process_root_keep(root);
@@ -1024,6 +1009,24 @@ static std::string archive_cache_key(const std::string& tar_path) {
          std::to_string(static_cast<long long>(stamp));
 }
 
+// Stable across processes and library builds, unlike std::hash.
+static std::string fnv1a_hex(const std::string& text) {
+  std::uint64_t h = 1469598103934665603ULL;
+  for (const unsigned char c : text) {
+    h ^= static_cast<std::uint64_t>(c);
+    h *= 1099511628211ULL;
+  }
+  std::ostringstream oss;
+  oss << std::hex << std::setw(16) << std::setfill('0') << h;
+  return oss.str();
+}
+
+// Archive identity, not basename: the loader clears its package root before extracting, so two
+// archives sharing a basename would otherwise evict each other inside the process root.
+static std::string identity_dir_name(const std::string& cache_key) {
+  return "pkg_" + fnv1a_hex(cache_key);
+}
+
 static std::unordered_map<std::string, std::string>& modelpack_extract_cache() {
   static std::unordered_map<std::string, std::string> cache;
   return cache;
@@ -1046,37 +1049,29 @@ static std::string extract_and_organize(const std::string& tar_path,
   }
 
   const std::string cache_key = archive_cache_key(tar_path);
+  const std::string identity_dir = identity_dir_name(cache_key);
+
   simaai::neat::internal::ModelArchiveLoaderOptions opt;
   // Runtime model packs may include auxiliary build/report artifacts.
-  // Keep strict type validation in security/unit tests (default options),
-  // but allow these extras in ModelPack runtime extraction.
   opt.reject_unsupported_file_types = false;
-  opt.require_pipeline_sequence = false;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
   try {
-    {
-      std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
-      auto& cache = modelpack_extract_cache();
-      const auto found = cache.find(cache_key);
-      if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
-        return found->second;
-      }
-    }
-
-    const auto manifest = simaai::neat::internal::ModelArchiveLoader::inspect(tar_path, opt);
-    const std::uint64_t required_available_bytes =
-        required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes);
-
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
+    // Applied on every path, including a cache hit, so the cleanup policy a caller asks for is
+    // honoured whether or not this load is the one that extracts.
+    const std::string process_root = modelpack_output_root(cleanup_extracted_model_data);
+
     auto& cache = modelpack_extract_cache();
     const auto found = cache.find(cache_key);
     if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
       return found->second;
     }
 
+    // One filesystem holds the inflated snapshot and the package, so the loader's free-space
+    // budget covers both coexisting.
+    opt.staging_base = process_root;
     const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
-        tar_path, modelpack_output_root(cleanup_extracted_model_data, required_available_bytes),
-        opt);
+        tar_path, (fs::path(process_root) / identity_dir).string(), opt);
     const fs::path target_dir(extracted.package_root);
 
     // Preserve existing behavior: materialize model-relative paths as absolute paths
@@ -3743,6 +3738,60 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
 }
 
 } // namespace
+
+// Automatic selection accepts only a local NVMe data volume. Matching the block device keeps NFS
+// and every other network filesystem out without maintaining an fstype allow-list, and a read-only
+// or system mount is never a model store.
+std::vector<std::string> nvme_model_bases_from_mounts(std::istream& mounts) {
+  std::vector<std::string> out;
+  std::string device, mount_point, fstype, options, rest;
+  while (mounts >> device >> mount_point >> fstype >> options) {
+    std::getline(mounts, rest);
+    if (device.rfind("/dev/nvme", 0) != 0)
+      continue;
+    // Mount points are octal-escaped ("\040" for space); skip rather than decode, which falls
+    // through to the next candidate instead of creating a directory with a literal backslash.
+    if (mount_point.find('\\') != std::string::npos)
+      continue;
+    if (system_mount_point(mount_point))
+      continue;
+    // vfat/EFI partitions cannot hold a model package's permissions or sizes.
+    if (fstype == "vfat" || fstype == "msdos" || fstype == "iso9660")
+      continue;
+    // Eligibility, not capacity: a read-only mount cannot hold the package, and a noexec mount
+    // cannot load a .so extracted into lib/. Both fall through to the next candidate, unlike a
+    // full NVMe, which fails the load.
+    if (mount_has_option(options, "ro") || mount_has_option(options, "noexec"))
+      continue;
+    out.push_back((fs::path(mount_point) / "simaai/coprocessing/models").string());
+  }
+  return out;
+}
+
+// Longest matching mount point wins, which is how the kernel resolves the path. Modalix exposes
+// its eMMC root filesystem as either /dev/mmcblk* or /dev/root.
+std::string modelpack_storage_label(const std::string& path) {
+  std::ifstream mounts("/proc/mounts");
+  std::string device, mount_point, rest, best_device;
+  std::size_t best_len = 0;
+  while (mounts >> device >> mount_point) {
+    std::getline(mounts, rest);
+    if (mount_point.find('\\') != std::string::npos)
+      continue;
+    const std::string prefix = (mount_point == "/") ? "/" : mount_point + "/";
+    if (path != mount_point && path.rfind(prefix, 0) != 0)
+      continue;
+    if (mount_point.size() >= best_len) {
+      best_len = mount_point.size();
+      best_device = device;
+    }
+  }
+  if (best_device.rfind("/dev/nvme", 0) == 0)
+    return "NVMe";
+  if (best_device == "/dev/root" || best_device.rfind("/dev/mmcblk", 0) == 0)
+    return "eMMC";
+  return best_device.empty() ? "unknown" : best_device;
+}
 
 ModelPack::ModelPack(const std::string& tar_gz) {
   init(tar_gz);

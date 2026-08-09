@@ -460,20 +460,26 @@ manifest_path() {
   return 1
 }
 
-platform_version() {
+modelzoo_version() {
   local manifest
   if ! manifest="$(manifest_path)"; then
-    echo "build.sh: cannot locate deps/manifest.json for Model Zoo platform version" >&2
+    echo "build.sh: cannot locate deps/manifest.json for Model Zoo version" >&2
     return 1
   fi
 
   local version
   version="$(
-    sed -n 's/.*"platform-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" \
+    sed -n 's/.*"modelzoo-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" \
       | head -n1
   )"
   if [[ -z "${version}" ]]; then
-    echo "build.sh: deps/manifest.json does not define platform-version: ${manifest}" >&2
+    version="$(
+      sed -n 's/.*"platform-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" \
+        | head -n1
+    )"
+  fi
+  if [[ -z "${version}" ]]; then
+    echo "build.sh: deps/manifest.json defines neither modelzoo-version nor platform-version: ${manifest}" >&2
     return 1
   fi
   echo "${version}"
@@ -587,7 +593,7 @@ EOF
   fi
 
   local version
-  version="$(platform_version)"
+  version="$(modelzoo_version)"
 
   local -a unique_models=()
   local seen=" "
@@ -601,17 +607,21 @@ EOF
 
   mkdir -p "${MODEL_TARGET_FOLDER}"
 
-  echo "Downloading tutorial model(s) for platform ${version}: ${unique_models[*]}"
+  echo "Downloading tutorial model(s) from Model Zoo ${version}: ${unique_models[*]}"
   echo "Model download target folder: ${MODEL_TARGET_FOLDER}"
   (
     cd "${MODEL_TARGET_FOLDER}"
     for model in "${unique_models[@]}"; do
-      "${sima_cli}" modelzoo -v "${version}" get "${model}"
+      if ! "${sima_cli}" modelzoo -v "${version}" get "${model}"; then
+        echo "Failed to download ${model} from Model Zoo ${version}" >&2
+        return 1
+      fi
       local downloaded_path
       if downloaded_path="$(model_download_path "${model}")"; then
         echo "Downloaded ${model}: ${downloaded_path}"
       else
-        echo "Downloaded ${model}: unable to locate tarball under ${MODEL_TARGET_FOLDER}" >&2
+        echo "Model Zoo ${version} reported success for ${model}, but no tarball was found under ${MODEL_TARGET_FOLDER}" >&2
+        return 1
       fi
     done
   )

@@ -988,7 +988,8 @@ void append_fused_node_fragment(BuildResult* br, std::ostringstream* pipeline,
   // gst_parse_launch() pipeline, however, and may contain one RTP packetizer
   // per source.  Those elements must have unique names inside that pipeline;
   // they are not exported as RTSP media factory payloaders.
-  if (node->kind() == "H264Packetize" && name_transform_enabled(name_transform)) {
+  if ((node->kind() == "H264Packetize" || node->kind() == "H265Packetize") &&
+      name_transform_enabled(name_transform)) {
     const std::string unique_payloader_name = "neat_fused_pay_" + std::to_string(actual_index);
     frag.fragment = rewrite_fragment_names(frag.fragment, {{"pay0", unique_payloader_name}});
     for (auto& element_name : frag.element_names) {
@@ -3003,7 +3004,9 @@ bool fused_consumer_fragment_may_drop(const std::string& fragment) {
   return false;
 }
 
-std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth) {
+std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth,
+                                               const NameTransform& name_transform,
+                                               std::vector<std::string>* generated_names) {
   if (requested_depth < 0 || requested_depth > 1024) {
     throw std::invalid_argument(
         "GraphOptions::async_queue_depth must be in [0, 1024] for fused realtime ingress");
@@ -3015,11 +3018,16 @@ std::string insert_fused_consumer_stage_queues(std::string fragment, int request
   const auto segments = split_fused_consumer_segments(fragment);
   std::vector<std::string> rendered;
   rendered.reserve(segments.size() + 3U);
-  const std::string queue = session_build_async_queue2_fragment(requested_depth);
+  std::size_t queue_index = 0;
   for (const auto& segment : segments) {
     const std::string factory = fused_consumer_segment_factory(segment);
     if (is_fused_consumer_stage_factory(factory)) {
-      rendered.push_back(queue);
+      const std::string queue_name = apply_name_transform(
+          name_transform, "queue_neat_fused_stage_" + std::to_string(queue_index++));
+      if (generated_names) {
+        generated_names->push_back(queue_name);
+      }
+      rendered.push_back(session_build_async_queue2_fragment(requested_depth, queue_name));
     }
     rendered.push_back(segment);
   }
@@ -3076,8 +3084,17 @@ BuildResult build_fused_realtime_source_pipeline(
                                &sess_opt, /*prepend_link=*/!first_consumer);
     first_consumer = false;
   }
+  std::vector<std::string> fused_stage_queue_names;
   const std::string rendered_consumer =
-      insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth);
+      insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth,
+                                         name_transform, &fused_stage_queue_names);
+  for (auto& queue_name : fused_stage_queue_names) {
+    br.framework_name_origins.push_back(LaunchNameOrigin{
+        .kind = LaunchNameOrigin::Kind::Queue,
+        .name = std::move(queue_name),
+        .role = "fused stage queue",
+    });
+  }
   br.fused_consumer_replaces_buffers = fused_consumer_fragment_replaces_buffers(rendered_consumer);
   if (enable_terminal_loans && br.fused_consumer_replaces_buffers &&
       fused_consumer_fragment_may_drop(rendered_consumer)) {
@@ -3121,7 +3138,7 @@ BuildResult build_fused_realtime_source_pipeline(
                     [](const auto& node) { return node && node->kind() == "SimaDecode"; });
     if (has_encoded_boundary && (encoded_split > nodes.size() || !decoder_after_split)) {
       throw std::invalid_argument(
-          "fused encoded branch requires a valid source boundary before H.264 SimaDecode");
+          "fused encoded branch requires a valid source boundary before SimaDecode");
     }
 
     ss << ' ';
@@ -3138,19 +3155,38 @@ BuildResult build_fused_realtime_source_pipeline(
       // concrete inside the fused pipeline. A single graph-owned probe on its
       // src pad retains the AU for Run::pull(); no capsfilter-name heuristic or
       // second encoded branch is needed.
-      ss << " ! identity name=" << fused_encoded_output_tap_name(name_transform, branch_index)
-         << " silent=true";
+      const std::string tap_name = fused_encoded_output_tap_name(name_transform, branch_index);
+      br.framework_name_origins.push_back(LaunchNameOrigin{
+          .kind = LaunchNameOrigin::Kind::Tap,
+          .name = tap_name,
+          .role = "fused encoded-output tap",
+      });
+      ss << " ! identity name=" << tap_name << " silent=true";
     }
     if (has_encoded_sink) {
       const std::string tee_name = apply_name_transform(branch_transform, "neat_encoded_tee");
+      const std::string egress_queue_name =
+          apply_name_transform(branch_transform, "queue_neat_encoded_egress");
+      const std::string decode_queue_name =
+          apply_name_transform(branch_transform, "queue_neat_encoded_decode");
+      br.framework_name_origins.push_back(LaunchNameOrigin{
+          .kind = LaunchNameOrigin::Kind::Mux,
+          .name = tee_name,
+          .role = "fused encoded-output tee",
+      });
+      br.framework_name_origins.push_back(LaunchNameOrigin{
+          .kind = LaunchNameOrigin::Kind::Queue,
+          .name = egress_queue_name,
+          .role = "fused encoded-output egress queue",
+      });
       ss << " ! tee name=" << tee_name;
 
       // Preserve the public edge policy on the encoded branch. Default is
       // lossless and may backpressure at this one-AU compressed queue;
       // RealtimeLatestByStream keeps the producer non-blocking by replacing a
       // whole old AU. This queue contains no decoded EV memory.
-      ss << ' ' << tee_name << ". ! queue max-size-buffers=1 max-size-bytes=0 "
-         << "max-size-time=0";
+      ss << ' ' << tee_name << ". ! queue name=" << egress_queue_name
+         << " max-size-buffers=1 max-size-bytes=0 " << "max-size-time=0";
       if (ingress.branches[branch_index].encoded_sink_link_options.policy ==
           GraphLinkPolicy::RealtimeLatestByStream) {
         ss << " leaky=downstream";
@@ -3169,9 +3205,17 @@ BuildResult build_fused_realtime_source_pipeline(
       const bool prefix_ends_in_typed_queue =
           encoded_split > 0U &&
           dynamic_cast<const simaai::neat::Queue*>(nodes[encoded_split - 1U].get()) != nullptr;
+      if (!prefix_ends_in_typed_queue) {
+        br.framework_name_origins.push_back(LaunchNameOrigin{
+            .kind = LaunchNameOrigin::Kind::Queue,
+            .name = decode_queue_name,
+            .role = "fused encoded-output decode queue",
+        });
+      }
       ss << ' ' << tee_name << ".";
       if (!prefix_ends_in_typed_queue) {
-        ss << " ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0";
+        ss << " ! queue name=" << decode_queue_name
+           << " max-size-buffers=1 max-size-bytes=0 max-size-time=0";
       }
       for (std::size_t node_index = encoded_split; node_index < nodes.size(); ++node_index) {
         append_fused_node_fragment(&br, &ss, nodes[node_index],

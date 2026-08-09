@@ -8,6 +8,8 @@
 #include "gst/GstBusWatch.h"
 #include "gst/GstHelpers.h"
 
+#include "pipeline/graph/internal/GraphTestHooks.h"
+
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
 #include "internal/InputStream.h"
@@ -343,7 +345,13 @@ void promote_endpoint_mode_or_throw(Composition& composition, std::string_view r
         "node; keep the linear path or split it into explicit Graph fragments");
   }
 
-  composition.edges = std::move(kept);
+  if (composition.active_mutation) {
+    composition.active_mutation->replace_edges(std::move(kept));
+  } else {
+    composition.edges = std::move(kept);
+  }
+  session_test::maybe_throw_composition_failure_for_test(
+      session_test::CompositionFailurePoint::EndpointEdgesReplaced);
   composition.recompute_unique_tail();
 }
 
@@ -582,7 +590,7 @@ std::vector<std::string> Graph::outputs() const {
   return out;
 }
 
-void Graph::mark_composition_changed() {
+void Graph::mark_composition_changed() noexcept {
   nodes_version_.fetch_add(1, std::memory_order_relaxed);
   invalidate_built_();
 }
@@ -598,6 +606,7 @@ Graph::CompositionView Graph::composition_view_for_internal_compile() const {
   if (!composition_) {
     throw std::runtime_error("Graph: cannot compile a moved-from composition");
   }
+  composition_->verify_identity_index_or_throw("Graph::compile");
   const bool linear = composition_->is_linear();
   return CompositionView{
       .linear_nodes = linear ? composition_->linear_nodes_or_throw("Graph::compile")
@@ -1014,6 +1023,9 @@ std::pair<std::size_t, std::size_t> Graph::append_linear_fragment_(const Graph& 
     throw std::runtime_error("Graph::add after branching is ambiguous; use connect()");
   }
   const auto nodes = fragment.composition_->linear_nodes_or_throw(where);
+  composition_->preflight_pipeline_nodes(nodes, where ? where : "Graph::add");
+  composition_->pipeline_vertex_by_identity.reserve(
+      composition_->pipeline_vertex_by_identity.size() + nodes.size());
   const auto start = composition_->size();
   for (const auto& node : nodes) {
     composition_->append_vertex(node);
@@ -1064,9 +1076,19 @@ std::pair<std::size_t, std::size_t> Graph::import_composition_fragment_(const Gr
   }
 
   const auto& source = *fragment.composition_;
+  composition_->preflight_pipeline_vertices(source.vertices, where ? where : "Graph::connect");
+  composition_->vertices.reserve(composition_->vertices.size() + source.vertices.size());
+  composition_->pipeline_vertex_by_identity.reserve(
+      composition_->pipeline_vertex_by_identity.size() + source.vertices.size());
   const std::size_t start = composition_->vertices.size();
-  composition_->vertices.insert(composition_->vertices.end(), source.vertices.begin(),
-                                source.vertices.end());
+  for (const auto& vertex : source.vertices) {
+    if (vertex.kind == CompositionGraph::CompositionVertex::Kind::PipelineNode) {
+      composition_->append_unlinked_pipeline_vertex(vertex.pipeline_node,
+                                                    where ? where : "Graph::connect");
+    } else {
+      composition_->append_unlinked_runtime_vertex(vertex.runtime_node);
+    }
+  }
   const std::size_t end = composition_->vertices.size();
 
   for (const auto& edge : source.edges) {
@@ -1167,8 +1189,19 @@ std::pair<std::size_t, std::size_t> Graph::import_output_collection_fragment_(co
   }
 
   const auto& nodes = fragment.composition_->vertices;
+  composition_->preflight_pipeline_vertices(nodes, where ? where : "Graph::connect");
+  composition_->vertices.reserve(composition_->vertices.size() + nodes.size());
+  composition_->pipeline_vertex_by_identity.reserve(
+      composition_->pipeline_vertex_by_identity.size() + nodes.size());
   const std::size_t start = composition_->vertices.size();
-  composition_->vertices.insert(composition_->vertices.end(), nodes.begin(), nodes.end());
+  for (const auto& vertex : nodes) {
+    if (vertex.kind == CompositionGraph::CompositionVertex::Kind::PipelineNode) {
+      composition_->append_unlinked_pipeline_vertex(vertex.pipeline_node,
+                                                    where ? where : "Graph::connect");
+    } else {
+      composition_->append_unlinked_runtime_vertex(vertex.runtime_node);
+    }
+  }
   const std::size_t end = composition_->vertices.size();
   if (end > start) {
     composition_->tail = end - 1U;
@@ -1273,14 +1306,12 @@ Graph::import_or_reuse_node_fragment_(std::shared_ptr<Node> node, const char* wh
                              ": cannot connect a null Node");
   }
 
-  const Node* key = node.get();
-  auto existing = composition_->imported_nodes.find(key);
-  if (existing != composition_->imported_nodes.end()) {
-    return {existing->second.start, existing->second.end};
+  if (const auto existing = composition_->find_pipeline_vertex(node.get())) {
+    return {*existing, *existing + 1U};
   }
 
   const std::size_t start = composition_->vertices.size();
-  composition_->vertices.emplace_back(std::move(node));
+  composition_->append_unlinked_pipeline_vertex(std::move(node), where ? where : "Graph::connect");
   const std::size_t end = composition_->vertices.size();
 
   const auto& inserted = composition_->vertices[start];
@@ -1305,8 +1336,6 @@ Graph::import_or_reuse_node_fragment_(std::shared_ptr<Node> node, const char* wh
       .user_named = !explicit_endpoint_name(inserted).empty(),
   });
 
-  composition_->imported_nodes.emplace(
-      key, CompositionGraph::ImportedFragment{.source_version = 0, .start = start, .end = end});
   composition_->recompute_unique_tail();
   return {start, end};
 }
@@ -1394,16 +1423,15 @@ void Graph::attach_fragment_boundary_hints_(std::size_t start, std::size_t end,
 }
 
 std::size_t Graph::append_pipeline_vertex_for_internal_graph_(std::shared_ptr<Node> node) {
-  if (!composition_) {
-    composition_ = std::make_unique<CompositionGraph>();
-  }
+  CompositionMutation mutation(*this);
   if (!node) {
     throw std::runtime_error("Graph::append_pipeline_vertex_for_internal_graph_: node is null");
   }
 
   const std::size_t id = composition_->vertices.size();
   const NodeCapsBehavior behavior = node->caps_behavior();
-  composition_->vertices.emplace_back(std::move(node));
+  composition_->append_unlinked_pipeline_vertex(
+      std::move(node), "Graph::append_pipeline_vertex_for_internal_graph_");
   composition_->tail = CompositionGraph::kInvalid;
   groups_.push_back(GroupMeta{
       .start = id,
@@ -1411,22 +1439,20 @@ std::size_t Graph::append_pipeline_vertex_for_internal_graph_(std::shared_ptr<No
       .caps_behavior = behavior,
       .label = "",
   });
-  mark_composition_changed();
+  mutation.commit();
   return id;
 }
 
 std::size_t
 Graph::append_runtime_vertex_for_internal_graph_(std::shared_ptr<simaai::neat::graph::Node> node) {
-  if (!composition_) {
-    composition_ = std::make_unique<CompositionGraph>();
-  }
+  CompositionMutation mutation(*this);
   if (!node) {
     throw std::runtime_error("Graph::append_runtime_vertex_for_internal_graph_: node is null");
   }
   const std::size_t id = composition_->vertices.size();
-  composition_->vertices.push_back(CompositionGraph::CompositionVertex::runtime(std::move(node)));
+  composition_->append_unlinked_runtime_vertex(std::move(node));
   composition_->tail = CompositionGraph::kInvalid;
-  mark_composition_changed();
+  mutation.commit();
   return id;
 }
 
@@ -1435,24 +1461,24 @@ void Graph::connect_runtime_port_for_internal_graph_(std::size_t from, std::stri
   if (!composition_) {
     throw std::runtime_error("Graph::connect_runtime_port_for_internal_graph_: moved-from Graph");
   }
+  CompositionMutation mutation(*this);
   composition_->connect_runtime_port(from, to, std::string(from_port), std::string(to_port));
-  mark_composition_changed();
+  mutation.commit();
 }
 
 Graph& Graph::add(std::shared_ptr<Node> node) {
-  if (!composition_) {
-    composition_ = std::make_unique<CompositionGraph>();
-  }
+  CompositionMutation mutation(*this);
   const NodeCapsBehavior behavior = node ? node->caps_behavior() : NodeCapsBehavior::Dynamic;
   const auto [start, end] = composition_->append_node(std::move(node));
   if (end > start) {
     groups_.push_back({start, end, behavior, ""});
   }
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::add(const Graph& fragment) {
+  CompositionMutation mutation(*this);
   if (!fragment.composition_) {
     throw std::runtime_error("Graph::add(Graph): cannot append a moved-from Graph fragment");
   }
@@ -1466,7 +1492,7 @@ Graph& Graph::add(const Graph& fragment) {
     }
     import_composition_fragment_(fragment, "Graph::add(Graph)");
   }
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
@@ -1475,9 +1501,7 @@ Graph& Graph::add(Graph&& fragment) {
 }
 
 Graph& Graph::connect(std::string_view from_endpoint, std::string_view to_endpoint) {
-  if (!composition_) {
-    composition_ = std::make_unique<CompositionGraph>();
-  }
+  CompositionMutation mutation(*this);
   if (composition_->empty()) {
     throw std::runtime_error("Graph::connect: cannot resolve endpoints in an empty Graph");
   }
@@ -1494,7 +1518,7 @@ Graph& Graph::connect(std::string_view from_endpoint, std::string_view to_endpoi
       resolve_boundary_endpoint_or_throw(*composition_, to_name, "destination", "Graph::connect");
   promote_endpoint_mode_or_throw(*composition_, from_name, to_name, "Graph::connect");
   composition_->connect_endpoint(from, to, from_name, to_name);
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
@@ -1503,6 +1527,7 @@ Graph& Graph::connect(const Graph& from, const Graph& to) {
 }
 
 Graph& Graph::connect(const Graph& from, const Graph& to, const GraphLinkOptions& options) {
+  CompositionMutation mutation(*this);
   const auto [from_start, from_end] =
       import_or_reuse_composition_fragment_(from, "Graph::connect(from)");
   if (from_end <= from_start) {
@@ -1548,78 +1573,86 @@ Graph& Graph::connect(const Graph& from, const Graph& to, const GraphLinkOptions
         "Graph::connect");
     composition_->connect_endpoint(match.from, match.to, match.from_name, match.to_name, options);
   }
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(std::shared_ptr<Node> from, std::shared_ptr<Node> to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_node_fragment_(std::move(from), "Graph::connect(from)");
   const auto to_range = import_or_reuse_node_fragment_(std::move(to), "Graph::connect(to)");
   connect_imported_ranges_(from_range, {}, to_range, {}, "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(const Graph& from, std::shared_ptr<Node> to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_composition_fragment_(from, "Graph::connect(from)");
   const auto to_range = import_or_reuse_node_fragment_(std::move(to), "Graph::connect(to)");
   connect_imported_ranges_(from_range, from.endpoint_name_, to_range, {}, "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(std::shared_ptr<Node> from, const Graph& to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_node_fragment_(std::move(from), "Graph::connect(from)");
   const auto to_range = is_output_collection_fragment_(to)
                             ? import_or_reuse_output_collection_fragment_(to, "Graph::connect(to)")
                             : import_or_reuse_composition_fragment_(to, "Graph::connect(to)");
   connect_imported_ranges_(from_range, {}, to_range, to.endpoint_name_, "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(const Model& from, const Model& to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_model_fragment_(from, "Graph::connect(from)");
   const auto to_range = import_or_reuse_model_fragment_(to, "Graph::connect(to)");
   connect_imported_ranges_(from_range, model_endpoint_name(from), to_range, model_endpoint_name(to),
                            "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(const Model& from, const Graph& to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_model_fragment_(from, "Graph::connect(from)");
   const auto to_range = is_output_collection_fragment_(to)
                             ? import_or_reuse_output_collection_fragment_(to, "Graph::connect(to)")
                             : import_or_reuse_composition_fragment_(to, "Graph::connect(to)");
   connect_imported_ranges_(from_range, model_endpoint_name(from), to_range, to.endpoint_name_,
                            "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(const Graph& from, const Model& to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_composition_fragment_(from, "Graph::connect(from)");
   const auto to_range = import_or_reuse_model_fragment_(to, "Graph::connect(to)");
   connect_imported_ranges_(from_range, from.endpoint_name_, to_range, model_endpoint_name(to),
                            "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(const Model& from, std::shared_ptr<Node> to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_model_fragment_(from, "Graph::connect(from)");
   const auto to_range = import_or_reuse_node_fragment_(std::move(to), "Graph::connect(to)");
   connect_imported_ranges_(from_range, model_endpoint_name(from), to_range, {}, "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
 Graph& Graph::connect(std::shared_ptr<Node> from, const Model& to) {
+  CompositionMutation mutation(*this);
   const auto from_range = import_or_reuse_node_fragment_(std::move(from), "Graph::connect(from)");
   const auto to_range = import_or_reuse_model_fragment_(to, "Graph::connect(to)");
   connect_imported_ranges_(from_range, {}, to_range, model_endpoint_name(to), "Graph::connect");
-  mark_composition_changed();
+  mutation.commit();
   return *this;
 }
 
@@ -1648,14 +1681,26 @@ Graph& Graph::add_output_tensor(const OutputTensorOptions& opt) {
     throw std::runtime_error("add_output_tensor: only UInt8 is supported for now");
   }
 
-  // Normalize to a CPU-friendly raw-video tensor path.
-  add(nodes::VideoConvert());
-  add(nodes::VideoScale());
+  // Construct every Node before touching the composition, then append the helper as one atomic
+  // mutation. This avoids committing a prefix if a later Node construction or insertion fails.
+  std::vector<std::shared_ptr<Node>> additions;
+  additions.reserve(4);
+  additions.push_back(nodes::VideoConvert());
+  additions.push_back(nodes::VideoScale());
+  additions.push_back(nodes::CapsRaw(o.format.str(), o.target_width, o.target_height, o.target_fps,
+                                     simaai::neat::CapsMemory::SystemMemory));
+  additions.push_back(nodes::Output());
 
-  // Force SystemMemory to keep CPU-accessible tensors for future bindings.
-  add(nodes::CapsRaw(o.format.str(), o.target_width, o.target_height, o.target_fps,
-                     simaai::neat::CapsMemory::SystemMemory));
-  add(nodes::Output());
+  CompositionMutation mutation(*this);
+  composition_->preflight_pipeline_nodes(additions, "Graph::add_output_tensor");
+  for (auto& node : additions) {
+    const NodeCapsBehavior behavior = node ? node->caps_behavior() : NodeCapsBehavior::Dynamic;
+    const auto [start, end] = composition_->append_node(std::move(node));
+    if (end > start) {
+      groups_.push_back({start, end, behavior, ""});
+    }
+  }
+  mutation.commit();
   return *this;
 }
 

@@ -33,11 +33,13 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            request.prompt = std::string{"hello"};
            GenerationResult result;
            result.text = "world";
+           result.reasoning = "thinking";
            result.no_speech_prob = 0.1F;
            result.avg_logprob = -0.2F;
            GenerationMetrics metrics;
            TokenSample token;
            token.text = "tok";
+           token.reasoning = "thinking";
            token.no_speech_prob = 0.3F;
            token.avg_logprob = -0.4F;
            ChatMessage message{"user", "hello"};
@@ -92,6 +94,10 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            auto genai_server = static_cast<GenAIServer*>(nullptr);
            auto genai_run = &GenAIModel::run;
            auto genai_stream = &GenAIModel::stream;
+           auto vlm_set_lora = &VisionLanguageModel::set_lora;
+           auto vlm_unset_lora = &VisionLanguageModel::unset_lora;
+           auto genai_set_lora = &GenAIModel::set_lora;
+           auto genai_unset_lora = &GenAIModel::unset_lora;
            bool vision_language_rejected_null = false;
            try {
              (void)graphs::VisionLanguage(nullptr);
@@ -129,4 +135,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)genai_server;
            (void)genai_run;
            (void)genai_stream;
+           (void)vlm_set_lora;
+           (void)vlm_unset_lora;
+           (void)genai_set_lora;
+           (void)genai_unset_lora;
          }));

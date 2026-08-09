@@ -30,11 +30,15 @@ struct GraphRunOptions;
 namespace nodes {
 class StageNode;
 }
+InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 } // namespace simaai::neat::graph
 
 namespace simaai::neat {
 class Graph;
+namespace internal {
+class InputSpecSpecializationContext;
 }
+} // namespace simaai::neat
 
 namespace simaai::neat::runtime {
 
@@ -127,12 +131,12 @@ struct FusedRealtimeIngressBranch {
   };
   std::optional<EncodedOutput> encoded_output;
   /**
-   * Optional encoded H.264 sink branch tapped before the hardware decoder.
+   * Optional H.264 or H.265 encoded-video sink branch tapped before the hardware decoder.
    * These nodes are rendered behind a tee branch in the fused source pipeline
-   * (for example H264Packetize -> UdpOutput). The normalized RTSP source
-   * parser is shared by the video and decoder paths. The original public link
-   * options select lossless backpressure for Default or latest replacement
-   * for RealtimeLatestByStream.
+   * (for example H264Packetize or H265Packetize -> UdpOutput). The normalized
+   * RTSP source parser is shared by the encoded video and decoder paths. The
+   * original public link options select lossless backpressure for Default or
+   * latest replacement for RealtimeLatestByStream.
    */
   std::vector<std::shared_ptr<Node>> encoded_sink_nodes;
   GraphLinkOptions encoded_sink_link_options;
@@ -201,6 +205,18 @@ struct PipelineSegmentPlan {
   std::vector<Provenance> provenance;
   std::vector<MaterializedNodeAttribution> materialized_node_attribution;
 };
+
+// An internal boundary transports whatever timeline it was handed, including no timestamp
+// at all; only a public application-owned Input authors one. Stamping here would give each
+// leg of a fan-out its own running time, which is what splits video from metadata.
+inline InputOptions injected_boundary_input_options(const PipelineSegmentPlan& segment) {
+  InputOptions opt =
+      (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty())
+          ? segment.boundary_hints->ingress_inputs.front()
+          : graph::input_opts_from_spec(segment.input_spec, segment.input_complete);
+  opt.do_timestamp = false;
+  return opt;
+}
 
 inline graph::NodeId attributed_runtime_node_for_segment_node(const PipelineSegmentPlan& segment,
                                                               std::size_t segment_node_index) {
@@ -338,6 +354,9 @@ ExecutionGraphPlan compile_graph_run_plan(const graph::Graph& graph,
                                           const graph::GraphRunOptions& opt);
 
 namespace session_test {
+
+void specialize_input_specs_for_test(ExecutionGraphPlan* plan,
+                                     const internal::InputSpecSpecializationContext& context);
 
 bool fused_realtime_source_segment_eligible_for_test(bool already_fused);
 

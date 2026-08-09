@@ -1,5 +1,6 @@
 #include "ExecutionGraphPlan.h"
 
+#include "builder/internal/InputSpecSpecialization.h"
 #include "graph/Compiler.h"
 #include "graph/Graph.h"
 #include "graph/GraphRun.h"
@@ -12,11 +13,13 @@
 #include "nodes/io/Input.h"
 #include "nodes/io/UdpOutput.h"
 #include "nodes/rtp/H264Depacketize.h"
+#include "nodes/rtp/H265Depacketize.h"
 #include "nodes/sima/SimaDecode.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/CapsStringUtil.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/InputSpecCapabilities.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 
@@ -1077,9 +1080,23 @@ OutputSpec input_options_to_output_spec(const InputOptions& opt) {
   spec.width = opt.width;
   spec.height = opt.height;
   spec.depth = opt.depth;
+  spec.fps_num = opt.fps_n;
+  spec.fps_den = opt.fps_d > 0 ? opt.fps_d : 1;
   if (spec.depth <= 0 && opt.max_depth > 0) {
     spec.depth = opt.max_depth;
   }
+  if (opt.memory_policy == InputMemoryPolicy::SystemMemory ||
+      (!opt.use_simaai_pool && opt.memory_policy == InputMemoryPolicy::Auto)) {
+    spec.memory = "SystemMemory";
+  } else if (opt.memory_policy == InputMemoryPolicy::Ev74 ||
+             opt.memory_policy == InputMemoryPolicy::Dms0 ||
+             opt.memory_policy == InputMemoryPolicy::Auto) {
+    // Match Input::output_spec(): Auto with the default SiMa pool is a stable
+    // SimaAI memory contract; the legacy false flag was handled above.
+    spec.memory = "SimaAI";
+  }
+  spec.certainty = SpecCertainty::Authoritative;
+  spec.note = "Explicit fragment input options";
   return spec;
 }
 
@@ -1789,14 +1806,13 @@ struct EncodedOutputFusionMatch {
   std::size_t encoded_split_node_index = 0;
 };
 
-bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
+std::optional<SimaDecodeType> encoded_video_sender_codec(const PipelineSegmentPlan& segment) {
   if (segment.nodes.size() != 3U) {
-    return false;
+    return std::nullopt;
   }
-  if (!segment.nodes[0] || segment.nodes[0]->kind() != "H264Parse" || !segment.nodes[1] ||
-      segment.nodes[1]->kind() != "H264Packetize" || !segment.nodes[2] ||
+  if (!segment.nodes[0] || !segment.nodes[1] || !segment.nodes[2] ||
       segment.nodes[2]->kind() != "UdpOutput") {
-    return false;
+    return std::nullopt;
   }
 
   const auto* udp_output = dynamic_cast<const simaai::neat::UdpOutput*>(segment.nodes[2].get());
@@ -1804,7 +1820,16 @@ bool is_encoded_video_sender_segment(const PipelineSegmentPlan& segment) {
   // changes its state domain: that sink can hold the shared pipeline in PAUSED
   // while waiting for preroll from every encoded branch. Keep this public
   // topology segmented rather than coupling video egress to decoder startup.
-  return udp_output && !udp_output->options().async;
+  if (!udp_output || udp_output->options().async) {
+    return std::nullopt;
+  }
+  if (segment.nodes[0]->kind() == "H264Parse" && segment.nodes[1]->kind() == "H264Packetize") {
+    return SimaDecodeType::H264;
+  }
+  if (segment.nodes[0]->kind() == "H265Parse" && segment.nodes[1]->kind() == "H265Packetize") {
+    return SimaDecodeType::H265;
+  }
+  return std::nullopt;
 }
 
 std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
@@ -1826,12 +1851,18 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
       decoder.output_edges.front() != target_edge_index) {
     return std::nullopt;
   }
-  const bool is_h264_decoder =
-      std::any_of(decoder.nodes.begin(), decoder.nodes.end(), [](const auto& node) {
-        const auto* sima_decode = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
-        return sima_decode && sima_decode->options().type == SimaDecodeType::H264;
-      });
-  if (!is_h264_decoder) {
+  const auto decoder_codec = [&decoder]() -> std::optional<SimaDecodeType> {
+    const auto it = std::find_if(decoder.nodes.begin(), decoder.nodes.end(), [](const auto& node) {
+      const auto* sima_decode = dynamic_cast<const simaai::neat::SimaDecode*>(node.get());
+      return sima_decode && (sima_decode->options().type == SimaDecodeType::H264 ||
+                             sima_decode->options().type == SimaDecodeType::H265);
+    });
+    if (it == decoder.nodes.end()) {
+      return std::nullopt;
+    }
+    return dynamic_cast<const simaai::neat::SimaDecode*>((*it).get())->options().type;
+  }();
+  if (!decoder_codec.has_value()) {
     return std::nullopt;
   }
 
@@ -1893,11 +1924,20 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
   if (!segment_is_private_live_source_for_fusion(source, source_to_fanout_edge)) {
     return std::nullopt;
   }
-  const bool is_h264_source =
-      std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
-        return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
-      });
-  if (!is_h264_source) {
+  const auto source_codec = [&source]() -> std::optional<SimaDecodeType> {
+    if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+          return dynamic_cast<const simaai::neat::H264Depacketize*>(node.get()) != nullptr;
+        })) {
+      return SimaDecodeType::H264;
+    }
+    if (std::any_of(source.nodes.begin(), source.nodes.end(), [](const auto& node) {
+          return dynamic_cast<const simaai::neat::H265Depacketize*>(node.get()) != nullptr;
+        })) {
+      return SimaDecodeType::H265;
+    }
+    return std::nullopt;
+  }();
+  if (source_codec != decoder_codec) {
     return std::nullopt;
   }
 
@@ -1919,12 +1959,18 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
       output.nodes.size() == 1U
           ? dynamic_cast<const simaai::neat::Output*>(output.nodes.front().get())
           : nullptr;
-  if (!output_node && !is_encoded_video_sender_segment(output)) {
-    return std::nullopt;
+  if (!output_node) {
+    const auto sender_codec = encoded_video_sender_codec(output);
+    if (!sender_codec.has_value() || sender_codec != decoder_codec) {
+      return std::nullopt;
+    }
   }
 
   const auto& encoded_output_edge = plan.edges[fanout_to_output_edge];
   if (output_node) {
+    if (decoder_codec != SimaDecodeType::H264) {
+      return std::nullopt;
+    }
     const auto& options = output_node->options();
     // A fused pad probe can preserve ordinary, unclocked Output buffering,
     // but it cannot faithfully reproduce clock synchronization, public
@@ -1956,9 +2002,9 @@ std::optional<EncodedOutputFusionMatch> match_encoded_output_fusion_branch(
                                          : encoded_output_edge.link_options.stream_id;
   } else {
     match.encoded_sink_link_options = encoded_output_edge.link_options;
-    // Preserve VideoSender's parser exactly. Finding H264Depacketize somewhere
+    // Preserve VideoSender's parser exactly. Finding a codec depacketizer somewhere
     // in the source segment does not prove that the source's public output tail
-    // is still parsed AU-aligned byte-stream H.264; a legal source fragment may
+    // is still parsed AU-aligned byte-stream video; a legal source fragment may
     // transform the stream afterward. Fusion is an execution lowering and must
     // not remove parser/caps/header semantics without an exact output contract.
     match.encoded_sink_nodes = output.nodes;
@@ -2451,13 +2497,58 @@ void apply_public_fragment_metadata(
     }
 
     segment.boundary_hints = *fragment->boundary_hints;
+    const bool input_is_stable = segment.input_spec.certainty == SpecCertainty::Derived ||
+                                 segment.input_spec.certainty == SpecCertainty::Authoritative;
     if (segment.boundary.needs_input && !segment.boundary_hints->ingress_inputs.empty() &&
-        !segment.input_complete) {
+        (!segment.input_complete || !input_is_stable)) {
       const InputOptions& ingress = segment.boundary_hints->ingress_inputs.front();
       segment.input_spec = input_options_to_output_spec(ingress);
       segment.input_complete = input_options_complete(ingress);
     }
   }
+}
+
+bool plan_has_input_spec_specializer(const ExecutionGraphPlan& plan) {
+  return std::any_of(
+      plan.pipeline_segments.begin(), plan.pipeline_segments.end(), [](const auto& segment) {
+        return std::any_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
+          return node &&
+                 dynamic_cast<const simaai::neat::internal::InputSpecSpecializer*>(node.get());
+        });
+      });
+}
+
+void specialize_pipeline_segments(
+    ExecutionGraphPlan* plan,
+    const simaai::neat::internal::InputSpecSpecializationContext& context) {
+  if (!plan) {
+    return;
+  }
+  for (auto& segment : plan->pipeline_segments) {
+    OutputSpec stable_input;
+    if (!plan->linear_compat) {
+      stable_input = segment.boundary.source_like ? OutputSpec{} : segment.input_spec;
+    } else if (segment.boundary_hints.has_value() &&
+               !segment.boundary_hints->ingress_inputs.empty()) {
+      stable_input = input_options_to_output_spec(segment.boundary_hints->ingress_inputs.front());
+    }
+    // Linear input_spec can describe only the first build seed. Starting from
+    // unknown excludes it while still allowing explicit Input/Caps Nodes in
+    // the segment to establish stable facts.
+    auto specialized =
+        simaai::neat::internal::specialize_nodes_for_input(segment.nodes, stable_input, context);
+    segment.nodes = std::move(specialized.nodes);
+    segment.output_spec = std::move(specialized.output_spec);
+    segment.output_complete = output_spec_complete(segment.output_spec);
+  }
+}
+
+void specialize_pipeline_segments_with_discovered_context(ExecutionGraphPlan* plan) {
+  if (!plan || !plan_has_input_spec_specializer(*plan)) {
+    return;
+  }
+  const auto context = pipeline_internal::discover_input_spec_specialization_context();
+  specialize_pipeline_segments(plan, context);
 }
 
 const InputOptions* ingress_options_for_segment_edge(const ExecutionGraphPlan& plan,
@@ -2568,6 +2659,12 @@ void validate_static_connected_input_capacities_impl(const ExecutionGraphPlan& p
 } // namespace
 
 namespace session_test {
+
+void specialize_input_specs_for_test(
+    ExecutionGraphPlan* plan,
+    const simaai::neat::internal::InputSpecSpecializationContext& context) {
+  specialize_pipeline_segments(plan, context);
+}
 
 bool fused_realtime_source_segment_eligible_for_test(bool already_fused) {
   PipelineSegmentPlan segment;
@@ -2742,6 +2839,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     apply_lowered_link_policies(lowering.lowered_edges, &plan);
     apply_normalized_link_policies(normalized, lowering.runtime_node_for_vertex, &plan);
     apply_public_fragment_metadata(view, graph_range_by_node, &plan);
+    specialize_pipeline_segments_with_discovered_context(&plan);
     validate_static_connected_input_capacities(plan);
     normalize_public_graph_boundaries(lowering.graph, &plan);
     // Fusion is an execution-plan lowering, not a public build mode. Eligible live
@@ -2790,6 +2888,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   graph_range_by_node[runtime_id] = {0U, view.vertices.size()};
   std::vector<graph::NodeId> runtime_node_for_vertex(view.vertices.size(), runtime_id);
   apply_public_fragment_metadata(view, graph_range_by_node, &plan);
+  specialize_pipeline_segments_with_discovered_context(&plan);
   resolve_single_pipeline_endpoints(&plan);
   if (plan.default_input.has_value() && !view.vertices.empty()) {
     std::string name = explicit_public_endpoint_name(view.vertices.front());

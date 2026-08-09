@@ -33,10 +33,13 @@ namespace simaai::neat::nodes::groups {
  * @ingroup nodes_groups
  */
 struct RtspDecodedInputOptions {
-  std::string url;       ///< `rtsp://` URL to consume.
-  int latency_ms = 200;  ///< Jitter-buffer latency in milliseconds.
-  bool tcp = true;       ///< If true, request the RTSP TCP transport.
-  int payload_type = 96; ///< RTP payload type number for the H.264 stream.
+  std::string url;      ///< `rtsp://` URL to consume.
+  int latency_ms = 200; ///< Jitter-buffer latency in milliseconds.
+  bool tcp = true;      ///< If true, request the RTSP TCP transport.
+  /// RTP payload type filter, independent of codec. `-1` selects the codec
+  /// default, `0` disables payload filtering, `> 0` selects an exact RTP
+  /// payload.
+  int payload_type = -1;
   int h264_parse_config_interval =
       -1;                   ///< SPS/PPS reinjection interval for the H.264 parser (-1 = default).
   int h264_fps = -1;        ///< Expected FPS injected into the parser caps (-1 = unspecified).
@@ -77,7 +80,7 @@ struct RtspDecodedInputOptions {
       RtspCodec::H264;          ///< RTSP codec path to build. Default preserves H.264 behavior.
   bool drop_on_latency = false; ///< If true, ask `rtspsrc` to drop late buffers.
   std::string buffer_mode;      ///< Optional `rtspsrc` buffer-mode value; empty = default.
-  int mjpeg_payload_type = 26;  ///< RTP payload type number for the MJPEG/RTP JPEG stream.
+  int mjpeg_payload_type = 26;  ///< Deprecated; use `payload_type`. RTP payload type for MJPEG.
   int dec_width = -1;           ///< Decoded frame width override; `-1` = upstream-defined.
   int dec_height = -1;          ///< Decoded frame height override; `-1` = upstream-defined.
   int dec_fps = -1; ///< Decoded frame rate override; for MJPEG also a missing-caps FPS fallback.
@@ -96,6 +99,7 @@ struct RtspDecodedInputOptions {
  * @brief Build the live-RTSP input Graph: source, depayload+parse, hardware decode.
  *
  * Typical H.264 chain: `RtspEncodedInput(H264)` -> `SimaDecode(H264)`.
+ * Typical H.265 chain: `RtspEncodedInput(H265)` -> `SimaDecode(H265)`.
  * Typical MJPEG chain: `RtspEncodedInput(MJPEG)` -> `SimaDecode(MJPEG)`.
  *
  * @param opt Configuration (URL, transport, parser fallback caps, decoder output).

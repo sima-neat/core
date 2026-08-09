@@ -56,6 +56,35 @@ void set_error(httplib::Response& res, const std::string& message, int status) {
   set_json(res, {{"error", {{"message", message}, {"type", "invalid_request_error"}}}}, status);
 }
 
+std::optional<std::string> apply_tool_options(const nlohmann::json& body,
+                                              GenerationRequest& request) {
+  if (body.contains("tools")) {
+    if (!body.at("tools").is_array()) {
+      return "tools must be an array";
+    }
+    const auto& tools = body.at("tools");
+    for (std::size_t i = 0; i < tools.size(); ++i) {
+      const auto& tool = tools.at(i);
+      if (!tool.is_object() || !tool.contains("type") || tool.at("type") != "function" ||
+          !tool.contains("function") || !tool.at("function").is_object() ||
+          !tool.at("function").contains("name") || !tool.at("function").at("name").is_string() ||
+          tool.at("function").at("name").get_ref<const std::string&>().empty()) {
+        return "tools[" + std::to_string(i) +
+               "] must contain type 'function' and a non-empty string function.name";
+      }
+    }
+    request.tools = tools;
+  }
+  if (body.contains("tool_choice")) {
+    const auto& choice = body.at("tool_choice");
+    if (!choice.is_null() && (!choice.is_string() || (choice != "auto" && choice != "none"))) {
+      return "Only tool_choice 'auto' or 'none' is supported";
+    }
+    request.tool_choice = choice;
+  }
+  return std::nullopt;
+}
+
 void write_sink(httplib::DataSink& sink, const std::string& text) {
   sink.write(text.data(), text.size());
 }
@@ -170,17 +199,32 @@ bool json_bool(const nlohmann::json& body, const char* key, bool default_value =
   return default_value;
 }
 
+bool request_enable_thinking(const nlohmann::json& body, bool ollama = false) {
+  if (ollama) {
+    return json_bool(body, "think", false);
+  }
+  bool enable_thinking = json_bool(body, "enable_thinking", false);
+  if (body.contains("chat_template_kwargs") && body.at("chat_template_kwargs").is_object()) {
+    enable_thinking =
+        json_bool(body.at("chat_template_kwargs"), "enable_thinking", enable_thinking);
+  }
+  return enable_thinking;
+}
+
 std::string choice_finish_reason(const std::string& finish_reason) {
   return finish_reason.empty() ? "stop" : finish_reason;
 }
 
-nlohmann::json chat_message_response(const GenerationResult& result) {
+nlohmann::json chat_message_response(const GenerationResult& result, bool ollama = false) {
   nlohmann::json message = {{"role", "assistant"}};
   if (!result.tool_calls.empty()) {
     message["content"] = nullptr;
     message["tool_calls"] = result.tool_calls;
   } else {
     message["content"] = result.text;
+  }
+  if (!result.reasoning.empty()) {
+    message[ollama ? "thinking" : "reasoning_content"] = result.reasoning;
   }
   return message;
 }
@@ -197,13 +241,15 @@ GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_s
   return metrics;
 }
 
-std::string chat_chunk(const std::string& model_name, const std::string& text,
+std::string chat_chunk(const std::string& model_name, const std::string& completion_id,
+                       std::uint64_t created, const std::string& text,
                        const std::optional<std::string>& finish_reason = std::nullopt,
-                       const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                       const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                       bool reasoning = false) {
   nlohmann::json chunk;
-  chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
+  chunk["id"] = completion_id;
   chunk["object"] = "chat.completion.chunk";
-  chunk["created"] = unix_time_s();
+  chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.has_value()) {
     if (metrics->time_to_first_token_s > 0.0) {
@@ -223,14 +269,15 @@ std::string chat_chunk(const std::string& model_name, const std::string& text,
     choice["delta"] = nlohmann::json::object();
     choice["finish_reason"] = *finish_reason;
   } else {
-    choice["delta"] = {{"content", text}};
+    choice["delta"] = {{reasoning ? "reasoning_content" : "content", text}};
     choice["finish_reason"] = nullptr;
   }
   chunk["choices"] = nlohmann::json::array({choice});
   return "data: " + chunk.dump() + "\n\n";
 }
 
-std::string chat_tool_call_chunk(const std::string& model_name, const Json& tool_calls,
+std::string chat_tool_call_chunk(const std::string& model_name, const std::string& completion_id,
+                                 std::uint64_t created, const Json& tool_calls,
                                  const GenerationMetrics& metrics) {
   nlohmann::json delta_tool_calls = nlohmann::json::array();
   for (std::size_t i = 0; i < tool_calls.size(); ++i) {
@@ -240,9 +287,9 @@ std::string chat_tool_call_chunk(const std::string& model_name, const Json& tool
   }
 
   nlohmann::json chunk;
-  chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
+  chunk["id"] = completion_id;
   chunk["object"] = "chat.completion.chunk";
-  chunk["created"] = unix_time_s();
+  chunk["created"] = created;
   chunk["model"] = model_name;
   if (metrics.time_to_first_token_s > 0.0) {
     chunk["ttft"] = metrics.time_to_first_token_s;
@@ -359,10 +406,15 @@ std::string audio_chunk(ASRTask task, const std::string& text, bool finished,
 
 std::string ollama_chat_line(const std::string& model_name, const std::string& text, bool done,
                              const std::optional<std::string>& finish_reason = std::nullopt,
-                             const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                             const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                             bool reasoning = false) {
   nlohmann::json body;
   body["model"] = model_name;
   body["message"] = {{"role", "assistant"}, {"content", done ? "" : text}};
+  if (!done && reasoning) {
+    body["message"]["content"] = "";
+    body["message"]["thinking"] = text;
+  }
   body["done"] = done;
   if (done) {
     body["done_reason"] = finish_reason.value_or("stop");
@@ -383,10 +435,14 @@ std::string ollama_chat_line(const std::string& model_name, const std::string& t
 
 std::string ollama_generate_line(const std::string& model_name, const std::string& text, bool done,
                                  const std::optional<std::string>& finish_reason = std::nullopt,
-                                 const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+                                 const std::optional<GenerationMetrics>& metrics = std::nullopt,
+                                 bool reasoning = false) {
   nlohmann::json body;
   body["model"] = model_name;
-  body["response"] = done ? "" : text;
+  body["response"] = done || reasoning ? "" : text;
+  if (!done && reasoning) {
+    body["thinking"] = text;
+  }
   body["done"] = done;
   if (done) {
     body["done_reason"] = finish_reason.value_or("stop");
@@ -709,6 +765,12 @@ struct GenAIServer::Impl {
     http.Post("/stop", [this](const httplib::Request& req, httplib::Response& res) {
       handle_stop(req, res);
     });
+    http.Post("/set_lora", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_lora(req, res, true);
+    });
+    http.Post("/unset_lora", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_lora(req, res, false);
+    });
     auto options_handler = [](const httplib::Request&, httplib::Response& res) {
       set_cors(res);
       res.status = 200;
@@ -723,6 +785,8 @@ struct GenAIServer::Impl {
     http.Options("/api/chat", options_handler);
     http.Options("/api/generate", options_handler);
     http.Options("/stop", options_handler);
+    http.Options("/set_lora", options_handler);
+    http.Options("/unset_lora", options_handler);
   }
 
   static void set_cors(httplib::Response& res) {
@@ -733,7 +797,7 @@ struct GenAIServer::Impl {
 
   std::string add_model(std::filesystem::path model_dir) {
     const auto info = internal::inspect_model_directory(model_dir);
-    return add_model(info.root, default_served_name(info.root));
+    return add_model(info.package_root, default_served_name(info.root));
   }
 
   std::string add_model(std::filesystem::path model_dir, std::string served_name) {
@@ -940,6 +1004,15 @@ struct GenAIServer::Impl {
     return true;
   }
 
+  bool require_thinking_capability(const GenAIModel& model, const GenerationRequest& request,
+                                   httplib::Response& res) const {
+    if (request.enable_thinking && !GenAIServer::model_supports_thinking(model)) {
+      set_error(res, "Thinking is not supported for this model", 400);
+      return false;
+    }
+    return true;
+  }
+
   void handle_stop(const httplib::Request& req, httplib::Response& res) {
     set_cors(res);
     try {
@@ -952,6 +1025,91 @@ struct GenAIServer::Impl {
       set_json(res, {{"status", "stopping"},
                      {"model", model_name.value_or(std::string{"*"})},
                      {"cancelled_streams", cancelled}});
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 500);
+    }
+  }
+
+  std::optional<std::pair<std::string, std::shared_ptr<GenAIModel>>>
+  select_lora_model(const nlohmann::json& body, httplib::Response& res) const {
+    std::string model_name;
+    if (body.contains("model")) {
+      if (!body.at("model").is_string() || body.at("model").get_ref<const std::string&>().empty()) {
+        set_error(res, "LoRA model must be a non-empty string", 400);
+        return std::nullopt;
+      }
+      model_name = body.at("model").get<std::string>();
+    } else {
+      std::lock_guard<std::mutex> lock(registry_mutex);
+      for (const auto& [name, entry] : registry) {
+        if (entry.model->accepts_audio()) {
+          continue;
+        }
+        if (!model_name.empty()) {
+          set_error(res, "LoRA request requires model when multiple eligible models are served",
+                    400);
+          return std::nullopt;
+        }
+        model_name = name;
+      }
+    }
+
+    if (model_name.empty()) {
+      set_error(res, "LoRA request requires a text or vision-language model", 400);
+      return std::nullopt;
+    }
+    auto model = find_model(model_name);
+    if (!model) {
+      set_error(res, "Unknown model: " + model_name, 404);
+      return std::nullopt;
+    }
+    if (!require_text_or_vision_model(*model, model_name, res)) {
+      return std::nullopt;
+    }
+    return std::pair{std::move(model_name), std::move(model)};
+  }
+
+  void handle_lora(const httplib::Request& req, httplib::Response& res, bool enable) {
+    set_cors(res);
+    nlohmann::json body;
+    try {
+      body = parse_json_body(req);
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 400);
+      return;
+    }
+    if (!body.is_object()) {
+      set_error(res, "LoRA request body must be a JSON object", 400);
+      return;
+    }
+
+    std::string adapter_name;
+    if (enable) {
+      if (!body.contains("name") || !body.at("name").is_string()) {
+        set_error(res, "LoRA request requires string name", 400);
+        return;
+      }
+      adapter_name = body.at("name").get<std::string>();
+    }
+
+    auto selected = select_lora_model(body, res);
+    if (!selected.has_value()) {
+      return;
+    }
+    auto& [model_name, model] = *selected;
+    try {
+      if (enable) {
+        model->set_lora(adapter_name);
+      } else {
+        model->unset_lora();
+      }
+      set_json(res, {{"status", "ok"},
+                     {"model", model_name},
+                     {"lora", enable ? nlohmann::json(adapter_name) : nlohmann::json(nullptr)}});
+    } catch (const std::invalid_argument& e) {
+      set_error(res, e.what(), 400);
+    } catch (const std::filesystem::filesystem_error& e) {
+      set_error(res, e.what(), 404);
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
     }
@@ -971,12 +1129,14 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
-      request.messages = parse_chat_messages(body);
-      if (body.contains("tools") && body.at("tools").is_array()) {
-        request.tools = body.at("tools");
+      request.enable_thinking = request_enable_thinking(body);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
       }
-      if (body.contains("tool_choice")) {
-        request.tool_choice = body.at("tool_choice");
+      request.messages = parse_chat_messages(body);
+      if (const auto error = apply_tool_options(body, request)) {
+        set_error(res, *error, 400);
+        return;
       }
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1020,6 +1180,10 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      request.enable_thinking = request_enable_thinking(body);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
       request.prompt = completion_prompt(body);
       if (const auto max_tokens = json_u32(body, {"max_tokens", "max_completion_tokens"})) {
         request.max_new_tokens = *max_tokens;
@@ -1059,12 +1223,14 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
-      request.messages = parse_chat_messages(body);
-      if (body.contains("tools") && body.at("tools").is_array()) {
-        request.tools = body.at("tools");
+      request.enable_thinking = request_enable_thinking(body, true);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
       }
-      if (body.contains("tool_choice")) {
-        request.tool_choice = body.at("tool_choice");
+      request.messages = parse_chat_messages(body);
+      if (const auto error = apply_tool_options(body, request)) {
+        set_error(res, *error, 400);
+        return;
       }
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1078,7 +1244,7 @@ struct GenAIServer::Impl {
       } else {
         const auto result = model->run(request);
         set_json(res, {{"model", model_name},
-                       {"message", chat_message_response(result)},
+                       {"message", chat_message_response(result, true)},
                        {"done", true},
                        {"done_reason", choice_finish_reason(result.finish_reason)},
                        {"eval_count", result.metrics.generated_tokens}});
@@ -1113,6 +1279,10 @@ struct GenAIServer::Impl {
       }
 
       GenerationRequest request;
+      request.enable_thinking = request_enable_thinking(body, true);
+      if (!require_thinking_capability(*model, request, res)) {
+        return;
+      }
       request.messages.push_back(std::move(message));
       if (!require_image_capability(*model, model_name, request, res)) {
         return;
@@ -1125,11 +1295,15 @@ struct GenAIServer::Impl {
         handle_ollama_generate_stream(res, model_name, std::move(model), std::move(request));
       } else {
         const auto result = model->run(request);
-        set_json(res, {{"model", model_name},
-                       {"response", result.text},
-                       {"done", true},
-                       {"done_reason", choice_finish_reason(result.finish_reason)},
-                       {"eval_count", result.metrics.generated_tokens}});
+        nlohmann::json response = {{"model", model_name},
+                                   {"response", result.text},
+                                   {"done", true},
+                                   {"done_reason", choice_finish_reason(result.finish_reason)},
+                                   {"eval_count", result.metrics.generated_tokens}};
+        if (!result.reasoning.empty()) {
+          response["thinking"] = result.reasoning;
+        }
+        set_json(res, std::move(response));
       }
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
@@ -1146,6 +1320,8 @@ struct GenAIServer::Impl {
         [this, model_name = std::move(model_name), model = std::move(model),
          request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
           try {
+            const auto created = unix_time_s();
+            const auto completion_id = "chatcmpl-" + std::to_string(created);
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
@@ -1154,21 +1330,26 @@ struct GenAIServer::Impl {
               const auto metrics = metrics_with_ttft_once(sample->metrics, ttft_sent);
               if (sample->is_final) {
                 const auto final_chunk =
-                    chat_chunk(model_name, "", choice_finish_reason(sample->finish_reason),
-                               metrics) +
+                    chat_chunk(model_name, completion_id, created, "",
+                               choice_finish_reason(sample->finish_reason), metrics) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
               if (!sample->tool_calls.empty()) {
-                write_sink(sink, chat_tool_call_chunk(model_name, sample->tool_calls, metrics));
+                write_sink(sink, chat_tool_call_chunk(model_name, completion_id, created,
+                                                      sample->tool_calls, metrics));
                 continue;
               }
-              const auto chunk = chat_chunk(model_name, sample->text, std::nullopt, metrics);
+              const bool reasoning = !sample->reasoning.empty();
+              const auto chunk = chat_chunk(model_name, completion_id, created,
+                                            reasoning ? sample->reasoning : sample->text,
+                                            std::nullopt, metrics, reasoning);
               write_sink(sink, chunk);
             }
-            const auto done = chat_chunk(model_name, "", "stop") + "data: [DONE]\n\n";
+            const auto done =
+                chat_chunk(model_name, completion_id, created, "", "stop") + "data: [DONE]\n\n";
             write_sink(sink, done);
           } catch (const std::exception& e) {
             const nlohmann::json error = {{"error", {{"message", e.what()}}}};
@@ -1265,8 +1446,10 @@ struct GenAIServer::Impl {
                 pending_tool_metrics = sample->metrics;
                 continue;
               }
-              write_sink(sink, ollama_chat_line(model_name, sample->text, false, std::nullopt,
-                                                sample->metrics));
+              const bool reasoning = !sample->reasoning.empty();
+              write_sink(sink,
+                         ollama_chat_line(model_name, reasoning ? sample->reasoning : sample->text,
+                                          false, std::nullopt, sample->metrics, reasoning));
             }
             write_sink(sink, ollama_chat_line(model_name, "", true, "stop"));
           } catch (const std::exception& e) {
@@ -1297,8 +1480,10 @@ struct GenAIServer::Impl {
                 sink.done();
                 return true;
               }
-              write_sink(sink, ollama_generate_line(model_name, sample->text, false, std::nullopt,
-                                                    sample->metrics));
+              const bool reasoning = !sample->reasoning.empty();
+              write_sink(sink, ollama_generate_line(
+                                   model_name, reasoning ? sample->reasoning : sample->text, false,
+                                   std::nullopt, sample->metrics, reasoning));
             }
             write_sink(sink, ollama_generate_line(model_name, "", true, "stop"));
           } catch (const std::exception& e) {
@@ -1532,6 +1717,10 @@ GenAIServer::~GenAIServer() {
   if (impl_) {
     impl_->stop();
   }
+}
+
+bool GenAIServer::model_supports_thinking(const GenAIModel& model) {
+  return model.supports_thinking();
 }
 
 GenAIServer::GenAIServer(GenAIServer&&) noexcept = default;

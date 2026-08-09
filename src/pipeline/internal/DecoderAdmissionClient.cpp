@@ -354,6 +354,7 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
     result.error = err;
     return result;
   }
+  result.may_have_committed = !dry_run;
 
   std::vector<std::uint8_t> resp_packet;
   if (!recv_packet(fd, resp_packet, &err)) {
@@ -416,6 +417,7 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
   ::close(fd);
 
   if (resp.status != kStatusSuccess) {
+    result.may_have_committed = false;
     result.error = status_payload_message(resp, resp_payload);
     if (decoder_admission_debug_enabled()) {
       std::fprintf(stderr, "[DECADM] rejected id=%llu status=%u err=%s\n",

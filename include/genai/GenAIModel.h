@@ -28,12 +28,18 @@ public:
   bool accepts_image() const;
   bool accepts_audio() const;
   std::string model_id() const;
+  void set_lora(const std::string& adapter_name);
+  void unset_lora();
   GenerationResult run(const GenerationRequest& request);
   GenerationStream stream(const GenerationRequest& request);
 
 private:
+  bool supports_thinking() const;
+
   struct Impl;
   std::unique_ptr<Impl> impl_;
+
+  friend class GenAIServer;
 };
 
 } // namespace simaai::neat::genai

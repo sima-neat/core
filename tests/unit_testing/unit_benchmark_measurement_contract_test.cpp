@@ -149,6 +149,153 @@ bool throws_benchmark_projection_error(const simaai::neat::MeasureReport& latenc
   return false;
 }
 
+void require_near(double actual, double expected, const std::string& label) {
+  require(std::isfinite(actual) && std::abs(actual - expected) <= 1e-9,
+          label + ": expected " + std::to_string(expected) + ", got " + std::to_string(actual));
+}
+
+simaai::neat::ResolvedPreprocessPlan make_benchmark_preprocess_plan() {
+  using namespace simaai::neat;
+  ResolvedPreprocessPlan plan;
+  plan.effective.resize.enable = AutoFlag::On;
+  plan.effective.resize.width = 640;
+  plan.effective.resize.height = 640;
+  plan.effective.resize.mode = ResizeMode::Stretch;
+  plan.effective.normalize.enable = AutoFlag::On;
+  plan.effective.layout_convert.perm = {2, 0, 1};
+  plan.mla_contract.width = 640;
+  plan.mla_contract.height = 640;
+  return plan;
+}
+
+void benchmark_options_api_is_additive() {
+  using namespace simaai::neat;
+  using OptionsOverload = BenchmarkReport (Model::*)(const BenchmarkOptions&);
+  using LegacyOverload = BenchmarkReport (Model::*)(int, bool);
+  using BooleanOverload = BenchmarkReport (Model::*)(bool);
+
+  require(static_cast<OptionsOverload>(&Model::benchmark) != nullptr,
+          "BenchmarkOptions overload should be available");
+  require(static_cast<LegacyOverload>(&Model::benchmark) != nullptr,
+          "legacy benchmark(int, bool) overload should remain available");
+  require(static_cast<BooleanOverload>(&Model::benchmark) != nullptr,
+          "legacy benchmark(bool) overload should remain available");
+}
+
+void benchmark_build_options_prefer_runtime_metadata() {
+  using namespace simaai::neat;
+  Model::Options model_options;
+  model_options.boxdecode_original_width = 320;
+  model_options.boxdecode_original_height = 240;
+  model_options.boxdecode_resize_mode = ResizeMode::Crop;
+  model_options.score_threshold = 0.42F;
+
+  const Model::Options benchmark_options = internal::benchmark_build_model_options(model_options);
+  require(benchmark_options.boxdecode_original_width == 0 &&
+              benchmark_options.boxdecode_original_height == 0,
+          "benchmark builds should not emit stale construction-time original geometry");
+  require(!benchmark_options.boxdecode_resize_mode.has_value(),
+          "benchmark builds should use per-buffer resize metadata");
+  require(benchmark_options.score_threshold == model_options.score_threshold,
+          "benchmark builds should preserve unrelated model options");
+}
+
+void benchmark_preprocess_meta_defaults_to_model_geometry() {
+  using namespace simaai::neat;
+  const Tensor tensor = make_color_tensor(640, 640, ImageSpec::PixelFormat::RGB);
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const internal::PreprocessContractFlags flags{.quant_needed = true, .tess_needed = true};
+
+  const PreprocessRuntimeMeta meta =
+      internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, BenchmarkOptions{});
+  require(meta.original_width == 640 && meta.original_height == 640,
+          "default benchmark geometry should use model-shaped synthetic input");
+  require(meta.resized_width == 640 && meta.resized_height == 640 && meta.scaled_width == 640 &&
+              meta.scaled_height == 640,
+          "default benchmark model geometry should remain 640x640");
+  require(meta.resize_mode == "stretch", "resolved preprocess resize mode should be preserved");
+  require(meta.normalize && meta.quantize && meta.tessellate,
+          "benchmark metadata should preserve preprocess operation flags");
+  require(meta.axis_perm == std::vector<int>({2, 0, 1}),
+          "benchmark metadata should preserve the resolved axis permutation");
+}
+
+void benchmark_preprocess_meta_supports_explicit_geometry() {
+  using namespace simaai::neat;
+  const Tensor tensor = make_color_tensor(640, 640, ImageSpec::PixelFormat::RGB);
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const internal::PreprocessContractFlags flags{};
+
+  BenchmarkOptions stretch;
+  stretch.original_width = 1920;
+  stretch.original_height = 1080;
+  stretch.resize_mode = ResizeMode::Stretch;
+  const PreprocessRuntimeMeta stretch_meta =
+      internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, stretch);
+  require(stretch_meta.original_width == 1920 && stretch_meta.original_height == 1080,
+          "explicit source geometry should override inferred geometry");
+  require(stretch_meta.scaled_width == 640 && stretch_meta.scaled_height == 640,
+          "stretch should fill the model input");
+  require(stretch_meta.pad_left == 0 && stretch_meta.pad_right == 0 && stretch_meta.pad_top == 0 &&
+              stretch_meta.pad_bottom == 0,
+          "stretch should not add padding");
+  require_near(stretch_meta.affine_m00, 3.0, "stretch inverse x scale");
+  require_near(stretch_meta.affine_m11, 1.6875, "stretch inverse y scale");
+
+  BenchmarkOptions letterbox = stretch;
+  letterbox.resize_mode = ResizeMode::Letterbox;
+  const PreprocessRuntimeMeta letterbox_meta =
+      internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, letterbox);
+  require(letterbox_meta.resize_mode == "letterbox", "letterbox mode should be recorded");
+  require(letterbox_meta.resized_width == 640 && letterbox_meta.resized_height == 640 &&
+              letterbox_meta.scaled_width == 640 && letterbox_meta.scaled_height == 360,
+          "letterbox should scale 1920x1080 content to 640x360 in a 640x640 target");
+  require(letterbox_meta.pad_left == 0 && letterbox_meta.pad_right == 0 &&
+              letterbox_meta.pad_top == 140 && letterbox_meta.pad_bottom == 140,
+          "letterbox should center the scaled content vertically");
+  require_near(letterbox_meta.affine_m00, 3.0, "letterbox inverse scale");
+  require_near(letterbox_meta.affine_m12, -420.0, "letterbox inverse y offset");
+
+  BenchmarkOptions crop = stretch;
+  crop.resize_mode = ResizeMode::Crop;
+  const PreprocessRuntimeMeta crop_meta =
+      internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, crop);
+  require(crop_meta.resize_mode == "crop", "crop mode should be recorded");
+  require(crop_meta.resized_width == 640 && crop_meta.resized_height == 640 &&
+              crop_meta.scaled_width == 1138 && crop_meta.scaled_height == 640,
+          "crop should scale 1920x1080 to cover a 640x640 target");
+  require_near(crop_meta.affine_m00, 1.6875, "crop inverse scale");
+  require_near(crop_meta.affine_m02, 420.1875, "crop inverse x offset");
+}
+
+void benchmark_preprocess_meta_rejects_invalid_options() {
+  using namespace simaai::neat;
+  const Tensor tensor = make_color_tensor(640, 640, ImageSpec::PixelFormat::RGB);
+  const ResolvedPreprocessPlan plan = make_benchmark_preprocess_plan();
+  const internal::PreprocessContractFlags flags{};
+
+  BenchmarkOptions partial;
+  partial.original_width = 1920;
+  try {
+    (void)internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, partial);
+    require(false, "partial benchmark source geometry should fail");
+  } catch (const std::exception& e) {
+    require(std::string(e.what()).find("provided together") != std::string::npos,
+            "partial source geometry should produce an actionable error");
+  }
+
+  BenchmarkOptions non_positive;
+  non_positive.original_width = 0;
+  non_positive.original_height = 1080;
+  try {
+    (void)internal::resolve_benchmark_preprocess_meta(tensor, plan, flags, non_positive);
+    require(false, "non-positive benchmark source geometry should fail");
+  } catch (const std::exception& e) {
+    require(std::string(e.what()).find("must be > 0") != std::string::npos,
+            "non-positive source geometry should produce an actionable error");
+  }
+}
+
 void require_measured_output(const std::optional<simaai::neat::Sample>& out,
                              const std::string& where) {
   require(out.has_value(), where + ": pull timed out");
@@ -299,6 +446,31 @@ void graph_sample_timing_counters_are_measurement_window_deltas() {
               std::to_string(report.graph_sample_timing_misses));
 }
 
+void composite_close_preserves_active_measurement_node_metrics() {
+  using namespace simaai::neat;
+
+  const Tensor seed = make_rgb_input(0);
+  Graph source("image");
+  source.add(nodes::Input("image"));
+  Graph sink("output");
+  sink.add(nodes::Output("output", OutputOptions::EveryFrame(8)));
+  Graph graph;
+  graph.connect(source, sink);
+
+  Run run = graph.build(TensorList{seed});
+  MeasureScope scope = run.start_measurement(make_fast_measure_options());
+  require(run.push("image", TensorList{make_rgb_input(1)}),
+          "composite measured push should succeed");
+  require_measured_output(run.pull("output", kTimeoutMs), "composite measured pull");
+
+  run.close();
+  const MeasureReport report = scope.stop();
+
+  require(!report.node_metrics.empty(),
+          "closing a composite Run must preserve child node metrics until its active "
+          "MeasureScope stops");
+}
+
 void internal_graph_run_measurement_collects_e2e_latency_and_throughput() {
   using namespace simaai::neat;
 
@@ -446,6 +618,8 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
            run_case("logical_batch_throughput", logical_batch_size_controls_inference_throughput);
            run_case("graph_sample_timing_counter_deltas",
                     graph_sample_timing_counters_are_measurement_window_deltas);
+           run_case("composite_close_preserves_active_measurement_node_metrics",
+                    composite_close_preserves_active_measurement_node_metrics);
            run_case("internal_graph_run_measurement",
                     internal_graph_run_measurement_collects_e2e_latency_and_throughput);
            run_case("model_benchmark_projection",
@@ -456,6 +630,15 @@ RUN_TEST("unit_benchmark_measurement_contract_test", ([] {
                     model_benchmark_projection_rejects_bad_batch_arithmetic);
            run_case("measurement_boolean_flags_make_profiling_explicit",
                     measurement_boolean_flags_make_profiling_explicit);
+           run_case("benchmark_options_api_is_additive", benchmark_options_api_is_additive);
+           run_case("benchmark_build_options_prefer_runtime_metadata",
+                    benchmark_build_options_prefer_runtime_metadata);
+           run_case("benchmark_preprocess_meta_defaults",
+                    benchmark_preprocess_meta_defaults_to_model_geometry);
+           run_case("benchmark_preprocess_meta_explicit_geometry",
+                    benchmark_preprocess_meta_supports_explicit_geometry);
+           run_case("benchmark_preprocess_meta_invalid_options",
+                    benchmark_preprocess_meta_rejects_invalid_options);
 
            require(failures.empty(), join_failures(failures));
          }));

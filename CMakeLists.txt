@@ -1,5 +1,38 @@
 cmake_minimum_required(VERSION 3.16)
-project(SimaNeat VERSION 0.3.0 LANGUAGES CXX)
+
+# Versioning from deps/manifest.json:
+# - package-version controls package/artifact and CMake project identity.
+# - platform-version controls dependency and CMake package compatibility.
+# - modelzoo-version selects compatible Model Zoo assets and defaults to
+#   platform-version when omitted.
+# - abi-version controls the public C++ shared-library ABI and SONAME.
+set(SIMANEAT_PLATFORM_VERSION "")
+set(SIMANEAT_MODELZOO_VERSION "")
+set(SIMANEAT_PACKAGE_BASE_VERSION "")
+set(SIMANEAT_ABI_VERSION "")
+execute_process(
+  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); platform=data['platform-version']; print(platform); print(data.get('modelzoo-version') or platform); print(data['package-version']); print(data['abi-version'])"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
+  RESULT_VARIABLE SIMANEAT_MANIFEST_RESULT
+  OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
+  ERROR_QUIET
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if (NOT SIMANEAT_MANIFEST_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
+  message(FATAL_ERROR
+    "Failed to read package-version, platform-version, modelzoo-version, and abi-version from deps/manifest.json")
+endif()
+string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_MODELZOO_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_PACKAGE_BASE_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 3 SIMANEAT_ABI_VERSION)
+if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR
+    "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
+endif()
+
+project(SimaNeat VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}" LANGUAGES CXX)
 
 enable_testing()
 
@@ -101,36 +134,9 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
 simaneat_configure_sanitizers()
 
 # ------------------------------------------------------------------------------
-# Versioning from deps/manifest.json:
-# - package-version controls package/artifact identity.
-# - platform-version controls dependency and CMake package compatibility.
-# - abi-version controls the public C++ shared-library ABI and SONAME.
+# Build/package versioning:
 # Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
-set(SIMANEAT_PLATFORM_VERSION "")
-set(SIMANEAT_PACKAGE_BASE_VERSION "")
-set(SIMANEAT_ABI_VERSION "")
-execute_process(
-  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); print(data['platform-version']); print(data['package-version']); print(data['abi-version'])"
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  RESULT_VARIABLE PLATFORM_VERSION_RESULT
-  OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
-  ERROR_QUIET
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
-  message(FATAL_ERROR
-    "Failed to read package-version, platform-version, and abi-version from deps/manifest.json")
-endif()
-string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_PACKAGE_BASE_VERSION)
-list(GET SIMANEAT_MANIFEST_VERSION_LIST 2 SIMANEAT_ABI_VERSION)
-if (NOT SIMANEAT_ABI_VERSION MATCHES "^[1-9][0-9]*$")
-  message(FATAL_ERROR
-    "deps/manifest.json abi-version must be a positive integer; got '${SIMANEAT_ABI_VERSION}'")
-endif()
-
 set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 execute_process(
   COMMAND git describe --tags --exact-match
@@ -203,20 +209,36 @@ math(EXPR SIMANEAT_NEXT_PACKAGE_MINOR "${SIMANEAT_PACKAGE_BASE_VERSION_MINOR} + 
 set(SIMANEAT_DEP_PACKAGE_MIN_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 set(SIMANEAT_DEP_PACKAGE_MAX_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION_MAJOR}.${SIMANEAT_NEXT_PACKAGE_MINOR}.0")
 
-string(REPLACE "." ";" SIMANEAT_PLATFORM_VERSION_PARTS "${SIMANEAT_PLATFORM_VERSION}")
-list(GET SIMANEAT_PLATFORM_VERSION_PARTS 0 SIMANEAT_PLATFORM_VERSION_MAJOR)
-list(GET SIMANEAT_PLATFORM_VERSION_PARTS 1 SIMANEAT_PLATFORM_VERSION_MINOR)
-list(GET SIMANEAT_PLATFORM_VERSION_PARTS 2 SIMANEAT_PLATFORM_VERSION_PATCH)
-if (SIMANEAT_PLATFORM_VERSION_PATCH GREATER 0)
-  math(EXPR SIMANEAT_PREVIOUS_PLATFORM_PATCH "${SIMANEAT_PLATFORM_VERSION_PATCH} - 1")
-else()
-  set(SIMANEAT_PREVIOUS_PLATFORM_PATCH "${SIMANEAT_PLATFORM_VERSION_PATCH}")
+set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "" CACHE STRING
+  "Exact simaai-memory-lib-dev version bundled by the resolved Internals artifact")
+if (SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
+  file(GLOB SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/debs/simaai-memory-lib-dev_*.deb")
+  list(LENGTH SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
+    SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT)
+  if (SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT EQUAL 1)
+    list(GET SIMANEAT_BUNDLED_MEMORY_DEV_DEBS 0
+      SIMANEAT_BUNDLED_MEMORY_DEV_DEB)
+    execute_process(
+      COMMAND dpkg-deb -f
+        "${SIMANEAT_BUNDLED_MEMORY_DEV_DEB}" Version
+      RESULT_VARIABLE SIMANEAT_MEMORY_VERSION_RESULT
+      OUTPUT_VARIABLE SIMANEAT_MEMORY_DEV_PACKAGE_VERSION
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if (NOT SIMANEAT_MEMORY_VERSION_RESULT EQUAL 0)
+      set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "")
+    endif()
+  endif()
 endif()
-math(EXPR SIMANEAT_NEXT_PLATFORM_PATCH "${SIMANEAT_PLATFORM_VERSION_PATCH} + 1")
-set(SIMANEAT_PLATFORM_DEP_PACKAGE_MIN_VERSION
-  "${SIMANEAT_PLATFORM_VERSION_MAJOR}.${SIMANEAT_PLATFORM_VERSION_MINOR}.${SIMANEAT_PREVIOUS_PLATFORM_PATCH}~")
-set(SIMANEAT_PLATFORM_DEP_PACKAGE_MAX_VERSION
-  "${SIMANEAT_PLATFORM_VERSION_MAJOR}.${SIMANEAT_PLATFORM_VERSION_MINOR}.${SIMANEAT_NEXT_PLATFORM_PATCH}")
+if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS
+    AND SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
+  message(FATAL_ERROR
+    "Could not determine the exact simaai-memory-lib-dev version from the "
+    "resolved Internals artifact under deps/debs. Core package dependencies "
+    "must follow the bundled package; they must not be inferred from "
+    "platform-version.")
+endif()
 
 # Debian package versions do not allow underscores. Keep branch-derived versions
 # installable by normalizing every non-Debian-version character to '-'.
@@ -1018,6 +1040,16 @@ if (SimaLMM_FOUND)
   target_link_libraries(sima_neat_static PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
+# Model archives are inflated in process. No public header uses zlib, so this stays PRIVATE, but a
+# static archive does not absorb its dependencies: CMake emits them in INTERFACE_LINK_LIBRARIES for
+# sima_neat_static regardless. The imported target exports as `ZLIB::ZLIB`, which SimaNeatConfig
+# resolves with find_dependency(ZLIB); ${ZLIB_LIBRARIES} would instead bake this build host's
+# absolute library path into SimaNeatTargets.cmake and break relocatable consumers.
+find_package(ZLIB REQUIRED)
+target_include_directories(sima_neat_objects PRIVATE ${ZLIB_INCLUDE_DIRS})
+target_link_libraries(sima_neat PRIVATE ZLIB::ZLIB)
+target_link_libraries(sima_neat_static PRIVATE ZLIB::ZLIB)
+
 if (GST_FOUND)
   target_link_libraries(sima_neat_common INTERFACE ${GST_LIBRARIES})
 endif()
@@ -1141,7 +1173,10 @@ file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL
   "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_CODEC_PERF_H264_FIXTURE_REL
   "${CMAKE_BINARY_DIR}"
-  "${CMAKE_BINARY_DIR}/test-assets/codec-perf/h264_1280x720_30fps.h264")
+  "${CMAKE_BINARY_DIR}/test-assets/codec-perf/h264_1280x720_30fps_no_sei.h264")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_CODEC_PERF_H265_FIXTURE_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_BINARY_DIR}/test-assets/codec-perf/h265_1280x720_30fps_no_sei.h265")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_SHARED_TEST_ASSET_ROOT_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}")
@@ -1158,6 +1193,7 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
   "mpk_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL@",
   "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@",
   "codec_perf_h264_fixture_rel": "@SIMANEAT_TEST_RUNTIME_CODEC_PERF_H264_FIXTURE_REL@",
+  "codec_perf_h265_fixture_rel": "@SIMANEAT_TEST_RUNTIME_CODEC_PERF_H265_FIXTURE_REL@",
   "shared_test_asset_root_rel": "@SIMANEAT_TEST_RUNTIME_SHARED_TEST_ASSET_ROOT_REL@"
 }
 ]=])
@@ -1189,7 +1225,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
   "mpk_fixture_root_rel": "test-assets/mpk",
   "mpk_fixture_manifest_rel": "test-assets/mpk/fixtures_manifest.json",
   "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264",
-  "codec_perf_h264_fixture_rel": "test-assets/codec-perf/h264_1280x720_30fps.h264",
+  "codec_perf_h264_fixture_rel": "test-assets/codec-perf/h264_1280x720_30fps_no_sei.h264",
+  "codec_perf_h265_fixture_rel": "test-assets/codec-perf/h265_1280x720_30fps_no_sei.h265",
   "shared_test_asset_root_rel": "../../share/sima-neat/test-assets"
 }
 ]=])
@@ -1450,6 +1487,8 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-core406"
   "libopencv-imgproc406"
   "libopencv-imgcodecs406"
+  # libsima_neat.so links libz directly to inflate model archives in process.
+  "zlib1g"
   "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
   "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
@@ -1465,17 +1504,23 @@ string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPEND
 set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
   "pkg-config"
-  "simaai-memory-lib-dev (>= ${SIMANEAT_PLATFORM_DEP_PACKAGE_MIN_VERSION})"
-  "simaai-memory-lib-dev (<< ${SIMANEAT_PLATFORM_DEP_PACKAGE_MAX_VERSION})"
   "libgstreamer1.0-dev"
   "libgstreamer-plugins-base1.0-dev"
   "libgstrtspserver-1.0-dev"
   "libglib2.0-dev"
   "libopencv-dev"
+  # Test-only: tests/rtsp_probe_utils.h probes source FPS with cv::VideoCapture.
+  "libopencv-videoio406"
+  # SimaNeatConfig calls find_dependency(ZLIB), and sima_neat_static exports ZLIB::ZLIB.
+  "zlib1g-dev"
   "nlohmann-json3-dev"
   "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
   "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
 )
+if (NOT SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
+  list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
+    "simaai-memory-lib-dev (= ${SIMANEAT_MEMORY_DEV_PACKAGE_VERSION})")
+endif()
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
     "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"

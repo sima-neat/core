@@ -4,8 +4,11 @@
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorTransfer.h"
@@ -25,6 +28,8 @@
 #include <span>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
+#include <unordered_set>
 #include <utility>
 
 namespace simaai::neat::graph {
@@ -36,7 +41,6 @@ std::size_t identity_map_capacity();
 bool has_input_appsrc(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 bool has_output_appsink(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
 bool has_internal_source(std::span<const std::shared_ptr<simaai::neat::Node>> nodes);
-InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 bool is_encoded_sample(const Sample& sample);
 } // namespace simaai::neat::graph
 
@@ -219,14 +223,8 @@ MaterializedSegmentNodes materialize_segment_nodes(const PipelineSegmentPlan& se
 
   if (segment.boundary.needs_input && !segment.boundary.source_like &&
       !simaai::neat::graph::has_input_appsrc(segment.nodes)) {
-    InputOptions opt_src;
-    if (segment.boundary_hints.has_value() && !segment.boundary_hints->ingress_inputs.empty()) {
-      opt_src = segment.boundary_hints->ingress_inputs.front();
-    } else {
-      opt_src =
-          simaai::neat::graph::input_opts_from_spec(segment.input_spec, segment.input_complete);
-    }
-    out.nodes.insert(out.nodes.begin(), simaai::neat::nodes::Input(opt_src));
+    out.nodes.insert(out.nodes.begin(),
+                     simaai::neat::nodes::Input(injected_boundary_input_options(segment)));
     out.injected_input = true;
   }
 
@@ -308,6 +306,15 @@ void copy_encoded_pipeline_input_to_cpu_if_needed(const PipelineSegmentRuntime& 
   }
 }
 
+PullError pull_error_from_neat_error(const NeatError& error) {
+  PullError detail;
+  detail.code = error.report().error_code.empty() ? std::string(error_codes::kInternalPluginFailure)
+                                                  : error.report().error_code;
+  detail.message = error.what();
+  detail.report = error.report();
+  return detail;
+}
+
 } // namespace
 
 void initialize_run_identity(RunCore& core) {
@@ -384,19 +391,450 @@ void RunCore::graph_signal_stop() {
 }
 
 void RunCore::graph_request_stop(const std::string& err) {
+  PullError detail;
+  pipeline_internal::error_util::set_pull_error(&detail, error_codes::kRuntimeElementFailed,
+                                                err.empty() ? "A graph stage failed." : err);
+  graph_request_stop(std::move(detail));
+}
+
+void RunCore::set_terminal_error(PullError detail) {
+  std::lock_guard<std::mutex> lock(error_mu);
+  const bool typed_upgrade =
+      detail.report.has_value() &&
+      (!terminal_error_detail.has_value() || !terminal_error_detail->report.has_value());
+  if (error.empty() || typed_upgrade) {
+    if (detail.code.empty()) {
+      detail.code = error_codes::kRuntimeElementFailed;
+    }
+    detail.message = pipeline_internal::error_util::decorate_error(detail.code, detail.message);
+    if (detail.report.has_value()) {
+      if (detail.report->error_code.empty()) {
+        detail.report->error_code = detail.code;
+      }
+      if (detail.report->repro_note.empty()) {
+        detail.report->repro_note = detail.message;
+      }
+    }
+    error = detail.message;
+    terminal_error_detail = std::move(detail);
+  }
+}
+
+void RunCore::set_terminal_error(const NeatError& err) {
+  set_terminal_error(pull_error_from_neat_error(err));
+}
+
+void RunCore::graph_request_stop(PullError detail) {
   if (graph_debug_enabled_for_core()) {
-    std::fprintf(stderr, "[GRAPH] request_stop err=%s\n", err.empty() ? "<empty>" : err.c_str());
+    std::fprintf(stderr, "[GRAPH] request_stop err=%s\n",
+                 detail.message.empty() ? "<empty>" : detail.message.c_str());
   }
-  {
-    std::lock_guard<std::mutex> lock(error_mu);
-    if (error.empty())
-      error = err;
-  }
+  set_terminal_error(std::move(detail));
   graph_signal_stop();
 }
 
+void RunCore::graph_request_stop(const NeatError& err) {
+  set_terminal_error(err);
+  graph_signal_stop();
+}
+
+void RunCore::graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
+                                               std::string fallback_error) {
+  // An appsrc flow failure can precede the terminal GStreamer bus message. Give the child
+  // InputStream worker a bounded window to replace its reportless push placeholder with the
+  // normalized, report-bearing bus error before stopping the parent graph.
+  constexpr auto kErrorSettleTimeout = std::chrono::milliseconds(250);
+  const std::optional<PullError> detail =
+      pipeline_core ? pipeline_core->wait_for_report_bearing_error(kErrorSettleTimeout)
+                    : std::nullopt;
+  if (detail.has_value() && detail->report.has_value()) {
+    graph_request_stop(*detail);
+    return;
+  }
+  graph_request_stop(fallback_error.empty() ? "GraphRun: pipeline push failed" : fallback_error);
+}
+
+void RunCore::graph_target_producer_completed(const DownstreamTarget& target) {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+  const auto decrement_to_zero = [](std::atomic<std::size_t>& remaining) {
+    std::size_t expected = remaining.load(std::memory_order_acquire);
+    while (expected != 0U &&
+           !remaining.compare_exchange_weak(expected, expected - 1U, std::memory_order_acq_rel,
+                                            std::memory_order_acquire)) {
+    }
+    return expected == 1U;
+  };
+
+  switch (target.kind) {
+  case DownstreamTarget::Kind::StageGroup: {
+    if (target.index >= execution.stage_groups.size()) {
+      return;
+    }
+    auto& group = execution.stage_groups[target.index];
+    if (!decrement_to_zero(group.producers_remaining)) {
+      return;
+    }
+    for (const std::size_t stage_index : group.instances) {
+      if (stage_index < execution.stages.size() && execution.stages[stage_index]) {
+        execution.stages[stage_index]->inbox.close();
+      }
+    }
+    return;
+  }
+  case DownstreamTarget::Kind::PipelineInput: {
+    if (target.index >= execution.pipelines.size() || !execution.pipelines[target.index]) {
+      return;
+    }
+    auto& transport = execution.pipelines[target.index]->transport;
+    if (decrement_to_zero(transport.producers_remaining) && transport.input_queue) {
+      transport.input_queue->close();
+    }
+    return;
+  }
+  case DownstreamTarget::Kind::GraphSink: {
+    const auto sink = execution.sinks.find(static_cast<simaai::neat::graph::NodeId>(target.index));
+    if (sink != execution.sinks.end() && sink->second) {
+      sink->second->producer_done();
+    }
+    return;
+  }
+  case DownstreamTarget::Kind::RealtimeLatestLink:
+    if (target.index < execution.realtime_links.size() && execution.realtime_links[target.index]) {
+      execution.realtime_links[target.index]->producer_done();
+    }
+    return;
+  }
+}
+
+void RunCore::graph_producer_completed(simaai::neat::graph::NodeId producer_node) {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+  bool has_downstream = false;
+  for (const auto& [key, targets] : execution.adjacency) {
+    (void)key;
+    for (const auto& target : targets) {
+      if (target.edge_index == invalid_edge_index() ||
+          target.edge_index >= execution.plan.edges.size() ||
+          execution.plan.edges[target.edge_index].from != producer_node) {
+        continue;
+      }
+      has_downstream = true;
+      graph_target_producer_completed(target);
+    }
+  }
+
+  if (has_downstream) {
+    return;
+  }
+  const auto sink = execution.sinks.find(producer_node);
+  if (sink != execution.sinks.end() && sink->second) {
+    sink->second->producer_done();
+  }
+}
+
+void RunCore::graph_mark_downstream_close_provenance(simaai::neat::graph::NodeId producer_node,
+                                                     const PullError* source_close_detail) {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+  std::unordered_set<simaai::neat::graph::NodeId> visited_producers;
+  std::unordered_set<simaai::neat::graph::NodeId> downstream_sinks;
+  std::function<void(simaai::neat::graph::NodeId)> visit_producer;
+  std::function<void(const DownstreamTarget&)> visit_target;
+
+  visit_target = [&](const DownstreamTarget& target) {
+    switch (target.kind) {
+    case DownstreamTarget::Kind::GraphSink:
+      downstream_sinks.insert(static_cast<simaai::neat::graph::NodeId>(target.index));
+      return;
+    case DownstreamTarget::Kind::StageGroup:
+      if (target.index < execution.stage_groups.size()) {
+        visit_producer(execution.stage_groups[target.index].node_id);
+      }
+      return;
+    case DownstreamTarget::Kind::PipelineInput:
+      if (target.index < execution.pipelines.size() && execution.pipelines[target.index] &&
+          !execution.pipelines[target.index]->seg.node_ids.empty()) {
+        visit_producer(execution.pipelines[target.index]->seg.node_ids.back());
+      }
+      return;
+    case DownstreamTarget::Kind::RealtimeLatestLink:
+      if (target.index < execution.realtime_links.size() &&
+          execution.realtime_links[target.index]) {
+        visit_target(execution.realtime_links[target.index]->downstream());
+      }
+      return;
+    }
+  };
+
+  visit_producer = [&](simaai::neat::graph::NodeId producer) {
+    if (!visited_producers.insert(producer).second) {
+      return;
+    }
+    bool has_downstream = false;
+    for (const auto& [key, targets] : execution.adjacency) {
+      (void)key;
+      for (const auto& target : targets) {
+        if (target.edge_index == invalid_edge_index() ||
+            target.edge_index >= execution.plan.edges.size() ||
+            execution.plan.edges[target.edge_index].from != producer) {
+          continue;
+        }
+        has_downstream = true;
+        visit_target(target);
+      }
+    }
+    if (!has_downstream && execution.sinks.find(producer) != execution.sinks.end()) {
+      downstream_sinks.insert(producer);
+    }
+  };
+  visit_producer(producer_node);
+
+  std::lock_guard<std::mutex> lock(execution.close_provenance_mu);
+  if (source_close_detail) {
+    for (const auto sink : downstream_sinks) {
+      execution.source_close_details_by_sink.try_emplace(sink, *source_close_detail);
+    }
+    return;
+  }
+  execution.application_closed_sinks.insert(downstream_sinks.begin(), downstream_sinks.end());
+}
+
+void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
+                                       std::optional<PullError> close_detail) {
+  if (!graph_execution_ || pipeline_index >= graph_execution_->pipelines.size() ||
+      !graph_execution_->pipelines[pipeline_index]) {
+    return;
+  }
+  auto& pipe = *graph_execution_->pipelines[pipeline_index];
+  if (pipe.transport.completion_started.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  if (close_detail.has_value()) {
+    if (close_detail->code.empty()) {
+      close_detail->code = error_codes::kSourceEnded;
+    }
+    if (close_detail->message.empty()) {
+      close_detail->message = "Run::pull: input source reached end of stream";
+    }
+    close_detail->message =
+        pipeline_internal::error_util::decorate_error(close_detail->code, close_detail->message);
+    if (!pipe.seg.node_ids.empty()) {
+      graph_mark_downstream_close_provenance(pipe.seg.node_ids.back(), &*close_detail);
+    }
+  }
+
+  // Encoded Outputs fused into a source segment bypass the ordinary edge router, but the source
+  // still owns their producer lifetime.
+  if (pipe.seg.fused_realtime_ingress.has_value()) {
+    for (const auto& branch : pipe.seg.fused_realtime_ingress->branches) {
+      if (!branch.encoded_output.has_value()) {
+        continue;
+      }
+      if (close_detail.has_value()) {
+        graph_mark_downstream_close_provenance(branch.encoded_output->sink_node, &*close_detail);
+      }
+      const auto sink = graph_execution_->sinks.find(branch.encoded_output->sink_node);
+      if (sink != graph_execution_->sinks.end() && sink->second) {
+        sink->second->producer_done();
+      }
+    }
+  }
+
+  if (!pipe.seg.node_ids.empty()) {
+    graph_producer_completed(pipe.seg.node_ids.back());
+  }
+  pipe.transport.completion_forwarded.store(true, std::memory_order_release);
+  pipe.transport.cv.notify_all();
+}
+
+void RunCore::graph_stage_worker_completed(std::size_t group_index) {
+  if (!graph_execution_ || group_index >= graph_execution_->stage_groups.size()) {
+    return;
+  }
+  auto& group = graph_execution_->stage_groups[group_index];
+  std::size_t expected = group.workers_remaining.load(std::memory_order_acquire);
+  while (expected != 0U &&
+         !group.workers_remaining.compare_exchange_weak(
+             expected, expected - 1U, std::memory_order_acq_rel, std::memory_order_acquire)) {
+  }
+  if (expected != 1U || group.completion_forwarded.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  graph_producer_completed(group.node_id);
+}
+
+void RunCore::graph_realtime_link_completed(std::size_t link_index) {
+  if (!graph_execution_ || link_index >= graph_execution_->realtime_links.size() ||
+      !graph_execution_->realtime_links[link_index]) {
+    return;
+  }
+  graph_target_producer_completed(graph_execution_->realtime_links[link_index]->downstream());
+}
+
+bool RunCore::graph_begin_public_push() {
+  if (!graph_execution_) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
+  if (graph_execution_->public_ingress_closed) {
+    return false;
+  }
+  ++graph_execution_->public_pushes_inflight;
+  return true;
+}
+
+void RunCore::graph_end_public_push() {
+  if (!graph_execution_) {
+    return;
+  }
+  bool forward_completion = false;
+  {
+    std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
+    if (graph_execution_->public_pushes_inflight > 0U) {
+      --graph_execution_->public_pushes_inflight;
+    }
+    if (graph_execution_->public_pushes_inflight == 0U) {
+      graph_execution_->public_ingress_cv.notify_all();
+      if (graph_execution_->public_ingress_closed &&
+          !graph_execution_->public_ingress_completion_forwarded) {
+        graph_execution_->public_ingress_completion_forwarded = true;
+        forward_completion = true;
+      }
+    }
+  }
+  if (forward_completion) {
+    graph_forward_public_input_completion();
+  }
+}
+
+bool RunCore::graph_public_input_closed() const {
+  if (!graph_execution_) {
+    return true;
+  }
+  std::lock_guard<std::mutex> lock(graph_execution_->public_ingress_mu);
+  return graph_execution_->public_ingress_closed;
+}
+
+void RunCore::graph_close_public_input() {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+  {
+    std::lock_guard<std::mutex> lock(execution.public_ingress_mu);
+    if (execution.public_ingress_closed) {
+      return;
+    }
+    execution.public_ingress_closed = true;
+  }
+  // Wake public pushes waiting for another thread's lazy pipeline build. A thread actively inside
+  // GStreamer construction cannot be interrupted safely, so close_input() bounds its own wait and
+  // lets the last push forward producer completion after that build returns.
+  for (const auto& pipeline : execution.pipelines) {
+    if (pipeline) {
+      pipeline->transport.cv.notify_all();
+    }
+  }
+
+  constexpr auto kInflightCloseWait = std::chrono::milliseconds(250);
+  bool forward_completion = false;
+  {
+    std::unique_lock<std::mutex> lock(execution.public_ingress_mu);
+    execution.public_ingress_cv.wait_for(lock, kInflightCloseWait,
+                                         [&] { return execution.public_pushes_inflight == 0U; });
+    if (execution.public_pushes_inflight == 0U && !execution.public_ingress_completion_forwarded) {
+      execution.public_ingress_completion_forwarded = true;
+      forward_completion = true;
+    }
+  }
+  if (forward_completion) {
+    graph_forward_public_input_completion();
+  }
+}
+
+void RunCore::graph_forward_public_input_completion() {
+  if (!graph_execution_) {
+    return;
+  }
+  auto& execution = *graph_execution_;
+
+  std::unordered_set<simaai::neat::graph::NodeId> completed_direct_sources;
+  for (const auto& endpoint : execution.public_ingress_endpoints) {
+    const auto stage = execution.node_to_stage_group.find(endpoint.node);
+    if (stage != execution.node_to_stage_group.end()) {
+      graph_mark_downstream_close_provenance(execution.stage_groups[stage->second].node_id,
+                                             nullptr);
+      graph_target_producer_completed(DownstreamTarget{
+          DownstreamTarget::Kind::StageGroup, stage->second, endpoint.port, invalid_edge_index()});
+      continue;
+    }
+
+    const auto pipeline = execution.node_to_pipeline.find(endpoint.node);
+    if (pipeline == execution.node_to_pipeline.end() ||
+        pipeline->second >= execution.pipelines.size() || !execution.pipelines[pipeline->second]) {
+      continue;
+    }
+    const auto& runtime = *execution.pipelines[pipeline->second];
+    if (!runtime.seg.node_ids.empty()) {
+      graph_mark_downstream_close_provenance(runtime.seg.node_ids.back(), nullptr);
+    }
+    if (runtime.seg.boundary.direct_graph_source) {
+      if (completed_direct_sources.insert(endpoint.node).second) {
+        graph_producer_completed(endpoint.node);
+      }
+      continue;
+    }
+    graph_target_producer_completed(DownstreamTarget{DownstreamTarget::Kind::PipelineInput,
+                                                     pipeline->second, endpoint.port,
+                                                     invalid_edge_index()});
+  }
+}
+
+std::optional<PullError> RunCore::graph_last_error_detail() const {
+  std::lock_guard<std::mutex> lock(error_mu);
+  return terminal_error_detail;
+}
+
+std::optional<PullError> RunCore::graph_close_detail(simaai::neat::graph::NodeId sink_node) const {
+  if (!graph_execution_) {
+    return std::nullopt;
+  }
+  {
+    std::lock_guard<std::mutex> lock(graph_execution_->close_provenance_mu);
+    if (graph_execution_->application_closed_sinks.find(sink_node) !=
+        graph_execution_->application_closed_sinks.end()) {
+      return std::nullopt;
+    }
+    const auto source_detail = graph_execution_->source_close_details_by_sink.find(sink_node);
+    if (source_detail != graph_execution_->source_close_details_by_sink.end()) {
+      return source_detail->second;
+    }
+  }
+  return std::nullopt;
+}
+
+bool RunCore::graph_sink_closed(simaai::neat::graph::NodeId node_id) const {
+  if (!graph_execution_) {
+    return false;
+  }
+  const auto sink = graph_execution_->sinks.find(node_id);
+  return sink != graph_execution_->sinks.end() && sink->second && sink->second->closed();
+}
+
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
-                                          bool allow_startup_preflight) {
+                                          bool allow_startup_preflight,
+                                          bool cancel_on_public_input_close,
+                                          PullError* current_failure) {
+  if (current_failure) {
+    *current_failure = {};
+  }
   const auto ensure_start_ns = std::chrono::steady_clock::now();
   const auto total_start = pipeline_internal::build_timing_now();
   ExecutionGraphRuntime& execution = graph_execution();
@@ -408,6 +846,9 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
 
   auto& pipe = *execution.pipelines[index];
   auto& tel = pipe.transport.telemetry;
+  const auto public_close_cancelled = [&] {
+    return cancel_on_public_input_close && graph_public_input_closed();
+  };
   tel.ensure_build_calls.fetch_add(1, std::memory_order_relaxed);
   auto record_total = [&tel, ensure_start_ns]() {
     atomic_add_max(tel.ensure_build_total_ns, tel.ensure_build_total_max_ns,
@@ -421,6 +862,13 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     if (err)
       *err = "GraphRun: stopped";
     tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
+    record_total();
+    return false;
+  }
+  if (public_close_cancelled()) {
+    if (err) {
+      *err = "GraphRun: input closed";
+    }
     record_total();
     return false;
   }
@@ -444,7 +892,8 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     if (pipe.transport.building) {
       const auto wait_start = std::chrono::steady_clock::now();
       pipe.transport.cv.wait(lock, [&] {
-        return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested();
+        return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested() ||
+               public_close_cancelled();
       });
       atomic_add_max(tel.ensure_build_wait_ns, tel.ensure_build_wait_max_ns,
                      elapsed_ns_since(wait_start));
@@ -452,8 +901,9 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
         record_total();
         return true;
       }
-      if (err)
-        *err = "GraphRun: stopped";
+      if (err) {
+        *err = public_close_cancelled() ? "GraphRun: input closed" : "GraphRun: stopped";
+      }
       tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
       record_total();
       return false;
@@ -468,6 +918,7 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
   tel.ensure_build_canonicalize_ns.fetch_add(static_cast<std::uint64_t>(canonicalize_us) * 1000ULL,
                                              std::memory_order_relaxed);
 
+  std::string build_error;
   try {
     if (graph_debug_enabled_for_core()) {
       std::fprintf(stderr, "[GRAPH] pipeline_build seg=%zu\n",
@@ -494,6 +945,8 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     start_opt.owner = &pipe;
     start_opt.allow_startup_preflight = allow_startup_preflight;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    start_opt.decoder_admission =
+        std::atomic_load_explicit(&decoder_admission, std::memory_order_acquire);
     const auto segment_start = pipeline_internal::build_timing_now();
     auto run_core = RunCore::start_pipeline_segment(pipe.seg, std::move(start_opt));
     const auto segment_us = pipeline_internal::build_timing_us(segment_start);
@@ -517,25 +970,45 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
         "seg=" + std::to_string(pipe.seg.id));
     pipe.transport.cv.notify_all();
     record_total();
-    return true;
-  } catch (const std::exception& e) {
-    {
-      std::lock_guard<std::mutex> lock(pipe.transport.mu);
-      pipe.transport.building = false;
+    if (public_close_cancelled()) {
+      if (err) {
+        *err = "GraphRun: input closed";
+      }
+      return false;
     }
-    pipe.transport.cv.notify_all();
-    tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
-    record_total();
-    if (err)
-      *err = e.what();
-    return false;
+    return true;
+  } catch (const NeatError& e) {
+    PullError detail = pull_error_from_neat_error(e);
+    if (current_failure) {
+      *current_failure = detail;
+    }
+    if (!public_close_cancelled()) {
+      set_terminal_error(std::move(detail));
+    }
+    build_error = e.what();
+  } catch (const std::exception& e) {
+    if (current_failure) {
+      current_failure->message = e.what();
+    }
+    build_error = e.what();
   }
+  {
+    std::lock_guard<std::mutex> lock(pipe.transport.mu);
+    pipe.transport.building = false;
+  }
+  pipe.transport.cv.notify_all();
+  tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
+  record_total();
+  if (err)
+    *err = std::move(build_error);
+  return false;
 }
 
 bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
                                             simaai::neat::graph::PortId port, Sample&& sample,
                                             std::size_t edge_index,
-                                            const EdgeRouterOptions& options) {
+                                            const EdgeRouterOptions& options,
+                                            bool cancel_on_public_input_close) {
   ExecutionGraphRuntime& execution = graph_execution();
   if (group_index >= execution.stage_groups.size())
     return false;
@@ -567,8 +1040,14 @@ bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
 
   auto& stage = *execution.stages[pick];
   RuntimeStageQueueMsg next{.in_port = port, .sample = std::move(sample), .edge_index = edge_index};
-  const bool ok = stage.inbox.push(std::move(next), options.push_timeout_ms);
-  if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
+  const auto cancelled = [&] {
+    return graph_stop_requested() || (cancel_on_public_input_close && graph_public_input_closed());
+  };
+  const bool ok =
+      cancel_on_public_input_close
+          ? stage.inbox.push_interruptible(std::move(next), options.push_timeout_ms, cancelled)
+          : stage.inbox.push(std::move(next), options.push_timeout_ms);
+  if (!ok && options.request_stop_on_backpressure && !cancelled()) {
     std::ostringstream msg;
     msg << "GraphRun: stage inbox backpressure timeout (node="
         << static_cast<std::size_t>(group.node_id) << ", edge_queue=" << options.edge_queue
@@ -608,17 +1087,19 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
                                                            simaai::neat::graph::PortId target_port,
                                                            Sample&& next, std::size_t edge_index) {
         return graph_dispatch_to_stage_group(group, target_port, std::move(next), edge_index,
-                                             options);
+                                             options, true);
       };
       callbacks.ensure_pipeline_built = [this](std::size_t index, const Sample& seed,
                                                std::string* err) {
-        return ensure_graph_pipeline_built(index, seed, err);
+        return ensure_graph_pipeline_built(index, seed, err, false, true);
       };
       callbacks.sanitize_pipeline_input = [this](std::size_t index, Sample& next) {
         graph_sanitize_pipeline_input(index, next);
       };
       callbacks.request_stop = [this](const std::string& err) { graph_request_stop(err); };
-      callbacks.stop_requested = [this] { return graph_stop_requested(); };
+      callbacks.stop_requested = [this] {
+        return graph_stop_requested() || graph_public_input_closed();
+      };
 
       EdgeRouterDispatchOptions dispatch_options;
       dispatch_options.sanitize_pipeline_input_before_enqueue = true;
@@ -643,15 +1124,19 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
     }
 
     std::string build_err;
-    if (!ensure_graph_pipeline_built(it_pipe->second, sample, &build_err)) {
+    if (!ensure_graph_pipeline_built(it_pipe->second, sample, &build_err, false, true)) {
+      if (graph_public_input_closed()) {
+        return false;
+      }
       graph_request_stop(build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
       return false;
     }
 
-    Sample copy = sample;
-    const bool ok = pipe.transport.input_queue->push(
-        RuntimePipelineQueueMsg{std::move(copy), invalid_edge_index()}, options.push_timeout_ms);
-    if (!ok && options.request_stop_on_backpressure && !graph_stop_requested()) {
+    RuntimePipelineQueueMsg queued{Sample{sample}, invalid_edge_index()};
+    const auto cancelled = [this] { return graph_stop_requested() || graph_public_input_closed(); };
+    const bool ok = pipe.transport.input_queue->push_interruptible(
+        std::move(queued), options.push_timeout_ms, cancelled);
+    if (!ok && options.request_stop_on_backpressure && !cancelled()) {
       std::ostringstream msg;
       msg << "GraphRun::push timed out waiting for pipeline input queue (seg="
           << static_cast<std::size_t>(pipe.seg.id) << ", edge_queue=" << options.edge_queue
@@ -677,7 +1162,7 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
     }
     Sample copy = sample;
     return graph_dispatch_to_stage_group(it_stage->second, in_port, std::move(copy),
-                                         invalid_edge_index(), options);
+                                         invalid_edge_index(), options, true);
   }
 
   std::fprintf(stderr, "[GRAPH] GraphRun::push failed: node %zu not found in any pipeline stage\n",
@@ -983,11 +1468,13 @@ std::optional<RuntimeSinkQueueMsg> graph_pull_msg_impl(RunCore& core,
             lock, std::chrono::steady_clock::now() + std::chrono::milliseconds(build_timeout_ms),
             [&] {
               return pipe.transport.built.load(std::memory_order_acquire) ||
+                     pipe.transport.completion_forwarded.load(std::memory_order_acquire) ||
                      core.graph_stop_requested();
             });
       } else {
         pipe.transport.cv.wait(lock, [&] {
           return pipe.transport.built.load(std::memory_order_acquire) ||
+                 pipe.transport.completion_forwarded.load(std::memory_order_acquire) ||
                  core.graph_stop_requested();
         });
       }
@@ -1142,7 +1629,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
         std::move(source.stream), source.merged_opt, source.stream_opt, opt.mode,
-        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor));
+        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor), opt.decoder_admission,
+        std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
     pipeline_internal::emit_build_timing(
@@ -1182,9 +1670,10 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   }
   const auto input_stream_us = pipeline_internal::build_timing_us(input_stream_start);
   const auto start_single_start = pipeline_internal::build_timing_now();
-  auto core = RunCore::start_single_pipeline(std::move(stream), ctx.merged_opt, build_stream_opt,
-                                             ctx.mode, opt.tensor_input_opt_for_cv,
-                                             std::move(opt.input_route_processor));
+  auto core = RunCore::start_single_pipeline(
+      std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
+      std::move(opt.input_route_processor), opt.decoder_admission,
+      std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",

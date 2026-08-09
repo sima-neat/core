@@ -266,16 +266,44 @@ runtime/build/IO paths map terminal failures into stable code families:
 - `misconfig.pipeline_shape`
 - `misconfig.caps`
 - `misconfig.input_shape`
+- `misconfig.input_capacity`
+- `misconfig.media_caps`
+- `misconfig.tensor_dtype_missing`
+- `misconfig.option_out_of_range`
 - `build.parse_launch`
+- `build.pipeline_syntax`
+- `build.plugin_missing`
+- `build.property_invalid`
 - `runtime.pull`
+- `runtime.element_failed`
+- `runtime.output_timeout`
 - `io.parse`
 - `io.open`
+- `io.file_not_found`
+- `io.permission_denied`
+- `io.rtsp_connection_failed`
+- `io.camera_not_found`
+- `codec.*`, `resource.*`, `infra.*`, and `internal.*`
 
-`GraphReport.repro_note` is the human-facing summary and must include enough
-context to reproduce (offending value, node/element context, or hint).
+GStreamer errors pass through one internal parser, classifier, and renderer.
+Classification prefers a versioned Neat diagnostic ID, then the native
+GStreamer domain/code and element factory, then narrow compatibility mappings
+for older plugins. Unknown failures use `runtime.element_failed`; they are not
+reported as `misconfig.media_caps` unless negotiation actually failed. When a pipeline
+posts several errors, the most specific root cause is rendered and every error
+is retained in the bus log.
+
+`GraphReport.repro_note` is the human-facing summary. Production rendering
+contains a plain-language cause, relevant observed/expected values, concrete
+user actions, and a stable diagnostic ID. Raw plugin strings, source locations,
+and GStreamer domain/code are debug-only. The bracketed public code is added
+once when the `NeatError` is constructed.
 `GraphReport.bus` is the source of truth for plugin/runtime error details.
 For build(input) flows, `GraphReport.build_adaptation` records the resolved shape policy/capability, origins for seed/max limits, byte-guard origin, and applied/skipped adaptation actions.
 For non-throwing runtime pulls, `PullError.code` uses the same taxonomy.
+Input-stream worker failures retain the typed error code and report across the
+worker-thread boundary, so `Run::pull()` and the Python exception translator
+surface the same `NeatError`.
 
 Support triage order is:
 1. bucket by `error_code`
@@ -330,6 +358,25 @@ is used for deterministic multi-input mapping; legacy input-buffer names remain 
 otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
 `simaaiboxdecode` elements by default.
+
+##### SuperPoint BoxDecode contract
+
+SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
+families, with these additional invariants:
+
+- The MPK record owns the detector-logits and descriptor-grid tensor identities, storage
+  representations, dtype/shape facts, numerical-profile provenance, and optional explicit NMS and
+  border controls. Core never identifies these roles from tensor values.
+- Core binds exactly one tensor to each role, validates the profile fingerprint and supported
+  representations, applies explicit `Model::Options::superpoint` overrides, and resolves only
+  omitted profile defaults. Changing a profile recomputes its derived defaults while preserving
+  controls explicitly authored by the MPK or API.
+- The versioned static-manifest ABI carries the resolved contract to `simaaiboxdecode`. Plugins
+  borrow manifest pointers only during configuration and must copy any state needed at runtime;
+  Core retains manifest ownership for the pipeline lifetime.
+- Production output uses the `FEATURE_POINTS_V1` wire format and feature semantic metadata.
+  `FEATURE_POINTS_LEGACY_A65_V0` is available only when explicitly selected for compatibility;
+  consumers must not infer either format from buffer size.
 
 ---
 
@@ -407,27 +454,33 @@ Additionally, runtime paths may verify required plugins are present:
 - `require_element("appsink", ...)`, etc.
 
 ### Building pipelines
-A `Graph` is built by adding `Node` objects:
+A `Graph` is built by adding `Node` objects and reusable Graph fragments. Use a
+codec-aware fragment for RTSP so the source is depacketized and parsed before
+decode:
 
 ```cpp
-simaai::neat::Graph graph;
-simaai::neat::SimaDecodeOptions decode_options;
-decode_options.type = simaai::neat::SimaDecodeType::H264;
-decode_options.raw_output = false;
+simaai::neat::nodes::groups::RtspDecodedInputOptions source;
+source.url = "rtsp://example/live";
+source.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+source.source_fps = 30;
 
-graph.add(simaai::neat::nodes::RTSPInput("rtsp://example/live"))
-     .add(simaai::neat::nodes::SimaDecode(decode_options))
-     .add(simaai::neat::nodes::CapsNV12SysMem(-1, -1, -1))
-     .add(simaai::neat::nodes::Output());
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source));
+graph.add(simaai::neat::nodes::Output());
 ```
 
 Internally:
 
-1. The Graph asks each Node for `backend_fragment(i)` and concatenates fragments with `!`
-2. Optionally inserts **boundary markers** between nodes:
+1. The Graph enforces one Node object per logical composition vertex. Repeated `connect()` calls
+   can reuse that indexed vertex for fan-out.
+2. A composition mutation commits as one unit or rolls back completely.
+3. The Graph asks each Node for `backend_fragment(i)` and concatenates fragments with `!`.
+4. It optionally inserts **boundary markers** between nodes:
 
    * `identity name=sima_b<i> silent=true`
-3. Builds a `DiagCtx`:
+5. It analyzes exact `name=` bindings, parses once with GStreamer, and inventories the constructed
+   object tree. Duplicate or missing names fail before downstream configuration.
+6. It builds a `DiagCtx`:
 
    * `node_reports` for reproducibility
    * `boundaries` as `BoundaryFlowCounters` (atomics)
@@ -443,6 +496,21 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+### Decoder admission lifecycle
+
+Before choosing the single-pipeline or connected-graph runtime, Core scans the
+compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
+decoders are admitted as one group, and the resulting reservation is owned by
+the top-level `Run` until its pipeline workers have stopped. This applies
+equally to linear `Graph::add(...)` pipelines, ordinary connected segments, and
+fused realtime branches.
+
+Admission requires a known decoder width, height, and frame rate. Core never
+invents a frame rate. An incomplete contract or unavailable optional admission
+endpoint produces a warning and leaves the plan unchanged; with
+`SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
+hardware starts. Capacity rejection and malformed lease responses always fail.
+
 ### Realtime fan-in lowering
 
 Applications describe realtime edges with ordinary `Graph::connect(...)` and
@@ -457,6 +525,48 @@ inputless source branches are lowered with their by-stream mux and consumer so
 decoded device buffers do not cross an appsink/appsrc boundary. Ineligible
 latest-by-stream topology remains segmented. Nested already-fused source
 segments remain ineligible until their branches can be preserved recursively.
+
+### Internal boundary timing
+
+One logical `Graph` can lower into several GStreamer pipeline segments. Core
+injects an `appsrc` at each internal boundary between them.
+
+**An injected boundary transports the timeline it was handed and never authors a
+timestamp. Only a public, application-owned `Input` authors one.**
+
+`appsrc` stamps from its own segment's running time, so a boundary that authors
+a timestamp gives each leg of a fan-out a different clock. Video RTP then stops
+agreeing with model-output metadata describing the same frame, and no
+application can correct it: lowering consumes the app-declared `Input` nodes, so
+`InputOptions` set by the application never reach the injected boundary.
+
+When adding a segment-materialization path:
+
+* Build the injected options with `injected_boundary_input_options(...)`, which
+  is the single home for this invariant.
+* Keep `is_live = true`. Clearing it stalls live segments.
+* Leave the public `InputOptions::do_timestamp` default alone, so a pushed
+  `cv::Mat` carrying no PTS still receives one at ingress.
+
+Boundaries forward the retained `GstBuffer` zero-copy, so a timestamp that
+already exists survives the crossing. Declining to author one can never remove
+it.
+
+### Input-contract specialization
+
+Some compound pipeline Nodes have more than one safe backend representation.
+The graph compiler specializes those Nodes from a statically established
+`OutputSpec`; it does not mutate the public Graph or infer a permanent topology
+from the first runtime sample. A `Derived` or `Authoritative` contract may
+select an optimized representation. `Hint`, unknown format/memory, or a missing
+backend capability selects the conservative representation.
+
+For example, raw `VideoSender` omits its NV12 conversion only for a stable NV12
+contract in system or SiMaAI memory and when `neatencoder` advertises its
+read-only `input-layout-aware=true` capability. `OutputSpec` does not currently
+carry plane strides and offsets, so no memory domain bypasses that capability
+gate. An absent or false capability is treated as unsupported so Core remains
+safe with older Internals packages.
 
 ### Parsing & launch
 
@@ -659,7 +769,16 @@ Deterministic element names are a core design principle because they enable:
 **Node authors must ensure**:
 
 * fragments include stable `name=` fields when elements must be retrievable
-* `element_names()` matches exactly what the fragment creates
+* `element_names()` returns every explicit element name the fragment creates
+* declarations and named-pad references stay synchronized
+
+Name integrity is part of `build()` and does not depend on an earlier `validate()` call. Names are
+unique across one materialized pipeline segment because framework lookups use recursive short
+names. Separately parsed connected segments may reuse the same name. The framework rejects
+collisions instead of renaming them because names can participate in pad and routing expressions.
+
+Input-dependent connected segments can materialize on the first input. Their build failure is
+therefore reported on the first `push()` or `pull()`, with the original `GraphReport` preserved.
 
 ---
 
@@ -691,6 +810,13 @@ Validation exists to catch issues earlier than runtime:
 
 * `validate()` can parse and preroll (PAUSED) to detect negotiation stalls
 * `contracts/` provides structured validators for "pipeline correctness"
+
+Mandatory final launch-name checks also run in the ordinary build path. `ValidateOptions` controls
+additional validation work, not whether name integrity is enforced.
+
+For connected Graphs, `validate()` compiles endpoint topology but does not fabricate launch strings
+for input-dependent segments. Each segment receives the mandatory check when its real input
+contract is available and the segment materializes.
 
 The intended behavior:
 

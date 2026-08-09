@@ -28,7 +28,9 @@ namespace simaai::neat {
  *
  * Used in caps strings and option fields throughout the pipeline. `Auto` is
  * the unset sentinel (let the framework pick or sniff). The EVXX_ variants
- * are aliases preferred by the EV74 caps surface.
+ * are aliases preferred by the EV74 caps surface. `AVC` and `HEVC` are aliases
+ * for `H264` and `H265`, matching the codec spellings accepted by `RtspCodec`
+ * and `SimaDecodeType`; `H264` and `H265` stay the canonical serialized names.
  *
  * @ingroup pipeline
  * @see FormatSpec
@@ -43,6 +45,9 @@ enum class FormatTag {
   YUYV,          ///< YUV 4:2:2 packed (Y0 U Y1 V).
   ENCODED,       ///< Generic encoded payload (codec from caps).
   H264,          ///< H.264 access unit / NAL stream.
+  AVC = H264,    ///< Alias for H.264.
+  H265,          ///< H.265 / HEVC access unit / NAL stream.
+  HEVC = H265,   ///< Alias for H.265.
   ByteStream,    ///< Opaque byte stream; downstream interprets bytes by contract.
   MLA,           ///< MLA-tessellated tensor payload.
   BBOX,          ///< Decoded bounding-box byte stream.
@@ -78,6 +83,8 @@ inline const char* format_tag_name(FormatTag tag) {
     return "ENCODED";
   case FormatTag::H264:
     return "H264";
+  case FormatTag::H265:
+    return "H265";
   case FormatTag::ByteStream:
     return "BYTESTREAM";
   case FormatTag::MLA:
@@ -214,8 +221,10 @@ inline FormatTag format_tag_from_string(const std::string& value) {
     return FormatTag::YUYV;
   if (up == "ENCODED")
     return FormatTag::ENCODED;
-  if (up == "H264")
+  if (up == "H264" || up == "AVC")
     return FormatTag::H264;
+  if (up == "H265" || up == "HEVC")
+    return FormatTag::H265;
   if (up == "BYTESTREAM" || up == "BYTE_STREAM" || up == "BYTE-STREAM" || up == "RAW_BYTES" ||
       up == "RAW-BYTES" || up == "OPAQUE_BYTES" || up == "OPAQUE-BYTES" || up == "OCTET_STREAM" ||
       up == "OCTET-STREAM")

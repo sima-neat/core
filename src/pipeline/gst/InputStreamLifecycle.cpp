@@ -1,8 +1,56 @@
 #include "InputStreamInternal.h"
 
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/CpuVisibleSample.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
 
 namespace simaai::neat {
+namespace {
+
+void release_input_stream_resources_once(InputStream::State& state) {
+  if (state.resources_released.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  state.lifetime_token.reset();
+  if (state.pending_buffer) {
+    release_input_buffer(state.pending_buffer, "InputStream::close:pending_buffer");
+    state.pending_buffer = nullptr;
+    state.pending_spec.reset();
+    state.pending_alloc_ns = 0;
+    state.pending_map_ns = 0;
+    state.pending_copy_ns = 0;
+  }
+  if (state.reusable_buffer) {
+    release_input_buffer(state.reusable_buffer, "InputStream::close:reusable_buffer");
+    state.reusable_buffer = nullptr;
+    state.reusable_bytes = 0;
+  }
+  if (state.current_caps) {
+    gst_caps_unref(state.current_caps);
+    state.current_caps = nullptr;
+  }
+  if (state.appsrc) {
+    gst_object_unref(state.appsrc);
+    state.appsrc = nullptr;
+  }
+  if (state.appsink) {
+    gst_object_unref(state.appsink);
+    state.appsink = nullptr;
+  }
+  if (state.pipeline) {
+    if (!state.teardown_started.exchange(true)) {
+      GstElement* pipeline = state.pipeline;
+      state.pipeline = nullptr;
+      pipeline_internal::stop_and_unref_no_flush(pipeline, state.opt.prefer_synchronous_teardown);
+    } else {
+      state.pipeline = nullptr;
+    }
+  }
+}
+
+} // namespace
+
 InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
                                 const SampleSpec& spec, const InputOptions& src_opt,
                                 const InputStreamOptions& opt, std::shared_ptr<DiagCtx> diag,
@@ -84,37 +132,49 @@ bool InputStream::running() const {
   return state_ && state_->running.load();
 }
 
+bool InputStream::reached_eos() const {
+  return state_ && state_->eos_seen.load();
+}
+
 std::string InputStream::last_error() const {
   if (!state_)
     return {};
   std::lock_guard<std::mutex> lock(state_->error_mu);
-  return state_->error;
+  return state_->terminal_error.has_value() ? state_->terminal_error->message : std::string{};
+}
+
+std::optional<PullError> InputStream::last_error_detail() const {
+  if (!state_)
+    return std::nullopt;
+  std::lock_guard<std::mutex> lock(state_->error_mu);
+  return state_->terminal_error;
 }
 
 InputStreamStats InputStream::stats() const {
   InputStreamStats out;
-  if (!state_)
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
     return out;
-  out.push_count = state_->push_count.load();
-  out.push_failures = state_->push_failures.load();
-  out.pull_count = state_->pull_count.load();
-  out.poll_count = state_->poll_count.load();
-  out.dropped_frames = state_->dropped_frames.load();
-  out.renegotiations = state_->renegotiations.load();
-  out.alloc_grows = state_->alloc_grows.load();
-  out.growth_blocked = state_->growth_blocked.load();
-  out.renegotiation_blocked = state_->renegotiation_blocked.load();
+  out.push_count = state->push_count.load();
+  out.push_failures = state->push_failures.load();
+  out.pull_count = state->pull_count.load();
+  out.poll_count = state->poll_count.load();
+  out.dropped_frames = state->dropped_frames.load();
+  out.renegotiations = state->renegotiations.load();
+  out.alloc_grows = state->alloc_grows.load();
+  out.growth_blocked = state->growth_blocked.load();
+  out.renegotiation_blocked = state->renegotiation_blocked.load();
   const auto avg_us = [](std::uint64_t total_ns, std::uint64_t count) -> double {
     if (count == 0)
       return 0.0;
     return static_cast<double>(total_ns) / static_cast<double>(count) / 1000.0;
   };
-  out.avg_alloc_us = avg_us(state_->alloc_ns.load(), out.push_count);
-  out.avg_map_us = avg_us(state_->map_ns.load(), out.push_count);
-  out.avg_copy_us = avg_us(state_->copy_ns.load(), out.push_count);
-  out.avg_push_us = avg_us(state_->push_ns.load(), out.push_count);
-  out.avg_pull_wait_us = avg_us(state_->pull_wait_ns.load(), out.pull_count);
-  out.avg_decode_us = avg_us(state_->decode_ns.load(), out.pull_count);
+  out.avg_alloc_us = avg_us(state->alloc_ns.load(), out.push_count);
+  out.avg_map_us = avg_us(state->map_ns.load(), out.push_count);
+  out.avg_copy_us = avg_us(state->copy_ns.load(), out.push_count);
+  out.avg_push_us = avg_us(state->push_ns.load(), out.push_count);
+  out.avg_pull_wait_us = avg_us(state->pull_wait_ns.load(), out.pull_count);
+  out.avg_decode_us = avg_us(state->decode_ns.load(), out.pull_count);
   return out;
 }
 
@@ -149,9 +209,10 @@ std::string InputStream::diagnostics_summary() const {
 }
 
 std::shared_ptr<DiagCtx> InputStream::diag_ctx() const {
-  if (!state_)
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
     return {};
-  return state_->diag;
+  return state->diag;
 }
 
 GstElement* InputStream::pipeline_handle() const {
@@ -189,6 +250,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
   state_->callback = std::move(on_output);
   state_->stop_requested.store(false);
   state_->worker_done.store(false);
+  state_->eos_seen.store(false);
   state_->teardown_on_exit.store(false);
   state_->use_callbacks = inputstream_use_appsink_callbacks_enabled();
   state_->cb_eos.store(false);
@@ -272,6 +334,7 @@ void InputStream::start(std::function<void(Sample)> on_output) {
             sink_eos = gst_app_sink_is_eos(GST_APP_SINK(st->appsink));
           }
           if (eos_seen || sink_eos) {
+            st->eos_seen.store(true);
             if (eos_debug_enabled()) {
               const char* pipeline_name =
                   st->pipeline ? gst_element_get_name(st->pipeline) : "<null>";
@@ -295,8 +358,16 @@ void InputStream::start(std::function<void(Sample)> on_output) {
                 if (inputstream_dot_on_timeout_enabled()) {
                   pipeline_internal::maybe_dump_dot(st->pipeline, "inputstream_timeout");
                 }
-                std::lock_guard<std::mutex> lock(st->error_mu);
-                st->error = "InputStream::start: timeout waiting for output";
+                const std::string timeout_message =
+                    "No output was received before the input-stream timeout expired.\n\n"
+                    "How to fix:\n"
+                    "- Verify that the source is still producing frames.\n"
+                    "- Increase the timeout if this delay is expected.\n\n"
+                    "Diagnostic ID: runtime.output_timeout";
+                GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+                report.error_code = error_codes::kOutputTimeout;
+                report.repro_note = timeout_message;
+                set_stream_error(*st, report.error_code, timeout_message, std::move(report));
                 st->stop_requested.store(true);
                 break;
               }
@@ -404,12 +475,43 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         if (cb)
           cb(std::move(out));
       }
+    } catch (const NeatError& e) {
+      if (pipeline_or_graph_debug_enabled()) {
+        std::fprintf(stderr, "[INPUTSTREAM] worker_error: %s\n", e.what());
+      }
+      const GraphReport& source_report = e.report();
+      const std::string code = source_report.error_code.empty()
+                                   ? std::string(error_codes::kInternalPluginFailure)
+                                   : source_report.error_code;
+      set_stream_error(*st, code, e.what(), source_report);
     } catch (const std::exception& e) {
       if (pipeline_or_graph_debug_enabled()) {
         std::fprintf(stderr, "[INPUTSTREAM] worker_error: %s\n", e.what());
       }
-      std::lock_guard<std::mutex> lock(st->error_mu);
-      st->error = e.what();
+      GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+      report.error_code = error_codes::kInternalPluginFailure;
+      report.repro_note = "A Neat pipeline stage failed while processing output data.";
+      const std::string cause = pipeline_internal::sanitize_gst_diagnostic_text(e.what());
+      if (!cause.empty()) {
+        report.repro_note += "\n\nCause: " + cause;
+      }
+      report.repro_note +=
+          "\n\n"
+          "How to fix:\n"
+          "- Stop and restart the pipeline.\n"
+          "- Confirm that the pipeline uses supported plugins and a compatible MPK.\n\n"
+          "Diagnostic ID: neat.internal_plugin_failure";
+      set_stream_error(*st, report.error_code, report.repro_note, std::move(report));
+    } catch (...) {
+      GraphReport report = st->diag ? st->diag->snapshot_basic() : GraphReport{};
+      report.error_code = error_codes::kInternalPluginFailure;
+      report.repro_note =
+          "A Neat pipeline stage failed unexpectedly.\n\n"
+          "How to fix:\n"
+          "- Stop and restart the pipeline.\n"
+          "- Confirm that the pipeline uses supported plugins and a compatible MPK.\n\n"
+          "Diagnostic ID: neat.unknown_plugin_failure";
+      set_stream_error(*st, report.error_code, report.repro_note, std::move(report));
     }
     st->running.store(false);
     if (st->teardown_on_exit.load() && st->pipeline) {
@@ -420,7 +522,10 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         pipeline_internal::stop_and_unref_no_flush(pipeline, st->opt.prefer_synchronous_teardown);
       }
     }
-    st->worker_done.store(true);
+    st->worker_done.store(true, std::memory_order_release);
+    if (st->close_requested.load(std::memory_order_acquire)) {
+      release_input_stream_resources_once(*st);
+    }
   });
 }
 
@@ -658,42 +763,14 @@ void InputStream::close() {
     std::fprintf(stderr, "[STOP] InputStream::close begin\n");
   }
   stop();
-  state_->lifetime_token.reset();
-  if (state_->pending_buffer) {
-    release_input_buffer(state_->pending_buffer, "InputStream::close:pending_buffer");
-    state_->pending_buffer = nullptr;
-    state_->pending_spec.reset();
-    state_->pending_alloc_ns = 0;
-    state_->pending_map_ns = 0;
-    state_->pending_copy_ns = 0;
+  const auto state = std::atomic_load_explicit(&state_, std::memory_order_acquire);
+  if (!state)
+    return;
+  state->close_requested.store(true, std::memory_order_release);
+  if (state->worker_done.load(std::memory_order_acquire)) {
+    release_input_stream_resources_once(*state);
   }
-  if (state_->reusable_buffer) {
-    release_input_buffer(state_->reusable_buffer, "InputStream::close:reusable_buffer");
-    state_->reusable_buffer = nullptr;
-    state_->reusable_bytes = 0;
-  }
-  if (state_->current_caps) {
-    gst_caps_unref(state_->current_caps);
-    state_->current_caps = nullptr;
-  }
-  if (state_->appsrc) {
-    gst_object_unref(state_->appsrc);
-    state_->appsrc = nullptr;
-  }
-  if (state_->appsink) {
-    gst_object_unref(state_->appsink);
-    state_->appsink = nullptr;
-  }
-  if (state_->pipeline) {
-    if (!state_->teardown_started.exchange(true)) {
-      GstElement* pipeline = state_->pipeline;
-      state_->pipeline = nullptr;
-      pipeline_internal::stop_and_unref_no_flush(pipeline, state_->opt.prefer_synchronous_teardown);
-    } else {
-      state_->pipeline = nullptr;
-    }
-  }
-  state_.reset();
+  std::atomic_store_explicit(&state_, std::shared_ptr<State>{}, std::memory_order_release);
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] InputStream::close end\n");
   }

@@ -137,6 +137,9 @@ inline std::string resolve_input_media_type(const InputOptions& opt) {
     if (opt.format.tag == FormatTag::H264) {
       return "video/x-h264";
     }
+    if (opt.format.tag == FormatTag::H265) {
+      return "video/x-h265";
+    }
     return "";
   case PayloadType::Auto:
   default:

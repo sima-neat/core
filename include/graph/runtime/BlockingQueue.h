@@ -154,6 +154,75 @@ public:
     return true;
   }
 
+  /// Push `item` (move) while periodically checking `cancel_requested`. The overall timeout
+  /// retains the same meaning as `push()`; polling does not create multiple logical timeouts.
+  template <class CancelPredicate>
+  bool push_interruptible(T&& item, int timeout_ms, CancelPredicate&& cancel_requested,
+                          int cancellation_poll_ms = 50) {
+    const bool timing = timing_enabled();
+    const auto t0 =
+        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    std::unique_lock<std::mutex> lock(mu_);
+    const auto poll =
+        std::chrono::milliseconds(cancellation_poll_ms > 0 ? cancellation_poll_ms : 1);
+    const auto deadline =
+        timeout_ms < 0 ? std::chrono::steady_clock::time_point::max()
+                       : std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    const auto cancellation_requested_without_queue_lock = [&]() {
+      lock.unlock();
+      bool requested = false;
+      try {
+        requested = static_cast<bool>(cancel_requested());
+      } catch (...) {
+        lock.lock();
+        throw;
+      }
+      lock.lock();
+      return requested;
+    };
+
+    for (;;) {
+      if (closed_) {
+        record_push_wait(t0, timing);
+        push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
+      if (cancellation_requested_without_queue_lock()) {
+        record_push_wait(t0, timing);
+        return false;
+      }
+      // The predicate may inspect or mutate this queue while the mutex is released.
+      // Recheck all queue state after reacquiring it rather than assuming the prior
+      // capacity/closed observations still hold.
+      if (closed_) {
+        record_push_wait(t0, timing);
+        push_closed_count_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
+      if (has_capacity_locked()) {
+        break;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        record_push_wait(t0, timing);
+        push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
+      auto wake_at = now + poll;
+      if (wake_at > deadline) {
+        wake_at = deadline;
+      }
+      cv_not_full_.wait_until(lock, wake_at, [&] { return closed_ || has_capacity_locked(); });
+    }
+    record_push_wait(t0, timing);
+    queue_.push_back(QueueEntry{std::move(item), timing ? std::chrono::steady_clock::now()
+                                                        : std::chrono::steady_clock::time_point{}});
+    push_count_.fetch_add(1, std::memory_order_relaxed);
+    update_high_watermark_locked();
+    cv_not_empty_.notify_one();
+    return true;
+  }
+
   /// Non-blocking copy push; returns false if closed or full.
   bool try_push(const T& item) {
     const bool timing = timing_enabled();

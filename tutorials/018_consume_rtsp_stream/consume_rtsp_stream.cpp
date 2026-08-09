@@ -1,14 +1,18 @@
-// Consume a live H.264 RTSP stream via the RtspDecodedInput Graph fragment.
+// Consume a live H.264 or H.265 RTSP stream via RtspDecodedInput.
 //
-// The fragment handles RTSP connect, depacketize, and H.264 decode — you hand it
-// a URL and pull decoded frames. This chapter is about the input fragment only.
+// The fragment handles RTSP connect, codec-specific depacketize/parse, and
+// hardware decode. This chapter is about the input fragment only.
 //
 // Usage:
-//   tutorial_018_consume_rtsp_stream --url rtsp://host/path [--frames 5]
+//   tutorial_018_consume_rtsp_stream --url rtsp://host/path
+//     [--codec h264|avc|h265|hevc] [--source-fps 30] [--frames 5]
 
 #include "neat.h"
 #include "nodes/groups/RtspDecodedInput.h"
 
+#include <opencv2/videoio.hpp>
+
+#include <cmath>
 #include <exception>
 #include <iostream>
 #include <stdexcept>
@@ -33,31 +37,65 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   return std::stoi(v);
 }
 
+simaai::neat::nodes::groups::RtspCodec parse_codec(const std::string& value) {
+  using simaai::neat::nodes::groups::RtspCodec;
+  if (value == "h264" || value == "avc")
+    return RtspCodec::H264;
+  if (value == "h265" || value == "hevc")
+    return RtspCodec::H265;
+  throw std::invalid_argument("--codec must be h264, avc, h265, or hevc");
+}
+
+int probe_source_fps(const std::string& url) {
+  cv::VideoCapture capture(url);
+  if (!capture.isOpened()) {
+    throw std::runtime_error("failed to open RTSP source for FPS probe");
+  }
+  const int fps = static_cast<int>(std::lround(capture.get(cv::CAP_PROP_FPS)));
+  capture.release();
+  if (fps <= 0) {
+    throw std::runtime_error("failed to probe a positive RTSP source FPS");
+  }
+  return fps;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
   try {
     std::string url;
     if (!get_arg(argc, argv, "--url", url)) {
-      std::cerr << "Usage: tutorial_018_consume_rtsp_stream --url <rtsp://...> [--frames <n>]\n";
+      std::cerr << "Usage: tutorial_018_consume_rtsp_stream --url <rtsp://...> "
+                   "[--codec h264|avc|h265|hevc] [--source-fps <n>] [--frames <n>]\n";
       return 1;
     }
+    std::string codec_name = "h264";
+    get_arg(argc, argv, "--codec", codec_name);
     const int frames = parse_int_arg(argc, argv, "--frames", 5);
+    int source_fps = parse_int_arg(argc, argv, "--source-fps", -1);
+    if (source_fps != -1 && source_fps <= 0) {
+      throw std::invalid_argument("--source-fps must be positive");
+    }
+    if (source_fps == -1) {
+      source_fps = probe_source_fps(url);
+    }
 
     // CORE LOGIC
     // STEP configure-rtsp
-    // Configure RtspDecodedInputOptions: the URL and the RTSP transport.
+    // Configure the URL, codec, source cadence, and RTSP transport.
     simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_opt;
     rtsp_opt.url = url;
+    rtsp_opt.codec = parse_codec(codec_name);
+    rtsp_opt.source_fps = source_fps;
     rtsp_opt.tcp = true;
     // END STEP
 
     // STEP compose-graph
     // Build a Graph whose only stages are the RTSP group and an Output node.
-    simaai::neat::Graph s;
-    s.add(simaai::neat::nodes::groups::RtspDecodedInput(rtsp_opt));
-    s.add(simaai::neat::nodes::Output());
-    auto run = s.build(simaai::neat::RunOptions{});
+    simaai::neat::Graph graph;
+    graph.add(simaai::neat::nodes::groups::RtspDecodedInput(rtsp_opt));
+    graph.add(simaai::neat::nodes::Output());
+    auto run = graph.build(simaai::neat::RunOptions{});
     // END STEP
 
     // STEP pull-frames

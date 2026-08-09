@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/RunDiagnostics.h"
+#include "DecoderAdmission.h"
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
@@ -25,6 +26,10 @@
 
 namespace simaai::neat::graph {
 struct GraphRunStats;
+}
+
+namespace simaai::neat {
+class NeatError;
 }
 
 namespace simaai::neat::runtime {
@@ -129,9 +134,32 @@ struct RunCoreStartOptions {
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
+  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
+  std::function<void()> after_pipeline_start_for_test;
 };
 
-struct RunCore {
+// Names the single thread that must call InputStream::close(). Teardown can detach a worker
+// still using the stream, so the closer has to be whichever thread exits last.
+//
+// Ownership only ever leaves the RunCoreOwns* values, so a handoff is never revoked.
+// InputThreadOwns is claimed by compare-exchange because the input thread races it with
+// RunCoreOwnsAfterInputFinished; StreamStopThreadOwns is a plain store that outranks both,
+// safe because stop() writes it only after claiming task detachment and runs the
+// input-thread handoff strictly afterwards.
+enum class InputStreamCloseState {
+  // Initial. RunCore::close() closes; the input thread has not published completion.
+  RunCoreOwnsWhileInputRunning,
+  // RunCore::close() closes; the input thread already exited, so the stop path joins it.
+  RunCoreOwnsAfterInputFinished,
+  // Stream-stop task was detached; it waits for the input thread, then closes.
+  StreamStopThreadOwns,
+  // Input thread was detached; it closes as its last act.
+  InputThreadOwns,
+  // Terminal.
+  Closed,
+};
+
+struct RunCore : std::enable_shared_from_this<RunCore> {
   static std::shared_ptr<RunCore> start(ExecutionGraphPlan plan, RunCoreStartOptions opt);
   static std::shared_ptr<RunCore> create_graph_compat();
   static std::shared_ptr<RunCore> start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -141,7 +169,9 @@ struct RunCore {
   start_single_pipeline(InputStream stream, const RunOptions& opt,
                         const InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                         const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,
-                        pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr);
+                        pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr,
+                        std::shared_ptr<DecoderAdmissionReservation> decoder_admission = nullptr,
+                        std::function<void()> after_pipeline_start_for_test = {});
 
   ~RunCore();
 
@@ -169,18 +199,45 @@ struct RunCore {
   InputStreamStats input_stats() const;
   RunDiagSnapshot diag_snapshot() const;
   std::string last_error() const;
+  std::optional<PullError> last_error_detail() const;
   std::string diagnostics_summary() const;
+  std::optional<PullError> wait_for_report_bearing_error(std::chrono::milliseconds timeout) const;
 
   ExecutionGraphRuntime& graph_execution();
   const ExecutionGraphRuntime& graph_execution() const;
   bool graph_stop_requested() const;
   void graph_signal_stop();
+  void set_terminal_error(PullError err);
+  void set_terminal_error(const NeatError& err);
   void graph_request_stop(const std::string& err);
+  void graph_request_stop(PullError err);
+  void graph_request_stop(const NeatError& err);
+  void graph_request_stop_from_pipeline(const std::shared_ptr<RunCore>& pipeline_core,
+                                        std::string fallback_error);
+  void graph_pipeline_completed(std::size_t pipeline_index,
+                                std::optional<PullError> close_detail = std::nullopt);
+  void graph_stage_worker_completed(std::size_t group_index);
+  void graph_realtime_link_completed(std::size_t link_index);
+  void graph_producer_completed(simaai::neat::graph::NodeId producer_node);
+  void graph_target_producer_completed(const DownstreamTarget& target);
+  bool graph_begin_public_push();
+  void graph_end_public_push();
+  bool graph_public_input_closed() const;
+  void graph_close_public_input();
+  void graph_forward_public_input_completion();
+  void graph_mark_downstream_close_provenance(simaai::neat::graph::NodeId producer_node,
+                                              const PullError* source_close_detail);
+  std::optional<PullError> graph_last_error_detail() const;
+  std::optional<PullError> graph_close_detail(simaai::neat::graph::NodeId sink_node) const;
+  bool graph_sink_closed(simaai::neat::graph::NodeId node_id) const;
   bool ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
-                                   bool allow_startup_preflight = false);
+                                   bool allow_startup_preflight = false,
+                                   bool cancel_on_public_input_close = false,
+                                   PullError* current_failure = nullptr);
   bool graph_dispatch_to_stage_group(std::size_t group_index, simaai::neat::graph::PortId port,
                                      Sample&& sample, std::size_t edge_index,
-                                     const EdgeRouterOptions& options);
+                                     const EdgeRouterOptions& options,
+                                     bool cancel_on_public_input_close = false);
   bool graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::graph::PortId port,
                   bool has_port, const Sample& sample, const EdgeRouterOptions& options);
   void record_graph_sample_entry(std::string_view endpoint, const Sample& sample,
@@ -213,6 +270,7 @@ struct RunCore {
   // can still show the customer's Graph::add topology instead of falling back
   // to node-metric order.
   std::unique_ptr<ExecutionGraphPlan> graph_export_plan_;
+  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;
@@ -250,6 +308,7 @@ struct RunCore {
   std::atomic<std::int64_t> next_public_graph_input_seq{0};
 
   std::string error;
+  std::optional<PullError> terminal_error_detail;
   std::string diag_sysinfo;
   std::unique_ptr<PowerMonitor> power_monitor;
   std::shared_ptr<void> graph_verbose_guard;
@@ -268,6 +327,9 @@ struct RunCore {
   mutable std::mutex error_mu;
   bool latency_init = false;
   std::atomic<bool> stop_requested{false};
+  // Who must close `pipeline.stream`; `closed` below only records close() being entered.
+  std::atomic<InputStreamCloseState> stream_close_state{
+      InputStreamCloseState::RunCoreOwnsWhileInputRunning};
   std::atomic<bool> closed{false};
   bool diag_enabled = false;
   std::atomic<bool> diag_logged{false};

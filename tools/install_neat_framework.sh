@@ -49,9 +49,6 @@ set -euo pipefail
 # - CLAUDE_HOME: optional Claude home override for skill install target
 # - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
 # - NEAT_INSTALLER_INSTALL_CLAUDE_SKILL: ON/OFF (default: ON)
-# - NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP: ON/OFF (default: ON) relax selected
-#   exact simaai-memory-lib dependencies to the matching minor-version family
-#   when the board carries the SDK's git-suffixed compatible memory package.
 # - NEAT_INSTALLER_RELAX_SIMA_LMM_DEP: ON/OFF (default: ON) relax sima-neat's
 #   lower sima-lmm-core/dev dependency to the bundled local LMM DEB version when
 #   both packages are from the same minor-version family.
@@ -75,7 +72,6 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
-NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
 NEAT_INSTALLER_RELAX_SIMA_LMM_DEP="${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OFF}"
@@ -144,6 +140,106 @@ parse_args() {
 
 log() {
   printf '[install_neat_framework] %s\n' "$*"
+}
+
+relation_field_has_package() {
+  local field="$1"
+  local expected_package="$2"
+  local relation package
+
+  while IFS= read -r relation; do
+    relation="${relation#"${relation%%[![:space:]]*}"}"
+    relation="${relation%"${relation##*[![:space:]]}"}"
+    package="${relation%%[[:space:](]*}"
+    package="${package%%:*}"
+    if [[ "${package}" == "${expected_package}" ]]; then
+      return 0
+    fi
+  done < <(printf '%s\n' "${field}" | tr ',' '\n')
+  return 1
+}
+
+relation_field_provides_exact_version() {
+  local field="$1"
+  local expected_package="$2"
+  local expected_version="$3"
+  local relation
+
+  while IFS= read -r relation; do
+    relation="$(printf '%s' "${relation}" |
+      sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
+    if [[ "${relation}" == "${expected_package} (= ${expected_version})" ]]; then
+      return 0
+    fi
+  done < <(printf '%s\n' "${field}" | tr ',' '\n')
+  return 1
+}
+
+find_verified_bundled_replacement() {
+  local removed_package="$1"
+  local installed_version="$2"
+  shift 2
+  local deb_path provides replaces conflicts
+
+  for deb_path in "$@"; do
+    [[ -f "${deb_path}" ]] || continue
+    provides="$(dpkg-deb -f "${deb_path}" Provides 2>/dev/null || true)"
+    replaces="$(dpkg-deb -f "${deb_path}" Replaces 2>/dev/null || true)"
+    conflicts="$(dpkg-deb -f "${deb_path}" Conflicts 2>/dev/null || true)"
+    if relation_field_provides_exact_version \
+         "${provides}" "${removed_package}" "${installed_version}" &&
+       relation_field_has_package "${replaces}" "${removed_package}" &&
+       relation_field_has_package "${conflicts}" "${removed_package}"; then
+      basename "${deb_path}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+verify_simulated_package_removals() {
+  local simulation_log="$1"
+  shift
+  local -a install_specs=("$@")
+  local -a removed_packages=()
+  local -a verified_replacements=()
+  local package package_name installed_version replacement_deb
+
+  mapfile -t removed_packages < <(awk '$1 == "Remv" {print $2}' "${simulation_log}")
+  for package in "${removed_packages[@]}"; do
+    package_name="${package%%:*}"
+    case "${package_name}" in
+      sima-neat | sima-neat-dev)
+        continue
+        ;;
+    esac
+
+    installed_version="$(
+      dpkg-query -W -f='${Version}' "${package_name}" 2>/dev/null || true
+    )"
+    replacement_deb=""
+    if [[ -n "${installed_version}" ]]; then
+      replacement_deb="$(
+        find_verified_bundled_replacement \
+          "${package_name}" "${installed_version}" "${install_specs[@]}" || true
+      )"
+    fi
+    if [[ -n "${replacement_deb}" ]]; then
+      verified_replacements+=(
+        "${package_name}=${installed_version} -> ${replacement_deb}"
+      )
+      continue
+    fi
+
+    cat "${simulation_log}" >&2
+    echo "Refusing to install because APT would remove ${package} without a bundled package that Provides its exact installed version and explicitly Replaces and Conflicts with it." >&2
+    return 1
+  done
+
+  if [[ "${#verified_replacements[@]}" -gt 0 ]]; then
+    log "Verified platform package replacements:"
+    printf '  %s\n' "${verified_replacements[@]}"
+  fi
 }
 
 log_green() {
@@ -869,21 +965,31 @@ print(match.group(1))
 
 exact_dependency_version_from_relations() {
   local dependency="$1"
+  local expected_version="${2:-}"
   python3 -c '
 import re
 import sys
 
 dependency = sys.argv[1]
+expected_version = sys.argv[2] or None
 relations = sys.stdin.read().strip()
-match = re.search(
+matches = re.finditer(
     rf"(?:^|,)\s*{re.escape(dependency)}(?:\:[^\s(,|]+)?\s*"
     rf"\(\s*=\s*([^\s)]+)\s*\)",
     relations,
 )
+match = next(
+    (
+        candidate
+        for candidate in matches
+        if expected_version is None or candidate.group(1) == expected_version
+    ),
+    None,
+)
 if match is None:
     raise SystemExit(1)
 print(match.group(1))
-' "${dependency}"
+' "${dependency}" "${expected_version}"
 }
 
 palette_required_simaai_memory_version() {
@@ -990,14 +1096,16 @@ collect_local_simaai_memory_debs() {
   done
 
   provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${provides}" || true)"
+  provided_version="$(exact_dependency_version_from_relations \
+    simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
   if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
   fi
 
   provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations simaai-memory-lib-dev <<<"${provides}" || true)"
+  provided_version="$(exact_dependency_version_from_relations \
+    simaai-memory-lib-dev "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
   if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
     echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
     return 1
@@ -1225,6 +1333,19 @@ verify_memory_transaction_preservation() {
   fi
 }
 
+local_simaai_memory_requires_atomic_downgrade() {
+  local package installed_version
+  for package in simaai-memory-lib simaai-memory-lib-dev; do
+    installed_version="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
+    if [[ -n "${installed_version}" ]] &&
+        dpkg --compare-versions "${installed_version}" gt "${SIMAAI_MEMORY_ACTUAL_VERSION}"; then
+      log "Installed ${package}=${installed_version} is newer than bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}; deferring the downgrade to the full package transaction."
+      return 0
+    fi
+  done
+  return 1
+}
+
 install_local_simaai_memory_transaction() {
   local simulation_log
   local -a apt_args=(apt-get install -y --reinstall --no-remove)
@@ -1232,6 +1353,9 @@ install_local_simaai_memory_transaction() {
   collect_local_simaai_memory_debs || return 1
   validate_local_simaai_memory_payload || return 1
   snapshot_memory_transaction_guard_state || return 1
+  if local_simaai_memory_requires_atomic_downgrade; then
+    return 0
+  fi
   simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
 
@@ -1398,103 +1522,6 @@ remove_installed_local_deb_packages() {
   run_sudo dpkg --remove --force-depends "${packages[@]}"
 }
 
-maybe_relax_simaai_memory_dep() {
-  local deb="$1"
-  local out_array_name="$2"
-  local -n out_array="${out_array_name}"
-
-  if [[ "${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP}" != "ON" ]]; then
-    out_array+=("${deb}")
-    return 0
-  fi
-  case "$(basename "${deb}")" in
-    sima-lmm-*-Linux-core.deb | neat-appcomplex_*.deb | appcomplex_*.deb) ;;
-    *)
-      out_array+=("${deb}")
-      return 0
-      ;;
-  esac
-  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
-    out_array+=("${deb}")
-    return 0
-  fi
-
-  local installed_memory_version
-  installed_memory_version="$(dpkg-query -W -f='${Version}' simaai-memory-lib 2>/dev/null || true)"
-  if [[ -z "${installed_memory_version}" ]]; then
-    installed_memory_version="$(local_deb_version_for_package simaai-memory-lib || true)"
-  fi
-  if [[ -z "${installed_memory_version}" ]]; then
-    out_array+=("${deb}")
-    return 0
-  fi
-
-  local tmp_dir unpack_dir out_deb changed_marker
-  tmp_dir="$(mktemp -d /tmp/sima-neat-deb-normalize-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${tmp_dir}")
-  unpack_dir="${tmp_dir}/unpack"
-  out_deb="${tmp_dir}/$(basename "${deb}")"
-  changed_marker="${tmp_dir}/changed"
-
-  dpkg-deb -R "${deb}" "${unpack_dir}"
-  if python3 - "${unpack_dir}/DEBIAN/control" "${installed_memory_version}" "${changed_marker}" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-control = Path(sys.argv[1])
-installed = sys.argv[2]
-changed_marker = Path(sys.argv[3])
-text = control.read_text()
-
-# Some SDK/DevKit images ship simaai-memory-lib as a same-upstream local build
-# such as 2.0.0~git..., 2.1.1+neat1, or 2.1.1-1 while selected runtime DEBs can
-# depend on the unsuffixed exact version 2.0.0/2.1.1. Debian exact-version
-# dependencies make otherwise compatible boards uninstallable. Only relax this
-# dependency when the installed version is the exact required version or the same
-# upstream version plus a Debian suffix, and cap the relaxed range to the same
-# minor-version family.
-def same_upstream_family(installed: str, required: str) -> bool:
-    if installed == required:
-        return True
-    return any(installed.startswith(required + suffix) for suffix in ("~", "+", "-"))
-
-def next_minor_bound(version: str):
-    match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)(?:[.+~-].*)?$", version)
-    if not match:
-        match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)\.\d+(?:[.+~-].*)?$", version)
-    if not match:
-        return None
-    epoch, major, minor = match.groups()
-    prefix = f"{epoch}:" if epoch else ""
-    return f"{prefix}{major}.{int(minor) + 1}~"
-
-def repl(match: re.Match[str]) -> str:
-    required = match.group(1).strip()
-    if same_upstream_family(installed, required):
-        upper = next_minor_bound(required)
-        if upper is None:
-            return match.group(0)
-        changed_marker.write_text("1")
-        return f"simaai-memory-lib (>= {required}~), simaai-memory-lib (<< {upper})"
-    return match.group(0)
-
-new_text = re.sub(r"simaai-memory-lib\s*\(=\s*([^)]+)\)", repl, text)
-if new_text != text:
-    control.write_text(new_text)
-PY
-  then
-    if [[ -f "${changed_marker}" ]]; then
-      log "Relaxed $(basename "${deb}") dependency on simaai-memory-lib for installed version ${installed_memory_version}"
-      dpkg-deb -b "${unpack_dir}" "${out_deb}" >/dev/null
-      out_array+=("${out_deb}")
-      return 0
-    fi
-  fi
-
-  out_array+=("${deb}")
-}
-
 local_deb_version_for_package() {
   local package="$1"
   local deb pkg version
@@ -1610,12 +1637,7 @@ PY
 
 prepare_debs_for_board_install() {
   local -a prepared=()
-  local -a memory_prepared=()
   local deb
-  for deb in "${DEBS[@]}"; do
-    maybe_relax_simaai_memory_dep "${deb}" memory_prepared
-  done
-  DEBS=("${memory_prepared[@]}")
   for deb in "${DEBS[@]}"; do
     maybe_relax_sima_lmm_dep "${deb}" prepared
   done
@@ -2091,9 +2113,7 @@ install_debs_on_board() {
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # The memory replacement is deliberately isolated from the broader Neat
-  # transaction. It must start from a coherent APT state because --fix-broken
-  # could make an otherwise local reinstall remove unrelated platform packages.
+  # Keep the isolated memory replacement away from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
     echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
@@ -2103,31 +2123,12 @@ install_debs_on_board() {
     echo "Failed to install the bundled simaai-memory payload without package removals." >&2
     exit 1
   fi
+  # Install the remaining packages without allowing memory-payload substitution.
 
-  # Prefer apt-get for the remaining packages so normal system dependencies can
-  # be resolved. The memory DEBs have been removed from this set; the repository
-  # cannot silently substitute its indistinguishable same-version payload.
-
-  # Resolve native palette repairs up front, but install them atomically with
-  # the local NEAT DEBs.  An older neat-gst-plugins may itself depend on a
-  # private libcamera version, so a separate native-first downgrade would make
-  # apt remove that package before the canonical replacement is visible.
-  local -a native_restore_specs=()
-  if native_modalix_repair_is_required; then
-    if ! native_modalix_restore_specs native_restore_specs; then
-      echo "Failed to resolve the canonical native Modalix package transaction." >&2
-      exit 1
-    fi
-    log "Adding native Modalix packages and exact palette dependencies to the atomic NEAT transaction:"
-    printf '  %s\n' "${native_restore_specs[@]}"
-  fi
-
-  # Avoid passing the same local canonical DEB twice when it is both part of
-  # the artifact manifest and selected as an exact palette dependency.
   local -a board_install_specs=()
   local -A seen_install_specs=()
   local spec
-  for spec in "${DEBS[@]}" "${native_restore_specs[@]}"; do
+  for spec in "${DEBS[@]}"; do
     [[ -n "${spec}" ]] || continue
     if [[ -n "${seen_install_specs[${spec}]+x}" ]]; then
       continue
@@ -2140,7 +2141,24 @@ install_debs_on_board() {
     apt-get install -y --fix-broken --allow-downgrades --reinstall
     -o Dpkg::Options::=--force-overwrite
   )
+
+  local simulation_log
+  simulation_log="$(mktemp /tmp/sima-neat-apt-simulate-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${simulation_log}")
+  if ! run_sudo "${apt_install_args[@]}" --simulate \
+      "${board_install_specs[@]}" >"${simulation_log}" 2>&1; then
+    cat "${simulation_log}" >&2
+    echo "APT cannot satisfy the bundled Neat package transaction." >&2
+    exit 1
+  fi
+  if ! verify_simulated_package_removals \
+      "${simulation_log}" "${board_install_specs[@]}"; then
+    exit 1
+  fi
+
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
+    run_sudo apt-get check
+    SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
     complete_board_install_after_packages
     return 0
   fi
@@ -2165,11 +2183,8 @@ install_debs_on_board() {
     log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
   fi
 
-  if [[ "${#native_restore_specs[@]}" -gt 0 ]]; then
-    echo "Direct dpkg fallback cannot safely complete the required native Modalix repair transaction." >&2
-    exit 1
-  fi
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+  run_sudo apt-get check
   complete_board_install_after_packages
 }
 
