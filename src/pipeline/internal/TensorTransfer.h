@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 
 #include <cstddef>
 #include <string>
@@ -22,7 +23,8 @@ TransferPoolStats tensor_transfer_pool_stats();
 simaai::neat::Tensor transfer_to_device(const simaai::neat::Tensor& src,
                                         const simaai::neat::Device& target,
                                         const std::vector<simaai::neat::Segment>* required_segments,
-                                        const std::vector<std::string>* required_segment_names);
+                                        const std::vector<std::string>* required_segment_names,
+                                        MemoryBackendPolicy backend);
 
 simaai::neat::Tensor transfer_to_cpu(const simaai::neat::Tensor& src);
 

@@ -6,7 +6,6 @@
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/HolderLoanGate.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
@@ -3193,7 +3192,8 @@ bool tensor_buffer_descriptor_from_sample(GstSample* sample, TensorBufferView* o
 }
 
 std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::string* err,
-                                                     bool allow_zero_copy) {
+                                                     bool allow_zero_copy,
+                                                     const MemoryBackendPolicy backend) {
   if (!sample_has_tensor_list(bundle) && bundle.kind != SampleKind::Bundle) {
     if (err)
       *err = "Sample tensor-list or bundle payload expected";
@@ -3207,7 +3207,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
   if (sample_debug_enabled()) {
     log_bundle(bundle);
   }
-  const bool dmabuf_plan = selected_memory_backend_policy() == MemoryBackendPolicy::DmaBufPlan;
+  const bool dmabuf_plan = backend == MemoryBackendPolicy::DmaBufPlan;
 
   GstBuffer* sample_buf = nullptr;
   GstCaps* sample_caps = nullptr;
@@ -3692,7 +3692,8 @@ std::shared_ptr<void> tensor_to_gst_envelope_holder(const Tensor& tensor, std::s
 
 std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tensors,
                                                          const Sample& envelope_meta,
-                                                         std::string* err, bool allow_zero_copy) {
+                                                         std::string* err, bool allow_zero_copy,
+                                                         const MemoryBackendPolicy backend) {
   if (tensors.empty()) {
     if (err) {
       *err = "TensorList envelope payload is empty";
@@ -3720,17 +3721,19 @@ std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tenso
   if (sample.stream_label.empty() && !tensors.front().route.name.empty()) {
     sample.stream_label = tensors.front().route.name;
   }
-  return make_sample_holder_from_bundle(sample, err, allow_zero_copy);
+  return make_sample_holder_from_bundle(sample, err, allow_zero_copy, backend);
 }
 
 std::shared_ptr<void> sample_to_gst_envelope_holder(const Sample& sample, std::string* err,
-                                                    bool allow_zero_copy) {
+                                                    bool allow_zero_copy,
+                                                    const MemoryBackendPolicy backend) {
   const Sample canonical = canonicalize_tensor_transport_sample(sample);
   if (sample_has_tensor_list(canonical)) {
-    return tensor_list_to_gst_envelope_holder(canonical.tensors, canonical, err, allow_zero_copy);
+    return tensor_list_to_gst_envelope_holder(canonical.tensors, canonical, err, allow_zero_copy,
+                                              backend);
   }
   if (canonical.kind == SampleKind::Bundle) {
-    return make_sample_holder_from_bundle(canonical, err, allow_zero_copy);
+    return make_sample_holder_from_bundle(canonical, err, allow_zero_copy, backend);
   }
   if (err) {
     *err = "Sample tensor envelope conversion requires TensorSet/Bundle";

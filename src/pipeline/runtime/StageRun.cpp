@@ -12,6 +12,7 @@
 #include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/SampleUtil.h"
@@ -1778,7 +1779,8 @@ make_device_packed_preproc_source_batch_tensor(const std::vector<cv::Mat>& input
   std::vector<Segment> segments{{"ifm0", device_bytes}};
   simaai::neat::Tensor device = pipeline_internal::transfer_to_device(
       cpu, simaai::neat::Device{simaai::neat::DeviceType::SIMA_CVU, 0}, &segments,
-      /*required_segment_names=*/nullptr);
+      /*required_segment_names=*/nullptr,
+      pipeline_internal::process_memory_backend_selection().policy);
   device.semantic.preprocess = runtime_meta;
   if (GstBuffer* buf = tensor_holder_buffer(device)) {
     (void)write_simaai_preprocess_meta(buf, runtime_meta);

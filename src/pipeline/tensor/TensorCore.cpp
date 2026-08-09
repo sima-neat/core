@@ -23,6 +23,7 @@
 
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -603,7 +604,9 @@ Tensor Tensor::to(Device target) const {
   case DeviceType::SIMA_CVU:
     return cvu();
   case DeviceType::SIMA_MLA:
-    return simaai::neat::pipeline_internal::transfer_to_device(*this, target, nullptr, nullptr);
+    return simaai::neat::pipeline_internal::transfer_to_device(
+        *this, target, nullptr, nullptr,
+        simaai::neat::pipeline_internal::process_memory_backend_selection().policy);
   case DeviceType::SIMA_APU:
   case DeviceType::UNKNOWN:
     break;
@@ -625,8 +628,9 @@ Tensor Tensor::cpu() const {
 Tensor Tensor::cvu() const {
   if (device.type == DeviceType::SIMA_CVU)
     return *this;
-  return simaai::neat::pipeline_internal::transfer_to_device(*this, {DeviceType::SIMA_CVU, 0},
-                                                             nullptr, nullptr);
+  return simaai::neat::pipeline_internal::transfer_to_device(
+      *this, {DeviceType::SIMA_CVU, 0}, nullptr, nullptr,
+      simaai::neat::pipeline_internal::process_memory_backend_selection().policy);
 }
 
 Tensor Tensor::mla(bool force) const {
@@ -638,14 +642,16 @@ Tensor Tensor::mla(bool force) const {
 
   if (!force) {
     try {
-      return simaai::neat::pipeline_internal::transfer_to_device(*this, {DeviceType::SIMA_CVU, 0},
-                                                                 nullptr, nullptr);
+      return simaai::neat::pipeline_internal::transfer_to_device(
+          *this, {DeviceType::SIMA_CVU, 0}, nullptr, nullptr,
+          simaai::neat::pipeline_internal::process_memory_backend_selection().policy);
     } catch (const std::exception&) {
       // Fall back to MLA (DMS0).
     }
   }
-  return simaai::neat::pipeline_internal::transfer_to_device(*this, {DeviceType::SIMA_MLA, 0},
-                                                             nullptr, nullptr);
+  return simaai::neat::pipeline_internal::transfer_to_device(
+      *this, {DeviceType::SIMA_MLA, 0}, nullptr, nullptr,
+      simaai::neat::pipeline_internal::process_memory_backend_selection().policy);
 }
 
 Tensor Tensor::to_cpu_if_needed() const {
@@ -1101,12 +1107,16 @@ Tensor make_dense_tensor_from_bytes(const void* data, std::size_t bytes, TensorD
 
   std::vector<Segment> segments{{"ifm0", bytes}};
   if (memory == TensorMemory::EV74) {
-    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_CVU, 0}, &segments,
-                                                 /*required_segment_names=*/nullptr);
+    return pipeline_internal::transfer_to_device(
+        tmp, Device{DeviceType::SIMA_CVU, 0}, &segments,
+        /*required_segment_names=*/nullptr,
+        pipeline_internal::process_memory_backend_selection().policy);
   }
   if (memory == TensorMemory::MLA) {
-    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_MLA, 0}, &segments,
-                                                 /*required_segment_names=*/nullptr);
+    return pipeline_internal::transfer_to_device(
+        tmp, Device{DeviceType::SIMA_MLA, 0}, &segments,
+        /*required_segment_names=*/nullptr,
+        pipeline_internal::process_memory_backend_selection().policy);
   }
   throw std::invalid_argument("Tensor::from_vector: unsupported TensorMemory placement");
 }

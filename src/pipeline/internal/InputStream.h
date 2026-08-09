@@ -5,6 +5,7 @@
 
 #include "pipeline/internal/InputStreamStats.h"
 #include "pipeline/internal/InputStreamTeardownPolicy.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"
@@ -99,6 +100,10 @@ struct InputStreamOptions {
   // constructed in the required memory placement; set
   // SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 for legacy compatibility.
   bool require_device_visible_input = false;
+  // Core-authored transport intent captured at graph construction. The push
+  // path passes this value explicitly to envelope/materialization helpers.
+  pipeline_internal::MemoryBackendPolicy memory_backend_policy =
+      pipeline_internal::MemoryBackendPolicy::Legacy;
   bool reuse_input_buffer = false;
   // True for user-visible Output/appsink endpoints.  False for graph-internal
   // transport appsinks, where downstream edge/view contracts must be preserved
