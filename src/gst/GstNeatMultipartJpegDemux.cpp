@@ -97,6 +97,7 @@ bool validate_jpeg_frame(const uint8_t* data, std::size_t size, gint* width, gin
   bool in_scan = false;
   bool saw_sof = false;
   bool saw_sos = false;
+  bool needs_dnl = false;
   while (pos < size) {
     if (data[pos] != 0xFFU) {
       if (in_scan) {
@@ -120,7 +121,7 @@ bool validate_jpeg_frame(const uint8_t* data, std::size_t size, gint* width, gin
       continue;
     }
     if (marker == 0xD9U) {
-      if (!saw_sof || !saw_sos) {
+      if (!saw_sof || !saw_sos || needs_dnl) {
         return fail_jpeg(err, "JPEG reaches EOI before a complete frame header");
       }
       if (pos != size) {
@@ -159,10 +160,21 @@ bool validate_jpeg_frame(const uint8_t* data, std::size_t size, gint* width, gin
       }
       *height = static_cast<gint>((static_cast<gint>(data[p + 1U]) << 8) | data[p + 2U]);
       *width = static_cast<gint>((static_cast<gint>(data[p + 3U]) << 8) | data[p + 4U]);
-      if (*width <= 0 || *height <= 0) {
+      if (*width <= 0) {
         return fail_jpeg(err, "JPEG SOF dimensions are invalid");
       }
+      needs_dnl = *height == 0;
       saw_sof = true;
+    }
+    if (marker == 0xDCU) {
+      if (!saw_sof || !saw_sos || !needs_dnl || seg_len != 4U) {
+        return fail_jpeg(err, "JPEG DNL segment is invalid");
+      }
+      *height = static_cast<gint>((static_cast<gint>(data[pos + 2U]) << 8) | data[pos + 3U]);
+      if (*height <= 0) {
+        return fail_jpeg(err, "JPEG DNL height is invalid");
+      }
+      needs_dnl = false;
     }
     if (marker == 0xDAU) {
       if (!saw_sof) {
@@ -382,6 +394,16 @@ gboolean gst_neat_multipart_jpeg_demux_sink_event(GstPad* pad, GstObject* parent
   auto* self = GST_NEAT_MULTIPART_JPEG_DEMUX(parent);
 
   switch (GST_EVENT_TYPE(event)) {
+  case GST_EVENT_STREAM_START: {
+    g_mutex_lock(&self->lock);
+    if (!self->configured_boundary || !*self->configured_boundary) {
+      g_clear_pointer(&self->active_boundary, g_free);
+    }
+    reset_parser_locked(self);
+    gst_event_replace(&self->pending_segment, nullptr);
+    g_mutex_unlock(&self->lock);
+    return gst_pad_push_event(self->srcpad, event);
+  }
   case GST_EVENT_CAPS: {
     GstCaps* caps = nullptr;
     gst_event_parse_caps(event, &caps);

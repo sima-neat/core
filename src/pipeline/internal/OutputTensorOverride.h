@@ -207,6 +207,7 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical,
   bundle.segment_name = canonical.segment_name;
   bundle.input_seq = canonical.input_seq;
   bundle.orig_input_seq = canonical.orig_input_seq;
+  bundle.attributes = canonical.attributes;
   bundle.pts_ns = canonical.pts_ns;
   bundle.dts_ns = canonical.dts_ns;
   bundle.duration_ns = canonical.duration_ns;

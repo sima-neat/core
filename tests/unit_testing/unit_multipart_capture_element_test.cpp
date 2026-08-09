@@ -47,6 +47,14 @@ std::string make_marked_jpeg(uint16_t width, uint16_t height, uint8_t marker) {
   return jpeg;
 }
 
+std::string make_dnl_jpeg(uint16_t width, uint16_t height, uint8_t marker) {
+  std::string jpeg = make_marked_jpeg(width, 0, marker);
+  const std::string dnl{static_cast<char>(0xFF),        static_cast<char>(0xDC),         0x00, 0x04,
+                        static_cast<char>(height >> 8), static_cast<char>(height & 0xFF)};
+  jpeg.insert(jpeg.size() - 2U, dnl);
+  return jpeg;
+}
+
 std::string part(const std::string& boundary, const std::vector<std::string>& header_lines,
                  const std::string& body) {
   std::string out = "--" + boundary + "\r\n";
@@ -288,6 +296,61 @@ void test_caps_boundary_refreshes_on_reconnect() {
   gst_object_unref(pipeline);
 }
 
+void test_same_boundary_stream_start_resets_parser() {
+  simaai::neat::gst_init_once();
+
+  GstElement* pipeline = gst_pipeline_new("capture-same-boundary-reconnect-test");
+  GstElement* src = gst_element_factory_make("appsrc", "src");
+  GstElement* demux = gst_element_factory_make("neatmultipartjpegdemux", "demux");
+  GstElement* sink = gst_element_factory_make("appsink", "sink");
+  require(pipeline && src && demux && sink, "same-boundary reconnect elements must be creatable");
+
+  g_object_set(demux, "boundary", "same", "capture-headers", "image-index", nullptr);
+  g_object_set(sink, "sync", FALSE, "emit-signals", FALSE, "max-buffers", 4, nullptr);
+  gst_bin_add_many(GST_BIN(pipeline), src, demux, sink, nullptr);
+  require(gst_element_link_many(src, demux, sink, nullptr) == TRUE,
+          "same-boundary reconnect pipeline must link");
+  require(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+          "same-boundary reconnect pipeline must reach PLAYING");
+
+  push_stream(src,
+              part("same", {"Image-Index: 1"}, make_marked_jpeg(32, 32, 0x31)) + "--same--\r\n");
+  const Received first = pull_received(sink);
+
+  GstPad* srcpad = gst_element_get_static_pad(src, "src");
+  require(srcpad != nullptr, "appsrc source pad must exist");
+  require(gst_pad_push_event(srcpad, gst_event_new_stream_start("second-stream")) == TRUE,
+          "second stream-start must be accepted");
+  GstSegment segment;
+  gst_segment_init(&segment, GST_FORMAT_TIME);
+  require(gst_pad_push_event(srcpad, gst_event_new_segment(&segment)) == TRUE,
+          "second segment must be accepted");
+  gst_object_unref(srcpad);
+
+  push_stream(src,
+              part("same", {"Image-Index: 2"}, make_marked_jpeg(32, 32, 0x32)) + "--same--\r\n");
+  (void)gst_app_src_end_of_stream(GST_APP_SRC(src));
+  const Received second = pull_received(sink);
+
+  require(first.attributes.at("image-index") == "1",
+          "first same-boundary stream must emit its frame");
+  require(second.attributes.at("image-index") == "2",
+          "stream-start must reset same-boundary framing state");
+
+  gst_element_set_state(pipeline, GST_STATE_NULL);
+  gst_object_unref(pipeline);
+}
+
+void test_dnl_height_negotiates_caps() {
+  const std::string boundary = "dnl";
+  std::vector<Received> received;
+  run_pipeline(part(boundary, {}, make_dnl_jpeg(32, 24, 0x51)) + "--dnl--\r\n", boundary, "",
+               &received);
+  require(received.size() == 1U, "DNL JPEG must emit one frame");
+  require(received.front().width == 32 && received.front().height == 24,
+          "DNL JPEG must advertise its deferred height");
+}
+
 void test_malformed_jpeg_parts_fail_the_stream() {
   const std::string boundary = "bad";
   std::string truncated = make_marked_jpeg(32, 32, 0x41);
@@ -520,6 +583,8 @@ RUN_TEST("unit_multipart_capture_element", [] {
   test_part_timing_comes_from_the_body_start_chunk();
   test_dimension_change_renegotiates_caps();
   test_caps_boundary_refreshes_on_reconnect();
+  test_same_boundary_stream_start_resets_parser();
+  test_dnl_height_negotiates_caps();
   test_malformed_jpeg_parts_fail_the_stream();
   test_reentrant_property_reset_is_safe();
   test_attribute_mutation_rejects_shared_buffers();
