@@ -1383,6 +1383,27 @@ RUN_TEST(
       }
 
       {
+        auto rank2_contract = make_resnet_flatten_detessdequant_contract();
+        rank2_contract.plugins[1].frame_shape = {1, 1000};
+        rank2_contract.plugins[1].runtime_frame_shape = {1, 1, 1, 1000};
+        const auto rank2_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            rank2_contract, simaai::neat::internal::ExecutionStageKind::DetessDequant);
+
+        require(tensor_desc_shape_for_test(rank2_compiled.payload.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 1, 1000}),
+                "rank-2 detessdequant should keep canonical ProcessCVU output geometry");
+        require(rank2_compiled.payload.output_shapes.front() == std::vector<int>({1, 1, 1, 1000}),
+                "rank-2 detessdequant should keep canonical runtime output geometry");
+        require(rank2_compiled.payload.runtime_output_logical_shapes.front() ==
+                    std::vector<int>({1, 1000}),
+                "rank-2 detessdequant should retain authored runtime output metadata");
+        require(rank2_compiled.runtime_contract.logical_outputs.size() == 1U &&
+                    rank2_compiled.runtime_contract.logical_outputs.front().shape ==
+                        std::vector<std::int64_t>({1, 1000}),
+                "rank-2 detessdequant should publish the authored logical output shape");
+      }
+
+      {
         const auto cast_contract = make_pre_and_post_cast_contract_for_exact_name_regression();
         const auto cast_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
             cast_contract, simaai::neat::internal::ExecutionStageKind::Cast,

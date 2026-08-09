@@ -8063,9 +8063,16 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
                                                                      : std::string("FP16")};
   runtime.runtime_output_transport_kind_list = {ProcessCvuOutputTransportKind::Packed};
   runtime.runtime_output_semantic_kind_list = {ProcessCvuOutputSemanticKind::Tensor};
-  runtime.runtime_output_logical_shapes.clear();
-  if (!runtime.output_shapes.empty()) {
-    runtime.runtime_output_logical_shapes.push_back(runtime.output_shapes.front());
+  const bool primary_frame_shape_was_resolved =
+      !ordered_subset.heads.empty() &&
+      ordered_subset.heads.front().runtime_frame_shape != ordered_subset.heads.front().frame_shape;
+  if (!primary_frame_shape_was_resolved) {
+    runtime.runtime_output_logical_shapes.clear();
+    if (!runtime.output_shapes.empty()) {
+      runtime.runtime_output_logical_shapes.push_back(runtime.output_shapes.front());
+    }
+  } else if (runtime.runtime_output_logical_shapes.size() > 1U) {
+    runtime.runtime_output_logical_shapes.resize(1U);
   }
   runtime.runtime_output_logical_layout_list = {runtime_output_layout_token_local(runtime)};
 
@@ -8079,6 +8086,10 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
   force_direct_materialization_for_inputs(&out);
   for (std::size_t i = 0; i < out.facts.outputs.size() && i < entries.size(); ++i) {
     if (i >= canonical_output_shapes.size() || canonical_output_shapes[i].empty()) {
+      continue;
+    }
+    if (i < ordered_subset.heads.size() &&
+        ordered_subset.heads[i].runtime_frame_shape != ordered_subset.heads[i].frame_shape) {
       continue;
     }
     out.facts.outputs[i].shape = canonical_output_shapes[i];
