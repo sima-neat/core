@@ -2291,6 +2291,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   h265_decode_resnet50_e2e_test
   h265_rtsp_resnet50_e2e_test
   codec_runtime_stream_test
+  multipart_header_capture_decode_e2e_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test
