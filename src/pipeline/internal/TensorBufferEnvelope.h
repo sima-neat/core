@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/internal/OutputTensorOverride.h"
 
@@ -64,12 +65,13 @@ bool tensor_buffer_descriptor_from_sample(GstSample* sample, TensorBufferView* o
                                           std::string* err);
 
 std::shared_ptr<void> tensor_to_gst_envelope_holder(const Tensor& tensor, std::string* err);
-std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tensors,
-                                                         const Sample& envelope_meta,
-                                                         std::string* err,
-                                                         bool allow_zero_copy = true);
-std::shared_ptr<void> sample_to_gst_envelope_holder(const Sample& sample, std::string* err,
-                                                    bool allow_zero_copy = true);
+std::shared_ptr<void>
+tensor_list_to_gst_envelope_holder(const TensorList& tensors, const Sample& envelope_meta,
+                                   std::string* err, bool allow_zero_copy = true,
+                                   MemoryBackendPolicy backend = MemoryBackendPolicy::Legacy);
+std::shared_ptr<void>
+sample_to_gst_envelope_holder(const Sample& sample, std::string* err, bool allow_zero_copy = true,
+                              MemoryBackendPolicy backend = MemoryBackendPolicy::Legacy);
 
 } // namespace simaai::neat::pipeline_internal
 

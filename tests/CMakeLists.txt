@@ -405,6 +405,8 @@ set(UNIT_TESTS
   unit_mpk_contract_legacy_ingress_test
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
+  unit_memory_backend_policy_test
+  unit_dmabuf_eligibility_test
   unit_legacy_afe_mpk_decoder_test
   unit_frame_slot_arena_plan_test
   unit_dmabuf_plan_contract_projection_test

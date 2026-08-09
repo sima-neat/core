@@ -28,6 +28,7 @@
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/InputRouteProcessor.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/SyncBuild.h"
@@ -1046,6 +1047,19 @@ void maybe_apply_public_terminal_output_override(const BuildResult& build_result
   }
 }
 
+pipeline_internal::MemoryBackendPolicy
+backend_policy_from_rendered_manifest(const BuildResult& build_result) {
+  if (!build_result.rendered_manifest.has_value()) {
+    return pipeline_internal::MemoryBackendPolicy::Legacy;
+  }
+  for (const auto& stage : build_result.rendered_manifest->stages) {
+    if (stage.processcvu.dmabuf_plan_contract || stage.processmla.dmabuf_plan_contract) {
+      return pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+    }
+  }
+  return pipeline_internal::MemoryBackendPolicy::Legacy;
+}
+
 InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   InputStreamOptions stream_opt;
   const int queue_depth = (opt.queue_depth > 0) ? opt.queue_depth : 0;
@@ -1889,6 +1903,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
+  stream_opt.memory_backend_policy = backend_policy_from_rendered_manifest(br);
   if (has_sink) {
     maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }

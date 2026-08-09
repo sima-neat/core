@@ -9,6 +9,7 @@
 #include "builder/NodeContractProvider.h"
 #include "gst/GstHelpers.h"
 #include "nodes/sima/Preproc.h"
+#include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/MemoryBackendPolicy.h"
@@ -22,7 +23,6 @@
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
-#include "pipeline/internal/sima/static_contract/LegacyAfeMpkDecoder.h"
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/DequantStageSemantics.h"
@@ -546,32 +546,17 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
   contract->batch_sz_model = props.batch_sz_model;
 }
 
-static std::optional<pipeline_internal::sima::static_contract::ModelExecutionPlan>
+static pipeline_internal::DmabufPlanCompileResult
 compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract) {
   if (mpk_contract.mpk_json_path.empty()) {
-    throw std::runtime_error("ModelPack: dmabuf-plan requires the exact MPK manifest path");
+    return pipeline_internal::try_compile_dmabuf_plan({}, {});
   }
   const auto runtime = read_mla_runtime_properties_from_mpk_contract(mpk_contract);
   if (!runtime.has_value() || runtime->model_path.empty()) {
-    throw std::runtime_error("ModelPack: dmabuf-plan requires the exact MLA executable path");
+    return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, {});
   }
-
-  pipeline_internal::sima::MlaElfIoTopology topology;
-  if (!pipeline_internal::sima::read_mla_elf_io_topology(runtime->model_path, &topology)) {
-    throw std::runtime_error("ModelPack: dmabuf-plan cannot read MLA ELF topology from '" +
-                             runtime->model_path + "': " + topology.error);
-  }
-
-  pipeline_internal::sima::static_contract::LegacyAfeMpkDecoder decoder;
-  auto decoded = decoder.decode_file(mpk_contract.mpk_json_path, topology);
-  if (!decoded) {
-    const auto detail = decoded.error.has_value()
-                            ? decoded.error->json_path + ": " + decoded.error->detail
-                            : std::string("unknown strict decoder failure");
-    throw std::runtime_error("ModelPack: dmabuf-plan strict MPK+ELF decode failed for '" +
-                             mpk_contract.mpk_json_path + "': " + detail);
-  }
-  return std::move(decoded.plan);
+  return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path,
+                                                    runtime->model_path);
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -3974,8 +3959,11 @@ void ModelPack::init(const std::string& tar_gz) {
 
 void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   options_ = std::move(cfg);
-  const bool dmabuf_plan_selected = pipeline_internal::selected_memory_backend_policy() ==
-                                    pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
+  const auto& process_backend = pipeline_internal::process_memory_backend_selection();
+  memory_backend_decision_ = {};
+  memory_backend_decision_.backend = process_backend.policy;
+  const bool dmabuf_plan_selected =
+      process_backend.policy == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
   mpk_contract_.reset();
   dmabuf_plan_execution_plan_.reset();
   route_graph_.reset();
@@ -4025,7 +4013,35 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
     if (!mpk_contract_.has_value()) {
       throw std::runtime_error("ModelPack: dmabuf-plan requires an exact mpk.json manifest");
     }
-    dmabuf_plan_execution_plan_ = compile_dmabuf_plan_execution_plan(*mpk_contract_);
+    auto compiled = compile_dmabuf_plan_execution_plan(*mpk_contract_);
+    memory_backend_decision_.admission = compiled.report;
+    memory_backend_decision_.plan_digest = compiled.plan_digest;
+    if (!compiled.eligible()) {
+      if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
+        std::fprintf(stderr,
+                     "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=0 code=%s "
+                     "location=%s artifact_digest=%s\n",
+                     pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code),
+                     compiled.report.location.c_str(), compiled.report.artifact_digest.c_str());
+      }
+      throw std::runtime_error(
+          std::string("ModelPack: dmabuf-plan admission failed [") +
+          pipeline_internal::dmabuf_eligibility_code_name(compiled.report.code) + "] at " +
+          (compiled.report.location.empty() ? "$" : compiled.report.location) + ": " +
+          compiled.report.detail);
+    }
+    dmabuf_plan_execution_plan_ = std::move(compiled.plan);
+    if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
+      std::fprintf(stderr,
+                   "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=1 code=eligible "
+                   "plan_digest=%s artifact_digest=%s\n",
+                   memory_backend_decision_.plan_digest.c_str(),
+                   memory_backend_decision_.admission.artifact_digest.c_str());
+    }
+  } else if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
+    std::fprintf(
+        stderr, "NEAT_MEMORY_BACKEND_DECISION backend=legacy eligible=not-evaluated code=%s\n",
+        pipeline_internal::dmabuf_eligibility_code_name(memory_backend_decision_.admission.code));
   }
   if (mpk_contract_.has_value()) {
     if (const auto* mla =

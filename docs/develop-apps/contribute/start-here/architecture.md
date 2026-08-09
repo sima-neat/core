@@ -381,11 +381,29 @@ pipeline-level `GstContext`:
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
 
-For the internal EVO DMA-BUF migration route, `ModelPack` is the sole owner of
-`SIMA_NEAT_MEMORY_BACKEND` selection. Selecting `dmabuf-plan` requires an exact MPK manifest and
-MLA ELF, a successful strict reverse-AFE decode, and exact reconciliation with the existing MLA
-stage contract. Only then does Core set `processmla.dmabuf_plan_contract` in static manifest ABI
-version 25. Core also projects each backend port's `required_alignment_bytes`
+For the internal EVO DMA-BUF migration route, Core reads
+`SIMA_NEAT_MEMORY_BACKEND` once per process. During migration the only valid
+values are exactly `legacy` and `dmabuf-plan`; an unset variable selects
+`legacy`, while empty, `auto`, `probe`, case-altered, whitespace-altered, and
+unknown values fail closed. `ModelPack` records that immutable choice and is
+the sole owner of model admission. Lower transfer and sample-materialization
+helpers receive the resolved transport intent explicitly and never reread
+mutable environment state. This temporary selector and its legacy branch are
+owned by the Phase 7B deletion ledger; the strict-only product has no selector.
+
+Selecting `dmabuf-plan` invokes the same side-effect-free
+`try_compile_dmabuf_plan()` operation used by the offline
+`neat-dmabuf-plan-audit --mpk <mpk.json> --elf <model.elf>` tool. It requires
+an exact MPK manifest and MLA ELF, a successful strict reverse-AFE decode, and
+an accepted immutable frame-arena plan. The audit emits a versioned JSON record
+with stable reason codes, contract locations, content digests, and basenames;
+it does not allocate accelerator memory, open a device, or expose customer
+filesystem paths. Strict setup records the same canonical plan digest and
+fails rather than constructing or retrying the legacy executor after a
+rejection.
+
+Only after admission does Core set `processmla.dmabuf_plan_contract` in static
+manifest ABI version 25. Core also projects each backend port's `required_alignment_bytes`
 and the immutable frame-arena placement plan into its physical buffer record;
 ProcessMLA consumes that value rather than duplicating the legacy
 page-alignment policy. It consumes these Core-owned facts; it must not re-read

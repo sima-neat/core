@@ -9,6 +9,7 @@
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/RouteGraph.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
+#include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
@@ -167,6 +168,11 @@ public:
 
   simaai::neat::InputOptions input_appsrc_options(bool tensor_mode) const;
 
+  const simaai::neat::pipeline_internal::MemoryBackendDecision&
+  memory_backend_decision() const noexcept {
+    return memory_backend_decision_;
+  }
+
   ModelPack clone_with_buffers(int num_buffers_cvu, int num_buffers_mla) const;
   ModelPack clone_with_overrides(const std::string& upstream_name,
                                  const std::string& name_suffix) const;
@@ -215,6 +221,7 @@ private:
   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;
   std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
       dmabuf_plan_execution_plan_;
+  simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<bool> processcvu_preproc_single_output_handoff_;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_managed_route_flags_;

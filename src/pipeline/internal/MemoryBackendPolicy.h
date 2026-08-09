@@ -5,16 +5,28 @@
 
 namespace simaai::neat::pipeline_internal {
 
-// One Core-owned parser for the memory architecture selected by the process.
-// ModelPack uses it to prove static stage contracts, while public Tensor
-// placement uses it to choose the matching transport allocation.
+// Temporary Phase-1 migration selector. Phase 7B deletes this enum and parser
+// after strict execution becomes the only implementation.
 enum class MemoryBackendPolicy {
   Legacy,
   DmaBufPlan,
 };
 
-// Reads SIMA_NEAT_MEMORY_BACKEND. An unset value means Legacy. Unknown values
-// fail closed rather than selecting either memory implementation implicitly.
-MemoryBackendPolicy selected_memory_backend_policy();
+const char* memory_backend_policy_name(MemoryBackendPolicy policy) noexcept;
+
+// Pure exact parser used by unit tests and the one process-level loader. Null
+// means the migration default (Legacy). Empty, whitespace-altered, case-altered,
+// and unknown values fail closed.
+MemoryBackendPolicy parse_memory_backend_policy(const char* raw);
+
+struct ProcessMemoryBackendSelection {
+  MemoryBackendPolicy policy = MemoryBackendPolicy::Legacy;
+  bool explicitly_configured = false;
+};
+
+// Reads SIMA_NEAT_MEMORY_BACKEND exactly once and returns an immutable process
+// selection. Lower layers consume this object or an explicitly propagated
+// policy; they never reread mutable environment state.
+const ProcessMemoryBackendSelection& process_memory_backend_selection();
 
 } // namespace simaai::neat::pipeline_internal
