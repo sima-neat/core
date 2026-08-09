@@ -106,6 +106,9 @@ bool write_attributes(GstBuffer* buffer, const SampleAttributes& attributes) {
     gst_structure_remove_field(existing, kSimaMetaAttributesField);
     return true;
   }
+  if (!gst_buffer_is_writable(buffer)) {
+    return false;
+  }
   GstStructure* target = meta_structure(buffer, true);
   if (!target) {
     return false;

@@ -393,6 +393,10 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
         if (content_end > cursor_ && buf_[content_end - 1U] == kCR) {
           --content_end;
         }
+        while (content_end > cursor_ + 2U &&
+               (buf_[content_end - 1U] == kSP || buf_[content_end - 1U] == kHT)) {
+          --content_end;
+        }
         const std::size_t len = content_end - cursor_;
         if (len >= 3U && buf_[cursor_] == '-' && buf_[cursor_ + 1U] == '-') {
           boundary_.assign(reinterpret_cast<const char*>(buf_.data() + cursor_ + 2U), len - 2U);
@@ -495,15 +499,15 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
       bool closing = false;
       std::size_t delim_len = 0;
       // Resume the scan where it stopped, backing off enough to catch a split delimiter.
-      const std::size_t resume = (scanned_ > body_begin_ + delimiter_.size() + 4U)
-                                     ? (scanned_ - delimiter_.size() - 4U)
-                                     : body_begin_;
+      const std::size_t boundary_window =
+          delimiter_.size() + kMultipartHeaderCaptureMaxLineBytes + 6U;
+      const std::size_t resume =
+          (scanned_ > body_begin_ + boundary_window) ? (scanned_ - boundary_window) : body_begin_;
       const std::size_t at = find_boundary(resume, &closing, &delim_len, true);
       if (at == std::string::npos) {
         // A split delimiter line is framing, not payload. Permit only one bounded
         // line of uncertainty; the exact body length is checked once classified.
-        const std::size_t framing_slack =
-            delimiter_.size() + kMultipartHeaderCaptureMaxLineBytes + 6U;
+        const std::size_t framing_slack = boundary_window;
         const std::size_t buffered = buf_.size() - body_begin_;
         if (buffered > max_part_bytes_ && buffered - max_part_bytes_ > framing_slack) {
           if (err) {

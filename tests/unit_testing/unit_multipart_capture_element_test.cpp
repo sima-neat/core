@@ -552,6 +552,13 @@ void test_attribute_mutation_rejects_shared_buffers() {
   simaai::neat::gst_internal::read_attributes(buffer, &observed);
   require(observed == original, "failed empty write must leave shared-buffer attributes unchanged");
 
+  const SampleAttributes replacement{{"image-index", "10"}};
+  require(!simaai::neat::gst_internal::write_attributes(buffer, replacement),
+          "replacing attributes on a shared buffer must fail without mutating it");
+  simaai::neat::gst_internal::read_attributes(buffer, &observed);
+  require(observed == original,
+          "failed nonempty write must leave shared-buffer attributes unchanged");
+
   gst_buffer_unref(shared_ref);
   require(simaai::neat::gst_internal::clear_attributes(buffer),
           "attribute clear must succeed after the buffer becomes writable");

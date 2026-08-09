@@ -120,6 +120,14 @@ void test_boundary_autodetect() {
     require(ok, "auto-detected boundary must parse" + ctx);
     check_canonical_parts(parts, ctx);
   }
+
+  std::string padded_stream = stream;
+  padded_stream.replace(0U, std::string("--myboundary\r\n").size(), "--myboundary \t\r\n");
+  bool ok = false;
+  std::string err;
+  const std::vector<Part> padded_parts = parse_all(padded_stream, "", capture, 5U, &ok, &err);
+  require(ok, "auto-detection must ignore transport padding: " + err);
+  check_canonical_parts(padded_parts, " (padded auto-detected boundary)");
 }
 
 /// The production camera framing: no closing delimiter, and a header that is simply
@@ -298,6 +306,21 @@ void test_limits_fail_rather_than_truncate() {
   require(exact_parser.finish(exact_sink, &err),
           "the size-compliant split-delimiter stream must finish: " + err);
   require(emitted_size == 8U, "framing bytes must not count toward the body-size limit");
+
+  MultipartParser padded_parser("b", capture, 8U);
+  emitted_size = 0U;
+  const std::string padded_prefix =
+      "--b\r\nContent-Type: image/jpeg\r\n\r\n12345678\r\n--b--        ";
+  require(padded_parser.feed(reinterpret_cast<const uint8_t*>(padded_prefix.data()),
+                             padded_prefix.size(), exact_sink, &err, {}),
+          "an incomplete padded delimiter must remain buffered: " + err);
+  const std::string padded_suffix = "\r\n";
+  require(padded_parser.feed(reinterpret_cast<const uint8_t*>(padded_suffix.data()),
+                             padded_suffix.size(), exact_sink, &err, {}),
+          "a completed padded delimiter must parse: " + err);
+  require(padded_parser.finish(exact_sink, &err),
+          "the padded-delimiter stream must finish: " + err);
+  require(emitted_size == 8U, "padded delimiter bytes must not enter the part body");
 }
 
 void test_allowlist_normalization() {
