@@ -79,8 +79,10 @@ normalize_multipart_header_capture(const MultipartHeaderCaptureOptions& opt);
 /**
  * @brief Demux multipart HTTP streams into per-part buffers.
  *
- * This wraps GStreamer's `multipartdemux`. For MJPEG streams, place `JpegParse`
- * after this node to normalize each part into parsed `image/jpeg` frames.
+ * With header capture disabled, this wraps GStreamer's `multipartdemux`; place
+ * `JpegParse` after it to normalize each MJPEG part. With header capture enabled,
+ * this node already emits parsed `image/jpeg` frames and must connect directly to
+ * the decoder because `JpegParse` does not preserve the captured attributes.
  *
  * @ingroup nodes_common
  */
