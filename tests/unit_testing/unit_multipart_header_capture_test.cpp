@@ -219,6 +219,20 @@ void test_value_trimming() {
   require(parts[0].attrs.at("image-index") == "42", "surrounding SP/HTAB must be trimmed");
 }
 
+void test_preamble_ignores_boundary_prefix_line() {
+  const std::vector<std::string> capture = {"image-index"};
+  const std::string stream = "--bX\r\npreamble\r\n--b\r\nContent-Type: image/jpeg\r\nImage-Index: "
+                             "7\r\n\r\nBODY\r\n--b--\r\n";
+  bool ok = false;
+  std::string err;
+  const std::vector<Part> parts = parse_all(stream, "b", capture, 3U, &ok, &err);
+  require(ok, "a boundary-prefix preamble line must be ignored: " + err);
+  require(parts.size() == 1U && parts[0].body == "BODY",
+          "the real delimiter after the preamble must emit its part");
+  require(parts[0].attrs.at("image-index") == "7",
+          "the real delimiter must retain its part attributes");
+}
+
 void test_malformed_input_is_rejected() {
   const std::vector<std::string> capture = {"image-index"};
   require(parse_rejects("--b\r\nImage-Index: 1\r\n\r\nBODY\r\n--b--\r\n", "b", capture),
@@ -404,6 +418,7 @@ RUN_TEST("unit_multipart_header_capture", [] {
   test_body_containing_delimiter_bytes();
   test_part_keeps_timing_from_body_start_chunk();
   test_value_trimming();
+  test_preamble_ignores_boundary_prefix_line();
   test_malformed_input_is_rejected();
   test_limits_fail_rather_than_truncate();
   test_allowlist_normalization();

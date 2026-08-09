@@ -229,26 +229,23 @@ std::size_t MultipartParser::find_boundary(std::size_t from, bool* is_closing,
       continue;
     }
 
-    // While scanning a body, a boundary token only counts when its delimiter line is
-    // complete: optional closing "--", optional transport padding, then CRLF. Opening
-    // boundary suffixes are validated by HeaderBlock so malformed framing remains an error.
+    // A boundary token only counts when its delimiter line is complete: optional closing
+    // "--", optional transport padding, then CRLF.
     const std::size_t after = at + needle_len;
     if (after + 2U > buf_.size()) {
       return std::string::npos;
     }
     const bool closing = (buf_[after] == '-' && buf_[after + 1U] == '-');
-    if (require_leading_crlf) {
-      std::size_t line_end = after + (closing ? 2U : 0U);
-      while (line_end < buf_.size() && (buf_[line_end] == kSP || buf_[line_end] == kHT)) {
-        ++line_end;
-      }
-      if (line_end + 2U > buf_.size()) {
-        return std::string::npos;
-      }
-      if (buf_[line_end] != kCR || buf_[line_end + 1U] != kLF) {
-        search_from = at + 1U;
-        continue;
-      }
+    std::size_t line_end = after + (closing ? 2U : 0U);
+    while (line_end < buf_.size() && (buf_[line_end] == kSP || buf_[line_end] == kHT)) {
+      ++line_end;
+    }
+    if (line_end + 2U > buf_.size()) {
+      return std::string::npos;
+    }
+    if (buf_[line_end] != kCR || buf_[line_end + 1U] != kLF) {
+      search_from = at + 1U;
+      continue;
     }
     if (is_closing) {
       *is_closing = closing;
