@@ -38,7 +38,6 @@
 #include "pipeline/internal/TensorTransfer.h"
 
 #include "pipeline/internal/GstDataAdapter.h"
-#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/SimaaiMemory.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
@@ -748,7 +747,8 @@ TransferPoolStats tensor_transfer_pool_stats() {
 
 Tensor transfer_to_device(const Tensor& src, const Device& target,
                           const std::vector<Segment>* required_segments,
-                          const std::vector<std::string>* required_segment_names) {
+                          const std::vector<std::string>* required_segment_names,
+                          const MemoryBackendPolicy backend) {
   const std::uint64_t target_flags = target_flags_from_device(target);
   if (target_flags == 0) {
     throw std::runtime_error("transfer: unsupported target device");
@@ -795,8 +795,7 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
   const std::vector<Segment> segments =
       resolve_segments(src, required_segments, required_segment_names, payload_bytes);
 
-  if (selected_memory_backend_policy() ==
-      MemoryBackendPolicy::DmaBufPlan) {
+  if (backend == MemoryBackendPolicy::DmaBufPlan) {
     return transfer_to_driver_dmabuf(src, target, target_flags, segments);
   }
 

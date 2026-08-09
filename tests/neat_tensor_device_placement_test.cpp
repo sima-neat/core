@@ -168,15 +168,17 @@ int main() {
     // must produce ordinary GstDmaBufMemory from the CMA heap. It must not
     // enter the legacy segmented allocator or disguise that allocator as a
     // DMA-BUF.
-    require(::setenv("SIMA_NEAT_MEMORY_BACKEND", "dmabuf-plan", 1) == 0,
-            "failed to select dmabuf-plan for placement test");
     std::vector<std::uint8_t> direct_data(4096U);
     for (std::size_t i = 0; i < direct_data.size(); ++i) {
       direct_data[i] = static_cast<std::uint8_t>(i & 0xffU);
     }
-    auto direct = simaai::neat::Tensor::from_vector(direct_data,
-                                                    {static_cast<std::int64_t>(direct_data.size())},
-                                                    simaai::neat::TensorMemory::EV74);
+    auto direct_cpu = simaai::neat::Tensor::from_vector(
+        direct_data, {static_cast<std::int64_t>(direct_data.size())},
+        simaai::neat::TensorMemory::CPU);
+    std::vector<simaai::neat::Segment> direct_segments{{"ifm0", direct_data.size()}};
+    auto direct = simaai::neat::pipeline_internal::transfer_to_device(
+        direct_cpu, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments, nullptr,
+        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
     require(direct.device.type == simaai::neat::DeviceType::SIMA_CVU,
             "direct EV74 device mismatch");
     require(direct.storage && direct.storage->sima_segments.size() == 1U,
@@ -196,9 +198,13 @@ int main() {
             "direct EV74 payload mismatch");
 
     std::vector<std::uint8_t> direct_data_1(2048U, 0x5aU);
-    auto direct_1 = simaai::neat::Tensor::from_vector(
+    auto direct_cpu_1 = simaai::neat::Tensor::from_vector(
         direct_data_1, {static_cast<std::int64_t>(direct_data_1.size())},
-        simaai::neat::TensorMemory::EV74);
+        simaai::neat::TensorMemory::CPU);
+    std::vector<simaai::neat::Segment> direct_segments_1{{"ifm0", direct_data_1.size()}};
+    auto direct_1 = simaai::neat::pipeline_internal::transfer_to_device(
+        direct_cpu_1, {simaai::neat::DeviceType::SIMA_CVU, 0}, &direct_segments_1, nullptr,
+        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
     direct.route.name = "image_l";
     direct.route.backend_name = "input_tensor";
     direct.route.segment_name = "input_tensor";
@@ -220,7 +226,8 @@ int main() {
     ingress.segment_name = "input_tensor";
     std::string ingress_error;
     auto ingress_holder = simaai::neat::pipeline_internal::sample_to_gst_envelope_holder(
-        ingress, &ingress_error, /*allow_zero_copy=*/true);
+        ingress, &ingress_error, /*allow_zero_copy=*/true,
+        simaai::neat::pipeline_internal::MemoryBackendPolicy::DmaBufPlan);
     require(ingress_holder != nullptr,
             ingress_error.empty() ? "direct tensor-set envelope failed" : ingress_error);
     GstBuffer* ingress_buffer =

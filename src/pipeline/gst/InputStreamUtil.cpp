@@ -6,6 +6,7 @@
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputPolicy.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/TessellatedTensor.h"
 #include "nodes/io/Input.h"
@@ -1900,8 +1901,10 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
         throw std::runtime_error(tag + ": unable to determine dense byte size for device tensor");
       }
       std::vector<Segment> segments{{"ifm0", device_bytes}};
-      return pipeline_internal::transfer_to_device(out, target, &segments,
-                                                   /*required_segment_names=*/nullptr);
+      return pipeline_internal::transfer_to_device(
+          out, target, &segments,
+          /*required_segment_names=*/nullptr,
+          pipeline_internal::process_memory_backend_selection().policy);
     }
     return out;
   }

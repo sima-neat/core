@@ -1351,6 +1351,21 @@ target_link_libraries(sima_neat_internal INTERFACE
   sima_neat_internal_headers
 )
 
+# Phase-1 offline structural admission tool. It shares the exact pure plan
+# compiler used by ModelPack and never opens an accelerator device.
+add_executable(neat-dmabuf-plan-audit
+  tools/dmabuf_plan_audit.cpp
+)
+target_link_libraries(neat-dmabuf-plan-audit PRIVATE
+  sima_neat
+  sima_neat_internal_headers
+)
+install(
+  TARGETS neat-dmabuf-plan-audit
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  COMPONENT core
+)
+
 # ------------------------------------------------------------------------------
 # Tutorials
 # ------------------------------------------------------------------------------
