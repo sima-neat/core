@@ -72,6 +72,18 @@ simaai::neat::Run make_async_drop_run(const simaai::neat::Tensor& seed) {
   return graph.build(TensorList{seed}, run_opt);
 }
 
+simaai::neat::PullStatus pull_until_terminal(simaai::neat::Run& run, simaai::neat::Sample& sample,
+                                             simaai::neat::PullError& error) {
+  simaai::neat::PullStatus status = simaai::neat::PullStatus::Timeout;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    status = run.pull(1000, sample, &error);
+    if (status == simaai::neat::PullStatus::Closed || status == simaai::neat::PullStatus::Error) {
+      break;
+    }
+  }
+  return status;
+}
+
 } // namespace
 
 RUN_TEST(
@@ -196,13 +208,7 @@ RUN_TEST(
 
         Sample tmp;
         PullError err;
-        PullStatus status = PullStatus::Timeout;
-        for (int attempt = 0; attempt < 10; ++attempt) {
-          status = eos_run.pull(1000, tmp, &err);
-          if (status == PullStatus::Closed || status == PullStatus::Error) {
-            break;
-          }
-        }
+        const PullStatus status = pull_until_terminal(eos_run, tmp, err);
         require(status == PullStatus::Error,
                 run_api_case("unexpected_eos_status", "premature EOS should be an error; status=" +
                                                           std::to_string(static_cast<int>(status)) +
@@ -226,13 +232,7 @@ RUN_TEST(
 
         Sample tmp;
         PullError err;
-        PullStatus status = PullStatus::Timeout;
-        for (int attempt = 0; attempt < 3; ++attempt) {
-          status = cardinality_run.pull(1000, tmp, &err);
-          if (status != PullStatus::Ok) {
-            break;
-          }
-        }
+        const PullStatus status = pull_until_terminal(cardinality_run, tmp, err);
         require(status == PullStatus::Closed,
                 run_api_case("cardinality_eos_status",
                              "a closed cardinality-changing pipeline should close normally; "

@@ -496,6 +496,21 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+### Decoder admission lifecycle
+
+Before choosing the single-pipeline or connected-graph runtime, Core scans the
+compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
+decoders are admitted as one group, and the resulting reservation is owned by
+the top-level `Run` until its pipeline workers have stopped. This applies
+equally to linear `Graph::add(...)` pipelines, ordinary connected segments, and
+fused realtime branches.
+
+Admission requires a known decoder width, height, and frame rate. Core never
+invents a frame rate. An incomplete contract or unavailable optional admission
+endpoint produces a warning and leaves the plan unchanged; with
+`SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
+hardware starts. Capacity rejection and malformed lease responses always fail.
+
 ### Realtime fan-in lowering
 
 Applications describe realtime edges with ordinary `Graph::connect(...)` and
