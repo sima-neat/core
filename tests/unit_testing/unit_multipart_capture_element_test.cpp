@@ -578,6 +578,19 @@ void test_attribute_mutation_rejects_shared_buffers() {
           "an embedded NUL key must be rejected instead of truncated");
   simaai::neat::gst_internal::read_attributes(buffer, &observed);
   require(observed == original, "a rejected NUL key must not mutate existing attributes");
+
+  const SampleAttributes invalid_utf8_value{{"image-index", std::string("\xc3\x28", 2)}};
+  require(!simaai::neat::gst_internal::write_attributes(buffer, invalid_utf8_value),
+          "an invalid UTF-8 value must be rejected");
+  simaai::neat::gst_internal::read_attributes(buffer, &observed);
+  require(observed == original,
+          "a rejected invalid UTF-8 value must not mutate existing attributes");
+
+  const SampleAttributes invalid_utf8_key{{std::string("image-\xc3\x28", 8), "4"}};
+  require(!simaai::neat::gst_internal::write_attributes(buffer, invalid_utf8_key),
+          "an invalid UTF-8 key must be rejected");
+  simaai::neat::gst_internal::read_attributes(buffer, &observed);
+  require(observed == original, "a rejected invalid UTF-8 key must not mutate existing attributes");
   gst_buffer_unref(buffer);
 }
 

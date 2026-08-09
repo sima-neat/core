@@ -503,8 +503,8 @@ struct PullError {
  *
  * Keys are normalized to ASCII lowercase by producers that capture them from a transport
  * (see `MultipartHeaderCaptureOptions`). Ordering is lexicographic by key. Keys and values
- * may not contain embedded NUL bytes because the GStreamer string representation cannot
- * preserve them.
+ * must be valid UTF-8 and may not contain embedded NUL bytes because the GStreamer string
+ * representation cannot preserve other encodings.
  *
  * @see Sample::attributes
  * @see MultipartHeaderCaptureOptions

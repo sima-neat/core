@@ -67,7 +67,9 @@ bool write_attributes_to_structure(GstStructure* target, const SampleAttributes&
     return false;
   }
   for (const auto& [key, value] : attributes) {
-    if (key.find('\0') != std::string::npos || value.find('\0') != std::string::npos) {
+    if (key.find('\0') != std::string::npos || value.find('\0') != std::string::npos ||
+        !g_utf8_validate(key.c_str(), -1, nullptr) ||
+        !g_utf8_validate(value.c_str(), -1, nullptr)) {
       return false;
     }
   }
