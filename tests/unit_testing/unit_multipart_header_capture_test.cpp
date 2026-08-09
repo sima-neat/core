@@ -128,6 +128,12 @@ void test_boundary_autodetect() {
   const std::vector<Part> padded_parts = parse_all(padded_stream, "", capture, 5U, &ok, &err);
   require(ok, "auto-detection must ignore transport padding: " + err);
   check_canonical_parts(padded_parts, " (padded auto-detected boundary)");
+
+  const std::string long_preamble =
+      std::string(simaai::neat::kMultipartHeaderCaptureMaxLineBytes + 1024U, 'p') + "\r\n" + stream;
+  const std::vector<Part> preamble_parts = parse_all(long_preamble, "", capture, 17U, &ok, &err);
+  require(ok, "auto-detection must skip an oversized ordinary preamble line: " + err);
+  check_canonical_parts(preamble_parts, " (long auto-detect preamble)");
 }
 
 /// The production camera framing: no closing delimiter, and a header that is simply

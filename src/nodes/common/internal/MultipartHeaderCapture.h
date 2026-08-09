@@ -110,6 +110,7 @@ private:
   PartTiming feed_timing_;                     ///< Timing of the chunk being consumed.
   PartTiming pending_timing_;                  ///< Timing captured when this body began.
   bool pending_timing_set_ = false;
+  bool discarding_preamble_line_ = false;
   bool buffer_starts_at_line_start_ = true;
   bool saw_any_part_ = false;
 };

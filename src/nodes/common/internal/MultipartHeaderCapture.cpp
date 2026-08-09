@@ -175,6 +175,7 @@ void MultipartParser::reset() {
   feed_timing_ = {};
   pending_timing_ = {};
   pending_timing_set_ = false;
+  discarding_preamble_line_ = false;
   buffer_starts_at_line_start_ = true;
   saw_any_part_ = false;
 }
@@ -372,6 +373,19 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
     switch (state_) {
     case State::Preamble: {
       if (delimiter_.empty()) {
+        if (discarding_preamble_line_) {
+          const auto line_end =
+              std::find(buf_.begin() + static_cast<std::ptrdiff_t>(cursor_), buf_.end(), kLF);
+          if (line_end == buf_.end()) {
+            cursor_ = buf_.size();
+            compact();
+            return true;
+          }
+          cursor_ = static_cast<std::size_t>(line_end - buf_.begin()) + 1U;
+          discarding_preamble_line_ = false;
+          compact();
+          continue;
+        }
         // Auto-detect: the first line starting with "--" names the boundary.
         std::size_t line_end = cursor_;
         while (line_end < buf_.size() && buf_[line_end] != kLF) {
@@ -379,6 +393,12 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
         }
         if (line_end >= buf_.size()) {
           if (buf_.size() - cursor_ > kMultipartHeaderCaptureMaxLineBytes) {
+            if (buf_[cursor_] != '-' || buf_[cursor_ + 1U] != '-') {
+              discarding_preamble_line_ = true;
+              cursor_ = buf_.size();
+              compact();
+              return true;
+            }
             if (err) {
               *err = "multipart boundary line exceeds " +
                      std::to_string(kMultipartHeaderCaptureMaxLineBytes) + " bytes";
