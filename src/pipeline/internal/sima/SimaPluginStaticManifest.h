@@ -71,6 +71,7 @@ struct TensorStaticSpec {
   int max_h = 0;                   ///< Envelope max height.
   int max_stride = 0;              ///< Envelope max row stride.
   std::string semantic_tag;        ///< Semantic tag (e.g., `"image"`, `"tensor"`).
+  bool parent_carrier = false;      ///< Slot anchors a larger packed physical carrier.
 };
 
 /// Provenance trace capturing how one resolved field was chosen.
@@ -106,6 +107,12 @@ enum class TensorMaterializationKind : std::uint8_t {
   Bf16LaneSplitRepack = 3, ///< Requires BF16 lane-split repack at runtime.
 };
 
+enum class FrameArenaRole : std::uint8_t {
+  None = 0,
+  Allocate = 1,
+  ReuseInput = 2,
+};
+
 /// Static spec for one physical buffer (input or output) on a stage.
 struct PhysicalBufferStaticSpec {
   int physical_index = -1;                      ///< Stage-local physical index.
@@ -117,6 +124,7 @@ struct PhysicalBufferStaticSpec {
   std::uint64_t memory_flags = 0;               ///< Allocator-specific memory flags.
   int segment_name_id = -1; ///< Index into the stage's name table for `segment_name`.
   std::string segment_name; ///< Segment name.
+  std::uint64_t required_alignment_bytes = 0; ///< Required DMA base/offset alignment.
 };
 
 /// Static spec for one logical (publishable) output tensor on a stage.
@@ -238,6 +246,7 @@ enum class ProcessCvuOutputSemanticKind : std::uint8_t {
  */
 struct ProcessCvuStagePayload {
   bool canonical_contract = false;
+  bool dmabuf_plan_contract = false;
   std::vector<std::int64_t> slice_shape_raw;
   std::vector<std::int64_t> out_shape_raw;
   bool has_align_c16 = false;
@@ -373,6 +382,7 @@ struct ProcessMlaStagePayload {
   int batch_sz_model = 0;                             ///< Batch size baked into the model.
   std::vector<std::string> dispatcher_output_names;   ///< Per-dispatcher-output names.
   std::vector<std::uint64_t> dispatcher_output_sizes; ///< Per-dispatcher-output byte sizes.
+  bool dmabuf_plan_contract = false; ///< Strict MPK+ELF plan was proved by Core.
 };
 
 /// BoxDecode stage payload — decode flavor, NMS / topK params, slice geometry.
@@ -423,6 +433,11 @@ struct StageStaticSpec {
   std::vector<StageOutputRoute> output_order;
   std::vector<QuantStaticSpec> output_quant;
   std::vector<std::string> required_preprocess_meta_fields;
+  // Non-zero only for the strict driver route. Every participating stage uses
+  // the same parent size; Allocate creates the first per-frame slot and each
+  // ReuseInput stage retains that standard GstBuffer/GstMemory ownership.
+  std::uint64_t frame_arena_size_bytes = 0;
+  FrameArenaRole frame_arena_role = FrameArenaRole::None;
   // Mirrors CompiledRuntimeContract::consumer_keeps_distinct_physical_inputs.
   // Plumbed from the upstream MLA contract through ContractRender so that
   // publish-contract construction can stamp TensorBufferPublishContract::

@@ -1903,6 +1903,10 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   last_pipeline = br.pipeline_string;
   br.pipeline_string = last_pipeline;
   br.diag->pipeline_string = last_pipeline;
+  const auto teardown_policy = inputstream_pipeline_teardown_policy(last_pipeline);
+  if (teardown_policy == pipeline_internal::InputStreamTeardownPolicy::MustReachNull) {
+    stream_opt.teardown_policy = teardown_policy;
+  }
   session_build_enforce_mla_num_buffers(last_pipeline, "Graph::build(input)", sync_mode);
   if (Traits::dump_pipeline_string()) {
     session_build_maybe_dump_pipeline_string(last_pipeline, "build_input");

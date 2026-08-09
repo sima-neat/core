@@ -6,6 +6,7 @@
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/HolderLoanGate.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
@@ -13,6 +14,7 @@
 #include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
+#include <gst/allocators/gstdmabuf.h>
 
 #include <algorithm>
 #include <atomic>
@@ -883,6 +885,11 @@ bool tensor_buffer_view_from_handle(simaai::gst::SimaTensorBufferHandle* handle,
       local.shape.push_back(descriptor.shape[dim]);
       local.stride_bytes.push_back(descriptor.stride_bytes[dim]);
     }
+    if (!local.stride_bytes.empty() &&
+        std::all_of(local.stride_bytes.begin(), local.stride_bytes.end(),
+                    [](std::int64_t stride) { return stride == 0; })) {
+      local.stride_bytes.clear();
+    }
     if (descriptor.has_quant != 0U) {
       TensorBufferQuantDescriptor quant;
       quant.granularity = descriptor.quant_granularity;
@@ -1480,6 +1487,8 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   GstBuffer* first_source_buffer = nullptr;
   bool appended_memory = false;
   TensorList descriptor_tensors = bundle.tensors;
+  std::vector<std::string> carrier_names;
+  carrier_names.reserve(bundle.tensors.size());
   for (std::size_t tensor_index = 0; tensor_index < bundle.tensors.size(); ++tensor_index) {
     const auto& tensor = bundle.tensors[tensor_index];
     if (!tensor.storage || tensor.storage->kind != simaai::neat::StorageKind::GstSample ||
@@ -1552,7 +1561,21 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
     }
 
     gst_buffer_append_memory(assembled, gst_memory_ref(memory));
-    descriptor_tensors[tensor_index].route.memory_index = static_cast<int>(tensor_index);
+    auto& descriptor_route = descriptor_tensors[tensor_index].route;
+    descriptor_route.memory_index = static_cast<int>(tensor_index);
+    descriptor_route.physical_index = static_cast<int>(tensor_index);
+    const std::string carrier_base =
+        descriptor_route.segment_name.empty() ? "input_tensor"
+                                              : descriptor_route.segment_name;
+    std::string carrier_name = carrier_base;
+    for (std::size_t suffix = 1U;
+         std::find(carrier_names.begin(), carrier_names.end(), carrier_name) !=
+         carrier_names.end();
+         ++suffix) {
+      carrier_name = carrier_base + "#" + std::to_string(suffix);
+    }
+    carrier_names.push_back(carrier_name);
+    descriptor_route.segment_name = std::move(carrier_name);
     appended_memory = true;
     gst_buffer_unref(source_buffer);
   }
@@ -1624,6 +1647,18 @@ bool try_build_multi_source_tensor_set_backing(const Sample& bundle, GstBuffer**
   }
 
   *out_buffer = assembled;
+  return true;
+}
+
+bool buffer_uses_only_standard_dmabuf_memory(GstBuffer* buffer) {
+  if (!buffer || gst_buffer_n_memory(buffer) == 0U) {
+    return false;
+  }
+  for (guint i = 0U; i < gst_buffer_n_memory(buffer); ++i) {
+    if (!gst_is_dmabuf_memory(gst_buffer_peek_memory(buffer, i))) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -2179,8 +2214,7 @@ bool tensor_buffer_descriptor_from_materialized_fields(
     TensorBufferTensorDescriptor descriptor_tensor;
     descriptor_tensor.logical_index =
         tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
-    descriptor_tensor.physical_index =
-        tensor.route.physical_index >= 0 ? tensor.route.physical_index : static_cast<int>(i);
+    descriptor_tensor.physical_index = static_cast<int>(i);
     descriptor_tensor.backend_output_index = tensor.route.backend_output_index >= 0
                                                  ? tensor.route.backend_output_index
                                                  : descriptor_tensor.logical_index;
@@ -3173,6 +3207,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
   if (sample_debug_enabled()) {
     log_bundle(bundle);
   }
+  const bool dmabuf_plan = selected_memory_backend_policy() == MemoryBackendPolicy::DmaBufPlan;
 
   GstBuffer* sample_buf = nullptr;
   GstCaps* sample_caps = nullptr;
@@ -3258,48 +3293,60 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
               t.route.memory_index, t.route.logical_index);
         }
       }
-      const bool built =
-          packed_parent_segment_name.has_value()
-              ? build_packed_tensor_set_backing(bundle, *packed_parent_segment_name, &sample_buf,
-                                                &sample_caps, &materialized_err)
-              : ([&]() {
-                  // Native multi-IFM / multi-physical TensorSet ingress should not take the
-                  // generic materialized path first: that path allocates temporary GstBuffers and
-                  // then copies again into a segmented buffer.  Prefer the direct segmented
-                  // allocation for dense CPU tensors (one unavoidable host->SiMa copy) and the
-                  // adopted multi-source path for already device-backed GstSamples.  Fall back to
-                  // the legacy materializer for non-dense tensors or unsupported backing.
-                  std::string direct_err;
-                  if (build_bundled_input_gst_buffer(bundle.tensors, &sample_buf, &direct_err)) {
-                    if (!build_tensor_set_envelope_caps(bundle, &sample_caps, &direct_err)) {
-                      if (sample_buf) {
-                        gst_buffer_unref(sample_buf);
-                        sample_buf = nullptr;
-                      }
-                      materialized_err = direct_err;
-                      return false;
-                    }
-                    std::string preprocess_err;
-                    if (!copy_bundle_tensor_preprocess_meta(sample_buf, bundle.tensors,
-                                                            &preprocess_err)) {
-                      gst_buffer_unref(sample_buf);
-                      sample_buf = nullptr;
-                      if (sample_caps) {
-                        gst_caps_unref(sample_caps);
-                        sample_caps = nullptr;
-                      }
-                      materialized_err = preprocess_err;
-                      return false;
-                    }
-                    return true;
-                  }
-                  if (allow_zero_copy && try_build_multi_source_tensor_set_backing(
-                                             bundle, &sample_buf, &sample_caps, &direct_err)) {
-                    return true;
-                  }
-                  return build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
-                                                               &materialized_err);
-                })();
+      bool built = false;
+      if (dmabuf_plan) {
+        if (!allow_zero_copy) {
+          materialized_err = "dmabuf-plan tensor-set ingress requires zero-copy transport";
+        } else {
+          built = try_build_multi_source_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                            &materialized_err);
+          if (!built && materialized_err.empty()) {
+            materialized_err = "dmabuf-plan tensor-set ingress requires one standard DMA-BUF "
+                               "source view per tensor";
+          }
+        }
+      } else if (packed_parent_segment_name.has_value()) {
+        built = build_packed_tensor_set_backing(bundle, *packed_parent_segment_name, &sample_buf,
+                                                &sample_caps, &materialized_err);
+      } else {
+        built = ([&]() {
+          // Native multi-IFM / multi-physical TensorSet ingress should not take the
+          // generic materialized path first: that path allocates temporary GstBuffers and
+          // then copies again into a segmented buffer.  Prefer the direct segmented
+          // allocation for dense CPU tensors (one unavoidable host->SiMa copy) and the
+          // adopted multi-source path for already device-backed GstSamples.  Fall back to
+          // the legacy materializer for non-dense tensors or unsupported backing.
+          std::string direct_err;
+          if (build_bundled_input_gst_buffer(bundle.tensors, &sample_buf, &direct_err)) {
+            if (!build_tensor_set_envelope_caps(bundle, &sample_caps, &direct_err)) {
+              if (sample_buf) {
+                gst_buffer_unref(sample_buf);
+                sample_buf = nullptr;
+              }
+              materialized_err = direct_err;
+              return false;
+            }
+            std::string preprocess_err;
+            if (!copy_bundle_tensor_preprocess_meta(sample_buf, bundle.tensors, &preprocess_err)) {
+              gst_buffer_unref(sample_buf);
+              sample_buf = nullptr;
+              if (sample_caps) {
+                gst_caps_unref(sample_caps);
+                sample_caps = nullptr;
+              }
+              materialized_err = preprocess_err;
+              return false;
+            }
+            return true;
+          }
+          if (allow_zero_copy && try_build_multi_source_tensor_set_backing(
+                                     bundle, &sample_buf, &sample_caps, &direct_err)) {
+            return true;
+          }
+          return build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                       &materialized_err);
+        })();
+      }
       if (!built) {
         if (err) {
           *err = materialized_err.empty() ? "Sample tensor-set materialized backing failed"
@@ -3309,7 +3356,9 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       }
       if (sample_debug_enabled() && sample_buf) {
         std::fprintf(stderr, "[SAMPLE] tensor-set %s tensor backing bytes=%zu\n",
-                     packed_parent_segment_name.has_value() ? "packed" : "materialized",
+                     dmabuf_plan
+                         ? "DMA-BUF"
+                         : (packed_parent_segment_name.has_value() ? "packed" : "materialized"),
                      static_cast<size_t>(gst_buffer_get_size(sample_buf)));
       }
     }
@@ -3342,6 +3391,17 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
     }
     if (err)
       *err = "Sample buffer allocation failed";
+    return {};
+  }
+  if (dmabuf_plan && sample_has_tensor_list(bundle) &&
+      !buffer_uses_only_standard_dmabuf_memory(sample_buf)) {
+    gst_buffer_unref(sample_buf);
+    if (sample_caps) {
+      gst_caps_unref(sample_caps);
+    }
+    if (err) {
+      *err = "dmabuf-plan tensor-set ingress is not backed only by standard DMA-BUF memory";
+    }
     return {};
   }
   if (!gst_buffer_is_writable(sample_buf)) {
@@ -3860,16 +3920,11 @@ Sample sample_from_tensors(const TensorList& tensors) {
   out.kind = SampleKind::TensorSet;
   out.owned = true;
   out.tensors = tensors;
-  // Stamp positional identity for multi-tensor sets so the SIMA_TENSOR_SET_META
-  // descriptor (built downstream by tensor_buffer_descriptor_from_tensors) gives
-  // each region a distinct logical slot. Each binding shares the same
-  // physical input slot (the packed parent buffer), with memory_index the
-  // disambiguator across regions — same convention the multi-IO renderer
-  // emits (physical_index=0 / memory_index per tensor). Sharing
-  // physical_index lets `packed_tensor_set_parent_segment_name` route the
-  // bundle into the existing packed-buffer materialization path so the
-  // dispatcher consumes one carrier with byte-offset disambiguation.
-  // Only stamps when the caller hasn't already assigned an explicit identity.
+  // Preserve the legacy packed-materialization convention for callers that
+  // provide no route identity. The strict DMA-BUF path does not consume this
+  // provisional physical index: when it adopts the source memories it assigns
+  // each descriptor the actual dense carrier index. Explicit caller identity
+  // is never rewritten here.
   if (out.tensors.size() > 1U) {
     bool any_route_unstamped = false;
     for (const auto& t : out.tensors) {

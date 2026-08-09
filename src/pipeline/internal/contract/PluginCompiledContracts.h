@@ -21,6 +21,9 @@ struct CompiledRuntimeContract {
   std::vector<pipeline_internal::sima::StageOutputRoute> output_order;
   std::vector<pipeline_internal::sima::QuantStaticSpec> output_quant;
   std::vector<std::string> required_preprocess_meta_fields;
+  std::uint64_t frame_arena_size_bytes = 0;
+  pipeline_internal::sima::FrameArenaRole frame_arena_role =
+      pipeline_internal::sima::FrameArenaRole::None;
   // Mirrors MlaStaticContract::consumer_keeps_distinct_physical_inputs. True
   // when the stage's compiled binary expects N>1 distinct physical input
   // segments (native multi-IFM dispatch). Used downstream to gate

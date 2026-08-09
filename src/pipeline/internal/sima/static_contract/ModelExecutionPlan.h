@@ -1,0 +1,208 @@
+#pragma once
+#ifndef SIMA_NEAT_INTERNAL
+#error "Internal header. Not part of the public API."
+#endif
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <variant>
+#include <vector>
+
+namespace simaai::neat::pipeline_internal::sima::static_contract {
+
+using ValueId = std::uint32_t;
+using OpId = std::uint32_t;
+using TensorShape = std::vector<std::int64_t>;
+
+enum class ValueRepresentation {
+  Dense,
+  Tessellated,
+  Packed,
+  BackendNative,
+};
+
+struct QuantizationSpec {
+  double scale = 0.0;
+  std::int64_t zero_point = 0;
+};
+
+// A compile-time tensor view over one canonical materialized carrier.  This is
+// an address expression consumed by the next real kernel, not an execution
+// operation and not a request to copy/repack bytes.  `byte_offset` is relative
+// to the root carrier and `stride_bytes` describes how the logical shape is
+// read from that address.
+struct ReadExpression {
+  ValueId source_value_id = 0;
+  std::uint64_t byte_offset = 0;
+  std::vector<std::int64_t> stride_bytes;
+};
+
+struct ValueSpec {
+  ValueId id = 0;
+  std::string name;
+  std::uint64_t required_bytes = 0;
+  std::optional<std::string> logical_dtype;
+  std::optional<TensorShape> logical_shape;
+  std::optional<std::string> logical_layout;
+  std::vector<QuantizationSpec> quantization;
+  ValueRepresentation representation = ValueRepresentation::Dense;
+  std::optional<ReadExpression> read_expression;
+};
+
+enum class OpKind {
+  Cast,
+  Quantize,
+  Tessellate,
+  Pack,
+  Mla,
+  Unpack,
+  Slice,
+  Detessellate,
+  Dequantize,
+  PassThrough,
+};
+
+struct CastOpConfig {
+  std::string output_dtype;
+};
+
+struct QuantizeOpConfig {
+  std::string output_dtype;
+  std::int64_t num_bits = 0;
+  std::string rounding;
+  std::vector<QuantizationSpec> channel_params;
+};
+
+struct TessellateOpConfig {
+  TensorShape slice_shape;
+  bool align_c16 = false;
+  bool cblock = false;
+  std::string frame_type;
+};
+
+// Exact batch-1 placement of one Pack input in its materialized parent. New
+// compiler contracts should emit this directly. The quarantined legacy EVO
+// decoder derives it only from exact MPK order/bytes and AFE's 16-byte Pack
+// rule; an incomplete parent remains executable only through a real Pack.
+struct PackComponentPlacement {
+  ValueId value_id = 0;
+  std::uint64_t parent_offset = 0;
+  std::uint64_t stored_bytes = 0;
+};
+
+struct PackOpConfig {
+  std::vector<PackComponentPlacement> components;
+};
+
+struct MlaOpConfig {
+  std::string executable;
+  std::int64_t number_of_quads = 0;
+};
+
+struct UnpackOpConfig {
+  std::vector<std::string> tensor_types;
+  std::vector<TensorShape> tensor_shapes;
+};
+
+struct SliceOpConfig {
+  TensorShape begin;
+  TensorShape end;
+  TensorShape input_shape;
+  TensorShape output_shape;
+};
+
+struct DetessellateOpConfig {
+  TensorShape slice_shape;
+  TensorShape frame_shape;
+  bool align_c16 = false;
+  bool cblock = false;
+  std::string frame_type;
+};
+
+struct DequantizeOpConfig {
+  std::string input_dtype;
+  std::vector<QuantizationSpec> channel_params;
+};
+
+struct PassThroughOpConfig {};
+
+using OpConfig = std::variant<CastOpConfig, QuantizeOpConfig, TessellateOpConfig, PackOpConfig,
+                              MlaOpConfig, UnpackOpConfig, SliceOpConfig, DetessellateOpConfig,
+                              DequantizeOpConfig, PassThroughOpConfig>;
+
+struct OpSpec {
+  OpId id = 0;
+  std::uint64_t sequence = 0;
+  std::string name;
+  OpKind kind = OpKind::PassThrough;
+  std::string processor;
+  // Exact registry token. MLA uses the explicitly registered empty token
+  // because its legacy MPK entry has no config_params.kernel member.
+  std::string kernel;
+  std::vector<ValueId> inputs;
+  std::vector<ValueId> outputs;
+  std::vector<TensorShape> input_shapes;
+  std::vector<TensorShape> output_shapes;
+  OpConfig config = PassThroughOpConfig{};
+};
+
+enum class BackendPortDirection { Input, Output };
+enum class BackendPortAccess { ReadOnly, WriteOnly };
+enum class BackendPortAlignmentAuthority { Contract, LegacyPolicy };
+
+// Frozen legacy EVO manifests contain no port-alignment field. Section 6.2 of
+// the migration contract deliberately over-aligns their common CMA regions to
+// a page. This is policy provenance, never represented as an MPK/ELF fact.
+inline constexpr std::size_t kLegacyEvoCmaRegionAlignmentBytes = 4096U;
+
+struct BackendPortSpec {
+  std::size_t stage_index = 0;
+  BackendPortDirection direction = BackendPortDirection::Input;
+  std::size_t port_index = 0;
+  std::string elf_symbol;
+  ValueId value_id = 0;
+  std::uint64_t required_bytes = 0;
+  std::size_t required_alignment_bytes = 0;
+  BackendPortAlignmentAuthority alignment_authority = BackendPortAlignmentAuthority::Contract;
+  BackendPortAccess access = BackendPortAccess::ReadOnly;
+};
+
+struct ModelOutputSpec {
+  std::size_t public_index = 0;
+  std::string name;
+  ValueId value_id = 0;
+};
+
+// Mutable construction payload. It is consumed by ModelExecutionPlan::create;
+// successful plans expose only const access to an immutable shared snapshot.
+struct ModelExecutionPlanData {
+  std::string contract_version;
+  std::vector<ValueSpec> values;
+  std::vector<ValueId> model_inputs;
+  std::vector<OpSpec> ops;
+  std::vector<BackendPortSpec> backend_ports;
+  std::vector<ModelOutputSpec> model_outputs;
+};
+
+class ModelExecutionPlan final {
+public:
+  static std::optional<ModelExecutionPlan> create(ModelExecutionPlanData data,
+                                                  std::string* error = nullptr);
+
+  const std::string& contract_version() const noexcept;
+  const std::vector<ValueSpec>& values() const noexcept;
+  const std::vector<ValueId>& model_inputs() const noexcept;
+  const std::vector<OpSpec>& ops() const noexcept;
+  const std::vector<BackendPortSpec>& backend_ports() const noexcept;
+  const std::vector<ModelOutputSpec>& model_outputs() const noexcept;
+  const ValueSpec* value(ValueId id) const noexcept;
+
+private:
+  explicit ModelExecutionPlan(std::shared_ptr<const ModelExecutionPlanData> data);
+  std::shared_ptr<const ModelExecutionPlanData> data_;
+};
+
+} // namespace simaai::neat::pipeline_internal::sima::static_contract

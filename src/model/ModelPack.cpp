@@ -11,6 +11,7 @@
 #include "nodes/sima/Preproc.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
+#include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TempJsonFileUtil.h"
 #include "pipeline/internal/packedio/PackedIoAdapter.h"
@@ -19,6 +20,10 @@
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/MlaElfIoTopology.h"
+#include "pipeline/internal/sima/MlaStaticContractExtractor.h"
+#include "pipeline/internal/sima/static_contract/LegacyAfeMpkDecoder.h"
+#include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/DequantStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
@@ -539,6 +544,34 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
   contract->model_path = props.model_path;
   contract->batch_size = props.batch_size;
   contract->batch_sz_model = props.batch_sz_model;
+}
+
+static std::optional<pipeline_internal::sima::static_contract::ModelExecutionPlan>
+compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract) {
+  if (mpk_contract.mpk_json_path.empty()) {
+    throw std::runtime_error("ModelPack: dmabuf-plan requires the exact MPK manifest path");
+  }
+  const auto runtime = read_mla_runtime_properties_from_mpk_contract(mpk_contract);
+  if (!runtime.has_value() || runtime->model_path.empty()) {
+    throw std::runtime_error("ModelPack: dmabuf-plan requires the exact MLA executable path");
+  }
+
+  pipeline_internal::sima::MlaElfIoTopology topology;
+  if (!pipeline_internal::sima::read_mla_elf_io_topology(runtime->model_path, &topology)) {
+    throw std::runtime_error("ModelPack: dmabuf-plan cannot read MLA ELF topology from '" +
+                             runtime->model_path + "': " + topology.error);
+  }
+
+  pipeline_internal::sima::static_contract::LegacyAfeMpkDecoder decoder;
+  auto decoded = decoder.decode_file(mpk_contract.mpk_json_path, topology);
+  if (!decoded) {
+    const auto detail = decoded.error.has_value()
+                            ? decoded.error->json_path + ": " + decoded.error->detail
+                            : std::string("unknown strict decoder failure");
+    throw std::runtime_error("ModelPack: dmabuf-plan strict MPK+ELF decode failed for '" +
+                             mpk_contract.mpk_json_path + "': " + detail);
+  }
+  return std::move(decoded.plan);
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -2757,8 +2790,10 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
     const std::string& input_format, int input_depth, int max_input_width, int max_input_height,
     bool normalize, const std::vector<float>& mean, const std::vector<float>& stddev,
     const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract,
-    ModelStage stage_context, bool direct_mla_to_boxdecode = false) {
-  (void)upstream_handoff_contract;
+    ModelStage stage_context,
+    const std::optional<pipeline_internal::sima::static_contract::ModelExecutionPlan>&
+        dmabuf_plan_execution_plan,
+    bool direct_mla_to_boxdecode = false) {
   if (!mpk_contract.has_value()) {
     throw std::runtime_error(
         "ModelFragment: strict MPK contract required for typed execution plan");
@@ -2871,6 +2906,27 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
             build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
                 *mpk_contract, stage.kind, exact_processcvu_stage_name_or_id, std::nullopt);
       }
+      if (entry.processcvu_contract.has_value()) {
+        if (dmabuf_plan_execution_plan.has_value()) {
+          std::string projection_error;
+          if (!pipeline_internal::sima::static_contract::
+                  apply_dmabuf_plan_processcvu_contract_projection(
+                      *dmabuf_plan_execution_plan,
+                      stage_context == ModelStage::Postprocess
+                          ? pipeline_internal::sima::static_contract::
+                                ProcessCvuMlaBoundary::Outputs
+                          : pipeline_internal::sima::static_contract::
+                                ProcessCvuMlaBoundary::Inputs,
+                      &entry.processcvu_contract->payload,
+                      &entry.processcvu_contract->runtime_contract,
+                      &entry.processcvu_contract->exposed_view,
+                      &projection_error)) {
+            throw std::runtime_error(
+                "ModelFragment: dmabuf-plan strict ProcessCVU projection failed: " +
+                projection_error);
+          }
+        }
+      }
     }
 
     if (stage.kind == ExecutionStageKind::Mla) {
@@ -2906,12 +2962,40 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
             " config or simaai__params section).");
       }
       apply_mla_runtime_properties_to_contract(*mla_props, &mla_contract);
+      if (dmabuf_plan_execution_plan.has_value()) {
+        std::string projection_error;
+        std::span<const pipeline_internal::sima::LogicalTensorStaticSpec> upstream_outputs;
+        if (upstream_handoff_contract.has_value()) {
+          const auto& exposed = upstream_handoff_contract->exposed_view.exposed_logical_outputs;
+          const auto& runtime = upstream_handoff_contract->runtime_contract.logical_outputs;
+          upstream_outputs =
+              exposed.empty()
+                  ? std::span<const pipeline_internal::sima::LogicalTensorStaticSpec>(runtime)
+                  : std::span<const pipeline_internal::sima::LogicalTensorStaticSpec>(exposed);
+        }
+        auto input_sources = pipeline_internal::sima::static_contract::
+            resolve_mla_input_physical_sources(
+                *dmabuf_plan_execution_plan, upstream_outputs,
+                &projection_error);
+        if (!input_sources.has_value()) {
+          throw std::runtime_error(
+              "ModelFragment: dmabuf-plan strict MLA physical-input projection failed: " +
+              projection_error);
+        }
+        if (!pipeline_internal::sima::static_contract::apply_dmabuf_plan_contract_projection(
+                *dmabuf_plan_execution_plan, &mla_contract, *input_sources,
+                &projection_error)) {
+          throw std::runtime_error("ModelFragment: dmabuf-plan strict MLA projection failed: " +
+                                   projection_error);
+        }
+      }
       if (should_publish_mla_outputs_as_packed_parent_for_boxdecode(
               stages, stage_index, mla_contract, direct_mla_to_boxdecode)) {
         (void)publish_mla_outputs_as_packed_parent(&mla_contract);
       }
       entry.mla_compiled =
           pipeline_internal::sima::stagesemantics::build_mla_compiled_contract(mla_contract);
+      entry.mla_compiled->payload.dmabuf_plan_contract = dmabuf_plan_execution_plan.has_value();
     }
 
     if (stage.kind == ExecutionStageKind::BoxDecode) {
@@ -3890,7 +3974,10 @@ void ModelPack::init(const std::string& tar_gz) {
 
 void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
   options_ = std::move(cfg);
+  const bool dmabuf_plan_selected = pipeline_internal::selected_memory_backend_policy() ==
+                                    pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
   mpk_contract_.reset();
+  dmabuf_plan_execution_plan_.reset();
   route_graph_.reset();
   processcvu_preproc_single_output_handoff_.reset();
   model_managed_route_flags_.reset();
@@ -3933,6 +4020,12 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
       std::cerr << "[MPK-CONTRACT][ModelPack] root=" << extracted
                 << " parse_status=missing error=" << contract_error << "\n";
     }
+  }
+  if (dmabuf_plan_selected) {
+    if (!mpk_contract_.has_value()) {
+      throw std::runtime_error("ModelPack: dmabuf-plan requires an exact mpk.json manifest");
+    }
+    dmabuf_plan_execution_plan_ = compile_dmabuf_plan_execution_plan(*mpk_contract_);
   }
   if (mpk_contract_.has_value()) {
     if (const auto* mla =
@@ -4059,7 +4152,7 @@ std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(
       stages, mpk_contract_, processcvu_preproc_single_output_handoff_, model_managed_route_flags_,
       options_.input_format, options_.input_depth, options_.max_input_width,
       options_.max_input_height, options_.normalize, options_.mean, options_.stddev,
-      upstream_handoff_contract, stage_context);
+      upstream_handoff_contract, stage_context, dmabuf_plan_execution_plan_);
 }
 
 std::vector<ModelFragment::StageFacts>
@@ -4084,7 +4177,8 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
         model_managed_route_flags_, options_.input_format, options_.input_depth,
         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
-        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
+        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
+        dmabuf_plan_execution_plan_, direct_mla_to_boxdecode);
   }
   if (stage == ModelStage::Postprocess) {
     return build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
@@ -4108,7 +4202,8 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
         model_managed_route_flags_, options_.input_format, options_.input_depth,
         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
-        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
+        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
+        dmabuf_plan_execution_plan_, direct_mla_to_boxdecode);
     auto post_facts = build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
 
     out.reserve(pre_facts.size() + infer_facts.size() + post_facts.size());
@@ -4211,7 +4306,8 @@ ModelPack::infer_block(const std::string& upstream_name,
       infer_seq, mpk_contract_, processcvu_preproc_single_output_handoff_,
       model_managed_route_flags_, options_.input_format, options_.input_depth,
       options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
-      options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
+      options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, dmabuf_plan_execution_plan_,
+      direct_mla_to_boxdecode);
   ModelFragment frag =
       build_fragment_linear(infer_seq, upstream, options_.num_buffers_cvu, options_.num_buffers_mla,
                             options_.name_suffix, mpk_contract_, std::move(stage_facts));
