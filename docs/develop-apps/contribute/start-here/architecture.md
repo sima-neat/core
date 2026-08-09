@@ -153,8 +153,42 @@ MLA may require INT8/BF16 and tessellated layouts, while user code generally wor
 and normal tensor layouts. The framework bridges that gap with manifest-driven adapter stages.
 
 Preprocessing and postprocessing are explicit framework stages/options. A format mismatch, missing
-required preprocessing metadata, unavailable MLA dispatcher, invalid model archive or MPK contract, or caps negotiation
+required preprocessing metadata, unavailable selected hardware transport, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
+
+### Compiled model execution contract
+
+The DMA-BUF driver migration keeps model semantics separate from per-frame
+storage. Core compiles model-load facts into one immutable internal
+`ModelExecutionPlan`:
+
+- values contain exact names, required bytes, optional logical type facts, and
+  an optional root-relative read expression `{source ValueId, byte offset,
+  byte strides}`;
+- operations contain exact ordered edges and operation-specific configuration;
+- MLA backend ports contain ELF/model order, exact required bytes, alignment
+  authority, and access direction; and
+- public outputs contain only publication order and the value they expose.
+
+Frozen untyped AFE MPKs use the quarantined `LegacyAfeMpkDecoder`. It accepts
+only the exact registered `(model SDK version, processor, kernel)` vocabulary,
+resolves full tensor names, validates operation byte equations, and reconciles
+the MPK MLA arity with strict ELF IFM/OFM topology. Ambiguity, missing slots,
+or conflicting evidence is a model-load error; filenames, sidecar JSON,
+substring matching, environment state, and runtime buffers are not evidence.
+The legacy EVO alignment is an explicit 4096-byte migration policy with
+`LegacyPolicy` provenance, not a fact inferred from its MPK or ELF. New typed
+contracts must declare their own alignment.
+
+Runtime frames do not copy the static plan. The direct path carries standard
+DMA-BUF ownership plus checked absolute `{fd, offset, length}` views and a
+bounded frame-slot lifetime. Unpack and Slice are consumer read expressions,
+not runtime operations: the decoder composes them to one materialized root
+carrier only after proving their exact offsets, byte strides, and physical
+spans. Pack, tessellation, and precision conversion remain producer/compute
+semantics unless a lowering pass proves exact backend production or equivalent
+fusion. This prevents storage placement from silently changing MLA port arity
+or model behavior.
 
 ---
 
@@ -346,6 +380,67 @@ pipeline-level `GstContext`:
   they need.
 - Repository boundary: this repo must not add build-time dependencies on plugin/dispatcher repos.
   Integration is interface-only (runtime `GstContext`, properties, caps/meta, and C-ABI contracts).
+
+For the internal EVO DMA-BUF migration route, `ModelPack` is the sole owner of
+`SIMA_NEAT_MEMORY_BACKEND` selection. Selecting `dmabuf-plan` requires an exact MPK manifest and
+MLA ELF, a successful strict reverse-AFE decode, and exact reconciliation with the existing MLA
+stage contract. Only then does Core set `processmla.dmabuf_plan_contract` in static manifest ABI
+version 25. Core also projects each backend port's `required_alignment_bytes`
+and the immutable frame-arena placement plan into its physical buffer record;
+ProcessMLA consumes that value rather than duplicating the legacy
+page-alignment policy. It consumes these Core-owned facts; it must not re-read
+the environment, infer missing ports, or fall back to the legacy transport
+after selection. Core and every plugin that consumes the static-manifest
+header must therefore be built and released together at ABI version 25.
+
+The same Core-owned memory policy controls public Tensor placement. With
+`dmabuf-plan`, `transfer_to_device()` allocates standard CMA or DMS DMA-BUF
+memory, performs the required cache-synchronized host copy, and records device
+placement in Tensor storage metadata without replacing `GstDmaBufMemory` with
+the legacy SiMa allocator. Tensor-list ingress adopts one standard DMA-BUF view
+per source tensor. It rejects an implicit materialization or segmented-memory
+fallback, so the static model proof and per-frame transport cannot silently
+select different architectures.
+
+At strict stage boundaries, logical payload size and physical address span are
+different facts. The MPK-derived typed operation owns shape/layout and the
+required address span; TensorBuffer metadata owns the checked DMA-BUF memory,
+offset and available physical span. For example, a C16-strided 12-byte logical
+value may touch offsets through byte 176 in a 192-byte MLA OFM. ProcessMLA's
+direct binding therefore remains the ordered IFM/OFM mirror
+`{tensor_slot, parent_carrier}`. The one boolean identifies a zero-offset
+logical anchor for a larger physical port; it does not duplicate layout.
+ProcessMLA must not add redundant `padded`, `strided`, or `contiguous` flags.
+
+For a packed one-IFM/one-OFM model, Core proves the upstream logical outputs
+are the ordered children of one complete IFM carrier. Downstream Unpack/Slice
+values are published as logical reads of the one OFM carrier. ProcessMLA still
+submits exactly one physical port in each direction; the consuming CVU kernel
+uses the compiled offset/stride expressions directly, without an unpack job or
+intermediate copy.
+
+Multiple direct MLA OFMs can be logical views of one physical arena. In that
+case every descriptor with the same memory index publishes the same parent
+physical segment name, while logical/backend names preserve OFM identity and
+exact arena offsets preserve each view. Direct ProcessCVU output publication
+likewise uses its exact strict arena layout rather than the legacy packed
+output reconstruction heuristic.
+
+For the strict graphs currently admitted by `dmabuf-plan`, ProcessCVU submits
+the same Core-projected tensor routes and frame arena through one of two
+executors. EV74 placement submits descriptors through `/dev/cvu`. A65
+placement maps each unique standard DMA-BUF parent once with the matching
+read/write `DMA_BUF_IOCTL_SYNC` boundary, patches a frame-owned typed EV ABI
+configuration with host virtual addresses, and executes the in-process A65
+kernel. A `ReuseInput` post stage maps its shared MLA arena once as read/write;
+it does not copy or reconstruct individual outputs. Both executors keep
+ConfigManager and dispatcher execution disabled.
+
+ProcessMLA submits through kernel-driver MLArt on `/dev/mla` without the MLA
+dispatcher, MLASHM, segmented allocation, or M4. Legacy libraries may still
+be linked into a multi-route plugin for unmigrated graphs; link presence is not
+a fallback permission. Once a strict route is selected, any executor, mapping,
+or synchronization error is terminal.
 
 Resolver precedence for migrated fields is deterministic:
 
@@ -651,6 +746,10 @@ The common pattern is:
 * set `GST_STATE_NULL`
 * unref objects
 * apply a timeout safeguard (leak instead of hanging if necessary)
+
+Push/appsrc pipelines normally use deferred teardown. Pipelines containing
+driver-backed CVU or MLA stages use the bounded synchronous `NULL` transition
+so accepted asynchronous submissions are reaped before `Run::close()` returns.
 
 ---
 
