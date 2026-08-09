@@ -502,7 +502,7 @@ DecoderAdmissionResult send_graph_request(const std::vector<DecoderAdmissionStre
 } // namespace
 
 bool decoder_admission_endpoint_available() {
-  struct stat st{};
+  struct stat st {};
   return ::stat(kDecoderAdmissionEndpoint, &st) == 0 && S_ISSOCK(st.st_mode);
 }
 

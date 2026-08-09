@@ -13,8 +13,8 @@ decode and hand them back on the `Sample` for the frame they belong to.
 
 `Sample::attributes` is a plain string-to-string map. Neat copies it, keeps it associated
 with its frame, and clears it when a destination buffer is reused. It never parses, merges,
-or reinterprets a value. Keys and values containing an embedded NUL byte are rejected because
-the GStreamer string representation cannot preserve them.
+or reinterprets a value. Keys and values must be valid UTF-8 and cannot contain an embedded
+NUL byte because the GStreamer string representation cannot preserve them.
 
 ## What is guaranteed
 
