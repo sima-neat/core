@@ -471,7 +471,11 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
         block_end = block_begin;
         body_start = block_begin + 2U;
       } else {
-        if (buf_.size() - block_begin > kMultipartHeaderCaptureMaxBlockBytes) {
+        // A maximum-sized block may be followed by the first CR of its terminating blank
+        // line before the remaining LF arrives in the next chunk.
+        constexpr std::size_t kIncompleteBlankLineSlack = 1U;
+        if (buf_.size() - block_begin >
+            kMultipartHeaderCaptureMaxBlockBytes + kIncompleteBlankLineSlack) {
           if (err) {
             *err = "multipart part header block exceeds " +
                    std::to_string(kMultipartHeaderCaptureMaxBlockBytes) + " bytes";

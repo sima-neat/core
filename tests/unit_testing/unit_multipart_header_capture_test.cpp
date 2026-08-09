@@ -291,6 +291,49 @@ void test_limits_fail_rather_than_truncate() {
   big_block += "\r\nBODY\r\n--b--\r\n";
   require(parse_rejects(big_block, "b", capture), "oversized header block must be rejected");
 
+  std::string exact_block = "Content-Type: image/jpeg\r\n";
+  constexpr std::size_t kFillerLineBytes = 1024U;
+  const std::string filler_prefix = "X-Filler: ";
+  while (simaai::neat::kMultipartHeaderCaptureMaxBlockBytes - exact_block.size() >
+         kFillerLineBytes) {
+    exact_block += filler_prefix;
+    exact_block += std::string(kFillerLineBytes - filler_prefix.size() - 2U, 'x');
+    exact_block += "\r\n";
+  }
+  const std::size_t remaining =
+      simaai::neat::kMultipartHeaderCaptureMaxBlockBytes - exact_block.size();
+  const std::string final_prefix = "X-Final: ";
+  require(remaining >= final_prefix.size() + 2U,
+          "exact-limit fixture must leave room for its final header");
+  exact_block += final_prefix;
+  exact_block += std::string(remaining - final_prefix.size() - 2U, 'y');
+  exact_block += "\r\n";
+  require(exact_block.size() == simaai::neat::kMultipartHeaderCaptureMaxBlockBytes,
+          "exact-limit fixture must reach the header-block limit");
+
+  MultipartParser exact_block_parser("b", capture);
+  std::string exact_block_body;
+  std::string exact_block_err;
+  const auto exact_block_sink = [&](const uint8_t* body, std::size_t size, Attrs&&,
+                                    MultipartParser::PartTiming) {
+    exact_block_body.assign(reinterpret_cast<const char*>(body), size);
+    return true;
+  };
+  const std::string exact_block_prefix = "--b\r\n" + exact_block + "\r";
+  require(exact_block_parser.feed(reinterpret_cast<const uint8_t*>(exact_block_prefix.data()),
+                                  exact_block_prefix.size(), exact_block_sink, &exact_block_err,
+                                  {}),
+          "a maximum-sized header block with a split blank line must remain buffered: " +
+              exact_block_err);
+  const std::string exact_block_suffix = "\nBODY\r\n--b--\r\n";
+  require(exact_block_parser.feed(reinterpret_cast<const uint8_t*>(exact_block_suffix.data()),
+                                  exact_block_suffix.size(), exact_block_sink, &exact_block_err,
+                                  {}),
+          "the completed exact-limit header block must parse: " + exact_block_err);
+  require(exact_block_parser.finish(exact_block_sink, &exact_block_err),
+          "the exact-limit header stream must finish: " + exact_block_err);
+  require(exact_block_body == "BODY", "header framing bytes must not enter the part body");
+
   MultipartParser parser("b", capture, 8U);
   const std::string oversized_body =
       "--b\r\nContent-Type: image/jpeg\r\n\r\n123456789\r\n--b--\r\n";
