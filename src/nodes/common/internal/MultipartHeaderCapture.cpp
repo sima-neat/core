@@ -431,7 +431,7 @@ bool MultipartParser::run(const PartSink& sink, std::string* err) {
       const std::size_t at = find_boundary(cursor_, &closing, &delim_len, false);
       if (at == std::string::npos) {
         // Keep one bounded delimiter line so transport padding may span chunks.
-        const std::size_t keep = delimiter_.size() + kMultipartHeaderCaptureMaxLineBytes;
+        const std::size_t keep = delimiter_.size() + kMultipartHeaderCaptureMaxLineBytes + 2U;
         if (buf_.size() - cursor_ > keep) {
           cursor_ = buf_.size() - keep;
           compact();

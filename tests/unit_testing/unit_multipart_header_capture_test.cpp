@@ -263,12 +263,14 @@ void test_preamble_ignores_boundary_prefix_line() {
         Part{std::string(reinterpret_cast<const char*>(body), size), std::move(attrs)});
     return true;
   };
-  const std::string padded_prefix = "--b" + std::string(32U, ' ');
+  const std::string padded_prefix =
+      "--b" + std::string(simaai::neat::kMultipartHeaderCaptureMaxLineBytes, ' ') + "\r";
   require(padded_parser.feed(reinterpret_cast<const uint8_t*>(padded_prefix.data()),
                              padded_prefix.size(), sink, &err, {}),
-          "an opening delimiter split inside transport padding must remain buffered: " + err);
+          "an opening delimiter split inside CRLF at the padding limit must remain buffered: " +
+              err);
   const std::string padded_suffix =
-      "\r\nContent-Type: image/jpeg\r\nImage-Index: 8\r\n\r\nPADDED\r\n--b--\r\n";
+      "\nContent-Type: image/jpeg\r\nImage-Index: 8\r\n\r\nPADDED\r\n--b--\r\n";
   require(padded_parser.feed(reinterpret_cast<const uint8_t*>(padded_suffix.data()),
                              padded_suffix.size(), sink, &err, {}),
           "the completed padded opening delimiter must parse: " + err);
