@@ -4,6 +4,7 @@
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
+#include "pipeline/internal/sima/static_contract/TvmHostModuleGraph.h"
 
 #include <glib.h>
 #include <nlohmann/json.hpp>
@@ -119,10 +120,14 @@ const char* op_kind_name(const sc::OpKind value) noexcept {
     return "unpack";
   case sc::OpKind::Slice:
     return "slice";
+  case sc::OpKind::Reshape:
+    return "reshape";
   case sc::OpKind::Detessellate:
     return "detessellate";
   case sc::OpKind::Dequantize:
     return "dequantize";
+  case sc::OpKind::HostTvm:
+    return "host-tvm";
   case sc::OpKind::PassThrough:
     return "pass-through";
   }
@@ -176,6 +181,7 @@ Json op_config_json(const sc::OpConfig& config) {
                         {"input_shape", value.input_shape},
                         {"output_shape", value.output_shape}};
           },
+          [](const sc::ReshapeOpConfig& value) { return Json{{"new_shape", value.new_shape}}; },
           [](const sc::DetessellateOpConfig& value) {
             return Json{{"slice_shape", value.slice_shape},
                         {"frame_shape", value.frame_shape},
@@ -186,6 +192,20 @@ Json op_config_json(const sc::OpConfig& config) {
           [](const sc::DequantizeOpConfig& value) {
             return Json{{"input_dtype", value.input_dtype},
                         {"channel_params", quantization_json(value.channel_params)}};
+          },
+          [](const sc::HostTvmOpConfig& value) {
+            const auto types_json = [](const auto& types) {
+              Json result = Json::array();
+              for (const auto& type : types) {
+                result.push_back({{"scalar", type.scalar}, {"shape", type.shape}});
+              }
+              return result;
+            };
+            return Json{{"executable", value.executable},
+                        {"input_names", value.input_names},
+                        {"input_types", types_json(value.input_types)},
+                        {"output_types", types_json(value.output_types)},
+                        {"output_alias_input", value.output_alias_input}};
           },
           [](const sc::PassThroughOpConfig&) { return Json::object(); }},
       config);
@@ -503,6 +523,14 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
 DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::vector<MlaExecutableArtifact>& mla_executables) noexcept {
+  return try_compile_dmabuf_plan(mpk_manifest, mla_executables,
+                                 std::vector<HostTvmExecutableArtifact>{});
+}
+
+DmabufPlanCompileResult
+try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
+                        const std::vector<MlaExecutableArtifact>& mla_executables,
+                        const std::vector<HostTvmExecutableArtifact>& host_executables) noexcept {
   const auto mpk_source = basename_or_placeholder(mpk_manifest, "<mpk-manifest>");
   try {
     std::error_code ec;
@@ -563,10 +591,48 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
       evidence.push_back(
           {artifact.logical_stage_id, artifact.manifest_executable, std::move(topology)});
     }
+    std::vector<sc::HostTvmExecutableEvidence> host_evidence;
+    host_evidence.reserve(host_executables.size());
+    for (const auto& artifact : host_executables) {
+      if (artifact.logical_stage_id.empty() || artifact.manifest_executable.empty()) {
+        return rejected(DmabufEligibilityCode::UnsupportedKernel, mpk_source,
+                        "$.plugins[processor=A65].resources.executable",
+                        "A65 evidence has an empty logical stage or executable identity");
+      }
+      ec.clear();
+      if (artifact.resolved_path.empty() ||
+          !std::filesystem::is_regular_file(artifact.resolved_path, ec) || ec) {
+        return rejected(DmabufEligibilityCode::UnsupportedKernel, mpk_source,
+                        "$.plugins[processor=A65].resources.executable",
+                        "exact A65 host module for stage '" + artifact.logical_stage_id +
+                            "' is missing or unreadable");
+      }
+      const auto digest = sha256_file(artifact.resolved_path);
+      if (!digest) {
+        return rejected(DmabufEligibilityCode::IoError, mpk_source,
+                        "$.plugins[processor=A65].resources.executable",
+                        "failed to hash exact A65 host module for stage '" +
+                            artifact.logical_stage_id + "'");
+      }
+      std::string graph_error;
+      auto graph = sc::read_tvm_host_module_graph(artifact.resolved_path, &graph_error);
+      if (!graph) {
+        return rejected(DmabufEligibilityCode::UnsupportedKernel, mpk_source,
+                        "$.plugins[processor=A65].resources.executable",
+                        graph_error.empty() ? "A65 host module has no valid GraphExecutor contract"
+                                            : graph_error);
+      }
+      artifact_identity += ";host-stage=" + artifact.logical_stage_id +
+                           ";executable=" + artifact.manifest_executable + ";so=" + *digest;
+      host_evidence.push_back({artifact.logical_stage_id, artifact.manifest_executable,
+                               std::move(graph->input_names), std::move(graph->input_types),
+                               std::move(graph->output_types),
+                               std::move(graph->output_alias_input)});
+    }
     const auto artifact_digest = sha256_text(artifact_identity);
 
     sc::AfeMpkV2Decoder decoder;
-    auto decoded = decoder.decode_file(mpk_manifest, evidence);
+    auto decoded = decoder.decode_file(mpk_manifest, evidence, host_evidence);
     if (!decoded || !decoded.plan) {
       const auto code = decoded.error ? map_decode_code(decoded.error->code)
                                       : DmabufEligibilityCode::InternalError;
@@ -599,7 +665,7 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
     result.report.source = mpk_source;
     result.report.location = "$";
     result.report.detail =
-        "strict MPK, exact per-stage ELF topologies, immutable plan, and graph arena accepted";
+        "strict MPK, exact ELF/TVM artifact structures, immutable plan, and graph arena accepted";
     result.report.contract_version = decoded.plan->contract_version();
     result.report.artifact_digest = artifact_digest;
     result.report.proof.reserve(decoded.proof.size() + 1U);
@@ -640,6 +706,24 @@ std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
             {"mpk_basename", basename_or_placeholder(mpk_manifest, "<mpk-manifest>")},
             {"elf_basename", basename_or_placeholder(mla_executable, "<mla-executable>")},
             {"proof", std::move(proof)}};
+  return root.dump(pretty ? 2 : -1);
+}
+
+std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
+                                   const std::filesystem::path& mpk_manifest,
+                                   const std::vector<MlaExecutableArtifact>& mla_executables,
+                                   const std::vector<HostTvmExecutableArtifact>& host_executables,
+                                   const bool pretty) {
+  Json root = Json::parse(dmabuf_plan_audit_json(result, mpk_manifest, mla_executables, false));
+  root["schema_version"] = 3;
+  Json artifacts = Json::array();
+  for (const auto& artifact : host_executables) {
+    artifacts.push_back(
+        {{"logical_stage_id", artifact.logical_stage_id},
+         {"manifest_executable", artifact.manifest_executable},
+         {"so_basename", basename_or_placeholder(artifact.resolved_path, "<host-module>")}});
+  }
+  root["host_artifacts"] = std::move(artifacts);
   return root.dump(pretty ? 2 : -1);
 }
 

@@ -84,9 +84,16 @@ struct MlaExecutableArtifact {
   std::filesystem::path resolved_path;
 };
 
-// Pure structural admission. It reads only the explicitly supplied MPK manifest
-// and MLA ELF. It allocates no device memory, opens no accelerator device, and
-// publishes no plugin manifest.
+struct HostTvmExecutableArtifact {
+  std::string logical_stage_id;
+  std::string manifest_executable;
+  std::filesystem::path resolved_path;
+};
+
+// Pure structural admission. It reads only explicitly supplied MPK, MLA ELF,
+// and (for the typed overload) A65 object-file metadata. It loads no model
+// code, allocates no device memory, opens no accelerator device, and publishes
+// no plugin manifest.
 DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::filesystem::path& mla_executable) noexcept;
@@ -94,6 +101,11 @@ try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
 DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::vector<MlaExecutableArtifact>& mla_executables) noexcept;
+
+DmabufPlanCompileResult
+try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
+                        const std::vector<MlaExecutableArtifact>& mla_executables,
+                        const std::vector<HostTvmExecutableArtifact>& host_executables) noexcept;
 
 // Stable canonical rendering and SHA-256 digest of the accepted immutable plan.
 std::string canonical_dmabuf_plan_json(const sima::static_contract::ModelExecutionPlan& plan);
@@ -104,6 +116,12 @@ std::string dmabuf_plan_digest(const sima::static_contract::ModelExecutionPlan& 
 std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
                                    const std::filesystem::path& mpk_manifest,
                                    const std::filesystem::path& mla_executable,
+                                   bool pretty = false);
+
+std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
+                                   const std::filesystem::path& mpk_manifest,
+                                   const std::vector<MlaExecutableArtifact>& mla_executables,
+                                   const std::vector<HostTvmExecutableArtifact>& host_executables,
                                    bool pretty = false);
 
 std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
