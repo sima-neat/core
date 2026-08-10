@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Focused tests for native Modalix package recovery in the installer."""
 
 from __future__ import annotations
@@ -7,7 +6,6 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "tools" / "install_neat_framework.sh"
@@ -27,20 +25,25 @@ def run_bash(
 
 
 class NativeModalixRestoreTest(unittest.TestCase):
-    def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
+    def test_board_install_keeps_platform_overrides_out_of_broad_transaction(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./simaai-memory-lib_2.1.1_arm64.deb \
       ./simaai-memory-lib-dev_2.1.1_arm64.deb \
       ./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb ./libcamera_2.1.1_arm64.deb)
 prepare_debs_for_board_install() { :; }
+preflight_b4593_board_install() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 stop_board_runtime_before_install() { :; }
 apt_package_database_is_healthy() { return 0; }
-install_local_simaai_memory_transaction() {
+simulate_complete_board_transaction_preflight() { :; }
+install_local_b4593_override_transaction() {
   SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
-  DEBS=(./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb ./libcamera_2.1.1_arm64.deb)
+  LIBCAMERA_TRANSACTION_COMPLETE=1
+  DEBS=(./neat-gst-plugins_fixed.deb ./sima-neat_fixed.deb)
 }
 native_modalix_repair_is_required() { return 0; }
 native_modalix_restore_specs() {
@@ -55,47 +58,41 @@ run_sudo() {
 complete_board_install_after_packages() { :; }
 
 install_debs_on_board
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
+        apt_lines = [
+            line for line in result.stdout.splitlines() if line.startswith("APT:")
+        ]
         self.assertEqual(len(apt_lines), 2, result.stdout)
         transaction, apt_check = apt_lines
         self.assertEqual(apt_check, "APT: <apt-get> <check>")
         for required in (
             "<./neat-gst-plugins_fixed.deb>",
             "<./sima-neat_fixed.deb>",
-            "<./libcamera_2.1.1_arm64.deb>",
             "<--allow-downgrades>",
         ):
             self.assertIn(required, transaction)
         self.assertNotIn("<simaai-gst-plugins>", transaction)
         self.assertNotIn("<simaai-palette-modalix=2.1.2>", transaction)
         self.assertNotIn("simaai-memory-lib", transaction)
+        self.assertNotIn("libcamera", transaction)
         self.assertNotIn("<--no-remove>", transaction)
-        self.assertEqual(transaction.count("<./libcamera_2.1.1_arm64.deb>"), 1)
 
     def test_board_downgrade_installs_memory_with_dependent_packages(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
 prepare_debs_for_board_install() { :; }
+preflight_b4593_board_install() { :; }
 refresh_apt_metadata_for_board_install() { :; }
 stop_board_runtime_before_install() { :; }
 apt_package_database_is_healthy() { return 0; }
-collect_local_simaai_memory_debs() {
-  SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat2
-  SIMAAI_MEMORY_RUNTIME_DEB=./memory-runtime.deb
-  SIMAAI_MEMORY_DEV_DEB=./memory-dev.deb
-  SIMAAI_MEMORY_DEBS=("${SIMAAI_MEMORY_RUNTIME_DEB}" "${SIMAAI_MEMORY_DEV_DEB}")
-}
-validate_local_simaai_memory_payload() { :; }
-snapshot_memory_transaction_guard_state() { :; }
-deb_package_installed_version() { printf '%s\n' 2.1.1-0neat4; }
-dpkg() {
-  [[ "$1:$2:$3:$4" == '--compare-versions:2.1.1-0neat4:gt:2.1.1-0neat2' ]]
+simulate_complete_board_transaction_preflight() { :; }
+install_local_b4593_override_transaction() {
+  printf '%s\n' 'Installed override is newer; deferring the downgrade to the full package transaction.'
 }
 run_sudo() {
   printf 'APT:'
@@ -105,11 +102,13 @@ run_sudo() {
 complete_board_install_after_packages() { printf 'COMPLETE\n'; }
 
 install_debs_on_board
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
+        apt_lines = [
+            line for line in result.stdout.splitlines() if line.startswith("APT:")
+        ]
         self.assertEqual(len(apt_lines), 2, result.stdout)
         transaction, apt_check = apt_lines
         self.assertIn("<--allow-downgrades>", transaction)
@@ -118,53 +117,55 @@ install_debs_on_board
         self.assertIn("<./neat-runtime.deb>", transaction)
         self.assertNotIn("<--no-remove>", transaction)
         self.assertEqual(apt_check, "APT: <apt-get> <check>")
-        self.assertIn("deferring the downgrade to the full package transaction", result.stdout)
+        self.assertIn(
+            "deferring the downgrade to the full package transaction", result.stdout
+        )
         self.assertIn("COMPLETE", result.stdout)
 
     def test_board_transaction_accepts_exact_identity_preserving_replacement(
         self,
     ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 replacement="${tmp}/neat-common.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4040]' > "${simulation}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4593]' > "${simulation}"
 dpkg-query() {
-  printf '%s\n' '2.1.3~pre4040'
+  printf '%s\n' '2.1.3~pre4593'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$3" in
-    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4040)' ;;
+    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4593)' ;;
     Replaces) printf '%s\n' 'simaai-common' ;;
     Conflicts) printf '%s\n' 'simaai-common' ;;
     *) return 2 ;;
   esac
 }
 verify_simulated_package_removals "${simulation}" "${replacement}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Verified platform package replacements", result.stdout)
-        self.assertIn("simaai-common=2.1.3~pre4040", result.stdout)
+        self.assertIn("simaai-common=2.1.3~pre4593", result.stdout)
 
     def test_board_transaction_rejects_non_exact_replacement(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 replacement="${tmp}/neat-common.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4040]' > "${simulation}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4593]' > "${simulation}"
 dpkg-query() {
-  printf '%s\n' '2.1.3~pre4040'
+  printf '%s\n' '2.1.3~pre4593'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -176,7 +177,7 @@ dpkg-deb() {
   esac
 }
 verify_simulated_package_removals "${simulation}" "${replacement}"
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -185,9 +186,11 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
             result.stderr,
         )
 
-    def test_restore_transaction_pins_palette_dependencies_and_installed_dev_packages(self) -> None:
+    def test_restore_transaction_pins_palette_dependencies_and_installed_dev_packages(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=()
 apt-cache() {
@@ -227,7 +230,7 @@ deb_package_is_present() {
 
 native_modalix_restore_specs specs
 printf '%s\n' "${specs[@]}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -246,7 +249,7 @@ printf '%s\n' "${specs[@]}"
 
     def test_private_same_name_version_forces_repair(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 deb_package_is_installed() { return 0; }
 deb_package_installed_version() {
@@ -257,28 +260,28 @@ deb_package_installed_version() {
   fi
 }
 native_modalix_repair_is_required
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_canonical_native_state_does_not_force_repair(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 deb_package_is_installed() { return 0; }
 deb_package_installed_version() { printf '%s\n' '2.1.1'; }
 if native_modalix_repair_is_required; then
   exit 99
 fi
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_missing_exact_dependency_is_rejected(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=()
 apt-cache() {
@@ -298,7 +301,7 @@ apt-cache() {
 }
 deb_package_is_present() { return 1; }
 native_modalix_restore_specs specs
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -313,32 +316,32 @@ class SimaaiMemoryTransactionTest(unittest.TestCase):
         self,
     ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-runtime="${tmp}/simaai-memory-lib_2.1.1-0neat1_arm64.deb"
-dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb"
+runtime="${tmp}/simaai-memory-lib_2.1.1-0neat5_arm64.deb"
+dev="${tmp}/simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}" other.deb)
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4593'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   file="$(basename "$2")"
   case "${file}:$3" in
-    simaai-memory-lib_2.1.1-0neat1_arm64.deb:Package) printf '%s\n' simaai-memory-lib ;;
-    simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
-    *:Version) printf '%s\n' 2.1.1-0neat1 ;;
+    simaai-memory-lib_2.1.1-0neat5_arm64.deb:Package) printf '%s\n' simaai-memory-lib ;;
+    simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
+    *:Version) printf '%s\n' 2.1.1-0neat5 ;;
     *:Architecture) printf '%s\n' arm64 ;;
-    simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1)'
+    simaai-memory-lib_2.1.1-0neat5_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4593), simaai-memory-dmabuf-export-abi (= 1)'
       ;;
-    simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1)'
+    simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb:Provides)
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4593)'
       ;;
-    simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
-      printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'
+    simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb:Depends)
+      printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat5)'
       ;;
     *) return 2 ;;
   esac
@@ -348,18 +351,18 @@ printf 'ACTUAL=%s\n' "${SIMAAI_MEMORY_ACTUAL_VERSION}"
 printf 'COMPAT=%s\n' "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}"
 printf 'RUNTIME=%s\n' "${SIMAAI_MEMORY_RUNTIME_DEB}"
 printf 'DEV=%s\n' "${SIMAAI_MEMORY_DEV_DEB}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("ACTUAL=2.1.1-0neat1", result.stdout)
-        self.assertIn("COMPAT=2.1.1", result.stdout)
-        self.assertIn("simaai-memory-lib_2.1.1-0neat1_arm64.deb", result.stdout)
-        self.assertIn("simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb", result.stdout)
+        self.assertIn("ACTUAL=2.1.1-0neat5", result.stdout)
+        self.assertIn("COMPAT=2.1.1~pre4593", result.stdout)
+        self.assertIn("simaai-memory-lib_2.1.1-0neat5_arm64.deb", result.stdout)
+        self.assertIn("simaai-memory-lib-dev_2.1.1-0neat5_arm64.deb", result.stdout)
 
     def test_collect_rejects_missing_runtime_compatibility_provide(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -367,33 +370,31 @@ runtime="${tmp}/runtime.deb"
 dev="${tmp}/dev.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}")
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4593'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$(basename "$2"):$3" in
     runtime.deb:Package) printf '%s\n' simaai-memory-lib ;;
     dev.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
-    *:Version) printf '%s\n' 2.1.1-0neat1 ;;
+    *:Version) printf '%s\n' 2.1.1-0neat5 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     runtime.deb:Provides) : ;;
-    dev.deb:Provides) printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1)' ;;
-    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat1)' ;;
+    dev.deb:Provides) printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4593)' ;;
+    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat5)' ;;
     *) return 2 ;;
   esac
 }
 collect_local_simaai_memory_debs
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "must provide simaai-memory-lib (= 2.1.1)", result.stderr
-        )
+        self.assertIn("must provide simaai-memory-lib (= 2.1.1~pre4593)", result.stderr)
 
     def test_collect_rejects_wrong_dev_compatibility_provide(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -401,33 +402,33 @@ runtime="${tmp}/runtime.deb"
 dev="${tmp}/dev.deb"
 touch "${runtime}" "${dev}"
 DEBS=("${runtime}" "${dev}")
-palette_required_simaai_memory_version() { printf '%s\n' '2.1.1'; }
+palette_required_simaai_memory_version() { printf '%s\n' '2.1.1~pre4593'; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$(basename "$2"):$3" in
     runtime.deb:Package) printf '%s\n' simaai-memory-lib ;;
     dev.deb:Package) printf '%s\n' simaai-memory-lib-dev ;;
-    *:Version) printf '%s\n' 2.1.1-0neat1 ;;
+    *:Version) printf '%s\n' 2.1.1-0neat5 ;;
     *:Architecture) printf '%s\n' arm64 ;;
-    runtime.deb:Provides) printf '%s\n' 'simaai-memory-lib (= 2.1.1)' ;;
+    runtime.deb:Provides) printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4593), simaai-memory-dmabuf-export-abi (= 1)' ;;
     dev.deb:Provides) printf '%s\n' 'simaai-memory-lib-dev (= 2.1.0)' ;;
-    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat1)' ;;
+    dev.deb:Depends) printf '%s\n' 'simaai-memory-lib (= 2.1.1-0neat5)' ;;
     *) return 2 ;;
   esac
 }
 collect_local_simaai_memory_debs
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "must provide simaai-memory-lib-dev (= 2.1.1)", result.stderr
+            "must provide simaai-memory-lib-dev (= 2.1.1~pre4593)", result.stderr
         )
 
     def test_payload_validation_records_final_so_hash_and_build_id(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 SIMAAI_MEMORY_RUNTIME_DEB=runtime.deb
 SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat1
@@ -451,34 +452,38 @@ validate_local_simaai_memory_payload
 printf 'PATH=%s\nSHA=%s\nBUILD=%s\n' \
   "${SIMAAI_MEMORY_PAYLOAD_PATH}" "${SIMAAI_MEMORY_PAYLOAD_SHA256}" \
   "${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("PATH=/usr/lib/aarch64-linux-gnu/libsimaaimem.so.2.1.1", result.stdout)
+        self.assertIn(
+            "PATH=/usr/lib/aarch64-linux-gnu/libsimaaimem.so.2.1.1", result.stdout
+        )
         self.assertIn("BUILD=feedface", result.stdout)
         self.assertIn("SHA=" + "0" * 64, result.stdout)
 
-    def test_postcheck_rejects_platform_compat_version_instead_of_actual_revision(self) -> None:
+    def test_postcheck_rejects_platform_compat_version_instead_of_actual_revision(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 SIMAAI_MEMORY_ACTUAL_VERSION=2.1.1-0neat1
 SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION=2.1.1
 deb_package_is_installed() { return 0; }
 deb_package_installed_version() { printf '%s\n' 2.1.1; }
 verify_installed_simaai_memory_payload
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "do not match bundled 2.1.1-0neat1", result.stderr
-        )
+        self.assertIn("do not match bundled 2.1.1-0neat1", result.stderr)
 
-    def test_isolated_transaction_simulates_then_installs_only_local_paths(self) -> None:
+    def test_isolated_transaction_simulates_then_installs_only_local_paths(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./memory-runtime.deb ./memory-dev.deb ./neat-runtime.deb)
 collect_local_simaai_memory_debs() {
@@ -498,11 +503,13 @@ run_sudo() {
 install_local_simaai_memory_transaction
 printf 'COMPLETE=%s\n' "${SIMAAI_MEMORY_TRANSACTION_COMPLETE}"
 printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        apt_lines = [line for line in result.stdout.splitlines() if line.startswith("APT:")]
+        apt_lines = [
+            line for line in result.stdout.splitlines() if line.startswith("APT:")
+        ]
         self.assertEqual(len(apt_lines), 2, result.stdout)
         self.assertIn("<--simulate>", apt_lines[0])
         self.assertNotIn("<--simulate>", apt_lines[1])
@@ -517,9 +524,11 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
         self.assertIn("COMPLETE=1", result.stdout)
         self.assertIn("REMAINING: <./neat-runtime.deb>", result.stdout)
 
-    def test_isolated_transaction_rejects_simulated_removal_before_real_apt(self) -> None:
+    def test_isolated_transaction_rejects_simulated_removal_before_real_apt(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./memory-runtime.deb ./memory-dev.deb)
 collect_local_simaai_memory_debs() {
@@ -538,7 +547,7 @@ run_sudo() {
   esac
 }
 install_local_simaai_memory_transaction
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -547,7 +556,7 @@ install_local_simaai_memory_transaction
 
     def test_guard_allows_fresh_board_without_palette_or_ota(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 dpkg-query() {
   case "$1:$2" in
@@ -560,7 +569,7 @@ snapshot_memory_transaction_guard_state
 verify_memory_guard_palette_and_ota
 printf 'PALETTE_WAS_INSTALLED=%s\n' \
   "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -569,7 +578,7 @@ printf 'PALETTE_WAS_INSTALLED=%s\n' \
 
     def test_guard_preserves_preinstalled_palette_version_and_ota_owner(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -592,7 +601,7 @@ snapshot_memory_transaction_guard_state
 verify_memory_guard_palette_and_ota
 printf 'PALETTE_WAS_INSTALLED=%s\n' \
   "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -600,14 +609,14 @@ printf 'PALETTE_WAS_INSTALLED=%s\n' \
 
     def test_guard_rejects_removal_of_preinstalled_palette(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=1
 SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=2.1.2
 SIMAAI_MEMORY_PREINSTALL_OTA_PATH=/usr/bin/simaai-ota
 deb_package_is_installed() { return 1; }
 verify_memory_guard_palette_and_ota
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -615,7 +624,7 @@ verify_memory_guard_palette_and_ota
 
     def test_final_check_requires_canonical_palette_ota_ownership(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 deb_package_is_installed() { [[ "$1" == simaai-palette-modalix ]]; }
 simaai_ota_command_path() { printf '%s\n' /usr/bin/simaai-ota; }
@@ -625,7 +634,7 @@ dpkg-query() {
 }
 verify_canonical_palette_and_ota_installation
 printf 'CANONICAL_PALETTE_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -633,19 +642,21 @@ printf 'CANONICAL_PALETTE_OK\n'
 
     def test_final_check_rejects_missing_palette_after_fresh_install(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 deb_package_is_installed() { return 1; }
 verify_canonical_palette_and_ota_installation
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("not installed after the native Modalix transaction", result.stderr)
+        self.assertIn(
+            "not installed after the native Modalix transaction", result.stderr
+        )
 
     def test_preservation_check_rejects_any_preinstalled_package_loss(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -658,16 +669,18 @@ dpkg-query() {
 }
 run_sudo() { "$@"; }
 verify_memory_transaction_preservation
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("removed preinstalled packages", result.stderr)
         self.assertIn("removed-by-resolver", result.stderr)
 
-    def test_native_restore_never_readds_memory_after_isolated_transaction(self) -> None:
+    def test_native_restore_never_readds_memory_after_isolated_transaction(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
 apt_candidate_version() { printf '%s\n' 2.1.2; }
@@ -681,7 +694,7 @@ exact_package_install_spec() { printf '%s=%s\n' "$1" "$2"; }
 deb_package_is_present() { return 1; }
 native_modalix_restore_specs specs
 printf '%s\n' "${specs[@]}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -700,7 +713,7 @@ printf '%s\n' "${specs[@]}"
 class DispatcherMigrationTest(unittest.TestCase):
     def test_migration_moves_unowned_global_and_backup_outside_loader_dir(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -722,7 +735,7 @@ migrate_stale_global_dispatcher_libs
 [[ "$(find "${quarantine}" -type f -name 'libneatdispatchercore.so.bak-20260705' | wc -l)" -eq 1 ]]
 [[ "$(find "${quarantine}" -type l -name 'libneatdispatchercore.so' | wc -l)" -eq 1 ]]
 printf 'MIGRATED\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -731,7 +744,7 @@ printf 'MIGRATED\n'
 
     def test_migration_refuses_package_owned_global_dispatcher(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -742,7 +755,7 @@ dispatcher_quarantine_root() { printf '%s\n' "${tmp}/quarantine"; }
 dpkg-query() { printf 'legacy-runtime: %s\n' "$2"; }
 run_sudo() { "$@"; }
 migrate_stale_global_dispatcher_libs
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -750,7 +763,7 @@ migrate_stale_global_dispatcher_libs
 
     def test_verifies_versioned_private_dispatcher_and_package_ownership(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -765,7 +778,7 @@ readelf() { printf '%s\n' ' 0x000000000000000e (SONAME) Library soname: [libneat
 dpkg-query() { printf 'neat-runtime: %s\n' "$2"; }
 verify_private_dispatcher_runtime
 printf 'PRIVATE_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -773,11 +786,10 @@ printf 'PRIVATE_OK\n'
         self.assertIn("versioned package-owned dispatcher", result.stdout)
 
 
-
 class DevKitRecoveryDispatcherTest(unittest.TestCase):
     def test_recovery_quarantines_every_global_dispatcher_without_alias(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/loader"
@@ -802,7 +814,7 @@ quarantine_stale_global_dispatcher_libs
 [[ -f "${tmp}/quarantine/libneatdispatchercore.so.bak-20260705" ]]
 [[ "$(find "${tmp}/loader" -name 'libneatdispatchercore.so*' | wc -l)" -eq 0 ]]
 printf 'RECOVERY_MIGRATED\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -812,7 +824,7 @@ printf 'RECOVERY_MIGRATED\n'
 
     def test_recovery_refuses_package_owned_global_dispatcher(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/loader"
@@ -831,7 +843,7 @@ ldconfig() { :; }
 [[ -f "${tmp}/loader/libneatdispatchercore.so" ]]
 [[ ! -e "${tmp}/quarantine" ]]
 printf 'RECOVERY_REFUSED\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -840,8 +852,7 @@ printf 'RECOVERY_REFUSED\n'
         self.assertIn("package-owned global dispatcher", result.stderr)
 
 
-
-RECOVERY_ORDER_HARNESS = r'''
+RECOVERY_ORDER_HARNESS = r"""
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 calls="${tmp}/calls"
@@ -858,7 +869,7 @@ systemctl() { return 0; }
 sleep() { :; }
 
 line_of() { grep -n -- "$1" "${calls}" | head -1 | cut -d: -f1; }
-'''
+"""
 
 
 class DevKitRecoveryOrderingTest(unittest.TestCase):
@@ -867,7 +878,7 @@ class DevKitRecoveryOrderingTest(unittest.TestCase):
     def test_m4_boots_before_appcomplex_is_stopped(self) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 pgrep() { return 0; }   # appcomplex already running
 
 recover_devkit_runtime
@@ -881,7 +892,7 @@ restart="$(line_of 'restart simaai-appcomplex.service')"
 (( stop < init ))    || { printf 'init_mla_memory ran while appcomplex held the mailbox\n' >&2; exit 1; }
 (( init < restart )) || { printf 'appcomplex restarted before init_mla_memory\n' >&2; exit 1; }
 printf 'RECOVERY_ORDER_OK\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -891,7 +902,7 @@ printf 'RECOVERY_ORDER_OK\n'
     def test_recovery_restarts_a_down_appcomplex_before_booting_the_m4(self) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 # Down on the first probe, up once the start step has run.
 probe_count=0
 pgrep() {
@@ -909,7 +920,7 @@ boot="$(line_of 'remoteproc1 start')"
 (( reset < start )) || { printf 'start attempted before clearing the start limit\n' >&2; exit 1; }
 (( start < boot ))  || { printf 'M4 booted before appcomplex was restored\n' >&2; exit 1; }
 printf 'RECOVERY_RESTORED_APPCOMPLEX\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -919,7 +930,7 @@ printf 'RECOVERY_RESTORED_APPCOMPLEX\n'
     def test_recovery_refuses_to_boot_the_m4_when_appcomplex_stays_down(self) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 pgrep() { return 1; }   # never comes up
 
 if recover_devkit_runtime; then
@@ -932,7 +943,7 @@ if grep -q 'remoteproc' "${calls}"; then
   exit 1
 fi
 printf 'RECOVERY_REFUSED_M4_BOOT\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -940,10 +951,12 @@ printf 'RECOVERY_REFUSED_M4_BOOT\n'
         self.assertIn("RECOVERY_REFUSED_M4_BOOT", result.stdout)
         self.assertIn("refusing to boot the M4", result.stderr)
 
-    def test_recovery_skips_the_precondition_when_appcomplex_is_not_installed(self) -> None:
+    def test_recovery_skips_the_precondition_when_appcomplex_is_not_installed(
+        self,
+    ) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 systemctl() { return 1; }   # unit not installed on this image
 pgrep() { return 1; }
 
@@ -952,7 +965,7 @@ recover_devkit_runtime
 boot="$(line_of 'remoteproc1 start')"
 [[ -n "${boot}" ]] || { printf 'recovery stalled on an image without appcomplex\n' >&2; exit 1; }
 printf 'RECOVERY_SKIPPED_PRECONDITION\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -964,7 +977,7 @@ printf 'RECOVERY_SKIPPED_PRECONDITION\n'
 class SimaNeatLinkRepairTest(unittest.TestCase):
     def test_sdk_sysroot_rejects_multiple_core_package_pairs(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(core-old.deb core-new.deb dev-new.deb)
 dpkg-deb() {
@@ -978,7 +991,7 @@ dpkg-deb() {
   esac
 }
 validate_single_sima_neat_package_pair
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -990,7 +1003,7 @@ validate_single_sima_neat_package_pair
 
     def test_sdk_sysroot_rejects_mismatched_core_package_versions(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(core.deb dev.deb)
 dpkg-deb() {
@@ -1004,7 +1017,7 @@ dpkg-deb() {
   esac
 }
 validate_single_sima_neat_package_pair
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -1014,7 +1027,7 @@ validate_single_sima_neat_package_pair
 
     def test_sdk_sysroot_accepts_one_matching_core_package_pair(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(core.deb dev.deb unrelated.deb)
 dpkg-deb() {
@@ -1030,7 +1043,7 @@ dpkg-deb() {
 }
 validate_single_sima_neat_package_pair
 printf 'PAIR_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1038,7 +1051,7 @@ printf 'PAIR_OK\n'
 
     def test_sdk_sysroot_preserves_current_bundle_compatibility_link(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1066,7 +1079,7 @@ repair_sysroot_sima_neat_libs "${tmp}"
 [[ "$(readlink "${lib_dir}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
 ! compgen -G "${lib_dir}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 printf 'SDK_COMPAT_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1075,9 +1088,11 @@ printf 'SDK_COMPAT_OK\n'
             "Quarantining stale SDK sysroot libsima_neat path", result.stdout
         )
 
-    def test_sdk_sysroot_quarantines_libraries_not_owned_by_current_bundle(self) -> None:
+    def test_sdk_sysroot_quarantines_libraries_not_owned_by_current_bundle(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1108,7 +1123,7 @@ repair_sysroot_sima_neat_libs "${tmp}"
 compgen -G "${lib_dir}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 compgen -G "${lib_dir}/libsima_neat.so.2.0.0.bak-neat-installer-*" >/dev/null
 printf 'SDK_ABI3_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1118,9 +1133,11 @@ printf 'SDK_ABI3_OK\n'
             2,
         )
 
-    def test_abi3_package_manifest_drives_links_and_quarantines_unowned_abi2(self) -> None:
+    def test_abi3_package_manifest_drives_links_and_quarantines_unowned_abi2(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1159,7 +1176,7 @@ verify_global_sima_neat_lib_links
 [[ ! -e "${tmp}/libsima_neat.so.2" && ! -L "${tmp}/libsima_neat.so.2" ]]
 compgen -G "${tmp}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 printf 'ABI3_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1169,7 +1186,7 @@ printf 'ABI3_OK\n'
 
     def test_package_owned_compatibility_soname_is_never_quarantined(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1199,16 +1216,20 @@ repair_global_sima_neat_lib_links
 [[ "$(readlink "${tmp}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
 ! compgen -G "${tmp}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 printf 'OWNED_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("OWNED_OK", result.stdout)
-        self.assertIn("Preserving package-owned libsima_neat compatibility link", result.stdout)
+        self.assertIn(
+            "Preserving package-owned libsima_neat compatibility link", result.stdout
+        )
 
-    def test_wrong_package_owned_manifest_links_are_repaired_without_quarantine(self) -> None:
+    def test_wrong_package_owned_manifest_links_are_repaired_without_quarantine(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1239,7 +1260,7 @@ verify_global_sima_neat_lib_links
 [[ "$(readlink "${tmp}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
 ! compgen -G "${tmp}/libsima_neat.so*.bak-neat-installer-*" >/dev/null
 printf 'OWNED_REPAIR_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1248,7 +1269,7 @@ printf 'OWNED_REPAIR_OK\n'
 
     def test_elf_soname_must_match_packaged_soname_link(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1272,7 +1293,7 @@ read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.2'; }
 run_sudo() { "$@"; }
 
 repair_global_sima_neat_lib_links
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)

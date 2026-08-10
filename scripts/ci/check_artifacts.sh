@@ -47,7 +47,12 @@ if isinstance(value, str) and value.strip():
 if isinstance(value, dict):
     policy = str(value.get("policy", "")).strip().lower()
     if policy == "snap":
+        required = str(value.get("required-branch", "")).strip()
+        if "required-branch" in value and not required:
+            raise SystemExit(1)
         raise SystemExit(0)
+    if value.get("required-branch"):
+        raise SystemExit(1)
     spec = str(value.get("spec", "")).strip()
     branch = str(value.get("branch", value.get("ref", ""))).strip()
     if branch and (spec or value.get("spec", "") == ""):
@@ -72,6 +77,44 @@ PY
   abi_version="$(sed -n 's/.*"abi-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"
   if [[ ! "${abi_version}" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: deps/manifest.json abi-version must be a positive integer." >&2
+    fail=1
+  fi
+  if ! python3 - deps/manifest.json <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+expected = {
+    "platform-package-version": "2.1.3~pre4593",
+    "platform-package-contract": {
+        "kernel": {
+            "package": "linux-image-6.18.3-modalix",
+            "package-version": "6.18.3-4593",
+            "release": "6.18.3-modalix",
+            "build-marker": "#4593",
+        },
+        "libcamera": {
+            "package-version": "2.1.3+neat2",
+            "platform-compat-version": "2.1.3~pre4593",
+            "capability-name": "simaai-libcamera-dmabuf-abi",
+            "capability-version": "1",
+        },
+        "memory": {
+            "package-version": "2.1.1-0neat5",
+            "platform-compat-version": "2.1.1~pre4593",
+            "capability-name": "simaai-memory-dmabuf-export-abi",
+            "capability-version": "1",
+        },
+    },
+}
+for key, value in expected.items():
+    if data.get(key) != value:
+        raise SystemExit(f"{path}: {key} must equal the reviewed B4593 contract")
+PY
+  then
+    echo "ERROR: deps/manifest.json must contain the exact reviewed B4593 platform package contract." >&2
     fail=1
   fi
 fi
