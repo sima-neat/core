@@ -1,6 +1,7 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/static_contract/DmabufPlanContractProjection.h"
 #include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
+#include "gst/SimaPluginStaticManifestAbi.h"
 
 #include <algorithm>
 #include <limits>
@@ -633,38 +634,81 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
     return false;
   }
 
+  constexpr std::uint32_t kDescriptorTensorTransformV1 =
+      SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1;
+  constexpr std::uint32_t kDescriptorPreprocV1 =
+      SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1;
+  constexpr std::uint32_t kPlacementEv74 = SIMA_PLUGIN_CVU_PLACEMENT_EV74;
+  constexpr std::uint32_t kPlacementA65 = SIMA_PLUGIN_CVU_PLACEMENT_A65;
+  constexpr std::uint32_t kPatchMetadata =
+      SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA;
+  constexpr std::uint32_t kPatchPreprocGeometry =
+      SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY;
+  constexpr std::uint32_t kPatchPreprocScalarRoi =
+      SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI;
+  constexpr std::uint32_t kPatchPreprocRoiList =
+      SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST;
+  constexpr std::uint32_t kPatchPreprocPlaneLayout =
+      SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT;
+
+  payload->descriptor_contract_version = 1U;
+  payload->binding_schema_version = 1U;
   switch (payload->graph_family_enum) {
+  case ProcessCvuGraphFamily::Preproc:
+    payload->graph_id = 200;
+    payload->graph_name = "preproc";
+    payload->descriptor_abi_id = kDescriptorPreprocV1;
+    payload->supported_placement_mask = kPlacementEv74;
+    payload->allowed_frame_patch_mask =
+        kPatchMetadata | kPatchPreprocGeometry |
+        kPatchPreprocScalarRoi | kPatchPreprocRoiList |
+        kPatchPreprocPlaneLayout;
+    break;
   case ProcessCvuGraphFamily::Cast:
     payload->graph_id = 221;
+    payload->graph_name = "cast";
     break;
   case ProcessCvuGraphFamily::Quant:
     payload->graph_id = 222;
+    payload->graph_name = "quantize";
     break;
   case ProcessCvuGraphFamily::Dequant:
     payload->graph_id = 223;
+    payload->graph_name = "dequantize";
     break;
   case ProcessCvuGraphFamily::Tess:
     payload->graph_id = 2;
+    payload->graph_name = "tessellate";
     break;
   case ProcessCvuGraphFamily::QuantTess:
     payload->graph_id = 226;
+    payload->graph_name = "quantizetessellate";
     break;
   case ProcessCvuGraphFamily::CastTess:
     payload->graph_id = 224;
+    payload->graph_name = "casttess";
     break;
   case ProcessCvuGraphFamily::Detess:
     payload->graph_id = 3;
+    payload->graph_name = "detessellate";
     break;
   case ProcessCvuGraphFamily::DetessCast:
     payload->graph_id = 225;
+    payload->graph_name = "detesscast";
     break;
   case ProcessCvuGraphFamily::DetessDequant:
     payload->graph_id = 227;
+    payload->graph_name = "detessdequant";
     break;
   default:
     return fail(error, "dmabuf-plan ProcessCVU does not support this graph family "
                        "(family=" +
                            std::to_string(static_cast<int>(payload->graph_family_enum)) + ")");
+  }
+  if (payload->graph_family_enum != ProcessCvuGraphFamily::Preproc) {
+    payload->descriptor_abi_id = kDescriptorTensorTransformV1;
+    payload->supported_placement_mask = kPlacementEv74 | kPlacementA65;
+    payload->allowed_frame_patch_mask = kPatchMetadata;
   }
 
   std::vector<const BackendPortSpec*> ports;
