@@ -408,6 +408,8 @@ set(UNIT_TESTS
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_jpeg_framing_nodes_test
+  unit_multipart_header_capture_test
+  unit_multipart_capture_element_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
@@ -574,6 +576,8 @@ set(E2E_TESTS
   graph_validate_report_regression_test
   stage_routing_regression_test
   udp_output_loopback_integration_test
+  multipart_header_capture_http_e2e_test
+  multipart_header_capture_decode_e2e_test
 )
 
 foreach(test ${E2E_TESTS})
@@ -2302,6 +2306,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   h265_decode_resnet50_e2e_test
   h265_rtsp_resnet50_e2e_test
   codec_runtime_stream_test
+  multipart_header_capture_decode_e2e_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test

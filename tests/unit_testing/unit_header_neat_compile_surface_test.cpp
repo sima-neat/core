@@ -140,9 +140,13 @@ RUN_TEST(
       http_mjpeg_opt.video_rate_fps = 10;
       auto http_mjpeg_group = simaai::neat::nodes::groups::HttpMjpegDecodedInput(http_mjpeg_opt);
       simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions legacy_http_mjpeg_opt{
-          "http://example.local/mjpeg", 15, 3, true, true, "Neat", "frame"};
+          "http://example.local/mjpeg", 15, 3, true, true, "Neat", "frame", true, false};
       require(legacy_http_mjpeg_opt.multipart_boundary == "frame",
               "HttpMjpegDecodedInputOptions aggregate field order changed");
+      require(legacy_http_mjpeg_opt.multipart_single_stream,
+              "HttpMjpegDecodedInputOptions aggregate multipart field order changed");
+      require(!legacy_http_mjpeg_opt.insert_queue,
+              "HttpMjpegDecodedInputOptions aggregate queue field order changed");
       require(legacy_http_mjpeg_opt.ssl_strict,
               "HttpMjpegDecodedInputOptions ssl_strict should default to true");
       require(std::string(simaai::neat::format_tag_name(simaai::neat::FormatTag::H265)) == "H265",

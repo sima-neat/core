@@ -915,8 +915,13 @@ def test_jpeg_framing_nodes_are_exposed():
   demux = pyneat.MultipartJpegDemuxOptions()
   assert demux.boundary == ""
   assert demux.single_stream is False
+  assert demux.header_capture.headers == []
   demux.boundary = "frame"
   demux.single_stream = True
+  capture = pyneat.MultipartHeaderCaptureOptions()
+  capture.headers = ["Image-Index"]
+  demux.header_capture = capture
+  assert demux.header_capture.headers == ["Image-Index"]
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux())
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux(demux))
 
