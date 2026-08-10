@@ -407,6 +407,7 @@ set(UNIT_TESTS
   unit_memory_backend_policy_test
   unit_dmabuf_eligibility_test
   unit_afe_mpk_v2_decoder_test
+  unit_tvm_host_module_graph_test
   unit_modelpack_multi_mla_plan_test
   unit_frame_slot_arena_plan_test
   unit_dmabuf_plan_contract_projection_test

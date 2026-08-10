@@ -15,7 +15,9 @@ int usage(const char* argv0, const char* detail = nullptr) {
   std::cerr << "usage: " << (argv0 ? argv0 : "neat-dmabuf-plan-audit")
             << " --mpk <mpk.json> (--elf <model.elf> |"
                " --mla-artifact <logical-stage-id> <manifest-executable> <resolved-file>"
-               " [--mla-artifact ...]) [--pretty]\n";
+               " [--mla-artifact ...])"
+               " [--host-artifact <logical-stage-id> <manifest-executable> <resolved-file> ...]"
+               " [--pretty]\n";
   return 64;
 }
 
@@ -25,6 +27,7 @@ int main(int argc, char** argv) {
   std::filesystem::path mpk;
   std::filesystem::path elf;
   std::vector<simaai::neat::pipeline_internal::MlaExecutableArtifact> artifacts;
+  std::vector<simaai::neat::pipeline_internal::HostTvmExecutableArtifact> host_artifacts;
   bool pretty = false;
   for (int index = 1; index < argc; ++index) {
     const std::string arg = argv[index] ? argv[index] : "";
@@ -47,6 +50,13 @@ int main(int argc, char** argv) {
       index += 3;
       continue;
     }
+    if (arg == "--host-artifact" && index + 3 < argc) {
+      host_artifacts.push_back({argv[index + 1] ? argv[index + 1] : "",
+                                argv[index + 2] ? argv[index + 2] : "",
+                                argv[index + 3] ? argv[index + 3] : ""});
+      index += 3;
+      continue;
+    }
     return usage(argv[0], "unknown or incomplete argument");
   }
   if (mpk.empty() || (elf.empty() == artifacts.empty())) {
@@ -54,12 +64,16 @@ int main(int argc, char** argv) {
                  "--mpk and exactly one of --elf or one-or-more --mla-artifact entries are "
                  "required");
   }
+  if (!elf.empty() && !host_artifacts.empty()) {
+    return usage(argv[0], "--host-artifact requires the explicit --mla-artifact form");
+  }
 
-  const auto result = elf.empty()
-                          ? simaai::neat::pipeline_internal::try_compile_dmabuf_plan(mpk, artifacts)
-                          : simaai::neat::pipeline_internal::try_compile_dmabuf_plan(mpk, elf);
+  const auto result =
+      elf.empty()
+          ? simaai::neat::pipeline_internal::try_compile_dmabuf_plan(mpk, artifacts, host_artifacts)
+          : simaai::neat::pipeline_internal::try_compile_dmabuf_plan(mpk, elf);
   std::cout << (elf.empty() ? simaai::neat::pipeline_internal::dmabuf_plan_audit_json(
-                                  result, mpk, artifacts, pretty)
+                                  result, mpk, artifacts, host_artifacts, pretty)
                             : simaai::neat::pipeline_internal::dmabuf_plan_audit_json(result, mpk,
                                                                                       elf, pretty))
             << "\n";

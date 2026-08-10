@@ -62,8 +62,10 @@ enum class OpKind {
   Mla,
   Unpack,
   Slice,
+  Reshape,
   Detessellate,
   Dequantize,
+  HostTvm,
   PassThrough,
 };
 
@@ -116,6 +118,12 @@ struct SliceOpConfig {
   TensorShape output_shape;
 };
 
+// A reshape is an address-only reinterpretation.  It never materializes bytes;
+// validation proves that the input and output dense byte equations are equal.
+struct ReshapeOpConfig {
+  TensorShape new_shape;
+};
+
 struct DetessellateOpConfig {
   TensorShape slice_shape;
   TensorShape frame_shape;
@@ -129,11 +137,30 @@ struct DequantizeOpConfig {
   std::vector<QuantizationSpec> channel_params;
 };
 
+struct HostTensorTypeSpec {
+  std::string scalar;
+  TensorShape shape;
+};
+
+// Exact AFE host-module contract.  The runtime loads `executable` once and
+// binds these ordered DLTensor ports directly to the frame arena.  There is no
+// dispatcher/config-manager interpretation and no staging tensor.
+struct HostTvmOpConfig {
+  std::string executable;
+  std::vector<std::string> input_names;
+  std::vector<HostTensorTypeSpec> input_types;
+  std::vector<HostTensorTypeSpec> output_types;
+  // -1 means a materialized graph-executor output.  Otherwise the output is
+  // the exact compiler-authored __nop view of this input port.
+  std::vector<std::int32_t> output_alias_input;
+};
+
 struct PassThroughOpConfig {};
 
-using OpConfig = std::variant<CastOpConfig, QuantizeOpConfig, TessellateOpConfig, PackOpConfig,
-                              MlaOpConfig, UnpackOpConfig, SliceOpConfig, DetessellateOpConfig,
-                              DequantizeOpConfig, PassThroughOpConfig>;
+using OpConfig =
+    std::variant<CastOpConfig, QuantizeOpConfig, TessellateOpConfig, PackOpConfig, MlaOpConfig,
+                 UnpackOpConfig, SliceOpConfig, ReshapeOpConfig, DetessellateOpConfig,
+                 DequantizeOpConfig, HostTvmOpConfig, PassThroughOpConfig>;
 
 struct OpSpec {
   OpId id = 0;
