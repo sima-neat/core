@@ -1,5 +1,5 @@
 #define SIMA_NEAT_INTERNAL 1
-#include "pipeline/internal/sima/static_contract/LegacyAfeMpkDecoder.h"
+#include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
 
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
 
@@ -23,19 +23,18 @@ namespace {
 using Json = nlohmann::json;
 
 struct DecodeAbort final {
-  LegacyAfeDecodeErrorCode code;
+  AfeMpkV2DecodeErrorCode code;
   std::string path;
   std::string detail;
 };
 
-[[noreturn]] void reject(const LegacyAfeDecodeErrorCode code, std::string path,
-                         std::string detail) {
+[[noreturn]] void reject(const AfeMpkV2DecodeErrorCode code, std::string path, std::string detail) {
   throw DecodeAbort{code, std::move(path), std::move(detail)};
 }
 
 const Json* required_member_ptr(const Json& object, const char* key, std::string path) {
   if (!object.is_object() || !object.contains(key)) {
-    reject(LegacyAfeDecodeErrorCode::MissingRequiredField, path + "." + key,
+    reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + "." + key,
            "required MPK member is absent");
   }
   return &object.at(key);
@@ -44,7 +43,7 @@ const Json* required_member_ptr(const Json& object, const char* key, std::string
 std::string required_string(const Json& object, const char* key, const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_string() || value.get_ref<const std::string&>().empty()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path + "." + key, "expected a non-empty string");
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key, "expected a non-empty string");
   }
   return value.get<std::string>();
 }
@@ -60,14 +59,14 @@ std::uint64_t positive_u64(const Json& value, const std::string& path) {
     }
   }
   if (result == 0U) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path, "expected a positive integer");
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a positive integer");
   }
   return result;
 }
 
 std::int64_t integer(const Json& value, const std::string& path) {
   if (!value.is_number_integer()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path, "expected an integer");
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected an integer");
   }
   return value.get<std::int64_t>();
 }
@@ -75,7 +74,7 @@ std::int64_t integer(const Json& value, const std::string& path) {
 bool required_bool(const Json& object, const char* key, const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_boolean()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path + "." + key, "expected a boolean");
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key, "expected a boolean");
   }
   return value.get<bool>();
 }
@@ -87,13 +86,13 @@ void require_exact_keys(const Json& object, const std::initializer_list<const ch
     expected.emplace(key);
   }
   if (!object.is_object() || object.size() != expected.size()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path,
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path,
            "object members do not match the exact legacy typed contract");
   }
   for (const auto& [key, value] : object.items()) {
     (void)value;
     if (!expected.contains(key)) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, path + "." + key,
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
              "member is not part of the exact legacy typed contract");
     }
   }
@@ -101,15 +100,14 @@ void require_exact_keys(const Json& object, const std::initializer_list<const ch
 
 TensorShape shape(const Json& value, const std::string& path, const bool allow_zero = false) {
   if (!value.is_array() || value.empty()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path,
-           "expected a non-empty integer shape array");
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a non-empty integer shape array");
   }
   TensorShape result;
   result.reserve(value.size());
   for (std::size_t index = 0; index < value.size(); ++index) {
     const auto dimension = integer(value[index], path + "[" + std::to_string(index) + "]");
     if (dimension < 0 || (!allow_zero && dimension == 0)) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, path + "[" + std::to_string(index) + "]",
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "[" + std::to_string(index) + "]",
              allow_zero ? "shape element must be non-negative"
                         : "shape dimension must be positive");
     }
@@ -122,14 +120,14 @@ std::vector<TensorShape> shapes(const Json& object, const char* key, const std::
                                 const bool required) {
   if (!object.contains(key)) {
     if (required) {
-      reject(LegacyAfeDecodeErrorCode::MissingRequiredField, path + "." + key,
+      reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + "." + key,
              "required shape list is absent");
     }
     return {};
   }
   const auto& value = object.at(key);
   if (!value.is_array()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path + "." + key, "expected an array of shapes");
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key, "expected an array of shapes");
   }
   std::vector<TensorShape> result;
   result.reserve(value.size());
@@ -143,7 +141,7 @@ std::vector<QuantizationSpec> quantization(const Json& object, const char* key,
                                            const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_array() || value.empty()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path + "." + key,
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
            "expected a non-empty channel-parameter array");
   }
   std::vector<QuantizationSpec> result;
@@ -153,12 +151,12 @@ std::vector<QuantizationSpec> quantization(const Json& object, const char* key,
     const std::string pair_path = path + "." + key + "[" + std::to_string(index) + "]";
     if (!pair.is_array() || pair.size() != 2U || !pair[0].is_number() ||
         !pair[1].is_number_integer()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, pair_path,
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, pair_path,
              "expected [positive scale, integer zero-point]");
     }
     const double scale_value = pair[0].get<double>();
     if (!std::isfinite(scale_value) || scale_value <= 0.0) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, pair_path + "[0]",
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, pair_path + "[0]",
              "quantization scale must be finite and positive");
     }
     result.push_back({scale_value, pair[1].get<std::int64_t>()});
@@ -174,7 +172,7 @@ struct Node {
 std::vector<Node> nodes(const Json& object, const char* key, const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
   if (!value.is_array() || value.empty()) {
-    reject(LegacyAfeDecodeErrorCode::InvalidField, path + "." + key,
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
            "expected a non-empty node array");
   }
   std::vector<Node> result;
@@ -183,7 +181,7 @@ std::vector<Node> nodes(const Json& object, const char* key, const std::string& 
     const auto& node = value[index];
     const std::string node_path = path + "." + key + "[" + std::to_string(index) + "]";
     if (!node.is_object()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, node_path, "expected a node object");
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, node_path, "expected a node object");
     }
     result.push_back(
         {required_string(node, "name", node_path),
@@ -236,9 +234,8 @@ contiguous_stride_bytes(const TensorShape& value_shape, const std::uint64_t elem
       return std::nullopt;
     }
     result[axis] = static_cast<std::int64_t>(stride);
-    if (axis != 0U &&
-        stride > std::numeric_limits<std::uint64_t>::max() /
-                     static_cast<std::uint64_t>(value_shape[axis])) {
+    if (axis != 0U && stride > std::numeric_limits<std::uint64_t>::max() /
+                                   static_cast<std::uint64_t>(value_shape[axis])) {
       return std::nullopt;
     }
     stride *= static_cast<std::uint64_t>(value_shape[axis]);
@@ -250,9 +247,8 @@ std::optional<std::uint64_t> exact_element_width(const std::uint64_t bytes,
                                                  const TensorShape& value_shape) {
   std::uint64_t elements = 1U;
   for (const auto dimension : value_shape) {
-    if (dimension <= 0 ||
-        elements > std::numeric_limits<std::uint64_t>::max() /
-                       static_cast<std::uint64_t>(dimension)) {
+    if (dimension <= 0 || elements > std::numeric_limits<std::uint64_t>::max() /
+                                         static_cast<std::uint64_t>(dimension)) {
       return std::nullopt;
     }
     elements *= static_cast<std::uint64_t>(dimension);
@@ -265,7 +261,7 @@ std::optional<std::uint64_t> exact_element_width(const std::uint64_t bytes,
 
 void merge_dtype(ValueSpec& value, const std::string& dtype, const std::string& path) {
   if (value.logical_dtype.has_value() && *value.logical_dtype != dtype) {
-    reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path,
+    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
            "conflicting exact dtype evidence for value '" + value.name + "'");
   }
   value.logical_dtype = dtype;
@@ -273,7 +269,7 @@ void merge_dtype(ValueSpec& value, const std::string& dtype, const std::string& 
 
 void merge_shape(ValueSpec& value, const TensorShape& value_shape, const std::string& path) {
   if (value.logical_shape.has_value() && *value.logical_shape != value_shape) {
-    reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path,
+    reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
            "conflicting exact shape evidence for value '" + value.name + "'");
   }
   value.logical_shape = value_shape;
@@ -283,13 +279,13 @@ void merge_quantization(ValueSpec& value, const std::vector<QuantizationSpec>& q
                         const std::string& path) {
   if (!value.quantization.empty()) {
     if (value.quantization.size() != q.size()) {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
              "conflicting quantization evidence");
     }
     for (std::size_t index = 0; index < q.size(); ++index) {
       if (value.quantization[index].scale != q[index].scale ||
           value.quantization[index].zero_point != q[index].zero_point) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
                "conflicting quantization evidence");
       }
     }
@@ -320,7 +316,7 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
                        path + ".config_params.params");
     CastOpConfig result{required_string(params, "out_dtype", path + ".params")};
     if (result.output_dtype != "bfloat16" && result.output_dtype != "float32") {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.out_dtype",
              "legacy cast has no exact registered transition for this dtype");
     }
@@ -337,7 +333,7 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
                             required_string(params, "rounding", path + ".params"),
                             quantization(params, "channel_params", path + ".params")};
     if (result.output_dtype != "int8" || result.num_bits != 8 || result.rounding != "TONEAREST") {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
              "legacy quantization must be exact signed INT8/TONEAREST");
     }
     return result;
@@ -353,7 +349,7 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
                               required_bool(params, "cblock", path + ".params"),
                               required_string(params, "frame_type", path + ".params")};
     if (result.frame_type != "int8" && result.frame_type != "bfloat16") {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.frame_type",
              "legacy tessellation frame type is not registered");
     }
@@ -365,14 +361,13 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
   case OpKind::Mla: {
     const auto& resources = *required_member_ptr(plugin, "resources", path);
     if (!resources.is_object()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, path + ".resources", "expected an object");
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".resources", "expected an object");
     }
     const auto quads =
         integer(*required_member_ptr(config, "number_of_quads_to_user", path + ".config_params"),
                 path + ".config_params.number_of_quads_to_user");
     if (quads <= 0) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField,
-             path + ".config_params.number_of_quads_to_user",
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.number_of_quads_to_user",
              "number of MLA quads must be positive");
     }
     return MlaOpConfig{required_string(resources, "executable", path + ".resources"), quads};
@@ -382,20 +377,20 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
                        path + ".config_params.params");
     const auto& types = *required_member_ptr(params, "tensor_types", path + ".params");
     if (!types.is_array() || types.empty()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, path + ".params.tensor_types",
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".params.tensor_types",
              "expected a non-empty tensor type array");
     }
     std::vector<std::string> tensor_types;
     tensor_types.reserve(types.size());
     for (std::size_t index = 0; index < types.size(); ++index) {
       if (!types[index].is_string() || types[index].get_ref<const std::string&>().empty()) {
-        reject(LegacyAfeDecodeErrorCode::InvalidField,
+        reject(AfeMpkV2DecodeErrorCode::InvalidField,
                path + ".params.tensor_types[" + std::to_string(index) + "]",
                "expected a non-empty tensor dtype");
       }
       const std::string tensor_type = types[index].get<std::string>();
       if (tensor_type != "int8" && tensor_type != "bfloat16") {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                path + ".params.tensor_types[" + std::to_string(index) + "]",
                "legacy unpack carrier type is not registered");
       }
@@ -419,14 +414,14 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
     if (result.begin.size() != result.end.size() ||
         result.begin.size() != result.input_shape.size() ||
         result.begin.size() != result.output_shape.size()) {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
              "slice ranks disagree");
     }
     for (std::size_t index = 0; index < result.begin.size(); ++index) {
       if (result.begin[index] > result.end[index] ||
           result.end[index] > result.input_shape[index] ||
           result.end[index] - result.begin[index] != result.output_shape[index]) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                "slice bounds do not prove output shape");
       }
     }
@@ -445,7 +440,7 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
                                 required_bool(params, "cblock", path + ".params"),
                                 required_string(params, "frame_type", path + ".params")};
     if (result.frame_type != "int8" && result.frame_type != "bfloat16") {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.frame_type",
              "legacy detessellation frame type is not registered");
     }
@@ -458,7 +453,7 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
     DequantizeOpConfig result{required_string(params, "input_data_type", path + ".params"),
                               quantization(params, "channel_params", path + ".params")};
     if (result.input_dtype != "int8") {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.input_data_type",
              "legacy dequantization input must be exact int8");
     }
@@ -468,13 +463,13 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
     require_exact_keys(params, {}, path + ".config_params.params");
     return PassThroughOpConfig{};
   }
-  reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path, "unhandled exact operation kind");
+  reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path, "unhandled exact operation kind");
 }
 
 void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const std::string& path) {
   if (!op.input_shapes.empty()) {
     if (op.input_shapes.size() != op.inputs.size()) {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              path + ".config_params.params.input_shapes",
              "input shape count does not equal input node count");
     }
@@ -491,7 +486,7 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
     } else if (config.output_dtype == "float32") {
       merge_dtype(data.values[op.inputs.front()], "bfloat16", path);
     } else {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path,
              "legacy cast_transform has an unsupported exact dtype transition");
     }
     break;
@@ -626,38 +621,37 @@ void validate_dense_byte_equations(const ModelExecutionPlanData& data) {
     }
     const auto expected = dense_bytes(*value.logical_shape, *value.logical_dtype);
     if (!expected.has_value()) {
-      reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
              "$.values[" + std::to_string(value.id) + "]",
              "unsupported or overflowing dense byte equation for value '" + value.name + "'");
     }
     if (*expected != value.required_bytes) {
       reject(
-          LegacyAfeDecodeErrorCode::ValueSizeMismatch, "$.values[" + std::to_string(value.id) + "]",
+          AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.values[" + std::to_string(value.id) + "]",
           "dense byte equation disagrees for value '" + value.name + "': expected " +
               std::to_string(*expected) + ", MPK declares " + std::to_string(value.required_bytes));
     }
   }
 }
 
-void lower_read_expressions(ModelExecutionPlanData& data,
-                            std::vector<LegacyAfeProofFact>* proof) {
+void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2ProofFact>* proof) {
   for (const auto& op : data.ops) {
     if (op.kind == OpKind::Unpack) {
       if (op.inputs.size() != 1U || op.outputs.empty()) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "$.ops[" + std::to_string(op.id) + "]",
                "unpack read expression requires one carrier and at least one view");
       }
       const auto& source = data.values[op.inputs.front()];
       if (source.read_expression.has_value()) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "$.ops[" + std::to_string(op.id) + "]",
                "unpack carrier must already be a materialized root buffer");
       }
       const auto& config = std::get<UnpackOpConfig>(op.config);
       if (config.tensor_types.size() != op.outputs.size() ||
           config.tensor_shapes.size() != op.outputs.size()) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "$.ops[" + std::to_string(op.id) + "]",
                "unpack read-expression arity is inconsistent");
       }
@@ -671,22 +665,20 @@ void lower_read_expressions(ModelExecutionPlanData& data,
                                  : std::nullopt;
         if (!strides.has_value() || offset > source.required_bytes ||
             output.required_bytes > source.required_bytes - offset) {
-          reject(LegacyAfeDecodeErrorCode::ValueSizeMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
+          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                  "unpack view does not fit its exact packed carrier");
         }
         output.read_expression = ReadExpression{source.id, offset, *strides};
         if (proof) {
-          proof->push_back(
-              {"read[" + std::to_string(output.id) + "]",
-               "unpack lowers to root value '" + source.name + "' + " +
-                   std::to_string(offset) + " bytes; no runtime operation is scheduled"});
+          proof->push_back({"read[" + std::to_string(output.id) + "]",
+                            "unpack lowers to root value '" + source.name + "' + " +
+                                std::to_string(offset) +
+                                " bytes; no runtime operation is scheduled"});
         }
         offset += output.required_bytes;
       }
       if (offset != source.required_bytes) {
-        reject(LegacyAfeDecodeErrorCode::ValueSizeMismatch,
-               "$.ops[" + std::to_string(op.id) + "]",
+        reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
                "unpack views do not partition the exact packed carrier");
       }
       continue;
@@ -694,7 +686,7 @@ void lower_read_expressions(ModelExecutionPlanData& data,
 
     if (op.kind == OpKind::Slice) {
       if (op.inputs.size() != 1U || op.outputs.size() != 1U) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "$.ops[" + std::to_string(op.id) + "]",
                "slice read expression requires one input and one output");
       }
@@ -711,18 +703,17 @@ void lower_read_expressions(ModelExecutionPlanData& data,
         strides = input.read_expression->stride_bytes;
       } else {
         const auto width = exact_element_width(input.required_bytes, config.input_shape);
-        const auto dense_strides = width.has_value()
-                                       ? contiguous_stride_bytes(config.input_shape, *width)
-                                       : std::nullopt;
+        const auto dense_strides =
+            width.has_value() ? contiguous_stride_bytes(config.input_shape, *width) : std::nullopt;
         if (!dense_strides.has_value()) {
-          reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                  "$.ops[" + std::to_string(op.id) + "]",
                  "slice input has no exact dense carrier stride");
         }
         strides = *dense_strides;
       }
       if (strides.size() != config.begin.size()) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "$.ops[" + std::to_string(op.id) + "]",
                "slice input view rank disagrees with its byte strides");
       }
@@ -730,24 +721,22 @@ void lower_read_expressions(ModelExecutionPlanData& data,
         const auto begin = static_cast<std::uint64_t>(config.begin[axis]);
         const auto stride = static_cast<std::uint64_t>(strides[axis]);
         if (begin != 0U && stride > std::numeric_limits<std::uint64_t>::max() / begin) {
-          reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
-                 "slice read-expression offset overflows");
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.ops[" + std::to_string(op.id) + "]", "slice read-expression offset overflows");
         }
         const auto axis_offset = begin * stride;
         if (base_offset > std::numeric_limits<std::uint64_t>::max() - axis_offset) {
-          reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
-                 "$.ops[" + std::to_string(op.id) + "]",
-                 "slice read-expression offset overflows");
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.ops[" + std::to_string(op.id) + "]", "slice read-expression offset overflows");
         }
         base_offset += axis_offset;
       }
       output.read_expression = ReadExpression{root, base_offset, std::move(strides)};
       if (proof) {
-        proof->push_back(
-            {"read[" + std::to_string(output.id) + "]",
-             "slice composes to root value '" + data.values[root].name + "' + " +
-                 std::to_string(base_offset) + " bytes; no runtime operation is scheduled"});
+        proof->push_back({"read[" + std::to_string(output.id) + "]",
+                          "slice composes to root value '" + data.values[root].name + "' + " +
+                              std::to_string(base_offset) +
+                              " bytes; no runtime operation is scheduled"});
       }
       continue;
     }
@@ -765,27 +754,28 @@ void lower_read_expressions(ModelExecutionPlanData& data,
   }
 }
 
-LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTopology& topology,
-                                  const std::string& source) {
-  LegacyAfeDecodeResult result;
+AfeMpkV2DecodeResult
+decode_impl(const std::string_view text,
+            const std::span<const MlaStageExecutableEvidence> executable_evidence,
+            const std::string& source) {
+  AfeMpkV2DecodeResult result;
   try {
     Json root = Json::parse(text.begin(), text.end(), nullptr, false);
     if (root.is_discarded() || !root.is_object()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidJson, "$",
-             "manifest is not valid JSON object syntax");
+      reject(AfeMpkV2DecodeErrorCode::InvalidJson, "$", "manifest is not valid JSON object syntax");
     }
 
     ModelExecutionPlanData data;
     data.contract_version = required_string(root, "model_sdk_version", "$");
     if (data.contract_version != "2.0.0") {
-      reject(LegacyAfeDecodeErrorCode::UnsupportedContractVersion, "$.model_sdk_version",
-             "LegacyAfeMpkDecoder supports only exact contract version 2.0.0");
+      reject(AfeMpkV2DecodeErrorCode::UnsupportedContractVersion, "$.model_sdk_version",
+             "AfeMpkV2Decoder supports only exact contract version 2.0.0");
     }
     result.proof.push_back({"contract.version", "MPK $.model_sdk_version exactly equals '2.0.0'"});
 
     const auto& input_array = *required_member_ptr(root, "input_nodes", "$");
     if (!input_array.is_array() || input_array.empty()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, "$.input_nodes",
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, "$.input_nodes",
              "expected at least one model input");
     }
 
@@ -794,7 +784,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
       const auto& input = input_array[index];
       const std::string path = "$.input_nodes[" + std::to_string(index) + "]";
       if (!input.is_object()) {
-        reject(LegacyAfeDecodeErrorCode::InvalidField, path, "expected a node object");
+        reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a node object");
       }
       ValueSpec value;
       value.id = static_cast<ValueId>(data.values.size());
@@ -802,7 +792,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
       value.required_bytes =
           positive_u64(*required_member_ptr(input, "size", path), path + ".size");
       if (!value_by_name.emplace(value.name, value.id).second) {
-        reject(LegacyAfeDecodeErrorCode::DuplicateProducer, path + ".name",
+        reject(AfeMpkV2DecodeErrorCode::DuplicateProducer, path + ".name",
                "model input name has a duplicate producer");
       }
       data.model_inputs.push_back(value.id);
@@ -814,7 +804,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
 
     const auto& plugins = *required_member_ptr(root, "plugins", "$");
     if (!plugins.is_array() || plugins.empty()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidField, "$.plugins",
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, "$.plugins",
              "expected a non-empty plugin array");
     }
     std::vector<PluginRef> ordered;
@@ -824,12 +814,12 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
       const auto& plugin = plugins[index];
       const std::string path = "$.plugins[" + std::to_string(index) + "]";
       if (!plugin.is_object()) {
-        reject(LegacyAfeDecodeErrorCode::InvalidField, path, "expected a plugin object");
+        reject(AfeMpkV2DecodeErrorCode::InvalidField, path, "expected a plugin object");
       }
       const auto sequence =
           positive_u64(*required_member_ptr(plugin, "sequence", path), path + ".sequence");
       if (!sequences.emplace(sequence).second) {
-        reject(LegacyAfeDecodeErrorCode::DuplicateSequence, path + ".sequence",
+        reject(AfeMpkV2DecodeErrorCode::DuplicateSequence, path + ".sequence",
                "plugin sequence is duplicated");
       }
       ordered.push_back({sequence, &plugin, index});
@@ -839,7 +829,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
     });
     for (std::size_t index = 0; index < ordered.size(); ++index) {
       if (ordered[index].sequence != index + 1U) {
-        reject(LegacyAfeDecodeErrorCode::InvalidField,
+        reject(AfeMpkV2DecodeErrorCode::InvalidField,
                "$.plugins[" + std::to_string(ordered[index].manifest_index) + "].sequence",
                "plugin sequences must be contiguous starting at one");
       }
@@ -847,7 +837,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
 
     std::size_t mla_count = 0U;
     std::size_t pass_count = 0U;
-    std::size_t mla_op_index = 0U;
+    std::vector<std::size_t> mla_op_indices;
     std::size_t pass_op_index = 0U;
     std::unordered_set<std::string> operation_names;
     for (const auto& ordered_plugin : ordered) {
@@ -855,18 +845,31 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
       const std::string path = "$.plugins[" + std::to_string(ordered_plugin.manifest_index) + "]";
       const std::string name = required_string(plugin, "name", path);
       if (!operation_names.emplace(name).second) {
-        reject(LegacyAfeDecodeErrorCode::InvalidField, path + ".name",
+        reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".name",
                "operation name is duplicated");
       }
       const std::string processor = required_string(plugin, "processor", path);
       if (required_string(plugin, "type", path) != "sgpProcess") {
-        reject(LegacyAfeDecodeErrorCode::InvalidField, path + ".type",
+        reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".type",
                "legacy static-plan plugin must be exactly 'sgpProcess'");
       }
       const auto& config = *required_member_ptr(plugin, "config_params", path);
       if (!config.is_object()) {
-        reject(LegacyAfeDecodeErrorCode::InvalidField, path + ".config_params",
+        reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params",
                "expected an object");
+      }
+      if (processor == "A65") {
+        const auto& resources = *required_member_ptr(plugin, "resources", path);
+        if (!resources.is_object()) {
+          reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".resources",
+                 "expected an object for the AFE A65 host module");
+        }
+        const auto executable = required_string(resources, "executable", path + ".resources");
+        reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, path + ".resources.executable",
+               "AFE processor='A65' classifies executable '" + executable +
+                   "' as a TVM host module; strict DMA-BUF execution requires the typed direct "
+                   "host-module ABI and never interprets it as an MLA ELF or dispatches it "
+                   "through ProcessTVM");
       }
       if (processor == "MLA") {
         require_exact_keys(config,
@@ -883,24 +886,24 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
           positive_u64(*required_member_ptr(config, "actual_batch_size", path + ".config_params"),
                        path + ".config_params.actual_batch_size");
       if (desired_batch != actual_batch) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path + ".config_params",
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
                "desired and actual batch sizes disagree");
       }
 
       std::string kernel;
       if (config.contains("kernel")) {
         if (!config.at("kernel").is_string()) {
-          reject(LegacyAfeDecodeErrorCode::InvalidField, path + ".config_params.kernel",
+          reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.kernel",
                  "expected a string");
         }
         kernel = config.at("kernel").get<std::string>();
       } else if (processor != "MLA") {
-        reject(LegacyAfeDecodeErrorCode::MissingRequiredField, path + ".config_params.kernel",
+        reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + ".config_params.kernel",
                "non-MLA plugin has no exact kernel token");
       }
       const auto descriptor = lookup_exact_kernel(data.contract_version, processor, kernel);
       if (!descriptor.has_value()) {
-        reject(LegacyAfeDecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
+        reject(AfeMpkV2DecodeErrorCode::UnsupportedKernel, path + ".config_params.kernel",
                "no exact registry entry for ('" + data.contract_version + "', '" + processor +
                    "', '" + kernel + "')");
       }
@@ -908,7 +911,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
       const auto input_nodes = nodes(plugin, "input_nodes", path);
       const auto output_nodes = nodes(plugin, "output_nodes", path);
       if (!exact_kernel_arity_is_valid(*descriptor, input_nodes.size(), output_nodes.size())) {
-        reject(LegacyAfeDecodeErrorCode::InvalidKernelArity, path,
+        reject(AfeMpkV2DecodeErrorCode::InvalidKernelArity, path,
                "node arity violates the exact kernel registry entry");
       }
 
@@ -922,12 +925,12 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
       for (std::size_t index = 0; index < input_nodes.size(); ++index) {
         const auto found = value_by_name.find(input_nodes[index].name);
         if (found == value_by_name.end()) {
-          reject(LegacyAfeDecodeErrorCode::MissingProducer,
+          reject(AfeMpkV2DecodeErrorCode::MissingProducer,
                  path + ".input_nodes[" + std::to_string(index) + "].name",
                  "no earlier exact producer for tensor '" + input_nodes[index].name + "'");
         }
         if (data.values[found->second].required_bytes != input_nodes[index].bytes) {
-          reject(LegacyAfeDecodeErrorCode::ValueSizeMismatch,
+          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
                  path + ".input_nodes[" + std::to_string(index) + "].size",
                  "consumer byte extent disagrees with exact producer for tensor '" +
                      input_nodes[index].name + "'");
@@ -940,7 +943,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
       if (op.kind != OpKind::Mla) {
         const auto& params_member = *required_member_ptr(config, "params", path + ".config_params");
         if (!params_member.is_object()) {
-          reject(LegacyAfeDecodeErrorCode::InvalidField, path + ".config_params.params",
+          reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.params",
                  "expected an object");
         }
         params = &params_member;
@@ -952,13 +955,13 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
           shapes(*params, "output_shapes", path + ".config_params.params", shape_lists_required);
       if ((!op.input_shapes.empty() && op.input_shapes.size() != input_nodes.size()) ||
           (!op.output_shapes.empty() && op.output_shapes.size() != output_nodes.size())) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                "typed shape-list arity disagrees with MPK node arity");
       }
       op.config = parse_typed_config(op.kind, plugin, config, *params, path);
       if (op.kind == OpKind::Pack) {
         if (actual_batch != 1U) {
-          reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                  path + ".config_params.actual_batch_size",
                  "legacy Pack placement is supported only for exact batch one");
         }
@@ -967,21 +970,18 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
         pack.components.reserve(op.inputs.size());
         for (const auto input_id : op.inputs) {
           const auto input_bytes = data.values[input_id].required_bytes;
-          if (input_bytes >
-              std::numeric_limits<std::uint64_t>::max() - 15U) {
-            reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+          if (input_bytes > std::numeric_limits<std::uint64_t>::max() - 15U) {
+            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                    path + ".config_params.params.input_shapes",
                    "legacy Pack component alignment overflows");
           }
           const auto stored_bytes = (input_bytes + 15U) & ~std::uint64_t{15U};
-          if (parent_offset >
-              std::numeric_limits<std::uint64_t>::max() - stored_bytes) {
-            reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+          if (parent_offset > std::numeric_limits<std::uint64_t>::max() - stored_bytes) {
+            reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                    path + ".config_params.params.input_shapes",
                    "legacy Pack parent placement overflows");
           }
-          pack.components.push_back(
-              {input_id, parent_offset, stored_bytes});
+          pack.components.push_back({input_id, parent_offset, stored_bytes});
           parent_offset += stored_bytes;
         }
       }
@@ -990,14 +990,14 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
         if (unpack.tensor_types.size() != output_nodes.size() ||
             unpack.tensor_shapes.size() != output_nodes.size() ||
             unpack.tensor_shapes != op.output_shapes) {
-          reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                  "unpack tensor metadata disagrees with output nodes/shapes");
         }
         for (std::size_t index = 0; index < output_nodes.size(); ++index) {
           const auto expected =
               dense_bytes(unpack.tensor_shapes[index], unpack.tensor_types[index]);
           if (!expected.has_value() || *expected != output_nodes[index].bytes) {
-            reject(LegacyAfeDecodeErrorCode::ValueSizeMismatch,
+            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
                    path + ".output_nodes[" + std::to_string(index) + "].size",
                    "unpack carrier byte equation disagrees with MPK output size");
           }
@@ -1010,14 +1010,14 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
             slice_config.begin.size() != slice_config.end.size() ||
             slice_config.begin.size() != slice_config.input_shape.size() ||
             slice_config.end.size() != slice_config.output_shape.size()) {
-          reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                  "slice typed fields are internally inconsistent");
         }
       }
       if (op.kind == OpKind::PassThrough) {
         for (std::size_t index = 0; index < input_nodes.size(); ++index) {
           if (input_nodes[index].bytes != output_nodes[index].bytes) {
-            reject(LegacyAfeDecodeErrorCode::ValueSizeMismatch,
+            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
                    path + ".output_nodes[" + std::to_string(index) + "].size",
                    "PassThrough must preserve each exact byte extent");
           }
@@ -1030,7 +1030,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
         const ValueId value_id = static_cast<ValueId>(data.values.size() + index);
         if (value_by_name.contains(output_nodes[index].name) ||
             !pending_output_names.emplace(output_nodes[index].name).second) {
-          reject(LegacyAfeDecodeErrorCode::DuplicateProducer,
+          reject(AfeMpkV2DecodeErrorCode::DuplicateProducer,
                  path + ".output_nodes[" + std::to_string(index) + "].name",
                  "tensor '" + output_nodes[index].name + "' has duplicate producers");
         }
@@ -1049,7 +1049,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
                                   "', '" + kernel + "') resolves plugin '" + name + "'"});
       if (op.kind == OpKind::Mla) {
         ++mla_count;
-        mla_op_index = data.ops.size();
+        mla_op_indices.push_back(data.ops.size());
       }
       if (op.kind == OpKind::PassThrough) {
         ++pass_count;
@@ -1059,60 +1059,97 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
     }
 
     if (mla_count == 0U) {
-      reject(LegacyAfeDecodeErrorCode::MissingMlaStage, "$.plugins",
+      reject(AfeMpkV2DecodeErrorCode::MissingMlaStage, "$.plugins",
              "no exact MLA operation exists");
     }
-    if (mla_count != 1U) {
-      reject(LegacyAfeDecodeErrorCode::MultipleMlaStages, "$.plugins",
-             "legacy EVO decoder accepts exactly one MLA stage");
-    }
     if (pass_count == 0U) {
-      reject(LegacyAfeDecodeErrorCode::MissingPublicationStage, "$.plugins",
+      reject(AfeMpkV2DecodeErrorCode::MissingPublicationStage, "$.plugins",
              "no exact PassThrough publication operation exists");
     }
     if (pass_count != 1U || pass_op_index + 1U != data.ops.size()) {
-      reject(LegacyAfeDecodeErrorCode::InvalidPublicationStage, "$.plugins",
+      reject(AfeMpkV2DecodeErrorCode::InvalidPublicationStage, "$.plugins",
              "PassThrough must be the unique terminal operation");
     }
 
-    const auto& mla = data.ops[mla_op_index];
-    const auto topology_validation =
-        reconcile_mla_elf_io_topology_strict(topology, mla.inputs.size(), mla.outputs.size());
-    if (!topology_validation.ok) {
-      const bool mismatch =
-          topology_validation.code == MlaElfIoTopologyError::IfmPortCountMismatch ||
-          topology_validation.code == MlaElfIoTopologyError::OfmPortCountMismatch;
-      reject(mismatch ? LegacyAfeDecodeErrorCode::ElfTopologyMismatch
-                      : LegacyAfeDecodeErrorCode::ElfTopologyInvalid,
-             "$.plugins[" + std::to_string(mla_op_index) + "]",
-             topology_error_detail(topology_validation));
+    if (executable_evidence.size() != mla_op_indices.size()) {
+      reject(executable_evidence.size() < mla_op_indices.size()
+                 ? AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence
+                 : AfeMpkV2DecodeErrorCode::UnexpectedMlaExecutableEvidence,
+             "$.plugins",
+             "MLA executable evidence cardinality does not equal exact MLA operation count");
     }
+    std::vector<bool> evidence_used(executable_evidence.size(), false);
+    for (std::size_t stage_index = 0; stage_index < mla_op_indices.size(); ++stage_index) {
+      const auto mla_op_index = mla_op_indices[stage_index];
+      const auto& mla = data.ops[mla_op_index];
+      const auto& config = std::get<MlaOpConfig>(mla.config);
+      const MlaStageExecutableEvidence* evidence = nullptr;
+      std::size_t evidence_index = 0U;
+      for (std::size_t index = 0; index < executable_evidence.size(); ++index) {
+        const auto& candidate = executable_evidence[index];
+        if (candidate.logical_stage_id != mla.name || candidate.executable != config.executable) {
+          continue;
+        }
+        if (evidence != nullptr) {
+          reject(AfeMpkV2DecodeErrorCode::AmbiguousMlaExecutableEvidence,
+                 "$.plugins[" + std::to_string(mla_op_index) + "].resources.executable",
+                 "more than one ELF evidence item matches MLA stage '" + mla.name + "'");
+        }
+        evidence = &candidate;
+        evidence_index = index;
+      }
+      if (!evidence) {
+        reject(AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence,
+               "$.plugins[" + std::to_string(mla_op_index) + "].resources.executable",
+               "no ELF evidence matches both logical stage '" + mla.name + "' and executable '" +
+                   config.executable + "'");
+      }
+      evidence_used[evidence_index] = true;
+      const auto& topology = evidence->topology;
+      const auto topology_validation =
+          reconcile_mla_elf_io_topology_strict(topology, mla.inputs.size(), mla.outputs.size());
+      if (!topology_validation.ok) {
+        const bool mismatch =
+            topology_validation.code == MlaElfIoTopologyError::IfmPortCountMismatch ||
+            topology_validation.code == MlaElfIoTopologyError::OfmPortCountMismatch;
+        reject(mismatch ? AfeMpkV2DecodeErrorCode::ElfTopologyMismatch
+                        : AfeMpkV2DecodeErrorCode::ElfTopologyInvalid,
+               "$.plugins[" + std::to_string(mla_op_index) + "]",
+               topology_error_detail(topology_validation));
+      }
 
-    for (std::size_t index = 0; index < mla.inputs.size(); ++index) {
-      const std::string symbol =
-          topology.monolithic_ifm ? "data.ifm.b0" : topology.ifm_symbol_names.at(index);
-      const auto& value = data.values[mla.inputs[index]];
-      data.backend_ports.push_back({0U, BackendPortDirection::Input, index, symbol, value.id,
-                                    value.required_bytes, kLegacyEvoCmaRegionAlignmentBytes,
-                                    BackendPortAlignmentAuthority::LegacyPolicy,
-                                    BackendPortAccess::ReadOnly});
-      result.proof.push_back({"MLA.IFM[" + std::to_string(index) + "]",
-                              "ELF symbol '" + symbol + "' and MPK MLA input[" +
-                                  std::to_string(index) +
-                                  "] agree; 4096-byte alignment is explicit legacy CMA policy"});
+      result.proof.push_back(
+          {"MLA[" + std::to_string(stage_index) + "].identity",
+           "MPK logical stage '" + mla.name + "' and executable '" + config.executable +
+               "' exactly select one ELF topology; no filename/order inference"});
+      for (std::size_t index = 0; index < mla.inputs.size(); ++index) {
+        const std::string symbol =
+            topology.monolithic_ifm ? "data.ifm.b0" : topology.ifm_symbol_names.at(index);
+        const auto& value = data.values[mla.inputs[index]];
+        data.backend_ports.push_back(
+            {stage_index, BackendPortDirection::Input, index, symbol, value.id,
+             value.required_bytes, kLegacyEvoCmaRegionAlignmentBytes,
+             BackendPortAlignmentAuthority::LegacyPolicy, BackendPortAccess::ReadOnly});
+        result.proof.push_back(
+            {"MLA[" + std::to_string(stage_index) + "].IFM[" + std::to_string(index) + "]",
+             "ELF symbol '" + symbol + "' and exact stage MPK input agree"});
+      }
+      for (std::size_t index = 0; index < mla.outputs.size(); ++index) {
+        const std::string symbol =
+            topology.monolithic_ofm ? "data.ofm.b0" : topology.ofm_symbol_names.at(index);
+        const auto& value = data.values[mla.outputs[index]];
+        data.backend_ports.push_back(
+            {stage_index, BackendPortDirection::Output, index, symbol, value.id,
+             value.required_bytes, kLegacyEvoCmaRegionAlignmentBytes,
+             BackendPortAlignmentAuthority::LegacyPolicy, BackendPortAccess::WriteOnly});
+        result.proof.push_back(
+            {"MLA[" + std::to_string(stage_index) + "].OFM[" + std::to_string(index) + "]",
+             "ELF symbol '" + symbol + "' and exact stage MPK output agree"});
+      }
     }
-    for (std::size_t index = 0; index < mla.outputs.size(); ++index) {
-      const std::string symbol =
-          topology.monolithic_ofm ? "data.ofm.b0" : topology.ofm_symbol_names.at(index);
-      const auto& value = data.values[mla.outputs[index]];
-      data.backend_ports.push_back({0U, BackendPortDirection::Output, index, symbol, value.id,
-                                    value.required_bytes, kLegacyEvoCmaRegionAlignmentBytes,
-                                    BackendPortAlignmentAuthority::LegacyPolicy,
-                                    BackendPortAccess::WriteOnly});
-      result.proof.push_back({"MLA.OFM[" + std::to_string(index) + "]",
-                              "ELF symbol '" + symbol + "' and MPK MLA output[" +
-                                  std::to_string(index) +
-                                  "] agree; 4096-byte alignment is explicit legacy CMA policy"});
+    if (std::find(evidence_used.begin(), evidence_used.end(), false) != evidence_used.end()) {
+      reject(AfeMpkV2DecodeErrorCode::UnexpectedMlaExecutableEvidence, "$.plugins",
+             "an ELF evidence item is not selected by any exact MLA stage identity");
     }
 
     const auto& publication = data.ops[pass_op_index];
@@ -1135,7 +1172,7 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
     }
     for (const auto& value : data.values) {
       if (!consumed_values.contains(value.id) && !public_values.contains(value.id)) {
-        reject(LegacyAfeDecodeErrorCode::ConfigurationMismatch,
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
                "$.values[" + std::to_string(value.id) + "]",
                "value '" + value.name + "' is neither consumed nor publicly published");
       }
@@ -1148,53 +1185,108 @@ LegacyAfeDecodeResult decode_impl(const std::string_view text, const MlaElfIoTop
     std::string plan_error;
     result.plan = ModelExecutionPlan::create(std::move(data), &plan_error);
     if (!result.plan.has_value()) {
-      reject(LegacyAfeDecodeErrorCode::PlanValidationFailed, "$", plan_error);
+      reject(AfeMpkV2DecodeErrorCode::PlanValidationFailed, "$", plan_error);
     }
     return result;
   } catch (const DecodeAbort& failure) {
     result.plan.reset();
-    result.error = LegacyAfeDecodeError{failure.code, source, failure.path, failure.detail};
+    result.error = AfeMpkV2DecodeError{failure.code, source, failure.path, failure.detail};
     return result;
   } catch (const std::exception& failure) {
     result.plan.reset();
     result.error =
-        LegacyAfeDecodeError{LegacyAfeDecodeErrorCode::InvalidJson, source, "$", failure.what()};
+        AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::InvalidJson, source, "$", failure.what()};
     return result;
   } catch (...) {
     result.plan.reset();
-    result.error = LegacyAfeDecodeError{LegacyAfeDecodeErrorCode::InvalidJson, source, "$",
-                                        "unknown decoder failure"};
+    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::InvalidJson, source, "$",
+                                       "unknown decoder failure"};
     return result;
   }
 }
 
 } // namespace
 
-LegacyAfeDecodeResult LegacyAfeMpkDecoder::decode_json(const std::string_view mpk_json,
-                                                       const MlaElfIoTopology& elf_topology,
-                                                       std::string source_label) const noexcept {
-  return decode_impl(mpk_json, elf_topology, source_label);
+AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_json(const std::string_view mpk_json,
+                                                  const MlaElfIoTopology& elf_topology,
+                                                  std::string source_label) const noexcept {
+  // Compatibility is intentionally unambiguous: discover the sole MLA identity
+  // from the manifest, then route through the exact multi-evidence decoder.
+  try {
+    const Json root = Json::parse(mpk_json.begin(), mpk_json.end());
+    const auto& plugins = root.at("plugins");
+    std::vector<MlaStageExecutableEvidence> evidence;
+    for (const auto& plugin : plugins) {
+      if (plugin.value("processor", std::string{}) != "MLA") {
+        continue;
+      }
+      evidence.push_back({plugin.at("name").get<std::string>(),
+                          plugin.at("resources").at("executable").get<std::string>(),
+                          elf_topology});
+    }
+    if (evidence.size() != 1U) {
+      AfeMpkV2DecodeResult result;
+      result.error = AfeMpkV2DecodeError{
+          AfeMpkV2DecodeErrorCode::MultipleMlaStages, std::move(source_label), "$.plugins",
+          "single-topology compatibility overload requires exactly one MLA stage"};
+      return result;
+    }
+    return decode_impl(mpk_json, evidence, source_label);
+  } catch (const std::exception& failure) {
+    AfeMpkV2DecodeResult result;
+    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::InvalidJson,
+                                       std::move(source_label), "$", failure.what()};
+    return result;
+  }
 }
 
-LegacyAfeDecodeResult
-LegacyAfeMpkDecoder::decode_file(const std::filesystem::path& mpk_manifest,
-                                 const MlaElfIoTopology& elf_topology) const noexcept {
+AfeMpkV2DecodeResult
+AfeMpkV2Decoder::decode_json(const std::string_view mpk_json,
+                             const std::span<const MlaStageExecutableEvidence> executable_evidence,
+                             std::string source_label) const noexcept {
+  return decode_impl(mpk_json, executable_evidence, source_label);
+}
+
+AfeMpkV2DecodeResult
+AfeMpkV2Decoder::decode_file(const std::filesystem::path& mpk_manifest,
+                             const MlaElfIoTopology& elf_topology) const noexcept {
   std::ifstream input(mpk_manifest, std::ios::binary);
   if (!input.is_open()) {
-    LegacyAfeDecodeResult result;
-    result.error = LegacyAfeDecodeError{LegacyAfeDecodeErrorCode::IoError, mpk_manifest.string(),
-                                        "$", "cannot open MPK manifest"};
+    AfeMpkV2DecodeResult result;
+    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                       "cannot open MPK manifest"};
     return result;
   }
   std::ostringstream contents;
   contents << input.rdbuf();
   if (!input.good() && !input.eof()) {
-    LegacyAfeDecodeResult result;
-    result.error = LegacyAfeDecodeError{LegacyAfeDecodeErrorCode::IoError, mpk_manifest.string(),
-                                        "$", "cannot read MPK manifest"};
+    AfeMpkV2DecodeResult result;
+    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                       "cannot read MPK manifest"};
     return result;
   }
-  return decode_impl(contents.str(), elf_topology, mpk_manifest.string());
+  return decode_json(contents.str(), elf_topology, mpk_manifest.string());
+}
+
+AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_file(
+    const std::filesystem::path& mpk_manifest,
+    const std::span<const MlaStageExecutableEvidence> executable_evidence) const noexcept {
+  std::ifstream input(mpk_manifest, std::ios::binary);
+  if (!input.is_open()) {
+    AfeMpkV2DecodeResult result;
+    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                       "cannot open MPK manifest"};
+    return result;
+  }
+  std::ostringstream contents;
+  contents << input.rdbuf();
+  if (!input.good() && !input.eof()) {
+    AfeMpkV2DecodeResult result;
+    result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::IoError, mpk_manifest.string(), "$",
+                                       "cannot read MPK manifest"};
+    return result;
+  }
+  return decode_impl(contents.str(), executable_evidence, mpk_manifest.string());
 }
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract

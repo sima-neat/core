@@ -9,6 +9,7 @@
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/RouteGraph.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
+#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 #include "pipeline/internal/DmabufEligibility.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
@@ -221,6 +222,8 @@ private:
   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;
   std::optional<simaai::neat::pipeline_internal::sima::static_contract::ModelExecutionPlan>
       dmabuf_plan_execution_plan_;
+  std::optional<simaai::neat::pipeline_internal::sima::static_contract::FrameSlotArenaPlan>
+      dmabuf_frame_arena_plan_;
   simaai::neat::pipeline_internal::MemoryBackendDecision memory_backend_decision_;
   mutable std::optional<simaai::neat::pipeline_internal::sima::RouteGraph> route_graph_;
   std::optional<bool> processcvu_preproc_single_output_handoff_;

@@ -3250,7 +3250,8 @@ main_route_joined_input_identities(const Model& model) {
 
   const auto& pack = internal::ModelAccess::pack(model);
   if (const auto& mpk_opt = pack.mpk_contract(); mpk_opt.has_value()) {
-    if (const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_opt)) {
+    if (const auto* mla_stage =
+            pipeline_internal::sima::get_first_mla_stage_io_contract(*mpk_opt)) {
       const auto boundary_inputs =
           pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(*mpk_opt);
       const auto published_outputs =
@@ -4724,7 +4725,7 @@ struct Model::Impl {
       if (!mpk_opt.has_value()) {
         // fall through to rendered infer-block fallback below
       } else if (const auto* mla_stage =
-                     pipeline_internal::sima::get_mla_stage_io_contract(*mpk_opt)) {
+                     pipeline_internal::sima::get_first_mla_stage_io_contract(*mpk_opt)) {
         const auto boundary_inputs =
             pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(*mpk_opt);
         const auto published_outputs =

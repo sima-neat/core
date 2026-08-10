@@ -2270,7 +2270,7 @@ std::optional<std::size_t> plugin_index_from_pointer(const MpkContract& contract
 }
 
 bool mla_outputs_are_quantized_like(const MpkContract& contract) {
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
+  const auto* mla_stage = get_last_mla_stage_io_contract(contract);
   if (!mla_stage) {
     return false;
   }
@@ -2293,7 +2293,7 @@ bool mla_outputs_are_quantized_like(const MpkContract& contract) {
 std::optional<std::pair<std::size_t, std::size_t>>
 mla_and_terminal_positions(const MpkContract& contract, const MpkPluginIoContract* terminal_stage,
                            std::string* error_message) {
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
+  const auto* mla_stage = get_last_mla_stage_io_contract(contract);
   if (!mla_stage) {
     set_error(error_message,
               "boxdecode model-managed facts require an upstream MLA stage contract");
@@ -2395,7 +2395,7 @@ resolve_model_managed_boxdecode_route_flags_from_mpk(const MpkContract& contract
     flags.quant_needed = flags.quant_needed || stage_is_dequant_like_local(plugin);
   }
 
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
+  const auto* mla_stage = get_last_mla_stage_io_contract(contract);
   if (!mla_stage) {
     set_error(error_message,
               "boxdecode model-managed facts require an upstream MLA stage contract");
@@ -2429,7 +2429,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   };
   set_error(error_message, {});
 
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
+  const auto* mla_stage = get_last_mla_stage_io_contract(contract);
   if (!mla_stage) {
     return fail("boxdecode model-managed contract requires an upstream MLA stage contract");
   }

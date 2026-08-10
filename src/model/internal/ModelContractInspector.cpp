@@ -14,6 +14,7 @@
 #include <optional>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace simaai::neat::internal {
 namespace {
@@ -417,17 +418,18 @@ bool stage_group_selected(const ModelContractStageFilter filter, const ModelStag
   return true;
 }
 
-bool raw_plugin_selected(const ModelContractStageFilter filter, const std::size_t plugin_index,
-                         const std::optional<std::size_t>& mla_plugin_index) {
+bool raw_plugin_selected(const ModelContractStageFilter filter, const std::size_t plugin_rank,
+                         const std::optional<std::size_t>& first_mla_rank,
+                         const std::optional<std::size_t>& last_mla_rank, const bool is_mla) {
   switch (filter) {
   case ModelContractStageFilter::All:
     return true;
   case ModelContractStageFilter::Pre:
-    return !mla_plugin_index.has_value() || plugin_index < *mla_plugin_index;
+    return !first_mla_rank.has_value() || plugin_rank < *first_mla_rank;
   case ModelContractStageFilter::Infer:
-    return mla_plugin_index.has_value() && plugin_index == *mla_plugin_index;
+    return is_mla;
   case ModelContractStageFilter::Post:
-    return mla_plugin_index.has_value() && plugin_index > *mla_plugin_index;
+    return last_mla_rank.has_value() && plugin_rank > *last_mla_rank;
   }
   return true;
 }
@@ -770,9 +772,18 @@ void append_raw_mpk_graph(std::ostringstream& oss, const ModelPack& pack,
   const MpkContract& contract = *maybe_contract;
   const auto ordered = pipeline_internal::sima::plugins_in_execution_order(contract);
   const ParsedModelInfo parsed = parse_model_from_pack(pack);
-  std::optional<std::size_t> mla_plugin_index;
-  if (parsed.mla_plugin_index >= 0) {
-    mla_plugin_index = static_cast<std::size_t>(parsed.mla_plugin_index);
+  std::unordered_set<std::size_t> mla_plugin_indices(parsed.mla_plugin_indices.begin(),
+                                                     parsed.mla_plugin_indices.end());
+  std::optional<std::size_t> first_mla_rank;
+  std::optional<std::size_t> last_mla_rank;
+  for (std::size_t rank = 0; rank < ordered.size(); ++rank) {
+    if (mla_plugin_indices.count(ordered[rank]) == 0U) {
+      continue;
+    }
+    if (!first_mla_rank.has_value()) {
+      first_mla_rank = rank;
+    }
+    last_mla_rank = rank;
   }
 
   std::unordered_map<std::size_t, std::vector<const MpkContractEdge*>> incoming;
@@ -793,7 +804,8 @@ void append_raw_mpk_graph(std::ostringstream& oss, const ModelPack& pack,
       continue;
     }
     const auto& plugin = contract.plugins[plugin_index];
-    if (!raw_plugin_selected(options.stage_filter, plugin_index, mla_plugin_index)) {
+    if (!raw_plugin_selected(options.stage_filter, rank, first_mla_rank, last_mla_rank,
+                             mla_plugin_indices.count(plugin_index) > 0U)) {
       continue;
     }
     if (!matches_plugin_filters(options.plugin_filters,

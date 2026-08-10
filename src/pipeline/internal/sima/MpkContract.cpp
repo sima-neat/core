@@ -6411,23 +6411,39 @@ const MpkPluginIoContract* get_stage_io_contract(const MpkContract& contract,
 }
 
 const MpkPluginIoContract* get_mla_stage_io_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla_stage = nullptr;
-  for (const auto& plugin : contract.plugins) {
+  const auto stages = get_mla_stage_io_contracts(contract);
+  return stages.size() == 1U ? stages.front() : nullptr;
+}
+
+const MpkPluginIoContract* get_first_mla_stage_io_contract(const MpkContract& contract) {
+  const auto stages = get_mla_stage_io_contracts(contract);
+  return stages.empty() ? nullptr : stages.front();
+}
+
+const MpkPluginIoContract* get_last_mla_stage_io_contract(const MpkContract& contract) {
+  const auto stages = get_mla_stage_io_contracts(contract);
+  return stages.empty() ? nullptr : stages.back();
+}
+
+std::vector<const MpkPluginIoContract*> get_mla_stage_io_contracts(const MpkContract& contract) {
+  std::vector<const MpkPluginIoContract*> stages;
+  for (const auto index : plugins_in_order_internal(contract)) {
+    if (index >= contract.plugins.size()) {
+      continue;
+    }
+    const auto& plugin = contract.plugins[index];
     const bool by_processor = lower_copy_local(plugin.processor) == "mla";
     const bool by_kernel = canonical_token_local(plugin.kernel) == "mla";
     if (!(by_processor || by_kernel)) {
       continue;
     }
-    if (mla_stage != nullptr) {
-      return nullptr;
-    }
-    mla_stage = &plugin;
+    stages.push_back(&plugin);
   }
-  return mla_stage;
+  return stages;
 }
 
 const MpkPluginIoContract* get_mla_unpack_stage_io_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_last_mla_stage_io_contract(contract);
   if (!mla) {
     return nullptr;
   }
@@ -6509,7 +6525,7 @@ const MpkPluginIoContract* get_mla_unpack_stage_io_contract(const MpkContract& c
 }
 
 bool mla_consumer_keeps_distinct_physical_inputs(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_first_mla_stage_io_contract(contract);
   if (!mla || mla->input_tensors.size() <= 1U) {
     return false;
   }
@@ -6638,7 +6654,7 @@ const MpkTensorContract* pick_stage_input_for_binding_local(const MpkPluginIoCon
 
 std::vector<MpkTensorContract>
 get_mla_boundary_physical_inputs_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_first_mla_stage_io_contract(contract);
   if (!mla) {
     return {};
   }
@@ -6854,7 +6870,7 @@ get_mla_boundary_physical_inputs_contract(const MpkContract& contract) {
 
 std::vector<MpkTensorContract>
 get_mla_boundary_logical_inputs_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* mla = get_first_mla_stage_io_contract(contract);
   if (!mla) {
     return {};
   }
@@ -7143,7 +7159,7 @@ resolve_mla_boundary_tensor_views_local(const MpkContract& contract,
 }
 
 const std::vector<MpkTensorContract>* get_mla_input_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* stage = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* stage = get_first_mla_stage_io_contract(contract);
   if (!stage) {
     return nullptr;
   }
@@ -7151,7 +7167,7 @@ const std::vector<MpkTensorContract>* get_mla_input_contract(const MpkContract& 
 }
 
 const std::vector<MpkTensorContract>* get_mla_outputs_contract(const MpkContract& contract) {
-  const MpkPluginIoContract* stage = get_mla_stage_io_contract(contract);
+  const MpkPluginIoContract* stage = get_last_mla_stage_io_contract(contract);
   if (!stage) {
     return nullptr;
   }
@@ -7173,7 +7189,7 @@ get_mla_boundary_physical_outputs_contract(const MpkContract& contract) {
 std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContract& contract) {
   auto build_outputs = [&](const bool publish_transport_boundary_views) {
     std::vector<MpkTensorContract> out;
-    const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+    const MpkPluginIoContract* mla = get_last_mla_stage_io_contract(contract);
     if (!mla) {
       return out;
     }
@@ -7491,7 +7507,7 @@ std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContr
 std::vector<MpkTensorContract> get_mla_logical_outputs_contract(const MpkContract& contract) {
   auto build_outputs = [&](const bool publish_transport_boundary_views) {
     std::vector<MpkTensorContract> out;
-    const MpkPluginIoContract* mla = get_mla_stage_io_contract(contract);
+    const MpkPluginIoContract* mla = get_last_mla_stage_io_contract(contract);
     if (!mla) {
       return out;
     }
