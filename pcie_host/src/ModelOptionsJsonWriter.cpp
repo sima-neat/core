@@ -137,9 +137,12 @@ ordered_json preprocess_json(const ModelOptions& opt) {
     pre["input_max"] = std::move(input_max);
   }
 
-  if (p.resize.enable == AutoFlag::On || p.resize.mode != ResizeMode::Letterbox ||
+  if (p.resize.enable != AutoFlag::Auto || p.resize.mode != ResizeMode::Letterbox ||
       p.resize.pad_value != 114 || p.resize.scaling_type != "BILINEAR") {
     ordered_json resize = ordered_json::object();
+    if (p.resize.enable != AutoFlag::Auto) {
+      resize["enable"] = p.resize.enable == AutoFlag::On;
+    }
     resize["mode"] = resize_mode_token(p.resize.mode);
     resize["pad_value"] = p.resize.pad_value;
     resize["scaling_type"] = p.resize.scaling_type;

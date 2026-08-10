@@ -12,9 +12,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
-#include <cstring>
 #include <algorithm>
-#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -49,11 +47,8 @@ using simaai::neat::PCIeSrcOptions;
 using simaai::neat::PreprocessColorFormat;
 using simaai::neat::ResizeMode;
 
-constexpr int kStartupReadinessSeconds = 15;
 constexpr const char* kProgramName = "pcie-pipeline-builder";
 constexpr const char* kPcieSourceBufferName = "n0_pciesrc";
-constexpr const char* kSrcReadyMessage = "neat-pcie-src-pads-active";
-constexpr const char* kSinkReadyMessage = "neat-pcie-sink-started";
 
 volatile std::sig_atomic_t g_stop_requested = 0;
 
@@ -86,8 +81,6 @@ struct Status {
 
 struct ReadinessState {
   bool pipeline_armed = false;
-  bool src_ready = false;
-  bool sink_ready = false;
 
   bool ready() const {
     return pipeline_armed;
@@ -95,7 +88,7 @@ struct ReadinessState {
 
   std::string message() const {
     if (ready())
-      return "pipeline armed and ready for PCIe host";
+      return "pipeline armed for PCIe host connection";
     return "pipeline starting; waiting for GStreamer PLAYING";
   }
 };
@@ -375,8 +368,15 @@ void apply_preprocess_model_options(const nlohmann::json& preprocess, Model::Opt
   }
 
   if (const auto it = preprocess.find("resize"); it != preprocess.end()) {
-    reject_unknown_fields(*it, {"mode", "pad_value", "scaling_type"}, "preprocess.resize");
+    reject_unknown_fields(*it, {"enable", "mode", "pad_value", "scaling_type"},
+                          "preprocess.resize");
     opt->preprocess.resize.enable = AutoFlag::On;
+    if (const auto enable = it->find("enable"); enable != it->end()) {
+      if (!enable->is_boolean()) {
+        throw PciePipelineError("model_options", "preprocess.resize.enable must be a boolean");
+      }
+      opt->preprocess.resize.enable = enable->get<bool>() ? AutoFlag::On : AutoFlag::Off;
+    }
     if (it->contains("mode"))
       opt->preprocess.resize.mode =
           parse_resize_mode(json_string_field(*it, "mode", "preprocess.resize"));
@@ -851,36 +851,7 @@ public:
 
     ReadinessState readiness;
     readiness.pipeline_armed = true;
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::seconds(kStartupReadinessSeconds);
-
-    while (!g_stop_requested && !readiness.ready()) {
-      const auto now = std::chrono::steady_clock::now();
-      if (now >= deadline)
-        break;
-      const auto remaining_ms =
-          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-      const guint64 wait_ns =
-          static_cast<guint64>(std::max<long long>(1, std::min<long long>(250, remaining_ms))) *
-          GST_MSECOND;
-
-      GstMessage* msg = gst_bus_timed_pop_filtered(
-          bus_, wait_ns,
-          static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_ELEMENT | GST_MESSAGE_EOS));
-      if (!msg) {
-        readiness.pipeline_armed = readiness.pipeline_armed || pipeline_is_armed(pipeline_);
-        continue;
-      }
-      handle_startup_message(msg, &readiness);
-      gst_message_unref(msg);
-    }
-
-    if (g_stop_requested)
-      throw PciePipelineError("signal", "startup interrupted");
-    std::cout << "PCIe readiness: pipeline_armed=" << (readiness.pipeline_armed ? 1 : 0)
-              << " src_ready=" << (readiness.src_ready ? 1 : 0)
-              << " sink_ready=" << (readiness.sink_ready ? 1 : 0)
-              << " ready=" << (readiness.ready() ? 1 : 0) << std::endl;
+    std::cout << "PCIe readiness: pipeline_armed=1 ready=1" << std::endl;
     return readiness;
   }
 
@@ -916,30 +887,6 @@ public:
   }
 
 private:
-  static void handle_startup_message(GstMessage* msg, ReadinessState* readiness) {
-    const GstMessageType type = GST_MESSAGE_TYPE(msg);
-    if (type == GST_MESSAGE_ERROR)
-      throw PciePipelineError("gst_state", gst_error_message(msg));
-    if (type == GST_MESSAGE_EOS)
-      throw PciePipelineError("gst_state", "GStreamer pipeline reached EOS during startup");
-    if (type != GST_MESSAGE_ELEMENT)
-      return;
-
-    const GstStructure* structure = gst_message_get_structure(msg);
-    const char* name = structure ? gst_structure_get_name(structure) : nullptr;
-    if (!name)
-      return;
-    if (std::strcmp(name, kSrcReadyMessage) == 0) {
-      if (!readiness->src_ready)
-        std::cout << "PCIe readiness: source pads active" << std::endl;
-      readiness->src_ready = true;
-    } else if (std::strcmp(name, kSinkReadyMessage) == 0) {
-      if (!readiness->sink_ready)
-        std::cout << "PCIe readiness: sink started" << std::endl;
-      readiness->sink_ready = true;
-    }
-  }
-
   Graph graph_;
   std::unique_ptr<Model> model_owner_;
   simaai::neat::Run run_;

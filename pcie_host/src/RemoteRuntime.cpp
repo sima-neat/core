@@ -3,7 +3,9 @@
 #include "SshRunner.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -13,6 +15,8 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -122,6 +126,19 @@ std::string RemoteRuntime::pid_path(const int queue) const {
   return "/run/sima-neat/pcie/q" + std::to_string(queue) + ".pid";
 }
 
+std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_path) {
+  static std::atomic<std::uint64_t> sequence{0};
+  const fs::path local(local_path);
+  const std::string filename = local.filename().string();
+  if (filename.empty()) {
+    throw std::invalid_argument("local upload path must have a filename");
+  }
+  const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  return std::string(kRemoteModelDir) + "/sima-neat-pcie-" +
+         std::to_string(static_cast<long long>(getpid())) + "-" + std::to_string(timestamp) + "-" +
+         std::to_string(sequence.fetch_add(1, std::memory_order_relaxed)) + "-" + filename;
+}
+
 std::vector<std::string> RemoteRuntime::ssh_base() const {
   std::vector<std::string> cmd;
   cmd.push_back("ssh");
@@ -169,7 +186,7 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
     run_or_throw(mkdir_cmd, kCommandTimeoutSec, "remote mkdir");
   }
 
-  const std::string remote_path = std::string(kRemoteModelDir) + "/" + local.filename().string();
+  const std::string remote_path = unique_remote_upload_path(local_path);
   std::vector<std::string> scp_cmd = scp_base();
   scp_cmd.push_back(local.string());
   scp_cmd.push_back(endpoint() + ":" + remote_path);

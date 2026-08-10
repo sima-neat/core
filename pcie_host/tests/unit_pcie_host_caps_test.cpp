@@ -53,6 +53,32 @@ int main() {
     require(image_caps == "video/x-raw,format=(string)BGR,width=(int)640,height=(int)480",
             "unexpected image caps: " + image_caps);
 
+    simaai::neat::pcie::Tensor nv12;
+    nv12.dtype = simaai::neat::pcie::TensorDType::UInt8;
+    nv12.layout = simaai::neat::pcie::TensorLayout::HW;
+    nv12.shape = {720, 640};
+    nv12.image =
+        simaai::neat::pcie::ImageSpec{.format = simaai::neat::pcie::ImageSpec::PixelFormat::NV12};
+    const std::string nv12_caps = pcie_internal::HostPcieChannel::caps_for_tensors({nv12});
+    require(nv12_caps == "video/x-raw,format=(string)NV12,width=(int)640,height=(int)480",
+            "unexpected packed NV12 caps: " + nv12_caps);
+
+    simaai::neat::pcie::Tensor i420 = nv12;
+    i420.image =
+        simaai::neat::pcie::ImageSpec{.format = simaai::neat::pcie::ImageSpec::PixelFormat::I420};
+    const std::string i420_caps = pcie_internal::HostPcieChannel::caps_for_tensors({i420});
+    require(i420_caps == "video/x-raw,format=(string)I420,width=(int)640,height=(int)480",
+            "unexpected packed I420 caps: " + i420_caps);
+
+    bool rejected_invalid_planar_height = false;
+    try {
+      nv12.shape = {721, 640};
+      (void)pcie_internal::HostPcieChannel::caps_for_tensors({nv12});
+    } catch (const std::runtime_error&) {
+      rejected_invalid_planar_height = true;
+    }
+    require(rejected_invalid_planar_height, "invalid packed NV12 height must be rejected");
+
     simaai::neat::pcie::Tensor legacy_image = image;
     legacy_image.image.reset();
     legacy_image.image_format = simaai::neat::pcie::PixelFormat::RGB;
@@ -68,6 +94,31 @@ int main() {
       rejected_mixed_payload = true;
     }
     require(rejected_mixed_payload, "mixed raw image/tensor payload must be rejected");
+
+    pcie_internal::HostPcieChannel::validate_output_payload_size(4096, 4096);
+    pcie_internal::HostPcieChannel::validate_output_payload_size(8192, 4096);
+    bool rejected_truncated_output = false;
+    try {
+      pcie_internal::HostPcieChannel::validate_output_payload_size(4095, 4096);
+    } catch (const std::runtime_error&) {
+      rejected_truncated_output = true;
+    }
+    require(rejected_truncated_output, "truncated PCIe output must be rejected");
+
+    require(pcie_internal::HostPcieChannel::required_transport_buffer_size(1024, 2048, 4096) ==
+                512U * 1024U,
+            "transport buffer must retain the 512 KiB minimum");
+    require(pcie_internal::HostPcieChannel::required_transport_buffer_size(
+                1024U * 1024U, 4U * 1024U * 1024U, 6U * 1024U * 1024U) == 6U * 1024U * 1024U,
+            "transport buffer must include the first submitted payload");
+    bool rejected_oversized_transport = false;
+    try {
+      (void)pcie_internal::HostPcieChannel::required_transport_buffer_size(
+          1024, 2048, 128U * 1024U * 1024U + 1U);
+    } catch (const std::runtime_error&) {
+      rejected_oversized_transport = true;
+    }
+    require(rejected_oversized_transport, "transport payload above 128 MiB must be rejected");
 
     pcie_internal::HostPcieChannel channel;
     GstBuffer* buffer = gst_buffer_new();

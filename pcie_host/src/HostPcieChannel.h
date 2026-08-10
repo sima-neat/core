@@ -39,6 +39,10 @@ public:
 
   static std::string tensor_set_caps();
   static std::string caps_for_tensors(const TensorList& tensors);
+  static std::size_t required_transport_buffer_size(std::size_t packed_input_bytes,
+                                                    std::size_t packed_output_bytes,
+                                                    std::size_t submitted_payload_bytes);
+  static void validate_output_payload_size(std::size_t received_bytes, std::size_t expected_bytes);
   static void attach_request_id(GstBuffer* buffer, std::int32_t request_id);
   static std::optional<std::int32_t> request_id_from_buffer(GstBuffer* buffer);
 
@@ -47,7 +51,7 @@ private:
   GstFlowReturn on_new_sample(GstElement* sink);
   void monitor_bus(GstBus* bus);
 
-  void start_with_caps(const std::string& caps);
+  void start_with_caps(const std::string& caps, std::size_t submitted_payload_bytes);
   void stop_locked();
   bool reserve_inflight();
   bool wait_and_reserve_inflight();
@@ -82,6 +86,7 @@ private:
   int max_inflight_ = 0;
   bool expects_bbox_output_ = false;
   bool configured_ = false;
+  std::size_t transport_buffer_size_ = 0;
   std::string caps_;
 };
 

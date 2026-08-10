@@ -46,9 +46,19 @@ int main() {
       opt.preprocess.resize.mode = pcie::ResizeMode::Stretch;
       const auto json = pcie_internal::write_model_options_json(opt);
       require(json.json.has_value(), "image resize route must emit JSON");
+      require(contains(*json.json, "\"enable\": true"), "resize enable state missing");
       require(contains(*json.json, "\"mode\": \"stretch\""), "resize mode missing");
       require(!contains(*json.json, "\"width\""), "resize width must be core-inferred");
       require(!contains(*json.json, "\"height\""), "resize height must be core-inferred");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.resize.enable = pcie::AutoFlag::Off;
+      const auto json = pcie_internal::write_model_options_json(opt);
+      require(json.json.has_value(), "disabled image resize route must emit JSON");
+      require(contains(*json.json, "\"enable\": false"), "resize disabled state missing");
     }
 
     {

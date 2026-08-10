@@ -30,6 +30,7 @@ public:
   std::string endpoint() const;
   std::string status_path(int queue) const;
   std::string pid_path(int queue) const;
+  static std::string unique_remote_upload_path(const std::string& local_path);
 
 private:
   ConnectionOptions connection_;

@@ -22,6 +22,9 @@
 namespace simaai::neat::pcie::internal {
 namespace {
 
+constexpr std::size_t kMinimumTransportBufferSize = 512U * 1024U;
+constexpr std::size_t kMaximumTransportBufferSize = 128U * 1024U * 1024U;
+
 void ensure_gstreamer_initialized() {
   static std::once_flag once;
   std::call_once(once, []() {
@@ -116,7 +119,8 @@ std::string tensor_set_caps_for_primary_tensor(const Tensor& tensor) {
   return caps.str();
 }
 
-std::pair<std::int64_t, std::int64_t> image_height_width(const Tensor& tensor) {
+std::pair<std::int64_t, std::int64_t> image_height_width(const Tensor& tensor,
+                                                         const PixelFormat format) {
   if (!tensor.planes.empty() && tensor.planes.front().shape.size() >= 2U) {
     return {tensor.planes.front().shape[0], tensor.planes.front().shape[1]};
   }
@@ -124,7 +128,14 @@ std::pair<std::int64_t, std::int64_t> image_height_width(const Tensor& tensor) {
     return {tensor.shape[1], tensor.shape[2]};
   }
   if (tensor.shape.size() >= 2U) {
-    return {tensor.shape[0], tensor.shape[1]};
+    std::int64_t height = tensor.shape[0];
+    if (tensor.shape.size() == 2U && (format == PixelFormat::NV12 || format == PixelFormat::I420)) {
+      if (height <= 0 || height % 3 != 0) {
+        throw std::runtime_error("packed NV12/I420 image height must equal visible height * 3 / 2");
+      }
+      height = height * 2 / 3;
+    }
+    return {height, tensor.shape[1]};
   }
   return {0, 0};
 }
@@ -135,7 +146,7 @@ std::string image_caps_for_tensor(const Tensor& tensor, const ImageSpec& image) 
     throw std::runtime_error("image tensor has unknown pixel format");
   }
 
-  const auto [height, width] = image_height_width(tensor);
+  const auto [height, width] = image_height_width(tensor, image.format);
   if (width <= 0 || height <= 0 || width > std::numeric_limits<int>::max() ||
       height > std::numeric_limits<int>::max()) {
     throw std::runtime_error("image tensor requires positive width/height in shape or planes");
@@ -177,12 +188,10 @@ TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owne
   if (!owner || !owner->map.data) {
     return out;
   }
+  HostPcieChannel::validate_output_payload_size(owner->map.size, facts.packed_output_bytes);
   std::size_t offset = 0;
   for (std::size_t i = 0; i < facts.outputs.size(); ++i) {
     const auto& fact = facts.outputs[i];
-    if (offset + fact.size_bytes > owner->map.size) {
-      break;
-    }
 
     Tensor tensor;
     tensor.owner = owner;
@@ -292,6 +301,28 @@ std::string HostPcieChannel::tensor_set_caps() {
          "storage=(string)tensorbuffer";
 }
 
+void HostPcieChannel::validate_output_payload_size(const std::size_t received_bytes,
+                                                   const std::size_t expected_bytes) {
+  if (received_bytes < expected_bytes) {
+    throw std::runtime_error("PCIe output payload is shorter than the model output contract: " +
+                             std::to_string(received_bytes) + " bytes received, " +
+                             std::to_string(expected_bytes) + " bytes expected");
+  }
+}
+
+std::size_t
+HostPcieChannel::required_transport_buffer_size(const std::size_t packed_input_bytes,
+                                                const std::size_t packed_output_bytes,
+                                                const std::size_t submitted_payload_bytes) {
+  const std::size_t required = std::max({kMinimumTransportBufferSize, packed_input_bytes,
+                                         packed_output_bytes, submitted_payload_bytes});
+  if (required > kMaximumTransportBufferSize) {
+    throw std::runtime_error("PCIe transport payload exceeds the 128 MiB buffer limit: " +
+                             std::to_string(required) + " bytes required");
+  }
+  return required;
+}
+
 std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
   if (tensors.empty()) {
     throw std::runtime_error("PCIe payload requires at least one tensor");
@@ -318,11 +349,19 @@ std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
   return image_caps_for_tensor(tensors.front(), *image);
 }
 
-void HostPcieChannel::start_with_caps(const std::string& caps_string) {
+void HostPcieChannel::start_with_caps(const std::string& caps_string,
+                                      const std::size_t submitted_payload_bytes) {
   if (!configured_) {
     throw std::runtime_error("host PCIe channel is not configured");
   }
   if (running_.load()) {
+    if (submitted_payload_bytes > transport_buffer_size_) {
+      throw std::runtime_error(
+          "PCIe input payload exceeds the transport buffer selected by the first submission: " +
+          std::to_string(submitted_payload_bytes) + " bytes submitted, " +
+          std::to_string(transport_buffer_size_) +
+          " bytes available; close and rebuild the model for the new input geometry");
+    }
     if (caps_string != caps_) {
       GstCaps* caps = gst_caps_from_string(caps_string.c_str());
       if (!caps) {
@@ -335,6 +374,8 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
     return;
   }
 
+  transport_buffer_size_ = required_transport_buffer_size(
+      facts_.packed_input_bytes, facts_.packed_output_bytes, submitted_payload_bytes);
   caps_ = caps_string;
   pipeline_ = gst_pipeline_new("sima_neat_pcie_host");
   appsrc_ = gst_element_factory_make("appsrc", "src");
@@ -359,11 +400,8 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string) {
                static_cast<guint64>(0), "max-time", static_cast<guint64>(0), nullptr);
   gst_caps_unref(caps);
 
-  const std::size_t auto_buffer = std::max(facts_.packed_input_bytes, facts_.packed_output_bytes);
-  const guint64 buffer_size =
-      static_cast<guint64>(std::max<std::size_t>(auto_buffer, 512U * 1024U));
-  g_object_set(G_OBJECT(pciehost_), "buffersize", buffer_size, "card-number", card_id_, "queue",
-               pcie_queue_, "queuedepth", queue_depth, nullptr);
+  g_object_set(G_OBJECT(pciehost_), "buffersize", static_cast<guint64>(transport_buffer_size_),
+               "card-number", card_id_, "queue", pcie_queue_, "queuedepth", queue_depth, nullptr);
 
   g_object_set(G_OBJECT(appsink_), "emit-signals", TRUE, "sync", FALSE, "max-buffers", 256, "drop",
                FALSE, nullptr);
@@ -475,6 +513,7 @@ void HostPcieChannel::stop_locked() {
   pciehost_sink_pad_ = nullptr;
   pciehost_src_pad_ = nullptr;
   caps_.clear();
+  transport_buffer_size_ = 0;
   {
     std::lock_guard<std::mutex> inflight_lock(inflight_mutex_);
     inflight_ = 0;
@@ -545,7 +584,7 @@ bool HostPcieChannel::push(const TensorList& tensors) {
   }
   std::lock_guard<std::mutex> lock(send_mutex_);
   try {
-    start_with_caps(caps_for_tensors(tensors));
+    start_with_caps(caps_for_tensors(tensors), payload.size_bytes);
     return push_prepared_payload(next_request_id_.fetch_add(1), std::move(payload));
   } catch (...) {
     release_inflight();
@@ -563,7 +602,7 @@ bool HostPcieChannel::try_push(const std::int32_t request_id, const TensorList& 
   try {
     PreparedPayload payload = prepare_tensor_payload(tensors);
     std::lock_guard<std::mutex> lock(send_mutex_);
-    start_with_caps(caps_for_tensors(tensors));
+    start_with_caps(caps_for_tensors(tensors), payload.size_bytes);
     return push_prepared_payload(request_id, std::move(payload));
   } catch (...) {
     release_inflight();
