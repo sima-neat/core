@@ -16,12 +16,12 @@ if [[ ! -x "${sima_cli_python}" ]]; then
   exit 1
 fi
 
-echo "Validating the saved sima-cli Developer Portal session (timeout: ${AUTH_CHECK_TIMEOUT_SECONDS}s)."
+echo "Validating or refreshing the sima-cli Developer Portal session (timeout: ${AUTH_CHECK_TIMEOUT_SECONDS}s)."
 
 set +e
 timeout "${AUTH_CHECK_TIMEOUT_SECONDS}s" \
   "${sima_cli_python}" -c \
-  'from sima_cli.auth.devportal import validate_session; _, valid = validate_session(); raise SystemExit(0 if valid else 1)'
+  'from sima_cli.auth.devportal import login_external; session = login_external(loginDocker=False); raise SystemExit(0 if session else 1)'
 status=$?
 set -e
 
