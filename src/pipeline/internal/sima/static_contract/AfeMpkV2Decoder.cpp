@@ -137,6 +137,58 @@ std::vector<TensorShape> shapes(const Json& object, const char* key, const std::
   return result;
 }
 
+std::optional<std::uint64_t> element_width(const std::string& dtype);
+
+std::vector<HostTensorTypeSpec> host_tensor_types(const Json& object, const char* key,
+                                                  const std::string& path) {
+  const auto& value = *required_member_ptr(object, key, path);
+  if (!value.is_array() || value.empty()) {
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
+           "expected a non-empty host tensor type array");
+  }
+  std::vector<HostTensorTypeSpec> result;
+  result.reserve(value.size());
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    const auto item_path = path + "." + key + "[" + std::to_string(index) + "]";
+    const auto& item = value[index];
+    require_exact_keys(item, {"scalar", "shape"}, item_path);
+    HostTensorTypeSpec type{
+        required_string(item, "scalar", item_path),
+        shape(*required_member_ptr(item, "shape", item_path), item_path + ".shape")};
+    if (!element_width(type.scalar).has_value()) {
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, item_path + ".scalar",
+             "host tensor scalar type has no exact registered DLPack mapping");
+    }
+    result.push_back(std::move(type));
+  }
+  return result;
+}
+
+std::vector<std::string> non_empty_strings(const Json& object, const char* key,
+                                           const std::string& path) {
+  const auto& value = *required_member_ptr(object, key, path);
+  if (!value.is_array() || value.empty()) {
+    reject(AfeMpkV2DecodeErrorCode::InvalidField, path + "." + key,
+           "expected a non-empty string array");
+  }
+  std::vector<std::string> result;
+  result.reserve(value.size());
+  std::unordered_set<std::string> unique;
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    const auto item_path = path + "." + key + "[" + std::to_string(index) + "]";
+    if (!value[index].is_string() || value[index].get_ref<const std::string&>().empty()) {
+      reject(AfeMpkV2DecodeErrorCode::InvalidField, item_path, "expected a non-empty string");
+    }
+    auto item = value[index].get<std::string>();
+    if (!unique.emplace(item).second) {
+      reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, item_path,
+             "host input name is duplicated");
+    }
+    result.push_back(std::move(item));
+  }
+  return result;
+}
+
 std::vector<QuantizationSpec> quantization(const Json& object, const char* key,
                                            const std::string& path) {
   const auto& value = *required_member_ptr(object, key, path);
@@ -191,13 +243,13 @@ std::vector<Node> nodes(const Json& object, const char* key, const std::string& 
 }
 
 std::optional<std::uint64_t> element_width(const std::string& dtype) {
-  if (dtype == "int8") {
+  if (dtype == "int8" || dtype == "uint8") {
     return 1U;
   }
-  if (dtype == "bfloat16") {
+  if (dtype == "int16" || dtype == "uint16" || dtype == "float16" || dtype == "bfloat16") {
     return 2U;
   }
-  if (dtype == "float32") {
+  if (dtype == "int32" || dtype == "uint32" || dtype == "float32") {
     return 4U;
   }
   return std::nullopt;
@@ -427,6 +479,12 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
     }
     return result;
   }
+  case OpKind::Reshape: {
+    require_exact_keys(params, {"newshape", "input_shapes", "output_shapes"},
+                       path + ".config_params.params");
+    return ReshapeOpConfig{shape(*required_member_ptr(params, "newshape", path + ".params"),
+                                 path + ".params.newshape")};
+  }
   case OpKind::Detessellate: {
     require_exact_keys(params,
                        {"slice_shape", "frame_shape", "align_c16", "cblock", "frame_type",
@@ -458,6 +516,17 @@ OpConfig parse_typed_config(const OpKind kind, const Json& plugin, const Json& c
              "legacy dequantization input must be exact int8");
     }
     return result;
+  }
+  case OpKind::HostTvm: {
+    require_exact_keys(config, {"input_names", "input_types", "output_types"},
+                       path + ".config_params");
+    const auto& resources = *required_member_ptr(plugin, "resources", path);
+    require_exact_keys(resources, {"executable"}, path + ".resources");
+    return HostTvmOpConfig{required_string(resources, "executable", path + ".resources"),
+                           non_empty_strings(config, "input_names", path + ".config_params"),
+                           host_tensor_types(config, "input_types", path + ".config_params"),
+                           host_tensor_types(config, "output_types", path + ".config_params"),
+                           {}};
   }
   case OpKind::PassThrough:
     require_exact_keys(params, {}, path + ".config_params.params");
@@ -506,6 +575,14 @@ void apply_input_evidence(ModelExecutionPlanData& data, const OpSpec& op, const 
     const auto& config = std::get<DequantizeOpConfig>(op.config);
     merge_dtype(data.values[op.inputs.front()], config.input_dtype, path);
     merge_quantization(data.values[op.inputs.front()], config.channel_params, path);
+    break;
+  }
+  case OpKind::HostTvm: {
+    const auto& config = std::get<HostTvmOpConfig>(op.config);
+    for (std::size_t index = 0; index < op.inputs.size(); ++index) {
+      merge_dtype(data.values[op.inputs[index]], config.input_types[index].scalar, path);
+      merge_shape(data.values[op.inputs[index]], config.input_types[index].shape, path);
+    }
     break;
   }
   default:
@@ -560,12 +637,26 @@ ValueSpec make_output_value(const ValueId id, const Node& node, const OpSpec& op
       value.quantization = input.quantization;
     }
     break;
+  case OpKind::Reshape: {
+    const auto& input = data.values[op.inputs.front()];
+    value.logical_shape = std::get<ReshapeOpConfig>(op.config).new_shape;
+    value.logical_dtype = input.logical_dtype;
+    value.quantization = input.quantization;
+    value.representation = input.representation;
+    break;
+  }
   case OpKind::Detessellate:
     value.logical_dtype = std::get<DetessellateOpConfig>(op.config).frame_type;
     break;
   case OpKind::Dequantize:
     value.logical_dtype = "float32";
     break;
+  case OpKind::HostTvm: {
+    const auto& type = std::get<HostTvmOpConfig>(op.config).output_types.at(output_index);
+    value.logical_dtype = type.scalar;
+    value.logical_shape = type.shape;
+    break;
+  }
   case OpKind::PassThrough: {
     const auto& input = data.values[op.inputs.at(output_index)];
     value.logical_dtype = input.logical_dtype;
@@ -586,7 +677,8 @@ void propagate_identity_evidence(ModelExecutionPlanData& data) {
   while (changed) {
     changed = false;
     for (const auto& op : data.ops) {
-      if (op.kind != OpKind::Slice && op.kind != OpKind::PassThrough) {
+      if (op.kind != OpKind::Slice && op.kind != OpKind::Reshape &&
+          op.kind != OpKind::PassThrough) {
         continue;
       }
       for (std::size_t index = 0; index < op.outputs.size(); ++index) {
@@ -741,6 +833,67 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
       continue;
     }
 
+    if (op.kind == OpKind::Reshape) {
+      if (op.inputs.size() != 1U || op.outputs.size() != 1U) {
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               "$.ops[" + std::to_string(op.id) + "]",
+               "reshape address view requires one input and one output");
+      }
+      const auto& input = data.values[op.inputs.front()];
+      auto& output = data.values[op.outputs.front()];
+      if (input.required_bytes != output.required_bytes || !output.logical_shape.has_value()) {
+        reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+               "reshape does not preserve the exact byte extent");
+      }
+      const auto width = exact_element_width(output.required_bytes, *output.logical_shape);
+      const auto strides =
+          width ? contiguous_stride_bytes(*output.logical_shape, *width) : std::nullopt;
+      if (!strides) {
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               "$.ops[" + std::to_string(op.id) + "]",
+               "reshape output has no exact contiguous byte equation");
+      }
+      const auto root = input.read_expression ? input.read_expression->source_value_id : input.id;
+      const auto offset = input.read_expression ? input.read_expression->byte_offset : 0U;
+      output.read_expression = ReadExpression{root, offset, *strides};
+      if (proof) {
+        proof->push_back(
+            {"read[" + std::to_string(output.id) + "]",
+             "reshape lowers to an exact address view; no runtime operation is scheduled"});
+      }
+      continue;
+    }
+
+    if (op.kind == OpKind::HostTvm) {
+      const auto& host = std::get<HostTvmOpConfig>(op.config);
+      for (std::size_t output_index = 0; output_index < op.outputs.size(); ++output_index) {
+        const auto input_index = host.output_alias_input[output_index];
+        if (input_index < 0) {
+          continue;
+        }
+        const auto& input = data.values[op.inputs[static_cast<std::size_t>(input_index)]];
+        auto& output = data.values[op.outputs[output_index]];
+        const auto width =
+            exact_element_width(output.required_bytes, host.output_types[output_index].shape);
+        const auto strides =
+            width ? contiguous_stride_bytes(host.output_types[output_index].shape, *width)
+                  : std::nullopt;
+        if (!strides || input.required_bytes != output.required_bytes) {
+          reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch, "$.ops[" + std::to_string(op.id) + "]",
+                 "TVM __nop output does not preserve an exact dense byte extent");
+        }
+        const auto root = input.read_expression ? input.read_expression->source_value_id : input.id;
+        const auto offset = input.read_expression ? input.read_expression->byte_offset : 0U;
+        output.read_expression = ReadExpression{root, offset, *strides};
+        if (proof) {
+          proof->push_back({"read[" + std::to_string(output.id) + "]",
+                            "embedded TVM GraphExecutor __nop + shared storage_id lowers to an "
+                            "exact address view"});
+        }
+      }
+      continue;
+    }
+
     // PassThrough is publication metadata.  Preserve an already-compiled view
     // without turning that metadata edge into work for any backend.
     if (op.kind == OpKind::PassThrough) {
@@ -757,6 +910,7 @@ void lower_read_expressions(ModelExecutionPlanData& data, std::vector<AfeMpkV2Pr
 AfeMpkV2DecodeResult
 decode_impl(const std::string_view text,
             const std::span<const MlaStageExecutableEvidence> executable_evidence,
+            const std::span<const HostTvmExecutableEvidence> host_evidence,
             const std::string& source) {
   AfeMpkV2DecodeResult result;
   try {
@@ -767,11 +921,12 @@ decode_impl(const std::string_view text,
 
     ModelExecutionPlanData data;
     data.contract_version = required_string(root, "model_sdk_version", "$");
-    if (data.contract_version != "2.0.0") {
+    if (data.contract_version != "2.0.0" && data.contract_version != "2.1.0") {
       reject(AfeMpkV2DecodeErrorCode::UnsupportedContractVersion, "$.model_sdk_version",
-             "AfeMpkV2Decoder supports only exact contract version 2.0.0");
+             "strict decoder supports only exact contract versions 2.0.0 and 2.1.0");
     }
-    result.proof.push_back({"contract.version", "MPK $.model_sdk_version exactly equals '2.0.0'"});
+    result.proof.push_back({"contract.version", "MPK $.model_sdk_version exactly equals '" +
+                                                    data.contract_version + "'"});
 
     const auto& input_array = *required_member_ptr(root, "input_nodes", "$");
     if (!input_array.is_array() || input_array.empty()) {
@@ -838,6 +993,7 @@ decode_impl(const std::string_view text,
     std::size_t mla_count = 0U;
     std::size_t pass_count = 0U;
     std::vector<std::size_t> mla_op_indices;
+    std::vector<std::size_t> host_op_indices;
     std::size_t pass_op_index = 0U;
     std::unordered_set<std::string> operation_names;
     for (const auto& ordered_plugin : ordered) {
@@ -858,36 +1014,33 @@ decode_impl(const std::string_view text,
         reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params",
                "expected an object");
       }
-      if (processor == "A65") {
-        const auto& resources = *required_member_ptr(plugin, "resources", path);
-        if (!resources.is_object()) {
-          reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".resources",
-                 "expected an object for the AFE A65 host module");
-        }
-        const auto executable = required_string(resources, "executable", path + ".resources");
-        reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, path + ".resources.executable",
-               "AFE processor='A65' classifies executable '" + executable +
-                   "' as a TVM host module; strict DMA-BUF execution requires the typed direct "
-                   "host-module ABI and never interprets it as an MLA ELF or dispatches it "
-                   "through ProcessTVM");
-      }
       if (processor == "MLA") {
         require_exact_keys(config,
                            {"desired_batch_size", "actual_batch_size", "number_of_quads_to_user"},
+                           path + ".config_params");
+      } else if (processor == "A65") {
+        if (data.contract_version != "2.1.0") {
+          reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, path + ".config_params",
+                 "A65 host modules require the exact typed 2.1.0 contract");
+        }
+        require_exact_keys(config, {"input_names", "input_types", "output_types"},
                            path + ".config_params");
       } else {
         require_exact_keys(config, {"desired_batch_size", "actual_batch_size", "kernel", "params"},
                            path + ".config_params");
       }
-      const auto desired_batch =
-          positive_u64(*required_member_ptr(config, "desired_batch_size", path + ".config_params"),
-                       path + ".config_params.desired_batch_size");
-      const auto actual_batch =
-          positive_u64(*required_member_ptr(config, "actual_batch_size", path + ".config_params"),
-                       path + ".config_params.actual_batch_size");
-      if (desired_batch != actual_batch) {
-        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
-               "desired and actual batch sizes disagree");
+      std::uint64_t actual_batch = 1U;
+      if (processor != "A65") {
+        const auto desired_batch = positive_u64(
+            *required_member_ptr(config, "desired_batch_size", path + ".config_params"),
+            path + ".config_params.desired_batch_size");
+        actual_batch =
+            positive_u64(*required_member_ptr(config, "actual_batch_size", path + ".config_params"),
+                         path + ".config_params.actual_batch_size");
+        if (desired_batch != actual_batch) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
+                 "desired and actual batch sizes disagree");
+        }
       }
 
       std::string kernel;
@@ -897,7 +1050,7 @@ decode_impl(const std::string_view text,
                  "expected a string");
         }
         kernel = config.at("kernel").get<std::string>();
-      } else if (processor != "MLA") {
+      } else if (processor != "MLA" && processor != "A65") {
         reject(AfeMpkV2DecodeErrorCode::MissingRequiredField, path + ".config_params.kernel",
                "non-MLA plugin has no exact kernel token");
       }
@@ -940,7 +1093,7 @@ decode_impl(const std::string_view text,
 
       Json empty_params = Json::object();
       const Json* params = &empty_params;
-      if (op.kind != OpKind::Mla) {
+      if (op.kind != OpKind::Mla && op.kind != OpKind::HostTvm) {
         const auto& params_member = *required_member_ptr(config, "params", path + ".config_params");
         if (!params_member.is_object()) {
           reject(AfeMpkV2DecodeErrorCode::InvalidField, path + ".config_params.params",
@@ -948,17 +1101,54 @@ decode_impl(const std::string_view text,
         }
         params = &params_member;
       }
-      const bool shape_lists_required = op.kind != OpKind::Mla && op.kind != OpKind::PassThrough;
-      op.input_shapes =
-          shapes(*params, "input_shapes", path + ".config_params.params", shape_lists_required);
-      op.output_shapes =
-          shapes(*params, "output_shapes", path + ".config_params.params", shape_lists_required);
+      op.config = parse_typed_config(op.kind, plugin, config, *params, path);
+      if (op.kind == OpKind::HostTvm) {
+        const auto& host = std::get<HostTvmOpConfig>(op.config);
+        for (const auto& type : host.input_types) {
+          op.input_shapes.push_back(type.shape);
+        }
+        for (const auto& type : host.output_types) {
+          op.output_shapes.push_back(type.shape);
+        }
+      } else {
+        const bool shape_lists_required = op.kind != OpKind::Mla && op.kind != OpKind::PassThrough;
+        op.input_shapes =
+            shapes(*params, "input_shapes", path + ".config_params.params", shape_lists_required);
+        op.output_shapes =
+            shapes(*params, "output_shapes", path + ".config_params.params", shape_lists_required);
+      }
       if ((!op.input_shapes.empty() && op.input_shapes.size() != input_nodes.size()) ||
           (!op.output_shapes.empty() && op.output_shapes.size() != output_nodes.size())) {
         reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params.params",
                "typed shape-list arity disagrees with MPK node arity");
       }
-      op.config = parse_typed_config(op.kind, plugin, config, *params, path);
+      if (op.kind == OpKind::HostTvm) {
+        const auto& host = std::get<HostTvmOpConfig>(op.config);
+        if (host.input_names.size() != input_nodes.size() ||
+            host.input_types.size() != input_nodes.size() ||
+            host.output_types.size() != output_nodes.size()) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch, path + ".config_params",
+                 "host-module typed port arity disagrees with MPK nodes");
+        }
+        for (std::size_t index = 0; index < input_nodes.size(); ++index) {
+          const auto bytes =
+              dense_bytes(host.input_types[index].shape, host.input_types[index].scalar);
+          if (!bytes || *bytes != input_nodes[index].bytes) {
+            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+                   path + ".config_params.input_types[" + std::to_string(index) + "]",
+                   "host input dense byte equation disagrees with its MPK node");
+          }
+        }
+        for (std::size_t index = 0; index < output_nodes.size(); ++index) {
+          const auto bytes =
+              dense_bytes(host.output_types[index].shape, host.output_types[index].scalar);
+          if (!bytes || *bytes != output_nodes[index].bytes) {
+            reject(AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+                   path + ".config_params.output_types[" + std::to_string(index) + "]",
+                   "host output dense byte equation disagrees with its MPK node");
+          }
+        }
+      }
       if (op.kind == OpKind::Pack) {
         if (actual_batch != 1U) {
           reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
@@ -1054,6 +1244,9 @@ decode_impl(const std::string_view text,
       if (op.kind == OpKind::PassThrough) {
         ++pass_count;
         pass_op_index = data.ops.size();
+      }
+      if (op.kind == OpKind::HostTvm) {
+        host_op_indices.push_back(data.ops.size());
       }
       data.ops.push_back(std::move(op));
     }
@@ -1152,6 +1345,79 @@ decode_impl(const std::string_view text,
              "an ELF evidence item is not selected by any exact MLA stage identity");
     }
 
+    if (host_evidence.size() != host_op_indices.size()) {
+      reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, "$.plugins",
+             "A65 host-module evidence cardinality does not equal exact A65 operation count");
+    }
+    std::vector<bool> host_evidence_used(host_evidence.size(), false);
+    for (const auto host_op_index : host_op_indices) {
+      auto& op = data.ops[host_op_index];
+      auto& config = std::get<HostTvmOpConfig>(op.config);
+      const HostTvmExecutableEvidence* evidence = nullptr;
+      std::size_t evidence_index = 0U;
+      for (std::size_t index = 0; index < host_evidence.size(); ++index) {
+        const auto& candidate = host_evidence[index];
+        if (candidate.logical_stage_id != op.name || candidate.executable != config.executable) {
+          continue;
+        }
+        if (evidence != nullptr) {
+          reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
+                 "$.plugins[" + std::to_string(host_op_index) + "].resources.executable",
+                 "more than one A65 module evidence item matches the exact stage");
+        }
+        evidence = &candidate;
+        evidence_index = index;
+      }
+      if (!evidence) {
+        reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule,
+               "$.plugins[" + std::to_string(host_op_index) + "].resources.executable",
+               "no structural A65 module evidence matches logical identity and executable");
+      }
+      if (evidence->input_names != config.input_names ||
+          evidence->input_types.size() != config.input_types.size() ||
+          evidence->output_types.size() != config.output_types.size() ||
+          evidence->output_alias_input.size() != config.output_types.size()) {
+        reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+               "$.plugins[" + std::to_string(host_op_index) + "].config_params",
+               "embedded TVM graph port contract disagrees with the MPK host contract");
+      }
+      const auto types_equal = [](const auto& left, const auto& right) {
+        return left.scalar == right.scalar && left.shape == right.shape;
+      };
+      for (std::size_t index = 0; index < config.input_types.size(); ++index) {
+        if (!types_equal(config.input_types[index], evidence->input_types[index])) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.plugins[" + std::to_string(host_op_index) + "].config_params.input_types[" +
+                     std::to_string(index) + "]",
+                 "embedded TVM graph input type disagrees with the MPK");
+        }
+      }
+      for (std::size_t index = 0; index < config.output_types.size(); ++index) {
+        if (!types_equal(config.output_types[index], evidence->output_types[index])) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.plugins[" + std::to_string(host_op_index) + "].config_params.output_types[" +
+                     std::to_string(index) + "]",
+                 "embedded TVM graph output type disagrees with the MPK");
+        }
+        const auto alias = evidence->output_alias_input[index];
+        if (alias >= 0 && static_cast<std::size_t>(alias) >= config.input_types.size()) {
+          reject(AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+                 "$.plugins[" + std::to_string(host_op_index) + "]",
+                 "embedded TVM graph output alias index is out of range");
+        }
+      }
+      config.output_alias_input = evidence->output_alias_input;
+      host_evidence_used[evidence_index] = true;
+      result.proof.push_back({"A65[" + std::to_string(host_op_index) + "].identity",
+                              "MPK logical stage and executable exactly match embedded "
+                              "GraphExecutor JSON; model code was not loaded during admission"});
+    }
+    if (std::find(host_evidence_used.begin(), host_evidence_used.end(), false) !=
+        host_evidence_used.end()) {
+      reject(AfeMpkV2DecodeErrorCode::UnsupportedHostModule, "$.plugins",
+             "an A65 module evidence item is not selected by any exact host stage identity");
+    }
+
     const auto& publication = data.ops[pass_op_index];
     for (std::size_t index = 0; index < publication.outputs.size(); ++index) {
       const auto value_id = publication.outputs[index];
@@ -1231,7 +1497,7 @@ AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_json(const std::string_view mpk_jso
           "single-topology compatibility overload requires exactly one MLA stage"};
       return result;
     }
-    return decode_impl(mpk_json, evidence, source_label);
+    return decode_impl(mpk_json, evidence, {}, source_label);
   } catch (const std::exception& failure) {
     AfeMpkV2DecodeResult result;
     result.error = AfeMpkV2DecodeError{AfeMpkV2DecodeErrorCode::InvalidJson,
@@ -1244,7 +1510,15 @@ AfeMpkV2DecodeResult
 AfeMpkV2Decoder::decode_json(const std::string_view mpk_json,
                              const std::span<const MlaStageExecutableEvidence> executable_evidence,
                              std::string source_label) const noexcept {
-  return decode_impl(mpk_json, executable_evidence, source_label);
+  return decode_impl(mpk_json, executable_evidence, {}, source_label);
+}
+
+AfeMpkV2DecodeResult
+AfeMpkV2Decoder::decode_json(const std::string_view mpk_json,
+                             const std::span<const MlaStageExecutableEvidence> executable_evidence,
+                             const std::span<const HostTvmExecutableEvidence> host_evidence,
+                             std::string source_label) const noexcept {
+  return decode_impl(mpk_json, executable_evidence, host_evidence, source_label);
 }
 
 AfeMpkV2DecodeResult
@@ -1271,6 +1545,14 @@ AfeMpkV2Decoder::decode_file(const std::filesystem::path& mpk_manifest,
 AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_file(
     const std::filesystem::path& mpk_manifest,
     const std::span<const MlaStageExecutableEvidence> executable_evidence) const noexcept {
+  return decode_file(mpk_manifest, executable_evidence,
+                     std::span<const HostTvmExecutableEvidence>{});
+}
+
+AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_file(
+    const std::filesystem::path& mpk_manifest,
+    const std::span<const MlaStageExecutableEvidence> executable_evidence,
+    const std::span<const HostTvmExecutableEvidence> host_evidence) const noexcept {
   std::ifstream input(mpk_manifest, std::ios::binary);
   if (!input.is_open()) {
     AfeMpkV2DecodeResult result;
@@ -1286,7 +1568,7 @@ AfeMpkV2DecodeResult AfeMpkV2Decoder::decode_file(
                                        "cannot read MPK manifest"};
     return result;
   }
-  return decode_impl(contents.str(), executable_evidence, mpk_manifest.string());
+  return decode_impl(contents.str(), executable_evidence, host_evidence, mpk_manifest.string());
 }
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract

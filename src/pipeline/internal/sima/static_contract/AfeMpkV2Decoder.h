@@ -50,6 +50,15 @@ struct MlaStageExecutableEvidence {
   MlaElfIoTopology topology;
 };
 
+struct HostTvmExecutableEvidence {
+  std::string logical_stage_id;
+  std::string executable;
+  std::vector<std::string> input_names;
+  std::vector<HostTensorTypeSpec> input_types;
+  std::vector<HostTensorTypeSpec> output_types;
+  std::vector<std::int32_t> output_alias_input;
+};
+
 struct AfeMpkV2DecodeError {
   AfeMpkV2DecodeErrorCode code = AfeMpkV2DecodeErrorCode::InvalidJson;
   std::string source;
@@ -72,18 +81,28 @@ struct AfeMpkV2DecodeResult {
   }
 };
 
-// Quarantined inverse for the frozen, untyped AFE MPK contract. It accepts an
-// explicitly supplied manifest and explicitly supplied ELF topology; archive
-// names, model names, sidecar JSON, environment, and runtime metadata are not
-// consulted. New typed MPK versions must use a direct parser instead.
+// Exact decoder for the frozen 2.0.0 contract and the typed 2.1.0 contract.
+// It accepts an explicitly supplied manifest plus exact setup-time MLA ELF and
+// A65 GraphExecutor evidence; archive names, filename suffixes, sidecar JSON,
+// environment, and runtime metadata are never semantic authority.
 class AfeMpkV2Decoder final {
 public:
+  AfeMpkV2DecodeResult decode_json(std::string_view mpk_json,
+                                   std::span<const MlaStageExecutableEvidence> executable_evidence,
+                                   std::span<const HostTvmExecutableEvidence> host_evidence,
+                                   std::string source_label = "<memory>") const noexcept;
+
   AfeMpkV2DecodeResult decode_json(std::string_view mpk_json,
                                    std::span<const MlaStageExecutableEvidence> executable_evidence,
                                    std::string source_label = "<memory>") const noexcept;
 
   AfeMpkV2DecodeResult decode_json(std::string_view mpk_json, const MlaElfIoTopology& elf_topology,
                                    std::string source_label = "<memory>") const noexcept;
+
+  AfeMpkV2DecodeResult
+  decode_file(const std::filesystem::path& mpk_manifest,
+              std::span<const MlaStageExecutableEvidence> executable_evidence,
+              std::span<const HostTvmExecutableEvidence> host_evidence) const noexcept;
 
   AfeMpkV2DecodeResult
   decode_file(const std::filesystem::path& mpk_manifest,

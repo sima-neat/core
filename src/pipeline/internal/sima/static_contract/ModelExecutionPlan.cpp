@@ -34,10 +34,14 @@ bool config_matches_kind(const OpSpec& op) {
     return std::holds_alternative<UnpackOpConfig>(op.config);
   case OpKind::Slice:
     return std::holds_alternative<SliceOpConfig>(op.config);
+  case OpKind::Reshape:
+    return std::holds_alternative<ReshapeOpConfig>(op.config);
   case OpKind::Detessellate:
     return std::holds_alternative<DetessellateOpConfig>(op.config);
   case OpKind::Dequantize:
     return std::holds_alternative<DequantizeOpConfig>(op.config);
+  case OpKind::HostTvm:
+    return std::holds_alternative<HostTvmOpConfig>(op.config);
   case OpKind::PassThrough:
     return std::holds_alternative<PassThroughOpConfig>(op.config);
   }
@@ -198,6 +202,34 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
         return fail(error, "execution-plan MLA operation has no exact executable identity");
       }
       mla_stages.push_back(&op);
+    }
+    if (op.kind == OpKind::Reshape) {
+      if (op.inputs.size() != 1U || op.outputs.size() != 1U ||
+          data.values[op.inputs.front()].required_bytes !=
+              data.values[op.outputs.front()].required_bytes ||
+          !data.values[op.outputs.front()].read_expression.has_value()) {
+        return fail(error, "execution-plan Reshape is not an exact address view");
+      }
+    }
+    if (op.kind == OpKind::HostTvm) {
+      const auto& host = std::get<HostTvmOpConfig>(op.config);
+      if (host.executable.empty() || host.input_names.size() != op.inputs.size() ||
+          host.input_types.size() != op.inputs.size() ||
+          host.output_types.size() != op.outputs.size() ||
+          host.output_alias_input.size() != op.outputs.size()) {
+        return fail(error, "execution-plan HostTVM port contract is incomplete");
+      }
+      for (std::size_t output_index = 0; output_index < host.output_alias_input.size();
+           ++output_index) {
+        const auto input_index = host.output_alias_input[output_index];
+        if (input_index >= 0 &&
+            (static_cast<std::size_t>(input_index) >= op.inputs.size() ||
+             data.values[op.inputs[static_cast<std::size_t>(input_index)]].required_bytes !=
+                 data.values[op.outputs[output_index]].required_bytes ||
+             !data.values[op.outputs[output_index]].read_expression.has_value())) {
+          return fail(error, "execution-plan HostTVM alias output is not an exact address view");
+        }
+      }
     }
   }
   if (produced.size() != data.values.size()) {

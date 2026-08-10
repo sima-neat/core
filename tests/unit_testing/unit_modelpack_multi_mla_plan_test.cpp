@@ -4,9 +4,11 @@
 #include "pipeline/internal/sima/MpkContract.h"
 #include "test_main.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -124,6 +126,7 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
            using simaai::neat::internal::ExecutionStageKind;
            using simaai::neat::internal::ModelPack;
            using simaai::neat::internal::ModelStage;
+           using simaai::neat::internal::PipelineType;
            using simaai::neat::pipeline_internal::MemoryBackendPolicy;
            using simaai::neat::pipeline_internal::sima::FrameArenaRole;
 
@@ -188,4 +191,42 @@ RUN_TEST("unit_modelpack_multi_mla_plan_test", ([] {
                        facts[1].mla_compiled->payload.model_path.ends_with("/share/decoder.elf"),
                    "an MLA .so/ELF must stay bound to its exact MPK stage identity");
            fs::remove_all(root, ec);
+
+           // Optional exact AFE 2.1 package gate for qualification jobs. The
+           // fixture remains external because it is a compiler artifact, not
+           // test source. This proves ModelPack resolves both MLA ELFs and the
+           // A65 shared object before it accepts the strict backend.
+           if (const char* real_package = std::getenv("SIMANEAT_AFE21_MULTI_MLA_PACKAGE");
+               real_package != nullptr && *real_package != '\0') {
+             ModelPack real_model(
+                 real_package, "application/vnd.simaai.tensor", "FP32", /*depth=*/1,
+                 /*max_width=*/640, /*max_height=*/480, /*max_depth=*/1,
+                 /*normalize=*/false, {}, {}, /*preproc_next_cpu=*/{}, PipelineType::QuantTess);
+             require(real_model.memory_backend_decision().admission.eligible(),
+                     "exact AFE 2.1 multi-MLA/A65 package failed ModelPack admission");
+             const auto real_plan = real_model.execution_plan();
+             require(real_plan.infer.size() == 2U &&
+                         real_plan.infer[0].kind == ExecutionStageKind::Mla &&
+                         real_plan.infer[1].kind == ExecutionStageKind::Mla,
+                     "exact AFE 2.1 package lost its two compiler-authored MLA stages");
+
+             // Until Phase 5 renders the compiler-authored interstitial EV74
+             // DAG, the second packed MLA input must not be projected as if
+             // the two MLA stages were adjacent. Keep this as an explicit
+             // fail-closed gate rather than admitting a semantically wrong
+             // runtime pipeline.
+             real_model.set_model_managed_stage_facts(
+                 /*processcvu_preproc_single_output_handoff=*/true, std::nullopt, {});
+             bool rejected_unscheduled_middle = false;
+             try {
+               (void)real_model.stage_facts_for_model_stage(ModelStage::MlaOnly);
+             } catch (const std::runtime_error& error) {
+               rejected_unscheduled_middle =
+                   std::string(error.what()).find("packed IFM child") != std::string::npos &&
+                   std::string(error.what()).find("no exact upstream TensorBuffer view") !=
+                       std::string::npos;
+             }
+             require(rejected_unscheduled_middle,
+                     "unscheduled interstitial EV74 materializations did not fail closed");
+           }
          }));

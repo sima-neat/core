@@ -198,6 +198,34 @@ const std::string& two_mla_with_a65_module_manifest() {
   return manifest;
 }
 
+const std::string& reshape_manifest() {
+  static const std::string manifest = R"json({
+    "name":"reshape-synthetic","model_sdk_version":"2.0.0",
+    "input_nodes":[{"name":"input","size":16}],
+    "plugins":[
+      {"name":"reshape","sequence":1,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"reshape_transform","params":{
+                          "newshape":[1,1,4],"input_shapes":[[1,4]],
+                          "output_shapes":[[1,1,4]]}},
+       "input_nodes":[{"name":"input","size":16}],
+       "output_nodes":[{"name":"reshaped","size":16}]},
+      {"name":"MLA_0","sequence":2,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"reshaped","size":16}],
+       "output_nodes":[{"name":"mla_out","size":8}],
+       "resources":{"executable":"synthetic_mla.elf"}},
+      {"name":"publish","sequence":3,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"pass_through","params":{}},
+       "input_nodes":[{"name":"mla_out","size":8}],
+       "output_nodes":[{"name":"output","size":8}]}
+    ]
+  })json";
+  return manifest;
+}
+
 std::string replace_once(std::string value, const std::string& before, const std::string& after) {
   const auto position = value.find(before);
   check(position != std::string::npos, "test mutation token exists");
@@ -305,6 +333,30 @@ void test_unpack_and_slice_are_read_expressions() {
   check(read_proofs == 4U, "decoder proves both unpack and both slice reads are not jobs");
 }
 
+void test_reshape_is_an_exact_read_expression() {
+  const auto result =
+      AfeMpkV2Decoder{}.decode_json(reshape_manifest(), monolithic_topology(), "reshape.json");
+  if (!result && result.error.has_value()) {
+    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
+  }
+  check(static_cast<bool>(result), "exact byte-preserving reshape is accepted");
+  const auto& reshape = result.plan->ops().front();
+  const auto& output = result.plan->values().at(reshape.outputs.front());
+  check(reshape.kind == OpKind::Reshape && output.read_expression.has_value() &&
+            output.read_expression->source_value_id == reshape.inputs.front() &&
+            output.required_bytes ==
+                result.plan->values().at(reshape.inputs.front()).required_bytes,
+        "reshape lowers to one zero-offset root view without materialization");
+
+  const auto mismatch =
+      replace_once(reshape_manifest(), "\"output_nodes\":[{\"name\":\"reshaped\",\"size\":16}]",
+                   "\"output_nodes\":[{\"name\":\"reshaped\",\"size\":12}]");
+  const auto rejected =
+      AfeMpkV2Decoder{}.decode_json(mismatch, monolithic_topology(), "reshape-mismatch.json");
+  check(!rejected && rejected.error->code == AfeMpkV2DecodeErrorCode::ValueSizeMismatch,
+        "reshape that changes the byte extent fails closed");
+}
+
 void test_fail_closed_cases() {
   const auto topology = monolithic_topology();
   expect_error(replace_once(valid_manifest(), "2.0.0", "2.0.1"), topology,
@@ -387,9 +439,46 @@ void test_exact_multi_mla_evidence() {
   const auto a65_result = AfeMpkV2Decoder{}.decode_json(two_mla_with_a65_module_manifest(),
                                                         evidence, "two-mla-a65.json");
   check(!a65_result && a65_result.error->code == AfeMpkV2DecodeErrorCode::UnsupportedHostModule &&
-            a65_result.error->json_path.find("resources.executable") != std::string::npos,
-        "an AFE A65/ProcessTVM .so is an explicit host module and fails closed until its "
-        "typed direct module ABI exists; it is never interpreted as an MLA ELF by suffix");
+            a65_result.error->json_path.find("config_params") != std::string::npos,
+        "the frozen 2.0 contract cannot acquire A65 meaning from a filename suffix");
+
+  const auto typed_manifest =
+      replace_once(two_mla_with_a65_module_manifest(), "\"2.0.0\"", "\"2.1.0\"");
+  const std::vector<HostTvmExecutableEvidence> host_evidence{{
+      "APU_module",
+      "middle.so",
+      {"arm_3_i0"},
+      {{"float32", {1, 8}}},
+      {{"float32", {1, 8}}},
+      {0},
+  }};
+  auto typed_mla_evidence = evidence;
+  typed_mla_evidence[1].executable = "encoder.elf";
+  const auto typed_result = AfeMpkV2Decoder{}.decode_json(typed_manifest, typed_mla_evidence,
+                                                          host_evidence, "two-mla-a65-typed.json");
+  if (!typed_result && typed_result.error.has_value()) {
+    std::cerr << typed_result.error->json_path << ": " << typed_result.error->detail << "\n";
+  }
+  check(static_cast<bool>(typed_result),
+        "typed 2.1 A65 stage joins exact structural module evidence");
+  const auto& host_op = typed_result.plan->ops().at(1);
+  check(host_op.kind == OpKind::HostTvm,
+        "processor A65 lowers to the explicit host TVM operation kind");
+  const auto& host_config = std::get<HostTvmOpConfig>(host_op.config);
+  check(host_config.executable == "middle.so" &&
+            host_config.output_alias_input == std::vector<std::int32_t>{0},
+        "host executable identity and structurally proven alias are immutable");
+  const auto& host_output = typed_result.plan->values().at(host_op.outputs.front());
+  check(host_output.read_expression.has_value() &&
+            host_output.read_expression->source_value_id == host_op.inputs.front(),
+        "exact TVM __nop is an address view rather than a materialized allocation");
+
+  auto wrong_host_evidence = host_evidence;
+  wrong_host_evidence.front().input_names.front() = "guessed_input";
+  const auto wrong_host = AfeMpkV2Decoder{}.decode_json(
+      typed_manifest, typed_mla_evidence, wrong_host_evidence, "two-mla-a65-typed.json");
+  check(!wrong_host && wrong_host.error->code == AfeMpkV2DecodeErrorCode::ConfigurationMismatch,
+        "MPK and embedded GraphExecutor ports must agree exactly");
 }
 
 int validate_explicit_pair(const char* manifest_path, const char* elf_path) {
@@ -428,6 +517,7 @@ int main(const int argc, char** argv) {
   test_exact_registry();
   test_success_and_immutable_contract();
   test_unpack_and_slice_are_read_expressions();
+  test_reshape_is_an_exact_read_expression();
   test_exact_multi_mla_evidence();
   test_fail_closed_cases();
   std::cout << "unit_afe_mpk_v2_decoder_test: PASS\n";

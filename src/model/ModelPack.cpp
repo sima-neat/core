@@ -566,7 +566,33 @@ compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& m
     }
     artifacts.push_back({stage->name, stage->executable, runtime->model_path});
   }
-  return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, artifacts);
+  std::vector<pipeline_internal::HostTvmExecutableArtifact> host_artifacts;
+  fs::path package_root = fs::path(mpk_contract.mpk_json_path).parent_path();
+  if (package_root.filename() == "etc") {
+    package_root = package_root.parent_path();
+  }
+  for (const auto& stage : mpk_contract.plugins) {
+    if (to_upper(stage.processor) != "A65") {
+      continue;
+    }
+    fs::path resolved;
+    const fs::path raw(stage.executable);
+    const std::array<fs::path, 4> candidates = {
+        raw.is_absolute() ? raw : package_root / "lib" / raw,
+        raw.is_absolute() ? raw : package_root / raw,
+        raw.is_absolute() ? raw : package_root / "share" / raw, raw};
+    for (const auto& candidate : candidates) {
+      std::error_code ec;
+      if (!candidate.empty() && fs::is_regular_file(candidate, ec) && !ec) {
+        resolved = candidate;
+        break;
+      }
+    }
+    host_artifacts.push_back(
+        {stage.name, stage.executable, resolved.empty() ? candidates.front() : resolved});
+  }
+  return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, artifacts,
+                                                    host_artifacts);
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
