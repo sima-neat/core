@@ -66,8 +66,7 @@ bool validate_read_expression(const ModelExecutionPlanData& data, const ValueSpe
     return true;
   }
   const auto& expression = *value.read_expression;
-  if (expression.source_value_id >= data.values.size() ||
-      expression.source_value_id >= value.id) {
+  if (expression.source_value_id >= data.values.size() || expression.source_value_id >= value.id) {
     return fail(error, "execution-plan read expression has a missing or forward carrier");
   }
   const auto& source = data.values[expression.source_value_id];
@@ -173,33 +172,31 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
     }
     if (op.kind == OpKind::Pack) {
       const auto& pack = std::get<PackOpConfig>(op.config);
-      if (op.outputs.size() != 1U ||
-          pack.components.size() != op.inputs.size()) {
-        return fail(error,
-                    "execution-plan Pack has no exact component placement");
+      if (op.outputs.size() != 1U || pack.components.size() != op.inputs.size()) {
+        return fail(error, "execution-plan Pack has no exact component placement");
       }
       std::uint64_t previous_end = 0U;
-      for (std::size_t component_index = 0;
-           component_index < pack.components.size(); ++component_index) {
+      for (std::size_t component_index = 0; component_index < pack.components.size();
+           ++component_index) {
         const auto& component = pack.components[component_index];
         const auto input_id = op.inputs[component_index];
         std::uint64_t component_end = 0U;
-        if (component.value_id != input_id ||
-            component.parent_offset != previous_end ||
-            component.parent_offset % 16U != 0U ||
-            component.stored_bytes == 0U ||
+        if (component.value_id != input_id || component.parent_offset != previous_end ||
+            component.parent_offset % 16U != 0U || component.stored_bytes == 0U ||
             component.stored_bytes % 16U != 0U ||
             component.stored_bytes < data.values[input_id].required_bytes ||
-            !checked_add(component.parent_offset, component.stored_bytes,
-                         &component_end) ||
+            !checked_add(component.parent_offset, component.stored_bytes, &component_end) ||
             component_end > data.values[op.outputs.front()].required_bytes) {
-          return fail(error,
-                      "execution-plan Pack component placement is invalid");
+          return fail(error, "execution-plan Pack component placement is invalid");
         }
         previous_end = component_end;
       }
     }
     if (op.kind == OpKind::Mla) {
+      const auto* mla = std::get_if<MlaOpConfig>(&op.config);
+      if (!mla || mla->executable.empty()) {
+        return fail(error, "execution-plan MLA operation has no exact executable identity");
+      }
       mla_stages.push_back(&op);
     }
   }
@@ -260,6 +257,46 @@ bool validate(const ModelExecutionPlanData& data, std::string* error) {
   return true;
 }
 
+void build_mla_index(ModelExecutionPlanData* data) {
+  data->mla_stages.clear();
+  std::sort(data->backend_ports.begin(), data->backend_ports.end(),
+            [](const BackendPortSpec& lhs, const BackendPortSpec& rhs) {
+              return std::tie(lhs.stage_index, lhs.direction, lhs.port_index) <
+                     std::tie(rhs.stage_index, rhs.direction, rhs.port_index);
+            });
+
+  std::size_t stage_index = 0U;
+  for (const auto& op : data->ops) {
+    if (op.kind != OpKind::Mla) {
+      continue;
+    }
+    MlaStageSpec stage;
+    stage.key.stage_index = stage_index;
+    stage.key.op_id = op.id;
+    stage.key.logical_stage_id = op.name;
+    stage.key.executable = std::get<MlaOpConfig>(op.config).executable;
+
+    const auto first =
+        std::lower_bound(data->backend_ports.begin(), data->backend_ports.end(), stage_index,
+                         [](const BackendPortSpec& port, const std::size_t wanted) {
+                           return port.stage_index < wanted;
+                         });
+    const auto last = std::upper_bound(first, data->backend_ports.end(), stage_index,
+                                       [](const std::size_t wanted, const BackendPortSpec& port) {
+                                         return wanted < port.stage_index;
+                                       });
+    const auto output = std::find_if(first, last, [](const BackendPortSpec& port) {
+      return port.direction == BackendPortDirection::Output;
+    });
+    stage.input_port_begin = static_cast<std::size_t>(first - data->backend_ports.begin());
+    stage.input_port_count = static_cast<std::size_t>(output - first);
+    stage.output_port_begin = static_cast<std::size_t>(output - data->backend_ports.begin());
+    stage.output_port_count = static_cast<std::size_t>(last - output);
+    data->mla_stages.push_back(std::move(stage));
+    ++stage_index;
+  }
+}
+
 } // namespace
 
 ModelExecutionPlan::ModelExecutionPlan(std::shared_ptr<const ModelExecutionPlanData> data)
@@ -270,6 +307,7 @@ std::optional<ModelExecutionPlan> ModelExecutionPlan::create(ModelExecutionPlanD
   if (!validate(data, error)) {
     return std::nullopt;
   }
+  build_mla_index(&data);
   if (error) {
     error->clear();
   }
@@ -290,6 +328,40 @@ const std::vector<OpSpec>& ModelExecutionPlan::ops() const noexcept {
 }
 const std::vector<BackendPortSpec>& ModelExecutionPlan::backend_ports() const noexcept {
   return data_->backend_ports;
+}
+std::size_t ModelExecutionPlan::mla_stage_count() const noexcept {
+  return data_->mla_stages.size();
+}
+const MlaStageSpec* ModelExecutionPlan::mla_stage(const std::size_t stage_index) const noexcept {
+  return stage_index < data_->mla_stages.size() ? &data_->mla_stages[stage_index] : nullptr;
+}
+const MlaStageSpec* ModelExecutionPlan::mla_stage_for_op(const OpId op_id) const noexcept {
+  const auto found =
+      std::find_if(data_->mla_stages.begin(), data_->mla_stages.end(),
+                   [op_id](const MlaStageSpec& stage) { return stage.key.op_id == op_id; });
+  return found == data_->mla_stages.end() ? nullptr : &*found;
+}
+const MlaStageSpec*
+ModelExecutionPlan::mla_stage_for_identity(const std::string_view logical_stage_id,
+                                           const std::string_view executable) const noexcept {
+  const auto found = std::find_if(
+      data_->mla_stages.begin(), data_->mla_stages.end(), [&](const MlaStageSpec& stage) {
+        return stage.key.logical_stage_id == logical_stage_id && stage.key.executable == executable;
+      });
+  return found == data_->mla_stages.end() ? nullptr : &*found;
+}
+std::span<const BackendPortSpec>
+ModelExecutionPlan::backend_ports(const std::size_t stage_index,
+                                  const BackendPortDirection direction) const noexcept {
+  const auto* stage = mla_stage(stage_index);
+  if (!stage) {
+    return {};
+  }
+  const auto begin =
+      direction == BackendPortDirection::Input ? stage->input_port_begin : stage->output_port_begin;
+  const auto count =
+      direction == BackendPortDirection::Input ? stage->input_port_count : stage->output_port_count;
+  return std::span<const BackendPortSpec>(data_->backend_ports).subspan(begin, count);
 }
 const std::vector<ModelOutputSpec>& ModelExecutionPlan::model_outputs() const noexcept {
   return data_->model_outputs;

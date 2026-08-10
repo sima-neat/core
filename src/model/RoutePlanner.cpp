@@ -725,8 +725,9 @@ bool populate_route_mla_facts_from_mpk_contract(
     return false;
   }
 
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
-  if (!mla_stage) {
+  const auto* first_mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
+  const auto* last_mla_stage = pipeline_internal::sima::get_last_mla_stage_io_contract(contract);
+  if (!first_mla_stage || !last_mla_stage) {
     if (error_message) {
       *error_message = "MPK contract is missing an MLA stage";
     }
@@ -745,12 +746,12 @@ bool populate_route_mla_facts_from_mpk_contract(
   const std::vector<pipeline_internal::sima::MpkTensorContract>& planning_outputs =
       !published_outputs.empty()
           ? published_outputs
-          : (logical_outputs.empty() ? mla_stage->output_tensors : logical_outputs);
+          : (logical_outputs.empty() ? last_mla_stage->output_tensors : logical_outputs);
   const std::string node_name_hint =
-      !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id;
+      !first_mla_stage->name.empty() ? first_mla_stage->name : first_mla_stage->plugin_id;
   const auto mla_contract = pipeline_internal::sima::build_mla_static_contract_from_mpk_stage(
-      *mla_stage, planning_outputs,
-      physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs, node_name_hint,
+      *first_mla_stage, planning_outputs,
+      physical_outputs.empty() ? last_mla_stage->output_tensors : physical_outputs, node_name_hint,
       boundary_inputs.empty() ? nullptr : &boundary_inputs);
 
   if (mla_contract.logical_inputs.empty()) {
@@ -2593,14 +2594,27 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   }
   const auto& graph = pack.route_graph();
   const auto& contract = *pack.mpk_contract();
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
-  if (!mla_stage) {
+  const auto mla_stages = pipeline_internal::sima::get_mla_stage_io_contracts(contract);
+  if (mla_stages.empty()) {
     return false;
   }
   const auto mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(
-      contract, !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id);
-  if (!mla_idx.has_value()) {
+      contract,
+      !mla_stages.front()->name.empty() ? mla_stages.front()->name : mla_stages.front()->plugin_id);
+  const auto last_mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(
+      contract,
+      !mla_stages.back()->name.empty() ? mla_stages.back()->name : mla_stages.back()->plugin_id);
+  if (!mla_idx.has_value() || !last_mla_idx.has_value()) {
     return false;
+  }
+  std::unordered_set<std::size_t> mla_indices;
+  mla_indices.reserve(mla_stages.size());
+  for (const auto* stage : mla_stages) {
+    const auto index = pipeline_internal::sima::find_plugin_index_by_name_or_id(
+        contract, !stage->name.empty() ? stage->name : stage->plugin_id);
+    if (!index.has_value() || !mla_indices.insert(*index).second) {
+      return false;
+    }
   }
   const auto ordered = pipeline_internal::sima::plugins_in_execution_order(contract);
   std::unordered_map<std::size_t, std::size_t> rank_by_index;
@@ -2613,6 +2627,11 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     return false;
   }
   const std::size_t mla_rank = mla_rank_it->second;
+  const auto last_mla_rank_it = rank_by_index.find(*last_mla_idx);
+  if (last_mla_rank_it == rank_by_index.end()) {
+    return false;
+  }
+  const std::size_t last_mla_rank = last_mla_rank_it->second;
   const auto pre_kind_dbg = [](PreRouteStageKind kind) -> const char* {
     switch (kind) {
     case PreRouteStageKind::None:
@@ -2653,8 +2672,10 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   };
   if (route_debug_enabled()) {
     std::fprintf(stderr,
-                 "[route-debug] source=mpk_graph plugins=%zu edges=%zu mla_idx=%zu mla_rank=%zu\n",
-                 contract.plugins.size(), contract.edges.size(), *mla_idx, mla_rank);
+                 "[route-debug] source=mpk_graph plugins=%zu edges=%zu first_mla_idx=%zu "
+                 "first_mla_rank=%zu last_mla_idx=%zu last_mla_rank=%zu\n",
+                 contract.plugins.size(), contract.edges.size(), *mla_idx, mla_rank, *last_mla_idx,
+                 last_mla_rank);
   }
 
   out->pre_kind = PreRouteStageKind::None;
@@ -2694,7 +2715,7 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   };
 
   for (const std::size_t plugin_idx : ordered) {
-    if (plugin_idx >= contract.plugins.size() || plugin_idx == *mla_idx) {
+    if (plugin_idx >= contract.plugins.size() || mla_indices.count(plugin_idx) > 0U) {
       continue;
     }
     const auto rank_it = rank_by_index.find(plugin_idx);
@@ -2702,6 +2723,18 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
       continue;
     }
     const bool before_mla = rank_it->second < mla_rank;
+    const bool after_mla = rank_it->second > last_mla_rank;
+    if (!before_mla && !after_mla) {
+      if (route_debug_enabled()) {
+        std::fprintf(stderr,
+                     "[route-debug] unsupported materializing stage between MLA stages: "
+                     "idx=%zu rank=%zu name=%s processor=%s kernel=%s\n",
+                     plugin_idx, rank_it->second, contract.plugins[plugin_idx].name.c_str(),
+                     contract.plugins[plugin_idx].processor.c_str(),
+                     contract.plugins[plugin_idx].kernel.c_str());
+      }
+      return false;
+    }
     std::string kernel_source = contract.plugins[plugin_idx].kernel;
     if (kernel_source.empty()) {
       kernel_source = contract.plugins[plugin_idx].name;
@@ -2709,9 +2742,9 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     const std::string kernel = canonical_mpk_kernel_kind(kernel_source);
     if (route_debug_enabled()) {
       std::fprintf(stderr,
-                   "[route-debug] mpk_plugin idx=%zu rank=%zu before_mla=%d raw_kernel=%s "
-                   "raw_name=%s canonical=%s\n",
-                   plugin_idx, rank_it->second, before_mla ? 1 : 0,
+                   "[route-debug] mpk_plugin idx=%zu rank=%zu before_mla=%d after_mla=%d "
+                   "raw_kernel=%s raw_name=%s canonical=%s\n",
+                   plugin_idx, rank_it->second, before_mla ? 1 : 0, after_mla ? 1 : 0,
                    contract.plugins[plugin_idx].kernel.c_str(),
                    contract.plugins[plugin_idx].name.c_str(), kernel.c_str());
     }

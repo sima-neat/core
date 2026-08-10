@@ -5,6 +5,7 @@
 
 #include "pipeline/internal/MemoryBackendPolicy.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
+#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 
 #include <filesystem>
 #include <optional>
@@ -18,6 +19,9 @@ enum class DmabufEligibilityCode {
   Eligible,
   MissingMpkManifest,
   MissingMlaExecutable,
+  MissingMlaExecutableEvidence,
+  AmbiguousMlaExecutableEvidence,
+  UnexpectedMlaExecutableEvidence,
   ElfTopologyUnreadable,
   InvalidJson,
   MissingRequiredField,
@@ -65,12 +69,19 @@ struct DmabufEligibilityReport {
 
 struct DmabufPlanCompileResult {
   std::optional<sima::static_contract::ModelExecutionPlan> plan;
+  std::optional<sima::static_contract::FrameSlotArenaPlan> arena_plan;
   DmabufEligibilityReport report;
   std::string plan_digest;
 
   [[nodiscard]] bool eligible() const noexcept {
-    return plan.has_value() && report.eligible() && !plan_digest.empty();
+    return plan.has_value() && arena_plan.has_value() && report.eligible() && !plan_digest.empty();
   }
+};
+
+struct MlaExecutableArtifact {
+  std::string logical_stage_id;
+  std::string manifest_executable;
+  std::filesystem::path resolved_path;
 };
 
 // Pure structural admission. It reads only the explicitly supplied MPK manifest
@@ -79,6 +90,10 @@ struct DmabufPlanCompileResult {
 DmabufPlanCompileResult
 try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
                         const std::filesystem::path& mla_executable) noexcept;
+
+DmabufPlanCompileResult
+try_compile_dmabuf_plan(const std::filesystem::path& mpk_manifest,
+                        const std::vector<MlaExecutableArtifact>& mla_executables) noexcept;
 
 // Stable canonical rendering and SHA-256 digest of the accepted immutable plan.
 std::string canonical_dmabuf_plan_json(const sima::static_contract::ModelExecutionPlan& plan);
@@ -89,6 +104,11 @@ std::string dmabuf_plan_digest(const sima::static_contract::ModelExecutionPlan& 
 std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
                                    const std::filesystem::path& mpk_manifest,
                                    const std::filesystem::path& mla_executable,
+                                   bool pretty = false);
+
+std::string dmabuf_plan_audit_json(const DmabufPlanCompileResult& result,
+                                   const std::filesystem::path& mpk_manifest,
+                                   const std::vector<MlaExecutableArtifact>& mla_executables,
                                    bool pretty = false);
 
 struct MemoryBackendDecision {

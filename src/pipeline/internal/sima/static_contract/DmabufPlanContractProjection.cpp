@@ -53,22 +53,18 @@ const OpSpec* producer_of(const ModelExecutionPlan& plan, const ValueId value_id
 
 ValueId root_value_id(const ModelExecutionPlan& plan, const ValueId value_id) {
   const auto* value = plan.value(value_id);
-  return value && value->read_expression.has_value()
-             ? value->read_expression->source_value_id
-             : value_id;
+  return value && value->read_expression.has_value() ? value->read_expression->source_value_id
+                                                     : value_id;
 }
 
-std::optional<FrameSlotArenaPlan>
-compile_frame_arena(const ModelExecutionPlan& plan, std::string* error) {
-  return FrameSlotArenaPlan::compile(
-      plan, FrameSlotArenaReuse::DisjointLifetimes,
-      kLegacyEvoCmaRegionAlignmentBytes, error);
+std::optional<FrameSlotArenaPlan> compile_frame_arena(const ModelExecutionPlan& plan,
+                                                      std::string* error) {
+  return FrameSlotArenaPlan::compile(plan, FrameSlotArenaReuse::DisjointLifetimes,
+                                     kLegacyEvoCmaRegionAlignmentBytes, error);
 }
 
-bool assign_physical_region(const FrameSlotArenaPlan& arena,
-                            const ValueSpec& value,
-                            PhysicalBufferStaticSpec* physical,
-                            std::string* error) {
+bool assign_physical_region(const FrameSlotArenaPlan& arena, const ValueSpec& value,
+                            PhysicalBufferStaticSpec* physical, std::string* error) {
   if (!physical) {
     return fail(error, "frame-slot physical projection is null");
   }
@@ -76,24 +72,21 @@ bool assign_physical_region(const FrameSlotArenaPlan& arena,
   if (!region || region->size_bytes != physical->size_bytes ||
       physical->required_alignment_bytes == 0U ||
       region->byte_offset % physical->required_alignment_bytes != 0U ||
-      region->byte_offset >
-          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      region->byte_offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
     return fail(error, "frame-slot region contradicts value '" + value.name + "'");
   }
-  physical->source_byte_offset =
-      static_cast<std::int64_t>(region->byte_offset);
+  physical->source_byte_offset = static_cast<std::int64_t>(region->byte_offset);
   return true;
 }
 
-const ValueSpec* find_materialized_value_for_logical(
-    const ModelExecutionPlan& plan, const LogicalTensorStaticSpec& logical,
-    std::string* error) {
+const ValueSpec* find_materialized_value_for_logical(const ModelExecutionPlan& plan,
+                                                     const LogicalTensorStaticSpec& logical,
+                                                     std::string* error) {
   // Names are compiler identities, not runtime binding keys.  Try the most
   // backend-specific spelling first and require that spelling to identify one
   // materialized value.  A shared-parent segment such as "output_tensor" is
   // intentionally only the final fallback.
-  for (const auto* name :
-       {&logical.backend_name, &logical.logical_name, &logical.segment_name}) {
+  for (const auto* name : {&logical.backend_name, &logical.logical_name, &logical.segment_name}) {
     if (name->empty()) {
       continue;
     }
@@ -121,19 +114,18 @@ struct CvuOutputPlacement {
   std::uint64_t required_alignment_bytes = 0U;
 };
 
-std::optional<CvuOutputPlacement> resolve_cvu_output_placement(
-    const ModelExecutionPlan& plan, const FrameSlotArenaPlan& arena,
-    const ProcessCvuMlaBoundary boundary,
-    std::span<const BackendPortSpec* const> ports,
-    const LogicalTensorStaticSpec& logical, const std::size_t output_index,
-    const std::size_t output_count, std::string* error) {
-  const ValueSpec* value =
-      find_materialized_value_for_logical(plan, logical, error);
+std::optional<CvuOutputPlacement>
+resolve_cvu_output_placement(const ModelExecutionPlan& plan, const FrameSlotArenaPlan& arena,
+                             const ProcessCvuMlaBoundary boundary,
+                             std::span<const BackendPortSpec> ports,
+                             const LogicalTensorStaticSpec& logical, const std::size_t output_index,
+                             const std::size_t output_count, std::string* error) {
+  const ValueSpec* value = find_materialized_value_for_logical(plan, logical, error);
   if (!value && error && !error->empty()) {
     return std::nullopt;
   }
   if (!value && output_count == ports.size()) {
-    value = plan.value(ports[output_index]->value_id);
+    value = plan.value(ports[output_index].value_id);
   }
   if (!value && boundary == ProcessCvuMlaBoundary::Outputs &&
       output_count == plan.model_outputs().size()) {
@@ -141,18 +133,18 @@ std::optional<CvuOutputPlacement> resolve_cvu_output_placement(
   }
   if (!value || value->read_expression.has_value()) {
     fail(error, "ProcessCVU logical output has no materialized execution-plan value: "
-                    "logical='" +
-                    logical.logical_name + "' backend='" + logical.backend_name +
-                    "' segment='" + logical.segment_name + "'");
+                "logical='" +
+                    logical.logical_name + "' backend='" + logical.backend_name + "' segment='" +
+                    logical.segment_name + "'");
     return std::nullopt;
   }
 
   const auto alignment_for_boundary = [&]() -> std::uint64_t {
     if (ports.size() == output_count) {
-      return ports[output_index]->required_alignment_bytes;
+      return ports[output_index].required_alignment_bytes;
     }
     if (ports.size() == 1U) {
-      return ports.front()->required_alignment_bytes;
+      return ports.front().required_alignment_bytes;
     }
     return 0U;
   };
@@ -163,7 +155,7 @@ std::optional<CvuOutputPlacement> resolve_cvu_output_placement(
   if (boundary == ProcessCvuMlaBoundary::Inputs && ports.size() == 1U) {
     for (const auto& op : plan.ops()) {
       if (op.kind != OpKind::Pack || op.outputs.size() != 1U ||
-          op.outputs.front() != ports.front()->value_id) {
+          op.outputs.front() != ports.front().value_id) {
         continue;
       }
       const auto* pack = std::get_if<PackOpConfig>(&op.config);
@@ -176,34 +168,28 @@ std::optional<CvuOutputPlacement> resolve_cvu_output_placement(
         }
         const auto* parent = arena.region(op.outputs.front());
         if (!parent || component.parent_offset >
-                           std::numeric_limits<std::uint64_t>::max() -
-                               parent->byte_offset) {
+                           std::numeric_limits<std::uint64_t>::max() - parent->byte_offset) {
           fail(error, "ProcessCVU Pack child has no parent frame-arena placement");
           return std::nullopt;
         }
-        return CvuOutputPlacement{value,
-                                  parent->byte_offset + component.parent_offset,
-                                  16U};
+        return CvuOutputPlacement{value, parent->byte_offset + component.parent_offset, 16U};
       }
     }
   }
 
   const auto* region = arena.region(value->id);
   const auto alignment = alignment_for_boundary();
-  if (!region || alignment == 0U ||
-      region->byte_offset % alignment != 0U) {
-    fail(error, "ProcessCVU value '" + value->name +
-                    "' has no aligned frame-arena placement");
+  if (!region || alignment == 0U || region->byte_offset % alignment != 0U) {
+    fail(error, "ProcessCVU value '" + value->name + "' has no aligned frame-arena placement");
     return std::nullopt;
   }
   return CvuOutputPlacement{value, region->byte_offset, alignment};
 }
 
 std::optional<int>
-resolve_pack_parent_physical_source(
-    const ModelExecutionPlan& plan, const ValueSpec& packed_value,
-    std::span<const LogicalTensorStaticSpec> upstream_outputs,
-    std::string* error) {
+resolve_pack_parent_physical_source(const ModelExecutionPlan& plan, const ValueSpec& packed_value,
+                                    std::span<const LogicalTensorStaticSpec> upstream_outputs,
+                                    std::string* error) {
   const auto* pack = producer_of(plan, packed_value.id);
   if (!pack || pack->kind != OpKind::Pack || pack->outputs.size() != 1U ||
       pack->outputs.front() != packed_value.id || pack->inputs.empty()) {
@@ -217,8 +203,7 @@ resolve_pack_parent_physical_source(
 
   int physical_index = -1;
   std::uint64_t covered_bytes = 0U;
-  for (std::size_t component_index = 0;
-       component_index < pack->inputs.size(); ++component_index) {
+  for (std::size_t component_index = 0; component_index < pack->inputs.size(); ++component_index) {
     const auto input_id = pack->inputs[component_index];
     const auto& placement = config->components[component_index];
     const auto* child_value = plan.value(input_id);
@@ -234,14 +219,11 @@ resolve_pack_parent_physical_source(
       }
       return std::nullopt;
     }
-    if (placement.value_id != input_id ||
-        placement.parent_offset != covered_bytes ||
-        placement.stored_bytes != child_value->required_bytes ||
-        child->logical_index < 0 || child->physical_index < 0 ||
-        child->byte_offset < 0 ||
+    if (placement.value_id != input_id || placement.parent_offset != covered_bytes ||
+        placement.stored_bytes != child_value->required_bytes || child->logical_index < 0 ||
+        child->physical_index < 0 || child->byte_offset < 0 ||
         child->size_bytes != child_value->required_bytes ||
-        static_cast<std::uint64_t>(child->byte_offset) !=
-            placement.parent_offset) {
+        static_cast<std::uint64_t>(child->byte_offset) != placement.parent_offset) {
       fail(error, "MLA packed IFM child '" + child_value->name +
                       "' does not exactly cover the ordered parent carrier");
       return std::nullopt;
@@ -252,8 +234,7 @@ resolve_pack_parent_physical_source(
       fail(error, "MLA packed IFM children do not share one physical parent");
       return std::nullopt;
     }
-    if (placement.stored_bytes >
-        std::numeric_limits<std::uint64_t>::max() - covered_bytes) {
+    if (placement.stored_bytes > std::numeric_limits<std::uint64_t>::max() - covered_bytes) {
       fail(error, "MLA packed IFM child extents overflow");
       return std::nullopt;
     }
@@ -266,8 +247,8 @@ resolve_pack_parent_physical_source(
   return physical_index;
 }
 
-std::vector<const ValueSpec*>
-read_views_consumed_after_mla(const ModelExecutionPlan& plan, const ValueId root_value_id) {
+std::vector<const ValueSpec*> read_views_consumed_after_mla(const ModelExecutionPlan& plan,
+                                                            const ValueId root_value_id) {
   std::vector<const ValueSpec*> result;
   std::unordered_set<ValueId> seen;
   for (const auto& op : plan.ops()) {
@@ -289,29 +270,21 @@ read_views_consumed_after_mla(const ModelExecutionPlan& plan, const ValueId root
 
 } // namespace
 
-std::optional<std::vector<PhysicalPortSource>>
-resolve_mla_input_physical_sources(
-    const ModelExecutionPlan& plan,
-    std::span<const LogicalTensorStaticSpec> upstream_outputs,
-    std::string* error) {
-  std::vector<const BackendPortSpec*> inputs;
-  for (const auto& port : plan.backend_ports()) {
-    if (port.direction == BackendPortDirection::Input) {
-      if (port.stage_index != 0U) {
-        fail(error, "MLA physical input projection currently requires one MLA stage");
-        return std::nullopt;
-      }
-      inputs.push_back(&port);
-    }
+std::optional<std::vector<PhysicalPortSource>> resolve_mla_input_physical_sources(
+    const ModelExecutionPlan& plan, const std::size_t mla_stage_index,
+    std::span<const LogicalTensorStaticSpec> upstream_outputs, std::string* error) {
+  const auto stage = plan.mla_stage(mla_stage_index);
+  const auto stage_inputs = plan.backend_ports(mla_stage_index, BackendPortDirection::Input);
+  if (!stage || stage_inputs.empty()) {
+    fail(error, "MLA physical input projection references a missing or empty exact stage");
+    return std::nullopt;
   }
-  std::sort(inputs.begin(), inputs.end(),
-            [](const auto* lhs, const auto* rhs) { return lhs->port_index < rhs->port_index; });
 
   std::vector<PhysicalPortSource> result;
-  result.reserve(inputs.size());
+  result.reserve(stage_inputs.size());
   std::unordered_set<int> seen_sources;
-  for (std::size_t port_index = 0; port_index < inputs.size(); ++port_index) {
-    const auto& port = *inputs[port_index];
+  for (std::size_t port_index = 0; port_index < stage_inputs.size(); ++port_index) {
+    const auto& port = stage_inputs[port_index];
     if (port.port_index != port_index) {
       fail(error, "MLA physical input projection has a sparse backend port order");
       return std::nullopt;
@@ -338,8 +311,8 @@ resolve_mla_input_physical_sources(
           match->size_bytes == value->required_bytes) {
         source_physical_index = match->physical_index;
       } else {
-        source_physical_index = resolve_pack_parent_physical_source(
-            plan, *value, upstream_outputs, error);
+        source_physical_index =
+            resolve_pack_parent_physical_source(plan, *value, upstream_outputs, error);
         if (!source_physical_index.has_value()) {
           if (error && error->empty()) {
             *error = "MLA input value '" + value->name +
@@ -354,8 +327,7 @@ resolve_mla_input_physical_sources(
       fail(error, "MLA input projection aliases two IFM ports to one physical carrier");
       return std::nullopt;
     }
-    result.push_back(
-        PhysicalPortSource{port.value_id, *source_physical_index});
+    result.push_back(PhysicalPortSource{port.value_id, *source_physical_index});
   }
   if (error) {
     error->clear();
@@ -363,45 +335,41 @@ resolve_mla_input_physical_sources(
   return result;
 }
 
+std::optional<std::vector<PhysicalPortSource>>
+resolve_mla_input_physical_sources(const ModelExecutionPlan& plan,
+                                   std::span<const LogicalTensorStaticSpec> upstream_outputs,
+                                   std::string* error) {
+  if (plan.mla_stage_count() != 1U) {
+    fail(error, "single-stage MLA input projection is ambiguous for a multi-stage plan");
+    return std::nullopt;
+  }
+  return resolve_mla_input_physical_sources(plan, 0U, upstream_outputs, error);
+}
+
 bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
+                                           const std::size_t mla_stage_index,
+                                           const FrameSlotArenaPlan& arena,
                                            MlaStaticContract* contract,
                                            std::span<const PhysicalPortSource> input_sources,
                                            std::string* error) {
   if (!contract) {
     return fail(error, "MLA contract projection is null");
   }
-  auto arena = compile_frame_arena(plan, error);
-  if (!arena) {
-    return false;
+  const auto* stage = plan.mla_stage(mla_stage_index);
+  const auto inputs = plan.backend_ports(mla_stage_index, BackendPortDirection::Input);
+  const auto outputs = plan.backend_ports(mla_stage_index, BackendPortDirection::Output);
+  if (!stage || inputs.empty() || outputs.empty()) {
+    return fail(error, "MLA projection requires one exact non-empty backend stage");
   }
 
-  std::vector<const BackendPortSpec*> inputs;
-  std::vector<const BackendPortSpec*> outputs;
-  for (const auto& port : plan.backend_ports()) {
-    (port.direction == BackendPortDirection::Input ? inputs : outputs).push_back(&port);
-  }
-  const auto by_port_index = [](const BackendPortSpec* lhs, const BackendPortSpec* rhs) {
-    return lhs->port_index < rhs->port_index;
-  };
-  std::sort(inputs.begin(), inputs.end(), by_port_index);
-  std::sort(outputs.begin(), outputs.end(), by_port_index);
-
-  if (inputs.empty() || outputs.empty() ||
-      std::any_of(inputs.begin(), inputs.end(),
-                  [](const auto* port) { return port->stage_index != 0U; }) ||
-      std::any_of(outputs.begin(), outputs.end(),
-                  [](const auto* port) { return port->stage_index != 0U; })) {
-    return fail(error, "MLA projection requires one non-empty backend stage");
-  }
-
-  const auto validate = [&](const std::vector<const BackendPortSpec*>& ports,
+  const auto validate = [&](const std::span<const BackendPortSpec> ports,
                             const std::vector<PhysicalBufferStaticSpec>& physical,
                             const char* kind) {
     if (ports.size() != physical.size()) {
       return fail(error, std::string(kind) + " projection arity mismatch");
     }
     for (std::size_t index = 0; index < ports.size(); ++index) {
-      const auto& port = *ports[index];
+      const auto& port = ports[index];
       const auto& projected = physical[index];
       const auto* value = plan.value(port.value_id);
       if (port.port_index != index || projected.physical_index != static_cast<int>(index) ||
@@ -424,11 +392,11 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
   // only after the MPK/ELF port identity has been reconciled exactly.
   for (std::size_t index = 0; index < inputs.size(); ++index) {
     contract->physical_inputs[index].required_alignment_bytes =
-        inputs[index]->required_alignment_bytes;
+        inputs[index].required_alignment_bytes;
   }
   for (std::size_t index = 0; index < outputs.size(); ++index) {
     contract->dispatcher_physical_outputs[index].required_alignment_bytes =
-        outputs[index]->required_alignment_bytes;
+        outputs[index].required_alignment_bytes;
   }
 
   if (input_sources.size() != inputs.size()) {
@@ -438,23 +406,21 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
   contract->input_bindings.clear();
   contract->input_bindings.reserve(inputs.size());
   for (std::size_t index = 0; index < inputs.size(); ++index) {
-    const auto& port = *inputs[index];
+    const auto& port = inputs[index];
     const auto& projected = input_sources[index];
     auto& physical = contract->physical_inputs[index];
-    if (projected.value_id != port.value_id ||
-        projected.source_physical_index < 0 ||
+    if (projected.value_id != port.value_id || projected.source_physical_index < 0 ||
         !seen_input_sources.emplace(projected.source_physical_index).second) {
       return fail(error, "IFM projection has an invalid or aliased physical carrier");
     }
     physical.source_physical_index = projected.source_physical_index;
     const auto root_id = root_value_id(plan, port.value_id);
-    if (const auto* region = arena->region(root_id)) {
-      if (region->byte_offset > static_cast<std::uint64_t>(
-                                    std::numeric_limits<std::int64_t>::max())) {
+    if (const auto* region = arena.region(root_id)) {
+      if (region->byte_offset >
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         return fail(error, "IFM frame-slot offset cannot be represented");
       }
-      physical.source_byte_offset =
-          static_cast<std::int64_t>(region->byte_offset);
+      physical.source_byte_offset = static_cast<std::int64_t>(region->byte_offset);
     } else {
       // Direct QMLA inputs remain imported public DMA-BUFs; ProcessMLA is the
       // first frame-arena producer in that route.
@@ -499,7 +465,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
   contract->logical_outputs.clear();
   contract->physical_outputs.reserve(outputs.size());
   for (std::size_t index = 0; index < outputs.size(); ++index) {
-    const auto& port = *outputs[index];
+    const auto& port = outputs[index];
     const auto* value = plan.value(port.value_id);
     if (!value || port.port_index != index ||
         index > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
@@ -516,7 +482,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
     physical.device_kind = DeviceKind::Mla;
     physical.segment_name = value->name;
     physical.required_alignment_bytes = port.required_alignment_bytes;
-    if (!assign_physical_region(*arena, *value, &physical, error)) {
+    if (!assign_physical_region(arena, *value, &physical, error)) {
       return false;
     }
     contract->physical_outputs.push_back(std::move(physical));
@@ -524,7 +490,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
 
   std::vector<const ValueSpec*> packed_read_views;
   if (outputs.size() == 1U) {
-    packed_read_views = read_views_consumed_after_mla(plan, outputs.front()->value_id);
+    packed_read_views = read_views_consumed_after_mla(plan, outputs.front().value_id);
   }
   // One affine child is still a read expression.  Cardinality must not decide
   // whether its root-relative offset/strides survive projection: a monolithic
@@ -554,7 +520,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
       logical.stride_bytes = expression.stride_bytes;
       logical.logical_name = value.name;
       logical.backend_name = value.name;
-      logical.segment_name = plan.value(outputs.front()->value_id)->name;
+      logical.segment_name = plan.value(outputs.front().value_id)->name;
       if (value.logical_dtype) {
         logical.dtype = *value.logical_dtype;
       }
@@ -566,7 +532,7 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
   } else {
     contract->logical_outputs.reserve(outputs.size());
     for (std::size_t index = 0; index < outputs.size(); ++index) {
-      const auto& port = *outputs[index];
+      const auto& port = outputs[index];
       const auto* value = plan.value(port.value_id);
       const int slot = static_cast<int>(index);
 
@@ -598,56 +564,65 @@ bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
   std::vector<std::string> ofm_symbols;
   ifm_symbols.reserve(inputs.size());
   ofm_symbols.reserve(outputs.size());
-  for (const auto* port : inputs) {
-    ifm_symbols.push_back(port->elf_symbol);
+  for (const auto& port : inputs) {
+    ifm_symbols.push_back(port.elf_symbol);
   }
-  for (const auto* port : outputs) {
-    ofm_symbols.push_back(port->elf_symbol);
+  for (const auto& port : outputs) {
+    ofm_symbols.push_back(port.elf_symbol);
   }
   contract->elf_ifm_symbol_names = std::move(ifm_symbols);
   contract->elf_ofm_symbol_names = std::move(ofm_symbols);
   contract->consumer_keeps_distinct_physical_inputs = inputs.size() > 1U;
-  contract->frame_arena_size_bytes = arena->allocation_bytes();
-  const bool has_internal_input = std::any_of(
-      inputs.begin(), inputs.end(), [&](const BackendPortSpec* port) {
-        return arena->region(root_value_id(plan, port->value_id)) != nullptr;
+  contract->frame_arena_size_bytes = arena.allocation_bytes();
+  const bool has_internal_input =
+      std::any_of(inputs.begin(), inputs.end(), [&](const BackendPortSpec& port) {
+        return arena.region(root_value_id(plan, port.value_id)) != nullptr;
       });
-  contract->frame_arena_role = has_internal_input
-                                   ? FrameArenaRole::ReuseInput
-                                   : FrameArenaRole::Allocate;
+  contract->frame_arena_role =
+      has_internal_input ? FrameArenaRole::ReuseInput : FrameArenaRole::Allocate;
   if (error) {
     error->clear();
   }
   return true;
 }
 
+bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
+                                           const std::size_t mla_stage_index,
+                                           MlaStaticContract* contract,
+                                           const std::span<const PhysicalPortSource> input_sources,
+                                           std::string* error) {
+  auto arena = compile_frame_arena(plan, error);
+  return arena && apply_dmabuf_plan_contract_projection(plan, mla_stage_index, *arena, contract,
+                                                        input_sources, error);
+}
+
+bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
+                                           MlaStaticContract* contract,
+                                           const std::span<const PhysicalPortSource> input_sources,
+                                           std::string* error) {
+  if (plan.mla_stage_count() != 1U) {
+    return fail(error, "single-stage MLA contract projection is ambiguous for a multi-stage plan");
+  }
+  return apply_dmabuf_plan_contract_projection(plan, 0U, contract, input_sources, error);
+}
+
 bool apply_dmabuf_plan_processcvu_contract_projection(
-    const ModelExecutionPlan& plan, ProcessCvuMlaBoundary boundary,
+    const ModelExecutionPlan& plan, const std::size_t adjacent_mla_stage_index,
+    const FrameSlotArenaPlan& arena, ProcessCvuMlaBoundary boundary,
     ProcessCvuStagePayload* payload, ::simaai::neat::CompiledRuntimeContract* runtime,
-    ::simaai::neat::CompiledExposedView* exposed_view,
-    std::string* error) {
+    ::simaai::neat::CompiledExposedView* exposed_view, std::string* error) {
   if (!payload || !runtime || !exposed_view) {
     return fail(error, "ProcessCVU contract projection is null");
   }
-  auto arena = compile_frame_arena(plan, error);
-  if (!arena) {
-    return false;
-  }
-
   constexpr std::uint32_t kDescriptorTensorTransformV1 =
       SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1;
-  constexpr std::uint32_t kDescriptorPreprocV1 =
-      SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1;
+  constexpr std::uint32_t kDescriptorPreprocV1 = SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1;
   constexpr std::uint32_t kPlacementEv74 = SIMA_PLUGIN_CVU_PLACEMENT_EV74;
   constexpr std::uint32_t kPlacementA65 = SIMA_PLUGIN_CVU_PLACEMENT_A65;
-  constexpr std::uint32_t kPatchMetadata =
-      SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA;
-  constexpr std::uint32_t kPatchPreprocGeometry =
-      SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY;
-  constexpr std::uint32_t kPatchPreprocScalarRoi =
-      SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI;
-  constexpr std::uint32_t kPatchPreprocRoiList =
-      SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST;
+  constexpr std::uint32_t kPatchMetadata = SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA;
+  constexpr std::uint32_t kPatchPreprocGeometry = SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY;
+  constexpr std::uint32_t kPatchPreprocScalarRoi = SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI;
+  constexpr std::uint32_t kPatchPreprocRoiList = SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST;
   constexpr std::uint32_t kPatchPreprocPlaneLayout =
       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT;
 
@@ -659,10 +634,9 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
     payload->graph_name = "preproc";
     payload->descriptor_abi_id = kDescriptorPreprocV1;
     payload->supported_placement_mask = kPlacementEv74;
-    payload->allowed_frame_patch_mask =
-        kPatchMetadata | kPatchPreprocGeometry |
-        kPatchPreprocScalarRoi | kPatchPreprocRoiList |
-        kPatchPreprocPlaneLayout;
+    payload->allowed_frame_patch_mask = kPatchMetadata | kPatchPreprocGeometry |
+                                        kPatchPreprocScalarRoi | kPatchPreprocRoiList |
+                                        kPatchPreprocPlaneLayout;
     break;
   case ProcessCvuGraphFamily::Cast:
     payload->graph_id = 221;
@@ -711,26 +685,16 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
     payload->allowed_frame_patch_mask = kPatchMetadata;
   }
 
-  std::vector<const BackendPortSpec*> ports;
-  const auto wanted_direction =
-      boundary == ProcessCvuMlaBoundary::Inputs
-          ? BackendPortDirection::Input
-          : BackendPortDirection::Output;
-  for (const auto& port : plan.backend_ports()) {
-    if (port.direction == wanted_direction) {
-      ports.push_back(&port);
-    }
-  }
-  std::sort(ports.begin(), ports.end(),
-            [](const auto* lhs, const auto* rhs) {
-              return lhs->port_index < rhs->port_index;
-            });
+  const auto wanted_direction = boundary == ProcessCvuMlaBoundary::Inputs
+                                    ? BackendPortDirection::Input
+                                    : BackendPortDirection::Output;
+  const auto ports = plan.backend_ports(adjacent_mla_stage_index, wanted_direction);
   if (ports.empty() || runtime->logical_outputs.empty()) {
     return fail(error, "ProcessCVU alignment projection has an empty MLA boundary");
   }
   for (std::size_t index = 0; index < ports.size(); ++index) {
-    const auto alignment = ports[index]->required_alignment_bytes;
-    if (ports[index]->port_index != index || alignment == 0U ||
+    const auto alignment = ports[index].required_alignment_bytes;
+    if (ports[index].port_index != index || alignment == 0U ||
         (alignment & (alignment - 1U)) != 0U) {
       return fail(error, "ProcessCVU alignment projection has an invalid MLA port order or "
                          "alignment");
@@ -742,24 +706,20 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
                        "boundary port order");
   }
 
-  const DeviceKind output_device =
-      runtime->physical_outputs.empty()
-          ? DeviceKind::Evxx
-          : runtime->physical_outputs.front().device_kind;
+  const DeviceKind output_device = runtime->physical_outputs.empty()
+                                       ? DeviceKind::Evxx
+                                       : runtime->physical_outputs.front().device_kind;
   const std::uint64_t output_memory_flags =
-      runtime->physical_outputs.empty()
-          ? 0U
-          : runtime->physical_outputs.front().memory_flags;
+      runtime->physical_outputs.empty() ? 0U : runtime->physical_outputs.front().memory_flags;
   std::vector<PhysicalBufferStaticSpec> projected_outputs;
   projected_outputs.reserve(output_count);
   bool exact_pack_children = false;
   for (std::size_t index = 0; index < output_count; ++index) {
     auto placement = resolve_cvu_output_placement(
-        plan, *arena, boundary, ports, runtime->logical_outputs[index], index,
-        output_count, error);
+        plan, arena, boundary, ports, runtime->logical_outputs[index], index, output_count, error);
     if (!placement || !placement->value ||
-        placement->byte_offset > static_cast<std::uint64_t>(
-                                     std::numeric_limits<std::int64_t>::max())) {
+        placement->byte_offset >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
       return false;
     }
     PhysicalBufferStaticSpec physical;
@@ -767,15 +727,12 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
     physical.allocator_index = static_cast<int>(index);
     physical.source_physical_index = static_cast<int>(index);
     physical.size_bytes = placement->value->required_bytes;
-    physical.source_byte_offset =
-        static_cast<std::int64_t>(placement->byte_offset);
+    physical.source_byte_offset = static_cast<std::int64_t>(placement->byte_offset);
     physical.device_kind = output_device;
     physical.memory_flags = output_memory_flags;
     physical.segment_name = placement->value->name;
-    physical.required_alignment_bytes =
-        placement->required_alignment_bytes;
-    exact_pack_children =
-        exact_pack_children || placement->required_alignment_bytes == 16U;
+    physical.required_alignment_bytes = placement->required_alignment_bytes;
+    exact_pack_children = exact_pack_children || placement->required_alignment_bytes == 16U;
     projected_outputs.push_back(std::move(physical));
 
     auto& logical = runtime->logical_outputs[index];
@@ -787,17 +744,16 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
   runtime->physical_outputs = std::move(projected_outputs);
   if (payload->runtime_output_physical_index_list.size() == output_count) {
     for (std::size_t index = 0; index < output_count; ++index) {
-      payload->runtime_output_physical_index_list[index] =
-          static_cast<int>(index);
+      payload->runtime_output_physical_index_list[index] = static_cast<int>(index);
     }
   }
   if (!exact_pack_children) {
     for (auto& exposed : exposed_view->exposed_logical_outputs) {
-      const auto projected = std::find_if(
-          runtime->logical_outputs.begin(), runtime->logical_outputs.end(),
-          [&](const LogicalTensorStaticSpec& logical) {
-            return logical.logical_index == exposed.logical_index;
-          });
+      const auto projected =
+          std::find_if(runtime->logical_outputs.begin(), runtime->logical_outputs.end(),
+                       [&](const LogicalTensorStaticSpec& logical) {
+                         return logical.logical_index == exposed.logical_index;
+                       });
       if (projected == runtime->logical_outputs.end()) {
         return fail(error, "ProcessCVU exposed output has no projected runtime output");
       }
@@ -807,23 +763,21 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
       exposed.segment_name = projected->segment_name;
     }
     for (auto& route : exposed_view->exposed_output_order) {
-      const auto logical = std::find_if(
-          exposed_view->exposed_logical_outputs.begin(),
-          exposed_view->exposed_logical_outputs.end(),
-          [&](const LogicalTensorStaticSpec& output) {
-            return output.logical_index == route.logical_output_index;
-          });
+      const auto logical = std::find_if(exposed_view->exposed_logical_outputs.begin(),
+                                        exposed_view->exposed_logical_outputs.end(),
+                                        [&](const LogicalTensorStaticSpec& output) {
+                                          return output.logical_index == route.logical_output_index;
+                                        });
       if (logical != exposed_view->exposed_logical_outputs.end()) {
         route.segment_name = logical->segment_name;
       }
     }
   }
 
-  runtime->frame_arena_size_bytes = arena->allocation_bytes();
-  runtime->frame_arena_role =
-      boundary == ProcessCvuMlaBoundary::Inputs
-          ? FrameArenaRole::Allocate
-          : FrameArenaRole::ReuseInput;
+  runtime->frame_arena_size_bytes = arena.allocation_bytes();
+  runtime->frame_arena_role = boundary == ProcessCvuMlaBoundary::Inputs
+                                  ? FrameArenaRole::Allocate
+                                  : FrameArenaRole::ReuseInput;
   runtime->consumer_keeps_distinct_physical_inputs =
       boundary == ProcessCvuMlaBoundary::Inputs && ports.size() > 1U;
 
@@ -832,6 +786,29 @@ bool apply_dmabuf_plan_processcvu_contract_projection(
     error->clear();
   }
   return true;
+}
+
+bool apply_dmabuf_plan_processcvu_contract_projection(
+    const ModelExecutionPlan& plan, const std::size_t adjacent_mla_stage_index,
+    const ProcessCvuMlaBoundary boundary, ProcessCvuStagePayload* payload,
+    ::simaai::neat::CompiledRuntimeContract* runtime,
+    ::simaai::neat::CompiledExposedView* exposed_view, std::string* error) {
+  auto arena = compile_frame_arena(plan, error);
+  return arena && apply_dmabuf_plan_processcvu_contract_projection(plan, adjacent_mla_stage_index,
+                                                                   *arena, boundary, payload,
+                                                                   runtime, exposed_view, error);
+}
+
+bool apply_dmabuf_plan_processcvu_contract_projection(
+    const ModelExecutionPlan& plan, const ProcessCvuMlaBoundary boundary,
+    ProcessCvuStagePayload* payload, ::simaai::neat::CompiledRuntimeContract* runtime,
+    ::simaai::neat::CompiledExposedView* exposed_view, std::string* error) {
+  if (plan.mla_stage_count() != 1U) {
+    return fail(error,
+                "single-stage ProcessCVU/MLA projection is ambiguous for a multi-stage plan");
+  }
+  return apply_dmabuf_plan_processcvu_contract_projection(plan, 0U, boundary, payload, runtime,
+                                                          exposed_view, error);
 }
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract
