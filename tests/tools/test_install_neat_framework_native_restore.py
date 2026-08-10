@@ -132,14 +132,14 @@ trap 'rm -rf "${tmp}"' EXIT
 replacement="${tmp}/neat-common.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4040]' > "${simulation}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4593]' > "${simulation}"
 dpkg-query() {
-  printf '%s\n' '2.1.3~pre4040'
+  printf '%s\n' '2.1.3~pre4593'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$3" in
-    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4040)' ;;
+    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4593)' ;;
     Replaces) printf '%s\n' 'simaai-common' ;;
     Conflicts) printf '%s\n' 'simaai-common' ;;
     *) return 2 ;;
@@ -151,7 +151,7 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Verified platform package replacements", result.stdout)
-        self.assertIn("simaai-common=2.1.3~pre4040", result.stdout)
+        self.assertIn("simaai-common=2.1.3~pre4593", result.stdout)
 
     def test_board_transaction_rejects_non_exact_replacement(self) -> None:
         result = run_bash(
@@ -162,9 +162,9 @@ trap 'rm -rf "${tmp}"' EXIT
 replacement="${tmp}/neat-common.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4040]' > "${simulation}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4593]' > "${simulation}"
 dpkg-query() {
-  printf '%s\n' '2.1.3~pre4040'
+  printf '%s\n' '2.1.3~pre4593'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -332,10 +332,10 @@ dpkg-deb() {
     *:Version) printf '%s\n' 2.1.1-0neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4040), simaai-memory-lib (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4593), simaai-memory-lib (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4040), simaai-memory-lib-dev (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4593), simaai-memory-lib-dev (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
       printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'
