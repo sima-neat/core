@@ -34,6 +34,18 @@ RUN_TEST(
       pre.processcvu.default_output_names = {"output_rgb_image"};
       pre.processcvu.primary_output_name = "output_rgb_image";
       pre.processcvu.preproc_single_output_handoff = true;
+      pre.processcvu.descriptor_abi_id =
+          SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1;
+      pre.processcvu.descriptor_contract_version = 1U;
+      pre.processcvu.binding_schema_version = 1U;
+      pre.processcvu.supported_placement_mask =
+          SIMA_PLUGIN_CVU_PLACEMENT_EV74;
+      pre.processcvu.allowed_frame_patch_mask =
+          SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA |
+          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY |
+          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI |
+          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST |
+          SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT;
       pre.processcvu.input_shapes = {{720, 1280, 3}};
       pre.processcvu.output_shapes = {{640, 640, 3}};
       pre.processcvu.normalize = 1;
@@ -218,6 +230,19 @@ RUN_TEST(
               "pre stage default_output_names[0] mismatch");
       require(pre_stage->payload.processcvu.preproc_single_output_handoff,
               "pre stage single-output handoff flag mismatch");
+      require(pre_stage->payload.processcvu.descriptor_abi_id ==
+                      SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 &&
+                  pre_stage->payload.processcvu.descriptor_contract_version == 1U &&
+                  pre_stage->payload.processcvu.binding_schema_version == 1U &&
+                  pre_stage->payload.processcvu.supported_placement_mask ==
+                      SIMA_PLUGIN_CVU_PLACEMENT_EV74 &&
+                  pre_stage->payload.processcvu.allowed_frame_patch_mask ==
+                      (SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT),
+              "pre stage exact descriptor registry handshake mismatch");
       require(pre_stage->payload.processcvu.primary_output_name != nullptr &&
                   std::string(pre_stage->payload.processcvu.primary_output_name) ==
                       "output_rgb_image",

@@ -247,6 +247,11 @@ enum class ProcessCvuOutputSemanticKind : std::uint8_t {
 struct ProcessCvuStagePayload {
   bool canonical_contract = false;
   bool dmabuf_plan_contract = false;
+  std::uint32_t descriptor_abi_id = 0U;
+  std::uint32_t descriptor_contract_version = 0U;
+  std::uint32_t binding_schema_version = 0U;
+  std::uint32_t supported_placement_mask = 0U;
+  std::uint32_t allowed_frame_patch_mask = 0U;
   std::vector<std::int64_t> slice_shape_raw;
   std::vector<std::int64_t> out_shape_raw;
   bool has_align_c16 = false;

@@ -106,8 +106,8 @@ bool QuantTess::compile_node_contract(const ContractCompileInput& input, Compile
       return false;
     }
     node_helpers::ProcessCvuRuntimeConfigOptions runtime_options;
-    runtime_options.graph_family = "quanttess";
-    runtime_options.graph_id = 202;
+    runtime_options.graph_family = "quantizetessellate";
+    runtime_options.graph_id = 226;
     runtime_options.input_dtype_default = "FP32";
     runtime_options.output_dtype_default = "EVXX_INT8";
     runtime_options.set_tessellate = true;

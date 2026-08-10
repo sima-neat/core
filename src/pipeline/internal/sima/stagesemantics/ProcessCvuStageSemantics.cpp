@@ -6770,9 +6770,11 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_preadapter_compile_
       runtime.graph_id = 2;
       runtime.out_dtype = runtime.output_dtype;
     } else {
+      // The historical graph-202 quanttess ABI is retired.  The supported
+      // fused semantic lowers only to the generic tensor-ABI graph 226.
       runtime.graph_family = "quanttess";
-      runtime.graph_name = "quanttess";
-      runtime.graph_id = 202;
+      runtime.graph_name = "quantizetessellate";
+      runtime.graph_id = 226;
       const auto quant = resolve_processcvu_mpk_quant_contract_local(
           contract, *(quant_stage ? quant_stage : geometry_stage));
       if (!quant.has_value() || quant->scales.empty() || quant->zero_points.empty()) {
