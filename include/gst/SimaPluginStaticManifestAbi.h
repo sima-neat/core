@@ -27,7 +27,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)25)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)26)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -236,6 +236,25 @@ typedef enum SimaPluginProcessCvuOutputSemanticKind {
   SIMA_PLUGIN_PROCESSCVU_OUTPUT_SEMANTIC_TENSOR = 5
 } SimaPluginProcessCvuOutputSemanticKind;
 
+typedef enum SimaPluginCvuDescriptorAbiId {
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_NONE = 0,
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1 = 1,
+  SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 = 2
+} SimaPluginCvuDescriptorAbiId;
+
+typedef enum SimaPluginCvuPlacementMask {
+  SIMA_PLUGIN_CVU_PLACEMENT_EV74 = 1u << 0u,
+  SIMA_PLUGIN_CVU_PLACEMENT_A65 = 1u << 1u
+} SimaPluginCvuPlacementMask;
+
+typedef enum SimaPluginCvuFramePatchMask {
+  SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA = 1u << 0u,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY = 1u << 1u,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI = 1u << 2u,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST = 1u << 3u,
+  SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT = 1u << 4u
+} SimaPluginCvuFramePatchMask;
+
 typedef struct SimaPluginProcessCvuStagePayload {
   const gchar* graph_family;
   SimaPluginProcessCvuGraphFamily graph_family_kind;
@@ -290,6 +309,11 @@ typedef struct SimaPluginProcessCvuStagePayload {
    * the strict MPK+ELF execution plan. The plugin must not re-read the
    * environment or fall back to the dispatcher when this bit is true. */
   gboolean dmabuf_plan_contract;
+  guint32 descriptor_abi_id;
+  guint32 descriptor_contract_version;
+  guint32 binding_schema_version;
+  guint32 supported_placement_mask;
+  guint32 allowed_frame_patch_mask;
   gboolean preproc_single_output_handoff;
 
   /* tri-state values: -1 unset, 0 false, 1 true */

@@ -600,6 +600,11 @@ RUN_TEST(
           {sima::ProcessCvuGraphFamily::DetessCast, 225},
           {sima::ProcessCvuGraphFamily::DetessDequant, 227},
       };
+      const std::vector<std::string> canonical_tokens = {
+          "tessellate", "quantizetessellate", "casttess", "detessellate",
+          "detesscast", "detessdequant",
+      };
+      std::size_t family_index = 0U;
       for (const auto& [family, graph_id] : driver_families) {
         sima::ProcessCvuStagePayload projected;
         projected.graph_family_enum = family;
@@ -609,14 +614,42 @@ RUN_TEST(
                     plan, sc::ProcessCvuMlaBoundary::Outputs, &projected,
                     &family_runtime, &family_exposed, &error),
                 "tess/detess family must project onto a production driver graph: " + error);
-        require(projected.dmabuf_plan_contract && projected.graph_id == graph_id,
-                "tess/detess family must use its canonical /dev/cvu graph id");
+        require(projected.dmabuf_plan_contract && projected.graph_id == graph_id &&
+                    projected.graph_name == canonical_tokens[family_index++] &&
+                    projected.descriptor_abi_id ==
+                        SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_TENSOR_TRANSFORM_PAIR_V1 &&
+                    projected.descriptor_contract_version == 1U &&
+                    projected.binding_schema_version == 1U &&
+                    projected.supported_placement_mask ==
+                        (SIMA_PLUGIN_CVU_PLACEMENT_EV74 |
+                         SIMA_PLUGIN_CVU_PLACEMENT_A65) &&
+                    projected.allowed_frame_patch_mask ==
+                        SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA,
+                "tess/detess family must publish its exact /dev/cvu registry handshake");
       }
 
-      sima::ProcessCvuStagePayload unsupported;
-      unsupported.graph_family_enum = sima::ProcessCvuGraphFamily::Preproc;
-      require(!sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  plan, sc::ProcessCvuMlaBoundary::Outputs, &unsupported,
-                  &post_runtime, &post_exposed, &error),
-              "preproc must remain unsupported until it has a driver descriptor planner");
+      sima::ProcessCvuStagePayload preproc;
+      preproc.graph_family_enum = sima::ProcessCvuGraphFamily::Preproc;
+      auto preproc_runtime = packed_pre_runtime;
+      auto preproc_exposed = packed_pre_exposed;
+      require(sc::apply_dmabuf_plan_processcvu_contract_projection(
+                  packed_plan, sc::ProcessCvuMlaBoundary::Inputs, &preproc,
+                  &preproc_runtime, &preproc_exposed, &error),
+              "preproc must project through its strict graph-200 descriptor ABI: " +
+                  error);
+      require(preproc.dmabuf_plan_contract && preproc.graph_id == 200 &&
+                  preproc.graph_name == "preproc" &&
+                  preproc.descriptor_abi_id ==
+                      SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 &&
+                  preproc.descriptor_contract_version == 1U &&
+                  preproc.binding_schema_version == 1U &&
+                  preproc.supported_placement_mask ==
+                      SIMA_PLUGIN_CVU_PLACEMENT_EV74 &&
+                  preproc.allowed_frame_patch_mask ==
+                      (SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_SCALAR_ROI |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST |
+                       SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT),
+              "preproc must publish the exact bounded graph-200 registry handshake");
     }));

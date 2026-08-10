@@ -252,6 +252,28 @@ bool read_int_key(const nlohmann::json& obj, const char* key, int& out) {
   return false;
 }
 
+bool read_u32_key(const nlohmann::json& obj, const char* key,
+                  std::uint32_t& out) {
+  if (!obj.contains(key) || !obj[key].is_number_integer()) {
+    return false;
+  }
+  std::uint64_t value = 0U;
+  if (obj[key].is_number_unsigned()) {
+    value = obj[key].get<std::uint64_t>();
+  } else {
+    const auto signed_value = obj[key].get<std::int64_t>();
+    if (signed_value < 0) {
+      return false;
+    }
+    value = static_cast<std::uint64_t>(signed_value);
+  }
+  if (value > std::numeric_limits<std::uint32_t>::max()) {
+    return false;
+  }
+  out = static_cast<std::uint32_t>(value);
+  return true;
+}
+
 bool read_bool_key(const nlohmann::json& obj, const char* key, bool& out) {
   if (!obj.contains(key))
     return false;
@@ -539,6 +561,16 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
       spec.processcvu.dmabuf_plan_contract) {
     j["processcvu_dmabuf_plan_contract"] = true;
+    j["processcvu_descriptor_abi_id"] =
+        spec.processcvu.descriptor_abi_id;
+    j["processcvu_descriptor_contract_version"] =
+        spec.processcvu.descriptor_contract_version;
+    j["processcvu_binding_schema_version"] =
+        spec.processcvu.binding_schema_version;
+    j["processcvu_supported_placement_mask"] =
+        spec.processcvu.supported_placement_mask;
+    j["processcvu_allowed_frame_patch_mask"] =
+        spec.processcvu.allowed_frame_patch_mask;
   }
 
   if (spec.payload_kind == StagePayloadKind::ProcessCvu && !spec.processcvu.run_target.empty()) {
@@ -914,6 +946,16 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
                   stage.processmla.dmabuf_plan_contract);
     read_bool_key(stage_j, "processcvu_dmabuf_plan_contract",
                   stage.processcvu.dmabuf_plan_contract);
+    read_u32_key(stage_j, "processcvu_descriptor_abi_id",
+                 stage.processcvu.descriptor_abi_id);
+    read_u32_key(stage_j, "processcvu_descriptor_contract_version",
+                 stage.processcvu.descriptor_contract_version);
+    read_u32_key(stage_j, "processcvu_binding_schema_version",
+                 stage.processcvu.binding_schema_version);
+    read_u32_key(stage_j, "processcvu_supported_placement_mask",
+                 stage.processcvu.supported_placement_mask);
+    read_u32_key(stage_j, "processcvu_allowed_frame_patch_mask",
+                 stage.processcvu.allowed_frame_patch_mask);
     if (stage_j.contains("elf_ifm_symbol_names") && stage_j["elf_ifm_symbol_names"].is_array()) {
       stage.elf_ifm_symbol_names.clear();
       for (const auto& s : stage_j["elf_ifm_symbol_names"]) {
@@ -1608,6 +1650,16 @@ private:
           stage.processcvu.canonical_contract ? TRUE : FALSE;
       out.spec.payload.processcvu.dmabuf_plan_contract =
           stage.processcvu.dmabuf_plan_contract ? TRUE : FALSE;
+      out.spec.payload.processcvu.descriptor_abi_id =
+          stage.processcvu.descriptor_abi_id;
+      out.spec.payload.processcvu.descriptor_contract_version =
+          stage.processcvu.descriptor_contract_version;
+      out.spec.payload.processcvu.binding_schema_version =
+          stage.processcvu.binding_schema_version;
+      out.spec.payload.processcvu.supported_placement_mask =
+          stage.processcvu.supported_placement_mask;
+      out.spec.payload.processcvu.allowed_frame_patch_mask =
+          stage.processcvu.allowed_frame_patch_mask;
       out.spec.payload.processcvu.preproc_single_output_handoff =
           stage.processcvu.preproc_single_output_handoff ? TRUE : FALSE;
       out.spec.payload.processcvu.aspect_ratio = stage.processcvu.aspect_ratio;
