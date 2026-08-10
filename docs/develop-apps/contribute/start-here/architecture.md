@@ -158,12 +158,27 @@ storage. Core compiles model-load facts into one immutable internal
   authority, and access direction; and
 - public outputs contain only publication order and the value they expose.
 
-Frozen untyped AFE MPKs use the quarantined `LegacyAfeMpkDecoder`. It accepts
+Frozen untyped AFE v2 MPKs use the quarantined `AfeMpkV2Decoder`. It accepts
 only the exact registered `(model SDK version, processor, kernel)` vocabulary,
 resolves full tensor names, validates operation byte equations, and reconciles
-the MPK MLA arity with strict ELF IFM/OFM topology. Ambiguity, missing slots,
-or conflicting evidence is a model-load error; filenames, sidecar JSON,
-substring matching, environment state, and runtime buffers are not evidence.
+each MPK MLA stage independently with its exact ELF IFM/OFM topology. The
+decoder joins executable evidence by both compiler-authored logical stage ID
+and the manifest executable token; archive order and filename suffixes are not
+semantic evidence. The resulting immutable plan exposes a checked
+`{stage index, op ID, logical stage ID, executable}` key and pre-indexed ordered
+port spans for every MLA operation. Ambiguity, missing slots, or conflicting
+evidence is a model-load error; sidecar JSON, substring matching, environment
+state, and runtime buffers are not evidence.
+
+An AFE artifact ending in `.so` is therefore classified by its MPK stage, not
+by its suffix. For `processor="MLA"`, Core reads the file as an ELF container
+without loading it into the host process, proves its section topology, and
+passes the exact artifact to MLArt. For `processor="A65"` with the
+compiler-authored `input_names`, `input_types`, and `output_types` contract, it
+is a host TVM module and is not an MLA executable.
+The strict DMA-BUF route rejects that stage until a typed direct host-module
+ABI is available; it never calls `dlopen`, silently skips the stage, or routes
+through the dispatcher-based ProcessTVM compatibility element.
 The legacy EVO alignment is an explicit 4096-byte migration policy with
 `LegacyPolicy` provenance, not a fact inferred from its MPK or ELF. New typed
 contracts must declare their own alignment.
@@ -177,6 +192,12 @@ spans. Pack, tessellation, and precision conversion remain producer/compute
 semantics unless a lowering pass proves exact backend production or equivalent
 fusion. This prevents storage placement from silently changing MLA port arity
 or model behavior.
+
+All MLA stages in one accepted graph project through the same retained
+`FrameSlotArenaPlan`. The first materializing strict stage allocates the arena;
+later MLA stages use `ReuseInput` and submit exact root-relative IFM/OFM views
+over that same DMA-BUF. Stage-less projection helpers remain available only
+for an unambiguous one-MLA graph and fail closed for multi-stage plans.
 
 ---
 
@@ -381,9 +402,12 @@ owned by the Phase 7B deletion ledger; the strict-only product has no selector.
 
 Selecting `dmabuf-plan` invokes the same side-effect-free
 `try_compile_dmabuf_plan()` operation used by the offline
-`neat-dmabuf-plan-audit --mpk <mpk.json> --elf <model.elf>` tool. It requires
-an exact MPK manifest and MLA ELF, a successful strict reverse-AFE decode, and
-an accepted immutable frame-arena plan. The audit emits a versioned JSON record
+`neat-dmabuf-plan-audit` tool. Pass `--mpk <mpk.json>` and one repeatable
+`--mla-artifact <stage-id> <manifest-executable> <resolved-file>` triple per
+MLA stage. The one-stage `--elf` spelling remains an unambiguous compatibility
+form. Admission requires an exact MPK manifest and exact identity for every
+MLA ELF, a successful strict reverse-AFE decode, and an accepted immutable
+frame-arena plan. The audit emits a versioned JSON record
 with stable reason codes, contract locations, content digests, and basenames;
 it does not allocate accelerator memory, open a device, or expose customer
 filesystem paths. Strict setup records the same canonical plan digest and

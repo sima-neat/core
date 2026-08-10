@@ -406,7 +406,8 @@ set(UNIT_TESTS
   unit_mla_elf_io_topology_test
   unit_memory_backend_policy_test
   unit_dmabuf_eligibility_test
-  unit_legacy_afe_mpk_decoder_test
+  unit_afe_mpk_v2_decoder_test
+  unit_modelpack_multi_mla_plan_test
   unit_frame_slot_arena_plan_test
   unit_dmabuf_plan_contract_projection_test
   unit_model_archive_loader_test
@@ -508,7 +509,7 @@ if (SIMANEAT_EVO_MPK_CORPUS_DIR)
     NAME integration_legacy_afe_evo_corpus_test
     COMMAND ${Python3_EXECUTABLE}
       ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_legacy_afe_evo_corpus_test.py
-      --validator $<TARGET_FILE:unit_legacy_afe_mpk_decoder_test>
+      --validator $<TARGET_FILE:unit_afe_mpk_v2_decoder_test>
       --corpus "${SIMANEAT_EVO_MPK_CORPUS_DIR}"
   )
   simaneat_append_ctest_env(integration_legacy_afe_evo_corpus_test)

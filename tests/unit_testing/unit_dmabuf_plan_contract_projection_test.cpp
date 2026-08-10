@@ -23,9 +23,8 @@ sc::ModelExecutionPlan make_plan() {
                                         4096U + port * 4096U});
   }
   for (std::size_t index = 0; index < 28U; ++index) {
-    data.values.push_back(sc::ValueSpec{
-        static_cast<sc::ValueId>(30U + index),
-        "post_" + std::to_string(index), 4096U});
+    data.values.push_back(sc::ValueSpec{static_cast<sc::ValueId>(30U + index),
+                                        "post_" + std::to_string(index), 4096U});
   }
   data.model_inputs = {0U, 1U};
   sc::OpSpec mla;
@@ -64,20 +63,17 @@ sc::ModelExecutionPlan make_plan() {
   }
   for (std::size_t index = 0; index < 28U; ++index) {
     const auto value_id = static_cast<sc::ValueId>(index + 2U);
-    const auto alignment =
-        index == 7U ? 8192U : sc::kLegacyEvoCmaRegionAlignmentBytes;
-    const auto alignment_authority =
-        index == 7U ? sc::BackendPortAlignmentAuthority::Contract
-                    : sc::BackendPortAlignmentAuthority::LegacyPolicy;
-    data.backend_ports.push_back(sc::BackendPortSpec{
-        0U, sc::BackendPortDirection::Output, index,
-        "data.ofm.persistent.output_" + std::to_string(index), value_id,
-        data.values[value_id].required_bytes, alignment, alignment_authority,
-        sc::BackendPortAccess::WriteOnly});
+    const auto alignment = index == 7U ? 8192U : sc::kLegacyEvoCmaRegionAlignmentBytes;
+    const auto alignment_authority = index == 7U ? sc::BackendPortAlignmentAuthority::Contract
+                                                 : sc::BackendPortAlignmentAuthority::LegacyPolicy;
+    data.backend_ports.push_back(
+        sc::BackendPortSpec{0U, sc::BackendPortDirection::Output, index,
+                            "data.ofm.persistent.output_" + std::to_string(index), value_id,
+                            data.values[value_id].required_bytes, alignment, alignment_authority,
+                            sc::BackendPortAccess::WriteOnly});
     const auto public_value_id = static_cast<sc::ValueId>(index + 30U);
     data.model_outputs.push_back(
-        sc::ModelOutputSpec{index, data.values[public_value_id].name,
-                            public_value_id});
+        sc::ModelOutputSpec{index, data.values[public_value_id].name, public_value_id});
   }
   std::string error;
   auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
@@ -160,14 +156,32 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
       sc::ValueSpec{3U, "quantize_1", 320U},
       sc::ValueSpec{4U, "packed_ifm", packed_ifm_bytes},
       sc::ValueSpec{5U, "packed_ofm", 400U},
-      sc::ValueSpec{6U, "unpack_0", 200U, "int8", sc::TensorShape{1, 10, 1, 20},
-                    std::nullopt, {}, sc::ValueRepresentation::BackendNative,
+      sc::ValueSpec{6U,
+                    "unpack_0",
+                    200U,
+                    "int8",
+                    sc::TensorShape{1, 10, 1, 20},
+                    std::nullopt,
+                    {},
+                    sc::ValueRepresentation::BackendNative,
                     sc::ReadExpression{5U, 0U, {200, 20, 20, 1}}},
-      sc::ValueSpec{7U, "slice_0", 10U, "int8", sc::TensorShape{1, 10, 1, 1},
-                    std::nullopt, {}, sc::ValueRepresentation::Dense,
+      sc::ValueSpec{7U,
+                    "slice_0",
+                    10U,
+                    "int8",
+                    sc::TensorShape{1, 10, 1, 1},
+                    std::nullopt,
+                    {},
+                    sc::ValueRepresentation::Dense,
                     sc::ReadExpression{5U, 0U, {200, 20, 20, 1}}},
-      sc::ValueSpec{8U, "unpack_1", 200U, "int8", sc::TensorShape{1, 10, 1, 20},
-                    std::nullopt, {}, sc::ValueRepresentation::BackendNative,
+      sc::ValueSpec{8U,
+                    "unpack_1",
+                    200U,
+                    "int8",
+                    sc::TensorShape{1, 10, 1, 20},
+                    std::nullopt,
+                    {},
+                    sc::ValueRepresentation::BackendNative,
                     sc::ReadExpression{5U, 200U, {200, 20, 20, 1}}},
       sc::ValueSpec{9U, "dequant_0", 40U},
       sc::ValueSpec{10U, "dequant_1", 800U},
@@ -176,10 +190,8 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
   };
   data.model_inputs = {0U, 1U};
 
-  const auto add_op = [&](sc::OpKind kind, std::string name,
-                          std::vector<sc::ValueId> inputs,
-                          std::vector<sc::ValueId> outputs,
-                          sc::OpConfig config) {
+  const auto add_op = [&](sc::OpKind kind, std::string name, std::vector<sc::ValueId> inputs,
+                          std::vector<sc::ValueId> outputs, sc::OpConfig config) {
     sc::OpSpec op;
     op.id = static_cast<sc::OpId>(data.ops.size());
     op.sequence = data.ops.size() + 1U;
@@ -200,22 +212,16 @@ sc::ModelExecutionPlan make_packed_plan(const std::uint64_t packed_ifm_bytes = 9
                            sc::PackComponentPlacement{3U, 640U, 320U}}});
   add_op(sc::OpKind::Mla, "MLA_0", {4U}, {5U}, sc::MlaOpConfig{"model.elf", 4});
   add_op(sc::OpKind::Unpack, "unpack", {5U}, {6U, 8U},
-         sc::UnpackOpConfig{{"int8", "int8"},
-                            {{1, 10, 1, 20}, {1, 10, 1, 20}}});
+         sc::UnpackOpConfig{{"int8", "int8"}, {{1, 10, 1, 20}, {1, 10, 1, 20}}});
   add_op(sc::OpKind::Slice, "slice", {6U}, {7U},
-         sc::SliceOpConfig{{0, 0, 0, 0}, {1, 10, 1, 1},
-                           {1, 10, 1, 20}, {1, 10, 1, 1}});
-  add_op(sc::OpKind::Dequantize, "dequantize_0", {7U}, {9U},
-         sc::DequantizeOpConfig{"int8", {}});
-  add_op(sc::OpKind::Dequantize, "dequantize_1", {8U}, {10U},
-         sc::DequantizeOpConfig{"int8", {}});
-  add_op(sc::OpKind::PassThrough, "publish", {9U, 10U}, {11U, 12U},
-         sc::PassThroughOpConfig{});
+         sc::SliceOpConfig{{0, 0, 0, 0}, {1, 10, 1, 1}, {1, 10, 1, 20}, {1, 10, 1, 1}});
+  add_op(sc::OpKind::Dequantize, "dequantize_0", {7U}, {9U}, sc::DequantizeOpConfig{"int8", {}});
+  add_op(sc::OpKind::Dequantize, "dequantize_1", {8U}, {10U}, sc::DequantizeOpConfig{"int8", {}});
+  add_op(sc::OpKind::PassThrough, "publish", {9U, 10U}, {11U, 12U}, sc::PassThroughOpConfig{});
 
   data.backend_ports = {
       sc::BackendPortSpec{0U, sc::BackendPortDirection::Input, 0U, "data.ifm.b0", 4U,
-                          packed_ifm_bytes,
-                          sc::kLegacyEvoCmaRegionAlignmentBytes,
+                          packed_ifm_bytes, sc::kLegacyEvoCmaRegionAlignmentBytes,
                           sc::BackendPortAlignmentAuthority::LegacyPolicy,
                           sc::BackendPortAccess::ReadOnly},
       sc::BackendPortSpec{0U, sc::BackendPortDirection::Output, 0U, "data.ofm.b0", 5U, 400U,
@@ -236,18 +242,22 @@ sc::ModelExecutionPlan make_single_read_plan() {
   data.values = {
       sc::ValueSpec{0U, "ifm", 64U, "int8", sc::TensorShape{1, 1, 1, 64}},
       sc::ValueSpec{1U, "physical_ofm", 192U, "int8", sc::TensorShape{1, 1, 1, 192}},
-      sc::ValueSpec{2U, "slice_view", 12U, "int8", sc::TensorShape{1, 1, 1, 12},
-                    std::nullopt, {}, sc::ValueRepresentation::Dense,
+      sc::ValueSpec{2U,
+                    "slice_view",
+                    12U,
+                    "int8",
+                    sc::TensorShape{1, 1, 1, 12},
+                    std::nullopt,
+                    {},
+                    sc::ValueRepresentation::Dense,
                     sc::ReadExpression{1U, 8U, {192, 192, 16, 1}}},
       sc::ValueSpec{3U, "dequantized", 48U, "fp32", sc::TensorShape{1, 1, 1, 12}},
       sc::ValueSpec{4U, "published", 48U, "fp32", sc::TensorShape{1, 1, 1, 12}},
   };
   data.model_inputs = {0U};
 
-  const auto add_op = [&](sc::OpKind kind, std::string name,
-                          std::vector<sc::ValueId> inputs,
-                          std::vector<sc::ValueId> outputs,
-                          sc::OpConfig config) {
+  const auto add_op = [&](sc::OpKind kind, std::string name, std::vector<sc::ValueId> inputs,
+                          std::vector<sc::ValueId> outputs, sc::OpConfig config) {
     sc::OpSpec op;
     op.id = static_cast<sc::OpId>(data.ops.size());
     op.sequence = data.ops.size() + 1U;
@@ -259,15 +269,11 @@ sc::ModelExecutionPlan make_single_read_plan() {
     op.config = std::move(config);
     data.ops.push_back(std::move(op));
   };
-  add_op(sc::OpKind::Mla, "MLA_0", {0U}, {1U},
-         sc::MlaOpConfig{"model.elf", 4});
+  add_op(sc::OpKind::Mla, "MLA_0", {0U}, {1U}, sc::MlaOpConfig{"model.elf", 4});
   add_op(sc::OpKind::Slice, "slice", {1U}, {2U},
-         sc::SliceOpConfig{{0, 0, 0, 0}, {1, 1, 1, 12},
-                           {1, 1, 1, 192}, {1, 1, 1, 12}});
-  add_op(sc::OpKind::Dequantize, "dequantize", {2U}, {3U},
-         sc::DequantizeOpConfig{"int8", {}});
-  add_op(sc::OpKind::PassThrough, "publish", {3U}, {4U},
-         sc::PassThroughOpConfig{});
+         sc::SliceOpConfig{{0, 0, 0, 0}, {1, 1, 1, 12}, {1, 1, 1, 192}, {1, 1, 1, 12}});
+  add_op(sc::OpKind::Dequantize, "dequantize", {2U}, {3U}, sc::DequantizeOpConfig{"int8", {}});
+  add_op(sc::OpKind::PassThrough, "publish", {3U}, {4U}, sc::PassThroughOpConfig{});
 
   data.backend_ports = {
       sc::BackendPortSpec{0U, sc::BackendPortDirection::Input, 0U, "data.ifm.b0", 0U, 64U,
@@ -286,6 +292,60 @@ sc::ModelExecutionPlan make_single_read_plan() {
   return std::move(*plan);
 }
 
+sc::ModelExecutionPlan make_two_mla_plan() {
+  sc::ModelExecutionPlanData data;
+  data.contract_version = "2.0.0";
+  data.values = {
+      sc::ValueSpec{0U, "input", 64U},
+      sc::ValueSpec{1U, "encoded", 64U},
+      sc::ValueSpec{2U, "decoded", 32U},
+      sc::ValueSpec{3U, "published", 32U},
+  };
+  data.model_inputs = {0U};
+  const auto add_mla = [&](const char* name, const char* executable, const sc::ValueId input,
+                           const sc::ValueId output) {
+    sc::OpSpec op;
+    op.id = static_cast<sc::OpId>(data.ops.size());
+    op.sequence = data.ops.size() + 1U;
+    op.name = name;
+    op.kind = sc::OpKind::Mla;
+    op.processor = "MLA";
+    op.inputs = {input};
+    op.outputs = {output};
+    op.config = sc::MlaOpConfig{executable, 4};
+    data.ops.push_back(std::move(op));
+  };
+  add_mla("MLA_encoder", "encoder.so", 0U, 1U);
+  add_mla("MLA_decoder", "decoder.elf", 1U, 2U);
+  sc::OpSpec publish;
+  publish.id = 2U;
+  publish.sequence = 3U;
+  publish.name = "publish";
+  publish.kind = sc::OpKind::PassThrough;
+  publish.processor = "EV74";
+  publish.inputs = {2U};
+  publish.outputs = {3U};
+  publish.config = sc::PassThroughOpConfig{};
+  data.ops.push_back(std::move(publish));
+  for (std::size_t stage = 0; stage < 2U; ++stage) {
+    const sc::ValueId input = stage == 0U ? 0U : 1U;
+    const sc::ValueId output = stage == 0U ? 1U : 2U;
+    data.backend_ports.push_back(sc::BackendPortSpec{
+        stage, sc::BackendPortDirection::Input, 0U, "data.ifm.b0", input,
+        data.values[input].required_bytes, sc::kLegacyEvoCmaRegionAlignmentBytes,
+        sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::ReadOnly});
+    data.backend_ports.push_back(sc::BackendPortSpec{
+        stage, sc::BackendPortDirection::Output, 0U, "data.ofm.b0", output,
+        data.values[output].required_bytes, sc::kLegacyEvoCmaRegionAlignmentBytes,
+        sc::BackendPortAlignmentAuthority::LegacyPolicy, sc::BackendPortAccess::WriteOnly});
+  }
+  data.model_outputs = {{0U, "published", 3U}};
+  std::string error;
+  auto plan = sc::ModelExecutionPlan::create(std::move(data), &error);
+  require(plan.has_value(), "two-MLA plan must be valid: " + error);
+  return std::move(*plan);
+}
+
 sima::MlaStaticContract make_projection(const sc::ModelExecutionPlan& plan) {
   sima::MlaStaticContract contract;
   for (const auto& port : plan.backend_ports()) {
@@ -301,6 +361,29 @@ sima::MlaStaticContract make_projection(const sc::ModelExecutionPlan& plan) {
       contract.logical_inputs.push_back(std::move(logical));
     } else {
       contract.dispatcher_physical_outputs.push_back(std::move(physical));
+    }
+  }
+  return contract;
+}
+
+sima::MlaStaticContract make_projection(const sc::ModelExecutionPlan& plan,
+                                        const std::size_t stage_index) {
+  sima::MlaStaticContract contract;
+  for (const auto direction : {sc::BackendPortDirection::Input, sc::BackendPortDirection::Output}) {
+    for (const auto& port : plan.backend_ports(stage_index, direction)) {
+      const auto* value = plan.value(port.value_id);
+      sima::PhysicalBufferStaticSpec physical;
+      physical.physical_index = static_cast<int>(port.port_index);
+      physical.size_bytes = port.required_bytes;
+      physical.segment_name = value ? value->name : std::string{};
+      if (direction == sc::BackendPortDirection::Input) {
+        contract.physical_inputs.push_back(std::move(physical));
+        sima::TensorStaticSpec logical;
+        logical.tensor_index = static_cast<int>(port.port_index);
+        contract.logical_inputs.push_back(std::move(logical));
+      } else {
+        contract.dispatcher_physical_outputs.push_back(std::move(physical));
+      }
     }
   }
   return contract;
@@ -363,11 +446,9 @@ RUN_TEST(
               "a guessed IFM name must fail closed");
 
       auto aliased_sources = *input_sources;
-      aliased_sources[1].source_physical_index =
-          aliased_sources[0].source_physical_index;
+      aliased_sources[1].source_physical_index = aliased_sources[0].source_physical_index;
       auto aliased_contract = make_projection(plan);
-      require(!sc::apply_dmabuf_plan_contract_projection(plan, &aliased_contract,
-                                                         aliased_sources,
+      require(!sc::apply_dmabuf_plan_contract_projection(plan, &aliased_contract, aliased_sources,
                                                          &error),
               "two IFMs must not alias one physical carrier");
 
@@ -388,15 +469,14 @@ RUN_TEST(
           sc::resolve_mla_input_physical_sources(frontend_plan, upstream, &error);
       require(frontend_sources.has_value(),
               "frontend-produced IFM carriers must resolve: " + error);
-      require(frontend_sources->size() == 2U &&
-                  (*frontend_sources)[0].value_id == 2U &&
+      require(frontend_sources->size() == 2U && (*frontend_sources)[0].value_id == 2U &&
                   (*frontend_sources)[0].source_physical_index == 0 &&
                   (*frontend_sources)[1].value_id == 3U &&
                   (*frontend_sources)[1].source_physical_index == 1,
               "frontend-produced IFMs must retain backend order and exact carriers");
       auto frontend_mla = make_projection(frontend_plan);
-      require(sc::apply_dmabuf_plan_contract_projection(
-                  frontend_plan, &frontend_mla, *frontend_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(frontend_plan, &frontend_mla,
+                                                        *frontend_sources, &error),
               "frontend MLA frame-arena projection must pass: " + error);
       require(frontend_mla.frame_arena_role == sima::FrameArenaRole::ReuseInput &&
                   frontend_mla.frame_arena_size_bytes > 0U &&
@@ -428,13 +508,11 @@ RUN_TEST(
       simaai::neat::CompiledExposedView frontend_exposed;
       frontend_exposed.exposed_logical_outputs = frontend_runtime.logical_outputs;
       require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  frontend_plan, sc::ProcessCvuMlaBoundary::Inputs,
-                  &frontend_cvu, &frontend_runtime, &frontend_exposed, &error),
+                  frontend_plan, sc::ProcessCvuMlaBoundary::Inputs, &frontend_cvu,
+                  &frontend_runtime, &frontend_exposed, &error),
               "pre-CVU frame-arena projection must pass: " + error);
-      require(frontend_runtime.frame_arena_role ==
-                      sima::FrameArenaRole::Allocate &&
-                  frontend_runtime.frame_arena_size_bytes ==
-                      frontend_mla.frame_arena_size_bytes &&
+      require(frontend_runtime.frame_arena_role == sima::FrameArenaRole::Allocate &&
+                  frontend_runtime.frame_arena_size_bytes == frontend_mla.frame_arena_size_bytes &&
                   frontend_runtime.physical_outputs[0].source_byte_offset ==
                       frontend_mla.physical_inputs[0].source_byte_offset &&
                   frontend_runtime.physical_outputs[1].source_byte_offset ==
@@ -467,12 +545,11 @@ RUN_TEST(
       auto packed_sources =
           sc::resolve_mla_input_physical_sources(packed_plan, packed_upstream, &error);
       require(packed_sources.has_value(), "packed parent IFM must resolve: " + error);
-      require(packed_sources->size() == 1U &&
-                  (*packed_sources)[0].source_physical_index == 0,
+      require(packed_sources->size() == 1U && (*packed_sources)[0].source_physical_index == 0,
               "packed IFM must resolve to its one physical parent");
       auto packed_contract = make_projection(packed_plan);
-      require(sc::apply_dmabuf_plan_contract_projection(
-                  packed_plan, &packed_contract, *packed_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(packed_plan, &packed_contract,
+                                                        *packed_sources, &error),
               "packed 1/1 projection must pass: " + error);
       require(packed_contract.physical_outputs.size() == 1U &&
                   packed_contract.logical_outputs.size() == 2U,
@@ -509,18 +586,16 @@ RUN_TEST(
         packed_pre_runtime.logical_outputs.push_back(std::move(logical));
       }
       simaai::neat::CompiledExposedView packed_pre_exposed;
-      packed_pre_exposed.exposed_logical_outputs =
-          packed_pre_runtime.logical_outputs;
+      packed_pre_exposed.exposed_logical_outputs = packed_pre_runtime.logical_outputs;
       require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  packed_plan, sc::ProcessCvuMlaBoundary::Inputs, &packed_pre,
-                  &packed_pre_runtime, &packed_pre_exposed, &error),
+                  packed_plan, sc::ProcessCvuMlaBoundary::Inputs, &packed_pre, &packed_pre_runtime,
+                  &packed_pre_exposed, &error),
               "packed pre-CVU placement must project: " + error);
       require(packed_pre_runtime.physical_outputs.size() == 2U &&
                   packed_pre_runtime.physical_outputs[1].source_byte_offset -
                           packed_pre_runtime.physical_outputs[0].source_byte_offset ==
                       640 &&
-                  packed_pre_runtime.physical_outputs[0]
-                          .required_alignment_bytes == 16U &&
+                  packed_pre_runtime.physical_outputs[0].required_alignment_bytes == 16U &&
                   !packed_pre_runtime.consumer_keeps_distinct_physical_inputs,
               "Pack children must be direct writes into one ordered parent carrier");
 
@@ -530,8 +605,8 @@ RUN_TEST(
           sc::resolve_mla_input_physical_sources(single_read_plan, {}, &error);
       require(single_read_sources.has_value(),
               "single-read model-input carrier must resolve: " + error);
-      require(sc::apply_dmabuf_plan_contract_projection(
-                  single_read_plan, &single_read_contract, *single_read_sources, &error),
+      require(sc::apply_dmabuf_plan_contract_projection(single_read_plan, &single_read_contract,
+                                                        *single_read_sources, &error),
               "single read-view projection must pass: " + error);
       require(single_read_contract.logical_outputs.size() == 1U &&
                   single_read_contract.logical_outputs[0].byte_offset == 8 &&
@@ -546,9 +621,9 @@ RUN_TEST(
               "packed IFM with a gap must fail closed");
 
       const auto incomplete_parent_plan = make_packed_plan(1920U);
-      require(!sc::resolve_mla_input_physical_sources(
-                  incomplete_parent_plan, packed_upstream, &error),
-              "legacy doubled-size BF16 parent without exact producer coverage must fail closed");
+      require(
+          !sc::resolve_mla_input_physical_sources(incomplete_parent_plan, packed_upstream, &error),
+          "legacy doubled-size BF16 parent without exact producer coverage must fail closed");
 
       sima::ProcessCvuStagePayload dequant;
       dequant.graph_family_enum = sima::ProcessCvuGraphFamily::Dequant;
@@ -577,8 +652,8 @@ RUN_TEST(
       simaai::neat::CompiledExposedView post_exposed;
       post_exposed.exposed_logical_outputs = post_runtime.logical_outputs;
       require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  plan, sc::ProcessCvuMlaBoundary::Outputs, &dequant,
-                  &post_runtime, &post_exposed, &error),
+                  plan, sc::ProcessCvuMlaBoundary::Outputs, &dequant, &post_runtime, &post_exposed,
+                  &error),
               "dequant must project onto the production driver graph: " + error);
       require(dequant.dmabuf_plan_contract && dequant.graph_id == 223,
               "dequant must use canonical graph 223 in dmabuf-plan mode");
@@ -586,10 +661,8 @@ RUN_TEST(
                   post_runtime.logical_outputs[7].physical_index == 7 &&
                   post_runtime.physical_outputs[7].required_alignment_bytes == 8192U,
               "post-CVU output region must inherit the exact ordered MLA OFM alignment");
-      require(post_runtime.frame_arena_role ==
-                      sima::FrameArenaRole::ReuseInput &&
-                  post_runtime.frame_arena_size_bytes ==
-                      contract.frame_arena_size_bytes,
+      require(post_runtime.frame_arena_role == sima::FrameArenaRole::ReuseInput &&
+                  post_runtime.frame_arena_size_bytes == contract.frame_arena_size_bytes,
               "post-CVU must reuse the same parent frame arena");
 
       const std::vector<std::pair<sima::ProcessCvuGraphFamily, int>> driver_families = {
@@ -601,8 +674,8 @@ RUN_TEST(
           {sima::ProcessCvuGraphFamily::DetessDequant, 227},
       };
       const std::vector<std::string> canonical_tokens = {
-          "tessellate", "quantizetessellate", "casttess", "detessellate",
-          "detesscast", "detessdequant",
+          "tessellate",   "quantizetessellate", "casttess",
+          "detessellate", "detesscast",         "detessdequant",
       };
       std::size_t family_index = 0U;
       for (const auto& [family, graph_id] : driver_families) {
@@ -611,8 +684,8 @@ RUN_TEST(
         auto family_runtime = post_runtime;
         auto family_exposed = post_exposed;
         require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                    plan, sc::ProcessCvuMlaBoundary::Outputs, &projected,
-                    &family_runtime, &family_exposed, &error),
+                    plan, sc::ProcessCvuMlaBoundary::Outputs, &projected, &family_runtime,
+                    &family_exposed, &error),
                 "tess/detess family must project onto a production driver graph: " + error);
         require(projected.dmabuf_plan_contract && projected.graph_id == graph_id &&
                     projected.graph_name == canonical_tokens[family_index++] &&
@@ -621,10 +694,8 @@ RUN_TEST(
                     projected.descriptor_contract_version == 1U &&
                     projected.binding_schema_version == 1U &&
                     projected.supported_placement_mask ==
-                        (SIMA_PLUGIN_CVU_PLACEMENT_EV74 |
-                         SIMA_PLUGIN_CVU_PLACEMENT_A65) &&
-                    projected.allowed_frame_patch_mask ==
-                        SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA,
+                        (SIMA_PLUGIN_CVU_PLACEMENT_EV74 | SIMA_PLUGIN_CVU_PLACEMENT_A65) &&
+                    projected.allowed_frame_patch_mask == SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA,
                 "tess/detess family must publish its exact /dev/cvu registry handshake");
       }
 
@@ -633,18 +704,15 @@ RUN_TEST(
       auto preproc_runtime = packed_pre_runtime;
       auto preproc_exposed = packed_pre_exposed;
       require(sc::apply_dmabuf_plan_processcvu_contract_projection(
-                  packed_plan, sc::ProcessCvuMlaBoundary::Inputs, &preproc,
-                  &preproc_runtime, &preproc_exposed, &error),
-              "preproc must project through its strict graph-200 descriptor ABI: " +
-                  error);
+                  packed_plan, sc::ProcessCvuMlaBoundary::Inputs, &preproc, &preproc_runtime,
+                  &preproc_exposed, &error),
+              "preproc must project through its strict graph-200 descriptor ABI: " + error);
       require(preproc.dmabuf_plan_contract && preproc.graph_id == 200 &&
                   preproc.graph_name == "preproc" &&
-                  preproc.descriptor_abi_id ==
-                      SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 &&
+                  preproc.descriptor_abi_id == SIMA_PLUGIN_CVU_DESCRIPTOR_ABI_PREPROC_V1 &&
                   preproc.descriptor_contract_version == 1U &&
                   preproc.binding_schema_version == 1U &&
-                  preproc.supported_placement_mask ==
-                      SIMA_PLUGIN_CVU_PLACEMENT_EV74 &&
+                  preproc.supported_placement_mask == SIMA_PLUGIN_CVU_PLACEMENT_EV74 &&
                   preproc.allowed_frame_patch_mask ==
                       (SIMA_PLUGIN_CVU_FRAME_PATCH_METADATA |
                        SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_GEOMETRY |
@@ -652,4 +720,38 @@ RUN_TEST(
                        SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_ROI_LIST |
                        SIMA_PLUGIN_CVU_FRAME_PATCH_PREPROC_PLANE_LAYOUT),
               "preproc must publish the exact bounded graph-200 registry handshake");
+
+      const auto two_mla = make_two_mla_plan();
+      std::string arena_error;
+      const auto shared_arena =
+          sc::FrameSlotArenaPlan::compile(two_mla, sc::FrameSlotArenaReuse::DisjointLifetimes,
+                                          sc::kLegacyEvoCmaRegionAlignmentBytes, &arena_error);
+      require(shared_arena.has_value(), "two MLA stages need one graph arena: " + arena_error);
+
+      auto encoder_sources = sc::resolve_mla_input_physical_sources(two_mla, 0U, {}, &error);
+      require(encoder_sources.has_value(), "encoder public IFM must resolve: " + error);
+      auto encoder = make_projection(two_mla, 0U);
+      require(sc::apply_dmabuf_plan_contract_projection(two_mla, 0U, *shared_arena, &encoder,
+                                                        *encoder_sources, &error),
+              "encoder stage-local projection must pass: " + error);
+
+      std::vector<sima::LogicalTensorStaticSpec> encoder_outputs = encoder.logical_outputs;
+      auto decoder_sources =
+          sc::resolve_mla_input_physical_sources(two_mla, 1U, encoder_outputs, &error);
+      require(decoder_sources.has_value(), "decoder internal IFM must resolve: " + error);
+      auto decoder = make_projection(two_mla, 1U);
+      require(sc::apply_dmabuf_plan_contract_projection(two_mla, 1U, *shared_arena, &decoder,
+                                                        *decoder_sources, &error),
+              "decoder stage-local projection must pass: " + error);
+      require(encoder.frame_arena_role == sima::FrameArenaRole::Allocate &&
+                  decoder.frame_arena_role == sima::FrameArenaRole::ReuseInput &&
+                  encoder.frame_arena_size_bytes == decoder.frame_arena_size_bytes &&
+                  encoder.physical_outputs[0].source_byte_offset ==
+                      decoder.physical_inputs[0].source_byte_offset,
+              "later MLA must consume the first MLA region in the same immutable arena");
+
+      auto ambiguous_contract = make_projection(two_mla, 0U);
+      require(!sc::apply_dmabuf_plan_contract_projection(two_mla, &ambiguous_contract,
+                                                         *encoder_sources, &error),
+              "stage-less projection must reject a multi-MLA plan");
     }));

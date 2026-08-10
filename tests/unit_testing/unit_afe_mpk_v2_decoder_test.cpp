@@ -1,11 +1,12 @@
 #define SIMA_NEAT_INTERNAL 1
 #include "pipeline/internal/sima/MlaElfIoTopology.h"
 #include "pipeline/internal/sima/static_contract/KernelRegistry.h"
-#include "pipeline/internal/sima/static_contract/LegacyAfeMpkDecoder.h"
+#include "pipeline/internal/sima/static_contract/AfeMpkV2Decoder.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -136,6 +137,67 @@ const std::string& packed_read_manifest() {
   return manifest;
 }
 
+const std::string& two_mla_manifest() {
+  static const std::string manifest = R"json({
+    "name":"two-mla-synthetic","model_sdk_version":"2.0.0",
+    "input_nodes":[{"name":"input","size":16}],
+    "plugins":[
+      {"name":"MLA_encoder","sequence":1,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"input","size":16}],
+       "output_nodes":[{"name":"encoded","size":32}],
+       "resources":{"executable":"encoder.so"}},
+      {"name":"MLA_decoder","sequence":2,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"encoded","size":32}],
+       "output_nodes":[{"name":"decoded","size":8}],
+       "resources":{"executable":"decoder.elf"}},
+      {"name":"publish","sequence":3,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"pass_through","params":{}},
+       "input_nodes":[{"name":"decoded","size":8}],
+       "output_nodes":[{"name":"output","size":8}]}
+    ]
+  })json";
+  return manifest;
+}
+
+const std::string& two_mla_with_a65_module_manifest() {
+  static const std::string manifest = R"json({
+    "name":"two-mla-a65-synthetic","model_sdk_version":"2.0.0",
+    "input_nodes":[{"name":"input","size":16}],
+    "plugins":[
+      {"name":"MLA_encoder","sequence":1,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"input","size":16}],
+       "output_nodes":[{"name":"encoded","size":32}],
+       "resources":{"executable":"encoder.elf"}},
+      {"name":"APU_module","sequence":2,"processor":"A65","type":"sgpProcess",
+       "config_params":{"input_names":["arm_3_i0"],
+                        "input_types":[{"scalar":"float32","shape":[1,8]}],
+                        "output_types":[{"scalar":"float32","shape":[1,8]}]},
+       "input_nodes":[{"name":"encoded","size":32}],
+       "output_nodes":[{"name":"transformed","size":32}],
+       "resources":{"executable":"middle.so"}},
+      {"name":"MLA_decoder","sequence":3,"processor":"MLA","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "number_of_quads_to_user":4},
+       "input_nodes":[{"name":"transformed","size":32}],
+       "output_nodes":[{"name":"decoded","size":8}],
+       "resources":{"executable":"decoder.elf"}},
+      {"name":"publish","sequence":4,"processor":"EV74","type":"sgpProcess",
+       "config_params":{"desired_batch_size":1,"actual_batch_size":1,
+                        "kernel":"pass_through","params":{}},
+       "input_nodes":[{"name":"decoded","size":8}],
+       "output_nodes":[{"name":"output","size":8}]}
+    ]
+  })json";
+  return manifest;
+}
+
 std::string replace_once(std::string value, const std::string& before, const std::string& after) {
   const auto position = value.find(before);
   check(position != std::string::npos, "test mutation token exists");
@@ -144,8 +206,8 @@ std::string replace_once(std::string value, const std::string& before, const std
 }
 
 void expect_error(const std::string& manifest, const MlaElfIoTopology& topology,
-                  const LegacyAfeDecodeErrorCode expected, const char* message) {
-  const auto result = LegacyAfeMpkDecoder{}.decode_json(manifest, topology, "synthetic.json");
+                  const AfeMpkV2DecodeErrorCode expected, const char* message) {
+  const auto result = AfeMpkV2Decoder{}.decode_json(manifest, topology, "synthetic.json");
   check(!result, message);
   check(result.error.has_value() && result.error->code == expected, message);
   check(!result.error->json_path.empty() && !result.error->detail.empty(),
@@ -168,7 +230,7 @@ void test_exact_registry() {
 
 void test_success_and_immutable_contract() {
   const auto result =
-      LegacyAfeMpkDecoder{}.decode_json(valid_manifest(), monolithic_topology(), "synthetic.json");
+      AfeMpkV2Decoder{}.decode_json(valid_manifest(), monolithic_topology(), "synthetic.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -197,8 +259,8 @@ void test_success_and_immutable_contract() {
 }
 
 void test_unpack_and_slice_are_read_expressions() {
-  const auto result = LegacyAfeMpkDecoder{}.decode_json(
-      packed_read_manifest(), monolithic_topology(), "packed-read-synthetic.json");
+  const auto result = AfeMpkV2Decoder{}.decode_json(packed_read_manifest(), monolithic_topology(),
+                                                    "packed-read-synthetic.json");
   if (!result && result.error.has_value()) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
   }
@@ -208,10 +270,8 @@ void test_unpack_and_slice_are_read_expressions() {
   check(plan.model_outputs().size() == 2U, "both logical reads are published");
   const auto* pack = std::get_if<PackOpConfig>(&plan.ops().front().config);
   check(pack != nullptr && pack->components.size() == 2U &&
-            pack->components[0].parent_offset == 0U &&
-            pack->components[0].stored_bytes == 16U &&
-            pack->components[1].parent_offset == 16U &&
-            pack->components[1].stored_bytes == 16U,
+            pack->components[0].parent_offset == 0U && pack->components[0].stored_bytes == 16U &&
+            pack->components[1].parent_offset == 16U && pack->components[1].stored_bytes == 16U,
         "Pack carries exact ordered parent placement");
 
   // Value order is: two public inputs, pack, MLA, two unpack reads, two
@@ -248,31 +308,88 @@ void test_unpack_and_slice_are_read_expressions() {
 void test_fail_closed_cases() {
   const auto topology = monolithic_topology();
   expect_error(replace_once(valid_manifest(), "2.0.0", "2.0.1"), topology,
-               LegacyAfeDecodeErrorCode::UnsupportedContractVersion,
+               AfeMpkV2DecodeErrorCode::UnsupportedContractVersion,
                "unsupported version fails closed");
   expect_error(replace_once(valid_manifest(), "cast_transform", "cast_transform_suffix"), topology,
-               LegacyAfeDecodeErrorCode::UnsupportedKernel, "kernel substring is not an alias");
+               AfeMpkV2DecodeErrorCode::UnsupportedKernel, "kernel substring is not an alias");
   expect_error(replace_once(valid_manifest(),
                             "\"name\":\"cast0\",\"size\":8}],\n        \"output_nodes\"",
                             "\"name\":\"missing\",\"size\":8}],\n        \"output_nodes\""),
-               topology, LegacyAfeDecodeErrorCode::MissingProducer,
+               topology, AfeMpkV2DecodeErrorCode::MissingProducer,
                "missing full-name producer fails closed");
   expect_error(replace_once(valid_manifest(), "\"params\":{\"out_dtype\":\"bfloat16\"",
                             "\"params\":{\"ignored\":1,\"out_dtype\":\"bfloat16\""),
-               topology, LegacyAfeDecodeErrorCode::InvalidField,
+               topology, AfeMpkV2DecodeErrorCode::InvalidField,
                "untyped extra operation config is not ignored");
 
   auto two_ifm = topology;
   two_ifm.monolithic_ifm = false;
   two_ifm.ifm_symbol_names = {"data.ifm.persistent.qmla_ifm_0.b0",
                               "data.ifm.persistent.qmla_ifm_1.b0"};
-  expect_error(valid_manifest(), two_ifm, LegacyAfeDecodeErrorCode::ElfTopologyMismatch,
+  expect_error(valid_manifest(), two_ifm, AfeMpkV2DecodeErrorCode::ElfTopologyMismatch,
                "MPK/ELF port arity mismatch fails before plan creation");
 
   auto conflict = topology;
   conflict.ifm_layout_conflict = true;
-  expect_error(valid_manifest(), conflict, LegacyAfeDecodeErrorCode::ElfTopologyInvalid,
+  expect_error(valid_manifest(), conflict, AfeMpkV2DecodeErrorCode::ElfTopologyInvalid,
                "ambiguous ELF layout fails closed");
+}
+
+void test_exact_multi_mla_evidence() {
+  const auto topology = monolithic_topology();
+  const std::vector<MlaStageExecutableEvidence> evidence{
+      {"MLA_decoder", "decoder.elf", topology},
+      {"MLA_encoder", "encoder.so", topology},
+  };
+  const auto result = AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), evidence, "two-mla.json");
+  if (!result && result.error.has_value()) {
+    std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
+  }
+  check(static_cast<bool>(result), "two MLA stages join evidence by identity, not list order");
+  const auto& plan = *result.plan;
+  check(plan.mla_stage_count() == 2U, "two immutable MLA stage keys are indexed");
+  check(plan.mla_stage(0)->key.logical_stage_id == "MLA_encoder" &&
+            plan.mla_stage(0)->key.executable == "encoder.so" &&
+            plan.mla_stage(1)->key.logical_stage_id == "MLA_decoder" &&
+            plan.mla_stage(1)->key.executable == "decoder.elf",
+        "stage keys preserve MPK graph order and exact executable tokens");
+  check(plan.mla_stage_for_identity("MLA_encoder", "encoder.so") == plan.mla_stage(0) &&
+            plan.mla_stage_for_identity("MLA_encoder", "decoder.elf") == nullptr,
+        "stage identity lookup requires both the MPK logical id and executable token");
+  check(plan.backend_ports(0, BackendPortDirection::Input).size() == 1U &&
+            plan.backend_ports(0, BackendPortDirection::Output).front().required_bytes == 32U &&
+            plan.backend_ports(1, BackendPortDirection::Input).front().required_bytes == 32U &&
+            plan.backend_ports(1, BackendPortDirection::Output).front().required_bytes == 8U,
+        "each stage retains an independent dense ordered port span");
+
+  auto missing = evidence;
+  missing.pop_back();
+  const auto missing_result =
+      AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), missing, "two-mla.json");
+  check(!missing_result &&
+            missing_result.error->code == AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence,
+        "missing exact stage evidence fails before plan creation");
+
+  auto wrong = evidence;
+  wrong[1].executable = "decoder.elf";
+  const auto wrong_result =
+      AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), wrong, "two-mla.json");
+  check(!wrong_result &&
+            wrong_result.error->code == AfeMpkV2DecodeErrorCode::MissingMlaExecutableEvidence,
+        "swapped executable identity cannot bind by topology position");
+
+  const auto ambiguous_single =
+      AfeMpkV2Decoder{}.decode_json(two_mla_manifest(), topology, "two-mla.json");
+  check(!ambiguous_single &&
+            ambiguous_single.error->code == AfeMpkV2DecodeErrorCode::MultipleMlaStages,
+        "single-topology compatibility API rejects a multi-stage manifest");
+
+  const auto a65_result = AfeMpkV2Decoder{}.decode_json(two_mla_with_a65_module_manifest(),
+                                                        evidence, "two-mla-a65.json");
+  check(!a65_result && a65_result.error->code == AfeMpkV2DecodeErrorCode::UnsupportedHostModule &&
+            a65_result.error->json_path.find("resources.executable") != std::string::npos,
+        "an AFE A65/ProcessTVM .so is an explicit host module and fails closed until its "
+        "typed direct module ABI exists; it is never interpreted as an MLA ELF by suffix");
 }
 
 int validate_explicit_pair(const char* manifest_path, const char* elf_path) {
@@ -281,7 +398,7 @@ int validate_explicit_pair(const char* manifest_path, const char* elf_path) {
     std::cerr << topology.error << "\n";
     return 2;
   }
-  const auto result = LegacyAfeMpkDecoder{}.decode_file(manifest_path, topology);
+  const auto result = AfeMpkV2Decoder{}.decode_file(manifest_path, topology);
   if (!result) {
     std::cerr << result.error->json_path << ": " << result.error->detail << "\n";
     return 1;
@@ -307,11 +424,12 @@ int main(const int argc, char** argv) {
   if (argc == 3) {
     return validate_explicit_pair(argv[1], argv[2]);
   }
-  check(argc == 1, "usage: unit_legacy_afe_mpk_decoder_test [manifest elf]");
+  check(argc == 1, "usage: unit_afe_mpk_v2_decoder_test [manifest elf]");
   test_exact_registry();
   test_success_and_immutable_contract();
   test_unpack_and_slice_are_read_expressions();
+  test_exact_multi_mla_evidence();
   test_fail_closed_cases();
-  std::cout << "unit_legacy_afe_mpk_decoder_test: PASS\n";
+  std::cout << "unit_afe_mpk_v2_decoder_test: PASS\n";
   return 0;
 }

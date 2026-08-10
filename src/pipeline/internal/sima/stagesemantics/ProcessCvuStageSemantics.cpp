@@ -4535,7 +4535,11 @@ resolve_processcvu_mpk_quant_contract_local(const MpkContract& contract,
   if (!stage_pos.has_value()) {
     return std::nullopt;
   }
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
+  const auto first_mla = get_first_mla_stage_io_contract(contract);
+  const auto last_mla = get_last_mla_stage_io_contract(contract);
+  const auto first_mla_pos = find_position(first_mla);
+  const auto* mla_stage =
+      first_mla_pos.has_value() && *stage_pos <= *first_mla_pos ? first_mla : last_mla;
   const auto mla_pos = find_position(mla_stage);
   const std::size_t lower_bound = mla_pos.value_or(0U);
   if (*stage_pos > lower_bound) {
@@ -4960,7 +4964,7 @@ std::vector<std::size_t> ordered_plugin_indices_local(const MpkContract& contrac
 
 std::optional<std::size_t> mla_rank_in_order_local(const MpkContract& contract,
                                                    const std::vector<std::size_t>& ordered) {
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
+  const auto* mla_stage = get_first_mla_stage_io_contract(contract);
   if (!mla_stage) {
     return std::nullopt;
   }
@@ -5250,7 +5254,7 @@ reorder_indices_by_mla_boundary_local(const std::vector<std::string>& branch_key
 // Returns nullptr if neither is unambiguously identifiable.
 const MpkPluginIoContract* find_pre_mla_boundary_stage_local(const MpkContract& contract) {
   if (mla_consumer_keeps_distinct_physical_inputs(contract)) {
-    return get_mla_stage_io_contract(contract);
+    return get_first_mla_stage_io_contract(contract);
   }
   const auto ordered = ordered_plugin_indices_local(contract);
   const auto mla_rank = mla_rank_in_order_local(contract, ordered);
@@ -6197,7 +6201,7 @@ static ProcessCvuCanonicalCompileInputs build_processcvu_mpk_preproc_compile_inp
     const MpkContract& contract, const std::string& input_format, int input_depth,
     int max_input_width, int max_input_height, bool normalize, const std::vector<float>& mean,
     const std::vector<float>& stddev, bool single_output_handoff) {
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
+  const auto* mla_stage = get_first_mla_stage_io_contract(contract);
   if (!mla_stage || mla_stage->input_tensors.empty()) {
     throw std::runtime_error("processcvu MPK preproc route missing MLA ingress contract");
   }

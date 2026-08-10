@@ -475,7 +475,8 @@ read_mla_runtime_properties_from_config(const std::string& cfg_path) {
 }
 
 static std::optional<MlaRuntimeProperties> read_mla_runtime_properties_from_mpk_contract(
-    const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract) {
+    const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract,
+    const pipeline_internal::sima::MpkPluginIoContract* exact_mla_stage = nullptr) {
   if (!mpk_contract.has_value()) {
     return std::nullopt;
   }
@@ -523,8 +524,10 @@ static std::optional<MlaRuntimeProperties> read_mla_runtime_properties_from_mpk_
   };
 
   MlaRuntimeProperties props;
-  if (const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
-      mla_stage && !mla_stage->executable.empty()) {
+  const auto* mla_stage = exact_mla_stage != nullptr
+                              ? exact_mla_stage
+                              : pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
+  if (mla_stage && !mla_stage->executable.empty()) {
     props.model_path = resolve_package_relative_path(mla_stage->executable, true);
     props.batch_size = mla_stage->batch_size;
     props.batch_sz_model = mla_stage->batch_sz_model;
@@ -549,14 +552,21 @@ apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
 static pipeline_internal::DmabufPlanCompileResult
 compile_dmabuf_plan_execution_plan(const pipeline_internal::sima::MpkContract& mpk_contract) {
   if (mpk_contract.mpk_json_path.empty()) {
-    return pipeline_internal::try_compile_dmabuf_plan({}, {});
+    return pipeline_internal::try_compile_dmabuf_plan(
+        std::filesystem::path{}, std::vector<pipeline_internal::MlaExecutableArtifact>{});
   }
-  const auto runtime = read_mla_runtime_properties_from_mpk_contract(mpk_contract);
-  if (!runtime.has_value() || runtime->model_path.empty()) {
-    return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, {});
+  const auto stages = pipeline_internal::sima::get_mla_stage_io_contracts(mpk_contract);
+  std::vector<pipeline_internal::MlaExecutableArtifact> artifacts;
+  artifacts.reserve(stages.size());
+  for (const auto* stage : stages) {
+    const auto runtime = read_mla_runtime_properties_from_mpk_contract(mpk_contract, stage);
+    if (!runtime.has_value() || runtime->model_path.empty()) {
+      return pipeline_internal::try_compile_dmabuf_plan(
+          mpk_contract.mpk_json_path, std::vector<pipeline_internal::MlaExecutableArtifact>{});
+    }
+    artifacts.push_back({stage->name, stage->executable, runtime->model_path});
   }
-  return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path,
-                                                    runtime->model_path);
+  return pipeline_internal::try_compile_dmabuf_plan(mpk_contract.mpk_json_path, artifacts);
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
@@ -1291,7 +1301,7 @@ resolve_model_managed_dequant_quant_contract(
   if (!stage_pos.has_value()) {
     return std::nullopt;
   }
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(mpk_contract);
+  const auto* mla_stage = pipeline_internal::sima::get_last_mla_stage_io_contract(mpk_contract);
   const auto mla_pos = find_position(mla_stage);
   const std::size_t lower_bound = mla_pos.value_or(0U);
   if (*stage_pos > lower_bound) {
@@ -1420,7 +1430,7 @@ ordered_plugin_indices(const pipeline_internal::sima::MpkContract& contract) {
 static std::optional<std::size_t>
 mla_rank_in_order(const pipeline_internal::sima::MpkContract& contract,
                   const std::vector<std::size_t>& ordered) {
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
+  const auto* mla_stage = pipeline_internal::sima::get_first_mla_stage_io_contract(contract);
   if (!mla_stage) {
     return std::nullopt;
   }
@@ -1431,6 +1441,24 @@ mla_rank_in_order(const pipeline_internal::sima::MpkContract& contract,
     }
   }
   return std::nullopt;
+}
+
+static std::vector<std::size_t>
+mla_ranks_in_order(const pipeline_internal::sima::MpkContract& contract,
+                   const std::vector<std::size_t>& ordered) {
+  std::vector<std::size_t> result;
+  for (std::size_t rank = 0; rank < ordered.size(); ++rank) {
+    const auto index = ordered[rank];
+    if (index >= contract.plugins.size()) {
+      continue;
+    }
+    const auto& stage = contract.plugins[index];
+    if (to_upper(stage.processor) == "MLA" ||
+        canonical_execution_stage_kind(stage.kernel) == ExecutionStageKind::Mla) {
+      result.push_back(rank);
+    }
+  }
+  return result;
 }
 
 static std::vector<std::size_t>
@@ -1652,27 +1680,26 @@ make_pre_stage_from_contract(const pipeline_internal::sima::MpkContract& contrac
   return stage;
 }
 
-static std::optional<ExecutionStage>
-make_mla_stage_from_contract(const pipeline_internal::sima::MpkContract& contract,
-                             std::size_t order_index) {
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
-  if (!mla_stage) {
-    return std::nullopt;
+static std::vector<ExecutionStage>
+make_mla_stages_from_contract(const pipeline_internal::sima::MpkContract& contract,
+                              std::size_t order_index) {
+  std::vector<ExecutionStage> result;
+  for (const auto* mla_stage : pipeline_internal::sima::get_mla_stage_io_contracts(contract)) {
+    ExecutionStage stage;
+    stage.order_index = order_index++;
+    stage.mpk_plugin_index =
+        pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla_stage->name);
+    stage.stage_name = !mla_stage->name.empty()
+                           ? mla_stage->name
+                           : std::string(default_stage_name(ExecutionStageKind::Mla));
+    stage.factory_name = require_stage_factory(ExecutionStageKind::Mla);
+    stage.plugin_id = plugin_id_for_stage_kind(ExecutionStageKind::Mla);
+    stage.processor = processor_for_stage_kind(ExecutionStageKind::Mla);
+    stage.kernel = kernel_for_stage_kind(ExecutionStageKind::Mla);
+    stage.kind = ExecutionStageKind::Mla;
+    result.push_back(std::move(stage));
   }
-  const auto mla_idx =
-      pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla_stage->name);
-  ExecutionStage stage;
-  stage.order_index = order_index;
-  stage.mpk_plugin_index = mla_idx;
-  stage.stage_name = !mla_stage->name.empty()
-                         ? mla_stage->name
-                         : std::string(default_stage_name(ExecutionStageKind::Mla));
-  stage.factory_name = require_stage_factory(ExecutionStageKind::Mla);
-  stage.plugin_id = plugin_id_for_stage_kind(ExecutionStageKind::Mla);
-  stage.processor = processor_for_stage_kind(ExecutionStageKind::Mla);
-  stage.kernel = kernel_for_stage_kind(ExecutionStageKind::Mla);
-  stage.kind = ExecutionStageKind::Mla;
-  return stage;
+  return result;
 }
 
 static std::vector<ExecutionStage> make_post_stages_from_contract(
@@ -1782,19 +1809,25 @@ static ExecutionPlan build_execution_plan_from_mpk_contract(
     const std::vector<ExecutionStageKind>& route_post_kinds) {
   ExecutionPlan plan;
   const auto ordered = ordered_plugin_indices(contract);
-  const auto mla_rank = mla_rank_in_order(contract, ordered);
+  const auto mla_ranks = mla_ranks_in_order(contract, ordered);
+  const auto first_mla_rank = mla_ranks.empty() ? std::optional<std::size_t>{}
+                                                : std::optional<std::size_t>{mla_ranks.front()};
+  const auto last_mla_rank = mla_ranks.empty() ? std::optional<std::size_t>{}
+                                               : std::optional<std::size_t>{mla_ranks.back()};
   std::size_t stage_order = 0U;
-  if (const auto pre = make_pre_stage_from_contract(contract, ordered, mla_rank,
+  if (const auto pre = make_pre_stage_from_contract(contract, ordered, first_mla_rank,
                                                     requested_pipeline_type, stage_order);
       pre.has_value()) {
     plan.pre.push_back(*pre);
     ++stage_order;
   }
-  if (const auto mla = make_mla_stage_from_contract(contract, stage_order); mla.has_value()) {
-    plan.infer.push_back(*mla);
-    ++stage_order;
+  auto mla_stages = make_mla_stages_from_contract(contract, stage_order);
+  stage_order += mla_stages.size();
+  if (!mla_stages.empty()) {
+    plan.infer.insert(plan.infer.end(), std::make_move_iterator(mla_stages.begin()),
+                      std::make_move_iterator(mla_stages.end()));
   }
-  const auto post = make_post_stages_from_contract(contract, ordered, mla_rank, route_flags,
+  const auto post = make_post_stages_from_contract(contract, ordered, last_mla_rank, route_flags,
                                                    route_post_kinds, stage_order);
   if (!post.empty()) {
     plan.post.insert(plan.post.end(), post.begin(), post.end());
@@ -2778,6 +2811,8 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
     ModelStage stage_context,
     const std::optional<pipeline_internal::sima::static_contract::ModelExecutionPlan>&
         dmabuf_plan_execution_plan,
+    const std::optional<pipeline_internal::sima::static_contract::FrameSlotArenaPlan>&
+        dmabuf_frame_arena_plan,
     bool direct_mla_to_boxdecode = false) {
   if (!mpk_contract.has_value()) {
     throw std::runtime_error(
@@ -2786,6 +2821,10 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
 
   std::vector<ModelFragment::StageFacts> facts;
   facts.reserve(stages.size());
+  std::optional<CompiledRuntimeContract> previous_runtime;
+  if (upstream_handoff_contract.has_value()) {
+    previous_runtime = upstream_handoff_contract->runtime_contract;
+  }
   for (std::size_t stage_index = 0; stage_index < stages.size(); ++stage_index) {
     const auto& stage = stages[stage_index];
     if (std::getenv("NEAT_DUMP_POST_REGIONS") != nullptr) {
@@ -2834,7 +2873,9 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
         // by-exact-name graph node lookup, which the generic family fallback
         // does not cover for every family — e.g. casttess).
         const auto pre_mla_branch_count = [&]() -> std::size_t {
-          const auto* mla = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
+          const auto mla_stages =
+              pipeline_internal::sima::get_mla_stage_io_contracts(*mpk_contract);
+          const auto* mla = mla_stages.empty() ? nullptr : mla_stages.front();
           if (mla == nullptr) {
             return 1U;
           }
@@ -2894,18 +2935,21 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
       if (entry.processcvu_contract.has_value()) {
         if (dmabuf_plan_execution_plan.has_value()) {
           std::string projection_error;
-          if (!pipeline_internal::sima::static_contract::
+          const auto adjacent_mla_stage_index =
+              stage_context == ModelStage::Postprocess
+                  ? dmabuf_plan_execution_plan->mla_stage_count() - 1U
+                  : 0U;
+          if (!dmabuf_frame_arena_plan.has_value() ||
+              !pipeline_internal::sima::static_contract::
                   apply_dmabuf_plan_processcvu_contract_projection(
-                      *dmabuf_plan_execution_plan,
+                      *dmabuf_plan_execution_plan, adjacent_mla_stage_index,
+                      *dmabuf_frame_arena_plan,
                       stage_context == ModelStage::Postprocess
-                          ? pipeline_internal::sima::static_contract::
-                                ProcessCvuMlaBoundary::Outputs
-                          : pipeline_internal::sima::static_contract::
-                                ProcessCvuMlaBoundary::Inputs,
+                          ? pipeline_internal::sima::static_contract::ProcessCvuMlaBoundary::Outputs
+                          : pipeline_internal::sima::static_contract::ProcessCvuMlaBoundary::Inputs,
                       &entry.processcvu_contract->payload,
                       &entry.processcvu_contract->runtime_contract,
-                      &entry.processcvu_contract->exposed_view,
-                      &projection_error)) {
+                      &entry.processcvu_contract->exposed_view, &projection_error)) {
             throw std::runtime_error(
                 "ModelFragment: dmabuf-plan strict ProcessCVU projection failed: " +
                 projection_error);
@@ -2915,21 +2959,33 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
     }
 
     if (stage.kind == ExecutionStageKind::Mla) {
-      const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
+      const auto* mla_stage = mpk_stage;
       if (!mla_stage) {
         throw std::runtime_error(
             "ModelFragment: strict MPK MLA contract missing for stage '" + stage.stage_name +
             "'. Ensure the MPK manifest includes an MLA plugin with"
             " input/output tensor contracts (processor='MLA' or kernel='infer').");
       }
+      if (to_upper(mla_stage->processor) != "MLA") {
+        throw std::runtime_error("ModelFragment: execution-stage identity '" + stage.stage_name +
+                                 "' does not select an MLA MPK plugin");
+      }
+      const bool one_mla = !dmabuf_plan_execution_plan.has_value() ||
+                           dmabuf_plan_execution_plan->mla_stage_count() == 1U;
       const auto published_outputs =
-          pipeline_internal::sima::get_mla_published_outputs_contract(*mpk_contract);
+          one_mla ? pipeline_internal::sima::get_mla_published_outputs_contract(*mpk_contract)
+                  : mla_stage->output_tensors;
       const auto logical_outputs =
-          pipeline_internal::sima::get_mla_logical_outputs_contract(*mpk_contract);
+          one_mla ? pipeline_internal::sima::get_mla_logical_outputs_contract(*mpk_contract)
+                  : mla_stage->output_tensors;
       const auto boundary_inputs =
-          pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(*mpk_contract);
+          one_mla
+              ? pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(*mpk_contract)
+              : mla_stage->input_tensors;
       const auto physical_outputs =
-          pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(*mpk_contract);
+          one_mla
+              ? pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(*mpk_contract)
+              : mla_stage->output_tensors;
       auto mla_contract = pipeline_internal::sima::build_mla_static_contract_from_mpk_stage(
           *mla_stage,
           !published_outputs.empty()
@@ -2938,8 +2994,10 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
           physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs, stage.stage_name,
           boundary_inputs.empty() ? nullptr : &boundary_inputs);
       mla_contract.consumer_keeps_distinct_physical_inputs =
-          pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_contract);
-      const auto mla_props = read_mla_runtime_properties_from_mpk_contract(mpk_contract);
+          one_mla
+              ? pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_contract)
+              : mla_stage->input_tensors.size() > 1U;
+      const auto mla_props = read_mla_runtime_properties_from_mpk_contract(mpk_contract, mla_stage);
       if (!mla_props.has_value() || mla_props->model_path.empty()) {
         throw std::runtime_error(
             "ModelFragment: strict MPK MLA runtime payload missing for stage '" + stage.stage_name +
@@ -2949,27 +3007,30 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
       apply_mla_runtime_properties_to_contract(*mla_props, &mla_contract);
       if (dmabuf_plan_execution_plan.has_value()) {
         std::string projection_error;
-        std::span<const pipeline_internal::sima::LogicalTensorStaticSpec> upstream_outputs;
-        if (upstream_handoff_contract.has_value()) {
-          const auto& exposed = upstream_handoff_contract->exposed_view.exposed_logical_outputs;
-          const auto& runtime = upstream_handoff_contract->runtime_contract.logical_outputs;
-          upstream_outputs =
-              exposed.empty()
-                  ? std::span<const pipeline_internal::sima::LogicalTensorStaticSpec>(runtime)
-                  : std::span<const pipeline_internal::sima::LogicalTensorStaticSpec>(exposed);
+        const auto* exact_stage = dmabuf_plan_execution_plan->mla_stage_for_identity(
+            mla_stage->name, mla_stage->executable);
+        if (!exact_stage) {
+          throw std::runtime_error(
+              "ModelFragment: no exact execution-plan MLA stage matches MPK stage '" +
+              mla_stage->name + "' and executable '" + mla_stage->executable + "'");
         }
-        auto input_sources = pipeline_internal::sima::static_contract::
-            resolve_mla_input_physical_sources(
-                *dmabuf_plan_execution_plan, upstream_outputs,
-                &projection_error);
+        const std::size_t mla_stage_index = exact_stage->key.stage_index;
+        std::span<const pipeline_internal::sima::LogicalTensorStaticSpec> upstream_outputs;
+        if (previous_runtime.has_value()) {
+          upstream_outputs = previous_runtime->logical_outputs;
+        }
+        auto input_sources =
+            pipeline_internal::sima::static_contract::resolve_mla_input_physical_sources(
+                *dmabuf_plan_execution_plan, mla_stage_index, upstream_outputs, &projection_error);
         if (!input_sources.has_value()) {
           throw std::runtime_error(
               "ModelFragment: dmabuf-plan strict MLA physical-input projection failed: " +
               projection_error);
         }
-        if (!pipeline_internal::sima::static_contract::apply_dmabuf_plan_contract_projection(
-                *dmabuf_plan_execution_plan, &mla_contract, *input_sources,
-                &projection_error)) {
+        if (!dmabuf_frame_arena_plan.has_value() ||
+            !pipeline_internal::sima::static_contract::apply_dmabuf_plan_contract_projection(
+                *dmabuf_plan_execution_plan, mla_stage_index, *dmabuf_frame_arena_plan,
+                &mla_contract, *input_sources, &projection_error)) {
           throw std::runtime_error("ModelFragment: dmabuf-plan strict MLA projection failed: " +
                                    projection_error);
         }
@@ -3081,6 +3142,17 @@ static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_p
           "neatdetess", "detess", std::move(processcvu_payload), std::move(runtime_contract));
     }
 
+    if (entry.processcvu_contract.has_value()) {
+      previous_runtime = entry.processcvu_contract->runtime_contract;
+    } else if (entry.mla_compiled.has_value()) {
+      previous_runtime = entry.mla_compiled->runtime_contract;
+    } else if (entry.boxdecode_compiled.has_value()) {
+      previous_runtime = entry.boxdecode_compiled->runtime_contract;
+    } else if (entry.dequant_compiled.has_value()) {
+      previous_runtime = entry.dequant_compiled->runtime_contract;
+    } else if (entry.transport_compiled.has_value()) {
+      previous_runtime = entry.transport_compiled->runtime_contract;
+    }
     facts.push_back(std::move(entry));
   }
   return facts;
@@ -3387,17 +3459,22 @@ static bool validate_terminal_mla_metadata(
         "Terminal MLA metadata validation requires strict MPK contract after infer trimming");
   }
 
-  const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
+  const auto* mla_stage =
+      pipeline_internal::sima::get_stage_io_contract(*mpk_contract, terminal.stage_name);
   if (!mla_stage) {
     throw std::runtime_error("Terminal MLA stage missing from strict MPK contract after infer "
                              "trimming: '" +
                              terminal.stage_name + "'");
   }
 
+  const bool single_mla =
+      pipeline_internal::sima::get_mla_stage_io_contracts(*mpk_contract).size() == 1U;
   const auto published_outputs =
-      pipeline_internal::sima::get_mla_published_outputs_contract(*mpk_contract);
+      single_mla ? pipeline_internal::sima::get_mla_published_outputs_contract(*mpk_contract)
+                 : mla_stage->output_tensors;
   const auto logical_outputs =
-      pipeline_internal::sima::get_mla_logical_outputs_contract(*mpk_contract);
+      single_mla ? pipeline_internal::sima::get_mla_logical_outputs_contract(*mpk_contract)
+                 : mla_stage->output_tensors;
   const auto& effective_outputs =
       !published_outputs.empty()
           ? published_outputs
@@ -3768,7 +3845,18 @@ build_fragment_linear(const std::vector<ExecutionStage>& stages,
         pipelineStr << " num-buffers=" << num_buffers_cvu << " ";
       }
     } else if (plugin == "neatprocessmla") {
-      const auto props = read_mla_runtime_properties_from_mpk_contract(mpk_contract);
+      const pipeline_internal::sima::MpkPluginIoContract* exact_mla_stage = nullptr;
+      if (mpk_contract.has_value()) {
+        if (stage.mpk_plugin_index.has_value() &&
+            *stage.mpk_plugin_index < mpk_contract->plugins.size()) {
+          exact_mla_stage = &mpk_contract->plugins[*stage.mpk_plugin_index];
+        } else {
+          exact_mla_stage =
+              pipeline_internal::sima::get_stage_io_contract(*mpk_contract, stage.stage_name);
+        }
+      }
+      const auto props =
+          read_mla_runtime_properties_from_mpk_contract(mpk_contract, exact_mla_stage);
       if (!props.has_value()) {
         throw std::runtime_error("ModelPack: model-managed MLA stage '" + name +
                                  "' is missing MPK runtime properties");
@@ -3966,6 +4054,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
       process_backend.policy == pipeline_internal::MemoryBackendPolicy::DmaBufPlan;
   mpk_contract_.reset();
   dmabuf_plan_execution_plan_.reset();
+  dmabuf_frame_arena_plan_.reset();
   route_graph_.reset();
   processcvu_preproc_single_output_handoff_.reset();
   model_managed_route_flags_.reset();
@@ -4031,6 +4120,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
           compiled.report.detail);
     }
     dmabuf_plan_execution_plan_ = std::move(compiled.plan);
+    dmabuf_frame_arena_plan_ = std::move(compiled.arena_plan);
     if (env_truthy_local("SIMA_NEAT_MEMORY_BACKEND_DIAGNOSTICS")) {
       std::fprintf(stderr,
                    "NEAT_MEMORY_BACKEND_DECISION backend=dmabuf-plan eligible=1 code=eligible "
@@ -4044,8 +4134,9 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
         pipeline_internal::dmabuf_eligibility_code_name(memory_backend_decision_.admission.code));
   }
   if (mpk_contract_.has_value()) {
-    if (const auto* mla =
-            simaai::neat::pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract_);
+    const auto mla_stages =
+        simaai::neat::pipeline_internal::sima::get_mla_stage_io_contracts(*mpk_contract_);
+    if (const auto* mla = mla_stages.empty() ? nullptr : mla_stages.front();
         mla && !mla->input_tensors.empty()) {
       const auto& in0 = mla->input_tensors.front();
       const MpkTensorDims mla_input_dims = mpk_dims_from_shape(in0.logical_shape);
@@ -4168,7 +4259,8 @@ std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(
       stages, mpk_contract_, processcvu_preproc_single_output_handoff_, model_managed_route_flags_,
       options_.input_format, options_.input_depth, options_.max_input_width,
       options_.max_input_height, options_.normalize, options_.mean, options_.stddev,
-      upstream_handoff_contract, stage_context, dmabuf_plan_execution_plan_);
+      upstream_handoff_contract, stage_context, dmabuf_plan_execution_plan_,
+      dmabuf_frame_arena_plan_);
 }
 
 std::vector<ModelFragment::StageFacts>
@@ -4194,7 +4286,7 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
         model_managed_route_flags_, options_.input_format, options_.input_depth,
         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
         options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
-        dmabuf_plan_execution_plan_, direct_mla_to_boxdecode);
+        dmabuf_plan_execution_plan_, dmabuf_frame_arena_plan_, direct_mla_to_boxdecode);
   }
   if (stage == ModelStage::Postprocess) {
     return build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
@@ -4219,7 +4311,7 @@ ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
         model_managed_route_flags_, options_.input_format, options_.input_depth,
         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
         options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
-        dmabuf_plan_execution_plan_, direct_mla_to_boxdecode);
+        dmabuf_plan_execution_plan_, dmabuf_frame_arena_plan_, direct_mla_to_boxdecode);
     auto post_facts = build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
 
     out.reserve(pre_facts.size() + infer_facts.size() + post_facts.size());
@@ -4323,7 +4415,7 @@ ModelPack::infer_block(const std::string& upstream_name,
       model_managed_route_flags_, options_.input_format, options_.input_depth,
       options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
       options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, dmabuf_plan_execution_plan_,
-      direct_mla_to_boxdecode);
+      dmabuf_frame_arena_plan_, direct_mla_to_boxdecode);
   ModelFragment frag =
       build_fragment_linear(infer_seq, upstream, options_.num_buffers_cvu, options_.num_buffers_mla,
                             options_.name_suffix, mpk_contract_, std::move(stage_facts));

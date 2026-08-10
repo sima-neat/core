@@ -420,17 +420,19 @@ std::optional<std::size_t> find_contract_stage_index_local(const MpkContract& co
 
 bool contract_stage_output_feeds_mla_local(const MpkContract& contract,
                                            const std::size_t stage_index, const int output_index) {
-  const auto* mla_stage = get_mla_stage_io_contract(contract);
-  const auto mla_stage_index = find_contract_stage_index_local(contract, mla_stage);
-  if (!mla_stage_index.has_value()) {
+  const auto mla_stages = get_mla_stage_io_contracts(contract);
+  if (mla_stages.empty()) {
     return false;
   }
   for (const auto& edge : contract.edges) {
     if (edge.src_plugin_index != stage_index || edge.src_output_index != output_index) {
       continue;
     }
-    if (edge.dst_plugin_index == *mla_stage_index) {
-      return true;
+    for (const auto* mla_stage : mla_stages) {
+      const auto mla_stage_index = find_contract_stage_index_local(contract, mla_stage);
+      if (mla_stage_index.has_value() && edge.dst_plugin_index == *mla_stage_index) {
+        return true;
+      }
     }
   }
   return false;
@@ -3478,26 +3480,41 @@ bool build_processmla_prepared_stage_from_graph_local(const MpkContract& contrac
     return false;
   }
   const auto* stage = get_stage_io_contract(contract, graph_node.name);
-  const auto* mla_stage = stage ? stage : get_mla_stage_io_contract(contract);
+  const auto mla_stages = get_mla_stage_io_contracts(contract);
+  const auto* mla_stage = stage ? stage : (mla_stages.size() == 1U ? mla_stages.front() : nullptr);
   if (!mla_stage) {
     if (error_message) {
       *error_message = "graph processmla stage missing MLA contract";
     }
     return false;
   }
-  auto logical_inputs = get_mla_boundary_logical_inputs_contract(contract);
+  const auto mla_stage_it = std::find(mla_stages.begin(), mla_stages.end(), mla_stage);
+  if (mla_stage_it == mla_stages.end()) {
+    if (error_message) {
+      *error_message = "graph processmla identity does not select an MLA contract";
+    }
+    return false;
+  }
+  const bool first_mla = mla_stage == mla_stages.front();
+  const bool last_mla = mla_stage == mla_stages.back();
+
+  auto logical_inputs =
+      first_mla ? get_mla_boundary_logical_inputs_contract(contract) : mla_stage->input_tensors;
   if (logical_inputs.empty()) {
     logical_inputs = mla_stage->input_tensors;
   }
-  auto physical_inputs = get_mla_boundary_physical_inputs_contract(contract);
+  auto physical_inputs =
+      first_mla ? get_mla_boundary_physical_inputs_contract(contract) : mla_stage->input_tensors;
   if (physical_inputs.empty()) {
     physical_inputs = mla_stage->input_tensors;
   }
-  auto logical_outputs = get_mla_logical_outputs_contract(contract);
+  auto logical_outputs =
+      last_mla ? get_mla_logical_outputs_contract(contract) : mla_stage->output_tensors;
   if (logical_outputs.empty()) {
     logical_outputs = mla_stage->output_tensors;
   }
-  auto physical_outputs = get_mla_boundary_physical_outputs_contract(contract);
+  auto physical_outputs =
+      last_mla ? get_mla_boundary_physical_outputs_contract(contract) : mla_stage->output_tensors;
   if (physical_outputs.empty()) {
     physical_outputs = mla_stage->output_tensors;
   }

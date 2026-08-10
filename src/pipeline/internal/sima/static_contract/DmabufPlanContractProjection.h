@@ -6,6 +6,7 @@
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/static_contract/ModelExecutionPlan.h"
+#include "pipeline/internal/sima/static_contract/FrameSlotArenaPlan.h"
 
 #include <optional>
 #include <span>
@@ -29,15 +30,32 @@ struct PhysicalPortSource {
 // exact ordered coverage. No logical child is used as a runtime address
 // anchor.
 std::optional<std::vector<PhysicalPortSource>>
-resolve_mla_input_physical_sources(
-    const ModelExecutionPlan& plan,
-    std::span<const LogicalTensorStaticSpec> upstream_outputs,
-    std::string* error = nullptr);
+resolve_mla_input_physical_sources(const ModelExecutionPlan& plan, std::size_t mla_stage_index,
+                                   std::span<const LogicalTensorStaticSpec> upstream_outputs,
+                                   std::string* error = nullptr);
+
+// Source-compatible single-stage entry point. It rejects an ambiguous plan.
+std::optional<std::vector<PhysicalPortSource>>
+resolve_mla_input_physical_sources(const ModelExecutionPlan& plan,
+                                   std::span<const LogicalTensorStaticSpec> upstream_outputs,
+                                   std::string* error = nullptr);
 
 // Prove that the existing manifest projection is byte-for-byte the MLA port
 // boundary decoded from MPK+ELF. On success, install the exact ELF symbols,
 // ordered physical-carrier IFM sources, raw stage-local OFM publication and
 // multi-IFM policy; on failure leave the contract unusable by dmabuf-plan.
+bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
+                                           std::size_t mla_stage_index,
+                                           const FrameSlotArenaPlan& arena,
+                                           MlaStaticContract* contract,
+                                           std::span<const PhysicalPortSource> input_sources,
+                                           std::string* error = nullptr);
+
+bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
+                                           std::size_t mla_stage_index, MlaStaticContract* contract,
+                                           std::span<const PhysicalPortSource> input_sources,
+                                           std::string* error = nullptr);
+
 bool apply_dmabuf_plan_contract_projection(const ModelExecutionPlan& plan,
                                            MlaStaticContract* contract,
                                            std::span<const PhysicalPortSource> input_sources,
@@ -54,9 +72,20 @@ enum class ProcessCvuMlaBoundary : std::uint8_t {
 // contract. A one-port packed boundary may fan out into multiple CVU output
 // regions, in which case the one authoritative alignment applies to each.
 bool apply_dmabuf_plan_processcvu_contract_projection(
-    const ModelExecutionPlan& plan, ProcessCvuMlaBoundary boundary,
+    const ModelExecutionPlan& plan, std::size_t adjacent_mla_stage_index,
+    const FrameSlotArenaPlan& arena, ProcessCvuMlaBoundary boundary,
     ProcessCvuStagePayload* payload, ::simaai::neat::CompiledRuntimeContract* runtime,
-    ::simaai::neat::CompiledExposedView* exposed_view,
-    std::string* error = nullptr);
+    ::simaai::neat::CompiledExposedView* exposed_view, std::string* error = nullptr);
+
+bool apply_dmabuf_plan_processcvu_contract_projection(
+    const ModelExecutionPlan& plan, std::size_t adjacent_mla_stage_index,
+    ProcessCvuMlaBoundary boundary, ProcessCvuStagePayload* payload,
+    ::simaai::neat::CompiledRuntimeContract* runtime,
+    ::simaai::neat::CompiledExposedView* exposed_view, std::string* error = nullptr);
+
+bool apply_dmabuf_plan_processcvu_contract_projection(
+    const ModelExecutionPlan& plan, ProcessCvuMlaBoundary boundary, ProcessCvuStagePayload* payload,
+    ::simaai::neat::CompiledRuntimeContract* runtime,
+    ::simaai::neat::CompiledExposedView* exposed_view, std::string* error = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima::static_contract

@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -170,6 +172,24 @@ struct BackendPortSpec {
   BackendPortAccess access = BackendPortAccess::ReadOnly;
 };
 
+// Immutable identity of one MLA operation in the compiler-authored graph.
+// The dense index is useful for setup-sized arrays; op_id/logical_stage_id and
+// executable make accidental positional rebinding observable and rejectable.
+struct MlaStageKey {
+  std::size_t stage_index = 0;
+  OpId op_id = 0;
+  std::string logical_stage_id;
+  std::string executable;
+};
+
+struct MlaStageSpec {
+  MlaStageKey key;
+  std::size_t input_port_begin = 0;
+  std::size_t input_port_count = 0;
+  std::size_t output_port_begin = 0;
+  std::size_t output_port_count = 0;
+};
+
 struct ModelOutputSpec {
   std::size_t public_index = 0;
   std::string name;
@@ -185,6 +205,8 @@ struct ModelExecutionPlanData {
   std::vector<OpSpec> ops;
   std::vector<BackendPortSpec> backend_ports;
   std::vector<ModelOutputSpec> model_outputs;
+  // Derived by create(). Callers never author or mutate this index.
+  std::vector<MlaStageSpec> mla_stages;
 };
 
 class ModelExecutionPlan final {
@@ -197,6 +219,13 @@ public:
   const std::vector<ValueId>& model_inputs() const noexcept;
   const std::vector<OpSpec>& ops() const noexcept;
   const std::vector<BackendPortSpec>& backend_ports() const noexcept;
+  std::size_t mla_stage_count() const noexcept;
+  const MlaStageSpec* mla_stage(std::size_t stage_index) const noexcept;
+  const MlaStageSpec* mla_stage_for_op(OpId op_id) const noexcept;
+  const MlaStageSpec* mla_stage_for_identity(std::string_view logical_stage_id,
+                                             std::string_view executable) const noexcept;
+  std::span<const BackendPortSpec> backend_ports(std::size_t stage_index,
+                                                 BackendPortDirection direction) const noexcept;
   const std::vector<ModelOutputSpec>& model_outputs() const noexcept;
   const ValueSpec* value(ValueId id) const noexcept;
 

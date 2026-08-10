@@ -348,8 +348,17 @@ std::string render_mpk_graph_markdown(const MpkGraph& graph,
 const MpkPluginIoContract* get_stage_io_contract(const MpkContract& contract,
                                                  const std::string& plugin_name_or_id);
 
-/// Returns the MLA stage's I/O contract, or null if no MLA stage is present.
+/// Returns every MLA stage in exact execution order.
+std::vector<const MpkPluginIoContract*> get_mla_stage_io_contracts(const MpkContract& contract);
+
+/// Returns the sole MLA stage, or null when absent or ambiguous.
 const MpkPluginIoContract* get_mla_stage_io_contract(const MpkContract& contract);
+
+/// Returns the first MLA stage in exact execution order, for ingress-boundary queries only.
+const MpkPluginIoContract* get_first_mla_stage_io_contract(const MpkContract& contract);
+
+/// Returns the terminal MLA stage in exact execution order, for egress-boundary queries only.
+const MpkPluginIoContract* get_last_mla_stage_io_contract(const MpkContract& contract);
 
 /// Returns the MLA-unpack stage's I/O contract, or null if absent.
 const MpkPluginIoContract* get_mla_unpack_stage_io_contract(const MpkContract& contract);
