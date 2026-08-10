@@ -68,6 +68,19 @@ std::string part(const std::string& boundary, const std::vector<std::string>& he
   return out;
 }
 
+std::string part_without_content_type(const std::string& boundary,
+                                      const std::vector<std::string>& header_lines,
+                                      const std::string& body) {
+  std::string out = "--" + boundary + "\r\n";
+  for (const std::string& line : header_lines) {
+    out += line + "\r\n";
+  }
+  out += "\r\n";
+  out += body;
+  out += "\r\n";
+  return out;
+}
+
 struct Received {
   uint8_t marker = 0;
   int width = -1;
@@ -366,6 +379,26 @@ void test_malformed_jpeg_parts_fail_the_stream() {
                          "unfinished MIME headers at EOS");
 }
 
+void test_missing_content_type_uses_jpeg_body_validation() {
+  const std::string boundary = "missing-type";
+  std::vector<Received> received;
+  run_pipeline(
+      part_without_content_type(boundary, {"Image-Index: 17"}, make_marked_jpeg(32, 32, 0x17)) +
+          "--" + boundary + "--\r\n",
+      boundary, "content-type,image-index", &received);
+
+  require(received.size() == 1U && received.front().marker == 0x17,
+          "a JPEG part without Content-Type must be emitted");
+  require(received.front().attributes.at("image-index") == "17",
+          "selected headers must propagate when Content-Type is absent");
+  require(received.front().attributes.count("content-type") == 0U,
+          "an absent Content-Type must remain absent downstream");
+
+  require_pipeline_error(part_without_content_type(boundary, {}, "not-a-jpeg") + "--" + boundary +
+                             "--\r\n",
+                         boundary, "missing Content-Type with a non-JPEG body");
+}
+
 void test_reentrant_property_reset_is_safe() {
   simaai::neat::gst_init_once();
 
@@ -606,6 +639,7 @@ RUN_TEST("unit_multipart_capture_element", [] {
   test_same_boundary_stream_start_resets_parser();
   test_dnl_height_negotiates_caps();
   test_malformed_jpeg_parts_fail_the_stream();
+  test_missing_content_type_uses_jpeg_body_validation();
   test_reentrant_property_reset_is_safe();
   test_attribute_mutation_rejects_shared_buffers();
 })

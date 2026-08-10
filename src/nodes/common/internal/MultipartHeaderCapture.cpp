@@ -271,7 +271,6 @@ bool MultipartParser::parse_header_block(std::size_t block_begin, std::size_t bl
     return false;
   }
 
-  bool saw_content_type = false;
   std::size_t line_begin = block_begin;
   while (line_begin < block_end) {
     std::size_t line_end = line_begin;
@@ -350,7 +349,6 @@ bool MultipartParser::parse_header_block(std::size_t block_begin, std::size_t bl
         }
         return false;
       }
-      saw_content_type = true;
     }
     if (std::binary_search(capture_.begin(), capture_.end(), key)) {
       // Last value wins for a repeated selected header.
@@ -358,12 +356,6 @@ bool MultipartParser::parse_header_block(std::size_t block_begin, std::size_t bl
     }
 
     line_begin = line_end + 1U;
-  }
-  if (!saw_content_type) {
-    if (err) {
-      *err = "multipart part is missing Content-Type: image/jpeg";
-    }
-    return false;
   }
   return true;
 }

@@ -83,7 +83,7 @@ the existing topology and behavior untouched.
 | Header absent from a part | Key is omitted. It is never inherited from a previous frame. |
 | Header present but empty | Preserved as an empty string. |
 | Whitespace | Only surrounding SP/HTAB is trimmed. Values are not otherwise reinterpreted. |
-| MIME type | Every part must declare `Content-Type: image/jpeg` (parameters are allowed). |
+| MIME type | A present `Content-Type` must be `image/jpeg` (parameters are allowed). If absent, the JPEG payload check determines the part type. |
 | JPEG payload | A part must contain exactly one complete JPEG from SOI through EOI. Truncated, empty, or concatenated images fail the stream. |
 | Invalid input | Invalid header names, folded header lines, and CR/LF/NUL injection are rejected — the stream errors rather than being normalized into something safe-looking. |
 

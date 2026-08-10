@@ -283,8 +283,6 @@ void test_preamble_ignores_boundary_prefix_line() {
 
 void test_malformed_input_is_rejected() {
   const std::vector<std::string> capture = {"image-index"};
-  require(parse_rejects("--b\r\nImage-Index: 1\r\n\r\nBODY\r\n--b--\r\n", "b", capture),
-          "a JPEG part without Content-Type must be rejected");
   require(
       parse_rejects("--b\r\nContent-Type: text/plain\r\nImage-Index: 1\r\n\r\nBODY\r\n--b--\r\n",
                     "b", capture),
@@ -314,6 +312,20 @@ void test_malformed_input_is_rejected() {
           "bare-LF framing must be rejected");
   require(parse_rejects("", "b", capture), "EOS before the first multipart part must be rejected");
   require(parse_rejects("--", "b", capture), "EOS inside the first boundary must be rejected");
+}
+
+void test_missing_content_type_is_accepted() {
+  const std::vector<std::string> capture = {"content-type", "image-index"};
+  bool ok = false;
+  std::string err;
+  const std::vector<Part> parts =
+      parse_all("--b\r\nImage-Index: 1\r\n\r\nBODY\r\n--b--\r\n", "b", capture, 3U, &ok, &err);
+  require(ok, "a part without Content-Type must be framed: " + err);
+  require(parts.size() == 1U && parts[0].body == "BODY",
+          "a part without Content-Type must retain its body");
+  require(parts[0].attrs.at("image-index") == "1",
+          "a part without Content-Type must retain selected headers");
+  require(parts[0].attrs.count("content-type") == 0U, "an absent Content-Type must remain absent");
 }
 
 void test_limits_fail_rather_than_truncate() {
@@ -510,6 +522,7 @@ RUN_TEST("unit_multipart_header_capture", [] {
   test_part_keeps_timing_from_body_start_chunk();
   test_value_trimming();
   test_preamble_ignores_boundary_prefix_line();
+  test_missing_content_type_is_accepted();
   test_malformed_input_is_rejected();
   test_limits_fail_rather_than_truncate();
   test_allowlist_normalization();
