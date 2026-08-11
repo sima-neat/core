@@ -639,6 +639,20 @@ GStreamer name collisions.
 
 ---
 
+## Per-frame attribute propagation
+
+Sources attach `Sample::attributes` as a nested structure in `GstSimaMeta`. Elements that
+preserve a buffer carry the metadata naturally; Core boundaries that allocate or reuse a
+buffer deep-copy the attributes and clear stale values. `neatdecoder` snapshots the same
+frame context before decode and restores it by a daemon-provided correlation ID, so reordered
+or dropped frames cannot shift attributes onto another output. A negotiated decoder/daemon
+protocol owns that correlation contract; the legacy decoder protocol remains FIFO-only.
+
+The supported user-facing paths and limits are documented in
+[Per-frame attributes](../../advanced-concepts/data-model-contracts/frame_attributes.md).
+
+---
+
 ## Threading & ownership model
 
 ### Threads

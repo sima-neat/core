@@ -197,6 +197,9 @@ jobs:
       - name: Test sccache configuration
         run: bash scripts/ci/test_sccache_config.sh
 
+      - name: Test sima-cli session preflight
+        run: bash scripts/ci/test_sima_cli_session.sh
+
   resolve-test-runner:
     name: Resolve Test Runner
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
