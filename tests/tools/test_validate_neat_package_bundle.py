@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for the host-side B4586 Debian bundle validator."""
+"""Unit tests for the host-side B4593 Debian bundle validator."""
 
 from __future__ import annotations
 
@@ -37,15 +37,15 @@ class ValidateNeatPackageBundleTest(unittest.TestCase):
         }
         self.provides = {
             "libcamera": (
-                "libcamera (= 2.1.3~pre4586), " "simaai-libcamera-dmabuf-abi (= 1)"
+                "libcamera (= 2.1.3~pre4593), " "simaai-libcamera-dmabuf-abi (= 1)"
             ),
-            "libcamera-dev": "libcamera-dev (= 2.1.3~pre4586)",
-            "libcamera-tools": "libcamera-tools (= 2.1.3~pre4586)",
+            "libcamera-dev": "libcamera-dev (= 2.1.3~pre4593)",
+            "libcamera-tools": "libcamera-tools (= 2.1.3~pre4593)",
             "simaai-memory-lib": (
-                "simaai-memory-lib (= 2.1.1~pre4586), "
+                "simaai-memory-lib (= 2.1.1~pre4593), "
                 "simaai-memory-dmabuf-export-abi (= 1)"
             ),
-            "simaai-memory-lib-dev": ("simaai-memory-lib-dev (= 2.1.1~pre4586)"),
+            "simaai-memory-lib-dev": ("simaai-memory-lib-dev (= 2.1.1~pre4593)"),
         }
 
     def validate(self) -> int:
@@ -57,17 +57,17 @@ class ValidateNeatPackageBundleTest(unittest.TestCase):
             self.provides,
         )
 
-    def test_accepts_reviewed_b4586_override_closure(self) -> None:
+    def test_accepts_reviewed_b4593_override_closure(self) -> None:
         self.assertGreater(self.validate(), 0)
 
     def test_rejects_missing_libcamera_capability(self) -> None:
-        self.provides["libcamera"] = "libcamera (= 2.1.3~pre4586)"
+        self.provides["libcamera"] = "libcamera (= 2.1.3~pre4593)"
         with self.assertRaisesRegex(SystemExit, "simaai-libcamera-dmabuf-abi"):
             self.validate()
 
     def test_rejects_wrong_memory_revision(self) -> None:
         self.versions["simaai-memory-lib"] = "2.1.1-0neat3"
-        with self.assertRaisesRegex(SystemExit, "Wrong B4586 override version"):
+        with self.assertRaisesRegex(SystemExit, "Wrong B4593 override version"):
             self.validate()
 
 

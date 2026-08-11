@@ -172,26 +172,28 @@ int main() {
     require_installed_packages(neat_packages);
     require_installed_packages(native_sima_packages);
 
-    require_package_version("linux-image-6.18.3-modalix", "6.18.3-4586");
+    require_package_version("linux-image-6.18.3-modalix", "6.18.3-4593");
     require_package_version("libcamera", "2.1.3+neat1");
     require_package_version("libcamera-tools", "2.1.3+neat1");
     require_package_version("libcamera-dev", "2.1.3+neat1");
     require_package_version("simaai-memory-lib", "2.1.1-0neat4");
     require_package_version("simaai-memory-lib-dev", "2.1.1-0neat4");
-    require_package_version("simaai-mlart-modalix", "2.1.3~pre4586");
-    require_versioned_provide("libcamera", "libcamera", "2.1.3~pre4586");
-    require_versioned_provide("libcamera-tools", "libcamera-tools", "2.1.3~pre4586");
-    require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4586");
+    require_package_version("simaai-mlart-modalix", "2.1.3~pre4593");
+    require_versioned_provide("libcamera", "libcamera", "2.1.3~pre4593");
+    require_versioned_provide("libcamera-tools", "libcamera-tools", "2.1.3~pre4593");
+    require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4593");
     require_versioned_provide("libcamera", "simaai-libcamera-dmabuf-abi", "1");
-    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1~pre4586");
-    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1~pre4586");
+    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1~pre4593");
+    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1~pre4593");
+    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1-0neat1");
+    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1-0neat1");
     require_versioned_provide("simaai-memory-lib", "simaai-memory-dmabuf-export-abi", "1");
 
     require(run_capture("uname -r") == "6.18.3-modalix\n",
-            "B4586 package inventory requires the 6.18.3-modalix kernel to be running");
+            "B4593 package inventory requires the 6.18.3-modalix kernel to be running");
     const std::string kernel_version = run_capture("cat /proc/version 2>/dev/null");
-    require(kernel_version.find(" #4586 ") != std::string::npos,
-            "running kernel should report B4586 build marker #4586, got: " + kernel_version);
+    require(kernel_version.find(" #4593 ") != std::string::npos,
+            "running kernel should report B4593 build marker #4593, got: " + kernel_version);
 
     require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
             "simaai-ota command should remain available through simaai-palette-modalix");

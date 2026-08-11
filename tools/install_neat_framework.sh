@@ -111,15 +111,15 @@ PLATFORM_OVERRIDE_DEBS=()
 B4586_PREFLIGHT_COMPLETE=0
 PLATFORM_GUARD_SNAPSHOT_COMPLETE=0
 B4586_KERNEL_PACKAGE="linux-image-6.18.3-modalix"
-B4586_KERNEL_PACKAGE_VERSION="6.18.3-4586"
+B4586_KERNEL_PACKAGE_VERSION="6.18.3-4593"
 B4586_KERNEL_RELEASE="6.18.3-modalix"
-B4586_KERNEL_BUILD_MARKER="#4586"
+B4586_KERNEL_BUILD_MARKER="#4593"
 B4586_LIBCAMERA_VERSION="2.1.3+neat1"
-B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION="2.1.3~pre4586"
+B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION="2.1.3~pre4593"
 B4586_LIBCAMERA_CAPABILITY_NAME="simaai-libcamera-dmabuf-abi"
 B4586_LIBCAMERA_CAPABILITY_VERSION="1"
 B4586_MEMORY_VERSION="2.1.1-0neat4"
-B4586_MEMORY_PLATFORM_COMPAT_VERSION="2.1.1~pre4586"
+B4586_MEMORY_PLATFORM_COMPAT_VERSION="2.1.1~pre4593"
 B4586_MEMORY_CAPABILITY_NAME="simaai-memory-dmabuf-export-abi"
 B4586_MEMORY_CAPABILITY_VERSION="1"
 
@@ -592,23 +592,23 @@ except json.JSONDecodeError as exc:
     raise SystemExit(f"invalid package manifest JSON: {path}: {exc}")
 
 expected = {
-    "platform-package-version": "2.1.3~pre4586",
+    "platform-package-version": "2.1.3~pre4593",
     "platform-package-contract": {
         "kernel": {
             "package": "linux-image-6.18.3-modalix",
-            "package-version": "6.18.3-4586",
+            "package-version": "6.18.3-4593",
             "release": "6.18.3-modalix",
-            "build-marker": "#4586",
+            "build-marker": "#4593",
         },
         "libcamera": {
             "package-version": "2.1.3+neat1",
-            "platform-compat-version": "2.1.3~pre4586",
+            "platform-compat-version": "2.1.3~pre4593",
             "capability-name": "simaai-libcamera-dmabuf-abi",
             "capability-version": "1",
         },
         "memory": {
             "package-version": "2.1.1-0neat4",
-            "platform-compat-version": "2.1.1~pre4586",
+            "platform-compat-version": "2.1.1~pre4593",
             "capability-name": "simaai-memory-dmabuf-export-abi",
             "capability-version": "1",
         },
@@ -617,7 +617,7 @@ expected = {
 for key, value in expected.items():
     if data.get(key) != value:
         raise SystemExit(
-            f"{path}: {key} does not match the reviewed B4586 package contract"
+            f"{path}: {key} does not match the reviewed B4593 package contract"
         )
 
 contract = data["platform-package-contract"]
@@ -643,7 +643,7 @@ PY
   ) || return 1
 
   if [[ "${#values[@]}" -ne 12 ]]; then
-    echo "Unable to read the complete B4586 package contract from ${manifest_path}." >&2
+    echo "Unable to read the complete B4593 package contract from ${manifest_path}." >&2
     return 1
   fi
   B4586_KERNEL_PACKAGE="${values[0]}"
@@ -664,28 +664,28 @@ verify_b4586_running_kernel() {
   local installed_version installed_arch running_release version_text
 
   if ! deb_package_is_installed "${B4586_KERNEL_PACKAGE}"; then
-    echo "Required B4586 kernel package is not installed: ${B4586_KERNEL_PACKAGE}=${B4586_KERNEL_PACKAGE_VERSION}." >&2
+    echo "Required B4593 kernel package is not installed: ${B4586_KERNEL_PACKAGE}=${B4586_KERNEL_PACKAGE_VERSION}." >&2
     return 1
   fi
   installed_version="$(deb_package_installed_version "${B4586_KERNEL_PACKAGE}")"
   if [[ "${installed_version}" != "${B4586_KERNEL_PACKAGE_VERSION}" ]]; then
-    echo "Wrong B4586 kernel package version: installed ${B4586_KERNEL_PACKAGE}=${installed_version:-<missing>}, expected ${B4586_KERNEL_PACKAGE_VERSION}." >&2
+    echo "Wrong B4593 kernel package version: installed ${B4586_KERNEL_PACKAGE}=${installed_version:-<missing>}, expected ${B4586_KERNEL_PACKAGE_VERSION}." >&2
     return 1
   fi
   installed_arch="$(dpkg-query -W -f='${Architecture}' "${B4586_KERNEL_PACKAGE}" 2>/dev/null || true)"
   if [[ "${installed_arch}" != "arm64" ]]; then
-    echo "Wrong B4586 kernel package architecture: ${installed_arch:-<missing>}; expected arm64." >&2
+    echo "Wrong B4593 kernel package architecture: ${installed_arch:-<missing>}; expected arm64." >&2
     return 1
   fi
 
   running_release="$(uname -r)"
   if [[ "${running_release}" != "${B4586_KERNEL_RELEASE}" ]]; then
-    echo "The installed B4586 kernel is not running: uname -r=${running_release}, expected ${B4586_KERNEL_RELEASE}. Reboot into ${B4586_KERNEL_PACKAGE_VERSION} before installing Neat." >&2
+    echo "The installed B4593 kernel is not running: uname -r=${running_release}, expected ${B4586_KERNEL_RELEASE}. Reboot into ${B4586_KERNEL_PACKAGE_VERSION} before installing Neat." >&2
     return 1
   fi
   version_text="$(cat /proc/version 2>/dev/null || true)"
   if [[ " ${version_text} " != *" ${B4586_KERNEL_BUILD_MARKER} "* ]]; then
-    echo "Running kernel ${running_release} does not report B4586 build marker ${B4586_KERNEL_BUILD_MARKER}." >&2
+    echo "Running kernel ${running_release} does not report B4593 build marker ${B4586_KERNEL_BUILD_MARKER}." >&2
     return 1
   fi
 
@@ -1256,7 +1256,7 @@ collect_local_simaai_memory_debs() {
 
   SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION="$(palette_required_simaai_memory_version)" || return 1
   if [[ "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" != "${B4586_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
-    echo "The installed/candidate Palette requires simaai-memory-lib=${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}, but this bundle is restricted to B4586 compatibility ${B4586_MEMORY_PLATFORM_COMPAT_VERSION}." >&2
+    echo "The installed/candidate Palette requires simaai-memory-lib=${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}, but this bundle is restricted to B4593 compatibility ${B4586_MEMORY_PLATFORM_COMPAT_VERSION}." >&2
     return 1
   fi
   board_arch="$(board_debian_architecture)" || return 1
@@ -1268,7 +1268,7 @@ collect_local_simaai_memory_debs() {
   fi
   SIMAAI_MEMORY_ACTUAL_VERSION="${runtime_version}"
   if [[ "${SIMAAI_MEMORY_ACTUAL_VERSION}" != "${B4586_MEMORY_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib has version ${SIMAAI_MEMORY_ACTUAL_VERSION}; expected reviewed B4586 override ${B4586_MEMORY_VERSION}." >&2
+    echo "Bundled simaai-memory-lib has version ${SIMAAI_MEMORY_ACTUAL_VERSION}; expected reviewed B4593 override ${B4586_MEMORY_VERSION}." >&2
     return 1
   fi
 
@@ -1400,17 +1400,17 @@ collect_local_libcamera_debs() {
   done
 
   if [[ -z "${runtime_deb}" || -z "${dev_deb}" || -z "${tools_deb}" ]]; then
-    echo "The B4586 board artifact must bundle exactly one libcamera, libcamera-dev, and libcamera-tools DEB." >&2
+    echo "The B4593 board artifact must bundle exactly one libcamera, libcamera-dev, and libcamera-tools DEB." >&2
     return 1
   fi
 
   compatible="$(palette_required_package_version libcamera)" || return 1
   if [[ "${compatible}" != "${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}" ]]; then
-    echo "The installed/candidate Palette requires libcamera=${compatible}, but this bundle is restricted to B4586 compatibility ${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}." >&2
+    echo "The installed/candidate Palette requires libcamera=${compatible}, but this bundle is restricted to B4593 compatibility ${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}." >&2
     return 1
   fi
   if [[ "$(palette_required_package_version libcamera-tools)" != "${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}" ]]; then
-    echo "The B4586 Palette must require libcamera-tools=${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}." >&2
+    echo "The B4593 Palette must require libcamera-tools=${B4586_LIBCAMERA_PLATFORM_COMPAT_VERSION}." >&2
     return 1
   fi
 
@@ -1420,7 +1420,7 @@ collect_local_libcamera_debs() {
     version="$(dpkg-deb -f "${deb}" Version)"
     arch="$(dpkg-deb -f "${deb}" Architecture)"
     if [[ "${version}" != "${B4586_LIBCAMERA_VERSION}" ]]; then
-      echo "Bundled ${package} has version ${version:-<missing>}; expected reviewed B4586 override ${B4586_LIBCAMERA_VERSION}." >&2
+      echo "Bundled ${package} has version ${version:-<missing>}; expected reviewed B4593 override ${B4586_LIBCAMERA_VERSION}." >&2
       return 1
     fi
     if [[ "${arch}" != "${board_arch}" ]]; then
@@ -1659,7 +1659,7 @@ verify_installed_libcamera_payload() {
 
   for package in libcamera libcamera-dev libcamera-tools; do
     if ! deb_package_is_installed "${package}"; then
-      echo "${package} is not installed after the B4586 override transaction." >&2
+      echo "${package} is not installed after the B4593 override transaction." >&2
       return 1
     fi
     installed_version="$(deb_package_installed_version "${package}")"
@@ -1803,7 +1803,7 @@ preflight_b4586_board_install() {
     return 0
   fi
   if [[ "${NEAT_INSTALLER_SKIP_PLATFORM_CHECK}" == "ON" ]]; then
-    log "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON; skipping the B4586 kernel and override package preflight."
+    log "NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON; skipping the B4593 kernel and override package preflight."
     B4586_PREFLIGHT_COMPLETE=1
     return 0
   fi
@@ -1818,7 +1818,7 @@ preflight_b4586_board_install() {
   snapshot_memory_transaction_guard_state || return 1
   PLATFORM_GUARD_SNAPSHOT_COMPLETE=1
   B4586_PREFLIGHT_COMPLETE=1
-  log "B4586 package preflight passed before any board package or service change."
+  log "B4593 package preflight passed before any board package or service change."
 }
 
 local_platform_overrides_require_atomic_downgrade() {
@@ -1826,7 +1826,7 @@ local_platform_overrides_require_atomic_downgrade() {
   while IFS=$'\t' read -r package expected; do
     installed="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
     if [[ -n "${installed}" ]] && dpkg --compare-versions "${installed}" gt "${expected}"; then
-      log "Installed ${package}=${installed} is newer than bundled ${expected}; deferring all B4586 overrides to the complete package transaction."
+      log "Installed ${package}=${installed} is newer than bundled ${expected}; deferring all B4593 overrides to the complete package transaction."
       return 0
     fi
   done <<EOF
@@ -1876,22 +1876,22 @@ install_local_b4586_override_transaction() {
 
   simulation_log="$(mktemp /tmp/sima-neat-b4586-apt-simulation-XXXXXX)"
   INSTALLER_TMP_DIRS+=("${simulation_log}")
-  log "Simulating the atomic local B4586 memory/libcamera override transaction."
+  log "Simulating the atomic local B4593 memory/libcamera override transaction."
   if ! run_sudo "${apt_args[@]}" --simulate "${PLATFORM_OVERRIDE_DEBS[@]}" >"${simulation_log}" 2>&1; then
     cat "${simulation_log}" >&2
-    echo "APT rejected the atomic B4586 override transaction; no packages were changed." >&2
+    echo "APT rejected the atomic B4593 override transaction; no packages were changed." >&2
     return 1
   fi
   cat "${simulation_log}"
   if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
-    echo "APT simulation planned package removal for the B4586 override transaction; refusing to continue." >&2
+    echo "APT simulation planned package removal for the B4593 override transaction; refusing to continue." >&2
     grep '^Remv[[:space:]]' "${simulation_log}" >&2
     return 1
   fi
   verify_simulated_preinstalled_package_changes \
     "${simulation_log}" "${PLATFORM_OVERRIDE_DEBS[@]}" || return 1
 
-  log "Installing the bundled B4586 memory and libcamera overrides in one zero-removal transaction."
+  log "Installing the bundled B4593 memory and libcamera overrides in one zero-removal transaction."
   run_sudo "${apt_args[@]}" "${PLATFORM_OVERRIDE_DEBS[@]}" || return 1
   verify_installed_simaai_memory_payload || return 1
   verify_installed_libcamera_payload || return 1
@@ -2666,7 +2666,7 @@ simulate_complete_board_transaction_preflight() {
 install_debs_on_board() {
   prepare_debs_for_board_install
   if ! preflight_b4586_board_install; then
-    echo "B4586 package preflight failed; no board services or packages were changed." >&2
+    echo "B4593 package preflight failed; no board services or packages were changed." >&2
     exit 1
   fi
   log "Detected Modalix board environment; installing DEBs with apt."
@@ -2676,7 +2676,7 @@ install_debs_on_board() {
 
   # Keep the isolated platform replacement away from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
-    echo "APT package state is unhealthy; refusing the atomic zero-removal B4586 override replacement." >&2
+    echo "APT package state is unhealthy; refusing the atomic zero-removal B4593 override replacement." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
@@ -2685,7 +2685,7 @@ install_debs_on_board() {
   fi
   stop_board_runtime_before_install
   if ! install_local_b4586_override_transaction; then
-    echo "Failed to install the bundled B4586 memory/libcamera overrides without package removals." >&2
+    echo "Failed to install the bundled B4593 memory/libcamera overrides without package removals." >&2
     exit 1
   fi
   # Install the remaining packages without allowing override-payload substitution.
@@ -3018,7 +3018,7 @@ log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
 if [[ "${ENV_MODE}" == "modalix-board" ]]; then
   if ! preflight_b4586_board_install; then
-    echo "B4586 package preflight failed before Python, package, or service changes." >&2
+    echo "B4593 package preflight failed before Python, package, or service changes." >&2
     exit 1
   fi
 fi

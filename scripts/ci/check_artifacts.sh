@@ -87,23 +87,23 @@ from pathlib import Path
 path = Path(sys.argv[1])
 data = json.loads(path.read_text(encoding="utf-8"))
 expected = {
-    "platform-package-version": "2.1.3~pre4586",
+    "platform-package-version": "2.1.3~pre4593",
     "platform-package-contract": {
         "kernel": {
             "package": "linux-image-6.18.3-modalix",
-            "package-version": "6.18.3-4586",
+            "package-version": "6.18.3-4593",
             "release": "6.18.3-modalix",
-            "build-marker": "#4586",
+            "build-marker": "#4593",
         },
         "libcamera": {
             "package-version": "2.1.3+neat1",
-            "platform-compat-version": "2.1.3~pre4586",
+            "platform-compat-version": "2.1.3~pre4593",
             "capability-name": "simaai-libcamera-dmabuf-abi",
             "capability-version": "1",
         },
         "memory": {
             "package-version": "2.1.1-0neat4",
-            "platform-compat-version": "2.1.1~pre4586",
+            "platform-compat-version": "2.1.1~pre4593",
             "capability-name": "simaai-memory-dmabuf-export-abi",
             "capability-version": "1",
         },
@@ -111,10 +111,10 @@ expected = {
 }
 for key, value in expected.items():
     if data.get(key) != value:
-        raise SystemExit(f"{path}: {key} must equal the reviewed B4586 contract")
+        raise SystemExit(f"{path}: {key} must equal the reviewed B4593 contract")
 PY
   then
-    echo "ERROR: deps/manifest.json must contain the exact reviewed B4586 platform package contract." >&2
+    echo "ERROR: deps/manifest.json must contain the exact reviewed B4593 platform package contract." >&2
     fail=1
   fi
 fi

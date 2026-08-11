@@ -62,16 +62,16 @@ def validate_platform_overrides(
         for package in packages:
             if package not in versions:
                 raise SystemExit(
-                    f"Incomplete package bundle: required B4586 override {package} is missing"
+                    f"Incomplete package bundle: required B4593 override {package} is missing"
                 )
             if versions[package] != actual:
                 raise SystemExit(
-                    f"Wrong B4586 override version: {package}={versions[package]}, "
+                    f"Wrong B4593 override version: {package}={versions[package]}, "
                     f"expected {actual}"
                 )
             if architectures[package] != "arm64":
                 raise SystemExit(
-                    f"Wrong B4586 override architecture: {package}="
+                    f"Wrong B4593 override architecture: {package}="
                     f"{architectures[package]}, expected arm64"
                 )
             if not has_exact_relation(provides[package], package, compatible):

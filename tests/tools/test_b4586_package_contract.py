@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused tests for the B4586 kernel and camera package contract."""
+"""Focused tests for the B4593 kernel and camera package contract."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def run_bash(script: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-class B4586PackageContractTest(unittest.TestCase):
+class B4593PackageContractTest(unittest.TestCase):
     def test_loads_reviewed_contract_from_source_manifest(self) -> None:
         result = run_bash(
             rf"""
@@ -36,19 +36,19 @@ printf '%s|%s|%s\n' \
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("6.18.3-4586|2.1.3+neat1|2.1.1-0neat4", result.stdout)
+        self.assertIn("6.18.3-4593|2.1.3+neat1|2.1.1-0neat4", result.stdout)
 
     def test_running_kernel_requires_exact_package_and_booted_build(self) -> None:
         result = run_bash(
             r"""
 source "$1"
 deb_package_is_installed() { [[ "$1" == linux-image-6.18.3-modalix ]]; }
-deb_package_installed_version() { printf '%s\n' 6.18.3-4586; }
+deb_package_installed_version() { printf '%s\n' 6.18.3-4593; }
 dpkg-query() { printf '%s\n' arm64; }
 uname() { [[ "$1" == -r ]] && printf '%s\n' 6.18.3-modalix; }
 cat() {
   [[ "$1" == /proc/version ]] || return 2
-  printf '%s\n' 'Linux version 6.18.3-modalix (builder) #4586 SMP PREEMPT'
+  printf '%s\n' 'Linux version 6.18.3-modalix (builder) #4593 SMP PREEMPT'
 }
 verify_b4586_running_kernel
 """
@@ -62,7 +62,7 @@ verify_b4586_running_kernel
             r"""
 source "$1"
 deb_package_is_installed() { return 0; }
-deb_package_installed_version() { printf '%s\n' 6.18.3-4586; }
+deb_package_installed_version() { printf '%s\n' 6.18.3-4593; }
 dpkg-query() { printf '%s\n' arm64; }
 uname() { printf '%s\n' 6.18.2-modalix; }
 verify_b4586_running_kernel
@@ -80,7 +80,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 touch "${tmp}/libcamera.deb" "${tmp}/libcamera-dev.deb" "${tmp}/libcamera-tools.deb"
 DEBS=("${tmp}/libcamera.deb" "${tmp}/libcamera-dev.deb" "${tmp}/libcamera-tools.deb")
-palette_required_package_version() { printf '%s\n' 2.1.3~pre4586; }
+palette_required_package_version() { printf '%s\n' 2.1.3~pre4593; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -91,10 +91,10 @@ dpkg-deb() {
     *:Version) printf '%s\n' 2.1.3+neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     libcamera.deb:Provides)
-      printf '%s\n' 'libcamera (= 2.1.3~pre4586), simaai-libcamera-dmabuf-abi (= 1)'
+      printf '%s\n' 'libcamera (= 2.1.3~pre4593), simaai-libcamera-dmabuf-abi (= 1)'
       ;;
-    libcamera-dev.deb:Provides) printf '%s\n' 'libcamera-dev (= 2.1.3~pre4586)' ;;
-    libcamera-tools.deb:Provides) printf '%s\n' 'libcamera-tools (= 2.1.3~pre4586)' ;;
+    libcamera-dev.deb:Provides) printf '%s\n' 'libcamera-dev (= 2.1.3~pre4593)' ;;
+    libcamera-tools.deb:Provides) printf '%s\n' 'libcamera-tools (= 2.1.3~pre4593)' ;;
     libcamera-dev.deb:Depends|libcamera-tools.deb:Depends)
       printf '%s\n' 'libc6, libcamera (= 2.1.3+neat1)'
       ;;
@@ -119,7 +119,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 touch "${tmp}/libcamera.deb" "${tmp}/libcamera-dev.deb" "${tmp}/libcamera-tools.deb"
 DEBS=("${tmp}/libcamera.deb" "${tmp}/libcamera-dev.deb" "${tmp}/libcamera-tools.deb")
-palette_required_package_version() { printf '%s\n' 2.1.3~pre4586; }
+palette_required_package_version() { printf '%s\n' 2.1.3~pre4593; }
 board_debian_architecture() { printf '%s\n' arm64; }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -129,9 +129,9 @@ dpkg-deb() {
     libcamera-tools.deb:Package) printf '%s\n' libcamera-tools ;;
     *:Version) printf '%s\n' 2.1.3+neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
-    libcamera.deb:Provides) printf '%s\n' 'libcamera (= 2.1.3~pre4586)' ;;
-    libcamera-dev.deb:Provides) printf '%s\n' 'libcamera-dev (= 2.1.3~pre4586)' ;;
-    libcamera-tools.deb:Provides) printf '%s\n' 'libcamera-tools (= 2.1.3~pre4586)' ;;
+    libcamera.deb:Provides) printf '%s\n' 'libcamera (= 2.1.3~pre4593)' ;;
+    libcamera-dev.deb:Provides) printf '%s\n' 'libcamera-dev (= 2.1.3~pre4593)' ;;
+    libcamera-tools.deb:Provides) printf '%s\n' 'libcamera-tools (= 2.1.3~pre4593)' ;;
     libcamera-dev.deb:Depends|libcamera-tools.deb:Depends)
       printf '%s\n' 'libcamera (= 2.1.3+neat1)'
       ;;
@@ -199,7 +199,7 @@ simulation="${tmp}/simulation.log"
 deb="${tmp}/libcamera.deb"
 touch "${deb}"
 printf '%s\n' \
-  'Inst libcamera [2.1.3~pre4586] (2.1.3+neat1 local [arm64])' \
+  'Inst libcamera [2.1.3~pre4593] (2.1.3+neat1 local [arm64])' \
   'Inst unrelated-runtime [1.0] (1.1 repository [arm64])' > "${simulation}"
 dpkg-deb() { printf '%s\n' libcamera; }
 verify_simulated_preinstalled_package_changes "${simulation}" "${deb}"
