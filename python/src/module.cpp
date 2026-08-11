@@ -2084,6 +2084,9 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::GenerationMetrics>(m, "GenerationMetrics")
       .def(nb::init<>())
       .def_rw("generated_tokens", &simaai::neat::genai::GenerationMetrics::generated_tokens)
+      .def_rw("prompt_tokens", &simaai::neat::genai::GenerationMetrics::prompt_tokens)
+      .def_rw("kv_cache_len", &simaai::neat::genai::GenerationMetrics::kv_cache_len)
+      .def_rw("max_context_tokens", &simaai::neat::genai::GenerationMetrics::max_context_tokens)
       .def_rw("time_to_first_token_s",
               &simaai::neat::genai::GenerationMetrics::time_to_first_token_s)
       .def_rw("tokens_per_second", &simaai::neat::genai::GenerationMetrics::tokens_per_second);
@@ -2186,6 +2189,8 @@ NB_MODULE(_pyneat_core, m) {
       .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
       .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
       .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
+      .def("kv_cache_len", &simaai::neat::genai::VisionLanguageModel::kv_cache_len)
+      .def("max_context_tokens", &simaai::neat::genai::VisionLanguageModel::max_context_tokens)
       .def(
           "encode",
           [](simaai::neat::genai::VisionLanguageModel& model, const nb::object& images) {
@@ -2215,6 +2220,8 @@ NB_MODULE(_pyneat_core, m) {
       .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
       .def("accepts_audio", &simaai::neat::genai::GenAIModel::accepts_audio)
       .def("model_id", &simaai::neat::genai::GenAIModel::model_id)
+      .def("kv_cache_len", &simaai::neat::genai::GenAIModel::kv_cache_len)
+      .def("max_context_tokens", &simaai::neat::genai::GenAIModel::max_context_tokens)
       .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,

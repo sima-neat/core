@@ -406,6 +406,30 @@ def test_genai_value_types_and_text_sample_helpers():
   assert token.avg_logprob == pytest.approx(-0.4)
 
 
+def test_genai_metrics_context_accounting():
+  """Context accounting fields and the KV-cache accessors are bound.
+
+  Runs without hardware: only checks the binding surface and defaults. The
+  values themselves are asserted in the generation tests below.
+  """
+  metrics = pyneat.genai.GenerationMetrics()
+  assert metrics.prompt_tokens == 0
+  assert metrics.kv_cache_len == 0
+  assert metrics.max_context_tokens == 0
+
+  metrics.prompt_tokens = 2280
+  metrics.kv_cache_len = 2344
+  metrics.max_context_tokens = 8192
+  assert metrics.prompt_tokens == 2280
+  assert metrics.kv_cache_len == 2344
+  assert metrics.max_context_tokens == 8192
+
+  # Exposed on both model handles; GenAIModel returns 0 for ASR models.
+  for handle in (pyneat.VisionLanguageModel, pyneat.GenAIModel):
+    assert hasattr(handle, "kv_cache_len")
+    assert hasattr(handle, "max_context_tokens")
+
+
 def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.ASRTask is pyneat.ASRTask
   assert pyneat.genai.VisionLanguageModel is pyneat.VisionLanguageModel
@@ -476,6 +500,15 @@ def test_genai_direct_text_generation_and_streaming():
     assert _trim_text(result.text) == _EXPECTED_TEXT
     _assert_finish_reason(result.finish_reason)
     assert result.metrics.generated_tokens > 0
+
+    # Context accounting: the prompt is tokenized, and the KV cache holds at
+    # least it once the run finishes.  LLiMa may reuse a cached prefix, so
+    # kv_cache_len is not required to equal prompt + generated.
+    assert result.metrics.prompt_tokens > 0
+    assert result.metrics.max_context_tokens > 0
+    assert result.metrics.kv_cache_len >= result.metrics.prompt_tokens
+    assert result.metrics.kv_cache_len <= result.metrics.max_context_tokens
+    assert model.max_context_tokens() == result.metrics.max_context_tokens
 
     streamed_text = []
     final_sample = None

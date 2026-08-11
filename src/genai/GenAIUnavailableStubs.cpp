@@ -45,6 +45,12 @@ bool GenAIModel::accepts_audio() const {
 std::string GenAIModel::model_id() const {
   throw_genai_unavailable();
 }
+std::uint32_t GenAIModel::kv_cache_len() const {
+  throw_genai_unavailable();
+}
+std::uint32_t GenAIModel::max_context_tokens() const {
+  throw_genai_unavailable();
+}
 GenerationResult GenAIModel::run(const GenerationRequest&) {
   throw_genai_unavailable();
 }
@@ -115,6 +121,12 @@ std::string VisionLanguageModel::model_id() const {
   throw_genai_unavailable();
 }
 std::size_t VisionLanguageModel::cached_image_count() const {
+  throw_genai_unavailable();
+}
+std::uint32_t VisionLanguageModel::kv_cache_len() const {
+  throw_genai_unavailable();
+}
+std::uint32_t VisionLanguageModel::max_context_tokens() const {
   throw_genai_unavailable();
 }
 bool VisionLanguageModel::encode(const Tensor&) {

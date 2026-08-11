@@ -405,7 +405,11 @@ struct VisionLanguageModel::Impl {
 
     const auto max_total_tokens =
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
-    return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens);
+    auto output_token_ids =
+        language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens);
+    // Decode advances the KV cache, so sample it once the run has finished.
+    record_token_counts(static_cast<std::uint32_t>(prepared.input_token_ids.size()));
+    return output_token_ids;
   }
 
   struct PreparedInput {
@@ -557,6 +561,23 @@ struct VisionLanguageModel::Impl {
     }
   }
 
+  void record_token_counts(std::uint32_t prompt_tokens) {
+    const auto cache_len = kv_cache_len();
+    const auto context_max = max_context_tokens();
+    std::lock_guard<std::mutex> lock(metrics_mutex);
+    metrics.prompt_tokens = prompt_tokens;
+    metrics.kv_cache_len = cache_len;
+    metrics.max_context_tokens = context_max;
+  }
+
+  std::uint32_t kv_cache_len() const {
+    return language_model ? language_model->get_kv_cache_len() : 0U;
+  }
+
+  std::uint32_t max_context_tokens() const {
+    return language_model ? language_model->get_max_num_tokens() : 0U;
+  }
+
   GenerationMetrics current_metrics() const {
     std::lock_guard<std::mutex> lock(metrics_mutex);
     return metrics;
@@ -603,6 +624,14 @@ std::string VisionLanguageModel::model_id() const {
 
 std::size_t VisionLanguageModel::cached_image_count() const {
   return impl_->cached_image_count();
+}
+
+std::uint32_t VisionLanguageModel::kv_cache_len() const {
+  return impl_->kv_cache_len();
+}
+
+std::uint32_t VisionLanguageModel::max_context_tokens() const {
+  return impl_->max_context_tokens();
 }
 
 bool VisionLanguageModel::encode(const Tensor& image) {
@@ -678,6 +707,11 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
               producer.record_text(text, stream_end);
             });
         auto output_token_ids = model->generate_tokens(request);
+        // generate_tokens() records the counts on the model; mirror them onto the
+        // stream so they ride along on every sample from here on, final one included.
+        const auto run_metrics = model->current_metrics();
+        producer.record_token_counts(run_metrics.prompt_tokens, run_metrics.kv_cache_len,
+                                     run_metrics.max_context_tokens);
         std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
         if (parse_tools && output_token_ids.has_value()) {
           handle_tool_parser_events(tool_parser.add("", true));
