@@ -1,6 +1,7 @@
 # SiMa NEAT PCIe Host
 
-Host-side C++ runtime and API for NEAT PCIe coprocessor execution.
+Host-side C++ runtime and API for NEAT coprocessor execution on a connected
+Modalix PCIe Card.
 
 This package is the WP11 successor to the old PipelineSession `SimaPCIe` host
 app. It keeps the useful control-plane ideas from that prototype, but uses the
@@ -59,11 +60,11 @@ if (runtime.try_enqueue(model_id, request_id, inputs) ==
 runtime.unload(model_id);
 ```
 
-A runtime represents one Modalix card. Each loaded model still owns one
+A runtime represents one Modalix PCIe Card. Each loaded model still owns one
 physical PCIe queue; the runtime assigns queues automatically, beginning with
 the preferred `ConnectionOptions::queue`, and exposes only logical `ModelId`
-values. With the current card-side builder, at most six models can be loaded
-concurrently.
+values. The Modalix EV74 supports at most four concurrent co-processing
+pipelines, using queues 0 through 3.
 
 `load_models()` reserves all required queues and has batch semantics: if any
 model fails to load, every model created by that call is closed and its queue
@@ -89,9 +90,9 @@ not itself export the standardized OAAX `runtime_*` C symbols.
 
 ## SSH Provisioning
 
-The PCIe host expects passwordless SSH to the PCIe card during normal operation.
+The PCIe host expects passwordless SSH to the card during normal operation.
 The package installs `pcie-setup.sh`, which follows the SDK DevKit pattern:
-create or reuse an ed25519 key, add PCIe card host keys to `known_hosts`, and
+create or reuse an ed25519 key, add card host keys to `known_hosts`, and
 install the public key with `ssh-copy-id`.
 
 By default it discovers PCIe management links from local IPv4 addresses: each
@@ -134,7 +135,7 @@ struct ConnectionOptions {
   std::string card_host;      // Optional explicit card IP/host for SSH/SCP.
   int card_id = 0;            // PCIe card/plugin index; default host is 10.0.<card_id>.2.
   std::string user = "sima";
-  int queue = 0;              // PCIe queue, 0..5.
+  int queue = 0;              // Supported co-processing queue, 0..3.
   int max_inflight = 10;
   std::string card_env;
   std::string card_gst_debug; // Optional card-side GST_DEBUG spec for pcie-pipeline-builder.
@@ -388,7 +389,7 @@ extra setup arguments when discovery is not available:
 dist/install_pciehost.sh --setup-args "--hosts 10.0.0.2"
 ```
 
-For metadata-only investigation, no PCIe card or SSH setup is required, so the
+For metadata-only investigation, no card or SSH setup is required, so the
 setup step can be skipped:
 
 ```bash
@@ -468,7 +469,7 @@ Implemented in this first WP11 cut:
 - tensor push through tensor-set/tensorbuffer caps and `GstSimaTensorSetMeta`
 - image tensor push for RGB/BGR/GRAY8/NV12/I420
 
-Validated on Modalix PCIe hardware:
+Validated on a Modalix PCIe Card:
 
 - tensor-set metadata attachment and transport
 - packaged C++ and Python tensor, image, and boxdecode routes
