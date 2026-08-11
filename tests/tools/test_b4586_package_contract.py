@@ -189,6 +189,43 @@ printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
             self.assertIn("<--no-remove>", line)
         self.assertIn("REMAINING: <./neat-runtime.deb>", result.stdout)
 
+    def test_override_transaction_defers_when_installed_closure_blocks_it(
+        self,
+    ) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
+DEBS=(./memory.deb ./memory-dev.deb ./libcamera.deb ./libcamera-dev.deb \
+      ./libcamera-tools.deb ./neat-runtime.deb)
+preflight_b4586_board_install() {
+  PLATFORM_OVERRIDE_DEBS=(./memory.deb ./memory-dev.deb ./libcamera.deb \
+    ./libcamera-dev.deb ./libcamera-tools.deb)
+  PLATFORM_GUARD_SNAPSHOT_COMPLETE=1
+}
+local_platform_overrides_require_atomic_downgrade() { return 1; }
+run_sudo() {
+  printf '%s\n' 'The following packages will be REMOVED:'
+  printf '%s\n' 'E: Packages need to be removed but remove is disabled.'
+  return 100
+}
+install_local_b4586_override_transaction
+printf 'REMAINING:'; printf ' <%s>' "${DEBS[@]}"; printf '\n'
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("deferring the overrides", result.stdout)
+        for deb in (
+            "memory.deb",
+            "memory-dev.deb",
+            "libcamera.deb",
+            "libcamera-dev.deb",
+            "libcamera-tools.deb",
+            "neat-runtime.deb",
+        ):
+            self.assertIn("<./" + deb + ">", result.stdout)
+
     def test_rejects_unrelated_preinstalled_upgrade(self) -> None:
         result = run_bash(
             r"""

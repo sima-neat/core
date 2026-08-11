@@ -1879,6 +1879,10 @@ install_local_b4586_override_transaction() {
   log "Simulating the atomic local B4593 memory/libcamera override transaction."
   if ! run_sudo "${apt_args[@]}" --simulate "${PLATFORM_OVERRIDE_DEBS[@]}" >"${simulation_log}" 2>&1; then
     cat "${simulation_log}" >&2
+    if grep -Fq 'Packages need to be removed but remove is disabled' "${simulation_log}"; then
+      log "The installed Neat dependency closure prevents an isolated B4593 override; deferring the overrides to the already-validated complete package transaction."
+      return 0
+    fi
     echo "APT rejected the atomic B4593 override transaction; no packages were changed." >&2
     return 1
   fi
