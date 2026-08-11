@@ -500,6 +500,21 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+### Decoder admission lifecycle
+
+Before choosing the single-pipeline or connected-graph runtime, Core scans the
+compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
+decoders are admitted as one group, and the resulting reservation is owned by
+the top-level `Run` until its pipeline workers have stopped. This applies
+equally to linear `Graph::add(...)` pipelines, ordinary connected segments, and
+fused realtime branches.
+
+Admission requires a known decoder width, height, and frame rate. Core never
+invents a frame rate. An incomplete contract or unavailable optional admission
+endpoint produces a warning and leaves the plan unchanged; with
+`SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
+hardware starts. Capacity rejection and malformed lease responses always fail.
+
 ### Realtime fan-in lowering
 
 Applications describe realtime edges with ordinary `Graph::connect(...)` and
@@ -625,6 +640,20 @@ GStreamer name collisions.
 | `Graph` | input-node options and/or seed input sample | explicit `max_*`; otherwise implicit from seed `width/height/depth` when provided | explicit `RunOptions.max_input_bytes`, otherwise bounded estimate or elastic default from `InputPolicy` |
 
 * **SimaAI concurrency**: multiple pipelines can run in-process; keep element names unique.
+
+---
+
+## Per-frame attribute propagation
+
+Sources attach `Sample::attributes` as a nested structure in `GstSimaMeta`. Elements that
+preserve a buffer carry the metadata naturally; Core boundaries that allocate or reuse a
+buffer deep-copy the attributes and clear stale values. `neatdecoder` snapshots the same
+frame context before decode and restores it by a daemon-provided correlation ID, so reordered
+or dropped frames cannot shift attributes onto another output. A negotiated decoder/daemon
+protocol owns that correlation contract; the legacy decoder protocol remains FIFO-only.
+
+The supported user-facing paths and limits are documented in
+[Per-frame attributes](../../advanced-concepts/data-model-contracts/frame_attributes.md).
 
 ---
 

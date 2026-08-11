@@ -126,6 +126,7 @@ void runtime::RunCore::stop() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
       owner->pipeline.stream.close();
+      owner->decoder_admission.reset();
       owner->stream_close_state.store(runtime::InputStreamCloseState::Closed,
                                       std::memory_order_release);
       ctx->state.store(StopTaskState::Completed, std::memory_order_release);
@@ -236,6 +237,9 @@ void runtime::RunCore::stop() {
       }
     }
     st->pipeline.input_thread.join();
+  }
+  if (run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
+    st->decoder_admission.reset();
   }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::stop end\n");
