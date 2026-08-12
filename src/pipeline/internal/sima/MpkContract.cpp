@@ -6326,6 +6326,20 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     const std::string kernel_token =
         canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
     if (kernel_token.find("detess") != std::string::npos && stage.frame_shape.size() == 2U) {
+      if (stage.batch_sz_model > 0 && config_actual_batch_size > 0 &&
+          stage.batch_sz_model != config_actual_batch_size) {
+        if (error_message) {
+          *error_message = "conflicting actual batch metadata for '" + stage.name + "'";
+        }
+        return std::nullopt;
+      }
+      if (stage.batch_size > 0 && config_desired_batch_size > 0 &&
+          stage.batch_size != config_desired_batch_size) {
+        if (error_message) {
+          *error_message = "conflicting desired batch metadata for '" + stage.name + "'";
+        }
+        return std::nullopt;
+      }
       if (stage.batch_sz_model <= 0 && config_actual_batch_size > 0) {
         stage.batch_sz_model = config_actual_batch_size;
       }

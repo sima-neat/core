@@ -25,7 +25,8 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
                      const std::size_t transport_bytes, const std::size_t output_bytes,
                      const int actual_batch = 1, const bool align_c16 = true,
                      const bool cblock = true, const bool include_detess_batch_metadata = true,
-                     const std::vector<std::int64_t>& slice_shape = {64}) {
+                     const std::vector<std::int64_t>& slice_shape = {64},
+                     const int nested_actual_batch = 0, const int nested_desired_batch = 0) {
   const auto root = std::filesystem::temp_directory_path() / ("sima_detess_rank2_" + name);
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
@@ -49,6 +50,13 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
   if (include_detess_batch_metadata) {
     detess_batch_metadata << "        \"desired_batch_size\": " << actual_batch << ",\n"
                           << "        \"actual_batch_size\": " << actual_batch << ",\n";
+  }
+  std::ostringstream nested_batch_metadata;
+  if (nested_desired_batch > 0) {
+    nested_batch_metadata << "          \"desired_batch_size\": " << nested_desired_batch << ",\n";
+  }
+  if (nested_actual_batch > 0) {
+    nested_batch_metadata << "          \"actual_batch_size\": " << nested_actual_batch << ",\n";
   }
 
   std::ofstream out(root / "mpk.json");
@@ -83,7 +91,8 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
  )JSON"
       << detess_batch_metadata.str() << R"JSON(        "kernel": "detessellation_transform",
         "params": {
-          "slice_shape": )JSON"
+ )JSON"
+      << nested_batch_metadata.str() << R"JSON(          "slice_shape": )JSON"
       << shape_json(slice_shape) << R"JSON(,
           "align_c16": )JSON"
       << (align_c16 ? "true" : "false") << R"JSON(,
@@ -349,6 +358,24 @@ RUN_TEST(
           write_detess_fixture("missing_batch", {1, 213}, 448U, 426U, 1, true, true, false));
       require(missing_batch_error.find("explicit batch metadata") != std::string::npos,
               "rank-2 contracts must not silently assume batch one");
+
+      const auto matching_batch_contract = load_fixture(write_detess_fixture(
+          "matching_batch", {1, 213}, 448U, 426U, 1, true, true, true, {64}, 1, 1));
+      require(matching_batch_contract.plugins[1].batch_size == 1 &&
+                  matching_batch_contract.plugins[1].batch_sz_model == 1,
+              "matching outer and nested batch metadata should remain valid");
+
+      const auto conflicting_actual_batch_error = reject_fixture(write_detess_fixture(
+          "conflicting_actual_batch", {1, 213}, 448U, 426U, 4, true, true, true, {64}, 1, 4));
+      require(conflicting_actual_batch_error.find("conflicting actual batch metadata") !=
+                  std::string::npos,
+              "conflicting actual batch metadata should fail at model loading");
+
+      const auto conflicting_desired_batch_error = reject_fixture(write_detess_fixture(
+          "conflicting_desired_batch", {1, 213}, 448U, 426U, 4, true, true, true, {64}, 4, 1));
+      require(conflicting_desired_batch_error.find("conflicting desired batch metadata") !=
+                  std::string::npos,
+              "conflicting desired batch metadata should fail at model loading");
 
       const auto rank3_contract =
           load_fixture(write_detess_fixture("rank3", {1, 10, 7}, 320U, 140U));
