@@ -774,6 +774,7 @@ jobs:
             --no-tests=error
 
       - name: Run Modalix Performance Matrix
+        id: modalix_perf_matrix
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           python3 tests/perf/tools/run_perf_matrix.py \
@@ -781,8 +782,8 @@ jobs:
             --results-dir "${GITHUB_WORKSPACE}/_work/perf-results"
 
       - name: Upload Modalix Performance Results
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && (steps.modalix_perf_matrix.outcome == 'success' || steps.modalix_perf_matrix.outcome == 'failure') }}
+        uses: actions/upload-artifact@v6
         with:
           name: modalix-performance-results-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/perf-results/*.json

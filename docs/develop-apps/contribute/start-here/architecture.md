@@ -709,6 +709,15 @@ carry plane strides and offsets, so no memory domain bypasses that capability
 gate. An absent or false capability is treated as unsupported so Core remains
 safe with older Internals packages.
 
+Raw-video geometry and physical storage layout remain separate contracts.
+`OutputSpec` and caps describe visible width and height; Core must not round
+those values to codec block, DMA pitch, or surface-height alignment. The
+layout-aware plugin derives physical plane offsets and strides from
+`GstVideoMeta` or `GstVideoInfo`, repacks when the physical contract is not
+compatible, and leaves codec/hardware admission to the encoder service. This
+preserves exact decoded geometry while keeping device-specific alignment out of
+the public graph API.
+
 ### Parsing & launch
 
 The library primarily uses:
