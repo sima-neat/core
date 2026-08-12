@@ -9,196 +9,104 @@
 #include <filesystem>
 #include <fstream>
 #include <gst/gst.h>
+#include <nlohmann/json.hpp>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace {
 
+using simaai::neat::pipeline_internal::sima::detess_runtime_frame_shape;
 using simaai::neat::pipeline_internal::sima::load_mpk_contract_from_pack_root;
 using simaai::neat::pipeline_internal::sima::MpkContract;
+using json = nlohmann::json;
 
-std::filesystem::path
-write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& frame_shape,
-                     const std::size_t transport_bytes, const std::size_t output_bytes,
-                     const int actual_batch = 1, const bool align_c16 = true,
-                     const bool cblock = true, const bool include_detess_batch_metadata = true,
-                     const std::vector<std::int64_t>& slice_shape = {64},
-                     const int nested_actual_batch = 0, const int nested_desired_batch = 0,
-                     const std::string& outer_batch_alias = {},
-                     const std::string& nested_batch_alias = {}) {
+struct DetessFixtureHead {
+  std::string name;
+  std::vector<std::int64_t> frame_shape;
+  std::vector<std::int64_t> slice_shape;
+  std::size_t transport_bytes = 0U;
+  std::size_t output_bytes = 0U;
+  bool align_c16 = true;
+  bool cblock = true;
+};
+
+std::filesystem::path write_detess_fixture(const std::string& name,
+                                           const std::vector<DetessFixtureHead>& heads,
+                                           std::vector<std::size_t> mla_output_order = {}) {
   const auto root = std::filesystem::temp_directory_path() / ("sima_detess_rank2_" + name);
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
   std::filesystem::create_directories(root, ec);
   require(!ec, "failed to create detess fixture root");
 
-  auto shape_json = [](const std::vector<std::int64_t>& shape) {
-    std::ostringstream out;
-    out << '[';
-    for (std::size_t i = 0; i < shape.size(); ++i) {
-      if (i != 0U) {
-        out << ',';
-      }
-      out << shape[i];
+  if (mla_output_order.empty()) {
+    mla_output_order.resize(heads.size());
+    for (std::size_t i = 0; i < heads.size(); ++i) {
+      mla_output_order[i] = i;
     }
-    out << ']';
-    return out.str();
-  };
+  }
 
-  std::ostringstream detess_batch_metadata;
-  if (include_detess_batch_metadata) {
-    detess_batch_metadata << "        \"desired_batch_size\": " << actual_batch << ",\n"
-                          << "        \"actual_batch_size\": " << actual_batch << ",\n"
-                          << outer_batch_alias;
+  json plugins = json::array();
+  json mla_outputs = json::array();
+  for (const auto index : mla_output_order) {
+    require(index < heads.size(), "invalid MLA output order in detess fixture");
+    mla_outputs.push_back(
+        {{"name", heads[index].name}, {"type", "buffer"}, {"size", heads[index].transport_bytes}});
   }
-  std::ostringstream nested_batch_metadata;
-  if (nested_desired_batch > 0) {
-    nested_batch_metadata << "          \"desired_batch_size\": " << nested_desired_batch << ",\n";
+  plugins.push_back({{"name", "MLA_0"},
+                     {"sequence", 1},
+                     {"processor", "MLA"},
+                     {"config_params", {{"desired_batch_size", 1}, {"actual_batch_size", 1}}},
+                     {"resources", {{"executable", "fixture.elf"}}},
+                     {"input_nodes", {{{"name", "model_input"}, {"type", "buffer"}, {"size", 1}}}},
+                     {"output_nodes", std::move(mla_outputs)}});
+
+  for (std::size_t i = 0; i < heads.size(); ++i) {
+    const auto& head = heads[i];
+    plugins.push_back(
+        {{"name", "detess_" + head.name},
+         {"sequence", static_cast<int>(i + 2U)},
+         {"processor", "EV74"},
+         {"config_params",
+          {{"desired_batch_size", 1},
+           {"actual_batch_size", 1},
+           {"kernel", "detessellation_transform"},
+           {"params",
+            {{"slice_shape", head.slice_shape},
+             {"align_c16", head.align_c16},
+             {"cblock", head.cblock},
+             {"frame_type", "bfloat16"},
+             {"frame_shape", head.frame_shape},
+             {"input_shapes", json::array({json::array({1, head.transport_bytes})})},
+             {"output_shapes", json::array({head.frame_shape})}}}}},
+         {"input_nodes",
+          {{{"name", head.name}, {"type", "buffer"}, {"size", head.transport_bytes}}}},
+         {"output_nodes",
+          {{{"name", head.name + "_output"}, {"type", "buffer"}, {"size", head.output_bytes}}}}});
   }
-  if (nested_actual_batch > 0) {
-    nested_batch_metadata << "          \"actual_batch_size\": " << nested_actual_batch << ",\n";
-  }
-  nested_batch_metadata << nested_batch_alias;
 
   std::ofstream out(root / "mpk.json");
   require(out.is_open(), "failed to open detess fixture manifest");
-  out << R"JSON({
-  "name": "detess_rank2_fixture",
-  "model_path": "fixture.elf",
-  "input_nodes": [{ "name": "model_input", "type": "buffer", "size": 1 }],
-  "plugins": [
-    {
-      "name": "MLA_0",
-      "sequence": 1,
-      "processor": "MLA",
-      "config_params": {
-        "desired_batch_size": )JSON"
-      << actual_batch << R"JSON(,
-        "actual_batch_size": )JSON"
-      << actual_batch << R"JSON(
-      },
-      "resources": { "executable": "fixture.elf" },
-      "input_nodes": [{ "name": "model_input", "type": "buffer", "size": 1 }],
-      "output_nodes": [
-        { "name": "MLA_0", "type": "buffer", "size": )JSON"
-      << transport_bytes << R"JSON( }
-      ]
-    },
-    {
-      "name": "detessellate_MLA_0_detessellation_transform",
-      "sequence": 2,
-      "processor": "EV74",
-      "config_params": {
- )JSON"
-      << detess_batch_metadata.str() << R"JSON(        "kernel": "detessellation_transform",
-        "params": {
- )JSON"
-      << nested_batch_metadata.str() << R"JSON(          "slice_shape": )JSON"
-      << shape_json(slice_shape) << R"JSON(,
-          "align_c16": )JSON"
-      << (align_c16 ? "true" : "false") << R"JSON(,
-          "cblock": )JSON"
-      << (cblock ? "true" : "false") << R"JSON(,
-          "frame_type": "bfloat16",
-          "frame_shape": )JSON"
-      << shape_json(frame_shape) << R"JSON(,
-          "input_shapes": [[1,)JSON"
-      << transport_bytes << R"JSON(]],
-          "output_shapes": [)JSON"
-      << shape_json(frame_shape) << R"JSON(]
-        }
-      },
-      "input_nodes": [
-        { "name": "MLA_0", "type": "buffer", "size": )JSON"
-      << transport_bytes << R"JSON( }
-      ],
-      "output_nodes": [
-        { "name": "detess_output", "type": "buffer", "size": )JSON"
-      << output_bytes << R"JSON( }
-      ]
-    }
-  ]
-})JSON";
+  out << json{{"name", "detess_rank2_fixture"},
+              {"model_path", "fixture.elf"},
+              {"input_nodes", {{{"name", "model_input"}, {"type", "buffer"}, {"size", 1}}}},
+              {"plugins", std::move(plugins)}}
+             .dump(2);
   out.close();
   require(out.good(), "failed to finalize detess fixture manifest");
   return root;
 }
 
-std::filesystem::path write_two_head_fixture() {
-  const auto root = std::filesystem::temp_directory_path() / "sima_detess_rank2_two_head_by_name";
-  std::error_code ec;
-  std::filesystem::remove_all(root, ec);
-  std::filesystem::create_directories(root, ec);
-  require(!ec, "failed to create two-head detess fixture root");
-
-  std::ofstream out(root / "two_head_mpk.json");
-  require(out.is_open(), "failed to open two-head detess fixture manifest");
-  out << R"JSON({
-  "name": "two_head_detess_fixture",
-  "model_path": "fixture.elf",
-  "input_nodes": [{ "name": "model_input", "type": "buffer", "size": 1 }],
-  "plugins": [
-    {
-      "name": "MLA_0",
-      "sequence": 1,
-      "processor": "MLA",
-      "resources": { "executable": "fixture.elf" },
-      "input_nodes": [{ "name": "model_input", "type": "buffer", "size": 1 }],
-      "output_nodes": [
-        { "name": "carrier_nc", "type": "buffer", "size": 448 },
-        { "name": "carrier_hw", "type": "buffer", "size": 192 }
-      ]
-    },
-    {
-      "name": "detess_hw",
-      "sequence": 2,
-      "processor": "EV74",
-      "config_params": {
-        "desired_batch_size": 1,
-        "actual_batch_size": 1,
-        "kernel": "detessellation_transform",
-        "params": {
-          "slice_shape": [1, 1, 1],
-          "align_c16": true,
-          "cblock": true,
-          "frame_type": "bfloat16",
-          "frame_shape": [2, 3],
-          "input_shapes": [[1, 192]],
-          "output_shapes": [[2, 3]]
-        }
-      },
-      "input_nodes": [{ "name": "carrier_hw", "type": "buffer", "size": 192 }],
-      "output_nodes": [{ "name": "hw_output", "type": "buffer", "size": 12 }]
-    },
-    {
-      "name": "detess_nc",
-      "sequence": 3,
-      "processor": "EV74",
-      "config_params": {
-        "desired_batch_size": 1,
-        "actual_batch_size": 1,
-        "kernel": "detessellation_transform",
-        "params": {
-          "slice_shape": [64],
-          "align_c16": true,
-          "cblock": true,
-          "frame_type": "bfloat16",
-          "frame_shape": [1, 213],
-          "input_shapes": [[1, 448]],
-          "output_shapes": [[1, 213]]
-        }
-      },
-      "input_nodes": [{ "name": "carrier_nc", "type": "buffer", "size": 448 }],
-      "output_nodes": [{ "name": "nc_output", "type": "buffer", "size": 426 }]
-    }
-  ]
-})JSON";
-  out.close();
-  require(out.good(), "failed to finalize two-head detess fixture manifest");
-  return root;
+std::filesystem::path write_detess_fixture(const std::string& name,
+                                           const std::vector<std::int64_t>& frame_shape,
+                                           const std::size_t transport_bytes,
+                                           const std::size_t output_bytes,
+                                           const bool align_c16 = true, const bool cblock = true,
+                                           const std::vector<std::int64_t>& slice_shape = {64}) {
+  return write_detess_fixture(name, {{"MLA_0", frame_shape, slice_shape, transport_bytes,
+                                      output_bytes, align_c16, cblock}});
 }
 
 const MpkContract load_fixture(const std::filesystem::path& root) {
@@ -323,9 +231,6 @@ RUN_TEST(
               "loader must preserve the authored logical frame_shape");
       require(detess.runtime_frame_shape == std::vector<std::int64_t>({1, 1, 1, 213}),
               "customer rank-2 shape should resolve uniquely as NC geometry");
-      require(detess.batch_size == 1 && detess.batch_sz_model == 1,
-              "detess resolver should retain explicit top-level batch metadata");
-
       const auto physical_outputs =
           simaai::neat::pipeline_internal::sima::get_mla_published_outputs_contract(contract);
       require(physical_outputs.size() == 1U, "expected one MLA boundary output");
@@ -348,76 +253,23 @@ RUN_TEST(
       require(hw_contract.plugins[1].runtime_frame_shape == std::vector<std::int64_t>({1, 2, 3, 1}),
               "rank-2 HW shape should resolve from its C16 transport span");
 
-      const auto batched_nc_error =
-          reject_fixture(write_detess_fixture("batched_nc", {4, 17}, 256U, 136U, 4));
-      require(batched_nc_error.find("requires batch=1") != std::string::npos,
-              "batched rank-2 NC contracts must fail at model loading");
-
-      const auto batched_hw_error =
-          reject_fixture(write_detess_fixture("batched_hw", {2, 3}, 768U, 48U, 4));
-      require(batched_hw_error.find("requires batch=1") != std::string::npos,
-              "batched rank-2 HW contracts must fail at model loading");
-
-      const auto missing_batch_error = reject_fixture(
-          write_detess_fixture("missing_batch", {1, 213}, 448U, 426U, 1, true, true, false));
-      require(missing_batch_error.find("explicit batch metadata") != std::string::npos,
-              "rank-2 contracts must not silently assume batch one");
-
-      const auto matching_batch_contract = load_fixture(write_detess_fixture(
-          "matching_batch", {1, 213}, 448U, 426U, 1, true, true, true, {64}, 1, 1,
-          "        \"batch_sz_model\": 1,\n", "          \"batch_size\": 1,\n"));
-      require(matching_batch_contract.plugins[1].batch_size == 1 &&
-                  matching_batch_contract.plugins[1].batch_sz_model == 1,
-              "matching outer and nested batch metadata should remain valid");
-
-      const auto conflicting_actual_batch_error = reject_fixture(write_detess_fixture(
-          "conflicting_actual_batch", {1, 213}, 448U, 426U, 4, true, true, true, {64}, 1, 4));
-      require(conflicting_actual_batch_error.find("conflicting actual batch metadata") !=
-                  std::string::npos,
-              "conflicting actual batch metadata should fail at model loading");
-
-      const auto conflicting_desired_batch_error = reject_fixture(write_detess_fixture(
-          "conflicting_desired_batch", {1, 213}, 448U, 426U, 4, true, true, true, {64}, 4, 1));
-      require(conflicting_desired_batch_error.find("conflicting desired batch metadata") !=
-                  std::string::npos,
-              "conflicting desired batch metadata should fail at model loading");
-
-      const auto conflicting_actual_alias_error = reject_fixture(
-          write_detess_fixture("conflicting_actual_alias", {1, 213}, 448U, 426U, 1, true, true,
-                               true, {64}, 0, 0, "        \"batch_sz_model\": 4,\n"));
-      require(conflicting_actual_alias_error.find("conflicting actual batch aliases") !=
-                  std::string::npos,
-              "conflicting actual batch aliases should fail at model loading");
-
-      const auto conflicting_desired_alias_error = reject_fixture(
-          write_detess_fixture("conflicting_desired_alias", {1, 213}, 448U, 426U, 1, true, true,
-                               true, {64}, 1, 1, {}, "          \"batch_size\": 4,\n"));
-      require(conflicting_desired_alias_error.find("conflicting desired batch aliases") !=
-                  std::string::npos,
-              "conflicting desired batch aliases should fail at model loading");
-
       const auto rank3_contract =
           load_fixture(write_detess_fixture("rank3", {1, 10, 7}, 320U, 140U));
-      require(rank3_contract.plugins[1].runtime_frame_shape ==
+      require(detess_runtime_frame_shape(rank3_contract.plugins[1]) ==
                   std::vector<std::int64_t>({1, 10, 7}),
               "canonical rank-3 detess geometry must remain unchanged");
 
       const auto rank4_contract =
           load_fixture(write_detess_fixture("rank4", {1, 2, 3, 7}, 192U, 84U));
-      require(rank4_contract.plugins[1].runtime_frame_shape ==
+      require(detess_runtime_frame_shape(rank4_contract.plugins[1]) ==
                   std::vector<std::int64_t>({1, 2, 3, 7}),
               "canonical rank-4 detess geometry must remain unchanged");
 
-      const auto batched_rank4_contract =
-          load_fixture(write_detess_fixture("batched_rank4", {4, 2, 3, 7}, 768U, 336U, 4));
-      require(batched_rank4_contract.plugins[1].runtime_frame_shape ==
-                  std::vector<std::int64_t>({4, 2, 3, 7}),
-              "canonical batched rank-4 detess geometry must remain unchanged");
-      require(batched_rank4_contract.plugins[1].batch_size == 0 &&
-                  batched_rank4_contract.plugins[1].batch_sz_model == 0,
-              "rank-2 batch parsing must not alter canonical detess contracts");
-
-      const auto two_head_contract = load_fixture(write_two_head_fixture());
+      const auto two_head_contract =
+          load_fixture(write_detess_fixture("two_head_by_name",
+                                            {{"carrier_hw", {2, 3}, {1, 1, 1}, 192U, 12U},
+                                             {"carrier_nc", {1, 213}, {64}, 448U, 426U}},
+                                            {1U, 0U}));
       require(two_head_contract.plugins[1].runtime_frame_shape ==
                       std::vector<std::int64_t>({1, 2, 3, 1}) &&
                   two_head_contract.plugins[2].runtime_frame_shape ==
@@ -433,14 +285,14 @@ RUN_TEST(
       require_prepared_runtime_geometry(write_detess_fixture("prepared_nc", {1, 213}, 448U, 426U),
                                         {1, 1, 1, 213}, {1, 213}, 448U);
       require_prepared_runtime_geometry(
-          write_detess_fixture("prepared_hw", {2, 3}, 192U, 12U, 1, true, true, true, {1, 1, 1}),
+          write_detess_fixture("prepared_hw", {2, 3}, 192U, 12U, true, true, {1, 1, 1}),
           {1, 2, 3, 1}, {2, 3}, 192U);
-      require_prepared_runtime_geometry(write_detess_fixture("prepared_rank4", {1, 2, 3, 7}, 192U,
-                                                             84U, 1, true, true, true, {1, 1, 1}),
-                                        {1, 2, 3, 7}, {1, 2, 3, 7}, 192U);
+      require_prepared_runtime_geometry(
+          write_detess_fixture("prepared_rank4", {1, 2, 3, 7}, 192U, 84U, true, true, {1, 1, 1}),
+          {1, 2, 3, 7}, {1, 2, 3, 7}, 192U);
 
       const auto ambiguous_error =
-          reject_fixture(write_detess_fixture("ambiguous", {1, 16}, 32U, 32U, 1, false, false));
+          reject_fixture(write_detess_fixture("ambiguous", {1, 16}, 32U, 32U, false, false));
       require(ambiguous_error.find("ambiguous") != std::string::npos &&
                   ambiguous_error.find("NC") != std::string::npos &&
                   ambiguous_error.find("HW") != std::string::npos,

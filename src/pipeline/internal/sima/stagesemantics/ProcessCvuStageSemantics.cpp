@@ -7185,13 +7185,12 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
         logical_channels_from_dims_local(output_dims) <= 0) {
       throw std::runtime_error("processcvu MPK detesscast route missing cast output geometry");
     }
-    std::vector<int> runtime_shape(subset.runtime_frame_shape.begin(),
-                                   subset.runtime_frame_shape.end());
+    std::vector<int> runtime_shape(subset.input_shape.begin(), subset.input_shape.end());
     const std::string output_layout;
 
     const std::string input_layout;
     const ShapeDims graph_input_dims =
-        detess_dims_from_shape_local(subset.runtime_frame_shape, detess_stage.name + " input");
+        detess_dims_from_shape_local(subset.input_shape, detess_stage.name + " input");
 
     if (graph_input_dims.width <= 0 || graph_input_dims.height <= 0 ||
         graph_input_dims.channels <= 0) {
@@ -7816,8 +7815,8 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
   runtime.runtime_output_physical_index_list.reserve(count);
   runtime.runtime_output_dtype_list.reserve(count);
   for (const auto& head : ordered_subset.heads) {
-    std::vector<int> input_shape_int(head.runtime_frame_shape.begin(),
-                                     head.runtime_frame_shape.end());
+    std::vector<int> input_shape_int(head.per_head_input_shape.begin(),
+                                     head.per_head_input_shape.end());
     runtime.input_shapes.push_back(std::move(input_shape_int));
   }
   std::uint64_t packed_input_offset = 0U;
@@ -7849,7 +7848,7 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
         published_input, resolved_input_dtype, head.input_transport_shape,
         head.input_transport_size_bytes, detess.name);
     synthetic_inputs.push_back(make_synthetic_tensor_contract_local(
-        head.runtime_frame_shape, resolved_input_dtype, static_cast<int>(i),
+        head.per_head_input_shape, resolved_input_dtype, static_cast<int>(i),
         "input_tensor_" + std::to_string(i)));
     synthetic_inputs.back().size_bytes =
         static_cast<std::size_t>(transport_view.transport_size_bytes);
@@ -7865,13 +7864,13 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
     const MpkTensorDims dequant_dims =
         dims_from_tensor_shape_local(dequant_output_tensor.logical_shape);
     const ShapeDims graph_output_dims =
-        detess_dims_from_shape_local(head.runtime_frame_shape, detess.name + " output");
+        detess_dims_from_shape_local(head.per_head_input_shape, detess.name + " output");
     const std::string graph_output_layout;
     const bool use_terminal_dims = terminal_output_tensor && terminal_dims.width > 0 &&
                                    terminal_dims.height > 0 && terminal_dims.depth > 0;
     std::string logical_input_layout;
     const ShapeDims graph_input_dims =
-        detess_dims_from_shape_local(head.runtime_frame_shape, detess.name + " input");
+        detess_dims_from_shape_local(head.per_head_input_shape, detess.name + " input");
     const int input_width = graph_input_dims.width;
     const int input_height = graph_input_dims.height;
     const int input_channels = graph_input_dims.channels;
@@ -7906,11 +7905,11 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
     // passing a batched storage size double-counts the batch dim.
     int per_frame_rank_local = plugin_contracts::derive_per_frame_rank_public(
         head.slice_shape, /*peer_per_frame_shape=*/{});
-    if (head.runtime_frame_shape != head.frame_shape) {
+    if (head.per_head_input_shape != head.frame_shape) {
       per_frame_rank_local = std::max(per_frame_rank_local, 3);
     }
     const auto frame_shape_per_frame = plugin_contracts::semantic_shape_without_batch_public(
-        head.runtime_frame_shape, per_frame_rank_local);
+        head.per_head_input_shape, per_frame_rank_local);
     const std::vector<int> input_shape_int(frame_shape_per_frame.begin(),
                                            frame_shape_per_frame.end());
     std::vector<int> tile_shape_int =
@@ -7925,7 +7924,7 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
           "processcvu MPK detessdequant route could not synthesize explicit input tensor");
     }
     const int local_head_batch_size = plugin_contracts::inferred_batch_size_from_shape_public(
-        head.runtime_frame_shape, per_frame_rank_local);
+        head.per_head_input_shape, per_frame_rank_local);
     const std::uint64_t per_frame_transport_size =
         local_head_batch_size > 0
             ? head.input_transport_size_bytes / static_cast<std::uint64_t>(local_head_batch_size)
@@ -7987,8 +7986,8 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
     }
     const auto canonical_runtime_output_shape =
         plugin_contracts::canonical_value_transform_shape_public(
-            "detessdequant", head.runtime_frame_shape, logical_output_shape,
-            head.runtime_frame_shape);
+            "detessdequant", head.per_head_input_shape, logical_output_shape,
+            head.per_head_input_shape);
     canonical_output_shapes.push_back(canonical_runtime_output_shape);
     std::vector<int> output_shape_int(canonical_runtime_output_shape.begin(),
                                       canonical_runtime_output_shape.end());
@@ -8061,7 +8060,7 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
   runtime.runtime_output_semantic_kind_list = {ProcessCvuOutputSemanticKind::Tensor};
   const bool primary_frame_shape_was_resolved =
       !ordered_subset.heads.empty() &&
-      ordered_subset.heads.front().runtime_frame_shape != ordered_subset.heads.front().frame_shape;
+      ordered_subset.heads.front().per_head_input_shape != ordered_subset.heads.front().frame_shape;
   if (!primary_frame_shape_was_resolved) {
     runtime.runtime_output_logical_shapes.clear();
     if (!runtime.output_shapes.empty()) {
@@ -8085,7 +8084,7 @@ build_processcvu_mpk_detessdequant_compile_inputs_local(const MpkContract& contr
       continue;
     }
     if (i < ordered_subset.heads.size() &&
-        ordered_subset.heads[i].runtime_frame_shape != ordered_subset.heads[i].frame_shape) {
+        ordered_subset.heads[i].per_head_input_shape != ordered_subset.heads[i].frame_shape) {
       continue;
     }
     out.facts.outputs[i].shape = canonical_output_shapes[i];

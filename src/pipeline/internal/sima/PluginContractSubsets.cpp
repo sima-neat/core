@@ -625,7 +625,7 @@ void validate_detessdequant_head_contract_local(const MpkPluginIoContract& detes
   }
 
   const auto logical_input_dims = dims_from_detess_shape(head.per_head_input_shape, detess.name);
-  const auto frame_dims = dims_from_detess_shape(head.runtime_frame_shape, detess.name + " frame");
+  const auto frame_dims = dims_from_detess_shape(head.frame_shape, detess.name + " frame");
 
   int slice_d = 0;
   int slice_h = 0;
@@ -638,7 +638,7 @@ void validate_detessdequant_head_contract_local(const MpkPluginIoContract& detes
   // channels=1 against the frame's channels=4 and spuriously fail the channel-consistency check.
   // Left-padding with 1s preserves image slices (e.g. [1,18,512] vs frame [1,35,35,512]).
   std::vector<std::int64_t> slice_for_geometry = head.slice_shape;
-  while (slice_for_geometry.size() < head.runtime_frame_shape.size()) {
+  while (slice_for_geometry.size() < head.frame_shape.size()) {
     slice_for_geometry.insert(slice_for_geometry.begin(), 1);
   }
   if (!canonical_slice_dhwc_from_shape(slice_for_geometry, &slice_d, &slice_h, &slice_w,
@@ -1817,7 +1817,6 @@ extract_detessellate_contract_subsets_from_mpk(const MpkContract& contract) {
     subset.input_transport_shape = boundary.transport_shape;
     subset.input_transport_size_bytes = boundary.transport_size_bytes;
     subset.frame_shape = stage->frame_shape;
-    subset.runtime_frame_shape = detess_runtime_frame_shape(*stage);
     subset.frame_type = normalize_dtype_token(stage->frame_type);
     subset.slice_shape = stage->slice_shape;
     subset.align_c16 = stage->has_align_c16 && stage->align_c16;
@@ -1833,8 +1832,6 @@ extract_detessellate_contract_subsets_from_mpk(const MpkContract& contract) {
                             stage->name);
     require_non_empty_value(subset.frame_shape, "detessellate", PluginContractFieldKey::FrameShape,
                             stage->name);
-    require_non_empty_value(subset.runtime_frame_shape, "detessellate",
-                            PluginContractFieldKey::FrameShape, stage->name);
     require_non_empty_value(subset.frame_type, "detessellate", PluginContractFieldKey::FrameType,
                             stage->name);
     require_non_empty_value(subset.slice_shape, "detessellate", PluginContractFieldKey::SliceShape,
@@ -1938,7 +1935,6 @@ extract_detessdequant_contract_subset_from_mpk(const MpkContract& contract) {
     head.input_transport_size_bytes = boundary.transport_size_bytes;
     head.per_head_quant_params = dequant.quant.value_or(MpkQuantContract{});
     head.frame_shape = detess.frame_shape;
-    head.runtime_frame_shape = detess_runtime_frame_shape(detess);
     head.frame_type = normalize_dtype_token(detess.frame_type);
     head.slice_shape = detess.slice_shape;
     head.align_c16 = detess.has_align_c16 && detess.align_c16;
@@ -1964,8 +1960,6 @@ extract_detessdequant_contract_subset_from_mpk(const MpkContract& contract) {
                             PluginContractFieldKey::PerHeadQuantParams, dequant.name);
     require_non_empty_value(head.frame_shape, "detessdequant", PluginContractFieldKey::FrameShape,
                             detess.name);
-    require_non_empty_value(head.runtime_frame_shape, "detessdequant",
-                            PluginContractFieldKey::FrameShape, detess.name);
     require_non_empty_value(head.frame_type, "detessdequant", PluginContractFieldKey::FrameType,
                             detess.name);
     require_non_empty_value(head.slice_shape, "detessdequant", PluginContractFieldKey::SliceShape,
@@ -2547,13 +2541,11 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
     const auto& subset = subsets[i];
     // Runtime geometry may be canonicalized independently of the authored
     // logical output rank. Slice rank should match the runtime frame.
-    check_per_frame_geometric_invariants("detessellate", "detessellate", subset.runtime_frame_shape,
-                                         subset.runtime_frame_shape, subset.slice_shape,
+    check_per_frame_geometric_invariants("detessellate", "detessellate", subset.input_shape,
+                                         subset.input_shape, subset.slice_shape,
                                          /*expected_batch_size=*/0);
     require_non_empty_value(subset.frame_shape, "detessellate", PluginContractFieldKey::FrameShape,
                             "detessellate");
-    require_non_empty_value(subset.runtime_frame_shape, "detessellate",
-                            PluginContractFieldKey::FrameShape, "detessellate");
     if (subset.input_transport_shape.empty() || subset.input_transport_size_bytes == 0U) {
       throw std::invalid_argument("detessellate runtime config requires packed transport view");
     }
@@ -2561,7 +2553,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
                             "detessellate");
     require_non_empty_value(subset.slice_shape, "detessellate", PluginContractFieldKey::SliceShape,
                             "detessellate");
-    const int subset_batch_size = inferred_batch_size_from_shape(subset.runtime_frame_shape);
+    const int subset_batch_size = inferred_batch_size_from_shape(subset.input_shape);
     if (subset_batch_size <= 0) {
       throw std::invalid_argument("detessellate runtime config requires a positive batch_size");
     }
@@ -2611,8 +2603,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
     runtime.runtime_output_names.push_back(output_name);
     runtime.published_output_names.push_back(published_name);
     {
-      std::vector<int> input_shape_int(subset.runtime_frame_shape.begin(),
-                                       subset.runtime_frame_shape.end());
+      std::vector<int> input_shape_int(subset.input_shape.begin(), subset.input_shape.end());
       runtime.input_shapes.push_back(input_shape_int);
       std::vector<int> tile_shape_int(subset.slice_shape.begin(), subset.slice_shape.end());
       tile_shape_int = tensor_desc_tile_shape_from_slice_shape(input_shape_int, tile_shape_int);
@@ -2630,8 +2621,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
       runtime.slice_shapes.push_back(slice_shape_int);
     }
     {
-      std::vector<int> output_shape_int(subset.runtime_frame_shape.begin(),
-                                        subset.runtime_frame_shape.end());
+      std::vector<int> output_shape_int(subset.input_shape.begin(), subset.input_shape.end());
       runtime.output_shapes.push_back(output_shape_int);
       sima_ev_tensor_desc output_desc{};
       if (!build_tensor_dense_desc_local(output_shape_int, frame_type, &output_desc)) {
@@ -2819,8 +2809,9 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
   for (std::size_t i = 0; i < subset.heads.size(); ++i) {
     const auto& head = subset.heads[i];
     // Phase 1 invariants for each detessdequant head: frame_shape vs slice_shape.
-    check_per_frame_geometric_invariants("detessdequant", "detessdequant", head.runtime_frame_shape,
-                                         head.runtime_frame_shape, head.slice_shape,
+    check_per_frame_geometric_invariants("detessdequant", "detessdequant",
+                                         head.per_head_input_shape, head.per_head_input_shape,
+                                         head.slice_shape,
                                          /*expected_batch_size=*/0);
     require_non_empty_value(head.per_head_input_shape, "detessdequant",
                             PluginContractFieldKey::PerHeadInputShape, "detessdequant");
@@ -2831,15 +2822,13 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
                             PluginContractFieldKey::PerHeadQuantParams, "detessdequant");
     require_non_empty_value(head.frame_shape, "detessdequant", PluginContractFieldKey::FrameShape,
                             "detessdequant");
-    require_non_empty_value(head.runtime_frame_shape, "detessdequant",
-                            PluginContractFieldKey::FrameShape, "detessdequant");
     require_non_empty_value(head.frame_type, "detessdequant", PluginContractFieldKey::FrameType,
                             "detessdequant");
     require_non_empty_value(head.slice_shape, "detessdequant", PluginContractFieldKey::SliceShape,
                             "detessdequant");
     require_non_empty_value(head.output_dtype, "detessdequant", PluginContractFieldKey::OutputDtype,
                             "detessdequant");
-    const int head_batch_size = inferred_batch_size_from_shape(head.runtime_frame_shape);
+    const int head_batch_size = inferred_batch_size_from_shape(head.per_head_input_shape);
     if (head_batch_size <= 0) {
       throw std::invalid_argument("detessdequant runtime config requires a positive batch_size");
     }
@@ -2865,7 +2854,7 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
     }
 
     const auto semantic_input_dims =
-        dims_from_detess_shape(head.runtime_frame_shape, "detessdequant input");
+        dims_from_detess_shape(head.per_head_input_shape, "detessdequant input");
     const std::string semantic_input_layout;
     {
       // Phase 3a (Option A++): caps fields keep the MPK-batched shape; the
@@ -2874,15 +2863,15 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
       // runtime.batch_size. Pre-Phase-3a this code path padded slice_shape
       // up to the batched-rank with full-axis leading dims, which produced a
       // single super-tile spanning the whole batch — wrong for batch>1.
-      std::vector<int> input_shape_int(head.runtime_frame_shape.begin(),
-                                       head.runtime_frame_shape.end());
+      std::vector<int> input_shape_int(head.per_head_input_shape.begin(),
+                                       head.per_head_input_shape.end());
       runtime.input_shapes.push_back(input_shape_int);
       int per_frame_rank = derive_per_frame_rank(head.slice_shape, /*peer_per_frame_shape=*/{});
-      if (head.runtime_frame_shape != head.frame_shape) {
+      if (head.per_head_input_shape != head.frame_shape) {
         per_frame_rank = std::max(per_frame_rank, 3);
       }
       const auto frame_shape_per_frame =
-          semantic_shape_without_batch(head.runtime_frame_shape, per_frame_rank);
+          semantic_shape_without_batch(head.per_head_input_shape, per_frame_rank);
       std::vector<int> input_shape_per_frame_int(frame_shape_per_frame.begin(),
                                                  frame_shape_per_frame.end());
       std::vector<int> tile_shape_int(head.slice_shape.begin(), head.slice_shape.end());
@@ -2906,10 +2895,7 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
               : head.input_transport_size_bytes;
       input_desc.storage.nbytes = per_frame_transport_size;
       runtime.input_tensors.push_back(input_desc);
-    }
-    {
-      std::vector<int> slice_shape_int(head.slice_shape.begin(), head.slice_shape.end());
-      runtime.slice_shapes.push_back(slice_shape_int);
+      runtime.slice_shapes.push_back(tile_shape_int);
     }
     runtime.dq_scale_list.push_back(head.per_head_quant_params.scales.front());
     runtime.dq_zp_list.push_back(
@@ -2917,8 +2903,8 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
             ? 0
             : static_cast<int>(head.per_head_quant_params.zero_points.front()));
     const std::string output_dtype = normalize_dtype_token(head.output_dtype);
-    std::vector<int> output_shape_int(head.runtime_frame_shape.begin(),
-                                      head.runtime_frame_shape.end());
+    std::vector<int> output_shape_int(head.per_head_input_shape.begin(),
+                                      head.per_head_input_shape.end());
     runtime.output_shapes.push_back(output_shape_int);
     runtime.runtime_output_logical_shapes.emplace_back(head.frame_shape.begin(),
                                                        head.frame_shape.end());
@@ -2952,9 +2938,9 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
   }
 
   const auto first_input_dims =
-      dims_from_detess_shape(subset.heads.front().runtime_frame_shape, "detessdequant input");
+      dims_from_detess_shape(subset.heads.front().per_head_input_shape, "detessdequant input");
   const auto first_output_dims =
-      dims_from_detess_shape(subset.heads.front().runtime_frame_shape, "detessdequant output");
+      dims_from_detess_shape(subset.heads.front().per_head_input_shape, "detessdequant output");
   runtime.input_dtype = normalize_dtype_token(subset.heads.front().frame_type);
   runtime.output_dtype = normalize_dtype_token(subset.heads.front().output_dtype);
   runtime.out_dtype = runtime.output_dtype;

@@ -826,8 +826,8 @@ RUN_TEST(
                 "dequantize dense descriptor should preserve authored output shape");
 
         pcs::DetessellateContractSubset detess_subset;
+        detess_subset.input_shape = {1, 300, 4};
         detess_subset.frame_shape = {1, 300, 4};
-        detess_subset.runtime_frame_shape = detess_subset.frame_shape;
         detess_subset.input_transport_shape = {1, 300, 4};
         detess_subset.input_transport_size_bytes =
             packed_tensor_bytes_for_test({1, 300, 4}, "INT8");
@@ -852,7 +852,6 @@ RUN_TEST(
         head.per_head_quant_params.scales = {0.25};
         head.per_head_quant_params.zero_points = {-7};
         head.frame_shape = {300, 4};
-        head.runtime_frame_shape = head.frame_shape;
         head.frame_type = "INT8";
         head.slice_shape = {4, 4};
         head.output_dtype = "FP32";
@@ -869,55 +868,6 @@ RUN_TEST(
         require(tensor_desc_shape_for_test(detessdequant_runtime.output_tensors.front()) ==
                     std::vector<std::int64_t>({300, 4}),
                 "detessdequant dense output descriptor should preserve authored frame shape");
-
-        pcs::DetessellateContractSubset rank2_detess;
-        rank2_detess.frame_shape = {1, 213};
-        rank2_detess.runtime_frame_shape = {1, 1, 1, 213};
-        rank2_detess.input_transport_shape = {1, 448};
-        rank2_detess.input_transport_size_bytes = 448U;
-        rank2_detess.frame_type = "BF16";
-        rank2_detess.slice_shape = {64};
-        rank2_detess.align_c16 = true;
-        rank2_detess.cblock = true;
-        const auto rank2_detess_runtime = pcs::build_detessellate_runtime_config_from_subsets(
-            {rank2_detess}, {"rank2_detess"}, {"rank2_detess"});
-        require(tensor_desc_shape_for_test(rank2_detess_runtime.input_tensors.front()) ==
-                    std::vector<std::int64_t>({1, 1, 1, 213}),
-                "rank-2 detess input descriptor should use canonical NC runtime geometry");
-        require(tensor_desc_shape_for_test(rank2_detess_runtime.output_tensors.front()) ==
-                    std::vector<std::int64_t>({1, 1, 1, 213}),
-                "rank-2 detess output descriptor should use canonical NC runtime geometry");
-        require(rank2_detess_runtime.runtime_output_logical_shapes ==
-                    std::vector<std::vector<int>>({{1, 213}}),
-                "rank-2 detess output should retain its authored logical shape");
-
-        pcs::DetessDequantHeadContractSubset rank2_head;
-        rank2_head.per_head_input_shape = {1, 1, 1, 213};
-        rank2_head.input_transport_shape = {1, 448};
-        rank2_head.input_transport_size_bytes = 448U;
-        rank2_head.per_head_quant_params.scales = {0.25};
-        rank2_head.per_head_quant_params.zero_points = {-7};
-        rank2_head.frame_shape = {1, 213};
-        rank2_head.runtime_frame_shape = {1, 1, 1, 213};
-        rank2_head.frame_type = "BF16";
-        rank2_head.slice_shape = {64};
-        rank2_head.align_c16 = true;
-        rank2_head.cblock = true;
-        rank2_head.output_dtype = "FP32";
-        pcs::DetessDequantContractSubset rank2_detessdequant;
-        rank2_detessdequant.heads = {rank2_head};
-        const auto rank2_detessdequant_runtime =
-            pcs::build_detessdequant_runtime_config_from_subset(
-                rank2_detessdequant, {"rank2_detessdequant"}, {"rank2_detessdequant"});
-        require(tensor_desc_shape_for_test(rank2_detessdequant_runtime.input_tensors.front()) ==
-                    std::vector<std::int64_t>({1, 1, 213}),
-                "rank-2 detessdequant input descriptor should use canonical per-frame HWC");
-        require(tensor_desc_shape_for_test(rank2_detessdequant_runtime.output_tensors.front()) ==
-                    std::vector<std::int64_t>({1, 1, 1, 213}),
-                "rank-2 detessdequant output descriptor should use canonical NC geometry");
-        require(rank2_detessdequant_runtime.runtime_output_logical_shapes ==
-                    std::vector<std::vector<int>>({{1, 213}}),
-                "rank-2 detessdequant output should retain its authored logical shape");
       }
 
       auto node = nodes::Preproc(make_preproc_options());
@@ -1404,23 +1354,30 @@ RUN_TEST(
       }
 
       {
-        auto rank2_contract = make_resnet_flatten_detessdequant_contract();
-        rank2_contract.plugins[1].frame_shape = {1, 1000};
-        rank2_contract.plugins[1].runtime_frame_shape = {1, 1, 1, 1000};
+        auto rank2_contract =
+            make_rank_aware_detessdequant_contract({1, 1, 1, 213}, "INT8", "FP32");
+        auto& rank2_detess = rank2_contract.plugins[2];
+        rank2_detess.frame_shape = {1, 213};
+        rank2_detess.runtime_frame_shape = {1, 1, 1, 213};
+        rank2_detess.slice_shape = {64};
+        rank2_detess.output_tensors.front() = make_test_tensor("detess_0_out", "INT8", {1, 213});
+        auto& rank2_dequant = rank2_contract.plugins[3];
+        rank2_dequant.input_tensors.front() = make_test_tensor("detess_0_out", "INT8", {1, 213});
+        rank2_dequant.output_tensors.front() = make_test_tensor("head0_fp32", "FP32", {1, 213});
         const auto rank2_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
             rank2_contract, simaai::neat::internal::ExecutionStageKind::DetessDequant);
 
         require(tensor_desc_shape_for_test(rank2_compiled.payload.output_tensors.front()) ==
-                    std::vector<std::int64_t>({1, 1, 1000}),
+                    std::vector<std::int64_t>({1, 1, 213}),
                 "rank-2 detessdequant should keep canonical ProcessCVU output geometry");
-        require(rank2_compiled.payload.output_shapes.front() == std::vector<int>({1, 1, 1, 1000}),
+        require(rank2_compiled.payload.output_shapes.front() == std::vector<int>({1, 1, 1, 213}),
                 "rank-2 detessdequant should keep canonical runtime output geometry");
         require(rank2_compiled.payload.runtime_output_logical_shapes.front() ==
-                    std::vector<int>({1, 1000}),
+                    std::vector<int>({1, 213}),
                 "rank-2 detessdequant should retain authored runtime output metadata");
         require(rank2_compiled.runtime_contract.logical_outputs.size() == 1U &&
                     rank2_compiled.runtime_contract.logical_outputs.front().shape ==
-                        std::vector<std::int64_t>({1, 1000}),
+                        std::vector<std::int64_t>({1, 213}),
                 "rank-2 detessdequant should publish the authored logical output shape");
       }
 

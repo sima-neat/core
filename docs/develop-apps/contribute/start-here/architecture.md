@@ -119,8 +119,8 @@ between implementation options.
   plugin-private.
 - **Detess logical rank and runtime geometry are separate.** Core preserves the MPK-authored
   `frame_shape` as the logical output contract and derives explicit MLA geometry when needed. A
-  rank-2 shape is accepted as NC or HW only when batch metadata and declared byte spans identify
-  one unique interpretation; ambiguous or inconsistent contracts fail during model loading.
+  rank-2 shape is accepted as NC or HW only when declared byte spans identify one unique
+  interpretation; ambiguous or inconsistent contracts fail during model loading.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
   Prefer additive changes and deprecation paths over breaking signatures.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
