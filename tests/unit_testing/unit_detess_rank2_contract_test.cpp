@@ -31,6 +31,10 @@ struct DetessFixtureHead {
   bool align_c16 = true;
   bool cblock = true;
   int actual_batch_size = 1;
+  int desired_batch_size = 1;
+  int outer_batch_sz_model = 0;
+  int nested_actual_batch_size = 0;
+  int nested_batch_sz_model = 0;
 };
 
 std::filesystem::path write_detess_fixture(const std::string& name,
@@ -71,7 +75,7 @@ std::filesystem::path write_detess_fixture(const std::string& name,
          {"sequence", static_cast<int>(i + 2U)},
          {"processor", "EV74"},
          {"config_params",
-          {{"desired_batch_size", 1},
+          {{"desired_batch_size", head.desired_batch_size},
            {"actual_batch_size", head.actual_batch_size},
            {"kernel", "detessellation_transform"},
            {"params",
@@ -86,6 +90,16 @@ std::filesystem::path write_detess_fixture(const std::string& name,
           {{{"name", head.name}, {"type", "buffer"}, {"size", head.transport_bytes}}}},
          {"output_nodes",
           {{{"name", head.name + "_output"}, {"type", "buffer"}, {"size", head.output_bytes}}}}});
+    auto& config = plugins.back()["config_params"];
+    if (head.outer_batch_sz_model > 0) {
+      config["batch_sz_model"] = head.outer_batch_sz_model;
+    }
+    if (head.nested_actual_batch_size > 0) {
+      config["params"]["actual_batch_size"] = head.nested_actual_batch_size;
+    }
+    if (head.nested_batch_sz_model > 0) {
+      config["params"]["batch_sz_model"] = head.nested_batch_sz_model;
+    }
   }
 
   std::ofstream out(root / "mpk.json");
@@ -259,6 +273,25 @@ RUN_TEST(
           std::vector<DetessFixtureHead>{{"MLA_0", {2, 3}, {1, 1, 1}, 12U, 12U, false, false, 2}}));
       require(batched_error.find("requires batch=1") != std::string::npos,
               "batched rank-2 contracts must fail before NC/HW inference");
+
+      const auto outer_desired_error = reject_fixture(write_detess_fixture(
+          "outer_desired_batch", std::vector<DetessFixtureHead>{
+                                     {"MLA_0", {2, 3}, {1, 1, 1}, 12U, 12U, false, false, 1, 2}}));
+      require(outer_desired_error.find("requires batch=1") != std::string::npos,
+              "outer desired batch must be checked before NC/HW inference");
+
+      const auto outer_alias_error = reject_fixture(write_detess_fixture(
+          "outer_batch_alias", std::vector<DetessFixtureHead>{
+                                   {"MLA_0", {2, 3}, {1, 1, 1}, 12U, 12U, false, false, 1, 1, 2}}));
+      require(outer_alias_error.find("requires batch=1") != std::string::npos,
+              "every outer batch alias must be checked before NC/HW inference");
+
+      const auto nested_alias_error = reject_fixture(write_detess_fixture(
+          "nested_batch_alias",
+          std::vector<DetessFixtureHead>{
+              {"MLA_0", {2, 3}, {1, 1, 1}, 12U, 12U, false, false, 1, 1, 0, 1, 2}}));
+      require(nested_alias_error.find("requires batch=1") != std::string::npos,
+              "every nested batch alias must be checked before NC/HW inference");
 
       const auto rank3_contract =
           load_fixture(write_detess_fixture("rank3", {1, 10, 7}, 320U, 140U));

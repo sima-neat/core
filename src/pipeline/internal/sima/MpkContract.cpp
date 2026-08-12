@@ -6305,9 +6305,18 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     const std::string kernel_token =
         canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
     if (kernel_token.find("detess") != std::string::npos && stage.frame_shape.size() == 2U) {
-      const int declared_batch_size =
-          std::max({config_actual_batch_size, stage.batch_sz_model, stage.batch_size});
-      if (declared_batch_size > 1) {
+      const auto declares_batched = [](const json& object) {
+        for (const char* key : {"desired_batch_size", "batch_size", "actual_batch_size",
+                                "batch_sz_model", "batch_size_model"}) {
+          if (object.contains(key) && read_int_local(object.at(key)).value_or(0) > 1) {
+            return true;
+          }
+        }
+        return false;
+      };
+      const auto& config = plugin["config_params"];
+      if (declares_batched(config) || (config.contains("params") && config["params"].is_object() &&
+                                       declares_batched(config["params"]))) {
         if (error_message) {
           *error_message = "rank-2 detess frame_shape requires batch=1 for '" + stage.name + "'";
         }
