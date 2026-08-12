@@ -26,7 +26,9 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
                      const int actual_batch = 1, const bool align_c16 = true,
                      const bool cblock = true, const bool include_detess_batch_metadata = true,
                      const std::vector<std::int64_t>& slice_shape = {64},
-                     const int nested_actual_batch = 0, const int nested_desired_batch = 0) {
+                     const int nested_actual_batch = 0, const int nested_desired_batch = 0,
+                     const std::string& outer_batch_alias = {},
+                     const std::string& nested_batch_alias = {}) {
   const auto root = std::filesystem::temp_directory_path() / ("sima_detess_rank2_" + name);
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
@@ -49,7 +51,8 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
   std::ostringstream detess_batch_metadata;
   if (include_detess_batch_metadata) {
     detess_batch_metadata << "        \"desired_batch_size\": " << actual_batch << ",\n"
-                          << "        \"actual_batch_size\": " << actual_batch << ",\n";
+                          << "        \"actual_batch_size\": " << actual_batch << ",\n"
+                          << outer_batch_alias;
   }
   std::ostringstream nested_batch_metadata;
   if (nested_desired_batch > 0) {
@@ -58,6 +61,7 @@ write_detess_fixture(const std::string& name, const std::vector<std::int64_t>& f
   if (nested_actual_batch > 0) {
     nested_batch_metadata << "          \"actual_batch_size\": " << nested_actual_batch << ",\n";
   }
+  nested_batch_metadata << nested_batch_alias;
 
   std::ofstream out(root / "mpk.json");
   require(out.is_open(), "failed to open detess fixture manifest");
@@ -360,7 +364,8 @@ RUN_TEST(
               "rank-2 contracts must not silently assume batch one");
 
       const auto matching_batch_contract = load_fixture(write_detess_fixture(
-          "matching_batch", {1, 213}, 448U, 426U, 1, true, true, true, {64}, 1, 1));
+          "matching_batch", {1, 213}, 448U, 426U, 1, true, true, true, {64}, 1, 1,
+          "        \"batch_sz_model\": 1,\n", "          \"batch_size\": 1,\n"));
       require(matching_batch_contract.plugins[1].batch_size == 1 &&
                   matching_batch_contract.plugins[1].batch_sz_model == 1,
               "matching outer and nested batch metadata should remain valid");
@@ -376,6 +381,20 @@ RUN_TEST(
       require(conflicting_desired_batch_error.find("conflicting desired batch metadata") !=
                   std::string::npos,
               "conflicting desired batch metadata should fail at model loading");
+
+      const auto conflicting_actual_alias_error = reject_fixture(
+          write_detess_fixture("conflicting_actual_alias", {1, 213}, 448U, 426U, 1, true, true,
+                               true, {64}, 0, 0, "        \"batch_sz_model\": 4,\n"));
+      require(conflicting_actual_alias_error.find("conflicting actual batch aliases") !=
+                  std::string::npos,
+              "conflicting actual batch aliases should fail at model loading");
+
+      const auto conflicting_desired_alias_error = reject_fixture(
+          write_detess_fixture("conflicting_desired_alias", {1, 213}, 448U, 426U, 1, true, true,
+                               true, {64}, 1, 1, {}, "          \"batch_size\": 4,\n"));
+      require(conflicting_desired_alias_error.find("conflicting desired batch aliases") !=
+                  std::string::npos,
+              "conflicting desired batch aliases should fail at model loading");
 
       const auto rank3_contract =
           load_fixture(write_detess_fixture("rank3", {1, 10, 7}, 320U, 140U));

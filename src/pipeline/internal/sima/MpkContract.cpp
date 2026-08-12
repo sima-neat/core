@@ -382,6 +382,26 @@ std::optional<int> read_int_local(const json& value) {
   return std::nullopt;
 }
 
+bool read_consistent_int_alias_local(const json& object, std::initializer_list<const char*> keys,
+                                     int* out) {
+  std::optional<int> resolved;
+  for (const char* key : keys) {
+    if (!object.contains(key)) {
+      continue;
+    }
+    const auto value = read_int_local(object.at(key));
+    if (!value.has_value()) {
+      continue;
+    }
+    if (resolved.has_value() && *resolved != *value) {
+      return false;
+    }
+    resolved = value;
+  }
+  *out = resolved.value_or(0);
+  return true;
+}
+
 std::optional<bool> read_bool_local(const json& value) {
   if (value.is_boolean()) {
     return value.get<bool>();
@@ -6109,6 +6129,17 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     DTypeSource fallback_output_dtype_source = DTypeSource::Unknown;
     int config_actual_batch_size = 0;
     int config_desired_batch_size = 0;
+    const auto read_batch_aliases = [&](const json& object, std::initializer_list<const char*> keys,
+                                        int* out, const char* kind) {
+      if (read_consistent_int_alias_local(object, keys, out)) {
+        return true;
+      }
+      if (error_message) {
+        *error_message =
+            "conflicting " + std::string(kind) + " batch aliases for '" + stage.name + "'";
+      }
+      return false;
+    };
 
     const json* params = nullptr;
     if (plugin.contains("config_params") && plugin["config_params"].is_object()) {
@@ -6116,21 +6147,11 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       if (const auto kernel = read_string_alias(cfg, {"kernel"}); kernel.has_value()) {
         stage.kernel = *kernel;
       }
-      for (const char* key : {"actual_batch_size", "batch_sz_model", "batch_size_model"}) {
-        if (cfg.contains(key)) {
-          if (const auto batch_model = read_int_local(cfg.at(key)); batch_model.has_value()) {
-            config_actual_batch_size = *batch_model;
-            break;
-          }
-        }
-      }
-      for (const char* key : {"desired_batch_size", "batch_size"}) {
-        if (cfg.contains(key)) {
-          if (const auto batch = read_int_local(cfg.at(key)); batch.has_value()) {
-            config_desired_batch_size = *batch;
-            break;
-          }
-        }
+      if (!read_batch_aliases(cfg, {"actual_batch_size", "batch_sz_model", "batch_size_model"},
+                              &config_actual_batch_size, "actual") ||
+          !read_batch_aliases(cfg, {"desired_batch_size", "batch_size"}, &config_desired_batch_size,
+                              "desired")) {
+        return std::nullopt;
       }
       if (cfg.contains("params") && cfg["params"].is_object()) {
         params = &cfg["params"];
@@ -6139,23 +6160,11 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       }
     }
     if (params && params->is_object()) {
-      for (const char* key : {"desired_batch_size", "batch_size"}) {
-        if (params->contains(key)) {
-          if (const auto batch = read_int_local(params->at(key)); batch.has_value()) {
-            stage.batch_size = *batch;
-            break;
-          }
-        }
-      }
-      for (const char* key : {"actual_batch_size", "batch_sz_model", "batch_size_model"}) {
-        if (params->contains(key)) {
-          if (const auto batch_model = read_int_local(params->at(key)); batch_model.has_value()) {
-            if (stage.batch_sz_model <= 0) {
-              stage.batch_sz_model = *batch_model;
-            }
-            break;
-          }
-        }
+      if (!read_batch_aliases(*params, {"desired_batch_size", "batch_size"}, &stage.batch_size,
+                              "desired") ||
+          !read_batch_aliases(*params, {"actual_batch_size", "batch_sz_model", "batch_size_model"},
+                              &stage.batch_sz_model, "actual")) {
+        return std::nullopt;
       }
       input_shapes = read_shape_alias(*params, {"input_shapes", "in_shapes", "input_shape"});
       output_shapes = read_shape_alias(
@@ -6326,25 +6335,22 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     const std::string kernel_token =
         canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
     if (kernel_token.find("detess") != std::string::npos && stage.frame_shape.size() == 2U) {
-      if (stage.batch_sz_model > 0 && config_actual_batch_size > 0 &&
-          stage.batch_sz_model != config_actual_batch_size) {
-        if (error_message) {
-          *error_message = "conflicting actual batch metadata for '" + stage.name + "'";
+      const auto merge_batch = [&](const int outer, int* nested, const char* kind) {
+        if (*nested > 0 && outer > 0 && *nested != outer) {
+          if (error_message) {
+            *error_message =
+                "conflicting " + std::string(kind) + " batch metadata for '" + stage.name + "'";
+          }
+          return false;
         }
-        return std::nullopt;
-      }
-      if (stage.batch_size > 0 && config_desired_batch_size > 0 &&
-          stage.batch_size != config_desired_batch_size) {
-        if (error_message) {
-          *error_message = "conflicting desired batch metadata for '" + stage.name + "'";
+        if (*nested <= 0) {
+          *nested = outer;
         }
+        return true;
+      };
+      if (!merge_batch(config_actual_batch_size, &stage.batch_sz_model, "actual") ||
+          !merge_batch(config_desired_batch_size, &stage.batch_size, "desired")) {
         return std::nullopt;
-      }
-      if (stage.batch_sz_model <= 0 && config_actual_batch_size > 0) {
-        stage.batch_sz_model = config_actual_batch_size;
-      }
-      if (stage.batch_size <= 0 && config_desired_batch_size > 0) {
-        stage.batch_size = config_desired_batch_size;
       }
     } else if (stage.batch_sz_model <= 0 && config_actual_batch_size > 1) {
       if (kernel_token.find("slice") != std::string::npos ||
