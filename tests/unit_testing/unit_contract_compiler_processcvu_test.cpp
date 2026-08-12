@@ -255,6 +255,27 @@ make_rank_aware_detess_contract(const std::vector<std::int64_t>& frame_shape,
 }
 
 simaai::neat::pipeline_internal::sima::MpkContract
+make_rank_aware_detesscast_contract(const std::vector<std::int64_t>& frame_shape) {
+  using simaai::neat::pipeline_internal::sima::MpkContractEdge;
+  using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
+
+  auto contract = make_rank_aware_detess_contract(frame_shape, "BF16", "BF16");
+
+  MpkPluginIoContract cast;
+  cast.name = "cast_0";
+  cast.kernel = "cast";
+  cast.sequence = 3;
+  cast.canonical_input_dtype = "BF16";
+  cast.canonical_output_dtype = "FP32";
+  cast.input_tensors = {make_test_tensor("head0", "BF16", frame_shape)};
+  cast.output_tensors = {make_test_tensor("head0_fp32", "FP32", frame_shape)};
+
+  contract.plugins.push_back(std::move(cast));
+  contract.edges.push_back(MpkContractEdge{2U, 0, 3U, 0, "detess_0", "cast_0", "head0"});
+  return contract;
+}
+
+simaai::neat::pipeline_internal::sima::MpkContract
 make_pre_and_post_cast_contract_for_exact_name_regression() {
   using simaai::neat::pipeline_internal::sima::MpkContract;
   using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
@@ -1401,6 +1422,40 @@ RUN_TEST(
                     rank2_compiled.runtime_contract.logical_outputs.front().shape ==
                         std::vector<std::int64_t>({1, 1000}),
                 "rank-2 detessdequant should publish the authored logical output shape");
+      }
+
+      {
+        auto rank2_contract = make_rank_aware_detesscast_contract({1, 1, 1, 213});
+        auto& rank2_detess = rank2_contract.plugins[2];
+        rank2_detess.frame_shape = {1, 213};
+        rank2_detess.runtime_frame_shape = {1, 1, 1, 213};
+        rank2_detess.output_tensors.front() = make_test_tensor("head0", "BF16", {1, 213});
+        auto& rank2_cast = rank2_contract.plugins[3];
+        rank2_cast.input_tensors.front() = make_test_tensor("head0", "BF16", {1, 213});
+        rank2_cast.output_tensors.front() = make_test_tensor("head0_fp32", "FP32", {1, 213});
+
+        const auto rank2_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            rank2_contract, simaai::neat::internal::ExecutionStageKind::DetessCast);
+
+        require(tensor_desc_shape_for_test(rank2_compiled.payload.input_tensors.front()) ==
+                        std::vector<std::int64_t>({1, 1, 1, 213}) &&
+                    tensor_desc_shape_for_test(rank2_compiled.payload.output_tensors.front()) ==
+                        std::vector<std::int64_t>({1, 1, 1, 213}),
+                "rank-2 detesscast should use matching canonical physical geometry");
+        require(rank2_compiled.payload.runtime_output_logical_shapes.front() ==
+                        std::vector<int>({1, 213}) &&
+                    rank2_compiled.runtime_contract.logical_outputs.front().shape ==
+                        std::vector<std::int64_t>({1, 213}),
+                "rank-2 detesscast should publish the authored logical output shape");
+
+        const auto rank4_contract = make_rank_aware_detesscast_contract({1, 1, 1, 213});
+        const auto rank4_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            rank4_contract, simaai::neat::internal::ExecutionStageKind::DetessCast);
+        require(tensor_desc_shape_for_test(rank4_compiled.payload.output_tensors.front()) ==
+                        std::vector<std::int64_t>({1, 1, 1, 213}) &&
+                    rank4_compiled.runtime_contract.logical_outputs.front().shape ==
+                        std::vector<std::int64_t>({1, 1, 1, 213}),
+                "canonical rank-4 detesscast geometry should remain unchanged");
       }
 
       {

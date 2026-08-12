@@ -7179,17 +7179,14 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
     if (output_dtype != "FP32") {
       throw std::runtime_error("processcvu MPK detesscast route requires FP32 cast outputs");
     }
-    const auto output_shape = preferred_mpk_tensor_shape_local(output_tensor);
-    const auto output_dims = dims_from_tensor_shape_local(output_shape);
+    const auto logical_output_shape = preferred_mpk_tensor_shape_local(output_tensor);
+    const auto output_dims = dims_from_tensor_shape_local(logical_output_shape);
     if (output_dims.width <= 0 || output_dims.height <= 0 ||
         logical_channels_from_dims_local(output_dims) <= 0) {
       throw std::runtime_error("processcvu MPK detesscast route missing cast output geometry");
     }
-    std::vector<int> output_shape_int(output_shape.begin(), output_shape.end());
-    if (output_shape_int.empty()) {
-      output_shape_int = {output_dims.height, output_dims.width,
-                          logical_channels_from_dims_local(output_dims)};
-    }
+    std::vector<int> runtime_shape(subset.runtime_frame_shape.begin(),
+                                   subset.runtime_frame_shape.end());
     const std::string output_layout;
 
     const std::string input_layout;
@@ -7207,31 +7204,30 @@ build_processcvu_mpk_detesscast_compile_inputs_local(const MpkContract& contract
       runtime.output_dtype = output_dtype;
       runtime.out_dtype = output_dtype;
     }
-    std::vector<int> input_shape_int(subset.runtime_frame_shape.begin(),
-                                     subset.runtime_frame_shape.end());
-    runtime.input_shapes.push_back(input_shape_int);
+    runtime.input_shapes.push_back(runtime_shape);
     std::vector<int> tile_shape_int(subset.slice_shape.begin(), subset.slice_shape.end());
     tile_shape_int =
-        tensor_desc_tile_shape_from_slice_shape_processcvu_local(input_shape_int, tile_shape_int);
+        tensor_desc_tile_shape_from_slice_shape_processcvu_local(runtime_shape, tile_shape_int);
     sima_ev_tensor_desc input_desc{};
     sima_ev_tensor_desc output_desc{};
     const bool c16_packed = subset.align_c16 || subset.cblock;
-    if (!build_tensor_tiled_desc_processcvu_local(input_shape_int, tile_shape_int, frame_type, 0U,
+    if (!build_tensor_tiled_desc_processcvu_local(runtime_shape, tile_shape_int, frame_type, 0U,
                                                   c16_packed, &input_desc) ||
-        !build_tensor_dense_desc_processcvu_local(output_shape_int, output_dtype, &output_desc)) {
+        !build_tensor_dense_desc_processcvu_local(runtime_shape, output_dtype, &output_desc)) {
       throw std::runtime_error(
           "processcvu MPK detesscast route could not synthesize explicit typed tensors");
     }
     runtime.input_tensors.push_back(input_desc);
     runtime.output_tensors.push_back(output_desc);
-    runtime.output_shapes.push_back(output_shape_int);
+    runtime.output_shapes.push_back(runtime_shape);
     runtime.runtime_output_logical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_output_slot_list.push_back(static_cast<int>(i));
     runtime.runtime_output_physical_index_list.push_back(static_cast<int>(i));
     runtime.runtime_output_dtype_list.push_back(output_dtype);
     runtime.runtime_output_transport_kind_list.push_back(ProcessCvuOutputTransportKind::Dense);
     runtime.runtime_output_semantic_kind_list.push_back(ProcessCvuOutputSemanticKind::Tensor);
-    runtime.runtime_output_logical_shapes.push_back(output_shape_int);
+    runtime.runtime_output_logical_shapes.emplace_back(logical_output_shape.begin(),
+                                                       logical_output_shape.end());
     runtime.runtime_output_logical_layout_list.push_back(output_layout);
     runtime.published_output_names.push_back(published_output_names[i]);
 
