@@ -6302,9 +6302,19 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
           plugin["output_nodes"], output_shapes, output_dtypes, fallback_output_dtype,
           output_dtype_source, fallback_output_dtype_source, output_shape_semantics);
     }
+    const std::string kernel_token =
+        canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
+    if (kernel_token.find("detess") != std::string::npos && stage.frame_shape.size() == 2U) {
+      const int declared_batch_size =
+          std::max({config_actual_batch_size, stage.batch_sz_model, stage.batch_size});
+      if (declared_batch_size > 1) {
+        if (error_message) {
+          *error_message = "rank-2 detess frame_shape requires batch=1 for '" + stage.name + "'";
+        }
+        return std::nullopt;
+      }
+    }
     if (stage.batch_sz_model <= 0 && config_actual_batch_size > 1) {
-      const std::string kernel_token =
-          canonical_token_local(!stage.kernel.empty() ? stage.kernel : stage.name);
       if (kernel_token.find("slice") != std::string::npos ||
           kernel_token.find("batchflatten") != std::string::npos) {
         stage.batch_sz_model = config_actual_batch_size;

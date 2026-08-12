@@ -30,6 +30,7 @@ struct DetessFixtureHead {
   std::size_t output_bytes = 0U;
   bool align_c16 = true;
   bool cblock = true;
+  int actual_batch_size = 1;
 };
 
 std::filesystem::path write_detess_fixture(const std::string& name,
@@ -71,7 +72,7 @@ std::filesystem::path write_detess_fixture(const std::string& name,
          {"processor", "EV74"},
          {"config_params",
           {{"desired_batch_size", 1},
-           {"actual_batch_size", 1},
+           {"actual_batch_size", head.actual_batch_size},
            {"kernel", "detessellation_transform"},
            {"params",
             {{"slice_shape", head.slice_shape},
@@ -252,6 +253,12 @@ RUN_TEST(
       const auto hw_contract = load_fixture(write_detess_fixture("hw", {2, 3}, 192U, 12U));
       require(hw_contract.plugins[1].runtime_frame_shape == std::vector<std::int64_t>({1, 2, 3, 1}),
               "rank-2 HW shape should resolve from its C16 transport span");
+
+      const auto batched_error = reject_fixture(write_detess_fixture(
+          "batched",
+          std::vector<DetessFixtureHead>{{"MLA_0", {2, 3}, {1, 1, 1}, 12U, 12U, false, false, 2}}));
+      require(batched_error.find("requires batch=1") != std::string::npos,
+              "batched rank-2 contracts must fail before NC/HW inference");
 
       const auto rank3_contract =
           load_fixture(write_detess_fixture("rank3", {1, 10, 7}, 320U, 140U));
