@@ -27,6 +27,91 @@ def run_bash(
 
 
 class NativeModalixRestoreTest(unittest.TestCase):
+    def test_sdk_platform_version_prefers_pre_release_platform_base(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Profile = platform-cross
+Platform Version = 2.1.3~pre4617
+Platform Base = 2.1.3
+Platform Channel = pre-release
+SDK Version = 2.1.3~pre4617_Palette_SDK_neat_develop_4b9f4a1
+EOF
+read_sdk_platform_version "${tmp}/sdk-release"
+sdk_platform_version_label "${tmp}/sdk-release"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["2.1.3", "Platform Base"])
+
+    def test_sdk_platform_version_preserves_legacy_sdk_release(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Version = 2.1.2.3_Palette_SDK_neat_release-2.1_3b4be39
+eLXr Version = 2.1.2_release_neat_release-2.1_3b4be39
+EOF
+read_sdk_platform_version "${tmp}/sdk-release"
+sdk_platform_version_label "${tmp}/sdk-release"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["2.1.2.3", "SDK Version"])
+
+    def test_pre_release_sdk_accepts_matching_package_platform_base(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' '{"platform-version":"2.1.3"}' > "${tmp}/manifest.json"
+cat > "${tmp}/sdk-release" <<'EOF'
+Platform Version = 2.1.3~pre4617
+Platform Base = 2.1.3
+SDK Version = 2.1.3~pre4617_Palette_SDK_neat_develop_4b9f4a1
+EOF
+ENV_MODE=elxr-sdk
+NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
+ensure_platform_compatible
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Platform compatibility verified: 2.1.3", result.stdout)
+
+    def test_pre_release_sdk_rejects_different_package_platform_base(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' '{"platform-version":"2.1.2"}' > "${tmp}/manifest.json"
+cat > "${tmp}/sdk-release" <<'EOF'
+Platform Version = 2.1.3~pre4617
+Platform Base = 2.1.3
+SDK Version = 2.1.3~pre4617_Palette_SDK_neat_develop_4b9f4a1
+EOF
+ENV_MODE=elxr-sdk
+NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
+ensure_platform_compatible
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Detected Platform Base: 2.1.3", result.stderr)
+
     def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
         result = run_bash(
             r'''

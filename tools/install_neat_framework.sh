@@ -433,15 +433,38 @@ PY
 read_sdk_platform_version() {
   local release_file="$1"
   awk -F'=' '
+    $1 ~ /^[[:space:]]*Platform Base[[:space:]]*$/ {
+      value=$2
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value != "") {
+        print value
+        found=1
+        exit
+      }
+    }
     $1 ~ /^[[:space:]]*SDK Version[[:space:]]*$/ {
       value=$2
       sub(/^[[:space:]]+/, "", value)
       sub(/[[:space:]]+$/, "", value)
       sub(/_.*/, "", value)
-      print value
-      exit
+      sdk_version=value
+    }
+    END {
+      if (!found && sdk_version != "") {
+        print sdk_version
+      }
     }
   ' "${release_file}" 2>/dev/null || true
+}
+
+sdk_platform_version_label() {
+  local release_file="$1"
+  if grep -qE '^[[:space:]]*Platform Base[[:space:]]*=[[:space:]]*[^[:space:]]' "${release_file}" 2>/dev/null; then
+    printf '%s\n' "Platform Base"
+  else
+    printf '%s\n' "SDK Version"
+  fi
 }
 
 read_devkit_platform_version() {
@@ -476,13 +499,13 @@ ensure_platform_compatible() {
 
   case "${ENV_MODE}" in
     elxr-sdk)
-      source_label="SDK Version"
       source_file="${ELXR_SDK_RELEASE_FILE}"
       if [[ ! -f "${source_file}" ]]; then
         echo "Cannot verify eLxr SDK compatibility: missing ${source_file}." >&2
         echo "Set ELXR_SDK_RELEASE_FILE or NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON for an explicit development override." >&2
         exit 1
       fi
+      source_label="$(sdk_platform_version_label "${source_file}")"
       actual="$(read_sdk_platform_version "${source_file}")"
       ;;
     modalix-board)
