@@ -2346,17 +2346,26 @@ bool should_reuse_sync_cache(const CachePtrT& run_cache, RunInputKind kind, uint
          run_cache->caps_key == caps_key;
 }
 
-template <typename CachePtrT>
-void set_sync_cache(CachePtrT& run_cache, Run runner, const CapKey& caps_key,
-                    const RunOptions& run_opt, uint64_t nodes_version, RunInputKind kind) {
-  using CacheType = typename std::decay_t<CachePtrT>::element_type;
-  auto cache = std::make_unique<CacheType>();
-  cache->runner = std::move(runner);
-  cache->caps_key = caps_key;
-  cache->opt = run_opt;
-  cache->nodes_version = nodes_version;
-  cache->input_kind = kind;
-  run_cache = std::move(cache);
+template <typename CachePtrT, typename FactoryT>
+void replace_sync_cache_after_reset(CachePtrT& run_cache, FactoryT&& make_cache) {
+  run_cache.reset();
+  run_cache = std::forward<FactoryT>(make_cache)();
+}
+
+template <typename CachePtrT, typename BuildFn>
+void rebuild_sync_cache(CachePtrT& run_cache, BuildFn& build_sync_runner, const CapKey& caps_key,
+                        const RunOptions& run_opt, uint64_t nodes_version, RunInputKind kind) {
+  replace_sync_cache_after_reset(run_cache, [&]() {
+    pipeline_internal::ScopedSyncBuild sync_guard(true);
+    using CacheType = typename std::decay_t<CachePtrT>::element_type;
+    auto cache = std::make_unique<CacheType>();
+    cache->runner = build_sync_runner(run_opt);
+    cache->caps_key = caps_key;
+    cache->opt = run_opt;
+    cache->nodes_version = nodes_version;
+    cache->input_kind = kind;
+    return cache;
+  });
 }
 
 template <typename InputT, typename NodesVersionT, typename CachePtrT, typename BuildFn>
@@ -2401,9 +2410,7 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
   }
 
   if (!reuse_cache) {
-    pipeline_internal::ScopedSyncBuild sync_guard(true);
-    set_sync_cache(run_cache, std::forward<BuildFn>(build_sync_runner)(run_opt), spec.caps_key,
-                   run_opt, version, kind);
+    rebuild_sync_cache(run_cache, build_sync_runner, spec.caps_key, run_opt, version, kind);
     if (session_sync_cache_debug_enabled()) {
       std::fprintf(stderr,
                    "[sync-cache] build_new kind=%s run_cache=%p runner_obj=%p nodes_version=%llu "
@@ -2460,9 +2467,7 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
       std::fprintf(stderr,
                    "[DBG] Graph::run(input): cached sync runner failed; rebuilding and retrying\n");
     }
-    pipeline_internal::ScopedSyncBuild sync_guard(true);
-    set_sync_cache(run_cache, std::forward<BuildFn>(build_sync_runner)(run_opt), spec.caps_key,
-                   run_opt, version, kind);
+    rebuild_sync_cache(run_cache, build_sync_runner, spec.caps_key, run_opt, version, kind);
     if (session_sync_cache_debug_enabled()) {
       std::fprintf(stderr, "[sync-cache] rebuilt kind=%s new_run_cache=%p new_runner_obj=%p\n",
                    run_input_kind_name(kind),
@@ -2485,9 +2490,7 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
       std::fprintf(stderr, "[DBG] Graph::run(input): cached sync runner std::exception; "
                            "rebuilding and retrying\n");
     }
-    pipeline_internal::ScopedSyncBuild sync_guard(true);
-    set_sync_cache(run_cache, std::forward<BuildFn>(build_sync_runner)(run_opt), spec.caps_key,
-                   run_opt, version, kind);
+    rebuild_sync_cache(run_cache, build_sync_runner, spec.caps_key, run_opt, version, kind);
     if (session_sync_cache_debug_enabled()) {
       std::fprintf(stderr, "[sync-cache] rebuilt kind=%s new_run_cache=%p new_runner_obj=%p\n",
                    run_input_kind_name(kind),
@@ -2501,6 +2504,38 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
 } // namespace
 
 namespace session_test {
+
+std::vector<std::string> sync_cache_rebuild_events_for_test(bool fail_build) {
+  struct Probe {
+    std::vector<std::string>* events = nullptr;
+    std::string label;
+    ~Probe() {
+      events->push_back(label + "-release");
+    }
+  };
+
+  std::vector<std::string> events;
+  {
+    auto cache = std::make_unique<Probe>();
+    cache->events = &events;
+    cache->label = "old";
+    try {
+      replace_sync_cache_after_reset(cache, [&]() {
+        events.push_back("build");
+        if (fail_build) {
+          throw std::runtime_error("injected sync cache build failure");
+        }
+        auto replacement = std::make_unique<Probe>();
+        replacement->events = &events;
+        replacement->label = "new";
+        return replacement;
+      });
+    } catch (const std::runtime_error&) {
+      events.push_back("throw");
+    }
+  }
+  return events;
+}
 
 bool apply_auto_memory_policy_from_downstream_for_test(
     InputOptions& src_opt, const std::vector<std::shared_ptr<Node>>& nodes) {

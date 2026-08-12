@@ -1509,7 +1509,8 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
   int h = 0;
   int w = 0;
   int logical_c = 0;
-  if (!dims_from_mpk_shape_for_input_nhwc_local(stage.frame_shape, &h, &w, &logical_c)) {
+  if (!dims_from_mpk_shape_for_input_nhwc_local(detess_runtime_frame_shape(stage), &h, &w,
+                                                &logical_c)) {
     set_error(error_message,
               "boxdecode model-managed contract requires detess frame_shape transport facts");
     return std::nullopt;
@@ -1741,8 +1742,8 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
       int frame_h = 0;
       int frame_w = 0;
       int frame_c = 0;
-      if (!dims_from_mpk_shape_for_input_nhwc_local(stage.frame_shape, &frame_h, &frame_w,
-                                                    &frame_c)) {
+      if (!dims_from_mpk_shape_for_input_nhwc_local(detess_runtime_frame_shape(stage), &frame_h,
+                                                    &frame_w, &frame_c)) {
         set_error(error_message, "boxdecode direct source requires MPK detess frame_shape facts");
         return std::nullopt;
       }

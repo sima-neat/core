@@ -1,5 +1,6 @@
 // src/pipeline/internal/SampleUtil.cpp
 #include "pipeline/internal/SampleUtil.h"
+#include "gst/GstSampleAttributes.h"
 
 #include "InputStreamUtil.h"
 #include "pipeline/internal/GstDataAdapter.h"
@@ -3516,6 +3517,19 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       bundle_input_seq, bundle_orig_input_seq,
       bundle.stream_id.empty() ? std::nullopt : std::optional<std::string>(bundle.stream_id),
       std::optional<std::string>("bundle"));
+  // Bundle policy: outer attributes live on GstSimaMeta, where every read path expects them;
+  // child attributes remain on their own buffers. Writing unconditionally also clears stale
+  // attributes on a reused destination.
+  if (!gst_internal::write_attributes(sample_buf, bundle.attributes)) {
+    gst_buffer_unref(sample_buf);
+    if (sample_caps) {
+      gst_caps_unref(sample_caps);
+    }
+    if (err) {
+      *err = "Sample outer attributes attach failed";
+    }
+    return {};
+  }
 
   if (sample_has_tensor_list(bundle)) {
     gst_structure_remove_field(s, "fields");
@@ -3614,6 +3628,15 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
           field_input_seq, field_orig_input_seq,
           bundle.stream_id.empty() ? std::nullopt : std::optional<std::string>(bundle.stream_id),
           std::optional<std::string>(buffer_name));
+      if (!gst_internal::write_attributes(buf, field.attributes)) {
+        gst_buffer_unref(buf);
+        gst_buffer_unref(sample_buf);
+        g_value_unset(&list);
+        if (err) {
+          *err = "Sample field attributes attach failed";
+        }
+        return {};
+      }
 
       Sample field_with_caps = field;
       field_with_caps.caps_string = spec.caps_string;

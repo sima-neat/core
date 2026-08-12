@@ -393,6 +393,7 @@ set(UNIT_TESTS
   unit_resnet50_mla_handoff_segment_test
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
+  unit_detess_rank2_contract_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
   unit_modelpack_mount_selection_test
@@ -415,6 +416,8 @@ set(UNIT_TESTS
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_jpeg_framing_nodes_test
+  unit_multipart_header_capture_test
+  unit_multipart_capture_element_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
@@ -440,6 +443,7 @@ set(UNIT_TESTS
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
   unit_sima_decode_test
+  unit_decoder_admission_test
   unit_kernel200_envelope_guard_test
   unit_processcvu_binding_table_uses_runtime_outputs_test
   unit_processcvu_preproc_runtime_vs_exposed_outputs_test
@@ -598,6 +602,8 @@ set(E2E_TESTS
   graph_validate_report_regression_test
   stage_routing_regression_test
   udp_output_loopback_integration_test
+  multipart_header_capture_http_e2e_test
+  multipart_header_capture_decode_e2e_test
 )
 
 foreach(test ${E2E_TESTS})
@@ -1920,6 +1926,20 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test_long(
+  decoder_multirun_admission_boundary_test
+  e2e_testing/decoder_multirun_admission_boundary_test.cpp
+)
+
+if (NOT decoder_multirun_admission_boundary_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST decoder_multirun_admission_boundary_test
+    APPEND PROPERTY LABELS "e2e;codec;rtsp;regression;lifecycle")
+  set_property(TEST decoder_multirun_admission_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST decoder_multirun_admission_boundary_test
+    APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_tests_properties(decoder_multirun_admission_boundary_test PROPERTIES TIMEOUT 120)
+endif()
+
+add_pipeline_test_long(
   codec_decode_accuracy_test
   e2e_testing/codec_decode_accuracy_test.cpp
 )
@@ -2312,6 +2332,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   h265_decode_resnet50_e2e_test
   h265_rtsp_resnet50_e2e_test
   codec_runtime_stream_test
+  multipart_header_capture_decode_e2e_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test

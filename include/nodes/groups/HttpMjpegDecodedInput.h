@@ -13,6 +13,7 @@
 #pragma once
 
 #include "contracts/ContractTypes.h"
+#include "nodes/common/MultipartJpegDemux.h"
 #include "pipeline/FormatSpec.h"
 #include "pipeline/Graph.h"
 
@@ -71,6 +72,17 @@ struct HttpMjpegDecodedInputOptions {
   int source_fps = -1;        ///< Declared source stream FPS; feeds caps repair and decoder FPS.
   bool use_videorate = false; ///< Insert `videorate` after decode to enforce an output FPS.
   int video_rate_fps = -1;    ///< FPS requested from `videorate`; `-1` = use `source_fps`.
+
+  /// Optional per-frame capture of selected multipart part headers.
+  ///
+  /// Empty (the default) keeps the existing topology and behavior unchanged. When set, the
+  /// selected headers appear in `Sample::attributes` on the decoded frame they arrived with,
+  /// and the group rejects construction of transforms whose metadata preservation is not
+  /// guaranteed (`use_videoconvert`, `use_videoscale`, `use_videorate`, `extra_fragment`).
+  /// Appended to preserve positional aggregate initialization of the pre-existing options.
+  ///
+  /// @see MultipartHeaderCaptureOptions
+  MultipartHeaderCaptureOptions header_capture;
 };
 
 /**
