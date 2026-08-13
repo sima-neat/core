@@ -3264,6 +3264,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("insert_queue", &simaai::neat::CameraInputOptions::insert_queue)
       .def_rw("leaky_queue", &simaai::neat::CameraInputOptions::leaky_queue)
       .def_rw("queue_depth", &simaai::neat::CameraInputOptions::queue_depth)
+      .def_rw("capture_buffer_count", &simaai::neat::CameraInputOptions::capture_buffer_count)
       .def_rw("allow_cpu_fallback", &simaai::neat::CameraInputOptions::allow_cpu_fallback);
 
   nb::module_ graphs_mod = m.def_submodule("graphs", "Reusable public Graph fragment helpers");

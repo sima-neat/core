@@ -77,6 +77,7 @@ def test_camera_input_options_roundtrip():
   assert opt.insert_queue is True
   assert opt.leaky_queue is True
   assert opt.queue_depth == 2
+  assert opt.capture_buffer_count == 0
   assert opt.allow_cpu_fallback is False
 
   opt.camera_name = "imx477 5-001a"
@@ -89,6 +90,7 @@ def test_camera_input_options_roundtrip():
   opt.insert_queue = False
   opt.leaky_queue = False
   opt.queue_depth = 4
+  opt.capture_buffer_count = 32
   opt.allow_cpu_fallback = True
 
   assert opt.camera_name == "imx477 5-001a"
@@ -99,6 +101,7 @@ def test_camera_input_options_roundtrip():
   assert opt.insert_queue is False
   assert opt.leaky_queue is False
   assert opt.queue_depth == 4
+  assert opt.capture_buffer_count == 32
   assert opt.allow_cpu_fallback is True
   opt.camera_name = None
   assert opt.camera_name is None

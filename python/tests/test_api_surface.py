@@ -138,6 +138,7 @@ CAMERA_INPUT_OPTION_FIELDS = (
     "insert_queue",
     "leaky_queue",
     "queue_depth",
+    "capture_buffer_count",
     "allow_cpu_fallback",
 )
 
@@ -548,6 +549,7 @@ def test_camera_input_surface_is_exposed():
   opt.format = "NV12"
   opt.buffer_name = "camera0"
   opt.queue_depth = 4
+  opt.capture_buffer_count = 32
   opt.allow_cpu_fallback = True
 
   assert opt.camera_name == "imx477 5-001a"
@@ -557,6 +559,7 @@ def test_camera_input_surface_is_exposed():
   assert opt.format == "NV12"
   assert opt.buffer_name == "camera0"
   assert opt.queue_depth == 4
+  assert opt.capture_buffer_count == 32
   assert opt.allow_cpu_fallback is True
   opt.camera_name = None
   assert opt.camera_name is None

@@ -79,6 +79,8 @@ CameraInput::CameraInput(CameraInputOptions opt) : opt_(std::move(opt)) {
     opt_.framerate_den = 1;
   if (opt_.buffer_name.empty())
     opt_.buffer_name = "camera";
+  if (opt_.capture_buffer_count > 32U)
+    throw std::invalid_argument("CameraInput capture_buffer_count must be between 0 and 32");
 }
 
 std::string CameraInput::user_label() const {
@@ -117,6 +119,14 @@ std::string CameraInput::backend_fragment(int node_index) const {
   if (has_zero_copy) {
     ss << " simaai-zero-copy=true";
   }
+  if (opt_.capture_buffer_count > 0) {
+    if (!libcamerasrc_property_exists("buffer-count")) {
+      throw std::runtime_error(
+          "CameraInput capture_buffer_count requires a libcamerasrc with the buffer-count "
+          "property");
+    }
+    ss << " buffer-count=" << opt_.capture_buffer_count;
+  }
   if (!opt_.allow_cpu_fallback) {
     if (!has_zero_copy || !has_zero_copy_required) {
       throw std::runtime_error(
@@ -131,6 +141,21 @@ std::string CameraInput::backend_fragment(int node_index) const {
   }
   ss << " ! capsfilter name=" << caps_name << " caps=" << gst_quote(caps_string());
 
+  // Keep the memory-policy element adjacent to libcamerasrc.  In addition to
+  // validating (or adapting) buffers, the bridge answers the source's
+  // downstream ALLOCATION query with Neat's SiMaAI allocator.  A queue must not
+  // sit between the producer and the element that owns this negotiation.
+  ss << " ! neatcamerabridge name=" << camera_bridge_name(node_index);
+  ss << " buffer-name=" << gst_quote(opt_.buffer_name);
+  const std::uint32_t bridgeBufferCount = opt_.capture_buffer_count > 0
+                                              ? opt_.capture_buffer_count
+                                              : std::max<std::uint32_t>(2U, opt_.queue_depth);
+  ss << " num-buffers=" << bridgeBufferCount;
+  // Let the private bridge derive any fallback copy span from each
+  // GstBuffer/GstVideoMeta. libcamera buffers may have padded strides or plane
+  // offsets, so a tight width*height estimate would truncate later planes.
+  ss << " copy-allowed=" << (opt_.allow_cpu_fallback ? "true" : "false");
+
   if (opt_.insert_queue) {
     ss << " ! queue name=" << camera_queue_name(node_index);
     if (opt_.queue_depth > 0) {
@@ -142,26 +167,14 @@ std::string CameraInput::backend_fragment(int node_index) const {
     }
   }
 
-  if (opt_.allow_cpu_fallback) {
-    ss << " ! neatcamerabridge name=" << camera_bridge_name(node_index);
-    ss << " buffer-name=" << gst_quote(opt_.buffer_name);
-    ss << " num-buffers=" << std::max<std::uint32_t>(2U, opt_.queue_depth);
-    // Let the private bridge derive the copy span from each GstBuffer/GstVideoMeta.  libcamera
-    // buffers may have padded strides or plane offsets, and forcing a tight width*height size would
-    // make the fallback copy treat row padding as image data and truncate the later planes.
-    ss << " copy-allowed=true";
-  }
-
   return ss.str();
 }
 
 std::vector<std::string> CameraInput::element_names(int node_index) const {
-  std::vector<std::string> names{camera_src_name(node_index), camera_caps_name(node_index)};
+  std::vector<std::string> names{camera_src_name(node_index), camera_caps_name(node_index),
+                                 camera_bridge_name(node_index)};
   if (opt_.insert_queue) {
     names.push_back(camera_queue_name(node_index));
-  }
-  if (opt_.allow_cpu_fallback) {
-    names.push_back(camera_bridge_name(node_index));
   }
   return names;
 }
@@ -175,7 +188,7 @@ OutputSpec CameraInput::output_spec(const OutputSpec& /*input*/) const {
   out.height = static_cast<int>(opt_.height);
   out.fps_num = static_cast<int>(opt_.framerate_num);
   out.fps_den = static_cast<int>(opt_.framerate_den);
-  out.memory = opt_.allow_cpu_fallback ? "SimaAI" : "SimaAI-preferred";
+  out.memory = "SimaAI";
   out.dtype = "UInt8";
   if (out.format == "RGB" || out.format == "BGR") {
     out.layout = "HWC";
@@ -189,8 +202,8 @@ OutputSpec CameraInput::output_spec(const OutputSpec& /*input*/) const {
   }
   out.certainty = SpecCertainty::Hint;
   out.note = opt_.allow_cpu_fallback
-                 ? "libcamerasrc camera input with Neat private adaptive EV74 memory bridge"
-                 : "libcamerasrc camera input; Neat requests device zero-copy";
+                 ? "libcamerasrc camera input with negotiated Neat allocation and CPU fallback"
+                 : "libcamerasrc camera input with negotiated strict Neat zero-copy";
   out.byte_size = expected_byte_size(out);
   if (out.byte_size == 0) {
     out.byte_size =

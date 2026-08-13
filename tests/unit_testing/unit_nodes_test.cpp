@@ -68,6 +68,19 @@ int main() {
 
     simaai::neat::CameraInputOptions cam_opt;
     require(!cam_opt.allow_cpu_fallback, "CameraInput must default to strict device zero-copy");
+    require(cam_opt.capture_buffer_count == 0,
+            "CameraInput must use the camera's default capture depth by default");
+
+    bool invalid_capture_count_threw = false;
+    try {
+      simaai::neat::CameraInputOptions invalid_cam_opt = cam_opt;
+      invalid_cam_opt.capture_buffer_count = 33;
+      (void)simaai::neat::nodes::CameraInput(invalid_cam_opt);
+    } catch (const std::invalid_argument&) {
+      invalid_capture_count_threw = true;
+    }
+    require(invalid_capture_count_threw,
+            "CameraInput must reject capture_buffer_count values above 32");
 
     simaai::neat::CameraInputOptions fallback_cam_opt = cam_opt;
     fallback_cam_opt.allow_cpu_fallback = true;
@@ -78,6 +91,32 @@ int main() {
                      "CameraInput fallback bridge missing");
     require(cam->backend_fragment(0).find(" buffer-size=") == std::string::npos,
             "CameraInput bridge should derive buffer size from actual camera buffers");
+    require_contains(cam->backend_fragment(0), "capsfilter name=n0_camera_caps",
+                     "CameraInput capsfilter missing");
+    require(cam->backend_fragment(0).find("neatcamerabridge name=n0_camera_bridge") <
+                cam->backend_fragment(0).find("queue name=n0_camera_queue"),
+            "CameraInput bridge must negotiate allocation before the queue");
+    require_contains(cam->backend_fragment(0), "copy-allowed=true",
+                     "CameraInput fallback bridge should allow copies");
+
+    if (simaai::neat::element_property_exists("libcamerasrc", "buffer-count")) {
+      simaai::neat::CameraInputOptions deep_cam_opt = fallback_cam_opt;
+      deep_cam_opt.capture_buffer_count = 32;
+      auto deep_cam = simaai::neat::nodes::CameraInput(deep_cam_opt);
+      require_contains(deep_cam->backend_fragment(2), "buffer-count=32",
+                       "CameraInput capture queue depth was not applied to libcamerasrc");
+      require_contains(deep_cam->backend_fragment(2), "num-buffers=32",
+                       "CameraInput bridge pool depth must follow application capture ownership");
+    }
+
+    if (simaai::neat::element_property_exists("libcamerasrc", "simaai-zero-copy") &&
+        simaai::neat::element_property_exists("libcamerasrc", "simaai-zero-copy-required")) {
+      auto strict_cam = simaai::neat::nodes::CameraInput(cam_opt);
+      require_contains(strict_cam->backend_fragment(1), "neatcamerabridge name=n1_camera_bridge",
+                       "CameraInput strict bridge missing");
+      require_contains(strict_cam->backend_fragment(1), "copy-allowed=false",
+                       "CameraInput strict bridge must reject copies");
+    }
     if (!simaai::neat::element_exists("neatcamerabridge")) {
       throw std::runtime_error("private neatcamerabridge factory not registered");
     }

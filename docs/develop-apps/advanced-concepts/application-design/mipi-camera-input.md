@@ -232,6 +232,21 @@ Leave `decode_type` unset and keep `mla_only = true` when you want raw MLA tenso
 
 Strict zero-copy is the framework default. It requires both a `libcamerasrc` that exposes the SiMaAI zero-copy properties and a memory library that supports DMA-BUF export. Set `camera.allow_cpu_fallback = true` only as an explicit compatibility escape hatch. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
 
+In both modes, Neat places its private memory bridge immediately after the
+camera caps and before any queue. The bridge proposes Neat's SiMaAI segment
+allocator through `GST_QUERY_ALLOCATION`; `libcamerasrc` uses that negotiated
+allocator to create its validated plane layout and queues the resulting
+DMA-BUFs to the ISP capture device. The bridge then passes those same buffers
+downstream. This is the normal path, not the fallback copy path.
+
+The application owns the ISP-output retention policy. Leave
+`capture_buffer_count = 0` to use the camera default, or request up to 32 when a
+temporal encoder or asynchronous ML graph holds frames longer. This count is
+separate from the private CSI-to-ISP RAW transit ring and from `queue_depth`,
+which controls only Neat's live GStreamer queue. Use a leaky queue when current
+frames matter more than completeness; use downstream backpressure when every
+frame must be retained.
+
 ## Keep preprocessing on CVU/EV74
 
 For model pipelines, prefer model-managed preprocessing:

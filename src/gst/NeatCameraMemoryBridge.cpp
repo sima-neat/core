@@ -7,9 +7,11 @@
 #include <gst/video/video.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <string>
 
@@ -29,6 +31,7 @@ GST_DEBUG_CATEGORY_STATIC(gst_neat_camera_memory_bridge_debug_category);
 
 using GstNeatCameraMemoryBridge = struct _GstNeatCameraMemoryBridge;
 using GstNeatCameraMemoryBridgeClass = struct _GstNeatCameraMemoryBridgeClass;
+using AtomicCounter = std::atomic<guint64>;
 
 #define GST_TYPE_NEAT_CAMERA_MEMORY_BRIDGE (gst_neat_camera_memory_bridge_get_type())
 #define GST_NEAT_CAMERA_MEMORY_BRIDGE(obj)                                                         \
@@ -49,8 +52,11 @@ struct _GstNeatCameraMemoryBridge {
   GstBufferPool* pool = nullptr;
   gsize pool_size = 0;
   gint64 sequence_id = 0;
-  guint64 passthrough_count = 0;
-  guint64 copy_count = 0;
+  AtomicCounter passthrough_count;
+  AtomicCounter copy_count;
+  AtomicCounter copied_bytes;
+  AtomicCounter rejected_count;
+  AtomicCounter allocation_proposal_count;
 };
 
 struct _GstNeatCameraMemoryBridgeClass {
@@ -77,6 +83,11 @@ enum {
   PROP_NUM_BUFFERS,
   PROP_COPY_ALLOWED,
   PROP_SILENT,
+  PROP_PASSTHROUGH_COUNT,
+  PROP_COPY_COUNT,
+  PROP_COPIED_BYTES,
+  PROP_REJECTED_COUNT,
+  PROP_ALLOCATION_PROPOSAL_COUNT,
 };
 
 bool debug_enabled(const GstNeatCameraMemoryBridge* self) {
@@ -123,6 +134,7 @@ bool ensure_pool(GstNeatCameraMemoryBridge* self, gsize required_size) {
   const guint buffers = std::max<guint>(1, self->num_buffers);
   GstBufferPool* pool = gst_simaai_allocate_buffer_pool2(
       GST_OBJECT(self), allocator, buffers, buffers, flags, 1, &segment_size, &segment_name);
+  gst_object_unref(allocator);
   if (!pool) {
     GST_ELEMENT_ERROR(
         self, RESOURCE, FAILED, ("Failed to allocate EV74 SiMaAI camera pool"),
@@ -172,6 +184,13 @@ bool memory_is_simaai_segment(const GstMemory* memory) {
   const gchar* allocator_name = memory_allocator_name(memory);
   return g_strcmp0(allocator_name, "SimaaiSegmentMemory") == 0 ||
          g_strcmp0(allocator_name, "NeatSimaaiSegmentMemory") == 0;
+}
+
+bool allocator_is_simaai_segment(const GstAllocator* allocator) {
+  if (!allocator || !allocator->mem_type)
+    return false;
+  return g_strcmp0(allocator->mem_type, "SimaaiSegmentMemory") == 0 ||
+         g_strcmp0(allocator->mem_type, "NeatSimaaiSegmentMemory") == 0;
 }
 
 bool memory_is_ev74_simaai_segment(const GstMemory* memory) {
@@ -528,7 +547,7 @@ GstBuffer* stamp_passthrough_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* 
     gst_buffer_unref(out);
     return nullptr;
   }
-  ++self->passthrough_count;
+  self->passthrough_count.fetch_add(1, std::memory_order_relaxed);
   return out;
 }
 
@@ -644,7 +663,8 @@ GstBuffer* copy_to_ev74_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* input
     gst_buffer_unref(out);
     return nullptr;
   }
-  ++self->copy_count;
+  self->copy_count.fetch_add(1, std::memory_order_relaxed);
+  self->copied_bytes.fetch_add(required, std::memory_order_relaxed);
   return out;
 }
 
@@ -669,6 +689,7 @@ GstFlowReturn bridge_chain(GstPad* /*pad*/, GstObject* parent, GstBuffer* input)
   }
 
   if (!self->copy_allowed) {
+    self->rejected_count.fetch_add(1, std::memory_order_relaxed);
     GST_ELEMENT_ERROR(self, STREAM, FAILED,
                       ("Camera buffer is not EV74 SiMaAI memory and copying is disabled"),
                       ("copy-allowed=false"));
@@ -697,6 +718,50 @@ gboolean bridge_sink_event(GstPad* pad, GstObject* parent, GstEvent* event) {
   default:
     return gst_pad_event_default(pad, parent, event);
   }
+}
+
+bool allocation_query_has_simaai_allocator(GstQuery* query) {
+  const guint count = gst_query_get_n_allocation_params(query);
+  for (guint i = 0; i < count; ++i) {
+    GstAllocator* allocator = nullptr;
+    GstAllocationParams params;
+    gst_query_parse_nth_allocation_param(query, i, &allocator, &params);
+    if (allocator_is_simaai_segment(allocator))
+      return true;
+  }
+  return false;
+}
+
+gboolean bridge_sink_query(GstPad* pad, GstObject* parent, GstQuery* query) {
+  auto* self = GST_NEAT_CAMERA_MEMORY_BRIDGE(parent);
+  if (GST_QUERY_TYPE(query) != GST_QUERY_ALLOCATION)
+    return gst_pad_query_default(pad, parent, query);
+
+  // First preserve pools, allocators, and metadata requested by later
+  // consumers. Then make Neat's allocator policy visible to the producer using
+  // GStreamer's standard downstream ALLOCATION negotiation.
+  (void)gst_pad_peer_query(self->srcpad, query);
+  if (!gst_query_find_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr))
+    gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr);
+
+#if SIMA_HAS_SIMAAI_POOL
+  if (!allocation_query_has_simaai_allocator(query)) {
+    gst_neat_segment_memory_init_once();
+    GstAllocator* allocator = gst_neat_memory_get_segment_allocator();
+    if (!allocator) {
+      GST_WARNING_OBJECT(self, "Neat SiMaAI allocator unavailable for ALLOCATION query");
+    } else {
+      GstAllocationParams params;
+      gst_allocation_params_init(&params);
+      params.flags = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74 |
+                                                 GST_SIMAAI_MEMORY_FLAG_CACHED);
+      gst_query_add_allocation_param(query, allocator, &params);
+      gst_object_unref(allocator);
+      self->allocation_proposal_count.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+#endif
+  return TRUE;
 }
 
 gboolean bridge_src_query(GstPad* pad, GstObject* parent, GstQuery* query) {
@@ -761,6 +826,21 @@ void bridge_get_property(GObject* object, guint property_id, GValue* value, GPar
   case PROP_SILENT:
     g_value_set_boolean(value, self->silent);
     break;
+  case PROP_PASSTHROUGH_COUNT:
+    g_value_set_uint64(value, self->passthrough_count.load(std::memory_order_relaxed));
+    break;
+  case PROP_COPY_COUNT:
+    g_value_set_uint64(value, self->copy_count.load(std::memory_order_relaxed));
+    break;
+  case PROP_COPIED_BYTES:
+    g_value_set_uint64(value, self->copied_bytes.load(std::memory_order_relaxed));
+    break;
+  case PROP_REJECTED_COUNT:
+    g_value_set_uint64(value, self->rejected_count.load(std::memory_order_relaxed));
+    break;
+  case PROP_ALLOCATION_PROPOSAL_COUNT:
+    g_value_set_uint64(value, self->allocation_proposal_count.load(std::memory_order_relaxed));
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
     break;
@@ -774,13 +854,36 @@ void bridge_finalize(GObject* object) {
     g_string_free(self->buffer_name, TRUE);
     self->buffer_name = nullptr;
   }
+  self->allocation_proposal_count.~AtomicCounter();
+  self->rejected_count.~AtomicCounter();
+  self->copied_bytes.~AtomicCounter();
+  self->copy_count.~AtomicCounter();
+  self->passthrough_count.~AtomicCounter();
   G_OBJECT_CLASS(gst_neat_camera_memory_bridge_parent_class)->finalize(object);
 }
 
 GstStateChangeReturn bridge_change_state(GstElement* element, GstStateChange transition) {
   auto* self = GST_NEAT_CAMERA_MEMORY_BRIDGE(element);
+  if (transition == GST_STATE_CHANGE_NULL_TO_READY) {
+    self->passthrough_count.store(0, std::memory_order_relaxed);
+    self->copy_count.store(0, std::memory_order_relaxed);
+    self->copied_bytes.store(0, std::memory_order_relaxed);
+    self->rejected_count.store(0, std::memory_order_relaxed);
+    self->allocation_proposal_count.store(0, std::memory_order_relaxed);
+  }
   if (transition == GST_STATE_CHANGE_READY_TO_NULL ||
       transition == GST_STATE_CHANGE_PAUSED_TO_READY) {
+    if (debug_enabled(self)) {
+      GST_INFO_OBJECT(self,
+                      "zero-copy stats proposals=%" G_GUINT64_FORMAT
+                      " passthrough=%" G_GUINT64_FORMAT " copies=%" G_GUINT64_FORMAT
+                      " copied-bytes=%" G_GUINT64_FORMAT " rejected=%" G_GUINT64_FORMAT,
+                      self->allocation_proposal_count.load(std::memory_order_relaxed),
+                      self->passthrough_count.load(std::memory_order_relaxed),
+                      self->copy_count.load(std::memory_order_relaxed),
+                      self->copied_bytes.load(std::memory_order_relaxed),
+                      self->rejected_count.load(std::memory_order_relaxed));
+    }
     release_pool(self);
   }
   return GST_ELEMENT_CLASS(gst_neat_camera_memory_bridge_parent_class)
@@ -836,9 +939,42 @@ void gst_neat_camera_memory_bridge_class_init(GstNeatCameraMemoryBridgeClass* kl
       gobject_class, PROP_SILENT,
       g_param_spec_boolean("silent", "Silent", "Suppress bridge info logging", TRUE,
                            static_cast<GParamFlags>(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_PASSTHROUGH_COUNT,
+      g_param_spec_uint64("passthrough-count", "Passthrough count",
+                          "Number of EV74 SiMaAI buffers forwarded without copying", 0, G_MAXUINT64,
+                          0, static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_COPY_COUNT,
+      g_param_spec_uint64("copy-count", "Copy count", "Number of CPU fallback copies", 0,
+                          G_MAXUINT64, 0,
+                          static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_COPIED_BYTES,
+      g_param_spec_uint64("copied-bytes", "Copied bytes",
+                          "Total number of bytes copied by the CPU fallback path", 0, G_MAXUINT64,
+                          0, static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_REJECTED_COUNT,
+      g_param_spec_uint64("rejected-count", "Rejected count",
+                          "Non-zero-copy buffers rejected while copying was disabled", 0,
+                          G_MAXUINT64, 0,
+                          static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(
+      gobject_class, PROP_ALLOCATION_PROPOSAL_COUNT,
+      g_param_spec_uint64("allocation-proposal-count", "Allocation proposal count",
+                          "Number of downstream ALLOCATION queries given Neat's allocator", 0,
+                          G_MAXUINT64, 0,
+                          static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
 }
 
 void gst_neat_camera_memory_bridge_init(GstNeatCameraMemoryBridge* self) {
+  // GObject allocates instance storage without invoking C++ constructors.
+  new (&self->passthrough_count) AtomicCounter(0);
+  new (&self->copy_count) AtomicCounter(0);
+  new (&self->copied_bytes) AtomicCounter(0);
+  new (&self->rejected_count) AtomicCounter(0);
+  new (&self->allocation_proposal_count) AtomicCounter(0);
   self->buffer_name = g_string_new(kDefaultBufferName);
   self->num_buffers = kDefaultNumBuffers;
   self->configured_buffer_size = 0;
@@ -847,12 +983,16 @@ void gst_neat_camera_memory_bridge_init(GstNeatCameraMemoryBridge* self) {
   self->pool = nullptr;
   self->pool_size = 0;
   self->sequence_id = 0;
-  self->passthrough_count = 0;
-  self->copy_count = 0;
+  self->passthrough_count.store(0, std::memory_order_relaxed);
+  self->copy_count.store(0, std::memory_order_relaxed);
+  self->copied_bytes.store(0, std::memory_order_relaxed);
+  self->rejected_count.store(0, std::memory_order_relaxed);
+  self->allocation_proposal_count.store(0, std::memory_order_relaxed);
 
   self->sinkpad = gst_pad_new_from_static_template(&sink_template, "sink");
   gst_pad_set_chain_function(self->sinkpad, GST_DEBUG_FUNCPTR(bridge_chain));
   gst_pad_set_event_function(self->sinkpad, GST_DEBUG_FUNCPTR(bridge_sink_event));
+  gst_pad_set_query_function(self->sinkpad, GST_DEBUG_FUNCPTR(bridge_sink_query));
   gst_element_add_pad(GST_ELEMENT(self), self->sinkpad);
 
   self->srcpad = gst_pad_new_from_static_template(&src_template, "src");
