@@ -1666,9 +1666,9 @@ collect_install_artifact_files() {
     out_files_ref+=("${file}")
   done
 
-  for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb \
-              "${NEAT_INTERNALS_DEB_DIR}"/simaai-common*.deb \
-              "${NEAT_INTERNALS_DEB_DIR}"/neat-appcomplex_*.deb; do
+  # Forward every package the selected Internals artifact delivered.  Internals
+  # decides what that set is; Core does not filter it or keep a list of its own.
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
@@ -2378,14 +2378,11 @@ stage_package_artifacts_to_dist() {
   fi
 
   mkdir -p dist
+  # Everything staged below is re-copied from its source directory, so clear
+  # the previously staged packages wholesale instead of naming each one.
   rm -f \
-    dist/*-Linux-core.deb \
-    dist/*-Linux-dev.deb \
+    dist/*.deb \
     dist/*-Linux-extras.tar.gz \
-    dist/neat-*.deb \
-    dist/simaai-common*.deb \
-    dist/appcomplex_*.deb \
-    dist/sima-lmm-*.deb \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
@@ -2464,6 +2461,19 @@ PY
   echo "Updated dist/manifest.json platform-version, modelzoo-version, and abi-version from ${NEAT_DEPS_MANIFEST}"
 }
 
+append_dist_manifest_forwarded_packages() {
+  local manifest_path="$1"
+  local file basename_file
+
+  while IFS= read -r file; do
+    basename_file="$(basename "${file}")"
+    case "${basename_file}" in
+      sima-lmm-*.deb|sima-neat-*.deb) continue ;;
+    esac
+    printf '%s\n' "${basename_file}" >> "${manifest_path}"
+  done < <(find dist -maxdepth 1 -type f -name '*.deb' | sort)
+}
+
 append_dist_manifest_matches() {
   local manifest_path="$1"
   local pattern="$2"
@@ -2495,18 +2505,10 @@ write_install_manifest() {
     echo "# Keep this file next to ${NEAT_PACKAGE_INSTALL_SCRIPT}."
   } > "${manifest_path}"
 
-  append_dist_manifest_matches "${manifest_path}" 'simaai-common*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera-tools_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-common_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-appcomplex_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-ev74-firmware_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-runtime_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-gst-plugins_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-internals-dev_*.deb'
+  # Internals packages first, then LLiMa, then Core's own artifacts.  Which
+  # packages Internals delivered is Internals' decision, so nothing here names
+  # them.
+  append_dist_manifest_forwarded_packages "${manifest_path}"
   append_dist_manifest_matches "${manifest_path}" 'sima-lmm-*.deb'
   append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
   append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-dev.deb'

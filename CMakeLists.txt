@@ -209,36 +209,9 @@ math(EXPR SIMANEAT_NEXT_PACKAGE_MINOR "${SIMANEAT_PACKAGE_BASE_VERSION_MINOR} + 
 set(SIMANEAT_DEP_PACKAGE_MIN_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 set(SIMANEAT_DEP_PACKAGE_MAX_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION_MAJOR}.${SIMANEAT_NEXT_PACKAGE_MINOR}.0")
 
-set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "" CACHE STRING
-  "Exact simaai-memory-lib-dev version bundled by the resolved Internals artifact")
-if (SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
-  file(GLOB SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
-    "${CMAKE_CURRENT_SOURCE_DIR}/deps/debs/simaai-memory-lib-dev_*.deb")
-  list(LENGTH SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
-    SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT)
-  if (SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT EQUAL 1)
-    list(GET SIMANEAT_BUNDLED_MEMORY_DEV_DEBS 0
-      SIMANEAT_BUNDLED_MEMORY_DEV_DEB)
-    execute_process(
-      COMMAND dpkg-deb -f
-        "${SIMANEAT_BUNDLED_MEMORY_DEV_DEB}" Version
-      RESULT_VARIABLE SIMANEAT_MEMORY_VERSION_RESULT
-      OUTPUT_VARIABLE SIMANEAT_MEMORY_DEV_PACKAGE_VERSION
-      ERROR_QUIET
-      OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if (NOT SIMANEAT_MEMORY_VERSION_RESULT EQUAL 0)
-      set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "")
-    endif()
-  endif()
-endif()
-if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS
-    AND SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
-  message(FATAL_ERROR
-    "Could not determine the exact simaai-memory-lib-dev version from the "
-    "resolved Internals artifact under deps/debs. Core package dependencies "
-    "must follow the bundled package; they must not be inferred from "
-    "platform-version.")
-endif()
+# Memory comes from the selected platform environment.  Core does not read a
+# bundled memory package out of the Internals artifact, and does not
+# propagate an exact memory version into its own dependencies.
 
 # Debian package versions do not allow underscores. Keep branch-derived versions
 # installable by normalizing every non-Debian-version character to '-'.
@@ -398,7 +371,14 @@ endif()
 
 set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE OFF)
 if (SIMANEAT_USE_EXPORTED_NEAT_INTERNALS)
-  find_package(NeatInternals ${SIMANEAT_PLATFORM_VERSION} CONFIG QUIET)
+  # The resolved Internals artifact decides which release this is.  Core does
+  # not ask for a version, and never passes platform-version as an Internals
+  # version: platform-version selects an environment, not a package.
+  if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS)
+    find_package(NeatInternals CONFIG REQUIRED)
+  else()
+    find_package(NeatInternals CONFIG QUIET)
+  endif()
   if (NeatInternals_FOUND)
     set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE ON)
     message(STATUS "Using exported NeatInternals package from ${NeatInternals_DIR}")
@@ -1489,10 +1469,11 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-imgcodecs406"
   # libsima_neat.so links libz directly to inflate model archives in process.
   "zlib1g"
-  "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
-  "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-gst-plugins (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  # Internals owns its release identity.  The release-locked SONAMEs recorded
+  # in the linked binaries are what actually bind this build to one Internals
+  # release, so no hand-built version range is declared here.
+  "neat-runtime"
+  "neat-gst-plugins"
 )
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
@@ -1514,13 +1495,10 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   # SimaNeatConfig calls find_dependency(ZLIB), and sima_neat_static exports ZLIB::ZLIB.
   "zlib1g-dev"
   "nlohmann-json3-dev"
-  "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  "neat-internals-dev"
+  # simaai-memory-lib-dev is platform-owned: name it, do not pin it.
+  "simaai-memory-lib-dev"
 )
-if (NOT SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
-  list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
-    "simaai-memory-lib-dev (= ${SIMANEAT_MEMORY_DEV_PACKAGE_VERSION})")
-endif()
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
     "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"

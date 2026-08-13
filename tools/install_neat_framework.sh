@@ -92,19 +92,6 @@ INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basena
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
-SIMAAI_MEMORY_DEBS=()
-SIMAAI_MEMORY_RUNTIME_DEB=""
-SIMAAI_MEMORY_DEV_DEB=""
-SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION=""
-SIMAAI_MEMORY_ACTUAL_VERSION=""
-SIMAAI_MEMORY_PAYLOAD_PATH=""
-SIMAAI_MEMORY_PAYLOAD_SHA256=""
-SIMAAI_MEMORY_PAYLOAD_BUILD_ID=""
-SIMAAI_MEMORY_PREINSTALL_PACKAGES=""
-SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=0
-SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
-SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
-SIMAAI_MEMORY_TRANSACTION_COMPLETE=0
 
 cleanup_installer_tmp_dirs() {
   local dir
@@ -732,20 +719,17 @@ collect_debs_in_install_order() {
   local -n out_array="${out_array_name}"
   out_array=()
 
-  # Install low-level runtime packages first, then LLiMa, then NEAT core/dev.
-  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib-dev_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-dev_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-tools_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-common_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'appcomplex_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-ev74-firmware_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-runtime_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-gst-plugins_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-internals-dev_*.deb'
+  # Forwarded Internals packages first, then LLiMa, then NEAT core/dev.  Which
+  # packages Internals delivered is Internals' decision, so nothing here names
+  # them; APT orders the transaction from their declared relationships.
+  local file basename_file
+  while IFS= read -r file; do
+    basename_file="$(basename "${file}")"
+    case "${basename_file}" in
+      sima-lmm-*.deb|sima-neat-*.deb) continue ;;
+    esac
+    out_array+=("${file}")
+  done < <(find "${search_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-lmm-*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-dev.deb'
@@ -885,19 +869,7 @@ cache_install_artifacts_in_sysroot() {
   log "Caching SDK install artifacts in sysroot: ${cache_dir}"
   run_sudo mkdir -p "${cache_dir}"
   run_sudo rm -f \
-    "${cache_dir}"/sima-neat-*-Linux-core.deb \
-    "${cache_dir}"/sima-neat-*-Linux-dev.deb \
-    "${cache_dir}"/neat-*.deb \
-    "${cache_dir}"/simaai-common*.deb \
-    "${cache_dir}"/simaai-memory-lib_*.deb \
-    "${cache_dir}"/simaai-memory-lib-dev_*.deb \
-    "${cache_dir}"/libcamera_*.deb \
-    "${cache_dir}"/libcamera-dev_*.deb \
-    "${cache_dir}"/libcamera-tools_*.deb \
-    "${cache_dir}"/neat-common_*.deb \
-    "${cache_dir}"/neat-appcomplex_*.deb \
-    "${cache_dir}"/appcomplex_*.deb \
-    "${cache_dir}"/sima-lmm-*.deb \
+    "${cache_dir}"/*.deb \
     "${cache_dir}"/*.whl \
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
@@ -1108,28 +1080,6 @@ print(match.group(1))
 ' "${dependency}" "${expected_version}"
 }
 
-palette_required_simaai_memory_version() {
-  local palette_version depends version
-  if deb_package_is_installed simaai-palette-modalix; then
-    palette_version="$(deb_package_installed_version simaai-palette-modalix)"
-    depends="$(dpkg-query -W -f='${Depends}' simaai-palette-modalix 2>/dev/null || true)"
-    version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
-    if [[ -z "${version}" ]]; then
-      echo "Installed simaai-palette-modalix=${palette_version} has no exact simaai-memory-lib dependency." >&2
-      return 1
-    fi
-    printf '%s\n' "${version}"
-    return 0
-  fi
-
-  palette_version="$(apt_candidate_version simaai-palette-modalix)"
-  if [[ -z "${palette_version}" || "${palette_version}" == "(none)" ]]; then
-    echo "Cannot discover the platform's required simaai-memory-lib revision: simaai-palette-modalix is not installed and has no APT candidate." >&2
-    return 1
-  fi
-  apt_exact_dependency_version simaai-palette-modalix "${palette_version}" simaai-memory-lib
-}
-
 board_debian_architecture() {
   dpkg --print-architecture
 }
@@ -1162,204 +1112,6 @@ if checksums:
 PY
 }
 
-collect_local_simaai_memory_debs() {
-  local deb package arch depends provides provided_version dev_runtime_version board_arch
-  local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
-
-  for deb in "${DEBS[@]}"; do
-    [[ -f "${deb}" ]] || continue
-    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    case "${package}" in
-      simaai-memory-lib)
-        if [[ -n "${runtime_deb}" ]]; then
-          echo "Artifact contains more than one simaai-memory-lib runtime DEB." >&2
-          return 1
-        fi
-        runtime_deb="${deb}"
-        ;;
-      simaai-memory-lib-dev)
-        if [[ -n "${dev_deb}" ]]; then
-          echo "Artifact contains more than one simaai-memory-lib-dev DEB." >&2
-          return 1
-        fi
-        dev_deb="${deb}"
-        ;;
-    esac
-  done
-
-  if [[ -z "${runtime_deb}" || -z "${dev_deb}" ]]; then
-    echo "The board artifact must bundle exactly one local simaai-memory-lib runtime and dev DEB." >&2
-    return 1
-  fi
-
-  SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION="$(palette_required_simaai_memory_version)" || return 1
-  board_arch="$(board_debian_architecture)" || return 1
-  runtime_version="$(dpkg-deb -f "${runtime_deb}" Version)"
-  dev_version="$(dpkg-deb -f "${dev_deb}" Version)"
-  if [[ -z "${runtime_version}" || "${dev_version}" != "${runtime_version}" ]]; then
-    echo "Bundled memory runtime/dev package versions must match: runtime=${runtime_version:-<missing>} dev=${dev_version:-<missing>}." >&2
-    return 1
-  fi
-  SIMAAI_MEMORY_ACTUAL_VERSION="${runtime_version}"
-
-  for deb in "${runtime_deb}" "${dev_deb}"; do
-    package="$(dpkg-deb -f "${deb}" Package)"
-    arch="$(dpkg-deb -f "${deb}" Architecture)"
-    if [[ "${arch}" != "${board_arch}" ]]; then
-      echo "Bundled ${package} has architecture ${arch}; board architecture is ${board_arch}." >&2
-      return 1
-    fi
-  done
-
-  provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations \
-    simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
-  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
-    return 1
-  fi
-
-  provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations \
-    simaai-memory-lib-dev "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
-  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
-    return 1
-  fi
-
-  depends="$(dpkg-deb -f "${dev_deb}" Depends 2>/dev/null || true)"
-  dev_runtime_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
-  if [[ "${dev_runtime_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib-dev must depend on simaai-memory-lib (= ${SIMAAI_MEMORY_ACTUAL_VERSION}); got ${depends:-<none>}." >&2
-    return 1
-  fi
-
-  SIMAAI_MEMORY_RUNTIME_DEB="${runtime_deb}"
-  SIMAAI_MEMORY_DEV_DEB="${dev_deb}"
-  SIMAAI_MEMORY_DEBS=("${runtime_deb}" "${dev_deb}")
-}
-
-validate_local_simaai_memory_payload() {
-  local extract_dir payload soname symbol build_id expected_deb_sha actual_deb_sha package_deb
-  local -a payloads=()
-  extract_dir="$(mktemp -d /tmp/sima-neat-memory-payload-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${extract_dir}")
-  dpkg-deb -x "${SIMAAI_MEMORY_RUNTIME_DEB}" "${extract_dir}"
-  mapfile -t payloads < <(find "${extract_dir}/usr/lib" -type f -name 'libsimaaimem.so.*' | sort)
-  if [[ "${#payloads[@]}" -ne 1 ]]; then
-    echo "Bundled simaai-memory-lib must contain exactly one versioned libsimaaimem payload; found ${#payloads[@]}." >&2
-    return 1
-  fi
-  payload="${payloads[0]}"
-
-  soname="$(LC_ALL=C readelf -d "${payload}" 2>/dev/null |
-    sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p' | head -n1)"
-  if [[ "${soname}" != "libsimaaimem.so.2" ]]; then
-    echo "Bundled simaai-memory-lib has unexpected SONAME ${soname:-<missing>}; expected libsimaaimem.so.2." >&2
-    return 1
-  fi
-  symbol="$(LC_ALL=C readelf -Ws "${payload}" 2>/dev/null |
-    awk '$8 == "simaai_memory_export_dmabuf_fd" { print $8; exit }')"
-  if [[ -z "${symbol}" ]]; then
-    echo "Bundled simaai-memory-lib is missing simaai_memory_export_dmabuf_fd." >&2
-    return 1
-  fi
-  build_id="$(LC_ALL=C readelf -n "${payload}" 2>/dev/null |
-    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
-  if [[ -z "${build_id}" ]]; then
-    echo "Bundled simaai-memory-lib payload has no ELF build ID." >&2
-    return 1
-  fi
-
-  for package_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
-    expected_deb_sha="$(artifact_checksum_for_file "${package_deb}")" || return 1
-    if [[ -n "${expected_deb_sha}" ]]; then
-      actual_deb_sha="$(sha256sum "${package_deb}" | awk '{print $1}')"
-      if [[ "${actual_deb_sha}" != "${expected_deb_sha}" ]]; then
-        echo "Bundled $(basename "${package_deb}") checksum does not match package metadata." >&2
-        return 1
-      fi
-    else
-      log "No resources-checksum entry was supplied for $(basename "${package_deb}"); installed payload identity will still be verified against the bundled DEB."
-    fi
-  done
-
-  SIMAAI_MEMORY_PAYLOAD_PATH="${payload#${extract_dir}}"
-  SIMAAI_MEMORY_PAYLOAD_SHA256="$(sha256sum "${payload}" | awk '{print $1}')"
-  SIMAAI_MEMORY_PAYLOAD_BUILD_ID="${build_id}"
-  log "Validated bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} (provides ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}) payload sha256=${SIMAAI_MEMORY_PAYLOAD_SHA256} build-id=${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}"
-}
-
-remove_local_simaai_memory_debs_from_general_transaction() {
-  local deb memory_deb is_memory
-  local -a remaining=()
-  for deb in "${DEBS[@]}"; do
-    is_memory=0
-    for memory_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
-      if [[ "${deb}" == "${memory_deb}" ]]; then
-        is_memory=1
-        break
-      fi
-    done
-    [[ "${is_memory}" -eq 1 ]] || remaining+=("${deb}")
-  done
-  DEBS=("${remaining[@]}")
-}
-
-snapshot_memory_transaction_guard_state() {
-  local ota_owner
-  SIMAAI_MEMORY_PREINSTALL_PACKAGES="$(mktemp /tmp/sima-neat-memory-packages-before-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${SIMAAI_MEMORY_PREINSTALL_PACKAGES}")
-  dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null |
-    awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${SIMAAI_MEMORY_PREINSTALL_PACKAGES}"
-
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=0
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
-  SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
-  if ! deb_package_is_installed simaai-palette-modalix; then
-    log "simaai-palette-modalix is not installed; the isolated memory transaction has no pre-existing palette/OTA state to preserve."
-    return 0
-  fi
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION="$(deb_package_installed_version simaai-palette-modalix)"
-  SIMAAI_MEMORY_PREINSTALL_OTA_PATH="$(command -v simaai-ota 2>/dev/null || true)"
-  if [[ -z "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" ]]; then
-    echo "simaai-ota is missing before the memory replacement." >&2
-    return 1
-  fi
-  ota_owner="$(dpkg-query -S "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" 2>/dev/null || true)"
-  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH} is not owned by simaai-palette-modalix before the memory replacement: ${ota_owner:-<unowned>}" >&2
-    return 1
-  fi
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=1
-}
-
-verify_memory_guard_palette_and_ota() {
-  local current_palette ota_path ota_owner
-  if [[ "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED:-0}" -ne 1 ]]; then
-    return 0
-  fi
-  if ! deb_package_is_installed simaai-palette-modalix; then
-    echo "simaai-palette-modalix was removed during NEAT installation." >&2
-    return 1
-  fi
-  current_palette="$(deb_package_installed_version simaai-palette-modalix)"
-  if [[ "${current_palette}" != "${SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION}" ]]; then
-    echo "simaai-palette-modalix changed from ${SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION} to ${current_palette}." >&2
-    return 1
-  fi
-  ota_path="$(command -v simaai-ota 2>/dev/null || true)"
-  if [[ "${ota_path}" != "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" ]]; then
-    echo "simaai-ota path changed or disappeared during NEAT installation: ${ota_path:-<missing>}." >&2
-    return 1
-  fi
-  ota_owner="$(dpkg-query -S "${ota_path}" 2>/dev/null || true)"
-  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "simaai-ota is no longer owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
-    return 1
-  fi
-}
-
 simaai_ota_command_path() {
   command -v simaai-ota 2>/dev/null || true
 }
@@ -1380,120 +1132,6 @@ verify_canonical_palette_and_ota_installation() {
     echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
     return 1
   fi
-}
-
-verify_installed_simaai_memory_payload() {
-  local installed_version installed_dev_version installed_sha installed_build_id owner
-  if ! deb_package_is_installed simaai-memory-lib; then
-    echo "simaai-memory-lib is not installed after the isolated replacement." >&2
-    return 1
-  fi
-  installed_version="$(deb_package_installed_version simaai-memory-lib)"
-  installed_dev_version="$(deb_package_installed_version simaai-memory-lib-dev 2>/dev/null || true)"
-  if [[ "${installed_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ||
-        "${installed_dev_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
-    echo "Installed memory runtime/dev versions do not match bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}: runtime=${installed_version:-<missing>} dev=${installed_dev_version:-<missing>}." >&2
-    return 1
-  fi
-  if [[ ! -f "${SIMAAI_MEMORY_PAYLOAD_PATH}" ]]; then
-    echo "Installed simaai-memory-lib payload is missing: ${SIMAAI_MEMORY_PAYLOAD_PATH}" >&2
-    return 1
-  fi
-  owner="$(dpkg-query -S "${SIMAAI_MEMORY_PAYLOAD_PATH}" 2>/dev/null || true)"
-  if [[ ! "${owner}" =~ ^simaai-memory-lib(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "Installed memory payload is not owned by simaai-memory-lib: ${owner:-<unowned>}." >&2
-    return 1
-  fi
-  installed_sha="$(sha256sum "${SIMAAI_MEMORY_PAYLOAD_PATH}" | awk '{print $1}')"
-  installed_build_id="$(LC_ALL=C readelf -n "${SIMAAI_MEMORY_PAYLOAD_PATH}" 2>/dev/null |
-    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
-  if [[ "${installed_sha}" != "${SIMAAI_MEMORY_PAYLOAD_SHA256}" ||
-        "${installed_build_id}" != "${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}" ]]; then
-    echo "Installed simaai-memory-lib payload does not match the bundled artifact." >&2
-    echo "  expected sha/build-id: ${SIMAAI_MEMORY_PAYLOAD_SHA256} / ${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}" >&2
-    echo "  installed sha/build-id: ${installed_sha:-<missing>} / ${installed_build_id:-<missing>}" >&2
-    return 1
-  fi
-  log "Verified installed simaai-memory-lib payload matches the bundled artifact."
-}
-
-verify_memory_transaction_preservation() {
-  local after missing audit_log
-  after="$(mktemp /tmp/sima-neat-memory-packages-after-XXXXXX)"
-  audit_log="$(mktemp /tmp/sima-neat-memory-dpkg-audit-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${after}" "${audit_log}")
-  dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null |
-    awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${after}"
-  missing="$(comm -23 "${SIMAAI_MEMORY_PREINSTALL_PACKAGES}" "${after}")"
-  if [[ -n "${missing}" ]]; then
-    echo "The isolated simaai-memory replacement removed preinstalled packages:" >&2
-    while IFS= read -r package; do
-      [[ -n "${package}" ]] && printf '  %s\n' "${package}" >&2
-    done <<<"${missing}"
-    return 1
-  fi
-  verify_memory_guard_palette_and_ota || return 1
-  if ! run_sudo apt-get check; then
-    echo "APT dependency check failed after the isolated simaai-memory replacement." >&2
-    return 1
-  fi
-  if ! dpkg --audit >"${audit_log}" 2>&1 || [[ -s "${audit_log}" ]]; then
-    echo "dpkg audit failed after the isolated simaai-memory replacement:" >&2
-    cat "${audit_log}" >&2
-    return 1
-  fi
-  if [[ "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED:-0}" -eq 1 ]]; then
-    log "Verified the isolated simaai-memory replacement removed no preinstalled packages and preserved simaai-palette-modalix/simaai-ota."
-  else
-    log "Verified the isolated simaai-memory replacement removed no preinstalled packages; no pre-existing palette/OTA state required preservation."
-  fi
-}
-
-local_simaai_memory_requires_atomic_downgrade() {
-  local package installed_version
-  for package in simaai-memory-lib simaai-memory-lib-dev; do
-    installed_version="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
-    if [[ -n "${installed_version}" ]] &&
-        dpkg --compare-versions "${installed_version}" gt "${SIMAAI_MEMORY_ACTUAL_VERSION}"; then
-      log "Installed ${package}=${installed_version} is newer than bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}; deferring the downgrade to the full package transaction."
-      return 0
-    fi
-  done
-  return 1
-}
-
-install_local_simaai_memory_transaction() {
-  local simulation_log
-  local -a apt_args=(apt-get install -y --reinstall --no-remove)
-
-  collect_local_simaai_memory_debs || return 1
-  validate_local_simaai_memory_payload || return 1
-  snapshot_memory_transaction_guard_state || return 1
-  if local_simaai_memory_requires_atomic_downgrade; then
-    return 0
-  fi
-  simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${simulation_log}")
-
-  log "Simulating isolated local simaai-memory replacement with package removal disabled."
-  if ! run_sudo "${apt_args[@]}" --simulate "${SIMAAI_MEMORY_DEBS[@]}" >"${simulation_log}" 2>&1; then
-    cat "${simulation_log}" >&2
-    echo "APT rejected the isolated local simaai-memory transaction; no packages were changed." >&2
-    return 1
-  fi
-  cat "${simulation_log}"
-  if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
-    echo "APT simulation planned package removal for the isolated simaai-memory transaction; refusing to continue." >&2
-    grep '^Remv[[:space:]]' "${simulation_log}" >&2
-    return 1
-  fi
-
-  log "Installing bundled simaai-memory runtime/dev packages in an isolated zero-removal transaction."
-  run_sudo "${apt_args[@]}" "${SIMAAI_MEMORY_DEBS[@]}" || return 1
-  verify_installed_simaai_memory_payload || return 1
-  verify_memory_transaction_preservation || return 1
-  SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
-  remove_local_simaai_memory_debs_from_general_transaction
 }
 
 local_deb_for_exact_package() {
@@ -1568,13 +1206,6 @@ native_modalix_restore_specs() {
 
   out_array=()
   for package in libcamera libcamera-tools simaai-memory-lib; do
-    # The bundled memory runtime/dev pair is installed and verified in its own
-    # zero-removal transaction. Never let this broader native-repair resolver
-    # substitute the repository's indistinguishable same-version payload.
-    if [[ "${package}" == "simaai-memory-lib" &&
-          "${SIMAAI_MEMORY_TRANSACTION_COMPLETE:-0}" -eq 1 ]]; then
-      continue
-    fi
     version="$(apt_exact_dependency_version \
       simaai-palette-modalix "${palette_version}" "${package}")" || {
       echo "simaai-palette-modalix=${palette_version} has no exact dependency on ${package}" >&2
@@ -2212,8 +1843,6 @@ complete_board_install_after_packages() {
   verify_private_dispatcher_runtime
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
-  verify_installed_simaai_memory_payload
-  verify_memory_guard_palette_and_ota
   verify_canonical_palette_and_ota_installation
   activate_board_runtime_after_install
   restart_board_codec_services
@@ -2394,17 +2023,12 @@ install_debs_on_board() {
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # Keep the isolated memory replacement away from an unhealthy APT state.
+  # Do not start a large package transaction from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
-    echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
+    echo "APT package state is unhealthy; refusing to install the Neat package set." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
-  if ! install_local_simaai_memory_transaction; then
-    echo "Failed to install the bundled simaai-memory payload without package removals." >&2
-    exit 1
-  fi
-  # Install the remaining packages without allowing memory-payload substitution.
 
   local -a board_install_specs=()
   local -A seen_install_specs=()
@@ -2439,7 +2063,6 @@ install_debs_on_board() {
 
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
-    SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
     complete_board_install_after_packages
     return 0
   fi
