@@ -56,6 +56,10 @@ void gst_simaai_memory_allocation_params_init(GstSimaaiAllocationParams* params)
 gboolean gst_simaai_memory_allocation_params_add_segment(GstSimaaiAllocationParams* params,
                                                          gsize size, const gchar* name);
 void* gst_simaai_memory_get_segment(const GstMemory* memory, const gchar* name);
+gboolean gst_simaai_memory_has_packed_segments(const GstMemory* memory);
+gint gst_simaai_memory_export_dmabuf_fd(const GstMemory* memory, const gchar* segment_name,
+                                        guint32 flags);
+void gst_simaai_segment_memory_mark_device_written(GstMemory* memory);
 
 GstBufferPool* gst_simaai_allocate_buffer_pool(GstObject* object, GstAllocator* allocator,
                                                guint buffer_size, guint min_buffers,

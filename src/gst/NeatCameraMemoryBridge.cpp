@@ -3,6 +3,7 @@
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/SimaMemApi.h"
 
+#include <gst/allocators/gstdmabuf.h>
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
@@ -10,10 +11,12 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <mutex>
 #include <new>
 #include <optional>
 #include <string>
+#include <unistd.h>
 
 namespace {
 
@@ -31,7 +34,136 @@ GST_DEBUG_CATEGORY_STATIC(gst_neat_camera_memory_bridge_debug_category);
 
 using GstNeatCameraMemoryBridge = struct _GstNeatCameraMemoryBridge;
 using GstNeatCameraMemoryBridgeClass = struct _GstNeatCameraMemoryBridgeClass;
+using GstNeatCameraDmaBufPool = struct _GstNeatCameraDmaBufPool;
+using GstNeatCameraDmaBufPoolClass = struct _GstNeatCameraDmaBufPoolClass;
 using AtomicCounter = std::atomic<guint64>;
+
+struct _GstNeatCameraDmaBufPool {
+  GstBufferPool parent;
+
+  GstAllocator* sima_allocator = nullptr;
+  GstAllocator* dmabuf_allocator = nullptr;
+  GstVideoInfo info{};
+  guint num_planes = 0;
+  gsize plane_sizes[GST_VIDEO_MAX_PLANES]{};
+};
+
+struct _GstNeatCameraDmaBufPoolClass {
+  GstBufferPoolClass parent_class;
+};
+
+#define GST_TYPE_NEAT_CAMERA_DMABUF_POOL (gst_neat_camera_dmabuf_pool_get_type())
+#define GST_NEAT_CAMERA_DMABUF_POOL(obj)                                                           \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_NEAT_CAMERA_DMABUF_POOL, GstNeatCameraDmaBufPool))
+
+GType gst_neat_camera_dmabuf_pool_get_type();
+
+G_DEFINE_TYPE(GstNeatCameraDmaBufPool, gst_neat_camera_dmabuf_pool, GST_TYPE_BUFFER_POOL)
+
+GstFlowReturn camera_dmabuf_pool_alloc_buffer(GstBufferPool* pool, GstBuffer** buffer,
+                                              GstBufferPoolAcquireParams* /*params*/) {
+  auto* self = GST_NEAT_CAMERA_DMABUF_POOL(pool);
+  static const gchar* const plane_names[GST_VIDEO_MAX_PLANES] = {"camera_y", "camera_uv",
+                                                                 "camera_v", "camera_plane3"};
+  GstSimaaiAllocationParams params;
+  gst_simaai_memory_allocation_params_init(&params);
+  params.parent.flags =
+      static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74 | GST_SIMAAI_MEMORY_FLAG_CACHED);
+  for (guint i = 0; i < self->num_planes; ++i) {
+    if (!gst_simaai_memory_allocation_params_add_segment(&params, self->plane_sizes[i],
+                                                         plane_names[i]))
+      return GST_FLOW_ERROR;
+  }
+
+  GstMemory* parent_memory =
+      gst_allocator_alloc(self->sima_allocator, GST_VIDEO_INFO_SIZE(&self->info), &params.parent);
+  if (!parent_memory)
+    return GST_FLOW_ERROR;
+  if (!gst_simaai_memory_has_packed_segments(parent_memory)) {
+    gst_memory_unref(parent_memory);
+    return GST_FLOW_ERROR;
+  }
+
+  GstBuffer* backing = gst_buffer_new();
+  gst_buffer_append_memory(backing, parent_memory);
+  GstBuffer* wrapper = gst_buffer_new();
+  for (guint i = 0; i < self->num_planes; ++i) {
+    gint fd = gst_simaai_memory_export_dmabuf_fd(parent_memory, plane_names[i], O_CLOEXEC);
+    if (fd < 0) {
+      gst_buffer_unref(wrapper);
+      gst_buffer_unref(backing);
+      return GST_FLOW_ERROR;
+    }
+
+    GstMemory* dmabuf =
+        gst_dmabuf_allocator_alloc(self->dmabuf_allocator, fd, self->plane_sizes[i]);
+    if (!dmabuf) {
+      close(fd);
+      gst_buffer_unref(wrapper);
+      gst_buffer_unref(backing);
+      return GST_FLOW_ERROR;
+    }
+    gst_buffer_append_memory(wrapper, dmabuf);
+  }
+
+  GstParentBufferMeta* parent_meta = gst_buffer_add_parent_buffer_meta(wrapper, backing);
+  if (!parent_meta) {
+    gst_buffer_unref(wrapper);
+    gst_buffer_unref(backing);
+    return GST_FLOW_ERROR;
+  }
+  GST_META_FLAGS(parent_meta) =
+      static_cast<GstMetaFlags>(GST_META_FLAGS(parent_meta) | GST_META_FLAG_POOLED);
+  gst_buffer_unref(backing);
+
+  GstVideoMeta* video_meta = gst_buffer_add_video_meta_full(
+      wrapper, GST_VIDEO_FRAME_FLAG_NONE, GST_VIDEO_INFO_FORMAT(&self->info),
+      GST_VIDEO_INFO_WIDTH(&self->info), GST_VIDEO_INFO_HEIGHT(&self->info),
+      GST_VIDEO_INFO_N_PLANES(&self->info), self->info.offset, self->info.stride);
+  if (!video_meta) {
+    gst_buffer_unref(wrapper);
+    return GST_FLOW_ERROR;
+  }
+  GST_META_FLAGS(video_meta) =
+      static_cast<GstMetaFlags>(GST_META_FLAGS(video_meta) | GST_META_FLAG_POOLED);
+
+  *buffer = wrapper;
+  return GST_FLOW_OK;
+}
+
+void camera_dmabuf_pool_reset_buffer(GstBufferPool* /*pool*/, GstBuffer* buffer) {
+  GST_BUFFER_FLAGS(buffer) = 0;
+  GST_BUFFER_PTS(buffer) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_DURATION(buffer) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_OFFSET(buffer) = GST_BUFFER_OFFSET_NONE;
+  GST_BUFFER_OFFSET_END(buffer) = GST_BUFFER_OFFSET_NONE;
+}
+
+void camera_dmabuf_pool_finalize(GObject* object) {
+  auto* self = GST_NEAT_CAMERA_DMABUF_POOL(object);
+  gst_clear_object(&self->sima_allocator);
+  gst_clear_object(&self->dmabuf_allocator);
+  G_OBJECT_CLASS(gst_neat_camera_dmabuf_pool_parent_class)->finalize(object);
+}
+
+const gchar** camera_dmabuf_pool_get_options(GstBufferPool* /*pool*/) {
+  static const gchar* options[] = {GST_BUFFER_POOL_OPTION_VIDEO_META, nullptr};
+  return options;
+}
+
+void gst_neat_camera_dmabuf_pool_class_init(GstNeatCameraDmaBufPoolClass* klass) {
+  auto* object_class = G_OBJECT_CLASS(klass);
+  auto* pool_class = GST_BUFFER_POOL_CLASS(klass);
+  object_class->finalize = camera_dmabuf_pool_finalize;
+  pool_class->get_options = camera_dmabuf_pool_get_options;
+  pool_class->alloc_buffer = camera_dmabuf_pool_alloc_buffer;
+  pool_class->reset_buffer = camera_dmabuf_pool_reset_buffer;
+}
+
+void gst_neat_camera_dmabuf_pool_init(GstNeatCameraDmaBufPool* self) {
+  self->dmabuf_allocator = gst_dmabuf_allocator_new();
+}
 
 #define GST_TYPE_NEAT_CAMERA_MEMORY_BRIDGE (gst_neat_camera_memory_bridge_get_type())
 #define GST_NEAT_CAMERA_MEMORY_BRIDGE(obj)                                                         \
@@ -51,6 +183,7 @@ struct _GstNeatCameraMemoryBridge {
 
   GstBufferPool* pool = nullptr;
   gsize pool_size = 0;
+  GstBufferPool* capture_pool = nullptr;
   gint64 sequence_id = 0;
   AtomicCounter passthrough_count;
   AtomicCounter copy_count;
@@ -109,6 +242,89 @@ void release_pool(GstNeatCameraMemoryBridge* self) {
   gst_simaai_free_buffer_pool(self->pool);
   self->pool = nullptr;
   self->pool_size = 0;
+}
+
+void release_capture_pool(GstNeatCameraMemoryBridge* self) {
+  if (!self)
+    return;
+  if (self->capture_pool)
+    gst_clear_object(&self->capture_pool);
+}
+
+GstBufferPool* create_capture_pool(GstNeatCameraMemoryBridge* self, GstCaps* caps,
+                                   GstQuery* allocation_query) {
+#if SIMA_HAS_SIMAAI_POOL
+  if (!self || !caps || !allocation_query)
+    return nullptr;
+  /* Rebuild for every negotiation. GstVideoMeta alignment requirements are
+   * carried by the query and can change even when caps remain identical. */
+  release_capture_pool(self);
+
+  GstVideoInfo info;
+  if (!gst_video_info_from_caps(&info, caps) || GST_VIDEO_INFO_N_PLANES(&info) == 0)
+    return nullptr;
+
+  const guint num_planes = GST_VIDEO_INFO_N_PLANES(&info);
+  gsize plane_sizes[GST_VIDEO_MAX_PLANES] = {};
+  GstVideoAlignment alignment;
+  gst_video_alignment_reset(&alignment);
+  const guint metas = gst_query_get_n_allocation_metas(allocation_query);
+  for (guint i = 0; i < metas; ++i) {
+    const GstStructure* params = nullptr;
+    if (gst_query_parse_nth_allocation_meta(allocation_query, i, &params) !=
+            GST_VIDEO_META_API_TYPE ||
+        !params)
+      continue;
+
+    guint padding = 0;
+    if (gst_structure_get_uint(params, "padding-top", &padding))
+      alignment.padding_top = std::max(alignment.padding_top, padding);
+    if (gst_structure_get_uint(params, "padding-bottom", &padding))
+      alignment.padding_bottom = std::max(alignment.padding_bottom, padding);
+    if (gst_structure_get_uint(params, "padding-left", &padding))
+      alignment.padding_left = std::max(alignment.padding_left, padding);
+    if (gst_structure_get_uint(params, "padding-right", &padding))
+      alignment.padding_right = std::max(alignment.padding_right, padding);
+  }
+  if (!gst_video_info_align(&info, &alignment))
+    return nullptr;
+
+  for (guint i = 0; i < num_planes; ++i) {
+    const gsize end = i + 1 < num_planes ? info.offset[i + 1] : info.size;
+    if (end <= info.offset[i])
+      return nullptr;
+    plane_sizes[i] = end - info.offset[i];
+  }
+
+  gst_neat_segment_memory_init_once();
+  GstAllocator* allocator = gst_neat_memory_get_segment_allocator();
+  if (!allocator)
+    return nullptr;
+
+  const guint buffers = std::max<guint>(1, self->num_buffers);
+  auto* capture_pool =
+      GST_NEAT_CAMERA_DMABUF_POOL(g_object_new(GST_TYPE_NEAT_CAMERA_DMABUF_POOL, nullptr));
+  capture_pool->sima_allocator = allocator;
+  capture_pool->info = info;
+  capture_pool->num_planes = num_planes;
+  std::copy_n(plane_sizes, num_planes, capture_pool->plane_sizes);
+
+  GstStructure* config = gst_buffer_pool_get_config(GST_BUFFER_POOL(capture_pool));
+  gst_buffer_pool_config_set_params(config, caps, info.size, buffers, buffers);
+  gst_buffer_pool_config_add_option(config, GST_BUFFER_POOL_OPTION_VIDEO_META);
+  if (!gst_buffer_pool_set_config(GST_BUFFER_POOL(capture_pool), config)) {
+    gst_object_unref(capture_pool);
+    return nullptr;
+  }
+
+  self->capture_pool = GST_BUFFER_POOL(capture_pool);
+  return GST_BUFFER_POOL(gst_object_ref(self->capture_pool));
+#else
+  (void)self;
+  (void)caps;
+  (void)allocation_query;
+  return nullptr;
+#endif
 }
 
 bool ensure_pool(GstNeatCameraMemoryBridge* self, gsize required_size) {
@@ -184,13 +400,6 @@ bool memory_is_simaai_segment(const GstMemory* memory) {
   const gchar* allocator_name = memory_allocator_name(memory);
   return g_strcmp0(allocator_name, "SimaaiSegmentMemory") == 0 ||
          g_strcmp0(allocator_name, "NeatSimaaiSegmentMemory") == 0;
-}
-
-bool allocator_is_simaai_segment(const GstAllocator* allocator) {
-  if (!allocator || !allocator->mem_type)
-    return false;
-  return g_strcmp0(allocator->mem_type, "SimaaiSegmentMemory") == 0 ||
-         g_strcmp0(allocator->mem_type, "NeatSimaaiSegmentMemory") == 0;
 }
 
 bool memory_is_ev74_simaai_segment(const GstMemory* memory) {
@@ -551,6 +760,69 @@ GstBuffer* stamp_passthrough_buffer(GstNeatCameraMemoryBridge* self, GstBuffer* 
   return out;
 }
 
+GstBuffer* find_simaai_parent(GstBuffer* buffer) {
+  GstBuffer* current = buffer;
+  for (unsigned int depth = 0; current && depth < 4; ++depth) {
+    if (buffer_is_single_ev74_simaai_segment(current))
+      return current;
+    GstParentBufferMeta* parent_meta = gst_buffer_get_parent_buffer_meta(current);
+    current = parent_meta ? parent_meta->buffer : nullptr;
+  }
+  return nullptr;
+}
+
+GstBuffer* unwrap_capture_dmabuf(GstNeatCameraMemoryBridge* self, GstBuffer* input) {
+  GstBuffer* backing = find_simaai_parent(input);
+  if (!backing || backing == input)
+    return nullptr;
+
+  GstVideoMeta* input_video_meta = gst_buffer_get_video_meta(input);
+
+  GstBuffer* output = gst_buffer_new();
+  const guint memories = gst_buffer_n_memory(backing);
+  for (guint i = 0; i < memories; ++i) {
+    GstMemory* memory = gst_buffer_peek_memory(backing, i);
+    gst_simaai_segment_memory_mark_device_written(memory);
+    gst_buffer_append_memory(output, gst_memory_ref(memory));
+  }
+  gst_buffer_copy_into(output, input,
+                       static_cast<GstBufferCopyFlags>(GST_BUFFER_COPY_FLAGS |
+                                                       GST_BUFFER_COPY_TIMESTAMPS |
+                                                       GST_BUFFER_COPY_META),
+                       0, -1);
+  /* GstLibcameraPool marks GstVideoMeta as pooled, so GStreamer deliberately
+   * omits it from GST_BUFFER_COPY_META. Recreate the standard layout metadata
+   * on the application-facing packed view. Encoders and ML preprocessors must
+   * not have to infer plane offsets and strides from caps alone. */
+  if (input_video_meta && !gst_buffer_get_video_meta(output) &&
+      !gst_buffer_add_video_meta_full(output, input_video_meta->flags, input_video_meta->format,
+                                      input_video_meta->width, input_video_meta->height,
+                                      input_video_meta->n_planes, input_video_meta->offset,
+                                      input_video_meta->stride)) {
+    gst_buffer_unref(output);
+    return nullptr;
+  }
+  /* Keep libcamera's wrapper (and therefore its FrameWrap) outstanding until
+   * the downstream consumer releases this SiMa-memory view. Otherwise the
+   * camera could QBUF the same DMA-BUF again while an encoder/ML stage still
+   * owns the frame. Replace the copied backing meta with the complete wrapper
+   * chain so buffer lifetime, not just allocation lifetime, is preserved. */
+  while (GstParentBufferMeta* parent = gst_buffer_get_parent_buffer_meta(output))
+    gst_buffer_remove_meta(output, &parent->parent);
+  if (!gst_buffer_add_parent_buffer_meta(output, input)) {
+    gst_buffer_unref(output);
+    return nullptr;
+  }
+
+  const guint64 phys = first_buffer_phys(output);
+  if (!phys || !stamp_sima_meta(self, output, phys, true)) {
+    gst_buffer_unref(output);
+    return nullptr;
+  }
+  self->passthrough_count.fetch_add(1, std::memory_order_relaxed);
+  return output;
+}
+
 gsize required_copy_size(GstNeatCameraMemoryBridge* self, GstBuffer* input) {
   if (!self || !input)
     return 0;
@@ -681,6 +953,11 @@ GstFlowReturn bridge_chain(GstPad* /*pad*/, GstObject* parent, GstBuffer* input)
     return gst_pad_push(self->srcpad, out);
   }
 
+  if ((out = unwrap_capture_dmabuf(self, input))) {
+    gst_buffer_unref(input);
+    return gst_pad_push(self->srcpad, out);
+  }
+
   if (buffer_is_ev74_simaai_segment(input) && debug_enabled(self)) {
     GST_INFO_OBJECT(self,
                     "copying multi-memory EV74 camera buffer into one packed EV74 buffer "
@@ -720,47 +997,34 @@ gboolean bridge_sink_event(GstPad* pad, GstObject* parent, GstEvent* event) {
   }
 }
 
-bool allocation_query_has_simaai_allocator(GstQuery* query) {
-  const guint count = gst_query_get_n_allocation_params(query);
-  for (guint i = 0; i < count; ++i) {
-    GstAllocator* allocator = nullptr;
-    GstAllocationParams params;
-    gst_query_parse_nth_allocation_param(query, i, &allocator, &params);
-    if (allocator_is_simaai_segment(allocator))
-      return true;
-  }
-  return false;
-}
-
 gboolean bridge_sink_query(GstPad* pad, GstObject* parent, GstQuery* query) {
   auto* self = GST_NEAT_CAMERA_MEMORY_BRIDGE(parent);
   if (GST_QUERY_TYPE(query) != GST_QUERY_ALLOCATION)
     return gst_pad_query_default(pad, parent, query);
 
-  // First preserve pools, allocators, and metadata requested by later
-  // consumers. Then make Neat's allocator policy visible to the producer using
-  // GStreamer's standard downstream ALLOCATION negotiation.
+  // First preserve pools and metadata requested by later consumers. Then offer
+  // a standard DMA-BUF pool to the producer. The pool privately retains Neat
+  // memory as its backing, so the producer never depends on a Neat API.
   (void)gst_pad_peer_query(self->srcpad, query);
   if (!gst_query_find_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr))
     gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr);
 
-#if SIMA_HAS_SIMAAI_POOL
-  if (!allocation_query_has_simaai_allocator(query)) {
-    gst_neat_segment_memory_init_once();
-    GstAllocator* allocator = gst_neat_memory_get_segment_allocator();
-    if (!allocator) {
-      GST_WARNING_OBJECT(self, "Neat SiMaAI allocator unavailable for ALLOCATION query");
-    } else {
-      GstAllocationParams params;
-      gst_allocation_params_init(&params);
-      params.flags = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74 |
-                                                 GST_SIMAAI_MEMORY_FLAG_CACHED);
-      gst_query_add_allocation_param(query, allocator, &params);
-      gst_object_unref(allocator);
-      self->allocation_proposal_count.fetch_add(1, std::memory_order_relaxed);
-    }
+  GstCaps* caps = nullptr;
+  gst_query_parse_allocation(query, &caps, nullptr);
+  GstBufferPool* pool = create_capture_pool(self, caps, query);
+  if (!pool) {
+    GST_WARNING_OBJECT(self, "Unable to create Neat DMA-BUF capture pool");
+  } else {
+    GstStructure* config = gst_buffer_pool_get_config(pool);
+    guint size = 0;
+    guint min_buffers = 0;
+    guint max_buffers = 0;
+    gst_buffer_pool_config_get_params(config, nullptr, &size, &min_buffers, &max_buffers);
+    gst_structure_free(config);
+    gst_query_add_allocation_pool(query, pool, size, min_buffers, max_buffers);
+    gst_object_unref(pool);
+    self->allocation_proposal_count.fetch_add(1, std::memory_order_relaxed);
   }
-#endif
   return TRUE;
 }
 
@@ -849,6 +1113,7 @@ void bridge_get_property(GObject* object, guint property_id, GValue* value, GPar
 
 void bridge_finalize(GObject* object) {
   auto* self = GST_NEAT_CAMERA_MEMORY_BRIDGE(object);
+  release_capture_pool(self);
   release_pool(self);
   if (self->buffer_name) {
     g_string_free(self->buffer_name, TRUE);
@@ -884,6 +1149,7 @@ GstStateChangeReturn bridge_change_state(GstElement* element, GstStateChange tra
                       self->copied_bytes.load(std::memory_order_relaxed),
                       self->rejected_count.load(std::memory_order_relaxed));
     }
+    release_capture_pool(self);
     release_pool(self);
   }
   return GST_ELEMENT_CLASS(gst_neat_camera_memory_bridge_parent_class)
@@ -963,7 +1229,7 @@ void gst_neat_camera_memory_bridge_class_init(GstNeatCameraMemoryBridgeClass* kl
   g_object_class_install_property(
       gobject_class, PROP_ALLOCATION_PROPOSAL_COUNT,
       g_param_spec_uint64("allocation-proposal-count", "Allocation proposal count",
-                          "Number of downstream ALLOCATION queries given Neat's allocator", 0,
+                          "Number of downstream ALLOCATION queries given Neat's DMA-BUF pool", 0,
                           G_MAXUINT64, 0,
                           static_cast<GParamFlags>(G_PARAM_READABLE | G_PARAM_STATIC_STRINGS)));
 }
@@ -982,6 +1248,7 @@ void gst_neat_camera_memory_bridge_init(GstNeatCameraMemoryBridge* self) {
   self->silent = TRUE;
   self->pool = nullptr;
   self->pool_size = 0;
+  self->capture_pool = nullptr;
   self->sequence_id = 0;
   self->passthrough_count.store(0, std::memory_order_relaxed);
   self->copy_count.store(0, std::memory_order_relaxed);

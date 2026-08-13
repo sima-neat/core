@@ -143,8 +143,9 @@ std::string CameraInput::backend_fragment(int node_index) const {
 
   // Keep the memory-policy element adjacent to libcamerasrc.  In addition to
   // validating (or adapting) buffers, the bridge answers the source's
-  // downstream ALLOCATION query with Neat's SiMaAI allocator.  A queue must not
-  // sit between the producer and the element that owns this negotiation.
+  // downstream ALLOCATION query with a standard DMA-BUF pool backed privately
+  // by Neat's SiMaAI allocator. A queue must not sit between the producer and
+  // the element that owns this negotiation.
   ss << " ! neatcamerabridge name=" << camera_bridge_name(node_index);
   ss << " buffer-name=" << gst_quote(opt_.buffer_name);
   const std::uint32_t bridgeBufferCount = opt_.capture_buffer_count > 0
