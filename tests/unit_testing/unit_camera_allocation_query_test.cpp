@@ -75,15 +75,19 @@ void print_bus_error(GstMessage* message) {
 }
 
 void prove_live_camera_negotiation() {
-  const char* description =
-      "libcamerasrc name=camera-src camera-name=\"og05c10 5-0036\" "
+  const char* configured_camera = std::getenv("SIMA_TEST_CAMERA_NAME");
+  const char* camera =
+      configured_camera && *configured_camera ? configured_camera : "og05c10 5-0036";
+  const std::string description =
+      "libcamerasrc name=camera-src camera-name=\"" + std::string(camera) +
+      "\" "
       "buffer-count=32 simaai-zero-copy-required=true ! "
       "video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1 ! "
       "neatcamerabridge name=bridge copy-allowed=false num-buffers=32 ! "
       "appsink name=sink sync=false emit-signals=false max-buffers=32 drop=false";
 
   GError* error = nullptr;
-  GstElement* pipeline = gst_parse_launch(description, &error);
+  GstElement* pipeline = gst_parse_launch(description.c_str(), &error);
   if (!pipeline) {
     const std::string message = error ? error->message : "unknown parse error";
     g_clear_error(&error);
@@ -128,6 +132,12 @@ void prove_live_camera_negotiation() {
   g_object_get(bridge, "allocation-proposal-count", &proposals, "passthrough-count", &passthrough,
                "copy-count", &copies, "rejected-count", &rejected, nullptr);
 
+  std::cout << "LIVE_METRICS camera=\"" << camera << "\" samples=" << samples
+            << " active=" << static_cast<bool>(active)
+            << " negotiated=" << static_cast<bool>(negotiated) << " zero_copy_frames=" << frames
+            << " proposals=" << proposals << " passthrough=" << passthrough << " copies=" << copies
+            << " rejected=" << rejected << '\n';
+
   gst_element_set_state(pipeline, GST_STATE_NULL);
   gst_object_unref(bus);
   gst_object_unref(sink);
@@ -148,6 +158,10 @@ void prove_live_camera_negotiation() {
 
 int main(int argc, char** argv) {
   gst_init(&argc, &argv);
+  if (!gst_meta_get_info("GstSimaMeta")) {
+    static const gchar* tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
+    gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr);
+  }
   try {
     prove_allocator_proposal();
     if (std::getenv("SIMA_TEST_CAMERA_ALLOCATION_QUERY"))
