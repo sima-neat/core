@@ -1,8 +1,5 @@
-"""Core consumes one selected Internals release without reinterpreting it."""
-
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,7 +18,6 @@ def installer() -> str:
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
     def test_internals_is_located_without_a_derived_version(self) -> None:
-        """platform-version selects an environment, never an Internals release."""
         text = cmake()
         self.assertIn("find_package(NeatInternals CONFIG REQUIRED)", text)
         self.assertNotIn(
@@ -43,18 +39,15 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             self.assertIn(kept, text, kept)
 
     def test_no_configure_time_bundled_memory_requirement(self) -> None:
-        """Memory comes from the platform, not from the Internals artifact."""
         text = cmake()
         self.assertNotIn("SIMANEAT_MEMORY_DEV_PACKAGE_VERSION", text)
         self.assertNotIn("SIMANEAT_BUNDLED_MEMORY_DEV_DEBS", text)
         self.assertNotIn("simaai-memory-lib-dev (=", text)
-        # It is still named so downstream C++ apps can link on a DevKit.
         self.assertIn('"simaai-memory-lib-dev"', text)
 
     def test_every_delivered_internals_package_is_forwarded(self) -> None:
         text = build_script()
         self.assertIn('for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do', text)
-        # No filename whitelist decides what reaches the artifact.
         for removed in (
             '"${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb',
             "dist/simaai-common*.deb",
@@ -75,20 +68,19 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         ):
             self.assertNotIn(removed, text, removed)
 
-    def test_installer_keeps_no_internals_package_filename_list(self) -> None:
+    def test_installer_consumes_every_manifest_deb(self) -> None:
         text = installer()
-        for removed in (
-            "'simaai-memory-lib_*.deb'",
-            "'libcamera-tools_*.deb'",
-            "'neat-common_*.deb'",
-            "'neat-internals-dev_*.deb'",
-        ):
-            self.assertNotIn(removed, text, removed)
-        # Core's own artifacts still install last.
-        self.assertIn("'sima-neat-*-Linux-core.deb'", text)
+        start = text.index("collect_debs_in_install_order()")
+        end = text.index("\nsysroot_path()", start)
+        function = text[start:end]
+        self.assertIn(
+            'append_matching_files "${out_array_name}" "${search_dir}" \'*.deb\'',
+            function,
+        )
+        for package in ("neat-runtime", "libcamera", "sima-lmm", "sima-neat"):
+            self.assertNotIn(package, function)
 
     def test_installer_still_repairs_platform_packages_from_the_platform(self) -> None:
-        """Memory/libcamera are repaired from the platform repository."""
         text = installer()
         self.assertIn(
             "for package in libcamera libcamera-tools simaai-memory-lib; do", text

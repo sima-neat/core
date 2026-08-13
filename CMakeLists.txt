@@ -209,10 +209,6 @@ math(EXPR SIMANEAT_NEXT_PACKAGE_MINOR "${SIMANEAT_PACKAGE_BASE_VERSION_MINOR} + 
 set(SIMANEAT_DEP_PACKAGE_MIN_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 set(SIMANEAT_DEP_PACKAGE_MAX_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION_MAJOR}.${SIMANEAT_NEXT_PACKAGE_MINOR}.0")
 
-# Memory comes from the selected platform environment.  Core does not read a
-# bundled memory package out of the Internals artifact, and does not
-# propagate an exact memory version into its own dependencies.
-
 # Debian package versions do not allow underscores. Keep branch-derived versions
 # installable by normalizing every non-Debian-version character to '-'.
 string(REGEX REPLACE "[^A-Za-z0-9.+~-]" "-" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
@@ -371,9 +367,6 @@ endif()
 
 set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE OFF)
 if (SIMANEAT_USE_EXPORTED_NEAT_INTERNALS)
-  # The resolved Internals artifact decides which release this is.  Core does
-  # not ask for a version, and never passes platform-version as an Internals
-  # version: platform-version selects an environment, not a package.
   if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS)
     find_package(NeatInternals CONFIG REQUIRED)
   else()
@@ -1469,9 +1462,6 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-imgcodecs406"
   # libsima_neat.so links libz directly to inflate model archives in process.
   "zlib1g"
-  # Internals owns its release identity.  The release-locked SONAMEs recorded
-  # in the linked binaries are what actually bind this build to one Internals
-  # release, so no hand-built version range is declared here.
   "neat-runtime"
   "neat-gst-plugins"
 )
@@ -1496,7 +1486,6 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   "zlib1g-dev"
   "nlohmann-json3-dev"
   "neat-internals-dev"
-  # simaai-memory-lib-dev is platform-owned: name it, do not pin it.
   "simaai-memory-lib-dev"
 )
 if (SimaLMM_FOUND)

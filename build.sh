@@ -1666,8 +1666,6 @@ collect_install_artifact_files() {
     out_files_ref+=("${file}")
   done
 
-  # Forward every package the selected Internals artifact delivered.  Internals
-  # decides what that set is; Core does not filter it or keep a list of its own.
   for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
@@ -2372,14 +2370,11 @@ build_extras_archive_if_requested() {
 }
 
 stage_package_artifacts_to_dist() {
-  # Keep dist/ as the complete local artifact directory for full builds.
   if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
     return 0
   fi
 
   mkdir -p dist
-  # Everything staged below is re-copied from its source directory, so clear
-  # the previously staged packages wholesale instead of naming each one.
   rm -f \
     dist/*.deb \
     dist/*-Linux-extras.tar.gz \
@@ -2461,19 +2456,6 @@ PY
   echo "Updated dist/manifest.json platform-version, modelzoo-version, and abi-version from ${NEAT_DEPS_MANIFEST}"
 }
 
-append_dist_manifest_forwarded_packages() {
-  local manifest_path="$1"
-  local file basename_file
-
-  while IFS= read -r file; do
-    basename_file="$(basename "${file}")"
-    case "${basename_file}" in
-      sima-lmm-*.deb|sima-neat-*.deb) continue ;;
-    esac
-    printf '%s\n' "${basename_file}" >> "${manifest_path}"
-  done < <(find dist -maxdepth 1 -type f -name '*.deb' | sort)
-}
-
 append_dist_manifest_matches() {
   local manifest_path="$1"
   local pattern="$2"
@@ -2505,13 +2487,7 @@ write_install_manifest() {
     echo "# Keep this file next to ${NEAT_PACKAGE_INSTALL_SCRIPT}."
   } > "${manifest_path}"
 
-  # Internals packages first, then LLiMa, then Core's own artifacts.  Which
-  # packages Internals delivered is Internals' decision, so nothing here names
-  # them.
-  append_dist_manifest_forwarded_packages "${manifest_path}"
-  append_dist_manifest_matches "${manifest_path}" 'sima-lmm-*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-dev.deb'
+  append_dist_manifest_matches "${manifest_path}" '*.deb'
   append_dist_manifest_matches "${manifest_path}" '*.whl'
 
   echo "Built install manifest: ${manifest_path}"

@@ -28,11 +28,7 @@ set -euo pipefail
 # Expected working directory:
 # - Directory containing:
 #   - one .whl file
-#   - sima-neat-*-Linux-core.deb
-#   - sima-neat-*-Linux-dev.deb
-#   - neat-*.deb / simaai-common*.deb runtime dependencies
-#   - appcomplex_*.deb legacy runtime dependency packages when present
-#   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-cli.deb / sima-lmm-*-Linux-dev.deb
+#   - the Debian packages delivered by the selected Internals, LLiMa, and Core artifacts
 #   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
@@ -718,21 +714,7 @@ collect_debs_in_install_order() {
   local out_array_name="$2"
   local -n out_array="${out_array_name}"
   out_array=()
-
-  # Forwarded Internals packages first, then LLiMa, then NEAT core/dev.  Which
-  # packages Internals delivered is Internals' decision, so nothing here names
-  # them; APT orders the transaction from their declared relationships.
-  local file basename_file
-  while IFS= read -r file; do
-    basename_file="$(basename "${file}")"
-    case "${basename_file}" in
-      sima-lmm-*.deb|sima-neat-*.deb) continue ;;
-    esac
-    out_array+=("${file}")
-  done < <(find "${search_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
-  append_matching_files "${out_array_name}" "${search_dir}" 'sima-lmm-*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-dev.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" '*.deb'
 }
 
 sysroot_path() {
