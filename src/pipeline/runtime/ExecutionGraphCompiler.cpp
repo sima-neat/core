@@ -2412,6 +2412,21 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
   resolve_default_endpoints(graph, plan);
 }
 
+void validate_routable_pcie_source_outputs(const ExecutionGraphPlan& plan) {
+  for (const auto& segment : plan.pipeline_segments) {
+    if (segment.consumed_by_fused_realtime_ingress || segment.output_edges.size() <= 1U) {
+      continue;
+    }
+    const bool is_pcie_source =
+        std::any_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
+          return dynamic_cast<const simaai::neat::PCIeSrc*>(node.get()) != nullptr;
+        });
+    if (is_pcie_source) {
+      throw std::runtime_error("PCIeSrc multi-pad outputs require a fused realtime decoder fan-in");
+    }
+  }
+}
+
 struct NamedEndpointCandidate {
   Endpoint endpoint;
   std::size_t vertex = 0;
@@ -2995,6 +3010,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     // Fusion is an execution-plan lowering, not a public build mode. Eligible live
     // fan-in is fused automatically; ineligible topology remains segmented.
     fuse_realtime_fan_in_segments(lowering.graph, &plan);
+    validate_routable_pcie_source_outputs(plan);
     map_named_public_endpoints(runtime_node_for_vertex, graph_range_by_node, view.vertices,
                                view.named_fragments, &plan);
     map_explicit_public_vertex_endpoints(runtime_node_for_vertex, view.vertices, &plan);

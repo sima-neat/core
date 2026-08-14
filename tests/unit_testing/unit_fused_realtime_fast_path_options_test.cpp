@@ -670,6 +670,26 @@ RUN_TEST(
       require(composed_pipeline.find(composed_queue + " ! appsink") == std::string::npos,
               "actual composed fused graph must not queue before its terminal Output");
 
+      simaai::neat::Graph unsupported_pcie_app("unsupported_named_pcie_fan_out", outer_options);
+      auto unsupported_pcie_source = simaai::neat::nodes::PCIeSrc({});
+      for (int stream = 0; stream < 2; ++stream) {
+        simaai::neat::Graph decoder("independent_pcie_decoder" + std::to_string(stream));
+        decoder.add(simaai::neat::nodes::SimaDecode());
+        decoder.add(simaai::neat::nodes::Output("frame_" + std::to_string(stream)));
+        unsupported_pcie_app.connect(unsupported_pcie_source, "src_" + std::to_string(stream),
+                                     decoder);
+      }
+      bool rejected_unsupported_pcie_fan_out = false;
+      try {
+        (void)simaai::neat::runtime::compile_public_graph(unsupported_pcie_app,
+                                                          composed_run_options);
+      } catch (const std::runtime_error& e) {
+        rejected_unsupported_pcie_fan_out =
+            std::string(e.what()).find("PCIeSrc multi-pad outputs require") != std::string::npos;
+      }
+      require(rejected_unsupported_pcie_fan_out,
+              "non-fusible PCIe multi-pad output must be rejected during compilation");
+
       const std::string no_output_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(
               fused_segment->nodes, fused_segment->route_options, fused_link_options,
