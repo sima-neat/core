@@ -568,13 +568,18 @@ NB_MODULE(_pyneatpcie_core, m) {
           },
           "readiness_timeout_ms"_a = 180000)
       .def("running", &pcie::Model::running)
-      .def("close", &pcie::Model::close)
+      .def("close",
+           [](pcie::Model& model) {
+             nb::gil_scoped_release release;
+             model.close();
+           })
       .def(
           "__enter__", [](pcie::Model& model) -> pcie::Model& { return model; },
           nb::rv_policy::reference_internal)
       .def(
           "__exit__",
           [](pcie::Model& model, nb::handle, nb::handle, nb::handle) {
+            nb::gil_scoped_release release;
             model.close();
             return false;
           },

@@ -275,8 +275,8 @@ public:
 
 private:
   static void validate_queue(const int queue) {
-    if (queue < 0 || queue > 5) {
-      throw std::invalid_argument("queue must be in range 0..5");
+    if (queue < 0 || queue > 3) {
+      throw std::invalid_argument("queue must be in range 0..3");
     }
   }
 
