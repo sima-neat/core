@@ -80,11 +80,15 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         for package in ("neat-runtime", "libcamera", "sima-lmm", "sima-neat"):
             self.assertNotIn(package, function)
 
-    def test_installer_still_repairs_platform_packages_from_the_platform(self) -> None:
+    def test_installer_does_not_resolve_platform_package_versions(self) -> None:
         text = installer()
-        self.assertIn(
-            "for package in libcamera libcamera-tools simaai-memory-lib; do", text
-        )
+        for removed in (
+            "apt_candidate_version",
+            "apt_exact_dependency_version",
+            "native_modalix_restore_specs",
+            "native_modalix_repair_is_required",
+        ):
+            self.assertNotIn(removed, text)
 
 
 if __name__ == "__main__":
