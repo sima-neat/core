@@ -525,11 +525,10 @@ trap 'rm -rf "${tmp}"' EXIT
 global="${tmp}/loader"
 runtime="${global}/neat/runtime"
 mkdir -p "${runtime}"
-touch "${runtime}/libneatdispatchercore.so.1.0.0"
-ln -s libneatdispatchercore.so.1.0.0 "${runtime}/libneatdispatchercore.so.1"
+touch "${runtime}/libneatdispatchercore.so.0.4.0"
 dispatcher_global_lib_dir() { printf '%s\n' "${global}"; }
 dispatcher_private_runtime_dir() { printf '%s\n' "${runtime}"; }
-readelf() { printf '%s\n' ' 0x000000000000000e (SONAME) Library soname: [libneatdispatchercore.so.1]'; }
+readelf() { printf '%s\n' ' 0x000000000000000e (SONAME) Library soname: [libneatdispatchercore.so.0.4.0]'; }
 dpkg-query() { printf 'neat-runtime: %s\n' "$2"; }
 verify_private_dispatcher_runtime
 printf 'PRIVATE_OK\n'

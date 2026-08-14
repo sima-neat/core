@@ -1275,7 +1275,7 @@ verify_private_dispatcher_runtime() {
   runtime_file="${runtime_files[0]}"
   soname="$(LC_ALL=C readelf -d "${runtime_file}" 2>/dev/null |
     sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p' | head -n1)"
-  if [[ ! "${soname}" =~ ^libneatdispatchercore\.so\.[1-9][0-9]*$ ]]; then
+  if [[ ! "${soname}" =~ ^libneatdispatchercore\.so\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Private dispatcher must have a versioned SONAME; got ${soname:-<missing>} from ${runtime_file}." >&2
     return 1
   fi
