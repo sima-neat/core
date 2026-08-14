@@ -58,6 +58,8 @@ def _connection() -> pcie.ConnectionOptions:
 def _connection_for_queue(queue: int) -> pcie.ConnectionOptions:
   conn = _connection()
   conn.queue = queue
+  if conn.card_gst_debug_file:
+    conn.card_gst_debug_file = conn.card_gst_debug_file.replace("{queue}", str(queue))
   return conn
 
 
@@ -411,15 +413,37 @@ def test_tensor_parallel_queues_yolov8():
       info = runtime.info()
       inputs = _make_inputs(info)
 
-      def push_once():
-        assert runtime.push(inputs)
-
-      def pull_once():
+      for iteration in range(1, sync_iterations + 1):
+        assert runtime.push(inputs), (
+            f"queue {queue} synchronous push {iteration}/{sync_iterations} returned false"
+        )
         outputs = runtime.pull(_pull_timeout_ms())
-        assert outputs is not None
+        assert outputs is not None, (
+            f"queue {queue} synchronous pull {iteration}/{sync_iterations} "
+            f"timed out after {_pull_timeout_ms()} ms"
+        )
         _assert_outputs_match_metadata(outputs, info.outputs)
 
-      _run_sync_push_pull(push_once, pull_once, sync_iterations)
+      push_iteration = 0
+      pull_iteration = 0
+
+      def push_once():
+        nonlocal push_iteration
+        push_iteration += 1
+        assert runtime.push(inputs), (
+            f"queue {queue} asynchronous push {push_iteration}/{iterations} returned false"
+        )
+
+      def pull_once():
+        nonlocal pull_iteration
+        pull_iteration += 1
+        outputs = runtime.pull(_pull_timeout_ms())
+        assert outputs is not None, (
+            f"queue {queue} asynchronous pull {pull_iteration}/{iterations} "
+            f"timed out after {_pull_timeout_ms()} ms"
+        )
+        _assert_outputs_match_metadata(outputs, info.outputs)
+
       _run_async_push_pull(push_once, pull_once, iterations, runtime.close)
       return queue
     finally:

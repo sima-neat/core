@@ -189,13 +189,16 @@ TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owne
     return out;
   }
   HostPcieChannel::validate_output_payload_size(owner->map.size, facts.packed_output_bytes);
-  std::size_t offset = 0;
   for (std::size_t i = 0; i < facts.outputs.size(); ++i) {
     const auto& fact = facts.outputs[i];
+    if (fact.payload_offset > owner->map.size ||
+        fact.size_bytes > owner->map.size - fact.payload_offset) {
+      throw std::runtime_error("PCIe output '" + fact.name + "' exceeds the received payload span");
+    }
 
     Tensor tensor;
     tensor.owner = owner;
-    tensor.data = static_cast<std::uint8_t*>(owner->map.data) + offset;
+    tensor.data = static_cast<std::uint8_t*>(owner->map.data) + fact.payload_offset;
     tensor.size_bytes = fact.size_bytes;
     tensor.dtype = dtype_from_fact(fact.dtype);
     tensor.layout = TensorLayout::Unknown;
@@ -210,7 +213,6 @@ TensorList tensors_from_output_payload(const std::shared_ptr<MappedSample>& owne
     tensor.route.physical_index = fact.physical_index;
     tensor.route.physical_byte_offset = fact.byte_offset;
     out.push_back(std::move(tensor));
-    offset += fact.size_bytes;
   }
   return out;
 }
@@ -351,6 +353,7 @@ std::string HostPcieChannel::caps_for_tensors(const TensorList& tensors) {
 
 void HostPcieChannel::start_with_caps(const std::string& caps_string,
                                       const std::size_t submitted_payload_bytes) {
+  throw_if_stopped();
   if (!configured_) {
     throw std::runtime_error("host PCIe channel is not configured");
   }
@@ -438,7 +441,6 @@ void HostPcieChannel::start_with_caps(const std::string& caps_string,
     stop_locked();
     throw std::runtime_error("failed to set host PCIe pipeline to PLAYING");
   }
-  stop_requested_.store(false);
   running_.store(true);
   GstBus* bus = gst_element_get_bus(pipeline_);
   if (!bus) {
@@ -578,12 +580,15 @@ bool HostPcieChannel::push(const TensorList& tensors) {
   if (tensors.empty()) {
     throw std::runtime_error("PCIe payload requires at least one tensor");
   }
+  throw_if_stopped();
   PreparedPayload payload = prepare_tensor_payload(tensors);
   if (!wait_and_reserve_inflight()) {
-    throw std::runtime_error("host PCIe channel stopped while waiting for capacity");
+    throw_if_stopped();
+    throw std::runtime_error("host PCIe channel could not reserve transport capacity");
   }
   std::lock_guard<std::mutex> lock(send_mutex_);
   try {
+    throw_if_stopped();
     start_with_caps(caps_for_tensors(tensors), payload.size_bytes);
     return push_prepared_payload(next_request_id_.fetch_add(1), std::move(payload));
   } catch (...) {
@@ -596,12 +601,15 @@ bool HostPcieChannel::try_push(const std::int32_t request_id, const TensorList& 
   if (tensors.empty()) {
     throw std::runtime_error("PCIe payload requires at least one tensor");
   }
+  throw_if_stopped();
   if (!reserve_inflight()) {
+    throw_if_stopped();
     return false;
   }
   try {
     PreparedPayload payload = prepare_tensor_payload(tensors);
     std::lock_guard<std::mutex> lock(send_mutex_);
+    throw_if_stopped();
     start_with_caps(caps_for_tensors(tensors), payload.size_bytes);
     return push_prepared_payload(request_id, std::move(payload));
   } catch (...) {
@@ -610,12 +618,26 @@ bool HostPcieChannel::try_push(const std::int32_t request_id, const TensorList& 
   }
 }
 
+void HostPcieChannel::throw_if_stopped() {
+  if (!stop_requested_.load()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(receive_mutex_);
+  if (receive_error_) {
+    throw std::runtime_error(*receive_error_);
+  }
+  throw std::runtime_error("host PCIe channel has stopped");
+}
+
 bool HostPcieChannel::reserve_inflight() {
+  if (stop_requested_.load()) {
+    return false;
+  }
   if (max_inflight_ == 0) {
     return true;
   }
   std::lock_guard<std::mutex> lock(inflight_mutex_);
-  if (inflight_ >= max_inflight_) {
+  if (stop_requested_.load() || inflight_ >= max_inflight_) {
     return false;
   }
   ++inflight_;

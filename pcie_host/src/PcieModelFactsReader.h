@@ -17,6 +17,7 @@ struct PcieTensorFact {
   int tensor_index = -1;
   int physical_index = -1;
   std::int64_t byte_offset = 0;
+  std::size_t payload_offset = 0;
 };
 
 struct PcieModelFacts {

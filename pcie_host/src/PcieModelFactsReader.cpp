@@ -3,9 +3,11 @@
 #include "model/internal/ModelArchiveLoader.h"
 #include "pipeline/internal/sima/MpkContract.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -184,16 +186,99 @@ application_input_contracts(const simaai::neat::pipeline_internal::sima::MpkCont
 
 std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>
 application_output_contracts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
-  for (auto it = contract.plugins.rbegin(); it != contract.plugins.rend(); ++it) {
-    const auto& stage = *it;
-    if (is_pass_through_stage(stage) && !stage.input_tensors.empty()) {
-      return stage.input_tensors;
-    }
-    if (!stage.output_tensors.empty()) {
-      return stage.output_tensors;
+  const auto ordered = simaai::neat::pipeline_internal::sima::plugins_in_execution_order(contract);
+  if (ordered.empty()) {
+    throw std::runtime_error("MPK contract has no executable plugin topology");
+  }
+
+  std::vector<bool> has_outgoing(contract.plugins.size(), false);
+  for (const auto& edge : contract.edges) {
+    if (edge.src_plugin_index < has_outgoing.size() &&
+        edge.dst_plugin_index < contract.plugins.size() &&
+        edge.src_plugin_index != edge.dst_plugin_index) {
+      has_outgoing[edge.src_plugin_index] = true;
     }
   }
-  return {};
+
+  std::vector<std::size_t> terminals;
+  for (const std::size_t index : ordered) {
+    if (index >= contract.plugins.size() || has_outgoing[index]) {
+      continue;
+    }
+    const auto& stage = contract.plugins[index];
+    if (!stage.output_tensors.empty() ||
+        (is_pass_through_stage(stage) && !stage.input_tensors.empty())) {
+      terminals.push_back(index);
+    }
+  }
+  if (terminals.size() != 1U) {
+    throw std::runtime_error("PCIe co-processing requires exactly one terminal MPK stage; found " +
+                             std::to_string(terminals.size()));
+  }
+
+  const auto& terminal = contract.plugins[terminals.front()];
+  if (is_pass_through_stage(terminal) && !terminal.input_tensors.empty()) {
+    return terminal.input_tensors;
+  }
+  return terminal.output_tensors;
+}
+
+void finalize_output_layout(PcieModelFacts* facts) {
+  if (!facts || facts->outputs.empty()) {
+    return;
+  }
+
+  std::vector<std::size_t> physical_spans(facts->outputs.size(), 0U);
+  std::vector<bool> physical_seen(facts->outputs.size(), false);
+  int max_physical_index = -1;
+  for (std::size_t i = 0; i < facts->outputs.size(); ++i) {
+    auto& output = facts->outputs[i];
+    if (output.physical_index < 0) {
+      output.physical_index = static_cast<int>(i);
+    }
+    if (output.physical_index < 0 ||
+        static_cast<std::size_t>(output.physical_index) >= facts->outputs.size()) {
+      throw std::runtime_error("PCIe output '" + output.name +
+                               "' has an unsupported physical index " +
+                               std::to_string(output.physical_index));
+    }
+    if (output.byte_offset < 0) {
+      throw std::runtime_error("PCIe output '" + output.name + "' has a negative byte offset");
+    }
+    const auto local_offset = static_cast<std::size_t>(output.byte_offset);
+    if (output.size_bytes > std::numeric_limits<std::size_t>::max() - local_offset) {
+      throw std::runtime_error("PCIe output '" + output.name + "' byte span overflows");
+    }
+    const std::size_t physical_index = static_cast<std::size_t>(output.physical_index);
+    physical_spans[physical_index] =
+        std::max(physical_spans[physical_index], local_offset + output.size_bytes);
+    physical_seen[physical_index] = true;
+    max_physical_index = std::max(max_physical_index, output.physical_index);
+  }
+
+  for (int index = 0; index <= max_physical_index; ++index) {
+    if (!physical_seen[static_cast<std::size_t>(index)]) {
+      throw std::runtime_error("PCIe output physical indices must be dense from zero");
+    }
+  }
+
+  std::vector<std::size_t> physical_bases(facts->outputs.size(), 0U);
+  std::size_t packed_bytes = 0U;
+  for (int index = 0; index <= max_physical_index; ++index) {
+    const std::size_t physical_index = static_cast<std::size_t>(index);
+    physical_bases[physical_index] = packed_bytes;
+    if (physical_spans[physical_index] > std::numeric_limits<std::size_t>::max() - packed_bytes) {
+      throw std::runtime_error("PCIe packed output size overflows");
+    }
+    packed_bytes += physical_spans[physical_index];
+  }
+
+  for (auto& output : facts->outputs) {
+    const std::size_t physical_index = static_cast<std::size_t>(output.physical_index);
+    output.payload_offset =
+        physical_bases[physical_index] + static_cast<std::size_t>(output.byte_offset);
+  }
+  facts->packed_output_bytes = packed_bytes;
 }
 
 bool graph_has_preprocess(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
@@ -254,9 +339,9 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
   }
   for (const auto& output : public_outputs) {
     auto converted = convert_tensor(output, true);
-    facts.packed_output_bytes += converted.size_bytes;
     facts.outputs.push_back(std::move(converted));
   }
+  finalize_output_layout(&facts);
 
   if (facts.inputs.empty()) {
     throw std::runtime_error("MPK contract does not expose MLA input tensors");

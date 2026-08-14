@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace pcie = simaai::neat::pcie;
 namespace pcie_internal = simaai::neat::pcie::internal;
@@ -59,6 +60,82 @@ int main() {
       const auto json = pcie_internal::write_model_options_json(opt);
       require(json.json.has_value(), "disabled image resize route must emit JSON");
       require(contains(*json.json, "\"enable\": false"), "resize disabled state missing");
+    }
+
+    for (const auto [width, height] : {std::pair{640, 0}, std::pair{0, 640}}) {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.resize.width = width;
+      opt.preprocess.resize.height = height;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "explicit resize dimensions must throw");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.color_convert.enable = pcie::AutoFlag::Off;
+      const auto json = pcie_internal::write_model_options_json(opt);
+      require(json.json.has_value(), "disabled color conversion route must emit image JSON");
+      require(!contains(*json.json, "\"color_convert\""),
+              "disabled color conversion must not emit an enabling object");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.color_convert.enable = pcie::AutoFlag::Off;
+      opt.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "disabled color conversion with explicit formats must throw");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.normalize.enable = pcie::AutoFlag::Off;
+      const auto json = pcie_internal::write_model_options_json(opt);
+      require(json.json.has_value(), "disabled normalization route must emit image JSON");
+      require(!contains(*json.json, "\"normalize\""),
+              "disabled normalization must not emit an enabling object");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.normalize.enable = pcie::AutoFlag::Off;
+      opt.preprocess.normalize.preset = pcie::NormalizePreset::ImageNet;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "disabled normalization with a preset must throw");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.normalize.enable = pcie::AutoFlag::Off;
+      opt.preprocess.normalize.has_explicit_stats = true;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "disabled normalization with explicit stats must throw");
     }
 
     {

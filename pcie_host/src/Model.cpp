@@ -102,43 +102,71 @@ public:
     if (state_ == State::Ready) {
       return;
     }
-    if (channel_.is_running() || state_ == State::Starting) {
+    if (channel_.is_running() || state_ == State::Starting || state_ == State::Failed ||
+        state_ == State::Stopping) {
       close_locked();
+    }
+    if (remote_model_upload_.has_value() || remote_options_upload_.has_value()) {
+      if (remote_uploads_may_be_in_use_) {
+        throw std::runtime_error(
+            "cannot rebuild while previous remote uploads may still be in use");
+      }
+      cleanup_remote_uploads_locked(true);
     }
 
     auto model_options = internal::write_model_options_json(options_);
-    const std::string remote_model_path = remote_.upload_file(model_path_);
-
-    std::optional<std::string> remote_options_path;
-    std::string local_options_path;
-    if (model_options.json.has_value()) {
-      local_options_path = write_temp_model_options(*model_options.json);
-      remote_options_path = remote_.upload_file(local_options_path);
-      std::error_code ec;
-      fs::remove(local_options_path, ec);
-    }
-
     state_ = State::Starting;
     remote_started_ = false;
+    remote_uploads_may_be_in_use_ = false;
     try {
-      remote_.start(connection_.queue, remote_model_path, remote_options_path);
+      remote_model_upload_ = remote_.upload_file(model_path_);
+
+      if (model_options.json.has_value()) {
+        const std::string local_options_path = write_temp_model_options(*model_options.json);
+        try {
+          remote_options_upload_ = remote_.upload_file(local_options_path);
+        } catch (...) {
+          std::error_code ec;
+          fs::remove(local_options_path, ec);
+          throw;
+        }
+        std::error_code ec;
+        fs::remove(local_options_path, ec);
+      }
+
+      remote_uploads_may_be_in_use_ = true;
+      try {
+        remote_.start(connection_.queue, *remote_model_upload_, remote_options_upload_);
+      } catch (const internal::RemoteStartError& e) {
+        remote_uploads_may_be_in_use_ = !e.cleanup_safe();
+        throw;
+      } catch (...) {
+        remote_uploads_may_be_in_use_ = false;
+        throw;
+      }
       remote_started_ = true;
       (void)remote_.wait_ready(connection_.queue, readiness_timeout_ms);
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode);
+      timed_out_run_pending_ = false;
       state_ = State::Ready;
     } catch (...) {
+      const std::exception_ptr build_error = std::current_exception();
       state_ = State::Failed;
       channel_.stop();
       if (remote_started_) {
         try {
           remote_.stop(connection_.queue);
+          remote_started_ = false;
+          remote_uploads_may_be_in_use_ = false;
         } catch (...) {
         }
-        remote_started_ = false;
       }
-      throw;
+      if (!remote_started_ && !remote_uploads_may_be_in_use_) {
+        cleanup_remote_uploads_locked(false);
+      }
+      std::rethrow_exception(build_error);
     }
   }
 
@@ -160,6 +188,7 @@ public:
     {
       std::lock_guard<std::mutex> lock(mu_);
       ensure_ready();
+      ensure_submission_allowed();
     }
     return channel_.push(tensors);
   }
@@ -177,7 +206,12 @@ public:
       std::lock_guard<std::mutex> lock(mu_);
       ensure_ready();
     }
-    return channel_.pull(timeout_ms);
+    auto result = channel_.pull(timeout_ms);
+    if (result) {
+      std::lock_guard<std::mutex> lock(mu_);
+      timed_out_run_pending_ = false;
+    }
+    return result;
   }
 
   std::optional<internal::RuntimeInferenceResult> pull_result(const int timeout_ms) {
@@ -222,17 +256,28 @@ private:
   void ensure_ready_for_run() const {
     std::lock_guard<std::mutex> lock(mu_);
     ensure_ready();
+    ensure_submission_allowed();
+  }
+
+  void ensure_submission_allowed() const {
+    if (timed_out_run_pending_) {
+      throw std::runtime_error(
+          "previous PCIe run timed out; call pull() to drain its result or close() the model");
+    }
   }
 
   TensorList pull_strict(const int timeout_ms) {
     auto result = pull(timeout_ms);
     if (!result) {
+      std::lock_guard<std::mutex> lock(mu_);
+      timed_out_run_pending_ = true;
       throw std::runtime_error("timed out waiting for PCIe result");
     }
     return std::move(*result);
   }
 
   void close_locked() {
+    timed_out_run_pending_ = false;
     channel_.request_stop();
     channel_.stop();
     if (state_ == State::Ready || state_ == State::Starting || state_ == State::Failed ||
@@ -243,6 +288,7 @@ private:
         try {
           remote_.stop(connection_.queue);
           remote_started_ = false;
+          remote_uploads_may_be_in_use_ = false;
         } catch (...) {
           remote_stop_error = std::current_exception();
         }
@@ -251,7 +297,31 @@ private:
         std::rethrow_exception(remote_stop_error);
       }
       state_ = State::Exited;
-      return;
+    }
+    if (!remote_started_ && !remote_uploads_may_be_in_use_) {
+      cleanup_remote_uploads_locked(true);
+    }
+  }
+
+  void cleanup_remote_uploads_locked(const bool throw_on_error) {
+    std::exception_ptr first_error;
+    const auto remove = [&](std::optional<std::string>* path) {
+      if (!path || !path->has_value()) {
+        return;
+      }
+      try {
+        remote_.remove_upload(**path);
+        path->reset();
+      } catch (...) {
+        if (!first_error) {
+          first_error = std::current_exception();
+        }
+      }
+    };
+    remove(&remote_options_upload_);
+    remove(&remote_model_upload_);
+    if (throw_on_error && first_error) {
+      std::rethrow_exception(first_error);
     }
   }
 
@@ -264,6 +334,10 @@ private:
   mutable std::mutex mu_;
   State state_ = State::Uninitialized;
   bool remote_started_ = false;
+  bool remote_uploads_may_be_in_use_ = false;
+  bool timed_out_run_pending_ = false;
+  std::optional<std::string> remote_model_upload_;
+  std::optional<std::string> remote_options_upload_;
   internal::PcieModelFacts facts_;
   ModelInfo model_info_;
 };

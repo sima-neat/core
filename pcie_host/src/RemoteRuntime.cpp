@@ -138,6 +138,23 @@ std::string RemoteRuntime::unique_remote_upload_path(const std::string& local_pa
          std::to_string(sequence.fetch_add(1, std::memory_order_relaxed)) + "-" + filename;
 }
 
+bool RemoteRuntime::is_managed_upload_path(const std::string& remote_path) {
+  const fs::path path(remote_path);
+  const std::string filename = path.filename().string();
+  return path == path.lexically_normal() && path.parent_path() == kRemoteModelDir &&
+         filename.rfind("sima-neat-pcie-", 0) == 0 &&
+         filename.size() > std::string("sima-neat-pcie-").size();
+}
+
+void RemoteRuntime::remove_upload(const std::string& remote_path) const {
+  if (!is_managed_upload_path(remote_path)) {
+    throw std::invalid_argument("refusing to remove unmanaged remote upload path: " + remote_path);
+  }
+  std::vector<std::string> cmd = ssh_base();
+  cmd.push_back("rm -f -- " + SshRunner::shell_escape(remote_path));
+  run_or_throw(cmd, kCommandTimeoutSec, "remote upload cleanup");
+}
+
 std::vector<std::string> RemoteRuntime::ssh_base() const {
   std::vector<std::string> cmd;
   cmd.push_back("ssh");
@@ -195,11 +212,15 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
 
 void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
                           const std::optional<std::string>& remote_model_options_path) const {
+  const std::string start_lock_path =
+      "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
   std::ostringstream ss;
   ss << "[ -x " << SshRunner::shell_escape(kRemoteHelper)
      << " ] || { echo missing_builder; exit 10; }; "
      << "[ -d /run/sima-neat/pcie ] || { echo missing_run_dir; exit 11; }; "
      << "[ -d /var/log/sima-neat/pcie ] || { echo missing_log_dir; exit 12; }; "
+     << "startlock=" << SshRunner::shell_escape(start_lock_path) << "; "
+     << "exec 9>\"$startlock\"; " << "flock -w 30 9 || { echo start_lock_timeout; exit 14; }; "
      << "pidfile=" << SshRunner::shell_escape(pid_path(queue)) << "; "
      << "statusfile=" << SshRunner::shell_escape(status_path(queue)) << "; "
      << "if [ -f \"$pidfile\" ]; then " << "pid=$(cat \"$pidfile\" 2>/dev/null || true); "
@@ -235,11 +256,33 @@ void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   if (remote_model_options_path.has_value()) {
     ss << " --model-options " << SshRunner::shell_escape(*remote_model_options_path);
   }
-  ss << " >/dev/null 2>&1 & echo $!";
+  ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "for i in $(seq 1 200); do "
+     << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
+     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then echo \"$launched_pid\"; exit 0; fi; "
+     << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
+     << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | "
+        "grep -q 'pcie-pipeline-builder'; then echo queue_busy; exit 9; fi; "
+     << "if ! kill -0 \"$launched_pid\" >/dev/null 2>&1; then "
+     << "wait \"$launched_pid\"; child_rc=$?; "
+     << "echo builder_exited_before_queue_claim:$child_rc; exit 15; fi; " << "sleep 0.05; "
+     << "done; " << "kill -TERM \"$launched_pid\" >/dev/null 2>&1 || true; "
+     << "echo queue_claim_timeout; exit 16";
 
   std::vector<std::string> cmd = ssh_base();
   cmd.push_back(ss.str());
-  run_or_throw(cmd, kCommandTimeoutSec, "remote pcie-pipeline-builder start");
+  CommandResult result;
+  try {
+    result = SshRunner::run(cmd, kCommandTimeoutSec);
+  } catch (const std::exception& e) {
+    throw RemoteStartError(std::string("remote pcie-pipeline-builder start failed: ") + e.what(),
+                           true);
+  }
+  if (result.timed_out || result.exit_code != 0) {
+    throw RemoteStartError(
+        "remote pcie-pipeline-builder start failed (exit=" + std::to_string(result.exit_code) +
+            ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output,
+        !result.timed_out);
+  }
 }
 
 RemoteStatus RemoteRuntime::read_status(const int queue) const {

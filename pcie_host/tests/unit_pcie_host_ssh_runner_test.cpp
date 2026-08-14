@@ -31,6 +31,15 @@ int main() {
         first.rfind("-model.tar.gz") != first.size() - std::string("-model.tar.gz").size()) {
       throw std::runtime_error("unexpected remote upload path: " + first);
     }
+    if (!pcie_internal::RemoteRuntime::is_managed_upload_path(first)) {
+      throw std::runtime_error("generated remote upload path must be managed");
+    }
+    for (const std::string path : {"/tmp/model.tar.gz", "/tmp/sima-neat-pcie-../model.tar.gz",
+                                   "/var/tmp/sima-neat-pcie-model.tar.gz"}) {
+      if (pcie_internal::RemoteRuntime::is_managed_upload_path(path)) {
+        throw std::runtime_error("unsafe remote upload path accepted: " + path);
+      }
+    }
     std::cout << "[PASS] ssh runner\n";
     return 0;
   } catch (const std::exception& e) {

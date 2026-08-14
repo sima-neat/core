@@ -4,7 +4,9 @@
 
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::pcie::internal {
@@ -14,6 +16,19 @@ struct RemoteStatus {
   int queue = -1;
   std::string message;
   std::string error_code;
+};
+
+class RemoteStartError final : public std::runtime_error {
+public:
+  RemoteStartError(std::string message, bool cleanup_safe)
+      : std::runtime_error(std::move(message)), cleanup_safe_(cleanup_safe) {}
+
+  bool cleanup_safe() const noexcept {
+    return cleanup_safe_;
+  }
+
+private:
+  bool cleanup_safe_ = false;
 };
 
 class RemoteRuntime {
@@ -30,6 +45,8 @@ public:
   std::string endpoint() const;
   std::string status_path(int queue) const;
   std::string pid_path(int queue) const;
+  void remove_upload(const std::string& remote_path) const;
+  static bool is_managed_upload_path(const std::string& remote_path);
   static std::string unique_remote_upload_path(const std::string& local_path);
 
 private:

@@ -17,8 +17,10 @@ def test_phase4_leftover_nodes():
   src_opt = pyneat.PCIeSrcOptions()
   src_opt.queue = 2
   src_opt.buffer_size = 1_000_000
+  src_opt.pool_size = 4
   assert src_opt.queue == 2
   assert src_opt.buffer_size == 1_000_000
+  assert src_opt.pool_size == 4
   assert isinstance(pyneat.nodes.pcie_src(src_opt), pyneat.Node)
   sink_opt = pyneat.PCIeSinkOptions()
   sink_opt.queue = 2

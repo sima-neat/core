@@ -969,16 +969,16 @@ int run_builder(const CliOptions& opt) {
     pipeline->run_until_stop_or_error();
     set_status(status_writer, status, "stopping", "signal received");
     pipeline->stop();
-    ownership.release();
     set_status(status_writer, status, "exited", "pipeline stopped");
+    ownership.release();
     return 0;
   } catch (const PciePipelineError& e) {
     if (e.code() == "signal") {
       set_status(status_writer, status, "stopping", e.what());
       if (pipeline)
         pipeline->stop();
-      ownership.release();
       set_status(status_writer, status, "exited", "pipeline stopped");
+      ownership.release();
       return 0;
     }
     set_status(status_writer, status, "failed", e.what(), e.code());

@@ -130,6 +130,24 @@ int main() {
     require(restored.has_value(), "request ID metadata must be readable");
     require(*restored == request_id, "request ID metadata must preserve the signed 32-bit value");
 
+    channel.configure({}, 0, 0, 1, false);
+    channel.request_stop();
+    bool stopped_try_push_rejected = false;
+    try {
+      (void)channel.try_push(1, {tensor});
+    } catch (const std::runtime_error& error) {
+      stopped_try_push_rejected = std::string(error.what()).find("stopped") != std::string::npos;
+    }
+    require(stopped_try_push_rejected, "try_push must reject a stopped channel");
+
+    bool stopped_push_rejected = false;
+    try {
+      (void)channel.push({tensor});
+    } catch (const std::runtime_error& error) {
+      stopped_push_rejected = std::string(error.what()).find("stopped") != std::string::npos;
+    }
+    require(stopped_push_rejected, "push must reject a stopped channel");
+
     std::cout << "[PASS] host channel caps\n";
     return 0;
   } catch (const std::exception& e) {

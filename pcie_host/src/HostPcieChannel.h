@@ -53,6 +53,7 @@ private:
 
   void start_with_caps(const std::string& caps, std::size_t submitted_payload_bytes);
   void stop_locked();
+  void throw_if_stopped();
   bool reserve_inflight();
   bool wait_and_reserve_inflight();
   void release_inflight();

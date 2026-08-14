@@ -334,8 +334,8 @@ void test_failed_build_cleanup(const Args& args) {
   } catch (const std::exception&) {
     readiness_failed = true;
   }
-  require(readiness_failed, "one-millisecond readiness timeout unexpectedly succeeded");
-  require(!readiness_model.running(), "readiness-timeout model reports running");
+  require(readiness_model.running() != readiness_failed,
+          "short readiness attempt left the model in an inconsistent state");
   readiness_model.close();
 
   readiness_model.build(args.readiness_timeout_ms);
@@ -348,6 +348,38 @@ void test_timeout_and_backpressure(pcie::Model& model, const pcie::ModelInfo& in
                                    const Args& args) {
   std::cout << "[scenario] pull timeout recovery\n";
   require(!model.pull(1).has_value(), "pull before push unexpectedly returned a result");
+  infer_once(model, info, args.pull_timeout_ms);
+
+  std::cout << "[scenario] synchronous run timeout requires draining\n";
+  bool run_timed_out = false;
+  try {
+    (void)model.run(make_inputs(info), 1);
+  } catch (const std::exception& error) {
+    run_timed_out = std::string(error.what()).find("timed out waiting") != std::string::npos;
+  }
+  require(run_timed_out, "one-millisecond synchronous run unexpectedly completed");
+
+  bool next_run_rejected = false;
+  try {
+    (void)model.run(make_inputs(info), args.pull_timeout_ms);
+  } catch (const std::exception& error) {
+    next_run_rejected = std::string(error.what()).find("call pull() to drain") != std::string::npos;
+  }
+  require(next_run_rejected,
+          "synchronous run was accepted before the timed-out result was drained");
+
+  bool next_push_rejected = false;
+  try {
+    (void)model.push(make_inputs(info));
+  } catch (const std::exception& error) {
+    next_push_rejected =
+        std::string(error.what()).find("call pull() to drain") != std::string::npos;
+  }
+  require(next_push_rejected, "push was accepted before the timed-out result was drained");
+
+  const auto late_outputs = model.pull(args.pull_timeout_ms);
+  require(late_outputs.has_value(), "timed-out synchronous result could not be drained");
+  validate_outputs(*late_outputs, info.outputs);
   infer_once(model, info, args.pull_timeout_ms);
 
   std::cout << "[scenario] max_inflight=1 backpressure and recovery\n";
@@ -373,6 +405,50 @@ void test_timeout_and_backpressure(pcie::Model& model, const pcie::ModelInfo& in
     require(outputs.has_value(), "backpressure result pull timed out");
     validate_outputs(*outputs, info.outputs);
   }
+}
+
+void test_concurrent_queue_ownership(pcie::Model& first, pcie::Model& second,
+                                     const pcie::ModelInfo& info, const Args& args) {
+  std::cout << "[scenario] concurrent queue ownership\n";
+  struct BuildResult {
+    bool succeeded = false;
+    std::string error;
+  };
+
+  std::promise<void> start;
+  const std::shared_future<void> start_signal = start.get_future().share();
+  auto launch = [&](pcie::Model& model) {
+    start_signal.wait();
+    BuildResult result;
+    try {
+      model.build(args.readiness_timeout_ms);
+      result.succeeded = true;
+    } catch (const std::exception& error) {
+      result.error = error.what();
+    }
+    return result;
+  };
+
+  auto first_build = std::async(std::launch::async, [&] { return launch(first); });
+  auto second_build = std::async(std::launch::async, [&] { return launch(second); });
+  start.set_value();
+
+  const BuildResult first_result = first_build.get();
+  const BuildResult second_result = second_build.get();
+  require(first_result.succeeded != second_result.succeeded,
+          "concurrent queue claim did not produce exactly one owner");
+
+  pcie::Model& winner = first_result.succeeded ? first : second;
+  pcie::Model& loser = first_result.succeeded ? second : first;
+  const std::string& loser_error =
+      first_result.succeeded ? second_result.error : first_result.error;
+  require(loser_error.find("queue_busy") != std::string::npos,
+          "concurrent queue loser did not report queue_busy: " + loser_error);
+
+  loser.close();
+  require(winner.running(), "closing the concurrent queue loser stopped the winner");
+  infer_once(winner, info, args.pull_timeout_ms);
+  winner.close();
 }
 
 void test_queue_ownership(pcie::Model& owner, pcie::Model& contender, const pcie::ModelInfo& info,
@@ -503,6 +579,8 @@ int main(int argc, char** argv) {
     pcie::Model owner(args.model, {}, conn);
     pcie::Model contender(args.model, {}, conn);
     const pcie::ModelInfo info = owner.info();
+
+    test_concurrent_queue_ownership(owner, contender, info, args);
 
     std::cout << "[lifecycle 1/" << args.lifecycle_cycles << "] build owner\n";
     owner.build(args.readiness_timeout_ms);

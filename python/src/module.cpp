@@ -3912,7 +3912,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::PCIeSrcOptions>(m, "PCIeSrcOptions")
       .def(nb::init<>())
       .def_rw("queue", &simaai::neat::PCIeSrcOptions::queue)
-      .def_rw("buffer_size", &simaai::neat::PCIeSrcOptions::buffer_size);
+      .def_rw("buffer_size", &simaai::neat::PCIeSrcOptions::buffer_size)
+      .def_rw("pool_size", &simaai::neat::PCIeSrcOptions::pool_size);
   nb::class_<simaai::neat::PCIeSinkOptions>(m, "PCIeSinkOptions")
       .def(nb::init<>())
       .def_rw("config_file", &simaai::neat::PCIeSinkOptions::config_file)

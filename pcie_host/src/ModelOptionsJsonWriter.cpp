@@ -115,6 +115,19 @@ void validate_supported_options(const ModelOptions& opt) {
   if (opt.preprocess.enable != AutoFlag::Auto && opt.preprocess.enable != AutoFlag::On) {
     reject(std::string("preprocess.enable=") + auto_flag_name(opt.preprocess.enable));
   }
+  if (opt.preprocess.resize.width != 0 || opt.preprocess.resize.height != 0) {
+    reject("preprocess.resize.width and height must remain zero for model-inferred sizing");
+  }
+  if (opt.preprocess.color_convert.enable == AutoFlag::Off &&
+      (opt.preprocess.color_convert.input_format != ColorFormat::Auto ||
+       opt.preprocess.color_convert.output_format != ColorFormat::Auto)) {
+    reject("preprocess.color_convert.enable=off cannot be combined with explicit formats");
+  }
+  if (opt.preprocess.normalize.enable == AutoFlag::Off &&
+      (opt.preprocess.normalize.preset != NormalizePreset::None ||
+       opt.preprocess.normalize.has_explicit_stats)) {
+    reject("preprocess.normalize.enable=off cannot be combined with a preset or explicit stats");
+  }
   if (opt.preprocess.color_convert.output_format == ColorFormat::NV12 ||
       opt.preprocess.color_convert.output_format == ColorFormat::I420 ||
       opt.preprocess.color_convert.output_format == ColorFormat::GRAY8) {

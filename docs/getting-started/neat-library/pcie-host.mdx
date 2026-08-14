@@ -48,14 +48,24 @@ sima-cli login
 
 ## Install the PCIe Host Package
 
-Choose a working directory on the PCIe host, then install the released package:
+Choose a working directory on the PCIe host, then run the command for the
+installed Ubuntu version.
+
+**Ubuntu 22.04 on x86_64:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat install core/pciehost@v0.4.0
+sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+</ShellCommand>
+
+**Ubuntu 24.04 on x86_64:**
+
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
 </ShellCommand>
 
 The installer adds everything needed to develop and run Neat PCIe host
-applications, including the C++ and Python APIs.
+applications, including the C++ API and a Python environment at
+`~/pyneatpcie`.
 
 During the first installation, SSH provisioning can request the `sima` account
 password for the card. It creates or reuses
