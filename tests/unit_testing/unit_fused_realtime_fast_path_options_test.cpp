@@ -685,10 +685,30 @@ RUN_TEST(
                                                           composed_run_options);
       } catch (const std::runtime_error& e) {
         rejected_unsupported_pcie_fan_out =
-            std::string(e.what()).find("PCIeSrc multi-pad outputs require") != std::string::npos;
+            std::string(e.what()).find("PCIeSrc named or multi-pad outputs require") !=
+            std::string::npos;
       }
       require(rejected_unsupported_pcie_fan_out,
               "non-fusible PCIe multi-pad output must be rejected during compilation");
+
+      simaai::neat::Graph unsupported_single_pcie_app("unsupported_single_named_pcie_output",
+                                                      outer_options);
+      auto unsupported_single_pcie_source = simaai::neat::nodes::PCIeSrc({});
+      simaai::neat::Graph single_decoder("single_independent_pcie_decoder");
+      single_decoder.add(simaai::neat::nodes::SimaDecode());
+      single_decoder.add(simaai::neat::nodes::Output("frame"));
+      unsupported_single_pcie_app.connect(unsupported_single_pcie_source, "src_1", single_decoder);
+      bool rejected_unsupported_single_pcie_output = false;
+      try {
+        (void)simaai::neat::runtime::compile_public_graph(unsupported_single_pcie_app,
+                                                          composed_run_options);
+      } catch (const std::runtime_error& e) {
+        rejected_unsupported_single_pcie_output =
+            std::string(e.what()).find("PCIeSrc named or multi-pad outputs require") !=
+            std::string::npos;
+      }
+      require(rejected_unsupported_single_pcie_output,
+              "non-fusible single named PCIe output must be rejected during compilation");
 
       const std::string no_output_pipeline =
           simaai::neat::session_test::render_fused_realtime_consumer_pipeline_for_test(

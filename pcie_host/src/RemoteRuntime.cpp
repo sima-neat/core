@@ -320,10 +320,11 @@ int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   }
 }
 
-RemoteStatus RemoteRuntime::read_status(const int queue) const {
+RemoteStatus RemoteRuntime::read_status(const int queue,
+                                        const std::chrono::milliseconds timeout) const {
   std::vector<std::string> cmd = ssh_base();
   cmd.push_back("cat " + SshRunner::shell_escape(status_path(queue)) + " 2>/dev/null");
-  const CommandResult res = SshRunner::run(cmd, kCommandTimeoutSec);
+  const CommandResult res = SshRunner::run_for(cmd, timeout);
   if (res.timed_out || res.exit_code != 0 || res.output.empty()) {
     return {};
   }
@@ -353,7 +354,12 @@ RemoteStatus RemoteRuntime::wait_ready(const int queue, const int expected_pid,
   RemoteStatus last;
 
   while (std::chrono::steady_clock::now() < deadline) {
-    last = read_status(queue);
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (remaining <= std::chrono::milliseconds::zero()) {
+      break;
+    }
+    last = read_status(queue, remaining);
     if (!status_owner_matches(last, expected_pid)) {
       throw std::runtime_error("remote pipeline queue ownership changed while waiting for "
                                "readiness: expected pid=" +
@@ -367,7 +373,11 @@ RemoteStatus RemoteRuntime::wait_ready(const int queue, const int expected_pid,
       throw std::runtime_error("remote pipeline startup failed: state=" + last.state +
                                " error=" + last.error_code + " message=" + last.message);
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    const auto sleep_remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (sleep_remaining > std::chrono::milliseconds::zero()) {
+      std::this_thread::sleep_for(std::min(std::chrono::milliseconds(250), sleep_remaining));
+    }
   }
 
   throw std::runtime_error("remote pipeline readiness timed out; last state=" + last.state +

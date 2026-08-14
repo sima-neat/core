@@ -1,6 +1,7 @@
 #include "SshRunner.h"
 #include "RemoteRuntime.h"
 
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 
@@ -19,6 +20,11 @@ int main() {
     const auto bad = pcie_internal::SshRunner::run({"/bin/sh", "-c", "exit 7"}, 2);
     if (bad.exit_code != 7) {
       throw std::runtime_error("expected exit code 7");
+    }
+    const auto timed =
+        pcie_internal::SshRunner::run_for({"/bin/sleep", "2"}, std::chrono::milliseconds(50));
+    if (!timed.timed_out) {
+      throw std::runtime_error("expected millisecond command timeout");
     }
     const std::string first =
         pcie_internal::RemoteRuntime::unique_remote_upload_path("/first/model.tar.gz");

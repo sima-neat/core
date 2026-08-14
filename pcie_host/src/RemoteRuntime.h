@@ -2,6 +2,7 @@
 
 #include "simaai/neat/pcie/Model.h"
 
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -41,7 +42,7 @@ public:
             const std::optional<std::string>& remote_model_options_path) const;
   RemoteStatus wait_ready(int queue, int expected_pid, int readiness_timeout_ms) const;
   void stop(int queue, int expected_pid) const;
-  RemoteStatus read_status(int queue) const;
+  RemoteStatus read_status(int queue, std::chrono::milliseconds timeout) const;
 
   std::string endpoint() const;
   std::string status_path(int queue) const;

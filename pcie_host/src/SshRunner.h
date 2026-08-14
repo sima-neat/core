@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,8 @@ struct CommandResult {
 class SshRunner {
 public:
   static CommandResult run(const std::vector<std::string>& args, int timeout_sec);
+  static CommandResult run_for(const std::vector<std::string>& args,
+                               std::chrono::milliseconds timeout);
   static std::string shell_escape(const std::string& value);
 };
 

@@ -28,6 +28,12 @@ std::string SshRunner::shell_escape(const std::string& value) {
 }
 
 CommandResult SshRunner::run(const std::vector<std::string>& args, const int timeout_sec) {
+  const int effective_timeout = timeout_sec > 0 ? timeout_sec : 1;
+  return run_for(args, std::chrono::seconds(effective_timeout));
+}
+
+CommandResult SshRunner::run_for(const std::vector<std::string>& args,
+                                 const std::chrono::milliseconds timeout) {
   if (args.empty()) {
     throw std::invalid_argument("SshRunner::run requires a command");
   }
@@ -63,8 +69,8 @@ CommandResult SshRunner::run(const std::vector<std::string>& args, const int tim
   ::close(pipefd[1]);
 
   CommandResult result;
-  const int effective_timeout = timeout_sec > 0 ? timeout_sec : 1;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(effective_timeout);
+  const auto effective_timeout = std::max(timeout, std::chrono::milliseconds(1));
+  const auto deadline = std::chrono::steady_clock::now() + effective_timeout;
   std::array<char, 4096> buffer{};
   bool child_done = false;
 

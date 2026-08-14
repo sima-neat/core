@@ -2414,15 +2414,28 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
 
 void validate_routable_pcie_source_outputs(const ExecutionGraphPlan& plan) {
   for (const auto& segment : plan.pipeline_segments) {
-    if (segment.consumed_by_fused_realtime_ingress || segment.output_edges.size() <= 1U) {
+    if (segment.consumed_by_fused_realtime_ingress) {
       continue;
     }
     const bool is_pcie_source =
         std::any_of(segment.nodes.begin(), segment.nodes.end(), [](const auto& node) {
           return dynamic_cast<const simaai::neat::PCIeSrc*>(node.get()) != nullptr;
         });
-    if (is_pcie_source) {
-      throw std::runtime_error("PCIeSrc multi-pad outputs require a fused realtime decoder fan-in");
+    if (!is_pcie_source) {
+      continue;
+    }
+    const bool has_named_output = std::any_of(
+        segment.output_edges.begin(), segment.output_edges.end(), [&plan](const auto edge_index) {
+          if (edge_index >= plan.edges.size()) {
+            return false;
+          }
+          const auto port = plan.edges[edge_index].from_port;
+          return port != graph::kInvalidPort && port < plan.port_names.size() &&
+                 plan.port_names[port].rfind("src_", 0) == 0;
+        });
+    if (has_named_output || segment.output_edges.size() > 1U) {
+      throw std::runtime_error(
+          "PCIeSrc named or multi-pad outputs require a fused realtime decoder fan-in");
     }
   }
 }
