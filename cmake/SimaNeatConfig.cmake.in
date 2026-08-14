@@ -7,7 +7,7 @@ set(SIMANEAT_WITH_LLIMA @SIMANEAT_CONFIG_WITH_LLIMA@)
 if (SIMANEAT_WITH_LLIMA)
   find_dependency(SimaLMM @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
 endif()
-find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
+find_dependency(NeatInternals CONFIG REQUIRED)
 # sima_neat_static exports ZLIB::ZLIB: a static archive carries its dependencies in its link
 # interface rather than absorbing them, so the consumer has to be able to resolve the target.
 find_dependency(ZLIB)

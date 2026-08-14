@@ -23,6 +23,16 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertNotIn(
             "find_package(NeatInternals ${SIMANEAT_PLATFORM_VERSION}", text
         )
+        exported_config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "find_dependency(NeatInternals CONFIG REQUIRED)", exported_config
+        )
+        self.assertNotIn(
+            "find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@",
+            exported_config,
+        )
 
     def test_no_manually_constructed_internals_version_ranges(self) -> None:
         text = cmake()
