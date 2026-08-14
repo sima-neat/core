@@ -35,7 +35,7 @@ private:
 public:
   explicit Impl(ConnectionOptions connection) : connection_(std::move(connection)) {
     if (connection_.queue < 0 || connection_.queue >= static_cast<int>(queues_.size())) {
-      throw std::invalid_argument("queue must be in range 0..5");
+      throw std::invalid_argument("queue must be in range 0..3");
     }
     if (connection_.max_inflight <= 0 || connection_.max_inflight > 256) {
       throw std::invalid_argument("Runtime max_inflight must be in range 1..256");
@@ -371,7 +371,7 @@ private:
   std::mutex operation_mutex_;
   std::mutex registry_mutex_;
   std::unordered_map<ModelId, std::shared_ptr<Entry>> entries_;
-  std::array<bool, 6> queues_{};
+  std::array<bool, 4> queues_{};
   ModelId next_model_id_ = 0;
   bool closed_ = false;
 

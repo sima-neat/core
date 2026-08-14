@@ -48,7 +48,7 @@ int main() {
                                        "closed runtime must reject model loading");
 
     pcie::ConnectionOptions invalid;
-    invalid.queue = 6;
+    invalid.queue = 4;
     require_throws<std::invalid_argument>([&] { pcie::Runtime invalid_runtime(invalid); },
                                           "runtime must reject an invalid first queue");
 

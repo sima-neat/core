@@ -2424,14 +2424,13 @@ void validate_routable_pcie_source_outputs(const ExecutionGraphPlan& plan) {
     if (!is_pcie_source) {
       continue;
     }
-    const bool has_named_output = std::any_of(
-        segment.output_edges.begin(), segment.output_edges.end(), [&plan](const auto edge_index) {
-          if (edge_index >= plan.edges.size()) {
-            return false;
-          }
-          const auto port = plan.edges[edge_index].from_port;
-          return port != graph::kInvalidPort && port < plan.port_names.size() &&
-                 plan.port_names[port].rfind("src_", 0) == 0;
+    const graph::NodeId source_node =
+        segment.node_ids.empty() ? graph::kInvalidNode : segment.node_ids.front();
+    const bool has_named_output =
+        std::any_of(plan.edges.begin(), plan.edges.end(), [&plan, source_node](const auto& edge) {
+          const auto port = edge.from_port;
+          return edge.from == source_node && port != graph::kInvalidPort &&
+                 port < plan.port_names.size() && plan.port_names[port].rfind("src_", 0) == 0;
         });
     if (has_named_output || segment.output_edges.size() > 1U) {
       throw std::runtime_error(
