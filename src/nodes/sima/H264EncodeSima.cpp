@@ -23,6 +23,7 @@ public:
 
   std::string backend_fragment(int node_index) const override {
     std::string factory;
+    std::string input_adapter;
     std::string props;
 
     if (simaai::neat::element_exists("x264enc")) {
@@ -51,6 +52,7 @@ public:
       }
     } else if (simaai::neat::element_exists("openh264enc")) {
       factory = "openh264enc";
+      input_adapter = "videoconvert ! video/x-raw,format=I420 ! ";
       props = "";
     } else if (simaai::neat::element_exists("avenc_h264")) {
       factory = "avenc_h264";
@@ -62,7 +64,7 @@ public:
     }
 
     std::ostringstream ss;
-    ss << factory << " name=n" << node_index << "_swenc";
+    ss << input_adapter << factory << " name=n" << node_index << "_swenc";
     if (!props.empty())
       ss << " " << props;
     return ss.str();

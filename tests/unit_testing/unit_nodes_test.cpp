@@ -155,7 +155,12 @@ int main() {
                   simaai::neat::element_exists("avenc_h264");
     if (has_sw) {
       auto sw = simaai::neat::nodes::H264EncodeSW(400);
-      require_contains(sw->backend_fragment(1), "name=n1_swenc", "H264EncodeSW name mismatch");
+      const std::string fragment = sw->backend_fragment(1);
+      require_contains(fragment, "name=n1_swenc", "H264EncodeSW name mismatch");
+      if (!simaai::neat::element_exists("x264enc") && simaai::neat::element_exists("openh264enc")) {
+        require_contains(fragment, "video/x-raw,format=I420",
+                         "H264EncodeSW OpenH264 input mismatch");
+      }
     }
 
     std::cout << "[OK] unit_nodes_test passed\n";
