@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import struct
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -393,6 +394,82 @@ def test_tensor_run_yolov8():
 
     _run_sync_push_pull(push_once, pull_once, sync_iterations)
     _run_async_push_pull(push_once, pull_once, async_iterations, runtime.close)
+  finally:
+    if runtime is not None:
+      runtime.close()
+
+
+def test_tensor_latency_yolov8():
+  model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
+  runtime = None
+  warmup = 100
+  iterations = 3000
+  max_mean_latency_ms = 14.0
+
+  try:
+    runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())
+    runtime.build(_readiness_timeout_ms())
+    info = runtime.info()
+    inputs = _make_inputs(info)
+
+    for _ in range(warmup):
+      assert runtime.push(inputs)
+      outputs = runtime.pull(_pull_timeout_ms())
+      assert outputs is not None
+      _assert_outputs_match_metadata(outputs, info.outputs)
+
+    latencies_ms = []
+    for _ in range(iterations):
+      started = time.perf_counter()
+      assert runtime.push(inputs)
+      outputs = runtime.pull(_pull_timeout_ms())
+      elapsed_ms = (time.perf_counter() - started) * 1000.0
+      assert outputs is not None
+      _assert_outputs_match_metadata(outputs, info.outputs)
+      latencies_ms.append(elapsed_ms)
+
+    mean_latency_ms = sum(latencies_ms) / len(latencies_ms)
+    print(f"Python PCIe mean latency: {mean_latency_ms:.3f} ms")
+    assert mean_latency_ms < max_mean_latency_ms
+  finally:
+    if runtime is not None:
+      runtime.close()
+
+
+def test_tensor_throughput_yolov8():
+  model = _require_file_env("SIMAPCIE_YOLOV8_MODEL")
+  runtime = None
+  warmup = 100
+  iterations = 3000
+  min_throughput_fps = 380.0
+
+  try:
+    runtime = pcie.Model(str(model), pcie.ModelOptions(), _connection())
+    runtime.build(_readiness_timeout_ms())
+    info = runtime.info()
+    inputs = _make_inputs(info)
+
+    for _ in range(warmup):
+      assert runtime.push(inputs)
+      outputs = runtime.pull(_pull_timeout_ms())
+      assert outputs is not None
+      _assert_outputs_match_metadata(outputs, info.outputs)
+
+    def push_once():
+      assert runtime.push(inputs)
+
+    def pull_once():
+      outputs = runtime.pull(_pull_timeout_ms())
+      assert outputs is not None
+      _assert_outputs_match_metadata(outputs, info.outputs)
+
+    started = time.perf_counter()
+    _run_async_push_pull(push_once, pull_once, iterations, runtime.close)
+    elapsed_seconds = time.perf_counter() - started
+    throughput_fps = iterations / elapsed_seconds
+
+    print(f"Python PCIe throughput: {throughput_fps:.3f} FPS")
+    assert throughput_fps > min_throughput_fps
   finally:
     if runtime is not None:
       runtime.close()

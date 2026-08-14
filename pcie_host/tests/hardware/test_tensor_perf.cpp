@@ -72,6 +72,8 @@ struct Args {
   int pull_timeout_ms = env_int_or_default("SIMAPCIE_PULL_TIMEOUT_MS", 30000);
   int warmup = env_int_or_default("SIMAPCIE_PERF_WARMUP", 50);
   int iterations = env_int_or_default("SIMAPCIE_PERF_ITERATIONS", 1000);
+  double max_mean_latency_ms = 0.0;
+  double min_throughput_fps = 0.0;
   Mode mode = Mode::Latency;
   std::string card_env = env_or_default("SIMAPCIE_CARD_ENV", "");
   std::string card_gst_debug = env_or_default("SIMAPCIE_CARD_GST_DEBUG", "");
@@ -91,6 +93,7 @@ void usage(const char* argv0) {
                " [--card-id n] [--user user] [--queue n] [--max-inflight n]"
                " [--readiness-timeout-ms ms] [--pull-timeout-ms ms]"
                " [--warmup n] [--iterations n]"
+               " [--max-mean-latency-ms ms] [--min-throughput-fps fps]"
                " [--card-env 'NAME=VALUE ...'] [--card-gst-debug spec]"
                " [--card-gst-debug-file path]\n";
 }
@@ -135,6 +138,10 @@ Args parse_args(int argc, char** argv) {
       args.warmup = std::stoi(require_value(argc, argv, i, "--warmup"));
     } else if (arg == "--iterations") {
       args.iterations = std::stoi(require_value(argc, argv, i, "--iterations"));
+    } else if (arg == "--max-mean-latency-ms") {
+      args.max_mean_latency_ms = std::stod(require_value(argc, argv, i, "--max-mean-latency-ms"));
+    } else if (arg == "--min-throughput-fps") {
+      args.min_throughput_fps = std::stod(require_value(argc, argv, i, "--min-throughput-fps"));
     } else if (arg == "--card-env") {
       args.card_env = require_value(argc, argv, i, "--card-env");
     } else if (arg == "--card-gst-debug") {
@@ -153,10 +160,12 @@ Args parse_args(int argc, char** argv) {
     throw std::runtime_error("model path does not exist or is not a regular file: " + args.model);
   }
   if (args.max_inflight < 0 || args.max_inflight > 256 || args.readiness_timeout_ms <= 0 ||
-      args.pull_timeout_ms <= 0 || args.warmup < 0 || args.iterations <= 0) {
+      args.pull_timeout_ms <= 0 || args.warmup < 0 || args.iterations <= 0 ||
+      args.max_mean_latency_ms < 0.0 || args.min_throughput_fps < 0.0) {
     throw std::runtime_error(
         "max-inflight must be in range 0..256, timeouts must be positive, warmup must be "
-        "non-negative, and iterations must be positive");
+        "non-negative, iterations must be positive, and performance thresholds must be "
+        "non-negative");
   }
   return args;
 }
@@ -483,10 +492,16 @@ void run_latency(pcie::Model& model, const pcie::TensorList& inputs,
     }
   }
   const auto elapsed_ms = milliseconds_between(started, Clock::now());
-  print_latency_stats("latency results", summarize_latencies(latencies_ms), latencies_ms.size());
+  const LatencyStats stats = summarize_latencies(latencies_ms);
+  print_latency_stats("latency results", stats, latencies_ms.size());
   std::cout << std::fixed << std::setprecision(3) << "  total_ms=" << elapsed_ms
             << " effective_fps=" << (static_cast<double>(args.iterations) * 1000.0 / elapsed_ms)
             << "\n";
+  if (args.max_mean_latency_ms > 0.0 && stats.mean_ms >= args.max_mean_latency_ms) {
+    throw std::runtime_error("mean latency " + std::to_string(stats.mean_ms) +
+                             " ms must be below " + std::to_string(args.max_mean_latency_ms) +
+                             " ms");
+  }
 }
 
 class TimestampQueue {
@@ -589,11 +604,12 @@ void run_throughput(pcie::Model& model, const pcie::TensorList& inputs,
   const double output_mib = (frames * static_cast<double>(output_bytes)) / (1024.0 * 1024.0);
   const double push_ms = static_cast<double>(producer_push_ns.load()) / 1.0e6;
   const double pull_ms = static_cast<double>(consumer_pull_ns.load()) / 1.0e6;
+  const double fps = frames / elapsed_s;
 
   std::cout << "throughput results\n";
   std::cout << std::fixed << std::setprecision(3);
-  std::cout << "  frames=" << args.iterations << " total_ms=" << elapsed_ms
-            << " fps=" << (frames / elapsed_s) << "\n";
+  std::cout << "  frames=" << args.iterations << " total_ms=" << elapsed_ms << " fps=" << fps
+            << "\n";
   std::cout << "  input_mib=" << input_mib << " input_mib_per_s=" << (input_mib / elapsed_s)
             << "\n";
   std::cout << "  output_mib=" << output_mib << " output_mib_per_s=" << (output_mib / elapsed_s)
@@ -604,6 +620,10 @@ void run_throughput(pcie::Model& model, const pcie::TensorList& inputs,
             << " consumer_pull_mean_ms=" << (pull_ms / frames) << "\n";
   print_latency_stats("throughput fifo latency estimate", summarize_latencies(latencies_ms),
                       latencies_ms.size());
+  if (args.min_throughput_fps > 0.0 && fps <= args.min_throughput_fps) {
+    throw std::runtime_error("throughput " + std::to_string(fps) + " FPS must be above " +
+                             std::to_string(args.min_throughput_fps) + " FPS");
+  }
 }
 
 } // namespace
@@ -632,6 +652,12 @@ int main(int argc, char** argv) {
               << " max_inflight=" << conn.max_inflight << "\n";
     std::cout << "  warmup=" << args.warmup << " iterations=" << args.iterations
               << " pull_timeout_ms=" << args.pull_timeout_ms << "\n";
+    if (args.max_mean_latency_ms > 0.0) {
+      std::cout << "  max_mean_latency_ms=" << args.max_mean_latency_ms << "\n";
+    }
+    if (args.min_throughput_fps > 0.0) {
+      std::cout << "  min_throughput_fps=" << args.min_throughput_fps << "\n";
+    }
     if (!conn.card_env.empty()) {
       std::cout << "  card_env=" << conn.card_env << "\n";
     }
