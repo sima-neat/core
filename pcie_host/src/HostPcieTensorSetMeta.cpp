@@ -85,7 +85,9 @@ void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>
       throw std::runtime_error("tensor-set metadata supports tensor ranks up to " +
                                std::to_string(SIMA_TENSOR_SET_MAX_RANK));
     }
-    if (!tensor.strides_bytes.empty() && tensor.strides_bytes.size() != tensor.shape.size()) {
+    const auto& declared_strides =
+        span.strides_bytes_override.empty() ? tensor.strides_bytes : span.strides_bytes_override;
+    if (!declared_strides.empty() && declared_strides.size() != tensor.shape.size()) {
       throw std::runtime_error("tensor-set metadata strides must match tensor rank");
     }
     names.push_back(tensor.route.name.empty() ? "tensor_" + std::to_string(i) : tensor.route.name);
@@ -109,9 +111,9 @@ void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>
       desc.shape[d] = tensor.shape[d];
     }
     const std::vector<std::int64_t> strides =
-        tensor.strides_bytes.empty()
+        declared_strides.empty()
             ? contiguous_tensor_strides(tensor.shape, tensor_dtype_bytes(tensor.dtype))
-            : tensor.strides_bytes;
+            : declared_strides;
     for (guint d = 0; d < desc.rank && d < strides.size(); ++d) {
       desc.stride_bytes[d] = strides[d];
     }

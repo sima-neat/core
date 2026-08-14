@@ -211,6 +211,20 @@ if (SIMAPCIE_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_tensor_test.cpp
   )
   target_link_libraries(unit_pcie_host_tensor_test PRIVATE sima_neat_pcie_host)
+  target_include_directories(unit_pcie_host_tensor_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GST_INCLUDE_DIRS}
+  )
+
+  add_executable(unit_pcie_host_model_facts_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_model_facts_test.cpp
+  )
+  target_compile_definitions(unit_pcie_host_model_facts_test PRIVATE SIMA_NEAT_INTERNAL=1)
+  target_include_directories(unit_pcie_host_model_facts_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SIMA_NEAT_CORE_ROOT}/src
+  )
+  target_link_libraries(unit_pcie_host_model_facts_test PRIVATE sima_neat_pcie_host)
 
   add_executable(unit_pcie_host_lifecycle_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_lifecycle_test.cpp
@@ -238,6 +252,7 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_options_test COMMAND unit_pcie_host_options_test)
   add_test(NAME unit_pcie_host_caps_test COMMAND unit_pcie_host_caps_test)
   add_test(NAME unit_pcie_host_tensor_test COMMAND unit_pcie_host_tensor_test)
+  add_test(NAME unit_pcie_host_model_facts_test COMMAND unit_pcie_host_model_facts_test)
   add_test(NAME unit_pcie_host_lifecycle_test COMMAND unit_pcie_host_lifecycle_test)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)

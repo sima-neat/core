@@ -15,6 +15,7 @@ struct TensorMetaSpan {
   const Tensor* tensor = nullptr;
   std::int64_t byte_offset = 0;
   std::size_t size_bytes = 0;
+  std::vector<std::int64_t> strides_bytes_override;
 };
 
 struct PreparedPayload {

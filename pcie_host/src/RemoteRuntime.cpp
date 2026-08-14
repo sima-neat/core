@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <sstream>
@@ -146,6 +147,31 @@ bool RemoteRuntime::is_managed_upload_path(const std::string& remote_path) {
          filename.size() > std::string("sima-neat-pcie-").size();
 }
 
+int RemoteRuntime::parse_launched_pid(const std::string& output) {
+  constexpr const char* marker = "launched_pid=";
+  const std::size_t marker_pos = output.rfind(marker);
+  if (marker_pos == std::string::npos) {
+    throw std::runtime_error("remote start output does not contain a launched PID");
+  }
+  const std::size_t begin = marker_pos + std::char_traits<char>::length(marker);
+  std::size_t end = begin;
+  while (end < output.size() && std::isdigit(static_cast<unsigned char>(output[end]))) {
+    ++end;
+  }
+  if (end == begin) {
+    throw std::runtime_error("remote start output contains an invalid launched PID");
+  }
+  const long long parsed = std::stoll(output.substr(begin, end - begin));
+  if (parsed <= 0 || parsed > std::numeric_limits<int>::max()) {
+    throw std::runtime_error("remote start output contains an out-of-range launched PID");
+  }
+  return static_cast<int>(parsed);
+}
+
+bool RemoteRuntime::status_owner_matches(const RemoteStatus& status, const int expected_pid) {
+  return status.state.empty() || status.state == "malformed" || status.pid == expected_pid;
+}
+
 void RemoteRuntime::remove_upload(const std::string& remote_path) const {
   if (!is_managed_upload_path(remote_path)) {
     throw std::invalid_argument("refusing to remove unmanaged remote upload path: " + remote_path);
@@ -210,8 +236,8 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
   return remote_path;
 }
 
-void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
-                          const std::optional<std::string>& remote_model_options_path) const {
+int RemoteRuntime::start(const int queue, const std::string& remote_model_path,
+                         const std::optional<std::string>& remote_model_options_path) const {
   const std::string start_lock_path =
       "/run/sima-neat/pcie/q" + std::to_string(queue) + ".start.lock";
   std::ostringstream ss;
@@ -258,7 +284,8 @@ void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
   }
   ss << " 9>&- >/dev/null 2>&1 & " << "launched_pid=$!; " << "for i in $(seq 1 200); do "
      << "owner_pid=$(cat \"$pidfile\" 2>/dev/null || true); "
-     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then echo \"$launched_pid\"; exit 0; fi; "
+     << "if [ \"$owner_pid\" = \"$launched_pid\" ]; then "
+     << "echo \"launched_pid=$launched_pid\"; exit 0; fi; "
      << "if [ -n \"$owner_pid\" ] && kill -0 \"$owner_pid\" >/dev/null 2>&1 && "
      << "tr '\\0' ' ' < \"/proc/$owner_pid/cmdline\" 2>/dev/null | "
         "grep -q 'pcie-pipeline-builder'; then echo queue_busy; exit 9; fi; "
@@ -283,6 +310,14 @@ void RemoteRuntime::start(const int queue, const std::string& remote_model_path,
             ", timed_out=" + (result.timed_out ? "true" : "false") + "): " + result.output,
         !result.timed_out);
   }
+  try {
+    return parse_launched_pid(result.output);
+  } catch (const std::exception& e) {
+    throw RemoteStartError(std::string("remote pcie-pipeline-builder start returned an invalid "
+                                       "owner PID: ") +
+                               e.what(),
+                           false);
+  }
 }
 
 RemoteStatus RemoteRuntime::read_status(const int queue) const {
@@ -298,6 +333,7 @@ RemoteStatus RemoteRuntime::read_status(const int queue) const {
     RemoteStatus out;
     out.state = json_string_or(root, "state");
     out.queue = json_int_or(root, "queue", queue);
+    out.pid = json_int_or(root, "pid", -1);
     out.message = json_string_or(root, "message");
     out.error_code = json_string_or(root, "error_code");
     return out;
@@ -310,13 +346,20 @@ RemoteStatus RemoteRuntime::read_status(const int queue) const {
   }
 }
 
-RemoteStatus RemoteRuntime::wait_ready(const int queue, const int readiness_timeout_ms) const {
+RemoteStatus RemoteRuntime::wait_ready(const int queue, const int expected_pid,
+                                       const int readiness_timeout_ms) const {
   const auto deadline =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(readiness_timeout_ms);
   RemoteStatus last;
 
   while (std::chrono::steady_clock::now() < deadline) {
     last = read_status(queue);
+    if (!status_owner_matches(last, expected_pid)) {
+      throw std::runtime_error("remote pipeline queue ownership changed while waiting for "
+                               "readiness: expected pid=" +
+                               std::to_string(expected_pid) +
+                               " observed pid=" + std::to_string(last.pid));
+    }
     if (last.state == "ready") {
       return last;
     }
@@ -331,13 +374,15 @@ RemoteStatus RemoteRuntime::wait_ready(const int queue, const int readiness_time
                            " message=" + last.message);
 }
 
-void RemoteRuntime::stop(const int queue) const {
+void RemoteRuntime::stop(const int queue, const int expected_pid) const {
   std::ostringstream ss;
-  ss << "pid=''; " << "if [ -f " << SshRunner::shell_escape(pid_path(queue)) << " ]; then "
-     << "pid=$(cat " << SshRunner::shell_escape(pid_path(queue)) << "); " << "elif [ -f "
+  ss << "expected_pid=" << expected_pid << "; " << "pid=''; " << "if [ -f "
+     << SshRunner::shell_escape(pid_path(queue)) << " ]; then " << "pid=$(cat "
+     << SshRunner::shell_escape(pid_path(queue)) << "); " << "elif [ -f "
      << SshRunner::shell_escape(status_path(queue)) << " ]; then "
      << "pid=$(sed -n 's/.*\"pid\"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "
      << SshRunner::shell_escape(status_path(queue)) << " | head -n1); " << "fi; "
+     << "if [ -n \"$pid\" ] && [ \"$pid\" != \"$expected_pid\" ]; then exit 0; fi; "
      << "if [ -n \"$pid\" ]; then " << "kill -0 \"$pid\" >/dev/null 2>&1 || { rm -f "
      << SshRunner::shell_escape(pid_path(queue)) << "; exit 0; }; "
      << "tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null | grep -q 'pcie-pipeline-builder' || "

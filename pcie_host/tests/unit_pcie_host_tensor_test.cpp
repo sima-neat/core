@@ -1,5 +1,7 @@
 #include "simaai/neat/pcie/Model.h"
 
+#include "HostPcieTensorPayload.h"
+
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -93,6 +95,23 @@ int main() {
       require(first.byte_offset == 0, "shared packed tensors first offset");
       require(second.byte_offset == static_cast<std::int64_t>(64 * sizeof(float)),
               "shared packed tensors second offset");
+    }
+
+    {
+      auto storage = std::make_shared<std::vector<std::uint8_t>>(
+          std::initializer_list<std::uint8_t>{'A', 'B', 'C', 0xEE, 'D', 'E', 'F', 0xEE});
+      pcie::Tensor tensor = pcie::Tensor::from_external(storage->data(), storage->size(), storage,
+                                                        {2, 3}, "strided", 0, {4, 1});
+      auto payload = simaai::neat::pcie::internal::prepare_tensor_payload({tensor});
+      require(payload.size_bytes == 6U, "staged strided tensor compacted size");
+      require(std::vector<std::uint8_t>(payload.data, payload.data + payload.size_bytes) ==
+                  std::vector<std::uint8_t>({'A', 'B', 'C', 'D', 'E', 'F'}),
+              "staged strided tensor compacted bytes");
+      require(payload.spans.size() == 1U, "staged strided tensor metadata span");
+      require(payload.spans.front().strides_bytes_override == std::vector<std::int64_t>({3, 1}),
+              "staged strided tensor must advertise contiguous strides");
+      require(tensor.strides_bytes == std::vector<std::int64_t>({4, 1}),
+              "staging must not mutate caller tensor strides");
     }
 
     require_throws([] { (void)pcie::Tensor::from_vector(std::vector<float>(3), {2, 2}); },

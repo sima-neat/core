@@ -1,7 +1,7 @@
 #include "PcieModelFactsReader.h"
+#include "PcieModelFactsReaderInternal.h"
 
 #include "model/internal/ModelArchiveLoader.h"
-#include "pipeline/internal/sima/MpkContract.h"
 
 #include <algorithm>
 #include <cctype>
@@ -157,24 +157,58 @@ bool is_pass_through_stage(
          canonical_token(stage.plugin_id) == "passthrough";
 }
 
+bool input_has_internal_producer(
+    const simaai::neat::pipeline_internal::sima::MpkContract& contract,
+    const std::size_t plugin_index, const std::size_t input_index,
+    const simaai::neat::pipeline_internal::sima::MpkTensorContract& input) {
+  for (const auto& edge : contract.edges) {
+    if (edge.dst_plugin_index != plugin_index) {
+      continue;
+    }
+    if (edge.dst_input_index >= 0) {
+      if (edge.dst_input_index == static_cast<int>(input_index)) {
+        return true;
+      }
+      continue;
+    }
+    if (!input.name.empty() && edge.tensor_name == input.name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+} // namespace
+
+namespace detail {
+
 std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>
 application_input_contracts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
   std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract> inputs;
   inputs.reserve(contract.ingress_tensors.size());
+  const auto ordered = simaai::neat::pipeline_internal::sima::plugins_in_execution_order(contract);
 
   for (std::size_t i = 0; i < contract.ingress_tensors.size(); ++i) {
     const auto& ingress = contract.ingress_tensors[i];
     const simaai::neat::pipeline_internal::sima::MpkTensorContract* semantic = nullptr;
-    for (const auto& stage : contract.plugins) {
-      for (const auto& candidate : stage.input_tensors) {
-        if (!ingress.name.empty() && candidate.name == ingress.name &&
-            has_semantic_tensor_info(candidate)) {
-          semantic = &candidate;
-          break;
-        }
+    for (const std::size_t plugin_index : ordered) {
+      if (plugin_index >= contract.plugins.size()) {
+        continue;
       }
-      if (semantic) {
-        break;
+      const auto& stage = contract.plugins[plugin_index];
+      for (std::size_t input_index = 0; input_index < stage.input_tensors.size(); ++input_index) {
+        const auto& candidate = stage.input_tensors[input_index];
+        if (!ingress.name.empty() && candidate.name == ingress.name &&
+            has_semantic_tensor_info(candidate) &&
+            !input_has_internal_producer(contract, plugin_index, input_index, candidate)) {
+          if (semantic && (best_shape(*semantic) != best_shape(candidate) ||
+                           best_dtype(*semantic) != best_dtype(candidate) ||
+                           semantic->size_bytes != candidate.size_bytes)) {
+            throw std::runtime_error("MPK ingress '" + ingress.name +
+                                     "' has ambiguous root input contracts");
+          }
+          semantic = &candidate;
+        }
       }
     }
     inputs.push_back(semantic ? semantic_view_for_name(ingress, *semantic, static_cast<int>(i))
@@ -183,6 +217,24 @@ application_input_contracts(const simaai::neat::pipeline_internal::sima::MpkCont
 
   return inputs;
 }
+
+void validate_supported_input_dtype(
+    const simaai::neat::pipeline_internal::sima::MpkTensorContract& input) {
+  const std::string dtype = best_dtype(input);
+  const std::string token = canonical_token(dtype);
+  if (token == "uint16" || token == "evxxuint16" || token == "ev74uint16" || token == "fp64" ||
+      token == "float64" || token == "evxxfp64" || token == "evxxfloat64" || token == "ev74fp64" ||
+      token == "ev74float64") {
+    const std::string name = !input.name.empty() ? input.name : input.segment_name;
+    throw std::runtime_error("PCIe model input '" + name + "' uses unsupported dtype '" + dtype +
+                             "'; supported input dtypes are UINT8, INT8, INT16, INT32, BF16, "
+                             "and FP32");
+  }
+}
+
+} // namespace detail
+
+namespace {
 
 std::vector<simaai::neat::pipeline_internal::sima::MpkTensorContract>
 application_output_contracts(const simaai::neat::pipeline_internal::sima::MpkContract& contract) {
@@ -325,7 +377,7 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
     throw std::runtime_error("failed to read MPK contract: " + error);
   }
 
-  const auto public_inputs = application_input_contracts(*contract);
+  const auto public_inputs = detail::application_input_contracts(*contract);
   const auto public_outputs = application_output_contracts(*contract);
 
   PcieModelFacts facts;
@@ -333,6 +385,7 @@ PcieModelFacts read_model_facts(const std::string& model_path) {
   facts.has_boxdecode = graph_has_boxdecode(*contract);
 
   for (const auto& input : public_inputs) {
+    detail::validate_supported_input_dtype(input);
     auto converted = convert_tensor(input);
     facts.packed_input_bytes += converted.size_bytes;
     facts.inputs.push_back(std::move(converted));

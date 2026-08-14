@@ -34,6 +34,26 @@ int main() {
     if (!pcie_internal::RemoteRuntime::is_managed_upload_path(first)) {
       throw std::runtime_error("generated remote upload path must be managed");
     }
+    const int launched_pid = pcie_internal::RemoteRuntime::parse_launched_pid(
+        "Warning: known host added\nlaunched_pid=12345\n");
+    if (launched_pid != 12345) {
+      throw std::runtime_error("launched PID parsing mismatch");
+    }
+    bool rejected_missing_pid = false;
+    try {
+      (void)pcie_internal::RemoteRuntime::parse_launched_pid("queue ready\n");
+    } catch (const std::runtime_error&) {
+      rejected_missing_pid = true;
+    }
+    if (!rejected_missing_pid) {
+      throw std::runtime_error("remote start output without a launched PID must be rejected");
+    }
+    const pcie_internal::RemoteStatus matching_status{.state = "ready", .pid = launched_pid};
+    const pcie_internal::RemoteStatus replacement_status{.state = "ready", .pid = launched_pid + 1};
+    if (!pcie_internal::RemoteRuntime::status_owner_matches(matching_status, launched_pid) ||
+        pcie_internal::RemoteRuntime::status_owner_matches(replacement_status, launched_pid)) {
+      throw std::runtime_error("remote readiness must remain bound to the launched PID");
+    }
     for (const std::string path : {"/tmp/model.tar.gz", "/tmp/sima-neat-pcie-../model.tar.gz",
                                    "/var/tmp/sima-neat-pcie-model.tar.gz"}) {
       if (pcie_internal::RemoteRuntime::is_managed_upload_path(path)) {

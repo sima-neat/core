@@ -117,6 +117,7 @@ public:
     auto model_options = internal::write_model_options_json(options_);
     state_ = State::Starting;
     remote_started_ = false;
+    remote_pid_.reset();
     remote_uploads_may_be_in_use_ = false;
     try {
       remote_model_upload_ = remote_.upload_file(model_path_);
@@ -136,7 +137,8 @@ public:
 
       remote_uploads_may_be_in_use_ = true;
       try {
-        remote_.start(connection_.queue, *remote_model_upload_, remote_options_upload_);
+        remote_pid_ =
+            remote_.start(connection_.queue, *remote_model_upload_, remote_options_upload_);
       } catch (const internal::RemoteStartError& e) {
         remote_uploads_may_be_in_use_ = !e.cleanup_safe();
         throw;
@@ -145,7 +147,7 @@ public:
         throw;
       }
       remote_started_ = true;
-      (void)remote_.wait_ready(connection_.queue, readiness_timeout_ms);
+      (void)remote_.wait_ready(connection_.queue, *remote_pid_, readiness_timeout_ms);
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode);
@@ -157,8 +159,9 @@ public:
       channel_.stop();
       if (remote_started_) {
         try {
-          remote_.stop(connection_.queue);
+          remote_.stop(connection_.queue, *remote_pid_);
           remote_started_ = false;
+          remote_pid_.reset();
           remote_uploads_may_be_in_use_ = false;
         } catch (...) {
         }
@@ -286,8 +289,9 @@ private:
       std::exception_ptr remote_stop_error;
       if (remote_started_) {
         try {
-          remote_.stop(connection_.queue);
+          remote_.stop(connection_.queue, *remote_pid_);
           remote_started_ = false;
+          remote_pid_.reset();
           remote_uploads_may_be_in_use_ = false;
         } catch (...) {
           remote_stop_error = std::current_exception();
@@ -334,6 +338,7 @@ private:
   mutable std::mutex mu_;
   State state_ = State::Uninitialized;
   bool remote_started_ = false;
+  std::optional<int> remote_pid_;
   bool remote_uploads_may_be_in_use_ = false;
   bool timed_out_run_pending_ = false;
   std::optional<std::string> remote_model_upload_;

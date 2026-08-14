@@ -207,6 +207,10 @@ std::vector<TensorMetaSpan> packed_spans_for_tensors(const TensorList& tensors) 
         .tensor = &tensor,
         .byte_offset = running_offset,
         .size_bytes = size_bytes,
+        .strides_bytes_override =
+            tensor.shape.empty()
+                ? std::vector<std::int64_t>{}
+                : contiguous_tensor_strides(tensor.shape, tensor_dtype_bytes(tensor.dtype)),
     });
     if (size_bytes >
         static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max() - running_offset)) {
