@@ -27,7 +27,7 @@ def run_bash(
 class Ros2SdkInstallTest(unittest.TestCase):
     def test_sdk_metadata_selects_supported_environment_modes(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -49,7 +49,7 @@ unset SYSROOT || true
 printf 'UNKNOWN=%s\n' "$(detect_env_mode)"
 SYSROOT="${tmp}/sysroot"
 printf 'OVERRIDE=%s\n' "$(detect_env_mode)"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -65,7 +65,7 @@ printf 'OVERRIDE=%s\n' "$(detect_env_mode)"
 
     def test_ros2_sdk_platform_base_matches_manifest(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -80,7 +80,7 @@ ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
 NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
 ENV_MODE=ros2-sdk
 ensure_platform_compatible
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -90,7 +90,7 @@ ensure_platform_compatible
         self,
     ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -104,7 +104,7 @@ ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
 NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
 ENV_MODE=ros2-sdk
 ensure_platform_compatible
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -113,7 +113,7 @@ ensure_platform_compatible
 
     def test_ros2_sdk_routes_only_to_native_install_without_pyneat(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 INSTALLER_TMP_DIRS=("${tmp}")
@@ -124,7 +124,7 @@ install_python_environment() { printf 'PYNEAT_PATH_USED\n'; return 99; }
 install_debs_on_board() { printf 'BOARD_PATH_USED\n'; return 99; }
 install_debs_into_sysroot() { printf 'SYSROOT_PATH_USED\n'; return 99; }
 install_for_environment
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -135,7 +135,7 @@ install_for_environment
 
     def test_ros2_sdk_uses_zero_removal_native_apt_transaction(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./sima-neat.deb ./sima-neat-dev.deb ./neat-runtime.deb)
 validate_ros2_sdk_native_host() { :; }
@@ -158,7 +158,7 @@ repair_global_sima_neat_lib_links() { printf 'REPAIRED_LINKS\n'; }
 verify_global_sima_neat_lib_links() { printf 'VERIFIED_LINKS\n'; }
 verify_ros2_sdk_deb_packages_installed() { printf 'VERIFIED_PACKAGES\n'; }
 install_debs_in_ros2_sdk
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -175,7 +175,7 @@ install_debs_in_ros2_sdk
 
     def test_ros2_sdk_rejects_simulated_package_removal(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./sima-neat.deb ./sima-neat-dev.deb)
 validate_ros2_sdk_native_host() { :; }
@@ -192,7 +192,7 @@ run_sudo() {
   printf 'MUTATED\n'
 }
 install_debs_in_ros2_sdk
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -201,7 +201,7 @@ install_debs_in_ros2_sdk
 
     def test_ros2_sdk_rejects_missing_tvm_before_apt_transaction(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./sima-neat.deb ./sima-neat-dev.deb)
 validate_ros2_sdk_native_host() { :; }
@@ -213,7 +213,7 @@ validate_ros2_sdk_tvm_runtime() {
 }
 run_sudo() { printf 'APT_MUTATED\n'; }
 install_debs_in_ros2_sdk
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -222,7 +222,7 @@ install_debs_in_ros2_sdk
 
     def test_ros2_sdk_rejects_non_arm64_deb(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(./sima-neat.deb ./sima-neat-dev.deb)
 dpkg-deb() {
@@ -233,7 +233,7 @@ dpkg-deb() {
   esac
 }
 validate_ros2_sdk_deb_architectures
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -242,7 +242,7 @@ validate_ros2_sdk_deb_architectures
 
     def test_ros2_sdk_validates_native_arm64_debian_bookworm_host(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -258,14 +258,14 @@ dpkg-query() { :; }
 dpkg() { [[ "$1" == --print-architecture ]] && printf '%s\n' arm64; }
 uname() { [[ "$1" == -m ]] && printf '%s\n' aarch64; }
 validate_ros2_sdk_native_host
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_ros2_sdk_rejects_non_arm64_host(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -281,7 +281,7 @@ dpkg-query() { :; }
 dpkg() { [[ "$1" == --print-architecture ]] && printf '%s\n' amd64; }
 uname() { [[ "$1" == -m ]] && printf '%s\n' x86_64; }
 validate_ros2_sdk_native_host
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -289,7 +289,7 @@ validate_ros2_sdk_native_host
 
     def test_ros2_sdk_installs_missing_tvm_runtime_from_matching_sysroot(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -303,7 +303,7 @@ run_sudo() {
 }
 readelf() { printf '%s\n' '  Machine: AArch64'; }
 install_ros2_sdk_tvm_runtime
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -317,7 +317,7 @@ install_ros2_sdk_tvm_runtime
 class NativeModalixRestoreTest(unittest.TestCase):
     def test_sdk_platform_version_prefers_pre_release_platform_base(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -330,7 +330,7 @@ SDK Version = 2.1.3~pre4678_Palette_SDK_neat_develop_4b9f4a1
 EOF
 read_sdk_platform_version "${tmp}/sdk-release"
 sdk_platform_version_label "${tmp}/sdk-release"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -338,7 +338,7 @@ sdk_platform_version_label "${tmp}/sdk-release"
 
     def test_sdk_platform_version_preserves_legacy_sdk_release(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -348,7 +348,7 @@ eLXr Version = 2.1.2_release_neat_release-2.1_3b4be39
 EOF
 read_sdk_platform_version "${tmp}/sdk-release"
 sdk_platform_version_label "${tmp}/sdk-release"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -356,7 +356,7 @@ sdk_platform_version_label "${tmp}/sdk-release"
 
     def test_pre_release_sdk_accepts_matching_package_platform_base(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -371,7 +371,7 @@ NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
 ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
 ensure_platform_compatible
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -379,7 +379,7 @@ ensure_platform_compatible
 
     def test_pre_release_sdk_rejects_different_package_platform_base(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -394,7 +394,7 @@ NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
 ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
 ensure_platform_compatible
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -404,7 +404,7 @@ ensure_platform_compatible
         self,
     ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -425,7 +425,7 @@ dpkg-deb() {
   esac
 }
 verify_simulated_package_removals "${simulation}" "${replacement}"
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -434,7 +434,7 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
 
     def test_board_transaction_rejects_non_exact_replacement(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -455,7 +455,7 @@ dpkg-deb() {
   esac
 }
 verify_simulated_package_removals "${simulation}" "${replacement}"
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -464,10 +464,11 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
             result.stderr,
         )
 
+
 class DispatcherMigrationTest(unittest.TestCase):
     def test_migration_moves_unowned_global_and_backup_outside_loader_dir(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -489,7 +490,7 @@ migrate_stale_global_dispatcher_libs
 [[ "$(find "${quarantine}" -type f -name 'libneatdispatchercore.so.bak-20260705' | wc -l)" -eq 1 ]]
 [[ "$(find "${quarantine}" -type l -name 'libneatdispatchercore.so' | wc -l)" -eq 1 ]]
 printf 'MIGRATED\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -498,7 +499,7 @@ printf 'MIGRATED\n'
 
     def test_migration_refuses_package_owned_global_dispatcher(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -509,7 +510,7 @@ dispatcher_quarantine_root() { printf '%s\n' "${tmp}/quarantine"; }
 dpkg-query() { printf 'legacy-runtime: %s\n' "$2"; }
 run_sudo() { "$@"; }
 migrate_stale_global_dispatcher_libs
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -517,7 +518,7 @@ migrate_stale_global_dispatcher_libs
 
     def test_verifies_versioned_private_dispatcher_and_package_ownership(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -532,7 +533,7 @@ readelf() { printf '%s\n' ' 0x000000000000000e (SONAME) Library soname: [libneat
 dpkg-query() { printf 'neat-runtime: %s\n' "$2"; }
 verify_private_dispatcher_runtime
 printf 'PRIVATE_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -540,11 +541,10 @@ printf 'PRIVATE_OK\n'
         self.assertIn("versioned package-owned dispatcher", result.stdout)
 
 
-
 class DevKitRecoveryDispatcherTest(unittest.TestCase):
     def test_recovery_quarantines_every_global_dispatcher_without_alias(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/loader"
@@ -569,7 +569,7 @@ quarantine_stale_global_dispatcher_libs
 [[ -f "${tmp}/quarantine/libneatdispatchercore.so.bak-20260705" ]]
 [[ "$(find "${tmp}/loader" -name 'libneatdispatchercore.so*' | wc -l)" -eq 0 ]]
 printf 'RECOVERY_MIGRATED\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -579,7 +579,7 @@ printf 'RECOVERY_MIGRATED\n'
 
     def test_recovery_refuses_package_owned_global_dispatcher(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/loader"
@@ -598,7 +598,7 @@ ldconfig() { :; }
 [[ -f "${tmp}/loader/libneatdispatchercore.so" ]]
 [[ ! -e "${tmp}/quarantine" ]]
 printf 'RECOVERY_REFUSED\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -607,8 +607,7 @@ printf 'RECOVERY_REFUSED\n'
         self.assertIn("package-owned global dispatcher", result.stderr)
 
 
-
-RECOVERY_ORDER_HARNESS = r'''
+RECOVERY_ORDER_HARNESS = r"""
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 calls="${tmp}/calls"
@@ -625,7 +624,7 @@ systemctl() { return 0; }
 sleep() { :; }
 
 line_of() { grep -n -- "$1" "${calls}" | head -1 | cut -d: -f1; }
-'''
+"""
 
 
 class DevKitRecoveryOrderingTest(unittest.TestCase):
@@ -634,7 +633,7 @@ class DevKitRecoveryOrderingTest(unittest.TestCase):
     def test_m4_boots_before_appcomplex_is_stopped(self) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 pgrep() { return 0; }   # appcomplex already running
 
 recover_devkit_runtime
@@ -648,7 +647,7 @@ restart="$(line_of 'restart simaai-appcomplex.service')"
 (( stop < init ))    || { printf 'init_mla_memory ran while appcomplex held the mailbox\n' >&2; exit 1; }
 (( init < restart )) || { printf 'appcomplex restarted before init_mla_memory\n' >&2; exit 1; }
 printf 'RECOVERY_ORDER_OK\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -658,7 +657,7 @@ printf 'RECOVERY_ORDER_OK\n'
     def test_recovery_restarts_a_down_appcomplex_before_booting_the_m4(self) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 # Down on the first probe, up once the start step has run.
 probe_count=0
 pgrep() {
@@ -676,7 +675,7 @@ boot="$(line_of 'remoteproc1 start')"
 (( reset < start )) || { printf 'start attempted before clearing the start limit\n' >&2; exit 1; }
 (( start < boot ))  || { printf 'M4 booted before appcomplex was restored\n' >&2; exit 1; }
 printf 'RECOVERY_RESTORED_APPCOMPLEX\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -686,7 +685,7 @@ printf 'RECOVERY_RESTORED_APPCOMPLEX\n'
     def test_recovery_refuses_to_boot_the_m4_when_appcomplex_stays_down(self) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 pgrep() { return 1; }   # never comes up
 
 if recover_devkit_runtime; then
@@ -699,7 +698,7 @@ if grep -q 'remoteproc' "${calls}"; then
   exit 1
 fi
 printf 'RECOVERY_REFUSED_M4_BOOT\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -707,10 +706,12 @@ printf 'RECOVERY_REFUSED_M4_BOOT\n'
         self.assertIn("RECOVERY_REFUSED_M4_BOOT", result.stdout)
         self.assertIn("refusing to boot the M4", result.stderr)
 
-    def test_recovery_skips_the_precondition_when_appcomplex_is_not_installed(self) -> None:
+    def test_recovery_skips_the_precondition_when_appcomplex_is_not_installed(
+        self,
+    ) -> None:
         result = run_bash(
             RECOVERY_ORDER_HARNESS
-            + r'''
+            + r"""
 systemctl() { return 1; }   # unit not installed on this image
 pgrep() { return 1; }
 
@@ -719,7 +720,7 @@ recover_devkit_runtime
 boot="$(line_of 'remoteproc1 start')"
 [[ -n "${boot}" ]] || { printf 'recovery stalled on an image without appcomplex\n' >&2; exit 1; }
 printf 'RECOVERY_SKIPPED_PRECONDITION\n'
-''',
+""",
             RECOVERY,
         )
 
@@ -731,7 +732,7 @@ printf 'RECOVERY_SKIPPED_PRECONDITION\n'
 class SimaNeatLinkRepairTest(unittest.TestCase):
     def test_sdk_sysroot_rejects_multiple_core_package_pairs(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(core-old.deb core-new.deb dev-new.deb)
 dpkg-deb() {
@@ -745,7 +746,7 @@ dpkg-deb() {
   esac
 }
 validate_single_sima_neat_package_pair
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -757,7 +758,7 @@ validate_single_sima_neat_package_pair
 
     def test_sdk_sysroot_rejects_mismatched_core_package_versions(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(core.deb dev.deb)
 dpkg-deb() {
@@ -771,7 +772,7 @@ dpkg-deb() {
   esac
 }
 validate_single_sima_neat_package_pair
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -781,7 +782,7 @@ validate_single_sima_neat_package_pair
 
     def test_sdk_sysroot_accepts_one_matching_core_package_pair(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 DEBS=(core.deb dev.deb unrelated.deb)
 dpkg-deb() {
@@ -797,7 +798,7 @@ dpkg-deb() {
 }
 validate_single_sima_neat_package_pair
 printf 'PAIR_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -805,7 +806,7 @@ printf 'PAIR_OK\n'
 
     def test_sdk_sysroot_preserves_current_bundle_compatibility_link(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -833,7 +834,7 @@ repair_sysroot_sima_neat_libs "${tmp}"
 [[ "$(readlink "${lib_dir}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
 ! compgen -G "${lib_dir}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 printf 'SDK_COMPAT_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -842,9 +843,11 @@ printf 'SDK_COMPAT_OK\n'
             "Quarantining stale SDK sysroot libsima_neat path", result.stdout
         )
 
-    def test_sdk_sysroot_quarantines_libraries_not_owned_by_current_bundle(self) -> None:
+    def test_sdk_sysroot_quarantines_libraries_not_owned_by_current_bundle(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -875,7 +878,7 @@ repair_sysroot_sima_neat_libs "${tmp}"
 compgen -G "${lib_dir}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 compgen -G "${lib_dir}/libsima_neat.so.2.0.0.bak-neat-installer-*" >/dev/null
 printf 'SDK_ABI3_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -885,9 +888,11 @@ printf 'SDK_ABI3_OK\n'
             2,
         )
 
-    def test_abi3_package_manifest_drives_links_and_quarantines_unowned_abi2(self) -> None:
+    def test_abi3_package_manifest_drives_links_and_quarantines_unowned_abi2(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -926,7 +931,7 @@ verify_global_sima_neat_lib_links
 [[ ! -e "${tmp}/libsima_neat.so.2" && ! -L "${tmp}/libsima_neat.so.2" ]]
 compgen -G "${tmp}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 printf 'ABI3_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -936,7 +941,7 @@ printf 'ABI3_OK\n'
 
     def test_package_owned_compatibility_soname_is_never_quarantined(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -966,16 +971,20 @@ repair_global_sima_neat_lib_links
 [[ "$(readlink "${tmp}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
 ! compgen -G "${tmp}/libsima_neat.so.2.bak-neat-installer-*" >/dev/null
 printf 'OWNED_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("OWNED_OK", result.stdout)
-        self.assertIn("Preserving package-owned libsima_neat compatibility link", result.stdout)
+        self.assertIn(
+            "Preserving package-owned libsima_neat compatibility link", result.stdout
+        )
 
-    def test_wrong_package_owned_manifest_links_are_repaired_without_quarantine(self) -> None:
+    def test_wrong_package_owned_manifest_links_are_repaired_without_quarantine(
+        self,
+    ) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1006,7 +1015,7 @@ verify_global_sima_neat_lib_links
 [[ "$(readlink "${tmp}/libsima_neat.so.2")" == 'libsima_neat.so.2.1.2' ]]
 ! compgen -G "${tmp}/libsima_neat.so*.bak-neat-installer-*" >/dev/null
 printf 'OWNED_REPAIR_OK\n'
-'''
+"""
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1015,7 +1024,7 @@ printf 'OWNED_REPAIR_OK\n'
 
     def test_elf_soname_must_match_packaged_soname_link(self) -> None:
         result = run_bash(
-            r'''
+            r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
@@ -1039,7 +1048,7 @@ read_sima_neat_elf_soname() { printf '%s\n' 'libsima_neat.so.2'; }
 run_sudo() { "$@"; }
 
 repair_global_sima_neat_lib_links
-'''
+"""
         )
 
         self.assertNotEqual(result.returncode, 0)
