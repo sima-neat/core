@@ -22,6 +22,7 @@ public:
   }
 
   std::string backend_fragment(int node_index) const override {
+    const std::string element_name = "n" + std::to_string(node_index) + "_swenc";
     std::string factory;
     std::string input_adapter;
     std::string props;
@@ -52,7 +53,9 @@ public:
       }
     } else if (simaai::neat::element_exists("openh264enc")) {
       factory = "openh264enc";
-      input_adapter = "videoconvert ! video/x-raw,format=I420 ! ";
+      input_adapter = "videoconvert name=" + element_name +
+                      "_convert ! capsfilter name=" + element_name +
+                      "_i420 caps=\"video/x-raw,format=I420\" ! ";
       props = "";
     } else if (simaai::neat::element_exists("avenc_h264")) {
       factory = "avenc_h264";
@@ -64,14 +67,18 @@ public:
     }
 
     std::ostringstream ss;
-    ss << input_adapter << factory << " name=n" << node_index << "_swenc";
+    ss << input_adapter << factory << " name=" << element_name;
     if (!props.empty())
       ss << " " << props;
     return ss.str();
   }
 
   std::vector<std::string> element_names(int node_index) const override {
-    return {"n" + std::to_string(node_index) + "_swenc"};
+    const std::string element_name = "n" + std::to_string(node_index) + "_swenc";
+    if (!simaai::neat::element_exists("x264enc") && simaai::neat::element_exists("openh264enc")) {
+      return {element_name + "_convert", element_name + "_i420", element_name};
+    }
+    return {element_name};
   }
 
 private:

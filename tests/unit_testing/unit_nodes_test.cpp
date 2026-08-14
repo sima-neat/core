@@ -158,8 +158,13 @@ int main() {
       const std::string fragment = sw->backend_fragment(1);
       require_contains(fragment, "name=n1_swenc", "H264EncodeSW name mismatch");
       if (!simaai::neat::element_exists("x264enc") && simaai::neat::element_exists("openh264enc")) {
-        require_contains(fragment, "video/x-raw,format=I420",
+        require_contains(fragment, "videoconvert name=n1_swenc_convert",
+                         "H264EncodeSW OpenH264 converter name mismatch");
+        require_contains(fragment, "capsfilter name=n1_swenc_i420 caps=\"video/x-raw,format=I420\"",
                          "H264EncodeSW OpenH264 input mismatch");
+        const auto names = sw->element_names(1);
+        require(names == std::vector<std::string>{"n1_swenc_convert", "n1_swenc_i420", "n1_swenc"},
+                "H264EncodeSW OpenH264 element names mismatch");
       }
     }
 
