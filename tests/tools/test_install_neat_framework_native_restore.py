@@ -26,7 +26,382 @@ def run_bash(
     )
 
 
+class Ros2SdkInstallTest(unittest.TestCase):
+    def test_sdk_metadata_selects_supported_environment_modes(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/ros2-release" <<'EOF'
+Product Name = SiMa.ai ROS2 SDK
+SDK Type = ros2-sdk
+Platform Version = 2.1.2
+EOF
+printf '%s\n' 'SDK Version = 2.1.2_Palette_SDK_neat_main_deadbeef' > "${tmp}/elxr-release"
+printf '%s\n' 'Product Name = Unknown SDK' > "${tmp}/unknown-release"
+mkdir -p "${tmp}/sysroot"
+
+ELXR_SDK_RELEASE_FILE="${tmp}/ros2-release"
+printf 'ROS2=%s\n' "$(detect_env_mode)"
+ELXR_SDK_RELEASE_FILE="${tmp}/elxr-release"
+printf 'ELXR=%s\n' "$(detect_env_mode)"
+ELXR_SDK_RELEASE_FILE="${tmp}/unknown-release"
+unset SYSROOT || true
+printf 'UNKNOWN=%s\n' "$(detect_env_mode)"
+SYSROOT="${tmp}/sysroot"
+printf 'OVERRIDE=%s\n' "$(detect_env_mode)"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "ROS2=ros2-sdk",
+                "ELXR=elxr-sdk",
+                "UNKNOWN=unsupported",
+                "OVERRIDE=elxr-sdk",
+            ],
+        )
+
+    def test_ros2_sdk_platform_base_matches_manifest(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Type = ros2-sdk
+Platform Version = 2.1.3~pre4678
+Platform Base = 2.1.3
+ROS2 SDK Version = main:deadbeef:20260806T225502Z
+EOF
+printf '%s\n' '{"platform-version":"2.1.3"}' > "${tmp}/manifest.json"
+ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+ENV_MODE=ros2-sdk
+ensure_platform_compatible
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Platform compatibility verified: 2.1.3", result.stdout)
+
+    def test_ros2_sdk_falls_back_to_platform_version_and_rejects_mismatch(
+        self,
+    ) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Type = ros2-sdk
+Platform Version = 2.2.0
+Version = 2.1.2
+EOF
+printf '%s\n' '{"platform-version":"2.1.2"}' > "${tmp}/manifest.json"
+ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+ENV_MODE=ros2-sdk
+ensure_platform_compatible
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Package platform-version: 2.1.2", result.stderr)
+        self.assertIn("Detected Platform Version: 2.2.0", result.stderr)
+
+    def test_ros2_sdk_routes_only_to_native_install_without_pyneat(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+INSTALLER_TMP_DIRS=("${tmp}")
+ENV_MODE=ros2-sdk
+install_debs_in_ros2_sdk() { printf 'NATIVE_INSTALL\n'; }
+install_agent_skills_for_current_user() { printf 'SKILLS=%s\n' "$1"; }
+install_python_environment() { printf 'PYNEAT_PATH_USED\n'; return 99; }
+install_debs_on_board() { printf 'BOARD_PATH_USED\n'; return 99; }
+install_debs_into_sysroot() { printf 'SYSROOT_PATH_USED\n'; return 99; }
+install_for_environment
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["NATIVE_INSTALL", "SKILLS=/usr/share/sima-neat/skills/sima-neat"],
+        )
+
+    def test_ros2_sdk_uses_zero_removal_native_apt_transaction(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./sima-neat.deb ./sima-neat-dev.deb ./neat-runtime.deb)
+validate_ros2_sdk_native_host() { :; }
+validate_single_sima_neat_package_pair() { :; }
+validate_ros2_sdk_deb_architectures() { :; }
+validate_ros2_sdk_tvm_runtime() { :; }
+refresh_apt_metadata_for_board_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+run_sudo() {
+  if [[ " $* " == *" --simulate "* ]]; then
+    printf 'SIMULATION_OK\n'
+    return 0
+  fi
+  printf 'RUN:'
+  printf ' <%s>' "$@"
+  printf '\n'
+}
+install_ros2_sdk_tvm_runtime() { printf 'INSTALLED_TVM_RUNTIME\n'; }
+repair_global_sima_neat_lib_links() { printf 'REPAIRED_LINKS\n'; }
+verify_global_sima_neat_lib_links() { printf 'VERIFIED_LINKS\n'; }
+verify_ros2_sdk_deb_packages_installed() { printf 'VERIFIED_PACKAGES\n'; }
+install_debs_in_ros2_sdk
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SIMULATION_OK", result.stdout)
+        self.assertIn("INSTALLED_TVM_RUNTIME", result.stdout)
+        self.assertIn("VERIFIED_PACKAGES", result.stdout)
+        transaction = next(
+            line for line in result.stdout.splitlines() if line.startswith("RUN:")
+        )
+        self.assertIn("<apt-get>", transaction)
+        self.assertIn("<--no-remove>", transaction)
+        self.assertIn("<--allow-downgrades>", transaction)
+        self.assertNotIn("--fix-broken", transaction)
+
+    def test_ros2_sdk_rejects_simulated_package_removal(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./sima-neat.deb ./sima-neat-dev.deb)
+validate_ros2_sdk_native_host() { :; }
+validate_single_sima_neat_package_pair() { :; }
+validate_ros2_sdk_deb_architectures() { :; }
+validate_ros2_sdk_tvm_runtime() { :; }
+refresh_apt_metadata_for_board_install() { :; }
+apt_package_database_is_healthy() { return 0; }
+run_sudo() {
+  if [[ " $* " == *" --simulate "* ]]; then
+    printf '%s\n' 'Remv simaai-palette-modalix [2.1.2]'
+    return 0
+  fi
+  printf 'MUTATED\n'
+}
+install_debs_in_ros2_sdk
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("planned package removal", result.stderr)
+        self.assertNotIn("MUTATED", result.stdout)
+
+    def test_ros2_sdk_rejects_missing_tvm_before_apt_transaction(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./sima-neat.deb ./sima-neat-dev.deb)
+validate_ros2_sdk_native_host() { :; }
+validate_single_sima_neat_package_pair() { :; }
+validate_ros2_sdk_deb_architectures() { :; }
+validate_ros2_sdk_tvm_runtime() {
+  printf 'MISSING_TVM\n' >&2
+  return 1
+}
+run_sudo() { printf 'APT_MUTATED\n'; }
+install_debs_in_ros2_sdk
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MISSING_TVM", result.stderr)
+        self.assertNotIn("APT_MUTATED", result.stdout)
+
+    def test_ros2_sdk_rejects_non_arm64_deb(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+DEBS=(./sima-neat.deb ./sima-neat-dev.deb)
+dpkg-deb() {
+  case "$2" in
+    ./sima-neat.deb) printf '%s\n' arm64 ;;
+    ./sima-neat-dev.deb) printf '%s\n' amd64 ;;
+    *) return 1 ;;
+  esac
+}
+validate_ros2_sdk_deb_architectures
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must be arm64 or all", result.stderr)
+        self.assertIn("./sima-neat-dev.deb", result.stderr)
+
+    def test_ros2_sdk_validates_native_arm64_debian_bookworm_host(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/os-release" <<'EOF'
+ID=debian
+VERSION_ID="12"
+VERSION_CODENAME=bookworm
+EOF
+NEAT_OS_RELEASE_FILE="${tmp}/os-release"
+apt-get() { :; }
+dpkg-deb() { :; }
+dpkg-query() { :; }
+dpkg() { [[ "$1" == --print-architecture ]] && printf '%s\n' arm64; }
+uname() { [[ "$1" == -m ]] && printf '%s\n' aarch64; }
+validate_ros2_sdk_native_host
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_ros2_sdk_rejects_non_arm64_host(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/os-release" <<'EOF'
+ID=debian
+VERSION_ID="12"
+VERSION_CODENAME=bookworm
+EOF
+NEAT_OS_RELEASE_FILE="${tmp}/os-release"
+apt-get() { :; }
+dpkg-deb() { :; }
+dpkg-query() { :; }
+dpkg() { [[ "$1" == --print-architecture ]] && printf '%s\n' amd64; }
+uname() { [[ "$1" == -m ]] && printf '%s\n' x86_64; }
+validate_ros2_sdk_native_host
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires an ARM64 host environment", result.stderr)
+
+    def test_ros2_sdk_installs_missing_tvm_runtime_from_matching_sysroot(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+mkdir -p "${tmp}/sysroot/usr/lib"
+touch "${tmp}/sysroot/usr/lib/libtvm_runtime.so"
+SYSROOT="${tmp}/sysroot"
+run_sudo() {
+  printf 'RUN:'
+  printf ' <%s>' "$@"
+  printf '\n'
+}
+readelf() { printf '%s\n' '  Machine: AArch64'; }
+install_ros2_sdk_tvm_runtime
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "<install> <-d> <-m> <0755> </usr/lib/aarch64-linux-gnu>",
+            result.stdout,
+        )
+        self.assertIn("libtvm_runtime.so>", result.stdout)
+
+
 class NativeModalixRestoreTest(unittest.TestCase):
+    def test_sdk_platform_version_prefers_pre_release_platform_base(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Profile = platform-cross
+Platform Version = 2.1.3~pre4678
+Platform Base = 2.1.3
+Platform Channel = pre-release
+SDK Version = 2.1.3~pre4678_Palette_SDK_neat_develop_4b9f4a1
+EOF
+read_sdk_platform_version "${tmp}/sdk-release"
+sdk_platform_version_label "${tmp}/sdk-release"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["2.1.3", "Platform Base"])
+
+    def test_sdk_platform_version_preserves_legacy_sdk_release(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+cat > "${tmp}/sdk-release" <<'EOF'
+SDK Version = 2.1.2.3_Palette_SDK_neat_release-2.1_3b4be39
+eLXr Version = 2.1.2_release_neat_release-2.1_3b4be39
+EOF
+read_sdk_platform_version "${tmp}/sdk-release"
+sdk_platform_version_label "${tmp}/sdk-release"
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["2.1.2.3", "SDK Version"])
+
+    def test_pre_release_sdk_accepts_matching_package_platform_base(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' '{"platform-version":"2.1.3"}' > "${tmp}/manifest.json"
+cat > "${tmp}/sdk-release" <<'EOF'
+Platform Version = 2.1.3~pre4678
+Platform Base = 2.1.3
+SDK Version = 2.1.3~pre4678_Palette_SDK_neat_develop_4b9f4a1
+EOF
+ENV_MODE=elxr-sdk
+NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
+ensure_platform_compatible
+'''
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Platform compatibility verified: 2.1.3", result.stdout)
+
+    def test_pre_release_sdk_rejects_different_package_platform_base(self) -> None:
+        result = run_bash(
+            r'''
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+printf '%s\n' '{"platform-version":"2.1.2"}' > "${tmp}/manifest.json"
+cat > "${tmp}/sdk-release" <<'EOF'
+Platform Version = 2.1.3~pre4678
+Platform Base = 2.1.3
+SDK Version = 2.1.3~pre4678_Palette_SDK_neat_develop_4b9f4a1
+EOF
+ENV_MODE=elxr-sdk
+NEAT_PACKAGE_MANIFEST="${tmp}/manifest.json"
+ELXR_SDK_RELEASE_FILE="${tmp}/sdk-release"
+NEAT_INSTALLER_SKIP_PLATFORM_CHECK=OFF
+ensure_platform_compatible
+'''
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Detected Platform Base: 2.1.3", result.stderr)
+
     def test_board_install_keeps_memory_out_of_broad_native_transaction(self) -> None:
         result = run_bash(
             r'''
@@ -132,14 +507,14 @@ trap 'rm -rf "${tmp}"' EXIT
 replacement="${tmp}/neat-common.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4617]' > "${simulation}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4678]' > "${simulation}"
 dpkg-query() {
-  printf '%s\n' '2.1.3~pre4617'
+  printf '%s\n' '2.1.3~pre4678'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
   case "$3" in
-    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4617)' ;;
+    Provides) printf '%s\n' 'simaai-common (= 2.1.3~pre4678)' ;;
     Replaces) printf '%s\n' 'simaai-common' ;;
     Conflicts) printf '%s\n' 'simaai-common' ;;
     *) return 2 ;;
@@ -151,7 +526,7 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Verified platform package replacements", result.stdout)
-        self.assertIn("simaai-common=2.1.3~pre4617", result.stdout)
+        self.assertIn("simaai-common=2.1.3~pre4678", result.stdout)
 
     def test_board_transaction_rejects_non_exact_replacement(self) -> None:
         result = run_bash(
@@ -162,9 +537,9 @@ trap 'rm -rf "${tmp}"' EXIT
 replacement="${tmp}/neat-common.deb"
 simulation="${tmp}/simulation.log"
 touch "${replacement}"
-printf '%s\n' 'Remv simaai-common [2.1.3~pre4617]' > "${simulation}"
+printf '%s\n' 'Remv simaai-common [2.1.3~pre4678]' > "${simulation}"
 dpkg-query() {
-  printf '%s\n' '2.1.3~pre4617'
+  printf '%s\n' '2.1.3~pre4678'
 }
 dpkg-deb() {
   [[ "$1" == -f ]] || return 2
@@ -332,10 +707,10 @@ dpkg-deb() {
     *:Version) printf '%s\n' 2.1.1-0neat1 ;;
     *:Architecture) printf '%s\n' arm64 ;;
     simaai-memory-lib_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib (= 2.1.1~pre4617), simaai-memory-lib (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib (= 2.1.3~pre4678), simaai-memory-lib (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Provides)
-      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.1~pre4617), simaai-memory-lib-dev (= 2.1.1)'
+      printf '%s\n' 'simaai-memory-lib-dev (= 2.1.3~pre4678), simaai-memory-lib-dev (= 2.1.1)'
       ;;
     simaai-memory-lib-dev_2.1.1-0neat1_arm64.deb:Depends)
       printf '%s\n' 'libc6, simaai-memory-lib (= 2.1.1-0neat1)'

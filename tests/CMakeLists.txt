@@ -393,6 +393,7 @@ set(UNIT_TESTS
   unit_resnet50_mla_handoff_segment_test
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
+  unit_detess_rank2_contract_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
   unit_modelpack_mount_selection_test
@@ -590,6 +591,19 @@ foreach(test ${E2E_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "e2e")
   endif()
 endforeach()
+
+add_pipeline_test(
+  ev74_four_process_rpmsg_concurrency_test
+  SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/ev74_four_process_rpmsg_concurrency_test.cpp
+  LOCK_DISPATCHER
+)
+
+if (NOT ev74_four_process_rpmsg_concurrency_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST ev74_four_process_rpmsg_concurrency_test APPEND PROPERTY
+    LABELS "e2e;ev74;concurrency;rpmsg")
+  set_tests_properties(ev74_four_process_rpmsg_concurrency_test PROPERTIES TIMEOUT 120)
+endif()
 
 add_pipeline_test_long(
   video_sender_adaptive_ingress_e2e_test
@@ -2077,6 +2091,7 @@ endfunction()
 # parallelism for the many non-accelerator E2E tests while allowing only one
 # accelerator-heavy test to own the device runtime at a time.
 foreach(test
+    ev74_four_process_rpmsg_concurrency_test
     hybrid_graph_stage_model_test
     preproc_standalone_test
     preproc_build_input_repro_test

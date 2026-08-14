@@ -5,13 +5,18 @@ set -euo pipefail
 #
 # Purpose:
 # - Install SiMa NEAT wheel into a Python virtual environment (board mode only).
-# - Install NEAT runtime .deb packages on Modalix board or into eLxr SDK sysroot.
+# - Install NEAT runtime .deb packages on a Modalix board, natively in the ROS2
+#   SDK, or into an eLxr SDK sysroot.
 #
 # Behavior:
 # - Auto-detects environment:
-#   - eLxr SDK when /etc/sdk-release exists, or SYSROOT points to a valid directory.
+#   - ROS2 SDK when /etc/sdk-release reports SDK Type=ros2-sdk.
+#   - eLxr SDK when /etc/sdk-release reports SDK Version, or SYSROOT points to a
+#     valid directory.
 #   - Modalix board when /etc/buildinfo reports MACHINE=modalix.
 # - In Modalix board mode, installs .deb packages with apt (sudo).
+# - In ROS2 SDK mode, installs .deb packages into native system paths with apt
+#   without running board lifecycle or firmware operations.
 # - In eLxr SDK mode, caches install artifacts under the sysroot
 #   neat-install-packages folder for paired DevKit sync.
 # - In eLxr SDK mode, exposes the sysroot-installed neat command at
@@ -36,6 +41,7 @@ set -euo pipefail
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
 # - ELXR_SDK_RELEASE_FILE: SDK release metadata path (default: /etc/sdk-release)
+# - NEAT_OS_RELEASE_FILE: operating-system metadata path (default: /etc/os-release)
 # - NEAT_BUILDINFO_FILE: DevKit build metadata path (default: /etc/buildinfo)
 # - NEAT_PACKAGE_MANIFEST: package manifest filename/path (default: manifest.json)
 # - NEAT_INSTALLER_SKIP_PLATFORM_CHECK: ON/OFF (default: OFF) explicit escape hatch
@@ -78,6 +84,7 @@ NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OF
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
+NEAT_OS_RELEASE_FILE="${NEAT_OS_RELEASE_FILE:-/etc/os-release}"
 NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
 NEAT_PACKAGE_MANIFEST="${NEAT_PACKAGE_MANIFEST:-manifest.json}"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
@@ -315,6 +322,16 @@ activation_path_for_display() {
 }
 
 run_sudo() {
+  if [[ "${EUID}" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "This installation modifies system packages and requires root or sudo." >&2
+    exit 1
+  fi
+
   if sudo -n true >/dev/null 2>&1; then
     sudo "$@"
     return $?
@@ -346,6 +363,33 @@ run_sudo() {
   exit 1
 }
 
+read_metadata_field() {
+  local metadata_file="$1"
+  local requested_key="$2"
+  awk -v requested_key="${requested_key}" '
+    {
+      separator = index($0, "=")
+      if (separator == 0) {
+        next
+      }
+      key = substr($0, 1, separator - 1)
+      value = substr($0, separator + 1)
+      sub(/^[[:space:]]+/, "", key)
+      sub(/[[:space:]]+$/, "", key)
+      if (key != requested_key) {
+        next
+      }
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value ~ /^".*"$/) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      print value
+      exit
+    }
+  ' "${metadata_file}" 2>/dev/null || true
+}
+
 run_scp() {
   if command -v scp >/dev/null 2>&1; then
     scp "$@"
@@ -373,18 +417,37 @@ run_ssh() {
 }
 
 detect_env_mode() {
+  local sdk_release_unrecognized=0
   if [[ -f "${ELXR_SDK_RELEASE_FILE}" ]]; then
-    echo "elxr-sdk"
-    return 0
+    local sdk_type product_name
+    sdk_type="$(read_metadata_field "${ELXR_SDK_RELEASE_FILE}" "SDK Type")"
+    product_name="$(read_metadata_field "${ELXR_SDK_RELEASE_FILE}" "Product Name")"
+    if [[ "${sdk_type}" == "ros2-sdk" ||
+          "${product_name}" == "SiMa.ai ROS2 SDK" ]]; then
+      echo "ros2-sdk"
+      return 0
+    fi
+    if [[ -z "${sdk_type}" &&
+          -n "$(read_metadata_field "${ELXR_SDK_RELEASE_FILE}" "SDK Version")" ]]; then
+      echo "elxr-sdk"
+      return 0
+    fi
+    sdk_release_unrecognized=1
   fi
   if [[ -n "${SYSROOT:-}" && -d "${SYSROOT}" ]]; then
     echo "elxr-sdk"
+    return 0
+  fi
+  if [[ "${sdk_release_unrecognized}" -eq 1 ]]; then
+    echo "unsupported"
     return 0
   fi
   if [[ -f "${NEAT_BUILDINFO_FILE}" ]] && grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' "${NEAT_BUILDINFO_FILE}"; then
     echo "modalix-board"
     return 0
   fi
+  # Preserve the legacy fallback for DevKit images that do not provide
+  # /etc/buildinfo. An unrecognized SDK release file is rejected above.
   echo "modalix-board"
 }
 
@@ -433,15 +496,58 @@ PY
 read_sdk_platform_version() {
   local release_file="$1"
   awk -F'=' '
+    $1 ~ /^[[:space:]]*Platform Base[[:space:]]*$/ {
+      value=$2
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value != "") {
+        print value
+        found=1
+        exit
+      }
+    }
     $1 ~ /^[[:space:]]*SDK Version[[:space:]]*$/ {
       value=$2
       sub(/^[[:space:]]+/, "", value)
       sub(/[[:space:]]+$/, "", value)
       sub(/_.*/, "", value)
-      print value
-      exit
+      sdk_version=value
+    }
+    END {
+      if (!found && sdk_version != "") {
+        print sdk_version
+      }
     }
   ' "${release_file}" 2>/dev/null || true
+}
+
+sdk_platform_version_label() {
+  local release_file="$1"
+  if grep -qE '^[[:space:]]*Platform Base[[:space:]]*=[[:space:]]*[^[:space:]]' "${release_file}" 2>/dev/null; then
+    printf '%s\n' "Platform Base"
+  else
+    printf '%s\n' "SDK Version"
+  fi
+}
+
+read_ros2_sdk_platform_version() {
+  local release_file="$1"
+  local value
+  value="$(read_metadata_field "${release_file}" "Platform Base")"
+  if [[ -n "${value}" ]]; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+  read_metadata_field "${release_file}" "Platform Version"
+}
+
+ros2_sdk_platform_version_label() {
+  local release_file="$1"
+  if [[ -n "$(read_metadata_field "${release_file}" "Platform Base")" ]]; then
+    printf '%s\n' "Platform Base"
+  else
+    printf '%s\n' "Platform Version"
+  fi
 }
 
 read_devkit_platform_version() {
@@ -476,14 +582,23 @@ ensure_platform_compatible() {
 
   case "${ENV_MODE}" in
     elxr-sdk)
-      source_label="SDK Version"
       source_file="${ELXR_SDK_RELEASE_FILE}"
       if [[ ! -f "${source_file}" ]]; then
         echo "Cannot verify eLxr SDK compatibility: missing ${source_file}." >&2
         echo "Set ELXR_SDK_RELEASE_FILE or NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON for an explicit development override." >&2
         exit 1
       fi
+      source_label="$(sdk_platform_version_label "${source_file}")"
       actual="$(read_sdk_platform_version "${source_file}")"
+      ;;
+    ros2-sdk)
+      source_file="${ELXR_SDK_RELEASE_FILE}"
+      if [[ ! -f "${source_file}" ]]; then
+        echo "Cannot verify ROS2 SDK compatibility: missing ${source_file}." >&2
+        exit 1
+      fi
+      source_label="$(ros2_sdk_platform_version_label "${source_file}")"
+      actual="$(read_ros2_sdk_platform_version "${source_file}")"
       ;;
     modalix-board)
       source_label="DISTRO_VERSION"
@@ -500,7 +615,8 @@ ensure_platform_compatible() {
       actual="$(read_devkit_platform_version "${source_file}")"
       ;;
     *)
-      echo "Unknown environment mode for platform compatibility check: ${ENV_MODE}" >&2
+      echo "Unsupported installation environment." >&2
+      echo "Expected SDK Type=ros2-sdk, an eLxr SDK release file, or MACHINE=modalix build metadata." >&2
       exit 1
       ;;
   esac
@@ -2105,6 +2221,171 @@ complete_board_install_after_packages() {
   verify_board_runtime_services
 }
 
+validate_ros2_sdk_native_host() {
+  local os_id os_version os_codename dpkg_arch machine command_name
+
+  for command_name in apt-get dpkg dpkg-deb dpkg-query; do
+    if ! command -v "${command_name}" >/dev/null 2>&1; then
+      echo "${command_name} is required for native ROS2 SDK installation." >&2
+      return 1
+    fi
+  done
+
+  if [[ ! -f "${NEAT_OS_RELEASE_FILE}" ]]; then
+    echo "Cannot verify the ROS2 SDK operating system: missing ${NEAT_OS_RELEASE_FILE}." >&2
+    return 1
+  fi
+  os_id="$(read_metadata_field "${NEAT_OS_RELEASE_FILE}" "ID")"
+  os_version="$(read_metadata_field "${NEAT_OS_RELEASE_FILE}" "VERSION_ID")"
+  os_codename="$(read_metadata_field "${NEAT_OS_RELEASE_FILE}" "VERSION_CODENAME")"
+  if [[ "${os_id}" != "debian" ||
+        ( "${os_version}" != "12" && "${os_codename}" != "bookworm" ) ]]; then
+    echo "Native ROS2 SDK installation requires Debian 12 (bookworm)." >&2
+    echo "  Detected: ID=${os_id:-<missing>} VERSION_ID=${os_version:-<missing>} VERSION_CODENAME=${os_codename:-<missing>}" >&2
+    return 1
+  fi
+
+  dpkg_arch="$(dpkg --print-architecture 2>/dev/null || true)"
+  machine="$(uname -m 2>/dev/null || true)"
+  if [[ "${dpkg_arch}" != "arm64" || "${machine}" != "aarch64" ]]; then
+    echo "Native ROS2 SDK installation requires an ARM64 host environment." >&2
+    echo "  Detected: dpkg=${dpkg_arch:-<missing>} uname=${machine:-<missing>}" >&2
+    return 1
+  fi
+}
+
+validate_ros2_sdk_deb_architectures() {
+  local deb architecture
+  for deb in "${DEBS[@]}"; do
+    architecture="$(dpkg-deb -f "${deb}" Architecture 2>/dev/null || true)"
+    case "${architecture}" in
+      arm64|all) ;;
+      *)
+        echo "ROS2 SDK package architecture must be arm64 or all." >&2
+        echo "  Package: ${deb}" >&2
+        echo "  Architecture: ${architecture:-<missing>}" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+verify_ros2_sdk_deb_packages_installed() {
+  local deb package expected_version installed_status installed_version
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    expected_version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
+    installed_status="$(dpkg-query -W -f='${db:Status-Abbrev}' "${package}" 2>/dev/null || true)"
+    installed_version="$(dpkg-query -W -f='${Version}' "${package}" 2>/dev/null || true)"
+    if [[ -z "${package}" || -z "${expected_version}" ||
+          "${installed_status}" != "ii " ||
+          "${installed_version}" != "${expected_version}" ]]; then
+      echo "Native ROS2 SDK package verification failed." >&2
+      echo "  Package: ${package:-<missing>} (${deb})" >&2
+      echo "  Expected version: ${expected_version:-<missing>}" >&2
+      echo "  Installed status/version: ${installed_status:-<missing>} / ${installed_version:-<missing>}" >&2
+      return 1
+    fi
+  done
+  log "Verified native ROS2 SDK packages are registered with dpkg at the bundled versions."
+}
+
+ros2_sdk_tvm_runtime_is_available() {
+  [[ -x /sbin/ldconfig ]] &&
+    /sbin/ldconfig -p 2>/dev/null | grep -qE 'libtvm_runtime\.so .* => /(usr/)?lib/'
+}
+
+validate_ros2_sdk_tvm_runtime() {
+  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  local source_lib="${sysroot}/usr/lib/libtvm_runtime.so"
+
+  if ros2_sdk_tvm_runtime_is_available; then
+    return 0
+  fi
+
+  if [[ ! -f "${source_lib}" ]]; then
+    echo "The ROS2 SDK does not provide the native TVM runtime required by Neat." >&2
+    echo "  Expected: ${source_lib}" >&2
+    return 1
+  fi
+
+  if command -v readelf >/dev/null 2>&1 &&
+     ! readelf -h "${source_lib}" 2>/dev/null | grep -q 'Machine:.*AArch64'; then
+    echo "The ROS2 SDK TVM runtime is not an AArch64 library: ${source_lib}" >&2
+    return 1
+  fi
+}
+
+install_ros2_sdk_tvm_runtime() {
+  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  local source_lib="${sysroot}/usr/lib/libtvm_runtime.so"
+  local target_dir="/usr/lib/aarch64-linux-gnu"
+  local target_lib="${target_dir}/libtvm_runtime.so"
+
+  validate_ros2_sdk_tvm_runtime || return 1
+  if ros2_sdk_tvm_runtime_is_available; then
+    log "Native TVM runtime is already available to the dynamic linker."
+    return 0
+  fi
+
+  run_sudo install -d -m 0755 "${target_dir}"
+  run_sudo install -m 0755 "${source_lib}" "${target_lib}"
+  log "Installed the ROS2 SDK TVM runtime into ${target_lib}."
+}
+
+install_debs_in_ros2_sdk() {
+  local simulation_log
+  local -a apt_install_args=(
+    apt-get install -y --reinstall --no-remove --allow-downgrades
+  )
+
+  validate_ros2_sdk_native_host || exit 1
+  validate_single_sima_neat_package_pair || exit 1
+  validate_ros2_sdk_deb_architectures || exit 1
+  validate_ros2_sdk_tvm_runtime || exit 1
+
+  log "Detected native ROS2 SDK environment; installing DEBs into system paths with apt."
+  printf '[install_neat_framework] DEB install set:\n'
+  printf '  %s\n' "${DEBS[@]}"
+  refresh_apt_metadata_for_board_install
+
+  if ! apt_package_database_is_healthy; then
+    echo "APT package state is unhealthy; refusing the native ROS2 SDK installation." >&2
+    echo "Repair the container package database first, then rerun this installer." >&2
+    exit 1
+  fi
+
+  simulation_log="$(mktemp /tmp/sima-neat-ros2-sdk-apt-simulation-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${simulation_log}")
+  log "Simulating native ROS2 SDK package installation with package removal disabled."
+  if ! run_sudo "${apt_install_args[@]}" --simulate "${DEBS[@]}" >"${simulation_log}" 2>&1; then
+    cat "${simulation_log}" >&2
+    echo "APT rejected the native ROS2 SDK package set; no packages were changed." >&2
+    exit 1
+  fi
+  cat "${simulation_log}"
+  if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
+    echo "APT simulation planned package removal in the ROS2 SDK; refusing to continue." >&2
+    grep '^Remv[[:space:]]' "${simulation_log}" >&2
+    exit 1
+  fi
+
+  run_sudo "${apt_install_args[@]}" "${DEBS[@]}"
+  install_ros2_sdk_tvm_runtime || exit 1
+  if [[ -x /sbin/ldconfig ]]; then
+    run_sudo /sbin/ldconfig
+  elif command -v ldconfig >/dev/null 2>&1; then
+    run_sudo ldconfig
+  fi
+  verify_ros2_sdk_deb_packages_installed || exit 1
+  repair_global_sima_neat_lib_links
+  verify_global_sima_neat_lib_links
+  if ! apt_package_database_is_healthy; then
+    echo "APT dependency check failed after the native ROS2 SDK installation." >&2
+    exit 1
+  fi
+}
+
 install_debs_on_board() {
   prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
@@ -2199,6 +2480,27 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+install_python_environment() {
+  VENV_DIR="$(resolve_venv_dir)"
+  ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
+  remove_stale_global_sima_lmm_pip_install
+  log_green "Preparing Python virtual environment at ${VENV_DIR}"
+  mkdir -p "$(dirname "${VENV_DIR}")"
+  python3 -m venv --system-site-packages "${VENV_DIR}"
+  ensure_home_pyneat_symlink "${VENV_DIR}"
+  print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
+  "${VENV_DIR}/bin/python" -m pip install --upgrade pip
+
+  WHEEL_FILES=()
+  collect_wheel_files "." WHEEL_FILES
+  WHEEL_FILE="${WHEEL_FILES[0]:-}"
+  if [[ -z "${WHEEL_FILE}" ]]; then
+    echo "No wheel file found in current directory." >&2
+    exit 1
+  fi
+  "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
+}
+
 validate_single_sima_neat_package_pair() {
   local deb package version
   local -a core_debs=()
@@ -2221,7 +2523,7 @@ validate_single_sima_neat_package_pair() {
   done
 
   if [[ "${#core_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 ]]; then
-    echo "SDK sysroot install requires exactly one sima-neat and one sima-neat-dev package." >&2
+    echo "Neat installation requires exactly one sima-neat and one sima-neat-dev package." >&2
     echo "  sima-neat packages:     ${#core_debs[@]}" >&2
     echo "  sima-neat-dev packages: ${#dev_debs[@]}" >&2
     echo "Remove stale package versions or install from a generated metadata/manifest bundle." >&2
@@ -2229,7 +2531,7 @@ validate_single_sima_neat_package_pair() {
   fi
   if [[ -z "${core_versions[0]}" || -z "${dev_versions[0]}" ||
         "${core_versions[0]}" != "${dev_versions[0]}" ]]; then
-    echo "SDK sysroot sima-neat package versions do not match." >&2
+    echo "Neat installation sima-neat package versions do not match." >&2
     echo "  sima-neat:     ${core_versions[0]:-<missing>} (${core_debs[0]})" >&2
     echo "  sima-neat-dev: ${dev_versions[0]:-<missing>} (${dev_debs[0]})" >&2
     return 1
@@ -2431,6 +2733,34 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
   log_green "Paired DevKit sync completed: ${ssh_target}"
 }
 
+install_for_environment() {
+  case "${ENV_MODE}" in
+    elxr-sdk)
+      install_debs_into_sysroot
+      ensure_sdk_neat_cli_symlink
+      install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
+      deploy_artifacts_to_paired_devkit_if_configured
+      ;;
+    ros2-sdk)
+      # The ROS2 SDK is a native C++ build environment. PyNeat remains a DevKit
+      # runtime feature and is intentionally not installed here.
+      install_debs_in_ros2_sdk
+      install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
+      ;;
+    modalix-board)
+      # Preserve the established board ordering: provision PyNeat before the
+      # board-specific package recovery and runtime restart transaction.
+      install_python_environment
+      install_debs_on_board
+      install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
+      ;;
+    *)
+      echo "Unsupported installation environment: ${ENV_MODE}" >&2
+      return 1
+      ;;
+  esac
+}
+
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
@@ -2446,30 +2776,4 @@ fi
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
-if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
-  install_debs_into_sysroot
-  ensure_sdk_neat_cli_symlink
-  install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
-  deploy_artifacts_to_paired_devkit_if_configured
-else
-  VENV_DIR="$(resolve_venv_dir)"
-  ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
-  remove_stale_global_sima_lmm_pip_install
-  log_green "Preparing Python virtual environment at ${VENV_DIR}"
-  mkdir -p "$(dirname "${VENV_DIR}")"
-  python3 -m venv --system-site-packages "${VENV_DIR}"
-  ensure_home_pyneat_symlink "${VENV_DIR}"
-  print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
-  "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-
-  WHEEL_FILES=()
-  collect_wheel_files "." WHEEL_FILES
-  WHEEL_FILE="${WHEEL_FILES[0]:-}"
-  if [[ -z "${WHEEL_FILE}" ]]; then
-    echo "No wheel file found in current directory." >&2
-    exit 1
-  fi
-  "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
-  install_debs_on_board
-  install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
-fi
+install_for_environment

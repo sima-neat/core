@@ -166,16 +166,16 @@ int main() {
     require_package_version("libcamera", "2.1.1+neat1");
     require_package_version("libcamera-tools", "2.1.1+neat1");
     require_package_version("libcamera-dev", "2.1.1+neat1");
-    require_package_version("simaai-memory-lib", "2.1.1-0neat2");
-    require_package_version("simaai-memory-lib-dev", "2.1.1-0neat2");
-    require_package_version("simaai-mlart-modalix", "2.1.3~pre4617");
-    require_versioned_provide("libcamera", "libcamera", "2.1.3~pre4617");
-    require_versioned_provide("libcamera-tools", "libcamera-tools", "2.1.3~pre4617");
-    require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4617");
-    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1~pre4617");
-    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1~pre4617");
-    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1-0neat1");
-    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1-0neat1");
+    require_package_version("simaai-memory-lib", "2.1.3-0neat1");
+    require_package_version("simaai-memory-lib-dev", "2.1.3-0neat1");
+    require_package_version("simaai-mlart-modalix", "2.1.3~pre4678");
+    require_versioned_provide("libcamera", "libcamera", "2.1.3~pre4678");
+    require_versioned_provide("libcamera-tools", "libcamera-tools", "2.1.3~pre4678");
+    require_versioned_provide("libcamera-dev", "libcamera-dev", "2.1.3~pre4678");
+    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.3~pre4678");
+    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.3~pre4678");
+    require_versioned_provide("simaai-memory-lib", "simaai-memory-lib", "2.1.1-0neat2");
+    require_versioned_provide("simaai-memory-lib-dev", "simaai-memory-lib-dev", "2.1.1-0neat2");
 
     require(command_succeeds("command -v simaai-ota >/dev/null 2>&1"),
             "simaai-ota command should remain available through simaai-palette-modalix");
