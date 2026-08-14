@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 # Versioning from deps/manifest.json:
 # - package-version controls package/artifact and CMake project identity.
-# - platform-version controls dependency and CMake package compatibility.
+# - platform-version records the selected platform environment.
 # - modelzoo-version selects compatible Model Zoo assets and defaults to
 #   platform-version when omitted.
 # - abi-version controls the public C++ shared-library ABI and SONAME.
@@ -202,44 +202,6 @@ else()
   endif()
 endif()
 
-string(REPLACE "." ";" SIMANEAT_PACKAGE_BASE_VERSION_PARTS "${SIMANEAT_PACKAGE_BASE_VERSION}")
-list(GET SIMANEAT_PACKAGE_BASE_VERSION_PARTS 0 SIMANEAT_PACKAGE_BASE_VERSION_MAJOR)
-list(GET SIMANEAT_PACKAGE_BASE_VERSION_PARTS 1 SIMANEAT_PACKAGE_BASE_VERSION_MINOR)
-math(EXPR SIMANEAT_NEXT_PACKAGE_MINOR "${SIMANEAT_PACKAGE_BASE_VERSION_MINOR} + 1")
-set(SIMANEAT_DEP_PACKAGE_MIN_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
-set(SIMANEAT_DEP_PACKAGE_MAX_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION_MAJOR}.${SIMANEAT_NEXT_PACKAGE_MINOR}.0")
-
-set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "" CACHE STRING
-  "Exact simaai-memory-lib-dev version bundled by the resolved Internals artifact")
-if (SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
-  file(GLOB SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
-    "${CMAKE_CURRENT_SOURCE_DIR}/deps/debs/simaai-memory-lib-dev_*.deb")
-  list(LENGTH SIMANEAT_BUNDLED_MEMORY_DEV_DEBS
-    SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT)
-  if (SIMANEAT_BUNDLED_MEMORY_DEV_DEB_COUNT EQUAL 1)
-    list(GET SIMANEAT_BUNDLED_MEMORY_DEV_DEBS 0
-      SIMANEAT_BUNDLED_MEMORY_DEV_DEB)
-    execute_process(
-      COMMAND dpkg-deb -f
-        "${SIMANEAT_BUNDLED_MEMORY_DEV_DEB}" Version
-      RESULT_VARIABLE SIMANEAT_MEMORY_VERSION_RESULT
-      OUTPUT_VARIABLE SIMANEAT_MEMORY_DEV_PACKAGE_VERSION
-      ERROR_QUIET
-      OUTPUT_STRIP_TRAILING_WHITESPACE)
-    if (NOT SIMANEAT_MEMORY_VERSION_RESULT EQUAL 0)
-      set(SIMANEAT_MEMORY_DEV_PACKAGE_VERSION "")
-    endif()
-  endif()
-endif()
-if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS
-    AND SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
-  message(FATAL_ERROR
-    "Could not determine the exact simaai-memory-lib-dev version from the "
-    "resolved Internals artifact under deps/debs. Core package dependencies "
-    "must follow the bundled package; they must not be inferred from "
-    "platform-version.")
-endif()
-
 # Debian package versions do not allow underscores. Keep branch-derived versions
 # installable by normalizing every non-Debian-version character to '-'.
 string(REGEX REPLACE "[^A-Za-z0-9.+~-]" "-" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
@@ -318,13 +280,13 @@ endif()
 # ------------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
-  find_package(SimaLMM ${SIMANEAT_PLATFORM_VERSION} CONFIG REQUIRED)
+  find_package(SimaLMM CONFIG REQUIRED)
 else()
   # Core-only builds must not fail when LLiMa is absent, but if the package is
   # present we should build the real GenAI implementation instead of silently
   # shipping unavailable stubs.  This keeps local developer/CI environments
   # coherent without making LLiMa a hard dependency for normal Graph/Core builds.
-  find_package(SimaLMM ${SIMANEAT_PLATFORM_VERSION} CONFIG QUIET)
+  find_package(SimaLMM CONFIG QUIET)
 endif()
 if (SimaLMM_FOUND)
   message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
@@ -398,7 +360,11 @@ endif()
 
 set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE OFF)
 if (SIMANEAT_USE_EXPORTED_NEAT_INTERNALS)
-  find_package(NeatInternals ${SIMANEAT_PLATFORM_VERSION} CONFIG QUIET)
+  if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS)
+    find_package(NeatInternals CONFIG REQUIRED)
+  else()
+    find_package(NeatInternals CONFIG QUIET)
+  endif()
   if (NeatInternals_FOUND)
     set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE ON)
     message(STATUS "Using exported NeatInternals package from ${NeatInternals_DIR}")
@@ -1422,7 +1388,7 @@ configure_package_config_file(
 
 write_basic_package_version_file(
   ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatConfigVersion.cmake
-  VERSION ${SIMANEAT_PLATFORM_VERSION}
+  VERSION ${SIMANEAT_PACKAGE_BASE_VERSION}
   COMPATIBILITY SameMajorVersion
 )
 
@@ -1489,15 +1455,12 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-imgcodecs406"
   # libsima_neat.so links libz directly to inflate model archives in process.
   "zlib1g"
-  "neat-runtime (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-runtime (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
-  "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-gst-plugins (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  "neat-runtime"
+  "neat-gst-plugins"
 )
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
-    "sima-lmm-core (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-    "sima-lmm-core (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+    "sima-lmm-core"
     "libcpp-httplib0.11")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
@@ -1514,17 +1477,12 @@ set(SIMANEAT_DEV_DEBIAN_DEPENDS
   # SimaNeatConfig calls find_dependency(ZLIB), and sima_neat_static exports ZLIB::ZLIB.
   "zlib1g-dev"
   "nlohmann-json3-dev"
-  "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-  "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  "neat-internals-dev"
+  "simaai-memory-lib-dev"
 )
-if (NOT SIMANEAT_MEMORY_DEV_PACKAGE_VERSION STREQUAL "")
-  list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
-    "simaai-memory-lib-dev (= ${SIMANEAT_MEMORY_DEV_PACKAGE_VERSION})")
-endif()
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_DEV_DEBIAN_DEPENDS
-    "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-    "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})")
+    "sima-lmm-dev")
 endif()
 string(JOIN ", " CPACK_DEBIAN_DEV_PACKAGE_DEPENDS ${SIMANEAT_DEV_DEBIAN_DEPENDS})
 set(CPACK_INSTALL_CMAKE_PROJECTS
