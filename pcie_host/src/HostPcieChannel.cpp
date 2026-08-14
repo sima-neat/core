@@ -121,11 +121,15 @@ std::string tensor_set_caps_for_primary_tensor(const Tensor& tensor) {
 
 std::pair<std::int64_t, std::int64_t> image_height_width(const Tensor& tensor,
                                                          const PixelFormat format) {
+  if (tensor.layout == TensorLayout::NHWC) {
+    if (tensor.shape.size() != 4U || tensor.shape[0] != 1) {
+      throw std::runtime_error(
+          "PCIe raw image transport requires NHWC shape [1, height, width, channels]");
+    }
+    return {tensor.shape[1], tensor.shape[2]};
+  }
   if (!tensor.planes.empty() && tensor.planes.front().shape.size() >= 2U) {
     return {tensor.planes.front().shape[0], tensor.planes.front().shape[1]};
-  }
-  if (tensor.layout == TensorLayout::NHWC && tensor.shape.size() >= 4U) {
-    return {tensor.shape[1], tensor.shape[2]};
   }
   if (tensor.shape.size() >= 2U) {
     std::int64_t height = tensor.shape[0];

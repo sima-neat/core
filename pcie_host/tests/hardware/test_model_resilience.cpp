@@ -350,6 +350,22 @@ void test_timeout_and_backpressure(pcie::Model& model, const pcie::ModelInfo& in
   require(!model.pull(1).has_value(), "pull before push unexpectedly returned a result");
   infer_once(model, info, args.pull_timeout_ms);
 
+  std::cout << "[scenario] synchronous run rejects an outstanding asynchronous result\n";
+  require(model.push(make_inputs(info)), "asynchronous push returned false");
+  bool run_with_async_result_rejected = false;
+  try {
+    (void)model.run(make_inputs(info), args.pull_timeout_ms);
+  } catch (const std::exception& error) {
+    run_with_async_result_rejected =
+        std::string(error.what()).find("asynchronous results") != std::string::npos;
+  }
+  require(run_with_async_result_rejected,
+          "synchronous run was accepted with an outstanding asynchronous result");
+  const auto async_outputs = model.pull(args.pull_timeout_ms);
+  require(async_outputs.has_value(), "outstanding asynchronous result could not be drained");
+  validate_outputs(*async_outputs, info.outputs);
+  infer_once(model, info, args.pull_timeout_ms);
+
   std::cout << "[scenario] synchronous run timeout requires draining\n";
   bool run_timed_out = false;
   try {

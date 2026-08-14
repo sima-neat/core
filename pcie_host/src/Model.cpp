@@ -151,7 +151,7 @@ public:
       std::this_thread::sleep_for(kPostReadyStabilizationDelay);
       channel_.configure(facts_, connection_.queue, connection_.card_id, connection_.max_inflight,
                          model_options.has_boxdecode || facts_.has_boxdecode);
-      timed_out_run_pending_ = false;
+      reset_submission_state_locked();
       state_ = State::Ready;
     } catch (...) {
       const std::exception_ptr build_error = std::current_exception();
@@ -188,12 +188,27 @@ public:
   }
 
   bool push(const TensorList& tensors) {
+    std::size_t generation = 0;
     {
       std::lock_guard<std::mutex> lock(mu_);
       ensure_ready();
       ensure_submission_allowed();
+      if (synchronous_run_active_) {
+        throw std::runtime_error("cannot call push() while run() is in progress");
+      }
+      generation = submission_generation_;
+      ++async_outstanding_;
     }
-    return channel_.push(tensors);
+    try {
+      const bool accepted = channel_.push(tensors);
+      if (!accepted) {
+        rollback_async_submission(generation);
+      }
+      return accepted;
+    } catch (...) {
+      rollback_async_submission(generation);
+      throw;
+    }
   }
 
   bool try_push(const std::int32_t request_id, const TensorList& tensors) {
@@ -205,15 +220,24 @@ public:
   }
 
   std::optional<TensorList> pull(const int timeout_ms) {
+    std::size_t generation = 0;
     {
       std::lock_guard<std::mutex> lock(mu_);
       ensure_ready();
+      if (synchronous_run_active_) {
+        throw std::runtime_error("cannot call pull() while run() is in progress");
+      }
+      generation = submission_generation_;
+      ++async_pulls_in_progress_;
     }
-    auto result = channel_.pull(timeout_ms);
-    if (result) {
-      std::lock_guard<std::mutex> lock(mu_);
-      timed_out_run_pending_ = false;
+    std::optional<TensorList> result;
+    try {
+      result = channel_.pull(timeout_ms);
+    } catch (...) {
+      finish_async_pull(generation, false);
+      throw;
     }
+    finish_async_pull(generation, result.has_value());
     return result;
   }
 
@@ -226,15 +250,27 @@ public:
   }
 
   TensorList run(const Tensor& tensor, const int timeout_ms) {
-    ensure_ready_for_run();
-    (void)push(tensor);
-    return pull_strict(timeout_ms);
+    return run(TensorList{tensor}, timeout_ms);
   }
 
   TensorList run(const TensorList& tensors, const int timeout_ms) {
-    ensure_ready_for_run();
-    (void)push(tensors);
-    return pull_strict(timeout_ms);
+    std::lock_guard<std::mutex> run_lock(synchronous_run_mu_);
+    const std::size_t generation = begin_synchronous_run();
+    std::optional<TensorList> result;
+    try {
+      if (!channel_.push(tensors)) {
+        throw std::runtime_error("host PCIe channel rejected synchronous submission");
+      }
+      result = channel_.pull(timeout_ms);
+    } catch (...) {
+      finish_synchronous_run(generation, false);
+      throw;
+    }
+    finish_synchronous_run(generation, !result.has_value());
+    if (!result) {
+      throw std::runtime_error("timed out waiting for PCIe result");
+    }
+    return std::move(*result);
   }
 
 private:
@@ -256,10 +292,16 @@ private:
     }
   }
 
-  void ensure_ready_for_run() const {
+  std::size_t begin_synchronous_run() {
     std::lock_guard<std::mutex> lock(mu_);
     ensure_ready();
     ensure_submission_allowed();
+    if (async_outstanding_ != 0U || async_pulls_in_progress_ != 0U) {
+      throw std::runtime_error(
+          "cannot call run() while asynchronous results or pulls are outstanding");
+    }
+    synchronous_run_active_ = true;
+    return submission_generation_;
   }
 
   void ensure_submission_allowed() const {
@@ -269,18 +311,52 @@ private:
     }
   }
 
-  TensorList pull_strict(const int timeout_ms) {
-    auto result = pull(timeout_ms);
-    if (!result) {
-      std::lock_guard<std::mutex> lock(mu_);
-      timed_out_run_pending_ = true;
-      throw std::runtime_error("timed out waiting for PCIe result");
+  void rollback_async_submission(const std::size_t generation) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (generation == submission_generation_ && async_outstanding_ != 0U) {
+      --async_outstanding_;
     }
-    return std::move(*result);
+  }
+
+  void finish_async_pull(const std::size_t generation, const bool received_result) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (generation != submission_generation_) {
+      return;
+    }
+    if (async_pulls_in_progress_ != 0U) {
+      --async_pulls_in_progress_;
+    }
+    if (!received_result) {
+      return;
+    }
+    if (timed_out_run_pending_) {
+      timed_out_run_pending_ = false;
+    } else if (async_outstanding_ != 0U) {
+      --async_outstanding_;
+    }
+  }
+
+  void finish_synchronous_run(const std::size_t generation, const bool timed_out) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (generation != submission_generation_) {
+      return;
+    }
+    synchronous_run_active_ = false;
+    if (timed_out) {
+      timed_out_run_pending_ = true;
+    }
+  }
+
+  void reset_submission_state_locked() {
+    ++submission_generation_;
+    async_outstanding_ = 0;
+    async_pulls_in_progress_ = 0;
+    synchronous_run_active_ = false;
+    timed_out_run_pending_ = false;
   }
 
   void close_locked() {
-    timed_out_run_pending_ = false;
+    reset_submission_state_locked();
     channel_.request_stop();
     channel_.stop();
     if (state_ == State::Ready || state_ == State::Starting || state_ == State::Failed ||
@@ -336,7 +412,12 @@ private:
   internal::HostPcieChannel channel_;
 
   mutable std::mutex mu_;
+  std::mutex synchronous_run_mu_;
   State state_ = State::Uninitialized;
+  std::size_t submission_generation_ = 0;
+  std::size_t async_outstanding_ = 0;
+  std::size_t async_pulls_in_progress_ = 0;
+  bool synchronous_run_active_ = false;
   bool remote_started_ = false;
   std::optional<int> remote_pid_;
   bool remote_uploads_may_be_in_use_ = false;

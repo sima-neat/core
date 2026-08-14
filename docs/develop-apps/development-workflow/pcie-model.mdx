@@ -232,7 +232,8 @@ while pulled < len(inputs):
 
 `push()` waits when `max_inflight` is full, so do not submit more than the
 configured window without pulling results. `pull()` returns the next available
-result for this model.
+result for this model. Drain all results submitted with `push()` before calling
+`run()`.
 
 ## Send images and configure preprocessing
 

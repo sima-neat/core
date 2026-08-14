@@ -265,6 +265,7 @@ followed by `pull()`. `run(...)`, `push(...)`, and `pull()` require a successful
 `build()` first and fail clearly if the model has not been built. For pipelined
 use, call `push(...)` and `pull()` directly. The host channel receives
 asynchronously from `appsink` and stores results in an internal queue.
+Drain all results submitted with `push(...)` before calling `run(...)`.
 
 During bring-up, `build()` keeps an internal five-second stabilization delay
 after the card status reaches `ready`, matching the old PipelineSession host

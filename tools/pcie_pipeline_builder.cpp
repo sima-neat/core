@@ -390,8 +390,16 @@ void apply_preprocess_model_options(const nlohmann::json& preprocess, Model::Opt
   }
 
   if (const auto it = preprocess.find("color_convert"); it != preprocess.end()) {
-    reject_unknown_fields(*it, {"input_format", "output_format"}, "preprocess.color_convert");
+    reject_unknown_fields(*it, {"enable", "input_format", "output_format"},
+                          "preprocess.color_convert");
     opt->preprocess.color_convert.enable = AutoFlag::On;
+    if (const auto enable = it->find("enable"); enable != it->end()) {
+      if (!enable->is_boolean()) {
+        throw PciePipelineError("model_options",
+                                "preprocess.color_convert.enable must be a boolean");
+      }
+      opt->preprocess.color_convert.enable = enable->get<bool>() ? AutoFlag::On : AutoFlag::Off;
+    }
     if (it->contains("input_format")) {
       opt->preprocess.color_convert.input_format = parse_input_color_format(
           json_string_field(*it, "input_format", "preprocess.color_convert"));

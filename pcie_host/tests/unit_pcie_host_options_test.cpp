@@ -82,8 +82,8 @@ int main() {
       opt.preprocess.color_convert.enable = pcie::AutoFlag::Off;
       const auto json = pcie_internal::write_model_options_json(opt);
       require(json.json.has_value(), "disabled color conversion route must emit image JSON");
-      require(!contains(*json.json, "\"color_convert\""),
-              "disabled color conversion must not emit an enabling object");
+      require(contains(*json.json, "\"color_convert\""), "disabled color conversion state missing");
+      require(contains(*json.json, "\"enable\": false"), "disabled color conversion flag missing");
     }
 
     {

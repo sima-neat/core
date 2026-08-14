@@ -162,9 +162,13 @@ ordered_json preprocess_json(const ModelOptions& opt) {
     pre["resize"] = std::move(resize);
   }
 
-  if (p.color_convert.enable == AutoFlag::On || p.color_convert.input_format != ColorFormat::Auto ||
+  if (p.color_convert.enable != AutoFlag::Auto ||
+      p.color_convert.input_format != ColorFormat::Auto ||
       p.color_convert.output_format != ColorFormat::Auto) {
     ordered_json color = ordered_json::object();
+    if (p.color_convert.enable != AutoFlag::Auto) {
+      color["enable"] = p.color_convert.enable == AutoFlag::On;
+    }
     color["input_format"] = color_format_token(p.color_convert.input_format);
     color["output_format"] = color_format_token(p.color_convert.output_format);
     pre["color_convert"] = std::move(color);

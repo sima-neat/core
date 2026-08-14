@@ -53,6 +53,23 @@ int main() {
     require(image_caps == "video/x-raw,format=(string)BGR,width=(int)640,height=(int)480",
             "unexpected image caps: " + image_caps);
 
+    simaai::neat::pcie::Tensor singleton_image = image;
+    singleton_image.layout = simaai::neat::pcie::TensorLayout::NHWC;
+    singleton_image.shape = {1, 480, 640, 3};
+    const std::string singleton_image_caps =
+        pcie_internal::HostPcieChannel::caps_for_tensors({singleton_image});
+    require(singleton_image_caps == "video/x-raw,format=(string)BGR,width=(int)640,height=(int)480",
+            "unexpected singleton NHWC image caps: " + singleton_image_caps);
+
+    bool rejected_image_batch = false;
+    try {
+      singleton_image.shape[0] = 2;
+      (void)pcie_internal::HostPcieChannel::caps_for_tensors({singleton_image});
+    } catch (const std::runtime_error&) {
+      rejected_image_batch = true;
+    }
+    require(rejected_image_batch, "batched NHWC image payload must be rejected");
+
     simaai::neat::pcie::Tensor nv12;
     nv12.dtype = simaai::neat::pcie::TensorDType::UInt8;
     nv12.layout = simaai::neat::pcie::TensorLayout::HW;
