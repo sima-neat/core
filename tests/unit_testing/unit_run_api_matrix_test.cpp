@@ -4,6 +4,7 @@
 #include "nodes/common/Caps.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "pipeline/runtime/RunCore.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "runtime_test_utils.h"
@@ -11,6 +12,8 @@
 #include "test_utils.h"
 
 #include <opencv2/core.hpp>
+
+#include <gst/gst.h>
 
 #include <chrono>
 #include <functional>
@@ -205,6 +208,10 @@ RUN_TEST(
                 run_api_case("unexpected_eos_push_1", "first test input should be accepted"));
         require(eos_run.push(TensorList{seed}),
                 run_api_case("unexpected_eos_push_2", "second test input should be accepted"));
+        const auto core = run_internal::core(eos_run);
+        GstElement* pipeline = core ? core->pipeline.stream.pipeline_handle() : nullptr;
+        require(pipeline && gst_element_send_event(pipeline, gst_event_new_eos()),
+                run_api_case("unexpected_eos_inject", "failed to inject premature EOS"));
 
         Sample tmp;
         PullError err;
