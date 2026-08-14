@@ -1362,7 +1362,6 @@ ensure_neat_internals() {
   internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
-  local marker_file="${NEAT_INTERNALS_DIR}/.internals"
   local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
 
   local tmp_dir
@@ -1371,19 +1370,6 @@ ensure_neat_internals() {
 
   local artifact_dir="${tmp_dir}/package"
   local plugins_list_file="${tmp_dir}/plugin-files.list"
-
-  if [[ -f "${marker_file}" ]] && [[ -d "${NEAT_INTERNALS_PLUGIN_DIR}" ]]; then
-    local current_tag
-    current_tag="$(tr -d '[:space:]' < "${marker_file}")"
-    # Cache hit requires matching resolved Vulcan spec and a known plugin sentinel.
-    if [[ "${current_tag}" == "${internals_ref}" ]] &&
-       [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]] &&
-       compgen -G "${deb_cache_dir}/neat-*.deb" >/dev/null 2>&1; then
-      echo "Using cached neat-internals plugins/debs (${internals_ref})."
-      rm -rf "${tmp_dir}"
-      return 0
-    fi
-  fi
 
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
@@ -1396,7 +1382,6 @@ ensure_neat_internals() {
 
   copy_plugins_to_neat_internals "${plugins_list_file}"
 
-  printf '%s\n' "${internals_ref}" > "${marker_file}"
   rm -rf "${tmp_dir}"
 }
 

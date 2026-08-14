@@ -27,9 +27,7 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         exported_config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text(
             encoding="utf-8"
         )
-        self.assertIn(
-            "find_dependency(NeatInternals CONFIG REQUIRED)", exported_config
-        )
+        self.assertIn("find_dependency(NeatInternals CONFIG REQUIRED)", exported_config)
         self.assertNotIn(
             "find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@",
             exported_config,
@@ -96,6 +94,13 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "'neat-runtime_*.deb'",
         ):
             self.assertNotIn(removed, text, removed)
+
+    def test_selected_internals_artifact_is_installed_before_build(self) -> None:
+        text = build_script()
+        start = text.index("ensure_neat_internals()")
+        end = text.index("\nensure_neat_llima()", start)
+        function = text[start:end]
+        self.assertNotIn("return 0", function[: function.index("fetch_neat_internals")])
 
     def test_installer_has_no_bundled_memory_transaction(self) -> None:
         text = installer()
