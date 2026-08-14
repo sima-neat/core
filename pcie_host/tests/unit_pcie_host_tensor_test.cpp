@@ -1,6 +1,8 @@
 #include "simaai/neat/pcie/Model.h"
 
 #include "HostPcieTensorPayload.h"
+#include "HostPcieTensorSetMeta.h"
+#include "gst/SimaTensorSetMetaAbi.h"
 
 #include <cstdint>
 #include <iostream>
@@ -32,6 +34,7 @@ template <typename Fn> void require_throws(Fn&& fn, const std::string& message) 
 } // namespace
 
 int main() {
+  gst_init(nullptr, nullptr);
   try {
     {
       std::vector<float> data(2 * 3 * 4, 1.0F);
@@ -112,6 +115,36 @@ int main() {
               "staged strided tensor must advertise contiguous strides");
       require(tensor.strides_bytes == std::vector<std::int64_t>({4, 1}),
               "staging must not mutate caller tensor strides");
+    }
+
+    {
+      pcie::TensorList tensors;
+      tensors.push_back(pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input_0"));
+      tensors.push_back(pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input_1"));
+      auto payload = simaai::neat::pcie::internal::prepare_tensor_payload(tensors);
+
+      std::vector<simaai::neat::pcie::internal::PcieTensorFact> facts(2);
+      facts[0].physical_index = 1;
+      facts[1].physical_index = 0;
+
+      GstBuffer* buffer = gst_buffer_new();
+      require(buffer != nullptr, "tensor-set metadata test buffer");
+      simaai::neat::pcie::internal::attach_tensor_set_meta(buffer, payload.spans, facts);
+      GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME);
+      require(meta != nullptr, "tensor-set metadata attached");
+      const GstStructure* structure = gst_custom_meta_get_structure(meta);
+      const GValue* value =
+          gst_structure_get_value(structure, SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS);
+      require(value != nullptr, "tensor-set descriptors present");
+      GBytes* bytes = static_cast<GBytes*>(g_value_get_boxed(value));
+      gsize descriptor_bytes = 0;
+      const auto* descriptors =
+          static_cast<const SimaTensorDescriptorV2*>(g_bytes_get_data(bytes, &descriptor_bytes));
+      require(descriptor_bytes == 2U * sizeof(SimaTensorDescriptorV2),
+              "tensor-set descriptor count");
+      require(descriptors[0].physical_index == 1 && descriptors[1].physical_index == 0,
+              "MPK physical input routing must override logical submission order");
+      gst_buffer_unref(buffer);
     }
 
     require_throws([] { (void)pcie::Tensor::from_vector(std::vector<float>(3), {2, 2}); },

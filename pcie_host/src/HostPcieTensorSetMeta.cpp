@@ -58,9 +58,13 @@ MappedSample::~MappedSample() {
   }
 }
 
-void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>& spans) {
+void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>& spans,
+                            const std::vector<PcieTensorFact>& input_facts) {
   if (!buffer || spans.empty()) {
     throw std::runtime_error("tensor-set metadata requires a buffer and at least one tensor");
+  }
+  if (input_facts.size() != spans.size()) {
+    throw std::runtime_error("submitted tensor count does not match the model input contract");
   }
   if (gst_meta_get_info(SIMA_TENSOR_SET_META_NAME) == nullptr) {
     static const gchar* tags[] = {"memory", "tensor", nullptr};
@@ -94,8 +98,10 @@ void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>
 
     SimaTensorDescriptorV2 desc{};
     desc.logical_index = static_cast<gint>(i);
-    desc.physical_index =
-        tensor.route.physical_index >= 0 ? tensor.route.physical_index : static_cast<int>(i);
+    desc.physical_index = input_facts[i].physical_index >= 0
+                              ? input_facts[i].physical_index
+                              : (tensor.route.physical_index >= 0 ? tensor.route.physical_index
+                                                                  : static_cast<int>(i));
     desc.backend_output_index = tensor.route.backend_output_index;
     desc.route_slot = tensor.route.route_slot >= 0 ? tensor.route.route_slot : static_cast<gint>(i);
     desc.memory_index = tensor.route.memory_index;

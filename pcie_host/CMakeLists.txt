@@ -213,6 +213,8 @@ if (SIMAPCIE_BUILD_TESTS)
   target_link_libraries(unit_pcie_host_tensor_test PRIVATE sima_neat_pcie_host)
   target_include_directories(unit_pcie_host_tensor_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${SIMA_NEAT_CORE_ROOT}/include
+    ${SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR}
     ${GST_INCLUDE_DIRS}
   )
 

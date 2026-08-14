@@ -174,9 +174,12 @@ ordered_json preprocess_json(const ModelOptions& opt) {
     pre["color_convert"] = std::move(color);
   }
 
-  if (p.normalize.enable == AutoFlag::On || p.normalize.has_explicit_stats ||
+  if (p.normalize.enable != AutoFlag::Auto || p.normalize.has_explicit_stats ||
       p.normalize.preset != NormalizePreset::None) {
     ordered_json norm = ordered_json::object();
+    if (p.normalize.enable != AutoFlag::Auto) {
+      norm["enable"] = p.normalize.enable == AutoFlag::On;
+    }
     if (p.normalize.preset != NormalizePreset::None) {
       norm["preset"] = normalize_preset_token(p.normalize.preset);
     }

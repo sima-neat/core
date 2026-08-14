@@ -144,12 +144,47 @@ std::pair<std::int64_t, std::int64_t> image_height_width(const Tensor& tensor,
   return {0, 0};
 }
 
+void validate_image_storage(const Tensor& tensor, const PixelFormat format) {
+  if (tensor.dtype != TensorDType::UInt8) {
+    throw std::runtime_error("PCIe raw image transport requires UInt8 storage");
+  }
+
+  const bool hw = tensor.layout == TensorLayout::HW && tensor.shape.size() == 2U;
+  const bool hwc = tensor.layout == TensorLayout::HWC && tensor.shape.size() == 3U;
+  const bool nhwc =
+      tensor.layout == TensorLayout::NHWC && tensor.shape.size() == 4U && tensor.shape[0] == 1;
+  switch (format) {
+  case PixelFormat::RGB:
+  case PixelFormat::BGR:
+    if ((!hwc || tensor.shape[2] != 3) && (!nhwc || tensor.shape[3] != 3)) {
+      throw std::runtime_error("PCIe RGB/BGR images require HWC or singleton NHWC storage with "
+                               "three channels");
+    }
+    return;
+  case PixelFormat::GRAY8:
+    if (!hw && (!hwc || tensor.shape[2] != 1) && (!nhwc || tensor.shape[3] != 1)) {
+      throw std::runtime_error(
+          "PCIe GRAY8 images require HW or single-channel HWC/singleton NHWC storage");
+    }
+    return;
+  case PixelFormat::NV12:
+  case PixelFormat::I420:
+    if (tensor.planes.empty() && !hw) {
+      throw std::runtime_error("PCIe packed NV12/I420 images require two-dimensional HW storage");
+    }
+    return;
+  case PixelFormat::Unknown:
+    return;
+  }
+}
+
 std::string image_caps_for_tensor(const Tensor& tensor, const ImageSpec& image) {
   const char* format = pixel_format_caps_name(image.format);
   if (!format) {
     throw std::runtime_error("image tensor has unknown pixel format");
   }
 
+  validate_image_storage(tensor, image.format);
   const auto [height, width] = image_height_width(tensor, image.format);
   if (width <= 0 || height <= 0 || width > std::numeric_limits<int>::max() ||
       height > std::numeric_limits<int>::max()) {
@@ -743,7 +778,7 @@ bool HostPcieChannel::push_prepared_payload(const std::int32_t request_id,
   }
   if (caps_.find("representation=(string)tensor-set") != std::string::npos) {
     try {
-      attach_tensor_set_meta(buffer, payload.spans);
+      attach_tensor_set_meta(buffer, payload.spans, facts_.inputs);
     } catch (...) {
       gst_buffer_unref(buffer);
       throw;

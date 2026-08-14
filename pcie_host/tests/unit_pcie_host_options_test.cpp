@@ -106,8 +106,8 @@ int main() {
       opt.preprocess.normalize.enable = pcie::AutoFlag::Off;
       const auto json = pcie_internal::write_model_options_json(opt);
       require(json.json.has_value(), "disabled normalization route must emit image JSON");
-      require(!contains(*json.json, "\"normalize\""),
-              "disabled normalization must not emit an enabling object");
+      require(contains(*json.json, "\"normalize\""), "disabled normalization state missing");
+      require(contains(*json.json, "\"enable\": false"), "disabled normalization flag missing");
     }
 
     {

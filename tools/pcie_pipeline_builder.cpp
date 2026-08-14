@@ -411,7 +411,14 @@ void apply_preprocess_model_options(const nlohmann::json& preprocess, Model::Opt
   }
 
   if (const auto it = preprocess.find("normalize"); it != preprocess.end()) {
-    reject_unknown_fields(*it, {"preset", "mean", "stddev"}, "preprocess.normalize");
+    reject_unknown_fields(*it, {"enable", "preset", "mean", "stddev"}, "preprocess.normalize");
+    const auto enable = it->find("enable");
+    if (enable != it->end()) {
+      if (!enable->is_boolean()) {
+        throw PciePipelineError("model_options", "preprocess.normalize.enable must be a boolean");
+      }
+      opt->preprocess.normalize.enable = enable->get<bool>() ? AutoFlag::On : AutoFlag::Off;
+    }
     bool normalize_requested = false;
     if (it->contains("preset")) {
       opt->preprocess.preset =
@@ -434,7 +441,7 @@ void apply_preprocess_model_options(const nlohmann::json& preprocess, Model::Opt
       opt->preprocess.normalize.has_explicit_stats = true;
       normalize_requested = true;
     }
-    if (normalize_requested)
+    if (normalize_requested && enable == it->end())
       opt->preprocess.normalize.enable = AutoFlag::On;
   }
 }

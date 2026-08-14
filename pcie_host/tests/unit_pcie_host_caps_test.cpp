@@ -53,6 +53,26 @@ int main() {
     require(image_caps == "video/x-raw,format=(string)BGR,width=(int)640,height=(int)480",
             "unexpected image caps: " + image_caps);
 
+    simaai::neat::pcie::Tensor invalid_image = image;
+    invalid_image.dtype = simaai::neat::pcie::TensorDType::Float32;
+    bool rejected_non_uint8_image = false;
+    try {
+      (void)pcie_internal::HostPcieChannel::caps_for_tensors({invalid_image});
+    } catch (const std::runtime_error&) {
+      rejected_non_uint8_image = true;
+    }
+    require(rejected_non_uint8_image, "raw image caps must reject non-UInt8 storage");
+
+    invalid_image = image;
+    invalid_image.shape[2] = 1;
+    bool rejected_wrong_channels = false;
+    try {
+      (void)pcie_internal::HostPcieChannel::caps_for_tensors({invalid_image});
+    } catch (const std::runtime_error&) {
+      rejected_wrong_channels = true;
+    }
+    require(rejected_wrong_channels, "BGR caps must reject non-three-channel storage");
+
     simaai::neat::pcie::Tensor singleton_image = image;
     singleton_image.layout = simaai::neat::pcie::TensorLayout::NHWC;
     singleton_image.shape = {1, 480, 640, 3};
