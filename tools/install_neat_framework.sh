@@ -51,9 +51,6 @@ set -euo pipefail
 # - CLAUDE_HOME: optional Claude home override for skill install target
 # - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
 # - NEAT_INSTALLER_INSTALL_CLAUDE_SKILL: ON/OFF (default: ON)
-# - NEAT_INSTALLER_RELAX_SIMA_LMM_DEP: ON/OFF (default: ON) relax sima-neat's
-#   lower sima-lmm-core/dev dependency to the bundled local LMM DEB version when
-#   both packages are from the same minor-version family.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
 # - NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL: ON/OFF (default: OFF) allow the
@@ -74,7 +71,6 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
-NEAT_INSTALLER_RELAX_SIMA_LMM_DEP="${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OFF}"
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
@@ -1051,128 +1047,6 @@ remove_installed_local_deb_packages() {
   run_sudo dpkg --remove --force-depends "${packages[@]}"
 }
 
-local_deb_version_for_package() {
-  local package="$1"
-  local deb pkg version
-  for deb in "${DEBS[@]}"; do
-    [[ -f "${deb}" ]] || continue
-    pkg="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    [[ "${pkg}" == "${package}" ]] || continue
-    version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
-    if [[ -n "${version}" ]]; then
-      printf '%s\n' "${version}"
-      return 0
-    fi
-  done
-  return 1
-}
-
-maybe_relax_sima_lmm_dep() {
-  local deb="$1"
-  local out_array_name="$2"
-  local -n out_array="${out_array_name}"
-
-  if [[ "${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP}" != "ON" ]]; then
-    out_array+=("${deb}")
-    return 0
-  fi
-  case "$(basename "${deb}")" in
-    sima-neat-*-Linux-core.deb | sima-neat-*-Linux-dev.deb) ;;
-    *)
-      out_array+=("${deb}")
-      return 0
-      ;;
-  esac
-  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1 ||
-      ! command -v python3 >/dev/null 2>&1; then
-    out_array+=("${deb}")
-    return 0
-  fi
-
-  local local_lmm_core_version local_lmm_dev_version
-  local_lmm_core_version="$(local_deb_version_for_package sima-lmm-core || true)"
-  local_lmm_dev_version="$(local_deb_version_for_package sima-lmm-dev || true)"
-  if [[ -z "${local_lmm_core_version}" && -z "${local_lmm_dev_version}" ]]; then
-    out_array+=("${deb}")
-    return 0
-  fi
-
-  local tmp_dir unpack_dir out_deb changed_marker
-  tmp_dir="$(mktemp -d /tmp/sima-neat-deb-normalize-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${tmp_dir}")
-  unpack_dir="${tmp_dir}/unpack"
-  out_deb="${tmp_dir}/$(basename "${deb}")"
-  changed_marker="${tmp_dir}/changed"
-
-  dpkg-deb -R "${deb}" "${unpack_dir}"
-  if python3 - "${unpack_dir}/DEBIAN/control" "${local_lmm_core_version}" \
-      "${local_lmm_dev_version}" "${changed_marker}" <<'PY'
-import re
-import subprocess
-import sys
-from pathlib import Path
-
-control = Path(sys.argv[1])
-local_versions = {
-    "sima-lmm-core": sys.argv[2],
-    "sima-lmm-dev": sys.argv[3],
-}
-changed_marker = Path(sys.argv[4])
-text = control.read_text()
-
-def minor_family(version: str):
-    match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)(?:\.\d+)?(?:[.+~-].*)?$", version)
-    if not match:
-        return None
-    return match.groups()
-
-def relax_package(package: str, body: str) -> str:
-    local = local_versions.get(package, "").strip()
-    if not local:
-        return body
-
-    def repl(match: re.Match[str]) -> str:
-        required = match.group(1).strip()
-        if minor_family(local) != minor_family(required):
-            return match.group(0)
-        if subprocess.run(
-            ["dpkg", "--compare-versions", local, "ge", required],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode != 0:
-            return match.group(0)
-        changed_marker.write_text("1")
-        return f"{package} (>= {local})"
-
-    return re.sub(rf"{re.escape(package)}\s*\(>=\s*([^)]+)\)", repl, body)
-
-new_text = relax_package("sima-lmm-core", text)
-new_text = relax_package("sima-lmm-dev", new_text)
-if new_text != text:
-    control.write_text(new_text)
-PY
-  then
-    if [[ -f "${changed_marker}" ]]; then
-      log "Relaxed $(basename "${deb}") dependency on bundled sima-lmm package version(s): core=${local_lmm_core_version:-<none>} dev=${local_lmm_dev_version:-<none>}"
-      dpkg-deb -b "${unpack_dir}" "${out_deb}" >/dev/null
-      out_array+=("${out_deb}")
-      return 0
-    fi
-  fi
-
-  out_array+=("${deb}")
-}
-
-prepare_debs_for_board_install() {
-  local -a prepared=()
-  local deb
-  for deb in "${DEBS[@]}"; do
-    maybe_relax_sima_lmm_dep "${deb}" prepared
-  done
-  DEBS=("${prepared[@]}")
-}
-
 stop_board_runtime_before_install() {
   if ! command -v systemctl >/dev/null 2>&1; then
     return 0
@@ -1798,7 +1672,6 @@ install_debs_in_ros2_sdk() {
 }
 
 install_debs_on_board() {
-  prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"

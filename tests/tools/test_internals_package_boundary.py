@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -47,6 +48,35 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             self.assertNotIn(removed, text, removed)
         for kept in ('"neat-runtime"', '"neat-gst-plugins"', '"neat-internals-dev"'):
             self.assertIn(kept, text, kept)
+
+    def test_llima_is_consumed_without_a_version_policy(self) -> None:
+        text = cmake()
+        self.assertIn("find_package(SimaLMM CONFIG REQUIRED)", text)
+        self.assertIn("find_package(SimaLMM CONFIG QUIET)", text)
+        for removed in (
+            "find_package(SimaLMM ${SIMANEAT_PLATFORM_VERSION}",
+            "sima-lmm-core (>=",
+            "sima-lmm-core (<<",
+            "sima-lmm-dev (>=",
+            "sima-lmm-dev (<<",
+            "SIMANEAT_DEP_PACKAGE_MIN_VERSION",
+            "SIMANEAT_DEP_PACKAGE_MAX_VERSION",
+        ):
+            self.assertNotIn(removed, text, removed)
+        exported_config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("find_dependency(SimaLMM CONFIG REQUIRED)", exported_config)
+        self.assertNotIn("@SIMANEAT_PLATFORM_VERSION@", exported_config)
+
+    def test_cmake_package_reports_core_release_identity(self) -> None:
+        text = cmake()
+        self.assertIn("VERSION ${SIMANEAT_PACKAGE_BASE_VERSION}", text)
+        self.assertNotIn("VERSION ${SIMANEAT_PLATFORM_VERSION}", text)
+
+    def test_manifest_has_no_platform_package_pin(self) -> None:
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
+        self.assertNotIn("platform-package-version", manifest)
 
     def test_no_configure_time_bundled_memory_requirement(self) -> None:
         text = cmake()
@@ -99,6 +129,19 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             "native_modalix_repair_is_required",
         ):
             self.assertNotIn(removed, text)
+
+    def test_installer_does_not_rewrite_llima_dependencies(self) -> None:
+        text = installer()
+        for removed in (
+            "NEAT_INSTALLER_RELAX_SIMA_LMM_DEP",
+            "maybe_relax_sima_lmm_dep",
+            "prepare_debs_for_board_install",
+        ):
+            self.assertNotIn(removed, text)
+
+    def test_no_bundle_version_resolver(self) -> None:
+        self.assertNotIn("validate_neat_package_bundle.py", build_script())
+        self.assertFalse((ROOT / "tools/validate_neat_package_bundle.py").exists())
 
 
 if __name__ == "__main__":

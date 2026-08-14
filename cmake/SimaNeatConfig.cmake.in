@@ -5,7 +5,7 @@ set(SimaNeat_ABI_VERSION "@SIMANEAT_ABI_VERSION@")
 set(SIMANEAT_MODELZOO_VERSION "@SIMANEAT_MODELZOO_VERSION@")
 set(SIMANEAT_WITH_LLIMA @SIMANEAT_CONFIG_WITH_LLIMA@)
 if (SIMANEAT_WITH_LLIMA)
-  find_dependency(SimaLMM @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
+  find_dependency(SimaLMM CONFIG REQUIRED)
 endif()
 find_dependency(NeatInternals CONFIG REQUIRED)
 # sima_neat_static exports ZLIB::ZLIB: a static archive carries its dependencies in its link
