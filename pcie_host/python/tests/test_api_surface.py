@@ -115,6 +115,17 @@ def test_tensor_from_bytes():
   np.testing.assert_array_equal(tensor.to_numpy(), np.array([[0, 1], [2, 3]], dtype=np.uint8))
 
 
+def test_tensor_from_bytes_preserves_strides():
+  tensor = pcie.Tensor.from_bytes(
+      b"\x00\x01\xff\x02\x03",
+      pcie.TensorDType.UInt8,
+      [2, 2],
+      strides_bytes=[3, 1],
+  )
+
+  np.testing.assert_array_equal(tensor.to_numpy(), np.array([[0, 1], [2, 3]], dtype=np.uint8))
+
+
 def test_model_requires_build_before_io():
   # A full model archive is needed by the constructor. The metadata-path test covers that
   # when SIMAPCIE_YOLOV8_MODEL is available.

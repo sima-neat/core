@@ -274,19 +274,20 @@ nb::bytes tensor_to_bytes(const pcie::Tensor& tensor) {
 nb::object tensor_to_numpy(const pcie::Tensor& tensor) {
   nb::module_ np = nb::module_::import_("numpy");
   nb::object dtype = np.attr("dtype")(numpy_dtype_name(tensor.dtype));
-  nb::object array = np.attr("frombuffer")(tensor_to_bytes(tensor), "dtype"_a = dtype);
-  if (!tensor.shape.empty()) {
-    nb::list shape;
-    for (const auto dim : tensor.shape) {
-      shape.append(nb::int_(dim));
-    }
-    try {
-      array = array.attr("reshape")(shape);
-    } catch (const nb::python_error&) {
-      PyErr_Clear();
-    }
+  nb::object bytes = tensor_to_bytes(tensor);
+  if (tensor.shape.empty()) {
+    return np.attr("frombuffer")(bytes, "dtype"_a = dtype);
   }
-  return array;
+
+  nb::list shape;
+  nb::list strides;
+  for (const auto dim : tensor.shape) {
+    shape.append(nb::int_(dim));
+  }
+  for (const auto stride : tensor.strides_bytes) {
+    strides.append(nb::int_(stride));
+  }
+  return np.attr("ndarray")(shape, "dtype"_a = dtype, "buffer"_a = bytes, "strides"_a = strides);
 }
 
 pcie::Tensor tensor_from_bytes(nb::bytes payload, const pcie::TensorDType dtype,

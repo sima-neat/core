@@ -100,7 +100,10 @@ public:
       throw std::invalid_argument("readiness_timeout_ms must be positive");
     }
     if (state_ == State::Ready) {
-      return;
+      if (channel_.is_running()) {
+        return;
+      }
+      close_locked();
     }
     if (channel_.is_running() || state_ == State::Starting || state_ == State::Failed ||
         state_ == State::Stopping) {
@@ -175,7 +178,7 @@ public:
 
   bool running() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return state_ == State::Ready;
+    return state_ == State::Ready && channel_.is_running();
   }
 
   void close() {
