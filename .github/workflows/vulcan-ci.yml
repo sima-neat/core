@@ -285,6 +285,7 @@ jobs:
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Neural Edge Acceleration Toolkit" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
+          -e NEAT_SYNC_SYSROOT="ON" \
           -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
           -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
           "${sdk_container}" \

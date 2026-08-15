@@ -1353,6 +1353,50 @@ PY
   fi
 }
 
+sync_sysroot_from_internals_manifest() {
+  local artifact_dir="$1"
+  [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0
+
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    echo "ERROR: NEAT_SYNC_SYSROOT requires an eLxr SDK." >&2
+    exit 1
+  fi
+
+  local artifact_manifest="${artifact_dir}/internals-manifest.json"
+  if [[ ! -f "${artifact_manifest}" ]]; then
+    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
+    exit 1
+  fi
+
+  local values receipt consumer_base
+  if ! values="$(python3 -c '
+import json, sys
+artifact = json.load(open(sys.argv[1], encoding="utf-8"))
+consumer = json.load(open(sys.argv[2], encoding="utf-8"))
+print(artifact.get("sysroot-version", ""), consumer.get("platform-version", ""), sep="\t")
+' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
+    echo "ERROR: Cannot read Internals build receipt." >&2
+    exit 1
+  fi
+  IFS=$'\t' read -r receipt consumer_base <<< "${values}"
+  if [[ ! "${receipt}" =~ ^[0-9]+\.[0-9]+\.[0-9]+~pre[0-9]+$ ]]; then
+    echo "ERROR: Internals artifact has an invalid platform receipt." >&2
+    exit 1
+  fi
+  if [[ ! "${consumer_base}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
+        "${consumer_base}" != "${receipt%%~pre*}" ]]; then
+    echo "ERROR: Internals requires platform ${receipt%%~pre*}, but Core declares ${consumer_base}." >&2
+    exit 1
+  fi
+
+  echo "Updating SDK sysroot to Internals receipt ${receipt}"
+  if ! run_privileged sysroot update "${receipt}"; then
+    echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+    exit 1
+  fi
+  sysroot status
+}
+
 ensure_neat_internals() {
   # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
@@ -1373,6 +1417,7 @@ ensure_neat_internals() {
 
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  sync_sysroot_from_internals_manifest "${artifact_dir}"
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
@@ -2855,7 +2900,6 @@ main() {
   ensure_node20_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
-  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     ensure_dependency_headers
@@ -2867,6 +2911,7 @@ main() {
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
   fi
+  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     echo

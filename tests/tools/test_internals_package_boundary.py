@@ -102,6 +102,30 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         function = text[start:end]
         self.assertNotIn("return 0", function[: function.index("fetch_neat_internals")])
 
+    def test_vulcan_build_uses_the_internals_sysroot_receipt(self) -> None:
+        text = build_script()
+        workflow = (ROOT / ".github/workflows/vulcan-ci.yml").read_text(
+            encoding="utf-8"
+        )
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
+        sync = text.index('sync_sysroot_from_internals_manifest "${artifact_dir}"')
+        install = text.index('collect_plugin_files_from_debs "${artifact_dir}"', sync)
+        ensure = text.index("ensure_neat_internals\n", text.index("main()"))
+        target_python = text.index("detect_elxr_target_python\n", ensure)
+
+        self.assertIn('[[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0', text)
+        self.assertIn('-e NEAT_SYNC_SYSROOT="ON"', workflow)
+        self.assertIn("internals-manifest.json", text)
+        self.assertIn('sysroot update "${receipt}"', text)
+        self.assertIn("Internals artifact is missing internals-manifest.json", text)
+        self.assertIn("has an invalid platform receipt", text)
+        self.assertIn("but Core declares", text)
+        self.assertNotIn("sysroot-version", manifest)
+        self.assertNotRegex(text, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
+        self.assertNotRegex(workflow, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
+        self.assertLess(sync, install)
+        self.assertLess(ensure, target_python)
+
     def test_installer_has_no_bundled_memory_transaction(self) -> None:
         text = installer()
         for removed in (
