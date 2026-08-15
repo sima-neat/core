@@ -616,13 +616,13 @@ run_privileged() {
   # 4) interactive sudo only in TTY sessions
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
-    return 0
+    return $?
   fi
 
   if command -v sudo >/dev/null 2>&1; then
     if sudo -n true 2>/dev/null; then
       sudo -n "$@"
-      return 0
+      return $?
     fi
 
     local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"

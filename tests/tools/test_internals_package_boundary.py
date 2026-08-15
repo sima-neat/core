@@ -1,4 +1,5 @@
 import json
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,12 @@ def build_script() -> str:
 
 def installer() -> str:
     return (ROOT / "tools/install_neat_framework.sh").read_text(encoding="utf-8")
+
+
+def shell_function(name: str) -> str:
+    text = build_script()
+    start = text.index(f"{name}() {{")
+    return text[start : text.index("\n}\n", start) + 2]
 
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
@@ -125,6 +132,18 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertNotRegex(workflow, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
         self.assertLess(sync, install)
         self.assertLess(ensure, target_python)
+
+    def test_failed_sysroot_update_is_not_masked(self) -> None:
+        script = "\n".join(
+            (
+                "id() { echo 0; }",
+                "sysroot() { return 23; }",
+                shell_function("run_privileged"),
+                "run_privileged sysroot update receipt",
+            )
+        )
+        result = subprocess.run(["bash", "-c", script], check=False)
+        self.assertEqual(result.returncode, 23)
 
     def test_installer_has_no_bundled_memory_transaction(self) -> None:
         text = installer()
