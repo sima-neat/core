@@ -1373,12 +1373,19 @@ sync_sysroot_from_internals_manifest() {
 import json, sys
 artifact = json.load(open(sys.argv[1], encoding="utf-8"))
 consumer = json.load(open(sys.argv[2], encoding="utf-8"))
-print(artifact.get("sysroot-version", ""), consumer.get("platform-version", ""), sep="\t")
+receipt = artifact["sysroot-version"]
+if not isinstance(receipt, str):
+    raise TypeError("sysroot-version must be a string")
+print(receipt, consumer.get("platform-version", ""), sep="|")
 ' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
     echo "ERROR: Cannot read Internals build receipt." >&2
     exit 1
   fi
-  IFS=$'\t' read -r receipt consumer_base <<< "${values}"
+  IFS='|' read -r receipt consumer_base <<< "${values}"
+  if [[ -z "${receipt}" ]]; then
+    echo "Core is using the existing SDK sysroot."
+    return 0
+  fi
   if [[ ! "${receipt}" =~ ^[0-9]+\.[0-9]+\.[0-9]+~pre[0-9]+$ ]]; then
     echo "ERROR: Internals artifact has an invalid platform receipt." >&2
     exit 1

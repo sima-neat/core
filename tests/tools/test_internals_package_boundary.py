@@ -189,12 +189,17 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [])
 
+        result, calls = run_sync({"sysroot-version": ""}, base)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [])
+
     def test_invalid_sysroot_receipts_fail_closed(self) -> None:
         base = "2.1.3"
         receipt = f"{base}~pre9999"
         cases = (
             (None, base, "missing internals-manifest.json"),
             ("{", base, "Cannot read Internals build receipt"),
+            ({}, base, "Cannot read Internals build receipt"),
             ({"sysroot-version": "latest"}, base, "invalid platform receipt"),
             ({"sysroot-version": receipt}, "2.1.4", "but Core declares"),
         )
