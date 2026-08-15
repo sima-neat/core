@@ -18,6 +18,7 @@ SHORT_SHA="${SHORT_SHA:0:12}"
 
 CARD_HOST="${SIMAPCIE_CARD_HOST:-10.0.0.2}"
 CARD_USER="${SIMAPCIE_USER:-sima}"
+CARD_SSH_KEY="${SIMAPCIE_SSH_KEY:-${HOME}/.ssh/sima_neat_pcie_ed25519}"
 CARD_ID="${SIMAPCIE_CARD_ID:-0}"
 QUEUE="${SIMAPCIE_QUEUE:-0}"
 STRESS_QUEUES="${SIMAPCIE_STRESS_QUEUES:-0 1 2 3}"
@@ -103,7 +104,10 @@ run_host_sudo_if_available() {
 
 ssh_card() {
   ssh \
+    -i "${CARD_SSH_KEY}" \
+    -o BatchMode=yes \
     -o ConnectTimeout=10 \
+    -o IdentitiesOnly=yes \
     -o StrictHostKeyChecking=accept-new \
     "${CARD_USER}@${CARD_HOST}" "$@"
 }
