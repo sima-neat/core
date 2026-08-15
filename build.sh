@@ -1368,32 +1368,27 @@ sync_sysroot_from_internals_manifest() {
     exit 1
   fi
 
-  local values receipt consumer_base
-  if ! values="$(python3 -c '
-import json, sys
+  local receipt
+  if ! receipt="$(python3 -c '
+import json, re, sys
 artifact = json.load(open(sys.argv[1], encoding="utf-8"))
 consumer = json.load(open(sys.argv[2], encoding="utf-8"))
 receipt = artifact["sysroot-version"]
-if not isinstance(receipt, str):
-    raise TypeError("sysroot-version must be a string")
-print(receipt, consumer.get("platform-version", ""), sep="|")
+consumer_base = consumer["platform-version"]
+if not isinstance(receipt, str) or (
+    receipt and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}~pre[0-9]+", receipt)
+):
+    raise ValueError("invalid sysroot-version")
+if receipt and consumer_base != receipt.split("~pre", 1)[0]:
+    raise ValueError("platform-version does not match the Internals receipt")
+print(receipt)
 ' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
     echo "ERROR: Cannot read Internals build receipt." >&2
     exit 1
   fi
-  IFS='|' read -r receipt consumer_base <<< "${values}"
   if [[ -z "${receipt}" ]]; then
     echo "Core is using the existing SDK sysroot."
     return 0
-  fi
-  if [[ ! "${receipt}" =~ ^[0-9]+\.[0-9]+\.[0-9]+~pre[0-9]+$ ]]; then
-    echo "ERROR: Internals artifact has an invalid platform receipt." >&2
-    exit 1
-  fi
-  if [[ ! "${consumer_base}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ||
-        "${consumer_base}" != "${receipt%%~pre*}" ]]; then
-    echo "ERROR: Internals requires platform ${receipt%%~pre*}, but Core declares ${consumer_base}." >&2
-    exit 1
   fi
 
   echo "Updating SDK sysroot to Internals receipt ${receipt}"

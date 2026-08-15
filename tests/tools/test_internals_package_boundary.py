@@ -170,8 +170,8 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertIn("internals-manifest.json", text)
         self.assertIn('sysroot update "${receipt}"', text)
         self.assertIn("Internals artifact is missing internals-manifest.json", text)
-        self.assertIn("has an invalid platform receipt", text)
-        self.assertIn("but Core declares", text)
+        self.assertIn("invalid sysroot-version", text)
+        self.assertIn("platform-version does not match the Internals receipt", text)
         self.assertNotIn("sysroot-version", manifest)
         self.assertNotRegex(text, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
         self.assertNotRegex(workflow, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
@@ -200,8 +200,26 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             (None, base, "missing internals-manifest.json"),
             ("{", base, "Cannot read Internals build receipt"),
             ({}, base, "Cannot read Internals build receipt"),
-            ({"sysroot-version": "latest"}, base, "invalid platform receipt"),
-            ({"sysroot-version": receipt}, "2.1.4", "but Core declares"),
+            (
+                {"sysroot-version": "latest"},
+                base,
+                "Cannot read Internals build receipt",
+            ),
+            (
+                {"sysroot-version": "|latest"},
+                base,
+                "Cannot read Internals build receipt",
+            ),
+            (
+                {"sysroot-version": "\nmalformed"},
+                base,
+                "Cannot read Internals build receipt",
+            ),
+            (
+                {"sysroot-version": receipt},
+                "2.1.4",
+                "Cannot read Internals build receipt",
+            ),
         )
         for artifact, consumer_base, message in cases:
             with self.subTest(message=message):
