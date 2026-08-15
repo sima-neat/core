@@ -39,6 +39,14 @@ Developers who want to:
 - Optionally serve a pipeline over RTSP (via `gst-rtsp-server`)
 - Feed ML code via tensor-friendly outputs without writing GStreamer plumbing
 
+## Package ownership
+
+The selected Core artifact is the source of truth for the Neat, LLiMa, and
+Internals Debian packages installed together. Core consumes and forwards that
+artifact closure without choosing or rewriting dependency versions. Packages
+outside the artifact remain platform-owned; an incompatible platform must be
+updated rather than repaired by Core or LLiMa.
+
 ### Common workflows
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer
 - **Validate:** build + parse + preroll (PAUSED) to catch negotiation issues early

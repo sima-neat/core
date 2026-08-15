@@ -1,0 +1,153 @@
+import json
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def cmake() -> str:
+    return (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+
+
+def build_script() -> str:
+    return (ROOT / "build.sh").read_text(encoding="utf-8")
+
+
+def installer() -> str:
+    return (ROOT / "tools/install_neat_framework.sh").read_text(encoding="utf-8")
+
+
+class InternalsPackageBoundaryTest(unittest.TestCase):
+    def test_internals_is_located_without_a_derived_version(self) -> None:
+        text = cmake()
+        self.assertIn("find_package(NeatInternals CONFIG REQUIRED)", text)
+        self.assertNotIn(
+            "find_package(NeatInternals ${SIMANEAT_PLATFORM_VERSION}", text
+        )
+        exported_config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("find_dependency(NeatInternals CONFIG REQUIRED)", exported_config)
+        self.assertNotIn(
+            "find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@",
+            exported_config,
+        )
+
+    def test_no_manually_constructed_internals_version_ranges(self) -> None:
+        text = cmake()
+        for removed in (
+            "neat-runtime (>=",
+            "neat-runtime (<<",
+            "neat-gst-plugins (>=",
+            "neat-gst-plugins (<<",
+            "neat-internals-dev (>=",
+            "neat-internals-dev (<<",
+        ):
+            self.assertNotIn(removed, text, removed)
+        for kept in ('"neat-runtime"', '"neat-gst-plugins"', '"neat-internals-dev"'):
+            self.assertIn(kept, text, kept)
+
+    def test_llima_is_consumed_without_a_version_policy(self) -> None:
+        text = cmake()
+        self.assertIn("find_package(SimaLMM CONFIG REQUIRED)", text)
+        self.assertIn("find_package(SimaLMM CONFIG QUIET)", text)
+        for removed in (
+            "find_package(SimaLMM ${SIMANEAT_PLATFORM_VERSION}",
+            "sima-lmm-core (>=",
+            "sima-lmm-core (<<",
+            "sima-lmm-dev (>=",
+            "sima-lmm-dev (<<",
+            "SIMANEAT_DEP_PACKAGE_MIN_VERSION",
+            "SIMANEAT_DEP_PACKAGE_MAX_VERSION",
+        ):
+            self.assertNotIn(removed, text, removed)
+        exported_config = (ROOT / "cmake/SimaNeatConfig.cmake.in").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("find_dependency(SimaLMM CONFIG REQUIRED)", exported_config)
+        self.assertNotIn("@SIMANEAT_PLATFORM_VERSION@", exported_config)
+
+    def test_cmake_package_reports_core_release_identity(self) -> None:
+        text = cmake()
+        self.assertIn("VERSION ${SIMANEAT_PACKAGE_BASE_VERSION}", text)
+        self.assertNotIn("VERSION ${SIMANEAT_PLATFORM_VERSION}", text)
+
+    def test_manifest_has_no_platform_package_pin(self) -> None:
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
+        self.assertNotIn("platform-package-version", manifest)
+
+    def test_no_configure_time_bundled_memory_requirement(self) -> None:
+        text = cmake()
+        self.assertNotIn("SIMANEAT_MEMORY_DEV_PACKAGE_VERSION", text)
+        self.assertNotIn("SIMANEAT_BUNDLED_MEMORY_DEV_DEBS", text)
+        self.assertNotIn("simaai-memory-lib-dev (=", text)
+        self.assertIn('"simaai-memory-lib-dev"', text)
+
+    def test_every_delivered_internals_package_is_forwarded(self) -> None:
+        text = build_script()
+        self.assertIn('for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do', text)
+        for removed in (
+            '"${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb',
+            "dist/simaai-common*.deb",
+            "'simaai-memory-lib_*.deb'",
+            "'libcamera_*.deb'",
+            "'neat-runtime_*.deb'",
+        ):
+            self.assertNotIn(removed, text, removed)
+
+    def test_selected_internals_artifact_is_installed_before_build(self) -> None:
+        text = build_script()
+        start = text.index("ensure_neat_internals()")
+        end = text.index("\nensure_neat_llima()", start)
+        function = text[start:end]
+        self.assertNotIn("return 0", function[: function.index("fetch_neat_internals")])
+
+    def test_installer_has_no_bundled_memory_transaction(self) -> None:
+        text = installer()
+        for removed in (
+            "SIMAAI_MEMORY",
+            "install_local_simaai_memory_transaction",
+            "collect_local_simaai_memory_debs",
+            "palette_required_simaai_memory_version",
+            "verify_memory_transaction_preservation",
+        ):
+            self.assertNotIn(removed, text, removed)
+
+    def test_installer_consumes_every_manifest_deb(self) -> None:
+        text = installer()
+        start = text.index("collect_debs_in_install_order()")
+        end = text.index("\nsysroot_path()", start)
+        function = text[start:end]
+        self.assertIn(
+            'append_matching_files "${out_array_name}" "${search_dir}" \'*.deb\'',
+            function,
+        )
+        for package in ("neat-runtime", "libcamera", "sima-lmm", "sima-neat"):
+            self.assertNotIn(package, function)
+
+    def test_installer_does_not_resolve_platform_package_versions(self) -> None:
+        text = installer()
+        for removed in (
+            "apt_candidate_version",
+            "apt_exact_dependency_version",
+            "native_modalix_restore_specs",
+            "native_modalix_repair_is_required",
+        ):
+            self.assertNotIn(removed, text)
+
+    def test_installer_does_not_rewrite_llima_dependencies(self) -> None:
+        text = installer()
+        for removed in (
+            "NEAT_INSTALLER_RELAX_SIMA_LMM_DEP",
+            "maybe_relax_sima_lmm_dep",
+            "prepare_debs_for_board_install",
+        ):
+            self.assertNotIn(removed, text)
+
+    def test_no_bundle_version_resolver(self) -> None:
+        self.assertNotIn("validate_neat_package_bundle.py", build_script())
+        self.assertFalse((ROOT / "tools/validate_neat_package_bundle.py").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

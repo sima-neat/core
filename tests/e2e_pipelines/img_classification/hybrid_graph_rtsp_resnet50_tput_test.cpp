@@ -4,6 +4,7 @@
 #include "graph/nodes/Map.h"
 #include "graph/nodes/StreamMetadata.h"
 #include "graph/nodes/StreamScheduler.h"
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/RTSPInput.h"
@@ -227,17 +228,16 @@ start_rtsp_servers_with_retry(const std::string& image_path, int content_w, int 
   return servers;
 }
 
-static bool probe_rtsp_encoded(const std::string& url, int fps, int w, int h, int tries,
-                               int timeout_ms, bool print_pipeline, bool debug) {
+static bool probe_rtsp_encoded(const std::string& url, int fps, int tries, int timeout_ms,
+                               bool print_pipeline, bool debug) {
   if (debug) {
     std::cerr << "[rtsp] probe start url=" << url << " tries=" << tries
               << " timeout_ms=" << timeout_ms << "\n";
   }
   simaai::neat::Graph p;
   p.add(simaai::neat::nodes::RTSPInput(url, /*latency_ms=*/200, /*tcp=*/true));
-  p.add(simaai::neat::nodes::H264Depacketize(kPayloadType,
-                                             /*config_interval=*/1, fps, w, h,
-                                             /*enforce_caps=*/true));
+  p.add(simaai::neat::nodes::H264Depacketize(kPayloadType, /*config_interval=*/1));
+  p.add(simaai::neat::nodes::EncodedCapsFixup({"video/x-h264", fps}));
   p.add(simaai::neat::nodes::Output());
 
   if (print_pipeline) {
@@ -571,8 +571,8 @@ int main(int argc, char** argv) {
     }
 
     for (auto& rtsp : rtsp_servers_vec) {
-      if (!probe_rtsp_encoded(rtsp.handle.url(), fps, kEncWidth, kEncHeight, rtsp_probe_tries,
-                              rtsp_probe_timeout_ms, print_pipeline, rtsp_debug)) {
+      if (!probe_rtsp_encoded(rtsp.handle.url(), fps, rtsp_probe_tries, rtsp_probe_timeout_ms,
+                              print_pipeline, rtsp_debug)) {
         if (rtsp_debug)
           std::cerr << "[rtsp] probe failed; server will stop\n";
         skip_long_test_exception("RTSP probe failed (no output). Check encoder/RTSP server.");
@@ -627,12 +627,8 @@ int main(int argc, char** argv) {
           simaai::neat::nodes::RTSPInput(rtsp_ctx.handle.url(),
                                          /*latency_ms=*/200,
                                          /*tcp=*/true),
-          simaai::neat::nodes::H264Depacketize(kPayloadType,
-                                               /*config_interval=*/1,
-                                               /*fps=*/fps,
-                                               /*w=*/kEncWidth,
-                                               /*h=*/kEncHeight,
-                                               /*enforce_caps=*/true),
+          simaai::neat::nodes::H264Depacketize(kPayloadType, /*config_interval=*/1),
+          simaai::neat::nodes::EncodedCapsFixup({"video/x-h264", fps}),
       };
 
       StreamPipelineDef def;

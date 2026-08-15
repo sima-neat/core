@@ -52,6 +52,14 @@ the machine cannot reach SiMa.ai services directly.
 
 ## Install the Neat Library
 
+:::note Package compatibility
+The installer uses every Debian package listed by the selected Core artifact
+and does not select different Internals or LLiMa versions. The installed
+platform must satisfy dependencies that are not delivered by that artifact. If
+APT would remove platform packages to complete the installation, the installer
+stops; update the platform instead of substituting packages in Core or LLiMa.
+:::
+
 Choose a working directory before running the installer. On the DevKit, install
 under `/media/nvme` to avoid filling the root file system. In the SDK container,
 use a container-local path such as `$HOME/neat`.
