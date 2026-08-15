@@ -62,14 +62,16 @@ if ! command -v sima-cli >/dev/null 2>&1; then
 fi
 
 card_install_dir="${REMOTE_CARD_INSTALL_DIR}"
+cleanup_card_install_dir=""
 if [[ -z "${card_install_dir}" ]]; then
-  if [[ -d /workspace ]]; then
-    card_install_dir="/workspace"
-  else
-    card_install_dir="${HOME:-/tmp}/sima-neat-card-install"
-  fi
+  card_install_root="${HOME}/tmp"
+  mkdir -p "${card_install_root}"
+  card_install_dir="$(mktemp -d "${card_install_root}/sima-neat-card-install.XXXXXX")"
+  cleanup_card_install_dir="${card_install_dir}"
+else
+  mkdir -p "${card_install_dir}"
 fi
-mkdir -p "${card_install_dir}"
+echo "Using card installation directory ${card_install_dir}"
 
 export SIMA_CLI_CHECK_FOR_UPDATE=0
 export DEVKIT_PASSWORD="${REMOTE_DEVKIT_PASSWORD}"
@@ -99,7 +101,7 @@ SUDO_WRAPPER
   export PATH="${REMOTE_SUDO_WRAPPER_DIR}:${PATH}"
 }
 setup_remote_sudo_wrapper
-trap 'rm -rf "${REMOTE_SUDO_WRAPPER_DIR:-}"' EXIT
+trap 'rm -rf "${REMOTE_SUDO_WRAPPER_DIR:-}" "${cleanup_card_install_dir:-}"' EXIT
 cd "${card_install_dir}"
 sima-cli install --neat --env "${REMOTE_VULCAN_ENV}" "${REMOTE_PACKAGE_SPEC}" -t all
 REMOTE_INSTALL
