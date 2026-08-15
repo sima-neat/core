@@ -43,6 +43,16 @@ int main() {
     {
       pcie::ModelOptions opt;
       opt.preprocess.kind = pcie::InputKind::Image;
+      opt.preprocess.enable = pcie::AutoFlag::On;
+      const auto json = pcie_internal::write_model_options_json(opt);
+      require(json.json.has_value(), "enabled image preprocess route must emit JSON");
+      require(contains(*json.json, "\"enable\": true"),
+              "top-level preprocess enable state missing");
+    }
+
+    {
+      pcie::ModelOptions opt;
+      opt.preprocess.kind = pcie::InputKind::Image;
       opt.preprocess.resize.enable = pcie::AutoFlag::On;
       opt.preprocess.resize.mode = pcie::ResizeMode::Stretch;
       const auto json = pcie_internal::write_model_options_json(opt);

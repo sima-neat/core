@@ -139,6 +139,10 @@ ordered_json preprocess_json(const ModelOptions& opt) {
   const auto& p = opt.preprocess;
   ordered_json pre = ordered_json::object();
 
+  if (p.enable != AutoFlag::Auto) {
+    pre["enable"] = p.enable == AutoFlag::On;
+  }
+
   if (p.input_max_width > 0 || p.input_max_height > 0 || p.input_max_depth > 0) {
     ordered_json input_max = ordered_json::object();
     if (p.input_max_width > 0)

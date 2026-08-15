@@ -116,6 +116,15 @@ int main() {
     }
     require(rejected_invalid_planar_height, "invalid packed NV12 height must be rejected");
 
+    bool rejected_odd_planar_width = false;
+    try {
+      nv12.shape = {720, 641};
+      (void)pcie_internal::HostPcieChannel::caps_for_tensors({nv12});
+    } catch (const std::runtime_error&) {
+      rejected_odd_planar_width = true;
+    }
+    require(rejected_odd_planar_width, "odd packed NV12/I420 width must be rejected");
+
     simaai::neat::pcie::Tensor legacy_image = image;
     legacy_image.image.reset();
     legacy_image.image_format = simaai::neat::pcie::PixelFormat::RGB;

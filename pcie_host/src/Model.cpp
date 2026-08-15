@@ -66,6 +66,7 @@ public:
       : model_path_(std::move(model_path)), options_(std::move(options)),
         connection_(std::move(connection)), remote_(connection_) {
     validate_queue(connection_.queue);
+    validate_card_id(connection_.card_id);
     validate_max_inflight(connection_.max_inflight);
     (void)internal::write_model_options_json(options_);
     facts_ = internal::read_model_facts(model_path_);
@@ -280,6 +281,12 @@ private:
   static void validate_queue(const int queue) {
     if (queue < 0 || queue > 3) {
       throw std::invalid_argument("queue must be in range 0..3");
+    }
+  }
+
+  static void validate_card_id(const int card_id) {
+    if (card_id < 0) {
+      throw std::invalid_argument("card_id must be non-negative");
     }
   }
 

@@ -349,8 +349,15 @@ BoxDecodeTypeOption parse_model_options_decode_type_option(const std::string& ra
 }
 
 void apply_preprocess_model_options(const nlohmann::json& preprocess, Model::Options* opt) {
-  reject_unknown_fields(preprocess, {"input_max", "resize", "color_convert", "normalize"},
+  reject_unknown_fields(preprocess, {"enable", "input_max", "resize", "color_convert", "normalize"},
                         "preprocess");
+
+  if (const auto enable = preprocess.find("enable"); enable != preprocess.end()) {
+    if (!enable->is_boolean()) {
+      throw PciePipelineError("model_options", "preprocess.enable must be a boolean");
+    }
+    opt->preprocess.enable = enable->get<bool>() ? AutoFlag::On : AutoFlag::Off;
+  }
 
   if (const auto it = preprocess.find("input_max"); it != preprocess.end()) {
     reject_unknown_fields(*it, {"width", "height", "depth"}, "preprocess.input_max");

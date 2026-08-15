@@ -169,8 +169,13 @@ void validate_image_storage(const Tensor& tensor, const PixelFormat format) {
     return;
   case PixelFormat::NV12:
   case PixelFormat::I420:
-    if (tensor.planes.empty() && !hw) {
-      throw std::runtime_error("PCIe packed NV12/I420 images require two-dimensional HW storage");
+    if (tensor.planes.empty()) {
+      if (!hw) {
+        throw std::runtime_error("PCIe packed NV12/I420 images require two-dimensional HW storage");
+      }
+      if (tensor.shape[1] % 2 != 0) {
+        throw std::runtime_error("PCIe packed NV12/I420 images require an even width");
+      }
     }
     return;
   case PixelFormat::Unknown:

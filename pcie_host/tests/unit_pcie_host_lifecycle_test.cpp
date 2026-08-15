@@ -10,6 +10,20 @@ namespace pcie = simaai::neat::pcie;
 
 int main() {
   try {
+    {
+      pcie::ConnectionOptions connection;
+      connection.card_id = -1;
+      bool threw = false;
+      try {
+        (void)pcie::Model("unused-model.tar.gz", {}, connection);
+      } catch (const std::invalid_argument& error) {
+        threw = std::string(error.what()) == "card_id must be non-negative";
+      }
+      if (!threw) {
+        throw std::runtime_error("negative PCIe card ID must be rejected");
+      }
+    }
+
     const char* model_env = std::getenv("SIMAPCIE_YOLOV8_MODEL");
     if (!model_env || !std::filesystem::is_regular_file(model_env)) {
       std::cout << "[SKIP] SIMAPCIE_YOLOV8_MODEL is not set to a readable model\n";

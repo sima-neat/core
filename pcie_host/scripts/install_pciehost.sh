@@ -311,16 +311,21 @@ if [[ -n "${PYTHON_WHEEL_PATH}" ]]; then
 fi
 
 apt_install_opts=(install -y --reinstall --allow-downgrades)
+python_apt_dependencies=()
+if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
+  python_apt_dependencies=(python3-venv)
+fi
 
 echo "Installing ${DEB_PATH}"
 if [[ "${RUNTIME_ONLY}" != "ON" && -n "${DEV_DEB_PATH}" ]]; then
   echo "Installing ${DEV_DEB_PATH}"
-  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}" "${DEV_DEB_PATH}"
+  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}" "${DEV_DEB_PATH}" \
+    "${python_apt_dependencies[@]}"
 else
   if [[ "${RUNTIME_ONLY}" != "ON" ]]; then
     echo "WARN: no sima-pcie-host-dev DEB found; installing runtime package only" >&2
   fi
-  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}"
+  run_sudo apt "${apt_install_opts[@]}" "${DEB_PATH}" "${python_apt_dependencies[@]}"
 fi
 
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then
@@ -330,10 +335,10 @@ fi
 if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
   echo "Installing ${PYTHON_WHEEL_PATH} into ${PYTHON_VENV}"
   if [[ ! -x "${PYTHON_VENV}/bin/python" ]]; then
-    python3 -m venv --system-site-packages "${PYTHON_VENV}"
+    python3 -m venv "${PYTHON_VENV}"
   fi
   "${PYTHON_VENV}/bin/python" -m pip install --upgrade pip
-  "${PYTHON_VENV}/bin/python" -m pip install --no-deps --force-reinstall "${PYTHON_WHEEL_PATH}"
+  "${PYTHON_VENV}/bin/python" -m pip install --force-reinstall "${PYTHON_WHEEL_PATH}"
 fi
 
 if [[ "${RUN_SETUP}" == "ON" ]]; then
