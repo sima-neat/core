@@ -25,6 +25,9 @@ Examples:
   pcie-setup.sh --hosts "10.0.0.2 10.0.1.2"
   pcie-setup.sh --range 0-3
   pcie-setup.sh --password '<bootstrap-password>'
+
+Environment:
+  SIMAPCIE_SSH_PASSWORD=<password>  Bootstrap password for non-interactive setup
 EOF
 }
 
@@ -37,7 +40,7 @@ range_last=9
 range_explicit=0
 hosts_explicit=0
 discover=1
-password=""
+password="${SIMAPCIE_SSH_PASSWORD:-}"
 non_interactive=0
 strict=0
 dry_run=0

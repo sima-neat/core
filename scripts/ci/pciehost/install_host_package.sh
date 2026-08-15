@@ -15,6 +15,8 @@ fi
 
 package_spec="core/pciehost/${host_distro}/amd64@${REF_NAME}:${SHORT_SHA}"
 echo "Installing PCIe host package ${package_spec} from Vulcan env ${VULCAN_ENV}"
+SIMAPCIE_SSH_PASSWORD="${DEVKIT_PASSWORD:-}" \
+SIMAPCIE_SETUP_ARGS="--non-interactive --strict" \
 SIMA_CLI_CHECK_FOR_UPDATE=0 \
   sima-cli neat install \
     --env "${VULCAN_ENV}" \
