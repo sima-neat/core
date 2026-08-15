@@ -2,6 +2,8 @@
 
 #include "gst/SimaTensorSetMetaAbi.h"
 
+#include <cctype>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -29,6 +31,57 @@ int tensor_set_dtype(const TensorDType dtype) {
     return SIMA_TENSOR_SET_DTYPE_FP64_V1;
   }
   return SIMA_TENSOR_SET_DTYPE_UNKNOWN_V1;
+}
+
+std::string canonical_dtype(std::string dtype) {
+  std::string out;
+  out.reserve(dtype.size());
+  for (const unsigned char c : dtype) {
+    if (std::isalnum(c)) {
+      out.push_back(static_cast<char>(std::tolower(c)));
+    }
+  }
+  if (out == "evxxint8" || out == "ev74int8")
+    return "int8";
+  if (out == "bfloat16" || out == "evxxbfloat16" || out == "ev74bfloat16")
+    return "bf16";
+  if (out == "float32")
+    return "fp32";
+  return out;
+}
+
+const char* tensor_dtype_name(const TensorDType dtype) {
+  switch (dtype) {
+  case TensorDType::UInt8:
+    return "UINT8";
+  case TensorDType::Int8:
+    return "INT8";
+  case TensorDType::UInt16:
+    return "UINT16";
+  case TensorDType::Int16:
+    return "INT16";
+  case TensorDType::Int32:
+    return "INT32";
+  case TensorDType::BFloat16:
+    return "BF16";
+  case TensorDType::Float32:
+    return "FP32";
+  case TensorDType::Float64:
+    return "FP64";
+  }
+  return "UNKNOWN";
+}
+
+std::string shape_string(const std::vector<std::int64_t>& shape) {
+  std::ostringstream out;
+  out << '[';
+  for (std::size_t i = 0; i < shape.size(); ++i) {
+    if (i != 0U)
+      out << ", ";
+    out << shape[i];
+  }
+  out << ']';
+  return out.str();
 }
 
 int tensor_set_layout(const Tensor& tensor) {
@@ -85,6 +138,17 @@ void attach_tensor_set_meta(GstBuffer* buffer, const std::vector<TensorMetaSpan>
       throw std::runtime_error("invalid tensor-set metadata span");
     }
     const auto& tensor = *span.tensor;
+    const auto& fact = input_facts[i];
+    if (canonical_dtype(tensor_dtype_name(tensor.dtype)) != canonical_dtype(fact.dtype)) {
+      throw std::invalid_argument("PCIe input tensor " + std::to_string(i) + " ('" + fact.name +
+                                  "') has dtype " + tensor_dtype_name(tensor.dtype) +
+                                  "; expected " + fact.dtype);
+    }
+    if (tensor.shape != fact.shape) {
+      throw std::invalid_argument("PCIe input tensor " + std::to_string(i) + " ('" + fact.name +
+                                  "') has shape " + shape_string(tensor.shape) + "; expected " +
+                                  shape_string(fact.shape));
+    }
     if (tensor.shape.size() > SIMA_TENSOR_SET_MAX_RANK) {
       throw std::runtime_error("tensor-set metadata supports tensor ranks up to " +
                                std::to_string(SIMA_TENSOR_SET_MAX_RANK));

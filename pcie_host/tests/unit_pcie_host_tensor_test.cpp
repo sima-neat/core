@@ -124,7 +124,13 @@ int main() {
       auto payload = simaai::neat::pcie::internal::prepare_tensor_payload(tensors);
 
       std::vector<simaai::neat::pcie::internal::PcieTensorFact> facts(2);
+      facts[0].name = "input_0";
+      facts[0].dtype = "FP32";
+      facts[0].shape = {2, 2};
       facts[0].physical_index = 1;
+      facts[1].name = "input_1";
+      facts[1].dtype = "FP32";
+      facts[1].shape = {2, 2};
       facts[1].physical_index = 0;
 
       GstBuffer* buffer = gst_buffer_new();
@@ -144,6 +150,29 @@ int main() {
               "tensor-set descriptor count");
       require(descriptors[0].physical_index == 1 && descriptors[1].physical_index == 0,
               "MPK physical input routing must override logical submission order");
+      gst_buffer_unref(buffer);
+    }
+
+    {
+      pcie::Tensor tensor = pcie::Tensor::from_vector(std::vector<float>(4), {2, 2}, "input");
+      auto payload = simaai::neat::pcie::internal::prepare_tensor_payload({tensor});
+      simaai::neat::pcie::internal::PcieTensorFact fact;
+      fact.name = "input";
+      fact.dtype = "INT8";
+      fact.shape = {2, 2};
+      GstBuffer* buffer = gst_buffer_new();
+      require_throws(
+          [&] {
+            simaai::neat::pcie::internal::attach_tensor_set_meta(buffer, payload.spans, {fact});
+          },
+          "tensor-set metadata must reject a mismatched dtype");
+      fact.dtype = "FP32";
+      fact.shape = {4, 1};
+      require_throws(
+          [&] {
+            simaai::neat::pcie::internal::attach_tensor_set_meta(buffer, payload.spans, {fact});
+          },
+          "tensor-set metadata must reject a mismatched shape");
       gst_buffer_unref(buffer);
     }
 

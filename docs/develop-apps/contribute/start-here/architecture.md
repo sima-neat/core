@@ -899,7 +899,7 @@ The runtime exposes logical model IDs, caller-provided request IDs, nonblocking
 enqueue, retrieve-from-any-model, batch load, independent unload, and
 idempotent cleanup. Hardware queue IDs remain an implementation detail. The
 current Modalix implementation assigns exactly one loaded model to each of the
-six PCIe queues and continues to transfer model archives over the virtual
+four PCIe queues and continues to transfer model archives over the virtual
 Ethernet SSH/SCP control path.
 
 Inference request correlation uses the signed 32-bit OAAX request ID encoded
