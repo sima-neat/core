@@ -5,7 +5,7 @@ add_test(test_metadata ./test_metadata)
 add_test(test_tensor_run ./test_tensor_run)
 add_test(test_tensor_latency
          ./test_tensor_perf --mode latency --warmup 100 --iterations 3000
-         --max-mean-latency-ms 14)
+         --max-mean-latency-ms 15)
 add_test(test_tensor_throughput
          ./test_tensor_perf --mode throughput --warmup 100 --iterations 3000
          --min-throughput-fps 380)

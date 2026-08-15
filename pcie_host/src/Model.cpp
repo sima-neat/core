@@ -178,7 +178,7 @@ public:
 
   bool running() const {
     std::lock_guard<std::mutex> lock(mu_);
-    return state_ == State::Ready && channel_.is_running();
+    return state_ == State::Ready;
   }
 
   void close() {
