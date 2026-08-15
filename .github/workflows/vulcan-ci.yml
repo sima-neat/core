@@ -87,7 +87,8 @@ jobs:
           "${test_venv}/bin/python" -m pip install --disable-pip-version-check pytest packaging
           "${test_venv}/bin/python" -m pytest -q \
             tests/test_build_pyneat_wheel.py \
-            tests/test_resolve_compiler_cache.py
+            tests/test_resolve_compiler_cache.py \
+            tests/tools/test_internals_package_boundary.py
 
       - name: Resolve cache namespace and access
         id: resolve
@@ -283,8 +284,9 @@ jobs:
           -e GITHUB_REF_TYPE="${{ github.ref_type }}" \
           -e GITHUB_SHA="${{ github.sha }}" \
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
-          -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Neural Edge Acceleration Toolkit" \
+          -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Palette Neat" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
+          -e NEAT_SYNC_SYSROOT="ON" \
           -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
           -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
           "${sdk_container}" \

@@ -72,7 +72,7 @@ ELXR_TARGET_PYTHON_VERSION=""
 ELXR_TARGET_PYTHON_INCLUDE_DIR=""
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
-NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
+NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Palette Neat}"
 NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa Neat extras (tutorials/tests)}"
@@ -616,13 +616,13 @@ run_privileged() {
   # 4) interactive sudo only in TTY sessions
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
-    return 0
+    return $?
   fi
 
   if command -v sudo >/dev/null 2>&1; then
     if sudo -n true 2>/dev/null; then
       sudo -n "$@"
-      return 0
+      return $?
     fi
 
     local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
@@ -1353,6 +1353,52 @@ PY
   fi
 }
 
+sync_sysroot_from_internals_manifest() {
+  local artifact_dir="$1"
+  [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0
+
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    echo "ERROR: NEAT_SYNC_SYSROOT requires an eLxr SDK." >&2
+    exit 1
+  fi
+
+  local artifact_manifest="${artifact_dir}/internals-manifest.json"
+  if [[ ! -f "${artifact_manifest}" ]]; then
+    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
+    exit 1
+  fi
+
+  local receipt
+  if ! receipt="$(python3 -c '
+import json, re, sys
+artifact = json.load(open(sys.argv[1], encoding="utf-8"))
+consumer = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt = artifact["sysroot-version"]
+consumer_base = consumer["platform-version"]
+if not isinstance(receipt, str) or (
+    receipt and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}~pre[0-9]+", receipt)
+):
+    raise ValueError("invalid sysroot-version")
+if receipt and consumer_base != receipt.split("~pre", 1)[0]:
+    raise ValueError("platform-version does not match the Internals receipt")
+print(receipt)
+' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
+    echo "ERROR: Cannot read Internals build receipt." >&2
+    exit 1
+  fi
+  if [[ -z "${receipt}" ]]; then
+    echo "Core is using the existing SDK sysroot."
+    return 0
+  fi
+
+  echo "Updating SDK sysroot to Internals receipt ${receipt}"
+  if ! run_privileged sysroot update "${receipt}"; then
+    echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+    exit 1
+  fi
+  sysroot status
+}
+
 ensure_neat_internals() {
   # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
@@ -1373,6 +1419,7 @@ ensure_neat_internals() {
 
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  sync_sysroot_from_internals_manifest "${artifact_dir}"
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
@@ -2855,7 +2902,6 @@ main() {
   ensure_node20_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
-  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     ensure_dependency_headers
@@ -2867,6 +2913,7 @@ main() {
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
   fi
+  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     echo
