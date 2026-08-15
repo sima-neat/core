@@ -1,4 +1,9 @@
+from __future__ import annotations
+
 import json
+import shlex
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -15,6 +20,53 @@ def build_script() -> str:
 
 def installer() -> str:
     return (ROOT / "tools/install_neat_framework.sh").read_text(encoding="utf-8")
+
+
+def shell_function(name: str) -> str:
+    text = build_script()
+    start = text.index(f"{name}() {{")
+    return text[start : text.index("\n}\n", start) + 2]
+
+
+def run_sync(
+    artifact: dict[str, str] | str | None,
+    consumer_base: str = "2.1.3",
+    enabled: str = "ON",
+    update_status: int = 0,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        artifact_dir = root / "artifact"
+        artifact_dir.mkdir()
+        if artifact is not None:
+            contents = json.dumps(artifact) if isinstance(artifact, dict) else artifact
+            (artifact_dir / "internals-manifest.json").write_text(
+                contents, encoding="utf-8"
+            )
+        consumer = root / "manifest.json"
+        consumer.write_text(
+            json.dumps({"platform-version": consumer_base}), encoding="utf-8"
+        )
+        log = root / "sysroot.log"
+        script = f"""
+set -e
+id() {{ echo 0; }}
+sysroot() {{
+  printf '%s\n' "$*" >> {shlex.quote(str(log))}
+  [[ "$1" != update ]] || return {update_status}
+}}
+{shell_function("run_privileged")}
+{shell_function("sync_sysroot_from_internals_manifest")}
+ELXR_SDK=ON
+NEAT_SYNC_SYSROOT={shlex.quote(enabled)}
+NEAT_DEPS_MANIFEST={shlex.quote(str(consumer))}
+sync_sysroot_from_internals_manifest {shlex.quote(str(artifact_dir))}
+"""
+        result = subprocess.run(
+            ["bash", "-c", script], check=False, text=True, capture_output=True
+        )
+        calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        return result, calls
 
 
 class InternalsPackageBoundaryTest(unittest.TestCase):
@@ -101,6 +153,89 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         end = text.index("\nensure_neat_llima()", start)
         function = text[start:end]
         self.assertNotIn("return 0", function[: function.index("fetch_neat_internals")])
+
+    def test_vulcan_build_uses_the_internals_sysroot_receipt(self) -> None:
+        text = build_script()
+        workflow = (ROOT / ".github/workflows/vulcan-ci.yml").read_text(
+            encoding="utf-8"
+        )
+        manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
+        sync = text.index('sync_sysroot_from_internals_manifest "${artifact_dir}"')
+        install = text.index('collect_plugin_files_from_debs "${artifact_dir}"', sync)
+        ensure = text.index("ensure_neat_internals\n", text.index("main()"))
+        target_python = text.index("detect_elxr_target_python\n", ensure)
+
+        self.assertIn('[[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0', text)
+        self.assertIn('-e NEAT_SYNC_SYSROOT="ON"', workflow)
+        self.assertIn("internals-manifest.json", text)
+        self.assertIn('sysroot update "${receipt}"', text)
+        self.assertIn("Internals artifact is missing internals-manifest.json", text)
+        self.assertIn("invalid sysroot-version", text)
+        self.assertIn("platform-version does not match the Internals receipt", text)
+        self.assertNotIn("sysroot-version", manifest)
+        self.assertNotRegex(text, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
+        self.assertNotRegex(workflow, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
+        self.assertLess(sync, install)
+        self.assertLess(ensure, target_python)
+
+    def test_sysroot_receipt_behavior(self) -> None:
+        base = "2.1.3"
+        receipt = f"{base}~pre9999"
+        result, calls = run_sync({"sysroot-version": receipt}, base)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [f"update {receipt}", "status"])
+
+        result, calls = run_sync(None, enabled="OFF")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [])
+
+        result, calls = run_sync({"sysroot-version": ""}, base)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, [])
+
+    def test_invalid_sysroot_receipts_fail_closed(self) -> None:
+        base = "2.1.3"
+        receipt = f"{base}~pre9999"
+        cases = (
+            (None, base, "missing internals-manifest.json"),
+            ("{", base, "Cannot read Internals build receipt"),
+            ({}, base, "Cannot read Internals build receipt"),
+            (
+                {"sysroot-version": "latest"},
+                base,
+                "Cannot read Internals build receipt",
+            ),
+            (
+                {"sysroot-version": "|latest"},
+                base,
+                "Cannot read Internals build receipt",
+            ),
+            (
+                {"sysroot-version": "\nmalformed"},
+                base,
+                "Cannot read Internals build receipt",
+            ),
+            (
+                {"sysroot-version": receipt},
+                "2.1.4",
+                "Cannot read Internals build receipt",
+            ),
+        )
+        for artifact, consumer_base, message in cases:
+            with self.subTest(message=message):
+                result, calls = run_sync(artifact, consumer_base)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(calls, [])
+
+    def test_failed_sysroot_update_is_not_masked(self) -> None:
+        base = "2.1.3"
+        result, calls = run_sync(
+            {"sysroot-version": f"{base}~pre9999"}, base, update_status=23
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Failed to update SDK sysroot", result.stderr)
+        self.assertEqual(calls, [f"update {base}~pre9999"])
 
     def test_installer_has_no_bundled_memory_transaction(self) -> None:
         text = installer()
