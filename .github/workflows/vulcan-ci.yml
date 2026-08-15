@@ -1351,20 +1351,28 @@ jobs:
           df -h "${TMP_ROOT}" || true
 
   test-pciehost-hardware:
-    name: Test PCIe Host Hardware
-    # Temporarily disabled while PCIe host CI is being stabilized.
-    if: ${{ false }}
+    name: Test PCIe Host Hardware (${{ matrix.runner_os }})
     needs:
       - detect-changes
       - resolve-vulcan-config
       - publish-vulcan-artifacts
       - publish-pciehost-package
-    runs-on: [self-hosted, Linux, X64, pcie-host]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner_os:
+          - u22.04
+          - u24.04
+        exclude:
+          # Infrastructure is ready, but Ubuntu 22 hardware testing remains disabled for now.
+          - runner_os: u22.04
+    runs-on: [self-hosted, Linux, X64, pcie, "${{ matrix.runner_os }}"]
     concurrency:
-      group: bench31-pcie-slot0
+      group: pciehost-${{ matrix.runner_os }}
       cancel-in-progress: false
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      SIMAPCIE_EXPECTED_HOST_DISTRO: ${{ matrix.runner_os == 'u24.04' && 'ubuntu24' || 'ubuntu22' }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
       SIMAPCIE_CARD_HOST: "10.0.0.2"
       SIMAPCIE_USER: "sima"
@@ -1496,7 +1504,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: pciehost-hardware-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pciehost-hardware-${{ matrix.runner_os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: _work/pciehost-artifacts
           if-no-files-found: warn
 
