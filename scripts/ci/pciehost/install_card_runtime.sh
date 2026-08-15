@@ -23,7 +23,7 @@ ensure_card_sima_cli() {
   ssh_card \
     "REMOTE_INSTALLER=$(shell_quote "${remote_installer}") \
      DEVKIT_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
-     SUDO_PASSWORD=$(shell_quote "${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}") \
+     SUDO_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
      bash -s" <<REMOTE_BOOTSTRAP
 set -euo pipefail
 $(remote_sudo_wrapper_script)
@@ -38,7 +38,7 @@ if [[ -n "${SIMAPCIE_CARD_INSTALL_CMD:-}" ]]; then
   echo "Installing card runtime with SIMAPCIE_CARD_INSTALL_CMD"
   export VULCAN_ENV REF_NAME SHORT_SHA CARD_HOST CARD_USER package_spec
   export DEVKIT_PASSWORD="${DEVKIT_PASSWORD:-}"
-  export SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+  export SUDO_PASSWORD="${DEVKIT_PASSWORD:-}"
   bash -lc "${SIMAPCIE_CARD_INSTALL_CMD}"
   exit 0
 fi
@@ -51,7 +51,7 @@ ssh_card \
    REMOTE_PACKAGE_SPEC=$(shell_quote "${package_spec}") \
    REMOTE_CARD_INSTALL_DIR=$(shell_quote "${SIMAPCIE_CARD_INSTALL_DIR:-}") \
    REMOTE_DEVKIT_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
-   REMOTE_SUDO_PASSWORD=$(shell_quote "${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}") \
+   REMOTE_SUDO_PASSWORD=$(shell_quote "${DEVKIT_PASSWORD:-}") \
    bash -s" <<'REMOTE_INSTALL'
 set -euo pipefail
 

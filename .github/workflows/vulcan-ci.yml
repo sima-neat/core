@@ -1390,7 +1390,7 @@ jobs:
       SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
       SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
       DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
-      SUDO_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+      SUDO_PASSWORD: ${{ secrets.PCIEHOST_SUDO_PASSWORD }}
 
     steps:
       - name: Checkout code
