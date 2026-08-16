@@ -608,6 +608,52 @@ collect_board_heal_specs "${bundled}"
             ],
         )
 
+    def test_heal_specs_emit_identities_and_warn_when_palette_is_absent(
+        self,
+    ) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+bundled="${tmp}/neat-gst-plugins.deb"
+touch "${bundled}"
+dpkg-query() {
+  case "$2" in
+    *Status-Abbrev*)
+      if [[ "$3" == simaai-palette-modalix ]]; then
+        printf 'un '
+        return 1
+      fi
+      printf 'ii '
+      return 0
+      ;;
+    *Provides*)
+      case "$3" in
+        neat-libcamera) printf '%s\n' 'libcamera (= 2.1.3~pre4744)' ;;
+        *) printf '\n' ;;
+      esac
+      ;;
+    *)
+      printf '%s\n' '2.1.3~pre4744'
+      ;;
+  esac
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Breaks) printf '%s\n' 'neat-libcamera' ;;
+    *) return 2 ;;
+  esac
+}
+collect_board_heal_specs "${bundled}"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["libcamera=2.1.3~pre4744"])
+        self.assertIn("simaai-palette-modalix is not installed", result.stderr)
+
 
 class DispatcherMigrationTest(unittest.TestCase):
     def test_migration_moves_unowned_global_and_backup_outside_loader_dir(self) -> None:

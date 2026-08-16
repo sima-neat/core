@@ -303,7 +303,7 @@ collect_board_heal_specs() {
         fi
       done < <(printf '%s\n' "${provides}" | tr ',' '\n')
     done
-  } | sort -u
+  } | LC_ALL=C sort -u
 }
 
 log_green() {
