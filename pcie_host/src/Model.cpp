@@ -25,6 +25,8 @@ namespace fs = std::filesystem;
 namespace simaai::neat::pcie {
 namespace {
 
+// The card publishes ready before every pipeline worker is guaranteed to accept traffic.
+// Preserve the established delay until readiness represents complete pipeline stabilization.
 constexpr auto kPostReadyStabilizationDelay = std::chrono::seconds(5);
 
 std::string write_temp_model_options(const std::string& contents) {
@@ -68,6 +70,7 @@ public:
     validate_queue(connection_.queue);
     validate_card_id(connection_.card_id);
     validate_max_inflight(connection_.max_inflight);
+    // Generate once during construction to validate the options before model loading.
     (void)internal::write_model_options_json(options_);
     facts_ = internal::read_model_facts(model_path_);
     model_info_ = internal::to_public_model_info(facts_);

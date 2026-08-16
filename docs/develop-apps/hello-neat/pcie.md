@@ -29,7 +29,8 @@ Create a working directory on the host machine and download ResNet-50 from the
 Model Zoo:
 
 <ShellCommand prompt="pcie-host">
-sudo apt-get install python3-opencv libopencv-dev
+sudo apt-get install libopencv-dev
+~/pyneatpcie/bin/python -m pip install opencv-python
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
 sima-cli modelzoo get resnet_50

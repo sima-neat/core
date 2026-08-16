@@ -24,13 +24,22 @@ class RuntimeModelAccess;
 }
 
 struct ConnectionOptions {
+  /// Card management address. Empty derives 10.0.<card_id>.2.
   std::string card_host;
+  /// Non-negative Modalix PCIe Card index.
   int card_id = 0;
+  /// SSH user used to launch the card-side runtime.
   std::string user = "sima";
+  /// PCIe queue assigned to the model. Supported queues are 0 through 3.
   int queue = 0;
+  /// Maximum accepted requests. Model permits 0 for plugin-managed depth; Runtime requires 1..256.
   int max_inflight = 10;
+  /// Additional whitespace-separated NAME=VALUE assignments for the card runtime.
+  /// MLASHM_CTRL_IO_TIMEOUT_MS defaults to 5000 when it is not supplied here.
   std::string card_env;
+  /// Optional card-side GST_DEBUG specification.
   std::string card_gst_debug;
+  /// Card-side GStreamer log path. Empty selects the queue-specific default when debugging.
   std::string card_gst_debug_file;
 };
 
@@ -85,44 +94,73 @@ enum class BoxDecodeTypeOption {
 struct ModelOptions {
   struct Preprocess {
     struct Resize {
+      /// Whether resize is inferred, explicitly enabled, or disabled.
       AutoFlag enable = AutoFlag::Auto;
+      /// Reserved for explicit sizing; must remain zero for model-inferred sizing.
       int width = 0;
+      /// Reserved for explicit sizing; must remain zero for model-inferred sizing.
       int height = 0;
+      /// Resize geometry used when resize is active.
       ResizeMode mode = ResizeMode::Letterbox;
+      /// Padding value used by letterbox resize.
       int pad_value = 114;
+      /// Core resize scaling type.
       std::string scaling_type = "BILINEAR";
     };
 
     struct ColorConvert {
+      /// Whether color conversion is inferred, explicitly enabled, or disabled.
       AutoFlag enable = AutoFlag::Auto;
+      /// Input image format. Auto uses the model/runtime contract.
       ColorFormat input_format = ColorFormat::Auto;
+      /// Output format passed to model preprocessing. Auto uses the model contract.
       ColorFormat output_format = ColorFormat::Auto;
     };
 
     struct Normalize {
+      /// Whether normalization is inferred, explicitly enabled, or disabled.
       AutoFlag enable = AutoFlag::Auto;
+      /// Named normalization preset. None leaves the model/default configuration unchanged.
       NormalizePreset preset = NormalizePreset::None;
+      /// Whether mean and stddev contain an explicit normalization request.
       bool has_explicit_stats = false;
+      /// Per-channel means used when has_explicit_stats is true.
       std::array<float, 3> mean{0.0f, 0.0f, 0.0f};
+      /// Per-channel standard deviations used when has_explicit_stats is true.
       std::array<float, 3> stddev{1.0f, 1.0f, 1.0f};
     };
 
+    /// Input transport kind. Image enables card-side preprocessing; Tensor bypasses it.
     InputKind kind = InputKind::Tensor;
+    /// Top-level preprocess selection. The PCIe schema supports Auto and On.
     AutoFlag enable = AutoFlag::Auto;
+    /// Maximum dynamic input width. Zero uses the model/runtime inferred capacity.
     int input_max_width = 0;
+    /// Maximum dynamic input height. Zero uses the model/runtime inferred capacity.
     int input_max_height = 0;
+    /// Maximum dynamic input depth. Zero uses the model/runtime inferred capacity.
     int input_max_depth = 0;
+    /// Resize configuration for image inputs.
     Resize resize;
+    /// Color-conversion configuration for image inputs.
     ColorConvert color_convert;
+    /// Normalization configuration for image inputs.
     Normalize normalize;
   };
 
+  /// Image preprocessing configuration. Defaults to tensor transport without preprocessing.
   Preprocess preprocess;
+  /// Optional box-decoder type. Unspecified keeps box decoding disabled unless supplied by MPK.
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
+  /// Decoder implementation variant. Auto selects the model/default variant.
   BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
+  /// Detection score threshold. Zero leaves the model/default value unchanged.
   float score_threshold = 0.0f;
+  /// NMS IoU threshold. Zero leaves the model/default value unchanged.
   float nms_iou_threshold = 0.0f;
+  /// Maximum decoded detections. Zero leaves the model/default value unchanged.
   int top_k = 0;
+  /// Number of model classes. Zero leaves the model/default value unchanged.
   int num_classes = 0;
 };
 

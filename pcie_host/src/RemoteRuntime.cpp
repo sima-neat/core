@@ -110,9 +110,27 @@ bool env_contains_name(const std::vector<std::string>& env, const std::string& n
                      [&prefix](const std::string& entry) { return entry.rfind(prefix, 0) == 0; });
 }
 
+void validate_endpoint_component(const std::string& value, const char* name,
+                                 const bool allow_empty) {
+  if (value.empty()) {
+    if (allow_empty) {
+      return;
+    }
+    throw std::invalid_argument(std::string(name) + " must not be empty");
+  }
+  if (value.front() == '-' || value.find('@') != std::string::npos ||
+      std::any_of(value.begin(), value.end(),
+                  [](const unsigned char ch) { return std::isspace(ch) != 0; })) {
+    throw std::invalid_argument(std::string(name) + " is not a valid SSH endpoint component");
+  }
+}
+
 } // namespace
 
-RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {}
+RemoteRuntime::RemoteRuntime(ConnectionOptions connection) : connection_(std::move(connection)) {
+  validate_endpoint_component(connection_.user, "user", false);
+  validate_endpoint_component(connection_.card_host, "card_host", true);
+}
 
 std::string RemoteRuntime::endpoint() const {
   return connection_.user + "@" + derive_card_host(connection_);
@@ -221,6 +239,7 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
   if (!fs::exists(local)) {
     throw std::runtime_error("local file does not exist: " + local_path);
   }
+  const fs::path absolute_local = fs::absolute(local).lexically_normal();
 
   {
     std::vector<std::string> mkdir_cmd = ssh_base();
@@ -228,9 +247,9 @@ std::string RemoteRuntime::upload_file(const std::string& local_path) const {
     run_or_throw(mkdir_cmd, kCommandTimeoutSec, "remote mkdir");
   }
 
-  const std::string remote_path = unique_remote_upload_path(local_path);
+  const std::string remote_path = unique_remote_upload_path(absolute_local.string());
   std::vector<std::string> scp_cmd = scp_base();
-  scp_cmd.push_back(local.string());
+  scp_cmd.push_back(absolute_local.string());
   scp_cmd.push_back(endpoint() + ":" + remote_path);
   run_or_throw(scp_cmd, kCommandTimeoutSec + 30, "scp upload");
   return remote_path;

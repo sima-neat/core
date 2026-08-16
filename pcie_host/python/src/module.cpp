@@ -558,9 +558,21 @@ NB_MODULE(_pyneatpcie_core, m) {
   nb::class_<pcie::Model>(m, "Model")
       .def(nb::init<std::string, pcie::ModelOptions, pcie::ConnectionOptions>(), "model_path"_a,
            "options"_a = pcie::ModelOptions{}, "connection"_a = pcie::ConnectionOptions{})
-      .def("info", &pcie::Model::info)
-      .def("input_specs", &pcie::Model::input_specs)
-      .def("output_specs", &pcie::Model::output_specs)
+      .def("info",
+           [](pcie::Model& model) {
+             nb::gil_scoped_release release;
+             return model.info();
+           })
+      .def("input_specs",
+           [](pcie::Model& model) {
+             nb::gil_scoped_release release;
+             return model.input_specs();
+           })
+      .def("output_specs",
+           [](pcie::Model& model) {
+             nb::gil_scoped_release release;
+             return model.output_specs();
+           })
       .def(
           "build",
           [](pcie::Model& model, const int readiness_timeout_ms) {
@@ -568,7 +580,11 @@ NB_MODULE(_pyneatpcie_core, m) {
             model.build(readiness_timeout_ms);
           },
           "readiness_timeout_ms"_a = 180000)
-      .def("running", &pcie::Model::running)
+      .def("running",
+           [](pcie::Model& model) {
+             nb::gil_scoped_release release;
+             return model.running();
+           })
       .def("close",
            [](pcie::Model& model) {
              nb::gil_scoped_release release;

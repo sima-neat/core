@@ -753,7 +753,7 @@ std::optional<std::int32_t> HostPcieChannel::request_id_from_buffer(GstBuffer* b
     return std::nullopt;
   }
   if (request_id > std::numeric_limits<std::uint32_t>::max()) {
-    throw std::runtime_error("PCIe frame-identifier exceeds the OAAX request ID width");
+    throw std::runtime_error("PCIe frame-identifier exceeds the PCIe request ID width");
   }
   return std::bit_cast<std::int32_t>(static_cast<std::uint32_t>(request_id));
 }

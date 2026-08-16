@@ -10,6 +10,34 @@ namespace pcie = simaai::neat::pcie;
 
 int main() {
   try {
+    for (const std::string invalid_user : {"", "-invalid", "user@host", "user name"}) {
+      pcie::ConnectionOptions connection;
+      connection.user = invalid_user;
+      bool threw = false;
+      try {
+        (void)pcie::Model("unused-model.tar.gz", {}, connection);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      if (!threw) {
+        throw std::runtime_error("invalid PCIe SSH user must be rejected");
+      }
+    }
+
+    for (const std::string invalid_host : {"-invalid", "user@host", "host name"}) {
+      pcie::ConnectionOptions connection;
+      connection.card_host = invalid_host;
+      bool threw = false;
+      try {
+        (void)pcie::Model("unused-model.tar.gz", {}, connection);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      if (!threw) {
+        throw std::runtime_error("invalid PCIe card host must be rejected");
+      }
+    }
+
     {
       pcie::ConnectionOptions connection;
       connection.card_id = -1;

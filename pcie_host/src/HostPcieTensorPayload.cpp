@@ -343,6 +343,9 @@ std::vector<std::int64_t> contiguous_tensor_strides(const std::vector<std::int64
   for (std::size_t index = shape.size(); index > 0; --index) {
     const std::size_t dim = index - 1;
     strides[dim] = stride;
+    if (shape[dim] > 0 && stride > std::numeric_limits<std::int64_t>::max() / shape[dim]) {
+      throw std::invalid_argument("pcie::Tensor stride is too large");
+    }
     stride *= shape[dim];
   }
   return strides;

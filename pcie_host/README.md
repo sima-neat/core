@@ -3,9 +3,8 @@
 Host-side C++ runtime and API for NEAT coprocessor execution on a connected
 Modalix PCIe Card.
 
-This package is the WP11 successor to the old PipelineSession `SimaPCIe` host
-app. It keeps the useful control-plane ideas from that prototype, but uses the
-production NEAT PCIe lifecycle:
+This package provides the production NEAT PCIe lifecycle for host-side
+co-processing applications:
 
 - card process: one `/usr/bin/pcie-pipeline-builder --queue N` instance per
   active PCIe queue
@@ -32,7 +31,7 @@ simaai::neat::pcie::Model model("model.tar.gz");
 The API uses PCIe-host-owned `ModelOptions`, `Tensor`, and `TensorList` types.
 Applications that are already built only need the `sima-pcie-host` runtime
 package; applications compiling against this API use `sima-pcie-host-dev`.
-`pcie::Model` serializes only the restricted WP9 model-options schema before
+`pcie::Model` serializes only the restricted PCIe model-options schema before
 launching the card-side builder; no full NEAT core `Model`, `Run`, or `Graph`
 API is part of this package surface.
 
@@ -268,8 +267,8 @@ asynchronously from `appsink` and stores results in an internal queue.
 Drain all results submitted with `push(...)` before calling `run(...)`.
 
 During bring-up, `build()` keeps an internal five-second stabilization delay
-after the card status reaches `ready`, matching the old PipelineSession host
-behavior. This is not exposed as a public option.
+after the card status reaches `ready`, allowing the card-side pipeline to finish
+settling before host traffic starts. This is not exposed as a public option.
 
 `close()` sends `SIGTERM` to the card-side builder and waits briefly for a clean
 exit. It does not send `SIGKILL`; if the remote process ignores `SIGTERM`, the
@@ -460,12 +459,12 @@ through CMake.
 
 ## V1 Scope
 
-Implemented in this first WP11 cut:
+Implemented in the initial PCIe host package:
 
 - model metadata through core archive/MPK parsing
-- `ModelOptions` to WP9 JSON serialization
+- `ModelOptions` to PCIe model-options JSON serialization
 - SSH/SCP launch of `pcie-pipeline-builder`
-- WP9 status-file readiness polling
+- card status-file readiness polling
 - host `appsrc ! queue ! neatpciehost ! appsink` channel
 - tensor push through tensor-set/tensorbuffer caps and `GstSimaTensorSetMeta`
 - image tensor push for RGB/BGR/GRAY8/NV12/I420

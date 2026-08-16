@@ -1274,7 +1274,7 @@ target_link_libraries(sima_neat_internal INTERFACE
 )
 
 # ------------------------------------------------------------------------------
-# Internal tools
+# Card-side PCIe runtime helper
 # ------------------------------------------------------------------------------
 if (SIMANEAT_BUILD_PCIE_PIPELINE_BUILDER)
   add_executable(pcie-pipeline-builder

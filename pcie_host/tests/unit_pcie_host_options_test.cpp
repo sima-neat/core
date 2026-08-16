@@ -33,6 +33,18 @@ int main() {
 
     {
       pcie::ModelOptions opt;
+      opt.preprocess.normalize.preset = pcie::NormalizePreset::ImageNet;
+      bool threw = false;
+      try {
+        (void)pcie_internal::write_model_options_json(opt);
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "tensor route with preprocess options must throw");
+    }
+
+    {
+      pcie::ModelOptions opt;
       opt.preprocess.kind = pcie::InputKind::Image;
       const auto json = pcie_internal::write_model_options_json(opt);
       require(json.json.has_value(), "image route must emit JSON");

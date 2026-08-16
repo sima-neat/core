@@ -311,15 +311,22 @@ private:
       try {
         result = internal::RuntimeModelAccess::pull_result(*entry->model, -1);
       } catch (const std::exception& e) {
+        bool shutting_down = false;
         const std::string message =
             "PCIe model " + std::to_string(entry->id) + " receive failed: " + e.what();
         {
           std::lock_guard<std::mutex> lock(entry->mutex);
-          entry->failure = message;
-          entry->accepting = false;
+          shutting_down = !entry->accepting;
+          if (!shutting_down) {
+            entry->failure = message;
+            entry->accepting = false;
+          }
           entry->outstanding = 0;
         }
         entry->cv.notify_all();
+        if (shutting_down) {
+          return;
+        }
         {
           std::lock_guard<std::mutex> lock(completion_mutex_);
           errors_.push_back(message);

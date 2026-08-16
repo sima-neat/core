@@ -38,6 +38,13 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
     throw std::invalid_argument("SshRunner::run requires a command");
   }
 
+  std::vector<char*> argv;
+  argv.reserve(args.size() + 1);
+  for (const auto& arg : args) {
+    argv.push_back(const_cast<char*>(arg.c_str()));
+  }
+  argv.push_back(nullptr);
+
   int pipefd[2] = {-1, -1};
   if (::pipe(pipefd) != 0) {
     throw std::runtime_error(std::string("pipe failed: ") + std::strerror(errno));
@@ -56,12 +63,6 @@ CommandResult SshRunner::run_for(const std::vector<std::string>& args,
     ::close(pipefd[0]);
     ::close(pipefd[1]);
 
-    std::vector<char*> argv;
-    argv.reserve(args.size() + 1);
-    for (const auto& arg : args) {
-      argv.push_back(const_cast<char*>(arg.c_str()));
-    }
-    argv.push_back(nullptr);
     ::execvp(argv[0], argv.data());
     _exit(127);
   }

@@ -1610,18 +1610,21 @@ Graph& Graph::connect(std::shared_ptr<Node> from, const Graph& to) {
 Graph& Graph::connect(std::shared_ptr<Node> from, std::string_view from_output, const Graph& to,
                       const GraphLinkOptions& options) {
   CompositionMutation mutation(*this);
-  const auto* pcie = dynamic_cast<const PCIeSrc*>(from.get());
-  if (!pcie) {
+  if (dynamic_cast<const PCIeSrc*>(from.get()) == nullptr) {
     throw std::runtime_error(
         "Graph::connect(named output): named Node outputs currently require PCIeSrc");
   }
-  (void)pcie;
 
   const std::string output = trim_endpoint_name(from_output);
   if (output.size() <= 4U || output.rfind("src_", 0) != 0 ||
       !std::all_of(output.begin() + 4, output.end(),
                    [](unsigned char c) { return std::isdigit(c) != 0; })) {
     throw std::runtime_error("Graph::connect(named output): PCIeSrc output must be named src_N");
+  }
+  try {
+    (void)std::stoul(output.substr(4));
+  } catch (const std::out_of_range&) {
+    throw std::runtime_error("Graph::connect(named output): PCIeSrc output index is out of range");
   }
 
   const auto from_range =

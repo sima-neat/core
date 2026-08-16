@@ -15,8 +15,8 @@ def test_load_metadata_from_yolov8_model():
   if not model_path.is_file():
     pytest.skip(f"SIMAPCIE_YOLOV8_MODEL does not exist: {model_path}")
 
-  runtime = pcie.Model(str(model_path))
-  info = runtime.info()
+  model = pcie.Model(str(model_path))
+  info = model.info()
 
   assert [tensor.name for tensor in info.inputs] == ["images"]
   assert info.inputs[0].dtype == "FP32"

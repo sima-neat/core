@@ -107,8 +107,25 @@ bool has_boxdecode_request(const ModelOptions& opt) {
 }
 
 void reject(const std::string& message) {
-  throw std::invalid_argument("ModelOptions cannot be represented by WP9 model-options JSON: " +
+  throw std::invalid_argument("ModelOptions cannot be represented by the PCIe model-options "
+                              "schema: " +
                               message);
+}
+
+bool has_preprocess_request(const ModelOptions::Preprocess& preprocess) {
+  return preprocess.enable != AutoFlag::Auto || preprocess.input_max_width != 0 ||
+         preprocess.input_max_height != 0 || preprocess.input_max_depth != 0 ||
+         preprocess.resize.enable != AutoFlag::Auto || preprocess.resize.width != 0 ||
+         preprocess.resize.height != 0 || preprocess.resize.mode != ResizeMode::Letterbox ||
+         preprocess.resize.pad_value != 114 || preprocess.resize.scaling_type != "BILINEAR" ||
+         preprocess.color_convert.enable != AutoFlag::Auto ||
+         preprocess.color_convert.input_format != ColorFormat::Auto ||
+         preprocess.color_convert.output_format != ColorFormat::Auto ||
+         preprocess.normalize.enable != AutoFlag::Auto ||
+         preprocess.normalize.preset != NormalizePreset::None ||
+         preprocess.normalize.has_explicit_stats ||
+         preprocess.normalize.mean != std::array<float, 3>{0.0f, 0.0f, 0.0f} ||
+         preprocess.normalize.stddev != std::array<float, 3>{1.0f, 1.0f, 1.0f};
 }
 
 void validate_supported_options(const ModelOptions& opt) {
@@ -227,6 +244,9 @@ ModelOptionsJson write_model_options_json(const ModelOptions& options) {
 
   const bool wants_boxdecode = has_boxdecode_request(options);
   if (options.preprocess.kind == InputKind::Tensor) {
+    if (has_preprocess_request(options.preprocess)) {
+      reject("preprocess options require preprocess.kind=InputKind::Image");
+    }
     if (wants_boxdecode) {
       reject("boxdecode requires preprocess.kind=InputKind::Image");
     }
