@@ -464,60 +464,35 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
             result.stderr,
         )
 
-    def test_board_transaction_accepts_bundled_breaks_retirement(self) -> None:
+    def test_board_transaction_accepts_retired_neat_libcamera_removals(self) -> None:
         result = run_bash(
             r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-bundled="${tmp}/neat-gst-plugins.deb"
 simulation="${tmp}/simulation.log"
-touch "${bundled}"
-printf '%s\n' 'Remv neat-libcamera [2.1.1~pre3348]' > "${simulation}"
-dpkg-query() {
-  printf '%s\n' '2.1.1~pre3348'
-}
-dpkg-deb() {
-  [[ "$1" == -f ]] || return 2
-  case "$3" in
-    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
-    *) return 2 ;;
-  esac
-}
-verify_simulated_package_removals "${simulation}" "${bundled}"
+printf '%s\n' \
+  'Remv neat-libcamera [2.1.1~pre3348]' \
+  'Remv neat-libcamera-dev [2.1.1~pre3348]' \
+  'Remv neat-libcamera-tools [2.1.1~pre3348]' > "${simulation}"
+verify_simulated_package_removals "${simulation}"
 """
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("Verified platform package replacements", result.stdout)
-        self.assertIn(
-            "neat-libcamera=2.1.1~pre3348 -> retired (bundled Breaks)",
-            result.stdout,
-        )
 
-    def test_board_transaction_rejects_removal_without_breaks_declaration(
-        self,
-    ) -> None:
+    def test_board_transaction_still_rejects_non_retired_removals(self) -> None:
         result = run_bash(
             r"""
 source "$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
-bundled="${tmp}/neat-gst-plugins.deb"
 simulation="${tmp}/simulation.log"
-touch "${bundled}"
 printf '%s\n' 'Remv simaai-palette-modalix [2.1.3~pre4744]' > "${simulation}"
 dpkg-query() {
   printf '%s\n' '2.1.3~pre4744'
 }
-dpkg-deb() {
-  [[ "$1" == -f ]] || return 2
-  case "$3" in
-    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
-    *) return 2 ;;
-  esac
-}
-verify_simulated_package_removals "${simulation}" "${bundled}"
+verify_simulated_package_removals "${simulation}"
 """
         )
 
@@ -526,16 +501,11 @@ verify_simulated_package_removals "${simulation}" "${bundled}"
             "without a bundled package that Provides its exact installed version",
             result.stderr,
         )
-        self.assertIn("no bundled package declares Breaks against it", result.stderr)
 
     def test_heal_specs_stay_empty_on_boards_without_retired_packages(self) -> None:
         result = run_bash(
             r"""
 source "$1"
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-bundled="${tmp}/neat-gst-plugins.deb"
-touch "${bundled}"
 dpkg-query() {
   if [[ "$2" == *Status-Abbrev* ]]; then
     printf 'un '
@@ -543,42 +513,31 @@ dpkg-query() {
   fi
   printf '%s\n' '2.1.3~pre4744'
 }
-dpkg-deb() {
-  [[ "$1" == -f ]] || return 2
-  case "$3" in
-    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
-    *) return 2 ;;
-  esac
-}
-collect_board_heal_specs "${bundled}"
+collect_board_heal_specs
 """
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
 
-    def test_heal_specs_pin_palette_and_provided_identities_on_dirty_board(
+    def test_heal_specs_pin_palette_and_installed_identities_on_dirty_board(
         self,
     ) -> None:
         result = run_bash(
             r"""
 source "$1"
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-bundled="${tmp}/neat-gst-plugins.deb"
-touch "${bundled}"
 dpkg-query() {
   case "$2" in
     *Status-Abbrev*)
-      printf 'ii '
-      return 0
-      ;;
-    *Provides*)
       case "$3" in
-        neat-libcamera) printf '%s\n' 'libcamera (= 2.1.3~pre4744)' ;;
-        neat-libcamera-tools) printf '%s\n' 'libcamera-tools (= 2.1.3~pre4744)' ;;
-        neat-libcamera-dev) printf '%s\n' 'libcamera-dev (= 2.1.3~pre4744), libcamera-headers' ;;
-        *) printf '\n' ;;
+        neat-libcamera | neat-libcamera-tools | simaai-palette-modalix)
+          printf 'ii '
+          return 0
+          ;;
+        *)
+          printf 'un '
+          return 1
+          ;;
       esac
       ;;
     *)
@@ -586,14 +545,7 @@ dpkg-query() {
       ;;
   esac
 }
-dpkg-deb() {
-  [[ "$1" == -f ]] || return 2
-  case "$3" in
-    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
-    *) return 2 ;;
-  esac
-}
-collect_board_heal_specs "${bundled}"
+collect_board_heal_specs
 """
         )
 
@@ -601,23 +553,16 @@ collect_board_heal_specs "${bundled}"
         self.assertEqual(
             result.stdout.splitlines(),
             [
-                "libcamera-dev=2.1.3~pre4744",
-                "libcamera-tools=2.1.3~pre4744",
-                "libcamera=2.1.3~pre4744",
                 "simaai-palette-modalix=2.1.3~pre4744",
+                "libcamera=2.1.3~pre4744",
+                "libcamera-tools=2.1.3~pre4744",
             ],
         )
 
-    def test_heal_specs_emit_identities_and_warn_when_palette_is_absent(
-        self,
-    ) -> None:
+    def test_heal_specs_warn_and_stay_empty_when_palette_is_absent(self) -> None:
         result = run_bash(
             r"""
 source "$1"
-tmp="$(mktemp -d)"
-trap 'rm -rf "${tmp}"' EXIT
-bundled="${tmp}/neat-gst-plugins.deb"
-touch "${bundled}"
 dpkg-query() {
   case "$2" in
     *Status-Abbrev*)
@@ -628,31 +573,18 @@ dpkg-query() {
       printf 'ii '
       return 0
       ;;
-    *Provides*)
-      case "$3" in
-        neat-libcamera) printf '%s\n' 'libcamera (= 2.1.3~pre4744)' ;;
-        *) printf '\n' ;;
-      esac
-      ;;
     *)
       printf '%s\n' '2.1.3~pre4744'
       ;;
   esac
 }
-dpkg-deb() {
-  [[ "$1" == -f ]] || return 2
-  case "$3" in
-    Breaks) printf '%s\n' 'neat-libcamera' ;;
-    *) return 2 ;;
-  esac
-}
-collect_board_heal_specs "${bundled}"
+collect_board_heal_specs
 """
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines(), ["libcamera=2.1.3~pre4744"])
-        self.assertIn("simaai-palette-modalix is not installed", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("simaai-palette-modalix version is unavailable", result.stderr)
 
 
 class DispatcherMigrationTest(unittest.TestCase):

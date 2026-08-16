@@ -145,25 +145,6 @@ relation_field_has_package() {
   return 1
 }
 
-list_bundled_breaks_targets() {
-  local deb_path breaks relation package
-
-  for deb_path in "$@"; do
-    [[ -f "${deb_path}" ]] || continue
-    breaks="$(dpkg-deb -f "${deb_path}" Breaks 2>/dev/null || true)"
-    [[ -n "${breaks}" ]] || continue
-    while IFS= read -r relation; do
-      relation="${relation#"${relation%%[![:space:]]*}"}"
-      relation="${relation%"${relation##*[![:space:]]}"}"
-      package="${relation%%[[:space:](]*}"
-      package="${package%%:*}"
-      if [[ -n "${package}" ]]; then
-        printf '%s\n' "${package}"
-      fi
-    done < <(printf '%s\n' "${breaks}" | tr ',' '\n')
-  done
-}
-
 relation_field_provides_exact_version() {
   local field="$1"
   local expected_package="$2"
@@ -209,14 +190,17 @@ verify_simulated_package_removals() {
   local -a removed_packages=()
   local -a verified_replacements=()
   local package package_name installed_version replacement_deb
-  local bundled_breaks_targets
 
-  bundled_breaks_targets="$(list_bundled_breaks_targets "${install_specs[@]}")"
   mapfile -t removed_packages < <(awk '$1 == "Remv" {print $2}' "${simulation_log}")
   for package in "${removed_packages[@]}"; do
     package_name="${package%%:*}"
     case "${package_name}" in
       sima-neat | sima-neat-dev)
+        continue
+        ;;
+      neat-libcamera | neat-libcamera-dev | neat-libcamera-tools)
+        # Retired recovery packages: the platform owns libcamera since
+        # internals#190, so APT removing them is the intended retirement.
         continue
         ;;
     esac
@@ -237,15 +221,8 @@ verify_simulated_package_removals() {
       )
       continue
     fi
-    if grep -Fxq "${package_name}" <<<"${bundled_breaks_targets}"; then
-      verified_replacements+=(
-        "${package_name}=${installed_version} -> retired (bundled Breaks)"
-      )
-      continue
-    fi
-
     cat "${simulation_log}" >&2
-    echo "Refusing to install because APT would remove ${package} without a bundled package that Provides its exact installed version and explicitly Replaces and Conflicts with it, and no bundled package declares Breaks against it." >&2
+    echo "Refusing to install because APT would remove ${package} without a bundled package that Provides its exact installed version and explicitly Replaces and Conflicts with it." >&2
     return 1
   done
 
@@ -255,55 +232,40 @@ verify_simulated_package_removals() {
   fi
 }
 
-# When the bundled debs retire packages that are still installed, extend the
-# transaction with explicit exact-version platform specs so APT can heal the
-# board instead of refusing or removing the palette:
-# - pin the installed palette, whose exact-version dependencies define the
-#   board's platform cohort and whose presence forbids removing it;
-# - reinstate every platform identity a retired package masquerades as,
-#   taken from that package's own exact-version Provides. Explicit
-#   name=version requests select the SiMa repository versions even where a
-#   shared package name has a foreign candidate.
-# Emits nothing on boards without retired packages, keeping their
-# transaction unchanged.
+# When retired neat-libcamera recovery packages are still installed, extend
+# the transaction with explicit name=version specs derived from the installed
+# palette's version: the pinned palette cannot be removed, and explicit
+# versions select the SiMa repository packages even where a shared name has a
+# foreign candidate. Emits nothing on boards without retired packages,
+# keeping their transaction unchanged.
 collect_board_heal_specs() {
-  local target palette_version provides relation
-  local provides_exact_re='^([A-Za-z0-9][A-Za-z0-9+._-]*) \(= ([^)]+)\)$'
+  local target palette_version
   local -a retired_installed=()
 
-  while IFS= read -r target; do
-    [[ -n "${target}" ]] || continue
+  for target in neat-libcamera neat-libcamera-dev neat-libcamera-tools; do
     if deb_package_is_installed "${target}"; then
       retired_installed+=("${target}")
     fi
-  done < <(list_bundled_breaks_targets "$@" | sort -u)
+  done
   if [[ "${#retired_installed[@]}" -eq 0 ]]; then
     return 0
   fi
 
-  {
-    if deb_package_is_installed simaai-palette-modalix; then
-      palette_version="$(
-        dpkg-query -W -f='${Version}' simaai-palette-modalix 2>/dev/null || true
-      )"
-      if [[ -n "${palette_version}" ]]; then
-        printf 'simaai-palette-modalix=%s\n' "${palette_version}"
-      fi
-    else
-      echo "Bundled packages retire installed packages, but simaai-palette-modalix is not installed; continuing without a palette pin." >&2
-    fi
-    for target in "${retired_installed[@]}"; do
-      provides="$(dpkg-query -W -f='${Provides}' "${target}" 2>/dev/null || true)"
-      [[ -n "${provides}" ]] || continue
-      while IFS= read -r relation; do
-        relation="$(printf '%s' "${relation}" |
-          sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
-        if [[ "${relation}" =~ ${provides_exact_re} ]]; then
-          printf '%s=%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-        fi
-      done < <(printf '%s\n' "${provides}" | tr ',' '\n')
-    done
-  } | LC_ALL=C sort -u
+  palette_version=""
+  if deb_package_is_installed simaai-palette-modalix; then
+    palette_version="$(
+      dpkg-query -W -f='${Version}' simaai-palette-modalix 2>/dev/null || true
+    )"
+  fi
+  if [[ -z "${palette_version}" ]]; then
+    echo "Retired neat-libcamera packages are installed, but the simaai-palette-modalix version is unavailable; continuing without platform pins." >&2
+    return 0
+  fi
+
+  printf 'simaai-palette-modalix=%s\n' "${palette_version}"
+  for target in "${retired_installed[@]}"; do
+    printf '%s=%s\n' "${target#neat-}" "${palette_version}"
+  done
 }
 
 log_green() {
@@ -1776,9 +1738,7 @@ install_debs_on_board() {
   done
 
   local -a board_heal_specs=()
-  mapfile -t board_heal_specs < <(
-    collect_board_heal_specs "${board_install_specs[@]}"
-  )
+  mapfile -t board_heal_specs < <(collect_board_heal_specs)
   if [[ "${#board_heal_specs[@]}" -gt 0 ]]; then
     log "Pinning platform packages for the retirement transaction:"
     printf '  %s\n' "${board_heal_specs[@]}"
