@@ -147,6 +147,7 @@ struct PipelineSegmentRuntime {
     std::atomic<bool> push_done{false};
     std::atomic<bool> pull_done{false};
     std::atomic<std::size_t> producers_remaining{0};
+    std::atomic<bool> completion_started{false};
     std::atomic<bool> completion_forwarded{false};
 
     std::mutex stream_mu;

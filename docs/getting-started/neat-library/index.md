@@ -27,9 +27,10 @@ the [Compatibility Guide](/getting-started/compatibility/).
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Library Setup</h2>
-    <p>Install Neat Library, use Python bindings, or inspect the environment from the command line.</p>
-    <ul class="overview-link-list">
+    <p>Install Neat Library, set up a PCIe host, use Python bindings, or inspect the environment from the command line.</p>
+    <ul class="overview-link-list neat-library-setup-grid">
       <li><a class="overview-link-card" href="/getting-started/neat-library/install-or-update/"><strong>Install or Update Neat Library</strong><span>Install the sima-neat package, GStreamer components, and the default PyNeat environment.</span></a></li>
+      <li><a class="overview-link-card" href="/getting-started/neat-library/pcie-host/"><strong>Install PCIe Host</strong><span>Install the PCIe host package to run co-processing applications with a connected Modalix PCIe Card.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/pyneat/"><strong>Install PyNeat</strong><span>Use the PyNeat wheel in a custom Python virtual environment.</span></a></li>
       <li><a class="overview-link-card" href="/getting-started/neat-library/neat-cli/"><strong>Neat CLI</strong><span>Check installed versions, inspect SDK state, and update installed components.</span></a></li>
     </ul>

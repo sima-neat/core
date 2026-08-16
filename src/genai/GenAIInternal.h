@@ -3,13 +3,16 @@
 #include "genai/GenAITypes.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace simaai::neat::genai::internal {
 
 struct ModelDirectoryInfo {
+  std::filesystem::path package_root;
   std::filesystem::path root;
+  std::optional<std::filesystem::path> draft_root;
   GenAITask task = GenAITask::VisionLanguage;
   bool accepts_text = false;
   bool accepts_image = false;

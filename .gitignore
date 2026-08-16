@@ -2,6 +2,9 @@
 /build/
 /build-*/
 /build*/
+pcie_host/artifacts/
+pcie_host/build*/
+pcie_host/packaging/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt

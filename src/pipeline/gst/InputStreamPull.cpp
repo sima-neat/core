@@ -1,5 +1,6 @@
 #include "InputStreamInternal.h"
 
+#include "gst/GstSampleAttributes.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/TensorAdapters.h"
@@ -727,6 +728,8 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   if (!s)
     return;
 
+  gst_internal::read_attributes_from_structure(s, &out->attributes);
+
   gint64 frame_id = -1;
   gint64 buffer_offset = -1;
   gint origin_output_slot = -1;
@@ -804,6 +807,8 @@ static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out)
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
   if (!s)
     return;
+
+  gst_internal::read_attributes_from_structure(s, &out->attributes);
 
   gint64 frame_id = -1;
   gboolean sample_frame_valid = FALSE;
@@ -1175,6 +1180,7 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
   enc.segment_name = out.segment_name;
   enc.input_seq = out.input_seq;
   enc.orig_input_seq = out.orig_input_seq;
+  enc.attributes = out.attributes;
   enc.owned = out.owned;
   if (const auto preprocess = read_simaai_preprocess_meta(buffer); preprocess.has_value()) {
     if (!enc.tensors.empty() && !enc.tensors.front().semantic.preprocess.has_value()) {
@@ -1224,6 +1230,7 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
       forced.stream_id = out.stream_id;
       forced.input_seq = out.input_seq;
       forced.orig_input_seq = out.orig_input_seq;
+      forced.attributes = out.attributes;
       forced.fields.emplace_back(std::move(out));
       if (sample_debug_enabled()) {
         std::fprintf(stderr, "[SAMPLE] %s: forced bundle with 1 field\n", where);
@@ -1539,6 +1546,7 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
   out.pts_ns = base.pts_ns;
   out.dts_ns = base.dts_ns;
   out.duration_ns = base.duration_ns;
+  out.attributes = base.attributes;
   out.tensors.reserve(tensor_buffer_view.tensors.size());
   std::unordered_set<int> unique_memory_indices;
   const auto tensor_loop_start = InputStreamDecodeProfileClock::now();
@@ -1789,6 +1797,7 @@ void clear_dynamic_sample_fields_for_decode_template(Sample* sample) {
   sample->stream_label.clear();
   sample->segment_name.clear();
   sample->route_slot = -1;
+  sample->attributes.clear();
 }
 
 void strip_tensor_storage_for_decode_template(Tensor* tensor) {

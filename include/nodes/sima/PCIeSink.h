@@ -3,7 +3,7 @@
  * @ingroup nodes_sima
  * @brief `PCIeSink` Node — sends samples to a PCIe-connected host (Modalix as PCIe target).
  *
- * Wraps the `simaaipciesink` GStreamer element, which delivers buffers across the PCIe
+ * Wraps the `neatpciesink` GStreamer element, which delivers buffers across the PCIe
  * link to the host driver. Use as a terminal sink in pipelines where the Modalix board
  * is acting as a PCIe target and the host is the actual consumer of the output.
  */
@@ -11,7 +11,6 @@
 
 #include "builder/Node.h"
 
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,28 +23,9 @@ namespace simaai::neat {
  * @ingroup nodes_sima
  */
 struct PCIeSinkOptions {
-  // Core properties (simaaipciesink)
-  std::string config_file;               ///< Optional simaaipciesink config file path.
-  std::string data_buf_name = "overlay"; ///< Name of the host-side buffer that receives data.
-  int data_buffer_size = 4194304;        ///< Data buffer size in bytes (default 4 MiB).
-  int num_buffers = 5;                   ///< Number of buffers in the pool.
-  int queue = 0;                         ///< Queue depth for outgoing samples.
-
-  // Multi-buffer mode
-  std::string param_buf_name =
-      "camera_params";            ///< Auxiliary parameter buffer name (multi-buffer mode).
-  int param_buffer_size = 48;     ///< Parameter buffer size in bytes (multi-buffer mode).
-  bool use_multi_buffers = false; ///< Enable the multi-buffer (data + params) protocol.
-
-  // Timing controls
-  bool sync = true;             ///< Sync to pipeline clock when delivering buffers.
-  bool async_state = true;      ///< Allow async state changes on this sink.
-  int64_t max_lateness_ns = -1; ///< Max lateness in ns; `-1` = unlimited (no late-frame drop).
-  uint64_t processing_deadline_ns = 20000000; ///< Processing deadline in ns (default 20 ms).
-
-  // Optional diagnostics
+  std::string config_file;   ///< Optional neatpciesink config file path.
+  int queue = 0;             ///< PCIe hardware queue number.
   bool transmit_kpi = false; ///< If true, transmit KPI/diagnostic packets alongside data.
-  bool qos = false;          ///< Enable QoS reporting on this sink.
 };
 
 /**
