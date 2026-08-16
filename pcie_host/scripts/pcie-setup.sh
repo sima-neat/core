@@ -9,7 +9,6 @@ Set up passwordless SSH from this host to SiMa PCIe cards.
 
 Options:
   --user USER             Remote user (default: sima)
-  --port PORT             Remote SSH port (default: 22)
   --key PATH              SSH private key path (default: ~/.ssh/sima_neat_pcie_ed25519)
   --password PASSWORD     Bootstrap password for sshpass/ssh-copy-id
   --hosts LIST            Space/comma-separated host list
@@ -98,10 +97,6 @@ while [[ $# -gt 0 ]]; do
       user="${2:?missing value for --user}"
       shift 2
       ;;
-    --port)
-      port="${2:?missing value for --port}"
-      shift 2
-      ;;
     --key)
       key_path="${2:?missing value for --key}"
       shift 2
@@ -156,10 +151,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! "${port}" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
-  echo "Invalid port: ${port}" >&2
-  exit 2
-fi
 if (( range_first > range_last )); then
   echo "Invalid range: ${range_first}-${range_last}" >&2
   exit 2
