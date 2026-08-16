@@ -331,6 +331,7 @@ if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
     gstreamer-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
+    gstreamer-allocators-1.0
     gstreamer-sdp-1.0
     gstreamer-rtsp-server-1.0
     glib-2.0
@@ -343,6 +344,7 @@ else()
     gstreamer-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
+    gstreamer-allocators-1.0
     gstreamer-sdp-1.0
     gstreamer-rtsp-server-1.0
     glib-2.0

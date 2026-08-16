@@ -116,7 +116,7 @@ def main(argv: list[str]) -> int:
 
   # STEP compose-graph
   graph = pyneat.Graph("mipi_camera_model")
-  graph.add(pyneat.nodes.camera_input(camera))
+  graph.add(pyneat.nodes.camera_input(camera, capture_buffer_count=32))
   graph.add(model.graph(route))
 
   if args.print_backend:

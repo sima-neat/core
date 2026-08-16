@@ -102,7 +102,7 @@ def test_camera_input_options_roundtrip():
   assert opt.allow_cpu_fallback is True
   opt.camera_name = None
   assert opt.camera_name is None
-  assert isinstance(pyneat.nodes.camera_input(opt), pyneat.Node)
+  assert isinstance(pyneat.nodes.camera_input(opt, capture_buffer_count=32), pyneat.Node)
 
 
 def test_format_filter_accepts_memory_enum():
