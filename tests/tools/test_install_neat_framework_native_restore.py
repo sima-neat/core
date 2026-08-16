@@ -464,6 +464,150 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
             result.stderr,
         )
 
+    def test_board_transaction_accepts_bundled_breaks_retirement(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+bundled="${tmp}/neat-gst-plugins.deb"
+simulation="${tmp}/simulation.log"
+touch "${bundled}"
+printf '%s\n' 'Remv neat-libcamera [2.1.1~pre3348]' > "${simulation}"
+dpkg-query() {
+  printf '%s\n' '2.1.1~pre3348'
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
+    *) return 2 ;;
+  esac
+}
+verify_simulated_package_removals "${simulation}" "${bundled}"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Verified platform package replacements", result.stdout)
+        self.assertIn(
+            "neat-libcamera=2.1.1~pre3348 -> retired (bundled Breaks)",
+            result.stdout,
+        )
+
+    def test_board_transaction_rejects_removal_without_breaks_declaration(
+        self,
+    ) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+bundled="${tmp}/neat-gst-plugins.deb"
+simulation="${tmp}/simulation.log"
+touch "${bundled}"
+printf '%s\n' 'Remv simaai-palette-modalix [2.1.3~pre4744]' > "${simulation}"
+dpkg-query() {
+  printf '%s\n' '2.1.3~pre4744'
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
+    *) return 2 ;;
+  esac
+}
+verify_simulated_package_removals "${simulation}" "${bundled}"
+"""
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "without a bundled package that Provides its exact installed version",
+            result.stderr,
+        )
+        self.assertIn("no bundled package declares Breaks against it", result.stderr)
+
+    def test_heal_specs_stay_empty_on_boards_without_retired_packages(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+bundled="${tmp}/neat-gst-plugins.deb"
+touch "${bundled}"
+dpkg-query() {
+  if [[ "$2" == *Status-Abbrev* ]]; then
+    printf 'un '
+    return 1
+  fi
+  printf '%s\n' '2.1.3~pre4744'
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
+    *) return 2 ;;
+  esac
+}
+collect_board_heal_specs "${bundled}"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_heal_specs_pin_palette_and_provided_identities_on_dirty_board(
+        self,
+    ) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+bundled="${tmp}/neat-gst-plugins.deb"
+touch "${bundled}"
+dpkg-query() {
+  case "$2" in
+    *Status-Abbrev*)
+      printf 'ii '
+      return 0
+      ;;
+    *Provides*)
+      case "$3" in
+        neat-libcamera) printf '%s\n' 'libcamera (= 2.1.3~pre4744)' ;;
+        neat-libcamera-tools) printf '%s\n' 'libcamera-tools (= 2.1.3~pre4744)' ;;
+        neat-libcamera-dev) printf '%s\n' 'libcamera-dev (= 2.1.3~pre4744), libcamera-headers' ;;
+        *) printf '\n' ;;
+      esac
+      ;;
+    *)
+      printf '%s\n' '2.1.3~pre4744'
+      ;;
+  esac
+}
+dpkg-deb() {
+  [[ "$1" == -f ]] || return 2
+  case "$3" in
+    Breaks) printf '%s\n' 'neat-libcamera, neat-libcamera-dev, neat-libcamera-tools' ;;
+    *) return 2 ;;
+  esac
+}
+collect_board_heal_specs "${bundled}"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "libcamera-dev=2.1.3~pre4744",
+                "libcamera-tools=2.1.3~pre4744",
+                "libcamera=2.1.3~pre4744",
+                "simaai-palette-modalix=2.1.3~pre4744",
+            ],
+        )
+
 
 class DispatcherMigrationTest(unittest.TestCase):
     def test_migration_moves_unowned_global_and_backup_outside_loader_dir(self) -> None:
