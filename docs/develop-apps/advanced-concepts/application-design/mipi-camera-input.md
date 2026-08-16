@@ -227,10 +227,30 @@ Leave `decode_type` unset and keep `mla_only = true` when you want raw MLA tenso
 
 | Mode | Use when | Behavior |
 | --- | --- | --- |
-| Strict zero-copy | Your `libcamerasrc` exposes SiMaAI camera zero-copy properties and the memory library supports DMA-BUF export. | Neat requests device/SiMaAI camera buffers and fails if the source cannot provide them. |
+| Strict zero-copy | Your `libcamerasrc` exposes `external-buffer-mode` and the memory library supports DMA-BUF export. | Neat requires direct capture into its downstream DMA-BUF pool and fails if the source cannot provide it. |
 | Adaptive fallback (explicit opt-in) | You need compatibility with a camera stack that cannot export device buffers. | Neat accepts OS/libcamera buffers, copies them into pooled SiMaAI memory for CVU/MLA handoff, and passes through SiMaAI buffers when the source already provides them. |
 
-Strict zero-copy is the framework default. It requires both a `libcamerasrc` that exposes the SiMaAI zero-copy properties and a memory library that supports DMA-BUF export. Set `camera.allow_cpu_fallback = true` only as an explicit compatibility escape hatch. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
+Strict zero-copy is the framework default. It requires both a `libcamerasrc` that exposes the generic `external-buffer-mode` property and a memory library that supports DMA-BUF export. Set `camera.allow_cpu_fallback = true` only as an explicit compatibility escape hatch. The fallback copy is a bridge into the accelerator pipeline; it is not permission to add CPU color conversion or scaling to the hot path.
+
+In both modes, Neat places its private memory bridge immediately after the
+camera caps and before any queue. The bridge proposes a standard buffer pool
+through `GST_QUERY_ALLOCATION`. That pool allocates the validated plane layout
+from one packed SiMaAI allocation and exports one DMA-BUF per plane.
+`libcamerasrc` imports those DMA-BUFs into the ISP capture queue; after capture,
+the bridge unwraps the same packed allocation for downstream processing. This
+is the normal path, not the fallback copy path.
+
+The application owns the ISP-output retention policy. Leave the
+`capture_buffer_count` argument to `nodes::CameraInputWithCaptureBuffers()` or
+`pyneat.nodes.camera_input()` at `0` to use the camera default, or request a
+larger minimum when a temporal encoder or asynchronous ML graph holds frames longer.
+The active camera pipeline validates its own limit; Neat's provider supports up
+to 128. This count is separate from the private CSI-to-ISP RAW transit ring and
+from `queue_depth`, which controls only Neat's live GStreamer queue. Use a leaky
+queue when current frames matter more than completeness; use downstream
+backpressure when every frame must be retained. In compatibility-copy mode,
+the bridge's private pool grows on demand so it does not block before a leaky
+queue can discard stale frames.
 
 ## Keep preprocessing on CVU/EV74
 

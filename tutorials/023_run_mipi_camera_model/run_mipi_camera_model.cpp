@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
 
     // STEP compose-graph
     neat::Graph graph("mipi_camera_model");
-    graph.add(neat::nodes::CameraInput(camera));
+    graph.add(neat::nodes::CameraInputWithCaptureBuffers(camera, 32));
     graph.add(model.graph(route));
 
     if (has_flag(argc, argv, "--print-backend")) {
