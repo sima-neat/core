@@ -671,27 +671,19 @@ RUN_TEST(
               "actual composed fused graph must not queue before its terminal Output");
 
       simaai::neat::Graph duplicate_pcie_pad_app("duplicate_named_pcie_pad", outer_options);
-      auto duplicate_pcie_detector = make_composed_consumer_graph();
       auto duplicate_pcie_source = simaai::neat::nodes::PCIeSrc({});
-      for (int stream = 0; stream < 2; ++stream) {
-        simaai::neat::Graph decoder("duplicate_pcie_decoder" + std::to_string(stream));
-        decoder.add(simaai::neat::nodes::SimaDecode());
-        decoder.add(simaai::neat::nodes::Output("duplicate_frame_" + std::to_string(stream)));
-        duplicate_pcie_pad_app.connect(duplicate_pcie_source, "src_0", decoder);
-
-        simaai::neat::GraphLinkOptions link;
-        link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
-        link.stream_id = std::to_string(stream);
-        duplicate_pcie_pad_app.connect(decoder, duplicate_pcie_detector, link);
-      }
+      simaai::neat::Graph first_decoder("first_duplicate_pcie_decoder");
+      first_decoder.add(simaai::neat::nodes::SimaDecode());
+      duplicate_pcie_pad_app.connect(duplicate_pcie_source, "src_0", first_decoder);
+      simaai::neat::Graph second_decoder("second_duplicate_pcie_decoder");
+      second_decoder.add(simaai::neat::nodes::SimaDecode());
       bool rejected_duplicate_pcie_pad = false;
       try {
-        (void)simaai::neat::runtime::compile_public_graph(duplicate_pcie_pad_app,
-                                                          composed_run_options);
-      } catch (const std::invalid_argument& e) {
+        duplicate_pcie_pad_app.connect(duplicate_pcie_source, "src_0", second_decoder);
+      } catch (const std::runtime_error& e) {
         rejected_duplicate_pcie_pad =
-            std::string(e.what()).find(
-                "shared PCIe source pad src_0 is connected more than once") != std::string::npos;
+            std::string(e.what()).find("PCIeSrc output src_0 is already connected") !=
+            std::string::npos;
       }
       require(rejected_duplicate_pcie_pad,
               "one PCIe source pad must not be connected to multiple decoder branches");

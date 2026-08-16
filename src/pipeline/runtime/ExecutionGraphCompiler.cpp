@@ -2270,16 +2270,6 @@ void fuse_realtime_fan_in_segments(const graph::Graph& graph, ExecutionGraphPlan
           return c.shared_source_segment.has_value() && !c.shared_source_pad.empty();
         });
     if (all_shared_pcie) {
-      std::unordered_set<std::string> source_pads;
-      for (const auto& candidate : candidates) {
-        const std::string source_pad =
-            std::to_string(*candidate.shared_source_segment) + ':' + candidate.shared_source_pad;
-        if (!source_pads.insert(source_pad).second) {
-          throw std::invalid_argument("shared PCIe source pad " + candidate.shared_source_pad +
-                                      " is connected more than once");
-        }
-      }
-
       std::vector<std::size_t> order(candidates.size());
       for (std::size_t i = 0; i < order.size(); ++i) {
         order[i] = i;
