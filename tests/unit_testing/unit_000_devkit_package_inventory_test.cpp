@@ -112,13 +112,14 @@ int main() {
         {"neat-runtime", "neat"},       {"neat-gst-plugins", "neat"},
         {"neat-ev74-firmware", "neat"}, {"neat-internals-dev", "neat"},
         {"sima-lmm-core", "neat"},      {"sima-lmm-dev", "neat"},
-        {"sima-lmm-cli", "neat"},       {"neat-libcamera", "neat"},
-        {"neat-libcamera-dev", "neat"}, {"neat-libcamera-tools", "neat"},
+        {"sima-lmm-cli", "neat"},
     };
 
     const std::vector<PackageExpectation> native_sima_packages = {
         {"simaai-palette-modalix", "native-sima"},
         {"simaai-palette-upgrade", "native-sima"},
+        {"libcamera", "native-sima"},
+        {"libcamera-tools", "native-sima"},
         {"simaai-a65-plat-tests", "native-sima"},
         {"simaai-base-files-modalix", "native-sima"},
         {"simaai-gst-plugins", "native-sima"},
