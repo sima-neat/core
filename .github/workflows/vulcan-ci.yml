@@ -383,6 +383,436 @@ jobs:
       min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 10 || 11 }}
       publish_manifest: false
 
+  build-pciehost-packages:
+    name: Build PCIe Host ${{ matrix.distro }} ${{ matrix.deb_arch }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
+    needs:
+      - resolve-vulcan-config
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu22
+            deb_arch: amd64
+            runs_on: ubuntu-22.04
+          - distro: ubuntu24
+            deb_arch: amd64
+            runs_on: ubuntu-24.04
+          - distro: ubuntu22
+            deb_arch: arm64
+            runs_on: ubuntu-22.04-arm
+          - distro: ubuntu24
+            deb_arch: arm64
+            runs_on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Install sima-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/install_sima_cli_main.sh
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
+
+      - name: Build PCIe host Debian packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd pcie_host
+          ./build.sh --clean --all
+        env:
+          NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+
+      - name: Run PCIe host unit tests
+        # Temporarily disabled while PCIe host CI is being stabilized.
+        if: ${{ false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctest --test-dir pcie_host/build --output-on-failure --no-tests=error
+
+      - name: Verify PCIe host Debian packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t runtime_debs < <(find pcie_host/dist -maxdepth 1 -type f \
+            -name "sima-pcie-host_*_${DEB_ARCH}.deb" ! -name "sima-pcie-host-dev_*" | sort)
+          mapfile -t dev_debs < <(find pcie_host/dist -maxdepth 1 -type f \
+            -name "sima-pcie-host-dev_*_${DEB_ARCH}.deb" | sort)
+          mapfile -t extras_tars < <(find pcie_host/dist -maxdepth 1 -type f \
+            -name "sima-pcie-host-*-Linux-${DEB_ARCH}-extras.tar.gz" | sort)
+          mapfile -t wheels < <(find pcie_host/dist -maxdepth 1 -type f \
+            -name "pyneatpcie-*.whl" | sort)
+
+          if [[ "${#runtime_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 || "${#extras_tars[@]}" -ne 1 || "${#wheels[@]}" -ne 1 ]]; then
+            echo "Expected exactly one runtime deb, one dev deb, one extras tarball, and one pyneatpcie wheel for ${DEB_ARCH}." >&2
+            printf 'runtime debs (%s):\n' "${#runtime_debs[@]}" >&2
+            printf '  %s\n' "${runtime_debs[@]}" >&2 || true
+            printf 'dev debs (%s):\n' "${#dev_debs[@]}" >&2
+            printf '  %s\n' "${dev_debs[@]}" >&2 || true
+            printf 'extras tarballs (%s):\n' "${#extras_tars[@]}" >&2
+            printf '  %s\n' "${extras_tars[@]}" >&2 || true
+            printf 'wheels (%s):\n' "${#wheels[@]}" >&2
+            printf '  %s\n' "${wheels[@]}" >&2 || true
+            exit 1
+          fi
+
+          for deb in "${runtime_debs[0]}" "${dev_debs[0]}"; do
+            file "${deb}"
+            dpkg-deb -I "${deb}"
+            sha256sum "${deb}" > "${deb}.sha256"
+          done
+          file "${extras_tars[0]}"
+          tar -tzf "${extras_tars[0]}" >/dev/null
+          sha256sum "${extras_tars[0]}" > "${extras_tars[0]}.sha256"
+          file "${wheels[0]}"
+          python3 -m zipfile --test "${wheels[0]}"
+          sha256sum "${wheels[0]}" > "${wheels[0]}.sha256"
+        env:
+          DEB_ARCH: ${{ matrix.deb_arch }}
+
+      - name: Smoke test installed PCIe host packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python_venv="${RUNNER_TEMP}/pyneatpcie-package-smoke"
+          consumer_build="${RUNNER_TEMP}/sima-pcie-host-consumer"
+
+          pcie_host/dist/install_pciehost.sh \
+            --skip-setup \
+            --python \
+            --python-venv "${python_venv}"
+
+          cmake \
+            -S pcie_host/tests/package_smoke \
+            -B "${consumer_build}" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build "${consumer_build}" --parallel
+          "${consumer_build}/sima_pcie_host_package_smoke"
+
+          "${python_venv}/bin/python" - <<'PY'
+          import pyneatpcie
+
+          assert pyneatpcie.__version__
+          assert pyneatpcie.Model
+          assert pyneatpcie.Runtime
+          assert pyneatpcie.ModelConfig
+          assert pyneatpcie.Completion
+          assert pyneatpcie.Tensor
+          PY
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+          role-session-name: pciehost-${{ matrix.distro }}-${{ matrix.deb_arch }}-${{ github.run_id }}
+
+      - name: Publish PCIe host Debian packages
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          branch_key="$(python3 - <<'PY'
+          import os
+          from urllib.parse import quote
+          print(quote(os.environ["REF_NAME"], safe=""))
+          PY
+          )"
+          short_sha="${GITHUB_SHA:0:12}"
+          prefix="core/${branch_key}/${short_sha}/pciehost/${DISTRO}/${DEB_ARCH}"
+
+          s3_args=(--sse aws:kms)
+          if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
+            s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
+          fi
+
+          for path in \
+            pcie_host/dist/*.deb \
+            pcie_host/dist/*.deb.sha256 \
+            pcie_host/dist/*-extras.tar.gz \
+            pcie_host/dist/*-extras.tar.gz.sha256 \
+            pcie_host/dist/pyneatpcie-*.whl \
+            pcie_host/dist/pyneatpcie-*.whl.sha256; do
+            name="$(basename "${path}")"
+            case "${name}" in
+              *.deb) content_type="application/vnd.debian.binary-package" ;;
+              *.tar.gz) content_type="application/gzip" ;;
+              *.whl) content_type="application/octet-stream" ;;
+              *.sha256) content_type="text/plain" ;;
+              *) content_type="application/octet-stream" ;;
+            esac
+            aws s3 cp \
+              "${path}" \
+              "s3://${ARTIFACT_BUCKET}/${prefix}/${name}" \
+              --content-type "${content_type}" \
+              "${s3_args[@]}"
+          done
+
+          if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
+            aws cloudfront create-invalidation \
+              --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+              --paths "/${prefix}/*"
+          fi
+
+          echo "Published s3://${ARTIFACT_BUCKET}/${prefix}/"
+        env:
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
+          DISTRO: ${{ matrix.distro }}
+          REF_NAME: ${{ github.ref_name }}
+          SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+
+  publish-pciehost-package:
+    name: Publish PCIe Host Package Metadata
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && (github.ref_type == 'branch' || github.ref_type == 'tag') }}
+    needs:
+      - resolve-vulcan-config
+      - build-pciehost-packages
+    environment: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+          role-to-assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+          role-session-name: pciehost-index-${{ github.run_id }}
+
+      - name: Write PCIe host package metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          branch_key="$(python3 - <<'PY'
+          import os
+          from urllib.parse import quote
+          print(quote(os.environ["REF_NAME"], safe=""))
+          PY
+          )"
+          short_sha="${GITHUB_SHA:0:12}"
+          install_script_source="pcie_host/scripts/install_pciehost.sh"
+
+          s3_args=(--sse aws:kms)
+          if [[ -n "${SSE_KMS_KEY_ID:-}" ]]; then
+            s3_args+=(--sse-kms-key-id "${SSE_KMS_KEY_ID}")
+          fi
+
+          for distro in ubuntu22 ubuntu24; do
+            for deb_arch in amd64 arm64; do
+              prefix="core/${branch_key}/${short_sha}/pciehost/${distro}/${deb_arch}"
+              work_dir="_vulcan/pciehost/${distro}/${deb_arch}"
+              resources_tsv="${work_dir}/resources.tsv"
+              install_script="${work_dir}/install_pciehost.sh"
+
+              rm -rf "${work_dir}"
+              mkdir -p "${work_dir}/checksums"
+              : > "${resources_tsv}"
+              install -m 0755 "${install_script_source}" "${install_script}"
+
+              mapfile -t package_keys < <(aws s3api list-objects-v2 \
+                --bucket "${ARTIFACT_BUCKET}" \
+                --prefix "${prefix}/" \
+                --query 'Contents[].Key' \
+                --output text \
+                | tr '\t' '\n' \
+                | grep -E '(\.deb|-extras\.tar\.gz|pyneatpcie-.*\.whl)$' \
+                | sort)
+
+              if [[ "${#package_keys[@]}" -ne 4 ]]; then
+                echo "Expected two PCIe host debs, one extras tarball, and one pyneatpcie wheel under s3://${ARTIFACT_BUCKET}/${prefix}/" >&2
+                printf 'found (%s):\n' "${#package_keys[@]}" >&2
+                printf '  %s\n' "${package_keys[@]}" >&2 || true
+                exit 1
+              fi
+
+              for key in "${package_keys[@]}"; do
+                size_bytes="$(aws s3api head-object \
+                  --bucket "${ARTIFACT_BUCKET}" \
+                  --key "${key}" \
+                  --query ContentLength \
+                  --output text)"
+                checksum_path="${work_dir}/checksums/$(basename "${key}").sha256"
+                aws s3 cp \
+                  "s3://${ARTIFACT_BUCKET}/${key}.sha256" \
+                  "${checksum_path}" \
+                  >/dev/null
+                checksum="$(awk '{print $1; exit}' "${checksum_path}")"
+                resource="${key#${prefix}/}"
+                printf '%s\t%s\t%s\n' "${resource}" "${checksum}" "${size_bytes}" \
+                  >> "${resources_tsv}"
+              done
+
+              install_script_size="$(stat -c '%s' "${install_script}")"
+              install_script_checksum="$(sha256sum "${install_script}" | awk '{print $1}')"
+              printf '%s\t%s\t%s\n' \
+                "install_pciehost.sh" \
+                "${install_script_checksum}" \
+                "${install_script_size}" \
+                >> "${resources_tsv}"
+
+              export PREFIX="${prefix}"
+              export DISTRO="${distro}"
+              export DEB_ARCH="${deb_arch}"
+              export RESOURCES_TSV="${resources_tsv}"
+              export METADATA_PATH="${work_dir}/metadata.json"
+              export PYNEATPCIE_METADATA_PATH="${work_dir}/metadata-pyneatpcie.json"
+              python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          distro = os.environ["DISTRO"]
+          deb_arch = os.environ["DEB_ARCH"]
+          resources = []
+          resource_checksums = {}
+          resource_sizes = {}
+          total_size_bytes = 0
+          wheel_resources = []
+          for line in Path(os.environ["RESOURCES_TSV"]).read_text(
+              encoding="utf-8").splitlines():
+              resource, checksum, size_bytes = line.split("\t")
+              resources.append(resource)
+              resource_checksums[resource] = checksum
+              resource_sizes[resource] = int(size_bytes)
+              total_size_bytes += resource_sizes[resource]
+              if resource.startswith("pyneatpcie-") and resource.endswith(".whl"):
+                  wheel_resources.append(resource)
+
+          if len(wheel_resources) != 1:
+              raise SystemExit(f"expected exactly one pyneatpcie wheel, got {wheel_resources!r}")
+
+          metadata = {
+              "name": f"gh:sima-neat/pciehost/{distro}/{deb_arch}",
+              "version": os.environ["GITHUB_SHA"][:12],
+              "release": "",
+              "description": (
+                  "SiMa.ai NEAT PCIe host runtime, development, and Python packages "
+                  f"({distro}, {deb_arch})"
+              ),
+              "platforms": [
+                  {
+                      "type": "host",
+                      "os": ["linux"],
+                      "arch": [deb_arch],
+                  }
+              ],
+              "resources": resources,
+              "resources-checksum": resource_checksums,
+              "selectable-resources": [],
+              "installation": {
+                  "script": "bash ./install_pciehost.sh --python",
+                  "post-message": "[bold]sima-pcie-host and pyneatpcie installed successfully.[/bold]\\n"
+                                  "Activate pyneatpcie with: source ~/pyneatpcie/bin/activate\\n",
+              },
+              "artifact": {
+                  "type": "debian-packages",
+                  "repository": "core",
+                  "package_path": f"pciehost/{distro}/{deb_arch}",
+                  "distro": distro,
+                  "arches": [deb_arch],
+              },
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "branch": os.environ["REF_NAME"],
+              "commit": os.environ["GITHUB_SHA"],
+              "commit_folder": os.environ["GITHUB_SHA"][:12],
+              "published_at_utc": datetime.now(timezone.utc).isoformat(),
+              "size": {
+                  "download": f"{max(1, (total_size_bytes + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+                  "install": f"{max(1, (total_size_bytes + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+              },
+          }
+          Path(os.environ["METADATA_PATH"]).write_text(
+              json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+          wheel = wheel_resources[0]
+          pyneatpcie_metadata = dict(metadata)
+          pyneatpcie_metadata.update({
+              "name": f"gh:sima-neat/pyneatpcie/{distro}/{deb_arch}",
+              "description": (
+                  "pyneatpcie wheel for SiMa.ai NEAT PCIe host "
+                  f"({distro}, {deb_arch})"
+              ),
+              "resources": [wheel],
+              "resources-checksum": {wheel: resource_checksums[wheel]},
+              "installation": {
+                  "script": ":",
+                  "post-message": "[bold]pyneatpcie wheel downloaded.[/bold]\\n"
+                                  f"Install it with: python3 -m pip install ./{wheel}\\n"
+                                  "pyneatpcie requires the matching sima-pcie-host runtime package. "
+                                  "If it is not installed yet, run: sima-cli neat install "
+                                  f"core/pciehost/{distro}/{deb_arch}\\n",
+              },
+              "artifact": {
+                  "type": "python-wheel",
+                  "repository": "core",
+                  "package_path": f"pciehost/{distro}/{deb_arch}",
+                  "distro": distro,
+                  "arches": [deb_arch],
+              },
+              "size": {
+                  "download": f"{max(1, (resource_sizes[wheel] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+                  "install": "1MB",
+              },
+          })
+          Path(os.environ["PYNEATPCIE_METADATA_PATH"]).write_text(
+              json.dumps(pyneatpcie_metadata, indent=2) + "\n", encoding="utf-8")
+          PY
+
+              aws s3 cp \
+                "${install_script}" \
+                "s3://${ARTIFACT_BUCKET}/${prefix}/install_pciehost.sh" \
+                --content-type text/x-shellscript \
+                "${s3_args[@]}"
+
+              aws s3 cp \
+                "${work_dir}/metadata.json" \
+                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata.json" \
+                --content-type application/json \
+                "${s3_args[@]}"
+
+              aws s3 cp \
+                "${work_dir}/metadata-pyneatpcie.json" \
+                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-pyneatpcie.json" \
+                --content-type application/json \
+                "${s3_args[@]}"
+
+              if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
+                aws cloudfront create-invalidation \
+                  --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+                  --paths "/${prefix}/metadata.json" "/${prefix}/metadata-pyneatpcie.json" "/${prefix}/install_pciehost.sh"
+              fi
+
+              cat "${work_dir}/metadata.json"
+              cat "${work_dir}/metadata-pyneatpcie.json"
+              echo "Published PCIe host ${distro} ${deb_arch} metadata under s3://${ARTIFACT_BUCKET}/${prefix}/"
+            done
+          done
+        env:
+          ARTIFACT_BUCKET: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+          CLOUDFRONT_DISTRIBUTION_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
+          REF_NAME: ${{ github.ref_name }}
+          SSE_KMS_KEY_ID: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+
   test-devkit:
     name: Test Core on DevKit
     if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
@@ -916,13 +1346,179 @@ jobs:
           echo "Disk usage after cleanup:"
           df -h "${TMP_ROOT}" || true
 
-  promote-latest-tag:
-    name: Promote Latest Tag
-    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' }}
+  test-pciehost-hardware:
+    name: Test PCIe Host Hardware (${{ matrix.runner_os }})
     needs:
       - detect-changes
       - resolve-vulcan-config
+      - publish-vulcan-artifacts
+      - publish-pciehost-package
+    strategy:
+      fail-fast: false
+      matrix:
+        runner_os:
+          - u22.04
+          - u24.04
+        exclude:
+          # Infrastructure is ready, but Ubuntu 22 hardware testing remains disabled for now.
+          - runner_os: u22.04
+    runs-on: [self-hosted, Linux, X64, pcie, "${{ matrix.runner_os }}"]
+    concurrency:
+      group: pciehost-${{ matrix.runner_os }}
+      cancel-in-progress: false
+    env:
+      VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      SIMAPCIE_EXPECTED_HOST_DISTRO: ${{ matrix.runner_os == 'u24.04' && 'ubuntu24' || 'ubuntu22' }}
+      SIMA_CLI_CHECK_FOR_UPDATE: "0"
+      SIMAPCIE_CARD_HOST: "10.0.0.2"
+      SIMAPCIE_USER: "sima"
+      SIMAPCIE_CARD_ID: "0"
+      SIMAPCIE_QUEUE: "0"
+      SIMAPCIE_READINESS_TIMEOUT_MS: "180000"
+      SIMAPCIE_PULL_TIMEOUT_MS: "30000"
+      SIMAPCIE_SYNC_ITERATIONS: "50"
+      SIMAPCIE_TEST_ITERATIONS: "1000"
+      SIMAPCIE_BURST_ITERATIONS: "20"
+      SIMAPCIE_LIFECYCLE_CYCLES: "10"
+      SIMAPCIE_LIFETIME_ITERATIONS: "20"
+      SIMAPCIE_STRESS_QUEUES: "0 1 2 3"
+      SIMAPCIE_STRESS_ITERATIONS: "1000"
+      SIMAPCIE_CARD_GST_DEBUG: ${{ vars.SIMAPCIE_PCIEHOST_CARD_GST_DEBUG }}
+      SIMAPCIE_CARD_INSTALL_CMD: ${{ vars.SIMAPCIE_CARD_INSTALL_CMD }}
+      DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+      SUDO_PASSWORD: ${{ secrets.PCIEHOST_SUDO_PASSWORD }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Install sima-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/install_sima_cli_main.sh
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" neat install --help >/dev/null
+
+      - name: Resolve PCIe artifact ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "REF_NAME=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
+          echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "${GITHUB_ENV}"
+
+      - name: Prepare PCIe host hardware workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/preflight.sh
+
+      - name: Install PCIe host package from Vulcan artifact
+        id: install_pciehost_package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_host_package.sh
+
+      - name: Install PCIe host test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_host_test_deps.sh
+
+      - name: Cleanup PCIe queues before card install
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Install Neat runtime on PCIe card
+        id: install_pcie_card_runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/install_card_runtime.sh
+
+      - name: Extract PCIe host extras
+        id: extract_pciehost_extras
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/extract_extras.sh
+
+      - name: Resolve PCIe hardware test assets
+        id: resolve_pciehost_assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/resolve_assets.sh
+
+      - name: Verify PCIe card runtime
+        id: verify_pcie_card_runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/verify_card_runtime.sh
+
+      - name: Cleanup PCIe queues before C++ tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh
+
+      - name: Run PCIe host C++ CTest suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/run_ctest.sh
+
+      - name: Cleanup PCIe queues before Python tests
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/cleanup_queue.sh || true
+
+      - name: Run pyneatpcie Python pytest suite
+        if: ${{ !cancelled() && steps.install_pciehost_package.outcome == 'success' && steps.install_pcie_card_runtime.outcome == 'success' && steps.extract_pciehost_extras.outcome == 'success' && steps.resolve_pciehost_assets.outcome == 'success' && steps.verify_pcie_card_runtime.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/ci/pciehost/run_pytest.sh
+
+      - name: Collect PCIe hardware test artifacts
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          ./scripts/ci/pciehost/collect_artifacts.sh
+
+      - name: Upload PCIe hardware test artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pciehost-hardware-${{ matrix.runner_os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _work/pciehost-artifacts
+          if-no-files-found: warn
+
+      - name: Cleanup PCIe queues
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          ./scripts/ci/pciehost/cleanup_queue.sh || true
+
+  promote-latest-tag:
+    name: Promote Latest Tag
+    if: ${{ always() && (github.ref_type == 'branch' || github.ref_type == 'tag') && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' && needs.publish-pciehost-package.result == 'success' && (needs.test-pciehost-hardware.result == 'success' || needs.test-pciehost-hardware.result == 'skipped') }}
+    needs:
+      - detect-changes
+      - resolve-vulcan-config
+      - publish-pciehost-package
       - test-devkit
+      - test-pciehost-hardware
     uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
     with:
       aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}

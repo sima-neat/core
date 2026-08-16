@@ -231,6 +231,15 @@ public:
   Graph& connect(std::shared_ptr<Node> from, std::shared_ptr<Node> to);
   Graph& connect(const Graph& from, std::shared_ptr<Node> to);
   Graph& connect(std::shared_ptr<Node> from, const Graph& to);
+  /**
+   * Connect one named output pad of a Node to a Graph fragment.
+   *
+   * This narrow overload currently supports `PCIeSrc` request pads named
+   * `src_N`, allowing one physical PCIe source to feed independent decoder
+   * branches without exposing a raw GStreamer fragment in the application.
+   */
+  Graph& connect(std::shared_ptr<Node> from, std::string_view from_output, const Graph& to,
+                 const GraphLinkOptions& options = {});
   Graph& connect(const Model& from, const Model& to);
   Graph& connect(const Model& from, const Graph& to);
   Graph& connect(const Graph& from, const Model& to);

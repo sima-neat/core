@@ -3911,28 +3911,14 @@ NB_MODULE(_pyneat_core, m) {
   // Phase 4 (plan slice): PCIe transport node options (host<->board zero-copy).
   nb::class_<simaai::neat::PCIeSrcOptions>(m, "PCIeSrcOptions")
       .def(nb::init<>())
+      .def_rw("queue", &simaai::neat::PCIeSrcOptions::queue)
       .def_rw("buffer_size", &simaai::neat::PCIeSrcOptions::buffer_size)
-      .def_rw("format", &simaai::neat::PCIeSrcOptions::format)
-      .def_rw("width", &simaai::neat::PCIeSrcOptions::width)
-      .def_rw("height", &simaai::neat::PCIeSrcOptions::height)
-      .def_rw("fps_n", &simaai::neat::PCIeSrcOptions::fps_n)
-      .def_rw("fps_d", &simaai::neat::PCIeSrcOptions::fps_d);
+      .def_rw("pool_size", &simaai::neat::PCIeSrcOptions::pool_size);
   nb::class_<simaai::neat::PCIeSinkOptions>(m, "PCIeSinkOptions")
       .def(nb::init<>())
       .def_rw("config_file", &simaai::neat::PCIeSinkOptions::config_file)
-      .def_rw("data_buf_name", &simaai::neat::PCIeSinkOptions::data_buf_name)
-      .def_rw("data_buffer_size", &simaai::neat::PCIeSinkOptions::data_buffer_size)
-      .def_rw("num_buffers", &simaai::neat::PCIeSinkOptions::num_buffers)
       .def_rw("queue", &simaai::neat::PCIeSinkOptions::queue)
-      .def_rw("param_buf_name", &simaai::neat::PCIeSinkOptions::param_buf_name)
-      .def_rw("param_buffer_size", &simaai::neat::PCIeSinkOptions::param_buffer_size)
-      .def_rw("use_multi_buffers", &simaai::neat::PCIeSinkOptions::use_multi_buffers)
-      .def_rw("sync", &simaai::neat::PCIeSinkOptions::sync)
-      .def_rw("async_state", &simaai::neat::PCIeSinkOptions::async_state)
-      .def_rw("max_lateness_ns", &simaai::neat::PCIeSinkOptions::max_lateness_ns)
-      .def_rw("processing_deadline_ns", &simaai::neat::PCIeSinkOptions::processing_deadline_ns)
-      .def_rw("transmit_kpi", &simaai::neat::PCIeSinkOptions::transmit_kpi)
-      .def_rw("qos", &simaai::neat::PCIeSinkOptions::qos);
+      .def_rw("transmit_kpi", &simaai::neat::PCIeSinkOptions::transmit_kpi);
 
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
   nodes_mod.def("queue", &simaai::neat::nodes::Queue);
