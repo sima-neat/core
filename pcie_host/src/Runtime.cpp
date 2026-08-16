@@ -310,6 +310,13 @@ private:
       std::optional<internal::RuntimeInferenceResult> result;
       try {
         result = internal::RuntimeModelAccess::pull_result(*entry->model, -1);
+        if (!result) {
+          std::lock_guard<std::mutex> lock(entry->mutex);
+          if (!entry->accepting) {
+            return;
+          }
+          throw std::runtime_error("PCIe receive channel stopped unexpectedly");
+        }
       } catch (const std::exception& e) {
         bool shutting_down = false;
         const std::string message =
@@ -334,10 +341,6 @@ private:
         completion_cv_.notify_all();
         return;
       }
-      if (!result) {
-        return;
-      }
-
       {
         std::lock_guard<std::mutex> lock(completion_mutex_);
         completions_.push_back(Completion{

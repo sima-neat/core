@@ -1414,7 +1414,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "REF_NAME=${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" >> "${GITHUB_ENV}"
+          echo "REF_NAME=${GITHUB_REF_NAME}" >> "${GITHUB_ENV}"
           echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "${GITHUB_ENV}"
 
       - name: Prepare PCIe host hardware workspace
