@@ -1,0 +1,105 @@
+.wrapper {
+  margin: 1rem 0 1.5rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.search {
+  flex: 1 1 18rem;
+  min-width: 0;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: var(--ifm-font-color-base);
+  background: var(--ifm-background-color);
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: var(--ifm-global-radius);
+}
+
+.search:focus {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: -1px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.filter,
+.filterOn {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: var(--ifm-global-radius);
+  background: var(--ifm-background-color);
+  color: var(--ifm-font-color-base);
+}
+
+.filterOn {
+  border-color: var(--ifm-color-primary);
+  background: var(--ifm-color-primary-contrast-background);
+}
+
+.filter:hover,
+.filterOn:hover {
+  border-color: var(--ifm-color-primary);
+}
+
+.count {
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* Keep a wide table inside its own scroll container rather than letting it
+   push the page body sideways on narrow screens. */
+.tableScroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table {
+  width: 100%;
+  margin: 0;
+  display: table;
+}
+
+.table th,
+.table td {
+  vertical-align: middle;
+}
+
+.center {
+  text-align: center;
+}
+
+.sort {
+  padding: 0;
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+.sort:hover {
+  color: var(--ifm-color-primary);
+}
+
+.empty {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+  color: var(--ifm-color-emphasis-700);
+}

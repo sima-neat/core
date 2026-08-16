@@ -4,6 +4,7 @@
 #endif
 
 #include "pipeline/internal/RunDiagnostics.h"
+#include "DecoderAdmission.h"
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"
@@ -133,9 +134,32 @@ struct RunCoreStartOptions {
   std::shared_ptr<void> graph_verbose_guard;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   FusedEncodedOutputDispatch fused_encoded_output_dispatch;
+  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
+  std::function<void()> after_pipeline_start_for_test;
 };
 
-struct RunCore {
+// Names the single thread that must call InputStream::close(). Teardown can detach a worker
+// still using the stream, so the closer has to be whichever thread exits last.
+//
+// Ownership only ever leaves the RunCoreOwns* values, so a handoff is never revoked.
+// InputThreadOwns is claimed by compare-exchange because the input thread races it with
+// RunCoreOwnsAfterInputFinished; StreamStopThreadOwns is a plain store that outranks both,
+// safe because stop() writes it only after claiming task detachment and runs the
+// input-thread handoff strictly afterwards.
+enum class InputStreamCloseState {
+  // Initial. RunCore::close() closes; the input thread has not published completion.
+  RunCoreOwnsWhileInputRunning,
+  // RunCore::close() closes; the input thread already exited, so the stop path joins it.
+  RunCoreOwnsAfterInputFinished,
+  // Stream-stop task was detached; it waits for the input thread, then closes.
+  StreamStopThreadOwns,
+  // Input thread was detached; it closes as its last act.
+  InputThreadOwns,
+  // Terminal.
+  Closed,
+};
+
+struct RunCore : std::enable_shared_from_this<RunCore> {
   static std::shared_ptr<RunCore> start(ExecutionGraphPlan plan, RunCoreStartOptions opt);
   static std::shared_ptr<RunCore> create_graph_compat();
   static std::shared_ptr<RunCore> start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -145,7 +169,9 @@ struct RunCore {
   start_single_pipeline(InputStream stream, const RunOptions& opt,
                         const InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                         const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,
-                        pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr);
+                        pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr,
+                        std::shared_ptr<DecoderAdmissionReservation> decoder_admission = nullptr,
+                        std::function<void()> after_pipeline_start_for_test = {});
 
   ~RunCore();
 
@@ -244,6 +270,7 @@ struct RunCore {
   // can still show the customer's Graph::add topology instead of falling back
   // to node-metric order.
   std::unique_ptr<ExecutionGraphPlan> graph_export_plan_;
+  std::shared_ptr<DecoderAdmissionReservation> decoder_admission;
   GraphRuntimeOptions graph_options;
   PushSamplePolicy push_sample_policy = PushSamplePolicy::PublicCompatibility;
   pipeline_internal::HolderLoanGatePtr holder_loan_gate;
@@ -300,6 +327,9 @@ struct RunCore {
   mutable std::mutex error_mu;
   bool latency_init = false;
   std::atomic<bool> stop_requested{false};
+  // Who must close `pipeline.stream`; `closed` below only records close() being entered.
+  std::atomic<InputStreamCloseState> stream_close_state{
+      InputStreamCloseState::RunCoreOwnsWhileInputRunning};
   std::atomic<bool> closed{false};
   bool diag_enabled = false;
   std::atomic<bool> diag_logged{false};

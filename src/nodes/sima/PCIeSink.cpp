@@ -23,31 +23,15 @@ PCIeSink::PCIeSink(PCIeSinkOptions opt) : opt_(std::move(opt)) {}
 
 std::string PCIeSink::backend_fragment(int node_index) const {
   require_element("neatpciesink", "PCIeSink::backend_fragment");
-  require_no_quotes(opt_.data_buf_name, "data_buf_name");
   require_no_quotes(opt_.config_file, "config_file");
-  require_no_quotes(opt_.param_buf_name, "param_buf_name");
 
   std::ostringstream ss;
-  ss << "neatpciesink name=n" << node_index << "_pciesink" << " data-buf-name=\""
-     << opt_.data_buf_name << "\"" << " data-buffer-size=" << opt_.data_buffer_size
-     << " num-buffers=" << opt_.num_buffers << " queue=" << opt_.queue
-     << " sync=" << (opt_.sync ? "true" : "false")
-     << " async=" << (opt_.async_state ? "true" : "false");
+  ss << "neatpciesink name=n" << node_index << "_pciesink queue=" << opt_.queue;
 
   if (!opt_.config_file.empty()) {
     ss << " config=\"" << opt_.config_file << "\"";
   }
-  if (opt_.use_multi_buffers) {
-    ss << " use-multi-buffers=true" << " param-buf-name=\"" << opt_.param_buf_name << "\""
-       << " param-buffer-size=" << opt_.param_buffer_size;
-  }
-  if (opt_.max_lateness_ns >= 0) {
-    ss << " max-lateness=" << opt_.max_lateness_ns;
-  }
-
-  ss << " processing-deadline=" << opt_.processing_deadline_ns
-     << " transmit=" << (opt_.transmit_kpi ? "true" : "false")
-     << " qos=" << (opt_.qos ? "true" : "false");
+  ss << " transmit=" << (opt_.transmit_kpi ? "true" : "false");
 
   return ss.str();
 }

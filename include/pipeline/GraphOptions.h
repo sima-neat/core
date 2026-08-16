@@ -30,6 +30,7 @@
 #include <functional>
 #include <initializer_list>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -494,6 +495,24 @@ struct PullError {
 };
 
 /**
+ * @brief Per-frame user attributes carried alongside a `Sample`.
+ *
+ * A plain string-to-string map. Values are opaque to the framework: it copies them,
+ * keeps them associated with their frame, and clears them when a destination buffer is
+ * reused. It never parses, merges, or reinterprets them.
+ *
+ * Keys are normalized to ASCII lowercase by producers that capture them from a transport
+ * (see `MultipartHeaderCaptureOptions`). Ordering is lexicographic by key. Keys and values
+ * must be valid UTF-8 and may not contain embedded NUL bytes because the GStreamer string
+ * representation cannot preserve other encodings.
+ *
+ * @see Sample::attributes
+ * @see MultipartHeaderCaptureOptions
+ * @ingroup pipeline
+ */
+using SampleAttributes = std::map<std::string, std::string>;
+
+/**
  * @brief Typed payload returned by `Run::pull()` and consumed by `Run::push()`.
  *
  * A Sample is a tagged union: depending on `kind`, exactly one of `tensor`, `tensors`, or
@@ -539,6 +558,13 @@ struct Sample {
   int64_t pts_ns = -1;      ///< Presentation timestamp in nanoseconds (-1 if absent).
   int64_t dts_ns = -1;      ///< Decoding timestamp in nanoseconds (-1 if absent).
   int64_t duration_ns = -1; ///< Sample duration in nanoseconds (-1 if absent).
+
+  /// Per-frame user attributes captured by a source (see `MultipartHeaderCaptureOptions`).
+  ///
+  /// Empty unless a producer was configured to capture them. Attributes stay associated with
+  /// the frame they were captured on across the guaranteed boundaries documented in
+  /// `docs/develop-apps/`; they are not merged or synthesized by intermediate nodes.
+  SampleAttributes attributes;
 
   /// Returns true when this Sample carries no payload.
   bool empty() const noexcept {

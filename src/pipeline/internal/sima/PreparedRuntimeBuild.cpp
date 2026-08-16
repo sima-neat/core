@@ -4778,8 +4778,9 @@ bool build_graph_owned_prepared_stage_local(
                                             transformed_stage.output_order.size() > 1U;
 
     simaai::gst::ProcessCvuPreparedStage processcvu_stage;
-    if (canonical_family == "detesscast" || canonical_family == "detessdequant" ||
-        canonical_family == "dequantize" || processcvu_region_contract) {
+    if (canonical_family == "detessellate" || canonical_family == "detesscast" ||
+        canonical_family == "detessdequant" || canonical_family == "dequantize" ||
+        processcvu_region_contract) {
       if (!build_processcvu_prepared_stage_from_manifest_stage_local(
               transformed_stage, &processcvu_stage, error_message, transformed_manifest,
               transformed_stage_index)) {

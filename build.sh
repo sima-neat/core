@@ -72,7 +72,7 @@ ELXR_TARGET_PYTHON_VERSION=""
 ELXR_TARGET_PYTHON_INCLUDE_DIR=""
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
-NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
+NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Palette Neat}"
 NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa Neat extras (tutorials/tests)}"
@@ -616,13 +616,13 @@ run_privileged() {
   # 4) interactive sudo only in TTY sessions
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
-    return 0
+    return $?
   fi
 
   if command -v sudo >/dev/null 2>&1; then
     if sudo -n true 2>/dev/null; then
       sudo -n "$@"
-      return 0
+      return $?
     fi
 
     local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
@@ -1353,6 +1353,52 @@ PY
   fi
 }
 
+sync_sysroot_from_internals_manifest() {
+  local artifact_dir="$1"
+  [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0
+
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    echo "ERROR: NEAT_SYNC_SYSROOT requires an eLxr SDK." >&2
+    exit 1
+  fi
+
+  local artifact_manifest="${artifact_dir}/internals-manifest.json"
+  if [[ ! -f "${artifact_manifest}" ]]; then
+    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
+    exit 1
+  fi
+
+  local receipt
+  if ! receipt="$(python3 -c '
+import json, re, sys
+artifact = json.load(open(sys.argv[1], encoding="utf-8"))
+consumer = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt = artifact["sysroot-version"]
+consumer_base = consumer["platform-version"]
+if not isinstance(receipt, str) or (
+    receipt and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}~pre[0-9]+", receipt)
+):
+    raise ValueError("invalid sysroot-version")
+if receipt and consumer_base != receipt.split("~pre", 1)[0]:
+    raise ValueError("platform-version does not match the Internals receipt")
+print(receipt)
+' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
+    echo "ERROR: Cannot read Internals build receipt." >&2
+    exit 1
+  fi
+  if [[ -z "${receipt}" ]]; then
+    echo "Core is using the existing SDK sysroot."
+    return 0
+  fi
+
+  echo "Updating SDK sysroot to Internals receipt ${receipt}"
+  if ! run_privileged sysroot update "${receipt}"; then
+    echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+    exit 1
+  fi
+  sysroot status
+}
+
 ensure_neat_internals() {
   # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
@@ -1362,7 +1408,6 @@ ensure_neat_internals() {
   internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
-  local marker_file="${NEAT_INTERNALS_DIR}/.internals"
   local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
 
   local tmp_dir
@@ -1372,21 +1417,9 @@ ensure_neat_internals() {
   local artifact_dir="${tmp_dir}/package"
   local plugins_list_file="${tmp_dir}/plugin-files.list"
 
-  if [[ -f "${marker_file}" ]] && [[ -d "${NEAT_INTERNALS_PLUGIN_DIR}" ]]; then
-    local current_tag
-    current_tag="$(tr -d '[:space:]' < "${marker_file}")"
-    # Cache hit requires matching resolved Vulcan spec and a known plugin sentinel.
-    if [[ "${current_tag}" == "${internals_ref}" ]] &&
-       [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]] &&
-       compgen -G "${deb_cache_dir}/neat-*.deb" >/dev/null 2>&1; then
-      echo "Using cached neat-internals plugins/debs (${internals_ref})."
-      rm -rf "${tmp_dir}"
-      return 0
-    fi
-  fi
-
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  sync_sysroot_from_internals_manifest "${artifact_dir}"
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
@@ -1396,7 +1429,6 @@ ensure_neat_internals() {
 
   copy_plugins_to_neat_internals "${plugins_list_file}"
 
-  printf '%s\n' "${internals_ref}" > "${marker_file}"
   rm -rf "${tmp_dir}"
 }
 
@@ -1666,9 +1698,7 @@ collect_install_artifact_files() {
     out_files_ref+=("${file}")
   done
 
-  for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb \
-              "${NEAT_INTERNALS_DEB_DIR}"/simaai-common*.deb \
-              "${NEAT_INTERNALS_DEB_DIR}"/neat-appcomplex_*.deb; do
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
@@ -2192,8 +2222,14 @@ PY
 run_install_sanity_check() {
   echo
   echo "Running install sanity check..."
-  local install_test_dir="/tmp/sima-neat-install-test"
-  rm -rf "${install_test_dir}"
+  # Fresh directory per run: the fixed path could hold artifacts left by a
+  # previous build. Removed on success, kept on failure for inspection.
+  local install_test_dir=""
+  install_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-install-test.XXXXXX")" || {
+    echo "ERROR: unable to create the install sanity check directory."
+    exit 1
+  }
+  echo "Install sanity check directory: ${install_test_dir}"
   local core_install_dir="${install_test_dir}/core"
   local dev_install_dir="${install_test_dir}/dev"
 
@@ -2262,6 +2298,7 @@ run_install_sanity_check() {
     echo "Refusing to package mismatched core and development packages."
     exit 1
   fi
+  rm -rf "${install_test_dir}"
 }
 
 build_deb_if_requested() {
@@ -2365,20 +2402,14 @@ build_extras_archive_if_requested() {
 }
 
 stage_package_artifacts_to_dist() {
-  # Keep dist/ as the complete local artifact directory for full builds.
   if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
     return 0
   fi
 
   mkdir -p dist
   rm -f \
-    dist/*-Linux-core.deb \
-    dist/*-Linux-dev.deb \
+    dist/*.deb \
     dist/*-Linux-extras.tar.gz \
-    dist/neat-*.deb \
-    dist/simaai-common*.deb \
-    dist/appcomplex_*.deb \
-    dist/sima-lmm-*.deb \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
@@ -2397,11 +2428,6 @@ stage_package_artifacts_to_dist() {
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
-
-  # The Core package declares an explicit LLiMa ABI range. Fail before
-  # publishing/installing a bundle when the copied LLiMa DEBs do not satisfy
-  # that range (for example Core 0.2.x combined with LLiMa 0.3.x).
-  python3 "${REPO_ROOT}/tools/validate_neat_package_bundle.py" "${REPO_ROOT}/dist"
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
@@ -2488,21 +2514,7 @@ write_install_manifest() {
     echo "# Keep this file next to ${NEAT_PACKAGE_INSTALL_SCRIPT}."
   } > "${manifest_path}"
 
-  append_dist_manifest_matches "${manifest_path}" 'simaai-common*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera-tools_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-common_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-appcomplex_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-ev74-firmware_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-runtime_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-gst-plugins_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-internals-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-lmm-*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-dev.deb'
+  append_dist_manifest_matches "${manifest_path}" '*.deb'
   append_dist_manifest_matches "${manifest_path}" '*.whl'
 
   echo "Built install manifest: ${manifest_path}"
@@ -2890,7 +2902,6 @@ main() {
   ensure_node20_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
-  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     ensure_dependency_headers
@@ -2902,6 +2913,7 @@ main() {
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
   fi
+  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     echo

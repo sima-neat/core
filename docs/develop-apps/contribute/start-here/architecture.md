@@ -39,6 +39,14 @@ Developers who want to:
 - Optionally serve a pipeline over RTSP (via `gst-rtsp-server`)
 - Feed ML code via tensor-friendly outputs without writing GStreamer plumbing
 
+## Package ownership
+
+The selected Core artifact is the source of truth for the Neat, LLiMa, and
+Internals Debian packages installed together. Core consumes and forwards that
+artifact closure without choosing or rewriting dependency versions. Packages
+outside the artifact remain platform-owned; an incompatible platform must be
+updated rather than repaired by Core or LLiMa.
+
 ### Common workflows
 - **Decode / ingest:** file or RTSP -> depay/demux/parse -> decode -> convert/caps -> appsink -> C++ consumer
 - **Validate:** build + parse + preroll (PAUSED) to catch negotiation issues early
@@ -117,6 +125,10 @@ between implementation options.
 - **The MPK contract is the model source of truth.** Core routing, dtype, shape, quantization, and
   stage decisions must come from `mpk.json` / `*_mpk.json`. Per-stage JSON files are
   plugin-private.
+- **Detess logical rank and runtime geometry are separate.** Core preserves the MPK-authored
+  `frame_shape` as the logical output contract and derives explicit MLA geometry when needed. A
+  rank-2 shape is accepted as NC or HW only when declared byte spans identify one unique
+  interpretation; ambiguous or inconsistent contracts fail during model loading.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
   Prefer additive changes and deprecation paths over breaking signatures.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
@@ -496,6 +508,21 @@ Internally:
 This supports fully async pipelines (producer/consumer split) as well as
 one-shot flows (`Graph::run(...)`).
 
+### Decoder admission lifecycle
+
+Before choosing the single-pipeline or connected-graph runtime, Core scans the
+compiled execution plan for typed H.264/H.265 `SimaDecode` nodes. All eligible
+decoders are admitted as one group, and the resulting reservation is owned by
+the top-level `Run` until its pipeline workers have stopped. This applies
+equally to linear `Graph::add(...)` pipelines, ordinary connected segments, and
+fused realtime branches.
+
+Admission requires a known decoder width, height, and frame rate. Core never
+invents a frame rate. An incomplete contract or unavailable optional admission
+endpoint produces a warning and leaves the plan unchanged; with
+`SIMA_DECODER_ADMISSION_REQUIRE=1`, either condition fails before decoder
+hardware starts. Capacity rejection and malformed lease responses always fail.
+
 ### Realtime fan-in lowering
 
 Applications describe realtime edges with ordinary `Graph::connect(...)` and
@@ -630,6 +657,20 @@ GStreamer name collisions.
 | `Graph` | input-node options and/or seed input sample | explicit `max_*`; otherwise implicit from seed `width/height/depth` when provided | explicit `RunOptions.max_input_bytes`, otherwise bounded estimate or elastic default from `InputPolicy` |
 
 * **SimaAI concurrency**: multiple pipelines can run in-process; keep element names unique.
+
+---
+
+## Per-frame attribute propagation
+
+Sources attach `Sample::attributes` as a nested structure in `GstSimaMeta`. Elements that
+preserve a buffer carry the metadata naturally; Core boundaries that allocate or reuse a
+buffer deep-copy the attributes and clear stale values. `neatdecoder` snapshots the same
+frame context before decode and restores it by a daemon-provided correlation ID, so reordered
+or dropped frames cannot shift attributes onto another output. A negotiated decoder/daemon
+protocol owns that correlation contract; the legacy decoder protocol remains FIFO-only.
+
+The supported user-facing paths and limits are documented in
+[Per-frame attributes](../../advanced-concepts/data-model-contracts/frame_attributes.md).
 
 ---
 
@@ -853,6 +894,43 @@ These knobs are intentionally outside the public API so you can turn them on in 
 There are additional low-level debug flags in `src/pipeline/internal/*` (input stream
 logging, sample dumps, pool debug). Keep those out of user-facing docs unless
 you need deep diagnostics.
+
+---
+
+## PCIe host runtime boundary
+
+The separately packaged PCIe host API has two public levels:
+
+* `pcie::Model` is the source-compatible convenience API for one model.
+* `pcie::Runtime` is a card-scoped multi-model coordinator intended to support a thin OAAX C ABI adapter.
+
+The runtime exposes logical model IDs, caller-provided request IDs, nonblocking
+enqueue, retrieve-from-any-model, batch load, independent unload, and
+idempotent cleanup. Hardware queue IDs remain an implementation detail. The
+current Modalix implementation assigns exactly one loaded model to each of the
+four PCIe queues and continues to transfer model archives over the virtual
+Ethernet SSH/SCP control path.
+
+Inference request correlation uses the signed 32-bit OAAX request ID encoded
+in `GstSimaHostMeta.frame-id` across the PCIe/card round trip. The bit pattern
+is opaque and must be restored unchanged in the public completion. The runtime
+owns the model-to-queue registry and aggregates each queue's results; the
+card-side `pcie-pipeline-builder` remains one process and one model graph per
+queue.
+
+The card transport carries a separate private request token in the legacy-named
+`GstSimaMeta.pcie-buffer-id` field. It identifies the exact driver request and inflight credit;
+ordinary plugins may forward it unchanged but must not inspect or manufacture
+it. `stream-id` remains the output-routing key, while `frame-id` remains the
+application correlation key. Only `neatpciesink` resolves the request token.
+Successful work returns a DATA response. A decoder drop, flush, restart, or
+downstream failure returns a correlated `NEAT_PCIE_FRAME_RETURN_ERROR`, which
+releases the same host credit and terminates the affected host pipeline with an
+actionable error rather than leaving it blocked.
+
+The standardized OAAX `runtime_*` C symbols are an adapter boundary above this
+native API. OAAX ownership rules, status codes, and last-error storage belong
+in that adapter instead of the C++ API.
 
 ---
 

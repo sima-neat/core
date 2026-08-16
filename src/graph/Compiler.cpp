@@ -175,9 +175,12 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
       }
     }
     if (g.out_degree(id) > 1) {
-      throw std::runtime_error("Compiler: pipeline node " + std::to_string(id) +
-                               " has multiple outputs (out_degree=" +
-                               std::to_string(g.out_degree(id)) + "; add stage fan-out)");
+      const auto outputs = node->output_ports();
+      if (outputs.size() <= 1U || g.out_degree(id) > outputs.size()) {
+        throw std::runtime_error("Compiler: pipeline node " + std::to_string(id) +
+                                 " has multiple outputs (out_degree=" +
+                                 std::to_string(g.out_degree(id)) + "; add stage fan-out)");
+      }
     }
   }
 
@@ -200,9 +203,10 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
                                "', backend=Pipeline but dynamic_cast to PipelineNode failed)");
     }
 
-    const bool start_segment =
-        (g.in_degree(id) != 1) || pn->is_source_like() ||
-        (g.in_degree(id) == 1 && !is_pipeline_node(g.node(g.edge(g.in_edges(id)[0]).from)));
+    const NodeId predecessor = g.in_degree(id) == 1 ? g.edge(g.in_edges(id)[0]).from : kInvalidNode;
+    const bool start_segment = (g.in_degree(id) != 1) || pn->is_source_like() ||
+                               (g.in_degree(id) == 1 && (!is_pipeline_node(g.node(predecessor)) ||
+                                                         g.out_degree(predecessor) != 1U));
 
     if (!start_segment) {
       continue; // Will be claimed by a previous segment walk.
@@ -295,7 +299,11 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
     seg.output_edges.assign(out_edges.begin(), out_edges.end());
 
     if (seg.output_edges.size() > 1) {
-      throw std::runtime_error("Compiler: pipeline segment has multiple outputs");
+      const auto& last_node = g.node(seg.node_ids.back());
+      const auto outputs = last_node ? last_node->output_ports() : std::vector<PortDesc>{};
+      if (outputs.size() <= 1U || seg.output_edges.size() > outputs.size()) {
+        throw std::runtime_error("Compiler: pipeline segment has multiple outputs");
+      }
     }
     if (!seg.input_edges.empty()) {
       const auto& first_node = g.node(seg.node_ids.front());
@@ -315,10 +323,12 @@ CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) cons
       }
     }
     if (!seg.output_edges.empty()) {
-      const Edge& e = g.edge(seg.output_edges[0]);
-      if (e.from != seg.node_ids.back()) {
-        throw std::runtime_error(
-            "Compiler: pipeline segment output edge must originate from last node");
+      for (const std::size_t edge_index : seg.output_edges) {
+        const Edge& e = g.edge(edge_index);
+        if (e.from != seg.node_ids.back()) {
+          throw std::runtime_error(
+              "Compiler: pipeline segment output edge must originate from last node");
+        }
       }
     }
 

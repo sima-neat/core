@@ -39,6 +39,7 @@ struct DecoderAdmissionLease {
 struct DecoderAdmissionResult {
   bool admitted = false;
   bool endpoint_missing = false;
+  bool may_have_committed = false;
   std::string error;
   std::array<std::uint8_t, 16> group_uuid{};
   std::uint64_t estimated_reserved_bytes = 0;

@@ -58,6 +58,16 @@ int main() {
     require(multipart_demux->element_names(10).front() == "n10_multipartdemux",
             "MultipartJpegDemux element name mismatch");
 
+    demux_opt.header_capture.headers = {"Image-Index"};
+    auto capture_demux = simaai::neat::nodes::MultipartJpegDemux(demux_opt);
+    require_contains(capture_demux->backend_fragment(10),
+                     "neatmultipartjpegdemux name=n10_neatmultipartjpegdemux",
+                     "capturing MultipartJpegDemux name mismatch");
+    require_contains(capture_demux->backend_fragment(10), "capture-headers=\"image-index\"",
+                     "capturing MultipartJpegDemux allowlist mismatch");
+    require_contains(capture_demux->backend_fragment(10), "single-stream=true",
+                     "capturing MultipartJpegDemux single-stream mismatch");
+
     simaai::neat::JpegParseOptions jpeg_parse_opt;
     jpeg_parse_opt.disable_passthrough = false;
     auto jpeg_parse = simaai::neat::nodes::JpegParse(jpeg_parse_opt);

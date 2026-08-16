@@ -25,8 +25,8 @@ using Json = nlohmann::json;
 constexpr const char* kQwenModelEnv = "SIMA_TEST_LLIMA_REASONING_QWEN_MODEL";
 constexpr const char* kQwenModel = "Qwen3-0.6B-GPTQ-a16w4";
 constexpr const char* kGemmaModelEnv = "SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL";
-constexpr const char* kGemmaModel = "Gemma-4-E2B-it-GPTQ-a16w4";
-constexpr const char* kQuery = "Think briefly: what is 2 plus 3? Give the final answer.";
+constexpr const char* kGemmaModel = "Gemma-4-E2B-it-TextOnly-GPTQ-a16w4";
+constexpr const char* kQuery = "Solve x + 7 = 12. Think briefly, then give x.";
 
 int choose_free_port() {
   const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
