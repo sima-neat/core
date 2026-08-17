@@ -73,6 +73,7 @@ def write_wheel(stage_dir: Path, output_dir: Path, version: str) -> Path:
       "Summary: Python bindings for the SiMa NEAT PCIe host co-processor API\n"
       "Requires-Python: >=3.8\n"
       "Requires-Dist: numpy\n"
+      "Requires-Dist: opencv-python\n"
   ).encode("utf-8")
   wheel = (
       "Wheel-Version: 1.0\n"

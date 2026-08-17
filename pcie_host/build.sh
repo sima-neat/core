@@ -12,6 +12,7 @@ BUILD_TYPE="Release"
 BUILD_TESTS="OFF"
 BUILD_PYTHON="OFF"
 BUILD_EXAMPLES="OFF"
+BUILD_TUTORIALS="ON"
 CLEAN_BUILD="OFF"
 MAKE_DEB="ON"
 PACKAGE_DIR="${SCRIPT_DIR}/dist"
@@ -92,7 +93,7 @@ install_build_deps() {
     nlohmann-json3-dev
     zlib1g-dev
   )
-  if [[ "${BUILD_TESTS}" == "ON" ]]; then
+  if [[ "${BUILD_TESTS}" == "ON" || "${BUILD_TUTORIALS}" == "ON" ]]; then
     packages+=(libopencv-dev)
   fi
   if [[ "${BUILD_PYTHON}" == "ON" ]]; then
@@ -403,7 +404,9 @@ ensure_artifact_downloaded() {
 
 generate_package_metadata() {
   mkdir -p "${PACKAGE_DIR}"
-  rm -f "${PACKAGE_DIR}/metadata.json" "${PACKAGE_DIR}/metadata-pyneatpcie.json"
+  rm -f "${PACKAGE_DIR}/metadata.json" \
+    "${PACKAGE_DIR}/metadata-extras.json" \
+    "${PACKAGE_DIR}/metadata-pyneatpcie.json"
 
   local git_commit="${GITHUB_SHA:-}"
   if [[ -z "${git_commit}" ]] &&
@@ -537,6 +540,41 @@ if runtime_debs and full_paths:
     (package_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
+    if len(extras_tars) == 1:
+        extras = extras_tars[0].name
+        extracted_dir = extras.removesuffix(".tar.gz")
+        extras_metadata = dict(metadata)
+        extras_metadata.update({
+            "description": (
+                "SiMa.ai NEAT PCIe host tutorial extras "
+                f"({host_distro}, {deb_arch})"
+            ),
+            "resources": [extras],
+            "resources-checksum": {extras: resource_checksums[extras]},
+            "selectable-resources": [],
+            "installation": {
+                "script": ":",
+                "post-message": (
+                    "[bold]PCIe host tutorial extras downloaded and extracted.[/bold]\n"
+                    f"Enter the tutorial directory with: cd {extracted_dir}\n"
+                    "The matching PCIe host package must already be installed.\n"
+                ),
+            },
+            "artifact": {
+                "type": "tutorial-extras",
+                "repository": "core",
+                "package_path": f"pciehost/{host_distro}/{deb_arch}",
+                "distro": host_distro,
+                "arches": [deb_arch],
+            },
+            "size": {
+                "download": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+                "install": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+            },
+        })
+        (package_dir / "metadata-extras.json").write_text(
+            json.dumps(extras_metadata, indent=2) + "\n", encoding="utf-8")
+
     if len(wheels) == 1:
         wheel = wheels[0].name
         pyneatpcie_metadata = dict(metadata)
@@ -602,6 +640,7 @@ echo "Build type      : ${BUILD_TYPE}"
 echo "Build tests     : ${BUILD_TESTS}"
 echo "Build Python    : ${BUILD_PYTHON}"
 echo "Build examples  : ${BUILD_EXAMPLES}"
+echo "Build tutorials : ${BUILD_TUTORIALS}"
 echo "Generate DEB    : ${MAKE_DEB}"
 echo "Clean build     : ${CLEAN_BUILD}"
 echo "Build dir       : ${BUILD_DIR}"
@@ -656,6 +695,7 @@ cmake -S . -B "${BUILD_DIR}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_EXAMPLES="${BUILD_EXAMPLES}" \
+  -DSIMAPCIE_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
   -DSIMAPCIE_BUILD_PYTHON="${BUILD_PYTHON}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
   -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
@@ -675,20 +715,41 @@ if [[ -f "${INSTALLER_SOURCE}" ]]; then
   chmod 0755 "${INSTALLER_STAGE}"
 fi
 
-if [[ "${BUILD_TESTS}" == "ON" ]]; then
+if [[ "${BUILD_TESTS}" == "ON" || "${BUILD_TUTORIALS}" == "ON" ]]; then
   echo
   echo "Building PCIe host extras archive..."
   extras_name="sima-pcie-host-${PACKAGE_VERSION}-Linux-${DEB_ARCH}-extras"
-  extras_dir="${PACKAGE_DIR}/${extras_name}"
   extras_tar="${PACKAGE_DIR}/${extras_name}.tar.gz"
-  rm -rf "${extras_dir}" "${extras_tar}" "${extras_tar}.sha256"
+  extras_stage="$(mktemp -d /tmp/sima-pcie-host-extras-stage.XXXXXX)"
+  extras_dir="${extras_stage}/prefix"
+  trap 'rm -rf "${extras_stage}"' EXIT
+  rm -f "${extras_tar}" "${extras_tar}.sha256"
   mkdir -p "${PACKAGE_DIR}"
   cmake --install "${BUILD_DIR_ABS}" \
     --component PcieHostExtras \
     --prefix "${extras_dir}"
+
+  if [[ ! -x "${extras_dir}/build.sh" ]]; then
+    echo "ERROR: PCIe host extras install tree is missing root build.sh." >&2
+    echo "       Expected build.sh next to lib/ and share/." >&2
+    exit 1
+  fi
+  if [[ ! -d "${extras_dir}/share/sima-pcie-host/tutorials" ]]; then
+    echo "ERROR: PCIe host extras install tree is missing tutorial sources." >&2
+    exit 1
+  fi
+  for tutorial_asset in labrador.jpg street-scene.png; do
+    asset_path="${extras_dir}/share/sima-pcie-host/tutorials/assets/${tutorial_asset}"
+    if [[ ! -s "${asset_path}" ]]; then
+      echo "ERROR: PCIe host extras install tree is missing tutorial asset ${tutorial_asset}." >&2
+      exit 1
+    fi
+  done
+
   tar -C "${extras_dir}" -czf "${extras_tar}" .
   sha256sum "${extras_tar}" > "${extras_tar}.sha256"
-  rm -rf "${extras_dir}"
+  rm -rf "${extras_stage}"
+  trap - EXIT
 fi
 
 if [[ "${BUILD_PYTHON}" == "ON" ]]; then

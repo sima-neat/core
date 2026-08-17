@@ -1,130 +1,113 @@
 ---
-title: Before You Run Tutorials
-description: Prerequisites, model archives, command contexts, and quick checks for Neat tutorials
+title: Tutorial Setup
+description: Choose an execution environment, download the tutorials, and prepare model archives
 sidebar_position: 2
 slug: /tutorials/before-you-run
 ---
 
-# Before You Run Tutorials
+# Tutorial Setup
 
-Use this page once before your first tutorial. It gets the path, model archive,
-and command context sorted out so the tutorial can stay focused on the API.
+Complete this setup once before starting a tutorial. Choose the environment
+that matches the tutorial category; the Neat Library and PCIe bundles are not
+interchangeable.
 
-## Check what you need
+## 1. Choose your environment
 
-Before you run a chapter, make sure you have:
-
-- Palette SDK or a target DevKit with Neat installed.
-- `pyneat` available for Python tutorials.
-- The tutorial extras folder if you want the prebuilt binaries under `lib/` or
-  the installed tutorial sources under `share/`.
-- A compiled model archive (`.tar.gz`, often called an MPK) for model-backed
-  tutorials. Use the Model Zoo or compile your own model with the Model
-  Compiler.
-
-No mystery wires. If a command below does not match where you are running, stop
-and switch context before copying it.
-
-## Pick the right command context
-
-| Command kind | Run from | Prompt context |
+| Tutorial category | Run on | Python environment |
 | --- | --- | --- |
-| Python tutorial from the installed extras folder | The Neat install or extras root that contains `share/` | `sdk-or-devkit` |
-| Prebuilt C++ tutorial | The Neat install or extras root that contains `lib/` | `sdk-or-devkit` |
-| Rebuild a C++ tutorial from source | The repo root or extras root that contains `build.sh` | `sdk-or-devkit` |
-| Run a repo binary through `dk` | Palette SDK container | `sdk-container`; the command executes on the DevKit |
-| DevKit-only Python environment setup | DevKit shell | `devkit` |
+| Models & Inference, Graphs & Pipelines, Cameras & Streaming, GenAI | Modalix DevKit or the environment named by the tutorial | `~/pyneat` |
+| PCIe Co-Processing | Host connected to a Modalix PCIe Card | `~/pyneatpcie` |
 
-Most tutorial pages show three commands:
+PCIe tutorials run on the host, not inside the SDK container or directly on
+the card.
 
-1. Python from `share/sima-neat/tutorials/...`.
-2. C++ prebuilt from `lib/sima-neat/tutorials/...`.
-3. C++ rebuilt with `./build.sh --target ...`.
+## 2. Set up Neat Library tutorials
 
-Run each command from the directory stated in the tutorial. Relative paths in the
-examples are intentional.
-
-## Verify the basics
-
-Check that `sima-cli` is visible before you try to fetch model archives:
+Make sure the [Neat Library is installed](/getting-started/neat-library/install-or-update/),
+then run these commands from the directory where you want the tutorial bundle:
 
 <ShellCommand prompt="sdk-or-devkit">
-command -v sima-cli
+sima-cli neat install core -t extras
+cd sima-neat-*-Linux-extras
 </ShellCommand>
 
-For Python tutorials, check that `pyneat` imports in the environment you will use:
-
-<ShellCommand prompt="sdk-or-devkit">
-python3 -c "import pyneat; print('pyneat ok')"
-</ShellCommand>
-
-If you run Python directly on a DevKit, activate the DevKit virtual environment
-first:
+For Python tutorials running directly on a DevKit, activate PyNeat and verify
+the import:
 
 <ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
+python3 -c "import pyneat; print('pyneat ready')"
 </ShellCommand>
 
-## Prepare model archives
+## 3. Set up PCIe tutorials
 
-Model-backed tutorials use fixed example paths so commands stay short:
+First [install and verify the PCIe host package](/getting-started/neat-library/pcie-host/).
+Then download the tutorial bundle for the Ubuntu version running on the host.
+Run the command from the directory where you want the bundle.
 
-| Tutorial family | Example path used in commands |
-| --- | --- |
-| Classification tutorials | `/tmp/resnet_50.tar.gz` |
-| Detection tutorials | `/tmp/yolo_v8s.tar.gz` |
+**Ubuntu 22.04:**
 
-Download the needed model from the Model Zoo when available:
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/ubuntu22/amd64 -t extras
+cd sima-pcie-host-*-Linux-amd64-extras
+</ShellCommand>
 
-<ShellCommand prompt="sdk-or-devkit">
+**Ubuntu 24.04:**
+
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/ubuntu24/amd64 -t extras
+cd sima-pcie-host-*-Linux-amd64-extras
+</ShellCommand>
+
+Verify PCIe PyNeat:
+
+<ShellCommand prompt="pcie-host">
+source ~/pyneatpcie/bin/activate
+python3 -c "import pyneatpcie; print('pyneatpcie ready')"
+</ShellCommand>
+
+## 4. Prepare model archives
+
+Use Model Zoo to download the model named by the tutorial. For example:
+
+<ShellCommand prompt="sdk-devkit-or-pcie-host">
 sima-cli modelzoo get resnet_50
-</ShellCommand>
-
-<ShellCommand prompt="sdk-or-devkit">
 sima-cli modelzoo get yolo_v8s
 </ShellCommand>
 
-Model Zoo filenames and download locations can vary. Use the actual tarball path
-with `--model <path>`, or create a symlink to the tutorial path:
+Neat Library tutorials accept `--model`, so you can pass the downloaded archive
+directly. PCIe tutorials use fixed filenames in the PCIe extras root:
 
-<ShellCommand prompt="sdk-or-devkit">
-ln -sf /path/to/resnet_50_mpk.tar.gz /tmp/resnet_50.tar.gz
+| PCIe tutorial | Required model file |
+| --- | --- |
+| Run Your First Model over PCIe | `yolo_v8s_mpk.tar.gz` |
+| Run PCIe Inference Async | `yolo_v8s_mpk.tar.gz` |
+| Run Multiple Models | `resnet_50_mpk.tar.gz` and `yolo_v8s_mpk.tar.gz` |
+
+Model Zoo output names and locations can vary. If necessary, copy the archives
+into the PCIe extras root using the required names:
+
+<ShellCommand prompt="pcie-host">
+cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
+cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
-<ShellCommand prompt="sdk-or-devkit">
-ln -sf /path/to/yolo_v8s_mpk.tar.gz /tmp/yolo_v8s.tar.gz
+## 5. Verify paths and expected output
+
+Run tutorial commands from the extracted extras root. Confirm that it contains
+the build helper, prebuilt C++ programs, and tutorial source:
+
+<ShellCommand prompt="sdk-or-pcie-host">
+test -x build.sh
+ls lib/*/tutorials/
+ls share/*/tutorials/
 </ShellCommand>
 
-Then check the path you need.
+- Prebuilt C++ programs are under `lib/<package>/tutorials/`.
+- C++ and Python source is under `share/<package>/tutorials/`.
+- `./build.sh --list-targets` lists the C++ programs you can rebuild.
+- Successful C++ tutorials finish with `[OK]`; Python tutorials print a compact
+  result such as `top1=...`, `completed=...`, or `detections=...`.
 
-<ShellCommand prompt="sdk-or-devkit">
-ls -lh /tmp/resnet_50.tar.gz
-</ShellCommand>
-
-<ShellCommand prompt="sdk-or-devkit">
-ls -lh /tmp/yolo_v8s.tar.gz
-</ShellCommand>
-
-## Know what a successful run looks like
-
-Tutorial output is small by design. A successful run usually prints one or two
-summary lines, such as `top1=...`, `outputs_pulled=...`, or `detections=...`.
-C++ tutorials also print `[OK] ...` at the end.
-
-Some chapters intentionally accept more than one valid output shape or label.
-For example, detection tutorials may print raw output heads when the current
-runtime route returns raw tensors instead of decoded BBOX data. The chapter
-explains the expected variants instead of pretending all packs behave the same.
-
-## When paths still fight back
-
-If a tutorial reports a missing model or asset:
-
-1. Pass the path explicitly with the tutorial's `--model` or `--image` flag.
-2. Check that you are running from the directory the tutorial command expects.
-3. Use the reference page for source-tree asset overrides when you are running
-   tests or repo-local examples.
-
-See [Tutorial Assets and Model Archives](/reference/tutorial-assets) for the
-source-tree environment variables, and [Troubleshooting](/reference/troubleshooting)
-for symptom-first fixes.
+If a tutorial reports a missing file, first check the current directory and the
+model filename. For more help, see [Troubleshooting](/reference/troubleshooting/).

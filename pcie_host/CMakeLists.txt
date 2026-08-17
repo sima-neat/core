@@ -29,6 +29,7 @@ option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
 option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware tests" OFF)
 option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host C++ examples" OFF)
 option(SIMAPCIE_BUILD_PYTHON "Build PCIe host Python bindings via nanobind" OFF)
+option(SIMAPCIE_BUILD_TUTORIALS "Build installable PCIe host tutorials" ON)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
 set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
@@ -265,6 +266,10 @@ if (SIMAPCIE_BUILD_HARDWARE_TESTS)
   add_subdirectory(tests/hardware)
 endif()
 
+if (SIMAPCIE_BUILD_TUTORIALS)
+  add_subdirectory(tutorials)
+endif()
+
 if (SIMAPCIE_BUILD_EXAMPLES)
   add_subdirectory(examples)
 endif()
@@ -302,7 +307,7 @@ set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_NAME "sima-pcie-host-dev")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_SECTION "libdevel")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_DEPENDS
-  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, zlib1g-dev"
+  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev"
 )
 set(CPACK_DEBIAN_DEVELOPMENT_DESCRIPTION
   "Headers, static library, and CMake package files for the NEAT PCIe host API.")

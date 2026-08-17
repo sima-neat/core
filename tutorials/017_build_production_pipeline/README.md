@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Graphs & Pipelines |
 | Difficulty | Advanced |
 | Estimated Read Time | 20-25 minutes |
 | Model | resnet_50 |

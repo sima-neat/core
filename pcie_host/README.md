@@ -361,7 +361,33 @@ the same build command on a fresh host and for subsequent rebuilds.
 ```text
 dist/sima-pcie-host_<version>_<arch>.deb
 dist/sima-pcie-host-dev_<version>_<arch>.deb
+dist/sima-pcie-host-<version>-Linux-<arch>-extras.tar.gz
 dist/install_pciehost.sh
+```
+
+The extras archive is relocatable and keeps prebuilt PCIe tutorial binaries
+separate from their C++, Python, documentation, and image sources. It contains
+the following entries directly at its root; it does not contain an enclosing
+directory:
+
+```text
+./
+├── build.sh
+├── lib/sima-pcie-host/tutorials/
+└── share/sima-pcie-host/tutorials/
+```
+
+Create the destination directory explicitly, then use the root helper to
+inspect or rebuild tutorials against the installed `sima-pcie-host-dev`
+package:
+
+```bash
+mkdir -p sima-pcie-host-extras
+tar -xzf dist/sima-pcie-host-<version>-Linux-<arch>-extras.tar.gz \
+  -C sima-pcie-host-extras
+cd sima-pcie-host-extras
+./build.sh --list-targets
+./build.sh --target tutorial_024_run_tensor_mode
 ```
 
 Core CI publishes each package set under its matching host distribution and
@@ -372,6 +398,14 @@ core/pciehost/ubuntu22/amd64
 core/pciehost/ubuntu22/arm64
 core/pciehost/ubuntu24/amd64
 core/pciehost/ubuntu24/arm64
+```
+
+The normal PCIe host package metadata includes the extras archive. To download
+and auto-extract only the tutorial bundle later without reinstalling the host
+packages, use the `extras` metadata variant:
+
+```bash
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0 -t extras
 ```
 
 Install the locally built packages on the host with:
@@ -452,10 +486,10 @@ sima-pcie-host-dev
 
 It contains `libsima_neat_pcie_host.a`, public headers, and the CMake package
 config. Because the installed target is a static library, `sima-pcie-host-dev`
-depends on the GStreamer and zlib development packages. Customer applications do
-not need the NEAT core or internals source tree; `find_package(SimaPCIeHost)`
-rediscovers the local GStreamer link flags with `pkg-config` and the zlib target
-through CMake.
+depends on the GStreamer, OpenCV, and zlib development packages. Customer
+applications do not need the NEAT core or internals source tree;
+`find_package(SimaPCIeHost)` rediscovers the local GStreamer link flags with
+`pkg-config` and the zlib target through CMake.
 
 ## V1 Scope
 

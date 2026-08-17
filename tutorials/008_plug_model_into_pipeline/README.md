@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Graphs & Pipelines |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15 minutes |
 | Model | yolo_v8s |
