@@ -452,10 +452,10 @@ sima-pcie-host-dev
 
 It contains `libsima_neat_pcie_host.a`, public headers, and the CMake package
 config. Because the installed target is a static library, `sima-pcie-host-dev`
-depends on the GStreamer and zlib development packages. Customer applications do
-not need the NEAT core or internals source tree; `find_package(SimaPCIeHost)`
-rediscovers the local GStreamer link flags with `pkg-config` and the zlib target
-through CMake.
+depends on the GStreamer, OpenCV, and zlib development packages. Customer
+applications do not need the NEAT core or internals source tree;
+`find_package(SimaPCIeHost)` rediscovers the local GStreamer link flags with
+`pkg-config` and the zlib target through CMake.
 
 ## V1 Scope
 

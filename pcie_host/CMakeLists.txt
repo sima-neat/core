@@ -302,7 +302,7 @@ set(CPACK_DEBIAN_RUNTIME_DESCRIPTION
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_NAME "sima-pcie-host-dev")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_SECTION "libdevel")
 set(CPACK_DEBIAN_DEVELOPMENT_PACKAGE_DEPENDS
-  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, zlib1g-dev"
+  "sima-pcie-host (= ${PROJECT_VERSION}), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libglib2.0-dev, libopencv-dev, zlib1g-dev"
 )
 set(CPACK_DEBIAN_DEVELOPMENT_DESCRIPTION
   "Headers, static library, and CMake package files for the NEAT PCIe host API.")
