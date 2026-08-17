@@ -27,7 +27,7 @@ Make sure the [Neat Library is installed](/getting-started/neat-library/install-
 then run these commands from the directory where you want the tutorial bundle:
 
 <ShellCommand prompt="sdk-or-devkit">
-sima-cli neat download core -t extras
+sima-cli neat install core -t extras
 cd sima-neat-*-Linux-extras
 </ShellCommand>
 
@@ -48,14 +48,14 @@ Run the command from the directory where you want the bundle.
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat download core/pciehost/ubuntu22/amd64 -t extras
+sima-cli neat install core/pciehost/ubuntu22/amd64 -t extras
 cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 
 **Ubuntu 24.04:**
 
 <ShellCommand prompt="pcie-host">
-sima-cli neat download core/pciehost/ubuntu24/amd64 -t extras
+sima-cli neat install core/pciehost/ubuntu24/amd64 -t extras
 cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 
