@@ -135,8 +135,17 @@ struct SpanStart {
 
 struct SpanAgg {
   MeasurePluginLatency metric;
+  MeasurePluginLatencyPercentiles percentiles;
   std::vector<double> durations_ms;
 };
+
+double percentile_from_sorted_samples(const std::vector<double>& samples, double percentile) {
+  const double index = percentile * static_cast<double>(samples.size() - 1U);
+  const auto lo = static_cast<std::size_t>(index);
+  const auto hi = std::min(lo + 1U, samples.size() - 1U);
+  const double frac = index - static_cast<double>(lo);
+  return samples[lo] + ((samples[hi] - samples[lo]) * frac);
+}
 
 std::string join_key(std::initializer_list<std::string> parts) {
   std::ostringstream os;
@@ -273,6 +282,17 @@ void add_plugin_metric(std::map<std::string, SpanAgg>* aggs, MeasurePluginLatenc
   agg.durations_ms.push_back(metric.total_ms);
 }
 
+void finalize_plugin_agg(SpanAgg& agg) {
+  if (agg.durations_ms.empty()) {
+    return;
+  }
+  std::sort(agg.durations_ms.begin(), agg.durations_ms.end());
+  agg.percentiles.p50_ms = percentile_from_sorted_samples(agg.durations_ms, 0.50);
+  agg.percentiles.p95_ms = percentile_from_sorted_samples(agg.durations_ms, 0.95);
+  agg.percentiles.p99_ms = percentile_from_sorted_samples(agg.durations_ms, 0.99);
+  agg.percentiles.available = true;
+}
+
 struct EdgeStart {
   RawEvent ev;
 };
@@ -376,15 +396,8 @@ void finalize_edge_agg(EdgeAgg& agg) {
     return;
   }
   std::sort(agg.durations_ms.begin(), agg.durations_ms.end());
-  auto percentile = [&](double p) {
-    const double index = p * static_cast<double>(agg.durations_ms.size() - 1U);
-    const auto lo = static_cast<std::size_t>(index);
-    const auto hi = std::min(lo + 1U, agg.durations_ms.size() - 1U);
-    const double frac = index - static_cast<double>(lo);
-    return agg.durations_ms[lo] + ((agg.durations_ms[hi] - agg.durations_ms[lo]) * frac);
-  };
-  agg.metric.p50_ms = percentile(0.50);
-  agg.metric.p95_ms = percentile(0.95);
+  agg.metric.p50_ms = percentile_from_sorted_samples(agg.durations_ms, 0.50);
+  agg.metric.p95_ms = percentile_from_sorted_samples(agg.durations_ms, 0.95);
 }
 
 void add_edge_metric(std::map<std::string, EdgeAgg>* aggs, MeasureEdgeLatency metric) {
@@ -571,10 +584,12 @@ LttngParseResult parse_lttng_trace_text(const std::string& text, std::uint64_t e
     if (duplicated_by_v2(agg.metric)) {
       continue;
     }
+    finalize_plugin_agg(agg);
     if (result.trace_loss_detected) {
       agg.metric.reliable = false;
     }
     result.plugin_metrics.push_back(std::move(agg.metric));
+    result.plugin_metric_percentiles.push_back(agg.percentiles);
   }
   for (auto& [key, agg] : edge_aggs) {
     (void)key;

@@ -6,6 +6,7 @@
 #include <gst/gst.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 RUN_TEST(
@@ -168,6 +169,17 @@ RUN_TEST(
       mla.processmla.batch_sz_model = 1;
       manifest.stages.push_back(mla);
 
+      // Recipe identity stays Core-side. Internals accepts the stable `ssd` family token and uses
+      // the already validated head geometry to select its fixed decoder implementation.
+      StageStaticSpec ssd_box = box;
+      ssd_box.element_name = "ssd_box";
+      ssd_box.logical_stage_id = "stage_ssd_box";
+      ssd_box.boxdecode.decode_type = simaai::neat::BoxDecodeType::Ssd;
+      ssd_box.boxdecode.ssd_recipe_id =
+          simaai::neat::pipeline_internal::sima::stagesemantics::SsdRecipeId::SsdMobile300V1;
+      ssd_box.boxdecode.decode_type_option = simaai::neat::BoxDecodeTypeOption::GroupedByRole;
+      manifest.stages.push_back(std::move(ssd_box));
+
       std::string attach_error;
       require(attach_manifest_context(pipeline, manifest, &attach_error),
               "attach_manifest_context should succeed: " + attach_error);
@@ -192,8 +204,11 @@ RUN_TEST(
           sima_plugin_manifest_stage_by_element_name(accessor, "pre");
       const SimaPluginStageSpec* box_stage =
           sima_plugin_manifest_stage_by_logical_id(accessor, "stage_box");
+      const SimaPluginStageSpec* ssd_box_stage =
+          sima_plugin_manifest_stage_by_logical_id(accessor, "stage_ssd_box");
       require(pre_stage != nullptr, "stage lookup by element name should return stage spec");
       require(box_stage != nullptr, "stage lookup by logical id should return stage spec");
+      require(ssd_box_stage != nullptr, "concrete SSD stage should resolve by logical id");
       require(pre_stage->payload_kind == SIMA_PLUGIN_STAGE_PAYLOAD_PROCESSCVU,
               "pre stage payload kind mismatch");
       require(pre_stage->payload.processcvu.graph_family != nullptr,
@@ -270,6 +285,9 @@ RUN_TEST(
                   std::string(box_stage->payload.boxdecode.decode_type_option) ==
                       "grouped-by-role-logit",
               "box stage payload decode_type_option mismatch");
+      require(ssd_box_stage->payload.boxdecode.decode_type != nullptr &&
+                  std::string(ssd_box_stage->payload.boxdecode.decode_type) == "ssd",
+              "manifest ABI must preserve the backend-compatible SSD family token");
 
       // The nested payload is embedded in movable manifest storage. Read it only through the
       // public accessor after construction to catch stale pre-move pointers.

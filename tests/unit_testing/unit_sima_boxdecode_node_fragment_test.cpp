@@ -176,106 +176,234 @@ sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
 
 } // namespace
 
-RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
-           const auto fixture = make_fixture();
-           const std::string tar_path = fixture.tar_path;
+RUN_TEST(
+    "unit_sima_boxdecode_node_fragment_test", ([] {
+      const auto fixture = make_fixture();
+      const std::string tar_path = fixture.tar_path;
 
-           simaai::neat::Model::Options model_opt;
-           model_opt.preprocess.kind = simaai::neat::InputKind::Image;
-           model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
-           model_opt.preprocess.color_convert.input_format =
-               simaai::neat::PreprocessColorFormat::BGR;
+      simaai::neat::Model::Options model_opt;
+      model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+      model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+      model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
 
-           simaai::neat::Model default_model(tar_path, model_opt);
-           require(!simaai::neat::internal::ModelAccess::has_model_managed_stage(
-                       default_model, simaai::neat::internal::StageNodeKind::BoxDecode),
-                   "default Model route must not auto-select BoxDecode from inferred MPK "
-                   "topology");
+      simaai::neat::Model default_model(tar_path, model_opt);
+      require(!simaai::neat::internal::ModelAccess::has_model_managed_stage(
+                  default_model, simaai::neat::internal::StageNodeKind::BoxDecode),
+              "default Model route must not auto-select BoxDecode from inferred MPK "
+              "topology");
 
-           simaai::neat::Model::Options mismatched_opt = model_opt;
-           mismatched_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
-           simaai::neat::Model mismatched_model(tar_path, mismatched_opt);
-           bool boxdecode_mismatch_rejected = false;
-           try {
-             (void)simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(
-                 mismatched_model, false);
-           } catch (const std::exception&) {
-             boxdecode_mismatch_rejected = true;
-           }
-           require(boxdecode_mismatch_rejected,
-                   "explicit BoxDecode must reject a detection decoder for a segmentation MPK "
-                   "contract");
+      // YOLO defines the established preprocessing-metadata contract. SSD and
+      // SuperPoint must consume geometry through the same neatobjectdecode path rather
+      // than inventing family-specific width/height sources.
+      auto metadata_yolo = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8,
+                                                              0.25, 0.45, 100, "metadata_yolo");
+      auto metadata_ssd = simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::Ssd, 0.30,
+                                                             0.60, 100, "metadata_ssd");
+      simaai::neat::BoxDecodeOptions superpoint_options(simaai::neat::BoxDecodeType::SuperPoint);
+      superpoint_options.superpoint.profile = simaai::neat::SuperPointProfile::A65V1;
+      auto metadata_superpoint =
+          simaai::neat::nodes::SimaBoxDecode(superpoint_options, "metadata_superpoint");
 
-           simaai::neat::Model::Options managed_opt = model_opt;
-           managed_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8Seg;
-           simaai::neat::Model managed_model(tar_path, managed_opt);
-           auto managed_node = simaai::neat::nodes::SimaBoxDecode(
-               managed_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100);
-           const auto* managed_box =
-               dynamic_cast<const simaai::neat::SimaBoxDecode*>(managed_node.get());
-           require(managed_box != nullptr,
-                   "model-managed boxdecode factory should return a concrete SimaBoxDecode node");
-           const std::string managed_fragment = managed_box->backend_fragment(0);
-           require(managed_fragment.find("original-width=") == std::string::npos,
-                   "model-managed boxdecode should let metadata drive original width");
-           require(managed_fragment.find("original-height=") == std::string::npos,
-                   "model-managed boxdecode should let metadata drive original height");
+      const auto* metadata_yolo_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(metadata_yolo.get());
+      const auto* metadata_ssd_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(metadata_ssd.get());
+      const auto* metadata_superpoint_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(metadata_superpoint.get());
+      require(metadata_yolo_box && metadata_ssd_box && metadata_superpoint_box,
+              "all BoxDecode families must use concrete SimaBoxDecode nodes");
+      require_contains(metadata_yolo_box->backend_fragment(0), "neatobjectdecode",
+                       "YOLO must use the shared ObjectDecode plugin");
+      require_contains(metadata_ssd_box->backend_fragment(0), "neatobjectdecode",
+                       "SSD must use the shared ObjectDecode plugin");
+      require_contains(metadata_superpoint_box->backend_fragment(0), "neatobjectdecode",
+                       "SuperPoint must use the shared ObjectDecode plugin");
 
-           auto standalone_node =
-               simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,
-                                                  100, "manual_boxdecode", 1280, 720, 640, 640);
-           const auto* standalone_box =
-               dynamic_cast<const simaai::neat::SimaBoxDecode*>(standalone_node.get());
-           require(standalone_box != nullptr,
-                   "manual boxdecode factory should return a concrete SimaBoxDecode node");
-           const auto standalone_req = standalone_box->preprocess_meta_requirement();
-           require(standalone_req.has_value(),
-                   "manual boxdecode should still expose non-geometry preprocess requirements");
-           require_contains(standalone_box->backend_fragment(0), "model-width=640",
-                            "boxdecode node fragment should emit explicit model-width");
-           require_contains(standalone_box->backend_fragment(0), "model-height=640",
-                            "boxdecode node fragment should emit explicit model-height");
-           require(std::find(standalone_req->required_fields.begin(),
-                             standalone_req->required_fields.end(),
-                             "preproc_original_width") == standalone_req->required_fields.end(),
-                   "manual boxdecode should drop original-width meta requirement when overridden");
-           require(std::find(standalone_req->required_fields.begin(),
-                             standalone_req->required_fields.end(),
-                             "preproc_original_height") == standalone_req->required_fields.end(),
-                   "manual boxdecode should drop original-height meta requirement when overridden");
-           require(std::find(standalone_req->required_fields.begin(),
-                             standalone_req->required_fields.end(),
-                             "preproc_resized_width") == standalone_req->required_fields.end(),
-                   "manual boxdecode should drop resized-width meta requirement when model dims "
-                   "are overridden");
-           require(std::find(standalone_req->required_fields.begin(),
-                             standalone_req->required_fields.end(),
-                             "preproc_scaled_height") == standalone_req->required_fields.end(),
-                   "manual boxdecode should drop scaled-height meta requirement when model dims "
-                   "are overridden");
-           require(std::find(standalone_req->required_fields.begin(),
-                             standalone_req->required_fields.end(),
-                             "preproc_resize_mode") != standalone_req->required_fields.end(),
-                   "manual boxdecode should preserve non-geometry preprocess requirements");
+      const auto yolo_geometry_req = metadata_yolo_box->preprocess_meta_requirement();
+      const auto ssd_geometry_req = metadata_ssd_box->preprocess_meta_requirement();
+      const auto superpoint_geometry_req = metadata_superpoint_box->preprocess_meta_requirement();
+      require(yolo_geometry_req && ssd_geometry_req && superpoint_geometry_req,
+              "metadata-driven BoxDecode families must require preprocessing metadata");
+      require(yolo_geometry_req->required_fields == ssd_geometry_req->required_fields,
+              "SSD must preserve YOLO's preprocessing metadata contract");
+      require(yolo_geometry_req->required_fields == superpoint_geometry_req->required_fields,
+              "SuperPoint must preserve YOLO's preprocessing metadata contract");
+      for (const char* geometry_field :
+           {"preproc_original_width", "preproc_original_height", "preproc_resized_width",
+            "preproc_resized_height", "preproc_scaled_width",    "preproc_scaled_height",
+            "preproc_pad_left",       "preproc_pad_right",       "preproc_pad_top",
+            "preproc_pad_bottom",     "preproc_resize_mode",     "preproc_affine_m00",
+            "preproc_affine_m01",     "preproc_affine_m02",      "preproc_affine_m10",
+            "preproc_affine_m11",     "preproc_affine_m12",      "preproc_affine_scale_x",
+            "preproc_affine_scale_y", "preproc_affine_offset_x", "preproc_affine_offset_y"}) {
+        require(std::find(yolo_geometry_req->required_fields.begin(),
+                          yolo_geometry_req->required_fields.end(),
+                          geometry_field) != yolo_geometry_req->required_fields.end(),
+                std::string("shared BoxDecode preprocessing contract is missing '") +
+                    geometry_field + "'");
+      }
 
-           bool threw_partial_model_dims = false;
-           try {
-             (void)simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25,
-                                                      0.45, 100, "bad_manual_boxdecode", 1280, 720,
-                                                      640, 0);
-           } catch (const std::exception& e) {
-             threw_partial_model_dims = true;
-             require_contains(std::string(e.what()),
-                              "explicit model dimensions requires both width and height",
-                              "partial-model-dims error text mismatch");
-           }
-           require(threw_partial_model_dims,
-                   "manual boxdecode must fail when only one explicit model dimension is provided");
+      simaai::neat::Model::Options mismatched_opt = model_opt;
+      mismatched_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+      simaai::neat::Model mismatched_model(tar_path, mismatched_opt);
+      bool boxdecode_mismatch_rejected = false;
+      try {
+        (void)simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(mismatched_model,
+                                                                                  false);
+      } catch (const std::exception&) {
+        boxdecode_mismatch_rejected = true;
+      }
+      require(boxdecode_mismatch_rejected,
+              "explicit BoxDecode must reject a detection decoder for a segmentation MPK "
+              "contract");
 
-           const auto legacy = sima_test::make_model_archive_fixture(
-               "boxdecode_node_fragment_legacy_missing_mpk", {
-                                                                 {"etc/pipeline_sequence.json",
-                                                                  R"json({
+      simaai::neat::Model::Options managed_opt = model_opt;
+      managed_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8Seg;
+      simaai::neat::Model managed_model(tar_path, managed_opt);
+      auto managed_node = simaai::neat::nodes::SimaBoxDecode(
+          managed_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100);
+      const auto* managed_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(managed_node.get());
+      require(managed_box != nullptr,
+              "model-managed boxdecode factory should return a concrete SimaBoxDecode node");
+      const std::string managed_fragment = managed_box->backend_fragment(0);
+      require(managed_fragment.find("original-width=") == std::string::npos,
+              "model-managed boxdecode should let metadata drive original width");
+      require(managed_fragment.find("original-height=") == std::string::npos,
+              "model-managed boxdecode should let metadata drive original height");
+
+      // A resize assertion may fill in missing external provenance, but it must not relabel
+      // an active model transform. Otherwise the decoder would invert the wrong geometry.
+      simaai::neat::Model::Options letterbox_opt = managed_opt;
+      letterbox_opt.preprocess.resize.enable = simaai::neat::AutoFlag::On;
+      letterbox_opt.preprocess.resize.mode = simaai::neat::ResizeMode::Letterbox;
+      letterbox_opt.preprocess.resize.width = 640;
+      letterbox_opt.preprocess.resize.height = 640;
+      simaai::neat::Model letterbox_model(tar_path, letterbox_opt);
+      bool conflicting_resize_override_rejected = false;
+      try {
+        (void)simaai::neat::nodes::SimaBoxDecode(
+            letterbox_model, simaai::neat::BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "",
+            std::nullopt, std::nullopt, 0, 0, 0, 0, simaai::neat::ResizeMode::Stretch);
+      } catch (const std::exception& e) {
+        conflicting_resize_override_rejected = true;
+        require_contains(e.what(), "conflicts with the active preprocess resize mode",
+                         "resize-plan conflict should have an actionable diagnostic");
+      }
+      require(conflicting_resize_override_rejected,
+              "an explicit Stretch override must not mask an active Letterbox resize");
+
+      auto standalone_node =
+          simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45, 100,
+                                             "manual_boxdecode", 1280, 720, 640, 640);
+      const auto* standalone_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(standalone_node.get());
+      require(standalone_box != nullptr,
+              "manual boxdecode factory should return a concrete SimaBoxDecode node");
+      const auto standalone_req = standalone_box->preprocess_meta_requirement();
+      require(standalone_req.has_value(),
+              "manual boxdecode should still expose non-geometry preprocess requirements");
+      require_contains(standalone_box->backend_fragment(0), "model-width=640",
+                       "boxdecode node fragment should emit explicit model-width");
+      require_contains(standalone_box->backend_fragment(0), "model-height=640",
+                       "boxdecode node fragment should emit explicit model-height");
+      require(std::find(standalone_req->required_fields.begin(),
+                        standalone_req->required_fields.end(),
+                        "preproc_original_width") == standalone_req->required_fields.end(),
+              "manual boxdecode should drop original-width meta requirement when overridden");
+      require(std::find(standalone_req->required_fields.begin(),
+                        standalone_req->required_fields.end(),
+                        "preproc_original_height") == standalone_req->required_fields.end(),
+              "manual boxdecode should drop original-height meta requirement when overridden");
+      require(std::find(standalone_req->required_fields.begin(),
+                        standalone_req->required_fields.end(),
+                        "preproc_resized_width") == standalone_req->required_fields.end(),
+              "manual boxdecode should drop resized-width meta requirement when model dims "
+              "are overridden");
+      require(std::find(standalone_req->required_fields.begin(),
+                        standalone_req->required_fields.end(),
+                        "preproc_scaled_height") == standalone_req->required_fields.end(),
+              "manual boxdecode should drop scaled-height meta requirement when model dims "
+              "are overridden");
+      require(std::find(standalone_req->required_fields.begin(),
+                        standalone_req->required_fields.end(),
+                        "preproc_resize_mode") != standalone_req->required_fields.end(),
+              "manual boxdecode should preserve non-geometry preprocess requirements");
+
+      // A raw SSD node must not manufacture preprocessing evidence. Without an explicit
+      // assertion it consumes resize mode from upstream metadata.
+      auto ssd_node = simaai::neat::nodes::SimaBoxDecode(
+          simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual", 1280, 720, 300, 300);
+      const auto* ssd_box = dynamic_cast<const simaai::neat::SimaBoxDecode*>(ssd_node.get());
+      require(ssd_box != nullptr, "raw SSD boxdecode factory should return a concrete node");
+      require(ssd_box->backend_fragment(0).find("resize-mode=") == std::string::npos,
+              "raw SSD boxdecode must not invent a resize-mode override");
+      const auto ssd_req = ssd_box->preprocess_meta_requirement();
+      require(ssd_req.has_value() &&
+                  std::find(ssd_req->required_fields.begin(), ssd_req->required_fields.end(),
+                            "preproc_resize_mode") != ssd_req->required_fields.end(),
+              "raw SSD boxdecode must require upstream resize-mode metadata");
+
+      // External preprocessing may be asserted explicitly, but SSD accepts only Stretch.
+      auto asserted_ssd_node = simaai::neat::nodes::SimaBoxDecode(
+          simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual_asserted", 1280, 720, 300,
+          300, simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt, std::nullopt,
+          simaai::neat::ResizeMode::Stretch);
+      const auto* asserted_ssd_box =
+          dynamic_cast<const simaai::neat::SimaBoxDecode*>(asserted_ssd_node.get());
+      require(asserted_ssd_box != nullptr, "asserted raw SSD node must be concrete");
+      require_contains(asserted_ssd_box->backend_fragment(0), "resize-mode=stretch",
+                       "explicit SSD Stretch assertion must reach the backend fragment");
+      const auto asserted_ssd_req = asserted_ssd_box->preprocess_meta_requirement();
+      require(asserted_ssd_req.has_value(),
+              "an SSD geometry assertion must preserve unrelated preprocess requirements");
+      require(std::find(asserted_ssd_req->required_fields.begin(),
+                        asserted_ssd_req->required_fields.end(),
+                        "preproc_resize_mode") == asserted_ssd_req->required_fields.end(),
+              "the explicit SSD Stretch assertion should discharge resize-mode metadata");
+      require(std::find(asserted_ssd_req->required_fields.begin(),
+                        asserted_ssd_req->required_fields.end(),
+                        "preproc_color_in") != asserted_ssd_req->required_fields.end(),
+              "a resize assertion must not discharge color metadata");
+      require(std::find(asserted_ssd_req->required_fields.begin(),
+                        asserted_ssd_req->required_fields.end(),
+                        "preproc_normalize") != asserted_ssd_req->required_fields.end(),
+              "a resize assertion must not discharge normalization metadata");
+      require(std::find(asserted_ssd_req->required_fields.begin(),
+                        asserted_ssd_req->required_fields.end(),
+                        "preproc_quantize") != asserted_ssd_req->required_fields.end(),
+              "a resize assertion must not discharge quantization metadata");
+
+      bool rejected_letterbox = false;
+      try {
+        (void)simaai::neat::nodes::SimaBoxDecode(
+            simaai::neat::BoxDecodeType::Ssd, 0.30, 0.60, 100, "ssd_manual_letterbox", 1280, 720,
+            300, 300, simaai::neat::BoxDecodeTypeOption::Auto, std::nullopt, std::nullopt,
+            std::nullopt, simaai::neat::ResizeMode::Letterbox);
+      } catch (const std::exception& e) {
+        rejected_letterbox = true;
+        require_contains(e.what(), "requires a stretch",
+                         "raw SSD letterbox rejection should explain the requirement");
+      }
+      require(rejected_letterbox, "raw SSD must reject an explicit Letterbox assertion");
+
+      bool threw_partial_model_dims = false;
+      try {
+        (void)simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,
+                                                 100, "bad_manual_boxdecode", 1280, 720, 640, 0);
+      } catch (const std::exception& e) {
+        threw_partial_model_dims = true;
+        require_contains(std::string(e.what()),
+                         "explicit model dimensions requires both width and height",
+                         "partial-model-dims error text mismatch");
+      }
+      require(threw_partial_model_dims,
+              "manual boxdecode must fail when only one explicit model dimension is provided");
+
+      const auto legacy = sima_test::make_model_archive_fixture(
+          "boxdecode_node_fragment_legacy_missing_mpk", {
+                                                            {"etc/pipeline_sequence.json",
+                                                             R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -290,21 +418,21 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
     ]
   }]
 })json"},
-                                                                 {"etc/0_process_mla.json",
-                                                                  R"json({
+                                                            {"etc/0_process_mla.json",
+                                                             R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-                                                             });
-           bool threw = false;
-           try {
-             simaai::neat::Model legacy_model(legacy.tar_path);
-             (void)simaai::neat::nodes::SimaBoxDecode(
-                 legacy_model, simaai::neat::BoxDecodeType::YoloV8, 0.35, 0.5, 120);
-           } catch (const std::exception& e) {
-             threw = true;
-             require_contains(std::string(e.what()), "strict MPK contract required",
-                              "legacy missing-mpk fixture should fail with strict contract error");
-           }
-           require(threw, "legacy missing-mpk fixture must fail under strict contract");
-         }));
+                                                        });
+      bool threw = false;
+      try {
+        simaai::neat::Model legacy_model(legacy.tar_path);
+        (void)simaai::neat::nodes::SimaBoxDecode(legacy_model, simaai::neat::BoxDecodeType::YoloV8,
+                                                 0.35, 0.5, 120);
+      } catch (const std::exception& e) {
+        threw = true;
+        require_contains(std::string(e.what()), "strict MPK contract required",
+                         "legacy missing-mpk fixture should fail with strict contract error");
+      }
+      require(threw, "legacy missing-mpk fixture must fail under strict contract");
+    }));

@@ -28,6 +28,20 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+std::vector<MeasurePluginLatencyWithPercentiles>
+zip_plugin_percentiles(const std::vector<MeasurePluginLatency>& metrics,
+                       const std::vector<MeasurePluginLatencyPercentiles>& percentiles) {
+  if (metrics.size() != percentiles.size()) {
+    throw std::logic_error("plugin latency percentile sidecars do not align with timing rows");
+  }
+  std::vector<MeasurePluginLatencyWithPercentiles> rows;
+  rows.reserve(metrics.size());
+  for (std::size_t index = 0; index < metrics.size(); ++index) {
+    rows.push_back({metrics[index], percentiles[index]});
+  }
+  return rows;
+}
+
 RunStats delta_counters(const RunStats& before, const RunStats& after) {
   RunStats out;
   out.inputs_enqueued = after.inputs_enqueued >= before.inputs_enqueued
@@ -352,6 +366,8 @@ struct MeasureScope::Impl {
   std::string message_latency_source = "none";
   bool stopped = false;
   MeasureReport cached{};
+  std::vector<MeasurePluginLatencyPercentiles> cached_plugin_percentiles;
+  std::vector<MeasurePluginLatencyPercentiles> cached_plugin_percentiles_unattributed;
 };
 
 void MeasureScope::disable_lttng_trace_identity_noexcept(Impl* impl) {
@@ -435,6 +451,8 @@ MeasureReport MeasureScope::stop() {
       impl_->core ? impl_->core->input_stats() : InputStreamStats{};
 
   MeasureReport report;
+  std::vector<MeasurePluginLatencyPercentiles> plugin_percentiles;
+  std::vector<MeasurePluginLatencyPercentiles> plugin_percentiles_unattributed;
   report.options = impl_->options;
   if (report.options.logical_batch_size <= 0)
     report.options.logical_batch_size = 1;
@@ -524,7 +542,9 @@ MeasureReport MeasureScope::stop() {
         }
       } else {
         report.plugin_latency = std::move(parsed.plugin_metrics);
+        plugin_percentiles = std::move(parsed.plugin_metric_percentiles);
         report.plugin_latency_unattributed = std::move(parsed.plugin_metrics_unattributed);
+        plugin_percentiles_unattributed = std::move(parsed.plugin_metric_percentiles_unattributed);
         report.edge_latency.insert(report.edge_latency.end(),
                                    std::make_move_iterator(parsed.edge_metrics.begin()),
                                    std::make_move_iterator(parsed.edge_metrics.end()));
@@ -611,12 +631,25 @@ MeasureReport MeasureScope::stop() {
   }
   pipeline_internal::attribute_edge_latency_to_nodes(report.node_metrics, &report.edge_latency,
                                                      &report.edge_latency_unattributed);
-  pipeline_internal::attribute_plugin_latency_to_nodes(report.node_metrics, &report.plugin_latency,
-                                                       &report.plugin_latency_unattributed);
+  pipeline_internal::attribute_plugin_latency_to_nodes(
+      report.node_metrics, &report.plugin_latency, &plugin_percentiles,
+      &report.plugin_latency_unattributed, &plugin_percentiles_unattributed);
 
   impl_->cached = report;
+  impl_->cached_plugin_percentiles = std::move(plugin_percentiles);
+  impl_->cached_plugin_percentiles_unattributed = std::move(plugin_percentiles_unattributed);
   impl_->stopped = true;
   return impl_->cached;
+}
+
+MeasureReportWithPluginPercentiles MeasureScope::stop_with_plugin_percentiles() {
+  MeasureReportWithPluginPercentiles out;
+  out.report = stop();
+  out.plugin_latency =
+      zip_plugin_percentiles(out.report.plugin_latency, impl_->cached_plugin_percentiles);
+  out.plugin_latency_unattributed = zip_plugin_percentiles(
+      out.report.plugin_latency_unattributed, impl_->cached_plugin_percentiles_unattributed);
+  return out;
 }
 
 MeasureScope run_internal::start_measurement_on_core(std::shared_ptr<runtime::RunCore> core,

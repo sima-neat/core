@@ -10,6 +10,7 @@
 #include "test_main.h"
 
 #include <filesystem>
+#include <optional>
 
 namespace {
 
@@ -176,6 +177,24 @@ RUN_TEST(
       Model::Options model_opt = base_opt;
       model_opt.decode_type = BoxDecodeType::YoloV8Seg;
       Model model(tar_path, model_opt);
+
+      // A non-SSD model route with external preprocessing has no Preproc element that can emit
+      // preproc metadata. Complete dimensions plus the explicit resize policy are the established
+      // provenance contract for this route and must discharge that bucket.
+      Model::Options external_opt = model_opt;
+      external_opt.preprocess.kind = InputKind::Tensor;
+      external_opt.preprocess.enable = AutoFlag::Off;
+      Model external_model(tar_path, external_opt);
+      auto external_node = simaai::neat::nodes::SimaBoxDecode(
+          external_model, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "", std::nullopt, std::nullopt,
+          1280, 720, 640, 640, ResizeMode::Letterbox);
+      const auto* external_box = dynamic_cast<const SimaBoxDecode*>(external_node.get());
+      require(external_box != nullptr,
+              "external-preprocessing boxdecode should return a concrete node");
+      const auto external_req = external_box->preprocess_meta_requirement();
+      require(!external_req.has_value() || external_req->required_fields.empty(),
+              "complete external YOLO preprocessing provenance must not require metadata from an "
+              "absent Preproc element");
 
       auto nodes = internal::ModelAccess::build_public_inference_nodes(model);
       require(!nodes.empty(), "inference fragment should contain renderable nodes");
