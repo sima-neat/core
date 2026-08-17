@@ -3938,8 +3938,13 @@ NB_MODULE(_pyneat_core, m) {
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(std::string, simaai::neat::InputOptions)>(
           &simaai::neat::nodes::Input),
       "name"_a, "options"_a = simaai::neat::InputOptions{});
-  nodes_mod.def("camera_input", &simaai::neat::nodes::CameraInput,
-                "options"_a = simaai::neat::CameraInputOptions{});
+  nodes_mod.def(
+      "camera_input",
+      [](simaai::neat::CameraInputOptions options, std::uint32_t capture_buffer_count) {
+        return simaai::neat::nodes::CameraInputWithCaptureBuffers(std::move(options),
+                                                                  capture_buffer_count);
+      },
+      "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),

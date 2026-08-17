@@ -468,6 +468,7 @@ set(UNIT_TESTS
   unit_tensor_image_mapping_test
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
+  unit_camera_allocation_query_test
   unit_nodes_test
   unit_visual_frontend_node_api_test
   unit_plugin_failure_messages_test

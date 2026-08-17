@@ -53,7 +53,7 @@ The framework's planner is responsible for picking segments such that consecutiv
 
 ## Camera sources and adaptive memory
 
-Live camera frames enter through the platform camera stack, so their memory type depends on the installed kernel, driver, and `libcamerasrc` path. `CameraInput` asks for device/SiMaAI zero-copy memory first. When the camera stack already provides it, Neat passes the buffer through and normalizes the metadata used by downstream CVU/MLA stages.
+Live camera frames enter through the platform camera stack, so their memory type depends on the installed kernel, driver, and `libcamerasrc` path. `CameraInput` asks for device/SiMaAI zero-copy memory first. Its private bridge proposes a standard pool through `GST_QUERY_ALLOCATION`; the pool allocates the validated planes from one packed SiMaAI allocation and exports them as DMA-BUFs. `libcamerasrc` imports those DMA-BUFs into the ISP, and the bridge unwraps the same packed allocation for downstream CVU/MLA stages.
 
 When the camera stack only provides OS/libcamera buffers and `allow_cpu_fallback` is enabled, Neat inserts a private camera memory bridge. The bridge copies each frame into a pooled SiMaAI buffer, stamps the expected metadata, and hands that buffer to model-managed CVU preprocessing. That copy is the compatibility bridge; resize, color conversion, normalization, quantization, and tessellation should still run on CVU/EV74.
 

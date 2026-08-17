@@ -198,6 +198,11 @@ verify_simulated_package_removals() {
       sima-neat | sima-neat-dev)
         continue
         ;;
+      neat-libcamera | neat-libcamera-dev | neat-libcamera-tools)
+        # Retired recovery packages: the platform owns libcamera since
+        # internals#190, so APT removing them is the intended retirement.
+        continue
+        ;;
     esac
 
     installed_version="$(
@@ -216,7 +221,6 @@ verify_simulated_package_removals() {
       )
       continue
     fi
-
     cat "${simulation_log}" >&2
     echo "Refusing to install because APT would remove ${package} without a bundled package that Provides its exact installed version and explicitly Replaces and Conflicts with it." >&2
     return 1
@@ -226,6 +230,42 @@ verify_simulated_package_removals() {
     log "Verified platform package replacements:"
     printf '  %s\n' "${verified_replacements[@]}"
   fi
+}
+
+# When retired neat-libcamera recovery packages are still installed, extend
+# the transaction with explicit name=version specs derived from the installed
+# palette's version: the pinned palette cannot be removed, and explicit
+# versions select the SiMa repository packages even where a shared name has a
+# foreign candidate. Emits nothing on boards without retired packages,
+# keeping their transaction unchanged.
+collect_board_heal_specs() {
+  local target palette_version
+  local -a retired_installed=()
+
+  for target in neat-libcamera neat-libcamera-dev neat-libcamera-tools; do
+    if deb_package_is_installed "${target}"; then
+      retired_installed+=("${target}")
+    fi
+  done
+  if [[ "${#retired_installed[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  palette_version=""
+  if deb_package_is_installed simaai-palette-modalix; then
+    palette_version="$(
+      dpkg-query -W -f='${Version}' simaai-palette-modalix 2>/dev/null || true
+    )"
+  fi
+  if [[ -z "${palette_version}" ]]; then
+    echo "Retired neat-libcamera packages are installed, but the simaai-palette-modalix version is unavailable; continuing without platform pins." >&2
+    return 0
+  fi
+
+  printf 'simaai-palette-modalix=%s\n' "${palette_version}"
+  for target in "${retired_installed[@]}"; do
+    printf '%s=%s\n' "${target#neat-}" "${palette_version}"
+  done
 }
 
 log_green() {
@@ -1696,6 +1736,14 @@ install_debs_on_board() {
     seen_install_specs["${spec}"]=1
     board_install_specs+=("${spec}")
   done
+
+  local -a board_heal_specs=()
+  mapfile -t board_heal_specs < <(collect_board_heal_specs)
+  if [[ "${#board_heal_specs[@]}" -gt 0 ]]; then
+    log "Pinning platform packages for the retirement transaction:"
+    printf '  %s\n' "${board_heal_specs[@]}"
+    board_install_specs+=("${board_heal_specs[@]}")
+  fi
 
   local -a apt_install_args=(
     apt-get install -y --fix-broken --allow-downgrades --reinstall

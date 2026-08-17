@@ -464,6 +464,128 @@ verify_simulated_package_removals "${simulation}" "${replacement}"
             result.stderr,
         )
 
+    def test_board_transaction_accepts_retired_neat_libcamera_removals(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+simulation="${tmp}/simulation.log"
+printf '%s\n' \
+  'Remv neat-libcamera [2.1.1~pre3348]' \
+  'Remv neat-libcamera-dev [2.1.1~pre3348]' \
+  'Remv neat-libcamera-tools [2.1.1~pre3348]' > "${simulation}"
+verify_simulated_package_removals "${simulation}"
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_board_transaction_still_rejects_non_retired_removals(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+tmp="$(mktemp -d)"
+trap 'rm -rf "${tmp}"' EXIT
+simulation="${tmp}/simulation.log"
+printf '%s\n' 'Remv simaai-palette-modalix [2.1.3~pre4744]' > "${simulation}"
+dpkg-query() {
+  printf '%s\n' '2.1.3~pre4744'
+}
+verify_simulated_package_removals "${simulation}"
+"""
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "without a bundled package that Provides its exact installed version",
+            result.stderr,
+        )
+
+    def test_heal_specs_stay_empty_on_boards_without_retired_packages(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+dpkg-query() {
+  if [[ "$2" == *Status-Abbrev* ]]; then
+    printf 'un '
+    return 1
+  fi
+  printf '%s\n' '2.1.3~pre4744'
+}
+collect_board_heal_specs
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_heal_specs_pin_palette_and_installed_identities_on_dirty_board(
+        self,
+    ) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+dpkg-query() {
+  case "$2" in
+    *Status-Abbrev*)
+      case "$3" in
+        neat-libcamera | neat-libcamera-tools | simaai-palette-modalix)
+          printf 'ii '
+          return 0
+          ;;
+        *)
+          printf 'un '
+          return 1
+          ;;
+      esac
+      ;;
+    *)
+      printf '%s\n' '2.1.3~pre4744'
+      ;;
+  esac
+}
+collect_board_heal_specs
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "simaai-palette-modalix=2.1.3~pre4744",
+                "libcamera=2.1.3~pre4744",
+                "libcamera-tools=2.1.3~pre4744",
+            ],
+        )
+
+    def test_heal_specs_warn_and_stay_empty_when_palette_is_absent(self) -> None:
+        result = run_bash(
+            r"""
+source "$1"
+dpkg-query() {
+  case "$2" in
+    *Status-Abbrev*)
+      if [[ "$3" == simaai-palette-modalix ]]; then
+        printf 'un '
+        return 1
+      fi
+      printf 'ii '
+      return 0
+      ;;
+    *)
+      printf '%s\n' '2.1.3~pre4744'
+      ;;
+  esac
+}
+collect_board_heal_specs
+"""
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("simaai-palette-modalix version is unavailable", result.stderr)
+
 
 class DispatcherMigrationTest(unittest.TestCase):
     def test_migration_moves_unowned_global_and_backup_outside_loader_dir(self) -> None:
