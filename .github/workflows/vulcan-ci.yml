@@ -15,6 +15,11 @@ on:
         required: false
         default: "standard"
         type: string
+      run_long_tests:
+        description: "Run weekly-only long tests on the Modalix runner"
+        required: false
+        default: false
+        type: boolean
       cache_base_branch:
         description: "Compiler-cache baseline: auto, develop, or main"
         required: false
@@ -30,6 +35,11 @@ on:
         options:
           - standard
           - fuzz
+      run_long_tests:
+        description: "Run weekly-only long tests on the Modalix runner"
+        required: false
+        default: false
+        type: boolean
       cache_base_branch:
         description: "Compiler-cache baseline"
         required: false
@@ -1195,6 +1205,10 @@ jobs:
 
           TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           SKIP_REGEX='^(unit_dispatcher_watchdog_test)$'
+          E2E_LABEL_EXCLUDE='perf|llima'
+          if [[ "${{ inputs.run_long_tests }}" != "true" ]]; then
+            E2E_LABEL_EXCLUDE+='|long'
+          fi
           if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
             echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"
             ctest --test-dir "${TEST_DIR}" \
@@ -1205,7 +1219,7 @@ jobs:
           else
             ctest --test-dir "${TEST_DIR}" \
               --label-regex "e2e" \
-              --label-exclude "perf|llima" \
+              --label-exclude "${E2E_LABEL_EXCLUDE}" \
               -E "${SKIP_REGEX}|^(modelzoo_bulk_models_test)$" \
               --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
@@ -1259,7 +1273,7 @@ jobs:
           echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "perf" \
-            --label-exclude "llima|disabled" \
+            --label-exclude "llima|disabled|long" \
             -E "^(modelzoo_bulk_models_test)$" \
             --output-on-failure \
             --no-tests=error
@@ -1267,9 +1281,14 @@ jobs:
       - name: Run Modalix Performance Matrix
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          PERF_MATRIX_ARGS=()
+          if [[ "${{ inputs.run_long_tests }}" == "true" ]]; then
+            PERF_MATRIX_ARGS+=(--include-long)
+          fi
           python3 tests/perf/tools/run_perf_matrix.py \
             --prebuilt-tests-dir "${TEST_DIR}" \
-            --results-dir "${GITHUB_WORKSPACE}/_work/perf-results"
+            --results-dir "${GITHUB_WORKSPACE}/_work/perf-results" \
+            "${PERF_MATRIX_ARGS[@]}"
 
       - name: Upload Modalix Performance Results
         if: ${{ always() }}
@@ -1372,6 +1391,28 @@ jobs:
             "${PYTHON_BIN}" -m pytest -q "${test_case}"
           done
           "${PYTHON_BIN}" -m pytest -q "${TUTORIALS_PYTEST_DIR}"
+
+      - name: Run weekly long Python pytest from installed extras
+        if: ${{ inputs.run_long_tests }}
+        run: |
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
+            exit 1
+          fi
+
+          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
+          PYTEST_LONG_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests_long"
+          if [[ ! -d "${PYTEST_LONG_DIR}" ]]; then
+            echo "Installed long Python tests not found at ${PYTEST_LONG_DIR}" >&2
+            exit 1
+          fi
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          SIMA_TEST_IS_LONG=1 "${PYTHON_BIN}" -m pytest -q "${PYTEST_LONG_DIR}"
 
       - name: Cleanup test workspace tmp artifacts
         if: ${{ always() }}

@@ -879,6 +879,23 @@ The intended behavior:
 * runtime flows throw exceptions on fatal errors
 * validation flows return structured reports (CI-friendly)
 
+### SSD BoxDecode contract resolution
+
+SSD model packs are validated against a private registry of exact post-surgery head contracts
+during graph compilation. The resolver compares every ordered logical localization and confidence
+H/W/C shape; it does not sort levels, use model names, or accept a generic SSD-like fallback.
+Currently registered recipes are SSD300-v1, SSD-Mobile-300-v1, SSD-Mobile-320-v1, and
+SSDlite-Mobile-320-v1.
+
+The resolved recipe owns score activation, confidence-channel order, background class, allowed
+class selection, required 300x300 or 320x320 model frame, and Stretch preprocessing. Core carries
+the recipe as an internal `SsdRecipeId`; the public and plugin ABI decode type remains
+`BoxDecodeType::Ssd` / `ssd`, which is the token supported by the deployed object decoder.
+Unsupported or malformed head
+geometry, conflicting activation, invalid class selection, a non-Stretch resize, or a wrong model
+frame fails before pipeline startup. Recipe discovery is compile-time only and adds no per-frame
+work.
+
 ---
 
 ## RTSP server mode

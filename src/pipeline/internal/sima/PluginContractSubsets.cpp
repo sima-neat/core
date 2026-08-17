@@ -2008,6 +2008,8 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   subset.tensor_storage_kind.reserve(contract.tensors.size());
   subset.tensor_roles.reserve(contract.tensors.size());
   subset.decode_type = contract.decode_type;
+  subset.ssd_recipe_id = contract.ssd_recipe_id;
+  subset.ssd_class_selection = contract.ssd_class_selection;
   subset.tess_needed = contract.tess_needed;
   subset.quant_needed = contract.quant_needed;
   if (contract.decode_type_option != BoxDecodeTypeOption::Auto) {
@@ -2062,10 +2064,8 @@ std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mp
   if (!extracted.has_value()) {
     return std::nullopt;
   }
-  // Apply the SSD-family contract defaults (softmax score activation, grouped-by-role layout, and
-  // geometric class-count inference) on the model-managed static contract before lowering it, so
-  // the subset — and the compiled payload built from it — carries a valid class count and layout
-  // into neatobjectdecode instead of the raw MPK defaults (Unknown / Auto / 0).
+  // Resolve SSD defaults before lowering, so the subset carries a valid class count
+  // and layout instead of the raw MPK defaults (Unknown/Auto/0).
   stagesemantics::apply_ssd_model_managed_contract_defaults(&*extracted);
   return extract_boxdecode_contract_subset_from_static_contract(*extracted);
 }
@@ -2129,6 +2129,17 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
             "facts for stage '" +
             stage_name + "'");
       }
+    }
+  }
+  if (box_decode_type_is_ssd_family(subset.decode_type)) {
+    const auto& selection = subset.ssd_class_selection;
+    if (selection.encoded_count <= 0 || selection.selected_count <= 0 ||
+        selection.selected_count > selection.encoded_count ||
+        subset.num_classes != selection.selected_count) {
+      throw std::invalid_argument(
+          "plugin contract subset 'boxdecode' carries an inconsistent SSD encoded/selected "
+          "class contract for stage '" +
+          stage_name + "'");
     }
   }
 }

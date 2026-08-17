@@ -84,11 +84,12 @@ struct BoxDecodeOptionsInternal;
  * **Supported families.**
  *
  * Supported decode families include YOLO, YOLOv5/v7/v8/v9/v10 detection and segmentation
- * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, the SSD detector
- * family (prior/anchor decode with softmax class scores), DETR, EfficientDet, RCNN stage 1,
- * CenterNet, and SuperPoint. `BoxDecodeType::Unspecified` is only a sentinel and fails before
- * runtime. SuperPoint requires an explicit numerical profile unless an authoritative MPK record
- * supplies one; Neat never infers that profile from tensor geometry.
+ * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, and four prepared SSD
+ * profiles (SSD300-v1 softmax @300, SSD-Mobile-300-v1 sigmoid @300, SSD-Mobile-320-v1 sigmoid
+ * @320, and SSDlite-Mobile-320-v1 softmax @320, all stretch-resize), plus DETR, EfficientDet,
+ * RCNN stage 1, CenterNet, and SuperPoint. `BoxDecodeType::Unspecified` is only a sentinel and
+ * fails before runtime. SuperPoint requires an explicit numerical profile unless an authoritative
+ * MPK record supplies one; Neat never infers that profile from tensor geometry.
  *
  * **Score and layout notes.**
  *
@@ -146,8 +147,8 @@ public:
    *                             tessellated heads.
    * @param dequant              Explicit override: do the upstream heads need dequantization before
    *                             decode? `std::nullopt` keeps the standalone default (derived from
-   * the input dtype) / model-pack value. When `true`, the upstream must carry quant
-   * scale/zero-point.
+   *                             the input dtype) / model-pack value. When `true`, the upstream must
+   *                             carry quant scale/zero-point.
    */
   explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
                          double nms_iou_threshold = 0.0, int top_k = 0,
@@ -157,6 +158,19 @@ public:
                          std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
                          std::optional<bool> detess = std::nullopt,
                          std::optional<bool> dequant = std::nullopt);
+  /**
+   * @brief Raw-geometry overload with an explicit external preprocessing resize assertion.
+   *
+   * SSD accepts only `ResizeMode::Stretch`. Passing `std::nullopt` preserves the metadata-driven
+   * behavior of the compatibility overload; no resize mode is silently assumed.
+   */
+  explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold,
+                         double nms_iou_threshold, int top_k, const std::string& element_name,
+                         int original_width, int original_height, int model_width, int model_height,
+                         BoxDecodeTypeOption decode_type_option,
+                         std::optional<BoxDecodeSourceStorage> source_storage,
+                         std::optional<bool> detess, std::optional<bool> dequant,
+                         std::optional<ResizeMode> resize_mode_override);
   /**
    * @brief Construct from a bound `Model` — pulls geometry and routing flags from the model.
    *
@@ -182,7 +196,9 @@ public:
    *                             (`Stretch`/`Letterbox`/`Crop`). Use when running the model
    *                             without an upstream `Preproc` stage and the per-buffer
    *                             `preproc_resize_mode` meta isn't being written by an
-   *                             upstream element. When set, the contract drops
+   *                             upstream element. If this route performs preprocessing, the
+   *                             override must match its resolved resize mode. When set, the
+   *                             contract drops
    *                             `preproc_resize_mode` from the required-meta list so buffers
    *                             flow through cleanly; otherwise the value is sourced from
    *                             per-buffer `GstSimaaiPreprocessMeta` as before.
@@ -260,6 +276,7 @@ public:
   int top_k_internal() const;
   int original_width_internal() const;
   int original_height_internal() const;
+  std::shared_ptr<Node> retargeted_for_model_internal(const Model& model) const;
   BoxDecodeTypeOption decode_type_option_internal() const;
   const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>&
   model_semantics_internal() const;
@@ -289,6 +306,13 @@ std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
     std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
     std::optional<bool> detess = std::nullopt, std::optional<bool> dequant = std::nullopt);
+/// Raw-geometry factory overload with an explicit external preprocessing resize assertion.
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
+              int top_k, const std::string& element_name, int original_width, int original_height,
+              int model_width, int model_height, BoxDecodeTypeOption decode_type_option,
+              std::optional<BoxDecodeSourceStorage> source_storage, std::optional<bool> detess,
+              std::optional<bool> dequant, std::optional<ResizeMode> resize_mode_override);
 std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
     const BoxDecodeOptions& options, const std::string& element_name = "", int original_width = 0,
     int original_height = 0, int model_width = 0, int model_height = 0,

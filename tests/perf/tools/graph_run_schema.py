@@ -180,7 +180,7 @@ def validate_latency_summary(value: Any, context: str) -> None:
     data = _mapping(value, context)
     if "samples" in data:
         _integer(data["samples"], f"{context}.samples")
-    for key in ("total_ms", "avg_ms", "min_ms", "max_ms"):
+    for key in ("total_ms", "avg_ms", "min_ms", "p50_ms", "p95_ms", "p99_ms", "max_ms"):
         if key in data:
             _number(data[key], f"{context}.{key}")
     if "min_max_available" in data:

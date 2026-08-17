@@ -83,6 +83,17 @@ class PerfClassifierTest(unittest.TestCase):
             schema.ReasonCode.ENV_TIMEOUT,
         )
 
+    def test_explicit_component_harness_marker_precedes_environment_classification(self) -> None:
+        output = (
+            "perf scenario exception: "
+            "PERF_HARNESS_ERROR:HARNESS_COMPONENT_AMBIGUOUS: boxdecode matches=2"
+        )
+        self.assertEqual(
+            schema.classify_perf_harness_failure(output),
+            schema.ReasonCode.HARNESS_COMPONENT_AMBIGUOUS,
+        )
+        self.assertIsNone(schema.classify_perf_harness_failure("ordinary runtime crash"))
+
 
 if __name__ == "__main__":
     unittest.main()
