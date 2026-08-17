@@ -156,10 +156,10 @@ An RTSP pull timed out — the URL is wrong or the stream isn't delivering frame
 Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/consume-rtsp-stream).
 :::
 
-### 12. `CameraInput strict zero-copy requires a libcamerasrc with simaai-zero-copy`
+### 12. `CameraInput strict zero-copy requires external-buffer-mode`
 
 :::info Cause
-`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the required properties or the installed memory library cannot export its allocation as a DMA-BUF.
+`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the generic `external-buffer-mode` property or the installed memory library cannot export its allocation as DMA-BUFs.
 :::
 
 :::tip Fix

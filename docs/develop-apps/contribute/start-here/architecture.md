@@ -619,6 +619,27 @@ Typical flow (`Graph::build()` / `Run`):
 Caps negotiation is automatic; failures surface early (validate/preroll) or at runtime with
 diagnostics you can reproduce (`describe_backend()` + report).
 
+### Camera allocation ownership
+
+`CameraInput` places `neatcamerabridge` immediately after its camera caps and
+before any live queue. During negotiation the bridge answers the upstream
+`GST_QUERY_ALLOCATION` with a standard pool and requests `GstVideoMeta`. The
+pool allocates the validated planes from one packed SiMaAI allocation and
+exports one DMA-BUF per plane. A compatible `libcamerasrc` imports those
+DMA-BUFs into the ISP capture queue. The bridge then unwraps the same packed
+allocation for downstream processing. Strict mode rejects any buffer that does
+not satisfy that contract; CPU copying remains an explicit compatibility
+fallback.
+
+The application-facing capture depth is independent of both the kernel's
+private CSI-to-ISP RAW transit ring and the later GStreamer queue. The optional
+`capture_buffer_count` argument to `CameraInputWithCaptureBuffers` controls buffers retained across
+ISP output, libcamera, and the application. `queue_depth` and `leaky_queue`
+separately control downstream latency and frame-drop policy. The optional
+compatibility-copy pool grows on demand and is not capped by that queue depth,
+so a leaky queue can apply its drop policy without the upstream bridge
+stalling first.
+
 ### Teardown
 
 Teardown is intentionally defensive.

@@ -539,6 +539,7 @@ def test_camera_input_surface_is_exposed():
   opt = pyneat.CameraInputOptions()
   for field in CAMERA_INPUT_OPTION_FIELDS:
     assert hasattr(opt, field), field
+  assert not hasattr(opt, "capture_buffer_count")
 
   opt.camera_name = "imx477 5-001a"
   opt.width = 1280
@@ -561,10 +562,12 @@ def test_camera_input_surface_is_exposed():
   opt.camera_name = None
   assert opt.camera_name is None
 
-  node = pyneat.nodes.camera_input(opt)
+  node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
   assert isinstance(node, pyneat.Node)
   assert node.kind() == "CameraInput"
   assert node.input_role() == pyneat.InputRole.Source
+  with pytest.raises(ValueError, match="128-buffer provider limit"):
+    pyneat.nodes.camera_input(opt, capture_buffer_count=129)
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
