@@ -1,4 +1,4 @@
-# 026 Run Models on Multiple PCIe Queues
+# 026 Run Multiple Models
 
 ## Metadata
 
@@ -51,9 +51,9 @@ its assigned queue.
 
 ## Run
 
-Install and extract the tutorial bundle by following
-[Install PCIe Host](/getting-started/neat-library/pcie-host/). From the
-extracted PCIe extras root, download both models:
+Install the PCIe host package and download the tutorial bundle as described in
+[Tutorial Setup](/tutorials/before-you-run). From the extracted PCIe
+extras root, download both models:
 
 ```bash
 sima-cli modelzoo get resnet_50
@@ -75,20 +75,20 @@ Run Python:
 
 ```bash
 source ~/pyneatpcie/bin/activate
-python3 share/sima-pcie-host/tutorials/026_run_models_on_multiple_pcie_queues/run_models_on_multiple_pcie_queues.py
+python3 share/sima-pcie-host/tutorials/026_run_multiple_models/run_multiple_models.py
 ```
 
 Run the prebuilt C++ tutorial:
 
 ```bash
-./lib/sima-pcie-host/tutorials/tutorial_026_run_models_on_multiple_pcie_queues
+./lib/sima-pcie-host/tutorials/tutorial_026_run_multiple_models
 ```
 
 Or rebuild it:
 
 ```bash
-./build.sh --target tutorial_026_run_models_on_multiple_pcie_queues
-./build/tutorials-standalone/tutorial_026_run_models_on_multiple_pcie_queues
+./build.sh --target tutorial_026_run_multiple_models
+./build/tutorials-standalone/tutorial_026_run_multiple_models
 ```
 
 With the documented models and assets, both versions print output similar to:
@@ -97,7 +97,7 @@ With the documented models and assets, both versions print output similar to:
 queue=0 model=resnet_50 output_shape=[1, 1000] top1=208 (Labrador retriever)
 queue=1 model=yolo_v8s detections=...
   person score=... box=(...)
-[OK] 026_run_models_on_multiple_pcie_queues
+[OK] 026_run_multiple_models
 ```
 
 The tutorial deliberately fixes ResNet-50 to queue 0 and YOLOv8s to queue 1.
@@ -117,7 +117,7 @@ For deployment diagnostics, continue with the
 
 ## Source Files
 
-- `run_models_on_multiple_pcie_queues.cpp`
-- `run_models_on_multiple_pcie_queues.py`
+- `run_multiple_models.cpp`
+- `run_multiple_models.py`
 - `../assets/labrador.jpg`
 - `../assets/street-scene.png`

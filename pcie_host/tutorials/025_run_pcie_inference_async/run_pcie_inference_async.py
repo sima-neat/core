@@ -2,7 +2,7 @@
 """Measure completed YOLOv8s detections with asynchronous PCIe push/pull.
 
 Usage:
-  python3 measure_pcie_detection_throughput.py
+  python3 run_pcie_inference_async.py
 """
 
 from __future__ import annotations
@@ -175,7 +175,7 @@ def main() -> None:
     finally:
         model.close()
 
-    print("[OK] 025_measure_pcie_detection_throughput")
+    print("[OK] 025_run_pcie_inference_async")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 """Run ResNet-50 and YOLOv8s concurrently on two PCIe queues.
 
 Usage:
-  python3 run_models_on_multiple_pcie_queues.py
+  python3 run_multiple_models.py
 """
 
 from __future__ import annotations
@@ -178,7 +178,7 @@ def main() -> None:
         yolo.close()
         resnet.close()
 
-    print("[OK] 026_run_models_on_multiple_pcie_queues")
+    print("[OK] 026_run_multiple_models")
 
 
 if __name__ == "__main__":

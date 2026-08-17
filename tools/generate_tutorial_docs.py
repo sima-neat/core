@@ -5,7 +5,7 @@ Source of truth:
 - tutorials/00x_*/README.md (metadata + concept/process)
 - tutorials/00x_*/*.cpp
 - tutorials/00x_*/*.py
-- pcie_host/tutorials/00x_* equivalents for x86 PCIe host tutorials
+- pcie_host/tutorials/00x_* equivalents for PCIe host tutorials
 
 Outputs:
 - docs/develop-apps/tutorials/<category>/tutorial_<folder>.mdx
@@ -58,12 +58,12 @@ CATEGORY_SUBDIRS = [
         "PCIe Co-Processing",
         "pcie",
         7,
-        "Run inference from an x86 host on a connected Modalix PCIe Card.",
+        "Run inference from a host connected to a Modalix PCIe Card.",
     ),
 ]
 
 CATEGORY_TUTORIAL_ORDER = {
-    "Models & Inference": [1, 5, 6, 7, 9, 10, 11, 2, 3],
+    "Models & Inference": [1, 2, 3, 5, 6, 7, 9, 10, 11],
     "Graphs & Pipelines": [4, 8, 13, 14, 15, 12, 16, 17],
     "Cameras & Streaming": [18, 23],
     "GenAI": [21, 19, 20, 22],

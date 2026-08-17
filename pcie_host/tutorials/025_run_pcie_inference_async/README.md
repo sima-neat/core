@@ -1,4 +1,4 @@
-# 025 Measure PCIe Detection Throughput
+# 025 Run PCIe Inference Async
 
 ## Metadata
 
@@ -53,10 +53,9 @@ arrives.
 
 ## Run
 
-Install and extract the tutorial bundle by following
-[Install PCIe Host](/getting-started/neat-library/pcie-host/). From the
-extracted PCIe extras root, download YOLOv8s if it is not
-already present:
+Install the PCIe host package and download the tutorial bundle as described in
+[Tutorial Setup](/tutorials/before-you-run). From the extracted PCIe
+extras root, download YOLOv8s if it is not already present:
 
 ```bash
 sima-cli modelzoo get yolo_v8s
@@ -75,20 +74,20 @@ Run Python:
 
 ```bash
 source ~/pyneatpcie/bin/activate
-python3 share/sima-pcie-host/tutorials/025_measure_pcie_detection_throughput/measure_pcie_detection_throughput.py
+python3 share/sima-pcie-host/tutorials/025_run_pcie_inference_async/run_pcie_inference_async.py
 ```
 
 Run the prebuilt C++ tutorial:
 
 ```bash
-./lib/sima-pcie-host/tutorials/tutorial_025_measure_pcie_detection_throughput
+./lib/sima-pcie-host/tutorials/tutorial_025_run_pcie_inference_async
 ```
 
 Or rebuild it:
 
 ```bash
-./build.sh --target tutorial_025_measure_pcie_detection_throughput
-./build/tutorials-standalone/tutorial_025_measure_pcie_detection_throughput
+./build.sh --target tutorial_025_run_pcie_inference_async
+./build/tutorials-standalone/tutorial_025_run_pcie_inference_async
 ```
 
 The exact timing depends on the host and card, but both programs use the same
@@ -100,7 +99,7 @@ elapsed_seconds=...
 throughput_fps=...
 average_latency_ms=...
 total_detections=...
-[OK] 025_measure_pcie_detection_throughput
+[OK] 025_run_pcie_inference_async
 ```
 
 The tutorial always warms up with five frames, then measures 1,000 completed
@@ -116,11 +115,11 @@ waiting.
 
 For a representative benchmark, replace the repeated frame with a fixed image
 set and keep disk reads outside the timed region. Continue with
-[Run Models on Multiple PCIe Queues](/tutorials/run-models-on-multiple-pcie-queues)
+[Run Multiple Models](/tutorials/run-multiple-models)
 to execute two different models concurrently.
 
 ## Source Files
 
-- `measure_pcie_detection_throughput.cpp`
-- `measure_pcie_detection_throughput.py`
+- `run_pcie_inference_async.cpp`
+- `run_pcie_inference_async.py`
 - `../assets/street-scene.png`

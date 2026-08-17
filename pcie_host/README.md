@@ -405,7 +405,7 @@ and auto-extract only the tutorial bundle later without reinstalling the host
 packages, use the `extras` metadata variant:
 
 ```bash
-sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0 -t extras
+sima-cli neat download core/pciehost/ubuntu24/amd64@v0.4.0 -t extras
 ```
 
 Install the locally built packages on the host with:

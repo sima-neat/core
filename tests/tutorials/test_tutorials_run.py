@@ -200,9 +200,9 @@ def test_walkthrough_segments_pair_across_languages() -> None:
 
 def test_pcie_tutorials_keep_the_model_api_and_minimal_cli() -> None:
   expected = {
-      "024_run_pcie_inference_modes",
-      "025_measure_pcie_detection_throughput",
-      "026_run_models_on_multiple_pcie_queues",
+      "024_run_your_first_model_over_pcie",
+      "025_run_pcie_inference_async",
+      "026_run_multiple_models",
   }
   tutorial_dirs = {
       directory.name: directory
@@ -226,7 +226,7 @@ def test_pcie_tutorials_keep_the_model_api_and_minimal_cli() -> None:
     cpp_sources = sorted(directory.glob("*.cpp"))
     py_sources = sorted(directory.glob("*.py"))
     sources = [directory / "README.md", *cpp_sources, *py_sources]
-    expected_source_count = 7 if name == "024_run_pcie_inference_modes" else 3
+    expected_source_count = 7 if name == "024_run_your_first_model_over_pcie" else 3
     assert len(sources) == expected_source_count, (
         f"{name}: expected README and matching C++/Python program pairs"
     )
@@ -238,12 +238,12 @@ def test_pcie_tutorials_keep_the_model_api_and_minimal_cli() -> None:
       assert token not in combined, f"{name}: tutorial introduces forbidden token {token}"
 
   throughput_cpp = (
-      tutorial_dirs["025_measure_pcie_detection_throughput"]
-      / "measure_pcie_detection_throughput.cpp"
+      tutorial_dirs["025_run_pcie_inference_async"]
+      / "run_pcie_inference_async.cpp"
   ).read_text()
   throughput_py = (
-      tutorial_dirs["025_measure_pcie_detection_throughput"]
-      / "measure_pcie_detection_throughput.py"
+      tutorial_dirs["025_run_pcie_inference_async"]
+      / "run_pcie_inference_async.py"
   ).read_text()
   assert "kMeasuredFrames = 1000" in throughput_cpp
   assert "MEASURED_FRAMES = 1000" in throughput_py

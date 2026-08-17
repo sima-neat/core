@@ -1,6 +1,6 @@
 # PCIe Host Tutorials
 
-These tutorials run on an x86 host connected to a Modalix PCIe Card. They use
+These tutorials run on a host connected to a Modalix PCIe Card. They use
 the installed `SimaPCIeHost` C++ package or the `pyneatpcie` Python wheel; they
 do not use the target-side Neat runtime API.
 

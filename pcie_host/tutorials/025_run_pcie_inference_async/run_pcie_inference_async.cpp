@@ -1,7 +1,7 @@
 // Measure completed YOLOv8s detections with asynchronous PCIe push/pull.
 //
 // Usage:
-//   tutorial_025_measure_pcie_detection_throughput
+//   tutorial_025_run_pcie_inference_async
 
 #include <simaai/neat/pcie/Model.h>
 
@@ -227,7 +227,7 @@ int main(int argc, char** argv) {
     // END CORE LOGIC
 
     model.close();
-    std::cout << "[OK] 025_measure_pcie_detection_throughput\n";
+    std::cout << "[OK] 025_run_pcie_inference_async\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "[FAIL] " << error.what() << '\n';

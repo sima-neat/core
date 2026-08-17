@@ -31,19 +31,19 @@ function(simapcie_add_tutorial name source)
 endfunction()
 
 simapcie_add_tutorial(tutorial_024_run_tensor_mode
-  024_run_pcie_inference_modes/run_tensor_mode.cpp)
+  024_run_your_first_model_over_pcie/run_tensor_mode.cpp)
 
 simapcie_add_tutorial(tutorial_024_run_image_mode
-  024_run_pcie_inference_modes/run_image_mode.cpp)
+  024_run_your_first_model_over_pcie/run_image_mode.cpp)
 
 simapcie_add_tutorial(tutorial_024_run_image_boxdecode
-  024_run_pcie_inference_modes/run_image_boxdecode.cpp)
+  024_run_your_first_model_over_pcie/run_image_boxdecode.cpp)
 
-simapcie_add_tutorial(tutorial_025_measure_pcie_detection_throughput
-  025_measure_pcie_detection_throughput/measure_pcie_detection_throughput.cpp)
+simapcie_add_tutorial(tutorial_025_run_pcie_inference_async
+  025_run_pcie_inference_async/run_pcie_inference_async.cpp)
 
-simapcie_add_tutorial(tutorial_026_run_models_on_multiple_pcie_queues
-  026_run_models_on_multiple_pcie_queues/run_models_on_multiple_pcie_queues.cpp)
+simapcie_add_tutorial(tutorial_026_run_multiple_models
+  026_run_multiple_models/run_multiple_models.cpp)
 
 if (SIMAPCIE_TUTORIAL_TARGETS)
   install(

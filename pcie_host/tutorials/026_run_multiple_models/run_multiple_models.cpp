@@ -1,7 +1,7 @@
 // Run ResNet-50 and YOLOv8s concurrently on two PCIe queues.
 //
 // Usage:
-//   tutorial_026_run_models_on_multiple_pcie_queues
+//   tutorial_026_run_multiple_models
 
 #include <simaai/neat/pcie/Model.h>
 
@@ -258,7 +258,7 @@ int main(int argc, char** argv) {
 
     yolo.close();
     resnet.close();
-    std::cout << "[OK] 026_run_models_on_multiple_pcie_queues\n";
+    std::cout << "[OK] 026_run_multiple_models\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "[FAIL] " << error.what() << '\n';

@@ -1,4 +1,4 @@
-# 024 Run PCIe Inference in Three Modes
+# 024 Run Your First Model over PCIe
 
 ## Metadata
 
@@ -13,7 +13,7 @@
 ## Concept
 
 The PCIe host API accepts either a model-ready tensor or decoded image pixels.
-Tensor mode keeps preprocessing on the x86 host. Image mode sends the original
+Tensor mode keeps preprocessing on the host. Image mode sends the original
 pixels and lets the Modalix card resize, convert color, and normalize them.
 Adding box decode keeps the image input but replaces six raw YOLO output tensors
 with one compact list of detections.
@@ -54,9 +54,9 @@ then converted to one detection for printing.
 
 ## Run
 
-Install the packages and extract the PCIe tutorial bundle exactly as described
-in [Install PCIe Host](/getting-started/neat-library/pcie-host/). Run the
-following commands from the extracted PCIe extras root:
+Install the PCIe host package and download the tutorial bundle as described in
+[Tutorial Setup](/tutorials/before-you-run). Run the following
+commands from the extracted PCIe extras root:
 
 ```bash
 sima-cli modelzoo get yolo_v8s
@@ -75,9 +75,9 @@ test -f yolo_v8s_mpk.tar.gz
 
 ```bash
 source ~/pyneatpcie/bin/activate
-python3 share/sima-pcie-host/tutorials/024_run_pcie_inference_modes/run_tensor_mode.py
-python3 share/sima-pcie-host/tutorials/024_run_pcie_inference_modes/run_image_mode.py
-python3 share/sima-pcie-host/tutorials/024_run_pcie_inference_modes/run_image_boxdecode.py
+python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_tensor_mode.py
+python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_image_mode.py
+python3 share/sima-pcie-host/tutorials/024_run_your_first_model_over_pcie/run_image_boxdecode.py
 ```
 
 **C++ (prebuilt):**
@@ -131,7 +131,7 @@ application needs detections rather than raw feature maps.
 
 Every mode uses the same `pcie::Model`/`pyneatpcie.Model` lifecycle. Only
 `ModelOptions` and the submitted payload change. Continue with
-[Measure PCIe Detection Throughput](/tutorials/measure-pcie-detection-throughput)
+[Run PCIe Inference Async](/tutorials/run-pcie-inference-async)
 to overlap submission and completion with `push()` and `pull()`.
 
 ## Source Files
