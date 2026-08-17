@@ -5,13 +5,18 @@ set -euo pipefail
 #
 # Purpose:
 # - Install SiMa NEAT wheel into a Python virtual environment (board mode only).
-# - Install NEAT runtime .deb packages on Modalix board or into eLxr SDK sysroot.
+# - Install NEAT runtime .deb packages on a Modalix board, natively in the ROS2
+#   SDK, or into an eLxr SDK sysroot.
 #
 # Behavior:
 # - Auto-detects environment:
-#   - eLxr SDK when /etc/sdk-release exists, or SYSROOT points to a valid directory.
+#   - ROS2 SDK when /etc/sdk-release reports SDK Type=ros2-sdk.
+#   - eLxr SDK when /etc/sdk-release reports SDK Version, or SYSROOT points to a
+#     valid directory.
 #   - Modalix board when /etc/buildinfo reports MACHINE=modalix.
 # - In Modalix board mode, installs .deb packages with apt (sudo).
+# - In ROS2 SDK mode, installs .deb packages into native system paths with apt
+#   without running board lifecycle or firmware operations.
 # - In eLxr SDK mode, caches install artifacts under the sysroot
 #   neat-install-packages folder for paired DevKit sync.
 # - In eLxr SDK mode, exposes the sysroot-installed neat command at
@@ -23,11 +28,7 @@ set -euo pipefail
 # Expected working directory:
 # - Directory containing:
 #   - one .whl file
-#   - sima-neat-*-Linux-core.deb
-#   - sima-neat-*-Linux-dev.deb
-#   - neat-*.deb / simaai-common*.deb runtime dependencies
-#   - appcomplex_*.deb legacy runtime dependency packages when present
-#   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-cli.deb / sima-lmm-*-Linux-dev.deb
+#   - the Debian packages delivered by the selected Internals, LLiMa, and Core artifacts
 #   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
@@ -36,6 +37,7 @@ set -euo pipefail
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
 # - ELXR_SDK_RELEASE_FILE: SDK release metadata path (default: /etc/sdk-release)
+# - NEAT_OS_RELEASE_FILE: operating-system metadata path (default: /etc/os-release)
 # - NEAT_BUILDINFO_FILE: DevKit build metadata path (default: /etc/buildinfo)
 # - NEAT_PACKAGE_MANIFEST: package manifest filename/path (default: manifest.json)
 # - NEAT_INSTALLER_SKIP_PLATFORM_CHECK: ON/OFF (default: OFF) explicit escape hatch
@@ -49,9 +51,6 @@ set -euo pipefail
 # - CLAUDE_HOME: optional Claude home override for skill install target
 # - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
 # - NEAT_INSTALLER_INSTALL_CLAUDE_SKILL: ON/OFF (default: ON)
-# - NEAT_INSTALLER_RELAX_SIMA_LMM_DEP: ON/OFF (default: ON) relax sima-neat's
-#   lower sima-lmm-core/dev dependency to the bundled local LMM DEB version when
-#   both packages are from the same minor-version family.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
 # - NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL: ON/OFF (default: OFF) allow the
@@ -72,12 +71,12 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
-NEAT_INSTALLER_RELAX_SIMA_LMM_DEP="${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL="${NEAT_INSTALLER_ALLOW_PACKAGE_REMOVAL:-OFF}"
 NEAT_INSTALLER_APT_UPDATE="${NEAT_INSTALLER_APT_UPDATE:-AUTO}"
 NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
+NEAT_OS_RELEASE_FILE="${NEAT_OS_RELEASE_FILE:-/etc/os-release}"
 NEAT_BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
 NEAT_PACKAGE_MANIFEST="${NEAT_PACKAGE_MANIFEST:-manifest.json}"
 NEAT_INSTALLER_SKIP_PLATFORM_CHECK="${NEAT_INSTALLER_SKIP_PLATFORM_CHECK:-OFF}"
@@ -85,19 +84,6 @@ INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basena
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
 INSTALLER_TMP_DIRS=()
-SIMAAI_MEMORY_DEBS=()
-SIMAAI_MEMORY_RUNTIME_DEB=""
-SIMAAI_MEMORY_DEV_DEB=""
-SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION=""
-SIMAAI_MEMORY_ACTUAL_VERSION=""
-SIMAAI_MEMORY_PAYLOAD_PATH=""
-SIMAAI_MEMORY_PAYLOAD_SHA256=""
-SIMAAI_MEMORY_PAYLOAD_BUILD_ID=""
-SIMAAI_MEMORY_PREINSTALL_PACKAGES=""
-SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=0
-SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
-SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
-SIMAAI_MEMORY_TRANSACTION_COMPLETE=0
 
 cleanup_installer_tmp_dirs() {
   local dir
@@ -212,6 +198,11 @@ verify_simulated_package_removals() {
       sima-neat | sima-neat-dev)
         continue
         ;;
+      neat-libcamera | neat-libcamera-dev | neat-libcamera-tools)
+        # Retired recovery packages: the platform owns libcamera since
+        # internals#190, so APT removing them is the intended retirement.
+        continue
+        ;;
     esac
 
     installed_version="$(
@@ -230,7 +221,6 @@ verify_simulated_package_removals() {
       )
       continue
     fi
-
     cat "${simulation_log}" >&2
     echo "Refusing to install because APT would remove ${package} without a bundled package that Provides its exact installed version and explicitly Replaces and Conflicts with it." >&2
     return 1
@@ -240,6 +230,42 @@ verify_simulated_package_removals() {
     log "Verified platform package replacements:"
     printf '  %s\n' "${verified_replacements[@]}"
   fi
+}
+
+# When retired neat-libcamera recovery packages are still installed, extend
+# the transaction with explicit name=version specs derived from the installed
+# palette's version: the pinned palette cannot be removed, and explicit
+# versions select the SiMa repository packages even where a shared name has a
+# foreign candidate. Emits nothing on boards without retired packages,
+# keeping their transaction unchanged.
+collect_board_heal_specs() {
+  local target palette_version
+  local -a retired_installed=()
+
+  for target in neat-libcamera neat-libcamera-dev neat-libcamera-tools; do
+    if deb_package_is_installed "${target}"; then
+      retired_installed+=("${target}")
+    fi
+  done
+  if [[ "${#retired_installed[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  palette_version=""
+  if deb_package_is_installed simaai-palette-modalix; then
+    palette_version="$(
+      dpkg-query -W -f='${Version}' simaai-palette-modalix 2>/dev/null || true
+    )"
+  fi
+  if [[ -z "${palette_version}" ]]; then
+    echo "Retired neat-libcamera packages are installed, but the simaai-palette-modalix version is unavailable; continuing without platform pins." >&2
+    return 0
+  fi
+
+  printf 'simaai-palette-modalix=%s\n' "${palette_version}"
+  for target in "${retired_installed[@]}"; do
+    printf '%s=%s\n' "${target#neat-}" "${palette_version}"
+  done
 }
 
 log_green() {
@@ -315,6 +341,16 @@ activation_path_for_display() {
 }
 
 run_sudo() {
+  if [[ "${EUID}" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "This installation modifies system packages and requires root or sudo." >&2
+    exit 1
+  fi
+
   if sudo -n true >/dev/null 2>&1; then
     sudo "$@"
     return $?
@@ -346,6 +382,33 @@ run_sudo() {
   exit 1
 }
 
+read_metadata_field() {
+  local metadata_file="$1"
+  local requested_key="$2"
+  awk -v requested_key="${requested_key}" '
+    {
+      separator = index($0, "=")
+      if (separator == 0) {
+        next
+      }
+      key = substr($0, 1, separator - 1)
+      value = substr($0, separator + 1)
+      sub(/^[[:space:]]+/, "", key)
+      sub(/[[:space:]]+$/, "", key)
+      if (key != requested_key) {
+        next
+      }
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value ~ /^".*"$/) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      print value
+      exit
+    }
+  ' "${metadata_file}" 2>/dev/null || true
+}
+
 run_scp() {
   if command -v scp >/dev/null 2>&1; then
     scp "$@"
@@ -373,18 +436,37 @@ run_ssh() {
 }
 
 detect_env_mode() {
+  local sdk_release_unrecognized=0
   if [[ -f "${ELXR_SDK_RELEASE_FILE}" ]]; then
-    echo "elxr-sdk"
-    return 0
+    local sdk_type product_name
+    sdk_type="$(read_metadata_field "${ELXR_SDK_RELEASE_FILE}" "SDK Type")"
+    product_name="$(read_metadata_field "${ELXR_SDK_RELEASE_FILE}" "Product Name")"
+    if [[ "${sdk_type}" == "ros2-sdk" ||
+          "${product_name}" == "SiMa.ai ROS2 SDK" ]]; then
+      echo "ros2-sdk"
+      return 0
+    fi
+    if [[ -z "${sdk_type}" &&
+          -n "$(read_metadata_field "${ELXR_SDK_RELEASE_FILE}" "SDK Version")" ]]; then
+      echo "elxr-sdk"
+      return 0
+    fi
+    sdk_release_unrecognized=1
   fi
   if [[ -n "${SYSROOT:-}" && -d "${SYSROOT}" ]]; then
     echo "elxr-sdk"
+    return 0
+  fi
+  if [[ "${sdk_release_unrecognized}" -eq 1 ]]; then
+    echo "unsupported"
     return 0
   fi
   if [[ -f "${NEAT_BUILDINFO_FILE}" ]] && grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' "${NEAT_BUILDINFO_FILE}"; then
     echo "modalix-board"
     return 0
   fi
+  # Preserve the legacy fallback for DevKit images that do not provide
+  # /etc/buildinfo. An unrecognized SDK release file is rejected above.
   echo "modalix-board"
 }
 
@@ -433,15 +515,58 @@ PY
 read_sdk_platform_version() {
   local release_file="$1"
   awk -F'=' '
+    $1 ~ /^[[:space:]]*Platform Base[[:space:]]*$/ {
+      value=$2
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      if (value != "") {
+        print value
+        found=1
+        exit
+      }
+    }
     $1 ~ /^[[:space:]]*SDK Version[[:space:]]*$/ {
       value=$2
       sub(/^[[:space:]]+/, "", value)
       sub(/[[:space:]]+$/, "", value)
       sub(/_.*/, "", value)
-      print value
-      exit
+      sdk_version=value
+    }
+    END {
+      if (!found && sdk_version != "") {
+        print sdk_version
+      }
     }
   ' "${release_file}" 2>/dev/null || true
+}
+
+sdk_platform_version_label() {
+  local release_file="$1"
+  if grep -qE '^[[:space:]]*Platform Base[[:space:]]*=[[:space:]]*[^[:space:]]' "${release_file}" 2>/dev/null; then
+    printf '%s\n' "Platform Base"
+  else
+    printf '%s\n' "SDK Version"
+  fi
+}
+
+read_ros2_sdk_platform_version() {
+  local release_file="$1"
+  local value
+  value="$(read_metadata_field "${release_file}" "Platform Base")"
+  if [[ -n "${value}" ]]; then
+    printf '%s\n' "${value}"
+    return 0
+  fi
+  read_metadata_field "${release_file}" "Platform Version"
+}
+
+ros2_sdk_platform_version_label() {
+  local release_file="$1"
+  if [[ -n "$(read_metadata_field "${release_file}" "Platform Base")" ]]; then
+    printf '%s\n' "Platform Base"
+  else
+    printf '%s\n' "Platform Version"
+  fi
 }
 
 read_devkit_platform_version() {
@@ -476,14 +601,23 @@ ensure_platform_compatible() {
 
   case "${ENV_MODE}" in
     elxr-sdk)
-      source_label="SDK Version"
       source_file="${ELXR_SDK_RELEASE_FILE}"
       if [[ ! -f "${source_file}" ]]; then
         echo "Cannot verify eLxr SDK compatibility: missing ${source_file}." >&2
         echo "Set ELXR_SDK_RELEASE_FILE or NEAT_INSTALLER_SKIP_PLATFORM_CHECK=ON for an explicit development override." >&2
         exit 1
       fi
+      source_label="$(sdk_platform_version_label "${source_file}")"
       actual="$(read_sdk_platform_version "${source_file}")"
+      ;;
+    ros2-sdk)
+      source_file="${ELXR_SDK_RELEASE_FILE}"
+      if [[ ! -f "${source_file}" ]]; then
+        echo "Cannot verify ROS2 SDK compatibility: missing ${source_file}." >&2
+        exit 1
+      fi
+      source_label="$(ros2_sdk_platform_version_label "${source_file}")"
+      actual="$(read_ros2_sdk_platform_version "${source_file}")"
       ;;
     modalix-board)
       source_label="DISTRO_VERSION"
@@ -500,7 +634,8 @@ ensure_platform_compatible() {
       actual="$(read_devkit_platform_version "${source_file}")"
       ;;
     *)
-      echo "Unknown environment mode for platform compatibility check: ${ENV_MODE}" >&2
+      echo "Unsupported installation environment." >&2
+      echo "Expected SDK Type=ros2-sdk, an eLxr SDK release file, or MACHINE=modalix build metadata." >&2
       exit 1
       ;;
   esac
@@ -615,24 +750,7 @@ collect_debs_in_install_order() {
   local out_array_name="$2"
   local -n out_array="${out_array_name}"
   out_array=()
-
-  # Install low-level runtime packages first, then LLiMa, then NEAT core/dev.
-  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-memory-lib-dev_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-dev_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'libcamera-tools_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-common_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'appcomplex_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-ev74-firmware_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-runtime_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-gst-plugins_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-internals-dev_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'sima-lmm-*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-dev.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" '*.deb'
 }
 
 sysroot_path() {
@@ -769,19 +887,7 @@ cache_install_artifacts_in_sysroot() {
   log "Caching SDK install artifacts in sysroot: ${cache_dir}"
   run_sudo mkdir -p "${cache_dir}"
   run_sudo rm -f \
-    "${cache_dir}"/sima-neat-*-Linux-core.deb \
-    "${cache_dir}"/sima-neat-*-Linux-dev.deb \
-    "${cache_dir}"/neat-*.deb \
-    "${cache_dir}"/simaai-common*.deb \
-    "${cache_dir}"/simaai-memory-lib_*.deb \
-    "${cache_dir}"/simaai-memory-lib-dev_*.deb \
-    "${cache_dir}"/libcamera_*.deb \
-    "${cache_dir}"/libcamera-dev_*.deb \
-    "${cache_dir}"/libcamera-tools_*.deb \
-    "${cache_dir}"/neat-common_*.deb \
-    "${cache_dir}"/neat-appcomplex_*.deb \
-    "${cache_dir}"/appcomplex_*.deb \
-    "${cache_dir}"/sima-lmm-*.deb \
+    "${cache_dir}"/*.deb \
     "${cache_dir}"/*.whl \
     "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}/${NEAT_PACKAGE_MANIFEST}" \
@@ -923,327 +1029,6 @@ deb_package_is_installed() {
   dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii '
 }
 
-deb_package_is_present() {
-  dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^i'
-}
-
-deb_package_installed_version() {
-  dpkg-query -W -f='${Version}' "$1" 2>/dev/null
-}
-
-apt_candidate_version() {
-  local package="$1"
-  LC_ALL=C apt-cache policy "${package}" 2>/dev/null |
-    awk '/^[[:space:]]*Candidate:/ { print $2; exit }'
-}
-
-apt_exact_dependency_version() {
-  local package="$1"
-  local package_version="$2"
-  local dependency="$3"
-  local control
-  control="$(LC_ALL=C apt-cache show "${package}=${package_version}" 2>/dev/null)" || return 1
-  [[ -n "${control}" ]] || return 1
-
-  python3 -c '
-import re
-import sys
-
-dependency = sys.argv[1]
-paragraph = sys.stdin.read().split("\n\n", 1)[0]
-unfolded = re.sub(r"\n[ \t]+", " ", paragraph)
-match = re.search(
-    rf"(?:^|,)\s*{re.escape(dependency)}(?:\:[^\s(,|]+)?\s*"
-    rf"\(\s*=\s*([^\s)]+)\s*\)",
-    next((line[9:] for line in unfolded.splitlines() if line.startswith("Depends: ")), ""),
-)
-if match is None:
-    raise SystemExit(1)
-print(match.group(1))
-' "${dependency}" <<<"${control}"
-}
-
-exact_dependency_version_from_relations() {
-  local dependency="$1"
-  local expected_version="${2:-}"
-  python3 -c '
-import re
-import sys
-
-dependency = sys.argv[1]
-expected_version = sys.argv[2] or None
-relations = sys.stdin.read().strip()
-matches = re.finditer(
-    rf"(?:^|,)\s*{re.escape(dependency)}(?:\:[^\s(,|]+)?\s*"
-    rf"\(\s*=\s*([^\s)]+)\s*\)",
-    relations,
-)
-match = next(
-    (
-        candidate
-        for candidate in matches
-        if expected_version is None or candidate.group(1) == expected_version
-    ),
-    None,
-)
-if match is None:
-    raise SystemExit(1)
-print(match.group(1))
-' "${dependency}" "${expected_version}"
-}
-
-palette_required_simaai_memory_version() {
-  local palette_version depends version
-  if deb_package_is_installed simaai-palette-modalix; then
-    palette_version="$(deb_package_installed_version simaai-palette-modalix)"
-    depends="$(dpkg-query -W -f='${Depends}' simaai-palette-modalix 2>/dev/null || true)"
-    version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
-    if [[ -z "${version}" ]]; then
-      echo "Installed simaai-palette-modalix=${palette_version} has no exact simaai-memory-lib dependency." >&2
-      return 1
-    fi
-    printf '%s\n' "${version}"
-    return 0
-  fi
-
-  palette_version="$(apt_candidate_version simaai-palette-modalix)"
-  if [[ -z "${palette_version}" || "${palette_version}" == "(none)" ]]; then
-    echo "Cannot discover the platform's required simaai-memory-lib revision: simaai-palette-modalix is not installed and has no APT candidate." >&2
-    return 1
-  fi
-  apt_exact_dependency_version simaai-palette-modalix "${palette_version}" simaai-memory-lib
-}
-
-board_debian_architecture() {
-  dpkg --print-architecture
-}
-
-artifact_checksum_for_file() {
-  local file="$1"
-  python3 - "$(basename "${file}")" <<'PY'
-import json
-import re
-import sys
-from pathlib import Path
-
-name = sys.argv[1]
-checksums = set()
-for path in sorted(Path.cwd().glob("metadata*.json")):
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"invalid package metadata {path}: {exc}")
-    value = data.get("resources-checksum", {}).get(name)
-    if value:
-        checksums.add(str(value).strip().lower())
-if len(checksums) > 1:
-    raise SystemExit(f"conflicting artifact checksums for {name}: {sorted(checksums)}")
-if checksums:
-    value = checksums.pop()
-    if not re.fullmatch(r"[0-9a-f]{64}", value):
-        raise SystemExit(f"invalid SHA256 for {name}: {value}")
-    print(value)
-PY
-}
-
-collect_local_simaai_memory_debs() {
-  local deb package arch depends provides provided_version dev_runtime_version board_arch
-  local runtime_deb="" dev_deb="" runtime_version="" dev_version=""
-
-  for deb in "${DEBS[@]}"; do
-    [[ -f "${deb}" ]] || continue
-    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    case "${package}" in
-      simaai-memory-lib)
-        if [[ -n "${runtime_deb}" ]]; then
-          echo "Artifact contains more than one simaai-memory-lib runtime DEB." >&2
-          return 1
-        fi
-        runtime_deb="${deb}"
-        ;;
-      simaai-memory-lib-dev)
-        if [[ -n "${dev_deb}" ]]; then
-          echo "Artifact contains more than one simaai-memory-lib-dev DEB." >&2
-          return 1
-        fi
-        dev_deb="${deb}"
-        ;;
-    esac
-  done
-
-  if [[ -z "${runtime_deb}" || -z "${dev_deb}" ]]; then
-    echo "The board artifact must bundle exactly one local simaai-memory-lib runtime and dev DEB." >&2
-    return 1
-  fi
-
-  SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION="$(palette_required_simaai_memory_version)" || return 1
-  board_arch="$(board_debian_architecture)" || return 1
-  runtime_version="$(dpkg-deb -f "${runtime_deb}" Version)"
-  dev_version="$(dpkg-deb -f "${dev_deb}" Version)"
-  if [[ -z "${runtime_version}" || "${dev_version}" != "${runtime_version}" ]]; then
-    echo "Bundled memory runtime/dev package versions must match: runtime=${runtime_version:-<missing>} dev=${dev_version:-<missing>}." >&2
-    return 1
-  fi
-  SIMAAI_MEMORY_ACTUAL_VERSION="${runtime_version}"
-
-  for deb in "${runtime_deb}" "${dev_deb}"; do
-    package="$(dpkg-deb -f "${deb}" Package)"
-    arch="$(dpkg-deb -f "${deb}" Architecture)"
-    if [[ "${arch}" != "${board_arch}" ]]; then
-      echo "Bundled ${package} has architecture ${arch}; board architecture is ${board_arch}." >&2
-      return 1
-    fi
-  done
-
-  provides="$(dpkg-deb -f "${runtime_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations \
-    simaai-memory-lib "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
-  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
-    return 1
-  fi
-
-  provides="$(dpkg-deb -f "${dev_deb}" Provides 2>/dev/null || true)"
-  provided_version="$(exact_dependency_version_from_relations \
-    simaai-memory-lib-dev "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" <<<"${provides}" || true)"
-  if [[ "${provided_version}" != "${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib-dev=${SIMAAI_MEMORY_ACTUAL_VERSION} must provide simaai-memory-lib-dev (= ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}); got ${provides:-<none>}." >&2
-    return 1
-  fi
-
-  depends="$(dpkg-deb -f "${dev_deb}" Depends 2>/dev/null || true)"
-  dev_runtime_version="$(exact_dependency_version_from_relations simaai-memory-lib <<<"${depends}" || true)"
-  if [[ "${dev_runtime_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
-    echo "Bundled simaai-memory-lib-dev must depend on simaai-memory-lib (= ${SIMAAI_MEMORY_ACTUAL_VERSION}); got ${depends:-<none>}." >&2
-    return 1
-  fi
-
-  SIMAAI_MEMORY_RUNTIME_DEB="${runtime_deb}"
-  SIMAAI_MEMORY_DEV_DEB="${dev_deb}"
-  SIMAAI_MEMORY_DEBS=("${runtime_deb}" "${dev_deb}")
-}
-
-validate_local_simaai_memory_payload() {
-  local extract_dir payload soname symbol build_id expected_deb_sha actual_deb_sha package_deb
-  local -a payloads=()
-  extract_dir="$(mktemp -d /tmp/sima-neat-memory-payload-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${extract_dir}")
-  dpkg-deb -x "${SIMAAI_MEMORY_RUNTIME_DEB}" "${extract_dir}"
-  mapfile -t payloads < <(find "${extract_dir}/usr/lib" -type f -name 'libsimaaimem.so.*' | sort)
-  if [[ "${#payloads[@]}" -ne 1 ]]; then
-    echo "Bundled simaai-memory-lib must contain exactly one versioned libsimaaimem payload; found ${#payloads[@]}." >&2
-    return 1
-  fi
-  payload="${payloads[0]}"
-
-  soname="$(LC_ALL=C readelf -d "${payload}" 2>/dev/null |
-    sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p' | head -n1)"
-  if [[ "${soname}" != "libsimaaimem.so.2" ]]; then
-    echo "Bundled simaai-memory-lib has unexpected SONAME ${soname:-<missing>}; expected libsimaaimem.so.2." >&2
-    return 1
-  fi
-  symbol="$(LC_ALL=C readelf -Ws "${payload}" 2>/dev/null |
-    awk '$8 == "simaai_memory_export_dmabuf_fd" { print $8; exit }')"
-  if [[ -z "${symbol}" ]]; then
-    echo "Bundled simaai-memory-lib is missing simaai_memory_export_dmabuf_fd." >&2
-    return 1
-  fi
-  build_id="$(LC_ALL=C readelf -n "${payload}" 2>/dev/null |
-    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
-  if [[ -z "${build_id}" ]]; then
-    echo "Bundled simaai-memory-lib payload has no ELF build ID." >&2
-    return 1
-  fi
-
-  for package_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
-    expected_deb_sha="$(artifact_checksum_for_file "${package_deb}")" || return 1
-    if [[ -n "${expected_deb_sha}" ]]; then
-      actual_deb_sha="$(sha256sum "${package_deb}" | awk '{print $1}')"
-      if [[ "${actual_deb_sha}" != "${expected_deb_sha}" ]]; then
-        echo "Bundled $(basename "${package_deb}") checksum does not match package metadata." >&2
-        return 1
-      fi
-    else
-      log "No resources-checksum entry was supplied for $(basename "${package_deb}"); installed payload identity will still be verified against the bundled DEB."
-    fi
-  done
-
-  SIMAAI_MEMORY_PAYLOAD_PATH="${payload#${extract_dir}}"
-  SIMAAI_MEMORY_PAYLOAD_SHA256="$(sha256sum "${payload}" | awk '{print $1}')"
-  SIMAAI_MEMORY_PAYLOAD_BUILD_ID="${build_id}"
-  log "Validated bundled simaai-memory-lib=${SIMAAI_MEMORY_ACTUAL_VERSION} (provides ${SIMAAI_MEMORY_PLATFORM_COMPAT_VERSION}) payload sha256=${SIMAAI_MEMORY_PAYLOAD_SHA256} build-id=${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}"
-}
-
-remove_local_simaai_memory_debs_from_general_transaction() {
-  local deb memory_deb is_memory
-  local -a remaining=()
-  for deb in "${DEBS[@]}"; do
-    is_memory=0
-    for memory_deb in "${SIMAAI_MEMORY_DEBS[@]}"; do
-      if [[ "${deb}" == "${memory_deb}" ]]; then
-        is_memory=1
-        break
-      fi
-    done
-    [[ "${is_memory}" -eq 1 ]] || remaining+=("${deb}")
-  done
-  DEBS=("${remaining[@]}")
-}
-
-snapshot_memory_transaction_guard_state() {
-  local ota_owner
-  SIMAAI_MEMORY_PREINSTALL_PACKAGES="$(mktemp /tmp/sima-neat-memory-packages-before-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${SIMAAI_MEMORY_PREINSTALL_PACKAGES}")
-  dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null |
-    awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${SIMAAI_MEMORY_PREINSTALL_PACKAGES}"
-
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=0
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION=""
-  SIMAAI_MEMORY_PREINSTALL_OTA_PATH=""
-  if ! deb_package_is_installed simaai-palette-modalix; then
-    log "simaai-palette-modalix is not installed; the isolated memory transaction has no pre-existing palette/OTA state to preserve."
-    return 0
-  fi
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION="$(deb_package_installed_version simaai-palette-modalix)"
-  SIMAAI_MEMORY_PREINSTALL_OTA_PATH="$(command -v simaai-ota 2>/dev/null || true)"
-  if [[ -z "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" ]]; then
-    echo "simaai-ota is missing before the memory replacement." >&2
-    return 1
-  fi
-  ota_owner="$(dpkg-query -S "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" 2>/dev/null || true)"
-  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH} is not owned by simaai-palette-modalix before the memory replacement: ${ota_owner:-<unowned>}" >&2
-    return 1
-  fi
-  SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED=1
-}
-
-verify_memory_guard_palette_and_ota() {
-  local current_palette ota_path ota_owner
-  if [[ "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED:-0}" -ne 1 ]]; then
-    return 0
-  fi
-  if ! deb_package_is_installed simaai-palette-modalix; then
-    echo "simaai-palette-modalix was removed during NEAT installation." >&2
-    return 1
-  fi
-  current_palette="$(deb_package_installed_version simaai-palette-modalix)"
-  if [[ "${current_palette}" != "${SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION}" ]]; then
-    echo "simaai-palette-modalix changed from ${SIMAAI_MEMORY_PREINSTALL_PALETTE_VERSION} to ${current_palette}." >&2
-    return 1
-  fi
-  ota_path="$(command -v simaai-ota 2>/dev/null || true)"
-  if [[ "${ota_path}" != "${SIMAAI_MEMORY_PREINSTALL_OTA_PATH}" ]]; then
-    echo "simaai-ota path changed or disappeared during NEAT installation: ${ota_path:-<missing>}." >&2
-    return 1
-  fi
-  ota_owner="$(dpkg-query -S "${ota_path}" 2>/dev/null || true)"
-  if [[ ! "${ota_owner}" =~ ^simaai-palette-modalix(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "simaai-ota is no longer owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
-    return 1
-  fi
-}
-
 simaai_ota_command_path() {
   command -v simaai-ota 2>/dev/null || true
 }
@@ -1264,226 +1049,6 @@ verify_canonical_palette_and_ota_installation() {
     echo "/usr/bin/simaai-ota is not owned by simaai-palette-modalix: ${ota_owner:-<unowned>}." >&2
     return 1
   fi
-}
-
-verify_installed_simaai_memory_payload() {
-  local installed_version installed_dev_version installed_sha installed_build_id owner
-  if ! deb_package_is_installed simaai-memory-lib; then
-    echo "simaai-memory-lib is not installed after the isolated replacement." >&2
-    return 1
-  fi
-  installed_version="$(deb_package_installed_version simaai-memory-lib)"
-  installed_dev_version="$(deb_package_installed_version simaai-memory-lib-dev 2>/dev/null || true)"
-  if [[ "${installed_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ||
-        "${installed_dev_version}" != "${SIMAAI_MEMORY_ACTUAL_VERSION}" ]]; then
-    echo "Installed memory runtime/dev versions do not match bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}: runtime=${installed_version:-<missing>} dev=${installed_dev_version:-<missing>}." >&2
-    return 1
-  fi
-  if [[ ! -f "${SIMAAI_MEMORY_PAYLOAD_PATH}" ]]; then
-    echo "Installed simaai-memory-lib payload is missing: ${SIMAAI_MEMORY_PAYLOAD_PATH}" >&2
-    return 1
-  fi
-  owner="$(dpkg-query -S "${SIMAAI_MEMORY_PAYLOAD_PATH}" 2>/dev/null || true)"
-  if [[ ! "${owner}" =~ ^simaai-memory-lib(:[^:[:space:]]+)?:[[:space:]] ]]; then
-    echo "Installed memory payload is not owned by simaai-memory-lib: ${owner:-<unowned>}." >&2
-    return 1
-  fi
-  installed_sha="$(sha256sum "${SIMAAI_MEMORY_PAYLOAD_PATH}" | awk '{print $1}')"
-  installed_build_id="$(LC_ALL=C readelf -n "${SIMAAI_MEMORY_PAYLOAD_PATH}" 2>/dev/null |
-    sed -n 's/^[[:space:]]*Build ID: //p' | head -n1)"
-  if [[ "${installed_sha}" != "${SIMAAI_MEMORY_PAYLOAD_SHA256}" ||
-        "${installed_build_id}" != "${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}" ]]; then
-    echo "Installed simaai-memory-lib payload does not match the bundled artifact." >&2
-    echo "  expected sha/build-id: ${SIMAAI_MEMORY_PAYLOAD_SHA256} / ${SIMAAI_MEMORY_PAYLOAD_BUILD_ID}" >&2
-    echo "  installed sha/build-id: ${installed_sha:-<missing>} / ${installed_build_id:-<missing>}" >&2
-    return 1
-  fi
-  log "Verified installed simaai-memory-lib payload matches the bundled artifact."
-}
-
-verify_memory_transaction_preservation() {
-  local after missing audit_log
-  after="$(mktemp /tmp/sima-neat-memory-packages-after-XXXXXX)"
-  audit_log="$(mktemp /tmp/sima-neat-memory-dpkg-audit-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${after}" "${audit_log}")
-  dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' 2>/dev/null |
-    awk -F '\t' '$2 ~ /^ii / {print $1}' | sort -u >"${after}"
-  missing="$(comm -23 "${SIMAAI_MEMORY_PREINSTALL_PACKAGES}" "${after}")"
-  if [[ -n "${missing}" ]]; then
-    echo "The isolated simaai-memory replacement removed preinstalled packages:" >&2
-    while IFS= read -r package; do
-      [[ -n "${package}" ]] && printf '  %s\n' "${package}" >&2
-    done <<<"${missing}"
-    return 1
-  fi
-  verify_memory_guard_palette_and_ota || return 1
-  if ! run_sudo apt-get check; then
-    echo "APT dependency check failed after the isolated simaai-memory replacement." >&2
-    return 1
-  fi
-  if ! dpkg --audit >"${audit_log}" 2>&1 || [[ -s "${audit_log}" ]]; then
-    echo "dpkg audit failed after the isolated simaai-memory replacement:" >&2
-    cat "${audit_log}" >&2
-    return 1
-  fi
-  if [[ "${SIMAAI_MEMORY_PREINSTALL_PALETTE_INSTALLED:-0}" -eq 1 ]]; then
-    log "Verified the isolated simaai-memory replacement removed no preinstalled packages and preserved simaai-palette-modalix/simaai-ota."
-  else
-    log "Verified the isolated simaai-memory replacement removed no preinstalled packages; no pre-existing palette/OTA state required preservation."
-  fi
-}
-
-local_simaai_memory_requires_atomic_downgrade() {
-  local package installed_version
-  for package in simaai-memory-lib simaai-memory-lib-dev; do
-    installed_version="$(deb_package_installed_version "${package}" 2>/dev/null || true)"
-    if [[ -n "${installed_version}" ]] &&
-        dpkg --compare-versions "${installed_version}" gt "${SIMAAI_MEMORY_ACTUAL_VERSION}"; then
-      log "Installed ${package}=${installed_version} is newer than bundled ${SIMAAI_MEMORY_ACTUAL_VERSION}; deferring the downgrade to the full package transaction."
-      return 0
-    fi
-  done
-  return 1
-}
-
-install_local_simaai_memory_transaction() {
-  local simulation_log
-  local -a apt_args=(apt-get install -y --reinstall --no-remove)
-
-  collect_local_simaai_memory_debs || return 1
-  validate_local_simaai_memory_payload || return 1
-  snapshot_memory_transaction_guard_state || return 1
-  if local_simaai_memory_requires_atomic_downgrade; then
-    return 0
-  fi
-  simulation_log="$(mktemp /tmp/sima-neat-memory-apt-simulation-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${simulation_log}")
-
-  log "Simulating isolated local simaai-memory replacement with package removal disabled."
-  if ! run_sudo "${apt_args[@]}" --simulate "${SIMAAI_MEMORY_DEBS[@]}" >"${simulation_log}" 2>&1; then
-    cat "${simulation_log}" >&2
-    echo "APT rejected the isolated local simaai-memory transaction; no packages were changed." >&2
-    return 1
-  fi
-  cat "${simulation_log}"
-  if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
-    echo "APT simulation planned package removal for the isolated simaai-memory transaction; refusing to continue." >&2
-    grep '^Remv[[:space:]]' "${simulation_log}" >&2
-    return 1
-  fi
-
-  log "Installing bundled simaai-memory runtime/dev packages in an isolated zero-removal transaction."
-  run_sudo "${apt_args[@]}" "${SIMAAI_MEMORY_DEBS[@]}" || return 1
-  verify_installed_simaai_memory_payload || return 1
-  verify_memory_transaction_preservation || return 1
-  SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
-  remove_local_simaai_memory_debs_from_general_transaction
-}
-
-local_deb_for_exact_package() {
-  local package="$1"
-  local version="$2"
-  local deb deb_package deb_version
-  for deb in "${DEBS[@]:-}"; do
-    [[ -f "${deb}" ]] || continue
-    deb_package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    [[ "${deb_package}" == "${package}" ]] || continue
-    deb_version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
-    if [[ "${deb_version}" == "${version}" ]]; then
-      printf '%s\n' "${deb}"
-      return 0
-    fi
-  done
-  return 1
-}
-
-exact_package_install_spec() {
-  local package="$1"
-  local version="$2"
-  local local_deb apt_control
-  local_deb="$(local_deb_for_exact_package "${package}" "${version}" || true)"
-  if [[ -n "${local_deb}" ]]; then
-    printf '%s\n' "${local_deb}"
-    return 0
-  fi
-
-  apt_control="$(LC_ALL=C apt-cache show "${package}=${version}" 2>/dev/null)" || true
-  if [[ -n "${apt_control}" ]]; then
-    printf '%s=%s\n' "${package}" "${version}"
-    return 0
-  fi
-
-  echo "Required canonical Modalix package is unavailable locally and from apt: ${package}=${version}" >&2
-  return 1
-}
-
-native_modalix_repair_is_required() {
-  local package version
-  for package in simaai-gst-plugins simaai-palette-modalix; do
-    if ! deb_package_is_installed "${package}"; then
-      return 0
-    fi
-  done
-
-  # Old CI runs briefly published private same-name packages. They cannot
-  # satisfy palette dependencies such as libcamera (= 2.1.1), even when they
-  # self-Provide that version. Repair them before installing the local stack.
-  for package in \
-    libcamera libcamera-dev libcamera-tools \
-    simaai-memory-lib simaai-memory-lib-dev; do
-    version="$(deb_package_installed_version "${package}" || true)"
-    if [[ "${version}" == *+neat* ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-native_modalix_restore_specs() {
-  local out_array_name="$1"
-  local -n out_array="${out_array_name}"
-  local palette_version package version spec
-
-  palette_version="$(apt_candidate_version simaai-palette-modalix)"
-  if [[ -z "${palette_version}" || "${palette_version}" == "(none)" ]]; then
-    echo "Required native Modalix package has no apt candidate: simaai-palette-modalix" >&2
-    return 1
-  fi
-
-  out_array=()
-  for package in libcamera libcamera-tools simaai-memory-lib; do
-    # The bundled memory runtime/dev pair is installed and verified in its own
-    # zero-removal transaction. Never let this broader native-repair resolver
-    # substitute the repository's indistinguishable same-version payload.
-    if [[ "${package}" == "simaai-memory-lib" &&
-          "${SIMAAI_MEMORY_TRANSACTION_COMPLETE:-0}" -eq 1 ]]; then
-      continue
-    fi
-    version="$(apt_exact_dependency_version \
-      simaai-palette-modalix "${palette_version}" "${package}")" || {
-      echo "simaai-palette-modalix=${palette_version} has no exact dependency on ${package}" >&2
-      return 1
-    }
-    spec="$(exact_package_install_spec "${package}" "${version}")" || return 1
-    out_array+=("${spec}")
-
-    case "${package}" in
-      libcamera)
-        if deb_package_is_present libcamera-dev; then
-          spec="$(exact_package_install_spec libcamera-dev "${version}")" || return 1
-          out_array+=("${spec}")
-        fi
-        ;;
-      simaai-memory-lib)
-        if deb_package_is_present simaai-memory-lib-dev; then
-          spec="$(exact_package_install_spec simaai-memory-lib-dev "${version}")" || return 1
-          out_array+=("${spec}")
-        fi
-        ;;
-    esac
-  done
-
-  out_array+=(simaai-gst-plugins "simaai-palette-modalix=${palette_version}")
 }
 
 remove_installed_local_deb_packages() {
@@ -1520,128 +1085,6 @@ remove_installed_local_deb_packages() {
 
   log "apt-get remove failed; falling back to forced dpkg removal before apt repair."
   run_sudo dpkg --remove --force-depends "${packages[@]}"
-}
-
-local_deb_version_for_package() {
-  local package="$1"
-  local deb pkg version
-  for deb in "${DEBS[@]}"; do
-    [[ -f "${deb}" ]] || continue
-    pkg="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
-    [[ "${pkg}" == "${package}" ]] || continue
-    version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
-    if [[ -n "${version}" ]]; then
-      printf '%s\n' "${version}"
-      return 0
-    fi
-  done
-  return 1
-}
-
-maybe_relax_sima_lmm_dep() {
-  local deb="$1"
-  local out_array_name="$2"
-  local -n out_array="${out_array_name}"
-
-  if [[ "${NEAT_INSTALLER_RELAX_SIMA_LMM_DEP}" != "ON" ]]; then
-    out_array+=("${deb}")
-    return 0
-  fi
-  case "$(basename "${deb}")" in
-    sima-neat-*-Linux-core.deb | sima-neat-*-Linux-dev.deb) ;;
-    *)
-      out_array+=("${deb}")
-      return 0
-      ;;
-  esac
-  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1 ||
-      ! command -v python3 >/dev/null 2>&1; then
-    out_array+=("${deb}")
-    return 0
-  fi
-
-  local local_lmm_core_version local_lmm_dev_version
-  local_lmm_core_version="$(local_deb_version_for_package sima-lmm-core || true)"
-  local_lmm_dev_version="$(local_deb_version_for_package sima-lmm-dev || true)"
-  if [[ -z "${local_lmm_core_version}" && -z "${local_lmm_dev_version}" ]]; then
-    out_array+=("${deb}")
-    return 0
-  fi
-
-  local tmp_dir unpack_dir out_deb changed_marker
-  tmp_dir="$(mktemp -d /tmp/sima-neat-deb-normalize-XXXXXX)"
-  INSTALLER_TMP_DIRS+=("${tmp_dir}")
-  unpack_dir="${tmp_dir}/unpack"
-  out_deb="${tmp_dir}/$(basename "${deb}")"
-  changed_marker="${tmp_dir}/changed"
-
-  dpkg-deb -R "${deb}" "${unpack_dir}"
-  if python3 - "${unpack_dir}/DEBIAN/control" "${local_lmm_core_version}" \
-      "${local_lmm_dev_version}" "${changed_marker}" <<'PY'
-import re
-import subprocess
-import sys
-from pathlib import Path
-
-control = Path(sys.argv[1])
-local_versions = {
-    "sima-lmm-core": sys.argv[2],
-    "sima-lmm-dev": sys.argv[3],
-}
-changed_marker = Path(sys.argv[4])
-text = control.read_text()
-
-def minor_family(version: str):
-    match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)(?:\.\d+)?(?:[.+~-].*)?$", version)
-    if not match:
-        return None
-    return match.groups()
-
-def relax_package(package: str, body: str) -> str:
-    local = local_versions.get(package, "").strip()
-    if not local:
-        return body
-
-    def repl(match: re.Match[str]) -> str:
-        required = match.group(1).strip()
-        if minor_family(local) != minor_family(required):
-            return match.group(0)
-        if subprocess.run(
-            ["dpkg", "--compare-versions", local, "ge", required],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode != 0:
-            return match.group(0)
-        changed_marker.write_text("1")
-        return f"{package} (>= {local})"
-
-    return re.sub(rf"{re.escape(package)}\s*\(>=\s*([^)]+)\)", repl, body)
-
-new_text = relax_package("sima-lmm-core", text)
-new_text = relax_package("sima-lmm-dev", new_text)
-if new_text != text:
-    control.write_text(new_text)
-PY
-  then
-    if [[ -f "${changed_marker}" ]]; then
-      log "Relaxed $(basename "${deb}") dependency on bundled sima-lmm package version(s): core=${local_lmm_core_version:-<none>} dev=${local_lmm_dev_version:-<none>}"
-      dpkg-deb -b "${unpack_dir}" "${out_deb}" >/dev/null
-      out_array+=("${out_deb}")
-      return 0
-    fi
-  fi
-
-  out_array+=("${deb}")
-}
-
-prepare_debs_for_board_install() {
-  local -a prepared=()
-  local deb
-  for deb in "${DEBS[@]}"; do
-    maybe_relax_sima_lmm_dep "${deb}" prepared
-  done
-  DEBS=("${prepared[@]}")
 }
 
 stop_board_runtime_before_install() {
@@ -1872,7 +1315,7 @@ verify_private_dispatcher_runtime() {
   runtime_file="${runtime_files[0]}"
   soname="$(LC_ALL=C readelf -d "${runtime_file}" 2>/dev/null |
     sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p' | head -n1)"
-  if [[ ! "${soname}" =~ ^libneatdispatchercore\.so\.[1-9][0-9]*$ ]]; then
+  if [[ ! "${soname}" =~ ^libneatdispatchercore\.so\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "Private dispatcher must have a versioned SONAME; got ${soname:-<missing>} from ${runtime_file}." >&2
     return 1
   fi
@@ -2096,8 +1539,6 @@ complete_board_install_after_packages() {
   verify_private_dispatcher_runtime
   repair_global_sima_neat_lib_links
   verify_global_sima_neat_lib_links
-  verify_installed_simaai_memory_payload
-  verify_memory_guard_palette_and_ota
   verify_canonical_palette_and_ota_installation
   activate_board_runtime_after_install
   restart_board_codec_services
@@ -2105,25 +1546,184 @@ complete_board_install_after_packages() {
   verify_board_runtime_services
 }
 
+validate_ros2_sdk_native_host() {
+  local os_id os_version os_codename dpkg_arch machine command_name
+
+  for command_name in apt-get dpkg dpkg-deb dpkg-query; do
+    if ! command -v "${command_name}" >/dev/null 2>&1; then
+      echo "${command_name} is required for native ROS2 SDK installation." >&2
+      return 1
+    fi
+  done
+
+  if [[ ! -f "${NEAT_OS_RELEASE_FILE}" ]]; then
+    echo "Cannot verify the ROS2 SDK operating system: missing ${NEAT_OS_RELEASE_FILE}." >&2
+    return 1
+  fi
+  os_id="$(read_metadata_field "${NEAT_OS_RELEASE_FILE}" "ID")"
+  os_version="$(read_metadata_field "${NEAT_OS_RELEASE_FILE}" "VERSION_ID")"
+  os_codename="$(read_metadata_field "${NEAT_OS_RELEASE_FILE}" "VERSION_CODENAME")"
+  if [[ "${os_id}" != "debian" ||
+        ( "${os_version}" != "12" && "${os_codename}" != "bookworm" ) ]]; then
+    echo "Native ROS2 SDK installation requires Debian 12 (bookworm)." >&2
+    echo "  Detected: ID=${os_id:-<missing>} VERSION_ID=${os_version:-<missing>} VERSION_CODENAME=${os_codename:-<missing>}" >&2
+    return 1
+  fi
+
+  dpkg_arch="$(dpkg --print-architecture 2>/dev/null || true)"
+  machine="$(uname -m 2>/dev/null || true)"
+  if [[ "${dpkg_arch}" != "arm64" || "${machine}" != "aarch64" ]]; then
+    echo "Native ROS2 SDK installation requires an ARM64 host environment." >&2
+    echo "  Detected: dpkg=${dpkg_arch:-<missing>} uname=${machine:-<missing>}" >&2
+    return 1
+  fi
+}
+
+validate_ros2_sdk_deb_architectures() {
+  local deb architecture
+  for deb in "${DEBS[@]}"; do
+    architecture="$(dpkg-deb -f "${deb}" Architecture 2>/dev/null || true)"
+    case "${architecture}" in
+      arm64|all) ;;
+      *)
+        echo "ROS2 SDK package architecture must be arm64 or all." >&2
+        echo "  Package: ${deb}" >&2
+        echo "  Architecture: ${architecture:-<missing>}" >&2
+        return 1
+        ;;
+    esac
+  done
+}
+
+verify_ros2_sdk_deb_packages_installed() {
+  local deb package expected_version installed_status installed_version
+  for deb in "${DEBS[@]}"; do
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    expected_version="$(dpkg-deb -f "${deb}" Version 2>/dev/null || true)"
+    installed_status="$(dpkg-query -W -f='${db:Status-Abbrev}' "${package}" 2>/dev/null || true)"
+    installed_version="$(dpkg-query -W -f='${Version}' "${package}" 2>/dev/null || true)"
+    if [[ -z "${package}" || -z "${expected_version}" ||
+          "${installed_status}" != "ii " ||
+          "${installed_version}" != "${expected_version}" ]]; then
+      echo "Native ROS2 SDK package verification failed." >&2
+      echo "  Package: ${package:-<missing>} (${deb})" >&2
+      echo "  Expected version: ${expected_version:-<missing>}" >&2
+      echo "  Installed status/version: ${installed_status:-<missing>} / ${installed_version:-<missing>}" >&2
+      return 1
+    fi
+  done
+  log "Verified native ROS2 SDK packages are registered with dpkg at the bundled versions."
+}
+
+ros2_sdk_tvm_runtime_is_available() {
+  [[ -x /sbin/ldconfig ]] &&
+    /sbin/ldconfig -p 2>/dev/null | grep -qE 'libtvm_runtime\.so .* => /(usr/)?lib/'
+}
+
+validate_ros2_sdk_tvm_runtime() {
+  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  local source_lib="${sysroot}/usr/lib/libtvm_runtime.so"
+
+  if ros2_sdk_tvm_runtime_is_available; then
+    return 0
+  fi
+
+  if [[ ! -f "${source_lib}" ]]; then
+    echo "The ROS2 SDK does not provide the native TVM runtime required by Neat." >&2
+    echo "  Expected: ${source_lib}" >&2
+    return 1
+  fi
+
+  if command -v readelf >/dev/null 2>&1 &&
+     ! readelf -h "${source_lib}" 2>/dev/null | grep -q 'Machine:.*AArch64'; then
+    echo "The ROS2 SDK TVM runtime is not an AArch64 library: ${source_lib}" >&2
+    return 1
+  fi
+}
+
+install_ros2_sdk_tvm_runtime() {
+  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  local source_lib="${sysroot}/usr/lib/libtvm_runtime.so"
+  local target_dir="/usr/lib/aarch64-linux-gnu"
+  local target_lib="${target_dir}/libtvm_runtime.so"
+
+  validate_ros2_sdk_tvm_runtime || return 1
+  if ros2_sdk_tvm_runtime_is_available; then
+    log "Native TVM runtime is already available to the dynamic linker."
+    return 0
+  fi
+
+  run_sudo install -d -m 0755 "${target_dir}"
+  run_sudo install -m 0755 "${source_lib}" "${target_lib}"
+  log "Installed the ROS2 SDK TVM runtime into ${target_lib}."
+}
+
+install_debs_in_ros2_sdk() {
+  local simulation_log
+  local -a apt_install_args=(
+    apt-get install -y --reinstall --no-remove --allow-downgrades
+  )
+
+  validate_ros2_sdk_native_host || exit 1
+  validate_single_sima_neat_package_pair || exit 1
+  validate_ros2_sdk_deb_architectures || exit 1
+  validate_ros2_sdk_tvm_runtime || exit 1
+
+  log "Detected native ROS2 SDK environment; installing DEBs into system paths with apt."
+  printf '[install_neat_framework] DEB install set:\n'
+  printf '  %s\n' "${DEBS[@]}"
+  refresh_apt_metadata_for_board_install
+
+  if ! apt_package_database_is_healthy; then
+    echo "APT package state is unhealthy; refusing the native ROS2 SDK installation." >&2
+    echo "Repair the container package database first, then rerun this installer." >&2
+    exit 1
+  fi
+
+  simulation_log="$(mktemp /tmp/sima-neat-ros2-sdk-apt-simulation-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${simulation_log}")
+  log "Simulating native ROS2 SDK package installation with package removal disabled."
+  if ! run_sudo "${apt_install_args[@]}" --simulate "${DEBS[@]}" >"${simulation_log}" 2>&1; then
+    cat "${simulation_log}" >&2
+    echo "APT rejected the native ROS2 SDK package set; no packages were changed." >&2
+    exit 1
+  fi
+  cat "${simulation_log}"
+  if grep -q '^Remv[[:space:]]' "${simulation_log}"; then
+    echo "APT simulation planned package removal in the ROS2 SDK; refusing to continue." >&2
+    grep '^Remv[[:space:]]' "${simulation_log}" >&2
+    exit 1
+  fi
+
+  run_sudo "${apt_install_args[@]}" "${DEBS[@]}"
+  install_ros2_sdk_tvm_runtime || exit 1
+  if [[ -x /sbin/ldconfig ]]; then
+    run_sudo /sbin/ldconfig
+  elif command -v ldconfig >/dev/null 2>&1; then
+    run_sudo ldconfig
+  fi
+  verify_ros2_sdk_deb_packages_installed || exit 1
+  repair_global_sima_neat_lib_links
+  verify_global_sima_neat_lib_links
+  if ! apt_package_database_is_healthy; then
+    echo "APT dependency check failed after the native ROS2 SDK installation." >&2
+    exit 1
+  fi
+}
+
 install_debs_on_board() {
-  prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
   refresh_apt_metadata_for_board_install
   stop_board_runtime_before_install
 
-  # Keep the isolated memory replacement away from an unhealthy APT state.
+  # Do not start a large package transaction from an unhealthy APT state.
   if ! apt_package_database_is_healthy; then
-    echo "APT package state is unhealthy; refusing the isolated zero-removal simaai-memory replacement." >&2
+    echo "APT package state is unhealthy; refusing to install the Neat package set." >&2
     echo "Repair the board package database first, then rerun this installer." >&2
     exit 1
   fi
-  if ! install_local_simaai_memory_transaction; then
-    echo "Failed to install the bundled simaai-memory payload without package removals." >&2
-    exit 1
-  fi
-  # Install the remaining packages without allowing memory-payload substitution.
 
   local -a board_install_specs=()
   local -A seen_install_specs=()
@@ -2136,6 +1736,14 @@ install_debs_on_board() {
     seen_install_specs["${spec}"]=1
     board_install_specs+=("${spec}")
   done
+
+  local -a board_heal_specs=()
+  mapfile -t board_heal_specs < <(collect_board_heal_specs)
+  if [[ "${#board_heal_specs[@]}" -gt 0 ]]; then
+    log "Pinning platform packages for the retirement transaction:"
+    printf '  %s\n' "${board_heal_specs[@]}"
+    board_install_specs+=("${board_heal_specs[@]}")
+  fi
 
   local -a apt_install_args=(
     apt-get install -y --fix-broken --allow-downgrades --reinstall
@@ -2158,7 +1766,6 @@ install_debs_on_board() {
 
   if run_sudo "${apt_install_args[@]}" "${board_install_specs[@]}"; then
     run_sudo apt-get check
-    SIMAAI_MEMORY_TRANSACTION_COMPLETE=1
     complete_board_install_after_packages
     return 0
   fi
@@ -2199,6 +1806,27 @@ remove_stale_global_sima_lmm_pip_install() {
   fi
 }
 
+install_python_environment() {
+  VENV_DIR="$(resolve_venv_dir)"
+  ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
+  remove_stale_global_sima_lmm_pip_install
+  log_green "Preparing Python virtual environment at ${VENV_DIR}"
+  mkdir -p "$(dirname "${VENV_DIR}")"
+  python3 -m venv --system-site-packages "${VENV_DIR}"
+  ensure_home_pyneat_symlink "${VENV_DIR}"
+  print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
+  "${VENV_DIR}/bin/python" -m pip install --upgrade pip
+
+  WHEEL_FILES=()
+  collect_wheel_files "." WHEEL_FILES
+  WHEEL_FILE="${WHEEL_FILES[0]:-}"
+  if [[ -z "${WHEEL_FILE}" ]]; then
+    echo "No wheel file found in current directory." >&2
+    exit 1
+  fi
+  "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
+}
+
 validate_single_sima_neat_package_pair() {
   local deb package version
   local -a core_debs=()
@@ -2221,7 +1849,7 @@ validate_single_sima_neat_package_pair() {
   done
 
   if [[ "${#core_debs[@]}" -ne 1 || "${#dev_debs[@]}" -ne 1 ]]; then
-    echo "SDK sysroot install requires exactly one sima-neat and one sima-neat-dev package." >&2
+    echo "Neat installation requires exactly one sima-neat and one sima-neat-dev package." >&2
     echo "  sima-neat packages:     ${#core_debs[@]}" >&2
     echo "  sima-neat-dev packages: ${#dev_debs[@]}" >&2
     echo "Remove stale package versions or install from a generated metadata/manifest bundle." >&2
@@ -2229,7 +1857,7 @@ validate_single_sima_neat_package_pair() {
   fi
   if [[ -z "${core_versions[0]}" || -z "${dev_versions[0]}" ||
         "${core_versions[0]}" != "${dev_versions[0]}" ]]; then
-    echo "SDK sysroot sima-neat package versions do not match." >&2
+    echo "Neat installation sima-neat package versions do not match." >&2
     echo "  sima-neat:     ${core_versions[0]:-<missing>} (${core_debs[0]})" >&2
     echo "  sima-neat-dev: ${dev_versions[0]:-<missing>} (${dev_debs[0]})" >&2
     return 1
@@ -2431,6 +2059,34 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
   log_green "Paired DevKit sync completed: ${ssh_target}"
 }
 
+install_for_environment() {
+  case "${ENV_MODE}" in
+    elxr-sdk)
+      install_debs_into_sysroot
+      ensure_sdk_neat_cli_symlink
+      install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
+      deploy_artifacts_to_paired_devkit_if_configured
+      ;;
+    ros2-sdk)
+      # The ROS2 SDK is a native C++ build environment. PyNeat remains a DevKit
+      # runtime feature and is intentionally not installed here.
+      install_debs_in_ros2_sdk
+      install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
+      ;;
+    modalix-board)
+      # Preserve the established board ordering: provision PyNeat before the
+      # board-specific package recovery and runtime restart transaction.
+      install_python_environment
+      install_debs_on_board
+      install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
+      ;;
+    *)
+      echo "Unsupported installation environment: ${ENV_MODE}" >&2
+      return 1
+      ;;
+  esac
+}
+
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
@@ -2446,30 +2102,4 @@ fi
 ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 ensure_platform_compatible
-if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
-  install_debs_into_sysroot
-  ensure_sdk_neat_cli_symlink
-  install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
-  deploy_artifacts_to_paired_devkit_if_configured
-else
-  VENV_DIR="$(resolve_venv_dir)"
-  ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
-  remove_stale_global_sima_lmm_pip_install
-  log_green "Preparing Python virtual environment at ${VENV_DIR}"
-  mkdir -p "$(dirname "${VENV_DIR}")"
-  python3 -m venv --system-site-packages "${VENV_DIR}"
-  ensure_home_pyneat_symlink "${VENV_DIR}"
-  print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
-  "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-
-  WHEEL_FILES=()
-  collect_wheel_files "." WHEEL_FILES
-  WHEEL_FILE="${WHEEL_FILES[0]:-}"
-  if [[ -z "${WHEEL_FILE}" ]]; then
-    echo "No wheel file found in current directory." >&2
-    exit 1
-  fi
-  "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
-  install_debs_on_board
-  install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
-fi
+install_for_environment

@@ -737,6 +737,10 @@ html[data-theme="dark"] .overview-workflow-image-dark {
   gap: 0.75rem;
 }
 
+.neat-library-setup-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .compile-workflow-list {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1776,6 +1780,10 @@ object.tutorial-flow {
   /* Keep the overview/installation/tutorial card grids single-column. */
   .overview-link-columns,
   .tutorial-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .neat-library-setup-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -1,7 +1,7 @@
 ---
 title: Neat CLI
 description: Use the neat command to inspect and update an installed Neat environment
-sidebar_position: 4
+sidebar_position: 5
 ---
 
 The installed library provides the `neat` environment command. Run it from either
@@ -24,12 +24,12 @@ Neat Environment
   Update check       online
 
 Components
-  Neat core              0.2.2 channel=release latest=0.2.2
-  PyNeat                 0.2.2
-  neat-runtime           0.2.2
-  neat-gst-plugins       0.2.2
-  neat-insight           0.0.3 channel=release status=Running venv=/opt/neat-insight/venv
-  Model Compiler         2.1.2 run activate-model-compiler to activate
+  Neat core              0.4.0 channel=release latest=0.4.0
+  PyNeat                 0.4.0
+  neat-runtime           0.4.0
+  neat-gst-plugins       0.4.0
+  neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
+  Model Compiler         2.1.3 run activate-model-compiler to activate
 
 Exposed Ports
   Insight Web UI     https://10.0.0.22:9900

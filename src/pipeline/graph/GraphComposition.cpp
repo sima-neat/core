@@ -463,6 +463,14 @@ void Graph::CompositionGraph::connect_runtime_port(VertexId from, VertexId to,
   if (to_port.empty()) {
     throw std::runtime_error("Graph::connect: port name must not be empty");
   }
+  if (vertices[from] && vertices[from]->kind() == "PCIeSrc" &&
+      std::any_of(edges.begin(), edges.end(), [&](const auto& edge) {
+        return edge.kind == CompositionEdgeKind::RuntimePort && edge.from == from &&
+               edge.from_port == from_port;
+      })) {
+    throw std::runtime_error("Graph::connect: PCIeSrc output " + from_port +
+                             " is already connected");
+  }
   std::string incoming_stream_id = link_options.stream_id;
   for (auto& edge : edges) {
     if (edge.kind != CompositionEdgeKind::RuntimePort) {

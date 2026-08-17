@@ -1,0 +1,106 @@
+---
+title: Install PCIe Host
+description: Install the PCIe host runtime to run models on a connected Modalix PCIe Card
+sidebar_position: 3
+---
+
+Use this page to install the Neat PCIe host package on a Linux machine connected
+to a Modalix PCIe Card.
+
+The Neat PCIe host package provides co-processing APIs for sending input from a
+host machine to a connected Modalix PCIe Card and receiving inference results.
+
+:::warning Install on the PCIe host machine
+Run this installation on the **PCIe host machine** connected to the Modalix PCIe
+Card. Do not run it inside the Neat SDK container, on a DevKit, or on the
+Modalix PCIe Card.
+:::
+
+## Supported host operating systems
+
+The Neat PCIe host package supports the following validated host platforms:
+
+| Operating system | Architecture | Support |
+| --- | --- | --- |
+| Ubuntu 22.04 | x86_64 | Supported |
+| Ubuntu 24.04 | x86_64 | Supported |
+
+Arm64 host builds have not yet been validated. Windows 11 is not supported.
+
+## Prerequisites
+
+Before installing the package:
+
+- Install `sima-cli` on the PCIe host. Use the
+  [sima-cli installation guide](/tools/sima-cli/).
+- Install and verify the PCIe host driver by following the
+  [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
+- Connect and configure the Modalix PCIe Card so its management interface is
+  reachable from the host. The default address for card 0 is `10.0.0.2`.
+- Install a compatible Neat Library version on the card. The host and
+  card packages must come from compatible releases.
+
+Authenticate the PCIe host so it can download SiMa.ai artifacts:
+
+<ShellCommand prompt="pcie-host">
+sima-cli login
+</ShellCommand>
+
+## Install the PCIe Host Package
+
+Choose a working directory on the PCIe host, then run the command for the installed Ubuntu version.
+
+**Ubuntu 22.04 on x86_64:**
+
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
+</ShellCommand>
+
+**Ubuntu 24.04 on x86_64:**
+
+<ShellCommand prompt="pcie-host">
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
+</ShellCommand>
+
+The installer adds everything needed to develop and run Neat PCIe host
+applications, including the C++ API and a Python environment at
+`~/pyneatpcie`.
+
+During the first installation, SSH provisioning can request the `sima` account
+password for the card. It creates or reuses
+`~/.ssh/sima_neat_pcie_ed25519` and installs its public key on the card. Normal
+PCIe operation then uses passwordless SSH for card-side model setup.
+
+## Verify the installation
+
+Confirm that the Python API and PCIe host plugin are available:
+
+<ShellCommand prompt="pcie-host">
+source ~/pyneatpcie/bin/activate
+python3 -c "import pyneatpcie; print('pyneatpcie ready')"
+gst-inspect-1.0 neatpciehost
+</ShellCommand>
+
+## Troubleshooting
+
+If SSH provisioning cannot discover the card automatically, first verify that
+the host can reach its management address:
+
+<ShellCommand prompt="pcie-host">
+ping -c 1 10.0.0.2
+</ShellCommand>
+
+Then run the installed setup utility with the address explicitly:
+
+<ShellCommand prompt="pcie-host">
+pcie-setup.sh --hosts "10.0.0.2"
+</ShellCommand>
+
+If package installation or runtime startup fails, confirm that the PCIe host
+package and the Neat Library installed on the card are from compatible
+releases.
+
+## Next Step
+
+Continue with [PCIe Co-Processing](/develop-apps/hello-neat/pcie/) to verify the
+complete host-to-card development path.

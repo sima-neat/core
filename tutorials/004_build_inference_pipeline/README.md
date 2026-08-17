@@ -1,8 +1,9 @@
-# 004 Build an Inference Pipeline
+# 004 Build Your First Graph
 
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Graphs & Pipelines |
 | Difficulty | Beginner |
 | Estimated Read Time | 5 minutes |
 | Model | None |

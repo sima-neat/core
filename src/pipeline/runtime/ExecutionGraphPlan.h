@@ -114,6 +114,9 @@ struct FusedRealtimeIngressBranch {
   std::size_t edge_index = static_cast<std::size_t>(-1);
   graph::NodeId source_node = graph::kInvalidNode;
   std::string stream_id;
+  /// Optional named pad on a shared physical source, for example `src_3` on
+  /// one multi-pad PCIe source.
+  std::string shared_source_pad;
   /// Exact public options from the source-to-consumer realtime link.  Fused
   /// lowering must retain these because there is no graph-runtime scheduler
   /// left outside the monolithic GStreamer pipeline to enforce them.
@@ -151,6 +154,10 @@ struct FusedRealtimeIngressBranch {
 };
 
 struct FusedRealtimeIngress {
+  /// A source rendered once and referenced by `shared_source_pad` from each
+  /// branch. Empty for ordinary one-source-per-branch realtime ingress.
+  std::vector<std::shared_ptr<Node>> shared_source_nodes;
+  graph::NodeId shared_source_node = graph::kInvalidNode;
   std::vector<FusedRealtimeIngressBranch> branches;
 };
 

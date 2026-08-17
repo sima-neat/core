@@ -4,6 +4,7 @@
 #include "nodes/common/Caps.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "pipeline/runtime/RunCore.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "runtime_test_utils.h"
@@ -11,6 +12,8 @@
 #include "test_utils.h"
 
 #include <opencv2/core.hpp>
+
+#include <gst/gst.h>
 
 #include <chrono>
 #include <functional>
@@ -70,6 +73,18 @@ simaai::neat::Run make_async_drop_run(const simaai::neat::Tensor& seed) {
   RunOptions run_opt;
   run_opt.advanced.copy_input = true;
   return graph.build(TensorList{seed}, run_opt);
+}
+
+simaai::neat::PullStatus pull_until_terminal(simaai::neat::Run& run, simaai::neat::Sample& sample,
+                                             simaai::neat::PullError& error) {
+  simaai::neat::PullStatus status = simaai::neat::PullStatus::Timeout;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    status = run.pull(1000, sample, &error);
+    if (status == simaai::neat::PullStatus::Closed || status == simaai::neat::PullStatus::Error) {
+      break;
+    }
+  }
+  return status;
 }
 
 } // namespace
@@ -193,16 +208,14 @@ RUN_TEST(
                 run_api_case("unexpected_eos_push_1", "first test input should be accepted"));
         require(eos_run.push(TensorList{seed}),
                 run_api_case("unexpected_eos_push_2", "second test input should be accepted"));
+        const auto core = run_internal::core(eos_run);
+        GstElement* pipeline = core ? core->pipeline.stream.pipeline_handle() : nullptr;
+        require(pipeline && gst_element_send_event(pipeline, gst_event_new_eos()),
+                run_api_case("unexpected_eos_inject", "failed to inject premature EOS"));
 
         Sample tmp;
         PullError err;
-        PullStatus status = PullStatus::Timeout;
-        for (int attempt = 0; attempt < 3; ++attempt) {
-          status = eos_run.pull(1000, tmp, &err);
-          if (status != PullStatus::Ok) {
-            break;
-          }
-        }
+        const PullStatus status = pull_until_terminal(eos_run, tmp, err);
         require(status == PullStatus::Error,
                 run_api_case("unexpected_eos_status", "premature EOS should be an error; status=" +
                                                           std::to_string(static_cast<int>(status)) +
@@ -226,13 +239,7 @@ RUN_TEST(
 
         Sample tmp;
         PullError err;
-        PullStatus status = PullStatus::Timeout;
-        for (int attempt = 0; attempt < 3; ++attempt) {
-          status = cardinality_run.pull(1000, tmp, &err);
-          if (status != PullStatus::Ok) {
-            break;
-          }
-        }
+        const PullStatus status = pull_until_terminal(cardinality_run, tmp, err);
         require(status == PullStatus::Closed,
                 run_api_case("cardinality_eos_status",
                              "a closed cardinality-changing pipeline should close normally; "
@@ -326,6 +333,7 @@ RUN_TEST(
         copy_msg.tensor = seed;
         copy_msg.payload_type = PayloadType::Image;
         copy_msg.format = "RGB";
+        copy_msg.attributes = {{"image-channel", "color"}, {"image-index", "41"}};
         try {
           require(run.try_push(Sample{copy_msg}),
                   run_api_case("active_try_push_sample_copy",
@@ -338,6 +346,9 @@ RUN_TEST(
         require(copy_out.has_value() && !tensors_from_sample(*copy_out, true).empty(),
                 run_api_case("active_try_push_sample_copy_output",
                              "Run::try_push(Sample copy) should produce tensor output"));
+        require(copy_out->attributes == copy_msg.attributes,
+                run_api_case("active_try_push_sample_copy_attributes",
+                             "CPU-copy input must preserve Sample attributes"));
 
         const auto fill = sima_test::fill_try_push_queue_non_blocking(run, seed, 4096);
         require(fill.saw_backpressure,

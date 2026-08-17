@@ -998,6 +998,40 @@ RUN_TEST(
       require(extracted_direct_bf16->tensors[0].source_size_bytes == 204800U,
               "BF16 direct route should preserve packed source byte span");
 
+      auto rank2_bf16_mpk = direct_bf16_mpk;
+      auto& rank2_mla_output = rank2_bf16_mpk.plugins[0].output_tensors.front();
+      rank2_mla_output.mpk_shape = {1, 448};
+      rank2_mla_output.size_bytes = 448U;
+      auto& rank2_unpack_output = rank2_bf16_mpk.plugins[1].output_tensors.front();
+      rank2_unpack_output.mpk_shape = {1, 448};
+      rank2_unpack_output.logical_shape = {1, 213};
+      rank2_unpack_output.size_bytes = 448U;
+      auto& rank2_detess = rank2_bf16_mpk.plugins[2];
+      rank2_detess.frame_shape = {1, 213};
+      rank2_detess.runtime_frame_shape = {1, 1, 1, 213};
+      rank2_detess.slice_shape = {1, 1, 64};
+      auto& rank2_detess_input = rank2_detess.input_tensors.front();
+      rank2_detess_input.mpk_shape = {1, 448};
+      rank2_detess_input.logical_shape = {1, 213};
+      rank2_detess_input.size_bytes = 448U;
+      auto& rank2_detess_output = rank2_detess.output_tensors.front();
+      rank2_detess_output.mpk_shape = {1, 213};
+      rank2_detess_output.logical_shape = {1, 213};
+      rank2_detess_output.size_bytes = 426U;
+      auto& rank2_cast_output = rank2_bf16_mpk.plugins[3].output_tensors.front();
+      rank2_cast_output.mpk_shape = {1, 213};
+      rank2_cast_output.logical_shape = {1, 213};
+      rank2_cast_output.size_bytes = 852U;
+
+      const auto extracted_rank2_bf16 =
+          build_boxdecode_static_contract_from_mpk(rank2_bf16_mpk, make_flags(false, true), &error);
+      require(extracted_rank2_bf16.has_value(),
+              "BF16 rank-2 NC route should use resolved detess geometry: " + error);
+      require(extracted_rank2_bf16->tensors[0].input_shape == std::vector<int>({1, 1, 213}),
+              "BF16 rank-2 NC route should expose H=1, W=1, C=213");
+      require(extracted_rank2_bf16->tensors[0].source_size_bytes == 448U,
+              "BF16 rank-2 NC route should preserve the C16-packed source byte span");
+
       // Tess route: unpack publishes dense physical HWC and slice selects logical C=1.
       MpkContract dense_slice_mpk;
       MpkPluginIoContract dense_mla;

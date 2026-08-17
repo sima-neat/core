@@ -174,6 +174,30 @@ const config = {
             from: "/getting-started/dev-environment/run-on-the-devkit/",
             to: "/getting-started/dev-environment/devkit-sync/",
           },
+          {
+            from: "/tutorials/beginner/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/intermediate/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/advanced/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/measure-pcie-detection-throughput/",
+            to: "/tutorials/run-pcie-inference-async/",
+          },
+          {
+            from: "/tutorials/run-pcie-inference-modes/",
+            to: "/tutorials/run-your-first-model-over-pcie/",
+          },
+          {
+            from: "/tutorials/run-models-on-multiple-pcie-queues/",
+            to: "/tutorials/run-multiple-models/",
+          },
         ],
       },
     ],

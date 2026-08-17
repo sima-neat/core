@@ -539,6 +539,7 @@ def test_camera_input_surface_is_exposed():
   opt = pyneat.CameraInputOptions()
   for field in CAMERA_INPUT_OPTION_FIELDS:
     assert hasattr(opt, field), field
+  assert not hasattr(opt, "capture_buffer_count")
 
   opt.camera_name = "imx477 5-001a"
   opt.width = 1280
@@ -561,10 +562,12 @@ def test_camera_input_surface_is_exposed():
   opt.camera_name = None
   assert opt.camera_name is None
 
-  node = pyneat.nodes.camera_input(opt)
+  node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
   assert isinstance(node, pyneat.Node)
   assert node.kind() == "CameraInput"
   assert node.input_role() == pyneat.InputRole.Source
+  with pytest.raises(ValueError, match="128-buffer provider limit"):
+    pyneat.nodes.camera_input(opt, capture_buffer_count=129)
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
@@ -915,8 +918,13 @@ def test_jpeg_framing_nodes_are_exposed():
   demux = pyneat.MultipartJpegDemuxOptions()
   assert demux.boundary == ""
   assert demux.single_stream is False
+  assert demux.header_capture.headers == []
   demux.boundary = "frame"
   demux.single_stream = True
+  capture = pyneat.MultipartHeaderCaptureOptions()
+  capture.headers = ["Image-Index"]
+  demux.header_capture = capture
+  assert demux.header_capture.headers == ["Image-Index"]
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux())
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux(demux))
 
