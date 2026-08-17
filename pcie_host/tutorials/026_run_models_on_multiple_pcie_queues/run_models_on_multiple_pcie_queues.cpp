@@ -31,8 +31,7 @@ constexpr int kYoloQueue = 1;
 constexpr char kResnetModelPath[] = "resnet_50_mpk.tar.gz";
 constexpr char kYoloModelPath[] = "yolo_v8s_mpk.tar.gz";
 constexpr char kResnetImagePath[] = "share/sima-pcie-host/tutorials/assets/labrador.jpg";
-constexpr char kYoloImagePath[] =
-    "share/sima-pcie-host/tutorials/assets/street-scene.png";
+constexpr char kYoloImagePath[] = "share/sima-pcie-host/tutorials/assets/street-scene.png";
 
 struct Args {
   int card_id = 0;
@@ -112,8 +111,8 @@ int top_class(const pcie::TensorList& outputs) {
   if (offset > output.size_bytes || (output.size_bytes - offset) % sizeof(float) != 0) {
     throw std::runtime_error("ResNet-50 returned an invalid output span");
   }
-  const auto* scores = reinterpret_cast<const float*>(
-      static_cast<const std::uint8_t*>(output.data) + offset);
+  const auto* scores =
+      reinterpret_cast<const float*>(static_cast<const std::uint8_t*>(output.data) + offset);
   const std::size_t count = (output.size_bytes - offset) / sizeof(float);
   return static_cast<int>(std::distance(scores, std::max_element(scores, scores + count)));
 }
@@ -154,9 +153,8 @@ std::vector<Box> parse_boxes(const pcie::TensorList& outputs) {
   for (std::uint32_t index = 0; index < count; ++index) {
     const auto* record = bytes + 4 + index * record_size;
     boxes.push_back({read_value<std::int32_t>(record), read_value<std::int32_t>(record + 4),
-                     read_value<std::int32_t>(record + 8),
-                     read_value<std::int32_t>(record + 12), read_value<float>(record + 16),
-                     read_value<std::int32_t>(record + 20)});
+                     read_value<std::int32_t>(record + 8), read_value<std::int32_t>(record + 12),
+                     read_value<float>(record + 16), read_value<std::int32_t>(record + 20)});
   }
   return boxes;
 }
@@ -201,8 +199,7 @@ int main(int argc, char** argv) {
     // STEP assign-queues
     pcie::Model resnet(kResnetModelPath, classification_options(),
                        connection_for(args, kResnetQueue));
-    pcie::Model yolo(kYoloModelPath, detection_options(),
-                     connection_for(args, kYoloQueue));
+    pcie::Model yolo(kYoloModelPath, detection_options(), connection_for(args, kYoloQueue));
     try {
       resnet.build(kBuildTimeoutMs);
     } catch (const std::exception& error) {
@@ -223,9 +220,8 @@ int main(int argc, char** argv) {
     pcie::TensorList classification;
     pcie::TensorList detections;
     try {
-      auto classification_future = std::async(std::launch::async, [&] {
-        return resnet.run(labrador, kRunTimeoutMs);
-      });
+      auto classification_future =
+          std::async(std::launch::async, [&] { return resnet.run(labrador, kRunTimeoutMs); });
       auto detection_future =
           std::async(std::launch::async, [&] { return yolo.run(street, kRunTimeoutMs); });
       classification = classification_future.get();
@@ -240,14 +236,14 @@ int main(int argc, char** argv) {
     // STEP read-results
     const int top1 = top_class(classification);
     const auto boxes = parse_boxes(detections);
-    std::cout << "queue=" << kResnetQueue << " model=resnet_50 output_shape="
-              << shape_string(classification[0].shape) << " top1=" << top1;
+    std::cout << "queue=" << kResnetQueue
+              << " model=resnet_50 output_shape=" << shape_string(classification[0].shape)
+              << " top1=" << top1;
     if (top1 == 208) {
       std::cout << " (Labrador retriever)";
     }
     std::cout << '\n';
-    std::cout << "queue=" << kYoloQueue << " model=yolo_v8s detections=" << boxes.size()
-              << '\n';
+    std::cout << "queue=" << kYoloQueue << " model=yolo_v8s detections=" << boxes.size() << '\n';
     for (std::size_t index = 0; index < std::min<std::size_t>(boxes.size(), 5); ++index) {
       const auto& box = boxes[index];
       std::cout << "  " << class_name(box.class_id) << " score=" << std::fixed

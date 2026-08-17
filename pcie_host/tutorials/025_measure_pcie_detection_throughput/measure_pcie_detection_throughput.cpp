@@ -218,8 +218,8 @@ int main(int argc, char** argv) {
 
     // STEP report-results
     std::cout << "completed=" << result.completed << '\n';
-    std::cout << std::fixed << std::setprecision(2)
-              << "elapsed_seconds=" << result.elapsed_seconds << '\n'
+    std::cout << std::fixed << std::setprecision(2) << "elapsed_seconds=" << result.elapsed_seconds
+              << '\n'
               << "throughput_fps=" << result.completed / result.elapsed_seconds << '\n'
               << "average_latency_ms=" << result.average_latency_ms << '\n'
               << "total_detections=" << result.total_detections << '\n';

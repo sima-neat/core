@@ -80,9 +80,8 @@ std::vector<Box> parse_boxes(const pcie::TensorList& outputs) {
   for (std::uint32_t index = 0; index < count; ++index) {
     const auto* record = bytes + 4 + index * record_size;
     boxes.push_back({read_value<std::int32_t>(record), read_value<std::int32_t>(record + 4),
-                     read_value<std::int32_t>(record + 8),
-                     read_value<std::int32_t>(record + 12), read_value<float>(record + 16),
-                     read_value<std::int32_t>(record + 20)});
+                     read_value<std::int32_t>(record + 8), read_value<std::int32_t>(record + 12),
+                     read_value<float>(record + 16), read_value<std::int32_t>(record + 20)});
   }
   return boxes;
 }
