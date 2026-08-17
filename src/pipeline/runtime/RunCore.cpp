@@ -306,6 +306,15 @@ void copy_encoded_pipeline_input_to_cpu_if_needed(const PipelineSegmentRuntime& 
   }
 }
 
+PullError pull_error_from_neat_error(const NeatError& error) {
+  PullError detail;
+  detail.code = error.report().error_code.empty() ? std::string(error_codes::kInternalPluginFailure)
+                                                  : error.report().error_code;
+  detail.message = error.what();
+  detail.report = error.report();
+  return detail;
+}
+
 } // namespace
 
 void initialize_run_identity(RunCore& core) {
@@ -412,12 +421,7 @@ void RunCore::set_terminal_error(PullError detail) {
 }
 
 void RunCore::set_terminal_error(const NeatError& err) {
-  PullError detail;
-  detail.code = err.report().error_code.empty() ? std::string(error_codes::kInternalPluginFailure)
-                                                : err.report().error_code;
-  detail.message = err.what();
-  detail.report = err.report();
-  set_terminal_error(std::move(detail));
+  set_terminal_error(pull_error_from_neat_error(err));
 }
 
 void RunCore::graph_request_stop(PullError detail) {
@@ -609,7 +613,7 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
     return;
   }
   auto& pipe = *graph_execution_->pipelines[pipeline_index];
-  if (pipe.transport.completion_forwarded.exchange(true, std::memory_order_acq_rel)) {
+  if (pipe.transport.completion_started.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
   if (close_detail.has_value()) {
@@ -643,10 +647,11 @@ void RunCore::graph_pipeline_completed(std::size_t pipeline_index,
     }
   }
 
-  pipe.transport.cv.notify_all();
   if (!pipe.seg.node_ids.empty()) {
     graph_producer_completed(pipe.seg.node_ids.back());
   }
+  pipe.transport.completion_forwarded.store(true, std::memory_order_release);
+  pipe.transport.cv.notify_all();
 }
 
 void RunCore::graph_stage_worker_completed(std::size_t group_index) {
@@ -825,7 +830,11 @@ bool RunCore::graph_sink_closed(simaai::neat::graph::NodeId node_id) const {
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                           bool allow_startup_preflight,
-                                          bool cancel_on_public_input_close) {
+                                          bool cancel_on_public_input_close,
+                                          PullError* current_failure) {
+  if (current_failure) {
+    *current_failure = {};
+  }
   const auto ensure_start_ns = std::chrono::steady_clock::now();
   const auto total_start = pipeline_internal::build_timing_now();
   ExecutionGraphRuntime& execution = graph_execution();
@@ -936,6 +945,8 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     start_opt.owner = &pipe;
     start_opt.allow_startup_preflight = allow_startup_preflight;
     start_opt.push_sample_policy = PushSamplePolicy::PreserveSample;
+    start_opt.decoder_admission =
+        std::atomic_load_explicit(&decoder_admission, std::memory_order_acquire);
     const auto segment_start = pipeline_internal::build_timing_now();
     auto run_core = RunCore::start_pipeline_segment(pipe.seg, std::move(start_opt));
     const auto segment_us = pipeline_internal::build_timing_us(segment_start);
@@ -967,11 +978,18 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     }
     return true;
   } catch (const NeatError& e) {
+    PullError detail = pull_error_from_neat_error(e);
+    if (current_failure) {
+      *current_failure = detail;
+    }
     if (!public_close_cancelled()) {
-      set_terminal_error(e);
+      set_terminal_error(std::move(detail));
     }
     build_error = e.what();
   } catch (const std::exception& e) {
+    if (current_failure) {
+      current_failure->message = e.what();
+    }
     build_error = e.what();
   }
   {
@@ -1611,7 +1629,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
         std::move(source.stream), source.merged_opt, source.stream_opt, opt.mode,
-        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor));
+        opt.tensor_input_opt_for_cv, std::move(opt.input_route_processor), opt.decoder_admission,
+        std::move(opt.after_pipeline_start_for_test));
     core->push_sample_policy = opt.push_sample_policy;
     const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
     pipeline_internal::emit_build_timing(
@@ -1651,9 +1670,10 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   }
   const auto input_stream_us = pipeline_internal::build_timing_us(input_stream_start);
   const auto start_single_start = pipeline_internal::build_timing_now();
-  auto core = RunCore::start_single_pipeline(std::move(stream), ctx.merged_opt, build_stream_opt,
-                                             ctx.mode, opt.tensor_input_opt_for_cv,
-                                             std::move(opt.input_route_processor));
+  auto core = RunCore::start_single_pipeline(
+      std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, opt.tensor_input_opt_for_cv,
+      std::move(opt.input_route_processor), opt.decoder_admission,
+      std::move(opt.after_pipeline_start_for_test));
   core->push_sample_policy = opt.push_sample_policy;
   const auto start_single_us = pipeline_internal::build_timing_us(start_single_start);
   pipeline_internal::emit_build_timing("RunCore::start_pipeline_segment",

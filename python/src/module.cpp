@@ -1,5 +1,6 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/bind_map.h>
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/function.h>
@@ -79,6 +80,7 @@
 #include "pipeline/RunExport.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/DetectionTypes.h"
+#include "pipeline/FeatureTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/FormatSpec.h"
@@ -1566,6 +1568,11 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("format", &simaai::neat::DetectionSpec::format);
 
+  nb::class_<simaai::neat::FeatureSpec>(
+      m, "FeatureSpec", "Feature-extractor output metadata (for example FEATURE_POINTS_V1).")
+      .def(nb::init<>())
+      .def_rw("format", &simaai::neat::FeatureSpec::format);
+
   nb::class_<simaai::neat::PreprocessRoi>(
       m, "PreprocessRoi",
       "Runtime ROI window consumed by Preproc. batch_index selects the source image; "
@@ -1651,6 +1658,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("encoded", &simaai::neat::Semantic::encoded)
       .def_rw("quant", &simaai::neat::Semantic::quant)
       .def_rw("detection", &simaai::neat::Semantic::detection)
+      .def_rw("feature", &simaai::neat::Semantic::feature)
       .def_rw("preprocess", &simaai::neat::Semantic::preprocess);
 
   nb::class_<simaai::neat::Segment>(m, "Segment")
@@ -1845,6 +1853,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("code", &PullError::code)
       .def_rw("report", &PullError::report);
 
+  // Per-frame attributes must behave like a live mapping, not a snapshot: users expect
+  // `sample.attributes["k"] = "v"` to reach the C++ Sample. A plain def_rw over std::map
+  // would convert through a temporary dict and silently drop item assignment, so the map is
+  // bound as its own type and exposed by reference.
+  nb::bind_map<simaai::neat::SampleAttributes>(m, "SampleAttributes");
+
   nb::class_<Sample>(m, "Sample")
       .def(nb::init<>())
       .def_rw("kind", &Sample::kind)
@@ -1873,6 +1887,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("pts_ns", &Sample::pts_ns)
       .def_rw("dts_ns", &Sample::dts_ns)
       .def_rw("duration_ns", &Sample::duration_ns)
+      // Live mapping view: item assignment/erase reaches the owning Sample. Assigning a
+      // whole dict replaces the contents.
+      .def_prop_rw(
+          "attributes", [](Sample& s) -> simaai::neat::SampleAttributes& { return s.attributes; },
+          [](Sample& s, const simaai::neat::SampleAttributes& value) { s.attributes = value; },
+          nb::rv_policy::reference_internal)
       // Phase 1 (plan slice S10): Pythonic sequence protocol over Bundle samples. The raw C++
       // operator[] returns *this for any index on a non-Bundle sample (no bounds error), so
       // __getitem__ is explicitly bounds-checked (and supports negative indices). front()/back()/
@@ -1956,6 +1976,13 @@ NB_MODULE(_pyneat_core, m) {
       "  RuntimeError: strict=True and a payload is malformed.",
       "bbox_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
       "strict"_a = false);
+
+  nb::class_<simaai::neat::FeaturePointTensors>(m, "FeaturePointTensors")
+      .def_ro("keypoints", &simaai::neat::FeaturePointTensors::keypoints)
+      .def_ro("scores", &simaai::neat::FeaturePointTensors::scores)
+      .def_ro("descriptors", &simaai::neat::FeaturePointTensors::descriptors);
+  m.def("decode_superpoint", &simaai::neat::decode_superpoint, "tensors"_a,
+        "Decode FEATURE_POINTS_V1 or explicitly tagged legacy A65 SuperPoint payloads.");
 
   nb::class_<simaai::neat::PoseDecodeTensors>(m, "PoseDecodeTensors")
       .def(nb::init<>())
@@ -2107,6 +2134,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
       .def_rw("asr_task", &simaai::neat::genai::GenerationRequest::asr_task)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
+      .def_rw("enable_thinking", &simaai::neat::genai::GenerationRequest::enable_thinking)
       .def_prop_rw(
           "tools",
           [](const simaai::neat::genai::GenerationRequest& request) {
@@ -2127,6 +2155,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::GenerationResult>(m, "GenerationResult")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::GenerationResult::text)
+      .def_rw("reasoning", &simaai::neat::genai::GenerationResult::reasoning)
       .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
       .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
       .def_rw("language", &simaai::neat::genai::GenerationResult::language)
@@ -2144,6 +2173,7 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::TokenSample>(m, "TokenSample")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::TokenSample::text)
+      .def_rw("reasoning", &simaai::neat::genai::TokenSample::reasoning)
       .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
       .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
       .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
@@ -2185,6 +2215,10 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
       .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
       .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
+      .def("set_lora", &simaai::neat::genai::VisionLanguageModel::set_lora, "adapter_name"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("unset_lora", &simaai::neat::genai::VisionLanguageModel::unset_lora,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
       .def(
           "encode",
@@ -2215,6 +2249,10 @@ NB_MODULE(_pyneat_core, m) {
       .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
       .def("accepts_audio", &simaai::neat::genai::GenAIModel::accepts_audio)
       .def("model_id", &simaai::neat::genai::GenAIModel::model_id)
+      .def("set_lora", &simaai::neat::genai::GenAIModel::set_lora, "adapter_name"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("unset_lora", &simaai::neat::genai::GenAIModel::unset_lora,
+           nb::call_guard<nb::gil_scoped_release>())
       .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
@@ -3233,6 +3271,11 @@ NB_MODULE(_pyneat_core, m) {
   graphs_mod.def("combine", &simaai::neat::graphs::Combine, "inputs"_a, "output"_a,
                  "policy"_a = simaai::neat::CombinePolicy::ByFrame);
 
+  nb::class_<simaai::neat::MultipartHeaderCaptureOptions>(m, "MultipartHeaderCaptureOptions")
+      .def(nb::init<>())
+      .def_rw("headers", &simaai::neat::MultipartHeaderCaptureOptions::headers)
+      .def("enabled", &simaai::neat::MultipartHeaderCaptureOptions::enabled);
+
   nb::class_<simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::OutputCaps>(
       m, "HttpMjpegDecodedInputOutputCaps")
       .def(nb::init<>())
@@ -3301,7 +3344,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("use_videorate",
               &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::use_videorate)
       .def_rw("video_rate_fps",
-              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::video_rate_fps);
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::video_rate_fps)
+      .def_rw("header_capture",
+              &simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions::header_capture);
 
   nb::class_<simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps>(
       m, "ImageInputGroupOutputCaps")
@@ -3796,7 +3841,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::MultipartJpegDemuxOptions>(m, "MultipartJpegDemuxOptions")
       .def(nb::init<>())
       .def_rw("boundary", &simaai::neat::MultipartJpegDemuxOptions::boundary)
-      .def_rw("single_stream", &simaai::neat::MultipartJpegDemuxOptions::single_stream);
+      .def_rw("single_stream", &simaai::neat::MultipartJpegDemuxOptions::single_stream)
+      .def_rw("header_capture", &simaai::neat::MultipartJpegDemuxOptions::header_capture);
   nb::class_<simaai::neat::EncodedCapsFixupOptions>(m, "EncodedCapsFixupOptions")
       .def(nb::init<>())
       .def_rw("media_type", &simaai::neat::EncodedCapsFixupOptions::media_type)
@@ -3865,28 +3911,14 @@ NB_MODULE(_pyneat_core, m) {
   // Phase 4 (plan slice): PCIe transport node options (host<->board zero-copy).
   nb::class_<simaai::neat::PCIeSrcOptions>(m, "PCIeSrcOptions")
       .def(nb::init<>())
+      .def_rw("queue", &simaai::neat::PCIeSrcOptions::queue)
       .def_rw("buffer_size", &simaai::neat::PCIeSrcOptions::buffer_size)
-      .def_rw("format", &simaai::neat::PCIeSrcOptions::format)
-      .def_rw("width", &simaai::neat::PCIeSrcOptions::width)
-      .def_rw("height", &simaai::neat::PCIeSrcOptions::height)
-      .def_rw("fps_n", &simaai::neat::PCIeSrcOptions::fps_n)
-      .def_rw("fps_d", &simaai::neat::PCIeSrcOptions::fps_d);
+      .def_rw("pool_size", &simaai::neat::PCIeSrcOptions::pool_size);
   nb::class_<simaai::neat::PCIeSinkOptions>(m, "PCIeSinkOptions")
       .def(nb::init<>())
       .def_rw("config_file", &simaai::neat::PCIeSinkOptions::config_file)
-      .def_rw("data_buf_name", &simaai::neat::PCIeSinkOptions::data_buf_name)
-      .def_rw("data_buffer_size", &simaai::neat::PCIeSinkOptions::data_buffer_size)
-      .def_rw("num_buffers", &simaai::neat::PCIeSinkOptions::num_buffers)
       .def_rw("queue", &simaai::neat::PCIeSinkOptions::queue)
-      .def_rw("param_buf_name", &simaai::neat::PCIeSinkOptions::param_buf_name)
-      .def_rw("param_buffer_size", &simaai::neat::PCIeSinkOptions::param_buffer_size)
-      .def_rw("use_multi_buffers", &simaai::neat::PCIeSinkOptions::use_multi_buffers)
-      .def_rw("sync", &simaai::neat::PCIeSinkOptions::sync)
-      .def_rw("async_state", &simaai::neat::PCIeSinkOptions::async_state)
-      .def_rw("max_lateness_ns", &simaai::neat::PCIeSinkOptions::max_lateness_ns)
-      .def_rw("processing_deadline_ns", &simaai::neat::PCIeSinkOptions::processing_deadline_ns)
-      .def_rw("transmit_kpi", &simaai::neat::PCIeSinkOptions::transmit_kpi)
-      .def_rw("qos", &simaai::neat::PCIeSinkOptions::qos);
+      .def_rw("transmit_kpi", &simaai::neat::PCIeSinkOptions::transmit_kpi);
 
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
   nodes_mod.def("queue", &simaai::neat::nodes::Queue);
@@ -3906,8 +3938,13 @@ NB_MODULE(_pyneat_core, m) {
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(std::string, simaai::neat::InputOptions)>(
           &simaai::neat::nodes::Input),
       "name"_a, "options"_a = simaai::neat::InputOptions{});
-  nodes_mod.def("camera_input", &simaai::neat::nodes::CameraInput,
-                "options"_a = simaai::neat::CameraInputOptions{});
+  nodes_mod.def(
+      "camera_input",
+      [](simaai::neat::CameraInputOptions options, std::uint32_t capture_buffer_count) {
+        return simaai::neat::nodes::CameraInputWithCaptureBuffers(std::move(options),
+                                                                  capture_buffer_count);
+      },
+      "options"_a = simaai::neat::CameraInputOptions{}, "capture_buffer_count"_a = 0U);
   nodes_mod.def("output",
                 static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::OutputOptions)>(
                     &simaai::neat::nodes::Output),
@@ -4189,7 +4226,8 @@ NB_MODULE(_pyneat_core, m) {
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
-      .value("Centernet", simaai::neat::BoxDecodeType::Centernet);
+      .value("Centernet", simaai::neat::BoxDecodeType::Centernet)
+      .value("SuperPoint", simaai::neat::BoxDecodeType::SuperPoint);
 
   nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
       .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
@@ -4204,6 +4242,34 @@ NB_MODULE(_pyneat_core, m) {
       .value("GroupedByRoleProbability",
              simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability)
       .value("GroupedByRoleLogit", simaai::neat::BoxDecodeTypeOption::GroupedByRoleLogit);
+
+  nb::enum_<simaai::neat::SuperPointProfile>(m, "SuperPointProfile")
+      .value("Auto", simaai::neat::SuperPointProfile::Auto)
+      .value("LightGlueV1", simaai::neat::SuperPointProfile::LightGlueV1)
+      .value("MagicLeapDemoV1", simaai::neat::SuperPointProfile::MagicLeapDemoV1)
+      .value("PaperBicubicV1", simaai::neat::SuperPointProfile::PaperBicubicV1)
+      .value("A65V1", simaai::neat::SuperPointProfile::A65V1);
+
+  nb::enum_<simaai::neat::SuperPointOutputFormat>(m, "SuperPointOutputFormat")
+      .value("FeaturePointsV1", simaai::neat::SuperPointOutputFormat::FeaturePointsV1)
+      .value("LegacyA65InterleavedV0",
+             simaai::neat::SuperPointOutputFormat::LegacyA65InterleavedV0);
+
+  nb::class_<simaai::neat::SuperPointOptions>(m, "SuperPointOptions")
+      .def(nb::init<>())
+      .def_rw("profile", &simaai::neat::SuperPointOptions::profile)
+      .def_rw("nms_radius", &simaai::neat::SuperPointOptions::nms_radius)
+      .def_rw("border_margin", &simaai::neat::SuperPointOptions::border_margin)
+      .def_rw("descriptor_output_dtype", &simaai::neat::SuperPointOptions::descriptor_output_dtype)
+      .def_rw("output_format", &simaai::neat::SuperPointOptions::output_format);
+
+  nb::class_<simaai::neat::BoxDecodeOptions>(m, "BoxDecodeOptions")
+      .def(nb::init<simaai::neat::BoxDecodeType>(), "decode_type"_a)
+      .def_rw("decode_type", &simaai::neat::BoxDecodeOptions::decode_type)
+      .def_rw("detection_threshold", &simaai::neat::BoxDecodeOptions::detection_threshold)
+      .def_rw("nms_iou_threshold", &simaai::neat::BoxDecodeOptions::nms_iou_threshold)
+      .def_rw("top_k", &simaai::neat::BoxDecodeOptions::top_k)
+      .def_rw("superpoint", &simaai::neat::BoxDecodeOptions::superpoint);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
@@ -4323,6 +4389,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("score_threshold", &simaai::neat::Model::Options::score_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::Model::Options::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
+      .def_rw("superpoint", &simaai::neat::Model::Options::superpoint)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
@@ -4923,6 +4990,12 @@ NB_MODULE(_pyneat_core, m) {
       "payload_type"_a = 96, "config_interval"_a = 1);
   nodes_mod.def("detess_dequant", &simaai::neat::nodes::DetessDequant,
                 "options"_a = simaai::neat::DetessDequantOptions{});
+  nodes_mod.def(
+      "sima_box_decode",
+      [](const simaai::neat::Model& model, const simaai::neat::BoxDecodeOptions& options) {
+        return simaai::neat::nodes::SimaBoxDecode(model, options);
+      },
+      "model"_a, "options"_a);
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, simaai::neat::BoxDecodeType decode_type,

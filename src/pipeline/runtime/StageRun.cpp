@@ -1,4 +1,5 @@
 #include "pipeline/StageRun.h"
+#include "pipeline/FeatureTypes.h"
 
 #include "builder/PreprocessMetaRequirement.h"
 #include "model/internal/ModelInternal.h"
@@ -1425,7 +1426,12 @@ bool operator==(const StageInputKey& a, const StageInputKey& b) {
 
 bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
   return a.decode_type == b.decode_type && a.detection_threshold == b.detection_threshold &&
-         a.nms_iou_threshold == b.nms_iou_threshold && a.top_k == b.top_k;
+         a.nms_iou_threshold == b.nms_iou_threshold && a.top_k == b.top_k &&
+         a.superpoint.profile == b.superpoint.profile &&
+         a.superpoint.nms_radius == b.superpoint.nms_radius &&
+         a.superpoint.border_margin == b.superpoint.border_margin &&
+         a.superpoint.descriptor_output_dtype == b.superpoint.descriptor_output_dtype &&
+         a.superpoint.output_format == b.superpoint.output_format;
 }
 
 bool operator==(const StageKey& a, const StageKey& b) {
@@ -3170,6 +3176,7 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   Sample out = run_single_sample(*runner, stage_input, timeout_ms, "Postprocess");
   propagate_preprocess_meta_to_sample_if_missing(selected_tensor, &out);
   tag_detection_format_in_sample(out);
+  tag_feature_format_in_sample(out);
   log_stage_output_sample("Postprocess: output sample", out);
   log_stage_tensor_stats("Postprocess: output sample", out);
   return out;
@@ -3237,8 +3244,8 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   }
 
   auto node = simaai::neat::nodes::SimaBoxDecode(
-      model, opt.decode_type, opt.detection_threshold, opt.nms_iou_threshold, opt.top_k, "",
-      route_tess_needed, route_quant_needed, original_width, original_height);
+      model, static_cast<const simaai::neat::BoxDecodeOptions&>(opt), "", route_tess_needed,
+      route_quant_needed, original_width, original_height);
   (void)node->backend_fragment(0);
   std::vector<std::shared_ptr<Node>> group{node};
   log_stage_group_nodes("BoxDecode", group);
@@ -3257,6 +3264,7 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
 
   auto box_model_opt = simaai::neat::internal::ModelAccess::options(model);
   box_model_opt.decode_type = opt.decode_type;
+  box_model_opt.superpoint = opt.superpoint;
   if (opt.detection_threshold > 0.0) {
     box_model_opt.score_threshold = static_cast<float>(opt.detection_threshold);
   }
@@ -3313,10 +3321,35 @@ Sample BoxDecode(const Sample& inputs, const simaai::neat::Model& model,
 
 BoxDecodeResultList BoxDecodeResults(const Sample& inputs, const simaai::neat::Model& model,
                                      const BoxDecodeOptions& opt) {
+  if (opt.decode_type == BoxDecodeType::SuperPoint) {
+    throw std::invalid_argument(
+        "stages::BoxDecodeResults does not parse SuperPoint feature payloads; use "
+        "stages::SuperPointResults");
+  }
   BoxDecodeResultList out;
   out.reserve(inputs.size());
   for (const auto& input : inputs) {
     out.push_back(DecodeBoxDecodeResultSample(input, model, opt));
+  }
+  return out;
+}
+
+FeaturePointTensorList SuperPointResults(const Sample& inputs, const simaai::neat::Model& model,
+                                         const BoxDecodeOptions& opt) {
+  if (opt.decode_type != BoxDecodeType::SuperPoint) {
+    throw std::invalid_argument("stages::SuperPointResults requires BoxDecodeType::SuperPoint");
+  }
+  FeaturePointTensorList out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    Sample decoded = BoxDecodeSample(input, model, opt);
+    const SelectedTensorSample selected = select_tensor_sample(decoded, "SuperPoint BoxDecode");
+    const TensorList& tensors =
+        sample_tensor_list(const_cast<Sample&>(*selected.sample), "SuperPoint BoxDecode");
+    if (tensors.size() != 1U) {
+      throw std::runtime_error("SuperPoint BoxDecode must emit exactly one feature payload tensor");
+    }
+    out.push_back(decode_superpoint_tensor(tensors.front()));
   }
   return out;
 }

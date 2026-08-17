@@ -157,6 +157,26 @@ def _assert_not_type_error(call):
     assert not isinstance(exc, TypeError), str(exc)
 
 
+def test_superpoint_named_options_surface():
+  options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.SuperPoint)
+  assert options.decode_type == pyneat.BoxDecodeType.SuperPoint
+  assert options.superpoint.profile == pyneat.SuperPointProfile.Auto
+  assert options.superpoint.nms_radius == -1
+  assert options.superpoint.border_margin == -1
+  assert options.superpoint.output_format == pyneat.SuperPointOutputFormat.FeaturePointsV1
+  assert hasattr(pyneat.SuperPointProfile, "A65V1")
+  assert not hasattr(pyneat.SuperPointProfile, "LegacyA65V1")
+
+  options.detection_threshold = 0.1
+  options.top_k = 600
+  options.superpoint.profile = pyneat.SuperPointProfile.LightGlueV1
+  options.superpoint.nms_radius = 0
+  options.superpoint.descriptor_output_dtype = pyneat.TensorDType.Float32
+  assert options.superpoint.profile == pyneat.SuperPointProfile.LightGlueV1
+  assert options.superpoint.nms_radius == 0
+  assert callable(pyneat.decode_superpoint)
+
+
 def test_graph_only_public_surface():
   assert hasattr(pyneat, "Graph")
   assert not hasattr(pyneat.Graph, "build_fused_realtime_source")
@@ -200,6 +220,18 @@ def test_graph_pythonic_add_and_describe():
   text = graph.describe_backend()
   assert isinstance(text, str)
   assert text
+
+
+def test_graph_rejects_duplicate_node_identity_atomically():
+  node = pyneat.nodes.video_scale()
+  graph = pyneat.Graph()
+  graph.add(node)
+  before = graph.describe_backend()
+
+  with pytest.raises(RuntimeError, match="already exists"):
+    graph.add(node)
+
+  assert graph.describe_backend() == before
 
 
 def test_graph_combine_round_robin_surface():
@@ -507,6 +539,7 @@ def test_camera_input_surface_is_exposed():
   opt = pyneat.CameraInputOptions()
   for field in CAMERA_INPUT_OPTION_FIELDS:
     assert hasattr(opt, field), field
+  assert not hasattr(opt, "capture_buffer_count")
 
   opt.camera_name = "imx477 5-001a"
   opt.width = 1280
@@ -529,10 +562,12 @@ def test_camera_input_surface_is_exposed():
   opt.camera_name = None
   assert opt.camera_name is None
 
-  node = pyneat.nodes.camera_input(opt)
+  node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
   assert isinstance(node, pyneat.Node)
   assert node.kind() == "CameraInput"
   assert node.input_role() == pyneat.InputRole.Source
+  with pytest.raises(ValueError, match="128-buffer provider limit"):
+    pyneat.nodes.camera_input(opt, capture_buffer_count=129)
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
@@ -883,8 +918,13 @@ def test_jpeg_framing_nodes_are_exposed():
   demux = pyneat.MultipartJpegDemuxOptions()
   assert demux.boundary == ""
   assert demux.single_stream is False
+  assert demux.header_capture.headers == []
   demux.boundary = "frame"
   demux.single_stream = True
+  capture = pyneat.MultipartHeaderCaptureOptions()
+  capture.headers = ["Image-Index"]
+  demux.header_capture = capture
+  assert demux.header_capture.headers == ["Image-Index"]
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux())
   _assert_not_type_error(lambda: pyneat.nodes.multipart_jpeg_demux(demux))
 

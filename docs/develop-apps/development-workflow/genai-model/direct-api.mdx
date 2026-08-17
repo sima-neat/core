@@ -176,6 +176,37 @@ For repeated questions about the same image, `VisionLanguageModel.encode(...)`
 can cache image embeddings in the model. Then set `request.use_cached_images =
 true` or use a chat message with `use_cached_images = true`.
 
+## Switch LoRA adapters
+
+Models compiled with LLiMa's `LORA_BRANCH` mode can switch compatible adapters
+stored under `npy_files/<adapter-name>`:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+model.set_lora("customer-adapter");
+auto adapted = model.run(request);
+model.unset_lora();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model.set_lora("customer-adapter")
+adapted = model.run(request)
+model.unset_lora()
+```
+
+</CodeTab>
+</CodeTabs>
+
+The adapter name must be one directory name, not a path. Switching waits for
+any active generation to finish and clears the language model's cached token
+state before the next request. Dynamic switching is not available for ASR,
+speculative-decoding packages, or permanently merged `LORA_MERGED` weights.
+
 ## Transcribe audio
 
 ASR models use the same request/result shape, but the request must provide
@@ -335,6 +366,10 @@ fragment = neat.genai.graphs.vision_language(model, options, "vlm")
   `ChatMessage.images`.
 - Use either direct images or cached images, not both.
 - ASR requests use audio fields, not text or image fields.
+
+Set `GenerationRequest.enable_thinking` for reasoning models like Qwen3 or Gemma 4
+E2B/E4B to enable reasoning. Complete results keep reasoning in `GenerationResult.reasoning` and the final answer in `GenerationResult.text`;
+streamed `TokenSample` objects likewise use `reasoning` and `text`.
 
 These rules let Neat fail early with a clear request error instead of sending an
 ambiguous prompt to the runtime.

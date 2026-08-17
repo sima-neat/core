@@ -103,6 +103,11 @@ struct InputStream::State {
   std::atomic<bool> running{false};
   std::atomic<bool> stop_requested{false};
   std::atomic<bool> worker_done{true};
+  // close() publishes this only after stop() no longer uses stream resources. A detached
+  // worker that observes it releases those resources after its final State access.
+  std::atomic<bool> close_requested{false};
+  // Arbitrates the close()/worker race so stream resources are released exactly once.
+  std::atomic<bool> resources_released{false};
   std::atomic<bool> eos_seen{false};
   std::atomic<bool> teardown_on_exit{false};
   bool use_callbacks = false;

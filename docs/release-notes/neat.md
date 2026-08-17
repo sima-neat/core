@@ -11,7 +11,7 @@ Release notes for the SiMa.ai Neat Library.
 
 ### Breaking changes
 
-- The Neat Library C++ ABI is now 4 and the shared-library SONAME is `libsima_neat.so.4`. Public GenAI request/result types now carry ASR task, language, and probe metadata, and `GraphLinkOptions` contains realtime admission limits. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
+- The Neat Library C++ ABI is now 4 and the shared-library SONAME is `libsima_neat.so.4`. Tensors now carry feature-extractor semantic metadata, public GenAI request/result types carry ASR task, language, and probe metadata, and `GraphLinkOptions` contains realtime admission limits. Rebuild C++ applications and plugins and install matching Core runtime and development packages.
 - Realtime graph composition now uses `GraphLinkOptions`, `Graph::connect()`, and `Graph::build()`. The preview `RealtimeGraphLinkOptions`, `connect_realtime()`, `build_fused_realtime_sources()` / `build_fused_realtime_source()`, and `RealtimeEveryFrameByStream` APIs were removed. Saved graphs containing `realtime_every_frame_by_stream` must be recreated with a supported policy; see [Connect live fragments](/develop-apps/development-workflow/graph/#connect-live-fragments).
 
 ### Runtime changes
@@ -46,6 +46,17 @@ Release notes for the SiMa.ai Neat Library.
   JSON messages. Update Insight to a version with metadata chunk reassembly
   before or together with this Neat Library version; older Insight versions
   continue to support unchanged JSON payloads up to 1200 bytes.
+
+### Graph construction and validation
+
+- Graph composition now treats one Node object as one logical vertex. Duplicate insertion and
+  overlapping fragment imports fail atomically, while repeated `connect()` calls reuse an existing
+  Node for fan-out.
+- Every materialized pipeline segment now validates final GStreamer names during `build()`; an
+  explicit `validate()` call is not required. Duplicate or dropped names fail with
+  `misconfig.pipeline_shape` instead of producing a truncated pipeline.
+- Custom fragments now report all explicit names and transform named-pad references together with
+  declarations. Name collisions are rejected rather than auto-renamed.
 
 | Release | Compatible Neat SDK | Notes |
 | --- | --- | --- |

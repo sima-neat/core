@@ -4,6 +4,7 @@
 #include "gst/GstInit.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/Caps.h"
+#include "nodes/common/EncodedCapsFixup.h"
 #include "nodes/common/FileInput.h"
 #include "nodes/common/Queue.h"
 #include "nodes/common/VideoConvert.h"
@@ -323,8 +324,8 @@ static std::string find_image_path(int argc, char** argv) {
   return "";
 }
 
-static std::filesystem::path capture_rtsp_h264_file(const std::string& url, int fps, int w, int h,
-                                                    int max_frames, int timeout_ms) {
+static std::filesystem::path capture_rtsp_h264_file(const std::string& url, int max_frames,
+                                                    int timeout_ms) {
   const auto nonce = std::chrono::duration_cast<std::chrono::nanoseconds>(
                          std::chrono::steady_clock::now().time_since_epoch())
                          .count();
@@ -335,8 +336,7 @@ static std::filesystem::path capture_rtsp_h264_file(const std::string& url, int 
   simaai::neat::Graph p;
   p.add(simaai::neat::nodes::RTSPInput(url, /*latency_ms=*/200, /*tcp=*/true));
   p.add(simaai::neat::nodes::H264Depacketize(/*payload_type=*/kPayloadType,
-                                             /*h264_parse_config_interval=*/1, fps, w, h,
-                                             /*enforce_h264_caps=*/true));
+                                             /*h264_parse_config_interval=*/1));
   p.add(simaai::neat::nodes::Queue());
   p.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::EveryFrame(max_frames)));
 
@@ -409,7 +409,7 @@ static std::filesystem::path capture_rtsp_h264_file(const std::string& url, int 
 
 static std::vector<Nv12Frame> decode_h264_file_frames(const std::filesystem::path& h264_path,
                                                       const std::string& decoder,
-                                                      bool use_neatdecoder, int max_frames,
+                                                      bool use_neatdecoder, int fps, int max_frames,
                                                       int timeout_ms) {
   simaai::neat::Graph p;
   p.add(simaai::neat::nodes::FileInput(h264_path.string()));
@@ -419,6 +419,7 @@ static std::vector<Nv12Frame> decode_h264_file_frames(const std::filesystem::pat
   parse_opt.alignment = simaai::neat::H264ParseOptions::Alignment::AU;
   parse_opt.stream_format = simaai::neat::H264ParseOptions::StreamFormat::ByteStream;
   p.add(simaai::neat::nodes::H264Parse(parse_opt));
+  p.add(simaai::neat::nodes::EncodedCapsFixup({"video/x-h264", fps}));
   p.add(simaai::neat::nodes::Queue());
   if (use_neatdecoder) {
     simaai::neat::SimaDecodeOptions dec;
@@ -531,8 +532,7 @@ int main(int argc, char** argv) {
     RtspHandleGuard guard(&server.handle);
 
     const std::string url = server.handle.url();
-    const std::filesystem::path h264_path =
-        capture_rtsp_h264_file(url, fps, enc_w, enc_h, max_frames, timeout_ms);
+    const std::filesystem::path h264_path = capture_rtsp_h264_file(url, max_frames, timeout_ms);
     struct CaptureFileGuard {
       std::filesystem::path path;
       ~CaptureFileGuard() {
@@ -543,10 +543,12 @@ int main(int argc, char** argv) {
       }
     } capture_guard{h264_path};
 
-    auto frames_neat = decode_h264_file_frames(h264_path, os_decoder,
-                                               /*use_neatdecoder=*/true, max_frames, timeout_ms);
-    auto frames_os = decode_h264_file_frames(h264_path, os_decoder,
-                                             /*use_neatdecoder=*/false, max_frames, timeout_ms);
+    auto frames_neat =
+        decode_h264_file_frames(h264_path, os_decoder,
+                                /*use_neatdecoder=*/true, fps, max_frames, timeout_ms);
+    auto frames_os =
+        decode_h264_file_frames(h264_path, os_decoder,
+                                /*use_neatdecoder=*/false, fps, max_frames, timeout_ms);
 
     const int compare_frames =
         std::min(static_cast<int>(frames_neat.size()), static_cast<int>(frames_os.size()));

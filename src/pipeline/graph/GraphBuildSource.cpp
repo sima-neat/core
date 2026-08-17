@@ -14,6 +14,7 @@
 #include "builder/OutputSpec.h"
 #include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/PCIeSrc.h"
 #include "nodes/sima/Preproc.h"
 
 #include "pipeline/EncodedSampleUtil.h"
@@ -3004,7 +3005,9 @@ bool fused_consumer_fragment_may_drop(const std::string& fragment) {
   return false;
 }
 
-std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth) {
+std::string insert_fused_consumer_stage_queues(std::string fragment, int requested_depth,
+                                               const NameTransform& name_transform,
+                                               std::vector<std::string>* generated_names) {
   if (requested_depth < 0 || requested_depth > 1024) {
     throw std::invalid_argument(
         "GraphOptions::async_queue_depth must be in [0, 1024] for fused realtime ingress");
@@ -3016,11 +3019,16 @@ std::string insert_fused_consumer_stage_queues(std::string fragment, int request
   const auto segments = split_fused_consumer_segments(fragment);
   std::vector<std::string> rendered;
   rendered.reserve(segments.size() + 3U);
-  const std::string queue = session_build_async_queue2_fragment(requested_depth);
+  std::size_t queue_index = 0;
   for (const auto& segment : segments) {
     const std::string factory = fused_consumer_segment_factory(segment);
     if (is_fused_consumer_stage_factory(factory)) {
-      rendered.push_back(queue);
+      const std::string queue_name = apply_name_transform(
+          name_transform, "queue_neat_fused_stage_" + std::to_string(queue_index++));
+      if (generated_names) {
+        generated_names->push_back(queue_name);
+      }
+      rendered.push_back(session_build_async_queue2_fragment(requested_depth, queue_name));
     }
     rendered.push_back(segment);
   }
@@ -3077,8 +3085,17 @@ BuildResult build_fused_realtime_source_pipeline(
                                &sess_opt, /*prepend_link=*/!first_consumer);
     first_consumer = false;
   }
+  std::vector<std::string> fused_stage_queue_names;
   const std::string rendered_consumer =
-      insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth);
+      insert_fused_consumer_stage_queues(consumer_pipeline.str(), sess_opt.async_queue_depth,
+                                         name_transform, &fused_stage_queue_names);
+  for (auto& queue_name : fused_stage_queue_names) {
+    br.framework_name_origins.push_back(LaunchNameOrigin{
+        .kind = LaunchNameOrigin::Kind::Queue,
+        .name = std::move(queue_name),
+        .role = "fused stage queue",
+    });
+  }
   br.fused_consumer_replaces_buffers = fused_consumer_fragment_replaces_buffers(rendered_consumer);
   if (enable_terminal_loans && br.fused_consumer_replaces_buffers &&
       fused_consumer_fragment_may_drop(rendered_consumer)) {
@@ -3091,7 +3108,29 @@ BuildResult build_fused_realtime_source_pipeline(
     ss << " ! " << rendered_consumer;
   }
 
-  int encoded_actual_index = static_cast<int>(consumer_nodes.size());
+  std::string shared_source_element;
+  int shared_actual_index = static_cast<int>(consumer_nodes.size());
+  if (!ingress.shared_source_nodes.empty()) {
+    if (ingress.shared_source_nodes.size() != 1U ||
+        dynamic_cast<const simaai::neat::PCIeSrc*>(ingress.shared_source_nodes.front().get()) ==
+            nullptr) {
+      throw std::invalid_argument(
+          "fused realtime shared source currently requires exactly one PCIeSrc node");
+    }
+    const NodeFragment source_fragment = make_node_fragment(ingress.shared_source_nodes.front(),
+                                                            shared_actual_index, name_transform);
+    if (source_fragment.element_names.empty()) {
+      throw std::invalid_argument("fused realtime shared PCIeSrc has no named element");
+    }
+    shared_source_element = source_fragment.element_names.front();
+    ss << ' ';
+    append_fused_node_fragment(&br, &ss, ingress.shared_source_nodes.front(), shared_actual_index,
+                               name_transform, &sess_opt,
+                               /*prepend_link=*/false);
+  }
+
+  int encoded_actual_index =
+      static_cast<int>(consumer_nodes.size() + ingress.shared_source_nodes.size());
   for (const auto& nodes : branch_nodes) {
     encoded_actual_index += static_cast<int>(nodes.size());
   }
@@ -3127,6 +3166,14 @@ BuildResult build_fused_realtime_source_pipeline(
 
     ss << ' ';
     bool first = true;
+    if (!ingress.branches[branch_index].shared_source_pad.empty()) {
+      if (shared_source_element.empty()) {
+        throw std::invalid_argument(
+            "fused realtime branch references a missing shared PCIe source");
+      }
+      ss << shared_source_element << '.' << ingress.branches[branch_index].shared_source_pad;
+      first = false;
+    }
     const std::size_t prefix_end = has_encoded_boundary ? encoded_split : nodes.size();
     for (std::size_t node_index = 0; node_index < prefix_end; ++node_index) {
       const auto& node = nodes[node_index];
@@ -3139,19 +3186,38 @@ BuildResult build_fused_realtime_source_pipeline(
       // concrete inside the fused pipeline. A single graph-owned probe on its
       // src pad retains the AU for Run::pull(); no capsfilter-name heuristic or
       // second encoded branch is needed.
-      ss << " ! identity name=" << fused_encoded_output_tap_name(name_transform, branch_index)
-         << " silent=true";
+      const std::string tap_name = fused_encoded_output_tap_name(name_transform, branch_index);
+      br.framework_name_origins.push_back(LaunchNameOrigin{
+          .kind = LaunchNameOrigin::Kind::Tap,
+          .name = tap_name,
+          .role = "fused encoded-output tap",
+      });
+      ss << " ! identity name=" << tap_name << " silent=true";
     }
     if (has_encoded_sink) {
       const std::string tee_name = apply_name_transform(branch_transform, "neat_encoded_tee");
+      const std::string egress_queue_name =
+          apply_name_transform(branch_transform, "queue_neat_encoded_egress");
+      const std::string decode_queue_name =
+          apply_name_transform(branch_transform, "queue_neat_encoded_decode");
+      br.framework_name_origins.push_back(LaunchNameOrigin{
+          .kind = LaunchNameOrigin::Kind::Mux,
+          .name = tee_name,
+          .role = "fused encoded-output tee",
+      });
+      br.framework_name_origins.push_back(LaunchNameOrigin{
+          .kind = LaunchNameOrigin::Kind::Queue,
+          .name = egress_queue_name,
+          .role = "fused encoded-output egress queue",
+      });
       ss << " ! tee name=" << tee_name;
 
       // Preserve the public edge policy on the encoded branch. Default is
       // lossless and may backpressure at this one-AU compressed queue;
       // RealtimeLatestByStream keeps the producer non-blocking by replacing a
       // whole old AU. This queue contains no decoded EV memory.
-      ss << ' ' << tee_name << ". ! queue max-size-buffers=1 max-size-bytes=0 "
-         << "max-size-time=0";
+      ss << ' ' << tee_name << ". ! queue name=" << egress_queue_name
+         << " max-size-buffers=1 max-size-bytes=0 " << "max-size-time=0";
       if (ingress.branches[branch_index].encoded_sink_link_options.policy ==
           GraphLinkPolicy::RealtimeLatestByStream) {
         ss << " leaky=downstream";
@@ -3170,9 +3236,17 @@ BuildResult build_fused_realtime_source_pipeline(
       const bool prefix_ends_in_typed_queue =
           encoded_split > 0U &&
           dynamic_cast<const simaai::neat::Queue*>(nodes[encoded_split - 1U].get()) != nullptr;
+      if (!prefix_ends_in_typed_queue) {
+        br.framework_name_origins.push_back(LaunchNameOrigin{
+            .kind = LaunchNameOrigin::Kind::Queue,
+            .name = decode_queue_name,
+            .role = "fused encoded-output decode queue",
+        });
+      }
       ss << ' ' << tee_name << ".";
       if (!prefix_ends_in_typed_queue) {
-        ss << " ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0";
+        ss << " ! queue name=" << decode_queue_name
+           << " max-size-buffers=1 max-size-bytes=0 max-size-time=0";
       }
       for (std::size_t node_index = encoded_split; node_index < nodes.size(); ++node_index) {
         append_fused_node_fragment(&br, &ss, nodes[node_index],
@@ -3317,7 +3391,8 @@ render_fused_realtime_pipeline_for_test(const runtime::FusedRealtimeIngress& ing
   branch_nodes.reserve(ingress.branches.size());
   branch_actual_indices.reserve(ingress.branches.size());
 
-  int next_actual_index = static_cast<int>(consumer_nodes.size());
+  int next_actual_index =
+      static_cast<int>(consumer_nodes.size() + ingress.shared_source_nodes.size());
   for (const auto& branch : ingress.branches) {
     branch_nodes.push_back(branch.nodes);
     std::vector<int> indices;
@@ -3351,6 +3426,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
           " consumer_nodes=" + std::to_string(consumer_nodes.size()));
 
   require_element("neatlatestbystreammux", where);
+  runtime::FusedRealtimeIngress build_ingress = ingress;
+  build_ingress.shared_source_nodes = fused_materialize_nodes(ingress.shared_source_nodes);
   std::vector<std::shared_ptr<Node>> build_consumer_nodes = fused_materialize_nodes(consumer_nodes);
   if (require_sink) {
     enforce_sink_last(build_consumer_nodes);
@@ -3366,15 +3443,21 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
 
   std::vector<std::vector<std::shared_ptr<Node>>> build_branch_nodes;
   build_branch_nodes.reserve(ingress.branches.size());
+  if (!build_ingress.shared_source_nodes.empty()) {
+    enforce_caps_behavior(build_ingress.shared_source_nodes, where);
+    enforce_source_run_mode(build_ingress.shared_source_nodes, where);
+  }
   for (const auto& branch : ingress.branches) {
     std::vector<std::shared_ptr<Node>> nodes = fused_materialize_nodes(branch.nodes);
     enforce_caps_behavior(nodes, where);
-    enforce_source_run_mode(nodes, where);
+    if (build_ingress.shared_source_nodes.empty()) {
+      enforce_source_run_mode(nodes, where);
+    }
     enforce_sink_last_if_present(nodes, where);
     build_branch_nodes.push_back(std::move(nodes));
   }
   enforce_caps_behavior(build_consumer_nodes, where);
-  const OutputSpec fused_ingress_spec = fused_ingress_spec_for_contracts(ingress);
+  const OutputSpec fused_ingress_spec = fused_ingress_spec_for_contracts(build_ingress);
   apply_fused_ingress_contract_to_nodes(&build_consumer_nodes, fused_ingress_spec, where);
 
   const RunOptions requested_opt = session_build_resolve_build_opt(mode, opt);
@@ -3394,7 +3477,8 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
   }
   std::vector<std::vector<int>> branch_actual_indices;
   branch_actual_indices.reserve(build_branch_nodes.size());
-  int next_branch_actual_index = static_cast<int>(build_consumer_nodes.size());
+  int next_branch_actual_index =
+      static_cast<int>(build_consumer_nodes.size() + build_ingress.shared_source_nodes.size());
   for (const auto& branch_nodes : build_branch_nodes) {
     // Fused branches are rendered after the consumer nodes in one pipeline, so
     // any post-parse probes must use these global indices to find element names.
@@ -3405,7 +3489,7 @@ SourceStreamBuildContext session_build_fused_realtime_source_stream_internal(
     }
     branch_actual_indices.push_back(std::move(indices));
   }
-  BuildResult br = build_fused_realtime_source_pipeline(ingress, build_consumer_nodes,
+  BuildResult br = build_fused_realtime_source_pipeline(build_ingress, build_consumer_nodes,
                                                         build_branch_nodes, branch_actual_indices,
                                                         name_transform, "mysink", sess_opt,
                                                         /*enable_terminal_loans=*/has_sink);

@@ -106,6 +106,8 @@ Every generation and audio request must use one of these served names in its
 | `POST` | `/api/chat` | Ollama-compatible chat; streams NDJSON by default. |
 | `POST` | `/api/generate` | Ollama-compatible prompt generation; streams NDJSON by default. |
 | `POST` | `/stop` | Cancel active streams for one model or for all models. |
+| `POST` | `/set_lora` | Activate or replace a dynamic LoRA adapter. |
+| `POST` | `/unset_lora` | Return a dynamically adapted model to its baseline weights. |
 
 The compatibility aliases `/audio/transcriptions` and `/audio/translations`
 are also accepted. Prefer the `/v1/audio/...` routes in new clients.
@@ -168,6 +170,55 @@ Both Ollama-compatible endpoints stream newline-delimited JSON by default. Set
 each `/api/chat` message's `images` array or in the top-level `images` array
 for `/api/generate`.
 
+## Reasoning models
+
+Reasoning Models like Qwen3 or Gemma 4 E2B/E4B can return reasoning separately from the
+final answer. For an OpenAI-compatible request, set `enable_thinking` at the
+top level:
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "enable_thinking": true,
+    "max_tokens": 256,
+    "stream": false
+  }'
+```
+
+The non-streaming response places reasoning in
+`choices[0].message.reasoning_content` and the final answer in
+`choices[0].message.content`. With `stream: true`, chunks use
+`choices[0].delta.reasoning_content` and `choices[0].delta.content`.
+
+For an Ollama-compatible request, use `think`:
+
+```bash
+curl http://<modalix-ip>:9998/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "think": true,
+    "options": {"num_predict": 256},
+    "stream": false
+  }'
+```
+
+`/api/chat` returns reasoning in `message.thinking` and the final answer in
+`message.content`. `/api/generate` accepts the same top-level `think` field and
+returns reasoning in top-level `thinking` and the answer in `response`.
+
+Reasoning fields are omitted when empty. They are output-only: incoming
+`reasoning_content` or `thinking` fields are not replayed as conversation
+history.
+
 ## Audio requests
 
 Audio endpoints accept multipart form data with a served ASR model name and an
@@ -206,6 +257,32 @@ Omit `model` to cancel all active streams. This HTTP route cancels active
 streaming generation; it does not cancel synchronous requests or stop the
 server process. Call `server.stop()` from the owning application to stop a
 server started with `server.start()`.
+
+## LoRA adapter switching
+
+For a model compiled with LLiMa's `LORA_BRANCH` mode, activate an adapter from
+the model's `npy_files/<adapter-name>` directory:
+
+```bash
+curl http://<modalix-ip>:9998/set_lora \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm","name":"customer-adapter"}'
+```
+
+Return to the baseline weights with:
+
+```bash
+curl http://<modalix-ip>:9998/unset_lora \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm"}'
+```
+
+The `model` field may be omitted only when exactly one text or vision-language
+model is registered. Switching waits for an active request on that model to
+finish and does not affect other served models. Adapter names must be a single
+directory name; paths and traversal are rejected. Dynamic switching is not
+supported for ASR, speculative-decoding packages, or permanently merged
+`LORA_MERGED` weights.
 
 ## Errors
 

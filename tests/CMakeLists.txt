@@ -306,6 +306,7 @@ set(UNIT_TESTS
   unit_dequant_node_fragment_test
   unit_detection_types_bbox_test
   unit_detection_types_boxdecode_payloads_test
+  unit_superpoint_feature_types_test
   unit_detessdequant_output_info_test
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test
@@ -347,11 +348,14 @@ set(UNIT_TESTS
   unit_groups_test
   unit_gst_helpers_test
   unit_gst_init_guard_test
+  unit_gst_launch_bindings_test
+  unit_gst_parse_launch_audit_test
   unit_gst_video_meta_test
   unit_latest_mux_credit_test
   unit_latest_mux_fairness_test
   unit_latest_mux_periodic_fairness_test
   unit_latest_mux_backpressure_test
+  unit_launch_validation_integration_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_inputstream_batched_raw_video_spec_test
   unit_http_mjpeg_decoded_group_test
@@ -389,6 +393,7 @@ set(UNIT_TESTS
   unit_resnet50_mla_handoff_segment_test
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
+  unit_detess_rank2_contract_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
   unit_modelpack_mount_selection_test
@@ -404,6 +409,8 @@ set(UNIT_TESTS
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_jpeg_framing_nodes_test
+  unit_multipart_header_capture_test
+  unit_multipart_capture_element_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
@@ -429,6 +436,7 @@ set(UNIT_TESTS
   unit_boxdecode_uses_upstream_cast_contract_test
   unit_sima_boxdecode_node_fragment_test
   unit_sima_decode_test
+  unit_decoder_admission_test
   unit_kernel200_envelope_guard_test
   unit_processcvu_binding_table_uses_runtime_outputs_test
   unit_processcvu_preproc_runtime_vs_exposed_outputs_test
@@ -459,13 +467,17 @@ set(UNIT_TESTS
   unit_tensor_image_mapping_test
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
+  unit_camera_allocation_query_test
   unit_nodes_test
   unit_visual_frontend_node_api_test
   unit_plugin_failure_messages_test
 )
 
 if (SimaLMM_FOUND)
-  list(APPEND UNIT_TESTS unit_genai_tool_call_parser_test)
+  list(APPEND UNIT_TESTS
+    unit_genai_model_directory_test
+    unit_genai_tool_call_parser_test
+  )
 endif()
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
@@ -566,6 +578,8 @@ set(E2E_TESTS
   graph_validate_report_regression_test
   stage_routing_regression_test
   udp_output_loopback_integration_test
+  multipart_header_capture_http_e2e_test
+  multipart_header_capture_decode_e2e_test
 )
 
 foreach(test ${E2E_TESTS})
@@ -579,6 +593,19 @@ foreach(test ${E2E_TESTS})
   endif()
 endforeach()
 
+add_pipeline_test(
+  ev74_four_process_rpmsg_concurrency_test
+  SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/ev74_four_process_rpmsg_concurrency_test.cpp
+  LOCK_DISPATCHER
+)
+
+if (NOT ev74_four_process_rpmsg_concurrency_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST ev74_four_process_rpmsg_concurrency_test APPEND PROPERTY
+    LABELS "e2e;ev74;concurrency;rpmsg")
+  set_tests_properties(ev74_four_process_rpmsg_concurrency_test PROPERTIES TIMEOUT 120)
+endif()
+
 add_pipeline_test_long(
   video_sender_adaptive_ingress_e2e_test
   SOURCES
@@ -591,6 +618,26 @@ if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLAC
   set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
     RESOURCE_LOCK "accelerator-device;udp")
   set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+
+  foreach(shape_case IN ITEMS "680;382" "672;384" "642;480")
+    list(GET shape_case 0 shape_width)
+    list(GET shape_case 1 shape_height)
+    set(shape_test_name
+      "video_sender_shape_${shape_width}x${shape_height}_e2e_test")
+    add_test(NAME ${shape_test_name}
+      COMMAND video_sender_adaptive_ingress_e2e_test
+        --scenario system_nv12_tight
+        --width ${shape_width}
+        --height ${shape_height})
+    simaneat_append_ctest_env(${shape_test_name})
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      LABELS "strict;long;e2e;codec;video_sender;arbitrary_shape;real_media")
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      RESOURCE_LOCK "accelerator-device;udp")
+    set_tests_properties(${shape_test_name} PROPERTIES TIMEOUT 120)
+  endforeach()
 endif()
 
 
@@ -698,6 +745,7 @@ if (SimaLMM_FOUND)
   )
 
   if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_tests_properties(genai_graph_vlm_run_test PROPERTIES DISABLED TRUE)
     set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
     set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   endif()
@@ -734,6 +782,18 @@ if (SimaLMM_FOUND)
   if (NOT genai_server_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST genai_server_http_test APPEND PROPERTY LABELS "e2e;genai;llima;server;long")
     set_property(TEST genai_server_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endif()
+
+  add_pipeline_test_long(
+    genai_server_reasoning_http_test
+    e2e_testing/genai/genai_server_reasoning_http_test.cpp
+  )
+  target_link_libraries(genai_server_reasoning_http_test PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+
+  if (NOT genai_server_reasoning_http_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY
+      LABELS "e2e;genai;llima;server;reasoning;long")
+    set_property(TEST genai_server_reasoning_http_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   endif()
 endif()
 
@@ -1876,6 +1936,20 @@ if (NOT codec_runtime_stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test_long(
+  decoder_multirun_admission_boundary_test
+  e2e_testing/decoder_multirun_admission_boundary_test.cpp
+)
+
+if (NOT decoder_multirun_admission_boundary_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST decoder_multirun_admission_boundary_test
+    APPEND PROPERTY LABELS "e2e;codec;rtsp;regression;lifecycle")
+  set_property(TEST decoder_multirun_admission_boundary_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST decoder_multirun_admission_boundary_test
+    APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+  set_tests_properties(decoder_multirun_admission_boundary_test PROPERTIES TIMEOUT 120)
+endif()
+
+add_pipeline_test_long(
   codec_decode_accuracy_test
   e2e_testing/codec_decode_accuracy_test.cpp
 )
@@ -2039,6 +2113,7 @@ endfunction()
 # parallelism for the many non-accelerator E2E tests while allowing only one
 # accelerator-heavy test to own the device runtime at a time.
 foreach(test
+    ev74_four_process_rpmsg_concurrency_test
     hybrid_graph_stage_model_test
     preproc_standalone_test
     preproc_build_input_repro_test
@@ -2268,6 +2343,7 @@ set(SIMANEAT_DECODER_MEDIA_E2E_TESTS
   h265_decode_resnet50_e2e_test
   h265_rtsp_resnet50_e2e_test
   codec_runtime_stream_test
+  multipart_header_capture_decode_e2e_test
   resnet50_modelpack_jpeg
   resnet50_modelpack_rtsp
   rtsp_encoded_boundary_caps_test

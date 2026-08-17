@@ -1,6 +1,5 @@
 #include "RunCore.h"
 
-#include "pipeline/internal/DecoderAdmissionClient.h"
 #include "pipeline/internal/EnvUtil.h"
 
 #include <algorithm>
@@ -9,7 +8,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <exception>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -47,45 +45,6 @@ double ns_to_ms(std::uint64_t ns) {
 
 unsigned long long ull(std::uint64_t value) {
   return static_cast<unsigned long long>(value);
-}
-
-bool decoder_cma_debug_enabled() {
-  return pipeline_internal::env_bool("SIMA_DECODER_CMA_DEBUG", false) ||
-         pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false);
-}
-
-void log_decoder_cma_snapshot(const char* event) {
-  if (!decoder_cma_debug_enabled()) {
-    return;
-  }
-  std::ifstream in("/proc/meminfo");
-  if (!in.is_open()) {
-    std::fprintf(stderr, "[DECCMA] event=%s read_failed=1\n", event ? event : "snapshot");
-    return;
-  }
-  long mem_free_kb = -1;
-  long mem_available_kb = -1;
-  long cma_total_kb = -1;
-  long cma_free_kb = -1;
-  std::string key;
-  long value = 0;
-  std::string unit;
-  while (in >> key >> value >> unit) {
-    if (key == "MemFree:") {
-      mem_free_kb = value;
-    } else if (key == "MemAvailable:") {
-      mem_available_kb = value;
-    } else if (key == "CmaTotal:") {
-      cma_total_kb = value;
-    } else if (key == "CmaFree:") {
-      cma_free_kb = value;
-    }
-  }
-  std::fprintf(stderr,
-               "[DECCMA] event=%s mem_free_kb=%ld mem_available_kb=%ld cma_total_kb=%ld "
-               "cma_free_kb=%ld cma_used_kb=%ld\n",
-               event ? event : "snapshot", mem_free_kb, mem_available_kb, cma_total_kb, cma_free_kb,
-               (cma_total_kb >= 0 && cma_free_kb >= 0) ? (cma_total_kb - cma_free_kb) : -1);
 }
 
 void dump_realtime_link_diag(const ExecutionGraphRuntime& execution) {
@@ -225,6 +184,11 @@ void RunCore::stop_graph() {
     }
     try {
       if (pipe->run_core) {
+        // Snapshot first: a child that detaches its input thread closes its own stream,
+        // nulling diag_ctx() before an active MeasureScope can read it.
+        if (!pipe->retained_diag) {
+          pipe->retained_diag = pipe->run_core->pipeline.stream.diag_ctx();
+        }
         pipe->run_core->close_input();
         pipe->run_core->stop();
       }
@@ -244,30 +208,6 @@ void RunCore::stop_graph() {
                    static_cast<long long>(
                        pipe->transport.identity_map_miss_count.load(std::memory_order_relaxed)));
     }
-  }
-
-  if (execution.decoder_admission_active) {
-    log_decoder_cma_snapshot("before_admission_release");
-    std::string release_error;
-    const bool released = pipeline_internal::release_decoder_graph(
-        execution.decoder_admission_group_uuid, &release_error);
-    if (!released && (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false) ||
-                      simaai::neat::graph::graph_debug_enabled())) {
-      std::fprintf(stderr, "[GRAPH] decoder_admission_release_failed group=%s err=%s\n",
-                   pipeline_internal::decoder_admission_uuid_to_string(
-                       execution.decoder_admission_group_uuid)
-                       .c_str(),
-                   release_error.empty() ? "<unknown>" : release_error.c_str());
-    } else if (released && (pipeline_internal::env_bool("SIMA_DECODER_ADMISSION_DEBUG", false) ||
-                            simaai::neat::graph::graph_debug_enabled())) {
-      std::fprintf(stderr, "[GRAPH] decoder_admission_released group=%s\n",
-                   pipeline_internal::decoder_admission_uuid_to_string(
-                       execution.decoder_admission_group_uuid)
-                       .c_str());
-    }
-    execution.decoder_admission_active = false;
-    log_decoder_cma_snapshot(released ? "after_admission_release"
-                                      : "after_admission_release_failed");
   }
 
   graph_signal_stop();
@@ -371,6 +311,7 @@ void RunCore::stop_graph() {
                        "[GRAPH] stop_timeout stage_index=%zu node=%zu timeout_ms=%d; detaching\n",
                        i, static_cast<std::size_t>(st->node_id), stop_timeout_ms);
         }
+        execution.has_detached_workers.store(true, std::memory_order_release);
         st->worker.detach();
       }
     }
@@ -404,6 +345,7 @@ void RunCore::stop_graph() {
                        "[GRAPH] stop_timeout seg=%zu where=pull.join timeout_ms=%d; detaching\n",
                        static_cast<std::size_t>(pipe->seg.id), stop_timeout_ms);
         }
+        execution.has_detached_workers.store(true, std::memory_order_release);
         pipe->transport.pull_thread.detach();
       }
     }
@@ -425,10 +367,14 @@ void RunCore::stop_graph() {
                        "[GRAPH] stop_timeout seg=%zu where=push.join timeout_ms=%d; detaching\n",
                        static_cast<std::size_t>(pipe->seg.id), stop_timeout_ms);
         }
+        execution.has_detached_workers.store(true, std::memory_order_release);
         pipe->transport.push_thread.detach();
       }
     }
   }
+
+  std::atomic_store_explicit(&decoder_admission, std::shared_ptr<DecoderAdmissionReservation>{},
+                             std::memory_order_release);
 
   if (simaai::neat::graph::stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] GraphRun::stop end\n");

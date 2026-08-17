@@ -13,7 +13,6 @@
 #include "pipeline/runtime/PipelineSegmentRuntime.h"
 #include "pipeline/runtime/TraceMessageEvents.h"
 
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -372,6 +371,8 @@ struct ExecutionGraphRuntime {
   std::vector<std::unique_ptr<StageRuntime>> stages;
   std::vector<StageGroup> stage_groups;
   std::vector<std::unique_ptr<RealtimeLatestLink>> realtime_links;
+  // Detached workers still access graph-owned pipeline children after stop() returns.
+  std::atomic<bool> has_detached_workers{false};
 
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_pipeline;
   std::unordered_map<simaai::neat::graph::NodeId, std::size_t> node_to_stage_group;
@@ -394,12 +395,6 @@ struct ExecutionGraphRuntime {
   std::atomic<std::uint64_t> trace_run_id_hash{0};
   std::atomic<std::uint64_t> trace_graph_id_hash{0};
   std::unordered_map<simaai::neat::graph::NodeId, std::shared_ptr<GraphSinkQueue>> sinks;
-
-  // Graph-wide decoder admission state.  A dense multi-decoder graph reserves
-  // and binds decoder daemon leases before any GStreamer fragment is started so
-  // each decoder receives the same automatic pool/tuning decision.
-  bool decoder_admission_active = false;
-  std::array<std::uint8_t, 16> decoder_admission_group_uuid{};
 };
 
 } // namespace simaai::neat::runtime

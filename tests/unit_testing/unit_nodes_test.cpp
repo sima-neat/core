@@ -69,15 +69,67 @@ int main() {
     simaai::neat::CameraInputOptions cam_opt;
     require(!cam_opt.allow_cpu_fallback, "CameraInput must default to strict device zero-copy");
 
+    bool invalid_capture_count_threw = false;
+    try {
+      (void)simaai::neat::nodes::CameraInputWithCaptureBuffers(cam_opt, 129);
+    } catch (const std::invalid_argument&) {
+      invalid_capture_count_threw = true;
+    }
+    require(invalid_capture_count_threw,
+            "CameraInput must reject values above the Neat provider limit");
+
     simaai::neat::CameraInputOptions fallback_cam_opt = cam_opt;
     fallback_cam_opt.allow_cpu_fallback = true;
-    auto cam = simaai::neat::nodes::CameraInput(fallback_cam_opt);
+    auto camera_factory = &simaai::neat::nodes::CameraInput;
+    auto cam = camera_factory(fallback_cam_opt);
     require_contains(cam->backend_fragment(0), "libcamerasrc name=n0_camera_src",
                      "CameraInput source missing");
     require_contains(cam->backend_fragment(0), "neatcamerabridge name=n0_camera_bridge",
                      "CameraInput fallback bridge missing");
     require(cam->backend_fragment(0).find(" buffer-size=") == std::string::npos,
             "CameraInput bridge should derive buffer size from actual camera buffers");
+    require_contains(cam->backend_fragment(0), "capsfilter name=n0_camera_caps",
+                     "CameraInput capsfilter missing");
+    require(cam->backend_fragment(0).find("neatcamerabridge name=n0_camera_bridge") <
+                cam->backend_fragment(0).find("queue name=n0_camera_queue"),
+            "CameraInput bridge must negotiate allocation before the queue");
+    require_contains(cam->backend_fragment(0), "copy-allowed=true",
+                     "CameraInput fallback bridge should allow copies");
+    require(cam->backend_fragment(0).find("capture-min-buffers=") == std::string::npos,
+            "CameraInput default must not impose an application capture minimum");
+    require(cam->backend_fragment(0).find("num-buffers=") == std::string::npos,
+            "CameraInput queue depth must not cap the fallback copy pool");
+    if (simaai::neat::element_property_exists("libcamerasrc", "external-buffer-mode")) {
+      require_contains(cam->backend_fragment(0), "external-buffer-mode=preferred",
+                       "CameraInput fallback should prefer direct downstream capture");
+    }
+
+    if (simaai::neat::element_property_exists("libcamerasrc", "buffer-count")) {
+      auto deep_cam = simaai::neat::nodes::CameraInputWithCaptureBuffers(fallback_cam_opt, 32);
+      require_contains(deep_cam->backend_fragment(2), "buffer-count=32",
+                       "CameraInput capture queue depth was not applied to libcamerasrc");
+      require_contains(deep_cam->backend_fragment(2), "capture-min-buffers=32",
+                       "CameraInput bridge pool depth must follow application capture ownership");
+      require(deep_cam->backend_fragment(2).find("num-buffers=") == std::string::npos,
+              "CameraInput capture depth must not cap the fallback copy pool");
+    }
+
+    fallback_cam_opt.queue_depth = 256;
+    auto deep_queue_cam = simaai::neat::nodes::CameraInput(fallback_cam_opt);
+    require_contains(deep_queue_cam->backend_fragment(3), "max-size-buffers=256",
+                     "CameraInput must preserve queue depths above the bridge preallocation limit");
+    require(deep_queue_cam->backend_fragment(3).find("num-buffers=") == std::string::npos,
+            "CameraInput queue depth must remain independent of bridge preallocation");
+
+    if (simaai::neat::element_property_exists("libcamerasrc", "external-buffer-mode")) {
+      auto strict_cam = simaai::neat::nodes::CameraInput(cam_opt);
+      require_contains(strict_cam->backend_fragment(1), "external-buffer-mode=required",
+                       "CameraInput strict mode must require external DMA-BUF capture");
+      require_contains(strict_cam->backend_fragment(1), "neatcamerabridge name=n1_camera_bridge",
+                       "CameraInput strict bridge missing");
+      require_contains(strict_cam->backend_fragment(1), "copy-allowed=false",
+                       "CameraInput strict bridge must reject copies");
+    }
     if (!simaai::neat::element_exists("neatcamerabridge")) {
       throw std::runtime_error("private neatcamerabridge factory not registered");
     }
@@ -155,7 +207,17 @@ int main() {
                   simaai::neat::element_exists("avenc_h264");
     if (has_sw) {
       auto sw = simaai::neat::nodes::H264EncodeSW(400);
-      require_contains(sw->backend_fragment(1), "name=n1_swenc", "H264EncodeSW name mismatch");
+      const std::string fragment = sw->backend_fragment(1);
+      require_contains(fragment, "name=n1_swenc", "H264EncodeSW name mismatch");
+      if (!simaai::neat::element_exists("x264enc") && simaai::neat::element_exists("openh264enc")) {
+        require_contains(fragment, "videoconvert name=n1_swenc_convert",
+                         "H264EncodeSW OpenH264 converter name mismatch");
+        require_contains(fragment, "capsfilter name=n1_swenc_i420 caps=\"video/x-raw,format=I420\"",
+                         "H264EncodeSW OpenH264 input mismatch");
+        const auto names = sw->element_names(1);
+        require(names == std::vector<std::string>{"n1_swenc_convert", "n1_swenc_i420", "n1_swenc"},
+                "H264EncodeSW OpenH264 element names mismatch");
+      }
     }
 
     std::cout << "[OK] unit_nodes_test passed\n";

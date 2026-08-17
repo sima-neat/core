@@ -1509,7 +1509,8 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
   int h = 0;
   int w = 0;
   int logical_c = 0;
-  if (!dims_from_mpk_shape_for_input_nhwc_local(stage.frame_shape, &h, &w, &logical_c)) {
+  if (!dims_from_mpk_shape_for_input_nhwc_local(detess_runtime_frame_shape(stage), &h, &w,
+                                                &logical_c)) {
     set_error(error_message,
               "boxdecode model-managed contract requires detess frame_shape transport facts");
     return std::nullopt;
@@ -1732,41 +1733,68 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     };
 
     if (stage_is_detess_like_local(stage)) {
-      if (!stage.has_cblock || !stage.cblock || !stage.has_align_c16 || !stage.align_c16) {
+      if (!stage.has_cblock || !stage.has_align_c16) {
         set_error(error_message,
-                  "boxdecode packed/cblock source requires MPK detess cblock/align_c16 facts");
-        return std::nullopt;
-      }
-      if (!assign_unique_source_storage_kind_local(
-              &facts.source_storage_kind, BoxDecodeSourceStorageKind::PackedCBlock, error_message,
-              "boxdecode MPK branch has conflicting source storage facts")) {
+                  "boxdecode direct source requires explicit MPK detess cblock/align_c16 facts");
         return std::nullopt;
       }
 
-      int h = 0;
-      int w = 0;
-      int c = 0;
-      if (!dims_from_mpk_shape_for_input_nhwc_local(stage.frame_shape, &h, &w, &c)) {
-        set_error(error_message,
-                  "boxdecode packed/cblock source requires MPK detess frame_shape facts");
-        return std::nullopt;
-      }
-      if (!assign_unique_slice_local(&facts.packed_frame_hwc, {h, w, c}, error_message,
-                                     "boxdecode MPK branch has conflicting packed frame facts")) {
+      int frame_h = 0;
+      int frame_w = 0;
+      int frame_c = 0;
+      if (!dims_from_mpk_shape_for_input_nhwc_local(detess_runtime_frame_shape(stage), &frame_h,
+                                                    &frame_w, &frame_c)) {
+        set_error(error_message, "boxdecode direct source requires MPK detess frame_shape facts");
         return std::nullopt;
       }
 
-      if (!dims_from_mpk_tess_slice_shape_local(stage.slice_shape, &h, &w, &c)) {
+      int slice_h = 0;
+      int slice_w = 0;
+      int slice_c = 0;
+      if (!dims_from_mpk_tess_slice_shape_local(stage.slice_shape, &slice_h, &slice_w, &slice_c)) {
         set_error(error_message,
                   "boxdecode tessellated route requires explicit detess slice facts for every "
                   "upstream tensor");
         return std::nullopt;
       }
       if (!assign_unique_slice_local(
-              &facts.detess_slice, {w, h, c}, error_message,
+              &facts.detess_slice, {slice_w, slice_h, slice_c}, error_message,
               "boxdecode model-managed contract resolved conflicting detess slice facts on one "
               "MPK branch")) {
         return std::nullopt;
+      }
+
+      if (stage.cblock) {
+        if (!stage.align_c16) {
+          set_error(error_message,
+                    "boxdecode packed/cblock source requires MPK detess align_c16=true");
+          return std::nullopt;
+        }
+        if (!assign_unique_source_storage_kind_local(
+                &facts.source_storage_kind, BoxDecodeSourceStorageKind::PackedCBlock, error_message,
+                "boxdecode MPK branch has conflicting source storage facts") ||
+            !assign_unique_slice_local(&facts.packed_frame_hwc, {frame_h, frame_w, frame_c},
+                                       error_message,
+                                       "boxdecode MPK branch has conflicting packed frame facts")) {
+          return std::nullopt;
+        }
+      } else {
+        // cblock=false keeps pixels HWC within each MLA tile instead of
+        // transposing 16-channel blocks ahead of the pixel plane. It is still
+        // a tiled source, and align_c16 pads the final channel tile.
+        if (!stage.align_c16) {
+          set_error(error_message,
+                    "boxdecode packed HWC C16 source requires MPK detess align_c16=true");
+          return std::nullopt;
+        }
+        if (!assign_unique_source_storage_kind_local(
+                &facts.source_storage_kind, BoxDecodeSourceStorageKind::PackedHwcC16, error_message,
+                "boxdecode MPK branch has conflicting source storage facts") ||
+            !assign_unique_slice_local(
+                &facts.packed_frame_hwc, {frame_h, frame_w, frame_c}, error_message,
+                "boxdecode MPK branch has conflicting packed HWC frame facts")) {
+          return std::nullopt;
+        }
       }
       if (input_tensor && input_tensor->size_bytes > 0U && !stage.frame_shape.empty()) {
         const auto transport =
@@ -1796,7 +1824,7 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
         if (!assign_unique_uint64_local(
                 &facts.source_size_bytes, static_cast<std::uint64_t>(input_tensor->size_bytes),
                 error_message,
-                "boxdecode MPK branch has conflicting packed source byte-span facts")) {
+                "boxdecode MPK branch has conflicting direct source byte-span facts")) {
           return std::nullopt;
         }
       }
@@ -1808,8 +1836,20 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     const bool value_only_stage =
         !stage_is_detess_like_local(stage) &&
         (stage_is_dequant_like_local(stage) || stage_token.find("cast") != std::string::npos);
+    const bool direct_mla_stage = lower_copy_local(stage.processor) == "mla";
 
-    if (unpack_stage) {
+    if (direct_mla_stage && !facts.source_storage_kind.has_value()) {
+      // AFE can publish a dense model output directly from MLA without an
+      // unpack/detess stage. In that form there is no transform in the lineage
+      // from which to learn the storage kind. Accept the MLA tensor itself only
+      // when its declared geometric shape, dtype, and byte count prove a tight
+      // HWC buffer. Rank-2 packed extents and padded buffers are rejected by
+      // record_dense_hwc_source(), so this does not reinterpret tessellated MLA
+      // output as dense storage.
+      if (!record_dense_hwc_source(output_tensor)) {
+        return std::nullopt;
+      }
+    } else if (unpack_stage) {
       if (!record_dense_hwc_source(output_tensor)) {
         return std::nullopt;
       }
@@ -2116,13 +2156,22 @@ resolve_boxdecode_score_activation_for_selected_tensors_local(
 std::optional<bool> resolve_external_boxdecode_tess_needed_local(
     const MpkContract& contract, const MpkPluginIoContract& mla_stage,
     const std::vector<MpkTensorContract>& logical_outputs,
-    const ModelManagedRouteFlags& route_flags, std::string* error_message) {
+    const ModelManagedRouteFlags& route_flags, BoxDecodeType decode_type,
+    std::string* error_message) {
   auto bypass_mla_unpack_enabled = []() -> bool {
     const char* raw = std::getenv("SIMA_BOXDECODE_BYPASS_MLA_UNPACK");
     return raw && *raw && std::strcmp(raw, "0") != 0;
   };
   const auto* unpack_stage = get_mla_unpack_stage_io_contract(contract);
-  if (bypass_mla_unpack_enabled()) {
+  const bool superpoint_direct_packed =
+      decode_type == BoxDecodeType::SuperPoint && unpack_stage &&
+      mla_stage.output_tensors.size() == 1U && logical_outputs.size() > 1U &&
+      !unpack_stage->output_tensors.empty() &&
+      std::all_of(unpack_stage->output_tensors.begin(), unpack_stage->output_tensors.end(),
+                  [](const MpkTensorContract& tensor) {
+                    return tensor.shape_semantics == MpkShapeSemantics::PackedExtent;
+                  });
+  if (bypass_mla_unpack_enabled() || superpoint_direct_packed) {
     const bool packed_single_physical_mla =
         mla_stage.output_tensors.size() == 1U && logical_outputs.size() > 1U;
     if (!packed_single_physical_mla) {
@@ -2404,10 +2453,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
 
   BoxDecodeStaticContract out;
   out.score_activation = BoxDecodeScoreActivation::Unknown;
-  // Source the decode type from the MPK boxdecode stage, scoped to SSD. Prefer the explicit
-  // terminal_stage; otherwise (terminal-less callers, e.g. the strict-route probe) fall back to the
-  // boxdecode plugin in the chain. Non-SSD/undeclared types stay Unspecified, so behavior is
-  // unchanged for them.
+  // Source an explicitly authored decode type from the MPK BoxDecode stage. Prefer the explicit
+  // terminal stage; otherwise fall back to the BoxDecode plugin in the chain.
   const MpkPluginIoContract* boxdecode_stage = terminal_stage;
   if (!boxdecode_stage) {
     for (const auto& plugin : contract.plugins) {
@@ -2417,19 +2464,81 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       }
     }
   }
-  if (boxdecode_stage &&
-      parse_box_decode_type_token(boxdecode_stage->decode_type) == BoxDecodeType::Ssd) {
-    out.decode_type = BoxDecodeType::Ssd;
+  if (boxdecode_stage) {
+    if (const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
+        parsed_type.has_value() &&
+        (*parsed_type == BoxDecodeType::Ssd || *parsed_type == BoxDecodeType::SuperPoint)) {
+      out.decode_type = *parsed_type;
+    }
     if (const auto parsed_option =
             parse_box_decode_type_option_token(boxdecode_stage->decode_type_option);
         parsed_option.has_value()) {
       out.decode_type_option = *parsed_option;
     }
+    if (out.decode_type == BoxDecodeType::SuperPoint) {
+      const auto& mpk_sp = boxdecode_stage->superpoint;
+      if (!mpk_sp.validation_error.empty()) {
+        return fail("boxdecode SuperPoint MPK metadata is invalid: " + mpk_sp.validation_error);
+      }
+      out.superpoint.schema_version = mpk_sp.schema_version;
+      out.superpoint.profile_fingerprint = mpk_sp.profile_fingerprint;
+      out.superpoint.detector_tensor_id = mpk_sp.detector_tensor_id;
+      out.superpoint.descriptor_tensor_id = mpk_sp.descriptor_tensor_id;
+      out.superpoint.detector_representation = mpk_sp.detector_representation;
+      out.superpoint.descriptor_representation = mpk_sp.descriptor_representation;
+      out.superpoint.nms_radius = mpk_sp.nms_radius;
+      out.superpoint.border_margin = mpk_sp.border_margin;
+      out.superpoint.nms_radius_from_mpk = mpk_sp.nms_radius >= 0;
+      out.superpoint.border_margin_from_mpk = mpk_sp.border_margin >= 0;
+      if (mpk_sp.cell_stride > 0) {
+        out.superpoint.cell_stride = mpk_sp.cell_stride;
+      }
+      if (mpk_sp.descriptor_stride > 0) {
+        out.superpoint.descriptor_stride = mpk_sp.descriptor_stride;
+      }
+      out.superpoint.descriptor_dim = mpk_sp.descriptor_dim;
+      if (!mpk_sp.profile.empty()) {
+        const auto profile = parse_superpoint_profile_token(mpk_sp.profile);
+        if (!profile.has_value()) {
+          return fail("boxdecode SuperPoint MPK declares unknown profile '" + mpk_sp.profile + "'");
+        }
+        out.superpoint.profile = *profile;
+        out.superpoint.profile_from_mpk = *profile != SuperPointProfile::Auto;
+        out.superpoint.fingerprint_profile =
+            mpk_sp.profile_fingerprint.empty() ? SuperPointProfile::Auto : *profile;
+      }
+      if (!mpk_sp.output_format.empty()) {
+        const auto output_format = parse_superpoint_output_format_token(mpk_sp.output_format);
+        if (!output_format.has_value()) {
+          return fail("boxdecode SuperPoint MPK declares unknown output format '" +
+                      mpk_sp.output_format + "'");
+        }
+        out.superpoint.output_format = *output_format;
+      }
+      const std::string output_dtype = lower_copy_local(mpk_sp.descriptor_output_dtype);
+      if (!output_dtype.empty()) {
+        if (output_dtype == "int8") {
+          out.superpoint.descriptor_output_dtype = TensorDType::Int8;
+        } else if (output_dtype == "bf16" || output_dtype == "bfloat16") {
+          out.superpoint.descriptor_output_dtype = TensorDType::BFloat16;
+        } else if (output_dtype == "fp32" || output_dtype == "float32") {
+          out.superpoint.descriptor_output_dtype = TensorDType::Float32;
+        } else {
+          return fail("boxdecode SuperPoint MPK descriptor_output_dtype must be INT8, BF16, or "
+                      "FP32");
+        }
+      }
+      canonicalize_schema0_superpoint_representations(&out.superpoint);
+      if (const auto metadata_error = validate_superpoint_static_metadata(
+              out.superpoint, /*require_resolved_profile=*/false)) {
+        return fail("boxdecode SuperPoint MPK metadata is invalid: " + *metadata_error);
+      }
+    }
   }
-  const auto tess_needed =
-      terminal_stage ? std::optional<bool>(route_flags.tess_needed)
-                     : resolve_external_boxdecode_tess_needed_local(
-                           contract, *mla_stage, logical_outputs, route_flags, error_message);
+  const auto tess_needed = terminal_stage ? std::optional<bool>(route_flags.tess_needed)
+                                          : resolve_external_boxdecode_tess_needed_local(
+                                                contract, *mla_stage, logical_outputs, route_flags,
+                                                out.decode_type, error_message);
   if (!tess_needed.has_value()) {
     return std::nullopt;
   }
@@ -2442,8 +2551,18 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   if (out.input_dtype.empty()) {
     out.input_dtype = normalize_mpk_dtype_token_local(mla_stage->frame_type);
   }
-  const bool bypass_unpack_boundary = terminal_stage == nullptr && bypass_mla_unpack_enabled();
   const auto* unpack_stage = get_mla_unpack_stage_io_contract(contract);
+  const bool unpack_outputs_are_packed =
+      unpack_stage && !unpack_stage->output_tensors.empty() &&
+      std::all_of(unpack_stage->output_tensors.begin(), unpack_stage->output_tensors.end(),
+                  [](const auto& tensor) {
+                    return tensor.shape_semantics == MpkShapeSemantics::PackedExtent;
+                  });
+  const bool superpoint_direct_packed =
+      out.decode_type == BoxDecodeType::SuperPoint && unpack_stage && unpack_outputs_are_packed &&
+      mla_stage->output_tensors.size() == 1U && logical_outputs.size() > 1U;
+  const bool bypass_unpack_boundary =
+      terminal_stage == nullptr && (bypass_mla_unpack_enabled() || superpoint_direct_packed);
   const bool explicit_unpack_boundary =
       !bypass_unpack_boundary && unpack_stage && !unpack_stage->output_tensors.empty() &&
       unpack_stage->output_tensors.size() == logical_outputs.size();
@@ -2489,10 +2608,12 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       lineage_roots.emplace_back(*mla_index, static_cast<int>(i));
     }
   }
-  for (std::size_t i = 0; i < logical_outputs.size(); ++i) {
-    if (const auto resolved = resolve_boxdecode_tensor_source_local(
-            contract, execution_positions, logical_outputs[i], mla_pos, terminal_pos)) {
-      lineage_roots[i] = *resolved;
+  if (!explicit_unpack_boundary) {
+    for (std::size_t i = 0; i < logical_outputs.size(); ++i) {
+      if (const auto resolved = resolve_boxdecode_tensor_source_local(
+              contract, execution_positions, logical_outputs[i], mla_pos, terminal_pos)) {
+        lineage_roots[i] = *resolved;
+      }
     }
   }
 
@@ -2648,7 +2769,8 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
 
     tensor.source_storage_kind = *facts.source_storage_kind;
 
-    if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock) {
+    if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+        tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16) {
       if (!facts.packed_frame_hwc.has_value() || !facts.detess_slice.has_value() ||
           !facts.source_size_bytes.has_value() || !facts.source_dtype.has_value()) {
         return fail("boxdecode packed/cblock source missing MPK detess source facts");
@@ -2686,20 +2808,17 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   }
   out.input_dtype = out.tensors.front().data_type;
 
-  const bool any_packed_source =
-      std::any_of(out.tensors.begin(), out.tensors.end(), [](const auto& tensor) {
-        return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock;
-      });
-  const bool packed_single_mla_parent =
-      any_packed_source && mla_stage->output_tensors.size() == 1U && out.tensors.size() > 1U &&
+  const bool segmented_single_mla_parent =
+      preserve_raw_packed_parent_source && mla_stage->output_tensors.size() == 1U &&
+      out.tensors.size() > 1U &&
       std::all_of(out.tensors.begin(), out.tensors.end(),
                   [](const auto& tensor) { return tensor.source_byte_offset == 0; });
-  if (packed_single_mla_parent) {
+  if (segmented_single_mla_parent) {
     std::uint64_t source_byte_offset = 0U;
     for (std::size_t i = 0; i < out.tensors.size(); ++i) {
       if (source_byte_offset >
           static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-        return fail("boxdecode packed tensor source byte offset overflows int64");
+        return fail("boxdecode segmented tensor source byte offset overflows int64");
       }
       out.tensors[i].source_byte_offset = static_cast<std::int64_t>(source_byte_offset);
       if (i < out.physical_inputs.size()) {
@@ -2711,7 +2830,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     const auto parent_size =
         static_cast<std::uint64_t>(mla_stage->output_tensors.front().size_bytes);
     if (parent_size > 0U && source_byte_offset != parent_size) {
-      return fail("boxdecode packed tensor byte spans do not sum to MPK MLA output size: sum=" +
+      return fail("boxdecode segmented tensor byte spans do not sum to MPK MLA output size: sum=" +
                   std::to_string(source_byte_offset) + " parent=" + std::to_string(parent_size));
     }
   }
@@ -2765,6 +2884,97 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   } else {
     out.dq_scale.assign(out.tensors.size(), 1.0);
     out.dq_zp.assign(out.tensors.size(), 0);
+  }
+
+  if (out.decode_type == BoxDecodeType::SuperPoint) {
+    if (out.tensors.size() != 2U) {
+      return fail("boxdecode SuperPoint contract requires exactly two logical inputs "
+                  "(detector logits and descriptor grid)");
+    }
+    auto logical_shape =
+        [](const BoxDecodeTensorStaticContract& tensor) -> const std::vector<int>& {
+      // Packed input_shape is the full logical frame while slice_shape is the
+      // MLA tessellation tile. Dense HWC uses
+      // slice_shape for its logical (unpadded) view.
+      if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+          tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16) {
+        return tensor.input_shape;
+      }
+      return tensor.slice_shape.size() >= 3U ? tensor.slice_shape : tensor.input_shape;
+    };
+    auto logical_channels = [&](const BoxDecodeTensorStaticContract& tensor) {
+      const auto& shape = logical_shape(tensor);
+      return shape.size() >= 3U ? shape.back() : 0;
+    };
+    auto name_matches = [](const BoxDecodeTensorStaticContract& tensor, const std::string& id) {
+      return !id.empty() && (tensor.logical_name == id || tensor.backend_name == id ||
+                             tensor.source_segment_name == id);
+    };
+    int detector_index = -1;
+    int descriptor_index = -1;
+    int detector_id_matches = 0;
+    int descriptor_id_matches = 0;
+    for (std::size_t i = 0; i < out.tensors.size(); ++i) {
+      if (name_matches(out.tensors[i], out.superpoint.detector_tensor_id)) {
+        detector_index = static_cast<int>(i);
+        ++detector_id_matches;
+      }
+      if (name_matches(out.tensors[i], out.superpoint.descriptor_tensor_id)) {
+        descriptor_index = static_cast<int>(i);
+        ++descriptor_id_matches;
+      }
+    }
+    if (!out.superpoint.detector_tensor_id.empty() && detector_id_matches != 1) {
+      return fail("boxdecode SuperPoint detector_tensor_id '" + out.superpoint.detector_tensor_id +
+                  "' must match exactly one logical input tensor");
+    }
+    if (!out.superpoint.descriptor_tensor_id.empty() && descriptor_id_matches != 1) {
+      return fail("boxdecode SuperPoint descriptor_tensor_id '" +
+                  out.superpoint.descriptor_tensor_id +
+                  "' must match exactly one logical input tensor");
+    }
+    // Once SuperPoint is selected, the uniquely-shaped 65-channel tensor is an unambiguous role
+    // binding. This never selects the numerical profile.
+    if (detector_index < 0) {
+      for (std::size_t i = 0; i < out.tensors.size(); ++i) {
+        if (logical_channels(out.tensors[i]) == 65) {
+          if (detector_index >= 0) {
+            return fail("boxdecode SuperPoint has multiple 65-channel detector candidates; "
+                        "declare detector_tensor_id in the MPK");
+          }
+          detector_index = static_cast<int>(i);
+        }
+      }
+    }
+    if (detector_index >= 0 && descriptor_index < 0) {
+      descriptor_index = 1 - detector_index;
+    }
+    if (detector_index < 0 || descriptor_index < 0 || detector_index == descriptor_index) {
+      return fail("boxdecode SuperPoint could not bind unique detector/descriptor tensor roles; "
+                  "declare detector_tensor_id and descriptor_tensor_id in the MPK");
+    }
+    auto& detector = out.tensors[static_cast<std::size_t>(detector_index)];
+    auto& descriptor = out.tensors[static_cast<std::size_t>(descriptor_index)];
+    detector.role = BoxDecodeTensorRole::DetectorLogits;
+    descriptor.role = BoxDecodeTensorRole::DescriptorGrid;
+    if (logical_channels(detector) != 65) {
+      return fail("boxdecode SuperPoint detector tensor must have 65 logical channels");
+    }
+    const int descriptor_dim = logical_channels(descriptor);
+    if (descriptor_dim <= 0 ||
+        (out.superpoint.descriptor_dim > 0 && descriptor_dim != out.superpoint.descriptor_dim)) {
+      return fail("boxdecode SuperPoint descriptor tensor dimension conflicts with the MPK");
+    }
+    out.superpoint.descriptor_dim = descriptor_dim;
+    const auto& detector_shape = logical_shape(detector);
+    const auto& descriptor_shape = logical_shape(descriptor);
+    const int detector_h = detector_shape[0];
+    const int detector_w = detector_shape[1];
+    const int descriptor_h = descriptor_shape[0];
+    const int descriptor_w = descriptor_shape[1];
+    if (detector_h != descriptor_h || detector_w != descriptor_w) {
+      return fail("boxdecode SuperPoint detector and descriptor coarse geometry must match");
+    }
   }
 
   if (route_flags.quant_needed && !out.tensors.empty()) {

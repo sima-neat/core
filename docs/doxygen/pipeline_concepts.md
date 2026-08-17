@@ -8,6 +8,10 @@
 
 Graph composes these into deterministic GStreamer pipelines.
 
+Within one Graph composition, one Node object is one logical vertex. Adding or importing the same
+object twice fails atomically. Use the same object in multiple `connect()` calls to create fan-out,
+or construct a separate Node object to create another vertex of the same type.
+
 ## Deterministic naming
 
 Element names are derived from node order (`n<idx>_...`). This keeps:
@@ -15,6 +19,19 @@ Element names are derived from node order (`n<idx>_...`). This keeps:
 - `describe_backend()` stable
 - diagnostics/probes reproducible
 - contract checks deterministic
+
+`build()` validates names automatically; you do not need to call `validate()` first. Explicit
+short names must be unique within each materialized GStreamer pipeline segment. Separate connected
+segments may reuse a name because they are parsed independently. Name declarations and named-pad
+references are transformed together, but collisions are never auto-renamed.
+
+Complete segments fail during `build()`. A connected segment that depends on the first input may
+materialize on the first `push()`, in which case its structured `GraphReport` is available through
+the resulting runtime error or `PullError`.
+
+For a connected Graph, `validate()` checks endpoint topology without inventing placeholder input
+caps. The mandatory launch check still runs against each segment's real final string when that
+segment materializes.
 
 ## Push pipeline negotiation model
 

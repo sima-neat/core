@@ -156,10 +156,10 @@ An RTSP pull timed out — the URL is wrong or the stream isn't delivering frame
 Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/consume-rtsp-stream).
 :::
 
-### 12. `CameraInput strict zero-copy requires a libcamerasrc with simaai-zero-copy`
+### 12. `CameraInput strict zero-copy requires external-buffer-mode`
 
 :::info Cause
-`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the required properties or the installed memory library cannot export its allocation as a DMA-BUF.
+`CameraInputOptions::allow_cpu_fallback` defaults to false, so Neat requires end-to-end SiMaAI/device zero-copy support. Either `libcamerasrc` does not advertise the generic `external-buffer-mode` property or the installed memory library cannot export its allocation as DMA-BUFs.
 :::
 
 :::tip Fix
@@ -429,7 +429,7 @@ read the message for specifics.
 |---|---|
 | `io.open` | A file or device path couldn't be opened — missing file, permission denied, or kernel device absent (e.g. `/dev/rpmsg*`). |
 | `io.parse` | JSON/config parse error — typically a bad MPK contract or per-stage config. |
-| `misconfig.pipeline_shape` | Pipeline geometry is wrong — bad sink count, a cycle, or a missing terminal `Output`. |
+| `misconfig.pipeline_shape` | Pipeline geometry or final name integrity is wrong — for example, a bad sink count, cycle, missing terminal `Output`, or duplicate element name. |
 | `misconfig.caps` | A caps override or adjacent Node contract failed framework validation before streaming. |
 | `misconfig.media_caps` | Runtime GStreamer negotiation failed between adjacent media stages. |
 | `misconfig.input_shape` | Input tensor violates the model's contract (rank, spatial dims, channel count). |

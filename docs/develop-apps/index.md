@@ -57,16 +57,28 @@ stages, models, or outputs, compose those components as a `Graph` and build it
 into a `Run`. The same public APIs support traditional and agentic development,
 so teams can review, extend, and maintain applications using either workflow.
 
+### Choose Your Deployment Model
+
+- **Run on a Modalix DevKit** — the application and Neat graph run directly on
+  the device. Use `simaai::neat` or `pyneat` with `Model`, `Graph`, `Node`, and
+  `Run`. Start with [Run / Inference](/develop-apps/development-workflow/overview/).
+- **Use a Modalix PCIe Card for co-processing** — the application runs on a
+  host machine and sends tensors or images to the card for model execution. Use
+  `simaai::neat::pcie` or `pyneatpcie`. Start with
+  [PCIe Co-processing](/develop-apps/development-workflow/pcie-model/).
+
 ### C++ or PyNeat
 
-SiMa.ai Neat provides the same core workflow through two language interfaces,
-so you can choose the one that fits your application:
+For applications running directly on a Modalix DevKit, SiMa.ai Neat provides
+the same core workflow through two language interfaces, so you can choose the
+one that fits your application:
 
 - **PyNeat** — the Python bindings (`pyneat`). Best for quick iteration, notebooks, data-science workflows, and running Python applications directly on the DevKit.
 - **C++** — the native `simaai::neat` API. Best for larger applications, tight integration with existing C++ codebases, and cross-compiled host-to-DevKit workflows.
 
 Both use the same compiled model artifacts and Modalix runtime; the concepts and
-pages below apply to either.
+pages below apply to either. PCIe co-processing provides separate C++ and Python
+interfaces through `simaai::neat::pcie` and `pyneatpcie`.
 
 ## Develop the application. <span className="neat-heading-highlight">SiMa.ai Neat maps it for you.</span>
 
@@ -128,9 +140,14 @@ development.
 
 Before building applications, complete the Getting Started setup:
 
-- **Install and sync** — install the Neat Library in the Neat SDK or directly on the DevKit. Pair and sync the DevKit when working from a host.
+- **Install for the deployment model** — for a Modalix DevKit, install the Neat
+  Library in the Neat SDK or directly on the device. For PCIe co-processing,
+  install `core/pciehost` on the host machine and a compatible Neat Library on the
+  Modalix PCIe Card.
 - **Model artifact** — use a precompiled model from the Model Zoo or compile your own model into a Modalix-ready archive.
-- **Runtime target** — run Python applications on the DevKit, and build C++ applications either directly on the DevKit or by cross-compiling in the Neat SDK.
+- **Runtime target** — run native applications on the DevKit, or build and run a
+  co-processing application directly on the host machine. Pair and sync the DevKit
+  when cross-compiling native C++ applications in the Neat SDK.
 
 The Hello Neat! pages help you run your first inference, the Development Workflow pages explain the main concepts in more detail, and the tutorials show how to apply them to real application patterns.
 

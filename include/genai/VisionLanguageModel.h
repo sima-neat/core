@@ -30,6 +30,8 @@ public:
 
   bool accepts_image() const;
   std::string model_id() const;
+  void set_lora(const std::string& adapter_name);
+  void unset_lora();
   std::size_t cached_image_count() const;
   bool encode(const Tensor& image);
   bool encode(const std::vector<Tensor>& images);
@@ -41,9 +43,12 @@ public:
   GenerationStream stream(const GenerationRequest& request);
 
 private:
+  bool supports_thinking() const;
+
   struct Impl;
   std::shared_ptr<Impl> impl_;
 
+  friend class GenAIModel;
   friend class GenerationStream;
 };
 

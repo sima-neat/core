@@ -330,6 +330,75 @@ int main() {
     require(tail_spec.memory == "SystemMemory",
             "HTTP MJPEG group output caps should advertise requested memory");
 
+    // --- Per-frame multipart header capture ---------------------------------------------
+    {
+      simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions base;
+      base.url = "http://example.local/mjpeg";
+      base.multipart_boundary = "frame";
+
+      // Capture disabled must reproduce the pre-existing topology exactly.
+      const Graph disabled = simaai::neat::nodes::groups::HttpMjpegDecodedInput(base);
+      const std::string disabled_text = disabled.describe();
+      require_contains(disabled_text, "MultipartJpegDemux",
+                       "capture-disabled group should keep MultipartJpegDemux");
+      require_contains(disabled_text, "JpegParse", "capture-disabled group should keep JpegParse");
+
+      simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions capture = base;
+      capture.header_capture.headers = {"Image-Index", "Image-Time"};
+      const Graph enabled = simaai::neat::nodes::groups::HttpMjpegDecodedInput(capture);
+      const std::string enabled_text = enabled.describe();
+      require_not_contains(enabled_text, "JpegParse",
+                           "capture-enabled group must not re-frame through JpegParse");
+
+      if (const auto disabled_backend =
+              describe_backend_if_available(disabled, "capture-disabled backend")) {
+        require_contains(*disabled_backend, "multipartdemux",
+                         "capture-disabled backend should use stock multipartdemux");
+        require_not_contains(*disabled_backend, "neatmultipartjpegdemux",
+                             "capture-disabled backend must not select the capture element");
+        require_contains(*disabled_backend, "jpegparse",
+                         "capture-disabled backend should keep jpegparse");
+      }
+      if (const auto enabled_backend =
+              describe_backend_if_available(enabled, "capture-enabled backend")) {
+        require_contains(*enabled_backend, "neatmultipartjpegdemux",
+                         "capture-enabled backend should select the capture element");
+        require_contains(*enabled_backend, "capture-headers=\"image-index,image-time\"",
+                         "capture-enabled backend should carry the normalized allowlist");
+        require_not_contains(*enabled_backend, "jpegparse",
+                             "capture-enabled backend must omit jpegparse");
+      }
+
+      // Unsupported transforms must fail construction rather than silently drop attributes.
+      const std::vector<std::pair<
+          std::string,
+          std::function<void(simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions&)>>>
+          unsupported = {
+              {"use_videoconvert", [](auto& o) { o.use_videoconvert = true; }},
+              {"use_videoscale", [](auto& o) { o.use_videoscale = true; }},
+              {"extra_fragment", [](auto& o) { o.extra_fragment = "identity"; }},
+          };
+      for (const auto& [name, apply] : unsupported) {
+        simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions bad = capture;
+        apply(bad);
+        require_throws_with([&] { (void)simaai::neat::nodes::groups::HttpMjpegDecodedInput(bad); },
+                            name, "header_capture with " + name + " should be rejected");
+      }
+
+      simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions bad_rate = capture;
+      bad_rate.use_videorate = true;
+      bad_rate.video_rate_fps = 15;
+      require_throws_with(
+          [&] { (void)simaai::neat::nodes::groups::HttpMjpegDecodedInput(bad_rate); },
+          "use_videorate", "header_capture with use_videorate should be rejected");
+
+      simaai::neat::nodes::groups::HttpMjpegDecodedInputOptions bad_name = base;
+      bad_name.header_capture.headers = {"Bad Name"};
+      require_throws_with(
+          [&] { (void)simaai::neat::nodes::groups::HttpMjpegDecodedInput(bad_name); }, "HTTP token",
+          "malformed capture name should be rejected");
+    }
+
     std::cout << "[OK] unit_http_mjpeg_decoded_group_test passed\n";
     return 0;
   } catch (const std::exception& e) {

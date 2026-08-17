@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | GenAI |
 | Difficulty | Beginner |
 | Estimated Read Time | 15-20 minutes |
 | Model | Qwen3-4B-Instruct-2507-GPTQ-a16w4, Qwen3-VL-4B-Instruct-GPTQ-a16w4, whisper-small-a16w8 |

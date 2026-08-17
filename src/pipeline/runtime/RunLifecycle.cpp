@@ -27,6 +27,11 @@ bool abort_on_hung_stop_threads() {
   return pipeline_internal::env_bool("SIMA_PIPELINE_ABORT_ON_HUNG_STOP_THREADS", false);
 }
 
+bool run_core_closes_stream(runtime::InputStreamCloseState state) {
+  return state == runtime::InputStreamCloseState::RunCoreOwnsWhileInputRunning ||
+         state == runtime::InputStreamCloseState::RunCoreOwnsAfterInputFinished;
+}
+
 } // namespace
 
 runtime::RunCore::~RunCore() {
@@ -55,6 +60,9 @@ void runtime::RunCore::stop() {
     stop_graph();
     return;
   }
+  if (!run_core_closes_stream(stream_close_state.load(std::memory_order_acquire))) {
+    return;
+  }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::stop begin\n");
   }
@@ -79,35 +87,61 @@ void runtime::RunCore::stop() {
   // Stop the underlying stream first to unblock any appsrc push waiting on downstream.
   const int stream_stop_timeout_ms =
       std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", 2000));
-  const int stream_stop_timeout_ms_2 = stream_stop_timeout_ms;
-  if (stream_stop_timeout_ms <= 0) {
+  const auto owner = weak_from_this().lock();
+  if (stream_stop_timeout_ms <= 0 || !owner) {
     st->pipeline.stream.stop();
   } else {
+    enum class StopTaskState {
+      Running,
+      Completed,
+      Detached,
+    };
     struct StopCtx {
-      std::atomic<bool> done{false};
+      std::atomic<StopTaskState> state{StopTaskState::Running};
     };
     auto ctx = std::make_shared<StopCtx>();
-    std::thread stop_thread([st, ctx]() {
+    std::thread stop_thread([owner, ctx]() {
       try {
-        st->pipeline.stream.stop();
+        owner->pipeline.stream.stop();
       } catch (const std::exception& e) {
         if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
             pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
           std::fprintf(stderr, "[PIPELINE] stop stream error: %s\n", e.what());
         }
       }
-      ctx->done.store(true, std::memory_order_relaxed);
+
+      StopTaskState expected = StopTaskState::Running;
+      if (ctx->state.compare_exchange_strong(expected, StopTaskState::Completed,
+                                             std::memory_order_acq_rel)) {
+        return;
+      }
+
+      // Losing the CAS only means the caller chose to detach, not that it has published
+      // the handoff yet; claiming ownership before it lands would strand the close.
+      while (owner->stream_close_state.load(std::memory_order_acquire) !=
+             runtime::InputStreamCloseState::StreamStopThreadOwns) {
+        std::this_thread::yield();
+      }
+      while (!owner->pipeline.input_thread_done.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+      owner->pipeline.stream.close();
+      owner->decoder_admission.reset();
+      owner->stream_close_state.store(runtime::InputStreamCloseState::Closed,
+                                      std::memory_order_release);
+      ctx->state.store(StopTaskState::Completed, std::memory_order_release);
     });
-    const auto deadline =
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(stream_stop_timeout_ms);
-    while (!ctx->done.load(std::memory_order_relaxed)) {
-      if (std::chrono::steady_clock::now() >= deadline)
-        break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (ctx->done.load(std::memory_order_relaxed)) {
-      stop_thread.join();
-    } else {
+
+    const auto wait_for_stop = [&](int timeout_ms) {
+      const auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+      while (ctx->state.load(std::memory_order_acquire) == StopTaskState::Running &&
+             std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    };
+    wait_for_stop(stream_stop_timeout_ms);
+    if (ctx->state.load(std::memory_order_acquire) == StopTaskState::Running) {
       if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
         std::fprintf(stderr,
@@ -115,31 +149,34 @@ void runtime::RunCore::stop() {
                      stream_stop_timeout_ms);
       }
       st->pipeline.stream.stop_async();
-      if (stream_stop_timeout_ms_2 > 0) {
-        const auto extra_deadline =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(stream_stop_timeout_ms_2);
-        while (!ctx->done.load(std::memory_order_relaxed)) {
-          if (std::chrono::steady_clock::now() >= extra_deadline)
-            break;
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-      }
-      if (ctx->done.load(std::memory_order_relaxed)) {
-        stop_thread.join();
-      } else {
-        const int waited_ms = stream_stop_timeout_ms + stream_stop_timeout_ms_2;
-        if (abort_on_hung_stop_threads()) {
-          std::fprintf(stderr,
-                       "[PIPELINE] stop: stream.stop did not exit after %dms; aborting "
-                       "(SIMA_PIPELINE_ABORT_ON_HUNG_STOP_THREADS=1)\n",
-                       waited_ms);
-          std::terminate();
-        }
+      wait_for_stop(stream_stop_timeout_ms);
+    }
+
+    if (ctx->state.load(std::memory_order_acquire) == StopTaskState::Completed) {
+      stop_thread.join();
+    } else {
+      const int waited_ms = stream_stop_timeout_ms * 2;
+      if (abort_on_hung_stop_threads()) {
         std::fprintf(stderr,
-                     "[PIPELINE] stop: stream.stop did not exit after %dms; detaching "
-                     "stop thread and continuing\n",
+                     "[PIPELINE] stop: stream.stop did not exit after %dms; aborting "
+                     "(SIMA_PIPELINE_ABORT_ON_HUNG_STOP_THREADS=1)\n",
+                     waited_ms);
+        std::terminate();
+      }
+
+      StopTaskState expected = StopTaskState::Running;
+      if (ctx->state.compare_exchange_strong(expected, StopTaskState::Detached,
+                                             std::memory_order_acq_rel)) {
+        // Only after claiming task detachment: a task that already returned cannot close.
+        st->stream_close_state.store(runtime::InputStreamCloseState::StreamStopThreadOwns,
+                                     std::memory_order_release);
+        std::fprintf(stderr,
+                     "[PIPELINE] stop: stream.stop did not exit after %dms; retaining runtime "
+                     "until teardown completes\n",
                      waited_ms);
         stop_thread.detach();
+      } else {
+        stop_thread.join();
       }
     }
   }
@@ -183,14 +220,26 @@ void runtime::RunCore::stop() {
                      waited_ms);
         std::terminate();
       }
-      std::fprintf(stderr,
-                   "[PIPELINE] stop: input_thread did not exit after %dms; detaching "
-                   "input thread and continuing\n",
-                   waited_ms);
-      st->pipeline.input_thread.detach();
-      return;
+      // The thread may have exited since the poll above, in which case it already published
+      // RunCoreOwnsAfterInputFinished and would never act on the duty. Join those; detach
+      // anything not positively reported as finished, since joining it would hang.
+      auto expected = runtime::InputStreamCloseState::RunCoreOwnsWhileInputRunning;
+      const bool handed_over = st->stream_close_state.compare_exchange_strong(
+          expected, runtime::InputStreamCloseState::InputThreadOwns, std::memory_order_acq_rel);
+      if (handed_over ||
+          expected != runtime::InputStreamCloseState::RunCoreOwnsAfterInputFinished) {
+        std::fprintf(stderr,
+                     "[PIPELINE] stop: input_thread did not exit after %dms; detaching "
+                     "input thread and continuing\n",
+                     waited_ms);
+        st->pipeline.input_thread.detach();
+        return;
+      }
     }
     st->pipeline.input_thread.join();
+  }
+  if (run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
+    st->decoder_admission.reset();
   }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::stop end\n");
@@ -216,6 +265,10 @@ void runtime::RunCore::close() {
     std::printf("[DBG] Run::close: teardown\n");
   }
   stop();
+  // A detached worker owns the close; leaking until it exits beats blocking the host.
+  if (!run_core_closes_stream(st->stream_close_state.load(std::memory_order_acquire))) {
+    return;
+  }
   const int drain_ms = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_BEFORE_TEARDOWN_MS", 1500);
   const int drain_min_outputs = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_MIN_OUTPUTS", 1);
   if (drain_ms > 0 && st->pipeline.supports_pull &&
@@ -344,7 +397,21 @@ void runtime::RunCore::close() {
     };
     log_diag(*st);
   }
+  if (st->graph_execution_ &&
+      !st->graph_execution_->has_detached_workers.load(std::memory_order_acquire)) {
+    // Joined workers no longer access child cores, so release their InputStream
+    // callbacks. Detached workers retain graph-owned children until they exit.
+    // stop_graph() already snapshotted each child's diag context, so an active
+    // MeasureScope survives these releases.
+    for (auto& pipe : st->graph_execution_->pipelines) {
+      if (pipe && pipe->run_core) {
+        pipe->run_core->close();
+        pipe->run_core.reset();
+      }
+    }
+  }
   st->pipeline.stream.close();
+  st->stream_close_state.store(runtime::InputStreamCloseState::Closed, std::memory_order_release);
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::close end\n");
   }

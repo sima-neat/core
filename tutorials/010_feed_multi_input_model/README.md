@@ -1,8 +1,9 @@
-# 010 Feed Models That Take Multiple Inputs
+# 010 Send Multiple Inputs in One Sample
 
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Models & Inference |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15 minutes |
 | Model | None |

@@ -375,11 +375,15 @@ def test_genai_value_types_and_text_sample_helpers():
   assert sample.to_text() == "What is NEAT?"
 
   result = pyneat.GenerationResult()
+  result.reasoning = "thinking"
   result.tool_calls = req.messages[0].tool_calls
+  assert result.reasoning == "thinking"
   assert result.tool_calls[0]["id"] == "call_0"
 
   token = pyneat.TokenSample()
+  token.reasoning = "thinking"
   token.tool_calls = req.messages[0].tool_calls
+  assert token.reasoning == "thinking"
   assert token.tool_calls[0]["function"]["arguments"] == "{}"
 
   result = pyneat.GenerationResult()
@@ -415,6 +419,9 @@ def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.GenAIServerOptions is pyneat.GenAIServerOptions
   assert pyneat.genai.ImageList is pyneat.ImageList
   assert pyneat.genai.GenerationRequest is pyneat.GenerationRequest
+  for model_type in (pyneat.VisionLanguageModel, pyneat.GenAIModel):
+    assert hasattr(model_type, "set_lora")
+    assert hasattr(model_type, "unset_lora")
   assert hasattr(pyneat.genai.graphs, "vision_language")
   assert hasattr(pyneat.genai.graphs, "speech_transcriber")
   assert not hasattr(pyneat.genai, "nodes")

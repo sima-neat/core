@@ -1,7 +1,7 @@
 ---
 title: Install PyNeat
 description: Install the PyNeat wheel in a custom Python virtual environment
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 :::note DevKit only — skip for SDK installs
@@ -32,7 +32,7 @@ To download the wheel for a specific Neat Library release, include the version.
 For Neat Library 0.2.2:
 
 <ShellCommand prompt="devkit">
-sima-cli neat install core@0.2.2 -t pyneat
+sima-cli neat install core@v0.4.0 -t pyneat
 </ShellCommand>
 
 ## Create a Python Environment

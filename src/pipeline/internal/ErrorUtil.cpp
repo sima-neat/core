@@ -82,8 +82,11 @@ std::string decorate_error(std::string_view code, std::string_view message) {
   if (code.empty())
     return to_owned(message);
   const std::string prefix = "[" + to_owned(code) + "]";
-  if (message.rfind(prefix, 0) == 0)
+  if (message.size() >= prefix.size() && message.substr(0, prefix.size()) == prefix &&
+      (message.size() == prefix.size() || message[prefix.size()] == ' ')) {
     return to_owned(message);
+  }
+
   return prefix + " " + to_owned(message);
 }
 

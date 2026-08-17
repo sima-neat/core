@@ -35,6 +35,28 @@ using run_internal::force_copy_sample_if_zero_copy;
 using run_internal::queue_full;
 using run_internal::sample_has_zero_copy_tensor;
 
+class RunCoreStartupGuard {
+public:
+  explicit RunCoreStartupGuard(std::shared_ptr<runtime::RunCore> core) : core_(std::move(core)) {}
+
+  ~RunCoreStartupGuard() {
+    if (!committed_ && core_) {
+      try {
+        core_->close();
+      } catch (...) {
+      }
+    }
+  }
+
+  void commit() noexcept {
+    committed_ = true;
+  }
+
+private:
+  std::shared_ptr<runtime::RunCore> core_;
+  bool committed_ = false;
+};
+
 std::string read_first_line(const char* path) {
   std::ifstream in(path);
   if (!in.is_open())
@@ -241,9 +263,13 @@ Run::~Run() {
 std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     InputStream stream, const RunOptions& opt, const InputStreamOptions& stream_opt, RunMode mode,
     const std::optional<InputOptions>& tensor_input_opt_for_cv,
-    pipeline_internal::InputRouteProcessorPtr input_route_processor) {
+    pipeline_internal::InputRouteProcessorPtr input_route_processor,
+    std::shared_ptr<DecoderAdmissionReservation> decoder_admission,
+    std::function<void()> after_pipeline_start_for_test) {
   auto st = std::make_shared<runtime::RunCore>();
   runtime::initialize_run_identity(*st);
+  st->decoder_admission = std::move(decoder_admission);
+  RunCoreStartupGuard startup_guard(st);
   st->pipeline.stream = std::move(stream);
   st->opt = opt;
   st->pipeline.stream_opt = stream_opt;
@@ -443,6 +469,10 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
 
   if (!st->pipeline.supports_push) {
     st->pipeline.input_thread_done.store(true);
+    if (after_pipeline_start_for_test) {
+      after_pipeline_start_for_test();
+    }
+    startup_guard.commit();
     return st;
   }
 
@@ -551,10 +581,32 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
         stop_with_error(e, nullptr);
       }
     }
+    // Settle the handoff before publishing input_thread_done: whichever side wins this
+    // exchange is the sole closer.
+    auto expected = runtime::InputStreamCloseState::RunCoreOwnsWhileInputRunning;
+    const bool owns_close =
+        !st->stream_close_state.compare_exchange_strong(
+            expected, runtime::InputStreamCloseState::RunCoreOwnsAfterInputFinished,
+            std::memory_order_acq_rel) &&
+        expected == runtime::InputStreamCloseState::InputThreadOwns;
+
     st->pipeline.input_thread_done.store(true);
     st->pipeline.out_cv.notify_all();
+
+    if (owns_close) {
+      // close() timed out here and skipped teardown, leaving this the last user. Close the
+      // stream directly; RunCore::close() latched `closed` on its way through.
+      st->pipeline.stream.close();
+      st->decoder_admission.reset();
+      st->stream_close_state.store(runtime::InputStreamCloseState::Closed,
+                                   std::memory_order_release);
+    }
   });
 
+  if (after_pipeline_start_for_test) {
+    after_pipeline_start_for_test();
+  }
+  startup_guard.commit();
   return st;
 }
 

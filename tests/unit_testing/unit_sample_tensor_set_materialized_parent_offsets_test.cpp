@@ -1,11 +1,19 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Tensor.h"
+#include "pipeline/internal/OutputTensorOverride.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "test_main.h"
 
 #include <gst/gst.h>
+
+#include <optional>
+
+namespace simaai::neat {
+Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy_output,
+                                 const std::optional<OutputTensorOverride>* override_opt);
+}
 
 using namespace simaai::neat;
 
@@ -18,6 +26,9 @@ void ensure_gst_ready() {
   const gchar* tags[] = {nullptr};
   if (gst_meta_get_info("GstSimaSampleMeta") == nullptr) {
     (void)gst_meta_register_custom("GstSimaSampleMeta", tags, nullptr, nullptr, nullptr);
+  }
+  if (gst_meta_get_info("GstSimaMeta") == nullptr) {
+    (void)gst_meta_register_custom("GstSimaMeta", tags, nullptr, nullptr, nullptr);
   }
   if (gst_meta_get_info(SIMA_TENSOR_SET_META_NAME) == nullptr) {
     (void)gst_meta_register_custom(SIMA_TENSOR_SET_META_NAME, tags, nullptr, nullptr, nullptr);
@@ -49,7 +60,8 @@ RUN_TEST(
 
       Tensor y = make_tensor(0, 16U, "cast_0");
       Tensor uv = make_tensor(1, 8U, "cast_1");
-      const Sample sample = sample_from_tensors(TensorList{y, uv});
+      Sample sample = sample_from_tensors(TensorList{y, uv});
+      sample.attributes = {{"outer-id", "tensor-set-7"}};
 
       std::string err;
       auto holder = pipeline_internal::make_sample_holder_from_bundle(sample, &err);
@@ -57,6 +69,11 @@ RUN_TEST(
 
       auto* gst_sample = static_cast<GstSample*>(holder.get());
       require(gst_sample != nullptr, "materialized holder should be a GstSample");
+
+      const Sample roundtrip = output_from_sample_stream(
+          gst_sample, "unit_sample_tensor_set_materialized_parent_offsets_test", false, nullptr);
+      require(roundtrip.attributes == sample.attributes,
+              "tensor-set outer attributes must round-trip through GstSimaMeta");
 
       simaai::neat::pipeline_internal::TensorBufferView view;
       err.clear();

@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Models & Inference |
 | Difficulty | Intermediate |
 | Estimated Read Time | 10-15 minutes |
 | Model | None |

@@ -147,6 +147,7 @@ struct PipelineSegmentRuntime {
     std::atomic<bool> push_done{false};
     std::atomic<bool> pull_done{false};
     std::atomic<std::size_t> producers_remaining{0};
+    std::atomic<bool> completion_started{false};
     std::atomic<bool> completion_forwarded{false};
 
     std::mutex stream_mu;
@@ -188,6 +189,8 @@ struct PipelineSegmentRuntime {
   RunOptions run_options;
   std::string last_pipeline;
   std::shared_ptr<RunCore> run_core;
+  // Keeps final child counters available after run_core teardown for an active MeasureScope.
+  std::shared_ptr<pipeline_internal::DiagCtx> retained_diag;
   GraphTransport transport;
 
   InputStream stream;
