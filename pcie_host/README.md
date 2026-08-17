@@ -361,7 +361,27 @@ the same build command on a fresh host and for subsequent rebuilds.
 ```text
 dist/sima-pcie-host_<version>_<arch>.deb
 dist/sima-pcie-host-dev_<version>_<arch>.deb
+dist/sima-pcie-host-<version>-Linux-<arch>-extras.tar.gz
 dist/install_pciehost.sh
+```
+
+The extras archive follows the core extras layout. It is relocatable and keeps
+prebuilt PCIe tutorial binaries separate from their C++, Python, documentation,
+and image sources:
+
+```text
+sima-pcie-host-<version>-Linux-<arch>-extras/
+├── build.sh
+├── lib/sima-pcie-host/tutorials/
+└── share/sima-pcie-host/tutorials/
+```
+
+After extracting it, use the root helper to inspect or rebuild tutorials
+against the installed `sima-pcie-host-dev` package:
+
+```bash
+./build.sh --list-targets
+./build.sh --target tutorial_024_run_tensor_mode
 ```
 
 Core CI publishes each package set under its matching host distribution and

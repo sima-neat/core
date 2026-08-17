@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Graphs & Pipelines |
 | Difficulty | Intermediate |
 | Estimated Read Time | <10 minutes |
 | Model | None |

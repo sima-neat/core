@@ -12,6 +12,7 @@ BUILD_TYPE="Release"
 BUILD_TESTS="OFF"
 BUILD_PYTHON="OFF"
 BUILD_EXAMPLES="OFF"
+BUILD_TUTORIALS="ON"
 CLEAN_BUILD="OFF"
 MAKE_DEB="ON"
 PACKAGE_DIR="${SCRIPT_DIR}/dist"
@@ -92,7 +93,7 @@ install_build_deps() {
     nlohmann-json3-dev
     zlib1g-dev
   )
-  if [[ "${BUILD_TESTS}" == "ON" ]]; then
+  if [[ "${BUILD_TESTS}" == "ON" || "${BUILD_TUTORIALS}" == "ON" ]]; then
     packages+=(libopencv-dev)
   fi
   if [[ "${BUILD_PYTHON}" == "ON" ]]; then
@@ -602,6 +603,7 @@ echo "Build type      : ${BUILD_TYPE}"
 echo "Build tests     : ${BUILD_TESTS}"
 echo "Build Python    : ${BUILD_PYTHON}"
 echo "Build examples  : ${BUILD_EXAMPLES}"
+echo "Build tutorials : ${BUILD_TUTORIALS}"
 echo "Generate DEB    : ${MAKE_DEB}"
 echo "Clean build     : ${CLEAN_BUILD}"
 echo "Build dir       : ${BUILD_DIR}"
@@ -656,6 +658,7 @@ cmake -S . -B "${BUILD_DIR}" \
   -DSIMAPCIE_BUILD_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_HARDWARE_TESTS="${BUILD_TESTS}" \
   -DSIMAPCIE_BUILD_EXAMPLES="${BUILD_EXAMPLES}" \
+  -DSIMAPCIE_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
   -DSIMAPCIE_BUILD_PYTHON="${BUILD_PYTHON}" \
   -DPython_EXECUTABLE="${PYTHON_EXECUTABLE}" \
   -DSIMAPCIE_NEATPCIEHOST_PLUGIN="${PLUGIN_STAGE}" \
@@ -675,20 +678,34 @@ if [[ -f "${INSTALLER_SOURCE}" ]]; then
   chmod 0755 "${INSTALLER_STAGE}"
 fi
 
-if [[ "${BUILD_TESTS}" == "ON" ]]; then
+if [[ "${BUILD_TESTS}" == "ON" || "${BUILD_TUTORIALS}" == "ON" ]]; then
   echo
   echo "Building PCIe host extras archive..."
   extras_name="sima-pcie-host-${PACKAGE_VERSION}-Linux-${DEB_ARCH}-extras"
-  extras_dir="${PACKAGE_DIR}/${extras_name}"
   extras_tar="${PACKAGE_DIR}/${extras_name}.tar.gz"
-  rm -rf "${extras_dir}" "${extras_tar}" "${extras_tar}.sha256"
+  extras_stage="$(mktemp -d /tmp/sima-pcie-host-extras-stage.XXXXXX)"
+  extras_dir="${extras_stage}/prefix"
+  trap 'rm -rf "${extras_stage}"' EXIT
+  rm -f "${extras_tar}" "${extras_tar}.sha256"
   mkdir -p "${PACKAGE_DIR}"
   cmake --install "${BUILD_DIR_ABS}" \
     --component PcieHostExtras \
     --prefix "${extras_dir}"
+
+  if [[ ! -x "${extras_dir}/build.sh" ]]; then
+    echo "ERROR: PCIe host extras install tree is missing root build.sh." >&2
+    echo "       Expected build.sh next to lib/ and share/." >&2
+    exit 1
+  fi
+  if [[ ! -d "${extras_dir}/share/sima-pcie-host/tutorials" ]]; then
+    echo "ERROR: PCIe host extras install tree is missing tutorial sources." >&2
+    exit 1
+  fi
+
   tar -C "${extras_dir}" -czf "${extras_tar}" .
   sha256sum "${extras_tar}" > "${extras_tar}.sha256"
-  rm -rf "${extras_dir}"
+  rm -rf "${extras_stage}"
+  trap - EXIT
 fi
 
 if [[ "${BUILD_PYTHON}" == "ON" ]]; then

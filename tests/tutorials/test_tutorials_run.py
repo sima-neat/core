@@ -18,6 +18,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TUTORIALS_ROOT = REPO_ROOT / "tutorials"
+PCIE_TUTORIALS_ROOT = REPO_ROOT / "pcie_host" / "tutorials"
 TIMEOUT_SEC = int(os.environ.get("SIMA_TUTORIAL_TIMEOUT_SEC", "180"))
 REQUIRE_RUNTIME = os.environ.get("SIMA_NEAT_TUTORIAL_REQUIRE_RUNTIME") == "1"
 
@@ -157,7 +158,12 @@ def test_walkthrough_segments_pair_across_languages() -> None:
   anchor must have a matching `STEP <name>` region in BOTH the .cpp and .py,
   with balanced END markers and no duplicate names. Comment-only markers, so
   this never affects whether the program runs."""
-  for d in sorted(TUTORIALS_ROOT.glob("[0-9][0-9][0-9]_*/")):
+  tutorial_dirs = [
+      directory
+      for root in (TUTORIALS_ROOT, PCIE_TUTORIALS_ROOT)
+      for directory in root.glob("[0-9][0-9][0-9]_*/")
+  ]
+  for d in sorted(tutorial_dirs):
     readme = d / "README.md"
     if not readme.exists():
       continue
@@ -168,21 +174,85 @@ def test_walkthrough_segments_pair_across_languages() -> None:
     anchors = _walkthrough_step_names(readme_text)
     assert anchors, f"{readme} has a Walkthrough but no {{#step:<name>}} anchors"
 
-    for src in (next(d.glob("*.cpp"), None), _tutorial_script_path(d)):
-      assert src is not None, f"{d.name}: missing a .cpp/.py source"
-      assert src.exists(), f"{d.name}: missing source {src}"
-      text = src.read_text()
-      starts = _STEP_MARKER_RE.findall(text)
-      assert len(starts) == len(set(starts)), (
-          f"{src}: duplicate STEP names {sorted(set(s for s in starts if starts.count(s) > 1))}"
+    language_sources = (
+        ("C++", sorted(d.glob("*.cpp"))),
+        ("Python", sorted(d.glob("*.py"))),
+    )
+    for language, sources in language_sources:
+      assert sources, f"{d.name}: missing a {language} source"
+      all_starts: list[str] = []
+      for src in sources:
+        text = src.read_text()
+        starts = _STEP_MARKER_RE.findall(text)
+        assert len(starts) == len(_STEP_END_RE.findall(text)), (
+            f"{src}: unbalanced STEP / END STEP markers"
+        )
+        all_starts.extend(starts)
+      assert len(all_starts) == len(set(all_starts)), (
+          f"{d}: duplicate {language} STEP names "
+          f"{sorted(set(s for s in all_starts if all_starts.count(s) > 1))}"
       )
-      assert len(starts) == len(_STEP_END_RE.findall(text)), (
-          f"{src}: unbalanced STEP / END STEP markers"
-      )
-      missing = [name for name in anchors if name not in set(starts)]
+      missing = [name for name in anchors if name not in set(all_starts)]
       assert not missing, (
-          f"{src}: walkthrough steps {missing} have no matching STEP marker"
+          f"{d}: walkthrough steps {missing} have no matching {language} STEP marker"
       )
+
+
+def test_pcie_tutorials_keep_the_model_api_and_minimal_cli() -> None:
+  expected = {
+      "024_run_pcie_inference_modes",
+      "025_measure_pcie_detection_throughput",
+      "026_run_models_on_multiple_pcie_queues",
+  }
+  tutorial_dirs = {
+      directory.name: directory
+      for directory in PCIE_TUTORIALS_ROOT.glob("[0-9][0-9][0-9]_*/")
+  }
+  assert set(tutorial_dirs) == expected
+
+  forbidden = (
+      "pcie::Runtime",
+      "pcie.Runtime",
+      "ModelId",
+      "RequestId",
+      "max_inflight",
+      "--model",
+      "--image",
+      "--frames",
+      "--card-ip",
+      "--card-host",
+  )
+  for name, directory in tutorial_dirs.items():
+    cpp_sources = sorted(directory.glob("*.cpp"))
+    py_sources = sorted(directory.glob("*.py"))
+    sources = [directory / "README.md", *cpp_sources, *py_sources]
+    expected_source_count = 7 if name == "024_run_pcie_inference_modes" else 3
+    assert len(sources) == expected_source_count, (
+        f"{name}: expected README and matching C++/Python program pairs"
+    )
+    assert {source.stem for source in cpp_sources} == {source.stem for source in py_sources}, (
+        f"{name}: C++ and Python program names must match"
+    )
+    combined = "\n".join(source.read_text() for source in sources)
+    for token in forbidden:
+      assert token not in combined, f"{name}: tutorial introduces forbidden token {token}"
+
+  throughput_cpp = (
+      tutorial_dirs["025_measure_pcie_detection_throughput"]
+      / "measure_pcie_detection_throughput.cpp"
+  ).read_text()
+  throughput_py = (
+      tutorial_dirs["025_measure_pcie_detection_throughput"]
+      / "measure_pcie_detection_throughput.py"
+  ).read_text()
+  assert "kMeasuredFrames = 1000" in throughput_cpp
+  assert "MEASURED_FRAMES = 1000" in throughput_py
+
+  street_scene = (PCIE_TUTORIALS_ROOT / "assets" / "street-scene.png").read_bytes()
+  assert street_scene.startswith(b"\x89PNG\r\n\x1a\n")
+  width = int.from_bytes(street_scene[16:20], "big")
+  height = int.from_bytes(street_scene[20:24], "big")
+  assert (width, height) == (640, 480)
 
 
 def test_ctested_python_usage_comments_use_current_script_names() -> None:

@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | GenAI |
 | Difficulty | Intermediate |
 | Estimated Read Time | 10 minutes |
 | Model | Qwen3-4B-Instruct-2507-GPTQ-a16w4 |

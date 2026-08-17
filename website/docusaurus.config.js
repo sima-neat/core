@@ -174,6 +174,18 @@ const config = {
             from: "/getting-started/dev-environment/run-on-the-devkit/",
             to: "/getting-started/dev-environment/devkit-sync/",
           },
+          {
+            from: "/tutorials/beginner/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/intermediate/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/advanced/",
+            to: "/tutorials/",
+          },
         ],
       },
     ],

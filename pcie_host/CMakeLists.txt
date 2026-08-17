@@ -29,6 +29,7 @@ option(SIMAPCIE_BUILD_TESTS "Build PCIe host unit tests" ON)
 option(SIMAPCIE_BUILD_HARDWARE_TESTS "Build installable PCIe host hardware tests" OFF)
 option(SIMAPCIE_BUILD_EXAMPLES "Build PCIe host C++ examples" OFF)
 option(SIMAPCIE_BUILD_PYTHON "Build PCIe host Python bindings via nanobind" OFF)
+option(SIMAPCIE_BUILD_TUTORIALS "Build installable PCIe host tutorials" ON)
 set(SIMAPCIE_NEATPCIEHOST_PLUGIN "" CACHE FILEPATH
   "Path to prebuilt libgstneatpciehost.so artifact to package")
 set(SIMAPCIE_NEATPCIEHOST_INCLUDE_DIR "" CACHE PATH
@@ -263,6 +264,10 @@ endif()
 
 if (SIMAPCIE_BUILD_HARDWARE_TESTS)
   add_subdirectory(tests/hardware)
+endif()
+
+if (SIMAPCIE_BUILD_TUTORIALS)
+  add_subdirectory(tutorials)
 endif()
 
 if (SIMAPCIE_BUILD_EXAMPLES)
