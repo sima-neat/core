@@ -24,12 +24,11 @@ the card.
 ## 2. Set up Neat Library tutorials
 
 Make sure the [Neat Library is installed](/getting-started/neat-library/install-or-update/),
-then download and enter the tutorial bundle:
+then run these commands from the directory where you want the tutorial bundle:
 
 <ShellCommand prompt="sdk-or-devkit">
-mkdir -p neat-tutorials
-sima-cli neat download core -t extras -d neat-tutorials
-cd neat-tutorials/sima-neat-*-Linux-extras
+sima-cli neat download core -t extras
+cd sima-neat-*-Linux-extras
 </ShellCommand>
 
 For Python tutorials running directly on a DevKit, activate PyNeat and verify
@@ -44,27 +43,25 @@ python3 -c "import pyneat; print('pyneat ready')"
 
 First [install and verify the PCIe host package](/getting-started/neat-library/pcie-host/).
 Then download the tutorial bundle for the Ubuntu version running on the host.
+Run the command from the directory where you want the bundle.
 
 **Ubuntu 22.04:**
 
 <ShellCommand prompt="pcie-host">
-mkdir -p pciehost-tutorials
-sima-cli neat download core/pciehost/ubuntu22/amd64@v0.4.0 \
-  -t extras -d pciehost-tutorials
+sima-cli neat download core/pciehost/ubuntu22/amd64 -t extras
+cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 
 **Ubuntu 24.04:**
 
 <ShellCommand prompt="pcie-host">
-mkdir -p pciehost-tutorials
-sima-cli neat download core/pciehost/ubuntu24/amd64@v0.4.0 \
-  -t extras -d pciehost-tutorials
+sima-cli neat download core/pciehost/ubuntu24/amd64 -t extras
+cd sima-pcie-host-*-Linux-amd64-extras
 </ShellCommand>
 
-Enter the extracted bundle, then activate and verify PyNeat PCIe:
+Verify PCIe PyNeat:
 
 <ShellCommand prompt="pcie-host">
-cd pciehost-tutorials/sima-pcie-host-*-Linux-amd64-extras
 source ~/pyneatpcie/bin/activate
 python3 -c "import pyneatpcie; print('pyneatpcie ready')"
 </ShellCommand>
