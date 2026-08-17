@@ -404,7 +404,9 @@ ensure_artifact_downloaded() {
 
 generate_package_metadata() {
   mkdir -p "${PACKAGE_DIR}"
-  rm -f "${PACKAGE_DIR}/metadata.json" "${PACKAGE_DIR}/metadata-pyneatpcie.json"
+  rm -f "${PACKAGE_DIR}/metadata.json" \
+    "${PACKAGE_DIR}/metadata-extras.json" \
+    "${PACKAGE_DIR}/metadata-pyneatpcie.json"
 
   local git_commit="${GITHUB_SHA:-}"
   if [[ -z "${git_commit}" ]] &&
@@ -537,6 +539,41 @@ if runtime_debs and full_paths:
     }
     (package_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+    if len(extras_tars) == 1:
+        extras = extras_tars[0].name
+        extracted_dir = extras.removesuffix(".tar.gz")
+        extras_metadata = dict(metadata)
+        extras_metadata.update({
+            "description": (
+                "SiMa.ai NEAT PCIe host tutorial extras "
+                f"({host_distro}, {deb_arch})"
+            ),
+            "resources": [extras],
+            "resources-checksum": {extras: resource_checksums[extras]},
+            "selectable-resources": [],
+            "installation": {
+                "script": ":",
+                "post-message": (
+                    "[bold]PCIe host tutorial extras downloaded and extracted.[/bold]\n"
+                    f"Enter the tutorial directory with: cd {extracted_dir}\n"
+                    "The matching PCIe host package must already be installed.\n"
+                ),
+            },
+            "artifact": {
+                "type": "tutorial-extras",
+                "repository": "core",
+                "package_path": f"pciehost/{host_distro}/{deb_arch}",
+                "distro": host_distro,
+                "arches": [deb_arch],
+            },
+            "size": {
+                "download": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+                "install": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+            },
+        })
+        (package_dir / "metadata-extras.json").write_text(
+            json.dumps(extras_metadata, indent=2) + "\n", encoding="utf-8")
 
     if len(wheels) == 1:
         wheel = wheels[0].name
@@ -701,6 +738,13 @@ if [[ "${BUILD_TESTS}" == "ON" || "${BUILD_TUTORIALS}" == "ON" ]]; then
     echo "ERROR: PCIe host extras install tree is missing tutorial sources." >&2
     exit 1
   fi
+  for tutorial_asset in labrador.jpg street-scene.png; do
+    asset_path="${extras_dir}/share/sima-pcie-host/tutorials/assets/${tutorial_asset}"
+    if [[ ! -s "${asset_path}" ]]; then
+      echo "ERROR: PCIe host extras install tree is missing tutorial asset ${tutorial_asset}." >&2
+      exit 1
+    fi
+  done
 
   tar -C "${extras_dir}" -czf "${extras_tar}" .
   sha256sum "${extras_tar}" > "${extras_tar}.sha256"

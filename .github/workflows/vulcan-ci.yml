@@ -477,6 +477,23 @@ jobs:
           file "${wheels[0]}"
           python3 -m zipfile --test "${wheels[0]}"
           sha256sum "${wheels[0]}" > "${wheels[0]}.sha256"
+
+          EXTRAS_ARCHIVE="$(basename "${extras_tars[0]}")" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          metadata_path = Path("pcie_host/dist/metadata-extras.json")
+          metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+          expected = [os.environ["EXTRAS_ARCHIVE"]]
+          if metadata.get("resources") != expected:
+              raise SystemExit(
+                  f"metadata-extras.json resources must be {expected!r}; "
+                  f"got {metadata.get('resources')!r}"
+              )
+          if metadata.get("installation", {}).get("script") != ":":
+              raise SystemExit("metadata-extras.json must not install host packages")
+          PY
         env:
           DEB_ARCH: ${{ matrix.deb_arch }}
 
@@ -674,6 +691,7 @@ jobs:
               export DEB_ARCH="${deb_arch}"
               export RESOURCES_TSV="${resources_tsv}"
               export METADATA_PATH="${work_dir}/metadata.json"
+              export EXTRAS_METADATA_PATH="${work_dir}/metadata-extras.json"
               export PYNEATPCIE_METADATA_PATH="${work_dir}/metadata-pyneatpcie.json"
               python3 - <<'PY'
           import json
@@ -688,6 +706,7 @@ jobs:
           resource_sizes = {}
           total_size_bytes = 0
           wheel_resources = []
+          extras_resources = []
           for line in Path(os.environ["RESOURCES_TSV"]).read_text(
               encoding="utf-8").splitlines():
               resource, checksum, size_bytes = line.split("\t")
@@ -697,9 +716,13 @@ jobs:
               total_size_bytes += resource_sizes[resource]
               if resource.startswith("pyneatpcie-") and resource.endswith(".whl"):
                   wheel_resources.append(resource)
+              if resource.startswith("sima-pcie-host-") and resource.endswith("-extras.tar.gz"):
+                  extras_resources.append(resource)
 
           if len(wheel_resources) != 1:
               raise SystemExit(f"expected exactly one pyneatpcie wheel, got {wheel_resources!r}")
+          if len(extras_resources) != 1:
+              raise SystemExit(f"expected exactly one PCIe host extras archive, got {extras_resources!r}")
 
           metadata = {
               "name": f"gh:sima-neat/pciehost/{distro}/{deb_arch}",
@@ -721,8 +744,8 @@ jobs:
               "selectable-resources": [],
               "installation": {
                   "script": "bash ./install_pciehost.sh --python",
-                  "post-message": "[bold]sima-pcie-host and pyneatpcie installed successfully.[/bold]\\n"
-                                  "Activate pyneatpcie with: source ~/pyneatpcie/bin/activate\\n",
+                  "post-message": "[bold]sima-pcie-host and pyneatpcie installed successfully.[/bold]\n"
+                                  "Activate pyneatpcie with: source ~/pyneatpcie/bin/activate\n",
               },
               "artifact": {
                   "type": "debian-packages",
@@ -744,6 +767,38 @@ jobs:
           Path(os.environ["METADATA_PATH"]).write_text(
               json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
+          extras = extras_resources[0]
+          extracted_dir = extras.removesuffix(".tar.gz")
+          extras_metadata = dict(metadata)
+          extras_metadata.update({
+              "description": (
+                  "SiMa.ai NEAT PCIe host tutorial extras "
+                  f"({distro}, {deb_arch})"
+              ),
+              "resources": [extras],
+              "resources-checksum": {extras: resource_checksums[extras]},
+              "selectable-resources": [],
+              "installation": {
+                  "script": ":",
+                  "post-message": "[bold]PCIe host tutorial extras downloaded and extracted.[/bold]\n"
+                                  f"Enter the tutorial directory with: cd {extracted_dir}\n"
+                                  "The matching PCIe host package must already be installed.\n",
+              },
+              "artifact": {
+                  "type": "tutorial-extras",
+                  "repository": "core",
+                  "package_path": f"pciehost/{distro}/{deb_arch}",
+                  "distro": distro,
+                  "arches": [deb_arch],
+              },
+              "size": {
+                  "download": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+                  "install": f"{max(1, (resource_sizes[extras] + 1024 * 1024 - 1) // (1024 * 1024))}MB",
+              },
+          })
+          Path(os.environ["EXTRAS_METADATA_PATH"]).write_text(
+              json.dumps(extras_metadata, indent=2) + "\n", encoding="utf-8")
+
           wheel = wheel_resources[0]
           pyneatpcie_metadata = dict(metadata)
           pyneatpcie_metadata.update({
@@ -756,11 +811,11 @@ jobs:
               "resources-checksum": {wheel: resource_checksums[wheel]},
               "installation": {
                   "script": ":",
-                  "post-message": "[bold]pyneatpcie wheel downloaded.[/bold]\\n"
-                                  f"Install it with: python3 -m pip install ./{wheel}\\n"
+                  "post-message": "[bold]pyneatpcie wheel downloaded.[/bold]\n"
+                                  f"Install it with: python3 -m pip install ./{wheel}\n"
                                   "pyneatpcie requires the matching sima-pcie-host runtime package. "
                                   "If it is not installed yet, run: sima-cli neat install "
-                                  f"core/pciehost/{distro}/{deb_arch}\\n",
+                                  f"core/pciehost/{distro}/{deb_arch}\n",
               },
               "artifact": {
                   "type": "python-wheel",
@@ -791,6 +846,12 @@ jobs:
                 "${s3_args[@]}"
 
               aws s3 cp \
+                "${work_dir}/metadata-extras.json" \
+                "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-extras.json" \
+                --content-type application/json \
+                "${s3_args[@]}"
+
+              aws s3 cp \
                 "${work_dir}/metadata-pyneatpcie.json" \
                 "s3://${ARTIFACT_BUCKET}/${prefix}/metadata-pyneatpcie.json" \
                 --content-type application/json \
@@ -799,10 +860,11 @@ jobs:
               if [[ -n "${CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
                 aws cloudfront create-invalidation \
                   --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-                  --paths "/${prefix}/metadata.json" "/${prefix}/metadata-pyneatpcie.json" "/${prefix}/install_pciehost.sh"
+                  --paths "/${prefix}/metadata.json" "/${prefix}/metadata-extras.json" "/${prefix}/metadata-pyneatpcie.json" "/${prefix}/install_pciehost.sh"
               fi
 
               cat "${work_dir}/metadata.json"
+              cat "${work_dir}/metadata-extras.json"
               cat "${work_dir}/metadata-pyneatpcie.json"
               echo "Published PCIe host ${distro} ${deb_arch} metadata under s3://${ARTIFACT_BUCKET}/${prefix}/"
             done

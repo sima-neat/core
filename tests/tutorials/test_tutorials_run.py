@@ -254,6 +254,11 @@ def test_pcie_tutorials_keep_the_model_api_and_minimal_cli() -> None:
   height = int.from_bytes(street_scene[20:24], "big")
   assert (width, height) == (640, 480)
 
+  labrador = (PCIE_TUTORIALS_ROOT / "assets" / "labrador.jpg").read_bytes()
+  assert labrador.startswith(b"\xff\xd8")
+  assert labrador.endswith(b"\xff\xd9")
+  assert len(labrador) > 10_000
+
 
 def test_ctested_python_usage_comments_use_current_script_names() -> None:
   ctested_chapters = _ctested_chapters()

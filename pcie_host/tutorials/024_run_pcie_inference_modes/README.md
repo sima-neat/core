@@ -35,8 +35,9 @@ routes.
 
 Set `preprocess.kind` to `Image`, identify the incoming pixels as BGR, and select
 the `COCO_YOLO` preset. The host now sends decoded pixels while the card performs
-letterbox resize, BGR-to-RGB conversion, and normalization. The program checks
-the same six raw output route names and shapes shown by tensor mode.
+letterbox resize, BGR-to-RGB conversion, and normalization. The program prints
+the six raw output route names and shapes so you can compare them with tensor
+mode.
 
 ### Decode detections on the card {#step-decode-boxes}
 
@@ -45,17 +46,30 @@ The returned BBOX tensor begins with a detection count followed by fixed-size
 records containing `(x, y, width, height, score, class_id)`. The example parses
 and prints the first ten records in source-image coordinates.
 
+### Parse the BBOX tensor {#step-parse-boxes}
+
+Validate that box decode returned one populated tensor, read its leading count,
+and reject a count that exceeds the payload. Each remaining 24-byte record is
+then converted to one detection for printing.
+
 ## Run
 
-Install the PCIe host packages and Python environment as described in
-[PCIe Co-Processing](/develop-apps/hello-neat/pcie/), then extract the PCIe host extras
-archive and enter its root directory. Download YOLOv8s there:
+Install the packages and extract the PCIe tutorial bundle exactly as described
+in [Install PCIe Host](/getting-started/neat-library/pcie-host/). Run the
+following commands from the extracted PCIe extras root:
 
 ```bash
 sima-cli modelzoo get yolo_v8s
 ```
 
-The command creates `yolo_v8s_mpk.tar.gz` in the current directory.
+The programs require `yolo_v8s_mpk.tar.gz` in this directory. Model Zoo output
+names and locations can vary. If the command did not create that exact path,
+copy the downloaded archive into place and verify it:
+
+```bash
+cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+test -f yolo_v8s_mpk.tar.gz
+```
 
 **Python:**
 

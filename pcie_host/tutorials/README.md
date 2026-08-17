@@ -15,11 +15,20 @@ for ResNet-50 classification in the multi-queue chapter.
 
 ## Packaged layout
 
-The PCIe host extras archive follows the same relocatable layout as the core
-extras archive:
+The PCIe host extras archive is relocatable, but it does not contain an
+enclosing directory. Create a destination directory before extracting it:
+
+```bash
+mkdir -p sima-pcie-host-extras
+tar -xzf sima-pcie-host-<version>-Linux-<arch>-extras.tar.gz \
+  -C sima-pcie-host-extras
+cd sima-pcie-host-extras
+```
+
+The extracted layout is:
 
 ```text
-sima-pcie-host-<version>-Linux-<arch>-extras/
+./
 ├── build.sh
 ├── lib/sima-pcie-host/tutorials/      # prebuilt C++ binaries
 └── share/sima-pcie-host/tutorials/    # C++, Python, docs, and assets

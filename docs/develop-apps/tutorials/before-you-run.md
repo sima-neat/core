@@ -7,124 +7,98 @@ slug: /tutorials/before-you-run
 
 # Before You Run Tutorials
 
-Use this page once before your first tutorial. It gets the path, model archive,
-and command context sorted out so the tutorial can stay focused on the API.
+Use this page once before your first tutorial. Neat Library tutorials and PCIe
+host tutorials execute in different environments and use different packages,
+Python environments, and extras bundles.
 
-## Check what you need
+## Pick the execution environment
 
-Before you run a chapter, make sure you have:
+| Tutorial category | Run on | Python | C++ package | Extras paths |
+| --- | --- | --- | --- | --- |
+| Models & Inference, Graphs & Pipelines, Cameras & Streaming, GenAI | Modalix DevKit or the context named by the tutorial | `~/pyneat` | `SimaNeat` | `lib/sima-neat`, `share/sima-neat` |
+| PCIe Co-Processing | x86 host connected to a Modalix PCIe Card | `~/pyneatpcie` | `SimaPCIeHost` | `lib/sima-pcie-host`, `share/sima-pcie-host` |
 
-- Palette SDK or a target DevKit with Neat installed.
-- `pyneat` available for Python tutorials.
-- The tutorial extras folder if you want the prebuilt binaries under `lib/` or
-  the installed tutorial sources under `share/`.
-- A compiled model archive (`.tar.gz`, often called an MPK) for model-backed
-  tutorials. Use the Model Zoo or compile your own model with the Model
-  Compiler.
+Do not run a PCIe host tutorial inside the SDK container or directly on the
+card. Do not use the target-side core extras bundle for a PCIe tutorial.
 
-No mystery wires. If a command below does not match where you are running, stop
-and switch context before copying it.
+## Prepare target-side Neat tutorials
 
-## Pick the right command context
-
-| Command kind | Run from | Prompt context |
-| --- | --- | --- |
-| Python tutorial from the installed extras folder | The Neat install or extras root that contains `share/` | `sdk-or-devkit` |
-| Prebuilt C++ tutorial | The Neat install or extras root that contains `lib/` | `sdk-or-devkit` |
-| Rebuild a C++ tutorial from source | The repo root or extras root that contains `build.sh` | `sdk-or-devkit` |
-| Run a repo binary through `dk` | Palette SDK container | `sdk-container`; the command executes on the DevKit |
-| DevKit-only Python environment setup | DevKit shell | `devkit` |
-
-Most tutorial pages show three commands:
-
-1. Python from `share/sima-neat/tutorials/...`.
-2. C++ prebuilt from `lib/sima-neat/tutorials/...`.
-3. C++ rebuilt with `./build.sh --target ...`.
-
-Run each command from the directory stated in the tutorial. Relative paths in the
-examples are intentional.
-
-## Verify the basics
-
-Check that `sima-cli` is visible before you try to fetch model archives:
+Install Neat and download the core extras bundle:
 
 <ShellCommand prompt="sdk-or-devkit">
-command -v sima-cli
+sima-cli neat install core -t extras
+cd sima-neat-*-Linux-extras
 </ShellCommand>
 
-For Python tutorials, check that `pyneat` imports in the environment you will use:
-
-<ShellCommand prompt="sdk-or-devkit">
-python3 -c "import pyneat; print('pyneat ok')"
-</ShellCommand>
-
-If you run Python directly on a DevKit, activate the DevKit virtual environment
-first:
+For Python tutorials running directly on a DevKit, activate PyNeat:
 
 <ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
+python3 -c "import pyneat; print('pyneat ready')"
 </ShellCommand>
 
-## Prepare model archives
+Target-side model tutorials accept `--model`, so you can pass the actual model
+archive path when it differs from the example path.
 
-Model-backed tutorials use fixed example paths so commands stay short:
+## Prepare PCIe host tutorials
 
-| Tutorial family | Example path used in commands |
+Install the host package and extract its separate extras archive by following
+[Install PCIe Host](/getting-started/neat-library/pcie-host/). Enter the
+extracted directory and verify PyNeat PCIe:
+
+<ShellCommand prompt="pcie-host">
+cd pciehost-install/sima-pcie-host-*-Linux-amd64-extras
+source ~/pyneatpcie/bin/activate
+python3 -c "import pyneatpcie; print('pyneatpcie ready')"
+</ShellCommand>
+
+PCIe tutorials intentionally accept only `--card N`. To keep their commands
+short, they require these exact model filenames in the extras root:
+
+| Model | Required PCIe tutorial filename |
 | --- | --- |
-| Classification tutorials | `/tmp/resnet_50.tar.gz` |
-| Detection tutorials | `/tmp/yolo_v8s.tar.gz` |
+| ResNet-50 | `resnet_50_mpk.tar.gz` |
+| YOLOv8s | `yolo_v8s_mpk.tar.gz` |
 
-Download the needed model from the Model Zoo when available:
+Download the models you need:
 
-<ShellCommand prompt="sdk-or-devkit">
+<ShellCommand prompt="pcie-host">
 sima-cli modelzoo get resnet_50
-</ShellCommand>
-
-<ShellCommand prompt="sdk-or-devkit">
 sima-cli modelzoo get yolo_v8s
 </ShellCommand>
 
-Model Zoo filenames and download locations can vary. Use the actual tarball path
-with `--model <path>`, or create a symlink to the tutorial path:
+Model Zoo output names and locations can vary. If either archive was written
+elsewhere or uses another name, copy it into the PCIe extras root using the
+required filename:
 
-<ShellCommand prompt="sdk-or-devkit">
-ln -sf /path/to/resnet_50_mpk.tar.gz /tmp/resnet_50.tar.gz
+<ShellCommand prompt="pcie-host">
+cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
+cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+test -f resnet_50_mpk.tar.gz
+test -f yolo_v8s_mpk.tar.gz
 </ShellCommand>
 
-<ShellCommand prompt="sdk-or-devkit">
-ln -sf /path/to/yolo_v8s_mpk.tar.gz /tmp/yolo_v8s.tar.gz
-</ShellCommand>
+Only prepare the model required by the tutorial you are running. Tutorial 026
+uses both models.
 
-Then check the path you need.
+## Run from the extras root
 
-<ShellCommand prompt="sdk-or-devkit">
-ls -lh /tmp/resnet_50.tar.gz
-</ShellCommand>
+Relative model and asset paths are intentional. From the correct extras root:
 
-<ShellCommand prompt="sdk-or-devkit">
-ls -lh /tmp/yolo_v8s.tar.gz
-</ShellCommand>
+- Python source is under `share/<package>/tutorials/`.
+- Prebuilt C++ programs are under `lib/<package>/tutorials/`.
+- `./build.sh --list-targets` lists rebuildable C++ tutorial targets.
 
-## Know what a successful run looks like
+If an example reports a missing file, first confirm that the shell is in the
+correct extras root and that the exact required model filename exists there.
 
-Tutorial output is small by design. A successful run usually prints one or two
-summary lines, such as `top1=...`, `outputs_pulled=...`, or `detections=...`.
-C++ tutorials also print `[OK] ...` at the end.
+## Know what success looks like
 
-Some chapters intentionally accept more than one valid output shape or label.
-For example, detection tutorials may print raw output heads when the current
-runtime route returns raw tensors instead of decoded BBOX data. The chapter
-explains the expected variants instead of pretending all packs behave the same.
+A successful tutorial prints a compact result such as `top1=...`,
+`completed=1000`, or `detections=...`. C++ tutorials also print an `[OK]` line.
+Timing and detection counts can vary by model package, host, card, and input,
+but C++ and Python should report the same tensor contracts for the same mode.
 
-## When paths still fight back
-
-If a tutorial reports a missing model or asset:
-
-1. Pass the path explicitly with the tutorial's `--model` or `--image` flag.
-2. Check that you are running from the directory the tutorial command expects.
-3. Use the reference page for source-tree asset overrides when you are running
-   tests or repo-local examples.
-
-See [Tutorial Assets and Model Archives](/reference/tutorial-assets) for the
-source-tree environment variables, and [Troubleshooting](/reference/troubleshooting)
-for symptom-first fixes.
+For target-side source-tree asset overrides, see
+[Tutorial Assets and Model Archives](/reference/tutorial-assets). For
+symptom-first help, see [Troubleshooting](/reference/troubleshooting).

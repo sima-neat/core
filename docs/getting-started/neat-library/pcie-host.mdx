@@ -48,8 +48,7 @@ sima-cli login
 
 ## Install the PCIe Host Package
 
-Choose a working directory on the PCIe host, then run the command for the
-installed Ubuntu version.
+Choose a working directory on the PCIe host, then run the command for the installed Ubuntu version.
 
 **Ubuntu 22.04 on x86_64:**
 
@@ -71,6 +70,46 @@ During the first installation, SSH provisioning can request the `sima` account
 password for the card. It creates or reuses
 `~/.ssh/sima_neat_pcie_ed25519` and installs its public key on the card. Normal
 PCIe operation then uses passwordless SSH for card-side model setup.
+
+
+**Ubuntu 22.04 on x86_64:**
+
+<ShellCommand prompt="pcie-host">
+mkdir -p pciehost-tutorials
+cd pciehost-tutorials
+sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0 -t extras
+cd sima-pcie-host-0.4.0-Linux-amd64-extras
+</ShellCommand>
+
+**Ubuntu 24.04 on x86_64:**
+
+<ShellCommand prompt="pcie-host">
+mkdir -p pciehost-tutorials
+cd pciehost-tutorials
+sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0 -t extras
+cd sima-pcie-host-0.4.0-Linux-amd64-extras
+</ShellCommand>
+
+If you already have the archive and want to extract it manually, remember that
+the archive stores `build.sh`, `lib/`, and `share/` directly at its root:
+
+<ShellCommand prompt="pcie-host">
+mkdir -p sima-pcie-host-extras
+tar -xzf sima-pcie-host-0.4.0-Linux-amd64-extras.tar.gz \
+  -C sima-pcie-host-extras
+cd sima-pcie-host-extras
+</ShellCommand>
+
+Verify the extracted layout:
+
+<ShellCommand prompt="pcie-host">
+test -x build.sh
+ls lib/sima-pcie-host/tutorials/
+ls share/sima-pcie-host/tutorials/
+</ShellCommand>
+
+Run all PCIe tutorial commands from whichever extracted extras directory you
+entered.
 
 ## Verify the installation
 

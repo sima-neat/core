@@ -28,21 +28,7 @@ def parse_card() -> int:
     return parser.parse_args().card
 
 
-def detection_options() -> pcie.ModelOptions:
-    options = pcie.ModelOptions()
-    options.preprocess.kind = pcie.InputKind.Image
-    options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
-    options.preprocess.color_convert.output_format = pcie.ColorFormat.RGB
-    options.preprocess.resize.enable = pcie.AutoFlag.On
-    options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
-    options.preprocess.normalize.preset = pcie.NormalizePreset.COCO_YOLO
-    options.decode_type = pcie.BoxDecodeType.YoloV8
-    options.score_threshold = 0.25
-    options.nms_iou_threshold = 0.45
-    options.top_k = 100
-    return options
-
-
+# STEP parse-boxes
 def parse_boxes(outputs: list[pcie.Tensor]) -> list[tuple[int, int, int, int, float, int]]:
     if len(outputs) != 1:
         raise RuntimeError("boxdecode must return one BBOX tensor")
@@ -57,6 +43,7 @@ def parse_boxes(outputs: list[pcie.Tensor]) -> list[tuple[int, int, int, int, fl
         struct.unpack_from("<iiiifi", payload, 4 + index * record_size)
         for index in range(count)
     ]
+# END STEP
 
 
 def class_name(class_id: int) -> str:
@@ -82,7 +69,18 @@ def main() -> None:
     # CORE LOGIC
     # STEP decode-boxes
     connection = pcie.ConnectionOptions(card_id=card_id)
-    with pcie.Model(str(MODEL_PATH), detection_options(), connection) as model:
+    options = pcie.ModelOptions()
+    options.preprocess.kind = pcie.InputKind.Image
+    options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
+    options.preprocess.color_convert.output_format = pcie.ColorFormat.RGB
+    options.preprocess.resize.enable = pcie.AutoFlag.On
+    options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
+    options.preprocess.normalize.preset = pcie.NormalizePreset.COCO_YOLO
+    options.decode_type = pcie.BoxDecodeType.YoloV8
+    options.score_threshold = 0.25
+    options.nms_iou_threshold = 0.45
+    options.top_k = 100
+    with pcie.Model(str(MODEL_PATH), options, connection) as model:
         model.build(BUILD_TIMEOUT_MS)
         outputs = model.run_image(image, RUN_TIMEOUT_MS, pcie.PixelFormat.BGR)
         boxes = parse_boxes(outputs)

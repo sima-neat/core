@@ -40,17 +40,6 @@ int parse_card(const int argc, char** argv) {
   return card_id;
 }
 
-pcie::ModelOptions image_options() {
-  pcie::ModelOptions options;
-  options.preprocess.kind = pcie::InputKind::Image;
-  options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
-  options.preprocess.color_convert.output_format = pcie::ColorFormat::RGB;
-  options.preprocess.resize.enable = pcie::AutoFlag::On;
-  options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
-  options.preprocess.normalize.preset = pcie::NormalizePreset::COCO_YOLO;
-  return options;
-}
-
 std::string shape_string(const std::vector<std::int64_t>& shape) {
   std::string text = "[";
   for (std::size_t index = 0; index < shape.size(); ++index) {
@@ -98,7 +87,14 @@ int main(int argc, char** argv) {
     // STEP image-mode
     pcie::ConnectionOptions connection;
     connection.card_id = card_id;
-    pcie::Model model(kModelPath, image_options(), connection);
+    pcie::ModelOptions options;
+    options.preprocess.kind = pcie::InputKind::Image;
+    options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
+    options.preprocess.color_convert.output_format = pcie::ColorFormat::RGB;
+    options.preprocess.resize.enable = pcie::AutoFlag::On;
+    options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
+    options.preprocess.normalize.preset = pcie::NormalizePreset::COCO_YOLO;
+    pcie::Model model(kModelPath, options, connection);
     model.build(kBuildTimeoutMs);
     const auto outputs = model.run(image, kRunTimeoutMs);
     if (outputs.empty()) {

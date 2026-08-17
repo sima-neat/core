@@ -36,26 +36,39 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">connection = pcie.ConnectionOptions(card_id…</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">with pcie.Model(str(MODEL_PATH), image_opti…</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">options = pcie.ModelOptions()</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">    model.build(BUILD_TIMEOUT_MS)</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">options.preprocess.kind = pcie.InputKind.Im…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">    outputs = model.run_image(image, RUN_TI…</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">options.preprocess.color_convert.input_form…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">if not outputs:</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">options.preprocess.color_convert.output_for…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Decode boxes</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">connection = pcie.ConnectionOptions(card_id…</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">with pcie.Model(str(MODEL_PATH), detection_…</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">options = pcie.ModelOptions()</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">    model.build(BUILD_TIMEOUT_MS)</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">options.preprocess.kind = pcie.InputKind.Im…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">    outputs = model.run_image(image, RUN_TI…</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">options.preprocess.color_convert.input_form…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">    boxes = parse_boxes(outputs)</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">options.preprocess.color_convert.output_for…</text>
+</g>
+<g id="code3" class="fanim" opacity="0">
+<text x="76" y="212" class="fsans fcap">STEP 4 · Parse boxes</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">def parse_boxes(outputs: list[pcie.Tensor])…</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">    if len(outputs) != 1:</text>
+<text x="76" y="300" class="fmono fln">3</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">        raise RuntimeError(&quot;boxdecode must…</text>
+<text x="76" y="326" class="fmono fln">4</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">    payload = outputs[0].to_bytes()</text>
+<text x="76" y="352" class="fmono fln">5</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">    if len(payload) &lt; 4:</text>
 </g>
 </g>
 <g filter="url(#fsh)">
@@ -64,30 +77,39 @@
 <rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>
 </g>
 <g id="node0" class="fanim" opacity="1">
-<rect x="600" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
-<text x="692" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
-<text x="692" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Tensor mode</text>
+<rect x="600" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="664" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
+<text x="664" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="664" dy="0">Tensor</tspan><tspan x="664" dy="15">mode</tspan></text>
 </g>
 <g id="ring0" class="fanim" opacity="1">
-<rect x="596" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="596" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g id="node1" class="fanim" opacity="0">
-<line x1="788" y1="293" x2="814" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
-<rect x="820" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
-<text x="912" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
-<text x="912" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Image mode</text>
+<line x1="733" y1="293" x2="759" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="765" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="830" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
+<text x="830" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="830" dy="0">Image</tspan><tspan x="830" dy="15">mode</tspan></text>
 </g>
 <g id="ring1" class="fanim" opacity="0">
-<rect x="816" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="761" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 <g id="node2" class="fanim" opacity="0">
-<line x1="1008" y1="293" x2="1034" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
-<rect x="1040" y="250" width="184" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
-<text x="1132" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
-<text x="1132" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Decode boxes</text>
+<line x1="898" y1="293" x2="924" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="930" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="994" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
+<text x="994" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="994" dy="0">Decode</tspan><tspan x="994" dy="15">boxes</tspan></text>
 </g>
 <g id="ring2" class="fanim" opacity="0">
-<rect x="1036" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+<rect x="926" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+<g id="node3" class="fanim" opacity="0">
+<line x1="1063" y1="293" x2="1089" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="1095" y="250" width="129" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
+<text x="1160" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 4</text>
+<text x="1160" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="1160" dy="0">Parse</tspan><tspan x="1160" dy="15">boxes</tspan></text>
+</g>
+<g id="ring3" class="fanim" opacity="0">
+<rect x="1091" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 </g>
 <g id="popup" class="fanim" opacity="0">
@@ -96,7 +118,7 @@
 </g>
 <script type="text/ecmascript"><![CDATA[
 (function(){
-  var n=3, i=0, t=null, anchors=["tensor-mode", "image-mode", "decode-boxes"];
+  var n=4, i=0, t=null, anchors=["tensor-mode", "image-mode", "decode-boxes", "parse-boxes"];
   function el(id){return document.getElementById(id);}
   function paint(a){
     for(var k=0;k<n;k++){

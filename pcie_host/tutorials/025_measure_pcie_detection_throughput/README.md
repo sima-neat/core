@@ -53,11 +53,22 @@ arrives.
 
 ## Run
 
-From the extracted PCIe host extras root, download YOLOv8s if it is not already
-present:
+Install and extract the tutorial bundle by following
+[Install PCIe Host](/getting-started/neat-library/pcie-host/). From the
+extracted PCIe extras root, download YOLOv8s if it is not
+already present:
 
 ```bash
 sima-cli modelzoo get yolo_v8s
+```
+
+The program requires the exact path `yolo_v8s_mpk.tar.gz` in this directory.
+If Model Zoo used another name or location, copy the downloaded archive into
+place:
+
+```bash
+cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+test -f yolo_v8s_mpk.tar.gz
 ```
 
 Run Python:

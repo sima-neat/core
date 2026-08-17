@@ -27,17 +27,6 @@ def parse_card() -> int:
     return parser.parse_args().card
 
 
-def image_options() -> pcie.ModelOptions:
-    options = pcie.ModelOptions()
-    options.preprocess.kind = pcie.InputKind.Image
-    options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
-    options.preprocess.color_convert.output_format = pcie.ColorFormat.RGB
-    options.preprocess.resize.enable = pcie.AutoFlag.On
-    options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
-    options.preprocess.normalize.preset = pcie.NormalizePreset.COCO_YOLO
-    return options
-
-
 def dtype_name(dtype: pcie.TensorDType) -> str:
     names = {
         pcie.TensorDType.UInt8: "UINT8",
@@ -63,7 +52,14 @@ def main() -> None:
     # CORE LOGIC
     # STEP image-mode
     connection = pcie.ConnectionOptions(card_id=card_id)
-    with pcie.Model(str(MODEL_PATH), image_options(), connection) as model:
+    options = pcie.ModelOptions()
+    options.preprocess.kind = pcie.InputKind.Image
+    options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
+    options.preprocess.color_convert.output_format = pcie.ColorFormat.RGB
+    options.preprocess.resize.enable = pcie.AutoFlag.On
+    options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
+    options.preprocess.normalize.preset = pcie.NormalizePreset.COCO_YOLO
+    with pcie.Model(str(MODEL_PATH), options, connection) as model:
         model.build(BUILD_TIMEOUT_MS)
         outputs = model.run_image(image, RUN_TIMEOUT_MS, pcie.PixelFormat.BGR)
     if not outputs:

@@ -43,21 +43,6 @@ int parse_card(const int argc, char** argv) {
   return card_id;
 }
 
-pcie::ModelOptions detection_options() {
-  pcie::ModelOptions options;
-  options.preprocess.kind = pcie::InputKind::Image;
-  options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
-  options.preprocess.color_convert.output_format = pcie::ColorFormat::RGB;
-  options.preprocess.resize.enable = pcie::AutoFlag::On;
-  options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
-  options.preprocess.normalize.preset = pcie::NormalizePreset::COCO_YOLO;
-  options.decode_type = pcie::BoxDecodeType::YoloV8;
-  options.score_threshold = 0.25F;
-  options.nms_iou_threshold = 0.45F;
-  options.top_k = 100;
-  return options;
-}
-
 struct Box {
   int x;
   int y;
@@ -73,6 +58,7 @@ template <typename T> T read_value(const std::uint8_t* data) {
   return value;
 }
 
+// STEP parse-boxes
 std::vector<Box> parse_boxes(const pcie::TensorList& outputs) {
   if (outputs.size() != 1 || outputs[0].data == nullptr || outputs[0].byte_offset < 0) {
     throw std::runtime_error("boxdecode must return one populated BBOX tensor");
@@ -100,6 +86,7 @@ std::vector<Box> parse_boxes(const pcie::TensorList& outputs) {
   }
   return boxes;
 }
+// END STEP
 
 std::string class_name(const int class_id) {
   switch (class_id) {
@@ -137,7 +124,18 @@ int main(int argc, char** argv) {
     // STEP decode-boxes
     pcie::ConnectionOptions connection;
     connection.card_id = card_id;
-    pcie::Model model(kModelPath, detection_options(), connection);
+    pcie::ModelOptions options;
+    options.preprocess.kind = pcie::InputKind::Image;
+    options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
+    options.preprocess.color_convert.output_format = pcie::ColorFormat::RGB;
+    options.preprocess.resize.enable = pcie::AutoFlag::On;
+    options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
+    options.preprocess.normalize.preset = pcie::NormalizePreset::COCO_YOLO;
+    options.decode_type = pcie::BoxDecodeType::YoloV8;
+    options.score_threshold = 0.25F;
+    options.nms_iou_threshold = 0.45F;
+    options.top_k = 100;
+    pcie::Model model(kModelPath, options, connection);
     model.build(kBuildTimeoutMs);
     const auto boxes = parse_boxes(model.run(image, kRunTimeoutMs));
     std::cout << "Image + boxdecode detections=" << boxes.size() << '\n';

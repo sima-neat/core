@@ -51,15 +51,25 @@ its assigned queue.
 
 ## Run
 
-From the extracted PCIe host extras root, download both models:
+Install and extract the tutorial bundle by following
+[Install PCIe Host](/getting-started/neat-library/pcie-host/). From the
+extracted PCIe extras root, download both models:
 
 ```bash
 sima-cli modelzoo get resnet_50
 sima-cli modelzoo get yolo_v8s
 ```
 
-The commands create `resnet_50_mpk.tar.gz` and `yolo_v8s_mpk.tar.gz` in the
-current directory.
+The program requires the exact paths `resnet_50_mpk.tar.gz` and
+`yolo_v8s_mpk.tar.gz` in this directory. If Model Zoo used other names or
+locations, copy the downloaded archives into place and verify them:
+
+```bash
+cp /absolute/path/to/downloaded-resnet-archive.tar.gz resnet_50_mpk.tar.gz
+cp /absolute/path/to/downloaded-yolov8s-archive.tar.gz yolo_v8s_mpk.tar.gz
+test -f resnet_50_mpk.tar.gz
+test -f yolo_v8s_mpk.tar.gz
+```
 
 Run Python:
 

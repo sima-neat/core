@@ -39,6 +39,11 @@ Place the downloaded archive in this directory as `resnet_50.tar.gz`.
 Download the [sample Labrador image](../../images/hello-neat-pcie-labrador.jpg)
 and save it as `assets/sample.png`.
 
+The image is based on
+[YellowLabradorLooking new.jpg](https://commons.wikimedia.org/wiki/File:YellowLabradorLooking_new.jpg),
+photographed by Elf and modified by Djmirko and FT2, and is licensed under
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
+
 Your working directory should now contain:
 
 ```text
