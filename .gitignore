@@ -84,6 +84,10 @@ models/
 *.tiff
 *.webp
 
+# Shipped PCIe tutorial fixtures
+!pcie_host/tutorials/assets/labrador.jpg
+!pcie_host/tutorials/assets/street-scene.png
+
 # Keep checked-in fixtures/media
 !samples/
 !samples/media/

@@ -313,7 +313,8 @@ void apply_raw_yolov6_yolox_contract_overrides_local(BoxDecodeStaticContract* co
 }
 
 void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticContract* contract) {
-  if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown) {
+  if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown ||
+      box_decode_type_is_ssd_family(contract->decode_type)) {
     return;
   }
   bool saw_prob_tensor = false;
@@ -770,6 +771,11 @@ maybe_infer_float_yolov8_score_activation_from_sample_values_local(
 std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_sample_local(
     const TensorList& tensors, BoxDecodeType decode_type,
     const std::optional<InputContract>& input_contract, std::string* error_message) {
+  if (box_decode_type_is_ssd_family(decode_type)) {
+    // SSD score domains belong to exact recipes. Standalone tensor names are routing labels and
+    // must not turn a softmax recipe into sigmoid before geometry-based recipe resolution.
+    return BoxDecodeScoreActivation::Unknown;
+  }
   bool saw_prob_tensor = false;
   bool saw_logit_tensor = false;
   for (std::size_t i = 0; i < tensors.size(); ++i) {
@@ -799,13 +805,6 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
   if (decode_type_is_yolov8_family_local(decode_type) ||
       decode_type_is_yolov26_family_local(decode_type)) {
     return BoxDecodeScoreActivation::Sigmoid;
-  }
-  if (decode_type == BoxDecodeType::Ssd) {
-    // SSD confidence heads are class logits decoded with a softmax over the class dimension
-    // (background included). The activation is implied by the decode type, so raw/manual-wired SSD
-    // loc/conf tensors resolve without needing special class_logit tensor names (this matches the
-    // softmax default the static-contract normalization applies downstream).
-    return BoxDecodeScoreActivation::Softmax;
   }
   set_error(error_message,
             "boxdecode inferred input tensors require explicit class score activation semantics");
@@ -1391,6 +1390,65 @@ bool slice_begin_is_zero_or_empty_local(const MpkPluginIoContract& stage) {
                      [](std::int64_t v) { return v == 0; });
 }
 
+bool logical_slice_hwc_from_stage_local(const MpkPluginIoContract& stage,
+                                        std::array<int, 3>* out_hwc, std::string* error_message) {
+  if (!out_hwc) {
+    return false;
+  }
+
+  // A slice plugin's declared output geometry is independent of its tensor dtype. In
+  // particular, MLA slice nodes emitted by Model Compiler can omit dtype aliases even though
+  // their input/output byte spans and shapes are complete. Requiring a dtype here causes the
+  // physical C16-aligned input depth to leak into the logical BoxDecode contract.
+  std::vector<std::int64_t> declared_shape =
+      !stage.slice_shape.empty() ? stage.slice_shape : stage.out_shape_raw;
+  if (declared_shape.empty() && !stage.slice_end.empty()) {
+    declared_shape = stage.slice_end;
+    if (!stage.slice_begin.empty()) {
+      if (stage.slice_begin.size() != declared_shape.size()) {
+        set_error(error_message, "boxdecode dense slice begin/end ranks do not match");
+        return false;
+      }
+      for (std::size_t i = 0; i < declared_shape.size(); ++i) {
+        declared_shape[i] -= stage.slice_begin[i];
+      }
+    }
+  }
+
+  int h = 0;
+  int w = 0;
+  int c = 0;
+  if (!dims_from_mpk_shape_for_input_nhwc_local(declared_shape, &h, &w, &c)) {
+    set_error(error_message, "boxdecode dense slice has an invalid declared output shape");
+    return false;
+  }
+
+  if (!stage.slice_end.empty()) {
+    if (!stage.slice_begin.empty() && stage.slice_begin.size() != stage.slice_end.size()) {
+      set_error(error_message, "boxdecode dense slice begin/end ranks do not match");
+      return false;
+    }
+    std::vector<std::int64_t> extent = stage.slice_end;
+    if (!stage.slice_begin.empty()) {
+      for (std::size_t i = 0; i < extent.size(); ++i) {
+        extent[i] -= stage.slice_begin[i];
+      }
+    }
+    int extent_h = 0;
+    int extent_w = 0;
+    int extent_c = 0;
+    if (!dims_from_mpk_shape_for_input_nhwc_local(extent, &extent_h, &extent_w, &extent_c) ||
+        extent_h != h || extent_w != w || extent_c != c) {
+      set_error(error_message,
+                "boxdecode dense slice output shape conflicts with its begin/end extent");
+      return false;
+    }
+  }
+
+  *out_hwc = {h, w, c};
+  return true;
+}
+
 std::string tensor_dtype_token_local(const MpkTensorContract* tensor) {
   if (!tensor) {
     return {};
@@ -1863,10 +1921,33 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
         return std::nullopt;
       }
       std::array<int, 3> slice_hwc{};
-      std::uint64_t ignored_size = 0U;
-      std::string ignored_dtype;
-      if (dense_hwc_source_fact_from_mpk_tensor_local(output_tensor, &slice_hwc, &ignored_size,
-                                                      &ignored_dtype)) {
+      const bool has_stage_slice_geometry =
+          !stage.slice_shape.empty() || !stage.out_shape_raw.empty() || !stage.slice_end.empty();
+      bool has_logical_slice = false;
+      if (has_stage_slice_geometry) {
+        if (!logical_slice_hwc_from_stage_local(stage, &slice_hwc, error_message)) {
+          return std::nullopt;
+        }
+        has_logical_slice = true;
+      } else {
+        // Compatibility for older hand-authored MPKs that describe the slice only on the
+        // output tensor. Unlike current compiler output this path necessarily needs dtype to
+        // prove that the tensor shape agrees with its byte extent.
+        std::uint64_t ignored_size = 0U;
+        std::string ignored_dtype;
+        has_logical_slice = dense_hwc_source_fact_from_mpk_tensor_local(
+            output_tensor, &slice_hwc, &ignored_size, &ignored_dtype);
+      }
+      if (has_logical_slice) {
+        if (facts.dense_source_hwc.has_value()) {
+          const auto& physical_hwc = *facts.dense_source_hwc;
+          if (slice_hwc[0] > physical_hwc[0] || slice_hwc[1] > physical_hwc[1] ||
+              slice_hwc[2] > physical_hwc[2]) {
+            set_error(error_message,
+                      "boxdecode dense slice output exceeds its physical HWC source");
+            return std::nullopt;
+          }
+        }
         if (!assign_unique_slice_local(&facts.logical_slice_hwc, slice_hwc, error_message,
                                        "boxdecode MPK branch has conflicting logical slice "
                                        "facts")) {
@@ -2465,11 +2546,14 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
   }
   if (boxdecode_stage) {
-    if (const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
-        parsed_type.has_value() &&
-        (*parsed_type == BoxDecodeType::Ssd || *parsed_type == BoxDecodeType::SuperPoint)) {
+    const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
+    if (parsed_type.has_value() && (box_decode_type_is_ssd_family(*parsed_type) ||
+                                    *parsed_type == BoxDecodeType::SuperPoint)) {
       out.decode_type = *parsed_type;
     }
+  }
+  if (boxdecode_stage && (box_decode_type_is_ssd_family(out.decode_type) ||
+                          out.decode_type == BoxDecodeType::SuperPoint)) {
     if (const auto parsed_option =
             parse_box_decode_type_option_token(boxdecode_stage->decode_type_option);
         parsed_option.has_value()) {

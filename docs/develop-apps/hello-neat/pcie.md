@@ -29,8 +29,6 @@ Create a working directory on the host machine and download ResNet-50 from the
 Model Zoo:
 
 <ShellCommand prompt="pcie-host">
-sudo apt-get install libopencv-dev
-~/pyneatpcie/bin/python -m pip install opencv-python
 mkdir -p pcie-host-quickstart/assets
 cd pcie-host-quickstart
 sima-cli modelzoo get resnet_50
@@ -38,8 +36,13 @@ sima-cli modelzoo get resnet_50
 
 Place the downloaded archive in this directory as `resnet_50.tar.gz`.
 
-Download the [sample image](../../images/tutorial_sample_image.png) and save it
-as `assets/sample.png`.
+Download the [sample Labrador image](../../images/hello-neat-pcie-labrador.jpg)
+and save it as `assets/sample.png`.
+
+The image is based on
+[YellowLabradorLooking new.jpg](https://commons.wikimedia.org/wiki/File:YellowLabradorLooking_new.jpg),
+photographed by Elf and modified by Djmirko and FT2, and is licensed under
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
 
 Your working directory should now contain:
 
@@ -173,7 +176,13 @@ int main() {
   const std::size_t count = outputs[0].size_bytes / sizeof(float);
   const auto best = std::max_element(scores, scores + count);
 
-  std::cout << "output: " << outputs[0].route.name << " [" << count << "]\n";
+  std::cout << "output: " << outputs[0].route.name << " [";
+  for (std::size_t index = 0; index < outputs[0].shape.size(); ++index) {
+    if (index != 0)
+      std::cout << ", ";
+    std::cout << outputs[0].shape[index];
+  }
+  std::cout << "]\n";
   std::cout << "top1: " << std::distance(scores, best) << '\n';
   model.close();
 }
@@ -228,13 +237,13 @@ cmake --build build
 </CodeTab>
 </CodeTabs>
 
-A successful run prints the returned output tensor and its top-scoring class
-index. The exact output name and index depend on the Model Zoo artifact and
-sample image:
+A successful run prints the returned output tensor and its top-scoring
+ImageNet class index. With the documented ResNet-50 artifact and Labrador
+image, the expected top class is index 208, Labrador retriever:
 
 ```text
-output: <output-name> [1000]
-top1: <class-index>
+output: resnetv17_dense0_fwd [1, 1000]
+top1: 208
 ```
 
 The Python context manager calls `close()` automatically. The C++ example calls

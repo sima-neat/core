@@ -78,7 +78,9 @@ struct LttngParseResult {
   bool trace_loss_detected = false;
   std::string trace_dir;
   std::vector<MeasurePluginLatency> plugin_metrics;
+  std::vector<MeasurePluginLatencyPercentiles> plugin_metric_percentiles;
   std::vector<MeasurePluginLatency> plugin_metrics_unattributed;
+  std::vector<MeasurePluginLatencyPercentiles> plugin_metric_percentiles_unattributed;
   std::vector<MeasureEdgeLatency> edge_metrics;
   std::vector<MeasureEdgeLatency> edge_metrics_unattributed;
   std::vector<ParsedPluginSpan> raw_plugin_spans;

@@ -3000,19 +3000,7 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 
     if (binding->stage_role == internal::ModelLineageStageRole::ManualPost) {
       if (auto* box = dynamic_cast<SimaBoxDecode*>(nodes[i].get())) {
-        const auto route_flags = box->model_route_flags_internal();
-        const auto route_tess_needed =
-            route_flags.has_value() ? std::optional<bool>(route_flags->tess_needed) : std::nullopt;
-        const auto route_quant_needed =
-            route_flags.has_value() ? std::optional<bool>(route_flags->quant_needed) : std::nullopt;
-        out.push_back(nodes::SimaBoxDecode(
-            *it->second.effective_model, box->decode_type_internal(),
-            box->detection_threshold_internal(), box->nms_iou_threshold_internal(),
-            box->top_k_internal(),
-            box->element_names(0).empty() ? std::string() : box->element_names(0).front(),
-            route_tess_needed, route_quant_needed, box->original_width_internal(),
-            box->original_height_internal(), /*model_width=*/0, /*model_height=*/0,
-            /*resize_mode_override=*/std::nullopt, box->decode_type_option_internal()));
+        out.push_back(box->retargeted_for_model_internal(*it->second.effective_model));
         ++i;
         continue;
       }

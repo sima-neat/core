@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Cameras & Streaming |
 | Difficulty | Intermediate |
 | Estimated Read Time | 5-10 minutes |
 | Model | None |

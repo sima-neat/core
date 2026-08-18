@@ -371,6 +371,16 @@ otherwise it falls back to element name.
 SIMA model-path fragment builders set `stage-id` on `simaaiprocesscvu`, `simaaiprocessmla`, and
 `simaaiboxdecode` elements by default.
 
+##### YOLO26 BoxDecode class-count contract
+
+For model-managed YOLO26 detection, pose, and segmentation routes, the MPK class-head depth is the
+authoritative class count. `Model::Options::num_classes = 0` selects that inferred value. A positive
+value must match it; a contradiction fails during contract construction and reports the configured
+value, the MPK-derived value, and the decode type. This prevents an invalid class count from being
+used to interpret the grouped raw-head layout. SSD and pre-YOLO26 non-pose YOLO families retain
+their existing explicit-override behavior, while pose and SuperPoint decoders retain their
+family-specific rules.
+
 ##### SuperPoint BoxDecode contract
 
 SuperPoint uses the same MPK-to-static-manifest boundary as other model-managed BoxDecode
@@ -579,6 +589,15 @@ read-only `input-layout-aware=true` capability. `OutputSpec` does not currently
 carry plane strides and offsets, so no memory domain bypasses that capability
 gate. An absent or false capability is treated as unsupported so Core remains
 safe with older Internals packages.
+
+Raw-video geometry and physical storage layout remain separate contracts.
+`OutputSpec` and caps describe visible width and height; Core must not round
+those values to codec block, DMA pitch, or surface-height alignment. The
+layout-aware plugin derives physical plane offsets and strides from
+`GstVideoMeta` or `GstVideoInfo`, repacks when the physical contract is not
+compatible, and leaves codec/hardware admission to the encoder service. This
+preserves exact decoded geometry while keeping device-specific alignment out of
+the public graph API.
 
 ### Parsing & launch
 
@@ -869,6 +888,23 @@ The intended behavior:
 
 * runtime flows throw exceptions on fatal errors
 * validation flows return structured reports (CI-friendly)
+
+### SSD BoxDecode contract resolution
+
+SSD model packs are validated against a private registry of exact post-surgery head contracts
+during graph compilation. The resolver compares every ordered logical localization and confidence
+H/W/C shape; it does not sort levels, use model names, or accept a generic SSD-like fallback.
+Currently registered recipes are SSD300-v1, SSD-Mobile-300-v1, SSD-Mobile-320-v1, and
+SSDlite-Mobile-320-v1.
+
+The resolved recipe owns score activation, confidence-channel order, background class, allowed
+class selection, required 300x300 or 320x320 model frame, and Stretch preprocessing. Core carries
+the recipe as an internal `SsdRecipeId`; the public and plugin ABI decode type remains
+`BoxDecodeType::Ssd` / `ssd`, which is the token supported by the deployed object decoder.
+Unsupported or malformed head
+geometry, conflicting activation, invalid class selection, a non-Stretch resize, or a wrong model
+frame fails before pipeline startup. Recipe discovery is compile-time only and adds no per-frame
+work.
 
 ---
 

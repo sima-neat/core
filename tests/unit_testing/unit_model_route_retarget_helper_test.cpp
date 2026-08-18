@@ -149,6 +149,20 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
            require(compiled.payload.decode_type == BoxDecodeType::YoloV8Seg,
                    "explicit retarget should use the MPK-derived segmentation BoxDecode contract");
 
+           auto asserted_boxdecode = nodes::SimaBoxDecode(
+               *effective, BoxDecodeType::YoloV8Seg, 0.25, 0.45, 100, "retarget_boxdecode",
+               std::nullopt, std::nullopt, 1920, 1080, 0, 0, ResizeMode::Stretch);
+           const auto* asserted_before =
+               dynamic_cast<const SimaBoxDecode*>(asserted_boxdecode.get());
+           require(asserted_before != nullptr && asserted_before->backend_fragment(0).find(
+                                                     "resize-mode=stretch") != std::string::npos,
+                   "manual post node should emit its explicit resize assertion");
+           const auto retargeted = asserted_before->retargeted_for_model_internal(*effective);
+           const auto* asserted_after = dynamic_cast<const SimaBoxDecode*>(retargeted.get());
+           require(asserted_after != nullptr && asserted_after->backend_fragment(0).find(
+                                                    "resize-mode=stretch") != std::string::npos,
+                   "model retarget must preserve an explicit resize assertion");
+
            std::vector<std::shared_ptr<Node>> nodes;
            nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));
 

@@ -384,6 +384,7 @@ set(UNIT_TESTS
   unit_asset_utils_readable_model_tar_test
   unit_benchmark_measurement_contract_test
   unit_measurement_consistency_test
+  unit_lttng_plugin_percentiles_test
   unit_model_infer_output_name_test
   unit_model_input_spec_contract_test
   unit_model_output_spec_contract_test
@@ -502,6 +503,10 @@ if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 endif()
 
+if (TARGET unit_lttng_plugin_percentiles_test)
+  target_include_directories(unit_lttng_plugin_percentiles_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+endif()
+
 if (TARGET unit_plugin_failure_messages_test)
   set_property(TEST unit_plugin_failure_messages_test APPEND PROPERTY
     ENVIRONMENT "GST_REGISTRY_1_0=${CMAKE_BINARY_DIR}/sima_gst_registry_unit_plugin_failure_messages_test_v2.bin")
@@ -618,6 +623,26 @@ if (NOT video_sender_adaptive_ingress_e2e_test IN_LIST PIPELINESESSION_TEST_BLAC
   set_property(TEST video_sender_adaptive_ingress_e2e_test APPEND PROPERTY
     RESOURCE_LOCK "accelerator-device;udp")
   set_tests_properties(video_sender_adaptive_ingress_e2e_test PROPERTIES TIMEOUT 600)
+
+  foreach(shape_case IN ITEMS "680;382" "672;384" "642;480")
+    list(GET shape_case 0 shape_width)
+    list(GET shape_case 1 shape_height)
+    set(shape_test_name
+      "video_sender_shape_${shape_width}x${shape_height}_e2e_test")
+    add_test(NAME ${shape_test_name}
+      COMMAND video_sender_adaptive_ingress_e2e_test
+        --scenario system_nv12_tight
+        --width ${shape_width}
+        --height ${shape_height})
+    simaneat_append_ctest_env(${shape_test_name})
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      LABELS "strict;long;e2e;codec;video_sender;arbitrary_shape;real_media")
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+    set_property(TEST ${shape_test_name} APPEND PROPERTY
+      RESOURCE_LOCK "accelerator-device;udp")
+    set_tests_properties(${shape_test_name} PROPERTIES TIMEOUT 120)
+  endforeach()
 endif()
 
 
@@ -851,6 +876,7 @@ set(PERF_TARGETS
   perf_runtime_codec_h264_decode_test
   perf_runtime_codec_h265_decode_test
   perf_runtime_model_archive_load_test
+  perf_ssd_mobilenet_boxdecode_test
 )
 
 foreach(target ${PERF_TARGETS})
@@ -865,12 +891,34 @@ foreach(target ${PERF_TARGETS})
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
       ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
   )
+  if (target STREQUAL "perf_ssd_mobilenet_boxdecode_test")
+    target_sources(${target}
+      PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/e2e_utils.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection/obj_detection_utils.cpp
+    )
+  endif()
   if (target STREQUAL "perf_runtime_codec_h264_decode_test" OR
       target STREQUAL "perf_runtime_codec_h265_decode_test")
     add_dependencies(${target} prepare_perf_codec_fixtures)
   endif()
   list(APPEND PIPELINESESSION_TEST_TARGETS ${target})
 endforeach()
+
+if (NOT perf_ssd_mobilenet_boxdecode_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_test(
+    NAME ssd_mobilenet_boxdecode_perf_smoke
+    COMMAND perf_ssd_mobilenet_boxdecode_test ${CMAKE_SOURCE_DIR}
+  )
+  simaneat_append_ctest_env(ssd_mobilenet_boxdecode_perf_smoke)
+  set_tests_properties(ssd_mobilenet_boxdecode_perf_smoke PROPERTIES
+    LABELS "perf;ssd;boxdecode;metrics;long;modalix-only"
+    RESOURCE_LOCK "perf-device"
+    SKIP_RETURN_CODE 77
+  )
+  set_property(TEST ssd_mobilenet_boxdecode_perf_smoke
+    APPEND PROPERTY ENVIRONMENT "SIMA_TEST_IS_LONG=1")
+endif()
 
 set(PERF_PYTHON_TESTS
   test_perf_schema
@@ -1656,7 +1704,7 @@ if (NOT yolov8_dynamic_boxdecode_geometry_async_test IN_LIST PIPELINESESSION_TES
     LABELS "e2e;obj_detection;boxdecode;dynamic;async")
 endif()
 
-add_pipeline_test(
+add_pipeline_test_long(
   ssd_mobilenet_e2e_test
   e2e_pipelines/obj_detection/ssd_mobilenet_e2e_test.cpp
   e2e_pipelines/e2e_utils.cpp
@@ -1666,9 +1714,33 @@ add_pipeline_test(
 
 if (NOT ssd_mobilenet_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST ssd_mobilenet_e2e_test
-    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;benchmark;metrics")
-  set_property(TEST ssd_mobilenet_e2e_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
-  set_tests_properties(ssd_mobilenet_e2e_test PROPERTIES SKIP_RETURN_CODE 77)
+    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;accuracy;modalix-only")
+endif()
+
+# Device-free SSD contract coverage. No SKIP_RETURN_CODE: it must fail, never skip.
+add_pipeline_test(
+  ssd_contract_integration_test
+  e2e_pipelines/obj_detection/ssd300_contract_e2e_test.cpp
+)
+
+if (NOT ssd_contract_integration_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST ssd_contract_integration_test
+    APPEND PROPERTY LABELS "integration;obj_detection;ssd;contract;strict")
+endif()
+
+add_pipeline_test_long(
+  ssd300_surgical_e2e_test
+  LOCK_DISPATCHER
+  SOURCES
+    e2e_pipelines/obj_detection/ssd300_surgical_e2e_test.cpp
+    e2e_pipelines/e2e_utils.cpp
+    e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT ssd300_surgical_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST ssd300_surgical_e2e_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;ssd;ssd300;surgical;acceptance")
 endif()
 
 add_pipeline_test(

@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | GenAI |
 | Difficulty | Advanced |
 | Estimated Read Time | 20-25 minutes |
 | Model | LFM2-VL-1.6B-a16w4 |

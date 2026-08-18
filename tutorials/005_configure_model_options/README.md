@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Models & Inference |
 | Difficulty | Beginner |
 | Estimated Read Time | 5 minutes |
 | Model | yolo_v8s |

@@ -2,6 +2,7 @@
 
 #include "e2e_pipelines/e2e_utils.h"
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
+#include "model/Model.h"
 #include "test_utils.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -15,6 +16,41 @@
 namespace sima_ssd_mobilenet_test {
 
 namespace fs = std::filesystem;
+
+struct ModelConfig {
+  int top_k = 24;
+  float score_threshold = 0.30f;
+  float nms_iou = 0.60f;
+  int num_classes = 91; // background + 90 COCO classes
+  int model_size = 300;
+};
+
+inline simaai::neat::Model::Options make_model_options(const ModelConfig& cfg) {
+  simaai::neat::Model::Options opt;
+  opt.preprocess.kind = simaai::neat::InputKind::Image;
+  opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  // This model uses TensorFlow's fixed_shape_resizer. The box decoder inverts a direct per-axis
+  // 300x300 resize, so letterbox/crop would make its back-projection wrong.
+  opt.preprocess.resize.enable = simaai::neat::AutoFlag::On;
+  opt.preprocess.resize.mode = simaai::neat::ResizeMode::Stretch;
+  opt.preprocess.resize.width = cfg.model_size;
+  opt.preprocess.resize.height = cfg.model_size;
+  // Model input range is [-1,1] = pixel/127.5 - 1. The CVU computes
+  // (pixel/255 - mean)/stddev.
+  opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+  opt.preprocess.normalize.mean = {0.5f, 0.5f, 0.5f};
+  opt.preprocess.normalize.stddev = {0.5f, 0.5f, 0.5f};
+  opt.preprocess.normalize.has_explicit_stats = true;
+  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  opt.preprocess.color_convert.output_format = simaai::neat::PreprocessColorFormat::RGB;
+  opt.decode_type = simaai::neat::BoxDecodeType::Ssd;
+  opt.num_classes = cfg.num_classes;
+  opt.score_threshold = cfg.score_threshold;
+  opt.nms_iou_threshold = cfg.nms_iou;
+  opt.top_k = cfg.top_k;
+  opt.upstream_name = "decoder";
+  return opt;
+}
 
 // Full download URL for the compiled SSD-MobileNetV2 pack. Overridable via env for mirrors;
 // defaults to the SDK2.1.2 modalix model download (OAuth-gated docs.sima.ai endpoint that
