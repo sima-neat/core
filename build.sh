@@ -2000,6 +2000,17 @@ build_docs_site() {
     npm --prefix "${REPO_ROOT}/website" ci --no-audit --no-fund
   fi
   echo
+  echo "Generating Insight API reference from OpenAPI..."
+  local insight_openapi_spec
+  insight_openapi_spec="${INSIGHT_OPENAPI_SPEC:-$(cd "${BUILD_DIR}" && pwd)/autodoc/insight/neat_insight/openapi.json}"
+  if [[ -f "${insight_openapi_spec}" ]]; then
+    INSIGHT_OPENAPI_SPEC="${insight_openapi_spec}" \
+      INSIGHT_API_OUTPUT="${expanded_docs_dir}/tools/insight/api" \
+      npm --prefix "${REPO_ROOT}/website" run gen-api-docs
+  else
+    echo "Skipping Insight API reference: OpenAPI spec not found at ${insight_openapi_spec}"
+  fi
+  echo
   echo "Building Docusaurus site..."
   DOCS_PATH="${expanded_docs_dir}" npm --prefix "${REPO_ROOT}/website" run build
   if [[ "${DOCS_STRICT_LINKS:-0}" == "1" ]]; then
