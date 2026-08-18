@@ -2023,6 +2023,7 @@ build_docs_site() {
   local insight_openapi_spec
   insight_openapi_spec="${INSIGHT_OPENAPI_SPEC:-$(cd "${BUILD_DIR}" && pwd)/autodoc/insight/neat_insight/openapi.json}"
   if [[ -f "${insight_openapi_spec}" ]]; then
+    insight_openapi_spec="$(cd "$(dirname "${insight_openapi_spec}")" && pwd -P)/$(basename "${insight_openapi_spec}")"
     INSIGHT_OPENAPI_SPEC="${insight_openapi_spec}" \
       INSIGHT_API_OUTPUT="${expanded_docs_dir}/tools/insight/api" \
       npm --prefix "${REPO_ROOT}/website" run gen-api-docs

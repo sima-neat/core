@@ -107,6 +107,19 @@ This command also works on macOS.
 ./build.sh --doc
 ```
 
+The docs build generates the Insight API reference from the OpenAPI specification
+downloaded by autodoc at
+`build/autodoc/insight/neat_insight/openapi.json`. For local development, you can
+override that default with `INSIGHT_OPENAPI_SPEC`:
+
+```bash
+INSIGHT_OPENAPI_SPEC=../insight/neat_insight/openapi.json ./build.sh --doc
+```
+
+Relative override paths are resolved from the Core repository root and converted
+to absolute paths before the Docusaurus generator runs. If the selected file does
+not exist, the Insight API generation step is skipped and the path is reported.
+
 Clean full build:
 
 ```bash
