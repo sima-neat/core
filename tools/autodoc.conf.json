@@ -175,6 +175,28 @@
         "workflows",
         "ports-network"
       ]
+    },
+    {
+      "key": "sentinel",
+      "title": "Sentinel",
+      "repo": "https://github.com/sima-neat/sentinel.git",
+      "branch": "main",
+      "branch_policy": "snap",
+      "fallback_branch": "main",
+      "githash": "",
+      "docs_subpath": "docs",
+      "mount": "tools/sentinel",
+      "sidebar_position": 5,
+      "root_index_file": "README.md",
+      "root_index_link_prefix": "docs/",
+      "files_order": [
+        "index",
+        "README",
+        "measurement-model",
+        "reports",
+        "run-comparison",
+        "api"
+      ]
     }
   ]
 }

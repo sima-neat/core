@@ -18,8 +18,10 @@ PluginAttributionResult attribute_plugin_latency(const MeasurePluginLatency& plu
 
 void inherit_plugin_node_identity(MeasurePluginLatency* plugin, const GraphNodeMetrics& node);
 
-void attribute_plugin_latency_to_nodes(const std::vector<GraphNodeMetrics>& nodes,
-                                       std::vector<MeasurePluginLatency>* attributed,
-                                       std::vector<MeasurePluginLatency>* unattributed);
+void attribute_plugin_latency_to_nodes(
+    const std::vector<GraphNodeMetrics>& nodes, std::vector<MeasurePluginLatency>* attributed,
+    std::vector<MeasurePluginLatencyPercentiles>* percentiles,
+    std::vector<MeasurePluginLatency>* unattributed,
+    std::vector<MeasurePluginLatencyPercentiles>* unattributed_percentiles);
 
 } // namespace simaai::neat::pipeline_internal

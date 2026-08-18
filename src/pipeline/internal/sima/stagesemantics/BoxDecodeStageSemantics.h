@@ -38,8 +38,27 @@ struct BoxDecodeCompiledContractOptions {
 /// already inferred score activation selects the matching grouped option.
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract);
 
-// Apply SSD defaults (softmax, grouped-by-role, class-count) to a model-managed contract before
-// lowering. No-op for non-SSD decode types.
+// SSD class count is fixed by the confidence-head depth. The resolved profile decides whether an
+// explicit value must match exactly or may select a contiguous prefix. No-op for non-SSD.
+void validate_ssd_num_classes(BoxDecodeType decode_type, SsdRecipeId recipe_id, int requested,
+                              int encoded, const char* context);
+
+/// Return the confidence-head encoded depth for SSD, even if a prior contract already selected a
+/// narrower prefix. Non-SSD and incomplete legacy contracts use fallback_num_classes.
+int ssd_encoded_num_classes(BoxDecodeType decode_type, const SsdClassSelection& selection,
+                            int fallback_num_classes);
+
+struct SsdModelFrame {
+  int width = 0;
+  int height = 0;
+};
+
+// Recipe-required SSD frame for this contract's exact ordered head geometry. Returns {0,0} for
+// non-SSD and throws for an unsupported SSD signature.
+SsdModelFrame ssd_expected_model_frame(const BoxDecodeStaticContract& contract);
+
+// Apply SSD defaults (recipe-specific activation, grouped-by-role layout, class-count) to a
+// model-managed contract before lowering. No-op for non-SSD decode types.
 void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract);
 
 /// Resolve an explicit class-count override against an inferred decoder contract. YOLO26 family
