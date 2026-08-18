@@ -28,6 +28,10 @@ const generatedSidebar = fs
   .replace(
     "export default sidebar.apisidebar;",
     "module.exports = sidebar.apisidebar;",
+  )
+  .replace(
+    /(\bid:\s*")[^"]*\/tools\/insight\/api\//g,
+    "$1tools/insight/api/",
   );
 
 fs.writeFileSync(path.join(outputDir, "sidebar.js"), generatedSidebar);
