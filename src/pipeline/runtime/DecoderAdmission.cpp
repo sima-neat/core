@@ -20,18 +20,6 @@ using pipeline_internal::DecoderAdmissionLease;
 using pipeline_internal::DecoderAdmissionResult;
 using pipeline_internal::DecoderAdmissionStreamRequest;
 
-class ProductionDecoderAdmissionBackend final : public DecoderAdmissionBackend {
-public:
-  DecoderAdmissionResult admit(const std::vector<DecoderAdmissionStreamRequest>& streams,
-                               bool dry_run) override {
-    return pipeline_internal::admit_decoder_graph(streams, dry_run);
-  }
-
-  bool release(const std::array<std::uint8_t, 16>& group_uuid, std::string* error) override {
-    return pipeline_internal::release_decoder_graph(group_uuid, error);
-  }
-};
-
 struct DecoderAdmissionCandidate {
   std::size_t segment_index = 0;
   std::size_t node_index = 0;
@@ -55,6 +43,7 @@ struct DecoderAdmissionProperties {
   std::string tuning;
   bool memory_opt = false;
   bool zero_copy_output = false;
+  bool require_external_lease = true;
 };
 
 bool decoder_plan_debug_enabled() {
@@ -116,11 +105,6 @@ void log_decoder_cma_snapshot(const char* event, std::size_t streams = 0,
                (snap.cma_total_kb >= 0 && snap.cma_free_kb >= 0)
                    ? (snap.cma_total_kb - snap.cma_free_kb)
                    : -1);
-}
-
-std::shared_ptr<DecoderAdmissionBackend> production_backend() {
-  static auto backend = std::make_shared<ProductionDecoderAdmissionBackend>();
-  return backend;
 }
 
 std::string gst_double_quote(std::string value) {
@@ -468,16 +452,18 @@ private:
     if (admission_.zero_copy_output) {
       ss << " zero-copy-output=true";
     }
-    ss << " decoder-admission-required=true";
-    if (!admission_.group_id.empty()) {
-      ss << " admission-group-id=" << gst_double_quote(admission_.group_id);
-    }
-    if (admission_.stream_index >= 0) {
-      ss << " admission-stream-index=" << admission_.stream_index;
-    }
-    if (admission_.lease_token_hi != 0 || admission_.lease_token_lo != 0) {
-      ss << " admission-lease-token-hi=" << admission_.lease_token_hi;
-      ss << " admission-lease-token-lo=" << admission_.lease_token_lo;
+    if (admission_.require_external_lease) {
+      ss << " decoder-admission-required=true";
+      if (!admission_.group_id.empty()) {
+        ss << " admission-group-id=" << gst_double_quote(admission_.group_id);
+      }
+      if (admission_.stream_index >= 0) {
+        ss << " admission-stream-index=" << admission_.stream_index;
+      }
+      if (admission_.lease_token_hi != 0 || admission_.lease_token_lo != 0) {
+        ss << " admission-lease-token-hi=" << admission_.lease_token_hi;
+        ss << " admission-lease-token-lo=" << admission_.lease_token_lo;
+      }
     }
     if (admission_.input_buffers > 0) {
       ss << " dec-ip-cnt=" << admission_.input_buffers;
@@ -525,6 +511,21 @@ std::shared_ptr<Node> make_admitted_decoder(const DecoderAdmissionCandidate& can
   opt.decoder_tuning.clear();
   opt.memory_opt = false;
   return std::make_shared<RuntimeAdmittedSimaDecode>(std::move(opt), std::move(props));
+}
+
+std::shared_ptr<Node> make_kernel_reserved_decoder(
+    const DecoderAdmissionCandidate& candidate) {
+  /*
+   * AL5_RESERVE is a command-channel contract.  The direct decoder owns that
+   * channel and reserves it immediately before codec allocation/start.  Core
+   * must not create an unrelated daemon socket lease which cannot authorize
+   * the eventual command fd.  It still owns graph-derived zero-copy policy.
+   */
+  DecoderAdmissionProperties props;
+  props.zero_copy_output = candidate.zero_copy_output;
+  props.require_external_lease = false;
+  return std::make_shared<RuntimeAdmittedSimaDecode>(candidate.options,
+                                                      std::move(props));
 }
 
 void bind_replacements(ExecutionGraphPlan& plan,
@@ -635,7 +636,18 @@ prepare_decoder_admission(ExecutionGraphPlan& plan,
   }
 
   if (!backend) {
-    backend = production_backend();
+    std::vector<std::shared_ptr<Node>> replacements;
+    replacements.reserve(candidates.size());
+    for (const auto& candidate : candidates) {
+      replacements.push_back(make_kernel_reserved_decoder(candidate));
+    }
+    bind_replacements(plan, candidates, replacements);
+    if (decoder_plan_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[DECPLAN] kernel_direct_admission streams=%zu owner=decoder-command-fd\n",
+                   candidates.size());
+    }
+    return preparation;
   }
   std::vector<DecoderAdmissionStreamRequest> streams;
   streams.reserve(candidates.size());

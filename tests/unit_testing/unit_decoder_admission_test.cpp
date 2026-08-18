@@ -267,6 +267,27 @@ void check_h264_h265_and_release() {
   require(backend->release_count == 1, "reservation release must be idempotent");
 }
 
+void check_production_uses_decoder_command_fd_reservation() {
+  SimaDecodeOptions options = decoder_options();
+  options.input_buffers = 3;
+  options.decoder_tuning = "throughput-low-latency";
+  ExecutionGraphPlan plan = ordinary_plan({options});
+
+  auto prepared = simaai::neat::runtime::prepare_decoder_admission(plan);
+  require(prepared.eligible_decoders == 1U && !prepared.reservation,
+          "direct production admission must be owned by the decoder command fd");
+  const std::string fragment =
+      plan.pipeline_segments.front().nodes.front()->backend_fragment(0);
+  require(fragment.find("decoder-admission-required=true") == std::string::npos,
+          "direct production decoder must not depend on an external socket lease");
+  require(fragment.find("admission-lease-token-") == std::string::npos,
+          "direct production decoder must not render daemon lease tokens");
+  require_contains(fragment, "zero-copy-output=true",
+                   "Core must retain its graph-derived zero-copy policy");
+  require_contains(fragment, "dec-ip-cnt=3",
+                   "decoder-owned reservation must retain configured input buffers");
+}
+
 void check_shared_reservation_releases_after_last_owner() {
   auto backend = std::make_shared<FakeBackend>();
   ExecutionGraphPlan plan = ordinary_plan({decoder_options()});
@@ -526,6 +547,7 @@ int main() {
     unsetenv("SIMA_DECODER_ADMISSION_DISABLE");
     unsetenv("SIMA_DECODER_ADMISSION_REQUIRE");
     check_h264_h265_and_release();
+    check_production_uses_decoder_command_fd_reservation();
     check_shared_reservation_releases_after_last_owner();
     check_non_video_codecs_are_ignored();
     check_fused_branch_is_admitted();
