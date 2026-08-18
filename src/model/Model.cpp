@@ -8385,20 +8385,24 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
       pipeline_internal::sima::stagesemantics::validate_ssd_num_classes(
           compiled->payload.decode_type, compiled->payload.ssd_recipe_id,
           model.impl_->options.num_classes, encoded_num_classes, "Model-managed boxdecode stage");
+      const int resolved_num_classes =
+          pipeline_internal::sima::stagesemantics::resolve_boxdecode_num_classes_override(
+              compiled->payload.decode_type, compiled->payload.num_classes,
+              model.impl_->options.num_classes, "Model-managed BoxDecode");
       if (compiled->payload.num_classes > 0 &&
-          compiled->payload.num_classes != model.impl_->options.num_classes &&
+          compiled->payload.num_classes != resolved_num_classes &&
           !box_decode_type_is_ssd_family(compiled->payload.decode_type)) {
         std::fprintf(
             stderr,
             "[WARN] BoxDecode num_classes mismatch: user=%d inferred_from_mpk=%d "
             "decode_type=%s. Using user value.\n",
-            model.impl_->options.num_classes, compiled->payload.num_classes,
+            resolved_num_classes, compiled->payload.num_classes,
             pipeline_internal::sima::box_decode_type_token_string(compiled->payload.decode_type)
                 .c_str());
       }
-      compiled->payload.num_classes = model.impl_->options.num_classes;
+      compiled->payload.num_classes = resolved_num_classes;
       if (box_decode_type_is_ssd_family(compiled->payload.decode_type)) {
-        compiled->payload.ssd_class_selection.selected_count = model.impl_->options.num_classes;
+        compiled->payload.ssd_class_selection.selected_count = resolved_num_classes;
       }
     }
     apply_model_superpoint_options(&compiled->payload, opt, "Model-managed boxdecode stage");

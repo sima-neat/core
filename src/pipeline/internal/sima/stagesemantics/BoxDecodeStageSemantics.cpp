@@ -470,6 +470,11 @@ bool decode_type_is_pose_yolo(BoxDecodeType type) {
   return type == BoxDecodeType::YoloV8Pose || type == BoxDecodeType::YoloV26Pose;
 }
 
+bool decode_type_is_yolov26_family(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV26 || type == BoxDecodeType::YoloV26Pose ||
+         type == BoxDecodeType::YoloV26Seg;
+}
+
 bool decode_type_is_packed_yolo(BoxDecodeType type) {
   return type == BoxDecodeType::Yolo || type == BoxDecodeType::YoloV5 ||
          type == BoxDecodeType::YoloV5Seg || type == BoxDecodeType::YoloV7 ||
@@ -550,6 +555,8 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
   if (user_num_classes > 0) {
     validate_ssd_num_classes(contract.decode_type, contract.ssd_recipe_id, user_num_classes,
                              inferred, context);
+    const int resolved = resolve_boxdecode_num_classes_override(contract.decode_type, inferred,
+                                                                user_num_classes, context);
     // Narrowing is the documented SSD contract, so it is not a mismatch there.
     const bool ssd_narrowing = box_decode_type_is_ssd_family(contract.decode_type);
     if (inferred > 0 && user_num_classes != inferred && !ssd_narrowing) {
@@ -559,7 +566,7 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
                    context ? context : "BoxDecode", user_num_classes, inferred,
                    box_decode_type_token(contract.decode_type));
     }
-    return user_num_classes;
+    return resolved;
   }
   return inferred;
 }
@@ -922,6 +929,24 @@ int ssd_encoded_num_classes(BoxDecodeType decode_type, const SsdClassSelection& 
     return selection.encoded_count;
   }
   return fallback_num_classes;
+}
+
+int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferred_num_classes,
+                                           int requested_num_classes, const char* context) {
+  if (requested_num_classes <= 0) {
+    return inferred_num_classes;
+  }
+  if (decode_type_is_yolov26_family(decode_type) && inferred_num_classes > 0 &&
+      requested_num_classes != inferred_num_classes) {
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") +
+        " num_classes mismatch: configured=" + std::to_string(requested_num_classes) +
+        " inferred_from_mpk=" + std::to_string(inferred_num_classes) +
+        " decode_type=" + box_decode_type_token(decode_type) +
+        ". Set num_classes=" + std::to_string(inferred_num_classes) +
+        " to match the model class-head depth, or leave it 0 to use MPK inference.");
+  }
+  return requested_num_classes;
 }
 
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract) {

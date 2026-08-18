@@ -5,6 +5,8 @@
 
 #include <array>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 RUN_TEST(
     "unit_contract_compiler_boxdecode_test", ([] {
@@ -104,12 +106,43 @@ RUN_TEST(
       const auto finalized_user_classes =
           finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
                                              std::nullopt, BoxDecodeTypeOption::GroupedByRoleLogit,
-                                             0.25, 0.55, 100, 42, {"orig_width", "orig_height"});
-      require(finalized_user_classes.num_classes == 42,
-              "explicit user num_classes should override MPK-inferred class depth");
+                                             0.25, 0.55, 100, 80, {"orig_width", "orig_height"});
+      require(finalized_user_classes.num_classes == 80,
+              "matching explicit num_classes should preserve the MPK class depth");
       const auto compiled_user_classes = build_boxdecode_compiled_contract(finalized_user_classes);
-      require(compiled_user_classes.payload.num_classes == 42,
+      require(compiled_user_classes.payload.num_classes == 80,
               "compiled payload should preserve explicit user num_classes override");
+
+      const auto finalized_legacy_override =
+          finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
+                                             std::nullopt, BoxDecodeTypeOption::GroupedByRoleLogit,
+                                             0.25, 0.55, 100, 42, {"orig_width", "orig_height"});
+      require(finalized_legacy_override.num_classes == 42,
+              "pre-YOLO26 decode families should preserve explicit class-count overrides");
+
+      BoxDecodeStaticContract yolov26_contract = contract;
+      yolov26_contract.decode_type = BoxDecodeType::YoloV26;
+      yolov26_contract.tensors[0].slice_shape = {80, 80, 4};
+      yolov26_contract.tensors[0].logical_name = "bbox_0";
+      yolov26_contract.tensors[0].backend_name = "bbox_0";
+      yolov26_contract.tensors[1].logical_name = "class_logit_0";
+      yolov26_contract.tensors[1].backend_name = "class_logit_0";
+
+      bool rejected_mismatched_classes = false;
+      try {
+        (void)finalize_boxdecode_static_contract(yolov26_contract, BoxDecodeType::YoloV26,
+                                                 std::nullopt, std::nullopt,
+                                                 BoxDecodeTypeOption::GroupedByRoleLogit, 0.25,
+                                                 0.55, 100, 42, {"orig_width", "orig_height"});
+      } catch (const std::invalid_argument& error) {
+        rejected_mismatched_classes = true;
+        require(std::string(error.what())
+                        .find("num_classes mismatch: configured=42 inferred_from_mpk=80") !=
+                    std::string::npos,
+                "class-count mismatch should report configured and inferred values");
+      }
+      require(rejected_mismatched_classes,
+              "YOLO26 num_classes must not override a contradictory MPK class-head depth");
 
       BoxDecodeStaticContract probability_domain = contract;
       probability_domain.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
@@ -333,6 +366,23 @@ RUN_TEST(
               "YOLO26 compiled payload should preserve grouped-by-role-logit");
       require(compiled_yolo26.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
               "YOLO26 compiled payload should preserve sigmoid activation");
+
+      bool rejected_model_managed_classes = false;
+      try {
+        (void)resolve_boxdecode_num_classes_override(
+            compiled_yolo26.payload.decode_type, compiled_yolo26.payload.num_classes,
+            /*requested_num_classes=*/42, "Model-managed BoxDecode");
+      } catch (const std::invalid_argument& error) {
+        rejected_model_managed_classes = true;
+        const std::string message = error.what();
+        require(message.find("configured=42") != std::string::npos &&
+                    message.find("inferred_from_mpk=80") != std::string::npos &&
+                    message.find("decode_type=yolo26") != std::string::npos,
+                "model-managed compiled-contract mismatch should report both class counts and "
+                "the decoder family");
+      }
+      require(rejected_model_managed_classes,
+              "model-managed YOLO26 compiled contracts must reject contradictory class counts");
 
       BoxDecodeStaticContract yolo26_pose_contract = yolo26_contract;
       yolo26_pose_contract.tensors.clear();
