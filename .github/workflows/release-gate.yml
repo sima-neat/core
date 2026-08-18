@@ -103,6 +103,7 @@ jobs:
       DOCS_STRICT_LINKS: "1"
       DOCS_URL: https://developer.sima.ai
       DOCS_BASE_URL: /
+      DOCS_DEVELOPER_CENTER_SHELL_BASE: /
       AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
     steps:
       - name: Checkout code
@@ -111,7 +112,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "20.19.0"
 
       - name: Install build dependencies
         run: ./build.sh --install-deps-only

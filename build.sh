@@ -1731,19 +1731,32 @@ collect_install_artifact_files() {
   done
 }
 
+node_version_meets_docs_minimum() {
+  local version="$1"
+
+  if [[ ! "${version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$ ]]; then
+    return 1
+  fi
+
+  local major="${BASH_REMATCH[1]}"
+  local minor="${BASH_REMATCH[2]}"
+  local patch="${BASH_REMATCH[3]}"
+  ((major > 20 || (major == 20 && (minor > 19 || (minor == 19 && patch >= 0)))))
+}
+
 ensure_node20_for_docs() {
-  # Docs toolchain expects Node.js 20.x.
+  # Docs dependencies require Node.js 20.19.0 or newer.
   if [[ "${INSTALL_NODE}" != "ON" || "${BUILD_DOCS}" != "ON" ]]; then
     return 0
   fi
 
-  local node_major=""
+  local node_version=""
   if command -v node >/dev/null 2>&1; then
-    node_major="$(node -v | sed 's/^v//' | cut -d. -f1 || true)"
+    node_version="$(node -v | sed 's/^v//' || true)"
   fi
 
-  # Auto-install Node 20 only when current version is missing/too old.
-  if [[ -z "${node_major}" || "${node_major}" -lt 20 ]]; then
+  # Auto-install Node 20 when the current version is missing or below 20.19.0.
+  if ! node_version_meets_docs_minimum "${node_version}"; then
     if [[ "${OS_NAME}" == "Darwin" ]]; then
       echo "Installing Node.js 20.x via Homebrew..."
       brew install node@20
@@ -1761,8 +1774,14 @@ ensure_node20_for_docs() {
         exit 1
       fi
     fi
+
+    node_version="$(node -v | sed 's/^v//' || true)"
+    if ! node_version_meets_docs_minimum "${node_version}"; then
+      echo "Node.js 20.19.0 or newer is required for docs; found ${node_version:-none}." >&2
+      exit 1
+    fi
   else
-    echo "Node.js ${node_major}.x already installed."
+    echo "Node.js ${node_version} already installed."
   fi
 }
 
