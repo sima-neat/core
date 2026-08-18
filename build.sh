@@ -1741,11 +1741,11 @@ node_version_meets_docs_minimum() {
   local major="${BASH_REMATCH[1]}"
   local minor="${BASH_REMATCH[2]}"
   local patch="${BASH_REMATCH[3]}"
-  ((major > 20 || (major == 20 && (minor > 19 || (minor == 19 && patch >= 0)))))
+  ((major > 22 || (major == 22 && (minor > 12 || (minor == 12 && patch >= 0)))))
 }
 
-ensure_node20_for_docs() {
-  # Docs dependencies require Node.js 20.19.0 or newer.
+ensure_node22_for_docs() {
+  # Docs dependencies require Node.js 22.12.0 or newer.
   if [[ "${INSTALL_NODE}" != "ON" || "${BUILD_DOCS}" != "ON" ]]; then
     return 0
   fi
@@ -1755,29 +1755,29 @@ ensure_node20_for_docs() {
     node_version="$(node -v | sed 's/^v//' || true)"
   fi
 
-  # Auto-install Node 20 when the current version is missing or below 20.19.0.
+  # Auto-install Node 22 when the current version is missing or below 22.12.0.
   if ! node_version_meets_docs_minimum "${node_version}"; then
     if [[ "${OS_NAME}" == "Darwin" ]]; then
-      echo "Installing Node.js 20.x via Homebrew..."
-      brew install node@20
-      brew link --overwrite --force node@20
+      echo "Installing Node.js 22.x via Homebrew..."
+      brew install node@22
+      brew link --overwrite --force node@22
     else
-      echo "Installing Node.js 20.x..."
-      if ! run_privileged bash -c "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"; then
+      echo "Installing Node.js 22.x..."
+      if ! run_privileged bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"; then
         echo "Cannot configure NodeSource without root or passwordless sudo."
-        echo "Please preinstall Node.js 20.x or run with --no-node."
+        echo "Please preinstall Node.js 22.x or run with --no-node."
         exit 1
       fi
       if ! run_privileged apt-get install -y nodejs; then
         echo "Cannot install Node.js without root or passwordless sudo."
-        echo "Please preinstall Node.js 20.x or run with --no-node."
+        echo "Please preinstall Node.js 22.x or run with --no-node."
         exit 1
       fi
     fi
 
     node_version="$(node -v | sed 's/^v//' || true)"
     if ! node_version_meets_docs_minimum "${node_version}"; then
-      echo "Node.js 20.19.0 or newer is required for docs; found ${node_version:-none}." >&2
+      echo "Node.js 22.12.0 or newer is required for docs; found ${node_version:-none}." >&2
       exit 1
     fi
   else
@@ -2929,7 +2929,7 @@ main() {
   detect_elxr_sdk
   select_system_deps
   install_system_deps
-  ensure_node20_for_docs
+  ensure_node22_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
 

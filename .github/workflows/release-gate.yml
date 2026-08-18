@@ -112,7 +112,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "20.19.0"
+          node-version: "22.12.0"
 
       - name: Install build dependencies
         run: ./build.sh --install-deps-only
