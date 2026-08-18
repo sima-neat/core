@@ -1731,38 +1731,57 @@ collect_install_artifact_files() {
   done
 }
 
-ensure_node20_for_docs() {
-  # Docs toolchain expects Node.js 20.x.
+node_version_meets_docs_minimum() {
+  local version="$1"
+
+  if [[ ! "${version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$ ]]; then
+    return 1
+  fi
+
+  local major="${BASH_REMATCH[1]}"
+  local minor="${BASH_REMATCH[2]}"
+  local patch="${BASH_REMATCH[3]}"
+  ((major > 22 || (major == 22 && (minor > 12 || (minor == 12 && patch >= 0)))))
+}
+
+ensure_node22_for_docs() {
+  # Docs dependencies require Node.js 22.12.0 or newer.
   if [[ "${INSTALL_NODE}" != "ON" || "${BUILD_DOCS}" != "ON" ]]; then
     return 0
   fi
 
-  local node_major=""
+  local node_version=""
   if command -v node >/dev/null 2>&1; then
-    node_major="$(node -v | sed 's/^v//' | cut -d. -f1 || true)"
+    node_version="$(node -v | sed 's/^v//' || true)"
   fi
 
-  # Auto-install Node 20 only when current version is missing/too old.
-  if [[ -z "${node_major}" || "${node_major}" -lt 20 ]]; then
+  # Auto-install Node 22 when the current version is missing or below 22.12.0.
+  if ! node_version_meets_docs_minimum "${node_version}"; then
     if [[ "${OS_NAME}" == "Darwin" ]]; then
-      echo "Installing Node.js 20.x via Homebrew..."
-      brew install node@20
-      brew link --overwrite --force node@20
+      echo "Installing Node.js 22.x via Homebrew..."
+      brew install node@22
+      brew link --overwrite --force node@22
     else
-      echo "Installing Node.js 20.x..."
-      if ! run_privileged bash -c "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"; then
+      echo "Installing Node.js 22.x..."
+      if ! run_privileged bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"; then
         echo "Cannot configure NodeSource without root or passwordless sudo."
-        echo "Please preinstall Node.js 20.x or run with --no-node."
+        echo "Please preinstall Node.js 22.x or run with --no-node."
         exit 1
       fi
       if ! run_privileged apt-get install -y nodejs; then
         echo "Cannot install Node.js without root or passwordless sudo."
-        echo "Please preinstall Node.js 20.x or run with --no-node."
+        echo "Please preinstall Node.js 22.x or run with --no-node."
         exit 1
       fi
     fi
+
+    node_version="$(node -v | sed 's/^v//' || true)"
+    if ! node_version_meets_docs_minimum "${node_version}"; then
+      echo "Node.js 22.12.0 or newer is required for docs; found ${node_version:-none}." >&2
+      exit 1
+    fi
   else
-    echo "Node.js ${node_major}.x already installed."
+    echo "Node.js ${node_version} already installed."
   fi
 }
 
@@ -2000,8 +2019,24 @@ build_docs_site() {
     npm --prefix "${REPO_ROOT}/website" ci --no-audit --no-fund
   fi
   echo
+  echo "Generating Insight API reference from OpenAPI..."
+  local insight_openapi_spec
+  local insight_api_output
+  insight_openapi_spec="${INSIGHT_OPENAPI_SPEC:-$(cd "${BUILD_DIR}" && pwd)/autodoc/insight/neat_insight/openapi.json}"
+  insight_api_output="${expanded_docs_dir}/tools/insight/api"
+  if [[ -f "${insight_openapi_spec}" ]]; then
+    insight_openapi_spec="$(cd "$(dirname "${insight_openapi_spec}")" && pwd -P)/$(basename "${insight_openapi_spec}")"
+    INSIGHT_OPENAPI_SPEC="${insight_openapi_spec}" \
+      INSIGHT_API_OUTPUT="${insight_api_output}" \
+      npm --prefix "${REPO_ROOT}/website" run gen-api-docs
+  else
+    echo "Skipping Insight API reference: OpenAPI spec not found at ${insight_openapi_spec}"
+  fi
+  echo
   echo "Building Docusaurus site..."
-  DOCS_PATH="${expanded_docs_dir}" npm --prefix "${REPO_ROOT}/website" run build
+  DOCS_PATH="${expanded_docs_dir}" \
+    INSIGHT_API_OUTPUT="${insight_api_output}" \
+    npm --prefix "${REPO_ROOT}/website" run build
   if [[ "${DOCS_STRICT_LINKS:-0}" == "1" ]]; then
     echo
     echo "Checking rendered docs links..."
@@ -2899,7 +2934,7 @@ main() {
   detect_elxr_sdk
   select_system_deps
   install_system_deps
-  ensure_node20_for_docs
+  ensure_node22_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
 
