@@ -32,8 +32,8 @@ connection.queue = 0;
 pcie::Model model("model.tar.gz", {}, connection);
 const pcie::ModelInfo info = model.info();
 const auto& input_spec = info.inputs.at(0);
-if (input_spec.dtype != "FP32") {
-  throw std::runtime_error("example expects an FP32 input");
+if (input_spec.dtype != "FP32" && input_spec.dtype != "FLOAT32") {
+  throw std::runtime_error("example expects a float32 input");
 }
 std::vector<float> values(input_spec.size_bytes / sizeof(float), 0.0F);
 pcie::Tensor input = pcie::Tensor::from_vector(
@@ -61,8 +61,8 @@ connection = pcie.ConnectionOptions(card_id=0, queue=0)
 with pcie.Model("model.tar.gz", connection=connection) as model:
     info = model.info()
     input_spec = info.inputs[0]
-    if input_spec.dtype != "FP32":
-        raise RuntimeError("example expects an FP32 input")
+    if input_spec.dtype not in {"FP32", "FLOAT32"}:
+        raise RuntimeError("example expects a float32 input")
     input_tensor = pcie.Tensor.from_numpy(
         np.zeros(input_spec.shape, dtype=np.float32),
         copy=True,

@@ -9,13 +9,14 @@ host's decoded image payload into that model ingress contract.
 
 Tensor mode is the default. The host application performs required resize, color conversion,
 normalization, and layout preparation before sending the model-ready tensor.
+`ModelInfo.dtype` preserves the MPK contract spelling, so treat `FP32` and `FLOAT32` as aliases.
 
 For C++, prefer `Tensor::from_vector()` when ownership simplicity matters:
 
 ```cpp
 const auto& spec = model.info().inputs.at(0);
-if (spec.dtype != "FP32") {
-  throw std::runtime_error("example expects an FP32 input");
+if (spec.dtype != "FP32" && spec.dtype != "FLOAT32") {
+  throw std::runtime_error("example expects a float32 input");
 }
 
 std::vector<float> values(spec.size_bytes / sizeof(float), 0.0F);
