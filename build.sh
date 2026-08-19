@@ -51,6 +51,7 @@ NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
+NEAT_INTERNALS_ARTIFACT_MANIFEST="${NEAT_INTERNALS_ARTIFACT_MANIFEST:-${NEAT_INTERNALS_DIR}/internals-manifest.json}"
 NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
@@ -1399,6 +1400,17 @@ print(receipt)
   sysroot status
 }
 
+preserve_internals_artifact_manifest() {
+  local artifact_manifest="$1/internals-manifest.json"
+  if [[ ! -f "${artifact_manifest}" ]]; then
+    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "${NEAT_INTERNALS_ARTIFACT_MANIFEST}")"
+  cp -f "${artifact_manifest}" "${NEAT_INTERNALS_ARTIFACT_MANIFEST}"
+}
+
 ensure_neat_internals() {
   # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
@@ -1420,6 +1432,7 @@ ensure_neat_internals() {
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
   sync_sysroot_from_internals_manifest "${artifact_dir}"
+  preserve_internals_artifact_manifest "${artifact_dir}"
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
@@ -2449,6 +2462,7 @@ stage_package_artifacts_to_dist() {
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
     dist/manifest.json \
+    dist/internals-manifest.json \
     dist/resolved-deps-manifest.json
 
   local staged_any=OFF
@@ -2463,6 +2477,13 @@ stage_package_artifacts_to_dist() {
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
+
+  if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then
+    echo "ERROR: Missing selected Internals manifest: ${NEAT_INTERNALS_ARTIFACT_MANIFEST}" >&2
+    exit 1
+  fi
+  cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" dist/internals-manifest.json
+  staged_any=ON
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
