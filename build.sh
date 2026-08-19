@@ -1432,7 +1432,9 @@ ensure_neat_internals() {
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
   sync_sysroot_from_internals_manifest "${artifact_dir}"
-  preserve_internals_artifact_manifest "${artifact_dir}"
+  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
+    preserve_internals_artifact_manifest "${artifact_dir}"
+  fi
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
@@ -2478,12 +2480,14 @@ stage_package_artifacts_to_dist() {
     staged_any=ON
   done
 
-  if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then
-    echo "ERROR: Missing selected Internals manifest: ${NEAT_INTERNALS_ARTIFACT_MANIFEST}" >&2
-    exit 1
+  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
+    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then
+      echo "ERROR: Missing selected Internals manifest: ${NEAT_INTERNALS_ARTIFACT_MANIFEST}" >&2
+      exit 1
+    fi
+    cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" dist/internals-manifest.json
+    staged_any=ON
   fi
-  cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" dist/internals-manifest.json
-  staged_any=ON
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"

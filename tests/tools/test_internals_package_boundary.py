@@ -194,6 +194,17 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
 
         self.assertIn('[[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0', text)
         self.assertIn('-e NEAT_SYNC_SYSROOT="ON"', workflow)
+        self.assertIn(
+            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
+            '    preserve_internals_artifact_manifest "${artifact_dir}"\n'
+            "  fi",
+            text,
+        )
+        self.assertIn(
+            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
+            '    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then',
+            text,
+        )
         self.assertIn("internals-manifest.json", text)
         self.assertIn('sysroot update "${receipt}"', text)
         self.assertIn("Internals artifact is missing internals-manifest.json", text)
