@@ -442,8 +442,6 @@ jobs:
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
       - name: Run PCIe host unit tests
-        # Temporarily disabled while PCIe host CI is being stabilized.
-        if: ${{ false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1451,8 +1449,6 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
-    # Temporarily disabled while PCIe card runtime installation is stabilized.
-    if: ${{ false }}
     needs:
       - detect-changes
       - resolve-vulcan-config
