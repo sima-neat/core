@@ -69,6 +69,25 @@ sync_sysroot_from_internals_manifest {shlex.quote(str(artifact_dir))}
         return result, calls
 
 
+def run_preserve(contents: bytes) -> tuple[subprocess.CompletedProcess[str], bytes]:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        artifact_dir = root / "artifact"
+        artifact_dir.mkdir()
+        (artifact_dir / "internals-manifest.json").write_bytes(contents)
+        retained = root / "retained" / "internals-manifest.json"
+        script = f"""
+set -e
+{shell_function("preserve_internals_artifact_manifest")}
+NEAT_INTERNALS_ARTIFACT_MANIFEST={shlex.quote(str(retained))}
+preserve_internals_artifact_manifest {shlex.quote(str(artifact_dir))}
+"""
+        result = subprocess.run(
+            ["bash", "-c", script], check=False, text=True, capture_output=True
+        )
+        return result, retained.read_bytes() if retained.exists() else b""
+
+
 class InternalsPackageBoundaryTest(unittest.TestCase):
     def test_internals_is_located_without_a_derived_version(self) -> None:
         text = cmake()
@@ -161,22 +180,52 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         )
         manifest = json.loads((ROOT / "deps/manifest.json").read_text(encoding="utf-8"))
         sync = text.index('sync_sysroot_from_internals_manifest "${artifact_dir}"')
+        preserve = text.index(
+            'preserve_internals_artifact_manifest "${artifact_dir}"', sync
+        )
         install = text.index('collect_plugin_files_from_debs "${artifact_dir}"', sync)
+        stage = text.index(
+            'cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" '
+            "dist/internals-manifest.json"
+        )
+        metadata = text.index("generate_package_metadata_if_requested\n", stage)
         ensure = text.index("ensure_neat_internals\n", text.index("main()"))
         target_python = text.index("detect_elxr_target_python\n", ensure)
 
         self.assertIn('[[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0', text)
         self.assertIn('-e NEAT_SYNC_SYSROOT="ON"', workflow)
+        self.assertIn(
+            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
+            '    preserve_internals_artifact_manifest "${artifact_dir}"\n'
+            "  fi",
+            text,
+        )
+        self.assertIn(
+            'if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then\n'
+            '    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then',
+            text,
+        )
         self.assertIn("internals-manifest.json", text)
         self.assertIn('sysroot update "${receipt}"', text)
         self.assertIn("Internals artifact is missing internals-manifest.json", text)
         self.assertIn("invalid sysroot-version", text)
         self.assertIn("platform-version does not match the Internals receipt", text)
+        self.assertIn('dist/internals-manifest.json', text)
+        self.assertIn('resources-checksum', workflow)
         self.assertNotIn("sysroot-version", manifest)
         self.assertNotRegex(text, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
         self.assertNotRegex(workflow, r"\b[0-9]+(?:\.[0-9]+){2}~pre[0-9]+\b")
         self.assertLess(sync, install)
+        self.assertLess(sync, preserve)
+        self.assertLess(preserve, install)
+        self.assertLess(stage, metadata)
         self.assertLess(ensure, target_python)
+
+    def test_selected_internals_manifest_is_preserved_byte_for_byte(self) -> None:
+        contents = b'{"sysroot-version":"2.1.3~pre9999", "marker":"exact"}\n'
+        result, retained = run_preserve(contents)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(retained, contents)
 
     def test_sysroot_receipt_behavior(self) -> None:
         base = "2.1.3"
