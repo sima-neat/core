@@ -66,6 +66,15 @@ The installer adds everything needed to develop and run Neat PCIe host
 applications, including the C++ API and a Python environment at
 `~/pyneatpcie`.
 
+It also installs the `neat-pcie-application-builder` coding-agent skill for
+Codex and Claude from the `sima-neat/core` repository. Skill installation is
+best-effort so a temporary GitHub or coding-agent configuration problem does
+not block the PCIe host packages. If it reports a warning, retry with:
+
+<ShellCommand prompt="pcie-host">
+sima-cli playbooks install gh:sima-neat/core/pcie_host/skills/neat-pcie-application-builder
+</ShellCommand>
+
 During the first installation, SSH provisioning can request the `sima` account
 password for the card. It creates or reuses
 `~/.ssh/sima_neat_pcie_ed25519` and installs its public key on the card. Normal

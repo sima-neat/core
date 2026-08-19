@@ -1,0 +1,4 @@
+interface:
+  display_name: "Neat PCIe Application Builder"
+  short_description: "Build host apps with the PCIe Model API"
+  default_prompt: "Use $neat-pcie-application-builder to build a host application with the Neat PCIe Model API."
