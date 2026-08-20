@@ -666,6 +666,7 @@ def test_genai_language_graph_node_generation_and_errors():
     raise
 
 
+@pytest.mark.skip(reason="VLM graph test disabled pending MLASHM model-loading investigation")
 def test_genai_vision_language_graph_node_generation_and_errors():
   try:
     model = pyneat.VisionLanguageModel(_vlm_model_dir())
