@@ -1128,9 +1128,11 @@ jobs:
           set -euo pipefail
           MODEL_ROOT="${RUNNER_TEMP:-/tmp}/sima-lightglue-neat68-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
+          # The restricted regression fixture is intentionally staging-only.
+          MODEL_VULCAN_ENV=stg
           mkdir -p "${MODEL_ROOT}"
           sima-cli neat install \
-            --env "${VULCAN_ENV}" \
+            --env "${MODEL_VULCAN_ENV}" \
             --install-dir "${MODEL_ROOT}" \
             "${MODEL_SPEC}"
 
