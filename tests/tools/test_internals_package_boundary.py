@@ -33,6 +33,7 @@ def run_sync(
     consumer_base: str = "2.1.3",
     enabled: str = "ON",
     update_status: int = 0,
+    sdk_platform_version: str | None = "2.1.3",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -47,9 +48,14 @@ def run_sync(
         consumer.write_text(
             json.dumps({"platform-version": consumer_base}), encoding="utf-8"
         )
+        sdk_release = root / "sdk-release"
+        if sdk_platform_version is not None:
+            sdk_release.write_text(
+                f"Platform Version = {sdk_platform_version}\n", encoding="utf-8"
+            )
         log = root / "sysroot.log"
         script = f"""
-set -e
+set -euo pipefail
 id() {{ echo 0; }}
 sysroot() {{
   printf '%s\n' "$*" >> {shlex.quote(str(log))}
@@ -58,6 +64,7 @@ sysroot() {{
 {shell_function("run_privileged")}
 {shell_function("sync_sysroot_from_internals_manifest")}
 ELXR_SDK=ON
+ELXR_SDK_RELEASE_FILE={shlex.quote(str(sdk_release))}
 NEAT_SYNC_SYSROOT={shlex.quote(enabled)}
 NEAT_DEPS_MANIFEST={shlex.quote(str(consumer))}
 sync_sysroot_from_internals_manifest {shlex.quote(str(artifact_dir))}
@@ -206,7 +213,9 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
             text,
         )
         self.assertIn("internals-manifest.json", text)
+        self.assertIn('(?:~pre[0-9]+)?', text)
         self.assertIn('sysroot update "${receipt}"', text)
+        self.assertIn("Using stable SDK sysroot", text)
         self.assertIn("Internals artifact is missing internals-manifest.json", text)
         self.assertIn("invalid sysroot-version", text)
         self.assertIn("platform-version does not match the Internals receipt", text)
@@ -234,6 +243,13 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [f"update {receipt}", "status"])
 
+        result, calls = run_sync({"sysroot-version": base}, base)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Using stable SDK sysroot 2.1.3 without updating it.", result.stdout
+        )
+        self.assertEqual(calls, [])
+
         result, calls = run_sync(None, enabled="OFF")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [])
@@ -241,6 +257,22 @@ class InternalsPackageBoundaryTest(unittest.TestCase):
         result, calls = run_sync({"sysroot-version": ""}, base)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls, [])
+
+    def test_stable_receipt_requires_a_matching_sdk(self) -> None:
+        base = "2.1.3"
+        for sdk_platform_version, actual in (("2.1.2", "2.1.2"), (None, "unknown")):
+            with self.subTest(sdk_platform_version=sdk_platform_version):
+                result, calls = run_sync(
+                    {"sysroot-version": base},
+                    base,
+                    sdk_platform_version=sdk_platform_version,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    f"SDK platform {actual} does not match required stable platform {base}",
+                    result.stderr,
+                )
+                self.assertEqual(calls, [])
 
     def test_invalid_sysroot_receipts_fail_closed(self) -> None:
         base = "2.1.3"

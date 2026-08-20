@@ -1377,7 +1377,8 @@ consumer = json.load(open(sys.argv[2], encoding="utf-8"))
 receipt = artifact["sysroot-version"]
 consumer_base = consumer["platform-version"]
 if not isinstance(receipt, str) or (
-    receipt and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}~pre[0-9]+", receipt)
+    receipt
+    and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}(?:~pre[0-9]+)?", receipt)
 ):
     raise ValueError("invalid sysroot-version")
 if receipt and consumer_base != receipt.split("~pre", 1)[0]:
@@ -1392,12 +1393,25 @@ print(receipt)
     return 0
   fi
 
-  echo "Updating SDK sysroot to Internals receipt ${receipt}"
-  if ! run_privileged sysroot update "${receipt}"; then
-    echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+  if [[ "${receipt}" == *"~pre"* ]]; then
+    echo "Updating SDK sysroot to Internals receipt ${receipt}"
+    if ! run_privileged sysroot update "${receipt}"; then
+      echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+      exit 1
+    fi
+    sysroot status
+    return 0
+  fi
+
+  local sdk_platform_version
+  sdk_platform_version="$(sed -nE \
+    's/^Platform Version[[:space:]]*=[[:space:]]*([^[:space:]]+).*$/\1/p' \
+    "${ELXR_SDK_RELEASE_FILE}" 2>/dev/null | head -n1 || true)"
+  if [[ "${sdk_platform_version}" != "${receipt}" ]]; then
+    echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required stable platform ${receipt}." >&2
     exit 1
   fi
-  sysroot status
+  echo "Using stable SDK sysroot ${sdk_platform_version} without updating it."
 }
 
 preserve_internals_artifact_manifest() {
