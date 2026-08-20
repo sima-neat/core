@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PCIE_APPLICATION_SKILL_SOURCE="${SIMAPCIE_SKILL_SOURCE:-gh:sima-neat/core/pcie_host/skills/neat-pcie-application-builder}"
 
 usage() {
   cat <<'EOF'
@@ -38,6 +39,7 @@ Environment:
   SIMAPCIE_SKIP_SETUP=1         Same as --skip-setup
   SIMAPCIE_SETUP_ARGS="..."     Same as --setup-args
   SIMAPCIE_SETUP_BEST_EFFORT=1  Same as --setup-best-effort
+  SIMAPCIE_SKILL_SOURCE=<source> Override the PCIe application skill source
   SUDO_PASSWORD=<password>       sudo password for non-interactive installs
   DEVKIT_PASSWORD=<password>     fallback sudo password for CI/devkit hosts
                                   If neither is set, sudo may prompt interactively.
@@ -238,6 +240,21 @@ run_sudo() {
   printf '%s\n' "${pw}" | sudo -S -p '' "$@"
 }
 
+install_pcie_application_skill() {
+  if ! command -v sima-cli >/dev/null 2>&1; then
+    echo "WARN: sima-cli was not found; skipping Neat PCIe application skill installation." >&2
+    echo "      Retry later with: sima-cli playbooks install ${PCIE_APPLICATION_SKILL_SOURCE}" >&2
+    return 0
+  fi
+
+  echo "Installing Neat PCIe application skill from ${PCIE_APPLICATION_SKILL_SOURCE}"
+  if ! SIMA_CLI_CHECK_FOR_UPDATE=0 \
+      sima-cli playbooks install "${PCIE_APPLICATION_SKILL_SOURCE}"; then
+    echo "WARN: Neat PCIe application skill installation failed; PCIe host package installation will continue." >&2
+    echo "      Retry later with: sima-cli playbooks install ${PCIE_APPLICATION_SKILL_SOURCE}" >&2
+  fi
+}
+
 deb_arch="$(detect_deb_arch)"
 case "${deb_arch}" in
   amd64|arm64)
@@ -331,6 +348,8 @@ fi
 if command -v gst-inspect-1.0 >/dev/null 2>&1; then
   gst-inspect-1.0 neatpciehost >/dev/null 2>&1 || true
 fi
+
+install_pcie_application_skill
 
 if [[ "${INSTALL_PYTHON}" == "ON" ]]; then
   echo "Installing ${PYTHON_WHEEL_PATH} into ${PYTHON_VENV}"

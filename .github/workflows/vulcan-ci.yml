@@ -353,8 +353,19 @@ jobs:
           python3 -m json.tool "dist/${metadata_file}" >/dev/null
         done
         python3 - <<'PY'
+        import hashlib
         import json
         from pathlib import Path
+
+        manifest_path = Path("dist/internals-manifest.json")
+        expected_checksum = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        for metadata_name in ("metadata.json", "metadata-minimal.json", "metadata-all.json"):
+            metadata = json.loads(Path("dist", metadata_name).read_text(encoding="utf-8"))
+            resources = metadata.get("resources", [])
+            if resources.count(manifest_path.name) != 1:
+                raise SystemExit(f"{metadata_name} must contain exactly one {manifest_path.name} resource")
+            if metadata.get("resources-checksum", {}).get(manifest_path.name) != expected_checksum:
+                raise SystemExit(f"{metadata_name} has the wrong {manifest_path.name} checksum")
 
         metadata = json.loads(Path("dist/metadata-pyneat.json").read_text(encoding="utf-8"))
         resources = metadata.get("resources", [])
@@ -369,6 +380,7 @@ jobs:
         tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tutorials/CTestTestfile.cmake' >/dev/null
         test -f dist/install_neat_framework.sh
         test -f dist/neat-install-manifest.txt
+        cmp deps/internals-manifest.json dist/internals-manifest.json
         test -f build/resolved_manifest.json
 
         sudo install -m 0644 build/resolved_manifest.json dist/resolved-deps-manifest.json
@@ -442,8 +454,6 @@ jobs:
           NEAT_VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
 
       - name: Run PCIe host unit tests
-        # Temporarily disabled while PCIe host CI is being stabilized.
-        if: ${{ false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1451,6 +1461,7 @@ jobs:
 
   test-pciehost-hardware:
     name: Test PCIe Host Hardware
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
       - detect-changes
       - resolve-vulcan-config

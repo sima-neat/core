@@ -51,6 +51,7 @@ NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
+NEAT_INTERNALS_ARTIFACT_MANIFEST="${NEAT_INTERNALS_DIR}/internals-manifest.json"
 NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
@@ -1376,7 +1377,8 @@ consumer = json.load(open(sys.argv[2], encoding="utf-8"))
 receipt = artifact["sysroot-version"]
 consumer_base = consumer["platform-version"]
 if not isinstance(receipt, str) or (
-    receipt and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}~pre[0-9]+", receipt)
+    receipt
+    and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}(?:~pre[0-9]+)?", receipt)
 ):
     raise ValueError("invalid sysroot-version")
 if receipt and consumer_base != receipt.split("~pre", 1)[0]:
@@ -1391,12 +1393,36 @@ print(receipt)
     return 0
   fi
 
-  echo "Updating SDK sysroot to Internals receipt ${receipt}"
-  if ! run_privileged sysroot update "${receipt}"; then
-    echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+  if [[ "${receipt}" == *"~pre"* ]]; then
+    echo "Updating SDK sysroot to Internals receipt ${receipt}"
+    if ! run_privileged sysroot update "${receipt}"; then
+      echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+      exit 1
+    fi
+    sysroot status
+    return 0
+  fi
+
+  local sdk_platform_version
+  sdk_platform_version="$(sed -nE \
+    's/^Platform Version[[:space:]]*=[[:space:]]*([^[:space:]]+).*$/\1/p' \
+    "${ELXR_SDK_RELEASE_FILE}" 2>/dev/null | head -n1 || true)"
+  if [[ "${sdk_platform_version}" != "${receipt}" ]]; then
+    echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required stable platform ${receipt}." >&2
     exit 1
   fi
-  sysroot status
+  echo "Using stable SDK sysroot ${sdk_platform_version} without updating it."
+}
+
+preserve_internals_artifact_manifest() {
+  local artifact_manifest="$1/internals-manifest.json"
+  if [[ ! -f "${artifact_manifest}" ]]; then
+    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "${NEAT_INTERNALS_ARTIFACT_MANIFEST}")"
+  cp -f "${artifact_manifest}" "${NEAT_INTERNALS_ARTIFACT_MANIFEST}"
 }
 
 ensure_neat_internals() {
@@ -1420,6 +1446,9 @@ ensure_neat_internals() {
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
   sync_sysroot_from_internals_manifest "${artifact_dir}"
+  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
+    preserve_internals_artifact_manifest "${artifact_dir}"
+  fi
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
@@ -2455,6 +2484,7 @@ stage_package_artifacts_to_dist() {
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
     dist/manifest.json \
+    dist/internals-manifest.json \
     dist/resolved-deps-manifest.json
 
   local staged_any=OFF
@@ -2469,6 +2499,15 @@ stage_package_artifacts_to_dist() {
     cp -f "${file}" "dist/$(basename "${file}")"
     staged_any=ON
   done
+
+  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
+    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then
+      echo "ERROR: Missing selected Internals manifest: ${NEAT_INTERNALS_ARTIFACT_MANIFEST}" >&2
+      exit 1
+    fi
+    cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" dist/internals-manifest.json
+    staged_any=ON
+  fi
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"

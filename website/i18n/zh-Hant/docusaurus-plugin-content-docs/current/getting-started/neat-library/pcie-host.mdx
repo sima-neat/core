@@ -6,7 +6,7 @@ sidebar_position: 3
 
 請使用此頁面，在已連接至 Modalix PCIe 卡的 Linux 主機上安裝 Neat PCIe 主機套件。
 
-Neat PCIe 主機封裝提供協同處理 API，用於將來自主機的輸入傳送到連接的 Modalix PCIe 卡，並接收推論結果。
+Neat PCIe 主機套件提供協同處理 API，用於將來自主機的輸入傳送到已連接的 Modalix PCIe 卡，並接收推論結果。
 
 :::warning 安裝於 PCIe 主機上。
 請在連接到 Modalix PCIe 卡的 **PCIe 主機**上執行此安裝。請勿在 Neat SDK 容器、DevKit 或 Modalix PCIe 卡上執行。
@@ -14,12 +14,12 @@ Neat PCIe 主機封裝提供協同處理 API，用於將來自主機的輸入傳
 
 ## 支援的主機作業系統
 
-Neat PCIe 主機封裝支援下列已驗證的主機平台：
+Neat PCIe 主機封裝支援以下經過驗證的主機平台：
 
 | 作業系統 | 架構 | 支援 |
-|---|---|---|
-| Ubuntu 22.04 | x86_64 | 已支援 |
-| Ubuntu 24.04 | x86_64 | 已支援 |
+| --- | --- | --- |
+| Ubuntu 22.04 | x86_64 | 支援 |
+| Ubuntu 24.04 | x86_64 | 支援 |
 
 Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
 
@@ -27,11 +27,14 @@ Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
 
 在安裝套件之前：
 
-- 在 PCIe 主機上安裝 `sima-cli`。請參考
-  [sima-cli 安裝指南](/tools/sima-cli/)。
-- 按照 [PCIe 驅動程式安裝指南](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation) 的步驟安裝並驗證 PCIe 主機驅動程式。
-- 連接並設定 Modalix PCIe 卡，使其管理介面可以從主機存取。卡 0 的預設位址為 `10.0.0.2`。
-- 在卡上安裝相容的 Neat Library 版本。主機和卡上的套件必須來自相容的版本。
+- 在 PCIe 主機上安裝 `sima-cli`。使用
+  [sima-cli installation guide](/tools/sima-cli/).
+- 請按照以下步驟安裝並驗證 PCIe 主機驅動程式。
+  [PCIe Driver Installation guide](https://developer.sima.ai/hardware/getting-started/pcie-mode/driver-installation).
+- 連接並設定 Modalix PCIe 卡，使其管理介面為
+  可以從主機存取。預設的卡片 0 位址為 `10.0.0.2`。
+- 在卡片上安裝相容的 Neat Library 版本。主機和
+  卡片套件必須來自相容的版本。
 
 驗證 PCIe 主機，以便它可以下載 SiMa.ai 成品：
 
@@ -39,11 +42,11 @@ Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
 sima-cli login
 </ShellCommand>
 
-## 安裝 PCIe 主機套件
+## 安裝 PCIe 主機套件。
 
 在 PCIe 主機上選擇一個工作目錄，然後執行適用於已安裝的 Ubuntu 版本的指令。
 
-**Ubuntu 22.04 於 x86_64 平台上：**
+**x86_64 上的 Ubuntu 22.04：**
 
 <ShellCommand prompt="pcie-host">
 sima-cli neat install core/pciehost/ubuntu22/amd64@v0.4.0
@@ -57,9 +60,15 @@ sima-cli neat install core/pciehost/ubuntu24/amd64@v0.4.0
 
 安裝程式會新增所有必要的元件，以便開發和執行 Neat PCIe 主機應用程式，包括 C++ API 和位於 `~/pyneatpcie` 的 Python 環境。
 
+它還會安裝來自 `sima-neat/core` 儲存庫的 `neat-pcie-application-builder` 編碼代理技能，適用於 Codex 和 Claude。技能安裝採用盡力而為的方式，因此暫時性的 GitHub 或編碼代理設定問題不會阻止 PCIe 主機套件的安裝。如果出現警告訊息，請嘗試重新執行：
+
+<ShellCommand prompt="pcie-host">
+sima-cli playbooks install gh:sima-neat/core/pcie_host/skills/neat-pcie-application-builder
+</ShellCommand>
+
 在第一次安裝期間，SSH 設定程序可以要求提供卡片的 `sima` 帳戶密碼。它會建立或重新使用 `~/.ssh/sima_neat_pcie_ed25519`，並將其公鑰安裝到卡片上。之後，正常的 PCIe 作業會使用無密碼的 SSH 來進行卡片端模型的設定。
 
-## 驗證安裝程序
+## 驗證安裝程序。
 
 確認 Python API 和 PCIe 主機外掛程式是否已安裝：
 
