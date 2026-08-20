@@ -1,8 +1,10 @@
 #include "security/model_archive_security_test_utils.h"
 #include "test_main.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -35,6 +37,42 @@ void write_empty_file(const std::filesystem::path& path) {
   out << "not an archive";
 }
 
+std::string read_file(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+std::vector<std::string> package_file_set(const std::filesystem::path& package_root) {
+  namespace fs = std::filesystem;
+  std::vector<std::string> files;
+  for (const auto& it : fs::recursive_directory_iterator(package_root)) {
+    if (it.is_regular_file())
+      files.push_back(fs::relative(it.path(), package_root).generic_string());
+  }
+  std::sort(files.begin(), files.end());
+  return files;
+}
+
+// Extracts `fixture`, swapping `replacement` over it after validation, before the first write.
+std::string extract_with_archive_swapped_mid_load(const std::string& fixture_rel,
+                                                  const std::string& replacement_rel,
+                                                  const std::string& scratch_tag) {
+  namespace fs = std::filesystem;
+  const fs::path scratch = fs::path(sima_test::make_temp_dir(scratch_tag)) / "swapped.tar.gz";
+  fs::copy_file(sima_test::model_archive_fixture_path(fixture_rel), scratch);
+
+  const std::string out_root = sima_test::make_temp_dir(scratch_tag + "_out");
+  const auto extracted = ModelArchiveLoader::extract(
+      scratch.string(),
+      [&](const simaai::neat::internal::ModelArchiveManifest&) {
+        fs::copy_file(sima_test::model_archive_fixture_path(replacement_rel), scratch,
+                      fs::copy_options::overwrite_existing);
+        return out_root;
+      },
+      ModelArchiveLoaderOptions{});
+  return extracted.package_root;
+}
+
 } // namespace
 
 RUN_TEST("security_modelpack_matrix_test", ([] {
@@ -60,18 +98,6 @@ RUN_TEST("security_modelpack_matrix_test", ([] {
                 ModelArchiveErrorClass::PathTraversal},
                {"archive_truncated", "invalid/truncated_archive.tar.gz",
                 ModelArchiveErrorClass::InvalidArchive},
-               {"archive_missing_sequence", "invalid/missing_pipeline_sequence.tar.gz",
-                ModelArchiveErrorClass::SchemaError},
-               {"archive_unsupported_version", "invalid/unsupported_version.tar.gz",
-                ModelArchiveErrorClass::UnsupportedVersion},
-               {"json_schema_error_sequence", "invalid/schema_error_sequence.tar.gz",
-                ModelArchiveErrorClass::SchemaError},
-               {"json_duplicate_stage_names", "invalid/duplicate_stage_names.tar.gz",
-                ModelArchiveErrorClass::SchemaError},
-               {"json_unknown_kernel", "invalid/unknown_kernel.tar.gz",
-                ModelArchiveErrorClass::SchemaError},
-               {"json_huge_numeric_sequence_id", "invalid/json_huge_numeric_sequence_id.tar.gz",
-                ModelArchiveErrorClass::SchemaError},
                {"json_deep_nesting_256", "invalid/json_deep_nesting_256.tar.gz",
                 ModelArchiveErrorClass::SchemaError},
                {"json_duplicate_keys_top", "invalid/json_duplicate_keys_top.tar.gz",
@@ -133,6 +159,29 @@ RUN_TEST("security_modelpack_matrix_test", ([] {
              } catch (const std::exception& e) {
                throw std::runtime_error(
                    std::string("SEC_CASE=json_size_ceiling_valid_archive_inspect ") + e.what());
+             }
+           }
+
+           // SEC_CASE=archive_replaced_between_validation_and_extraction
+           // multi_stage_valid differs from basic_valid in both member set and contents, so any
+           // read of the replaced file would show up below.
+           {
+             const fs::path reference = fs::path(
+                 ModelArchiveLoader::extract(
+                     sima_test::model_archive_fixture_path("valid/basic_valid.tar.gz").string(),
+                     sima_test::make_temp_dir("model_archive_swap_ref"))
+                     .package_root);
+             const fs::path swapped = fs::path(extract_with_archive_swapped_mid_load(
+                 "valid/basic_valid.tar.gz", "valid/multi_stage_valid.tar.gz", "swap"));
+
+             require(package_file_set(swapped) == package_file_set(reference),
+                     "SEC_CASE=archive_replaced_between_validation_and_extraction: swapped "
+                     "archive changed the extracted file set");
+             for (const std::string& rel : package_file_set(reference)) {
+               require(read_file(swapped / rel) == read_file(reference / rel),
+                       "SEC_CASE=archive_replaced_between_validation_and_extraction: swapped "
+                       "archive changed " +
+                           rel);
              }
            }
 

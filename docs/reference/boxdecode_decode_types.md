@@ -58,8 +58,82 @@ opt.top_k = 100;
 | Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
 | Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
 | Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
+| SuperPoint | `decode_superpoint(...)` | `pyneat.decode_superpoint(...)` | keypoints `[N,2]`, scores `[N]`, descriptors `[N,D]` |
 
 Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
+
+## SuperPoint
+
+SuperPoint remains part of the BoxDecode product surface, but emits feature points rather than
+pretending that they are boxes. The minimal A65-default configuration is:
+
+```cpp
+BoxDecodeOptions options{BoxDecodeType::SuperPoint};
+options.superpoint.descriptor_output_dtype = TensorDType::Float32;
+
+auto decoder = nodes::SimaBoxDecode(model, options);
+```
+
+Python uses the same defaults:
+
+```python
+options = pyneat.BoxDecodeOptions(pyneat.BoxDecodeType.SuperPoint)
+options.superpoint.descriptor_output_dtype = pyneat.TensorDType.Float32
+
+decoder = pyneat.nodes.sima_box_decode(model, options=options)
+```
+
+`A65V1` is the default profile. Select another profile explicitly when the
+model requires different numerical behavior; Neat does not infer behavior from
+tensor shapes or values:
+
+| Profile | When to select it | Production status |
+|---|---|---|
+| `LightGlueV1` | LightGlue-compatible detector, NMS, coordinate, and descriptor behavior | Supported |
+| `MagicLeapDemoV1` | The pinned Magic Leap demo behavior | Supported |
+| `A65V1` | Compatibility with the former A65 SuperPoint decoder | Supported; default |
+| `PaperBicubicV1` | Reserved numeric ID for a future fully specified bicubic policy | Rejected until production-defined |
+
+Numerical behavior and output encoding are independent. For example, select A65 numerical
+behavior with the default V1 output:
+
+```cpp
+BoxDecodeOptions options{BoxDecodeType::SuperPoint};
+options.superpoint.profile = SuperPointProfile::A65V1;
+options.superpoint.output_format = SuperPointOutputFormat::FeaturePointsV1;
+```
+
+The legacy byte layout is opt-in and has additional constraints:
+
+```cpp
+options.superpoint.profile = SuperPointProfile::A65V1;
+options.superpoint.output_format = SuperPointOutputFormat::LegacyA65InterleavedV0;
+options.superpoint.descriptor_output_dtype = TensorDType::Int8;
+```
+
+`SuperPointProfile::Auto` first uses authoritative MPK `superpoint.profile` metadata. If neither
+the API, `Model::Options.superpoint.profile`, nor MPK supplies a profile, it resolves to `A65V1`.
+Neat never guesses a profile from tensor shapes, values, filenames, or downstream nodes.
+
+When their public sentinel values are left unchanged, `detection_threshold=0.0`, `top_k=0`,
+`nms_radius=-1`, and `border_margin=-1` resolve from the selected profile. `A65V1` resolves to a
+threshold of `0.1`, Top-K `600`, NMS radius `4`, and border margin `0`. LightGlueV1 and
+MagicLeapDemoV1 use thresholds `0.0005` and `0.015`, respectively; both use Top-K `600`, NMS
+radius `4`, and border margin `4`.
+
+`nms_iou_threshold` does not apply to SuperPoint; use the pixel-radius
+`superpoint.nms_radius`. The default output is the versioned `FEATURE_POINTS_V1` structure-of-arrays
+payload. `LegacyA65InterleavedV0` is an explicit migration format and requires 256-dimensional INT8
+descriptors. Use `decode_superpoint` rather than `decode_bbox` or `BoxDecodeResults`.
+
+Versioned MPK `superpoint` schema v1 records are fail-closed. They must name the profile, distinct
+detector and descriptor tensor IDs, a `sha256:` fingerprint with 64 hexadecimal digits, and the
+supported input representations `raw-logits-65` and `coarse-pre-l2`. Schema 0 remains accepted only
+as a migration/manual record; omitted schema-0 representation fields are canonicalized to those two
+raw-input representations and recorded as defaults in diagnostics. Unknown schema versions or
+representation tokens fail contract compilation.
+If an API profile override conflicts with a fingerprint stamped for a different MPK profile,
+re-stamp the MPK for the selected profile; Neat does not discard or reinterpret that provenance.
 
 ## BBOX wire payload
 
@@ -137,6 +211,10 @@ non-empty or positive value.
 | `nms_iou_threshold` | `> 0.0` | Override NMS IoU. |
 | `top_k` | `0` | Preserve packaged top-K. |
 | `top_k` | `> 0` | Override the maximum kept detections. |
+| `num_classes` | `0` | Use the class-head depth inferred from the MPK. |
+| `num_classes` | positive integer matching the MPK | Use the explicit class count. This is required when the MPK cannot infer a split single-class head reliably. |
+| `num_classes` | positive integer contradicting a YOLO26 MPK | Fail before pipeline construction and report both values. YOLO26 derives its grouped raw-head layout from the class depth, so this mismatch is a model contract error. |
+| `num_classes` | positive integer for SSD or a pre-YOLO26 non-pose YOLO family | Preserve the existing explicit-override behavior. Pose decoders and SuperPoint retain their family-specific rules. |
 
 `detection_threshold` is the name used by the BoxDecode node/stage
 constructors. `ModelOptions.score_threshold` is the model-route option that
@@ -163,13 +241,19 @@ feeds the same control.
 | `BoxDecodeType::YoloV26Seg` | `yolo26-seg` | YOLO26 segmentation |
 | `BoxDecodeType::YoloV6` | `yolov6` | YOLOv6 detection |
 | `BoxDecodeType::YoloX` | `yolox` | YOLOX detection |
-| `BoxDecodeType::Ssd` | `ssd` | SSD-family detection (any feature-map count / input size) |
+| `BoxDecodeType::Ssd` | `ssd` | Exact prepared SSD300, SSD-Mobile-300, SSD-Mobile-320, or SSDlite-Mobile-320 contract, selected from ordered head geometry |
+| `BoxDecodeType::SuperPoint` | `superpoint` | SuperPoint detector and descriptor postprocessing |
 | `BoxDecodeType::Detr` | `detr` | DETR-style transformer detection |
 | `BoxDecodeType::EffDet` | `effdet` | EfficientDet detection |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | R-CNN proposal stage |
 | `BoxDecodeType::Centernet` | `centernet` | CenterNet detection |
 
-`BoxDecodeType::Unspecified` is an unset sentinel and fails before runtime. Always choose a concrete type.
+`BoxDecodeType::Unspecified` is an unset sentinel and fails before runtime. SSD recipe identity is
+an internal Core contract (`ssd300-v1`, `ssd-mobile-300-v1`, `ssd-mobile-320-v1`, or
+`ssdlite-mobile-320-v1`), not another public decode type or
+backend token. Core resolves it before lowering, while the installed object decoder continues to
+receive its supported `ssd` family token and selects the corresponding fixed implementation from
+the already validated head geometry.
 
 ## Choosing the right type
 
@@ -192,23 +276,61 @@ Advanced tensor-contract rules:
 - Packed YOLO heads must keep class count and head depth consistent across
   feature levels.
 - `YoloV26` uses grouped raw l/t/r/b bbox heads plus class-score heads.
-- `Ssd` uses grouped per-level localization heads (depth = `4 * priors-per-cell`)
-  paired with class-confidence heads (depth = `num_classes * priors-per-cell`).
-  Boxes are decoded against the model's prior/anchor boxes and class scores use a
-  softmax over the class dimension (background included). The decode is generic
-  across SSD variants: the feature-map count, input size, and per-level
-  priors-per-cell are read from the model archive, and the class count is derived
-  from the loc/conf head geometry. Leave `decode_type_option` as `Auto`; the
-  grouped-by-role layout is selected automatically.
+- `Ssd` is **not** a generic SSD decoder. It resolves exactly **four prepared profiles**
+  from the complete ordered loc/conf H/W/C signature at compile time. Any other
+  head set or order is rejected with an error that prints the observed and supported
+  signatures:
+  - **SSD300** (`dboxes300_coco`): 300×300 input, feature maps
+    `{38,19,10,5,3,1}`, priors-per-cell `{4,6,6,6,4,4}`, confidence channel order
+    `class*A + anchor`, class scores via **softmax** over the class dimension
+    (background at index 0 included).
+  - **SSD-Mobile-300-v1** (`ssd_anchor_generator`): 300×300 input, feature
+    maps `{19,10,5,3,2,1}`, priors-per-cell `{3,6,6,6,6,6}`, confidence channel
+    order `anchor*C + class`, class scores via per-class **sigmoid** (background
+    ignored).
+  - **SSD-Mobile-320-v1** (`ssd_anchor_generator`): 320×320 input, feature
+    maps `{20,10,5,3,2,1}`, priors-per-cell `{3,6,6,6,6,6}`, confidence channel
+    order `anchor*C + class`, class scores via per-class **sigmoid** (background
+    ignored).
+  - **SSDlite-Mobile-320-v1** (TorchVision `DefaultBoxGenerator`): 320×320
+    input, feature maps `{20,10,5,3,2,1}`, six priors per cell at every level,
+    localization order `anchor*4 + {dx,dy,dw,dh}`, confidence order
+    `anchor*C + class`, and class scores via **softmax** over all 91 classes
+    including background.
+
+  All recipes use grouped per-level localization heads (depth =
+  `4 * priors-per-cell`) paired with class-confidence heads (depth =
+  `num_classes * priors-per-cell`), FasterRcnnBoxCoder variance scaling
+  (`scale_xy 0.1`, `scale_wh 0.2`), and a **stretch** (anisotropic) preprocessing
+  resize. The score activation is fixed by the recipe (matching the on-device
+  decoder), and the grouped-by-role layout is selected automatically — leave
+  `decode_type_option` as `Auto`. A non-grouped layout token is rejected.
+
+  The **model frame is part of the profile**, not just the head geometry. SSD300-v1
+  and SSD-Mobile-300-v1 require 300×300; both 320-v1 profiles require 320×320. A
+  resolved preprocess resize target or model-dimension override of any other
+  size is rejected at build time, because the prior tables and the stretch
+  back-projection are only valid at that frame.
+
+  Raw/standalone `SimaBoxDecode` construction never invents a resize mode. Keep
+  the upstream `Preproc` metadata requirement, or use the explicit raw overload
+  to assert externally performed `ResizeMode::Stretch`; Letterbox and Crop are
+  rejected.
+
+  **`num_classes` contract.** The encoded class count is always derived from the
+  confidence-head depth (`conf_depth / priors-per-cell`, background at index 0
+  included). SSD300-v1 permits a contiguous prefix selection such as the prepared
+  81-to-8 route; the other three profiles require the exact encoded count. An
+  invalid selection is rejected at build time. Leave it unset to use the profile
+  default.
 - `Detr` infers class channels from the maximum head depth and requires a valid
   class dimension.
 - `EffDet`, `RcnnStage1`, and `Centernet` use their model-family contracts; do
   not route them through a YOLO decode type.
 - `*-seg` decode types produce box-leading output plus task-specific mask data.
 
-If a custom model pack cannot infer class count or head order, fix the model
-archive contract or set the explicit decode options documented above. Guessing
-from tensor shape is brittle and hard to debug.
+If a custom model pack does not match either complete ordered signature, prepare a
+new explicitly supported profile rather than weakening the matcher.
 
 ## Python note
 

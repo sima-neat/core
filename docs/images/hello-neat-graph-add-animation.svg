@@ -30,22 +30,22 @@
 
     <clipPath id="line1Clip" clipPathUnits="userSpaceOnUse">
       <rect x="116" y="202" width="0" height="28">
-        <animate attributeName="width" dur="12s" repeatCount="indefinite" values="0;0;390;390;0" keyTimes="0;0.033;0.15;0.97;1"/>
+        <animate attributeName="width" dur="12s" repeatCount="1" fill="freeze" values="0;0;390;390;390" keyTimes="0;0.033;0.15;0.97;1"/>
       </rect>
     </clipPath>
     <clipPath id="line2Clip" clipPathUnits="userSpaceOnUse">
       <rect x="116" y="242" width="0" height="28">
-        <animate attributeName="width" dur="12s" repeatCount="indefinite" values="0;0;390;390;0" keyTimes="0;0.2;0.317;0.97;1"/>
+        <animate attributeName="width" dur="12s" repeatCount="1" fill="freeze" values="0;0;390;390;390" keyTimes="0;0.2;0.317;0.97;1"/>
       </rect>
     </clipPath>
     <clipPath id="line3Clip" clipPathUnits="userSpaceOnUse">
       <rect x="116" y="282" width="0" height="28">
-        <animate attributeName="width" dur="12s" repeatCount="indefinite" values="0;0;390;390;0" keyTimes="0;0.367;0.483;0.97;1"/>
+        <animate attributeName="width" dur="12s" repeatCount="1" fill="freeze" values="0;0;390;390;390" keyTimes="0;0.367;0.483;0.97;1"/>
       </rect>
     </clipPath>
     <clipPath id="line4Clip" clipPathUnits="userSpaceOnUse">
       <rect x="116" y="322" width="0" height="28">
-        <animate attributeName="width" dur="12s" repeatCount="indefinite" values="0;0;390;390;0" keyTimes="0;0.533;0.65;0.97;1"/>
+        <animate attributeName="width" dur="12s" repeatCount="1" fill="freeze" values="0;0;390;390;390" keyTimes="0;0.533;0.65;0.97;1"/>
       </rect>
     </clipPath>
 

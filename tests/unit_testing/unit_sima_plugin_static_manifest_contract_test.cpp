@@ -6,6 +6,7 @@
 #include <gst/gst.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 RUN_TEST(
@@ -127,6 +128,36 @@ RUN_TEST(
       });
       manifest.stages.push_back(box);
 
+      StageStaticSpec superpoint_box;
+      superpoint_box.element_name = "superpoint_box";
+      superpoint_box.logical_stage_id = "stage_superpoint_box";
+      superpoint_box.plugin_kind = "neatboxdecode";
+      superpoint_box.kernel_kind = "boxdecode";
+      superpoint_box.payload_kind = StagePayloadKind::BoxDecode;
+      superpoint_box.boxdecode.decode_type = simaai::neat::BoxDecodeType::SuperPoint;
+      superpoint_box.boxdecode.topk = 600;
+      superpoint_box.boxdecode.superpoint.profile = simaai::neat::SuperPointProfile::LightGlueV1;
+      superpoint_box.boxdecode.superpoint.output_format =
+          simaai::neat::SuperPointOutputFormat::FeaturePointsV1;
+      superpoint_box.boxdecode.superpoint.descriptor_output_dtype =
+          simaai::neat::TensorDType::BFloat16;
+      superpoint_box.boxdecode.superpoint.nms_radius = 4;
+      superpoint_box.boxdecode.superpoint.border_margin = 4;
+      superpoint_box.boxdecode.superpoint.cell_stride = 8;
+      superpoint_box.boxdecode.superpoint.descriptor_stride = 8;
+      superpoint_box.boxdecode.superpoint.descriptor_dim = 256;
+      superpoint_box.boxdecode.superpoint.profile_fingerprint =
+          "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+      superpoint_box.boxdecode.superpoint.detector_tensor_id = "semi";
+      superpoint_box.boxdecode.superpoint.descriptor_tensor_id = "desc";
+      superpoint_box.boxdecode.superpoint.detector_representation = "raw-logits-65";
+      superpoint_box.boxdecode.superpoint.descriptor_representation = "coarse-pre-l2";
+      superpoint_box.boxdecode.tensor_roles = {
+          BoxDecodeTensorRole::DetectorLogits,
+          BoxDecodeTensorRole::DescriptorGrid,
+      };
+      manifest.stages.push_back(superpoint_box);
+
       StageStaticSpec mla;
       mla.element_name = "mla";
       mla.logical_stage_id = "stage_mla";
@@ -137,6 +168,17 @@ RUN_TEST(
       mla.processmla.batch_size = 1;
       mla.processmla.batch_sz_model = 1;
       manifest.stages.push_back(mla);
+
+      // Recipe identity stays Core-side. Internals accepts the stable `ssd` family token and uses
+      // the already validated head geometry to select its fixed decoder implementation.
+      StageStaticSpec ssd_box = box;
+      ssd_box.element_name = "ssd_box";
+      ssd_box.logical_stage_id = "stage_ssd_box";
+      ssd_box.boxdecode.decode_type = simaai::neat::BoxDecodeType::Ssd;
+      ssd_box.boxdecode.ssd_recipe_id =
+          simaai::neat::pipeline_internal::sima::stagesemantics::SsdRecipeId::SsdMobile300V1;
+      ssd_box.boxdecode.decode_type_option = simaai::neat::BoxDecodeTypeOption::GroupedByRole;
+      manifest.stages.push_back(std::move(ssd_box));
 
       std::string attach_error;
       require(attach_manifest_context(pipeline, manifest, &attach_error),
@@ -162,8 +204,11 @@ RUN_TEST(
           sima_plugin_manifest_stage_by_element_name(accessor, "pre");
       const SimaPluginStageSpec* box_stage =
           sima_plugin_manifest_stage_by_logical_id(accessor, "stage_box");
+      const SimaPluginStageSpec* ssd_box_stage =
+          sima_plugin_manifest_stage_by_logical_id(accessor, "stage_ssd_box");
       require(pre_stage != nullptr, "stage lookup by element name should return stage spec");
       require(box_stage != nullptr, "stage lookup by logical id should return stage spec");
+      require(ssd_box_stage != nullptr, "concrete SSD stage should resolve by logical id");
       require(pre_stage->payload_kind == SIMA_PLUGIN_STAGE_PAYLOAD_PROCESSCVU,
               "pre stage payload kind mismatch");
       require(pre_stage->payload.processcvu.graph_family != nullptr,
@@ -240,6 +285,41 @@ RUN_TEST(
                   std::string(box_stage->payload.boxdecode.decode_type_option) ==
                       "grouped-by-role-logit",
               "box stage payload decode_type_option mismatch");
+      require(ssd_box_stage->payload.boxdecode.decode_type != nullptr &&
+                  std::string(ssd_box_stage->payload.boxdecode.decode_type) == "ssd",
+              "manifest ABI must preserve the backend-compatible SSD family token");
+
+      // The nested payload is embedded in movable manifest storage. Read it only through the
+      // public accessor after construction to catch stale pre-move pointers.
+      const SimaPluginStageSpec* superpoint_stage =
+          sima_plugin_manifest_stage_by_logical_id(accessor, "stage_superpoint_box");
+      require(superpoint_stage != nullptr, "SuperPoint stage should resolve by logical id");
+      require(superpoint_stage->payload_kind == SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE,
+              "SuperPoint stage payload kind mismatch");
+      const auto* superpoint = superpoint_stage->payload.boxdecode.superpoint;
+      require(superpoint != nullptr, "nested SuperPoint manifest payload missing");
+      require(superpoint->struct_version == 1U, "SuperPoint payload version mismatch");
+      require(superpoint->profile ==
+                  static_cast<gint>(simaai::neat::SuperPointProfile::LightGlueV1),
+              "SuperPoint profile did not survive manifest storage move");
+      require(superpoint->descriptor_output_dtype ==
+                  static_cast<gint>(simaai::neat::TensorDType::BFloat16),
+              "SuperPoint descriptor output dtype mismatch");
+      require(superpoint->profile_fingerprint != nullptr &&
+                  std::string(superpoint->profile_fingerprint).starts_with("sha256:"),
+              "SuperPoint fingerprint pointer is stale or missing");
+      require(superpoint->detector_representation != nullptr &&
+                  std::string(superpoint->detector_representation) == "raw-logits-65",
+              "SuperPoint detector representation mismatch");
+      require(superpoint->descriptor_representation != nullptr &&
+                  std::string(superpoint->descriptor_representation) == "coarse-pre-l2",
+              "SuperPoint descriptor representation mismatch");
+      require(superpoint->tensor_roles_len == 2U && superpoint->tensor_roles != nullptr,
+              "SuperPoint tensor role table missing");
+      require(
+          superpoint->tensor_roles[0] == static_cast<gint>(BoxDecodeTensorRole::DetectorLogits) &&
+              superpoint->tensor_roles[1] == static_cast<gint>(BoxDecodeTensorRole::DescriptorGrid),
+          "SuperPoint tensor role table mismatch after manifest storage move");
 
       const SimaPluginStageSpec* mla_stage =
           sima_plugin_manifest_stage_by_logical_id(accessor, "stage_mla");

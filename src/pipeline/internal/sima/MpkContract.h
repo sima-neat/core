@@ -262,12 +262,33 @@ struct MpkPluginIoContract {
   std::vector<std::int64_t> slice_shape;
   std::vector<std::int64_t> slice_begin;
   std::vector<std::int64_t> slice_end;
+  // Authored logical output shape from MPK. Detess stages may also carry a
+  // resolved runtime shape when a lower-rank logical tensor needs explicit
+  // MLA geometry.
   std::vector<std::int64_t> frame_shape;
+  std::vector<std::int64_t> runtime_frame_shape;
   std::string frame_type;
   std::string round_off;
   // Boxdecode decode-type tokens from MPK params (e.g. "ssd"); empty when not declared.
   std::string decode_type;
   std::string decode_type_option;
+  struct SuperPointContract {
+    int schema_version = 0;
+    std::string profile;
+    std::string profile_fingerprint;
+    std::string output_format;
+    std::string detector_tensor_id;
+    std::string descriptor_tensor_id;
+    std::string detector_representation;
+    std::string descriptor_representation;
+    std::string descriptor_output_dtype;
+    int nms_radius = -1;
+    int border_margin = -1;
+    int cell_stride = 0;
+    int descriptor_stride = 0;
+    int descriptor_dim = 0;
+    std::string validation_error;
+  } superpoint;
   // Canonical processcvu contract decoded from MPK params and tensor contracts.
   // These fields are model-managed source-of-truth and keep raw output rank.
   bool has_canonical_processcvu_contract = false;
@@ -282,6 +303,11 @@ struct MpkPluginIoContract {
   std::vector<MpkTensorContract> output_tensors;
   std::optional<MpkQuantContract> quant;
 };
+
+/// Return the runtime detess geometry, falling back to the authored shape for
+/// canonical rank-3/rank-4 contracts and hand-built test contracts.
+const std::vector<std::int64_t>&
+detess_runtime_frame_shape(const MpkPluginIoContract& stage) noexcept;
 
 /**
  * @brief Top-level parsed-and-validated form of an MPK manifest.

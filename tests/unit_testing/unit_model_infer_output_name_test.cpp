@@ -64,7 +64,7 @@ RUN_TEST(
                   "ModelPack"),
               "constructing Model from missing path should fail");
 
-      // Malformed model metadata should fail deterministically.
+      // A malformed MPK contract should fail deterministically.
       {
         const auto fixture =
             sima_test::make_malformed_model_archive_fixture("infer_output_name_malformed");

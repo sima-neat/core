@@ -67,6 +67,18 @@ Supported `build.sh` options:
 - `--no-node`: Skip Node.js install (docs build may fail if Node is missing).
 - `--install-deps-only`: Install system dependencies and dependency headers, then exit.
 
+## Compiler Cache
+
+`build.sh` enables `sccache` automatically, and its cache remains available
+after `--clean`. Local builds use a user-local disk cache. Vulcan gives
+`develop` and `main` separate protected caches; a feature branch seeds an
+isolated writable cache from its closest protected base and keeps it until the
+branch is deleted.
+
+See the [Neat sccache Cheatsheet](/develop-apps/contribute/sccache) for local
+controls, cloud access rules, cache namespaces, statistics, verification, and
+troubleshooting.
+
 ## Typical Builds
 
 Core library only (default):
@@ -95,6 +107,19 @@ This command also works on macOS.
 ./build.sh --doc
 ```
 
+The docs build generates the Insight API reference from the OpenAPI specification
+downloaded by autodoc at
+`build/autodoc/insight/neat_insight/openapi.json`. For local development, you can
+override that default with `INSIGHT_OPENAPI_SPEC`:
+
+```bash
+INSIGHT_OPENAPI_SPEC=../insight/neat_insight/openapi.json ./build.sh --doc
+```
+
+Relative override paths are resolved from the Core repository root and converted
+to absolute paths before the Docusaurus generator runs. If the selected file does
+not exist, the Insight API generation step is skipped and the path is reported.
+
 Clean full build:
 
 ```bash
@@ -111,10 +136,14 @@ Install dependencies without building core:
 
 - Build tree: `build/`
 - Docusaurus site output (when docs build runs): `website/build/`
-- Install sanity-check prefix: `/tmp/sima-neat-install-test`
+- Install sanity-check prefix: a unique temporary directory (`${TMPDIR:-/tmp}/sima-neat-install-test.XXXXXX`) printed during the build; removed on success, kept on failure for inspection.
 - Neat package artifacts (`*.deb`) are generated on Linux full builds unless `--no-dist` is used.
 - Extras package (`*extras.tar.gz`) is generated on Linux full builds unless `--no-dist` is used.
 - Python wheel (`dist/*.whl`) is generated when Python build is enabled.
+
+The Python wheel packages the `_pyneat_core` extension produced by the main
+CMake build. Wheel creation does not configure or compile a second CMake tree,
+so the library, DEBs, extras archive, and wheel share one compilation.
 
 ## Build Profiles & CMake Options
 

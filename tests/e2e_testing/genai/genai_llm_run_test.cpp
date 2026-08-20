@@ -15,7 +15,7 @@
 // real LLiMa text model.
 // Model fixture:
 //   export LLIMA_MODELS_PATH=/media/nvme/llima/models
-//   export SIMA_TEST_LLIMA_TEXT_MODEL=Qwen2.5-0.5B-Instruct-GPTQ-a16w4
+//   export SIMA_TEST_LLIMA_TEXT_MODEL=Qwen2.5-0.5B-Instruct-Autoround-a16w4
 //   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 
@@ -102,6 +102,13 @@ int main() {
     request.system_prompt = std::string{"You are concise."};
     request.prompt = std::string{"What is the capital of Germany?"};
     request.max_new_tokens = 24;
+
+    auto thinking_request = request;
+    thinking_request.enable_thinking = true;
+    require_throws([&] { (void)model.run(thinking_request); },
+                   "VisionLanguageModel unsupported thinking run");
+    require_throws([&] { (void)model.stream(thinking_request); },
+                   "VisionLanguageModel unsupported thinking stream");
 
     const auto result = model.run(request);
     require(!result.text.empty(), "GenAI LLM e2e expected non-empty generated text");

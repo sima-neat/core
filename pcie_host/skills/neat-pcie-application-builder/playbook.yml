@@ -1,0 +1,9 @@
+id: neat-pcie-application-builder
+name: Neat PCIe Application Builder
+version: 0.1.0
+agents: [codex, claude]
+description: Build host-side C++ and Python applications with the installed Neat PCIe Model API.
+compatibility:
+  env_types: [host]
+  env_subtypes: [linux]
+  min_cli_version: 2.1.2

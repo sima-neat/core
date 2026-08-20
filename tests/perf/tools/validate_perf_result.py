@@ -28,6 +28,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print one-line summary per scenario.",
     )
+    parser.add_argument(
+        "--include-long",
+        action="store_true",
+        help="Expect long/fixture-dependent results in addition to the standard lane.",
+    )
     return parser.parse_args()
 
 
@@ -62,7 +67,7 @@ def main() -> int:
             return 1
         by_scenario[result.scenario_id] = result
 
-    expected = set(schema.REQUIRED_SCENARIO_IDS)
+    expected = set(schema.expected_result_scenario_ids(args.include_long))
     present = set(by_scenario.keys())
     missing = sorted(expected - present)
     extra = sorted(present - expected)

@@ -62,8 +62,16 @@ const githubOrgUrl = process.env.DOCS_GITHUB_ORG_URL || `https://github.com/${or
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
+const insightOpenApiSpec = path.resolve(
+  __dirname,
+  process.env.INSIGHT_OPENAPI_SPEC || "../../insight/neat_insight/openapi.json",
+);
+const insightApiOutput = path.resolve(
+  __dirname,
+  process.env.INSIGHT_API_OUTPUT || "../docs/tools/insight/api",
+);
 const siteRoot = url.replace(/\/+$/, "");
-const developerCenterShellBase = process.env.DOCS_DEVELOPER_CENTER_SHELL_BASE || "/";
+const developerCenterShellBase = process.env.DOCS_DEVELOPER_CENTER_SHELL_BASE || "";
 const analyticsConfig = {
   measurementId: process.env.DOCS_GA_MEASUREMENT_ID || "",
 };
@@ -94,6 +102,12 @@ const buildCommitUrl = buildCommit ? `${githubRepoUrl}/commit/${buildCommit}` : 
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
+  future: {
+    faster: {
+      rspackBundler: true,
+      swcJsLoader: true,
+    },
+  },
   title: "SiMa.ai Neat",
   tagline: "SiMa.ai Neat documentation",
   url,
@@ -135,6 +149,7 @@ const config = {
       tagName: "script",
       attributes: {},
       innerHTML: `window.__NEAT_DEVELOPER_CENTER_SHELL__ = ${JSON.stringify({
+        enabled: Boolean(developerCenterShellBase),
         base: developerCenterShellBase,
       })};`,
     },
@@ -152,6 +167,8 @@ const config = {
           path: canonicalDocsPath(process.env.DOCS_PATH || "../docs"),
           routeBasePath: "/",
           sidebarPath: require.resolve("./sidebars.js"),
+          sidebarItemsGenerator: require("./sidebarItemsGenerator.js"),
+          docItemComponent: "@theme/ApiItem",
           exclude: ["doxygen/**", "reference/env_var_rationalization.md"],
         },
         blog: false,
@@ -174,10 +191,63 @@ const config = {
             from: "/getting-started/dev-environment/run-on-the-devkit/",
             to: "/getting-started/dev-environment/devkit-sync/",
           },
+          {
+            from: "/tutorials/beginner/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/intermediate/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/advanced/",
+            to: "/tutorials/",
+          },
+          {
+            from: "/tutorials/measure-pcie-detection-throughput/",
+            to: "/tutorials/run-pcie-inference-async/",
+          },
+          {
+            from: "/tutorials/run-pcie-inference-modes/",
+            to: "/tutorials/run-your-first-model-over-pcie/",
+          },
+          {
+            from: "/tutorials/run-models-on-multiple-pcie-queues/",
+            to: "/tutorials/run-multiple-models/",
+          },
         ],
       },
     ],
+    [
+      "docusaurus-plugin-openapi-docs",
+      {
+        id: "openapi",
+        docsPluginId: "classic",
+        config: {
+          insight: {
+            specPath: insightOpenApiSpec,
+            outputDir: insightApiOutput,
+            template: path.resolve(
+              __dirname,
+              "openapi-templates/api.mdx.mustache",
+            ),
+            tagTemplate: path.resolve(
+              __dirname,
+              "openapi-templates/tag.mdx.mustache",
+            ),
+            downloadUrl:
+              "https://raw.githubusercontent.com/sima-neat/insight/main/neat_insight/openapi.json",
+            hideSendButton: true,
+            sidebarOptions: {
+              groupPathsBy: "tagGroup",
+              categoryLinkSource: "tag",
+            },
+          },
+        },
+      },
+    ],
   ],
+  themes: ["docusaurus-theme-openapi-docs"],
   themeConfig: {
     docs: {
       sidebar: {

@@ -1,9 +1,10 @@
-# 019 Run an LLM
+# 019 Run an LLM with the Direct API
 
 ## Metadata
 | Field | Value |
 | --- | --- |
-| Difficulty | Beginner |
+| Category | GenAI |
+| Difficulty | Intermediate |
 | Estimated Read Time | 10 minutes |
 | Model | Qwen3-4B-Instruct-2507-GPTQ-a16w4 |
 | Labels | genai, llm, chat, history, streaming |

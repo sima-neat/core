@@ -2,6 +2,7 @@
 
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
+#include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include <algorithm>
 #include <cctype>
@@ -11,6 +12,8 @@
 #include <initializer_list>
 #include <optional>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace simaai::neat::pipeline_internal::sima::stagesemantics {
 namespace {
@@ -401,17 +404,12 @@ int infer_yolox_interleaved_class_depth(const BoxDecodeStaticContract& contract)
   return classes.value_or(0);
 }
 
-bool decode_type_is_ssd(BoxDecodeType type) {
-  return type == BoxDecodeType::Ssd;
-}
-
-// SSD groups per-level localization heads (depth = 4 * priors-per-cell) with
-// class-confidence heads (depth = num_classes * priors-per-cell). Heads are grouped
-// by role: the first half are localization, the second half confidence, paired per
-// feature level by spatial size. The number of priors-per-cell may differ per level
-// (e.g. 4/6/6/6/4/4), but the class count is identical across levels. Inference is
-// purely geometric so it works for any SSD variant (input size / feature-map count).
+// Grouped by role: first half loc (4*A), second half conf (num_classes*A), paired by
+// feature level with one class count across levels.
 int infer_ssd_grouped_class_depth(const BoxDecodeStaticContract& contract) {
+  if (const auto* recipe = find_ssd_recipe_descriptor(contract.ssd_recipe_id)) {
+    return recipe->encoded_class_count;
+  }
   if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return 0;
   }
@@ -472,6 +470,11 @@ bool decode_type_is_pose_yolo(BoxDecodeType type) {
   return type == BoxDecodeType::YoloV8Pose || type == BoxDecodeType::YoloV26Pose;
 }
 
+bool decode_type_is_yolov26_family(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV26 || type == BoxDecodeType::YoloV26Pose ||
+         type == BoxDecodeType::YoloV26Seg;
+}
+
 bool decode_type_is_packed_yolo(BoxDecodeType type) {
   return type == BoxDecodeType::Yolo || type == BoxDecodeType::YoloV5 ||
          type == BoxDecodeType::YoloV5Seg || type == BoxDecodeType::YoloV7 ||
@@ -481,7 +484,7 @@ bool decode_type_is_packed_yolo(BoxDecodeType type) {
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
 
 int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
-  if (decode_type_is_ssd(contract.decode_type)) {
+  if (box_decode_type_is_ssd_family(contract.decode_type)) {
     // SSD class count is derived from the loc/conf head geometry, not head names:
     // confidence heads pack num_classes * priors-per-cell channels, so a name-based
     // guess would over-count by the prior multiplier.
@@ -550,16 +553,231 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
 
   const int inferred = infer_boxdecode_num_classes_from_contract(contract);
   if (user_num_classes > 0) {
-    if (inferred > 0 && user_num_classes != inferred) {
+    validate_ssd_num_classes(contract.decode_type, contract.ssd_recipe_id, user_num_classes,
+                             inferred, context);
+    const int resolved = resolve_boxdecode_num_classes_override(contract.decode_type, inferred,
+                                                                user_num_classes, context);
+    // Narrowing is the documented SSD contract, so it is not a mismatch there.
+    const bool ssd_narrowing = box_decode_type_is_ssd_family(contract.decode_type);
+    if (inferred > 0 && user_num_classes != inferred && !ssd_narrowing) {
       std::fprintf(stderr,
                    "[WARN] %s num_classes mismatch: user=%d inferred_from_mpk=%d decode_type=%s. "
                    "Using user value.\n",
                    context ? context : "BoxDecode", user_num_classes, inferred,
                    box_decode_type_token(contract.decode_type));
     }
-    return user_num_classes;
+    return resolved;
   }
   return inferred;
+}
+
+void finalize_superpoint_contract(BoxDecodeStaticContract* contract, const char* context) {
+  if (!contract || contract->decode_type != BoxDecodeType::SuperPoint) {
+    return;
+  }
+  auto& sp = contract->superpoint;
+  resolve_default_superpoint_profile(&sp);
+  canonicalize_schema0_superpoint_representations(&sp);
+  if (const auto metadata_error =
+          validate_superpoint_static_metadata(sp, /*require_resolved_profile=*/true)) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): " + *metadata_error);
+  }
+  if (sp.profile == SuperPointProfile::PaperBicubicV1) {
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") +
+        "(SuperPoint): paper-bicubic-v1 is reserved but not production-defined. "
+        "Select lightglue-v1, magic-leap-demo-v1, or a65-v1.");
+  }
+  if (sp.nms_radius < -1 || sp.border_margin < -1) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): radius and border must be -1 (profile default) "
+                                "or non-negative; zero is valid");
+  }
+  if (sp.nms_radius == -1) {
+    sp.nms_radius = 4;
+  }
+  if (sp.border_margin == -1) {
+    sp.border_margin = sp.profile == SuperPointProfile::A65V1 ? 0 : 4;
+  }
+  if (contract->tensors.size() != 2U) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): exactly two inputs are required");
+  }
+  auto logical_channels = [](const BoxDecodeTensorStaticContract& tensor) {
+    if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+        tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16) {
+      return tensor.input_shape.size() >= 3U ? tensor.input_shape.back() : 0;
+    }
+    return tensor.slice_shape.size() >= 3U
+               ? tensor.slice_shape.back()
+               : (tensor.input_shape.size() >= 3U ? tensor.input_shape.back() : 0);
+  };
+  int detector_index = -1;
+  int descriptor_index = -1;
+  auto name_matches = [](const BoxDecodeTensorStaticContract& tensor, const std::string& id) {
+    return !id.empty() && (tensor.logical_name == id || tensor.backend_name == id ||
+                           tensor.source_segment_name == id);
+  };
+  auto bind_authored_id = [&](const std::string& id, const char* role_name) {
+    if (id.empty()) {
+      return -1;
+    }
+    int match = -1;
+    for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+      if (!name_matches(contract->tensors[i], id)) {
+        continue;
+      }
+      if (match >= 0) {
+        throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                    "(SuperPoint): authored " + role_name + " tensor ID '" + id +
+                                    "' is ambiguous");
+      }
+      match = static_cast<int>(i);
+    }
+    if (match < 0) {
+      throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                  "(SuperPoint): authored " + role_name + " tensor ID '" + id +
+                                  "' does not match an input tensor");
+    }
+    return match;
+  };
+  detector_index = bind_authored_id(sp.detector_tensor_id, "detector");
+  descriptor_index = bind_authored_id(sp.descriptor_tensor_id, "descriptor");
+  int detector_role_count = 0;
+  int descriptor_role_count = 0;
+  for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+    if (contract->tensors[i].role == BoxDecodeTensorRole::DetectorLogits) {
+      if (!sp.detector_tensor_id.empty() && detector_index >= 0 &&
+          detector_index != static_cast<int>(i)) {
+        throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                    "(SuperPoint): detector tensor ID conflicts with the "
+                                    "explicit tensor role");
+      }
+      detector_index = static_cast<int>(i);
+      ++detector_role_count;
+    } else if (contract->tensors[i].role == BoxDecodeTensorRole::DescriptorGrid) {
+      if (!sp.descriptor_tensor_id.empty() && descriptor_index >= 0 &&
+          descriptor_index != static_cast<int>(i)) {
+        throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                    "(SuperPoint): descriptor tensor ID conflicts with the "
+                                    "explicit tensor role");
+      }
+      descriptor_index = static_cast<int>(i);
+      ++descriptor_role_count;
+    }
+  }
+  if (detector_role_count > 1 || descriptor_role_count > 1) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): tensor roles must contain exactly one detector "
+                                "and one descriptor, not duplicate explicit roles");
+  }
+  if (detector_index < 0) {
+    for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+      if (logical_channels(contract->tensors[i]) == 65) {
+        if (detector_index >= 0) {
+          throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                      "(SuperPoint): ambiguous 65-channel detector inputs");
+        }
+        detector_index = static_cast<int>(i);
+      }
+    }
+  }
+  if (detector_index >= 0 && descriptor_index < 0) {
+    descriptor_index = 1 - detector_index;
+  }
+  if (detector_index < 0 || descriptor_index < 0 || detector_index == descriptor_index) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): detector and descriptor roles are ambiguous");
+  }
+  auto& detector = contract->tensors[static_cast<std::size_t>(detector_index)];
+  auto& descriptor = contract->tensors[static_cast<std::size_t>(descriptor_index)];
+  detector.role = BoxDecodeTensorRole::DetectorLogits;
+  descriptor.role = BoxDecodeTensorRole::DescriptorGrid;
+  if (logical_channels(detector) != 65 || logical_channels(descriptor) <= 0) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): detector must have 65 channels and descriptor "
+                                "dimension must be positive");
+  }
+  auto logical_geometry = [](const BoxDecodeTensorStaticContract& tensor) {
+    // input_shape carries the logical tensor H/W exposed by the MLA output.
+    // slice_shape is the physical CBlock tile geometry and may legitimately
+    // differ between detector and descriptor even when their logical coarse
+    // grids are both [60,80].
+    const auto& shape = tensor.input_shape;
+    return shape.size() >= 3U
+               ? std::pair<int, int>{shape[shape.size() - 3U], shape[shape.size() - 2U]}
+               : std::pair<int, int>{0, 0};
+  };
+  const auto detector_geometry = logical_geometry(detector);
+  const auto descriptor_geometry = logical_geometry(descriptor);
+  if (detector_geometry.first <= 0 || detector_geometry.second <= 0 ||
+      detector_geometry != descriptor_geometry) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): detector and descriptor coarse H/W geometry "
+                                "must be positive and identical");
+  }
+  auto supported_input_dtype = [](std::string dtype) {
+    std::transform(dtype.begin(), dtype.end(), dtype.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return dtype == "INT8" || dtype == "BF16" || dtype == "BFLOAT16" || dtype == "FP32" ||
+           dtype == "FLOAT32";
+  };
+  if (!supported_input_dtype(detector.data_type) || !supported_input_dtype(descriptor.data_type)) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): detector and descriptor input dtypes must each "
+                                "be INT8, BF16, or FP32");
+  }
+  if (sp.descriptor_dim > 0 && sp.descriptor_dim != logical_channels(descriptor)) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): descriptor dimension conflicts with tensor "
+                                "geometry");
+  }
+  sp.descriptor_dim = logical_channels(descriptor);
+  if (sp.nms_radius < 0 || sp.border_margin < 0 || sp.cell_stride <= 0 ||
+      sp.descriptor_stride <= 0 || sp.descriptor_dim <= 0) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): invalid radius, border, stride, or descriptor "
+                                "dimension");
+  }
+  if (sp.descriptor_output_dtype != TensorDType::Int8 &&
+      sp.descriptor_output_dtype != TensorDType::BFloat16 &&
+      sp.descriptor_output_dtype != TensorDType::Float32) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): descriptor output dtype must be INT8, BF16, or "
+                                "FP32");
+  }
+  if (sp.output_format == SuperPointOutputFormat::LegacyA65InterleavedV0 &&
+      (sp.descriptor_dim != 256 || sp.descriptor_output_dtype != TensorDType::Int8)) {
+    throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                "(SuperPoint): legacy A65 V0 output requires 256-dimensional "
+                                "INT8 descriptors");
+  }
+}
+
+void finalize_superpoint_decode_controls(SuperPointProfile profile, double nms_iou_threshold,
+                                         double* detection_threshold, int* topk,
+                                         const char* context) {
+  const std::string prefix = std::string(context ? context : "BoxDecode") + "(SuperPoint): ";
+  if (!detection_threshold || !topk) {
+    throw std::invalid_argument(prefix + "missing decode controls");
+  }
+  if (nms_iou_threshold != 0.0) {
+    throw std::invalid_argument(prefix + "nms_iou_threshold is not applicable; use "
+                                         "BoxDecodeOptions.superpoint.nms_radius");
+  }
+  if (*detection_threshold == 0.0) {
+    *detection_threshold = superpoint_default_detection_threshold(profile);
+  }
+  if (!(*detection_threshold >= 0.0 && *detection_threshold <= 1.0)) {
+    throw std::invalid_argument(prefix + "detection_threshold must be in [0, 1]");
+  }
+  if (*topk == 0) {
+    *topk = kSuperPointDefaultTopK;
+  }
+  if (*topk < 0) {
+    throw std::invalid_argument(prefix + "top_k must be positive, or zero to use the default");
+  }
 }
 
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract) {
@@ -596,19 +814,41 @@ void apply_raw_yolov6_yolox_static_contract_overrides(BoxDecodeStaticContract* c
 }
 
 void apply_ssd_static_contract_overrides(BoxDecodeStaticContract* contract) {
-  if (!contract || contract->decode_type != BoxDecodeType::Ssd) {
+  if (!contract || !box_decode_type_is_ssd_family(contract->decode_type)) {
     return;
   }
-  // SSD confidence heads carry raw logits; the decoder applies softmax across the
-  // class dimension (background included) before thresholding. Grouped-by-role is the
-  // canonical SSD head layout (all localization heads, then all confidence heads).
-  contract->score_activation = BoxDecodeScoreActivation::Softmax;
+  // Any other layout token would pair loc/conf differently than validated here.
   if (contract->decode_type_option == BoxDecodeTypeOption::Auto) {
     contract->decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+  } else if (contract->decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+    throw std::invalid_argument(
+        std::string("SSD BoxDecode supports only the grouped-by-role head layout, but got '") +
+        box_decode_type_option_token(contract->decode_type_option) +
+        "'. Use BoxDecodeTypeOption::Auto or GroupedByRole.");
   }
+  const SsdRecipeDescriptor& recipe = resolve_ssd_recipe_descriptor(*contract);
+  if (contract->score_activation != BoxDecodeScoreActivation::Unknown &&
+      contract->score_activation != recipe.activation) {
+    throw std::invalid_argument(
+        "SSD BoxDecode: declared score activation conflicts with resolved profile '" +
+        std::string(ssd_recipe_id_token(recipe.id)) + "'");
+  }
+  contract->ssd_recipe_id = recipe.id;
+  contract->score_activation = recipe.activation;
+  const int inferred_classes = infer_ssd_grouped_class_depth(*contract);
   if (contract->num_classes <= 0) {
-    contract->num_classes = infer_ssd_grouped_class_depth(*contract);
+    contract->num_classes = inferred_classes;
+  } else {
+    validate_ssd_num_classes(contract->decode_type, contract->ssd_recipe_id, contract->num_classes,
+                             inferred_classes, "BoxDecode");
   }
+  contract->ssd_class_selection = {
+      inferred_classes,
+      contract->num_classes,
+      recipe.class_count_policy == SsdClassCountPolicy::AllowPrefixNarrowing
+          ? SsdClassSelectionKind::PrefixFromZero
+          : SsdClassSelectionKind::Exact,
+  };
 }
 
 std::string resolve_boxdecode_input_dtype(const plugin_contracts::BoxDecodeContractSubset& subset) {
@@ -621,7 +861,11 @@ std::string resolve_boxdecode_input_dtype(const plugin_contracts::BoxDecodeContr
       dtype = logical.dtype;
       continue;
     }
-    if (dtype != logical.dtype) {
+    if (dtype != logical.dtype && subset.decode_type == BoxDecodeType::SuperPoint) {
+      dtype = "MIXED";
+      continue;
+    }
+    if (dtype != logical.dtype && dtype != "MIXED") {
       throw std::invalid_argument(
           "boxdecode compiled contract requires a homogeneous logical input dtype");
     }
@@ -644,6 +888,66 @@ void populate_boxdecode_node_contract_common(
 }
 
 } // namespace
+
+SsdModelFrame ssd_expected_model_frame(const BoxDecodeStaticContract& contract) {
+  if (!box_decode_type_is_ssd_family(contract.decode_type)) {
+    return {};
+  }
+  const auto& descriptor = resolve_ssd_recipe_descriptor(contract);
+  return SsdModelFrame{descriptor.model_width, descriptor.model_height};
+}
+
+void validate_ssd_num_classes(BoxDecodeType decode_type, SsdRecipeId recipe_id, int requested,
+                              int encoded, const char* context) {
+  if (!box_decode_type_is_ssd_family(decode_type) || requested <= 0 || encoded <= 0) {
+    return;
+  }
+  const auto* descriptor = find_ssd_recipe_descriptor(recipe_id);
+  if (descriptor && descriptor->class_count_policy == SsdClassCountPolicy::Exact) {
+    if (requested == encoded) {
+      return;
+    }
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") + ": SSD profile '" +
+        ssd_recipe_id_token(recipe_id) + "' requires exactly " + std::to_string(encoded) +
+        " classes encoded by the confidence heads, but num_classes=" + std::to_string(requested) +
+        " was requested.");
+  }
+  if (requested <= encoded) {
+    return;
+  }
+  throw std::invalid_argument(
+      std::string(context ? context : "BoxDecode") +
+      ": SSD num_classes=" + std::to_string(requested) + " exceeds the " + std::to_string(encoded) +
+      " classes encoded in the confidence heads. Use a value <= " + std::to_string(encoded) +
+      ", or leave it unset to infer from the head geometry.");
+}
+
+int ssd_encoded_num_classes(BoxDecodeType decode_type, const SsdClassSelection& selection,
+                            int fallback_num_classes) {
+  if (box_decode_type_is_ssd_family(decode_type) && selection.encoded_count > 0) {
+    return selection.encoded_count;
+  }
+  return fallback_num_classes;
+}
+
+int resolve_boxdecode_num_classes_override(BoxDecodeType decode_type, int inferred_num_classes,
+                                           int requested_num_classes, const char* context) {
+  if (requested_num_classes <= 0) {
+    return inferred_num_classes;
+  }
+  if (decode_type_is_yolov26_family(decode_type) && inferred_num_classes > 0 &&
+      requested_num_classes != inferred_num_classes) {
+    throw std::invalid_argument(
+        std::string(context ? context : "BoxDecode") +
+        " num_classes mismatch: configured=" + std::to_string(requested_num_classes) +
+        " inferred_from_mpk=" + std::to_string(inferred_num_classes) +
+        " decode_type=" + box_decode_type_token(decode_type) +
+        ". Set num_classes=" + std::to_string(inferred_num_classes) +
+        " to match the model class-head depth, or leave it 0 to use MPK inference.");
+  }
+  return requested_num_classes;
+}
 
 void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract) {
   if (!contract) {
@@ -685,9 +989,9 @@ void resolve_grouped_yolo_dfl_score_domain(BoxDecodeStaticContract* contract) {
 }
 
 void apply_ssd_model_managed_contract_defaults(BoxDecodeStaticContract* contract) {
-  // Exported entry point for the model-managed subset extractor. Applies the same SSD defaults as
-  // the static-compile path (softmax score activation, grouped-by-role head layout, and geometric
-  // class-count inference from the loc/conf head channels). No-op for non-SSD decode types.
+  // Exported entry point for the model-managed subset extractor. Resolves the exact ordered
+  // prepared-head signature and applies the descriptor's concrete type, activation, layout, and
+  // class policy. No-op for non-SSD decode types.
   apply_ssd_static_contract_overrides(contract);
 }
 
@@ -703,7 +1007,13 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
                                      ? decode_type_option
                                      : contract.decode_type_option;
   if (model_route_flags.has_value()) {
-    if (!boxdecode_bypass_mla_unpack_enabled()) {
+    const bool direct_packed_superpoint =
+        finalized.decode_type == BoxDecodeType::SuperPoint &&
+        std::any_of(finalized.tensors.begin(), finalized.tensors.end(), [](const auto& tensor) {
+          return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock ||
+                 tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedHwcC16;
+        });
+    if (!boxdecode_bypass_mla_unpack_enabled() && !direct_packed_superpoint) {
       finalized.tess_needed = model_route_flags->tess_needed;
       finalized.quant_needed = model_route_flags->quant_needed;
     }
@@ -722,7 +1032,18 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   apply_yolov26_static_contract_overrides(&finalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&finalized);
   apply_ssd_static_contract_overrides(&finalized);
-  finalized.num_classes = resolve_boxdecode_num_classes(finalized, num_classes, "BoxDecode");
+  if (finalized.decode_type == BoxDecodeType::SuperPoint) {
+    finalize_superpoint_contract(&finalized, "BoxDecode");
+    finalize_superpoint_decode_controls(finalized.superpoint.profile, finalized.nms_iou_threshold,
+                                        &finalized.detection_threshold, &finalized.topk,
+                                        "BoxDecode");
+    finalized.num_classes = 0;
+  } else {
+    finalized.num_classes = resolve_boxdecode_num_classes(finalized, num_classes, "BoxDecode");
+    if (box_decode_type_is_ssd_family(finalized.decode_type)) {
+      finalized.ssd_class_selection.selected_count = finalized.num_classes;
+    }
+  }
   return finalized;
 }
 
@@ -732,8 +1053,27 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   plugin_contracts::validate_boxdecode_contract_subset(subset);
 
   CompiledBoxDecodeContract compiled;
-  compiled.payload.decode_type =
-      is_box_decode_type_specified(options.decode_type) ? options.decode_type : subset.decode_type;
+  if (subset.decode_type == BoxDecodeType::Ssd && subset.ssd_recipe_id == SsdRecipeId::Unknown) {
+    throw std::invalid_argument(
+        "boxdecode compiled SSD subset is unresolved; validate the complete ordered head "
+        "signature and carry a concrete SSD profile before subset lowering");
+  }
+  if (is_box_decode_type_specified(options.decode_type) &&
+      is_box_decode_type_specified(subset.decode_type) &&
+      !box_decode_type_matches_requested_contract(subset.decode_type, options.decode_type)) {
+    throw std::invalid_argument("boxdecode compiled contract decode_type conflict: subset='" +
+                                box_decode_type_token_string(subset.decode_type) +
+                                "', requested='" +
+                                box_decode_type_token_string(options.decode_type) + "'");
+  }
+  compiled.payload.decode_type = subset.decode_type;
+  compiled.payload.ssd_recipe_id = subset.ssd_recipe_id;
+  compiled.payload.ssd_class_selection = subset.ssd_class_selection;
+  if (!is_box_decode_type_specified(compiled.payload.decode_type) ||
+      (options.decode_type != BoxDecodeType::Ssd &&
+       is_box_decode_type_specified(options.decode_type))) {
+    compiled.payload.decode_type = options.decode_type;
+  }
   if (!is_box_decode_type_specified(compiled.payload.decode_type)) {
     throw std::invalid_argument("boxdecode compiled contract requires an explicit decode_type");
   }
@@ -743,15 +1083,27 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.score_activation = options.score_activation != BoxDecodeScoreActivation::Unknown
                                           ? options.score_activation
                                           : subset.score_activation;
-  // Model-managed SSD subsets may omit score/layout; apply the same SSD defaults as the
-  // static-contract path here (the single construction point for the MPK subset route). Idempotent.
-  if (compiled.payload.decode_type == BoxDecodeType::Ssd) {
-    // SSD always decodes with class-dimension softmax; force it even if a non-Unknown domain was
-    // forwarded, matching apply_ssd_static_contract_overrides on the static-contract path.
-    compiled.payload.score_activation = BoxDecodeScoreActivation::Softmax;
+  if (box_decode_type_is_ssd_family(compiled.payload.decode_type)) {
+    const auto* descriptor = find_ssd_recipe_descriptor(compiled.payload.ssd_recipe_id);
+    if (!descriptor) {
+      throw std::invalid_argument(
+          "boxdecode compiled SSD contract is unresolved; the exact ordered head signature must "
+          "resolve BoxDecodeType::Ssd before subset lowering");
+    }
+    if (compiled.payload.score_activation != BoxDecodeScoreActivation::Unknown &&
+        compiled.payload.score_activation != descriptor->activation) {
+      throw std::invalid_argument(
+          "boxdecode compiled SSD contract activation conflicts with resolved profile '" +
+          std::string(ssd_recipe_id_token(descriptor->id)) + "'");
+    }
+    compiled.payload.score_activation = descriptor->activation;
     if (!compiled.payload.decode_type_option.has_value() ||
         *compiled.payload.decode_type_option == BoxDecodeTypeOption::Auto) {
       compiled.payload.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+    } else if (*compiled.payload.decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+      throw std::invalid_argument(
+          std::string("SSD BoxDecode supports only the grouped-by-role head layout, but got '") +
+          box_decode_type_option_token(*compiled.payload.decode_type_option) + "'.");
     }
   }
   compiled.payload.input_dtype = resolve_boxdecode_input_dtype(subset);
@@ -763,9 +1115,111 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.detection_threshold = options.detection_threshold;
   compiled.payload.nms_iou_threshold = options.nms_iou_threshold;
   compiled.payload.topk = options.topk;
+  validate_ssd_num_classes(compiled.payload.decode_type, compiled.payload.ssd_recipe_id,
+                           options.num_classes,
+                           box_decode_type_is_ssd_family(compiled.payload.decode_type)
+                               ? subset.ssd_class_selection.encoded_count
+                               : subset.num_classes,
+                           "BoxDecode");
   compiled.payload.num_classes = options.num_classes > 0 ? options.num_classes : subset.num_classes;
+  if (box_decode_type_is_ssd_family(compiled.payload.decode_type)) {
+    compiled.payload.ssd_class_selection.selected_count = compiled.payload.num_classes;
+  }
   compiled.payload.slice_shapes = subset.slice_shapes;
   compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
+  compiled.payload.superpoint = subset.superpoint;
+  if (compiled.payload.decode_type == BoxDecodeType::SuperPoint) {
+    auto& resolved = compiled.payload.superpoint;
+    if (options.superpoint.has_value()) {
+      const auto& requested = *options.superpoint;
+      const bool profile_changed = apply_superpoint_profile_override(&resolved, requested.profile);
+      SuperPointOptions spatial_overrides;
+      spatial_overrides.nms_radius = requested.nms_radius;
+      spatial_overrides.border_margin = requested.border_margin;
+      apply_superpoint_spatial_overrides(&resolved, spatial_overrides);
+      resolved.descriptor_output_dtype = requested.descriptor_output_dtype;
+      resolved.output_format = requested.output_format;
+      if (requested.cell_stride > 0) {
+        resolved.cell_stride = requested.cell_stride;
+      }
+      if (requested.descriptor_stride > 0) {
+        resolved.descriptor_stride = requested.descriptor_stride;
+      }
+      if (requested.descriptor_dim > 0) {
+        resolved.descriptor_dim = requested.descriptor_dim;
+      }
+      if (!requested.profile_fingerprint.empty()) {
+        resolved.profile_fingerprint = requested.profile_fingerprint;
+        resolved.fingerprint_profile = requested.fingerprint_profile;
+      }
+      if (!requested.detector_tensor_id.empty()) {
+        resolved.detector_tensor_id = requested.detector_tensor_id;
+      }
+      if (!requested.descriptor_tensor_id.empty()) {
+        resolved.descriptor_tensor_id = requested.descriptor_tensor_id;
+      }
+      if (!requested.detector_representation.empty()) {
+        resolved.detector_representation = requested.detector_representation;
+      }
+      if (!requested.descriptor_representation.empty()) {
+        resolved.descriptor_representation = requested.descriptor_representation;
+      }
+      if (requested.schema_version != 0) {
+        resolved.schema_version = requested.schema_version;
+      }
+      compiled.payload.detection_threshold = rebase_superpoint_detection_threshold(
+          profile_changed, resolved.profile, options.detection_threshold,
+          compiled.payload.detection_threshold);
+    }
+    resolve_default_superpoint_profile(&resolved);
+    canonicalize_schema0_superpoint_representations(&resolved);
+    if (const auto metadata_error =
+            validate_superpoint_static_metadata(resolved, /*require_resolved_profile=*/true)) {
+      throw std::invalid_argument("boxdecode compiled SuperPoint contract: " + *metadata_error);
+    }
+    if (resolved.profile == SuperPointProfile::PaperBicubicV1) {
+      throw std::invalid_argument(
+          "boxdecode compiled SuperPoint contract: paper-bicubic-v1 is reserved but not "
+          "production-defined");
+    }
+    if (resolved.nms_radius < -1 || resolved.border_margin < -1) {
+      throw std::invalid_argument(
+          "boxdecode compiled SuperPoint contract radius and border must be -1 (profile "
+          "default) or non-negative; zero is valid");
+    }
+    if (resolved.nms_radius == -1) {
+      resolved.nms_radius = 4;
+    }
+    if (resolved.border_margin == -1) {
+      resolved.border_margin = resolved.profile == SuperPointProfile::A65V1 ? 0 : 4;
+    }
+    finalize_superpoint_decode_controls(resolved.profile, compiled.payload.nms_iou_threshold,
+                                        &compiled.payload.detection_threshold,
+                                        &compiled.payload.topk, "boxdecode compiled contract");
+    if (subset.logical_inputs.size() != 2U || subset.tensor_roles.size() != 2U ||
+        std::count(subset.tensor_roles.begin(), subset.tensor_roles.end(),
+                   BoxDecodeTensorRole::DetectorLogits) != 1 ||
+        std::count(subset.tensor_roles.begin(), subset.tensor_roles.end(),
+                   BoxDecodeTensorRole::DescriptorGrid) != 1) {
+      throw std::invalid_argument(
+          "boxdecode compiled SuperPoint contract requires exactly one detector-logits and one "
+          "descriptor-grid input role");
+    }
+    if (resolved.cell_stride <= 0 || resolved.descriptor_stride <= 0 ||
+        resolved.descriptor_dim <= 0) {
+      throw std::invalid_argument(
+          "boxdecode compiled SuperPoint contract has unresolved radius, border, stride, or "
+          "descriptor dimension");
+    }
+    if (resolved.output_format == SuperPointOutputFormat::LegacyA65InterleavedV0 &&
+        (resolved.descriptor_dim != 256 || resolved.descriptor_output_dtype != TensorDType::Int8)) {
+      throw std::invalid_argument(
+          "boxdecode compiled SuperPoint contract legacy A65 V0 output requires "
+          "256-dimensional INT8 descriptors");
+    }
+    compiled.payload.num_classes = 0;
+  }
+  compiled.payload.tensor_roles = subset.tensor_roles;
   compiled.runtime_contract.plugin_kind = "boxdecode";
   compiled.runtime_contract.logical_inputs = subset.logical_inputs;
   compiled.runtime_contract.input_bindings = subset.input_bindings;
@@ -780,7 +1234,10 @@ build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   apply_yolov26_static_contract_overrides(&normalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&normalized);
   apply_ssd_static_contract_overrides(&normalized);
-  if (normalized.num_classes <= 0) {
+  if (normalized.decode_type == BoxDecodeType::SuperPoint) {
+    finalize_superpoint_contract(&normalized, "BoxDecode");
+    normalized.num_classes = 0;
+  } else if (normalized.num_classes <= 0) {
     normalized.num_classes =
         resolve_boxdecode_num_classes(normalized, /*user_num_classes=*/0, "BoxDecode");
   }
@@ -796,6 +1253,7 @@ build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   options.nms_iou_threshold = normalized.nms_iou_threshold;
   options.topk = normalized.topk;
   options.num_classes = normalized.num_classes;
+  options.superpoint = normalized.superpoint;
   options.model_owned_flags = normalized.model_owned_flags;
   options.quant_contract_required = normalized.quant_contract_required;
   options.required_preprocess_meta_fields = normalized.required_preprocess_meta_fields;

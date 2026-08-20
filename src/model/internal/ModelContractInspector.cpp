@@ -683,10 +683,8 @@ void append_archive_summary(std::ostringstream& oss, const ModelArchiveManifest&
   append_section_header(oss, "Archive Summary");
   append_kv(oss, 0, "archive_path", manifest.archive_path);
   append_kv(oss, 0, "package_name", manifest.package_name);
-  append_kv(oss, 0, "version", manifest.version);
   append_kv_num(oss, 0, "archive_size_bytes", manifest.archive_size_bytes);
   append_kv_num(oss, 0, "entry_count", manifest.entries.size());
-  append_kv(oss, 0, "has_pipeline_sequence", bool_name(manifest.has_pipeline_sequence));
   append_kv(oss, 0, "has_model_binary", bool_name(manifest.has_model_binary));
   if (!mpk_json_path.empty()) {
     append_kv(oss, 0, "mpk_json_path", mpk_json_path);
@@ -1219,7 +1217,6 @@ inspect_model_contract_archive(const std::string& tar_gz,
   try {
     ModelArchiveLoaderOptions loader_options;
     loader_options.reject_unsupported_file_types = false;
-    loader_options.require_pipeline_sequence = false;
     manifest = ModelArchiveLoader::inspect(tar_gz, loader_options);
     result.archive_ok = true;
   } catch (const std::exception& e) {

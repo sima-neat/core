@@ -11,8 +11,10 @@
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
+#include "pipeline/internal/sima/stagesemantics/SsdDecodeContract.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -48,6 +50,7 @@ struct BoxDecodeOptionsInternal {
   int top_k = 0;
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
+  SuperPointOptions superpoint;
   std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics;
   std::optional<pipeline_internal::sima::ModelManagedRouteFlags> model_route_flags;
   std::optional<pipeline_internal::sima::BoxDecodeStaticContract> model_static_contract;
@@ -278,6 +281,7 @@ json boxdecode_static_contract_to_json(
         {"source_physical_index", tensor.source_physical_index},
         {"source_byte_offset", tensor.source_byte_offset},
         {"source_size_bytes", tensor.source_size_bytes},
+        {"role", static_cast<int>(tensor.role)},
     });
   }
   json physical_inputs = json::array();
@@ -304,6 +308,25 @@ json boxdecode_static_contract_to_json(
       {"physical_inputs", std::move(physical_inputs)},
       {"dq_scale", contract.dq_scale},
       {"dq_zp", contract.dq_zp},
+      {"superpoint",
+       {{"schema_version", contract.superpoint.schema_version},
+        {"profile", superpoint_profile_token(contract.superpoint.profile)},
+        {"profile_source", contract.superpoint.profile_from_mpk ? "mpk" : "api-or-model"},
+        {"profile_fingerprint", contract.superpoint.profile_fingerprint},
+        {"fingerprint_profile", superpoint_profile_token(contract.superpoint.fingerprint_profile)},
+        {"output_format", superpoint_output_format_token(contract.superpoint.output_format)},
+        {"descriptor_output_dtype", static_cast<int>(contract.superpoint.descriptor_output_dtype)},
+        {"nms_radius", contract.superpoint.nms_radius},
+        {"border_margin", contract.superpoint.border_margin},
+        {"cell_stride", contract.superpoint.cell_stride},
+        {"descriptor_stride", contract.superpoint.descriptor_stride},
+        {"descriptor_dim", contract.superpoint.descriptor_dim},
+        {"detector_tensor_id", contract.superpoint.detector_tensor_id},
+        {"descriptor_tensor_id", contract.superpoint.descriptor_tensor_id},
+        {"detector_representation", contract.superpoint.detector_representation},
+        {"descriptor_representation", contract.superpoint.descriptor_representation},
+        {"representation_source",
+         contract.superpoint.representations_defaulted ? "schema-0-canonical-default" : "mpk"}}},
   };
 }
 
@@ -338,6 +361,16 @@ void maybe_dump_boxdecode_core_dossier(
       {"nms_iou_threshold", compiled.payload.nms_iou_threshold},
       {"topk", compiled.payload.topk},
       {"slice_shapes", shape_descs_to_json(compiled.payload.slice_shapes)},
+      {"superpoint_profile", superpoint_profile_token(compiled.payload.superpoint.profile)},
+      {"superpoint_output_format",
+       superpoint_output_format_token(compiled.payload.superpoint.output_format)},
+      {"superpoint_profile_fingerprint", compiled.payload.superpoint.profile_fingerprint},
+      {"superpoint_detector_representation", compiled.payload.superpoint.detector_representation},
+      {"superpoint_descriptor_representation",
+       compiled.payload.superpoint.descriptor_representation},
+      {"superpoint_representation_source", compiled.payload.superpoint.representations_defaulted
+                                               ? "schema-0-canonical-default"
+                                               : "mpk"},
   };
   json root{
       {"element_name", element_name},
@@ -418,18 +451,22 @@ void validate_dimension_override_pair(int width, int height, const char* label,
 std::vector<std::string>
 filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, int original_width,
                                        int original_height, int model_width, int model_height,
-                                       bool has_resize_mode_override = false) {
+                                       bool has_resize_mode_override = false,
+                                       bool require_independent_preprocess_provenance = false) {
   std::vector<std::string> filtered;
   filtered.reserve(fields.size());
   const bool has_original_override = has_explicit_dimension_pair(original_width, original_height);
   const bool has_model_override = has_explicit_dimension_pair(model_width, model_height);
-  // resize_mode_override is the customer's explicit "I did my own preproc"
-  // signal — by definition there is no upstream Preproc stage to emit
-  // per-buffer GstSimaaiPreprocessMeta, so the *entire* preproc_* family of
-  // required meta fields (color_in/out, axis_perm, normalize, quantize,
-  // tessellate, affine_*) must be dropped together. Geometry fields are
-  // still gated on the corresponding dimension overrides above so callers
-  // can opt into per-field relaxation without flipping the whole switch.
+  // Strict SSD recipes treat a resize-mode override as evidence only for the
+  // declared resize policy. If both endpoint frames are also explicit, Stretch
+  // determines the affine transform as well. It does not prove color conversion,
+  // axis permutation, normalization, quantization, or tessellation, so those
+  // facts must continue to come from upstream metadata. Other decoder families
+  // retain the established external-preprocessing contract: the complete
+  // geometry plus resize override discharges the preproc metadata bucket because
+  // there is deliberately no upstream Preproc element to emit it.
+  const bool has_complete_geometry_proof =
+      has_resize_mode_override && has_original_override && has_model_override;
   for (const auto& field : fields) {
     if (field == "preproc_original_width" && has_original_override) {
       continue;
@@ -444,21 +481,22 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
          field == "preproc_pad_top" || field == "preproc_pad_bottom")) {
       continue;
     }
-    if (has_resize_mode_override) {
-      // resize_mode lives in this bucket plus all the non-geometry semantic
-      // fields below; they all originate from the same upstream Preproc
-      // emitter, which is absent in the manual-preproc composition.
-      if (field == "preproc_resize_mode" || field == "preproc_color_in" ||
-          field == "preproc_color_out" || field == "preproc_axis_perm" ||
-          field == "preproc_normalize" || field == "preproc_quantize" ||
-          field == "preproc_tessellate" || field == "preproc_affine_m00" ||
-          field == "preproc_affine_m01" || field == "preproc_affine_m02" ||
-          field == "preproc_affine_m10" || field == "preproc_affine_m11" ||
-          field == "preproc_affine_m12" || field == "preproc_affine_scale_x" ||
-          field == "preproc_affine_scale_y" || field == "preproc_affine_offset_x" ||
-          field == "preproc_affine_offset_y") {
-        continue;
-      }
+    if (has_resize_mode_override && field == "preproc_resize_mode") {
+      continue;
+    }
+    if (has_complete_geometry_proof && !require_independent_preprocess_provenance &&
+        (field == "preproc_color_in" || field == "preproc_color_out" ||
+         field == "preproc_axis_perm" || field == "preproc_normalize" ||
+         field == "preproc_quantize" || field == "preproc_tessellate")) {
+      continue;
+    }
+    if (has_complete_geometry_proof &&
+        (field == "preproc_affine_m00" || field == "preproc_affine_m01" ||
+         field == "preproc_affine_m02" || field == "preproc_affine_m10" ||
+         field == "preproc_affine_m11" || field == "preproc_affine_m12" ||
+         field == "preproc_affine_scale_x" || field == "preproc_affine_scale_y" ||
+         field == "preproc_affine_offset_x" || field == "preproc_affine_offset_y")) {
+      continue;
     }
     filtered.push_back(field);
   }
@@ -496,17 +534,69 @@ void apply_raw_yolov6_yolox_compiled_payload_overrides(CompiledBoxDecodeContract
   }
 }
 
-void apply_ssd_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
-  if (!compiled || compiled->payload.decode_type != BoxDecodeType::Ssd) {
+void reject_wrong_ssd_model_frame(BoxDecodeType decode_type, int expected_width,
+                                  int expected_height, int width, int height, const char* source,
+                                  const char* where) {
+  if (!box_decode_type_is_ssd_family(decode_type) || width <= 0 || height <= 0 ||
+      expected_width <= 0 || expected_height <= 0) {
     return;
   }
-  // SSD confidence heads are raw class logits decoded with a softmax over the class
-  // dimension. Keep the grouped-by-role head layout (all loc heads, then all conf
-  // heads) robust even when a model-managed route was auto-extracted.
-  compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Softmax;
-  if (!compiled->payload.decode_type_option.has_value() ||
-      *compiled->payload.decode_type_option == BoxDecodeTypeOption::Auto) {
-    compiled->payload.decode_type_option = BoxDecodeTypeOption::GroupedByRole;
+  if (width != expected_width || height != expected_height) {
+    throw std::invalid_argument(
+        std::string(where) + ": SSD box decode profile '" + box_decode_type_token(decode_type) +
+        "' requires a " + std::to_string(expected_width) + "x" + std::to_string(expected_height) +
+        " model frame (the prior table assumes it), but " + source + " resolved to " +
+        std::to_string(width) + "x" + std::to_string(height) + ".");
+  }
+}
+
+const char* resize_mode_token_local(ResizeMode mode) {
+  switch (mode) {
+  case ResizeMode::Stretch:
+    return "stretch";
+  case ResizeMode::Letterbox:
+    return "letterbox";
+  case ResizeMode::Crop:
+    return "crop";
+  }
+  return "unknown";
+}
+
+void reject_conflicting_resize_mode_override(const std::optional<ResizeMode>& override_mode,
+                                             const std::optional<ResizeMode>& active_plan_mode,
+                                             const char* where) {
+  if (!override_mode.has_value() || !active_plan_mode.has_value() ||
+      *override_mode == *active_plan_mode) {
+    return;
+  }
+  throw std::invalid_argument(
+      std::string(where) + ": resize_mode_override='" + resize_mode_token_local(*override_mode) +
+      "' conflicts with the active preprocess resize mode '" +
+      resize_mode_token_local(*active_plan_mode) +
+      "'. An override may provide provenance when preprocessing is external, but it cannot "
+      "relabel a resize that the model route actually performs.");
+}
+
+// The decoder inverts a stretch remap, so reject other resize modes at build time. A caller must
+// first reject a disagreement when both the override and an active model plan are present.
+void reject_non_stretch_ssd_resize(BoxDecodeType decode_type,
+                                   const std::optional<ResizeMode>& override_mode,
+                                   const std::optional<ResizeMode>& plan_mode, const char* where) {
+  if (!box_decode_type_is_ssd_family(decode_type)) {
+    return;
+  }
+  const std::optional<ResizeMode> effective = override_mode.has_value() ? override_mode : plan_mode;
+  if (effective.has_value() && *effective != ResizeMode::Stretch) {
+    throw std::invalid_argument(
+        std::string(where) +
+        ": SSD box decode requires a stretch (anisotropic) preprocessing resize. "
+        "All supported prepared profiles (SSD300-v1, SSD-Mobile-300-v1, "
+        "SSD-Mobile-320-v1, and SSD-Lite-Mobile-320-v1) are configured with stretch and the "
+        "on-device decoder inverts a "
+        "stretch remap, so a '" +
+        resize_mode_token_local(*effective) +
+        "' resize would misplace boxes. Set ResizeMode::Stretch (or remove the "
+        "letterbox/crop override).");
   }
 }
 
@@ -578,6 +668,94 @@ options_from_customer(BoxDecodeType decode_type, double detection_threshold,
   return opt;
 }
 
+void apply_named_superpoint_options(BoxDecodeOptionsInternal* opt, const BoxDecodeOptions& options,
+                                    bool /*model_or_mpk_may_resolve_auto*/) {
+  if (!opt) {
+    throw std::invalid_argument("SimaBoxDecode: missing options");
+  }
+  if (options.decode_type != BoxDecodeType::SuperPoint) {
+    if (options.superpoint.profile != SuperPointProfile::Auto ||
+        options.superpoint.nms_radius >= 0 || options.superpoint.border_margin >= 0 ||
+        options.superpoint.output_format != SuperPointOutputFormat::FeaturePointsV1 ||
+        options.superpoint.descriptor_output_dtype != TensorDType::Float32) {
+      throw std::invalid_argument(
+          "SimaBoxDecode: SuperPoint-specific options require BoxDecodeType::SuperPoint");
+    }
+    return;
+  }
+  if (options.superpoint.nms_radius < -1 || options.superpoint.border_margin < -1) {
+    throw std::invalid_argument(
+        "SimaBoxDecode(SuperPoint): nms_radius and border_margin must be -1 (profile default) "
+        "or non-negative; zero is valid");
+  }
+  pipeline_internal::sima::SuperPointStaticContract requested;
+  requested.profile = options.superpoint.profile;
+  requested.output_format = options.superpoint.output_format;
+  requested.descriptor_output_dtype = options.superpoint.descriptor_output_dtype;
+  if (const auto metadata_error = pipeline_internal::sima::validate_superpoint_static_metadata(
+          requested, /*require_resolved_profile=*/false)) {
+    throw std::invalid_argument("SimaBoxDecode(SuperPoint): " + *metadata_error);
+  }
+  if (options.superpoint.profile == SuperPointProfile::PaperBicubicV1) {
+    throw std::invalid_argument(
+        "SimaBoxDecode(SuperPoint): paper-bicubic-v1 is reserved but not production-defined; "
+        "select lightglue-v1, magic-leap-demo-v1, or a65-v1");
+  }
+  if (options.nms_iou_threshold != 0.0) {
+    throw std::invalid_argument(
+        "SimaBoxDecode(SuperPoint): nms_iou_threshold is not applicable; use "
+        "options.superpoint.nms_radius");
+  }
+
+  pipeline_internal::sima::SuperPointStaticContract resolved;
+  if (opt->compiled_contract) {
+    resolved = opt->compiled_contract->payload.superpoint;
+  } else if (opt->model_static_contract) {
+    resolved = opt->model_static_contract->superpoint;
+  }
+  const bool profile_changed = pipeline_internal::sima::apply_superpoint_profile_override(
+      &resolved, options.superpoint.profile);
+  pipeline_internal::sima::apply_superpoint_spatial_overrides(&resolved, options.superpoint);
+  resolved.descriptor_output_dtype = options.superpoint.descriptor_output_dtype;
+  resolved.output_format = options.superpoint.output_format;
+  pipeline_internal::sima::resolve_default_superpoint_profile(&resolved);
+  if (const auto metadata_error = pipeline_internal::sima::validate_superpoint_static_metadata(
+          resolved, /*require_resolved_profile=*/true)) {
+    throw std::invalid_argument("SimaBoxDecode(SuperPoint): " + *metadata_error);
+  }
+  opt->superpoint.profile = resolved.profile;
+  opt->superpoint.nms_radius = resolved.nms_radius;
+  opt->superpoint.border_margin = resolved.border_margin;
+  opt->superpoint.descriptor_output_dtype = resolved.descriptor_output_dtype;
+  opt->superpoint.output_format = resolved.output_format;
+  opt->detection_threshold = pipeline_internal::sima::rebase_superpoint_detection_threshold(
+      profile_changed, resolved.profile, options.detection_threshold, opt->detection_threshold);
+  if (opt->model_static_contract) {
+    opt->model_static_contract->superpoint = resolved;
+  }
+  if (opt->compiled_contract) {
+    auto compiled = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
+    compiled->payload.superpoint = resolved;
+    compiled->payload.detection_threshold =
+        pipeline_internal::sima::rebase_superpoint_detection_threshold(
+            profile_changed, resolved.profile, options.detection_threshold,
+            compiled->payload.detection_threshold);
+    opt->compiled_contract = std::move(compiled);
+  }
+}
+
+simaai::neat::Model model_with_named_superpoint_options(const simaai::neat::Model& model,
+                                                        const BoxDecodeOptions& options) {
+  if (options.decode_type != BoxDecodeType::SuperPoint) {
+    return simaai::neat::internal::ModelAccess::clone_with_options(
+        model, simaai::neat::internal::ModelAccess::options(model));
+  }
+  auto model_options = simaai::neat::internal::ModelAccess::options(model);
+  model_options.superpoint = pipeline_internal::sima::merge_superpoint_node_options(
+      model_options.superpoint, options.superpoint);
+  return simaai::neat::internal::ModelAccess::clone_with_options(model, model_options);
+}
+
 static BoxDecodeOptionsInternal options_from_contract(
     const pipeline_internal::sima::BoxDecodeStaticContract& static_contract,
     BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold, int top_k,
@@ -626,13 +804,34 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
                              int original_width, int original_height, int model_width,
                              int model_height, BoxDecodeTypeOption decode_type_option,
                              std::optional<BoxDecodeSourceStorage> source_storage,
-                             std::optional<bool> detess, std::optional<bool> dequant) {
+                             std::optional<bool> detess, std::optional<bool> dequant)
+    : SimaBoxDecode(decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,
+                    original_width, original_height, model_width, model_height, decode_type_option,
+                    source_storage, detess, dequant, std::nullopt) {}
+
+SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold,
+                             double nms_iou_threshold, int top_k, const std::string& element_name,
+                             int original_width, int original_height, int model_width,
+                             int model_height, BoxDecodeTypeOption decode_type_option,
+                             std::optional<BoxDecodeSourceStorage> source_storage,
+                             std::optional<bool> detess, std::optional<bool> dequant,
+                             std::optional<ResizeMode> resize_mode_override) {
   validate_dimension_override_pair(original_width, original_height, "original dimensions",
                                    "SimaBoxDecode");
   validate_dimension_override_pair(model_width, model_height, "model dimensions", "SimaBoxDecode");
   auto opt = std::make_unique<BoxDecodeOptionsInternal>(options_from_customer(
       decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
       original_height, model_width, model_height, decode_type_option));
+  reject_non_stretch_ssd_resize(opt->decode_type, resize_mode_override, std::nullopt,
+                                "SimaBoxDecode");
+  opt->resize_mode_override = resize_mode_override;
+  if (resize_mode_override.has_value()) {
+    opt->required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
+        default_preprocess_meta_required_fields(), opt->original_width, opt->original_height,
+        opt->model_width, opt->model_height, /*has_resize_mode_override=*/true,
+        /*require_independent_preprocess_provenance=*/
+        box_decode_type_is_ssd_family(opt->decode_type));
+  }
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt->decode_type)) {
     throw std::invalid_argument(
         "SimaBoxDecode: decode_type is required and cannot be BoxDecodeType::Unspecified.");
@@ -643,6 +842,17 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
   opt->override_tess_needed = detess;
   opt->override_quant_needed = dequant;
   opt_ = std::move(opt);
+}
+
+SimaBoxDecode::SimaBoxDecode(const BoxDecodeOptions& options, const std::string& element_name,
+                             int original_width, int original_height, int model_width,
+                             int model_height, BoxDecodeTypeOption decode_type_option,
+                             std::optional<BoxDecodeSourceStorage> source_storage,
+                             std::optional<bool> detess, std::optional<bool> dequant)
+    : SimaBoxDecode(options.decode_type, options.detection_threshold, options.nms_iou_threshold,
+                    options.top_k, element_name, original_width, original_height, model_width,
+                    model_height, decode_type_option, source_storage, detess, dequant) {
+  apply_named_superpoint_options(opt_.get(), options, /*model_or_mpk_may_resolve_auto=*/false);
 }
 
 SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
@@ -687,9 +897,16 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   if (decode_type != BoxDecodeType::Unspecified) {
     validate_requested_boxdecode_contract_type_local(compiled_contract.payload.decode_type,
                                                      decode_type, "SimaBoxDecode(Model)");
-    compiled_contract.payload.decode_type = decode_type;
+    if (decode_type != BoxDecodeType::Ssd) {
+      compiled_contract.payload.decode_type = decode_type;
+    }
   }
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
+    if (box_decode_type_is_ssd_family(compiled_contract.payload.decode_type) &&
+        decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+      throw std::invalid_argument("SimaBoxDecode(Model): resolved SSD profiles support only "
+                                  "BoxDecodeTypeOption::Auto or GroupedByRole");
+    }
     compiled_contract.payload.decode_type_option = decode_type_option;
     if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleProbability ||
         decode_type_option == BoxDecodeTypeOption::InterleavedByHeadProbability) {
@@ -703,7 +920,6 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
   apply_raw_yolov6_yolox_compiled_payload_overrides(&compiled_contract);
-  apply_ssd_compiled_payload_overrides(&compiled_contract);
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
   }
@@ -722,10 +938,73 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   opt->decode_type_option = decode_type_option;
   opt->element_name = element_name;
   const auto resolved = model.resolved_preprocess_plan();
-  opt->resize_mode_override = resize_mode_override;
+  std::optional<ResizeMode> effective_resize_mode = resize_mode_override;
+  // Enforce the SSD resize and model-frame invariants before finalizing the contract.
+  {
+    const bool resize_runs = resolved.enabled && resolved.effective.resize.enable != AutoFlag::Off;
+    // The plan mode describes only a resize that actually runs. An override may supply missing
+    // provenance, but it cannot contradict a transform performed by this route.
+    std::optional<ResizeMode> plan_resize;
+    if (resize_runs) {
+      plan_resize = resolved.effective.resize.mode;
+    }
+    reject_conflicting_resize_mode_override(resize_mode_override, plan_resize,
+                                            "SimaBoxDecode(Model)");
+    reject_non_stretch_ssd_resize(compiled_contract.payload.decode_type, resize_mode_override,
+                                  plan_resize, "SimaBoxDecode(Model)");
+    // Prepared-runtime stages are configured before their first input buffer exists, so the
+    // validated model plan must travel in the typed static payload. Per-buffer metadata still
+    // wins at runtime and is checked against this value by neatobjectdecode.
+    if (!effective_resize_mode.has_value() &&
+        box_decode_type_is_ssd_family(compiled_contract.payload.decode_type) &&
+        plan_resize.has_value()) {
+      effective_resize_mode = plan_resize;
+    }
+    // Head geometry alone does not pin the model frame; the recipe does. Resize dims may be
+    // inferred from the MLA ingress, so fall back to it when the plan omits them.
+    const auto* ssd_recipe = pipeline_internal::sima::stagesemantics::find_ssd_recipe_descriptor(
+        compiled_contract.payload.ssd_recipe_id);
+    if (box_decode_type_is_ssd_family(compiled_contract.payload.decode_type) && !ssd_recipe) {
+      throw std::invalid_argument(
+          "SimaBoxDecode(Model): SSD compatibility selector reached resize validation without "
+          "resolving an exact supported ordered head signature");
+    }
+    const int recipe_width = ssd_recipe ? ssd_recipe->model_width : 0;
+    const int recipe_height = ssd_recipe ? ssd_recipe->model_height : 0;
+    if (ssd_recipe) {
+      const int resize_w =
+          resize_runs ? (resolved.effective.resize.width > 0 ? resolved.effective.resize.width
+                                                             : resolved.mla_contract.width)
+                      : 0;
+      const int resize_h =
+          resize_runs ? (resolved.effective.resize.height > 0 ? resolved.effective.resize.height
+                                                              : resolved.mla_contract.height)
+                      : 0;
+      const std::array<pipeline_internal::sima::stagesemantics::SsdModelFrameObservation, 3>
+          frame_contracts = {
+              {{resize_w, resize_h, "the preprocess resize plan"},
+               {resolved.mla_contract.width, resolved.mla_contract.height,
+                "the model MLA contract"},
+               {resolved_model_width, resolved_model_height, "the model-dimension override"}}};
+      pipeline_internal::sima::stagesemantics::validate_ssd_model_frames(
+          *ssd_recipe, frame_contracts, "SimaBoxDecode(Model)");
+    }
+    if (ssd_recipe && !resize_runs && !effective_resize_mode.has_value() &&
+        has_explicit_dimension_pair(resolved_original_width, resolved_original_height) &&
+        (resolved_original_width != recipe_width || resolved_original_height != recipe_height)) {
+      throw std::invalid_argument(
+          "SimaBoxDecode(Model): SSD source geometry differs from the " +
+          std::to_string(recipe_width) + "x" + std::to_string(recipe_height) +
+          " model frame, but the route has no preprocess resize and no explicit resize-mode "
+          "assertion. Provide ResizeMode::Stretch for truthful external preprocessing; "
+          "Letterbox/Crop are not supported.");
+    }
+  }
+  opt->resize_mode_override = effective_resize_mode;
   opt->required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
       resolved.meta_contract.required_fields, resolved_original_width, resolved_original_height,
-      resolved_model_width, resolved_model_height, resize_mode_override.has_value());
+      resolved_model_width, resolved_model_height, effective_resize_mode.has_value(),
+      box_decode_type_is_ssd_family(compiled_contract.payload.decode_type));
   if (opt->compiled_contract) {
     auto updated = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
     updated->runtime_contract.required_preprocess_meta_fields =
@@ -740,7 +1019,7 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   opt->original_height = resolved_original_height;
   opt->model_width = resolved_model_width;
   opt->model_height = resolved_model_height;
-  if (decode_type != BoxDecodeType::Unspecified)
+  if (decode_type != BoxDecodeType::Unspecified && decode_type != BoxDecodeType::Ssd)
     opt->decode_type = decode_type;
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
     opt->decode_type_option = decode_type_option;
@@ -758,6 +1037,20 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   }
 
   opt_ = std::move(opt);
+}
+
+SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, const BoxDecodeOptions& options,
+                             const std::string& element_name, std::optional<bool> route_tess_needed,
+                             std::optional<bool> route_quant_needed, int original_width,
+                             int original_height, int model_width, int model_height,
+                             std::optional<ResizeMode> resize_mode_override,
+                             BoxDecodeTypeOption decode_type_option)
+    : SimaBoxDecode(model_with_named_superpoint_options(model, options), options.decode_type,
+                    options.detection_threshold, options.nms_iou_threshold, options.top_k,
+                    element_name, route_tess_needed, route_quant_needed, original_width,
+                    original_height, model_width, model_height, resize_mode_override,
+                    decode_type_option) {
+  apply_named_superpoint_options(opt_.get(), options, /*model_or_mpk_may_resolve_auto=*/true);
 }
 
 #ifdef SIMA_NEAT_INTERNAL
@@ -780,6 +1073,13 @@ SimaBoxDecode::SimaBoxDecode(
       required_preprocess_meta_fields, route_flags, model_semantics, expect_resize,
       expect_normalize, expect_quantize, expect_tessellate, original_width, original_height,
       model_width, model_height, decode_type_option));
+  // Resolve the exact recipe frame from the complete ordered head geometry. Unsupported SSD
+  // signatures throw here rather than reaching the backend with an unconstrained frame.
+  const auto expected_frame =
+      pipeline_internal::sima::stagesemantics::ssd_expected_model_frame(contract);
+  reject_wrong_ssd_model_frame(opt->decode_type, expected_frame.width, expected_frame.height,
+                               opt->model_width, opt->model_height, "the model dimensions",
+                               "SimaBoxDecode");
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt->decode_type)) {
     throw std::invalid_argument(
         "SimaBoxDecode: decode_type is required and cannot be BoxDecodeType::Unspecified. "
@@ -870,11 +1170,26 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
         }
       }
     }
+    if (opt_->decode_type == BoxDecodeType::SuperPoint) {
+      pipeline_internal::sima::apply_superpoint_profile_override(&contract->superpoint,
+                                                                 opt_->superpoint.profile);
+      pipeline_internal::sima::apply_superpoint_spatial_overrides(&contract->superpoint,
+                                                                  opt_->superpoint);
+      contract->superpoint.descriptor_output_dtype = opt_->superpoint.descriptor_output_dtype;
+      contract->superpoint.output_format = opt_->superpoint.output_format;
+    }
     const auto finalized_contract =
         pipeline_internal::sima::stagesemantics::finalize_boxdecode_static_contract(
             *contract, opt_->decode_type, opt_->model_semantics, opt_->model_route_flags,
             opt_->decode_type_option, opt_->detection_threshold, opt_->nms_iou_threshold,
             opt_->top_k, /*num_classes=*/0, opt_->required_preprocess_meta_fields);
+    // The heads now pin the SSD recipe frame; reject a caller model_width/height that
+    // contradicts it so the backend never emits the wrong frame.
+    const auto expected_frame =
+        pipeline_internal::sima::stagesemantics::ssd_expected_model_frame(finalized_contract);
+    reject_wrong_ssd_model_frame(finalized_contract.decode_type, expected_frame.width,
+                                 expected_frame.height, opt_->model_width, opt_->model_height,
+                                 "the model dimensions", "SimaBoxDecode");
     const auto compiled =
         pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(
             finalized_contract);
@@ -933,6 +1248,23 @@ int SimaBoxDecode::original_width_internal() const {
 
 int SimaBoxDecode::original_height_internal() const {
   return opt_ ? opt_->original_height : 0;
+}
+
+std::shared_ptr<Node> SimaBoxDecode::retargeted_for_model_internal(const Model& model) const {
+  if (!opt_) {
+    throw std::logic_error("SimaBoxDecode: cannot retarget an uninitialized node");
+  }
+  const auto route_tess_needed = opt_->model_route_flags.has_value()
+                                     ? std::optional<bool>(opt_->model_route_flags->tess_needed)
+                                     : std::nullopt;
+  const auto route_quant_needed = opt_->model_route_flags.has_value()
+                                      ? std::optional<bool>(opt_->model_route_flags->quant_needed)
+                                      : std::nullopt;
+  return std::make_shared<SimaBoxDecode>(
+      model, opt_->decode_type, opt_->detection_threshold, opt_->nms_iou_threshold, opt_->top_k,
+      opt_->element_name, route_tess_needed, route_quant_needed, opt_->original_width,
+      opt_->original_height, /*model_width=*/0, /*model_height=*/0, opt_->resize_mode_override,
+      opt_->decode_type_option);
 }
 
 BoxDecodeTypeOption SimaBoxDecode::decode_type_option_internal() const {
@@ -996,9 +1328,11 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   if (boxdecode_debug_enabled()) {
     std::fprintf(stderr,
                  "[boxdecode-debug] backend_fragment stage=%s factory=%s decode_type=%s topk=%d "
-                 "det=%.6f nms=%.6f metadata_only=1 contract_only=1\n",
+                 "det=%.6f nms=%.6f resize_mode=%s metadata_only=1 contract_only=1\n",
                  name.c_str(), opt_->factory.c_str(), decode_type_token.c_str(), opt_->top_k,
-                 opt_->detection_threshold, opt_->nms_iou_threshold);
+                 opt_->detection_threshold, opt_->nms_iou_threshold,
+                 opt_->resize_mode_override ? resize_mode_token_local(*opt_->resize_mode_override)
+                                            : "<unset>");
   }
   if (opt_->original_width > 0) {
     ss << " original-width=" << opt_->original_width;
@@ -1034,7 +1368,17 @@ std::vector<std::string> SimaBoxDecode::element_names(int node_index) const {
 OutputSpec SimaBoxDecode::output_spec(const OutputSpec& input) const {
   OutputSpec out;
   out.media_type = "application/vnd.simaai.tensor";
-  out.format = "BBOX";
+  if (opt_ && opt_->decode_type == BoxDecodeType::SuperPoint) {
+    SuperPointOutputFormat format = opt_->superpoint.output_format;
+    if (opt_->compiled_contract) {
+      format = opt_->compiled_contract->payload.superpoint.output_format;
+    }
+    out.format = format == SuperPointOutputFormat::LegacyA65InterleavedV0
+                     ? kFeatureFormatLegacyA65V0
+                     : kFeatureFormatPointsV1;
+  } else {
+    out.format = "BBOX";
+  }
   out.memory = input.memory;
   out.certainty = SpecCertainty::Hint;
   out.note = opt_ ? opt_->factory : "neatobjectdecode";
@@ -1073,6 +1417,29 @@ SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_
 }
 
 std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
+              int top_k, const std::string& element_name, int original_width, int original_height,
+              int model_width, int model_height, BoxDecodeTypeOption decode_type_option,
+              std::optional<BoxDecodeSourceStorage> source_storage, std::optional<bool> detess,
+              std::optional<bool> dequant, std::optional<ResizeMode> resize_mode_override) {
+  return std::make_shared<simaai::neat::SimaBoxDecode>(
+      decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
+      original_height, model_width, model_height, decode_type_option, source_storage, detess,
+      dequant, resize_mode_override);
+}
+
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(const BoxDecodeOptions& options, const std::string& element_name, int original_width,
+              int original_height, int model_width, int model_height,
+              BoxDecodeTypeOption decode_type_option,
+              std::optional<BoxDecodeSourceStorage> source_storage, std::optional<bool> detess,
+              std::optional<bool> dequant) {
+  return std::make_shared<simaai::neat::SimaBoxDecode>(
+      options, element_name, original_width, original_height, model_width, model_height,
+      decode_type_option, source_storage, detess, dequant);
+}
+
+std::shared_ptr<simaai::neat::Node>
 SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
               double detection_threshold, double nms_iou_threshold, int top_k,
               const std::string& element_name, std::optional<bool> route_tess_needed,
@@ -1083,6 +1450,17 @@ SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
       model, decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,
       route_tess_needed, route_quant_needed, original_width, original_height, model_width,
       model_height, resize_mode_override, decode_type_option);
+}
+
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(const simaai::neat::Model& model, const BoxDecodeOptions& options,
+              const std::string& element_name, std::optional<bool> route_tess_needed,
+              std::optional<bool> route_quant_needed, int original_width, int original_height,
+              int model_width, int model_height, std::optional<ResizeMode> resize_mode_override,
+              BoxDecodeTypeOption decode_type_option) {
+  return std::make_shared<simaai::neat::SimaBoxDecode>(
+      model, options, element_name, route_tess_needed, route_quant_needed, original_width,
+      original_height, model_width, model_height, resize_mode_override, decode_type_option);
 }
 
 #ifdef SIMA_NEAT_INTERNAL

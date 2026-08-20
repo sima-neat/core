@@ -15,7 +15,7 @@ import perf_schema as schema
 
 
 def parse_args() -> argparse.Namespace:
-    repo_root = THIS_DIR.parents[3]
+    repo_root = THIS_DIR.parents[2]
     parser = argparse.ArgumentParser(description="Validate perf baseline schema")
     parser.add_argument(
         "--profile-dir",

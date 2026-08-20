@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Models & Inference |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15-20 minutes |
 | Model | resnet_50 |

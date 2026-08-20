@@ -405,6 +405,8 @@ void require_override_owned_zero_copy_parity(const Sample& base,
           std::string(context) + ": owned tensor count should follow override");
   require(view.tensors.size() == override.outputs.size(),
           std::string(context) + ": zero-copy tensor count should follow override");
+  require(owned.attributes == base.attributes && view.attributes == base.attributes,
+          std::string(context) + ": frame attributes must survive output projection");
   for (std::size_t i = 0; i < override.outputs.size(); ++i) {
     require_same_public_contract(owned.tensors[i], view.tensors[i], override.outputs[i], context);
   }
@@ -447,7 +449,8 @@ void override_owned_zero_copy_parity_padded_stride() {
 
 void override_authoritative_over_stale_tensor_set_metadata() {
   auto sample = make_sample_with_memories({96U});
-  const Sample base = make_stale_tensor_set_sample(sample.get(), 3U);
+  Sample base = make_stale_tensor_set_sample(sample.get(), 3U);
+  base.attributes = {{"frame-key", "frame-value"}};
 
   OutputTensorOverride override;
   override.outputs.push_back(

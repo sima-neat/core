@@ -76,6 +76,11 @@ jobs:
           SIMANEAT_STRICT_WARNINGS: "ON"
         run: ./build.sh --all --clean --no-doc
 
+      - name: Run public ABI and header-surface gates
+        run: |
+          ctest --test-dir build/tests --output-on-failure --no-tests=error \
+            -R "^(unit_graph_api_surface_test|unit_header_neat_compile_surface_test)$"
+
       - name: Run full unit and integration tests
         env:
           SIMA_YOLO_IMAGE: tests/images/people.jpg
@@ -98,6 +103,7 @@ jobs:
       DOCS_STRICT_LINKS: "1"
       DOCS_URL: https://developer.sima.ai
       DOCS_BASE_URL: /
+      DOCS_DEVELOPER_CENTER_SHELL_BASE: /
       AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
     steps:
       - name: Checkout code
@@ -106,7 +112,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22.12.0"
 
       - name: Install build dependencies
         run: ./build.sh --install-deps-only

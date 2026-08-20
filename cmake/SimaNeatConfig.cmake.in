@@ -2,11 +2,15 @@
 
 include(CMakeFindDependencyMacro)
 set(SimaNeat_ABI_VERSION "@SIMANEAT_ABI_VERSION@")
+set(SIMANEAT_MODELZOO_VERSION "@SIMANEAT_MODELZOO_VERSION@")
 set(SIMANEAT_WITH_LLIMA @SIMANEAT_CONFIG_WITH_LLIMA@)
 if (SIMANEAT_WITH_LLIMA)
-  find_dependency(SimaLMM @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
+  find_dependency(SimaLMM CONFIG REQUIRED)
 endif()
-find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
+find_dependency(NeatInternals CONFIG REQUIRED)
+# sima_neat_static exports ZLIB::ZLIB: a static archive carries its dependencies in its link
+# interface rather than absorbing them, so the consumer has to be able to resolve the target.
+find_dependency(ZLIB)
 
 # Exported targets
 include("${CMAKE_CURRENT_LIST_DIR}/SimaNeatTargets.cmake")
@@ -29,6 +33,7 @@ if (NOT _simaneat_ext_deps_done AND TARGET SimaNeat::sima_neat_common)
       gstreamer-1.0
       gstreamer-app-1.0
       gstreamer-video-1.0
+      gstreamer-allocators-1.0
       gstreamer-sdp-1.0
       gstreamer-rtsp-server-1.0
       glib-2.0)

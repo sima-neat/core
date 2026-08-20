@@ -10,16 +10,11 @@
 #pragma once
 
 #include "pipeline/Graph.h"
+#include "nodes/groups/RtspCodec.h"
 
 #include <string>
 
 namespace simaai::neat::nodes::groups {
-
-/// RTSP stream codec path to depayload and parse.
-enum class RtspCodec {
-  H264 = 0, ///< RTSP RTP/H.264 path.
-  MJPEG,    ///< RTSP RTP/JPEG MJPEG path.
-};
 
 /**
  * @brief Configuration for `RtspEncodedInput`.
@@ -39,8 +34,8 @@ struct RtspEncodedInputOptions {
   std::string buffer_mode;      ///< Optional `rtspsrc` buffer-mode value; empty = default.
   bool insert_queue = true;     ///< Insert queues around depacketize/parse.
   bool sync_mode = false;       ///< If true, sink elements run in sync (real-time) mode.
-  int h264_payload_type = 96;   ///< RTP payload type for H.264 streams.
-  int mjpeg_payload_type = 26;  ///< RTP payload type for MJPEG/RTP JPEG streams.
+  int h264_payload_type = 96;   ///< Deprecated; use `payload_type`. RTP payload type for H.264.
+  int mjpeg_payload_type = 26;  ///< Deprecated; use `payload_type`. RTP payload type for MJPEG.
   int h264_parse_config_interval =
       -1;               ///< SPS/PPS reinjection interval for H.264 parser (-1 = default).
   int h264_fps = -1;    ///< Expected H.264 FPS injected into parser caps (-1 = unspecified).
@@ -52,12 +47,17 @@ struct RtspEncodedInputOptions {
   int fallback_h264_height = -1;     ///< Fallback H.264 height used if auto-caps fails.
   int source_fps =
       -1; ///< Declared source stream FPS for codec caps repair (-1 = use legacy FPS fields).
+  /// RTP payload type filter, independent of codec. `-1` selects the codec
+  /// default, `0` disables payload filtering, `> 0` selects an exact RTP
+  /// payload. Takes precedence over the deprecated per-codec fields above.
+  int payload_type = -1;
 };
 
 /**
  * @brief Build the live-RTSP encoded input Graph.
  *
  * H.264 chain: `rtspsrc` -> RTP H.264 depay/parse -> optional H.264 caps fixup.
+ * H.265 chain: `rtspsrc` -> RTP H.265 depay/parse.
  * MJPEG chain: `rtspsrc` -> RTP JPEG depay -> `jpegparse`.
  *
  * @param opt Configuration for source, transport, queueing, and codec framing.

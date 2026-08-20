@@ -1,3 +1,4 @@
+#include "model_archive_fixture_utils.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
@@ -146,6 +147,94 @@ RUN_TEST(
       require(stream_link_roundtrip_json.find("\"link_policy\"") == std::string::npos,
               io_case("default_link_policy_roundtrip_omitted",
                       "default-link stream id roundtrip should keep default policy implicit"));
+
+      const auto model_fixture = sima_test::make_model_archive_fixture(
+          "graph_io_superpoint_options", {{"etc/model_mpk.json",
+                                           R"json({
+  "name": "graph_io_superpoint_options",
+  "model_sdk_version": "2.0.0",
+  "input_nodes": [{"name":"decoder","type":"buffer","size":1}],
+  "plugins": [{
+    "name": "MLA_0",
+    "sequence": 1,
+    "processor": "MLA",
+    "config_params": {
+      "desired_batch_size":1,
+      "actual_batch_size":1,
+      "input_shapes":[[1,1,1]],
+      "output_shapes":[[1,1,1]],
+      "input_dtype":"INT8",
+      "output_dtype":"INT8"
+    },
+    "input_nodes": [{"name":"decoder","size":1}],
+    "output_nodes": [{"name":"MLA_0","type":"buffer","size":1}],
+    "type": "sgpProcess",
+    "resources": {"executable":"placeholder.elf"}
+  }]
+})json"},
+                                          {"etc/pipeline_sequence.json",
+                                           R"json({
+  "pipelines": [{"sequence": [{
+    "sequence_id": 1,
+    "name": "MLA_0",
+    "pluginId": "processmla",
+    "configPath": "0_process_mla.json",
+    "processor": "MLA",
+    "kernel": "infer",
+    "input": "decoder"
+  }]}]
+})json"},
+                                          {"etc/0_process_mla.json",
+                                           R"json({
+  "node_name":"MLA_0",
+  "input_buffers":[{"name":"decoder"}],
+  "data_type":["INT8"],
+  "output_width":[1],
+  "output_height":[1],
+  "output_depth":[1]
+})json"}});
+      Graph superpoint_provenance_graph;
+      superpoint_provenance_graph.custom("identity name=superpoint_provenance");
+      const std::string superpoint_base_path =
+          tmp_json_path("graph_io_superpoint_options_base.json");
+      superpoint_provenance_graph.save(superpoint_base_path);
+      std::string superpoint_options_json = read_text(superpoint_base_path);
+      const std::size_t root_end = superpoint_options_json.rfind('}');
+      require(root_end != std::string::npos,
+              io_case("superpoint_fixture_root", "saved graph root is missing"));
+      const std::string model_fragment =
+          ",\n  \"edges\":[],\n  \"model_fragments\":[{\"start\":0,\"end\":1,"
+          "\"model_id\":\"superpoint\","
+          "\"source_path\":\"" +
+          model_fixture.tar_path +
+          "\",\"stage_role\":\"route\",\"model_options\":{"
+          "\"superpoint\":{\"profile\":2,\"nms_radius\":7,\"border_margin\":3,"
+          "\"descriptor_output_dtype\":5,\"output_format\":2}}}]\n";
+      superpoint_options_json.insert(root_end, model_fragment);
+      const std::string superpoint_options_path = tmp_json_path("graph_io_superpoint_options.json");
+      write_text(superpoint_options_path, superpoint_options_json);
+
+      const Graph loaded_superpoint_model_graph = Graph::load(superpoint_options_path);
+      const std::string superpoint_options_roundtrip_path =
+          tmp_json_path("graph_io_superpoint_options_roundtrip.json");
+      loaded_superpoint_model_graph.save(superpoint_options_roundtrip_path);
+      const std::string superpoint_options_roundtrip_json =
+          read_text(superpoint_options_roundtrip_path);
+      require_contains(
+          superpoint_options_roundtrip_json, "\"superpoint\":{\"profile\":2",
+          io_case("superpoint_profile_roundtrip", "SuperPoint profile should survive save/load"));
+      require_contains(
+          superpoint_options_roundtrip_json, "\"nms_radius\":7",
+          io_case("superpoint_nms_roundtrip", "SuperPoint NMS radius should survive save/load"));
+      require_contains(superpoint_options_roundtrip_json, "\"border_margin\":3",
+                       io_case("superpoint_border_roundtrip",
+                               "SuperPoint border margin should survive save/load"));
+      require_contains(superpoint_options_roundtrip_json, "\"descriptor_output_dtype\":5",
+                       io_case("superpoint_descriptor_dtype_roundtrip",
+                               "SuperPoint descriptor dtype should survive save/load"));
+      require_contains(superpoint_options_roundtrip_json, "\"output_format\":2",
+                       io_case("superpoint_output_format_roundtrip",
+                               "SuperPoint output format should survive save/load"));
 
       Graph realtime_app("graph_io_realtime_link_options");
       GraphLinkOptions realtime_link;

@@ -5,9 +5,10 @@ Source of truth:
 - tutorials/00x_*/README.md (metadata + concept/process)
 - tutorials/00x_*/*.cpp
 - tutorials/00x_*/*.py
+- pcie_host/tutorials/00x_* equivalents for PCIe host tutorials
 
 Outputs:
-- docs/develop-apps/tutorials/<difficulty>/tutorial_<folder>.mdx
+- docs/develop-apps/tutorials/<category>/tutorial_<folder>.mdx
 - docs/develop-apps/tutorials/index.md
 """
 
@@ -28,24 +29,53 @@ from typing import Dict, List, Tuple
 
 REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 
-# Curated learning-flow order, by tutorial number. Drives both the sidebar
-# (TOC) position and the in-section ordering on the tutorials index page.
-# Modules whose number is not listed here fall to the end in numeric order.
-LEARNING_FLOW_ORDER = [
-    1, 2, 3, 4, 5,          # Beginner foundations
-    19, 20,                 # Beginner GenAI patterns
-    21,                     # GenAI serving
-    9, 6, 11, 7,            # Core I/O and pre/postprocessing
-    8, 10, 12, 13, 18, 23,  # Pipelines, diagnostics, custom graphs, live input
-    14, 15, 16, 17,         # Advanced: hybrid graphs, multi-stream, perf, production
-    22,                     # Advanced GenAI composition
+CATEGORY_SUBDIRS = [
+    (
+        "Models & Inference",
+        "models-inference",
+        3,
+        "Run models, configure preprocessing and postprocessing, exchange tensors, and measure inference.",
+    ),
+    (
+        "Graphs & Pipelines",
+        "graphs-pipelines",
+        4,
+        "Compose, diagnose, tune, and deploy Neat graphs and pipelines.",
+    ),
+    (
+        "Cameras & Streaming",
+        "cameras-streaming",
+        5,
+        "Consume live RTSP and MIPI camera inputs.",
+    ),
+    (
+        "GenAI",
+        "genai",
+        6,
+        "Serve and embed language, vision-language, and speech models.",
+    ),
+    (
+        "PCIe Co-Processing",
+        "pcie",
+        7,
+        "Run inference from a host connected to a Modalix PCIe Card.",
+    ),
 ]
 
+CATEGORY_TUTORIAL_ORDER = {
+    "Models & Inference": [1, 2, 3, 5, 6, 7, 9, 10, 11],
+    "Graphs & Pipelines": [4, 8, 13, 14, 15, 12, 16, 17],
+    "Cameras & Streaming": [18, 23],
+    "GenAI": [21, 19, 20, 22],
+    "PCIe Co-Processing": [24, 25, 26],
+}
 
-def _flow_key(number: int) -> tuple:
-    """Sort key: explicit flow position first, then numeric fallback."""
+
+def _category_flow_key(category: str, number: int) -> tuple:
+    """Sort by the curated order inside a category, then by tutorial number."""
+    order = CATEGORY_TUTORIAL_ORDER.get(category, [])
     try:
-        return (0, LEARNING_FLOW_ORDER.index(number))
+        return (0, order.index(number))
     except ValueError:
         return (1, number)
 
@@ -101,6 +131,8 @@ class WalkStep:
     py_prose: str = ""
     cpp_snippet: str = ""
     py_snippet: str = ""
+    cpp_rel: str = ""
+    py_rel: str = ""
 
 
 @dataclass
@@ -109,6 +141,7 @@ class TutorialModule:
     number: int
     slug: str
     title: str
+    category: str
     difficulty: str
     estimated_read_time: str
     labels: List[str]
@@ -118,6 +151,8 @@ class TutorialModule:
     in_practice: str
     cpp_rel: str
     py_rel: str = ""
+    cpp_rels: List[str] = field(default_factory=list)
+    py_rels: List[str] = field(default_factory=list)
     walkthrough_lead: str = ""
     walkthrough_steps: List[WalkStep] = field(default_factory=list)
 
@@ -373,16 +408,35 @@ def _parse_walkthrough(readme_text: str) -> Tuple[str, List[Tuple[str, str, str]
     return lead, steps
 
 
+def _segments_from_sources(
+    sources: List[Tuple[str, str]], language: str, folder: str
+) -> Dict[str, Tuple[str, str]]:
+    """Return STEP snippets and their source paths across one language."""
+    segments: Dict[str, Tuple[str, str]] = {}
+    for source_rel, code in sources:
+        for name, snippet in _extract_named_segments(code, source_rel).items():
+            if name in segments:
+                raise ValueError(
+                    f"{folder}: duplicate {language} STEP '{name}' in "
+                    f"{segments[name][1]} and {source_rel}"
+                )
+            segments[name] = (snippet, source_rel)
+    return segments
+
+
 def _build_walk_steps(
-    readme_text: str, cpp_code: str, py_code: str, folder: str
+    readme_text: str,
+    cpp_sources: List[Tuple[str, str]],
+    py_sources: List[Tuple[str, str]],
+    folder: str,
 ) -> Tuple[str, List[WalkStep]]:
     """Pair README walkthrough prose with source segments (prose order wins)."""
     lead, prose_steps = _parse_walkthrough(readme_text)
     if not prose_steps:
         return "", []
 
-    cpp_segs = _extract_named_segments(cpp_code, f"{folder}/*.cpp")
-    py_segs = _extract_named_segments(py_code, f"{folder}/*.py")
+    cpp_segs = _segments_from_sources(cpp_sources, "C++", folder)
+    py_segs = _segments_from_sources(py_sources, "Python", folder)
 
     steps: List[WalkStep] = []
     referenced: set = set()
@@ -405,8 +459,8 @@ def _build_walk_steps(
             )
             continue
         referenced.add(name)
-        cpp_snip = cpp_segs.get(name, "")
-        py_snip = py_segs.get(name, "")
+        cpp_snip, cpp_rel = cpp_segs.get(name, ("", ""))
+        py_snip, py_rel = py_segs.get(name, ("", ""))
         if not cpp_snip and not py_snip:
             print(
                 f"WARNING: {folder}: walkthrough step '{name}' has no matching "
@@ -422,6 +476,8 @@ def _build_walk_steps(
                 py_prose=py_prose,
                 cpp_snippet=cpp_snip,
                 py_snippet=py_snip,
+                cpp_rel=cpp_rel,
+                py_rel=py_rel,
             )
         )
 
@@ -731,8 +787,14 @@ def flow_animation_svg(module: TutorialModule) -> str:
     anchors = [s.name for s in chosen]
     title = re.sub(r"\s+", " ", module.display_title).strip()
     subtitle = _first_sentence(module.concept or module.walkthrough_lead)
+    py_sources = module.py_rels or ([module.py_rel] if module.py_rel else [])
+    source_label = (
+        pathlib.Path(py_sources[0]).name
+        if len(py_sources) == 1
+        else f"{len(py_sources)} standalone programs"
+    )
     return stepper_animation_svg(
-        title, subtitle, pathlib.Path(module.py_rel).name, data, interactive=True, anchors=anchors
+        title, subtitle, source_label, data, interactive=True, anchors=anchors
     )
 
 
@@ -813,16 +875,45 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     if not readme_path.exists():
         raise FileNotFoundError(f"Missing README: {readme_path}")
 
-    cpp = module_dir / f"{slug}.cpp"
-    if not cpp.exists():
-        cpp = next(module_dir.glob("*.cpp"), None)
-    py = module_dir / f"{slug}.py"
-    if not py.exists():
-        py = next(module_dir.glob("*.py"), None)
-    if not cpp:
-        raise FileNotFoundError(f"Missing C++ source in: {module_dir}")
-
     text = readme_path.read_text(encoding="utf-8")
+
+    def tutorial_sources(suffix: str) -> List[pathlib.Path]:
+        candidates = sorted(module_dir.glob(f"*{suffix}"))
+        preferred = module_dir / f"{slug}{suffix}"
+
+        def source_markers(path: pathlib.Path) -> List[str]:
+            return [
+                match.group(1)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if (match := _STEP_START_RE.match(line))
+            ]
+
+        marked = [
+            path
+            for path in candidates
+            if source_markers(path)
+        ]
+        selected = ([preferred] if preferred.exists() else []) + [
+            path for path in marked if path != preferred
+        ]
+        if not selected and candidates:
+            selected = [candidates[0]]
+
+        anchor_order = {
+            name: index for index, name in enumerate(_STEP_ANCHOR_RE.findall(text))
+        }
+
+        def source_order(path: pathlib.Path) -> Tuple[int, str]:
+            markers = source_markers(path)
+            positions = [anchor_order[name] for name in markers if name in anchor_order]
+            return (min(positions) if positions else len(anchor_order), path.name)
+
+        return sorted(dict.fromkeys(selected), key=source_order)
+
+    cpp_files = tutorial_sources(".cpp")
+    py_files = tutorial_sources(".py")
+    if not cpp_files:
+        raise FileNotFoundError(f"Missing C++ source in: {module_dir}")
 
     title_match = re.search(r"^#\s+(.+)$", text, flags=re.M)
     title = title_match.group(1).strip() if title_match else f"{number:03d} {slug.replace('_', ' ').title()}"
@@ -835,19 +926,38 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
 
     meta = _parse_metadata_table(meta_section)
     difficulty = meta.get("difficulty", "Intermediate")
+    category = meta.get("category", "")
+    known_categories = {label for label, _, _, _ in CATEGORY_SUBDIRS}
+    if category not in known_categories:
+        raise ValueError(
+            f"Invalid or missing tutorial category {category!r} in {readme_path}; "
+            f"expected one of {sorted(known_categories)}"
+        )
     estimated = meta.get("estimated read time", "10-15 minutes")
     labels_raw = meta.get("labels", "")
     labels = [x.strip() for x in labels_raw.split(",") if x.strip()]
 
     process_steps = _parse_numbered(process_section)
 
-    cpp_rel = cpp.resolve().relative_to(repo_root.resolve()).as_posix()
-    py_rel = py.resolve().relative_to(repo_root.resolve()).as_posix() if py else ""
+    cpp_rels = [
+        path.resolve().relative_to(repo_root.resolve()).as_posix() for path in cpp_files
+    ]
+    py_rels = [
+        path.resolve().relative_to(repo_root.resolve()).as_posix() for path in py_files
+    ]
+    cpp_sources = [
+        (rel, path.read_text(encoding="utf-8"))
+        for path, rel in zip(cpp_files, cpp_rels)
+    ]
+    py_sources = [
+        (rel, path.read_text(encoding="utf-8"))
+        for path, rel in zip(py_files, py_rels)
+    ]
 
     walkthrough_lead, walkthrough_steps = _build_walk_steps(
         text,
-        cpp.read_text(encoding="utf-8"),
-        py.read_text(encoding="utf-8") if py else "",
+        cpp_sources,
+        py_sources,
         name,
     )
 
@@ -856,6 +966,7 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
         number=number,
         slug=slug,
         title=title,
+        category=category,
         difficulty=difficulty,
         estimated_read_time=estimated,
         labels=labels,
@@ -863,37 +974,37 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
         process_steps=process_steps,
         run_section=run_section,
         in_practice=in_practice_section,
-        cpp_rel=cpp_rel,
-        py_rel=py_rel,
+        cpp_rel=cpp_rels[0],
+        py_rel=py_rels[0] if py_rels else "",
+        cpp_rels=cpp_rels,
+        py_rels=py_rels,
         walkthrough_lead=walkthrough_lead,
         walkthrough_steps=walkthrough_steps,
     )
 
 
-def _full_code_codetabs(module: TutorialModule) -> List[str]:
-    """A `<CodeTabs>` block with the complete C++ and Python files (CORE LOGIC
-    highlight preserved). Used by the legacy `## Code` section and by the
-    walkthrough's collapsed "Full source" block."""
-    cpp_src = pathlib.Path(module.cpp_rel).read_text(encoding="utf-8").rstrip()
+def _source_pair_codetabs(cpp_rel: str, py_rel: str = "") -> List[str]:
+    """Render one complete C++/Python program pair."""
+    cpp_src = pathlib.Path(cpp_rel).read_text(encoding="utf-8").rstrip()
     cpp_code, cpp_hl = _render_code_with_core_logic(cpp_src)
     out = [
         "<CodeTabs>",
         '<CodeTab label="C++" lang="cpp">',
         "",
-        _code_fence("cpp", module.cpp_rel, cpp_hl),
+        _code_fence("cpp", cpp_rel, cpp_hl),
         cpp_code,
         "```",
         "",
         "</CodeTab>",
     ]
-    if module.py_rel:
-        py_src = pathlib.Path(module.py_rel).read_text(encoding="utf-8").rstrip()
+    if py_rel:
+        py_src = pathlib.Path(py_rel).read_text(encoding="utf-8").rstrip()
         py_code, py_hl = _render_code_with_core_logic(py_src)
         out.extend(
             [
                 '<CodeTab label="Python" lang="python">',
                 "",
-                _code_fence("python", module.py_rel, py_hl),
+                _code_fence("python", py_rel, py_hl),
                 py_code,
                 "```",
                 "",
@@ -901,6 +1012,27 @@ def _full_code_codetabs(module: TutorialModule) -> List[str]:
             ]
         )
     out.append("</CodeTabs>")
+    return out
+
+
+def _full_code_codetabs(module: TutorialModule) -> List[str]:
+    """Complete source for every primary program in a tutorial."""
+    cpp_rels = module.cpp_rels or [module.cpp_rel]
+    py_rels = module.py_rels or ([module.py_rel] if module.py_rel else [])
+    py_by_stem = {
+        pathlib.Path(path).stem: path
+        for path in py_rels
+    }
+    multiple = len(cpp_rels) > 1
+    out: List[str] = []
+    for cpp_rel in cpp_rels:
+        stem = pathlib.Path(cpp_rel).stem
+        if multiple:
+            if out:
+                out.append("")
+            label = stem.removeprefix("run_").replace("_", " ").title()
+            out.extend([f"### {label}", ""])
+        out.extend(_source_pair_codetabs(cpp_rel, py_by_stem.get(stem, "")))
     return out
 
 
@@ -914,7 +1046,7 @@ def _step_codetabs(module: TutorialModule, step: WalkStep) -> List[str]:
             [
                 '<CodeTab label="C++" lang="cpp">',
                 "",
-                _code_fence("cpp", module.cpp_rel, ""),
+                _code_fence("cpp", step.cpp_rel or module.cpp_rel, ""),
                 step.cpp_snippet,
                 "```",
                 "",
@@ -926,7 +1058,7 @@ def _step_codetabs(module: TutorialModule, step: WalkStep) -> List[str]:
             [
                 '<CodeTab label="Python" lang="python">',
                 "",
-                _code_fence("python", module.py_rel, ""),
+                _code_fence("python", step.py_rel or module.py_rel, ""),
                 step.py_snippet,
                 "```",
                 "",
@@ -1074,9 +1206,7 @@ def render_walkthrough_body(module: TutorialModule) -> List[str]:
             "## Full source",
             "",
             "<details>",
-            "<summary>Show the complete source program"
-            + ("s" if module.py_rel else "")
-            + "</summary>",
+            "<summary>Show the complete source programs</summary>",
             "",
         ]
     )
@@ -1120,6 +1250,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
         [
             "| Field | Value |",
             "| --- | --- |",
+            f"| Category | {module.category} |",
             f"| Difficulty | {module.difficulty} |",
             f"| Estimated Read Time | {module.estimated_read_time} |",
             f"| Labels | {label_text} |",
@@ -1132,33 +1263,37 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
     else:
         lines.extend(render_legacy_body(module))
 
-    lines.extend(
-        [
-            "",
-            "## Source",
-            "",
-            f"- [C++]({repo_link_prefix}/{module.cpp_rel})",
-            f"- [README]({repo_link_prefix}/tutorials/{module.folder}/README.md)",
-            "",
-        ]
-    )
-    if module.py_rel:
-        lines.insert(-2, f"- [Python]({repo_link_prefix}/{module.py_rel})")
+    lines.extend(["", "## Source", ""])
+    cpp_rels = module.cpp_rels or [module.cpp_rel]
+    py_rels = module.py_rels or ([module.py_rel] if module.py_rel else [])
+    if len(cpp_rels) == 1:
+        lines.append(f"- [C++]({repo_link_prefix}/{cpp_rels[0]})")
+    else:
+        for path in cpp_rels:
+            label = pathlib.Path(path).stem.removeprefix("run_").replace("_", " ").title()
+            lines.append(f"- [C++ — {label}]({repo_link_prefix}/{path})")
+    if len(py_rels) == 1:
+        lines.append(f"- [Python]({repo_link_prefix}/{py_rels[0]})")
+    else:
+        for path in py_rels:
+            label = pathlib.Path(path).stem.removeprefix("run_").replace("_", " ").title()
+            lines.append(f"- [Python — {label}]({repo_link_prefix}/{path})")
+    source_dir = pathlib.Path(cpp_rels[0]).parent.as_posix()
+    lines.extend([f"- [README]({repo_link_prefix}/{source_dir}/README.md)", ""])
 
     return "\n".join(lines)
 
 
 def _group_tutorials(modules: List[TutorialModule]) -> Dict[str, List[TutorialModule]]:
     groups: Dict[str, List[TutorialModule]] = {
-        "Beginner": [],
-        "Intermediate": [],
-        "Advanced": [],
+        label: [] for label, _, _, _ in CATEGORY_SUBDIRS
     }
     for module in modules:
-        key = module.difficulty if module.difficulty in groups else "Intermediate"
-        groups[key].append(module)
+        groups[module.category].append(module)
     for key in groups:
-        groups[key] = sorted(groups[key], key=lambda m: _flow_key(m.number))
+        groups[key] = sorted(
+            groups[key], key=lambda m: _category_flow_key(key, m.number)
+        )
     return groups
 
 
@@ -1207,15 +1342,13 @@ def _render_tutorial_path_block(groups: Dict[str, List[TutorialModule]]) -> List
         "    <p>Use the cards in each section in order. Each tutorial includes concept-first guidance with source code in the supported language surface.</p>",
         '    <ul class="overview-link-list">',
     ]
-    difficulty_copy = {
-        "Beginner": "First model run, async inference, model benchmarking, basic graphs, and model options.",
-        "Intermediate": "Data exchange, preprocessing, outputs, streaming, diagnostics, and graph composition.",
-        "Advanced": "Multi-stream graphs, throughput tuning, and production-style pipeline structure.",
-    }
-    for difficulty, slug, _ in DIFFICULTY_SUBDIRS:
-        count = len(groups[difficulty])
+    for category, slug, _, description in CATEGORY_SUBDIRS:
+        count = len(groups[category])
+        count_text = f"{count} guided tutorial{'s' if count != 1 else ''}."
+        if count == 0:
+            count_text = "Tutorials are being added."
         lines.append(
-            f'      <li><a class="overview-link-card" href="/tutorials/{slug}/"><strong>{difficulty}</strong><span>{difficulty_copy[difficulty]} {count} guided chapters.</span></a></li>'
+            f'      <li><a class="overview-link-card" href="/tutorials/{slug}/"><strong>{category}</strong><span>{description} {count_text}</span></a></li>'
         )
     lines.extend(["    </ul>", "  </section>", "</div>", ""])
     return lines
@@ -1245,20 +1378,22 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
     return "\n".join(lines)
 
 
-def render_difficulty_index(difficulty: str, slug: str, modules: List[TutorialModule]) -> str:
+def render_category_index(
+    category: str, slug: str, description: str, modules: List[TutorialModule]
+) -> str:
     lines: List[str] = [
         "---",
-        f"title: {difficulty}",
-        f"description: {difficulty} Neat tutorials",
+        f"title: {category}",
+        f'description: "{_yaml_double_quote_escape(description)}"',
         "sidebar_position: 1",
         f"slug: /tutorials/{slug}",
         "---",
         "",
         "<!-- AUTO-GENERATED by tools/generate_tutorial_docs.py. -->",
         "",
-        f"# {difficulty} Tutorials",
+        f"# {category}",
         "",
-        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and source code in the supported language surface.</p>',
+        f'<p class="tutorial-grid-intro">{html.escape(description)} Use these tutorials in order.</p>',
         "",
     ]
     lines.extend(_render_tutorial_card_grid(modules))
@@ -1282,19 +1417,14 @@ def discover_modules(tutorials_dir: pathlib.Path) -> List[pathlib.Path]:
     return sorted(items, key=lambda p: p.name)
 
 
-DIFFICULTY_SUBDIRS = [
-    ("Beginner", "beginner", 2),
-    ("Intermediate", "intermediate", 3),
-    ("Advanced", "advanced", 4),
-]
+LEGACY_DIFFICULTY_SUBDIRS = ("beginner", "intermediate", "advanced")
 
 
-def _difficulty_subdir(difficulty: str) -> str:
-    key = (difficulty or "").strip().lower()
-    for _, slug, _ in DIFFICULTY_SUBDIRS:
-        if slug == key:
+def _category_subdir(category: str) -> str:
+    for label, slug, _, _ in CATEGORY_SUBDIRS:
+        if label == category:
             return slug
-    return "intermediate"
+    raise ValueError(f"Unknown tutorial category: {category}")
 
 
 def main() -> int:
@@ -1303,12 +1433,22 @@ def main() -> int:
     args = parser.parse_args()
 
     root = pathlib.Path(args.repo_root).resolve()
-    tutorials_dir = root / "tutorials"
+    tutorial_roots = [root / "tutorials", root / "pcie_host" / "tutorials"]
     docs_tutorials_dir = root / "docs" / "develop-apps" / "tutorials"
 
-    module_dirs = discover_modules(tutorials_dir)
+    module_dirs = [
+        module_dir
+        for tutorial_root in tutorial_roots
+        if tutorial_root.exists()
+        for module_dir in discover_modules(tutorial_root)
+    ]
     modules = [parse_module(d, root) for d in module_dirs]
-    modules.sort(key=lambda m: _flow_key(m.number))
+    groups = _group_tutorials(modules)
+    modules = [
+        module
+        for label, _, _, _ in CATEGORY_SUBDIRS
+        for module in groups[label]
+    ]
     repo_ref = detect_repo_ref()
 
     docs_tutorials_dir.mkdir(parents=True, exist_ok=True)
@@ -1319,9 +1459,9 @@ def main() -> int:
     heading_path = docs_tutorials_dir / "heading.mm"
     heading_body = heading_path.read_text(encoding="utf-8").strip() if heading_path.exists() else ""
 
-    # Create difficulty subdirectories with category metadata so the sidebar
-    # nests tutorials under Beginner / Intermediate / Advanced.
-    for label, slug, position in DIFFICULTY_SUBDIRS:
+    # Create topic subdirectories with category metadata so the sidebar groups
+    # tutorials by API and deployment surface. Difficulty remains page metadata.
+    for label, slug, position, _ in CATEGORY_SUBDIRS:
         sub = docs_tutorials_dir / slug
         sub.mkdir(parents=True, exist_ok=True)
         (sub / "_category_.json").write_text(
@@ -1329,24 +1469,29 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    # Purge stale auto-generated MDX from prior generator runs (flat layout or
-    # renamed/removed tutorial folders). Docusaurus indexes everything it sees,
-    # so we sweep the parent directory and every difficulty subdir.
+    # Purge stale auto-generated MDX from prior generator runs, including the
+    # former difficulty-based layout. Docusaurus indexes everything it sees.
     expected_paths = {
-        docs_tutorials_dir / _difficulty_subdir(m.difficulty) / f"{m.doc_id}.mdx"
+        docs_tutorials_dir / _category_subdir(m.category) / f"{m.doc_id}.mdx"
         for m in modules
     }
-    for parent in [docs_tutorials_dir, *(docs_tutorials_dir / s for _, s, _ in DIFFICULTY_SUBDIRS)]:
-        for stale in parent.glob("tutorial_*.mdx"):
-            if stale not in expected_paths:
-                stale.unlink()
+    for stale in docs_tutorials_dir.rglob("tutorial_*.mdx"):
+        if stale not in expected_paths:
+            stale.unlink()
 
-    grouped_modules = _group_tutorials(modules)
+    for slug in LEGACY_DIFFICULTY_SUBDIRS:
+        legacy = docs_tutorials_dir / slug
+        for generated_name in ("index.md", "_category_.json"):
+            (legacy / generated_name).unlink(missing_ok=True)
+        if legacy.exists() and not any(legacy.iterdir()):
+            legacy.rmdir()
 
-    # Re-number sidebar_position per difficulty group so each subsection starts at 1.
-    per_group_idx: Dict[str, int] = {slug: 0 for _, slug, _ in DIFFICULTY_SUBDIRS}
+    # Re-number sidebar_position per topic category so each subsection starts at 1.
+    per_group_idx: Dict[str, int] = {
+        slug: 0 for _, slug, _, _ in CATEGORY_SUBDIRS
+    }
     for module in modules:
-        sub_slug = _difficulty_subdir(module.difficulty)
+        sub_slug = _category_subdir(module.category)
         per_group_idx[sub_slug] += 1
         out_path = docs_tutorials_dir / sub_slug / f"{module.doc_id}.mdx"
         out_path.write_text(
@@ -1354,10 +1499,10 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    for label, slug, _ in DIFFICULTY_SUBDIRS:
+    for label, slug, _, description in CATEGORY_SUBDIRS:
         out_path = docs_tutorials_dir / slug / "index.md"
         out_path.write_text(
-            render_difficulty_index(label, slug, grouped_modules[label]),
+            render_category_index(label, slug, description, groups[label]),
             encoding="utf-8",
         )
 

@@ -75,6 +75,8 @@ function ensureShellRoot() {
 
 async function mountShell() {
   const config = window.__NEAT_DEVELOPER_CENTER_SHELL__ || {};
+  if (!config.enabled) return;
+
   const base = config.base || DEFAULT_SHELL_BASE;
 
   try {

@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 4 ]]; then
-  echo "Usage: $0 <model-name> <expected-tar> <model-target-folder> <executable> [args...]" >&2
+if [[ $# -lt 5 ]]; then
+  echo "Usage: $0 <model-name> <expected-tar> <model-target-folder> <modelzoo-version> <executable> [args...]" >&2
   exit 2
 fi
 
 MODEL_NAME="$1"
 EXPECTED_TAR="$2"
 MODEL_TARGET_FOLDER="$3"
-EXE="$4"
-shift 4
+MODELZOO_VERSION="$4"
+EXE="$5"
+shift 5
 
 is_file() {
   [[ -f "$1" && -s "$1" ]]
@@ -85,10 +86,11 @@ if ! is_file "${EXPECTED_TAR}"; then
       echo "Missing ${EXPECTED_TAR} and cannot find sima-cli to download ${MODEL_NAME}" >&2
       exit 1
     fi
-    echo "Missing ${EXPECTED_TAR}; downloading ${MODEL_NAME} with sima-cli modelzoo get" >&2
+    echo "Missing ${EXPECTED_TAR}; downloading ${MODEL_NAME} from Model Zoo ${MODELZOO_VERSION}" >&2
     (
       cd "${MODEL_TARGET_FOLDER}"
-      SIMA_CLI_CHECK_FOR_UPDATE=0 "${sima_cli}" modelzoo get "${MODEL_NAME}"
+      SIMA_CLI_CHECK_FOR_UPDATE=0 \
+        "${sima_cli}" modelzoo -v "${MODELZOO_VERSION}" get "${MODEL_NAME}"
     )
     if found="$(find_downloaded_tar)"; then
       copy_to_expected "${found}"

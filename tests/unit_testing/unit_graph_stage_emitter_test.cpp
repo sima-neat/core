@@ -1,7 +1,9 @@
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
+#include "nodes/common/Caps.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
 #include "test_main.h"
@@ -111,17 +113,23 @@ private:
 
 class PassThroughStage final : public simaai::neat::graph::StageExecutor {
 public:
+  explicit PassThroughStage(int delay_ms = 0) : delay_ms_(delay_ms) {}
+
   void set_ports(const simaai::neat::graph::StagePorts& ports) override {
     out_ = ports.out_port("out");
   }
 
   void on_input(simaai::neat::graph::StageMsg&& msg,
                 std::vector<simaai::neat::graph::StageOutMsg>& out) override {
+    if (delay_ms_ > 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms_));
+    }
     out.push_back(
         simaai::neat::graph::StageOutMsg{.out_port = out_, .sample = std::move(msg.sample)});
   }
 
 private:
+  int delay_ms_ = 0;
   simaai::neat::graph::PortId out_ = simaai::neat::graph::kInvalidPort;
 };
 
@@ -140,12 +148,14 @@ make_blocking_emitter_node(const std::shared_ptr<StreamState>& state) {
                                      std::move(outputs), "streamer");
 }
 
-std::shared_ptr<simaai::neat::graph::Node> make_pass_node() {
+std::shared_ptr<simaai::neat::graph::Node> make_pass_node(int delay_ms = 0) {
   using simaai::neat::OutputSpec;
   using simaai::neat::graph::PortDesc;
   using simaai::neat::graph::nodes::StageNode;
 
-  StageNode::StageExecutorFactory factory = [] { return std::make_unique<PassThroughStage>(); };
+  StageNode::StageExecutorFactory factory = [delay_ms] {
+    return std::make_unique<PassThroughStage>(delay_ms);
+  };
   std::vector<PortDesc> inputs = {PortDesc{.name = "in", .spec = OutputSpec{}}};
   std::vector<PortDesc> outputs = {PortDesc{.name = "out", .spec = OutputSpec{}}};
   return std::make_shared<StageNode>("PassThrough", std::move(factory), std::move(inputs),
@@ -180,6 +190,143 @@ void release_stage(const std::shared_ptr<StreamState>& state) {
 } // namespace
 
 RUN_TEST("unit_graph_stage_emitter_test", [] {
+  // A finite source can finish while an asynchronous stage still owns accepted work. The graph
+  // output must remain open until that stage drains and forwards every sample.
+  {
+    simaai::neat::Graph graph;
+    const auto source = graph.append_pipeline_vertex_for_internal_graph_(
+        simaai::neat::nodes::Custom("videotestsrc num-buffers=4 pattern=black ! "
+                                    "video/x-raw,format=RGB,width=64,height=48,framerate=30/1",
+                                    simaai::neat::InputRole::Source));
+    const auto stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node(30));
+    const auto output = add_output_endpoint(graph, "drained");
+    connect_runtime(graph, source, "out", stage, "in");
+    connect_runtime(graph, stage, "out", output, "in");
+
+    simaai::neat::Run run = graph.build();
+    simaai::neat::Sample sample;
+    simaai::neat::PullError error;
+    simaai::neat::PullStatus status = simaai::neat::PullStatus::Timeout;
+    std::size_t outputs = 0;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+      status = run.pull("drained", 1000, sample, &error);
+      if (status != simaai::neat::PullStatus::Ok) {
+        break;
+      }
+      ++outputs;
+    }
+    require(outputs == 4U, "finite source tail was dropped before async stage drain");
+    require(status == simaai::neat::PullStatus::Closed,
+            "finite source graph did not close after async stage drain");
+    require(error.code == simaai::neat::error_codes::kSourceEnded,
+            "finite source graph lost source-ended closure after async stage drain");
+  }
+
+  // The public graph ingress is also a producer. close_input() must reject later pushes, then
+  // release that producer only after pushes already in flight have entered the graph so accepted
+  // stage work drains before the output closes.
+  {
+    simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "in");
+    const auto stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node(20));
+    const auto output = add_output_endpoint(graph, "closed_input");
+    connect_runtime(graph, input, "out", stage, "in");
+    connect_runtime(graph, stage, "out", output, "in");
+
+    simaai::neat::Run run = graph.build();
+    for (int i = 0; i < 4; ++i) {
+      require(run.push("in", make_text_sample("prompt", "queued-" + std::to_string(i))),
+              "push-backed graph rejected input before close_input");
+    }
+    run.close_input();
+    require(!run.push("in", make_text_sample("prompt", "late")),
+            "push-backed graph accepted input after close_input");
+
+    simaai::neat::Sample sample;
+    simaai::neat::PullError error;
+    for (int i = 0; i < 4; ++i) {
+      require(run.pull("closed_input", 1000, sample, &error) == simaai::neat::PullStatus::Ok,
+              "push-backed graph dropped accepted stage work during close_input");
+      require(sample_text(sample) == "queued-" + std::to_string(i),
+              "push-backed graph changed accepted stage output ordering");
+    }
+    require(run.pull("closed_input", 1000, sample, &error) == simaai::neat::PullStatus::Closed,
+            "push-backed graph output did not close after ingress drain");
+    require(error.code == simaai::neat::error_codes::kRuntimePull,
+            "application-driven graph close should use runtime.pull closure");
+  }
+
+  // A downstream pipeline may still be lazy when application ingress closes. Completion must
+  // wake a pull that is waiting for that pipeline to build so the closed sink is observed.
+  {
+    simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "lazy_input");
+    const auto stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node());
+    const auto lazy_pipeline =
+        graph.append_pipeline_vertex_for_internal_graph_(simaai::neat::nodes::Custom("identity"));
+    const auto output = add_output_endpoint(graph, "lazy_output");
+    connect_runtime(graph, input, "out", stage, "in");
+    connect_runtime(graph, stage, "out", lazy_pipeline, "in");
+    connect_runtime(graph, lazy_pipeline, "out", output, "in");
+
+    simaai::neat::Run run = graph.build();
+    run.close_input();
+    simaai::neat::Sample sample;
+    simaai::neat::PullError error;
+    const auto pull_started = std::chrono::steady_clock::now();
+    require(run.pull("lazy_output", 100, sample, &error) == simaai::neat::PullStatus::Closed,
+            "pull did not observe closure of an unbuilt downstream pipeline");
+    const auto pull_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - pull_started);
+    require(pull_elapsed < std::chrono::milliseconds(1000),
+            "pull waited for the lazy pipeline build timeout after completion");
+    require(error.code == simaai::neat::error_codes::kRuntimePull,
+            "lazy application-driven close should use runtime.pull closure");
+  }
+
+  // Closure details are per output branch. A finite source ending must not relabel a separate
+  // application-pushed branch when close_input() drains that branch normally.
+  {
+    simaai::neat::Graph graph;
+    const auto finite_source = graph.append_pipeline_vertex_for_internal_graph_(
+        simaai::neat::nodes::Custom("videotestsrc num-buffers=1 pattern=black ! "
+                                    "video/x-raw,format=RGB,width=64,height=48,framerate=30/1",
+                                    simaai::neat::InputRole::Source));
+    const auto finite_output = add_output_endpoint(graph, "finite_branch");
+    connect_runtime(graph, finite_source, "out", finite_output, "in");
+
+    const auto pushed_input = add_input_endpoint(graph, "pushed_input");
+    const auto pushed_stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node(20));
+    const auto pushed_output = add_output_endpoint(graph, "pushed_branch");
+    connect_runtime(graph, pushed_input, "out", pushed_stage, "in");
+    connect_runtime(graph, pushed_stage, "out", pushed_output, "in");
+
+    simaai::neat::Run run = graph.build();
+    require(run.push("pushed_input", make_text_sample("prompt", "application")),
+            "mixed graph rejected application input");
+    run.close_input();
+
+    simaai::neat::Sample sample;
+    simaai::neat::PullError finite_error;
+    require(run.pull("finite_branch", 1000, sample, &finite_error) == simaai::neat::PullStatus::Ok,
+            "mixed graph finite branch did not produce output");
+    require(run.pull("finite_branch", 1000, sample, &finite_error) ==
+                simaai::neat::PullStatus::Closed,
+            "mixed graph finite branch did not close");
+    require(finite_error.code == simaai::neat::error_codes::kSourceEnded,
+            "mixed graph finite branch lost source-ended provenance");
+
+    simaai::neat::PullError pushed_error;
+    require(run.pull("pushed_branch", 1000, sample, &pushed_error) == simaai::neat::PullStatus::Ok,
+            "mixed graph pushed branch dropped accepted output");
+    require(sample_text(sample) == "application", "mixed graph pushed branch changed payload");
+    require(run.pull("pushed_branch", 1000, sample, &pushed_error) ==
+                simaai::neat::PullStatus::Closed,
+            "mixed graph pushed branch did not close");
+    require(pushed_error.code == simaai::neat::error_codes::kRuntimePull,
+            "finite source incorrectly relabeled application branch closure");
+  }
+
   {
     simaai::neat::Graph graph;
     const auto input = add_input_endpoint(graph, "in");

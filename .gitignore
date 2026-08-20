@@ -2,6 +2,9 @@
 /build/
 /build-*/
 /build*/
+pcie_host/artifacts/
+pcie_host/build*/
+pcie_host/packaging/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
@@ -80,6 +83,10 @@ models/
 *.tif
 *.tiff
 *.webp
+
+# Shipped PCIe tutorial fixtures
+!pcie_host/tutorials/assets/labrador.jpg
+!pcie_host/tutorials/assets/street-scene.png
 
 # Keep checked-in fixtures/media
 !samples/

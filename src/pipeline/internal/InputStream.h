@@ -166,7 +166,9 @@ public:
   void stop();
   void stop_async();
   bool running() const;
+  bool reached_eos() const;
   std::string last_error() const;
+  std::optional<PullError> last_error_detail() const;
   InputStreamStats stats() const;
   std::string diagnostics_summary() const;
   std::shared_ptr<pipeline_internal::DiagCtx> diag_ctx() const;

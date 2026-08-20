@@ -3,7 +3,8 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
-| Difficulty | Intermediate |
+| Category | GenAI |
+| Difficulty | Beginner |
 | Estimated Read Time | 15-20 minutes |
 | Model | Qwen3-4B-Instruct-2507-GPTQ-a16w4, Qwen3-VL-4B-Instruct-GPTQ-a16w4, whisper-small-a16w8 |
 | Labels | genai, server, llm, vlm, asr, http |
@@ -14,7 +15,12 @@ Host multiple GenAI models behind the Neat GenAI server so a UI, service, or rem
 
 ## Walkthrough
 
-Direct `model.run(request)` is the best starting point for embedded application logic. Use `GenAIServer` when the application boundary is HTTP: a browser UI, a companion service, or a remote client that should not link against the Neat runtime.
+For most applications, start with `GenAIServer` and its OpenAI-compatible
+`POST /v1/chat/completions` endpoint. Use direct `model.run(request)` calls
+when embedded application logic should own the model call in the same process.
+
+See the [GenAI Server reference](/develop-apps/development-workflow/genai-model/genai-server)
+for the complete endpoint and request contract.
 
 ### Configure the server {#step-configure-server}
 
@@ -94,6 +100,50 @@ python3 share/sima-neat/tutorials/021_serve_genai_models/request_chat_completion
   "Give me three tips for designing a small REST API."
 ```
 
+### Tool-calling request to the LLM
+
+The OpenAI-compatible `POST /v1/chat/completions` endpoint and the Ollama-compatible
+`POST /api/chat` endpoint accept function definitions in the `tools` array. Each entry
+must have `type: "function"`, a `function` object, and a non-empty string
+`function.name`. The function description and JSON Schema parameters may be included
+inside the `function` object:
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "What is the weather in Paris?"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {"type": "string"}
+            },
+            "required": ["city"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto",
+    "stream": false
+  }'
+```
+
+Set `tool_choice` to `"auto"` to let the model select a declared tool or to `"none"`
+to disable tool prompting and parsing. Omitting `tool_choice`, or setting it to
+`null`, behaves like `"auto"` when `tools` is non-empty. Malformed tool definitions,
+non-array `tools`, and unsupported `tool_choice` values or types return HTTP 400 with
+an `invalid_request_error`. The same tool-definition and tool-choice validation
+applies to direct `GenerationRequest` calls before inference starts.
+
 ### Text and image request to the VLM
 
 The request script base64-encodes the image and sends it as an OpenAI-compatible `image_url` content part.
@@ -108,12 +158,33 @@ python3 share/sima-neat/tutorials/021_serve_genai_models/request_chat_completion
 
 ### Audio request to the ASR model
 
+The transcription client defaults to automatic source-language detection. Use
+`--language` when the source language is known:
+
 ```bash
 python3 share/sima-neat/tutorials/021_serve_genai_models/request_audio_transcription.py \
   --server-ip <modalix-ip> \
   --model asr \
   speech.wav
 ```
+
+To translate speech into English, add `--translate`. The client sends the same
+multipart request to `POST /v1/audio/translations`:
+
+```bash
+python3 share/sima-neat/tutorials/021_serve_genai_models/request_audio_transcription.py \
+  --server-ip <modalix-ip> \
+  --model asr \
+  --translate \
+  speech-in-another-language.wav
+```
+
+Transcription uses `POST /v1/audio/transcriptions`. Both routes support
+`stream=true`; the supplied client streams text and prints the detected source
+language, `no_speech_prob`, and `avg_logprob` from the final event. A higher
+`no_speech_prob` indicates that Whisper considers the input more likely to
+contain no speech. `avg_logprob` is the mean log probability of generated
+tokens, where a higher (less negative) value indicates a more confident decode.
 
 ## In Practice
 

@@ -26,6 +26,7 @@
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
+#include "pipeline/internal/sima/stagesemantics/SsdRecipeId.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 
 #include <optional>
@@ -153,9 +154,11 @@ struct ProcessMlaContractSubset {
 
 /// Detessellate stage contract subset.
 struct DetessellateContractSubset {
+  /// Canonical geometry used to configure the detessellation runtime.
   std::vector<std::int64_t> input_shape;
   std::vector<std::int64_t> input_transport_shape;
   std::uint64_t input_transport_size_bytes = 0U;
+  /// Authored logical output shape exposed by Neat.
   std::vector<std::int64_t> frame_shape;
   std::string frame_type;
   std::vector<std::int64_t> slice_shape;
@@ -174,10 +177,12 @@ struct DequantizeContractSubset {
 
 /// Per-head subset for the fused DetessDequant contract.
 struct DetessDequantHeadContractSubset {
+  /// Canonical geometry used to configure the detessellation runtime.
   std::vector<std::int64_t> per_head_input_shape;
   std::vector<std::int64_t> input_transport_shape;
   std::uint64_t input_transport_size_bytes = 0U;
   MpkQuantContract per_head_quant_params;
+  /// Authored logical output shape exposed by Neat.
   std::vector<std::int64_t> frame_shape;
   std::string frame_type;
   std::vector<std::int64_t> slice_shape;
@@ -204,11 +209,15 @@ struct BoxDecodeContractSubset {
   std::vector<sima_ev_shape_desc> slice_shapes;
   std::vector<int> tensor_storage_kind;
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
+  stagesemantics::SsdRecipeId ssd_recipe_id = stagesemantics::SsdRecipeId::Unknown;
+  stagesemantics::SsdClassSelection ssd_class_selection;
   bool tess_needed = false;
   bool quant_needed = false;
   std::optional<BoxDecodeTypeOption> decode_type_option;
   BoxDecodeScoreActivation score_activation = BoxDecodeScoreActivation::Unknown;
   int num_classes = 0;
+  SuperPointStaticContract superpoint;
+  std::vector<BoxDecodeTensorRole> tensor_roles;
 };
 
 // Phase 3a (Option A++): public wrappers around the per-frame normalization

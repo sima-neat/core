@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -50,10 +51,8 @@ struct ModelArchiveEntry {
 struct ModelArchiveManifest {
   std::string archive_path;
   std::string package_name;
-  std::string version = "1";
   std::uint64_t archive_size_bytes = 0;
 
-  bool has_pipeline_sequence = false;
   bool has_model_binary = false;
 
   std::vector<ModelArchiveEntry> entries;
@@ -61,13 +60,17 @@ struct ModelArchiveManifest {
 
 struct ModelArchiveLoaderOptions {
   std::size_t max_archive_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL;
+  // Gzip-bomb guard for the staging copy: the compressed size says nothing about how far a
+  // hostile archive expands.
+  std::size_t max_inflated_archive_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL;
   std::size_t max_entry_bytes = 8ULL * 1024ULL * 1024ULL * 1024ULL;
   std::size_t max_total_json_bytes = 32ULL * 1024ULL * 1024ULL;
   std::size_t max_entries = 2048;
   std::size_t max_json_depth = 64;
   std::uint64_t min_output_free_bytes = 16ULL * 1024ULL * 1024ULL;
+  // Filesystem for the inflated snapshot. Empty stages under TMPDIR.
+  std::string staging_base;
 
-  bool require_pipeline_sequence = true;
   bool require_model_binary = true;
   bool reject_unsupported_file_types = true;
   bool reject_duplicate_json_keys = true;
@@ -90,6 +93,11 @@ struct ModelArchiveExtractResult {
   ModelArchiveManifest manifest;
 };
 
+/// Selects the extraction root from the validated manifest, before any output file is created.
+using ChooseModelArchiveOutputRoot = std::function<std::string(const ModelArchiveManifest&)>;
+
+/// Reads .tar.gz model archives. Every entry point, inspect() included, inflates the archive
+/// once into a staging copy and so needs temp space for the inflated size.
 class ModelArchiveLoader {
 public:
   static ModelArchiveManifest inspect(const std::string& archive_path,
@@ -98,6 +106,16 @@ public:
   static ModelArchiveExtractResult extract(const std::string& archive_path,
                                            const std::string& output_root,
                                            const ModelArchiveLoaderOptions& opt = {});
+
+  /// extract() for callers whose root choice depends on the extracted size, without costing
+  /// them a second validation pass.
+  static ModelArchiveExtractResult extract(const std::string& archive_path,
+                                           const ChooseModelArchiveOutputRoot& choose_output_root,
+                                           const ModelArchiveLoaderOptions& opt = {});
+
+  /// Total archive inflations performed by this process. #653 made one load cost exactly one
+  /// inflation; a regression to repeated passes is otherwise only visible as elapsed time.
+  static std::uint64_t inflation_count();
 };
 
 } // namespace simaai::neat::internal

@@ -113,5 +113,5 @@ tar -xzf ./sima-neat-*-Linux-extras.tar.gz -C "${HOME}/sima-neat-extras"
 
 ## Documentation
 
-Full documentation, guides, and API references are published [here](https://neat.modalix.info).
+Full documentation, guides, and API references are published [here](https://developer.sima.ai/software).
 Contributor and agent quality guidance is documented in `AGENTS.md` at the repository root.

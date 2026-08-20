@@ -3,6 +3,7 @@
 
 #include "internal/InputStream.h"
 #include "pipeline/RunExport.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/RealtimeFrameCredit.h"
@@ -33,6 +34,28 @@ namespace {
 using run_internal::force_copy_sample_if_zero_copy;
 using run_internal::queue_full;
 using run_internal::sample_has_zero_copy_tensor;
+
+class RunCoreStartupGuard {
+public:
+  explicit RunCoreStartupGuard(std::shared_ptr<runtime::RunCore> core) : core_(std::move(core)) {}
+
+  ~RunCoreStartupGuard() {
+    if (!committed_ && core_) {
+      try {
+        core_->close();
+      } catch (...) {
+      }
+    }
+  }
+
+  void commit() noexcept {
+    committed_ = true;
+  }
+
+private:
+  std::shared_ptr<runtime::RunCore> core_;
+  bool committed_ = false;
+};
 
 std::string read_first_line(const char* path) {
   std::ifstream in(path);
@@ -240,9 +263,13 @@ Run::~Run() {
 std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     InputStream stream, const RunOptions& opt, const InputStreamOptions& stream_opt, RunMode mode,
     const std::optional<InputOptions>& tensor_input_opt_for_cv,
-    pipeline_internal::InputRouteProcessorPtr input_route_processor) {
+    pipeline_internal::InputRouteProcessorPtr input_route_processor,
+    std::shared_ptr<DecoderAdmissionReservation> decoder_admission,
+    std::function<void()> after_pipeline_start_for_test) {
   auto st = std::make_shared<runtime::RunCore>();
   runtime::initialize_run_identity(*st);
+  st->decoder_admission = std::move(decoder_admission);
+  RunCoreStartupGuard startup_guard(st);
   st->pipeline.stream = std::move(stream);
   st->opt = opt;
   st->pipeline.stream_opt = stream_opt;
@@ -442,12 +469,39 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
 
   if (!st->pipeline.supports_push) {
     st->pipeline.input_thread_done.store(true);
+    if (after_pipeline_start_for_test) {
+      after_pipeline_start_for_test();
+    }
+    startup_guard.commit();
     return st;
   }
 
   st->pipeline.input_thread = std::thread([st]() {
     const bool input_thread_timing = run_input_thread_timing_enabled();
     int input_thread_timing_count = 0;
+    const auto stop_with_error = [&st](const std::exception& e, const NeatError* typed_error) {
+      if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
+          pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
+        std::fprintf(stderr, "[PIPELINE] input_thread_error: %s\n", e.what());
+      }
+      if (typed_error) {
+        st->set_terminal_error(*typed_error);
+      } else {
+        std::lock_guard<std::mutex> lock(st->error_mu);
+        st->error = e.what();
+      }
+      st->stop_requested.store(true);
+      st->pipeline.out_cv.notify_all();
+    };
+    const auto discard_pending_input_timing = [&st]() {
+      if (!st->pipeline.supports_pull) {
+        return;
+      }
+      std::lock_guard<std::mutex> lock(st->latency_mu);
+      if (!st->pipeline.pending_times.empty()) {
+        st->pipeline.pending_times.pop_back();
+      }
+    };
     while (true) {
       InputItem item;
       std::size_t q_after_pop = 0;
@@ -507,21 +561,13 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
                 static_cast<long long>(push_ns));
           }
         }
+      } catch (const NeatError& e) {
+        discard_pending_input_timing();
+        stop_with_error(e, &e);
+        break;
       } catch (const std::exception& e) {
-        if (st->pipeline.supports_pull) {
-          std::lock_guard<std::mutex> lock(st->latency_mu);
-          if (!st->pipeline.pending_times.empty()) {
-            st->pipeline.pending_times.pop_back();
-          }
-        }
-        if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
-            pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
-          std::fprintf(stderr, "[PIPELINE] input_thread_error: %s\n", e.what());
-        }
-        std::lock_guard<std::mutex> lock(st->error_mu);
-        st->error = e.what();
-        st->stop_requested.store(true);
-        st->pipeline.out_cv.notify_all();
+        discard_pending_input_timing();
+        stop_with_error(e, nullptr);
         break;
       }
     }
@@ -529,17 +575,38 @@ std::shared_ptr<runtime::RunCore> runtime::RunCore::start_single_pipeline(
     if (!st->stop_requested.load() && st->pipeline.input_closed) {
       try {
         st->pipeline.stream.signal_eos();
+      } catch (const NeatError& e) {
+        stop_with_error(e, &e);
       } catch (const std::exception& e) {
-        std::lock_guard<std::mutex> lock(st->error_mu);
-        st->error = e.what();
-        st->stop_requested.store(true);
-        st->pipeline.out_cv.notify_all();
+        stop_with_error(e, nullptr);
       }
     }
+    // Settle the handoff before publishing input_thread_done: whichever side wins this
+    // exchange is the sole closer.
+    auto expected = runtime::InputStreamCloseState::RunCoreOwnsWhileInputRunning;
+    const bool owns_close =
+        !st->stream_close_state.compare_exchange_strong(
+            expected, runtime::InputStreamCloseState::RunCoreOwnsAfterInputFinished,
+            std::memory_order_acq_rel) &&
+        expected == runtime::InputStreamCloseState::InputThreadOwns;
+
     st->pipeline.input_thread_done.store(true);
     st->pipeline.out_cv.notify_all();
+
+    if (owns_close) {
+      // close() timed out here and skipped teardown, leaving this the last user. Close the
+      // stream directly; RunCore::close() latched `closed` on its way through.
+      st->pipeline.stream.close();
+      st->decoder_admission.reset();
+      st->stream_close_state.store(runtime::InputStreamCloseState::Closed,
+                                   std::memory_order_release);
+    }
   });
 
+  if (after_pipeline_start_for_test) {
+    after_pipeline_start_for_test();
+  }
+  startup_guard.commit();
   return st;
 }
 
@@ -612,6 +679,30 @@ std::string runtime::RunCore::last_error() const {
   if (graph_execution_)
     return {};
   return pipeline.stream.last_error();
+}
+
+std::optional<PullError> runtime::RunCore::last_error_detail() const {
+  {
+    std::lock_guard<std::mutex> lock(error_mu);
+    if (terminal_error_detail.has_value())
+      return terminal_error_detail;
+  }
+  if (graph_execution_)
+    return std::nullopt;
+  return pipeline.stream.last_error_detail();
+}
+
+std::optional<PullError>
+runtime::RunCore::wait_for_report_bearing_error(std::chrono::milliseconds timeout) const {
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::max(timeout, std::chrono::milliseconds::zero());
+  std::optional<PullError> detail = last_error_detail();
+  while ((!detail.has_value() || !detail->report.has_value()) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    detail = last_error_detail();
+  }
+  return detail;
 }
 
 std::string runtime::RunCore::diagnostics_summary() const {

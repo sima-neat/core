@@ -17,23 +17,39 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-import perf_schema as schema
+import perf_schema as schema  # noqa: E402
 
 
 @dataclass(frozen=True)
 class ScenarioSpec:
     scenario_id: str
     target: str
+    allow_skip: bool = False
 
 
-SCENARIOS: tuple[ScenarioSpec, ...] = (
+SKIP_RETURN_CODE = 77
+
+
+STANDARD_SCENARIOS: tuple[ScenarioSpec, ...] = (
     ScenarioSpec("runtime_session_sync_rgb", "perf_runtime_graph_sync_rgb_test"),
     ScenarioSpec("runtime_session_async_rgb", "perf_runtime_graph_async_rgb_test"),
     ScenarioSpec("runtime_graph_fanout", "perf_runtime_graph_fanout_test"),
     ScenarioSpec("runtime_graph_join_bundle", "perf_runtime_graph_join_bundle_test"),
     ScenarioSpec("runtime_codec_mjpeg_decode", "perf_runtime_codec_mjpeg_decode_test"),
     ScenarioSpec("runtime_codec_h264_decode", "perf_runtime_codec_h264_decode_test"),
+    ScenarioSpec("runtime_codec_h265_decode", "perf_runtime_codec_h265_decode_test"),
+    ScenarioSpec("runtime_model_archive_load", "perf_runtime_model_archive_load_test"),
 )
+
+LONG_SCENARIOS: tuple[ScenarioSpec, ...] = (
+    ScenarioSpec(
+        "ssd_mobilenet_boxdecode",
+        "perf_ssd_mobilenet_boxdecode_test",
+        allow_skip=True,
+    ),
+)
+
+SCENARIOS: tuple[ScenarioSpec, ...] = STANDARD_SCENARIOS + LONG_SCENARIOS
 
 
 def utc_now() -> str:
@@ -75,13 +91,15 @@ def preflight_baselines(
     profile_dir: Path,
     results_dir: Path,
     scenarios: tuple[ScenarioSpec, ...] = SCENARIOS,
+    result_scenarios: tuple[ScenarioSpec, ...] | None = None,
 ) -> tuple[schema.PerfProfile | None, dict[str, schema.ScenarioBaseline], bool]:
     results_dir.mkdir(parents=True, exist_ok=True)
+    report_specs = scenarios if result_scenarios is None else result_scenarios
 
     try:
         profile, baseline_map = schema.validate_baseline_directory(profile_dir)
     except schema.SchemaError as exc:
-        for spec in scenarios:
+        for spec in report_specs:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id="unknown",
@@ -97,7 +115,7 @@ def preflight_baselines(
     expected = {spec.scenario_id for spec in scenarios}
     extras = sorted(set(baseline_map.keys()) - expected)
     if extras:
-        for spec in scenarios:
+        for spec in report_specs:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
@@ -112,7 +130,7 @@ def preflight_baselines(
 
     missing = [spec.scenario_id for spec in scenarios if spec.scenario_id not in baseline_map]
     if missing:
-        for spec in scenarios:
+        for spec in report_specs:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
@@ -166,12 +184,12 @@ def configure_and_build(repo_root: Path, build_dir: Path, targets: list[str]) ->
     return True, ""
 
 
-def run_modalix_preflight(repo_root: Path, build_dir: Path) -> tuple[bool, str]:
+def run_modalix_preflight(repo_root: Path, ctest_dir: Path) -> tuple[bool, str]:
     proc = run_cmd(
         [
             "ctest",
             "--test-dir",
-            str(build_dir),
+            str(ctest_dir),
             "--output-on-failure",
             "-R",
             "^unit_modalix_contract_preflight_test$",
@@ -191,7 +209,7 @@ def run_modalix_preflight(repo_root: Path, build_dir: Path) -> tuple[bool, str]:
 def run_scenario(
     *,
     repo_root: Path,
-    build_dir: Path,
+    executable_dir: Path,
     results_dir: Path,
     profile: schema.PerfProfile,
     spec: ScenarioSpec,
@@ -199,7 +217,7 @@ def run_scenario(
     timeout_sec: int,
     iterations_override: int | None,
 ) -> schema.PerfResult:
-    exe_path = build_dir / "tests" / spec.target
+    exe_path = executable_dir / spec.target
     if not exe_path.exists():
         return build_result(
             scenario_id=spec.scenario_id,
@@ -229,7 +247,40 @@ def run_scenario(
         )
 
     combined_output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    if proc.returncode == SKIP_RETURN_CODE and spec.allow_skip:
+        return build_result(
+            scenario_id=spec.scenario_id,
+            modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.SKIP,
+            failure_class=None,
+            reason_code=None,
+            metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+            run_meta={
+                "phase": "skip",
+                "executable": str(exe_path),
+                "exit_code": proc.returncode,
+                "stdout_tail": proc.stdout[-800:] if proc.stdout else "",
+                "stderr_tail": proc.stderr[-800:] if proc.stderr else "",
+            },
+        )
     if proc.returncode != 0:
+        harness_reason = schema.classify_perf_harness_failure(combined_output)
+        if harness_reason is not None:
+            return build_result(
+                scenario_id=spec.scenario_id,
+                modalix_profile_id=profile.modalix_profile_id,
+                status=schema.ResultStatus.FAIL,
+                failure_class=schema.FailureClass.HARNESS_ERROR,
+                reason_code=harness_reason,
+                metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+                run_meta={
+                    "phase": "run",
+                    "executable": str(exe_path),
+                    "exit_code": proc.returncode,
+                    "stdout_tail": proc.stdout[-800:] if proc.stdout else "",
+                    "stderr_tail": proc.stderr[-800:] if proc.stderr else "",
+                },
+            )
         reason = schema.classify_env_failure(proc.returncode, combined_output, timed_out=False)
         return build_result(
             scenario_id=spec.scenario_id,
@@ -277,12 +328,6 @@ def run_scenario(
 
     try:
         metrics = schema.parse_metrics_payload(payload_raw, context=f"payload:{spec.scenario_id}")
-        power = schema.parse_optional_power_payload(
-            payload_raw, context=f"payload:{spec.scenario_id}"
-        )
-        measure_report = schema.parse_optional_measure_report_payload(
-            payload_raw, context=f"payload:{spec.scenario_id}"
-        )
     except schema.SchemaError as exc:
         return build_result(
             scenario_id=spec.scenario_id,
@@ -294,22 +339,80 @@ def run_scenario(
             run_meta={"phase": "parse_output", "error": str(exc)},
         )
 
+    try:
+        power = schema.parse_optional_power_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
+        measure_report = schema.parse_optional_measure_report_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
+        component_latency = schema.parse_optional_component_latency_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
+    except schema.SchemaError as exc:
+        return build_result(
+            scenario_id=spec.scenario_id,
+            modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.FAIL,
+            failure_class=schema.FailureClass.HARNESS_ERROR,
+            reason_code=schema.ReasonCode.HARNESS_SCHEMA_INVALID,
+            metrics=metrics,
+            run_meta={"phase": "parse_output", "error": str(exc)},
+        )
+
     run_meta = {"phase": "compare", "executable": str(exe_path), "iterations": scenario_iters}
     if power is not None:
         run_meta["power"] = power
     if measure_report is not None:
         run_meta["measure_report"] = measure_report
+    if component_latency or baseline.component_latency_thresholds:
+        run_meta["component_latency"] = schema.component_latency_to_json_dict(component_latency)
+
+    component_failures = schema.compare_component_latency(component_latency, baseline)
+    if component_failures:
+        run_meta["component_latency_failures"] = [
+            schema.component_failure_to_json_dict(failure) for failure in component_failures
+        ]
+    harness_failures = [
+        failure
+        for failure in component_failures
+        if failure.failure_class == schema.FailureClass.HARNESS_ERROR
+    ]
+    if harness_failures:
+        return build_result(
+            scenario_id=spec.scenario_id,
+            modalix_profile_id=profile.modalix_profile_id,
+            status=schema.ResultStatus.FAIL,
+            failure_class=schema.FailureClass.HARNESS_ERROR,
+            reason_code=harness_failures[0].reason_code,
+            metrics=metrics,
+            run_meta=run_meta,
+        )
 
     regressions = schema.compare_metrics(metrics, baseline)
-    if regressions:
+    component_regressions = [
+        failure
+        for failure in component_failures
+        if failure.failure_class == schema.FailureClass.REGRESSION
+    ]
+    if component_regressions or regressions:
+        primary_reason = (
+            component_regressions[0].reason_code if component_regressions else regressions[0]
+        )
         return build_result(
             scenario_id=spec.scenario_id,
             modalix_profile_id=profile.modalix_profile_id,
             status=schema.ResultStatus.FAIL,
             failure_class=schema.FailureClass.REGRESSION,
-            reason_code=regressions[0],
+            reason_code=primary_reason,
             metrics=metrics,
-            run_meta={**run_meta, "regression_reasons": [reason.value for reason in regressions]},
+            run_meta={
+                **run_meta,
+                "regression_reasons": [
+                    *[failure.reason_code.value for failure in component_regressions],
+                    *[reason.value for reason in regressions],
+                ],
+            },
         )
 
     return build_result(
@@ -349,11 +452,17 @@ def print_summary(results: list[schema.PerfResult]) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    repo_root_default = THIS_DIR.parents[3]
+    repo_root_default = THIS_DIR.parents[2]
 
     parser = argparse.ArgumentParser(description="Run perf matrix against strict baselines")
     parser.add_argument("--repo-root", type=Path, default=repo_root_default)
     parser.add_argument("--build-dir", type=Path, default=Path("build-perf-gate"))
+    parser.add_argument(
+        "--prebuilt-tests-dir",
+        type=Path,
+        default=None,
+        help="Run installed test executables from this directory without configuring or building.",
+    )
     parser.add_argument(
         "--profile-dir",
         type=Path,
@@ -362,6 +471,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results-dir", type=Path, default=None)
     parser.add_argument("--scenario-timeout-sec", type=int, default=int(os.getenv("SIMA_PERF_SCENARIO_TIMEOUT_SEC", "180")))
     parser.add_argument("--iterations", type=int, default=None)
+    parser.add_argument(
+        "--include-long",
+        action="store_true",
+        help="Include fixture-dependent long scenarios (weekly/device lanes only).",
+    )
     parser.add_argument(
         "--failfast-only",
         action="store_true",
@@ -385,10 +499,16 @@ def main() -> int:
     for stale in results_dir.glob("*.json"):
         stale.unlink(missing_ok=True)
 
-    profile, baseline_map, preflight_failed = preflight_baselines(profile_dir, results_dir, SCENARIOS)
+    selected_scenarios = SCENARIOS if args.include_long else STANDARD_SCENARIOS
+    profile, baseline_map, preflight_failed = preflight_baselines(
+        profile_dir, results_dir, SCENARIOS, selected_scenarios
+    )
 
     if preflight_failed:
-        results = [schema.load_perf_result(scenario_result_path(results_dir, s.scenario_id)) for s in SCENARIOS]
+        results = [
+            schema.load_perf_result(scenario_result_path(results_dir, s.scenario_id))
+            for s in selected_scenarios
+        ]
         print_summary(results)
         return 1
 
@@ -396,7 +516,7 @@ def main() -> int:
 
     if args.failfast_only:
         results = []
-        for spec in SCENARIOS:
+        for spec in selected_scenarios:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
@@ -411,26 +531,39 @@ def main() -> int:
         print_summary(results)
         return 0
 
-    build_targets = ["unit_modalix_contract_preflight_test", *[spec.target for spec in SCENARIOS]]
-    ok, build_error = configure_and_build(repo_root, build_dir, build_targets)
-    if not ok:
-        results: list[schema.PerfResult] = []
-        for spec in SCENARIOS:
-            result = build_result(
-                scenario_id=spec.scenario_id,
-                modalix_profile_id=profile.modalix_profile_id,
-                status=schema.ResultStatus.FAIL,
-                failure_class=schema.FailureClass.ENV_BROKEN,
-                reason_code=schema.ReasonCode.ENV_RUNTIME_CRASH,
-                metrics=dict(schema.DEFAULT_EMPTY_METRICS),
-                run_meta={"phase": "build", "error": build_error},
-            )
-            write_result(results_dir, result)
-            results.append(result)
-        print_summary(results)
-        return 1
+    if args.prebuilt_tests_dir is not None:
+        executable_dir = (
+            (repo_root / args.prebuilt_tests_dir).resolve()
+            if not args.prebuilt_tests_dir.is_absolute()
+            else args.prebuilt_tests_dir
+        )
+        preflight_dir = executable_dir
+    else:
+        build_targets = [
+            "unit_modalix_contract_preflight_test",
+            *[spec.target for spec in selected_scenarios],
+        ]
+        ok, build_error = configure_and_build(repo_root, build_dir, build_targets)
+        if not ok:
+            results: list[schema.PerfResult] = []
+            for spec in selected_scenarios:
+                result = build_result(
+                    scenario_id=spec.scenario_id,
+                    modalix_profile_id=profile.modalix_profile_id,
+                    status=schema.ResultStatus.FAIL,
+                    failure_class=schema.FailureClass.ENV_BROKEN,
+                    reason_code=schema.ReasonCode.ENV_RUNTIME_CRASH,
+                    metrics=dict(schema.DEFAULT_EMPTY_METRICS),
+                    run_meta={"phase": "build", "error": build_error},
+                )
+                write_result(results_dir, result)
+                results.append(result)
+            print_summary(results)
+            return 1
+        executable_dir = build_dir / "tests"
+        preflight_dir = build_dir
 
-    preflight_ok, preflight_error = run_modalix_preflight(repo_root, build_dir)
+    preflight_ok, preflight_error = run_modalix_preflight(repo_root, preflight_dir)
     if not preflight_ok:
         preflight_reason = schema.classify_env_failure(
             exit_code=1,
@@ -438,7 +571,7 @@ def main() -> int:
             timed_out=False,
         )
         results = []
-        for spec in SCENARIOS:
+        for spec in selected_scenarios:
             result = build_result(
                 scenario_id=spec.scenario_id,
                 modalix_profile_id=profile.modalix_profile_id,
@@ -454,11 +587,11 @@ def main() -> int:
         return 1
 
     all_results: list[schema.PerfResult] = []
-    for spec in SCENARIOS:
+    for spec in selected_scenarios:
         baseline = baseline_map[spec.scenario_id]
         result = run_scenario(
             repo_root=repo_root,
-            build_dir=build_dir,
+            executable_dir=executable_dir,
             results_dir=results_dir,
             profile=profile,
             spec=spec,

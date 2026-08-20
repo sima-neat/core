@@ -44,13 +44,14 @@ NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manife
 NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-production}"
 NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
 NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
-NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima}"
+NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima/debs}"
 NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
 NEAT_PACKAGE_BUILDINFO_JSON="${NEAT_PACKAGE_BUILDINFO_JSON:-${BUILD_DIR}/buildinfo.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
+NEAT_INTERNALS_ARTIFACT_MANIFEST="${NEAT_INTERNALS_DIR}/internals-manifest.json"
 NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
@@ -72,12 +73,16 @@ ELXR_TARGET_PYTHON_VERSION=""
 ELXR_TARGET_PYTHON_INCLUDE_DIR=""
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
-NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
+NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Palette Neat}"
 NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
-NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (tutorials/tests)}"
+NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa Neat extras (tutorials/tests)}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 SIMANEAT_BOOTSTRAP_SIMA_CLI="${SIMANEAT_BOOTSTRAP_SIMA_CLI:-auto}"
+SIMANEAT_SCCACHE="${SIMANEAT_SCCACHE:-auto}"
+
+# shellcheck source=scripts/configure_sccache.sh
+source "${REPO_ROOT}/scripts/configure_sccache.sh"
 
 # ------------------------------------------------------------------------------
 # System dependencies
@@ -293,6 +298,13 @@ Environment:
                  Vulcan environment used for dependency artifact installs.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
+  SIMANEAT_SCCACHE=auto|on|off
+                 Enable the persistent compiler cache. auto bootstraps a pinned,
+                 checksum-verified sccache binary when needed.
+  SCCACHE_DIR=~/.cache/sima-neat/sccache
+                 Persistent local compiler-cache directory.
+  SCCACHE_CACHE_SIZE=10G
+                 Maximum local compiler-cache size.
 
 Examples:
   ./build.sh
@@ -605,13 +617,13 @@ run_privileged() {
   # 4) interactive sudo only in TTY sessions
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
-    return 0
+    return $?
   fi
 
   if command -v sudo >/dev/null 2>&1; then
     if sudo -n true 2>/dev/null; then
       sudo -n "$@"
-      return 0
+      return $?
     fi
 
     local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
@@ -1342,6 +1354,77 @@ PY
   fi
 }
 
+sync_sysroot_from_internals_manifest() {
+  local artifact_dir="$1"
+  [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]] || return 0
+
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    echo "ERROR: NEAT_SYNC_SYSROOT requires an eLxr SDK." >&2
+    exit 1
+  fi
+
+  local artifact_manifest="${artifact_dir}/internals-manifest.json"
+  if [[ ! -f "${artifact_manifest}" ]]; then
+    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
+    exit 1
+  fi
+
+  local receipt
+  if ! receipt="$(python3 -c '
+import json, re, sys
+artifact = json.load(open(sys.argv[1], encoding="utf-8"))
+consumer = json.load(open(sys.argv[2], encoding="utf-8"))
+receipt = artifact["sysroot-version"]
+consumer_base = consumer["platform-version"]
+if not isinstance(receipt, str) or (
+    receipt
+    and not re.fullmatch(r"[0-9]+(?:[.][0-9]+){2}(?:~pre[0-9]+)?", receipt)
+):
+    raise ValueError("invalid sysroot-version")
+if receipt and consumer_base != receipt.split("~pre", 1)[0]:
+    raise ValueError("platform-version does not match the Internals receipt")
+print(receipt)
+' "${artifact_manifest}" "${NEAT_DEPS_MANIFEST}")"; then
+    echo "ERROR: Cannot read Internals build receipt." >&2
+    exit 1
+  fi
+  if [[ -z "${receipt}" ]]; then
+    echo "Core is using the existing SDK sysroot."
+    return 0
+  fi
+
+  if [[ "${receipt}" == *"~pre"* ]]; then
+    echo "Updating SDK sysroot to Internals receipt ${receipt}"
+    if ! run_privileged sysroot update "${receipt}"; then
+      echo "ERROR: Failed to update SDK sysroot to ${receipt}." >&2
+      exit 1
+    fi
+    sysroot status
+    return 0
+  fi
+
+  local sdk_platform_version
+  sdk_platform_version="$(sed -nE \
+    's/^Platform Version[[:space:]]*=[[:space:]]*([^[:space:]]+).*$/\1/p' \
+    "${ELXR_SDK_RELEASE_FILE}" 2>/dev/null | head -n1 || true)"
+  if [[ "${sdk_platform_version}" != "${receipt}" ]]; then
+    echo "ERROR: SDK platform ${sdk_platform_version:-unknown} does not match required stable platform ${receipt}." >&2
+    exit 1
+  fi
+  echo "Using stable SDK sysroot ${sdk_platform_version} without updating it."
+}
+
+preserve_internals_artifact_manifest() {
+  local artifact_manifest="$1/internals-manifest.json"
+  if [[ ! -f "${artifact_manifest}" ]]; then
+    echo "ERROR: Internals artifact is missing internals-manifest.json." >&2
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "${NEAT_INTERNALS_ARTIFACT_MANIFEST}")"
+  cp -f "${artifact_manifest}" "${NEAT_INTERNALS_ARTIFACT_MANIFEST}"
+}
+
 ensure_neat_internals() {
   # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
@@ -1351,7 +1434,6 @@ ensure_neat_internals() {
   internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
-  local marker_file="${NEAT_INTERNALS_DIR}/.internals"
   local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
 
   local tmp_dir
@@ -1361,21 +1443,12 @@ ensure_neat_internals() {
   local artifact_dir="${tmp_dir}/package"
   local plugins_list_file="${tmp_dir}/plugin-files.list"
 
-  if [[ -f "${marker_file}" ]] && [[ -d "${NEAT_INTERNALS_PLUGIN_DIR}" ]]; then
-    local current_tag
-    current_tag="$(tr -d '[:space:]' < "${marker_file}")"
-    # Cache hit requires matching resolved Vulcan spec and a known plugin sentinel.
-    if [[ "${current_tag}" == "${internals_ref}" ]] &&
-       [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]] &&
-       compgen -G "${deb_cache_dir}/neat-*.deb" >/dev/null 2>&1; then
-      echo "Using cached neat-internals plugins/debs (${internals_ref})."
-      rm -rf "${tmp_dir}"
-      return 0
-    fi
-  fi
-
   fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
   internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
+  sync_sysroot_from_internals_manifest "${artifact_dir}"
+  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
+    preserve_internals_artifact_manifest "${artifact_dir}"
+  fi
 
   if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
@@ -1385,7 +1458,6 @@ ensure_neat_internals() {
 
   copy_plugins_to_neat_internals "${plugins_list_file}"
 
-  printf '%s\n' "${internals_ref}" > "${marker_file}"
   rm -rf "${tmp_dir}"
 }
 
@@ -1655,9 +1727,7 @@ collect_install_artifact_files() {
     out_files_ref+=("${file}")
   done
 
-  for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb \
-              "${NEAT_INTERNALS_DEB_DIR}"/simaai-common*.deb \
-              "${NEAT_INTERNALS_DEB_DIR}"/neat-appcomplex_*.deb; do
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
@@ -1690,38 +1760,57 @@ collect_install_artifact_files() {
   done
 }
 
-ensure_node20_for_docs() {
-  # Docs toolchain expects Node.js 20.x.
+node_version_meets_docs_minimum() {
+  local version="$1"
+
+  if [[ ! "${version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$ ]]; then
+    return 1
+  fi
+
+  local major="${BASH_REMATCH[1]}"
+  local minor="${BASH_REMATCH[2]}"
+  local patch="${BASH_REMATCH[3]}"
+  ((major > 22 || (major == 22 && (minor > 12 || (minor == 12 && patch >= 0)))))
+}
+
+ensure_node22_for_docs() {
+  # Docs dependencies require Node.js 22.12.0 or newer.
   if [[ "${INSTALL_NODE}" != "ON" || "${BUILD_DOCS}" != "ON" ]]; then
     return 0
   fi
 
-  local node_major=""
+  local node_version=""
   if command -v node >/dev/null 2>&1; then
-    node_major="$(node -v | sed 's/^v//' | cut -d. -f1 || true)"
+    node_version="$(node -v | sed 's/^v//' || true)"
   fi
 
-  # Auto-install Node 20 only when current version is missing/too old.
-  if [[ -z "${node_major}" || "${node_major}" -lt 20 ]]; then
+  # Auto-install Node 22 when the current version is missing or below 22.12.0.
+  if ! node_version_meets_docs_minimum "${node_version}"; then
     if [[ "${OS_NAME}" == "Darwin" ]]; then
-      echo "Installing Node.js 20.x via Homebrew..."
-      brew install node@20
-      brew link --overwrite --force node@20
+      echo "Installing Node.js 22.x via Homebrew..."
+      brew install node@22
+      brew link --overwrite --force node@22
     else
-      echo "Installing Node.js 20.x..."
-      if ! run_privileged bash -c "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -"; then
+      echo "Installing Node.js 22.x..."
+      if ! run_privileged bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"; then
         echo "Cannot configure NodeSource without root or passwordless sudo."
-        echo "Please preinstall Node.js 20.x or run with --no-node."
+        echo "Please preinstall Node.js 22.x or run with --no-node."
         exit 1
       fi
       if ! run_privileged apt-get install -y nodejs; then
         echo "Cannot install Node.js without root or passwordless sudo."
-        echo "Please preinstall Node.js 20.x or run with --no-node."
+        echo "Please preinstall Node.js 22.x or run with --no-node."
         exit 1
       fi
     fi
+
+    node_version="$(node -v | sed 's/^v//' || true)"
+    if ! node_version_meets_docs_minimum "${node_version}"; then
+      echo "Node.js 22.12.0 or newer is required for docs; found ${node_version:-none}." >&2
+      exit 1
+    fi
   else
-    echo "Node.js ${node_major}.x already installed."
+    echo "Node.js ${node_version} already installed."
   fi
 }
 
@@ -1808,6 +1897,7 @@ print_build_config() {
   echo "Strict warns   : ${STRICT_WARNINGS}"
   echo "Build dir      : ${BUILD_DIR}"
   echo "Build jobs     : ${BUILD_JOBS}"
+  echo "sccache        : ${SIMANEAT_SCCACHE_ACTIVE:-OFF}"
   echo "eLxr SDK       : ${ELXR_SDK}"
   echo "Neat LLiMa     : ${INSTALL_NEAT_LLIMA}"
   if [[ "${ELXR_SDK}" == "ON" ]]; then
@@ -1829,8 +1919,10 @@ clean_build_dir_if_requested() {
 configure_cmake() {
   # Configure once; subsequent steps reuse this build tree.
   local -a cmake_args=(
+    -U "SKBUILD_*"
     -S . -B "${BUILD_DIR}"
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    -DCMAKE_INSTALL_PREFIX=/usr/local
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
@@ -1842,6 +1934,20 @@ configure_cmake() {
     -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
     -DFUZZING="${BUILD_FUZZ}"
   )
+
+  if [[ "${SIMANEAT_SCCACHE_ACTIVE:-OFF}" == "ON" ]]; then
+    cmake_args+=(
+      -DCMAKE_C_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
+      -DCMAKE_CXX_COMPILER_LAUNCHER="${SIMANEAT_SCCACHE_BIN}"
+    )
+  else
+    # CMake retains launcher values in an existing build tree. Clear them
+    # explicitly so SIMANEAT_SCCACHE=off is honored without requiring --clean.
+    cmake_args+=(
+      -DCMAKE_C_COMPILER_LAUNCHER=
+      -DCMAKE_CXX_COMPILER_LAUNCHER=
+    )
+  fi
 
   if [[ -f "${NEAT_PACKAGE_BUILDINFO_JSON}" ]]; then
     local buildinfo_json_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
@@ -1942,8 +2048,24 @@ build_docs_site() {
     npm --prefix "${REPO_ROOT}/website" ci --no-audit --no-fund
   fi
   echo
+  echo "Generating Insight API reference from OpenAPI..."
+  local insight_openapi_spec
+  local insight_api_output
+  insight_openapi_spec="${INSIGHT_OPENAPI_SPEC:-$(cd "${BUILD_DIR}" && pwd)/autodoc/insight/neat_insight/openapi.json}"
+  insight_api_output="${expanded_docs_dir}/tools/insight/api"
+  if [[ -f "${insight_openapi_spec}" ]]; then
+    insight_openapi_spec="$(cd "$(dirname "${insight_openapi_spec}")" && pwd -P)/$(basename "${insight_openapi_spec}")"
+    INSIGHT_OPENAPI_SPEC="${insight_openapi_spec}" \
+      INSIGHT_API_OUTPUT="${insight_api_output}" \
+      npm --prefix "${REPO_ROOT}/website" run gen-api-docs
+  else
+    echo "Skipping Insight API reference: OpenAPI spec not found at ${insight_openapi_spec}"
+  fi
+  echo
   echo "Building Docusaurus site..."
-  DOCS_PATH="${expanded_docs_dir}" npm --prefix "${REPO_ROOT}/website" run build
+  DOCS_PATH="${expanded_docs_dir}" \
+    INSIGHT_API_OUTPUT="${insight_api_output}" \
+    npm --prefix "${REPO_ROOT}/website" run build
   if [[ "${DOCS_STRICT_LINKS:-0}" == "1" ]]; then
     echo
     echo "Checking rendered docs links..."
@@ -1969,7 +2091,11 @@ build_docs_only_if_requested() {
 build_targets() {
   # For dev-only builds, avoid building tests/tutorials by targeting core lib.
   if [[ "${BUILD_TESTS}" == "OFF" && "${BUILD_TUTORIALS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
-    cmake --build "${BUILD_DIR}" --target sima_neat_libraries -j"${BUILD_JOBS}"
+    local -a targets=(sima_neat_libraries)
+    if [[ "${BUILD_PYTHON}" == "ON" ]]; then
+      targets+=(_pyneat_core)
+    fi
+    cmake --build "${BUILD_DIR}" --target "${targets[@]}" -j"${BUILD_JOBS}"
   else
     cmake --build "${BUILD_DIR}" -j"${BUILD_JOBS}"
   fi
@@ -2101,131 +2227,73 @@ build_python_wheel_if_requested() {
     exit 1
   fi
 
-  local wheel_python="python3"
-  local pyproject_path="${REPO_ROOT}/pyproject.toml"
-  local pyproject_backup
   local pyneat_package_version
-
-  # Use isolated venv if python-build module is missing on the host.
-  if ! python3 -m build --version >/dev/null 2>&1; then
-    local venv_dir="${BUILD_DIR}/.wheel-venv"
-    echo "Python 'build' module not found; creating isolated venv at ${venv_dir}..."
-    if ! python3 -m venv "${venv_dir}"; then
-      echo "ERROR: failed to create venv. Install python3-venv and retry."
-      exit 1
-    fi
-    wheel_python="${venv_dir}/bin/python"
-    "${wheel_python}" -m pip install --upgrade pip build
-  fi
+  local python_tag
+  local abi_tag
+  local platform_tag
+  local -a extension_candidates=()
 
   pyneat_package_version="$(compute_neat_package_version)"
   echo "Using pyneat package version: ${pyneat_package_version}"
 
-  pyproject_backup="$(mktemp)"
-  cp "${pyproject_path}" "${pyproject_backup}"
-  restore_pyneat_pyproject() {
-    if [[ -n "${pyproject_backup:-}" && -f "${pyproject_backup}" ]]; then
-      cp "${pyproject_backup}" "${pyproject_path}"
-      rm -f "${pyproject_backup}"
-    fi
-  }
+  mapfile -t extension_candidates < <(
+    find "${BUILD_DIR}/python" -maxdepth 1 -type f -name '_pyneat_core*.so' | sort
+  )
+  if [[ "${#extension_candidates[@]}" -ne 1 ]]; then
+    echo "ERROR: expected exactly one prebuilt pyneat extension, found ${#extension_candidates[@]}." >&2
+    printf '  %s\n' "${extension_candidates[@]}" >&2
+    exit 1
+  fi
 
-  python3 - "${pyproject_path}" "${pyneat_package_version}" <<'PY'
+  if [[ "${ELXR_SDK}" == "ON" ]]; then
+    local py_abi="${ELXR_TARGET_PYTHON_VERSION/./}"
+    python_tag="cp${py_abi}"
+    abi_tag="cp${py_abi}"
+    platform_tag="${ELXR_WHEEL_HOST_PLATFORM//-/_}"
+  else
+    read -r python_tag abi_tag platform_tag < <(
+      python3 - "${extension_candidates[0]}" <<'PY'
 import re
 import sys
+import sysconfig
 from pathlib import Path
 
-path = Path(sys.argv[1])
-version = sys.argv[2]
-text = path.read_text(encoding="utf-8")
-updated, count = re.subn(
-    r'(?m)^version = "[^"]*"$',
-    f'version = "{version}"',
-    text,
-    count=1,
-)
-if count != 1:
-    raise SystemExit(f"Failed to update version in {path}")
-path.write_text(updated, encoding="utf-8")
+extension = Path(sys.argv[1]).name
+match = re.search(r"\.cpython-(\d+)([a-z]*)-", extension)
+if not match:
+    raise SystemExit(f"Cannot determine CPython ABI from extension name: {extension}")
+python_tag = f"cp{match.group(1)}"
+abi_tag = f"{python_tag}{match.group(2)}"
+platform_tag = sysconfig.get_platform().replace("-", "_").replace(".", "_")
+print(python_tag, abi_tag, platform_tag)
 PY
-
-  local wheel_build_status=0
-  set +e
-  (
-    set -e
-    rm -rf dist
-    if [[ "${ELXR_SDK}" == "ON" ]]; then
-      echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
-      echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja wheel
-      local py_abi
-      local py_triplet
-      local pyneat_ext_suffix
-      py_abi="${ELXR_TARGET_PYTHON_VERSION/./}"
-      py_triplet="$(elxr_ext_platform_triplet)"
-      pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
-      echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
-      local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
-      if [[ -n "${SYSROOT:-}" ]]; then
-        wheel_cmake_args+=" -DPython_INCLUDE_DIR=${ELXR_TARGET_PYTHON_INCLUDE_DIR}"
-        wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY"
-        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
-        wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
-        wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
-        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=ON"
-      fi
-      # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
-      # (notably ninja), which are not executable on the host container.
-      # Build without isolation and force Makefiles to keep host tools executable.
-      local backend_pythonpath
-      backend_pythonpath="$("${wheel_python}" - <<'PY'
-import sysconfig
-print(sysconfig.get_paths()["purelib"])
-PY
-)"
-      _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
-        PYTHONPATH="${backend_pythonpath}${PYTHONPATH:+:${PYTHONPATH}}" \
-        CMAKE_ARGS="${wheel_cmake_args}" \
-        CMAKE_GENERATOR="Unix Makefiles" \
-        CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build --wheel --outdir dist --no-isolation
-      mapfile -t built_wheels < <(find dist -maxdepth 1 -type f -name 'pyneat-*.whl' | sort)
-      if [[ "${#built_wheels[@]}" -ne 1 ]]; then
-        echo "ERROR: expected exactly one pyneat wheel, found ${#built_wheels[@]}." >&2
-        printf '  %s\n' "${built_wheels[@]}" >&2
-        exit 1
-      fi
-      "${wheel_python}" -m wheel tags \
-        --remove \
-        --python-tag "cp${py_abi}" \
-        --abi-tag "cp${py_abi}" \
-        --platform-tag "${ELXR_WHEEL_HOST_PLATFORM//-/_}" \
-        "${built_wheels[0]}"
-    else
-      CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${wheel_python}" -m build --wheel --outdir dist
-    fi
-    echo "Built wheel(s):"
-    ls -lh dist/*.whl
-  )
-  wheel_build_status=$?
-  set -e
-
-  restore_pyneat_pyproject
-  if [[ "${wheel_build_status}" -ne 0 ]]; then
-    exit "${wheel_build_status}"
+    )
   fi
+
+  rm -rf dist
+  python3 scripts/build/build_pyneat_wheel.py \
+    --project-root "${REPO_ROOT}" \
+    --extension "${extension_candidates[0]}" \
+    --output-dir "${REPO_ROOT}/dist" \
+    --version "${pyneat_package_version}" \
+    --python-tag "${python_tag}" \
+    --abi-tag "${abi_tag}" \
+    --platform-tag "${platform_tag}"
+  echo "Built wheel from the existing CMake extension:"
+  ls -lh dist/*.whl
 }
 
 run_install_sanity_check() {
   echo
   echo "Running install sanity check..."
-  local install_test_dir="/tmp/sima-neat-install-test"
-  rm -rf "${install_test_dir}"
+  # Fresh directory per run: the fixed path could hold artifacts left by a
+  # previous build. Removed on success, kept on failure for inspection.
+  local install_test_dir=""
+  install_test_dir="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-install-test.XXXXXX")" || {
+    echo "ERROR: unable to create the install sanity check directory."
+    exit 1
+  }
+  echo "Install sanity check directory: ${install_test_dir}"
   local core_install_dir="${install_test_dir}/core"
   local dev_install_dir="${install_test_dir}/dev"
 
@@ -2294,6 +2362,7 @@ run_install_sanity_check() {
     echo "Refusing to package mismatched core and development packages."
     exit 1
   fi
+  rm -rf "${install_test_dir}"
 }
 
 build_deb_if_requested() {
@@ -2397,24 +2466,19 @@ build_extras_archive_if_requested() {
 }
 
 stage_package_artifacts_to_dist() {
-  # Keep dist/ as the complete local artifact directory for full builds.
   if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
     return 0
   fi
 
   mkdir -p dist
   rm -f \
-    dist/*-Linux-core.deb \
-    dist/*-Linux-dev.deb \
+    dist/*.deb \
     dist/*-Linux-extras.tar.gz \
-    dist/neat-*.deb \
-    dist/simaai-common*.deb \
-    dist/appcomplex_*.deb \
-    dist/sima-lmm-*.deb \
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
     dist/manifest.json \
+    dist/internals-manifest.json \
     dist/resolved-deps-manifest.json
 
   local staged_any=OFF
@@ -2430,10 +2494,14 @@ stage_package_artifacts_to_dist() {
     staged_any=ON
   done
 
-  # The Core package declares an explicit LLiMa ABI range. Fail before
-  # publishing/installing a bundle when the copied LLiMa DEBs do not satisfy
-  # that range (for example Core 0.2.x combined with LLiMa 0.3.x).
-  python3 "${REPO_ROOT}/tools/validate_neat_package_bundle.py" "${REPO_ROOT}/dist"
+  if [[ "${NEAT_SYNC_SYSROOT:-OFF}" == "ON" ]]; then
+    if [[ ! -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" ]]; then
+      echo "ERROR: Missing selected Internals manifest: ${NEAT_INTERNALS_ARTIFACT_MANIFEST}" >&2
+      exit 1
+    fi
+    cp -f "${NEAT_INTERNALS_ARTIFACT_MANIFEST}" dist/internals-manifest.json
+    staged_any=ON
+  fi
 
   if [[ -f "tools/install_neat_framework.sh" ]]; then
     cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
@@ -2466,6 +2534,7 @@ target_path = Path(sys.argv[2])
 
 source = json.loads(source_path.read_text(encoding="utf-8"))
 platform_version = str(source.get("platform-version", "")).strip()
+modelzoo_version = str(source.get("modelzoo-version", "")).strip() or platform_version
 abi_version = str(source.get("abi-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty platform-version in {source_path}")
@@ -2480,11 +2549,12 @@ if not isinstance(target, dict):
     raise SystemExit(f"{target_path} must contain a JSON object")
 
 target["platform-version"] = platform_version
+target["modelzoo-version"] = modelzoo_version
 target["abi-version"] = abi_version
 target_path.write_text(json.dumps(target, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 PY
 
-  echo "Updated dist/manifest.json platform-version and abi-version from ${NEAT_DEPS_MANIFEST}"
+  echo "Updated dist/manifest.json platform-version, modelzoo-version, and abi-version from ${NEAT_DEPS_MANIFEST}"
 }
 
 append_dist_manifest_matches() {
@@ -2518,21 +2588,7 @@ write_install_manifest() {
     echo "# Keep this file next to ${NEAT_PACKAGE_INSTALL_SCRIPT}."
   } > "${manifest_path}"
 
-  append_dist_manifest_matches "${manifest_path}" 'simaai-common*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'simaai-memory-lib-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'libcamera-tools_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-common_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-appcomplex_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-ev74-firmware_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-runtime_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-gst-plugins_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'neat-internals-dev_*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-lmm-*.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
-  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-dev.deb'
+  append_dist_manifest_matches "${manifest_path}" '*.deb'
   append_dist_manifest_matches "${manifest_path}" '*.whl'
 
   echo "Built install manifest: ${manifest_path}"
@@ -2917,10 +2973,9 @@ main() {
   detect_elxr_sdk
   select_system_deps
   install_system_deps
-  ensure_node20_for_docs
+  ensure_node22_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
-  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     ensure_dependency_headers
@@ -2932,6 +2987,7 @@ main() {
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
   fi
+  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     echo
@@ -2941,6 +2997,11 @@ main() {
 
   detect_build_jobs
   configure_fuzz_toolchain_if_needed
+  if [[ "${DOCS_ONLY}" == "ON" ]]; then
+    SIMANEAT_SCCACHE_ACTIVE=OFF
+  else
+    simaneat_configure_sccache "${REPO_ROOT}"
+  fi
   generate_platform_version_artifacts
   print_build_config
   clean_build_dir_if_requested
@@ -2951,10 +3012,12 @@ main() {
   build_targets
   copy_test_images
   build_docs_if_requested
-  build_python_wheel_if_requested
   run_install_sanity_check
   build_deb_if_requested
   build_extras_archive_if_requested
+  # The wheel backend reconfigures the shared CMake tree for its staging path,
+  # so all other CMake/CPack consumers must finish before this step.
+  build_python_wheel_if_requested
   stage_package_artifacts_to_dist
   write_dist_package_contract_manifest_fields
   write_install_manifest
@@ -2962,6 +3025,7 @@ main() {
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested
+  simaneat_show_sccache_stats
 }
 
 main "$@"

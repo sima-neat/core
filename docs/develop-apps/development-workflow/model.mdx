@@ -693,6 +693,44 @@ print("latency_ms=", report.latency_ms, "fps=", report.fps)
 </CodeTab>
 </CodeTabs>
 
+For a BoxDecode route, describe the synthetic input's source-image geometry so the benchmark can
+map detections back from model coordinates:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.num_samples = 100;
+options.original_width = 1920;
+options.original_height = 1080;
+options.resize_mode = simaai::neat::ResizeMode::Letterbox;
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.num_samples = 100
+options.original_width = 1920
+options.original_height = 1080
+options.resize_mode = pyneat.ResizeMode.Letterbox
+
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Set `original_width` and `original_height` together. The benchmark still generates a model-shaped
+synthetic tensor; these fields supply the source geometry and resize transform required by
+BoxDecode metadata. If you omit them, the benchmark infers geometry from the resolved preprocess
+and model input contracts. These per-run values take precedence over deprecated BoxDecode geometry
+hints in `ModelOptions`. Existing `benchmark(num_samples)` calls keep the same behavior.
+
 Read `avg_power_watts` and `energy_joules` only when the board power monitor produced samples. If power telemetry is unavailable for the board or rail configuration, those fields stay zero.
 
 Use runner measurement when you own the input loop and want to measure that loop:

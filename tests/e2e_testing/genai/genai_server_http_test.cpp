@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cmath>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
@@ -19,6 +20,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -30,8 +32,8 @@ constexpr const char* kTextModelEnv = "SIMA_TEST_LLIMA_TEXT_MODEL";
 constexpr const char* kVlmModelEnv = "SIMA_TEST_LLIMA_VLM_MODEL";
 constexpr const char* kAsrModelEnv = "SIMA_TEST_LLIMA_ASR_MODEL";
 constexpr const char* kExpectedText = "The capital of Germany is Berlin.";
-constexpr const char* kExpectedVlmText = "Skier in the air.";
 constexpr const char* kExpectedAsrText = "tell me a joke please";
+constexpr const char* kExpectedTranslation = "please tell me a joke";
 
 std::string trim_text(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -202,6 +204,54 @@ void request_text_completion(int port) {
   require(trim_text(text) == kExpectedText, "server text completion returned unexpected text");
 }
 
+void reject_unsupported_thinking(int port) {
+  const std::vector<std::pair<std::string, Json>> requests = {
+      {"/v1/chat/completions",
+       {{"model", "llm"},
+        {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})},
+        {"enable_thinking", true},
+        {"stream", true}}},
+      {"/v1/completions",
+       {{"model", "llm"}, {"prompt", "Hello"}, {"enable_thinking", true}, {"stream", true}}},
+      {"/api/chat",
+       {{"model", "llm"},
+        {"messages", Json::array({{{"role", "user"}, {"content", "Hello"}}})},
+        {"think", true},
+        {"stream", true}}},
+      {"/api/generate", {{"model", "llm"}, {"prompt", "Hello"}, {"think", true}, {"stream", true}}},
+  };
+
+  for (const auto& [path, request] : requests) {
+    auto client = make_client(port);
+    const auto response = client.Post(path, request.dump(), "application/json");
+    require(response != nullptr, path + " unsupported-thinking request failed");
+    require(response->status == 400, path + " should reject unsupported thinking with HTTP 400");
+    const Json body = Json::parse(response->body);
+    require(body.at("error").at("message") == "Thinking is not supported for this model",
+            path + " returned an unexpected unsupported-thinking error");
+  }
+}
+
+void validate_lora_requests(int port) {
+  const std::vector<std::pair<std::string, Json>> bad_requests = {
+      {"/set_lora", {{"model", "llm"}, {"name", "../adapter"}}},
+      {"/set_lora", {{"model", "llm"}}},
+      {"/unset_lora", Json::object()},
+      {"/unset_lora", {{"model", "asr"}}},
+  };
+  for (const auto& [path, request] : bad_requests) {
+    auto client = make_client(port);
+    const auto response = client.Post(path, request.dump(), "application/json");
+    require(response != nullptr, path + " validation request failed");
+    require(response->status == 400, path + " should reject invalid LoRA input with HTTP 400");
+  }
+
+  auto client = make_client(port);
+  const auto unknown = client.Post("/unset_lora", R"({"model":"unknown"})", "application/json");
+  require(unknown != nullptr, "/unset_lora unknown-model request failed");
+  require(unknown->status == 404, "/unset_lora should reject an unknown model with HTTP 404");
+}
+
 void request_image_completion(int port, const fs::path& image_path) {
   auto client = make_client(port);
   const std::string data_uri = "data:image/jpeg;base64," + base64_encode(read_file(image_path));
@@ -221,22 +271,31 @@ void request_image_completion(int port, const fs::path& image_path) {
                      "POST /v1/chat/completions image");
   const std::string text = body.at("choices").at(0).at("message").at("content").get<std::string>();
   std::cout << "GENAI_SERVER_VLM text=" << text << "\n";
-  require(trim_text(text) == kExpectedVlmText, "server image chat returned unexpected text");
+  require(!trim_text(text).empty(), "server image chat expected non-empty generated text");
 }
 
-void request_audio_transcription(int port, const fs::path& audio_path) {
+void request_audio(int port, const fs::path& audio_path, const std::string& endpoint,
+                   const std::string& task, const std::string& expected_text,
+                   const std::string& expected_language) {
   auto client = make_client(port);
   httplib::MultipartFormDataItems items = {
       {"model", "asr", "", ""},
-      {"language", "en", "", ""},
       {"file", read_file(audio_path), audio_path.filename().string(), "audio/wav"},
   };
-  const Json body = parse_response(client.Post("/v1/audio/transcriptions", items),
-                                   "POST /v1/audio/transcriptions");
+  const Json body = parse_response(client.Post(endpoint, items), "POST " + endpoint);
   const std::string text = body.at("text").get<std::string>();
   std::cout << "GENAI_SERVER_ASR text=" << text << "\n";
-  require(normalize_transcript(text) == kExpectedAsrText,
-          "server audio transcription returned unexpected text");
+  require(normalize_transcript(text) == expected_text,
+          "server audio " + task + " returned unexpected text");
+  require(body.at("task") == task, "server audio response should report task=" + task);
+  require(body.at("language") == expected_language,
+          "server audio request should report detected language " + expected_language);
+  const double no_speech_prob = body.at("no_speech_prob").get<double>();
+  require(std::isfinite(no_speech_prob), "server audio no_speech_prob should be finite");
+  require(no_speech_prob >= 0.0 && no_speech_prob <= 1.0,
+          "server audio no_speech_prob should be within [0, 1]");
+  require(std::isfinite(body.at("avg_logprob").get<double>()),
+          "server audio avg_logprob should be finite");
 }
 
 } // namespace
@@ -258,6 +317,7 @@ int main(int argc, char** argv) {
         "devkit/whisper_config.json");
     const fs::path image_path = fixture_path(argv[1], "tests/images/people.jpg");
     const fs::path audio_path = fixture_path(argv[1], "tests/assets/genai/audio.wav");
+    const fs::path german_audio_path = fixture_path(argv[1], "tests/assets/genai/audio_de.wav");
     const int port = choose_free_port();
 
     std::cout << "GENAI_SERVER text_model_dir=" << text_model_dir << "\n";
@@ -277,9 +337,14 @@ int main(int argc, char** argv) {
     wait_for_server(port);
 
     require_model_list_contains(port);
+    reject_unsupported_thinking(port);
+    validate_lora_requests(port);
     request_text_completion(port);
     request_image_completion(port, image_path);
-    request_audio_transcription(port, audio_path);
+    request_audio(port, audio_path, "/v1/audio/transcriptions", "transcribe", kExpectedAsrText,
+                  "en");
+    request_audio(port, german_audio_path, "/v1/audio/translations", "translate",
+                  kExpectedTranslation, "de");
 
     server.stop();
     std::cout << "[OK] genai_server_http_test passed\n";

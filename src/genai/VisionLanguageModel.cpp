@@ -5,29 +5,34 @@
 #include <sima_lmm/image_processor.hpp>
 #include <sima_lmm/language_model.hpp>
 #include <sima_lmm/mla_model.hpp>
+#include <sima_lmm/reasoning_parser.hpp>
 #include <sima_lmm/text_streamer.hpp>
+#include <sima_lmm/tool_call_parser.hpp>
 #include <sima_lmm/utils.hpp>
 #include <sima_lmm/vlm_config.hpp>
 #include <sima_lmm/vlm_helper.hpp>
 #include <sima_lmm/vision_model.hpp>
 
 #include <atomic>
-#include <cctype>
 #include <condition_variable>
+#include <cstddef>
+#include <cstring>
 #include <exception>
 #include <fstream>
 #include <limits>
 #include <map>
 #include <mutex>
 #include <queue>
-#include <regex>
 #include <stdexcept>
-#include <string_view>
 #include <thread>
 #include <utility>
+#include <variant>
+#include <vector>
 
 namespace simaai::neat::genai {
 namespace {
+
+using CachedVisionOutput = std::vector<std::vector<std::byte>>;
 
 cv::Mat require_genai_rgb_image_tensor(const Tensor& image) {
   if (image.dtype != TensorDType::UInt8) {
@@ -57,6 +62,15 @@ simaai::llima::VlmConfig load_vlm_config(const std::filesystem::path& model_root
   } catch (const std::exception& e) {
     throw std::runtime_error("Unable to parse LLiMa VLM config " + config_path.string() + ": " +
                              e.what());
+  }
+}
+
+void validate_lora_adapter_name(const std::string& adapter_name) {
+  if (adapter_name.empty() || adapter_name == "." || adapter_name == ".." ||
+      std::filesystem::path(adapter_name).is_absolute() ||
+      adapter_name.find('/') != std::string::npos || adapter_name.find('\\') != std::string::npos ||
+      adapter_name.find('\0') != std::string::npos) {
+    throw std::invalid_argument("LoRA adapter name must be one non-empty directory name");
   }
 }
 
@@ -104,182 +118,19 @@ std::string load_bos_token(const std::filesystem::path& model_root) {
   }
 }
 
-Json build_tool_call_entry(const nlohmann::json& parsed, int& id_counter) {
-  if (!parsed.contains("name") || !parsed.at("name").is_string()) {
-    return nullptr;
+std::vector<std::string> tool_names_from_definitions(const Json& tools) {
+  std::vector<std::string> names;
+  if (!tools.is_array()) {
+    return names;
   }
 
-  auto extract_args = [](const nlohmann::json& value) -> Json {
-    if (value.is_object()) {
-      return value;
-    }
-    if (value.is_string()) {
-      try {
-        return nlohmann::json::parse(value.get<std::string>());
-      } catch (const nlohmann::json::exception&) {
-      }
-    }
-    return Json::object();
-  };
-
-  Json args = Json::object();
-  if (parsed.contains("arguments")) {
-    args = extract_args(parsed.at("arguments"));
-  } else if (parsed.contains("parameters")) {
-    args = extract_args(parsed.at("parameters"));
-  }
-
-  const std::string id = parsed.contains("id") && parsed.at("id").is_string()
-                             ? parsed.at("id").get<std::string>()
-                             : "call_" + std::to_string(id_counter++);
-
-  return Json{{"id", id},
-              {"type", "function"},
-              {"function", {{"name", parsed.at("name")}, {"arguments", args.dump()}}}};
-}
-
-std::size_t find_matching_brace(std::string_view text, std::size_t start) {
-  int depth = 0;
-  for (std::size_t i = start; i < text.size(); ++i) {
-    if (text[i] == '{') {
-      ++depth;
-    } else if (text[i] == '}' && --depth == 0) {
-      return i;
+  for (const auto& tool : tools) {
+    if (tool.is_object() && tool.contains("function") && tool.at("function").is_object() &&
+        tool.at("function").contains("name") && tool.at("function").at("name").is_string()) {
+      names.push_back(tool.at("function").at("name").get<std::string>());
     }
   }
-  return std::string_view::npos;
-}
-
-std::string gemma4_bare_to_json(const std::string& text) {
-  static const std::regex unquoted_key(R"((\w+)\s*:)");
-  static const std::regex unquoted_val(R"(:\s*([^{}\[\]",\s][^{}\[\]",]*))");
-  std::string out = std::regex_replace(text, unquoted_key, "\"$1\":");
-  return std::regex_replace(out, unquoted_val, ":\"$1\"");
-}
-
-Json parse_plain_json_tool_calls(std::string_view text, int& id_counter) {
-  Json out = Json::array();
-  std::size_t pos = 0;
-  while (pos < text.size()) {
-    while (pos < text.size() &&
-           (std::isspace(static_cast<unsigned char>(text[pos])) != 0 || text[pos] == ';')) {
-      ++pos;
-    }
-    if (pos == text.size()) {
-      break;
-    }
-    if (text[pos] != '{') {
-      return nullptr;
-    }
-    const auto close = find_matching_brace(text, pos);
-    if (close == std::string_view::npos) {
-      return nullptr;
-    }
-    const auto parsed = nlohmann::json::parse(std::string(text.substr(pos, close - pos + 1)));
-    auto entry = build_tool_call_entry(parsed, id_counter);
-    if (entry.is_null()) {
-      return nullptr;
-    }
-    out.push_back(std::move(entry));
-    pos = close + 1;
-  }
-  return out.empty() ? nullptr : out;
-}
-
-Json try_parse_tool_calls(std::string_view text) {
-  int id_counter = 0;
-  try {
-    if (text.starts_with("call:")) {
-      Json out = Json::array();
-      std::size_t pos = 0;
-      while (pos < text.size() && text.substr(pos).starts_with("call:")) {
-        pos += 5;
-        const auto brace = text.find('{', pos);
-        if (brace == std::string_view::npos) {
-          return nullptr;
-        }
-        const std::string_view name = text.substr(pos, brace - pos);
-        const auto close = find_matching_brace(text, brace);
-        if (close == std::string_view::npos) {
-          return nullptr;
-        }
-        const std::string args =
-            gemma4_bare_to_json(std::string(text.substr(brace, close - brace + 1)));
-        auto entry =
-            build_tool_call_entry({{"name", std::string(name)}, {"arguments", args}}, id_counter);
-        if (entry.is_null()) {
-          return nullptr;
-        }
-        out.push_back(std::move(entry));
-        pos = close + 1;
-      }
-      return out;
-    }
-
-    const std::string mistral_prefix = "[TOOL_CALLS] ";
-    const auto mistral_pos = text.find(mistral_prefix);
-    if (mistral_pos != std::string::npos) {
-      const auto parsed =
-          nlohmann::json::parse(std::string(text.substr(mistral_pos + mistral_prefix.size())));
-      if (!parsed.is_array()) {
-        return nullptr;
-      }
-      Json out = Json::array();
-      for (const auto& item : parsed) {
-        auto entry = build_tool_call_entry(item, id_counter);
-        if (entry.is_null()) {
-          return nullptr;
-        }
-        out.push_back(std::move(entry));
-      }
-      return out;
-    }
-
-    if (text.starts_with('[')) {
-      const auto parsed = nlohmann::json::parse(std::string(text));
-      if (parsed.is_array()) {
-        Json out = Json::array();
-        for (const auto& item : parsed) {
-          auto entry = build_tool_call_entry(item, id_counter);
-          if (entry.is_null()) {
-            return nullptr;
-          }
-          out.push_back(std::move(entry));
-        }
-        return out;
-      }
-    }
-
-    if (text.find("<tool_call>") != std::string::npos) {
-      Json out = Json::array();
-      std::size_t search_pos = 0;
-      while (true) {
-        auto tag_start = text.find("<tool_call>", search_pos);
-        auto tag_end = text.find("</tool_call>", search_pos);
-        if (tag_start == std::string::npos || tag_end == std::string::npos) {
-          break;
-        }
-        constexpr std::size_t open_tag_len = 11;
-        constexpr std::size_t close_tag_len = 12;
-        tag_start += open_tag_len;
-        auto parsed =
-            nlohmann::json::parse(std::string(text.substr(tag_start, tag_end - tag_start)));
-        auto entry = build_tool_call_entry(parsed, id_counter);
-        if (entry.is_null()) {
-          return nullptr;
-        }
-        out.push_back(std::move(entry));
-        search_pos = tag_end + close_tag_len;
-      }
-      if (!out.empty()) {
-        return out;
-      }
-    }
-
-    return parse_plain_json_tool_calls(text, id_counter);
-  } catch (const nlohmann::json::exception&) {
-    return nullptr;
-  }
+  return names;
 }
 
 std::unique_ptr<simaai::llima::ImageProcessor>
@@ -511,9 +362,25 @@ struct VisionLanguageModel::Impl {
         vlm_helper->get_tokenizer(),
         [this](const std::string& metric, double value) { record_metric(metric, value); },
         [](const std::string&, bool, bool) {});
+    tool_call_format = simaai::llima::tool_call_format_for_model(cfg.model_type);
+    reasoning_format = simaai::llima::reasoning_format_for_model(cfg.model_type);
+    preserved_tool_call_tokens = simaai::llima::resolve_tool_call_special_tokens(
+        tool_call_format, *vlm_helper->get_tokenizer());
+    text_streamer->set_preserved_token_ids(preserved_tool_call_tokens);
     language_model = std::make_unique<simaai::llima::LanguageModel>(
         info.root, vlm_helper->get_stop_token_ids(), vlm_helper->get_image_token_id(),
-        vlm_helper->get_pad_token_id(), *text_streamer, true);
+        vlm_helper->get_pad_token_id(), *text_streamer);
+    if (info.draft_root.has_value()) {
+      draft_cfg = load_vlm_config(*info.draft_root);
+      draft_vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
+          draft_cfg, *info.draft_root / "devkit", std::nullopt, std::nullopt);
+      draft_text_streamer = std::make_unique<simaai::llima::TextStreamer>(
+          draft_vlm_helper->get_tokenizer(), std::nullopt, std::nullopt);
+      draft_language_model = std::make_unique<simaai::llima::LanguageModel>(
+          *info.draft_root, draft_vlm_helper->get_stop_token_ids(),
+          draft_vlm_helper->get_image_token_id(), draft_vlm_helper->get_pad_token_id(),
+          *draft_text_streamer);
+    }
     if (info.accepts_image) {
       image_processor = make_image_processor(cfg, info.root / "devkit");
       vision_model = std::make_unique<simaai::llima::VisionModel>(info.root);
@@ -523,11 +390,13 @@ struct VisionLanguageModel::Impl {
 
   GenerationResult run(const GenerationRequest& request) {
     internal::validate_text_generation_request(request);
+    validate_thinking_request(request);
 
     auto active_run = ActiveRunGuard::acquire(*this);
     reset_metrics();
     configure_run_callbacks();
 
+    const bool parse_tools = internal::tool_calls_enabled(request);
     auto output_token_ids = generate_tokens(request);
 
     GenerationResult result;
@@ -538,13 +407,43 @@ struct VisionLanguageModel::Impl {
     }
 
     result.metrics.generated_tokens = static_cast<std::uint32_t>(output_token_ids->size());
-    result.text = vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true);
-    result.tool_calls = try_parse_tool_calls(result.text);
+    const auto preserved_tokens = structural_tokens(request);
+    const auto decoded =
+        preserved_tokens.empty()
+            ? vlm_helper->get_tokenizer()->decode(output_token_ids.value(), true)
+            : simaai::llima::decode_tool_call_output(*vlm_helper->get_tokenizer(),
+                                                     output_token_ids.value(), preserved_tokens);
+    simaai::llima::ReasoningStreamParser reasoning_parser(reasoning_format, request.enable_thinking,
+                                                          prompt_opens_reasoning(request));
+    for (auto& event : reasoning_parser.add(decoded, true)) {
+      if (event.reasoning) {
+        result.reasoning += event.text;
+      } else {
+        result.text += event.text;
+      }
+    }
+    if (parse_tools) {
+      auto tool_calls = simaai::llima::try_parse_tool_calls(
+          tool_call_format, result.text, tool_names_from_definitions(request.tools));
+      if (!tool_calls.is_null()) {
+        result.tool_calls = std::move(tool_calls);
+        result.text.clear();
+      }
+    }
     result.finish_reason = result.tool_calls.empty() ? "stop" : "tool_calls";
     return result;
   }
 
+  void validate_thinking_request(const GenerationRequest& request) const {
+    if (request.enable_thinking && reasoning_format == simaai::llima::ReasoningFormat::None) {
+      throw std::invalid_argument("Thinking is not supported for this model");
+    }
+  }
+
   std::optional<std::vector<uint32_t>> generate_tokens(const GenerationRequest& request) {
+    auto preserved_tokens = structural_tokens(request);
+    text_streamer->set_preserved_token_ids(preserved_tokens);
+    text_streamer->set_tool_call_enabled(!preserved_tokens.empty());
     simaai::llima::ChronoTimer timer_ttft{true};
     auto prepared = prepare_input(request);
     auto vision_ofm_maps = language_model->create_input_buffers(prepared.input_token_ids);
@@ -552,13 +451,41 @@ struct VisionLanguageModel::Impl {
 
     const auto max_total_tokens =
         make_max_total_tokens(prepared.input_token_ids.size(), request.max_new_tokens);
+    if (draft_language_model) {
+      return language_model->run_model_speculative_decoding(
+          *draft_language_model, prepared.input_token_ids, max_total_tokens, timer_ttft);
+    }
     return language_model->run_model(prepared.input_token_ids, timer_ttft, max_total_tokens);
+  }
+
+  bool prompt_opens_reasoning(const GenerationRequest& request) const {
+    return reasoning_format == simaai::llima::ReasoningFormat::Gemma4 &&
+           !request.messages.empty() && request.messages.back().role == "tool";
+  }
+
+  simaai::llima::PreservedToolCallTokens structural_tokens(const GenerationRequest& request) const {
+    simaai::llima::PreservedToolCallTokens tokens;
+    if (internal::tool_calls_enabled(request)) {
+      tokens = preserved_tool_call_tokens;
+    }
+    if (request.enable_thinking && reasoning_format != simaai::llima::ReasoningFormat::None) {
+      for (const auto marker : simaai::llima::reasoning_special_tokens(reasoning_format)) {
+        try {
+          tokens.emplace_back(vlm_helper->get_tokenizer()->token_to_id(std::string(marker)),
+                              marker);
+        } catch (const std::exception&) {
+          throw std::runtime_error("Reasoning token '" + std::string(marker) +
+                                   "' is missing from the tokenizer");
+        }
+      }
+    }
+    return tokens;
   }
 
   struct PreparedInput {
     std::vector<uint32_t> input_token_ids;
     std::vector<std::vector<Eigen::bfloat16>> image_tensors;
-    std::vector<std::vector<Eigen::bfloat16>> cached_image_tensors;
+    std::vector<CachedVisionOutput> cached_vision_outputs;
     std::size_t expected_image_count = 0;
   };
 
@@ -571,8 +498,9 @@ struct VisionLanguageModel::Impl {
     }
 
     simaai::llima::Chat chat(*vlm_helper);
+    chat.set_enable_thinking(request.enable_thinking);
     chat.set_messages(built.messages);
-    if (!request.tools.empty()) {
+    if (internal::tool_calls_enabled(request)) {
       chat.set_tools(request.tools);
     }
     auto preprocessed = vlm_helper->preprocess(chat);
@@ -590,7 +518,7 @@ struct VisionLanguageModel::Impl {
       prepared.image_tensors = preprocess_images(*image_processor, built.images);
     }
     if (built.use_cached_images) {
-      prepared.cached_image_tensors = cached;
+      prepared.cached_vision_outputs = cached;
     }
     return prepared;
   }
@@ -612,36 +540,68 @@ struct VisionLanguageModel::Impl {
       vision_model->run_model(image_tensor, &ofm_maps.at(map_idx));
       ++map_idx;
     }
-    for (const auto& cached_tensor : prepared.cached_image_tensors) {
-      upload_cached_image(cached_tensor, ofm_maps.at(map_idx));
+    for (const auto& cached_output : prepared.cached_vision_outputs) {
+      upload_cached_vision_output(cached_output, ofm_maps.at(map_idx));
       ++map_idx;
     }
   }
 
-  static void upload_cached_image(const std::vector<Eigen::bfloat16>& cached_tensor,
-                                  const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
-    if (ofm_map.size() != 1U || !ofm_map.contains(0)) {
-      throw std::runtime_error(
-          "Cached image reuse is not supported for this model's multi-output vision encoder");
-    }
+  static CachedVisionOutput
+  cache_vision_output(const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
+    CachedVisionOutput cached_output;
+    cached_output.reserve(ofm_map.size());
+    for (const auto& [output_idx, slice] : ofm_map) {
+      if (output_idx != cached_output.size()) {
+        throw std::runtime_error("Vision encoder output indexes must be contiguous from zero");
+      }
 
-    const auto& slice = ofm_map.at(0);
-    auto* buffer = slice.get_buf_ptr();
-    if (buffer == nullptr) {
-      throw std::runtime_error("Cached image destination buffer is null");
+      auto* buffer = slice.get_buf_ptr();
+      if (buffer == nullptr || buffer->get_virtual_addr() == nullptr) {
+        throw std::runtime_error("Vision encoder output buffer is unavailable");
+      }
+      const auto data_offset = buffer->get_buf_addr_offset(slice.get_buf_begins());
+      const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
+      buffer->invalidate_cache(data_offset, data_size);
+
+      std::vector<std::byte> bytes(data_size);
+      const auto* source = static_cast<const std::byte*>(buffer->get_virtual_addr()) + data_offset;
+      std::memcpy(bytes.data(), source, data_size);
+      cached_output.push_back(std::move(bytes));
     }
-    const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
-    const auto expected_size = cached_tensor.size() * sizeof(Eigen::bfloat16);
-    if (data_size != expected_size) {
-      throw std::runtime_error("Cached image tensor shape does not match language input buffer");
-    }
-    buffer->upload(cached_tensor.data(), buffer->get_buf_addr_offset(slice.get_buf_begins()),
-                   data_size);
+    return cached_output;
   }
 
-  std::vector<std::vector<Eigen::bfloat16>> cached_images_copy() const {
+  static void
+  upload_cached_vision_output(const CachedVisionOutput& cached_output,
+                              const std::map<uint8_t, simaai::llima::MLABufferSlice>& ofm_map) {
+    if (cached_output.size() != ofm_map.size()) {
+      throw std::runtime_error("Cached image output count does not match language input buffers");
+    }
+
+    std::size_t expected_output_idx = 0;
+    for (const auto& [output_idx, slice] : ofm_map) {
+      if (output_idx != expected_output_idx) {
+        throw std::runtime_error("Language model input indexes must be contiguous from zero");
+      }
+
+      auto* buffer = slice.get_buf_ptr();
+      if (buffer == nullptr) {
+        throw std::runtime_error("Cached image destination buffer is null");
+      }
+      const auto data_size = buffer->get_buf_len(slice.get_buf_shapes());
+      const auto& bytes = cached_output[expected_output_idx];
+      if (data_size != bytes.size()) {
+        throw std::runtime_error("Cached image output does not match language input buffer");
+      }
+      buffer->upload_raw(bytes.data(), buffer->get_buf_addr_offset(slice.get_buf_begins()),
+                         data_size);
+      ++expected_output_idx;
+    }
+  }
+
+  std::vector<CachedVisionOutput> cached_images_copy() const {
     std::lock_guard<std::mutex> lock(cache_mutex);
-    return cached_image_tensors;
+    return cached_vision_outputs;
   }
 
   bool encode(const std::vector<Tensor>& images) {
@@ -656,32 +616,42 @@ struct VisionLanguageModel::Impl {
     if (!image_processor || !vision_model) {
       throw std::runtime_error("GenAI vision runtime is unavailable for this model");
     }
-    if (!cached_image_reuse_supported()) {
-      throw std::runtime_error(
-          "VisionLanguageModel::encode cached reuse is not supported for this model's "
-          "multi-output vision encoder");
+    if (!cfg.mm_cfg.has_value() || cfg.mm_cfg->mm_tokens_per_image == 0U) {
+      throw std::runtime_error("VisionLanguageModel::encode requires image-token configuration");
+    }
+    const auto image_token_id = vlm_helper->get_image_token_id();
+    if (!image_token_id.has_value()) {
+      throw std::runtime_error("VisionLanguageModel::encode requires an image token ID");
+    }
+    const auto tokens_per_image = static_cast<std::size_t>(cfg.mm_cfg->mm_tokens_per_image);
+    const auto max_token_count = static_cast<std::size_t>(std::numeric_limits<uint16_t>::max());
+    if (images.size() > max_token_count / tokens_per_image) {
+      throw std::runtime_error("VisionLanguageModel::encode image count exceeds LLiMa token limit");
     }
 
     auto image_tensors = preprocess_images(*image_processor, images);
-    std::vector<std::vector<Eigen::bfloat16>> encoded;
+    std::vector<uint32_t> image_token_ids(images.size() * tokens_per_image, *image_token_id);
+    auto ofm_maps = language_model->create_input_buffers(image_token_ids);
+    if (ofm_maps.size() != image_tensors.size()) {
+      throw std::runtime_error("LLiMa language model did not create one output map per image");
+    }
+
+    std::vector<CachedVisionOutput> encoded;
     encoded.reserve(image_tensors.size());
-    for (const auto& image_tensor : image_tensors) {
-      encoded.push_back(vision_model->run_model(image_tensor));
+    for (std::size_t i = 0; i < image_tensors.size(); ++i) {
+      vision_model->run_model(image_tensors[i], &ofm_maps[i]);
+      encoded.push_back(cache_vision_output(ofm_maps[i]));
     }
     {
       std::lock_guard<std::mutex> lock(cache_mutex);
-      cached_image_tensors = std::move(encoded);
+      cached_vision_outputs = std::move(encoded);
     }
     return true;
   }
 
-  bool cached_image_reuse_supported() const {
-    return !cfg.vm_cfg.has_value() || cfg.vm_cfg->deepstack_visual_indexes.empty();
-  }
-
   std::size_t cached_image_count() const {
     std::lock_guard<std::mutex> lock(cache_mutex);
-    return cached_image_tensors.size();
+    return cached_vision_outputs.size();
   }
 
   void configure_run_callbacks() {
@@ -714,7 +684,14 @@ struct VisionLanguageModel::Impl {
   std::string bos_token;
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
   std::unique_ptr<simaai::llima::TextStreamer> text_streamer;
+  simaai::llima::ToolCallFormat tool_call_format = simaai::llima::ToolCallFormat::GenericJson;
+  simaai::llima::ReasoningFormat reasoning_format = simaai::llima::ReasoningFormat::None;
+  simaai::llima::PreservedToolCallTokens preserved_tool_call_tokens;
   std::unique_ptr<simaai::llima::LanguageModel> language_model;
+  simaai::llima::VlmConfig draft_cfg;
+  std::unique_ptr<simaai::llima::VlmHelper> draft_vlm_helper;
+  std::unique_ptr<simaai::llima::TextStreamer> draft_text_streamer;
+  std::unique_ptr<simaai::llima::LanguageModel> draft_language_model;
   std::unique_ptr<simaai::llima::ImageProcessor> image_processor;
   std::unique_ptr<simaai::llima::VisionModel> vision_model;
   std::mutex load_mutex;
@@ -722,7 +699,7 @@ struct VisionLanguageModel::Impl {
   std::condition_variable run_state_cv;
   bool run_active = false;
   mutable std::mutex cache_mutex;
-  std::vector<std::vector<Eigen::bfloat16>> cached_image_tensors;
+  std::vector<CachedVisionOutput> cached_vision_outputs;
   mutable std::mutex metrics_mutex;
   GenerationMetrics metrics;
 };
@@ -742,8 +719,29 @@ bool VisionLanguageModel::accepts_image() const {
   return impl_->info.accepts_image;
 }
 
+bool VisionLanguageModel::supports_thinking() const {
+  return impl_->reasoning_format != simaai::llima::ReasoningFormat::None;
+}
+
 std::string VisionLanguageModel::model_id() const {
-  return internal::model_id_from_path(impl_->info.root);
+  return internal::model_id_from_path(impl_->info.package_root);
+}
+
+void VisionLanguageModel::set_lora(const std::string& adapter_name) {
+  validate_lora_adapter_name(adapter_name);
+  if (impl_->draft_language_model) {
+    throw std::invalid_argument("Dynamic LoRA is not supported with speculative decoding");
+  }
+  auto active_run = Impl::ActiveRunGuard::acquire(*impl_);
+  impl_->language_model->set_reloc(adapter_name);
+}
+
+void VisionLanguageModel::unset_lora() {
+  if (impl_->draft_language_model) {
+    throw std::invalid_argument("Dynamic LoRA is not supported with speculative decoding");
+  }
+  auto active_run = Impl::ActiveRunGuard::acquire(*impl_);
+  impl_->language_model->unset_reloc();
 }
 
 std::size_t VisionLanguageModel::cached_image_count() const {
@@ -775,6 +773,7 @@ GenerationResult VisionLanguageModel::run(const GenerationRequest& request) {
 
 GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
   internal::validate_text_generation_request(request);
+  impl_->validate_thinking_request(request);
   return GenerationStream(
       [model = impl_, request](GenerationStream::Producer& producer) {
         struct CallbackGuard {
@@ -792,34 +791,56 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
             [&producer](const std::string& metric, double value) {
               producer.record_metric(metric, value);
             });
-        const bool buffer_for_tools = !request.tools.empty();
-        std::string buffered_text;
-        model->text_streamer->set_text_callback(
-            [&producer, buffer_for_tools, &buffered_text](const std::string& text, bool stream_end,
-                                                          bool) {
-              if (buffer_for_tools) {
-                buffered_text += text;
-                return;
+        const bool parse_tools = internal::tool_calls_enabled(request);
+        simaai::llima::ToolCallStreamParser tool_parser(model->tool_call_format,
+                                                        tool_names_from_definitions(request.tools));
+        simaai::llima::ReasoningStreamParser reasoning_parser(
+            model->reasoning_format, request.enable_thinking,
+            model->prompt_opens_reasoning(request));
+        bool emitted_tool_calls = false;
+        auto handle_tool_parser_events =
+            [&producer,
+             &emitted_tool_calls](std::vector<simaai::llima::ToolCallStreamParser::Event> events) {
+              for (auto& event : events) {
+                TokenSample sample;
+                sample.metrics = producer.current_metrics();
+                if (std::holds_alternative<simaai::llima::ToolCallStreamParser::Content>(event)) {
+                  sample.text =
+                      std::move(std::get<simaai::llima::ToolCallStreamParser::Content>(event).text);
+                } else {
+                  sample.tool_calls = std::move(
+                      std::get<simaai::llima::ToolCallStreamParser::ToolCalls>(event).calls);
+                  emitted_tool_calls = true;
+                }
+                producer.push(std::move(sample));
               }
-              producer.record_text(text, stream_end);
+            };
+        model->text_streamer->set_text_callback(
+            [&producer, parse_tools, &reasoning_parser, &tool_parser,
+             &handle_tool_parser_events](const std::string& text, bool stream_end, bool) {
+              for (auto& event : reasoning_parser.add(text, stream_end)) {
+                if (event.reasoning) {
+                  TokenSample sample;
+                  sample.reasoning = std::move(event.text);
+                  sample.metrics = producer.current_metrics();
+                  producer.push(std::move(sample));
+                } else if (parse_tools) {
+                  handle_tool_parser_events(tool_parser.add(event.text, false));
+                } else {
+                  producer.record_text(event.text, false);
+                }
+              }
+              if (stream_end) {
+                if (parse_tools) {
+                  handle_tool_parser_events(tool_parser.add("", true));
+                }
+                producer.record_text("", true);
+              }
             });
-
         auto output_token_ids = model->generate_tokens(request);
         std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
-        if (buffer_for_tools && output_token_ids.has_value()) {
-          auto tool_calls = try_parse_tool_calls(buffered_text);
-          if (!tool_calls.empty()) {
-            TokenSample sample;
-            sample.tool_calls = std::move(tool_calls);
-            sample.metrics = producer.current_metrics();
-            producer.push(std::move(sample));
-            finish_reason = "tool_calls";
-          } else if (!buffered_text.empty()) {
-            TokenSample sample;
-            sample.text = std::move(buffered_text);
-            sample.metrics = producer.current_metrics();
-            producer.push(std::move(sample));
-          }
+        if (parse_tools && output_token_ids.has_value() && emitted_tool_calls) {
+          finish_reason = "tool_calls";
         }
         const auto generated_tokens =
             output_token_ids.has_value()
@@ -830,6 +851,9 @@ GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
       [model = impl_] {
         if (model && model->language_model) {
           model->language_model->stop_model();
+        }
+        if (model && model->draft_language_model) {
+          model->draft_language_model->stop_model();
         }
       });
 }

@@ -51,4 +51,17 @@ cmake --build "${CONSUMER_BUILD_DIR}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
 echo "[install-smoke] running downstream consumer..."
 "${CONSUMER_BUILD_DIR}/install_smoke_app"
 
+echo "[install-smoke] running statically linked downstream consumer..."
+"${CONSUMER_BUILD_DIR}/install_smoke_static_app"
+
+# A baked-in build-host path still links on the build host, so only an explicit check catches it.
+# Scoped to zlib: SIMANEAT_HTTPLIB_LIBRARY comes from find_library and exports an absolute path the
+# same way, which predates this check and needs its own imported target to fix.
+echo "[install-smoke] checking zlib is exported relocatably..."
+if grep -nE '"[^"]*libz\.(so|a)[^"]*"' \
+    "${INSTALL_PREFIX}/lib/cmake/SimaNeat/SimaNeatTargets.cmake"; then
+  echo "[install-smoke] exported targets carry an absolute zlib path; link ZLIB::ZLIB and resolve it with find_dependency(ZLIB) instead." >&2
+  exit 1
+fi
+
 echo "[install-smoke] passed."

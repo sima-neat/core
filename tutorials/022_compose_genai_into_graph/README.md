@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | GenAI |
 | Difficulty | Advanced |
 | Estimated Read Time | 20-25 minutes |
 | Model | LFM2-VL-1.6B-a16w4 |
@@ -21,6 +22,12 @@ Most GenAI applications should start with direct model APIs. Graph composition b
 Create a task-specific model handle, configure graph-fragment options, and build a public `Graph` fragment.
 
 The vision-language fragment exposes `prompt`, `image`, and `use_cached_image` inputs plus `tokens`, `done`, `encoded`, and `error` outputs. The speech transcriber fragment exposes `audio` and `audio_path` inputs plus `tokens`, `done`, and `error` outputs.
+
+`SpeechTranscriberOptions` defaults to automatic language detection and
+transcription. Set `task` to `ASRTask::Translate` in C++ or
+`ASRTask.Translate` in Python to translate speech into English. Its `done`
+bundle reports the detected source language and, when available,
+`no_speech_prob` and `avg_logprob`.
 
 ### Add the fragment to an app graph {#step-compose-graph}
 

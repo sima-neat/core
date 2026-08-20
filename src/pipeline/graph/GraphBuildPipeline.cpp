@@ -13,14 +13,19 @@
 #include "nodes/rtp/RTPJpegDepacketize.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/NeatError.h"
+#include "gst/internal/GstLaunchBindings.h"
 #include "pipeline/internal/BuildTiming.h"
+#include "pipeline/internal/GstErrorNormalizer.h"
+#include "pipeline/internal/UxLogging.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/sima/PreparedRuntimeBuild.h"
 #include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 
 #include <gst/SimaPluginStaticManifestAbi.h>
+#include "gst/internal/GstParseLaunch.h"
 #include <neat/PreparedRuntimeBridge.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -36,6 +41,7 @@
 #include <string_view>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -691,36 +697,225 @@ static void dump_mla_contract_debug(
   }
 }
 
+using ExplicitBindingIndex = std::unordered_map<std::string, const gst::launch::Assignment*>;
+
+const char* launch_name_origin_kind(LaunchNameOrigin::Kind kind) {
+  switch (kind) {
+  case LaunchNameOrigin::Kind::NodeFragment:
+    return "Node fragment";
+  case LaunchNameOrigin::Kind::Boundary:
+    return "boundary";
+  case LaunchNameOrigin::Kind::Queue:
+    return "queue";
+  case LaunchNameOrigin::Kind::Tap:
+    return "tap";
+  case LaunchNameOrigin::Kind::AppSrc:
+    return "appsrc";
+  case LaunchNameOrigin::Kind::AppSink:
+    return "appsink";
+  case LaunchNameOrigin::Kind::Mux:
+    return "mux/tee";
+  case LaunchNameOrigin::Kind::RtspHelper:
+    return "RTSP helper";
+  case LaunchNameOrigin::Kind::Unknown:
+    return "unknown/generated";
+  }
+  return "unknown/generated";
+}
+
+std::vector<LaunchNameOrigin> launch_name_origin_ledger(const BuildResult* build) {
+  if (!build) {
+    return {};
+  }
+  std::vector<LaunchNameOrigin> origins = build->framework_name_origins;
+  if (build->diag) {
+    for (const auto& report : build->diag->node_reports) {
+      for (const auto& name : report.elements) {
+        origins.push_back(LaunchNameOrigin{
+            .kind = report.index < 0 && report.kind == "RealtimeLatestMux"
+                        ? LaunchNameOrigin::Kind::Mux
+                        : LaunchNameOrigin::Kind::NodeFragment,
+            .name = name,
+            .node_index = report.index,
+            .node_kind = report.kind,
+            .role = report.index < 0 ? "framework node report" : "rendered Node fragment",
+        });
+      }
+    }
+    for (const auto& boundary : build->diag->boundaries) {
+      if (boundary) {
+        origins.push_back(LaunchNameOrigin{
+            .kind = LaunchNameOrigin::Kind::Boundary,
+            .name = boundary->boundary_name,
+            .node_index = boundary->after_node_index,
+            .role = "diagnostic boundary",
+        });
+      }
+    }
+  }
+  if (!build->appsink_name.empty() &&
+      std::none_of(origins.begin(), origins.end(),
+                   [&](const auto& origin) { return origin.name == build->appsink_name; })) {
+    origins.push_back(LaunchNameOrigin{
+        .kind = LaunchNameOrigin::Kind::AppSink,
+        .name = build->appsink_name,
+        .role = "terminal sink",
+    });
+  }
+  return origins;
+}
+
+std::string describe_launch_name_origins(std::string_view name,
+                                         const std::vector<LaunchNameOrigin>& ledger) {
+  std::ostringstream out;
+  bool found = false;
+  for (const auto& origin : ledger) {
+    if (origin.name != name) {
+      continue;
+    }
+    out << (found ? "; " : "");
+    found = true;
+    out << launch_name_origin_kind(origin.kind);
+    if (origin.node_index >= 0) {
+      out << " node[" << origin.node_index << ']';
+    }
+    if (!origin.node_kind.empty()) {
+      out << " kind='" << origin.node_kind << "'";
+    }
+    if (!origin.role.empty()) {
+      out << " role='" << origin.role << "'";
+    }
+  }
+  return found ? out.str() : "unknown/generated (no matching rendered metadata)";
+}
+
+ExplicitBindingIndex validate_explicit_bindings_or_throw(
+    const gst::launch::Analysis& binding_analysis, const std::string& pipeline, const char* where,
+    const BuildResult* build = nullptr, std::span<const LaunchNameOrigin> extra_origins = {}) {
+  const auto explicit_bindings = gst::launch::explicit_name_bindings(binding_analysis);
+  auto origins = launch_name_origin_ledger(build);
+  origins.insert(origins.end(), extra_origins.begin(), extra_origins.end());
+  ExplicitBindingIndex explicit_by_name;
+  explicit_by_name.reserve(explicit_bindings.size());
+  for (const auto* binding : explicit_bindings) {
+    if (!binding || binding->canonical_value.empty()) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build") +
+              ": explicit GStreamer element name must not be empty at byte " +
+              std::to_string(binding ? binding->value_span.begin : 0U) + "\nPipeline:\n" + pipeline,
+          "Give every explicitly named element a non-empty, segment-unique name.", pipeline);
+    }
+    const auto [existing, inserted] = explicit_by_name.emplace(binding->canonical_value, binding);
+    if (!inserted) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build") +
+              ": duplicate explicit GStreamer element name '" + binding->canonical_value +
+              "' in one materialized pipeline segment (declarations at bytes " +
+              std::to_string(existing->second->value_span.begin) + " and " +
+              std::to_string(binding->value_span.begin) +
+              "). Origins: " + describe_launch_name_origins(binding->canonical_value, origins) +
+              ".\nPipeline:\n" + pipeline,
+          "Use a unique short name in this segment. Automatic renaming is disabled because "
+          "names can participate in pad and routing references.",
+          pipeline);
+    }
+  }
+  return explicit_by_name;
+}
+
 static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   const auto timing_start = pipeline_internal::build_timing_now();
-  const auto gst_parse_start = pipeline_internal::build_timing_now();
-  GError* err = nullptr;
-  GstElement* pipeline = gst_parse_launch(build.pipeline_string.c_str(), &err);
-  const auto gst_parse_us = pipeline_internal::build_timing_us(gst_parse_start);
-  const bool had_pipeline = (pipeline != nullptr);
-  const bool parse_error = (err != nullptr) || !had_pipeline || !GST_IS_BIN(pipeline);
-
-  std::string msg;
-  if (err && err->message) {
-    msg = err->message;
+  const auto binding_analysis = gst::launch::analyze(build.pipeline_string);
+  ExplicitBindingIndex explicit_by_name;
+  if (binding_analysis.complete) {
+    explicit_by_name =
+        validate_explicit_bindings_or_throw(binding_analysis, build.pipeline_string, where, &build);
   }
-  if (err)
-    g_error_free(err);
+
+  const auto gst_parse_start = pipeline_internal::build_timing_now();
+  auto parsed = simaai::neat::gst::parse_launch(build.pipeline_string);
+  const auto gst_parse_us = pipeline_internal::build_timing_us(gst_parse_start);
+  GstElement* pipeline = parsed.get();
+  const bool had_pipeline = (pipeline != nullptr);
+  const bool parse_error = parsed.had_error() || !had_pipeline || !GST_IS_BIN(pipeline);
 
   if (parse_error) {
-    if (had_pipeline) {
-      gst_object_unref(pipeline);
-    }
-    if (msg.empty()) {
-      msg = had_pipeline ? "parser returned non-bin root element" : "unknown";
+    pipeline_internal::NormalizedDiagnostic diagnostic =
+        pipeline_internal::classify_gst_parse_error(parsed.error(), build.pipeline_string);
+    if (!parsed.had_error() && had_pipeline) {
+      diagnostic.title = "GStreamer returned an invalid pipeline root.";
+      diagnostic.actions = {
+          "Check the custom pipeline fragment and ensure it creates a complete pipeline.",
+      };
     }
     session_build_throw_session_error_simple(
-        error_codes::kParseLaunch,
-        std::string(where ? where : "Graph::build") + ": gst_parse_launch failed: " + msg +
-            "\nPipeline:\n" + build.pipeline_string,
-        "Validate pipeline fragments and plugin availability (gst-inspect-1.0).",
+        diagnostic.error_code,
+        pipeline_internal::render_diagnostic_body(
+            diagnostic, pipeline_internal::ux::should_emit_gstreamer_for_current_context()),
+        "", build.pipeline_string);
+  }
+
+  if (!binding_analysis.complete) {
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        std::string(where ? where : "Graph::build") +
+            ": GStreamer accepted a launch string whose explicit name bindings could not be "
+            "analyzed safely.\nPipeline:\n" +
+            build.pipeline_string,
+        "Fix malformed quoting/escaping or use supported gst-launch assignment syntax.",
         build.pipeline_string);
   }
+
+  const auto object_inventory = simaai::neat::gst::inventory_elements(pipeline);
+  const auto name_origins = launch_name_origin_ledger(&build);
+  std::unordered_map<std::string, std::vector<const simaai::neat::gst::ElementObjectInfo*>>
+      actual_by_name;
+  actual_by_name.reserve(object_inventory.size());
+  for (const auto& object : object_inventory) {
+    if (!object.short_name.empty()) {
+      actual_by_name[object.short_name].push_back(&object);
+    }
+  }
+  for (const auto& [name, objects] : actual_by_name) {
+    if (objects.size() <= 1U) {
+      continue;
+    }
+    std::ostringstream paths;
+    for (std::size_t i = 0; i < objects.size(); ++i) {
+      if (i != 0U) {
+        paths << ", ";
+      }
+      paths << (objects[i]->object_path.empty() ? "<unknown>" : objects[i]->object_path);
+    }
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        std::string(where ? where : "Graph::build") + ": ambiguous GStreamer short name '" + name +
+            "' occurs more than once in one materialized pipeline segment: " + paths.str() +
+            ". Origins: " + describe_launch_name_origins(name, name_origins) + "\nPipeline:\n" +
+            build.pipeline_string,
+        "Use globally unique short element names within this parsed segment.",
+        build.pipeline_string);
+  }
+  for (const auto& [name, binding] : explicit_by_name) {
+    const auto actual = actual_by_name.find(name);
+    if (actual == actual_by_name.end() || actual->second.size() != 1U) {
+      session_build_throw_session_error_simple(
+          error_codes::kPipelineShape,
+          std::string(where ? where : "Graph::build") + ": explicit GStreamer element name '" +
+              name + "' declared at byte " + std::to_string(binding->value_span.begin) +
+              " did not survive construction exactly once. GStreamer may have dropped an "
+              "element while assembling the bin. Origin: " +
+              describe_launch_name_origins(name, name_origins) + ".\nPipeline:\n" +
+              build.pipeline_string,
+          "Make every element name unique in the final segment and keep declarations and named "
+          "pad references synchronized.",
+          build.pipeline_string);
+    }
+  }
+
+  pipeline = parsed.release();
 
   using namespace simaai::neat::pipeline_internal::sima;
   ManifestBuildDiagnostics manifest_diag;
@@ -2463,6 +2658,22 @@ static void attach_encoded_caps_fixups(GstElement* pipeline,
 
 GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   return parse_pipeline_or_throw(build, where);
+}
+
+void session_build_validate_explicit_launch_names_or_throw(
+    std::string_view pipeline, const char* where, std::span<const LaunchNameOrigin> origins) {
+  const std::string owned_pipeline(pipeline);
+  const auto analysis = gst::launch::analyze(owned_pipeline);
+  (void)validate_explicit_bindings_or_throw(analysis, owned_pipeline, where, nullptr, origins);
+  if (!analysis.complete) {
+    session_build_throw_session_error_simple(
+        error_codes::kPipelineShape,
+        std::string(where ? where : "Graph") +
+            ": explicit GStreamer name bindings could not be analyzed safely.\nPipeline:\n" +
+            owned_pipeline,
+        "Fix malformed quoting/escaping or use supported gst-launch assignment syntax.",
+        owned_pipeline);
+  }
 }
 
 void session_build_attach_rtsp_debug(GstElement* pipeline,

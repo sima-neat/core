@@ -87,6 +87,9 @@ class CameraInput;
 namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node> CameraInput(
     simaai::neat::CameraInputOptions opt = {});
+std::shared_ptr<simaai::neat::Node> CameraInputWithCaptureBuffers(
+    simaai::neat::CameraInputOptions opt,
+    std::uint32_t capture_buffer_count);
 }
 ```
 
@@ -94,7 +97,7 @@ Python:
 
 ```python
 opt = pyneat.CameraInputOptions()
-node = pyneat.nodes.camera_input(opt)
+node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
 ```
 
 ## Options
@@ -108,10 +111,15 @@ node = pyneat.nodes.camera_input(opt)
 | `framerate_den` | `1` | Framerate denominator. `0` is normalized to `1`. |
 | `format` | `"NV12"` | Requested `video/x-raw` format. `NV12` is the recommended model-preproc path. |
 | `buffer_name` | `"camera"` | Logical buffer name used in downstream metadata and model route naming. |
-| `insert_queue` | `true` | Insert a small live-source queue after `libcamerasrc`. |
+| `insert_queue` | `true` | Insert a small live-source queue after allocator negotiation and zero-copy validation. |
 | `leaky_queue` | `true` | Make the queue leaky downstream so live graphs prefer recent frames over stale backlog. |
 | `queue_depth` | `2` | Maximum queued buffers when `insert_queue` is true. |
 | `allow_cpu_fallback` | `false` | If `false`, require camera/device zero-copy support. Set it to `true` only to opt into Neat's private adaptive bridge into SiMaAI memory. |
+
+`capture_buffer_count` is an argument to `CameraInputWithCaptureBuffers`, not a
+`CameraInputOptions` field. It defaults to `0`, which preserves the camera
+pipeline's own default. The camera pipeline validates its limit; Neat's
+provider supports at most `128`.
 
 ## Input and output contract
 
@@ -125,9 +133,30 @@ node = pyneat.nodes.camera_input(opt)
 
 ## Zero-copy and fallback
 
-`allow_cpu_fallback = false` is the default and requests strict camera/device zero-copy. The build fails with an actionable error unless the installed `libcamerasrc` exposes the required SiMaAI zero-copy properties and the memory library can export the camera allocation as a DMA-BUF.
+`allow_cpu_fallback = false` is the default and requests strict camera/device zero-copy. The build fails with an actionable error unless the installed `libcamerasrc` exposes the generic `external-buffer-mode` property and the memory library can export the camera allocation as DMA-BUFs.
 
-Set `allow_cpu_fallback = true` explicitly to insert Neat's private adaptive camera memory bridge. The bridge passes through SiMaAI/EV74 buffers when upstream already provides them. Otherwise, it copies the camera frame into a pooled SiMaAI buffer and attaches the metadata downstream stages expect.
+Neat always places its private camera bridge directly after the capsfilter and
+before the live queue. The bridge proposes a standard pool through GStreamer's
+downstream `GST_QUERY_ALLOCATION`. The pool derives plane sizes and strides
+from the validated caps, allocates them from one packed SiMaAI allocation, and
+exports one DMA-BUF per plane. `libcamerasrc` imports those DMA-BUFs into the
+ISP capture queue. The bridge verifies the result and unwraps the same packed
+allocation without a copy in strict mode.
+
+Pass `capture_buffer_count` to the camera factory based on the downstream
+owner. A temporal encoder or deep asynchronous ML graph may need 32 buffers; a
+low-latency CV graph may use fewer and drop stale frames. This setting controls
+the ISP-output/application cycle only. It does not enlarge the kernel's private
+CSI-to-ISP RAW transit ring, and it is independent of the GStreamer
+`queue_depth` drop policy.
+
+Set `allow_cpu_fallback = true` explicitly to permit the already-present bridge
+to copy when the camera stack cannot honor the proposed allocator. The bridge
+passes through SiMaAI/EV74 buffers when upstream provides them. Otherwise, it
+copies the camera frame into a pooled SiMaAI buffer and attaches the metadata
+downstream stages expect. That private copy pool grows on demand instead of
+being capped by `queue_depth`, allowing a downstream leaky queue to discard
+stale frames without the bridge stalling first.
 
 The fallback name means the bridge can accept OS/libcamera buffers. It does not mean you should move resize, color conversion, or normalization to the CPU. Keep those operations in model-managed CVU preprocessing whenever the route supports it.
 
@@ -153,8 +182,8 @@ For model pipelines, configure preprocessing through `Model::Options::preprocess
 
 | Error | Likely cause |
 | --- | --- |
-| `build.parse_launch` | `libcamerasrc` or `neatcamerabridge` is missing from the runtime plugin set. |
-| `misconfig.caps` / `not-negotiated` | The camera does not support the requested format, resolution, or framerate. |
+| `build.plugin_missing` | `libcamerasrc` or `neatcamerabridge` is missing from the runtime plugin set. |
+| `misconfig.media_caps` / `not-negotiated` | The camera does not support the requested format, resolution, or framerate. |
 | Strict zero-copy error | `allow_cpu_fallback` is false and the camera source does not expose SiMaAI zero-copy properties. |
 | Pull timeout | The camera did not deliver frames, the graph is backpressured, or the camera stack stopped streaming. |
 | Green, purple, or heavily tinted frames | The frame format or model preprocess color conversion is wrong, or the tint already exists in the camera ISP/libcamera output. Validate an `NV12` capture outside Neat first. |

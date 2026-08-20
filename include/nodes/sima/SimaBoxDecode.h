@@ -3,7 +3,8 @@
  * @ingroup nodes_sima
  * @brief `SimaBoxDecode` Node — postprocess box decode + NMS for object-detection models.
  *
- * Runs on the EV74. Consumes the raw detection-head tensor(s) emitted by the MLA, applies
+ * Runs through the Neat BoxDecode postprocess backend. Consumes the raw detection-head tensor(s)
+ * emitted by the MLA, applies
  * detector-specific box decoding (grid/anchor or raw-distance decode, score activation,
  * thresholding, top-K, and NMS), and returns surviving detections as BoxDecode payloads.
  * Place at the tail of an object-detection pipeline, or use the model-managed Graph route
@@ -25,6 +26,8 @@
 #include "builder/OutputSpec.h"
 #include "model/PreprocessPlan.h"
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/BoxDecodeOptions.h"
+#include "pipeline/FeatureTypes.h"
 #ifdef SIMA_NEAT_INTERNAL
 #include "model/internal/ModelRouteRetarget.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
@@ -44,7 +47,7 @@ namespace simaai::neat {
 struct BoxDecodeOptionsInternal;
 
 /**
- * @brief EV74 postprocess Node that converts detection-head tensors into detection results.
+ * @brief Postprocess Node that converts detection-head tensors into task-specific results.
  *
  * `SimaBoxDecode` is the postprocessing node used by object-detection graphs after MLA
  * inference. It reads the model output tensors, decodes them according to the selected
@@ -70,18 +73,23 @@ struct BoxDecodeOptionsInternal;
  *
  * **Outputs.**
  *
- * The output starts with a `BBOX` detection payload. Use `decode_bbox_tensor()`,
+ * Detection-family output starts with a `BBOX` payload. Use `decode_bbox_tensor()`,
  * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
  * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or
- * `decode_segmentation()` to get boxes plus `[N, 160, 160]` masks. Use `SimaRender` downstream
- * when you want an annotated video/image stream.
+ * `decode_segmentation()` to get boxes plus `[N, 160, 160]` masks.
+ * `BoxDecodeType::SuperPoint` instead emits a type-honest `FEATURE_POINTS_V1` payload; consume it
+ * with `decode_superpoint()` or `stages::SuperPointResults()`. Use `SimaRender` downstream when
+ * you want an annotated video/image stream.
  *
  * **Supported families.**
  *
  * Supported decode families include YOLO, YOLOv5/v7/v8/v9/v10 detection and segmentation
- * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, the SSD detector
- * family (prior/anchor decode with softmax class scores), DETR, EfficientDet, RCNN stage 1,
- * and CenterNet. `BoxDecodeType::Unspecified` is only a sentinel and fails before runtime.
+ * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, and four prepared SSD
+ * profiles (SSD300-v1 softmax @300, SSD-Mobile-300-v1 sigmoid @300, SSD-Mobile-320-v1 sigmoid
+ * @320, and SSDlite-Mobile-320-v1 softmax @320, all stretch-resize), plus DETR, EfficientDet,
+ * RCNN stage 1, CenterNet, and SuperPoint. `BoxDecodeType::Unspecified` is only a sentinel and
+ * fails before runtime. SuperPoint requires an explicit numerical profile unless an authoritative
+ * MPK record supplies one; Neat never infers that profile from tensor geometry.
  *
  * **Score and layout notes.**
  *
@@ -105,6 +113,16 @@ class SimaBoxDecode final : public Node,
                             public NodeContractProvider,
                             public NodeContractConfigurable {
 public:
+  /// Construct a standalone decoder with named options. Geometry/layout arguments retain the
+  /// same meaning as the positional overload below.
+  explicit SimaBoxDecode(const BoxDecodeOptions& options, const std::string& element_name = "",
+                         int original_width = 0, int original_height = 0, int model_width = 0,
+                         int model_height = 0,
+                         BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
+                         std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
+                         std::optional<bool> detess = std::nullopt,
+                         std::optional<bool> dequant = std::nullopt);
+
   /**
    * @brief Construct from raw geometry — for graphs without a bound `Model`.
    *
@@ -129,8 +147,8 @@ public:
    *                             tessellated heads.
    * @param dequant              Explicit override: do the upstream heads need dequantization before
    *                             decode? `std::nullopt` keeps the standalone default (derived from
-   * the input dtype) / model-pack value. When `true`, the upstream must carry quant
-   * scale/zero-point.
+   *                             the input dtype) / model-pack value. When `true`, the upstream must
+   *                             carry quant scale/zero-point.
    */
   explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
                          double nms_iou_threshold = 0.0, int top_k = 0,
@@ -140,6 +158,19 @@ public:
                          std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
                          std::optional<bool> detess = std::nullopt,
                          std::optional<bool> dequant = std::nullopt);
+  /**
+   * @brief Raw-geometry overload with an explicit external preprocessing resize assertion.
+   *
+   * SSD accepts only `ResizeMode::Stretch`. Passing `std::nullopt` preserves the metadata-driven
+   * behavior of the compatibility overload; no resize mode is silently assumed.
+   */
+  explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold,
+                         double nms_iou_threshold, int top_k, const std::string& element_name,
+                         int original_width, int original_height, int model_width, int model_height,
+                         BoxDecodeTypeOption decode_type_option,
+                         std::optional<BoxDecodeSourceStorage> source_storage,
+                         std::optional<bool> detess, std::optional<bool> dequant,
+                         std::optional<ResizeMode> resize_mode_override);
   /**
    * @brief Construct from a bound `Model` — pulls geometry and routing flags from the model.
    *
@@ -165,7 +196,9 @@ public:
    *                             (`Stretch`/`Letterbox`/`Crop`). Use when running the model
    *                             without an upstream `Preproc` stage and the per-buffer
    *                             `preproc_resize_mode` meta isn't being written by an
-   *                             upstream element. When set, the contract drops
+   *                             upstream element. If this route performs preprocessing, the
+   *                             override must match its resolved resize mode. When set, the
+   *                             contract drops
    *                             `preproc_resize_mode` from the required-meta list so buffers
    *                             flow through cleanly; otherwise the value is sourced from
    *                             per-buffer `GstSimaaiPreprocessMeta` as before.
@@ -174,6 +207,17 @@ public:
   explicit SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
                          double detection_threshold = 0.0, double nms_iou_threshold = 0.0,
                          int top_k = 0, const std::string& element_name = "",
+                         std::optional<bool> route_tess_needed = std::nullopt,
+                         std::optional<bool> route_quant_needed = std::nullopt,
+                         int original_width = 0, int original_height = 0, int model_width = 0,
+                         int model_height = 0,
+                         std::optional<ResizeMode> resize_mode_override = std::nullopt,
+                         BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+
+  /// Model-bound named-options overload. Explicit SuperPoint profile options take precedence over
+  /// `Model::Options`, which in turn takes precedence over MPK metadata.
+  explicit SimaBoxDecode(const simaai::neat::Model& model, const BoxDecodeOptions& options,
+                         const std::string& element_name = "",
                          std::optional<bool> route_tess_needed = std::nullopt,
                          std::optional<bool> route_quant_needed = std::nullopt,
                          int original_width = 0, int original_height = 0, int model_width = 0,
@@ -232,6 +276,7 @@ public:
   int top_k_internal() const;
   int original_width_internal() const;
   int original_height_internal() const;
+  std::shared_ptr<Node> retargeted_for_model_internal(const Model& model) const;
   BoxDecodeTypeOption decode_type_option_internal() const;
   const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>&
   model_semantics_internal() const;
@@ -261,10 +306,31 @@ std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
     std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
     std::optional<bool> detess = std::nullopt, std::optional<bool> dequant = std::nullopt);
+/// Raw-geometry factory overload with an explicit external preprocessing resize assertion.
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
+              int top_k, const std::string& element_name, int original_width, int original_height,
+              int model_width, int model_height, BoxDecodeTypeOption decode_type_option,
+              std::optional<BoxDecodeSourceStorage> source_storage, std::optional<bool> detess,
+              std::optional<bool> dequant, std::optional<ResizeMode> resize_mode_override);
+std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
+    const BoxDecodeOptions& options, const std::string& element_name = "", int original_width = 0,
+    int original_height = 0, int model_width = 0, int model_height = 0,
+    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
+    std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
+    std::optional<bool> detess = std::nullopt, std::optional<bool> dequant = std::nullopt);
 /// Convenience factory for `SimaBoxDecode` from a bound `Model` — see the class constructor docs.
 std::shared_ptr<simaai::neat::Node>
 SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
               double detection_threshold = 0.0, double nms_iou_threshold = 0.0, int top_k = 0,
+              const std::string& element_name = "",
+              std::optional<bool> route_tess_needed = std::nullopt,
+              std::optional<bool> route_quant_needed = std::nullopt, int original_width = 0,
+              int original_height = 0, int model_width = 0, int model_height = 0,
+              std::optional<ResizeMode> resize_mode_override = std::nullopt,
+              BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(const simaai::neat::Model& model, const BoxDecodeOptions& options,
               const std::string& element_name = "",
               std::optional<bool> route_tess_needed = std::nullopt,
               std::optional<bool> route_quant_needed = std::nullopt, int original_width = 0,

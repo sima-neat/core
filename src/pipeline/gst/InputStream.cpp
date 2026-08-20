@@ -2,10 +2,13 @@
 #include "InputStreamInternal.h"
 
 #include "pipeline/GraphOptions.h"
+#include "pipeline/ErrorCodes.h"
 #include "pipeline/EncodedSampleUtil.h"
+#include "pipeline/NeatError.h"
 #include "InputStreamUtil.h"
 
 #include "pipeline/internal/CapsBridge.h"
+#include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -209,9 +212,26 @@ int inputstream_stop_timeout_ms() {
   return inputstream_debug_flags().stop_timeout_ms;
 }
 
-void set_stream_error(InputStream::State& st, const std::string& msg) {
+void set_stream_error(InputStream::State& st, std::string code, std::string msg,
+                      std::optional<GraphReport> report) {
   std::lock_guard<std::mutex> lock(st.error_mu);
-  st.error = msg;
+  const bool typed_upgrade = report.has_value() && (!st.terminal_error.has_value() ||
+                                                    !st.terminal_error->report.has_value());
+  if (st.terminal_error.has_value() && !typed_upgrade)
+    return;
+  PullError error;
+  error.code = std::move(code);
+  error.message = pipeline_internal::error_util::decorate_error(error.code, std::move(msg));
+  if (report.has_value()) {
+    if (report->error_code.empty())
+      report->error_code = error.code;
+    error.report = std::move(report);
+  }
+  st.terminal_error = std::move(error);
+}
+
+void set_stream_error(InputStream::State& st, const std::string& msg) {
+  set_stream_error(st, error_codes::kRuntimeElementFailed, msg);
 }
 
 std::string format_push_failure_error(const InputStream::State& st, const char* where,
@@ -233,21 +253,38 @@ std::string format_push_failure_error(const InputStream::State& st, const char* 
 [[noreturn]] void throw_push_failed_with_last_error(const char* where,
                                                     const std::shared_ptr<InputStream::State>& st) {
   const char* tag = where ? where : "InputStream::push";
+  std::optional<PullError> terminal_error;
+  if (st) {
+    std::lock_guard<std::mutex> lock(st->error_mu);
+    terminal_error = st->terminal_error;
+  }
+  if (terminal_error.has_value()) {
+    if (terminal_error->report.has_value()) {
+      GraphReport report = std::move(*terminal_error->report);
+      if (report.error_code.empty())
+        report.error_code = terminal_error->code;
+      if (report.repro_note.empty())
+        report.repro_note = terminal_error->message;
+      throw NeatError(terminal_error->message, std::move(report));
+    }
+    // Keep a push placeholder reportless. The output worker may shortly observe the
+    // underlying bus error and replace it with a specific, report-bearing diagnostic.
+    throw std::runtime_error(terminal_error->message);
+  }
+
   std::ostringstream oss;
   oss << tag << ": push failed";
   if (!st) {
     oss << " (stream state unavailable)";
   } else {
-    std::lock_guard<std::mutex> lock(st->error_mu);
-    if (!st->error.empty()) {
-      oss << ": " << st->error;
-    } else if (st->stop_requested.load(std::memory_order_relaxed)) {
+    if (st->stop_requested.load(std::memory_order_relaxed)) {
       oss << ": stream is stopping";
     } else {
       oss << ": appsrc rejected buffer";
     }
   }
-  throw std::runtime_error(oss.str());
+  throw std::runtime_error(
+      pipeline_internal::error_util::decorate_error(error_codes::kRuntimeElementFailed, oss.str()));
 }
 
 void log_push_refcount(const char* where, GstBuffer* buffer) {

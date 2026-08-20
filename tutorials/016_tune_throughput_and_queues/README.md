@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Graphs & Pipelines |
 | Difficulty | Advanced |
 | Estimated Read Time | 15-20 minutes |
 | Model | None |

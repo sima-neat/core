@@ -1,0 +1,65 @@
+---
+title: GenAI Model
+description: Choose how to run or serve LLM, VLM, and ASR models from Neat applications
+sidebar_position: 1
+slug: /develop-apps/development-workflow/genai-model
+---
+
+# GenAI Model
+
+Neat uses the GenAI APIs for LLM, VLM, and ASR models prepared with LLiMa. This
+is the generative-model counterpart to
+[`Model`](/develop-apps/development-workflow/model): load a deployed model
+directory, create a request, then run it inside your application or serve it
+over HTTP.
+
+Use these APIs when your application asks a model to generate text, answer
+questions about images, call tools, or transcribe audio. Use the classic
+`Model` API for fixed-shape discriminative models such as classification,
+detection, segmentation, or embedding models.
+
+## Where GenAI fits
+
+The GenAI path has the same high-level shape as the rest of Neat:
+
+1. Prepare or download a model artifact for Modalix.
+2. Put the model on the target, commonly under `/media/nvme/llima/models/`.
+3. Load the model from your C++ or Python application.
+4. Send a request directly or expose the model through `GenAIServer`.
+5. Read the complete result or consume streamed output.
+
+LLiMa owns GenAI model preparation, command-line testing, and benchmarking.
+Neat owns the application-facing API and runtime integration once the model is
+used inside your app. For model preparation details, see
+[GenAI with LLiMa](/genai-llima/).
+
+## Choose an application boundary
+
+<div class="overview-link-columns">
+  <section class="overview-link-panel overview-link-panel-start">
+    <h2>Serve applications and clients</h2>
+    <p>Recommended for most applications. Use the GenAI server to expose common API endpoints.</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/genai-server/"><strong>GenAI Server</strong><span>Register one or more models and call OpenAI- or Ollama-compatible HTTP endpoints.</span></a></li>
+    </ul>
+  </section>
+
+  <section class="overview-link-panel overview-link-panel-explore">
+    <h2>Run in your process</h2>
+    <p>Use the direct APIs when your C++ or Python application owns the model call.</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/direct-api/"><strong>Direct GenAI APIs</strong><span>Run or stream LLM, VLM, and ASR requests in process, and compose GenAI graph fragments.</span></a></li>
+    </ul>
+  </section>
+</div>
+
+Use direct calls for embedded application logic and tests that should run in
+the same process as the model. Use the server when clients should not link
+against the Neat runtime or when one process should route requests to multiple
+served models.
+
+## Next steps
+
+- Follow [Serve GenAI Models](/tutorials/serve-genai-models) for a complete HTTP server example.
+- Follow [Run an LLM with the Direct API](/tutorials/run-an-llm) for an in-process walkthrough.
+- Prepare and benchmark models with [GenAI with LLiMa](/genai-llima/).

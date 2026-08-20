@@ -28,6 +28,7 @@ when the app earns more moving parts.
 | If you need to... | Start with | Why | Next stop |
 | --- | --- | --- | --- |
 | Run one compiled model once | `Model.run(...)` | Smallest path from artifact to output tensors. | [Run Your First Model](/tutorials/run-your-first-model) |
+| Run a model on a connected Modalix PCIe Card | `pcie::Model` / `pyneatpcie.Model` | Host-side co-processing without building a native on-card application. | [PCIe Co-processing](/develop-apps/development-workflow/pcie-model) |
 | Inspect a model contract or route | `Model` | Specs, metadata, and route info tell you what the model accepts and emits. | [Model](/develop-apps/development-workflow/model) |
 | Add a model to application flow | `Graph` | Names inputs and outputs, composes nodes, and keeps topology explicit. | [Graph](/develop-apps/development-workflow/graph) |
 | Reuse a graph over time | `graph.build(...)` → `Run` | Gives you push/pull, close/drain control, measurement, and queue policy. | [Run a Graph](/develop-apps/development-workflow/pipeline) |
@@ -41,7 +42,8 @@ preflight checklist, then run one model before adding graph machinery.
 The Development Workflow pages break each of these down in depth. At a glance:
 
 - [Model](/develop-apps/development-workflow/model) — load a compiled model package and expose it as a runnable unit.
-- [GenAIModel](/develop-apps/development-workflow/genai-model) — the generative-model counterpart to `Model`.
+- [PCIe Co-processing](/develop-apps/development-workflow/pcie-model) — run a compiled model on a connected Modalix PCIe Card from a host application.
+- [GenAI Model](/develop-apps/development-workflow/genai-model) — run generative models directly or serve them over HTTP.
 - [Tensor and Sample](/develop-apps/development-workflow/core_types) — the payload and metadata envelope passed between stages.
 - [Run / Inference](/develop-apps/development-workflow/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
 - [Graph](/develop-apps/development-workflow/graph) — compose model stages, nodes, inputs, and outputs into an application graph.

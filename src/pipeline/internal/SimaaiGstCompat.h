@@ -56,6 +56,25 @@ void gst_simaai_memory_allocation_params_init(GstSimaaiAllocationParams* params)
 gboolean gst_simaai_memory_allocation_params_add_segment(GstSimaaiAllocationParams* params,
                                                          gsize size, const gchar* name);
 void* gst_simaai_memory_get_segment(const GstMemory* memory, const gchar* name);
+#define GST_NEAT_CAMERA_MEMORY_API_VERSION_1 1u
+#define GST_NEAT_CAMERA_MEMORY_CAP_DMABUF_EXPORT (G_GUINT64_CONSTANT(1) << 0)
+#define GST_NEAT_CAMERA_MEMORY_CAP_PACKED_LAYOUT (G_GUINT64_CONSTANT(1) << 1)
+#define GST_NEAT_CAMERA_MEMORY_CAP_DEVICE_WRITTEN (G_GUINT64_CONSTANT(1) << 2)
+
+typedef struct _GstNeatCameraMemoryApiV1 {
+  guint32 abi_version;
+  guint32 struct_size;
+  guint64 capabilities;
+  void (*init_once)(void);
+  GstAllocator* (*get_allocator)(void);
+  void (*allocation_params_init)(GstSimaaiAllocationParams* params);
+  gboolean (*allocation_params_add_segment)(GstSimaaiAllocationParams* params, gsize size,
+                                            const gchar* name);
+  gboolean (*has_packed_segments)(const GstMemory* memory);
+  gint (*export_dmabuf_fd)(const GstMemory* memory, const gchar* segment_name, guint32 flags);
+  GstMemory* (*share_packed)(const GstMemory* memory, const gchar* output_name);
+  void (*mark_device_written)(GstMemory* memory);
+} GstNeatCameraMemoryApiV1;
 
 GstBufferPool* gst_simaai_allocate_buffer_pool(GstObject* object, GstAllocator* allocator,
                                                guint buffer_size, guint min_buffers,

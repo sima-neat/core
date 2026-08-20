@@ -3,6 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
+| Category | Models & Inference |
 | Difficulty | Beginner |
 | Estimated Read Time | 5-10 minutes |
 | Model | resnet_50 |
@@ -31,6 +32,24 @@ Start with the same compiled `.tar.gz` archive used by the earlier model tutoria
 Call `benchmark(samples)`. The API warms up the async model runner, measures an async push/pull window, prints a summary to stdout, and returns the same headline values in a `BenchmarkReport`.
 
 The sample count is the number of measured synthetic inputs. Use a larger number for steadier throughput and power numbers; use a smaller number when you only want a quick smoke check.
+
+Detection models whose route ends in BoxDecode can also use `BenchmarkOptions`. Set
+`original_width`, `original_height`, and `resize_mode` to describe the source-image geometry that
+BoxDecode uses when it maps detections from model coordinates. The synthetic tensor remains
+model-shaped:
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.num_samples = 100;
+options.original_width = 1920;
+options.original_height = 1080;
+options.resize_mode = simaai::neat::ResizeMode::Letterbox;
+auto report = model.benchmark(options);
+```
+
+Python exposes the same fields through `pyneat.BenchmarkOptions`. Set both original dimensions or
+omit both; when omitted, the benchmark infers geometry from the resolved model route. Per-run
+benchmark geometry takes precedence over deprecated BoxDecode geometry in `ModelOptions`.
 
 ### Read the report {#step-read-report}
 
