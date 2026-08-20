@@ -138,7 +138,7 @@ resolve_from_modelzoo() {
   local pattern="$2"
   [[ -n "${model_name}" ]] || return 1
   if command -v sima-cli >/dev/null 2>&1; then
-    SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo get "${model_name}" >/dev/null
+    SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo -v 2.1.2 get "${model_name}" >/dev/null
   else
     return 1
   fi
