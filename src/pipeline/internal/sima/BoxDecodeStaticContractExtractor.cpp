@@ -2604,15 +2604,19 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   std::vector<std::size_t> terminal_consumer_order;
   if (boxdecode_stage) {
     const auto parsed_type = parse_box_decode_type_token(boxdecode_stage->decode_type);
+    // Only families whose MPK-declared token is authoritative are honoured here.
+    // For everything else the token is read and dropped, and the caller must set
+    // Model::Options::decode_type by hand.
     if (parsed_type.has_value() &&
         (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
-         *parsed_type == BoxDecodeType::YoloV5)) {
+         *parsed_type == BoxDecodeType::YoloV5 || *parsed_type == BoxDecodeType::YoloXSegPose)) {
       out.decode_type = *parsed_type;
     }
   }
   if (boxdecode_stage &&
       (box_decode_type_is_ssd_family(out.decode_type) ||
-       out.decode_type == BoxDecodeType::SuperPoint || out.decode_type == BoxDecodeType::YoloV5)) {
+       out.decode_type == BoxDecodeType::SuperPoint || out.decode_type == BoxDecodeType::YoloV5 ||
+       out.decode_type == BoxDecodeType::YoloXSegPose)) {
     if (const auto parsed_option =
             parse_box_decode_type_option_token(boxdecode_stage->decode_type_option);
         parsed_option.has_value()) {
