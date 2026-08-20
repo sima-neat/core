@@ -408,6 +408,7 @@ set(UNIT_TESTS
   unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
   unit_model_archive_loader_test
+  unit_modelpack_compact_extraction_path_test
   unit_outputspec_test
   unit_pcie_nodes_test
   unit_jpeg_framing_nodes_test
@@ -1562,6 +1563,7 @@ foreach(test
     graph_naming_pipeline_integration_test
     gst_data_adapter_runtime_regression_test
     unit_model_archive_loader_test
+    unit_modelpack_compact_extraction_path_test
     graph_rtsp_lifecycle_regression_test
     graph_validate_report_regression_test
     security_modelpack_matrix_test)
@@ -1590,6 +1592,7 @@ foreach(test
     unit_tensor_image_mapping_test
     unit_detection_types_bbox_test
     unit_model_archive_loader_test
+    unit_modelpack_compact_extraction_path_test
     unit_modalix_contract_preflight_test
     graph_validate_report_regression_test
     graph_rtsp_lifecycle_regression_test
