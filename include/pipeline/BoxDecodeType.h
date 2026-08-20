@@ -77,6 +77,7 @@ enum class BoxDecodeType : std::int32_t {
   YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
   Ssd = 22, ///< SSD family token, resolved internally to an exact supported prepared signature.
   SuperPoint = 23, ///< SuperPoint detector-logit and descriptor-grid postprocessing.
+  YoloXSegPose = 24, ///< YOLOX packed export carrying box, mask and keypoint heads together.
 };
 
 /**
@@ -172,6 +173,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "ssd";
   case BoxDecodeType::SuperPoint:
     return "superpoint";
+  case BoxDecodeType::YoloXSegPose:
+    return "yolox-seg-pose";
   case BoxDecodeType::Detr:
     return "detr";
   case BoxDecodeType::EffDet:
@@ -234,6 +237,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV26Seg:
   case BoxDecodeType::YoloV6:
   case BoxDecodeType::YoloX:
+  case BoxDecodeType::YoloXSegPose:
     return true;
   case BoxDecodeType::Ssd:
   case BoxDecodeType::SuperPoint:
@@ -261,6 +265,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV9Seg:
   case BoxDecodeType::YoloV10Seg:
   case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloXSegPose:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5:
@@ -290,6 +295,10 @@ constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
   switch (type) {
   case BoxDecodeType::YoloV8Pose:
   case BoxDecodeType::YoloV26Pose:
+  // First type for which box_decode_type_is_segmentation() is ALSO true. The two
+  // predicates were mutually exclusive over the previous value set; nothing in
+  // the enum ever required that, but callers may have assumed it.
+  case BoxDecodeType::YoloXSegPose:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5:
@@ -357,6 +366,12 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
     return "SuperPoint contract: one 65-channel coarse detector-logit tensor and one "
            "coarse descriptor-grid tensor at compatible spatial geometry; numerical semantics "
            "are selected by an explicit or MPK-authored SuperPoint profile.";
+  case BoxDecodeType::YoloXSegPose:
+    return "YOLOX seg+pose contract: 13 grouped-by-role tensors - three heads of "
+           "[bbox(4), class(1 objectness + N classes), mask coefficients(32), keypoints(3*K)] "
+           "plus one shared mask-prototype tensor; class scores are logits and objectness is "
+           "packed into channel 0 of the class tensor, so num_classes is the class-block width "
+           "and excludes it.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

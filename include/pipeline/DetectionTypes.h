@@ -64,6 +64,8 @@ inline constexpr char kDetectionFormatBbox[] = "BBOX";
 inline constexpr char kDetectionFormatBboxPose[] = "BBOX_POSE";
 /// Canonical detection-format token for BoxDecode instance-segmentation payloads.
 inline constexpr char kDetectionFormatBboxSegmentation[] = "BBOX_SEGMENTATION";
+/// Canonical detection-format token for BoxDecode payloads carrying masks AND keypoints.
+inline constexpr char kDetectionFormatBboxSegmentationPose[] = "BBOX_SEGMENTATION_POSE";
 
 /// Number of keypoints emitted by the BoxDecode pose wire format.
 inline constexpr int64_t kDecodedPoseKeypoints = 17;
@@ -97,8 +99,27 @@ struct SegmentationDecodeTensors {
   simaai::neat::Tensor masks;
 };
 
+/**
+ * @brief Decoded tensors for a BoxDecode output carrying masks and keypoints together.
+ *
+ * `boxes` and `masks` match `SegmentationDecodeTensors`; `keypoints` matches
+ * `PoseDecodeTensors`. All three are parallel: row `i` of each describes the same
+ * detection.
+ *
+ * The wire layout is boxes, then masks, then poses, every region strided by the
+ * same slot count. Keypoint rows for a detection whose class carries no keypoints
+ * are all-zero, including visibility, so a consumer can gate on visibility rather
+ * than needing the decoder's class list.
+ */
+struct SegmentationPoseDecodeTensors {
+  simaai::neat::Tensor boxes;
+  simaai::neat::Tensor masks;
+  simaai::neat::Tensor keypoints;
+};
+
 using PoseDecodeTensorList = std::vector<PoseDecodeTensors>;
 using SegmentationDecodeTensorList = std::vector<SegmentationDecodeTensors>;
+using SegmentationPoseDecodeTensorList = std::vector<SegmentationPoseDecodeTensors>;
 
 /// True iff @p format names the plain BBOX detection wire format.
 bool detection_format_is_bbox(const std::string& format);
@@ -110,7 +131,23 @@ bool detection_format_is_pose(const std::string& format);
 bool detection_format_is_segmentation(const std::string& format);
 
 /// True iff @p format is any BoxDecode format whose leading payload is BBOX records.
+bool detection_format_is_segmentation_pose(const std::string& format);
+
 bool detection_format_is_bbox_family(const std::string& format);
+
+/**
+ * @brief Decode a combined segmentation + pose BoxDecode payload.
+ *
+ * Same contract as `decode_segmentation_tensor` and `decode_pose_tensor`, for a
+ * payload that carries both extension regions.
+ */
+SegmentationPoseDecodeTensors decode_segmentation_pose_tensor(const simaai::neat::Tensor& tensor,
+                                                              int img_w = 0, int img_h = 0,
+                                                              int top_k = 0, bool strict = false);
+
+SegmentationPoseDecodeTensorList
+decode_segmentation_pose(const simaai::neat::TensorList& tensors, int img_w = 0, int img_h = 0,
+                         int top_k = 0, bool strict = false);
 
 /**
  * @brief Parse a packed BBOX byte payload into typed `Box` records.
