@@ -395,6 +395,7 @@ set(UNIT_TESTS
   unit_cast_fanout_contract_test
   unit_mla_boundary_output_contract_test
   unit_detess_rank2_contract_test
+  unit_processcvu_v2_mpk_encoding_test
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
   unit_modelpack_mount_selection_test

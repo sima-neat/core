@@ -27,6 +27,14 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 
+/** Validate the additive ProcessCVU V2 bridge before any rich request crosses the DSO boundary. */
+std::string validate_graph_processcvu_prepared_bridge_v2();
+
+/** Pure layout validator exposed for mixed-version regression coverage. */
+std::string validate_graph_processcvu_prepared_bridge_v2_abi(
+    const simaai::neat::GraphProcessCvuPreparedBridgeAbiV2* bridge_abi,
+    bool builder_symbol_available);
+
 /**
  * @brief Build the prepared-runtime descriptor for a SiMa pipeline.
  *

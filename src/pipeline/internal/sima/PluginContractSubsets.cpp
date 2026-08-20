@@ -319,8 +319,7 @@ void apply_tiled_channel_storage_policy_local(sima_ev_tensor_desc* desc, bool c1
   }
 }
 
-void apply_detessdequant_input_encoding_local(sima_ev_tensor_desc* desc, bool align_c16,
-                                              bool cblock) {
+void apply_tiled_channel_encoding_local(sima_ev_tensor_desc* desc, bool align_c16, bool cblock) {
   if (!desc || desc->layout_kind != SIMA_EV_LAYOUT_TILED ||
       tensorsemantics::find_shape_axis(desc->shape, SIMA_EV_AXIS_C) < 0) {
     return;
@@ -1293,7 +1292,7 @@ DetessDequantTensorDescriptorContract build_detessdequant_tensor_descriptor_cont
     throw std::invalid_argument(
         "detessdequant tensor descriptor contract could not synthesize its tiled input");
   }
-  apply_detessdequant_input_encoding_local(&contract.input, head.align_c16, head.cblock);
+  apply_tiled_channel_encoding_local(&contract.input, head.align_c16, head.cblock);
   contract.input.storage.nbytes =
       head.input_transport_size_bytes / static_cast<std::uint64_t>(contract.batch_size);
 
@@ -2706,6 +2705,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
         throw std::invalid_argument(
             "detessellate runtime config could not synthesize typed input tensor");
       }
+      apply_tiled_channel_encoding_local(&input_desc, subset.align_c16, subset.cblock);
       input_desc.storage.nbytes = subset.input_transport_size_bytes;
       runtime.input_tensors.push_back(input_desc);
     }

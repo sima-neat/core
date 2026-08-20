@@ -132,7 +132,12 @@ between implementation options.
   DetessDequant additionally projects both kernel descriptors through one per-frame descriptor
   contract: tile rank determines kernel rank, leading batch dimensions remain separate, and
   semantic axes, byte spans, byte strides, and explicit tiled-storage encoding remain
-  authoritative. Route compilation must not reinterpret those descriptors after projection.
+  authoritative. Route compilation must not reinterpret those descriptors after projection. The
+  prepared-runtime bridge carries the explicit encoding through an additive, version-negotiated
+  ProcessCVU V2 request whenever it must synthesize those descriptors across the DSO boundary.
+  Its fixed-width prefix and ABI probe are validated before either DSO reads the rich C++ request;
+  the legacy request and builder remain unchanged for binary compatibility rather than acquiring
+  another ambiguous tail field.
 - **ProcessCVU backend policy has one authority.** A stage's capability result owns backend
   availability and the AUTO preference used by resolution and diagnostics. Explicit stage or
   session targets either run on the requested supported backend or fail; later role-based
