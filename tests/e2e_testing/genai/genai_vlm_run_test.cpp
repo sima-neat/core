@@ -18,7 +18,7 @@
 // VLM using tests/images/people.jpg.
 // Model fixture:
 //   export LLIMA_MODELS_PATH=/media/nvme/llima/models
-//   export SIMA_TEST_LLIMA_VLM_MODEL=LFM2.5-VL-450M-a16w4
+//   export SIMA_TEST_LLIMA_VLM_MODEL=LFM2.5-VL-450M-Autoround-a16w4
 //   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 
@@ -26,7 +26,8 @@ namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_VLM_MODEL";
 constexpr const char* kPrompt = "Describe this image in a short phrase.";
-constexpr const char* kExpectedText = "Skier in the air.";
+constexpr const char* kExpectedText =
+    "A skier is in the air, wearing a colorful jacket and beige pants.";
 
 std::string trim_text(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
