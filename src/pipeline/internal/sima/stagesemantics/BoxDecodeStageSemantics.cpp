@@ -813,6 +813,40 @@ void apply_raw_yolov6_yolox_static_contract_overrides(BoxDecodeStaticContract* c
   }
 }
 
+void apply_yolox_seg_pose_static_contract_overrides(BoxDecodeStaticContract* contract) {
+  if (!contract || contract->decode_type != BoxDecodeType::YoloXSegPose) {
+    return;
+  }
+  // Deliberately NOT folded into apply_raw_yolov6_yolox_static_contract_overrides:
+  // that one stamps Split3Interleaved for YoloX, which is the interleaved export.
+  // This family is the packed export and arrives grouped by role - three heads of
+  // [bbox, class, mask_coeff, kpt] followed by one shared mask prototype - and the
+  // backend rejects any other layout outright.
+  if (contract->decode_type_option == BoxDecodeTypeOption::Auto) {
+    contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+  } else if (contract->decode_type_option != BoxDecodeTypeOption::GroupedByRoleLogit &&
+             contract->decode_type_option != BoxDecodeTypeOption::GroupedByRole) {
+    throw std::invalid_argument(
+        std::string("yolox-seg-pose BoxDecode supports only the grouped-by-role head layout, but "
+                    "got '") +
+        box_decode_type_option_token(contract->decode_type_option) +
+        "'. Use BoxDecodeTypeOption::Auto, GroupedByRole or GroupedByRoleLogit.");
+  }
+  contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
+  // num_classes is deliberately not inferred. The class tensor packs objectness into
+  // channel 0, so its channel count is one greater than the class-block width and the
+  // generic inference has no way to know that - it would resolve 30 where the answer
+  // is 29, shifting every class id by one and mis-striding the scorer. The plugin
+  // refuses to guess for this family for the same reason; failing here keeps the two
+  // layers agreeing instead of silently disagreeing by one.
+  if (contract->num_classes <= 0) {
+    throw std::invalid_argument(
+        "yolox-seg-pose BoxDecode requires an explicit num_classes: its class tensor packs "
+        "objectness into channel 0, so the class-block width cannot be inferred from the channel "
+        "count. Set Model::Options::num_classes.");
+  }
+}
+
 void apply_ssd_static_contract_overrides(BoxDecodeStaticContract* contract) {
   if (!contract || !box_decode_type_is_ssd_family(contract->decode_type)) {
     return;
@@ -1031,6 +1065,7 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   finalized.required_preprocess_meta_fields = required_preprocess_meta_fields;
   apply_yolov26_static_contract_overrides(&finalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&finalized);
+  apply_yolox_seg_pose_static_contract_overrides(&finalized);
   apply_ssd_static_contract_overrides(&finalized);
   if (finalized.decode_type == BoxDecodeType::SuperPoint) {
     finalize_superpoint_contract(&finalized, "BoxDecode");
@@ -1233,6 +1268,7 @@ build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   BoxDecodeStaticContract normalized = contract;
   apply_yolov26_static_contract_overrides(&normalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&normalized);
+  apply_yolox_seg_pose_static_contract_overrides(&normalized);
   apply_ssd_static_contract_overrides(&normalized);
   if (normalized.decode_type == BoxDecodeType::SuperPoint) {
     finalize_superpoint_contract(&normalized, "BoxDecode");
