@@ -1,0 +1,24 @@
+{
+  "excludedPrefixes": [
+    "docs/compile-a-model/",
+    "docs/doxygen/",
+    "docs/genai-llima/",
+    "docs/reference/",
+    "docs/tools/insight/",
+    "docs/tools/sentinel/",
+    "docs/tools/sima-cli/"
+  ],
+  "generatedRoutePrefixes": [
+    "/compile-a-model",
+    "/genai-llima",
+    "/reference",
+    "/tools/insight",
+    "/tools/sentinel",
+    "/tools/sima-cli",
+    "/tutorials"
+  ],
+  "localizedRouteExceptions": [
+    "/tutorials/before-you-run"
+  ],
+  "reason": "Reference, Doxygen-derived, and externally sourced autodoc families remain English-only during the localization preview. Their owning repositories or generators must produce localized artifacts before those prefixes enter the authored-content workflow."
+}

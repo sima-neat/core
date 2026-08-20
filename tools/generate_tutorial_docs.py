@@ -83,12 +83,10 @@ def _category_flow_key(category: str, number: int) -> tuple:
 def docs_static_url(path: str, *, relative_prefix: str | None = None) -> str:
     if relative_prefix is not None:
         return f"{relative_prefix.rstrip('/')}/{path.lstrip('/')}"
-    base_url = os.environ.get("DOCS_BASE_URL", "/").strip() or "/"
-    if not base_url.startswith("/"):
-        base_url = f"/{base_url}"
-    if not base_url.endswith("/"):
-        base_url = f"{base_url}/"
-    return f"{base_url}{path.lstrip('/')}"
+    # Generated MDX passes this logical static path to Docusaurus' useBaseUrl.
+    # Do not bake DOCS_BASE_URL into generated sources: the same docs must work
+    # both at site root and below the Developer Center's /software/ mount.
+    return f"/{path.lstrip('/')}"
 
 
 def detect_repo_ref(default: str = "main") -> str:
@@ -1241,8 +1239,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
         alt = html.escape(f"{module.display_title} — animated walkthrough overview", quote=True)
         url = module.flow_image_url
         lines.append(
-            f'<object type="image/svg+xml" data="{url}" class="tutorial-flow" aria-label="{alt}">'
-            f'<img src="{url}" alt="{alt}" loading="lazy" /></object>'
+            f'<BaseUrlImage src="{url}" alt="{alt}" className="tutorial-flow" asobject="true"></BaseUrlImage>'
         )
         lines.append("")
 
@@ -1312,7 +1309,7 @@ def _render_tutorial_card_grid(modules: List[TutorialModule]) -> List[str]:
             [
                 f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
                 '    <div class="tutorial-card-image-wrap">',
-                f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
+                f'      <BaseUrlImage className="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy"></BaseUrlImage>',
                 f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
                 f'      <span class="tutorial-card-duration">{duration}</span>',
                 "    </div>",
@@ -1368,7 +1365,7 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         "",
         "# Tutorials",
         "",
-        f'<img src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
+        f'<BaseUrlImage src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" className="tutorial-flow" loading="lazy"></BaseUrlImage>',
     ]
 
     cleaned_heading_body = _clean_heading_body(heading_body)

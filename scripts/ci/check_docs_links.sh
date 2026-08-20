@@ -87,6 +87,10 @@ esac
 if [[ "${BASE_PATH}" != "/" ]]; then
   BASE_PATH="/${BASE_PATH#/}"
   BASE_PATH="${BASE_PATH%/}/"
+  if rg -q '(<img[^>]+src|<object[^>]+data)="/img/' "${SITE_DIR}" -g '*.html'; then
+    rg -n '(<img[^>]+src|<object[^>]+data)="/img/' "${SITE_DIR}" -g '*.html' >&2
+    die "built pages contain root-absolute image URLs that bypass ${BASE_PATH}"
+  fi
   SERVE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-docs-link-root.XXXXXX")"
   mkdir -p "${SERVE_DIR}${BASE_PATH%/}"
   cp -a "${SITE_DIR}/." "${SERVE_DIR}${BASE_PATH%/}/"

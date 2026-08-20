@@ -1,0 +1,718 @@
+---
+title: "圖"
+description: "從節點、模型和可重複使用的 Graph 片段建構可執行的應用程式。"
+sidebar_position: 5
+---
+
+# 圖
+
+在 SiMa.ai 的 Neat 中，`Graph` [API](/reference/{lsa}/classes/simaai-neat-graph) 是您組合應用程式的方式。一個 `Graph` 描述了從輸入端到輸出端，經過處理節點的流程。如果您熟悉機器學習，可以將 `Graph` 視為一個小型模型圖，用於建置圍繞您模型的應用程式。
+
+- 幀、張量或樣本通過 **輸入** 進入，並通過 **輸出** 離開。處理過程發生在中間，通過諸如解碼、調整大小、預處理、推理、後處理、分支和自訂邏輯等 **節點** 進行。
+
+![圖的輸入、處理步驟和輸出，全部都在同一個圖的範圍內。](@site/../docs/images/graph-input-output.svg)
+
+- 圖可以獨立運行，也可以在更大的圖中重複使用。
+
+![一個可重複使用的圖表片段，插入到更大的應用程式圖表中。](@site/../docs/images/graph-reusable-fragment.svg)
+
+Neat 允許您描述應用程式，而不是手動設定執行階段。使用預建的 [節點](/develop-apps/development-workflow/node) 和 [節點群組](/develop-apps/development-workflow/node#pre-built-node-groups) 來執行常見任務，例如輸入、解碼、調整大小、預處理、推理、後處理和輸出。在一個 `Graph` 中，您宣告節點，設定其參數，並按照應用程式的需求將它們連接起來。
+
+在後端，Neat 在 GStreamer 上建置可執行的執行階段圖。Neat 將此實現抽象化，因此您使用公開的 `Graph` API，而不是管理 GStreamer 元素、`appsrc`、`appsink`、佇列或內部執行階段端口。
+
+## 節點、群組和邊界
+
+`Graph` 是組裝邊界；[`Node`](/develop-apps/development-workflow/node) 是建置模塊。
+
+這包括：
+
+- 原子節點，例如解碼、預處理、後處理、來源和匯出階段；
+- 預建節點群組，它們是可以重複使用的節點集合；
+- 邊界節點，例如 `Input("image")` 和 `Output("classes")`。
+
+有關預建群組和邊界節點的詳細規則，請參閱 [節點 → 預先建置的節點群組](/develop-apps/development-workflow/node#pre-built-node-groups) 和 [節點 → 邊界節點](/develop-apps/development-workflow/node#boundary-nodes)。
+
+當您呼叫 `Graph::build()` 時，Neat 將公開圖轉換為一個可執行的執行階段圖，並保留端點名稱以進行診斷和命名 `Run` API。
+
+## 命名輸入和輸出
+
+`Input` 和 `Output` 節點上的名稱會宣告 Graph 片段的邊界端點。最終組裝的 `Graph` 外部所保留的邊界會成為公開的執行階段端點。
+
+```cpp
+simaai::neat::Graph classifier("classifier");
+classifier.add(simaai::neat::nodes::Input("image"));
+classifier.add(model);
+classifier.add(simaai::neat::nodes::Output("classes"));
+```
+
+在這裡，`image` 是輸入端點，而 `classes` 是輸出端點。圖的名稱，`classifier`，僅用於診斷和視覺化，它不會建立輸入或輸出。
+
+### 在建構之前檢查端點
+
+在建構圖之前，列印出公開的端點。不應存在任何未定義的端點。如果名稱不在此列表中，`Run` 將不會在後續階段接受它。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+for (const auto& name : classifier.inputs()) {
+  std::cout << "graph input: " << name << "\n";
+}
+for (const auto& name : classifier.outputs()) {
+  std::cout << "graph output: " << name << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+print("graph inputs:", classifier.inputs())
+print("graph outputs:", classifier.outputs())
+```
+
+</CodeTab>
+</CodeTabs>
+
+在 `graph.build(...)` 之後，檢查即時 `Run` 中的 `run.input_names()` 和 `run.output_names()`。這些名稱應與您打算公開的介面相符。
+
+## 選擇來源擁有或應用程式推送的拓撲結構
+
+每個圖都必須回答一個問題：誰擁有輸入？
+
+| 拓撲結構 | 何時使用 | 執行階段形狀 |
+|---|---|---|
+| 應用程式推送 | 您的應用程式已經有影格、張量或樣本 | 添加 `nodes.input("name")`，然後使用 `run.push("name", ...)` 推送，或使用 `Graph.run([...])`。 |
+| 來源擁有 | 圖應從檔案、相機、RTSP 或其他來源節點讀取 | 添加來源節點或來源群組，然後建置/執行，無需推送應用程式輸入。 |
+
+對於應用程式推送的圖，請根據應用程式概念命名輸入端點：`image`、`left_camera`、`metadata`、`prompt`。對於來源擁有的圖，請檢查輸出合約，並提取來源路徑發出的內容。
+
+## 選擇圖選項
+
+使用 [`GraphOptions`](/reference/{lsa}/structs/simaai-neat-graphoptions) 來設定圖層級的行為。稍後使用 `RunOptions` 來設定即時執行階段行為。
+
+| 目標 | 使用 | 備註 |
+|---|---|---|
+| 在日誌和匯出中標記圖 | `Graph("name")` | 這是一個標籤，而不是一個端點。 |
+| 在一個程序中運行多個圖 | `element_name_prefix` / `element_name_suffix` | 避免產生重複的元素名稱，並使診斷結果更易於閱讀。 |
+| 控制圖的診斷 | `VerboseOptions` | 從生產輸出開始。僅在收集證據時才開啟詳細的輸出。 |
+| 選擇輸出佇列行為 | `OutputOptions::Latest()`、`EveryFrame(...)` 或 `Clocked(...)` | 選擇新鮮度、完整性或計時傳遞。 |
+| 連接即時 Graph 片段 | `GraphLinkOptions` 與 `RealtimeLatestByStream` | 在限制已解碼影格傳輸量的同時，讓每個串流保持最新。 |
+| 限制回調工作 | `callback_timeout_ms` | 與 C++ 回調樣式的輸出消耗一起使用，以防止緩慢的回調掩蓋圖問題。 |
+| 調整高級執行 | `advanced_execution` | 僅在預設圖具有可測量的基準之後使用。 |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions options;
+options.element_name_prefix = "cam0_";
+
+simaai::neat::Graph graph("cam0_detector", options);
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.GraphOptions()
+options.element_name_prefix = "cam0_"
+
+graph = pyneat.Graph("cam0_detector", options)
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+```
+
+</CodeTab>
+</CodeTabs>
+
+`Latest()` 會保留最新的結果，即使應用程式無法提取所有輸出。當每個輸出都很重要時，請使用 `EveryFrame(...)`。當輸出必須遵循管線時鐘時，請使用 `Clocked(...)`。
+
+`RunOptions::queue_depth` 控制圖的輸入和內部執行階段佇列。它不會取代公用 `Output` 的佇列合約：`OutputOptions::max_buffers` 和 `drop` 控制該終端佇列，並優先使用。框架建立的輸出佇列會回退到 `RunOptions` 的預設值。
+
+## 在建構之前進行驗證
+
+當您想要在不啟動實際執行時，取得圖建構的證據時，請使用 `graph.validate(...)`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphReport report = graph.validate();
+std::cout << report.to_json() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = graph.validate()
+print(report.to_json())
+```
+
+</CodeTab>
+</CodeTabs>
+
+`ValidateOptions.parse_launch` 會檢查產生的管線字串。`ValidateOptions.enforce_names` 會捕捉未命名或非預期的元素。在變更圖的選項之前，請先使用報告；先有證據，再調整參數。
+
+## 組合圖
+
+### 最簡化的心智模型
+
+為了組合一個應用程式，請宣告一個 `Graph`，然後使用 `add()` 來建立線性鏈，或使用 `connect()` 來建立明確的拓撲結構：
+
+- 對於常見的單路徑處理，例如簡單的單模型推論，請使用 `add()`。
+- 當您需要明確控制節點或片段的連接方式時，請使用 `connect()`。
+
+```cpp
+simaai::neat::Graph g;
+g.add(...);      // continue the same linear chain
+g.connect(...);  // add explicit graph topology
+
+auto run = g.build();
+```
+
+### 使用 `add()` 進行建置
+
+以下範例會讀取一張圖片，執行推論，並輸出模型預測的類別。
+
+```text
+image -> model inference -> classes
+```
+
+以下是程式碼的樣子：
+
+```cpp
+simaai::neat::Model model("resnet50.tar.gz");  // Load a compiled model and prepare its Graph route.
+
+simaai::neat::Graph g("classifier");           // instantiate the Graph that will describe the app
+g.add(simaai::neat::nodes::Input("image"));    // adds an input Node named "image"
+g.add(model);                                  // adds the model Nodes connected to the Input
+g.add(simaai::neat::nodes::Output("classes")); // adds an output Node named "classes" connected to 'model'
+
+auto run = g.build();                          // build the Graph
+```
+
+:::note
+使用 `add()` 將節點附加到一個簡單的線性序列中，並遵循先前新增的節點。
+:::
+
+### 使用 `connect()` 建立
+
+需要明確控制圖的拓撲時，請使用 `connect()`。每次呼叫 `add()`，一開始都會將新節點或片段接在前一個節點或片段之後。同時使用這兩種方法時，`connect()` 會以您明確宣告的連接取代相關的隱含連接。您也可以直接在具名端點、節點、模型或可重複使用的 Graph 片段之間使用 `connect()`。
+
+#### 使用 `connect()` 進行扇出
+
+扇出會將一個輸入傳送到多個輸出。首先新增端點，以便它們存在於圖中：
+
+```cpp
+simaai::neat::Graph fan_out_graph("fan_out_graph");
+fan_out_graph.add(simaai::neat::nodes::Input("image_input"));
+fan_out_graph.add(simaai::neat::nodes::Output("original_image"));
+fan_out_graph.add(simaai::neat::nodes::Output("model_image"));
+```
+
+從概念上來看，`fan_out_graph` 的樣子會是這樣：
+
+```text
+image_input --> original_image --> model_image
+```
+
+然後使用 `connect()`，將預設的線性接線替換為您想要的拓撲結構：
+
+```cpp
+fan_out_graph.connect("image_input", "original_image");
+fan_out_graph.connect("image_input", "model_image");
+```
+
+從概念上來說，`fan_out_graph` 現在看起來會像這樣：
+
+```text
+            /--> original_image
+image_input
+            \--> model_image
+```
+
+#### 使用 `Branch()`
+
+由於扇出（fan-out）很常見，因此 Neat 提供 [`graphs::Branch()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a1feffc304100fd17cb99c5f5bff3c20c) 作為輔助工具。這會在內部建立輸入、輸出，以及 `connect()` 呼叫：
+
+```cpp
+auto fan_out_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"original_image", "model_image"});
+```
+
+Python 使用相同的端點名稱：
+
+```python
+fan_out_graph = pyneat.graphs.branch(
+    "image_input",
+    ["original_image", "model_image"],
+)
+```
+
+`fan_out_graph` 仍然只是一個普通的 `Graph` 片段。您可以將它連接到一個更大的應用程式中，就像連接任何其他 `Graph` 一樣。
+
+:::note
+分支可能會導致反壓。如果某個分支停止處理資料，根據所選的執行階段原則，它可能會減慢或阻止資料的產生。`Branch()` 會將資料分發方式明確化，而不是將其隱藏在意外的重複輸出中。
+:::
+
+#### 使用 `connect()` 進行匯聚
+
+匯聚會將多個輸入傳送到單一輸出。與簡單的扇出不同，匯聚還必須宣告如何匹配樣本。此策略存在於輸出端點。
+
+首先，設定輸出並新增端點，以便它們存在於圖中：
+
+```cpp
+simaai::neat::OutputOptions render_options;
+render_options.combine_policy = simaai::neat::CombinePolicy::ByFrame;
+
+simaai::neat::Graph render_inputs_graph("render_inputs_graph");
+render_inputs_graph.add(simaai::neat::nodes::Input("image"));
+render_inputs_graph.add(simaai::neat::nodes::Input("bbox"));
+render_inputs_graph.add(simaai::neat::nodes::Output("render_inputs", render_options));
+```
+
+從概念上來看，`render_inputs_graph` 的呈現方式會是這樣：
+
+```text
+image -> bbox -> render_inputs
+```
+
+然後使用 `connect()`，將預設的線性接線替換為您想要的拓撲結構：
+
+```cpp
+render_inputs_graph.connect("image", "render_inputs");
+render_inputs_graph.connect("bbox", "render_inputs");
+```
+
+從概念上來說，`render_inputs_graph` 現在的樣子會是這樣：
+
+```text
+image ----\
+           render_inputs
+bbox -----/
+```
+
+#### 使用 `Combine()`
+
+由於扇入（fan-in）很常見，因此 Neat 提供 [`graphs::Combine()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a6f1479674758179a4bbd72af1291ea47) 作為輔助工具。這會在內部建立輸入、輸出、合併策略以及 `connect()` 呼叫：
+
+```cpp
+auto render_inputs_graph = simaai::neat::graphs::Combine(
+    {"image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+```
+
+Python 使用 `None_` 來設定「不合併」的策略，因為 `None` 是一個保留字：
+
+```python
+render_inputs_graph = pyneat.graphs.combine(
+    ["image", "bbox"],
+    "render_inputs",
+    pyneat.CombinePolicy.ByFrame,
+)
+```
+
+`render_inputs_graph` 仍然是一個普通的 `Graph` 片段。您可以將其連接到更大的應用程式中，就像連接任何其他 `Graph` 一樣。
+
+`graphs::Combine()` 使用預設的 `OutputOptions` 產生其輸出：四個排隊的樣本、阻止溢出，且不進行時鐘同步。當該輸出仍然是一個公共終端時，在產生時將其清空。如果必須在提取之前推送有限的批次，請建立上述所示的明確扇入，並使用 `OutputOptions::EveryFrame(...)` 設定其輸出，使其大小適合該批次。
+在 Python 中，使用 `pyneat.OutputOptions.every_frame(...)`。
+
+:::note
+`CombinePolicy` 告訴 Neat 如何匹配輸入的樣本：
+
+- `ByFrame`：將具有相同 `frame_id` 的樣本組合在一起。
+- `ByPts`：將具有相同呈現時間戳 (`pts_ns`) 的樣本組合在一起。
+- `None`：不組合多個產生器；圖會失敗，並要求提供明確的策略。
+- Python 寫法：`pyneat.CombinePolicy.None_`、`ByFrame` 或 `ByPts`。
+
+沒有隱藏的後備機制。使用 `ByFrame` 時，缺少框架 ID 會導致錯誤。使用 `ByPts` 時，缺少時間戳會導致錯誤。這可防止 Neat 在不知不覺中組合錯誤的樣本。
+:::
+
+### 完整的分支與合併範例
+
+現在將各個部分整合起來。輸入影像會被分割成兩個路徑。其中一個路徑會經過模型，並產生邊界框。另一個路徑則會保留原始影像，以便在後續的渲染階段使用。
+
+```text
+           /--> model_image -> model -> bbox --\
+image_input                                     render_inputs
+           \----------------> original_image --/
+```
+
+從高層級來看，請遵循以下步驟：
+
+1. 首先宣告輸入分叉 `Graph` 片段。
+2. 建立模型推論 `Graph` 片段，該片段會接收 `model_image` 並產生 `bbox`。
+3. 將原始影像路徑和 `bbox` 路徑合併到 `render_inputs` 中。
+4. 將它們全部連接在一起，形成一個最終的 `Graph`，稱為 `app`。
+
+#### 建置分支和合併範例
+
+1. 首先使用 `Branch()` 建立分叉，如上所示：
+
+    ```cpp
+    auto image_input_graph = simaai::neat::graphs::Branch(
+        "image_input",
+        {"model_image", "original_image"});
+    ```
+
+    接著，`image_input_graph` 將會以以下方式建構：
+
+    ```text
+                /--> original_image
+    image_input
+                \--> model_image
+    ```
+
+2. 建立 `model_inference_graph`：
+
+    ```cpp
+    simaai::neat::Graph model_inference_graph("model_inference_graph");
+    model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+    model_inference_graph.add(model);
+    model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+    ```
+
+    接著，`model_inference_graph` 將會被建構如下：
+
+    ```text
+    model_image --> model --> bbox
+    ```
+
+    :::note
+    這個範例假設選取的模型路徑會輸出已解碼的 BBOX 資料。如果模型輸出原始的推論張量，請在 `Output("bbox")` 之前新增一個特定於模型的 `SimaBoxDecode` 階段。
+    :::
+
+3. 然後建立匯聚圖 `render_graph`：
+
+    ```cpp
+    auto render_graph = simaai::neat::graphs::Combine(
+        {"original_image", "bbox"},
+        "render_inputs",
+        simaai::neat::CombinePolicy::ByFrame);
+    ```
+
+    接著，`render_graph` 將會被建構如下：
+
+    ```text
+    original_image ----\
+                        render_inputs
+    bbox --------------/
+    ```
+
+4. 最後，將這些片段連接成一個完整的`Graph`，以建構整個應用程式：
+
+    ```cpp
+    simaai::neat::Graph app("app");
+    app.connect(image_input_graph, model_inference_graph);
+    app.connect(image_input_graph, render_graph);
+    app.connect(model_inference_graph, render_graph);
+    ```
+
+**完整的範例：**
+
+```cpp
+simaai::neat::Model model("yolov8s_model.tar.gz");
+
+auto image_input_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"model_image", "original_image"});
+
+simaai::neat::Graph model_inference_graph("model_inference_graph");
+model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+model_inference_graph.add(model);
+model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+
+auto render_graph = simaai::neat::graphs::Combine(
+    {"original_image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+
+simaai::neat::Graph app("app");
+app.connect(image_input_graph, model_inference_graph);
+app.connect(image_input_graph, render_graph);
+app.connect(model_inference_graph, render_graph);
+
+auto run = app.build();
+
+auto image_sample =
+    simaai::neat::make_tensor_sample("image_input", image_tensor);
+image_sample.frame_id = 0;
+run.push("image_input", image_sample);
+
+auto inputs = run.pull("render_inputs");
+```
+
+可執行範例會在 `render_inputs` 處停止，其中包含對應的 `original_image` 和 `bbox` 值。後續的渲染或輸出節點可以消耗該組合結果，然後將渲染後的影像儲存到檔案中、顯示它，或將其傳送到其他位置。
+
+## 在執行階段使用具名端點
+
+在建立 `Graph` 之後，使用相同的端點名稱來傳送資料和讀取結果。
+
+當圖有多个公共輸入或輸出時，將端點名稱傳遞給 `push()` 或 `pull()`：
+
+```cpp
+run.push("image", simaai::neat::TensorList{image_tensor});
+run.push("metadata", simaai::neat::TensorList{metadata_tensor});
+
+auto classes = run.pull("classes");
+auto preview = run.pull("preview");
+```
+
+對於一個只有一個公開輸入或輸出的圖，在執行階段時，名稱是可選的：
+
+```cpp
+run.push(simaai::neat::TensorList{image_tensor});
+auto classes = run.pull();
+```
+
+如果有多個輸入或輸出可用，未命名的 `push(...)` 或 `pull()` 將會失敗，並列出可用的端點名稱，而不是猜測您想要使用哪個。
+
+## 連接即時片段
+
+當連接需要執行階段原則或明確的原始影格傳輸限制時，請使用 [`GraphLinkOptions`](/reference/{lsa}/structs/simaai-neat-graphlinkoptions)。
+
+對於即時多串流匯聚，`RealtimeLatestByStream` 會保留每個 `Sample::stream_id` 的最新樣本，並公平地安排即將處理的串流。如果來源未標記 `stream_id`，則在連結上標記一個穩定的 ID。使用預設原則的即時匯聚會自動升級為「最新串流」。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphLinkOptions link;
+link.policy = simaai::neat::GraphLinkPolicy::RealtimeLatestByStream;
+link.queue_depth = 4;
+link.stream_id = "camera-0";
+link.max_inflight_per_stream = 4;
+link.max_inflight_total = 8;
+
+app.connect(camera_fragment, detector_fragment, link);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+link = pyneat.GraphLinkOptions()
+link.policy = pyneat.GraphLinkPolicy.RealtimeLatestByStream
+link.queue_depth = 4
+link.stream_id = "camera-0"
+link.max_inflight_per_stream = 4
+link.max_inflight_total = 8
+
+app.connect(camera_fragment, detector_fragment, link)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`RealtimeLatestByStream` 總是會為每個資料流保留一個待處理的樣本。`queue_depth` 仍然保留在 `GraphLinkOptions` 中，以確保來源相容性，並且專用於此原則；更改它不會增加單一插槽的限制。
+
+透過標準的 `build()` API 建立一個具有大量頻道的即時圖：
+
+```cpp
+auto run = app.build(run_options);
+```
+
+```python
+run = app.build(run_options)
+```
+
+融合是一種內部編譯器決策，而不是建置模式。一般的 `build()` 會保留符合資格的私有來源分支、其即時多工器，以及模型消費者，全部置於一個 GStreamer 管線中，從而避免 appsink/appsrc 裝置-記憶體交接。不符合資格的即時串流拓撲會使用一般分段的執行階段。
+
+在頂層圖上設定 `graph_options.advanced_execution.internal_queue_depth`，以重疊模型階段。正值會在 CVU、MLA 和解碼階段之前插入有界、非洩漏的全局佇列，但不在終端輸出之前。`GraphLinkOptions::max_inflight_per_stream` 會傳遞到每個連結的融合多工器，因此它可以保持在 `1`，以保持即時性，而無需進行私有環境切換。將 `internal_queue_depth` 保持未設定，或將其設定為 `0`，以保留單鏈消費者路徑。
+
+C++ 和 Python 都會在 `GraphLinkOptions` 上公開這些欄位，該欄位會傳遞到一般 `connect(...)`。不需要單獨的即時連接方法或建置模式。
+
+| 欄位 | 何時使用 |
+|---|---|
+| `policy` | 連結需要每個串流的最新影格即時性。 |
+| `queue_depth` | 相容性欄位。`RealtimeLatestByStream` 會保留它，並始終為每個串流保留一個待處理樣本。 |
+| `stream_id` | 上游片段不會標記 `Sample::stream_id`，但此連結代表一個穩定的串流。 |
+| `max_inflight_per_stream` | 即時串流連結攜帶原始解碼器支援的樣本，並且需要每個串流的明確下游許可上限。該欄位的預設值為 `-1`；核心使用 `4`。融合來源降低會將解析的值應用於對應的多工器串流。 |
+| `max_inflight_total` | 即時串流連結需要在所有串流中需要一個硬性全局上限。該欄位的預設值為 `-1`；如果沒有環境覆寫，核心會衍生 `min(max_inflight_per_stream * stream_count, 8)`。 |
+
+:::caution 升級預覽應用程式和已儲存的圖。
+
+這個版本在 `GraphLinkOptions` 中新增了許可欄位。目前的 Neat Library C++ ABI 和共享函式庫 SONAME 為 4。請重新建置 C++ 應用程式和外掛程式，使其與對應的核心套件相容。請勿將為較早版本的 `libsima_neat` SONAME 建置的二進位檔與 `libsima_neat.so.4` 混合使用。
+
+請按照以下方式遷移預覽原始程式碼：
+
+| 預覽 API | 目前 API |
+|---|---|
+| `RealtimeGraphLinkOptions` | `GraphLinkOptions` |
+| `graph.connect_realtime(from, to, link)` | `graph.connect(from, to, link)` |
+| `graph.build_fused_realtime_sources(options)` (C++) | `graph.build(options)` |
+| `graph.build_fused_realtime_source(options)` (Python) | `graph.build(options)` |
+| `RealtimeEveryFrameByStream` | `RealtimeLatestByStream`，當新鮮度和替換是可以接受時 |
+
+`RealtimeLatestByStream` 是一種新鮮度策略，並非 `RealtimeEveryFrameByStream` 的無損替換方案。它會保留每個資料流中的一個待處理樣本，並在收到較新的影格時替換該樣本。
+
+`Graph::load()` 會拒絕包含 `"link_policy": "realtime_every_frame_by_stream"` 的已儲存 JSON 檔案。請從更新後的來源重新產生圖。如果 JSON 是唯一的來源，則僅在捨棄過時的影格是可以接受的情況下，才將策略變更為 `realtime_latest_by_stream`，然後再次載入並儲存此版本。
+
+:::
+
+
+## 從單一串流擴展到多個串流
+
+多串流圖在進行調整之前，需要先確認其識別性。保留 `stream_id` 和 `frame_id`，以便執行階段指標、合併策略和丟棄報告能夠區分不同的串流。
+
+| 模式 | 何時使用 | 注意事項 |
+|---|---|---|
+| 單一串流 -> 單一模型 -> 單一輸出 | 您正在驗證圖是否正常運作 | 輸出形狀、dtype 和端點名稱。 |
+| 多個串流 -> 單一模型路徑 | 組合後的輸入速率符合單一模型路徑 | 每個串流的公平性和過時串流。 |
+| 多個串流 -> 多個模型路徑 | 單一模型路徑無法跟上 | 串流分割、路徑命名和輸出統計。 |
+| 單一串流 -> 幾個模型 | 不同的決策需要相同的輸入 | 分支級別的延遲和目標標準化的 FPS。 |
+| 多個串流 -> 模型 + 中繼資料/影片輸出 | 實際輸出包含多個成品 | 將目標輸出與預覽或遙測資料分開計算。 |
+
+對於需要最新輸出的即時輸出，請使用 `OutputOptions::Latest()`。對於離線或無損輸出，請使用 `EveryFrame(...)`。對於扇入，僅當每個輸入都存在 `frame_id` 時，才使用 `CombinePolicy::ByFrame`，並且僅當存在時間戳時，才使用 `CombinePolicy::ByPts`。
+
+當您需要執行階段佇列、丟棄策略、測量或排空行為時，請轉到 [執行圖形](/develop-apps/development-workflow/pipeline)。`Graph` 是您描述拓撲結構的地方；`Run` 是您驅動它的地方。
+
+## 實用範例
+
+### 可重複使用的模型路徑
+
+```cpp
+simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
+  simaai::neat::Graph classifier_route("classifier");           // create a reusable Graph fragment
+  classifier_route.add(simaai::neat::nodes::Input("image"));    // declare the fragment's input
+  classifier_route.add(model);                                  // add the model inference route
+  classifier_route.add(simaai::neat::nodes::Output("classes")); // declare the fragment's output
+  return classifier_route;                                      // return the fragment for reuse
+}
+```
+
+單獨使用：
+
+```cpp
+auto classifier_route = make_classifier(model);      // create the classifier fragment
+auto run = classifier_route.build();                 // build it as a standalone application
+run.push("image", simaai::neat::TensorList{image});  // send data to its named input
+auto classes = run.pull("classes");                  // read from its named output
+```
+
+在較大的應用程式中使用：
+
+```cpp
+simaai::neat::Graph app("app");            // create the larger application Graph
+app.connect(camera, classifier_route);     // connect the camera fragment to the classifier
+app.connect(classifier_route, telemetry);  // forward classification results to telemetry
+```
+
+在較大的應用程式中，分類器路徑的邊界節點是內部宣告。除非它們仍然位於最終圖的外部，否則它們不會變成額外的公開推送/拉取端點。
+
+### 轉發配接器
+
+有時，一個片段僅僅是重新命名一個邊界：
+
+```cpp
+simaai::neat::Graph adapter("adapter");            // create a reusable adapter fragment
+adapter.add(simaai::neat::nodes::Input("raw"));    // declare the incoming endpoint name
+adapter.add(simaai::neat::nodes::Output("image")); // declare the outgoing endpoint name
+adapter.connect("raw", "image");                   // pass data directly between the endpoints
+```
+
+當在另一個圖中使用時，這可以編譯成直接的連接。Neat 會保留名稱以提高可讀性和診斷能力，但它不會產生不必要的執行階段工作。
+
+## 進階圖工具
+
+在基本圖路徑正常運作後使用這些工具。它們是參考工具，而不是 API 的第一個路徑。
+
+| 工具 | 語言 | 何時使用 |
+|---|---|---|
+| `add_output_tensor(...)` | C++ 和 Python | 進階轉接器：影像或視訊輸出必須在提取之前成為一個適合 CPU 的 `UInt8` 張量，且具有要求的格式、大小或幀率。 |
+| `Graph::save(...)` / `Graph::load(...)`；Python `graph.save(...)` / `pyneat.Graph.load(...)` | C++ 和 Python | 您想要持久保存並重新載入圖的組成。 |
+| `graph.custom(...)` | C++ 和 Python | 您需要將後端片段插入到線性圖中。 |
+| `nodes::Custom(...)` / `pyneat.nodes.custom(...)` | C++ 和 Python | 您需要在明確的拓撲結構中需要一個自訂節點。 |
+| `run_rtsp(...)` | C++ 和 Python | 圖應該透過 RTSP 提供 H.264 輸出。 |
+| `set_tensor_callback(...)` | C++ | C++ 程式碼需要基於回調的張量消耗，而不是提取迴圈。當回調延遲很重要時，與 `GraphOptions.callback_timeout_ms` 搭配使用。 |
+
+首先優先使用公開的節點和群組。只有在任務沒有穩定的節點時，才使用原始的自訂片段。
+
+### 保存和重新載入圖定義
+
+當您想要將組成的定義傳遞給另一個工具、保留 CI 成品或比較不同變更之間的圖建置時，請保存圖。當保存的定義是執行的真實現象時，請載入它。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.save("classifier.neat.json");
+
+simaai::neat::Graph loaded = simaai::neat::Graph::load("classifier.neat.json");
+auto run = loaded.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.save("classifier.neat.json")
+
+loaded = pyneat.Graph.load("classifier.neat.json")
+run = loaded.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+將儲存的圖形檔案視為建構產物，除非您的應用程式有意對其進行版本控制。這些檔案會記錄圖形的組成方式；它們不會取代模型合約、輸入資料或執行階段測量。
+
+## 最佳實務
+
+### 端點命名
+
+選擇能描述其在應用程式中意義的端點名稱：
+
+```cpp
+nodes::Input("image");          // describes the data entering the Graph
+nodes::Input("left_camera");    // identifies the input's application role
+nodes::Output("classes");       // describes a classification result
+nodes::Output("detections");    // describes a detection result
+nodes::Output("preview");       // describes the output's intended use
+```
+
+避免使用基於內部執行階段細節的名稱：
+
+```cpp
+nodes::Input("appsrc0");  // exposes an internal GStreamer implementation detail
+nodes::Output("sink1");   // describes runtime wiring instead of application meaning
+nodes::Output("out");     // acceptable for small tests, but unclear in applications
+```
+
+如果一個片段包含多個未命名的輸出，Neat 會指派確定性的後綴，例如 `classes_0`、`classes_1` 和 `classes_2`。 建議在應用程式程式碼中使用明確的名稱。
+
+### 實用規則
+
+- 對於應用程式和可重複使用的片段，請使用 `Graph`。
+- 當您想要模型使用其正常路徑時，請在 `Graph::add(model)` 中直接使用 `Model`。
+- 使用具名稱的 `Input` 和 `Output` 節點來宣告片段的公開合約。
+- 對於簡單的鏈，請使用 `add()`。
+- 對於明確的拓撲和片段組合，請使用 `connect()`。
+- 對於多輸入或多輸出應用程式，請使用具名稱的 `run.push("name", ...)` 和 `run.pull("name")`。
+- 宣告您的應用程式所需的 [節點](/develop-apps/development-workflow/node)、[節點群組](/develop-apps/development-workflow/node#pre-built-node-groups)、參數和連接；讓 Neat 處理低階的執行階段細節。
+
+## 參閱
+
+- [節點](/develop-apps/development-workflow/node)
+- [模型](/develop-apps/development-workflow/model)
+- [執行圖形](/develop-apps/development-workflow/pipeline)
+- [公開的圖和圖輔助函式](/develop-apps/advanced-concepts/graphs)
+
+## 教學課程
+
+- [建立自訂資料圖](/tutorials/build-a-custom-data-graph)
+- [將模型嵌入到圖中](/tutorials/embed-model-inside-graph)
+- [在一個圖中同時執行多個串流。](/tutorials/run-multiple-streams)

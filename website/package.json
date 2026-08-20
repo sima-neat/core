@@ -4,7 +4,13 @@
   "version": "0.0.0",
   "scripts": {
     "start": "docusaurus start",
+    "prebuild": "npm run check:i18n-complete && npm run check:i18n-navigation",
     "build": "NO_UPDATE_NOTIFIER=1 docusaurus build",
+    "check:i18n": "node scripts/check-i18n.js",
+    "check:i18n-complete": "node scripts/check-i18n.js --require-complete",
+    "check:i18n-navigation": "node scripts/check-i18n-preview-navigation.js",
+    "check:i18n-pilot": "node scripts/check-i18n-pilot.js",
+    "translate:i18n": "node scripts/translate-docs-ollama.js",
     "gen-api-docs": "node scripts/clean-insight-api-docs.js && docusaurus gen-api-docs insight && node scripts/configure-insight-api-category.js",
     "serve": "docusaurus serve",
     "swizzle": "docusaurus swizzle"

@@ -1,0 +1,354 @@
+---
+title: "Прямі API для генеративного штучного інтелекту."
+description: "Запускайте моделі LLM, VLM та ASR безпосередньо з програм, написаних мовами C++ та Python."
+sidebar_position: 3
+slug: /develop-apps/development-workflow/genai-model/direct-api
+---
+
+# Прямі API для генеративного штучного інтелекту.
+
+Використовуйте прямі API GenAI від Neat, коли модель LLM, VLM або ASR працює в тому ж процесі, що й ваша програма. Завантажте розгорнутий каталог моделі LLiMa, створіть `GenerationRequest`, а потім дочекайтеся повного результату або отримуйте токени по мірі їх генерації.
+
+Якщо браузеру, сервісу або віддаленому клієнту потрібно викликати модель через HTTP, використовуйте [Сервер GenAI](/develop-apps/development-workflow/genai-model/genai-server). Перегляньте [Огляд моделі генеративного штучного інтелекту.](/develop-apps/development-workflow/genai-model), щоб отримати допомогу у виборі між двома варіантами реалізації.
+
+## Оберіть відповідну ручку.
+
+Для більшості застосунків почніть з `GenAIModel`. Він автоматично визначає завдання моделі на основі каталогу моделі та надає можливість перевірки її функціональних можливостей:
+
+- `accepts_text()`
+- `accepts_image()`
+- `accepts_audio()`
+- `task()`
+- `model_id()`
+
+Використовуйте спеціальні обробники для конкретних завдань, коли програма знає, що саме завантажує, і потребує більш обмеженого API:
+
+| Ручка | Використовуйте для |
+|--------|---------|
+| `genai::GenAIModel` | Автоматично виявлено каталоги моделей LLM, VLM або ASR. |
+| `genai::VisionLanguageModel` | Великі мовні моделі (ВММ), що працюють лише з текстом, і великі багатомодальні моделі (ВБМ), здатні обробляти зображення. |
+| `genai::ASRModel` | Моделі перетворення мовлення на текст. |
+
+## Надішліть текстовий запит.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/genai.h"
+
+#include <iostream>
+
+int main() {
+  simaai::neat::genai::GenAIModel model(
+      "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4");
+
+  simaai::neat::genai::GenerationRequest request;
+  request.prompt = "Explain what an API gateway is in one sentence.";
+  request.max_new_tokens = 64;
+
+  auto result = model.run(request);
+  std::cout << result.text << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+model = neat.genai.GenAIModel(
+    "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+)
+
+request = neat.genai.GenerationRequest()
+request.prompt = "Explain what an API gateway is in one sentence."
+request.max_new_tokens = 64
+
+result = model.run(request)
+print(result.text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`run()` є синхронним: він завершує роботу після завершення генерації. Це найпростіша форма для тестів, сценаріїв і коду застосунків, що обробляють запити та відповіді.
+
+## Потік згенерованих токенів
+
+Використовуйте `stream()`, коли абоненту потрібно бачити вивід у міру його створення. Кожен елемент є `TokenSample`, що містить останній фрагмент тексту, поточні показники та остаточний статус після завершення генерації.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenerationRequest request;
+request.prompt = "Give me three practical tips for designing a small REST API.";
+request.max_new_tokens = 96;
+
+simaai::neat::genai::GenerationStream stream_handle = model.stream(request);
+for (const auto& token : stream_handle) {
+  std::cout << token.text << std::flush;
+}
+std::cout << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+request = neat.genai.GenerationRequest()
+request.prompt = "Give me three practical tips for designing a small REST API."
+request.max_new_tokens = 96
+
+stream_handle = model.stream(request)
+for token in stream_handle:
+    print(token.text, end="", flush=True)
+print()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Якщо користувач закриє запит, змінить підказки або якщо час генерації, встановлений вашою програмою, закінчиться, надішліть команду `cancel()` у потоці даних.
+
+## Додайте зображення для великих мовних моделей.
+
+Візуальні мовні моделі (VLMs) приймають текст і одне або кілька зображень. Зображення передаються через `GenerationRequest.images` для простого запиту або через `ChatMessage.images`, коли ви використовуєте історію чату.
+
+Зображення, що передаються як значення `Tensor`, повинні бути `uint8` тензорами HWC RGB. Вхідні дані OpenCV `cv::Mat` відповідають конвенції Neat/OpenCV: триканальні матриці розглядаються як BGR і перетворюються на RGB перед збереженням у запиті.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::VisionLanguageModel model(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4");
+
+cv::Mat image = cv::imread("scene.jpg");
+
+simaai::neat::genai::GenerationRequest request;
+request.prompt = "What is visible in this image?";
+request.images = {image};
+request.max_new_tokens = 128;
+
+auto result = model.run(request);
+std::cout << result.text << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.VisionLanguageModel(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
+)
+
+request = neat.genai.GenerationRequest()
+request.prompt = "What is visible in this image?"
+request.images = [image_tensor]
+request.max_new_tokens = 128
+
+print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+У випадку повторюваних запитань щодо одного й того ж зображення, `VisionLanguageModel.encode(...)` може зберігати в моделі векторні представлення зображень у кеші. Потім встановіть `request.use_cached_images =
+true` або використовуйте повідомлення в чаті з параметром `use_cached_images = true`.
+
+## Перемикайте адаптери LoRA.
+
+Моделі, скомпільовані з використанням режиму `LORA_BRANCH` від LLiMa, можуть перемикатися між сумісними адаптерами, що зберігаються за адресою `npy_files/<adapter-name>`:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+model.set_lora("customer-adapter");
+auto adapted = model.run(request);
+model.unset_lora();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model.set_lora("customer-adapter")
+adapted = model.run(request)
+model.unset_lora()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Назва адаптера має бути назвою однієї директорії, а не шляхом до неї. Перемикання чекає завершення будь-якого активного процесу генерації та очищає кешований стан токенів мовної моделі перед наступним запитом. Динамічне перемикання недоступне для ASR, пакетів спекулятивного декодування або для постійно об’єднаних ваг `LORA_MERGED`.
+
+## Перетворіть аудіо на текст.
+
+Моделі автоматичного розпізнавання мовлення (ASR) використовують однакову структуру запиту/відповіді, але запит повинен містити аудіодані. Використовуйте `audio_file` для вказівки шляху до файлу або `audio` для представлення аудіо у вигляді тензора.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::ASRModel model("/media/nvme/llima/models/whisper-model");
+
+simaai::neat::genai::GenerationRequest request;
+request.audio_file = "meeting.wav";
+
+auto result = model.run(request);
+std::cout << result.text << "\n";
+std::cout << "language=" << result.language << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.ASRModel("/media/nvme/llima/models/whisper-model")
+
+request = neat.genai.GenerationRequest()
+request.audio_file = "meeting.wav"
+
+result = model.run(request)
+print(result.text)
+print(f"language={result.language}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+За замовчуванням використовується `auto`, тому багатомовні моделі Whisper визначають
+вихідну мову. Встановіть `request.language` на підтримуваний код або назву мови,
+коли відома вихідна мова. Результати також містять `no_speech_prob` та
+`avg_logprob`, якщо завантажений артефакт Whisper надає ці показники. Вище значення
+`no_speech_prob` означає, що вхідні дані, ймовірніше, не містять мовлення. Вище
+(менш від’ємне) значення `avg_logprob` означає, що Whisper присвоїла більшу середню
+ймовірність згенерованим токенам.
+
+Щоб перекласти мовлення на англійську мову, виберіть завдання перекладу:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+request.asr_task = simaai::neat::genai::ASRTask::Translate;
+auto result = model.run(request);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+request.asr_task = neat.genai.ASRTask.Translate
+result = model.run(request)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Інтегруйте GenAI у граф.
+
+Прямі виклики `run()` / `stream()` є найшвидшим способом для більшості застосунків генеративного штучного інтелекту (GenAI). Якщо GenAI є лише одним із етапів у більшому графі Neat, використовуйте загальнодоступні фрагменти графа:
+
+- `genai::graphs::VisionLanguage(...)`
+- `genai::graphs::SpeechTranscriber(...)`
+
+Ці фрагменти розкривають етапи GenAI за допомогою іменованих кінцевих точок графа, щоб ви могли об’єднати їх з тією ж моделлю `Graph` і `Run`, яка використовується рештою системи Neat.
+
+Для графів ASR, `SpeechTranscriberOptions` за замовчуванням використовує автоматичне визначення мови джерела та транскрипцію. Щоб явно вказати мову перекладу, виберіть її:
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto model = std::make_shared<simaai::neat::genai::ASRModel>(
+    "/media/nvme/llima/models/whisper-small-a16w8");
+
+simaai::neat::genai::SpeechTranscriberOptions options;
+options.task = simaai::neat::genai::ASRTask::Translate;
+options.streaming = true;
+
+auto fragment = simaai::neat::genai::graphs::SpeechTranscriber(model, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.ASRModel(
+    "/media/nvme/llima/models/whisper-small-a16w8"
+)
+
+options = neat.genai.SpeechTranscriberOptions()
+options.task = neat.genai.ASRTask.Translate
+options.streaming = True
+
+fragment = neat.genai.graphs.speech_transcriber(model, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Цей фрагмент приймає `audio` та `audio_path`. Його остаточний пакет `done` містить
+`text`, `finish_reason`, `language`, `no_speech_prob` та `avg_logprob`, коли
+модель надає результати перевірки.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto model = std::make_shared<simaai::neat::genai::VisionLanguageModel>(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4");
+
+simaai::neat::genai::VisionLanguageOptions options;
+options.max_new_tokens = 128;
+options.streaming = true;
+
+simaai::neat::Graph fragment =
+    simaai::neat::genai::graphs::VisionLanguage(model, options, "vlm");
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.VisionLanguageModel(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
+)
+
+options = neat.genai.VisionLanguageOptions()
+options.max_new_tokens = 128
+options.streaming = True
+
+fragment = neat.genai.graphs.vision_language(model, options, "vlm")
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Правила подання запитів.
+
+`GenerationRequest` навмисно сформульовано чітко:
+
+- Використовуйте або `prompt`, або `messages`, але не обидва одночасно.
+- Використовуйте `system_prompt` лише разом із `prompt`.
+- Додавайте зображення безпосередньо лише за допомогою `prompt`; додавайте зображення для кожного окремого повідомлення через
+  `ChatMessage.images`.
+- Використовуйте або прямі зображення, або зображення, збережені в кеші, але не обидва варіанти одночасно.
+- Запити ASR використовують аудіополя, а не текстові чи графічні поля.
+
+Встановіть `GenerationRequest.enable_thinking` для моделей, що виконують логічні міркування, таких як Qwen3 або Gemma 4.
+Використовуйте E2B/E4B, щоб увімкнути логічні міркування. У повних результатах логічні міркування зберігаються в `GenerationResult.reasoning`, а остаточна відповідь – у `GenerationResult.text`;
+потокові об’єкти `TokenSample` також використовують `reasoning` та `text`.
+
+Ці правила дозволяють Neat швидко завершувати роботу з чіткою помилкою запиту, замість того щоб надсилати неоднозначний запит до середовища виконання.
+
+## Наступні кроки
+
+- Надавайте доступ до моделей через HTTP за допомогою [Сервер GenAI](/develop-apps/development-workflow/genai-model/genai-server).
+- Підготуйте та протестуйте моделі генеративного штучного інтелекту (GenAI) за допомогою [Генеративний ШІ з використанням LLiMa.](/genai-llima/).
+- Створюйте масштабніші графі застосунків за допомогою [Граф](/develop-apps/development-workflow/graph).

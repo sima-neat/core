@@ -1760,7 +1760,13 @@ ensure_node22_for_docs() {
     if [[ "${OS_NAME}" == "Darwin" ]]; then
       echo "Installing Node.js 22.x via Homebrew..."
       brew install node@22
-      brew link --overwrite --force node@22
+      # node@22 is keg-only. Prefer it for this build without relinking the
+      # user's global Node installation; /usr/local/bin may otherwise continue
+      # to resolve an older Node even after Homebrew installs the requested one.
+      local node22_prefix
+      node22_prefix="$(brew --prefix node@22)"
+      export PATH="${node22_prefix}/bin:${PATH}"
+      hash -r
     else
       echo "Installing Node.js 22.x..."
       if ! run_privileged bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"; then

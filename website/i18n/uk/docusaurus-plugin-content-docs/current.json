@@ -1,0 +1,114 @@
+{
+  "sidebar.docs.category.Getting Started": {
+    "message": "Початок роботи",
+    "description": "The label for category 'Getting Started' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Neat SDK": {
+    "message": "Neat SDK",
+    "description": "The label for category 'Neat SDK' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Neat Library": {
+    "message": "Neat Library",
+    "description": "The label for category 'Neat Library' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Compile a Model": {
+    "message": "Компіляція моделі",
+    "description": "The label for category 'Compile a Model' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.GenAI with LLiMa": {
+    "message": "GenAI з LLiMa",
+    "description": "The label for category 'GenAI with LLiMa' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Develop Apps": {
+    "message": "Розробка застосунків",
+    "description": "The label for category 'Develop Apps' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Hello Neat!": {
+    "message": "Знайомство з Neat",
+    "description": "The label for category 'Hello Neat!' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Development Workflow": {
+    "message": "Робочий процес розробки",
+    "description": "The label for category 'Development Workflow' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.GenAI Model": {
+    "message": "Модель GenAI",
+    "description": "The label for category 'GenAI Model' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Tutorials": {
+    "message": "Навчальні матеріали",
+    "description": "The label for category 'Tutorials' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Models & Inference": {
+    "message": "Моделі та інференс",
+    "description": "The label for category 'Models & Inference' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Graphs & Pipelines": {
+    "message": "Графи та конвеєри",
+    "description": "The label for category 'Graphs & Pipelines' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Cameras & Streaming": {
+    "message": "Камери та потокове передавання",
+    "description": "The label for category 'Cameras & Streaming' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.GenAI": {
+    "message": "GenAI",
+    "description": "The label for category 'GenAI' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.PCIe Co-Processing": {
+    "message": "Співобробка PCIe",
+    "description": "The label for category 'PCIe Co-Processing' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Advanced Concepts": {
+    "message": "Розширені концепції",
+    "description": "The label for category 'Advanced Concepts' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Application Design": {
+    "message": "Проєктування застосунків",
+    "description": "The label for category 'Application Design' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Execution Model": {
+    "message": "Модель виконання",
+    "description": "The label for category 'Execution Model' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Data & Model Contracts": {
+    "message": "Контракти даних і моделей",
+    "description": "The label for category 'Data & Model Contracts' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Model Runtime": {
+    "message": "Середовище виконання моделі",
+    "description": "The label for category 'Model Runtime' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Contribute": {
+    "message": "Участь у розробці",
+    "description": "The label for category 'Contribute' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Start Here": {
+    "message": "Почніть тут",
+    "description": "The label for category 'Start Here' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Build & Test": {
+    "message": "Збірка й тестування",
+    "description": "The label for category 'Build & Test' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Contracts & Internals": {
+    "message": "Контракти та внутрішня реалізація",
+    "description": "The label for category 'Contracts & Internals' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Release & Maintenance": {
+    "message": "Випуск і супровід",
+    "description": "The label for category 'Release & Maintenance' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Tools": {
+    "message": "Інструменти",
+    "description": "The label for category 'Tools' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.References": {
+    "message": "Довідка",
+    "description": "The label for category 'References' in sidebar 'docs'"
+  },
+  "sidebar.docs.category.Release Notes": {
+    "message": "Примітки до випуску",
+    "description": "The label for category 'Release Notes' in sidebar 'docs'"
+  }
+}

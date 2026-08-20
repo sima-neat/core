@@ -1,0 +1,215 @@
+---
+title: "執行／推論"
+description: "從 model.run() 到圖，用於執行推論的端到端心理模型。"
+sidebar_position: 4
+---
+
+# 執行/推論
+
+如果您剛接觸 SiMa.ai Neat，那麼獲得預測結果的最快方法是使用兩行程式碼：載入模型，然後執行它。
+
+1. 使用 [`Model`](/reference/{lsa}/classes/simaai-neat-model) 載入已編譯的模型封存檔（`.tar.gz`）。
+2. 呼叫 `model.run(inputs, timeout_ms)` 以同步執行推論，並取得輸出張量。
+
+這就是單一模型的完整工作流程。當單一模型不足以滿足需求時，請使用 [`Graph`](/reference/{lsa}/classes/simaai-neat-graph)：串聯階段、使用非同步 `push` / `pull` 解耦生產者和消費者，或控制佇列。
+
+## 範例程式碼的假設
+
+請將此頁面上的程式碼片段視為範例，而不是完整的應用程式。可執行的應用程式還需要：
+
+- 從 Model Compiler 取得已編譯的模型成品，並複製到執行 Neat 的機器上；
+- Python：`import pyneat`；
+- C++：`#include "neat.h"`；
+- C++ 建置：`find_package(SimaNeat REQUIRED CONFIG)` 和 `SimaNeat::sima_neat`；
+- 一個與模型合約相符的影像或張量。
+
+將範例路徑（例如 `resnet_50_model.tar.gz`）替換為您的模型成品。規格是合約；在分配實際輸入之前，請檢查它們。
+
+## 選擇執行階段路徑
+
+使用最符合工作需求的最小程式碼。避免不必要的繁瑣步驟。
+
+| 如果您需要... | 使用 | 原因 |
+|---|---|---|
+| 執行一次已編譯的模型 | `Model.run(...)` | 對成品、輸入和輸出合約進行最快速的測試。 |
+| 將模型與應用程式節點組合 | `Graph` | 定義邊界並使拓撲結構可見。 |
+| 執行一次圖形請求/回應 | `Graph.run(...)` | 一次性執行圖形，無需管理長期運行的執行階段。 |
+| 維持圖形處於活動狀態，以處理多個輸入 | `graph.build(...)` → `Run` | 重新使用執行階段，並公開推送/拉取、關閉、清空和測量功能。 |
+| 調整多個串流或最大吞吐量 | `RunOptions`、`try_push(...)`、`MeasureReport` | 佇列策略和計數器可以告訴您在負載下實際發生了什麼。 |
+
+有關設定、模型封存檔和命令上下文，請參閱 [教學指南](/tutorials) 預先檢查清單。
+
+## 直接執行模型
+
+載入模型並呼叫 `run(...)`。它會同步執行。沒有 `Graph`，沒有 `Run`，也沒有執行階段迴圈。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+cv::Mat frame = /* your OpenCV BGR frame */;
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/1000);
+
+// outputs[0] holds the first result; read its bytes with outputs[0].map_read().
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+outputs = model.run([tensor], timeout_ms=1000)
+
+# outputs[0] holds the first result.
+```
+
+</CodeTab>
+</CodeTabs>
+
+在 Python 中，傳遞一個輸入列表或元組。`model.run([tensor])` 表示「一個模型輸入」，而不是「新增一個批次維度」。
+
+如需完整的、可執行的版本，請參閱 [執行您的第一個模型](/tutorials/run-your-first-model)。
+
+## 當您需要更多時，組合一個圖
+
+一個 [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) 將一個或多個模型階段以及您自己的節點包裝到一個執行階段流程中，您可以將其建構到一個 [`Run`](/reference/{lsa}/classes/simaai-neat-run) 中。當您需要以下功能時，請使用它：
+
+- 連結多個模型或預處理/後處理階段；
+- 使用非同步 `push` / `pull` 將生產者和消費者解耦；或
+- 使用 [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions) 控制佇列、溢出和指標。
+
+### 一次執行一個圖
+
+對於請求/響應執行，請使用 `Graph.run(...)`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+cv::Mat frame = /* your frame (RGB/BGR as configured) */;
+auto out = graph.run(std::vector<cv::Mat>{frame});
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+out = graph.run([tensor])
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 建立一個可重複使用的「執行」流程
+
+當您想要將生產者和消費者分開、控制佇列，或同時執行 I/O 和計算時，請使用可重複使用的 `Run`。使用 `push(...)` / `pull(...)`，並搭配 `RunOptions`，以調整佇列和資料丟棄行為。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+cv::Mat frame = /* your frame */;
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{frame});
+auto out = run.pull("classes", /*timeout_ms=*/1000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+run = graph.build()
+run.push("image", [tensor])
+out = run.pull("classes", timeout_ms=1000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+為了生命週期、反壓、多串流吞吐量、測量和執行匯出，請繼續使用 [執行圖形](/develop-apps/development-workflow/pipeline)。
+
+## C++ 和 Python 的回傳形狀
+
+API 的結構相同，但 Python 使用明確的列表或元組來區分單一輸入與多個輸入端口。一個單獨的 `Tensor` 或 `Sample` 會被故意拒絕。
+
+| 運算 | C++ 回傳 | Python 回傳 | 備註 |
+|---|---|---|---|
+| `Model::run(TensorList)` 或 `Model::run(std::vector<cv::Mat>)` | `TensorList` | `model.run([tensor])` 會回傳一個張量列表 | 用於正常的張量/圖像輸入。 |
+| `Model::run(Sample)` | `Sample` | `model.run([sample])` 會回傳一個 `Sample` | 當您需要範例元資料或捆綁包時使用。 |
+| `Graph::run(TensorList)` 或 `Graph::run(std::vector<cv::Mat>)` | `TensorList` | `graph.run([tensor])` 會回傳一個張量列表 | 單次圖形請求/回應。 |
+| `Graph::run(Sample)` | `Sample` | `graph.run([sample])` 會回傳一個 `Sample` | 用於基於範例的圖形輸入。 |
+| `Run::run(TensorList)` 或 `Run::run(std::vector<cv::Mat>)` | `TensorList` | `run.run([tensor])` 會回傳一個張量列表 | 在活動 `Run` 上進行可重複使用的請求/回應。 |
+| `Run::run(Sample)` | `Sample` | `run.run([sample])` 會回傳一個 `Sample` | 用於捆綁包、串流 ID、幀 ID 或元資料。 |
+| `Run::pull(...)` | `std::optional<Sample>` | `Sample` 或 `None` | `None` 表示在超時之前沒有範例到達，或者輸出已關閉。 |
+| `Run::pull_tensors(...)` | `TensorList` | 張量列表 | 當您只需要張量有效載荷時使用。 |
+| `Run::pull_samples(...)` | `Sample` | `Sample` | 當缺少範例的情況不常見，並且您需要嚴格的範例輸出時使用。 |
+
+## 學習概念
+
+- [模型](/develop-apps/development-workflow/model)：模型封存檔載入和模型驅動的圖形片段。
+- [圖](/develop-apps/development-workflow/graph)：組裝、驗證和執行/建置入口點。
+- [執行圖形](/develop-apps/development-workflow/pipeline)：執行階段選項、推/拉循環、多串流吞吐量和測量。
+- [節點](/develop-apps/development-workflow/node)：原子階段、預建組和圖形邊界節點。
+- [張量與樣本](/develop-apps/development-workflow/core_types)：有效載荷與元資料封套。
+
+## 教程
+
+- [執行您的第一個模型](/tutorials/run-your-first-model)
+- [以非同步方式執行推論。](/tutorials/run-inference-async)
+- [建立您的第一個圖](/tutorials/build-inference-pipeline)
+- [將模型嵌入到圖中](/tutorials/embed-model-inside-graph)

@@ -1,0 +1,867 @@
+---
+title: "모델"
+description: "컴파일된 모델 아카이브를 로드하고, 해당 아카이브의 계약 내용을 검토한 후, 모델 옵션을 선택합니다."
+sidebar_position: 1
+---
+
+# 모델
+
+[`Model`](/reference/{lsa}/classes/simaai-neat-model)은 컴파일된 모델 아카이브를 로드하고 Neat이 실행할 수 있는 경로를 노출합니다.
+
+각 전처리, 추론 및 후처리 단계를 수동으로 연결하지 않고 모델을 인식하는 방식으로 실행하려는 경우 `Model`을 사용합니다. 먼저 계약을 검사한 다음 실행합니다. 알 수 없는 텐서는 없습니다.
+
+## `Model`이 제공하는 기능
+
+- `input_specs()` 및 `output_specs()`는 모델이 예상하고 생성하는 텐서 계약을 보여줍니다.
+- `metadata()`, `info()` 및 Python `summary()`는 로드된 모델을 검사하는 데 도움이 됩니다.
+- `run(...)`은 단일 추론을 실행합니다.
+- `build(...)`는 푸시/풀 실행을 위한 재사용 가능한 모델 러너를 만듭니다.
+- `graph()`는 모델 경로를 재사용 가능한 `Graph` 조각으로 반환합니다.
+- `preprocess()`, `inference()` 및 `postprocess()`는 고급 구성을 위한 경로 단계를 노출합니다.
+
+참조:
+
+- [`Model` API](/reference/{lsa}/classes/simaai-neat-model)
+- [`Model::Options`](/reference/{lsa}/structs/simaai-neat-model-options)
+- [`Model::RouteOptions`](/reference/{lsa}/structs/simaai-neat-model-routeoptions)
+
+## 모델 아카이브 로드
+
+이 페이지의 예제에서는 `model_path`가 Model Compiler에서 컴파일된 모델 아카이브를 가리키고, 일반적으로 Neat을 실행하는 시스템에 복사된 `.tar.gz` 파일을 사용한다고 가정합니다. 먼저 기본 옵션을 사용하고, 계약 또는 입력 소스에서 필요한 경우에만 `ModelOptions`를 추가합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const std::string model_path = "resnet_50_model.tar.gz";
+simaai::neat::Model model(model_path);
+
+const auto info = model.info();
+const auto inputs = model.input_specs();
+const auto outputs = model.output_specs();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model_path = "resnet_50_model.tar.gz"
+model = pyneat.Model(model_path)
+
+print(model.summary())
+inputs = model.input_specs()
+outputs = model.output_specs()
+```
+
+</CodeTab>
+</CodeTabs>
+
+이 검사 단계가 예상치 못한 결과를 보인다면, 여기서 멈추세요. 더 큰 애플리케이션을 작성하기 전에 모델 경로, 아티팩트 또는 계약을 수정하세요.
+
+## 모델 실행 경로 선택
+
+작업에 맞는 경로를 선택하세요. 간단한 테스트는 작게 유지하고, 그래프 수준의 문제를 해결하기 위해 그래프 수준의 기능을 사용하세요.
+
+| 필요 | 사용 | 반환 값 |
+|---|---|---|
+| 모델 입력을 한 번 실행 | `model.run(...)` | 텐서 입력의 경우 `TensorList`, 샘플 입력의 경우 `Sample` |
+| 여러 입력에 걸쳐 모델 경로 재사용 | `model.build(...)` 및 모델 러너 | 모델 경로 주변의 푸시/풀 제어 |
+| 모델 실행만 측정 | `model.benchmark(...)` 또는 측정된 모델 러너 | `BenchmarkReport` 또는 `MeasureReport` |
+| 모델을 애플리케이션 흐름에 포함 | `graph.add(model)` | `Graph` 단계 |
+| 구성에 대한 경로 경계 노출 | `model.graph(route_options)` | 재사용 가능한 `Graph` 조각 |
+| 하나의 모델 단계를 디버깅 | `model.fragment(ModelStage::...)` | 단계별 `Graph` 조각 |
+
+직접적인 모델 호출을 사용하여 확실하게 하세요. 모델이 애플리케이션의 일부가 될 때 `Graph`를 사용하세요. (예: 명명된 입력, 소스 노드, 분기, 조인, 렌더링, 비디오 출력, 메타데이터 출력 또는 여러 모델)
+
+## 모델 옵션 선택
+
+기본 `ModelOptions`로 시작하세요. 모델 계약 또는 입력 소스에서 필요한 경우에만 옵션을 추가하세요.
+
+| 목표 | 사용할 옵션 | 참고 사항 |
+|---|---|---|
+| 디코딩된 이미지 입력을 전송 | `preprocess.kind`, `preprocess.preset` 및 크기 조정, 색상, 레이아웃, 정규화, 양자화 또는 테셀레이션과 같은 특정 전처리 필드 | 애플리케이션에서 픽셀을 전송하고 Neat가 이를 모델 계약에 맞게 조정해야 할 때 사용하세요. |
+| 모델 모양의 텐서 입력을 전송 | `preprocess.kind = Tensor`; 텐서가 이미 모델 계약을 충족하는 경우에만 `preprocess.enable = Off`를 설정하세요. | 애플리케이션에서 이미 전처리를 수행하는 경우에 사용하세요. |
+| 감지 출력을 디코딩 | `decode_type`, `decode_type_option`, `score_threshold`, `nms_iou_threshold`, `top_k`, `num_classes` | 감지 모델은 명시적인 디코딩 의도가 필요합니다. |
+| 추출된 모델 파일을 검사를 위해 보관 | `cleanup_extracted_model_data = false` | 디버깅 중에 유용합니다. 일반 실행에서는 기본값을 유지하세요. |
+| 하나의 프로세스에서 여러 모델 경로 실행 | `name_suffix` 및 그래프 요소 이름 접두사/접미사 | 생성된 이름과 진단 정보를 읽기 쉽게 유지합니다. |
+| 모델 경로 조기 중단 | `inference_terminal` | 고급 경로 디버깅 경로입니다. 처음 실행하는 코드에는 사용하지 마세요. |
+| 실행 배치 또는 내부 큐 조정 | `processcvu`, `processmla`, `advanced_execution` | 고급 기능입니다. 조정하기 전에 기본 경로를 먼저 측정하세요. |
+
+### 감지 디코딩을 사용한 이미지 입력
+
+모델이 이미지 전처리를 예상하고 YOLO 스타일의 감지 결과를 출력할 때 이 패턴을 사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.preprocess.kind = simaai::neat::InputKind::Image;
+options.preprocess.preset = simaai::neat::NormalizePreset::COCO_YOLO;
+options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.preprocess.kind = pyneat.InputKind.Image
+options.preprocess.preset = pyneat.NormalizePreset.COCO_YOLO
+options.decode_type = pyneat.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+설정을 일관성 있게 유지하세요. 필요한 계약 내용을 변경하지 않는 한 기본값이나 더 이상 사용되지 않는 필드를 설정하지 마세요. 텐서 또는 이미지 메타데이터에 이미 소스 형식이 포함되어 있는 경우, 페이지에서 그 이유를 설명하지 않는 한 반복하지 않도록 하세요.
+
+### 객체 감지 디코딩 필드 가이드
+
+경로가 원시 추론 텐서 대신 디코딩된 박스, 포즈 결과 또는 분할 결과를 반환해야 할 때 객체 감지 디코딩 옵션을 설정하세요. 원시 모델 출력을 원하는 경우 필드를 설정하지 않은 상태로 두세요.
+
+| 필드 | 사용 시점 | 기본 의미 |
+|---|---|---|
+| `decode_type` | 객체 감지 모델에 BoxDecode 단계를 연결하기 위해 Neat이 필요합니다. | `Unspecified`; 객체 감지 디코딩 의도가 없습니다. |
+| `decode_type_option` | 객체 감지 헤드 텐서 순서에 특정 변형이 필요합니다. | `Auto`; 모델 계약 및 경로 계획자가 결정하도록 합니다. |
+| `score_threshold` | 디코딩 중에 낮은 신뢰도의 후보를 제거하려는 경우. | `0`; 이후 필터링 전에 후보를 유지합니다. |
+| `nms_iou_threshold` | 디코딩 경로에 비최대값 억제(NMS)를 적용해야 합니다. | `0`; NMS가 비활성화됩니다. |
+| `top_k` | 출력당 감지 횟수에 제한을 두려는 경우. | `0`; 상위 K 제한이 없습니다. |
+| `num_classes` | 클래스 헤드 깊이를 안정적으로 추론할 수 없는 경우(예: 단일 클래스 YOLO 분할 헤드). | `0`; MPK 메타데이터 또는 이전 추론을 사용합니다. |
+
+대부분의 YOLO 스타일 모델의 경우 `decode_type`, `score_threshold`, `nms_iou_threshold` 및 `top_k`로 시작하세요. 모델 계약에 도움이 필요한 경우에만 `num_classes`를 추가하세요. 텐서 순서에 특정 선택자가 필요한 것으로 알려지지 않은 한 `decode_type_option`을 `Auto`로 유지하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+options.num_classes = 1;  // Set only when the model contract needs the class count.
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.decode_type = pyneat.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+options.num_classes = 1  # Set only when the model contract needs the class count.
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+새 예제에서는 `boxdecode_original_width` 또는 `boxdecode_original_height`를 사용하지 마십시오. 좌표 반전은 전처리 메타데이터를 사용합니다. 이미지 크기를 하드 코딩하는 대신 해당 메타데이터를 유지하십시오.
+
+### 원시 텐서 입력
+
+앱에서 이미 컴파일된 모델에서 예상하는 형태, 데이터 유형 및 레이아웃으로 텐서를 생성하는 경우 이 패턴을 사용하십시오.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::Options options;
+options.preprocess.kind = simaai::neat::InputKind::Tensor;
+options.preprocess.enable = simaai::neat::AutoFlag::Off;
+
+simaai::neat::Model model(model_path, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.ModelOptions()
+options.preprocess.kind = pyneat.InputKind.Tensor
+options.preprocess.enable = pyneat.AutoFlag.Off
+
+model = pyneat.Model(model_path, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+텐서가 아직 모델에 적합한 형태로 되어 있지 않다면, 이 단계를 강제로 적용하지 마세요. 전처리 과정을 통해 텐서를 조정하거나, 텐서 생성 코드를 수정하세요.
+
+### 전처리 필드 가이드
+
+`ModelOptions.preprocess`는 어떤 종류의 입력을 제공할지, 그리고 Neat이 추론 전에 어떤 방식으로 조정할지를 나타냅니다.
+
+| 필요 | 필드 |
+|---|---|
+| 이미지 또는 텐서 입력 선택 | `preprocess.kind` |
+| 이미 형태가 지정된 텐서에 대한 전처리 비활성화 | `preprocess.enable = Off` |
+| 동적 이미지 입력 제한 | `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth` |
+| 크기 조정, 자르기 또는 레터박스 적용 | `preprocess.resize` |
+| RGB, BGR, NV12, I420 또는 흑백으로 변환 | `preprocess.color_convert` |
+| HWC, CHW 또는 다른 축 순서로 변환 | `preprocess.layout_convert` |
+| 평균/표준 편차 정규화 적용 | `preprocess.normalize` 또는 `preprocess.preset` |
+| 추론 전에 양자화 | `preprocess.quantize` |
+| 추론 전에 테셀레이션 | `preprocess.tessellate` |
+| 순서가 지정된 변환 목록으로 재정의 | `preprocess.transforms` |
+
+실제로 전송하는 입력에 대한 가장 작은 옵션 세트를 설정하세요. 사양은 계약이고, 결정된 전처리 계획은 영수증입니다.
+
+## 사양 검토 및 직접 실행
+
+`Graph`를 구성하기 전에 모델 계약을 검토하세요. 사양은 무엇을 할당하고, 전송하고, 디코딩해야 하는지 알려줍니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model(model_path, options);
+
+const auto inputs = model.input_specs();
+const auto outputs = model.output_specs();
+const auto metadata = model.metadata();
+const auto info = model.info();
+
+for (const auto& input : inputs) {
+  const auto& shape = input.shape;
+}
+
+for (const auto& output : outputs) {
+  const auto& shape = output.shape;
+}
+
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList result = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model(model_path, options)
+
+print(model.summary())
+inputs = model.input_specs()
+outputs = model.output_specs()
+metadata = model.metadata()
+
+for input_spec in inputs:
+    input_shape = list(input_spec.shape)
+
+for output_spec in outputs:
+    output_shape = list(output_spec.shape)
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+result = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Python에서는 입력 목록 또는 튜플을 전달합니다. `model.run([tensor])`는 “모델 입력 하나”를 의미합니다. 배치 차원을 추가하지 않습니다.
+
+`model.run(...)`은 호출할 때마다 다시 빌드하는 방식이 아니라 한 번에 실행되는 방식입니다. 첫 번째 호출 시 내부 실행기를 지연 방식으로 빌드하고 캐시하며, 이후 호출에서는 해당 실행기를 재사용하고 이를 통해 데이터를 전달합니다. 라우팅 옵션, 런타임 옵션, 측정, 종료/비우기 제어 또는 프로듀서/컨슈머 루프가 필요한 경우 명시적인 `model.build(...)`를 사용하십시오.
+
+OpenCV 지원으로 빌드된 C++는 `model.run(std::vector<cv::Mat>{frame}, timeout_ms)`를 노출합니다. 예제에서 픽셀 형식 또는 메모리 소유권을 명시해야 하는 경우 명시적인 `Tensor::from_cv_mat(...)` 경로를 사용하십시오.
+
+## 여러 입력 및 배치와 함께 작업
+
+모델은 여러 입력 포트, 컴파일된 배치 크기 또는 둘 다를 가질 수 있습니다. 이러한 개념을 혼합하지 마십시오.
+
+- **여러 입력**은 모델 입력당 텐서 하나를 의미합니다. 예상되는 순서와 계약을 확인하려면 `model.input_specs()`를 검사하십시오.
+- **배치**는 모델이 추론당 여러 논리적 샘플을 처리하도록 컴파일되었음을 의미합니다. `model.compiled_batch_size()`를 검사하십시오.
+- **Python 입력 목록**은 배치 차원이 아닌 입력 목록을 선택합니다. `model.run([tensor])`는 입력 하나입니다. `tensor`를 배치 크기 1로 변환하지 않습니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const int batch = model.compiled_batch_size();
+const auto specs = model.input_specs();
+
+// Two-input model: pass one tensor per ingress.
+simaai::neat::TensorList inputs{left_tensor, right_tensor};
+simaai::neat::TensorList outputs = model.run(inputs, /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+batch = model.compiled_batch_size()
+specs = model.input_specs()
+
+# Two-input model: pass one tensor per ingress.
+outputs = model.run([left_tensor, right_tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+일괄 처리 모델이 `[N, ...]` 형태를 예상하는 경우, 입력 사양에 따라 텐서 형태에 `N`을 넣습니다. 모델에 `N` 입력 포트가 없는 한, `N` 별도의 Python 목록 항목을 전달하지 마십시오.
+
+## 라우트 계획 검사
+
+전처리, 출력 토폴로지 또는 라우트 선택이 예상과 다를 경우, 추측하기보다는 라우트를 검사하십시오.
+
+| 질문 | 검사 |
+|---|---|
+| 모델이 어떤 텐서 형태와 데이터 유형을 노출합니까? | `input_specs()` 및 `output_specs()` |
+| 컴파일된 아티팩트는 무엇을 선언했습니까? | `info()` 및 `metadata()` |
+| 전처리는 어떤 입력을 예상합니까? | `preprocess_requirements()` |
+| Neat은 어떤 전처리 경로를 컴파일했습니까? | `resolved_preprocess_plan()` / Python `preprocess_plan()` |
+| 어떤 배치 크기가 컴파일되었습니까? | `compiled_batch_size()` |
+| 어떤 출력 형식을 디코딩해야 합니까? | 출력 사양 + `info().output_topology` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto requirements = model.preprocess_requirements();
+const auto plan = model.resolved_preprocess_plan();
+
+std::cout << "preprocess: " << plan.to_debug_string() << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+requirements = model.preprocess_requirements()
+plan = model.preprocess_plan()
+
+print(plan.to_debug_string())
+```
+
+</CodeTab>
+</CodeTabs>
+
+해결된 계획은 감사 추적 기록입니다. 여기에는 요청된 옵션, 적용된 옵션, 그래프 계열, 입력 계약, MLA 계약 및 경고가 포함됩니다.
+
+### 모델 경로 스냅샷을 읽습니다.
+
+모델 아카이브를 직접 읽지 않고 간결한 경로 스냅샷이 필요한 경우 `info()`를 사용합니다. Python은 또한 빠른 텍스트 보기를 위해 `summary()`를 제공합니다. C++는 구조화된 `info()` 결과를 사용합니다.
+
+| 질문 | 검사할 `info()` 필드 |
+|---|---|
+| 어떤 아티팩트를 로드했습니까? | `model_name`, `mpk_json_path` |
+| 어떤 어댑터 단계가 필요합니까? | `needs` |
+| 어떤 어댑터 단계를 사용할 수 있습니까? | `capabilities` |
+| 경로에 전처리 또는 후처리가 포함되었습니까? | `selection.include_preprocess_stage`, `selection.include_postprocess_stage` |
+| 이것은 추론 전용 경로입니까? | `selection.infer_only` |
+| 어떤 전처리 그래프 또는 후처리 유형이 선택되었습니까? | `selection.preprocess_graph`, `selection.selected_post_kind` |
+| 물리적 출력과 논리적 출력의 수는 얼마입니까? | `output_topology.physical_outputs`, `logical_outputs`, `packed_outputs` |
+| 경로 플래너에서 어떤 경고가 발생했습니까? | `warnings` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto info = model.info();
+
+std::cout << "model=" << info.model_name << "\n";
+std::cout << "physical_outputs=" << info.output_topology.physical_outputs
+          << " logical_outputs=" << info.output_topology.logical_outputs << "\n";
+
+for (const auto& warning : info.warnings) {
+  std::cerr << warning << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+print(model.summary())
+
+info = model.info()
+print("model=", info.model_name)
+print("physical_outputs=", info.output_topology.physical_outputs)
+print("logical_outputs=", info.output_topology.logical_outputs)
+
+for warning in info.warnings:
+    print(warning)
+```
+
+</CodeTab>
+</CodeTabs>
+
+경로 경고를 가장 중요한 증거로 취급합니다. 경로 계획 도구가 이상한 정보를 제공하는 경우, 무시하지 말고 문제를 해결하십시오. 먼저 계약 또는 옵션을 수정하십시오.
+
+## 그래프에서 모델 사용
+
+일반적인 경로의 경우, 공개 입력과 출력 사이에 모델을 직접 추가합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+```
+
+</CodeTab>
+</CodeTabs>
+
+재사용 가능한 코드 조각이나 명확한 경로 경계가 필요할 때 `model.graph(...)`를 사용하세요.
+
+경로 옵션은 해당 코드 조각이 계약을 어떻게 노출할지 제어합니다.
+
+| 필요 사항 | 경로 옵션 |
+|---|---|
+| 반환된 그래프에 공개 입력 노드를 추가 | `include_input` |
+| 반환된 그래프에 공개 출력 노드를 추가 | `include_output` |
+| 별도의 물리적 출력을 노출 | `expose_all_outputs` |
+| 생성된 요소 이름의 중복을 방지 | `name_suffix` |
+| 특정 상위 요소 이름에서 연결 | `upstream_name` |
+| 이 경로에 대한 고급 실행을 재정의 | `advanced_execution` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.include_input = true;
+route.include_output = true;
+route.name_suffix = "_detector";
+
+simaai::neat::Graph model_fragment = model.graph(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.include_input = True
+route.include_output = True
+route.name_suffix = "_detector"
+
+model_fragment = model.graph(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+경로 경계는 일종의 계약입니다. 경로의 일부를 공개 입력 또는 출력으로 노출하려는 경우 경로 경계를 추가합니다. 모델이 더 큰 그래프 내의 단일 단계일 뿐인 경우에는 경로 경계를 추가하지 않습니다.
+
+### 고급 구성을 위해 단계 조각 사용
+
+대부분의 앱은 전체 모델 경로를 추가해야 합니다. 경로를 의도적으로 구성하거나 디버깅할 때만 단계 조각을 사용합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph preprocess =
+    model.fragment(simaai::neat::Model::Stage::Preprocess);
+simaai::neat::Graph inference =
+    model.fragment(simaai::neat::Model::Stage::Inference);
+simaai::neat::Graph postprocess =
+    model.fragment(simaai::neat::Model::Stage::Postprocess);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+preprocess = model.fragment(pyneat.ModelStage.Preprocess)
+inference = model.fragment(pyneat.ModelStage.Inference)
+postprocess = model.fragment(pyneat.ModelStage.Postprocess)
+```
+
+</CodeTab>
+</CodeTabs>
+
+고급 헬퍼는 진단 및 의도적인 구성에 사용됩니다. 초기 실행 코드에서는 사용하지 마십시오.
+
+| 헬퍼 | 언어 | 사용 시점 |
+|---|---|---|
+| `backend_fragment(stage)` | C++ 및 Python | 디버깅 중에 특정 모델 단계를 검사해야 할 때 백엔드 단편을 검사합니다. |
+| `input_appsrc_options(tensor_mode)` | C++ 및 Python | 단일 입력 모델에는 입력 경계에 대한 `InputOptions` Neat 파생이 필요합니다. |
+| `input_appsrc_options_list(tensor_mode)` | C++ | 다중 입력 모델에는 각 입력에 대한 `InputOptions`가 필요합니다. |
+| `find_config_path_by_plugin(plugin_id)` | C++ 및 Python | 증거를 수집하는 동안 특정 플러그인에 대한 추출된 구성 파일이 필요합니다. |
+| `find_config_path_by_processor(processor)` | C++ 및 Python | MLA, CVU 또는 APU와 같은 프로세서에 대한 구성 파일이 필요합니다. |
+| `infer_output_name()` | C++ 및 Python | 진단을 위해 추론 단계의 표준 출력 요소 이름이 필요합니다. |
+
+헬퍼가 백엔드 이름 또는 추출된 파일을 노출하는 경우 결과를 애플리케이션 제어 흐름이 아닌 증거로 처리합니다. 공개 `Model`, `Graph`, `Run`, `Input` 및 `Output` API는 일반적인 애플리케이션 경로를 따라야 합니다.
+
+## 기본 설정을 기준으로 모델 실행을 조정하십시오.
+
+대부분의 모델은 먼저 기본 실행 설정으로 실행해야 합니다. 올바른 기본 설정이 설정되면 고급 실행 필드를 사용하여 한 번에 하나의 변경 사항을 테스트합니다. 하나의 설정을 변경하고, 측정하고, 기본 경로를 제어 경로로 유지합니다.
+
+`advanced_execution`은 각 필드가 의도를 직접적으로 나타내기 때문에 새로운 문서 및 예제에 대한 선호되는 옵션 표면입니다. 설정되지 않은 필드는 아무런 영향이 없습니다. 경로 수준 옵션은 해당 경로에 대한 모델 수준 옵션을 재정의합니다.
+
+| 필요 | 필드 | 참고 사항 |
+|---|---|---|
+| 모델에서 관리하는 전처리 실행 위치 선택 | `advanced_execution.preprocess_target` | `"AUTO"`, `"A65"` 또는 `"EV74"`와 같은 대상 토큰은 위치를 증명할 때만 사용하십시오. |
+| 모델에서 관리하는 후처리 실행 위치 선택 | `advanced_execution.postprocess_target` | 하나 이상의 대상에서 실행할 수 있는 후처리 단계에 사용합니다. |
+| 전처리를 비동기적으로 실행하도록 허용 | `advanced_execution.preprocess_async` | 활성화하기 전후에 지연 시간과 처리량을 측정합니다. |
+| MLA 추론을 비동기적으로 실행하도록 허용 | `advanced_execution.inference_async` | 작업을 계속 진행하는 스트리밍 워크로드에 유용합니다. |
+| 추론 출력 버퍼링 조정 | `advanced_execution.inference_output_buffers` | 측정 결과 출력 버퍼링이 병목 현상인 경우에만 늘립니다. |
+| 출력 캐시 동기화를 연기 | `advanced_execution.defer_output_cache_sync` | 고급 기능입니다. 소비자 및 메모리 수명이 이해될 때만 사용하십시오. |
+| 준비된 러너 사용 | `advanced_execution.prepared_runner` | 고급 경로 러너 실험입니다. 초기 실행 코드에서는 사용하지 마십시오. |
+| 내부적으로 삽입된 큐 깊이 조정 | `advanced_execution.internal_queue_depth` | 고급 기능입니다. 큐 깊이는 지터를 흡수하지만, 가속기 용량을 생성하지는 않습니다. |
+
+실험과 일치하는 가장 좁은 범위에서 고급 실행 필드를 설정하십시오.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.name_suffix = "_lane0";
+route.advanced_execution.inference_async = true;
+
+auto runner = model.build(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.name_suffix = "_lane0"
+route.advanced_execution.inference_async = True
+
+runner = model.build_with_route_options(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+기본 경로를 제어 기준으로 유지합니다. 하나의 필드를 변경하고, 측정하고, 증거를 내보낸 다음, 해당 변경 사항이 앱에 포함될 가치가 있는지 결정합니다.
+
+C++는 또한 `Model::Options`, `Model::RouteOptions` 및 `GraphOptions`에서 더 낮은 수준의 `processcvu`, `processmla`, `prepared_runner` 및 `async_queue_depth` 필드를 노출합니다. 기존 C++ 코드를 유지하거나 특정 하위 수준 필드를 디버깅하는 경우가 아니라면 고객 예제에서는 `advanced_execution`을 사용하는 것이 좋습니다.
+
+## 모델 러너 재사용
+
+각 입력에 대해 경로를 다시 빌드하는 것을 피하려는 경우 `build(...)`를 사용합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build();
+
+// Convenience path: push one input and wait for its output.
+simaai::neat::TensorList result = runner.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+
+// Async path: push now, pull later.
+runner.push(simaai::neat::TensorList{input});
+simaai::neat::Sample sample = runner.pull(/*timeout_ms=*/2000);
+
+runner.close_input();
+runner.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build()
+
+# Convenience path: push one input and wait for its output.
+result = runner.run([tensor], timeout_ms=2000)
+
+# Async path: push now, pull later.
+runner.push([tensor])
+sample = runner.pull(timeout_ms=2000)
+
+runner.close_input()
+runner.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+각 호출마다 하나의 입력을 전달하고 해당 입력에 대한 출력을 기다려야 할 때는 `runner.run(...)`을 사용합니다. 애플리케이션에서 작업을 계속 진행하려는 경우 `push(...)` / `pull(...)`을 사용합니다. 더 이상 입력이 들어오지 않고 남은 작업을 완료하려는 경우 `close_input()`을 사용합니다. 러너가 작업을 완료했을 때는 `close()`를 사용합니다.
+
+### 특정 경로에 대한 러너 구축
+
+재사용 가능한 러너가 기본 경로와 다른 경로 수준의 실행 설정 또는 경로 이름을 사용해야 할 때는 특정 경로에 대한 러너를 사용합니다. `Model::build(...)`는 러너의 입력 및 출력 경계를 자동으로 설정합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model::RouteOptions route;
+route.name_suffix = "_detector";
+
+auto runner = model.build(route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+route = pyneat.ModelRouteOptions()
+route.name_suffix = "_detector"
+
+runner = model.build_with_route_options(route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+실제 입력이 첫 번째 프로덕션 배포 전에 형태, 형식 또는 페이로드 호환성을 입증해야 할 때 빌드에 시드 값을 설정합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build(simaai::neat::TensorList{input}, route);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build([tensor], route_options=route)
+```
+
+</CodeTab>
+</CodeTabs>
+
+증거 확보 및 조기 오류 감지를 위해 시드 빌드를 사용하되, 습관처럼 사용하지 마십시오. 기본 빌드가 이미 계약 조건을 충족하는지 확인되면 예제 크기를 줄이십시오.
+
+## 모델 실행 측정
+
+빠른 합성 모델 벤치마크를 위해 `model.benchmark(...)`를 사용하십시오. `input_specs()`에서 입력을 생성하고 주요 지연 시간, 처리량 및 선택적 전력 필드를 반환합니다. 이를 사용하여 모델/런타임 변경 사항을 비교하되, 프로덕션 애플리케이션의 처리량을 주장하는 데 사용하지 마십시오.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkReport report = model.benchmark();
+
+std::cout << "latency_ms=" << report.latency_ms
+          << " fps=" << report.fps << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = model.benchmark()
+print("latency_ms=", report.latency_ms, "fps=", report.fps)
+```
+
+</CodeTab>
+</CodeTabs>
+
+BoxDecode 경로의 경우, 합성 입력 이미지의 원본 이미지 기하학적 정보를 설명하여 벤치마크가 모델 좌표에서 감지 결과를 역으로 매핑할 수 있도록 합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::BenchmarkOptions options;
+options.num_samples = 100;
+options.original_width = 1920;
+options.original_height = 1080;
+options.resize_mode = simaai::neat::ResizeMode::Letterbox;
+
+simaai::neat::BenchmarkReport report = model.benchmark(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.BenchmarkOptions()
+options.num_samples = 100
+options.original_width = 1920
+options.original_height = 1080
+options.resize_mode = pyneat.ResizeMode.Letterbox
+
+report = model.benchmark(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`original_width`와 `original_height`를 함께 설정합니다. 벤치마크는 여전히 모델 형태의 합성 텐서를 생성합니다. 이 필드는 BoxDecode 메타데이터에 필요한 소스 지오메트리와 크기 조정 변환을 제공합니다. 이 필드를 생략하면 벤치마크는 해결된 전처리 및 모델 입력 계약에서 지오메트리를 추론합니다. 이러한 실행별 값은 `ModelOptions`의 더 이상 사용되지 않는 BoxDecode 지오메트리 힌트보다 우선합니다. 기존 `benchmark(num_samples)` 호출은 동일한 동작을 유지합니다.
+
+보드 전력 모니터가 샘플을 생성한 경우에만 `avg_power_watts`와 `energy_joules`를 읽습니다. 보드 또는 레일 구성에 대한 전력 텔레메트리가 제공되지 않으면 해당 필드는 0으로 유지됩니다.
+
+입력 루프를 직접 제어하고 해당 루프를 측정하려는 경우 러너 측정을 사용합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto runner = model.build();
+auto scope = runner.start_measurement();
+
+for (const auto& input : inputs) {
+  (void)runner.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+}
+
+simaai::neat::MeasureReport report = scope.stop();
+runner.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+runner = model.build()
+scope = runner.start_measurement()
+
+for tensor in tensors:
+    runner.run([tensor], timeout_ms=2000)
+
+report = scope.stop()
+runner.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+단발성 연기 테스트와 재사용 가능한 러너를 비교하지 마십시오. 두 가지는 서로 다른 질문에 대한 답을 제공합니다.
+
+## 출력 디코딩
+
+먼저 출력 사양을 확인하십시오. 모델 출력 계약에서 페이로드가 감지, 자세 또는 분할 형식인지 확인한 경우에만 디코딩하십시오.
+
+| 출력 계약 | 사용법 |
+|---|---|
+| 원시 텐서 | 반환된 텐서를 직접 사용하거나 Python에서 `to_numpy(...)` / `to_torch(...)`를 사용하여 변환합니다. |
+| 텐서로 패킹된 박스 | C++ `simaai::neat::decode_bbox(...)` / Python `pyneat.decode_bbox(...)` |
+| 유형이 지정된 레코드로 패킹된 박스 | C++ `simaai::neat::decode_bbox_tensor(...)` / Python `pyneat.detections.decode_bbox_tensor(...)` |
+| 패킹된 자세 | C++ `simaai::neat::decode_pose(...)` / Python `pyneat.decode_pose(...)` |
+| 패킹된 분할 | C++ `simaai::neat::decode_segmentation(...)` / Python `pyneat.decode_segmentation(...)` |
+
+다음 단계에서 텐서가 필요한 경우 텐서 디코딩을 사용하십시오. 애플리케이션 코드가 `x1`, `y1`, `x2`, `y2`, `score` 및 `class_id`를 포함하는 레코드를 원하는 경우 유형 지정 디코딩을 사용하십시오.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto decoded = simaai::neat::decode_bbox_tensor(
+    outputs[0],
+    image_width,
+    image_height,
+    /*expected_topk=*/100,
+    /*strict=*/true);
+
+for (const auto& box : decoded.boxes) {
+  handle_box(box.x1, box.y1, box.x2, box.y2, box.score, box.class_id);
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+decoded = pyneat.detections.decode_bbox_tensor(
+    outputs[0],
+    image_width,
+    image_height,
+    expected_topk=100,
+    strict=True,
+)
+
+for box in decoded.boxes:
+    handle_box(box.x1, box.y1, box.x2, box.y2, box.score, box.class_id)
+```
+
+</CodeTab>
+</CodeTabs>
+
+해당 형식에서 예상하는 출력 형식에만 디코딩 도우미를 사용하세요.
+
+## 오류 처리
+
+모델 기반 그래프는 원시 `Graph`와 동일한 진단 계약을 사용합니다.
+
+- 치명적인 오류의 경우 `NeatError.report().error_code`를 사용합니다.
+- 문제 해결에 도움이 되는 정보와 힌트를 제공하기 위해 `NeatError.report().repro_note`를 사용합니다.
+- 플러그인 또는 런타임 관련 세부 정보를 제공하기 위해 `NeatError.report().bus`를 사용합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+try {
+  auto result = model.run(simaai::neat::TensorList{input}, /*timeout_ms=*/2000);
+} catch (const simaai::neat::NeatError& error) {
+  const auto& report = error.report();
+  std::cerr << report.error_code << "\n";
+  std::cerr << report.repro_note << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+try:
+    result = model.run([tensor], timeout_ms=2000)
+except pyneat.NeatError as error:
+    print(error.error_code)
+    print(error.repro_note)
+    print(error.report_json)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`misconfig.*`, `build.*`, `runtime.*` 또는 `io.*`와 같은 `error_code` 값으로 시작합니다. 구조화된 오류 메시지가 가리키는 곳을 확인한 후에만 버스 로그를 읽으세요.
+
+## 관련 항목
+
+- [실행 / 추론](/develop-apps/development-workflow/overview)
+- [그래프](/develop-apps/development-workflow/graph)
+- [그래프 실행](/develop-apps/development-workflow/pipeline)
+
+## 튜토리얼
+
+- [첫 번째 모델을 실행하세요.](/tutorials/run-your-first-model)
+- [모델의 성능을 평가해 보세요.](/tutorials/benchmark-your-model)
+- [모델 옵션을 구성합니다.](/tutorials/configure-model-options)
+- [모델 출력에서 객체 감지 영역을 읽습니다.](/tutorials/read-detection-boxes)
+- [모델을 파이프라인에 연결하세요.](/tutorials/plug-model-into-pipeline)

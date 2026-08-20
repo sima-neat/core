@@ -1,0 +1,132 @@
+---
+title: "Neat Library를 설치하거나 업데이트하세요."
+description: "Neat Library 런타임, C++ 파일, GStreamer 구성 요소 및 기본 PyNeat 환경을 설치하거나 업데이트합니다."
+sidebar_position: 2
+---
+
+이 페이지를 사용하여 Palette Neat Library를 설치하거나 업데이트하십시오.
+
+:::tip Neat SDK 내의 Neat Library
+`sima-cli sdk setup` 과정에서 DevKit을 연결하면 SDK가 포함된 Neat Library와 함께 제공되는 PyNeat 환경을 DevKit의 `~/pyneat`에 자동으로 설치합니다.
+:::
+
+## 설치 위치를 선택하세요
+
+Neat 애플리케이션을 빌드하거나 실행하는 환경에서 설치 프로그램을 실행합니다.
+
+| 환경 | 사용 시점 |
+|---|---|
+| Neat SDK | 새 SDK 버전을 설치하지 않고 Neat SDK 내에서 Neat Library를 업그레이드하려는 경우. |
+| ROS2 SDK | 컨테이너의 시스템 경로에 설치된 Neat 헤더 및 라이브러리를 사용하여 ARM64에서 ROS 2 애플리케이션을 네이티브로 컴파일하려는 경우. |
+| DevKit | 장치에 런타임을 직접 설치하거나 업데이트하려는 경우. |
+
+## 필수 조건
+
+Neat Library를 설치할 환경에 `sima-cli`를 설치합니다.
+[sima-cli 설치 안내서](/tools/sima-cli/)를 사용하세요.
+
+[community.sima.ai](https://community.sima.ai)에 계정을 생성하여 테스트용으로 미리 컴파일된 모델과 같은 SiMa.ai 리소스에 액세스하세요.
+
+설치 프로그램이 SiMa.ai 아티팩트를 다운로드할 수 있도록 환경을 인증합니다. 자세한 내용은 [sima-cli 로그인](/tools/sima-cli/login/)를 참조하십시오.
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli login
+</ShellCommand>
+
+SiMa.ai 아티팩트가 있는 호스트에 접속할 수 있는지 확인합니다.
+
+<ShellCommand prompt="sdk-or-devkit">
+curl -fsS https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh -o /dev/null && echo "artifacts reachable"
+</ShellCommand>
+
+`artifacts reachable` 메시지가 출력되면 호스트에 연결 가능하다는 의미입니다. 타임아웃, 연결 거부 또는 "호스트를 확인할 수 없음"과 같은 `curl` 오류는 외부 액세스가 차단되었음을 의미합니다. 호스트 네트워크, 프록시 또는 방화벽을 확인하십시오([Neat SDK 네트워킹](/tools/sima-cli/sdk-networking/) 및 [호스트 설정 참고 사항](/reference/elxr-sdk-host-setup/ubuntu) 참조). 또는 장치가 SiMa.ai 서비스에 직접 연결할 수 없는 경우 [오프라인 설치](/getting-started/dev-environment/offline-installation)을 사용하십시오.
+
+## Neat Library 설치
+
+:::note 패키지 호환성
+설치 프로그램은 선택한 핵심 아티팩트에 나열된 모든 Debian 패키지를 사용하며, 다른 내부 구성 요소나 LLiMa 버전을 선택하지 않습니다. 설치된 플랫폼은 해당 아티팩트에 포함되지 않은 종속성을 충족해야 합니다. APT가 설치를 완료하기 위해 플랫폼 패키지를 제거하는 경우, 설치 프로그램은 중단됩니다. 핵심 또는 LLiMa에서 패키지를 대체하는 대신 플랫폼을 업데이트하십시오.
+:::
+
+설치 프로그램을 실행하기 전에 작업 디렉터리를 선택합니다. DevKit에서 설치할 때는 루트 파일 시스템이 가득 차지 않도록 `/media/nvme` 아래에 설치합니다. SDK 컨테이너 내에서는 `$HOME/neat`와 같이 컨테이너 내의 경로를 사용합니다.
+
+원하는 환경을 선택한 다음 단계를 순서대로 실행합니다. C++ 애플리케이션을 크로스 컴파일하기 위해 **Neat SDK** 컨테이너에 설치합니다. ARM64에서 네이티브 컴파일을 수행하려면 **ROS2 SDK**에 설치합니다. Debian 패키지는 Neat 크로스 컴파일 sysroot 대신 `/usr`에 설치됩니다. **DevKit**에 설치하여 해당 환경에 런타임을 설정하고, PyNeat도 `~/pyneat`에 프로비저닝합니다. 설치 명령은 모든 환경에서 동일합니다.
+
+<CodeTabs>
+<CodeTab label="Neat SDK" lang="bash">
+
+`$HOME/neat`와 같이 컨테이너 내에 설치할 디렉터리를 준비합니다.
+
+<ShellCommand prompt="username@neat-sdk-latest">
+cd $HOME && mkdir -p neat && cd neat
+</ShellCommand>
+
+`sima-cli`에서 선택한 기본 Neat Library 패키지를 설치합니다. 필요에 따라 미리 만들어진 튜토리얼, 소스 코드 튜토리얼, 테스트 등 추가 기능을 설치할 수 있습니다.
+
+<ShellCommand prompt="username@neat-sdk-latest">
+sima-cli neat install core@v0.4.0
+</ShellCommand>
+
+</CodeTab>
+
+<CodeTab label="ROS2 SDK" lang="bash">
+
+컨테이너가 자체적으로 네이티브 ROS2 SDK로 식별되고, Neat 패키지에서 예상하는 플랫폼 호환성 정보를 보고하는지 확인합니다.
+
+<ShellCommand prompt="username@ros2-sdk-latest">
+grep -E '^(SDK Type|Platform Base|Platform Version) =' /etc/sdk-release
+</ShellCommand>
+
+호환되는 Neat 패키지를 설치합니다. 설치 프로그램은 기본 ARM64 Debian 환경을 확인하고, 패키지 제거를 비활성화한 상태에서 APT 트랜잭션을 시뮬레이션하며, 런타임 및 개발 패키지를 컨테이너의 시스템 경로에 설치합니다. PyNeat은 여전히 DevKit 런타임 기능으로 남아 있으므로 설치되지 않습니다.
+
+<ShellCommand prompt="username@ros2-sdk-latest">
+cd $HOME &amp;&amp; mkdir -p neat &amp;&amp; cd neat
+sima-cli neat install core@release-0.3
+</ShellCommand>
+
+</CodeTab>
+
+<CodeTab label="DevKit" lang="bash">
+
+:::note 먼저 DevKit 펌웨어를 업데이트하십시오.
+DevKit에 Neat Library를 설치하기 전에 DevKit 소프트웨어 버전이 Neat Library와 호환되는지 확인하십시오. 자세한 내용은 [호환성 안내](/getting-started/compatibility/)를 참조하십시오.
+:::
+
+루트 파일 시스템이 가득 차지 않도록 `/media/nvme` 아래에 설치 디렉터리를 준비하십시오.
+
+<ShellCommand prompt="modalix">
+cd /media/nvme && mkdir -p neat && cd neat
+</ShellCommand>
+
+`sima-cli`에서 선택한 기본 Neat Library 패키지를 설치합니다. 필요에 따라 미리 만들어진 튜토리얼, 소스 코드 튜토리얼, 테스트 등 추가 기능을 설치할 수 있습니다.
+
+<ShellCommand prompt="modalix">
+sima-cli neat install core@v0.2.2
+</ShellCommand>
+
+</CodeTab>
+</CodeTabs>
+
+## 기본 PyNeat 환경
+
+Neat Library를 DevKit에 설치하면 `~/pyneat`의 DevKit에 기본 PyNeat 가상 환경이 설정됩니다. 이는 지원되는 PyNeat 환경이며, 직접 활성화할 수 있습니다.
+
+<ShellCommand prompt="modalix">
+source ~/pyneat/bin/activate
+</ShellCommand>
+
+DevKit Sync와 함께 구성된 SDK 컨테이너 내에서 설치 프로그램을 실행하면, 설치 프로그램이 SDK 컨테이너 내뿐만 아니라 연결된 DevKit에 PyNeat을 설치합니다. PyNeat은 DevKit의 `~/pyneat` 아래에 있는 가상 환경에 설치됩니다.
+
+사용자 지정 Python 가상 환경에 대해서는 다음을 참조하십시오.
+[PyNeat을 설치하세요.](/getting-started/neat-library/pyneat/).
+
+## 소스 빌드
+
+미리 배포되지 않은 변경 사항을 적용하거나, 사용자 지정 빌드 구성을 하거나, Neat Library에 기여해야 할 때에는 소스 코드를 직접 빌드하세요. 대부분의 사용자는 위에 설명된 패키지 설치 방법을 사용하는 것이 좋습니다.
+
+소스 코드에서 직접 빌드하는 것을 선호한다면, 다음 [구축하다](/develop-apps/contribute/build) 가이드를 따르세요.
+
+SDK 설정 및 DevKit Sync 온보딩에 대한 자세한 내용은 [Neat SDK](/getting-started/dev-environment/)를 참조하십시오.
+
+## 다음 단계
+
+사용자 지정 Python 환경을 위해 [PyNeat을 설치하세요.](/getting-started/neat-library/pyneat/)를 계속 진행하거나, 설치된 환경을 확인하려면 [Neat 명령줄 인터페이스](/getting-started/neat-library/neat-cli/)를 사용하십시오.

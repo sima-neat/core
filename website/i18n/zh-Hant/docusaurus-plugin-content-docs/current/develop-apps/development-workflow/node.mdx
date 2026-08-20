@@ -1,0 +1,641 @@
+---
+title: "節點"
+description: "原子級的建構模組、預先建構的群組，以及圖的邊界節點。"
+sidebar_position: 7
+---
+
+# 節點
+
+一個 `Node` 是 SiMa.ai Neat 中最小的可組合單元。
+節點是 [`Graph`](/develop-apps/development-workflow/graph) 將其連接在一起的元素：解碼階段、預處理階段、模型階段、後處理階段、來源、接收端和應用程式邊界。
+
+參考資料：
+- [`nodes` namespace](/reference/{lsa}/namespaces/simaai-neat-nodes)
+- [`nodes::groups` namespace](/reference/{lsa}/namespaces/simaai-neat-nodes-groups)
+
+## 一個節點代表什麼？
+
+一個節點貢獻一個邏輯工作單元，以及建構者需要用來安全地將其整合進去的元資料：
+
+- 執行階段工作，例如解碼、轉換、預處理、推論、後處理或資料匯出行為；
+- 輸入/輸出合約，例如預期的媒體類型、張量形狀、資料類型或限制；
+- 採用確定性的後端命名方式，因此，`describe()`、診斷資訊、指標和探測功能會保持穩定。
+
+主要原則很簡單：
+
+```text
+Graph = nodes wired together
+```
+
+`Model` 是具有模型意識的節點來源。一個 `Model` 可以直接新增到一個 `Graph` 中，或者可以提供可重複使用的階段片段，例如預處理、推論和後處理。
+
+<a id="pre-built-node-groups"></a>
+## 預先建置的節點群組
+
+某些常見的模式包含多個低階節點。Neat 將這些節點以預先建置的群組形式呈現，因此使用者不必手動連接每個來源、解碼器、轉換器、佇列或接收器。
+
+將群組視為一個可重複使用的迷你圖：一個具有明確規範的、由多個節點組成的命名集合。
+
+範例：
+
+- `VideoInputGroup(...)`：檔案/影片來源 + 解碼路徑。
+- `RtspDecodedInput(...)`：RTSP 來源 + 解碼路徑。
+- 模型路徑片段：針對已編譯的模型，進行預處理 + 推論 + 解碼/後處理。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/runtime.h"
+#include "neat/node_groups.h"
+
+simaai::neat::Graph graph;
+
+simaai::neat::nodes::groups::VideoInputGroupOptions vopt;
+vopt.path = "/data/sample.mp4";
+graph.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+
+vopt = pyneat.VideoInputGroupOptions()
+vopt.path = "/data/sample.mp4"
+graph.add(pyneat.groups.video_input(vopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+當形狀為標準，且應用程式中令人感興趣的部分並非內部媒體處理時，請使用預先建置的群組。如果您需要自訂的拓撲結構，請從較低層級的節點自行建置對應的 `Graph`。
+
+## 選擇一個節點或群組。
+
+在您查閱完整的 API 檔案之前，請先參考這張地圖。
+
+| 任務 | C++ 的起點 | Python 的起點 |
+| --- | --- | --- |
+| 應用程式推送張量、圖片或樣本。 | `nodes::Input("name", options)` | `pyneat.nodes.input("name", options)` |
+| 應用程式提取完整的樣本。 | `nodes::Output("name", options)` | `pyneat.nodes.output("name", options)` |
+| 從檔案中讀取影格。 | `nodes::FileInput(...)`，再加上解碼節點，或者使用 `nodes::groups::VideoInputGroup(...)`。 | `pyneat.nodes.file_input(...)`，再加上解碼節點，或者使用 `pyneat.groups.video_input(...)`。 |
+| 將一張圖片讀取為來源。 | `nodes::StillImageInput(...)` | `pyneat.nodes.still_image_input(...)` |
+| 讀取 MIPI/libcamera 相機 | `nodes::CameraInput(...)` | `pyneat.nodes.camera_input(...)` |
+| 讀取 RTSP 串流。 | `nodes::RTSPInput(...)`、`nodes::groups::RtspEncodedInput(...)` 或 `nodes::groups::RtspDecodedInput(...)`。 | `pyneat.nodes.rtsp_input(...)`、`pyneat.groups.rtsp_encoded_input(...)` 或 `pyneat.groups.rtsp_decoded_input(...)` |
+| 讀取 HTTP 多部分 MJPEG 格式。 | `nodes::groups::HttpMjpegDecodedInput(...)`，或用於手動設定畫面的 `nodes::HttpSource(...)`、`MultipartJpegDemux()`、`JpegParse()`。 | `pyneat.groups.http_mjpeg_decoded_input(...)`，或 `pyneat.nodes.http_source(...)`、`pyneat.nodes.multipart_jpeg_demux()`、`pyneat.nodes.jpeg_parse()`。 |
+| 解碼圖片 | `nodes::ImageDecode()` 或 `nodes::JpegDecode()` | `pyneat.nodes.image_decode()` 或 `pyneat.nodes.jpeg_decode()` |
+| 解碼已編碼的影片 | `nodes::SimaDecode(SimaDecodeOptions{...})` | `pyneat.nodes.sima_decode(options)` |
+| 調整影片的畫質或限制播放速率。 | `nodes::VideoScale()`, `VideoRate()`, `ImageFreeze()` | `pyneat.nodes.video_scale()`, `video_rate()`, `image_freeze()` |
+| 建立一個可重複使用的影像輸入路徑。 | `nodes::groups::ImageInputGroup(...)` | `pyneat.groups.image_input(...)` |
+| 建立一個可重複使用的視訊輸入路徑。 | `nodes::groups::VideoInputGroup(...)` | `pyneat.groups.video_input(...)` |
+| 傳輸影片訊號 | `nodes::groups::VideoSender(...)` 或 H.264/UDP 輸出輔助工具。 | `pyneat.groups.video_sender(...)` 或 H.264/UDP 輸出輔助工具 |
+| 傳送中繼資料。 | `MetadataSender` | `pyneat.MetadataSender` |
+| 呈現偵測結果 | `nodes::SimaRender(...)` | `pyneat.nodes.sima_render(...)` |
+| 將 logits 轉換為類別索引。 | `nodes::SimaArgMax(...)` | `pyneat.nodes.sima_argmax(...)` |
+
+當您需要一個經過測試的片段時，請使用群組。當您需要明確的拓撲結構時，請使用個別節點。對於扇出和扇入，請使用 `Graph` 輔助工具，例如 `graphs::Branch(...)` 和 `graphs::Combine(...)`，而不是將拓撲結構隱藏在重複的輸出後面。
+
+`nodes::H264Decode(...)` 和 `pyneat.nodes.h264_decode(...)` 已經過時，是相容性包裝函。新的 H.264 解碼圖應使用 `SimaDecode`，並搭配 `SimaDecodeType::H264`。
+
+## 已編碼的解碼路徑
+
+根據您的圖所接收的內容，選擇適當的 API：
+
+| 可供圖使用的輸入資料。 | API | 輸出 |
+| --- | --- | --- |
+| 已完成、已解析的已編碼存取單元。 | `SimaDecode(...)` | 原始解碼後的影片 |
+| 一個應該保持編碼狀態的 RTSP 串流。 | `RtspEncodedInput(...)` | 已解析編碼後的存取單元。 |
+| 應該要解碼的 RTSP 串流。 | `RtspDecodedInput(...)` | 原始解碼後的影片 |
+
+`SimaDecode` 不會連接到 RTSP、解封封包 RTP 或解析基本資料流。當上游階段或應用程式已經提供完整的編碼樣本時，請使用它。
+
+| 已編碼的輸入 | 原生解碼器選項 | 典型的上游路徑 |
+| --- | --- | --- |
+| H.264/AVC 存取單元 | `SimaDecodeType::H264` 或 `SimaDecodeType::AVC` | RTSP H.264 訊號解封裝和解析，或解析其他 H.264 來源。 |
+| H.265/HEVC 存取單元 | `SimaDecodeType::H265` 或 `SimaDecodeType::HEVC` | RTSP H.265 進行解封封包和解析，或者解析另一個 H.265 來源。 |
+| 單張 JPEG 圖像 | `SimaDecodeType::JPEG` | `JpegParse()` 或應用程式提供的已編碼的 JPEG 範例 |
+| MJPEG 影格串流 | `SimaDecodeType::MJPEG` | HTTP 多部分資料流解碼器 + `JpegParse()`，或 RTSP JPEG 封包解碼器 + `JpegParse()`。 |
+
+別名會選擇相同的解碼器路徑：`H264` 等同於 `AVC`，而 `H265` 等同於 `HEVC`。 這些相同的別名可以在 C++ 和 Python 中透過 `RtspCodec` 和 `FormatTag` 取得。
+
+H.265 輸入必須使用 8 位元、4:2:0 色度的 HEVC 主要設定檔。 直接的基礎資料流輸入必須進行解析，且必須是 Annex-B 位元組資料流，並且必須對齊存取單元。 其參數集（VPS、SPS 和 PPS）必須在依賴它們的影格之前到達解碼器。 `RtspEncodedInput` 會處理 RTP 解封裝和用於 RTSP 路徑的 H.265 解析。 不支援主要 10、10 位元、4:2:2 和單色 4:0:0 位元串流。 對於灰階內容，請編碼一個 8 位元 4:2:0 資料流，其 Y 平面包含灰階影像，並且其 U 和 V 樣本使用中性值 128。
+
+在使用資料流之前，請驗證它：
+
+```bash
+ffprobe -v error -rtsp_transport tcp -select_streams v:0 \
+  -show_entries stream=codec_name,profile,pix_fmt \
+  -of default=noprint_wrappers=1 rtsp://camera.example/live
+```
+
+H.265 解碼器需要 `codec_name=hevc`、`profile=Main` 和 `pix_fmt=yuv420p`。
+
+`SimaDecodeOptions::raw_output` 控制解碼器的即時輸出：
+
+| 價值 | 解碼器輸出 |
+| --- | --- |
+| `true`（預設值） | 在 SiMaAI 記憶體中使用原生 NV12 或 I420 格式。對於解碼器的零拷貝輸出，請使用 NV12 格式。 |
+| `false` | 已轉換的 `video/x-raw(memory:SystemMemory)` 輸出，供 CPU 使用。 |
+
+`raw_output` 與解碼器分開 `zero-copy-output`。核心功能可讓
+`zero-copy-output` 在解碼器接收時，如果圖可以轉送解碼器的原生 NV12 緩衝區。如果任何後續分支使用無法讀取原生平面佈局的編碼器輸入，則核心會讓解碼器進入，但不會進行零拷貝輸出，因此每個分支都會收到一個打包後的影格。 `RunOptions::output_memory`
+分別控制終端機輸出是否與其後端緩衝區共用`ZeroCopy`) 或複製到框架擁有的儲存空間中（`Owned`)。
+
+H.264/H.265 自動偵測功能需要知道解碼器的寬度、高度和幀率。設定 `dec_width`, `dec_height`，以及 `dec_fps` 直接提供，
+或透過鍵入的來源提供。 `RtspEncodedInput` 搭配
+`source_fps`。核心元件在來源幀率未知時，不會預設為 30 FPS。
+允許進入會引發明確的 `num_buffers` 當其低於租賃的
+安全下限時，其價值為。離開 `num_buffers` 「unset」會保留解碼器元素的預設值。
+
+保留 `decoder_tuning` 設為空白或設定為 `auto` 適用於一般資料流。請使用
+`throughput-low-latency` 僅適用於未包含 B 影格且僅使用一張參考影格進行編碼的影音串流；該模式會停用已解碼影格的重新排序功能。
+
+`nodes::JpegDecode()` 以及 `pyneat.nodes.jpeg_decode()` 是獨立的 CPU/GStreamer
+JPEG 解碼節點。將它們用於簡單的 CPU 影像管線。不要將它們用於模型預處理之前的原生 MJPEG 視訊解碼。
+
+對於 RTSP，如果來源的解析度是標準的，請優先使用支援特定編碼器的群組。H.264 仍然是預設設定。明確選擇 H.265 或 HEVC。
+
+### 保留 RTSP 輸入的編碼格式。
+
+使用 `RtspEncodedInput(...)` 來解封包並解析資料流，而無需對其進行解碼：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspEncodedInputOptions encoded;
+encoded.url = "rtsp://camera.example/live";
+encoded.codec = simaai::neat::nodes::groups::RtspCodec::HEVC;
+encoded.source_fps = 30;
+
+auto encoded_graph =
+    simaai::neat::nodes::groups::RtspEncodedInput(encoded);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+encoded = pyneat.RtspEncodedInputOptions()
+encoded.url = "rtsp://camera.example/live"
+encoded.codec = pyneat.RtspCodec.HEVC
+encoded.source_fps = 30
+
+encoded_graph = pyneat.groups.rtsp_encoded_input(encoded)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`RtspEncodedInput(...)` 在來源解封包和解析/分幀後停止。
+當您的應用程式需要編碼後的樣本時，請使用它，例如將一個已解析的串流分割成解碼圖和視訊輸出圖。對於 H.265，當串流未宣告有效的幀率時，`source_fps` 會寫入已解析的編碼封包中。
+
+### 解碼 RTSP 輸入。
+
+使用 `RtspDecodedInput(...)` 來附加 `SimaDecode(...)`，並傳回原始解碼後的影片：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspDecodedInputOptions decoded;
+decoded.url = "rtsp://camera.example/live";
+decoded.codec = simaai::neat::nodes::groups::RtspCodec::H265;
+decoded.source_fps = 30;
+
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(decoded));
+graph.add(simaai::neat::nodes::Output("frames"));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+decoded = pyneat.RtspDecodedInputOptions()
+decoded.url = "rtsp://camera.example/live"
+decoded.codec = pyneat.RtspCodec.H265
+decoded.source_fps = 30
+
+graph = pyneat.Graph()
+graph.add(pyneat.groups.rtsp_decoded_input(decoded))
+graph.add(pyneat.nodes.output("frames"))
+```
+
+</CodeTab>
+</CodeTabs>
+
+對於 H.265，`RtspDecodedInput(...)` 會同時針對已解析的 caps 和解碼器 `dec-fps` 使用 `source_fps`。當 RTSP caps 不包含有效的幀率時，請設定此值；如果缺少任何一個值，解碼器啟動將會失敗。Neat 不會針對此值探查 RTSP URL。它會宣告來源的幀率，且不會要求進行幀率轉換。若要變更輸出幀率，請啟用 `use_videorate`，並設定 `video_rate_fps`。
+
+對於 HTTP 多部分 MJPEG，請使用 `HttpMjpegDecodedInput(...)`。HTTP 多部分 MJPEG 不是 RTP，因此它使用 `HttpSource -> MultipartJpegDemux -> JpegParse ->
+SimaDecode(MJPEG)`，而不是 RTSP 解封包。
+
+
+## 來源端擁有的群組和接收端群組
+
+當圖表應自行讀取媒體時，請使用來源擁有的群組。建立這些圖表時，不要使用應用程式的輸入，然後提取輸出，或讓接收節點處理傳輸。當圖表應在沒有應用程式提取每個影格的情況下發送影片時，請使用接收群組；即使圖表也具有 `Input` 邊界，接收圖表仍然可以由應用程式推送到。
+
+| 需要 | 群組 | 首先需要設定的主要欄位 | 常見的後續欄位 |
+| --- | --- | --- | --- |
+| 靜態影像固定裝置 | `nodes::groups::ImageInputGroup(...)` / `pyneat.groups.image_input(...)` | `path` | `fps`, `imagefreeze_num_buffers`, `output_caps` |
+| 影片檔案 | `nodes::groups::VideoInputGroup(...)` / `pyneat.groups.video_input(...)` | `path` | `out_format`, `output_caps`, `sync_mode` |
+| 即時 MIPI/libcamera 攝影機 | `nodes::CameraInput(...)` / `pyneat.nodes.camera_input(...)` | `width`、`height`、`framerate_num`、`format`；可選的 `camera_name`。 | `allow_cpu_fallback`，佇列欄位，`buffer_name`。 |
+| 即時傳輸經過 RTSP 編碼的 H.264、H.265 或 MJPEG 視訊串流。 | `nodes::groups::RtspEncodedInput(...)` / `pyneat.groups.rtsp_encoded_input(...)` | `url`，當不是 H.264 時，則使用 `codec`。 | `source_fps`、`latency_ms`、`tcp`、`drop_on_latency`、`buffer_mode`、RTP 負載類型 |
+| 即時解碼並播放 RTSP 格式的 H.264、H.265 或 MJPEG 串流。 | `nodes::groups::RtspDecodedInput(...)` / `pyneat.groups.rtsp_decoded_input(...)` | `url`，當不是 H.264 時，則使用 `codec`。 | `source_fps`、`latency_ms`、`tcp`、`drop_on_latency`、`buffer_mode`、已解碼的寬度/高度、`out_format`、`output_caps` |
+| HTTP 多部分 MJPEG 串流 | `nodes::groups::HttpMjpegDecodedInput(...)` / `pyneat.groups.http_mjpeg_decoded_input(...)` | `url` | `out_format`，`decoder_next_element`，已解碼的寬度/高度/每秒影格數，`output_caps`。 |
+| 原始或經過編碼的 H.264/H.265 視訊輸出 | `nodes::groups::VideoSender(...)` / `pyneat.groups.video_sender(...)` | `VideoSenderOptions::H264RtpUdpFromRaw(...)`，或`Passthrough(RtspCodec::H264 / RtspCodec::H265)`。 | `host`、`channel`、`video_port_base`、編碼器/RTP 選項。 |
+| 透過 UDP 輸出的 RTP/H.264 | `nodes::groups::UdpH264OutputGroup(...)` / `pyneat.groups.udp_h264_output_group(...)` | 當預設值不正確時，請指定目標主機/連接埠。 | `h264_caps`, `payload_type`, `config_interval` |
+
+由來源擁有的圖與由應用程式推送的圖在執行階段的呈現方式不同：
+
+```text
+source group -> model -> output
+```
+
+對於 MIPI 攝影機，請直接使用 [`CameraInput`](/reference/nodes/camera-input)，而不是將攝影機包裝在應用程式推送的 `Input` 中。首先使用 libcamera/GStreamer 驗證攝影機，然後將圖建置為 `CameraInput -> model -> Output`。請參閱 [使用 MIPI 相機](/develop-apps/advanced-concepts/mipi-camera-input) 以取得完整路徑。
+
+使用 `graph.build()` 或 `graph.run()` 執行，且不帶任何輸入參數。除非您的應用程式確實有第二個公開輸入來推送，否則請勿在來源群組前面新增 `Input("image")`。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::nodes::groups::RtspDecodedInputOptions source_options;
+source_options.url = "rtsp://camera.example/live";
+
+simaai::neat::Graph graph("rtsp_detector");
+graph.add(simaai::neat::nodes::groups::RtspDecodedInput(source_options));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+
+auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+source_options = pyneat.RtspDecodedInputOptions()
+source_options.url = "rtsp://camera.example/live"
+
+graph = pyneat.Graph("rtsp_detector")
+graph.add(pyneat.groups.rtsp_decoded_input(source_options))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+當媒體管道設定為標準時，請從一個群組開始。只有在您需要自訂拓撲結構，或來源格式與群組所描述的格式不同時，才切換到個別節點。
+
+
+<a id="common-sima-nodes"></a>
+## 常見的 SiMa 節點
+
+有些 SiMa 節點相當常見，因此有專門的參考資料或操作指南：
+
+- [`Preproc`](/reference/nodes/preproc): 將 CVU 影像的預處理步驟整合，用於調整大小、色彩轉換、正規化、量化、鑲嵌，以及執行階段的 ROI 列表。
+- [`CameraInput`](/reference/nodes/camera-input)：來源端擁有的 MIPI/libcamera 幀，並採用自適應的 SiMaAI 記憶體傳遞機制，以供後續的 CVU/MLA 階段使用。
+- [`SimaBoxDecode`](/reference/boxdecode_decode_types)：一種偵測後處理方法，用於將模型輸出的結果解碼為邊界框，並使用上游預處理的元資料進行座標映射。
+
+<a id="boundary-nodes"></a>
+## 邊界節點：`Input` 和 `Output`
+
+`Input` 和 `Output` 也是節點。它們之所以特殊，是因為它們描述了資料如何進入或離開一個圖的片段。
+
+重要的心智模型：
+
+> `Input("name")` 和 `Output("name")` 是兩個命名的門。
+
+在最終應用程式的外部，這些門戶會變成公開的執行階段 API：
+
+- `Input("image")` 會變成 `run.push("image", ...)`。
+- `Output("classes")` 會變成 `run.pull("classes", ...)`。
+
+在更大的圖中，這些相同的「門」僅僅是連接點。Neat 在建立可執行的執行階段路徑時，會移除內部邊界節點，並直接連接實際的工作流程。
+
+```cpp
+simaai::neat::Graph route("route");
+route.add(simaai::neat::nodes::Input("image"));
+route.add(model);
+route.add(simaai::neat::nodes::Output("classes"));
+```
+
+可用作完整的應用程式：
+
+```cpp
+auto run = route.build();
+run.push("image", simaai::neat::TensorList{image_tensor});
+auto classes = run.pull("classes");
+```
+
+用於較大型的應用程式中：
+
+```cpp
+simaai::neat::Graph app("app");
+app.connect(camera, route);
+app.connect(route, telemetry);
+```
+
+從概念上來說，內部邊界節點會降低以進行直接布線：
+
+```text
+camera -> model -> telemetry
+```
+
+這些名稱仍然保留下來，用於診斷、端點檢查、指標和視覺化。它們只是不會在應用程式的過程中建立額外的佇列、副本或虛假的執行階段接收器。
+
+### 標籤並非終點。
+
+請將這些名稱分開：
+
+| 姓名 | 這是什麼？ | 它會產生嗎？ `push(...)` / `pull(...)`? |
+| --- | --- | --- |
+| `Graph("detector")` | 用於診斷、匯出和日誌的圖表標籤。 | 不。 |
+| `nodes::Input("image")` / `pyneat.nodes.input("image")` | 當它仍位於最終圖的外部時，公眾輸入的邊界。 | 是的：`run.push("image", ...)`。 |
+| `nodes::Output("detections")` / `pyneat.nodes.output("detections")` | 當它仍然位於最終圖的外部時，公用輸出邊界會顯示出來。 | 是的：`run.pull("detections", ...)`。 |
+| 節點或元素名稱 | 用於診斷和管線最佳化的後端名稱。 | 不，除非透過 `Input` 或 `Output` 邊界進行暴露。 |
+
+如果執行階段調用指出端點名稱未知，請檢查 `run.input_names()` 和 `run.output_names()`，而不是隨意猜測。名稱很容易取得；錯誤的名稱卻會造成很大的損失。
+
+### 透過應用程式推送的輸入
+
+當您的應用程式已經擁有框架或張量，並且想要將其傳遞到 Neat 時，請使用 `nodes::Input`。
+
+當邊界需要明確的有效載荷、格式、大小、時序或設定合約時，請使用 `InputOptions`。
+
+| 需要 | 欄位 |
+| --- | --- |
+| 酬載類型 | `payload_type` / `PayloadType` |
+| 格式 | `format` / `FormatTag` |
+| 固定尺寸 | `width`, `height`, `depth` |
+| 動態輸入限制 | `max_width`, `max_height`, `max_depth`, `max_bytes` |
+| 時限與上限 | `fps_n`, `fps_d`, `caps_override` |
+| 即時來源行為 | `is_live`, `do_timestamp`, `block`, `stream_type` |
+| 分配 | `memory_policy`, `pool_min_buffers`, `pool_max_buffers` |
+| 進階中繼資料 | `buffer_name`, `preprocess_meta` |
+
+`use_simaai_pool` 已被棄用。請在新程式碼中使用 `memory_policy`：
+
+- 如果現有程式碼使用了 `use_simaai_pool=false`，請使用 `memory_policy=SystemMemory`。
+- 對於預設的 SiMa 分配行為，請使用 `memory_policy=Auto`。
+- 僅在輸入邊界需要特定目標時，才使用 `Ev74` 或 `Dms0`。
+- 為了保持相容性，現有的程式碼和較舊版本的圖形 JSON 仍然可以使用 `use_simaai_pool`。
+- 新的已儲存的圖形 JSON 檔案會寫入 `memory_policy`，而不是 `use_simaai_pool`。
+
+除非圖的邊界需要設定限制，否則請將欄位保持空白。設定上限值是召喚沼澤的方法。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::RGB;
+iopt.width = 224;
+iopt.height = 224;
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.RGB
+iopt.width = 224
+iopt.height = 224
+graph.add(pyneat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+#### 輸入邊界配方
+
+在第一次提交之前，如果邊界合約很重要，請使用這些模式。
+
+| 邊界 | 設定 | 如果不需要設定，請保持空白。 |
+| --- | --- | --- |
+| 已解碼且大小固定的影像 | `payload_type`, `format`, `width`, `height` | 推送的張量或樣本已經包含完整的影像中繼資料。 |
+| 動態解碼後的影像 | `payload_type`、`format`、`max_width`、`max_height`，以及可選的 `max_bytes`。 | 這個圖僅接受一種固定的尺寸。 |
+| 已編碼的 H.264 輸入 | `payload_type = Encoded`、`format = H264`，以及推送的 `Sample` 上的 H.264 限制。 | 圖的來源透過 RTSP 或檔案群組來擁有資料流。 |
+| 已編碼的 H.265 輸入 | `payload_type = Encoded`、`format = H265`，以及推送的 `Sample` 上的 H.265 限制。 | 圖的來源擁有並解析透過 RTSP 或檔案群組的資料流。 |
+| 偵測座標映射 | `preprocess_meta` | 該模型路徑擁有預處理功能，並自行產生元資料。 |
+
+對於動態影像輸入，請將資料流繫結，但不要假設每個影格都具有相同的大小：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Image;
+iopt.format = simaai::neat::FormatTag::BGR;
+iopt.max_width = 1920;
+iopt.max_height = 1080;
+iopt.max_bytes = 1920 * 1080 * 3;
+
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Image
+iopt.format = pyneat.Format.BGR
+iopt.max_width = 1920
+iopt.max_height = 1080
+iopt.max_bytes = 1920 * 1080 * 3
+
+graph.add(pyneat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+對於您的應用程式推送的已解析 H.265 存取單元，請將邊界進行編碼，選擇 `FormatTag::H265`，並選擇對應的解碼器類型。媒體類型會從標籤中解析出來，因此不需要能力字串。將解碼器的寬度、高度和 FPS 設定為基本資料流的值：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+
+simaai::neat::InputOptions iopt;
+iopt.payload_type = simaai::neat::PayloadType::Encoded;
+iopt.format = simaai::neat::FormatTag::H265;
+
+graph.add(simaai::neat::nodes::Input("video", iopt));
+
+simaai::neat::SimaDecodeOptions decode;
+decode.type = simaai::neat::SimaDecodeType::H265;
+decode.dec_width = 1280;
+decode.dec_height = 720;
+decode.dec_fps = 30;
+graph.add(simaai::neat::nodes::SimaDecode(decode));
+graph.add(simaai::neat::nodes::Output("frames"));
+
+auto run = graph.build();
+
+auto push_h265_access_unit = [&run](std::vector<std::uint8_t> bytes) {
+  auto sample = simaai::neat::make_encoded_sample(
+      std::move(bytes),
+      "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au");
+  sample.port_name = "video";
+  run.push("video", sample);
+};
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph()
+
+iopt = pyneat.InputOptions()
+iopt.payload_type = pyneat.PayloadType.Encoded
+iopt.format = pyneat.Format.H265
+
+graph.add(pyneat.nodes.input("video", iopt))
+
+decode = pyneat.SimaDecodeOptions()
+decode.type = pyneat.SimaDecodeType.H265
+decode.dec_width = 1280
+decode.dec_height = 720
+decode.dec_fps = 30
+graph.add(pyneat.nodes.sima_decode(decode))
+graph.add(pyneat.nodes.output("frames"))
+
+run = graph.build()
+
+def push_h265_access_unit(run: pyneat.Run, data: bytes) -> None:
+    sample = pyneat.Sample.from_encoded(
+        data,
+        caps_string=(
+            "video/x-h265,parsed=true,stream-format=byte-stream,alignment=au"
+        ),
+        port_name="video",
+    )
+    run.push("video", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+如果您已經使用 `RtspDecodedInput(...)` 或 `VideoInputGroup(...)`，請不要在其前面新增此應用程式推送的邊界。來源擁有的群組擁有其輸入路徑。
+
+### 範例輸出
+
+當消費者需要完整的 [`Sample`](/develop-apps/development-workflow/core_types#sample)（包含有效載荷以及串流/影格/時間戳的元資料）時，請使用 `nodes::Output`。
+
+當需要考慮拉取行為時，請使用 `OutputOptions`。
+
+| 目標 | 使用 |
+| --- | --- |
+| 保持輸出內容的新鮮度。 | `OutputOptions::Latest()` / `pyneat.OutputOptions.latest()` |
+| 擷取每一幀畫面。 | `OutputOptions::EveryFrame(...)` / `pyneat.OutputOptions.every_frame(...)` |
+| 將輸出速率與圖的時脈同步。 | `OutputOptions::Clocked(...)` / `pyneat.OutputOptions.clocked(...)` |
+| 合併多個生產者。 | `combine_policy = CombinePolicy::ByFrame` 或 `ByPts` |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output(
+    "classes",
+    simaai::neat::OutputOptions::EveryFrame()));
+
+const auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output(
+    "classes",
+    pyneat.OutputOptions.every_frame(),
+))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+`OutputOptions` 具有四個旋鈕，但預設設定涵蓋了大多數應用程式：
+
+| 欄位 | 它控制什麼？ | 偏好 |
+| --- | --- | --- |
+| `max_buffers` | 在發生反壓或丟棄之前，最多可以排隊多少個輸出樣本？ | `Latest()`、`EveryFrame(...)` 或 `Clocked(...)` 預設值。 |
+| `drop` | 當發生溢出時，是否捨棄最舊的佇列樣本，而不是停止處理。 | 用於即時預覽樣式輸出的 `Latest()`。 |
+| `sync` | 輸出是否與圖的時鐘同步。 | `Clocked(...)`，用於以時鐘頻率控制的輸出。 |
+| `combine_policy` | 一個公開 `Output` 如何整合多個上游供應端。 | 僅在具有有效 `frame_id` 時使用 `CombinePolicy::ByFrame`；僅在具有有效 `pts_ns` 時使用 `ByPts`。 |
+
+對於您絕對不能遺失的記錄，請使用 `EveryFrame(...)`。當「時效性」比「歷史」更重要時，請使用 `Latest()`。請勿讓即時預覽的行為方式類似於法庭記錄。
+
+#### 進階：將影像或影片輸出調整為張量。
+
+對於一般模型或圖的輸出，請在此停止：使用 `nodes::Output`。如果有效載體僅包含張量，並且您不需要完整的 `Sample` 封包，請使用 `pull_tensors(...)` 提取。
+
+僅當影像或視訊輸出必須在應用程式提取之前轉換、縮放或調整幀率，以轉換為適合 CPU 的 `UInt8` 張量時，才使用 `Graph::add_output_tensor(...)`。此輔助函式會插入配接器路徑並建立一個未命名的輸出。對於單一輸出，請使用 `run.pull_tensors(...)` 提取。
+
+`OutputTensorOptions` 控制 `format`、`target_width`、`target_height` 和 `target_fps`。將 `dtype` 保持為 `UInt8`；目前的公開路徑會拒絕其他 dtype。大多數模型輸出都不需要此輔助函式。
+
+## 快速決策指南
+
+- 來源可以是檔案、攝影機或 RTSP：請使用 `nodes::groups` 中的預先建置的輸入群組。
+- 來源是應用程式產生的張量/框架：請使用 `nodes::Input`。
+- 輸出消費者需求串流/影格/時間戳記中繼資料：使用 `nodes::Output` 並提取 `Sample` 物件。
+- 輸出是一個模型或張量：當您不需要完整的 `Sample` 時，請使用 `nodes::Output`，並使用 `pull_tensors(...)` 來提取張量。
+- 輸出內容為影像或影片，在擷取之前必須調整大小、重新格式化或調整幀率：請使用進階的 `add_output_tensor(...)` 轉接器。
+- 需要一個可重複使用的模組：從節點建立一個 `Graph` 片段，然後像其他任何建構模組一樣，將其新增或連接。
+
+## 這件事為何重要？
+
+- 一個概念涵蓋原子階段、邊界宣告和預先建置的群組。
+- 可重複使用的 Graph 片段如同函式：接收輸入並產生輸出，中間不會出現非預期的執行階段來源或接收器。
+- 診斷資訊保持易於理解，因為節點名稱和邊界名稱在轉換過程中會被保留。
+- 由於內部界線不會強制產生隱藏的副本或佇列，因此執行階段仍能保持高效運作。
+
+## 另請參閱
+
+- [圖](/develop-apps/development-workflow/graph)
+- [模型](/develop-apps/development-workflow/model)
+- [張量與樣本](/develop-apps/development-workflow/core_types)
+
+## 教學指南
+
+- [建立您的第一個圖](/tutorials/build-inference-pipeline)
+- [將模型接入管線](/tutorials/plug-model-into-pipeline)
+- [建立自訂資料圖](/tutorials/build-a-custom-data-graph)

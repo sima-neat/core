@@ -1,0 +1,343 @@
+---
+title: "直接的な生成AI API"
+description: "C++およびPythonアプリケーションから、LLM、VLM、ASRモデルを直接実行します。"
+sidebar_position: 3
+slug: /develop-apps/development-workflow/genai-model/direct-api
+---
+
+# GenAI API の直接利用
+
+LLM、VLM、または ASR モデルがアプリケーションと同じプロセスで実行される場合は、Neat の GenAI API を直接使用します。デプロイされた LLiMa モデルのディレクトリをロードし、`GenerationRequest` を作成し、完全な結果を待つか、生成されたトークンをストリーミングします。
+
+ブラウザ、サービス、またはリモートクライアントが HTTP 経由でモデルを呼び出す必要がある場合は、代わりに [GenAIサーバー](/develop-apps/development-workflow/genai-model/genai-server) を使用してください。どちらのアプリケーション境界を選択するかについては、[生成AIモデルの概要](/develop-apps/development-workflow/genai-model) を参照してください。
+
+## 適切なハンドラーを選択する
+
+ほとんどのアプリケーションでは、`GenAIModel` から開始します。モデルディレクトリからモデルのタスクを自動的に検出し、以下の機能チェックを公開します。
+
+- `accepts_text()`
+- `accepts_image()`
+- `accepts_audio()`
+- `task()`
+- `model_id()`
+
+アプリケーションがロードするものを知っており、より限定された API を使用したい場合は、タスク固有のハンドラーを使用します。
+
+| ハンドラー | 使用例 |
+|--------|---------|
+| `genai::GenAIModel` | 自動検出された LLM、VLM、または ASR モデルのディレクトリ。 |
+| `genai::VisionLanguageModel` | テキストのみの LLM および画像処理が可能な VLM。 |
+| `genai::ASRModel` | 音声認識モデル。 |
+
+## テキストリクエストを実行
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/genai.h"
+
+#include <iostream>
+
+int main() {
+  simaai::neat::genai::GenAIModel model(
+      "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4");
+
+  simaai::neat::genai::GenerationRequest request;
+  request.prompt = "Explain what an API gateway is in one sentence.";
+  request.max_new_tokens = 64;
+
+  auto result = model.run(request);
+  std::cout << result.text << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+model = neat.genai.GenAIModel(
+    "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+)
+
+request = neat.genai.GenerationRequest()
+request.prompt = "Explain what an API gateway is in one sentence."
+request.max_new_tokens = 64
+
+result = model.run(request)
+print(result.text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`run()` は同期処理です。生成が完了した後、処理が終了します。これは、テスト、スクリプト、およびリクエスト/レスポンス形式のアプリケーションコードにとって最も単純な形式です。
+
+## 生成されたトークンをストリームで処理する
+
+呼び出し元が生成された内容をリアルタイムで確認する必要がある場合は、`stream()` を使用します。各項目は、最新のテキストフラグメント、現在のメトリック、および生成が終了したときの最終ステータスを含む `TokenSample` です。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenerationRequest request;
+request.prompt = "Give me three practical tips for designing a small REST API.";
+request.max_new_tokens = 96;
+
+simaai::neat::genai::GenerationStream stream_handle = model.stream(request);
+for (const auto& token : stream_handle) {
+  std::cout << token.text << std::flush;
+}
+std::cout << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+request = neat.genai.GenerationRequest()
+request.prompt = "Give me three practical tips for designing a small REST API."
+request.max_new_tokens = 96
+
+stream_handle = model.stream(request)
+for token in stream_handle:
+    print(token.text, end="", flush=True)
+print()
+```
+
+</CodeTab>
+</CodeTabs>
+
+ユーザーがリクエストを閉じたり、プロンプトを変更したり、アプリケーションが生成処理のタイムアウトに達した場合、ストリームに対して`cancel()`を呼び出します。
+
+## VLMに画像を追加する
+
+VLMは、テキストに加えて1つ以上の画像を受け入れます。画像は、単純なプロンプトの場合は`GenerationRequest.images`を介して、チャット履歴を使用する場合は`ChatMessage.images`を介して渡されます。
+
+`Tensor`の値として渡される画像は、`uint8`形式のHWC RGBテンソルである必要があります。OpenCVの`cv::Mat`入力は、Neat/OpenCVの規則に従います。つまり、3チャンネルの行列はBGRとして扱われ、リクエストに保存される前にRGBに変換されます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::VisionLanguageModel model(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4");
+
+cv::Mat image = cv::imread("scene.jpg");
+
+simaai::neat::genai::GenerationRequest request;
+request.prompt = "What is visible in this image?";
+request.images = {image};
+request.max_new_tokens = 128;
+
+auto result = model.run(request);
+std::cout << result.text << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.VisionLanguageModel(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
+)
+
+request = neat.genai.GenerationRequest()
+request.prompt = "What is visible in this image?"
+request.images = [image_tensor]
+request.max_new_tokens = 128
+
+print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+同じ画像に関する繰り返しのご質問の場合、`VisionLanguageModel.encode(...)` は、モデル内で画像の埋め込みをキャッシュできます。その後、`request.use_cached_images =
+true` を設定するか、`use_cached_images = true` を含むチャットメッセージを使用します。
+
+## LoRAアダプターの切り替え
+
+LLiMa の `LORA_BRANCH` モードでコンパイルされたモデルは、`npy_files/<adapter-name>` に保存されている互換性のあるアダプターを切り替えることができます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+model.set_lora("customer-adapter");
+auto adapted = model.run(request);
+model.unset_lora();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model.set_lora("customer-adapter")
+adapted = model.run(request)
+model.unset_lora()
+```
+
+</CodeTab>
+</CodeTabs>
+
+アダプター名は、パスではなく、単一のディレクトリ名である必要があります。切り替え時には、現在実行中の生成処理が完了するまで待機し、次のリクエストの前に、言語モデルのキャッシュされたトークン状態をクリアします。動的な切り替えは、ASR、推測デコーディングパッケージ、または永続的にマージされた`LORA_MERGED`の重みに対しては利用できません。
+
+## 音声の文字起こし
+
+ASRモデルは、同じリクエスト/結果の形式を使用しますが、リクエストには音声データを含める必要があります。ファイルパスの場合は`audio_file`を、音声テンソルの場合は`audio`を使用してください。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::ASRModel model("/media/nvme/llima/models/whisper-model");
+
+simaai::neat::genai::GenerationRequest request;
+request.audio_file = "meeting.wav";
+
+auto result = model.run(request);
+std::cout << result.text << "\n";
+std::cout << "language=" << result.language << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.ASRModel("/media/nvme/llima/models/whisper-model")
+
+request = neat.genai.GenerationRequest()
+request.audio_file = "meeting.wav"
+
+result = model.run(request)
+print(result.text)
+print(f"language={result.language}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+デフォルトの言語は`auto`であるため、多言語対応のWhisperモデルは入力言語を検知します。入力言語がわかっている場合は、`request.language`をサポートされている言語コードまたは名前に設定してください。また、読み込まれたWhisperアーティファクトがそれらのプローブを提供する場合、`no_speech_prob`と`avg_logprob`も結果として表示されます。`no_speech_prob`の値が高いほど、入力に音声が含まれていない可能性が高くなります。`avg_logprob`の値が高い（より負の値が小さい）ほど、Whisperが生成されたトークンにより高い平均確率を割り当てたことを意味します。
+
+音声を英語に翻訳するには、翻訳タスクを選択してください。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+request.asr_task = simaai::neat::genai::ASRTask::Translate;
+auto result = model.run(request);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+request.asr_task = neat.genai.ASRTask.Translate
+result = model.run(request)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## GenAIをグラフに組み込む
+
+ほとんどの GenAI アプリケーションでは、`run()` / `stream()` を直接呼び出すのが最短の方法です。GenAI をより大きな Neat グラフの一段階として使用する場合は、公開グラフフラグメントを使用します。
+
+- `genai::graphs::VisionLanguage(...)`
+- `genai::graphs::SpeechTranscriber(...)`
+
+これらの断片は、名前付きのグラフエンドポイントを通じてGenAIステージを公開するため、Neatの他の部分で使用されているのと同じ`Graph`と`Run`モデルを使用して、それらを組み合わせることができます。
+
+ASRグラフの場合、`SpeechTranscriberOptions`は、デフォルトで自動的なソース言語の検出と文字起こしを使用します。明示的に翻訳を選択してください。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto model = std::make_shared<simaai::neat::genai::ASRModel>(
+    "/media/nvme/llima/models/whisper-small-a16w8");
+
+simaai::neat::genai::SpeechTranscriberOptions options;
+options.task = simaai::neat::genai::ASRTask::Translate;
+options.streaming = true;
+
+auto fragment = simaai::neat::genai::graphs::SpeechTranscriber(model, options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.ASRModel(
+    "/media/nvme/llima/models/whisper-small-a16w8"
+)
+
+options = neat.genai.SpeechTranscriberOptions()
+options.task = neat.genai.ASRTask.Translate
+options.streaming = True
+
+fragment = neat.genai.graphs.speech_transcriber(model, options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+このフラグメントは、`audio`と`audio_path`を受け入れます。最終的な`done`バンドルには、モデルがプローブの出力を提供した際に、`text`、`finish_reason`、`language`、`no_speech_prob`、および`avg_logprob`が含まれます。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto model = std::make_shared<simaai::neat::genai::VisionLanguageModel>(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4");
+
+simaai::neat::genai::VisionLanguageOptions options;
+options.max_new_tokens = 128;
+options.streaming = true;
+
+simaai::neat::Graph fragment =
+    simaai::neat::genai::graphs::VisionLanguage(model, options, "vlm");
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.VisionLanguageModel(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
+)
+
+options = neat.genai.VisionLanguageOptions()
+options.max_new_tokens = 128
+options.streaming = True
+
+fragment = neat.genai.graphs.vision_language(model, options, "vlm")
+```
+
+</CodeTab>
+</CodeTabs>
+
+## リクエストルール
+
+`GenerationRequest` は、意図的に明確に定義されています。
+
+- `prompt` または `messages` のいずれか一方のみを使用し、両方を同時に使用しないでください。
+- `system_prompt` は、`prompt` と組み合わせてのみ使用してください。
+- 画像を直接添付する場合は、`prompt` のみを使用し、メッセージごとの画像を添付する場合は、`ChatMessage.images` を使用します。
+- 直接添付する画像とキャッシュされた画像のいずれか一方のみを使用し、両方を同時に使用しないでください。
+- ASRリクエストでは、テキストまたは画像フィールドではなく、オーディオフィールドを使用します。
+
+Qwen3やGemma 4 E2B/E4Bなどの推論モデルに対して、`GenerationRequest.enable_thinking` を設定することで、推論を有効にします。完全な結果では、推論を `GenerationResult.reasoning` に、最終的な回答を `GenerationResult.text` に格納します。ストリーミングされる `TokenSample` オブジェクトも同様に、`reasoning` と `text` を使用します。
+
+これらのルールにより、Neat は、あいまいなプロンプトをランタイムに送信する代わりに、明確なリクエストエラーで早期に処理を停止できます。
+
+## 次のステップ
+
+- [GenAIサーバー](/develop-apps/development-workflow/genai-model/genai-server) を使用して、HTTP経由でモデルを公開します。
+- [LLiMa を搭載した生成AI](/genai-llima/) を使用して、GenAIモデルを準備し、ベンチマークテストを実施します。
+- [グラフ](/develop-apps/development-workflow/graph) を使用して、より大規模なアプリケーションのグラフを構築します。
