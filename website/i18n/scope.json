@@ -9,16 +9,11 @@
     "docs/tools/sima-cli/"
   ],
   "generatedRoutePrefixes": [
-    "/compile-a-model",
-    "/genai-llima",
     "/reference",
-    "/tools/insight",
-    "/tools/sentinel",
-    "/tools/sima-cli",
     "/tutorials"
   ],
   "localizedRouteExceptions": [
     "/tutorials/before-you-run"
   ],
-  "reason": "Reference, Doxygen-derived, and externally sourced autodoc families remain English-only during the localization preview. Their owning repositories or generators must produce localized artifacts before those prefixes enter the authored-content workflow."
+  "reason": "Reference and Doxygen-derived families remain English-only. Externally sourced autodoc families stay outside Core-authored coverage because autodoc imports and validates their source-owned locale artifacts separately."
 }

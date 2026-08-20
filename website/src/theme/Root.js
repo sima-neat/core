@@ -7,13 +7,8 @@ const I18N_PREVIEW_PARAM = "i18n";
 const I18N_PREVIEW_SESSION_KEY = "neat-docs-i18n-preview";
 const DOCS_LOCALE_COOKIE = "sima-neat-locale";
 const ENGLISH_ONLY_ROUTE_PREFIXES = [
-  "/compile-a-model",
   "/doxygen",
-  "/genai-llima",
   "/reference",
-  "/tools/insight",
-  "/tools/sentinel",
-  "/tools/sima-cli",
 ];
 const LOCALIZED_UI = {
   en: {

@@ -2037,7 +2037,8 @@ build_docs_site() {
     --conf "${REPO_ROOT}/tools/autodoc.conf.json" \
     --repo-root "${REPO_ROOT}" \
     --build-dir "${BUILD_DIR}" \
-    --out-root "${REPO_ROOT}/docs" || true
+    --out-root "${REPO_ROOT}/docs" \
+    --i18n-root "${REPO_ROOT}/website/i18n" || true
   echo
   echo "Expanding code tabs..."
   local expanded_docs_dir

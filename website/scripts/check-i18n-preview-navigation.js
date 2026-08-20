@@ -19,12 +19,30 @@ const shellHostModule = fs.readFileSync(
   path.resolve(__dirname, "../src/clientModules/developer-center-shell.js"),
   "utf8",
 );
+const rootTheme = fs.readFileSync(
+  path.resolve(__dirname, "../src/theme/Root.js"),
+  "utf8",
+);
 
 assert.match(
   shellHostModule,
   /export function onRouteDidUpdate\(\)[\s\S]*requestAnimationFrame[\s\S]*mountShell\(\)/,
   "Developer Center shell must remount after client-side locale route changes",
 );
+
+for (const localizedAutodocRoute of [
+  "/compile-a-model",
+  "/genai-llima",
+  "/tools/insight",
+  "/tools/sentinel",
+  "/tools/sima-cli",
+]) {
+  assert.doesNotMatch(
+    rootTheme,
+    new RegExp(`^[ \\t]*["']${localizedAutodocRoute.replaceAll("/", "\\/")}["'],?$`, "m"),
+    `${localizedAutodocRoute} must not show the English-only localization banner`,
+  );
+}
 
 function anchor(href, attributes = {}) {
   return {

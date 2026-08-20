@@ -90,26 +90,30 @@ npm run translate:i18n -- \
   --normalize-existing
 ```
 
-## Generated and reference documentation
+## Generated, imported, and reference documentation
 
 Generated documentation is deliberately outside the authored-content
-translation workflow. `scope.json` is the authoritative boundary. It includes
-reference and Doxygen output as well as the Model Compiler, LLiMa, Insight,
-Sentinel, and sima-cli families imported by autodoc. Those routes remain
-English-only. Generated tutorial routes are also English-only except for the
-authored `/tutorials/before-you-run` page. The site labels these boundaries in
-localized navigation. Do not hand-edit localized copies of generated output in
-this repository; the next generator run would make those edits stale or
-overwrite them.
+translation workflow. `scope.json` is the authoritative boundary for Core-owned
+content. Reference, Doxygen, and generated tutorial routes remain English-only
+except for the authored `/tutorials/before-you-run` page.
 
-If a generated documentation family is localized later, localization belongs
-with the source repository or generator that owns its schema and templates. The
-producer should emit stable page and symbol identifiers plus locale-specific
-titles, descriptions, explanatory prose, and navigation metadata. API symbols,
-signatures, code, and machine-readable identifiers remain canonical. Core should
-then consume the generated locale artifacts reproducibly, record their source
-version or hash, and validate route parity before removing that family from
-`scope.json`.
+Autodoc imports source-owned translations for the Model Compiler guides, LLiMa,
+Insight, Sentinel, and sima-cli. Each participating repository declares its
+locale layout in `sima-i18n.config.json` and records reviewed English hashes in
+`docs/i18n/translation-sources.json`. During a Software docs build,
+`tools/autodoc.py` mounts current translations under Docusaurus' locale tree. A
+missing or stale locale is removed from generated output and uses Docusaurus'
+English fallback. Do not hand-edit these mounted copies in this repository; the
+next autodoc run overwrites them.
+
+If another generated documentation family is localized later, localization
+belongs with the source repository or generator that owns its schema and
+templates. The producer should emit stable page and symbol identifiers plus
+locale-specific titles, descriptions, explanatory prose, and navigation
+metadata. API symbols, signatures, code, and machine-readable identifiers
+remain canonical. Core should then consume the generated locale artifacts
+reproducibly, record their source version or hash, and validate route parity
+before removing that family from `scope.json`.
 
 Onboarding a generated family therefore requires all of the following:
 
@@ -117,8 +121,8 @@ Onboarding a generated family therefore requires all of the following:
 2. the shared terminology rules in `terminology.md` (or a synchronized copy);
 3. stable locale output paths and source-version metadata;
 4. structural and link validation equivalent to `check:i18n`; and
-5. removal of the exact generated prefix from `scope.json` only after all four
-   locales build successfully.
+5. removal of the route from the English-only banner classification after all
+   four locales build successfully.
 
 This keeps generated translations source-owned and updateable without forcing
 each downstream repository to maintain hand-translated Doxygen output.

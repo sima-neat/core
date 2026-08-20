@@ -9,6 +9,8 @@ configured docs subpath into <out_root>/<mount>/ with light transforms:
 - Rewrite sibling .md links to Docusaurus-style routes.
 - Rewrite configured imported-doc link targets to their mounted core routes.
 - Drop a generated _category_.json at the section root.
+- Import source-owned translations into Docusaurus' locale content trees.
+- Reject localized Markdown whose recorded English source hash is stale.
 
 Per-source clone or copy failures are logged and skipped; the script always
 exits 0 unless the manifest itself is malformed.
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -61,6 +64,7 @@ SOURCE_INDEX_ENTRY_RE = re.compile(
     r"(?:\s+\((?P<counts>[^)]+)\))?"
     r"(?:\s+-\s+(?P<summary>.+?))?\s*$"
 )
+DOCUSAURUS_DOCS_TRANSLATION_DIR = "docusaurus-plugin-content-docs/current"
 
 
 def run_git(args: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
@@ -420,6 +424,8 @@ def copy_section(
     exclude_files: Optional[List[str]] = None,
     restructure_api: bool = False,
     link_rewrites: Optional[List[Tuple[str, str]]] = None,
+    exclude_prefixes: Optional[List[Path]] = None,
+    clean_destination: bool = True,
 ) -> int:
     """Copy src_root into dst_root, transforming markdown.
 
@@ -431,7 +437,8 @@ def copy_section(
     """
     excluded = set(exclude_files or [])
     link_rewrites = link_rewrites or []
-    if dst_root.exists():
+    excluded_prefixes = [prefix.parts for prefix in (exclude_prefixes or [])]
+    if clean_destination and dst_root.exists():
         shutil.rmtree(dst_root)
     dst_root.mkdir(parents=True, exist_ok=True)
 
@@ -443,6 +450,8 @@ def copy_section(
         if src_path.is_dir():
             continue
         rel = src_path.relative_to(src_root)
+        if any(rel.parts[:len(prefix)] == prefix for prefix in excluded_prefixes):
+            continue
         is_top_level_md = src_path.parent == src_root and src_path.suffix.lower() in {".md", ".mdx"}
         if is_top_level_md and src_path.stem in excluded:
             continue
@@ -481,6 +490,122 @@ def copy_section(
             shutil.copy2(src_path, dst_path)
         count += 1
     return count
+
+
+def path_within(root: Path, configured: str, field: str) -> Path:
+    """Resolve a manifest path and require it to remain inside ``root``."""
+    relative = Path(configured)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise OSError(f"{field} must stay within the source repository: {configured}")
+    return root / relative
+
+
+def load_source_i18n(source: Dict, staging: Path) -> Optional[Dict]:
+    """Load the source-owned localization contract when enabled for a source."""
+    if not source.get("localization", False):
+        return None
+
+    config_name = str(source.get("i18n_config", "sima-i18n.config.json")).strip()
+    config_path = path_within(staging, config_name, "i18n_config")
+    if not config_path.is_file():
+        raise OSError(f"localization enabled but '{config_name}' was not found")
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise OSError(f"invalid localization config '{config_name}': {exc}") from exc
+
+    source_dir = str(config.get("sourceDir", "")).strip()
+    translation_dir = str(config.get("translationDir", "")).strip()
+    manifest_name = str(config.get("manifest", "")).strip()
+    configured_locales = config.get("locales", {})
+    if not source_dir or not translation_dir or not manifest_name:
+        raise OSError(
+            f"localization config '{config_name}' requires sourceDir, translationDir, and manifest"
+        )
+    if translation_dir.count("{locale}") != 1:
+        raise OSError(f"translationDir in '{config_name}' must contain one {{locale}} placeholder")
+    if not isinstance(configured_locales, dict):
+        raise OSError(f"locales in '{config_name}' must be an object")
+
+    path_within(staging, source_dir, "sourceDir")
+    path_within(
+        staging,
+        translation_dir.replace("{locale}", "locale"),
+        "translationDir",
+    )
+
+    docs_subpath = Path(str(source.get("docs_subpath", "docs")))
+    source_root = Path(source_dir)
+    try:
+        docs_relative = docs_subpath.relative_to(source_root)
+    except ValueError as exc:
+        raise OSError(
+            f"docs_subpath '{docs_subpath}' must be within localization sourceDir '{source_root}'"
+        ) from exc
+
+    manifest_path = path_within(staging, manifest_name, "manifest")
+    if not manifest_path.is_file():
+        raise OSError(f"localization manifest '{manifest_name}' was not found")
+    try:
+        hashes = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise OSError(f"invalid localization manifest '{manifest_name}': {exc}") from exc
+    if not isinstance(hashes, dict):
+        raise OSError(f"localization manifest '{manifest_name}' must be an object")
+
+    return {
+        "source_dir": source_root,
+        "docs_relative": docs_relative,
+        "translation_dir": translation_dir,
+        "locales": configured_locales,
+        "hashes": hashes,
+    }
+
+
+def localized_docs_path(staging: Path, config: Dict, locale: str) -> Path:
+    translated_root = path_within(
+        staging,
+        config["translation_dir"].replace("{locale}", locale),
+        "translationDir",
+    )
+    return translated_root / config["docs_relative"]
+
+
+def validate_localized_hashes(
+    staging: Path,
+    config: Dict,
+    locale: str,
+    localized_docs: Path,
+) -> List[str]:
+    """Return source-hash contract violations for selected localized Markdown."""
+    failures: List[str] = []
+    locale_hashes = config["hashes"].get(locale, {})
+    if not isinstance(locale_hashes, dict):
+        return [f"manifest entry for {locale} must be an object"]
+
+    translated_root = path_within(
+        staging,
+        config["translation_dir"].replace("{locale}", locale),
+        "translationDir",
+    )
+    source_root = path_within(staging, str(config["source_dir"]), "sourceDir")
+    for translated_path in sorted(localized_docs.rglob("*")):
+        if translated_path.suffix.lower() not in {".md", ".mdx"}:
+            continue
+        relative = translated_path.relative_to(translated_root)
+        source_path = source_root / relative
+        source_key = (config["source_dir"] / relative).as_posix()
+        if not source_path.is_file():
+            failures.append(f"{locale} translation has no English source: {source_key}")
+            continue
+        expected = locale_hashes.get(source_key)
+        if not expected:
+            failures.append(f"{locale} translation has no source-hash record: {source_key}")
+            continue
+        actual = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        if actual != expected:
+            failures.append(f"{locale} translation is stale: {source_key}")
+    return failures
 
 
 def write_group_categories(dst_root: Path, landing: Optional[Dict]) -> None:
@@ -803,23 +928,94 @@ def write_root_index_file(
         text = MARKDOWN_TARGET_RE.sub(rebase_markdown, text)
         text = HTML_HREF_TARGET_RE.sub(rebase_markdown, text)
 
+    # Docusaurus treats README.md as a directory index too. If docs_subpath
+    # contributed one, retaining it alongside this explicit index creates a
+    # duplicate route and can make its sibling links resolve nondeterministically.
+    readme_path = dst_section / "README.md"
+    if readme_path.is_file():
+        readme_target = str(source.get("root_index_readme_target", "documentation.md")).strip()
+        text = rewrite_configured_link_targets(text, [("README.md", readme_target)])
+        target_path = dst_section / readme_target
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        readme_path.replace(target_path)
     (dst_section / "index.md").write_text(text, encoding="utf-8")
     return True
 
 
-def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Path) -> Tuple[bool, str]:
+def stage_source_section(
+    source: Dict,
+    staging: Path,
+    src_docs: Path,
+    dst_section: Path,
+    *,
+    localized: bool = False,
+    exclude_prefixes: Optional[List[Path]] = None,
+    clean_destination: bool = True,
+    run_group_commands: bool = True,
+) -> int:
+    """Apply the same mounting transforms to English or localized source docs."""
+    title = source.get("title", source["key"])
+    sidebar_position = int(source.get("sidebar_position", 99))
+    files_order = source.get("files_order", []) or []
+    exclude_files = source.get("exclude_files", []) or []
+    restructure_api = bool(source.get("restructure_api", False))
+    link_rewrites = normalize_link_rewrites(source.get("link_rewrites", []) or [])
+    landing = source.get("landing_page")
+    group_index = build_group_index(landing)
+
+    file_count = copy_section(
+        src_docs,
+        dst_section,
+        files_order,
+        group_index,
+        exclude_files,
+        restructure_api,
+        link_rewrites,
+        exclude_prefixes,
+        clean_destination,
+    )
+    promote_index_file(source, dst_section)
+    write_category_json(dst_section, title, sidebar_position)
+    write_group_categories(dst_section, landing)
+    maybe_write_landing_page(source, src_docs, dst_section, title)
+    # Repository-root files are outside the translated sourceDir contract.
+    # Docusaurus falls back to English unless a source explicitly provides one.
+    if localized:
+        localized_root = str(source.get("localized_root_index_file", "")).strip()
+        if localized_root:
+            localized_source = dict(source, root_index_file=localized_root)
+            write_root_index_file(localized_source, staging, dst_section, link_rewrites)
+        elif source.get("root_index_file"):
+            readme_path = dst_section / "README.md"
+            if readme_path.is_file():
+                readme_target = str(
+                    source.get("root_index_readme_target", "documentation.md")
+                ).strip()
+                target_path = dst_section / readme_target
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                readme_path.replace(target_path)
+    else:
+        write_root_index_file(source, staging, dst_section, link_rewrites)
+    group_commands = source.get("group_commands")
+    if group_commands and run_group_commands:
+        regroup_command_pages(dst_section, group_commands)
+    return file_count
+
+
+def process_source(
+    source: Dict,
+    repo_root: Path,
+    build_dir: Path,
+    out_root: Path,
+    i18n_root: Optional[Path] = None,
+    locales: Optional[List[str]] = None,
+) -> Tuple[bool, str]:
     key = source["key"]
     repo = source["repo"]
     branches, snap_target = resolve_branch_candidates(source, repo_root)
     githash = source.get("githash", "") or ""
     docs_subpath = source.get("docs_subpath", "docs")
     mount = source.get("mount", key)
-    title = source.get("title", key)
-    sidebar_position = int(source.get("sidebar_position", 99))
-    files_order = source.get("files_order", []) or []
-    exclude_files = source.get("exclude_files", []) or []
-    restructure_api = bool(source.get("restructure_api", False))
-    link_rewrites = normalize_link_rewrites(source.get("link_rewrites", []) or [])
 
     staging = build_dir / "autodoc" / key
     LOG.info("[%s] clone/update %s (candidates: %s)", key, repo, githash or ", ".join(branches))
@@ -847,32 +1043,116 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
     if not src_docs.is_dir():
         return False, f"docs_subpath '{docs_subpath}' not found in clone"
 
+    try:
+        source_i18n = load_source_i18n(source, staging)
+    except OSError as exc:
+        LOG.warning(
+            "[%s] source localization unavailable: %s; staging English only",
+            key,
+            exc,
+        )
+        source_i18n = None
+
     dst_section = out_root / mount
-    landing = source.get("landing_page")
-    group_index = build_group_index(landing)
     LOG.info("[%s] copy %s -> %s", key, src_docs, dst_section)
     try:
-        file_count = copy_section(
+        excluded_prefixes: List[Path] = []
+        if source.get("localization", False):
+            try:
+                conventional_i18n = Path("docs/i18n").relative_to(Path(docs_subpath))
+                if conventional_i18n.parts:
+                    excluded_prefixes.append(conventional_i18n)
+            except ValueError:
+                pass
+        if source_i18n is not None:
+            translation_prefix = source_i18n["translation_dir"].split("{locale}", 1)[0].rstrip("/")
+            try:
+                relative_prefix = Path(translation_prefix).relative_to(Path(docs_subpath))
+                if relative_prefix.parts and relative_prefix not in excluded_prefixes:
+                    excluded_prefixes.append(relative_prefix)
+            except ValueError:
+                pass
+        file_count = stage_source_section(
+            source,
+            staging,
             src_docs,
             dst_section,
-            files_order,
-            group_index,
-            exclude_files,
-            restructure_api,
-            link_rewrites,
+            exclude_prefixes=excluded_prefixes,
         )
-        promote_index_file(source, dst_section)
-        write_category_json(dst_section, title, sidebar_position)
-        write_group_categories(dst_section, landing)
-        maybe_write_landing_page(source, src_docs, dst_section, title)
-        write_root_index_file(source, staging, dst_section, link_rewrites)
-        group_commands = source.get("group_commands")
-        if group_commands:
-            regroup_command_pages(dst_section, group_commands)
     except OSError as exc:
         return False, f"copy failed: {exc}"
 
-    return True, f"staged {file_count} files into {dst_section.relative_to(repo_root)}"
+    localized_counts: Dict[str, int] = {}
+    if source_i18n is not None and i18n_root is not None:
+        requested_locales = locales or list(source_i18n["locales"])
+        for locale in requested_locales:
+            if locale not in source_i18n["locales"]:
+                LOG.warning("[%s:%s] locale is not declared by the source; skipping", key, locale)
+                continue
+            localized_docs = localized_docs_path(staging, source_i18n, locale)
+            localized_destination = (
+                i18n_root / locale / DOCUSAURUS_DOCS_TRANSLATION_DIR / mount
+            )
+            if not localized_docs.is_dir():
+                if localized_destination.exists():
+                    shutil.rmtree(localized_destination)
+                LOG.warning(
+                    "[%s:%s] localized docs not found at %s; using English fallback",
+                    key, locale, localized_docs,
+                )
+                continue
+            hash_failures = validate_localized_hashes(
+                staging, source_i18n, locale, localized_docs,
+            )
+            if hash_failures:
+                if localized_destination.exists():
+                    shutil.rmtree(localized_destination)
+                for failure in hash_failures:
+                    LOG.warning("[%s:%s] %s", key, locale, failure)
+                LOG.warning(
+                    "[%s:%s] rejected localized docs; using English fallback",
+                    key,
+                    locale,
+                )
+                continue
+            LOG.info(
+                "[%s:%s] copy %s -> %s",
+                key, locale, localized_docs, localized_destination,
+            )
+            try:
+                # Locale files can link to untranslated generated pages and
+                # relative image assets. Seed the locale with the transformed
+                # English section, then overlay source-owned translations.
+                stage_source_section(
+                    source,
+                    staging,
+                    src_docs,
+                    localized_destination,
+                    exclude_prefixes=excluded_prefixes,
+                    run_group_commands=False,
+                )
+                localized_counts[locale] = stage_source_section(
+                    source,
+                    staging,
+                    localized_docs,
+                    localized_destination,
+                    localized=True,
+                    clean_destination=False,
+                )
+            except OSError as exc:
+                if localized_destination.exists():
+                    shutil.rmtree(localized_destination)
+                LOG.warning(
+                    "[%s:%s] localized copy failed: %s; using English fallback",
+                    key, locale, exc,
+                )
+
+    detail = f"staged {file_count} files into {dst_section.relative_to(repo_root)}"
+    if localized_counts:
+        detail += "; localized " + ", ".join(
+            f"{locale} ({count})" for locale, count in localized_counts.items()
+        )
+    return True, detail
 
 
 def main() -> int:
@@ -881,6 +1161,10 @@ def main() -> int:
     parser.add_argument("--repo-root", required=True, help="Core repo root.")
     parser.add_argument("--build-dir", required=True, help="Build directory (relative to repo-root or absolute).")
     parser.add_argument("--out-root", required=True, help="Where staged docs sections land (typically <repo-root>/docs).")
+    parser.add_argument(
+        "--i18n-root",
+        help="Docusaurus i18n root for source-owned translations (typically <repo-root>/website/i18n).",
+    )
     parser.add_argument("--verbose", action="store_true", help="Verbose logging.")
     args = parser.parse_args()
 
@@ -894,9 +1178,11 @@ def main() -> int:
     if not build_dir.is_absolute():
         build_dir = (repo_root / build_dir).resolve()
     out_root = Path(args.out_root).resolve()
+    i18n_root = Path(args.i18n_root).resolve() if args.i18n_root else None
 
     manifest = json.loads(Path(args.conf).read_text(encoding="utf-8"))
     sources = manifest.get("sources", [])
+    locales = manifest.get("locales", []) or []
     if not sources:
         LOG.info("manifest has no sources; nothing to do")
         return 0
@@ -904,7 +1190,7 @@ def main() -> int:
     failures: List[str] = []
     successes: List[str] = []
     for source in sources:
-        ok, message = process_source(source, repo_root, build_dir, out_root)
+        ok, message = process_source(source, repo_root, build_dir, out_root, i18n_root, locales)
         if ok:
             successes.append(f"{source['key']}: {message}")
             LOG.info("[%s] OK: %s", source["key"], message)
