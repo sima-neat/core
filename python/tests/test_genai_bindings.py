@@ -15,11 +15,13 @@ _VLM_MODEL_ENV = "SIMA_TEST_LLIMA_VLM_MODEL"
 _ASR_MODEL_ENV = "SIMA_TEST_LLIMA_ASR_MODEL"
 _LLIMA_MODELS_PATH_ENV = "LLIMA_MODELS_PATH"
 _DEFAULT_LLIMA_MODELS_PATH = Path("/media/nvme/llima/models")
-_DEFAULT_TEXT_MODEL = "Qwen2.5-0.5B-Instruct-GPTQ-a16w4"
-_DEFAULT_VLM_MODEL = "LFM2.5-VL-450M-a16w4"
+_DEFAULT_TEXT_MODEL = "Qwen2.5-0.5B-Instruct-Autoround-a16w4"
+_DEFAULT_VLM_MODEL = "LFM2.5-VL-450M-Autoround-a16w4"
 _DEFAULT_ASR_MODEL = "whisper-small-a16w8"
 _VLM_PROMPT = "Describe this image in a short phrase."
-_EXPECTED_VLM_TEXT = "Skier in the air."
+_EXPECTED_VLM_TEXT = (
+    "A skier is in the air, wearing a colorful jacket and beige pants."
+)
 _PROMPT = "What is the capital of Germany?"
 _EXPECTED_TEXT = "The capital of Germany is Berlin."
 _EXPECTED_ASR_TEXT = "tell me a joke please"
