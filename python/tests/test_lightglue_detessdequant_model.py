@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -122,6 +123,12 @@ def _worker_main() -> int:
 
 
 def _run_isolated(model_path: Path, target: str, output_path: Path) -> dict[str, object]:
+  worker_env = os.environ.copy()
+  extract_root = None
+  if "SIMA_MPK_EXTRACT_ROOT" not in worker_env:
+    extract_root = model_path.parent / f".lightglue-extract-{target.lower()}"
+    extract_root.mkdir(parents=True, exist_ok=True)
+    worker_env["SIMA_MPK_EXTRACT_ROOT"] = str(extract_root)
   command = [
       sys.executable,
       str(Path(__file__).resolve()),
@@ -132,13 +139,18 @@ def _run_isolated(model_path: Path, target: str, output_path: Path) -> dict[str,
       "--output",
       str(output_path),
   ]
-  completed = subprocess.run(
-      command,
-      check=False,
-      capture_output=True,
-      text=True,
-      timeout=120,
-  )
+  try:
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        env=worker_env,
+        text=True,
+        timeout=120,
+    )
+  finally:
+    if extract_root is not None:
+      shutil.rmtree(extract_root, ignore_errors=True)
   if completed.returncode != 0:
     raise AssertionError(
         f"LightGlue {target} worker failed with {completed.returncode}\n"
