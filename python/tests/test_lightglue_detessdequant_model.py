@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 KEYPOINT_COUNT = 600
 DESCRIPTOR_DIM = 256
@@ -25,7 +24,7 @@ METRICS_PREFIX = "LIGHTGLUE_METRICS="
 def _model_path() -> Path:
   value = os.environ.get(MODEL_ENV, "")
   if not value:
-    pytest.skip(f"{MODEL_ENV} is not set")
+    raise AssertionError(f"required model environment variable is not set: {MODEL_ENV}")
   path = Path(value)
   if not path.is_file():
     raise AssertionError(f"{MODEL_ENV} does not name a file: {path}")
@@ -171,7 +170,7 @@ def _run_isolated(model_path: Path, target: str, output_path: Path) -> dict[str,
 
 def test_lightglue_model_wide_cblock_matches_on_auto_and_ev74(tmp_path):
   if platform.machine().lower() not in {"aarch64", "arm64"}:
-    pytest.skip("LightGlue MPK regression requires a Modalix AArch64 target")
+    raise AssertionError("LightGlue MPK regression requires a Modalix AArch64 target")
 
   model_path = _model_path()
   outputs = {}
