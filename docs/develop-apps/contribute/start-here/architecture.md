@@ -137,7 +137,9 @@ between implementation options.
   ProcessCVU V2 request whenever it must synthesize those descriptors across the DSO boundary.
   Its fixed-width prefix and ABI probe are validated before either DSO reads the rich C++ request;
   the legacy request and builder remain unchanged for binary compatibility rather than acquiring
-  another ambiguous tail field.
+  another ambiguous tail field. The explicit V2 CBlock16 encoding is currently valid only for
+  fused DetessDequant; V2 requests using it for other ProcessCVU families fail instead of being
+  silently treated as padded HWC until those kernels implement CBlock addressing.
 - **ProcessCVU backend policy has one authority.** A stage's capability result owns backend
   availability and the AUTO preference used by resolution and diagnostics. Explicit stage or
   session targets either run on the requested supported backend or fail; later role-based

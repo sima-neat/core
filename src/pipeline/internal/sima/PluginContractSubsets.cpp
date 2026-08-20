@@ -2705,7 +2705,11 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
         throw std::invalid_argument(
             "detessellate runtime config could not synthesize typed input tensor");
       }
-      apply_tiled_channel_encoding_local(&input_desc, subset.align_c16, subset.cblock);
+      // Standalone Detess kernels consume padded pixel-major HWC. Historical
+      // MPKs also used cblock as an aggregate C16-capacity fact here, so keep
+      // those contracts on padded HWC without advertising CBlock16.
+      apply_tiled_channel_encoding_local(&input_desc, subset.align_c16 || subset.cblock,
+                                         /*cblock=*/false);
       input_desc.storage.nbytes = subset.input_transport_size_bytes;
       runtime.input_tensors.push_back(input_desc);
     }

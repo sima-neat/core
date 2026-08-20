@@ -68,12 +68,14 @@ struct GraphProcessCvuIoData {
   bool cblock = false;
 };
 
-constexpr std::uint32_t processcvu_tiled_encoding_flags_local(const bool c16_packed,
-                                                              const bool cblock) {
-  if (cblock) {
+constexpr std::uint32_t processcvu_tiled_encoding_flags_local(
+    const simaai::neat::GraphProcessCvuTiledChannelEncoding encoding) {
+  if (encoding == simaai::neat::GraphProcessCvuTiledChannelEncoding::CBlock16) {
     return SIMA_EV_TILED_FLAG_CBLOCK16;
   }
-  return c16_packed ? SIMA_EV_TILED_FLAG_PADDED_HWC_C16 : SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
+  return encoding == simaai::neat::GraphProcessCvuTiledChannelEncoding::PaddedHwcC16
+             ? SIMA_EV_TILED_FLAG_PADDED_HWC_C16
+             : SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
 }
 
 bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b, std::uint64_t* out);
@@ -2608,8 +2610,9 @@ bool processcvu_build_dense_tensor_desc_local(const std::vector<std::int64_t>& s
 bool processcvu_build_tiled_tensor_desc_local(
     const std::vector<std::int64_t>& shape, const std::vector<std::int64_t>& tile_shape,
     const std::string& dtype_token, const std::string& layout_token,
-    const std::uint32_t tile_align_bytes, const std::uint64_t size_bytes, const bool c16_packed,
-    const bool cblock, sima_ev_tensor_desc* out, std::string* error_message) {
+    const std::uint32_t tile_align_bytes, const std::uint64_t size_bytes,
+    const simaai::neat::GraphProcessCvuTiledChannelEncoding encoding, sima_ev_tensor_desc* out,
+    std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "processcvu tiled tensor desc requires output storage";
@@ -2640,7 +2643,7 @@ bool processcvu_build_tiled_tensor_desc_local(
       return false;
     }
     if (tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0) {
-      out->layout.tiled.flags = processcvu_tiled_encoding_flags_local(c16_packed, cblock);
+      out->layout.tiled.flags = processcvu_tiled_encoding_flags_local(encoding);
     }
     out->storage.nbytes = size_bytes != 0U ? size_bytes
                                            : tensorsemantics::generic_fixed_slot_tiled_size_bytes(
@@ -2668,7 +2671,7 @@ bool processcvu_build_tiled_tensor_desc_local(
   }
   out->layout.tiled.tile_align_bytes = tile_align_bytes;
   if (tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0) {
-    out->layout.tiled.flags = processcvu_tiled_encoding_flags_local(c16_packed, cblock);
+    out->layout.tiled.flags = processcvu_tiled_encoding_flags_local(encoding);
   } else {
     out->layout.tiled.flags = SIMA_EV_TILED_FLAG_NONE;
   }
@@ -2945,6 +2948,11 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
   cfg->input_tensors.clear();
   cfg->output_tensors.clear();
   const std::string canonical = processcvu_canonical_graph_name_local(graph_name);
+  simaai::neat::GraphProcessCvuTiledChannelEncoding resolved_encoding;
+  if (!resolve_graph_processcvu_tiled_channel_encoding(canonical, io.c16_packed, io.cblock,
+                                                       &resolved_encoding, error_message)) {
+    return false;
+  }
   const bool input_is_tiled =
       canonical == "detessellate" || canonical == "detesscast" || canonical == "detessdequant";
   const bool output_is_tiled = canonical == "tessellate" || canonical == "casttess" ||
@@ -2996,7 +3004,7 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
                                                  error_message) ||
           !processcvu_build_tiled_tensor_desc_local(
               input_shape, tile_shape, input_dtype, input_layout, 0U, input.size_bytes,
-              io.c16_packed, io.cblock, &input_desc, error_message)) {
+              resolved_encoding, &input_desc, error_message)) {
         return false;
       }
     } else if (!processcvu_build_dense_tensor_desc_local(input_shape, input_dtype, input_layout,
@@ -3010,7 +3018,7 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
                                                  error_message) ||
           !processcvu_build_tiled_tensor_desc_local(
               output_shape, tile_shape, output_dtype, output_layout, output_tile_align,
-              output.size_bytes, io.c16_packed, io.cblock, &output_desc, error_message)) {
+              output.size_bytes, resolved_encoding, &output_desc, error_message)) {
         return false;
       }
     } else if (!processcvu_build_dense_tensor_desc_local(output_shape, output_dtype, output_layout,
@@ -3420,11 +3428,11 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
   }
   request.slice_shapes = io.slice_shapes;
   request.c16_packed_io = io.c16_packed;
-  request_v2.tiled_channel_encoding =
-      io.cblock
-          ? simaai::neat::GraphProcessCvuTiledChannelEncoding::CBlock16
-          : (io.c16_packed ? simaai::neat::GraphProcessCvuTiledChannelEncoding::PaddedHwcC16
-                           : simaai::neat::GraphProcessCvuTiledChannelEncoding::CompactPixelMajor);
+  if (!resolve_graph_processcvu_tiled_channel_encoding(request.graph_name, io.c16_packed, io.cblock,
+                                                       &request_v2.tiled_channel_encoding,
+                                                       error_message)) {
+    return false;
+  }
   request.input_tensors.reserve(io.input_tensors.size());
   for (const auto& tensor : io.input_tensors) {
     request.input_tensors.push_back(bridge_graph_tensor_contract_from_mpk_local(tensor));
@@ -5303,6 +5311,31 @@ void overlay_processmla_runtime_graph_node_local(
 }
 
 } // namespace
+
+bool resolve_graph_processcvu_tiled_channel_encoding(
+    const std::string& canonical_graph_name, const bool c16_packed, const bool cblock,
+    simaai::neat::GraphProcessCvuTiledChannelEncoding* out, std::string* error_message) {
+  if (error_message) {
+    error_message->clear();
+  }
+  if (!out) {
+    if (error_message) {
+      *error_message = "graph processcvu V2 tiled channel encoding requires output storage";
+    }
+    return false;
+  }
+  if (cblock && canonical_graph_name != "detessdequant") {
+    if (error_message) {
+      *error_message = "graph processcvu V2 CBlock16 encoding is supported only for detessdequant";
+    }
+    return false;
+  }
+  *out = cblock
+             ? simaai::neat::GraphProcessCvuTiledChannelEncoding::CBlock16
+             : (c16_packed ? simaai::neat::GraphProcessCvuTiledChannelEncoding::PaddedHwcC16
+                           : simaai::neat::GraphProcessCvuTiledChannelEncoding::CompactPixelMajor);
+  return true;
+}
 
 std::string validate_graph_processcvu_prepared_bridge_v2_abi(
     const simaai::neat::GraphProcessCvuPreparedBridgeAbiV2* bridge_abi,

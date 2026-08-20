@@ -143,6 +143,23 @@ std::uint32_t prepared_input_flags(const std::filesystem::path& root) {
   return tensors.front().layout.tiled.flags;
 }
 
+std::uint32_t authoritative_detessdequant_cblock_flags() {
+  pcs::DetessDequantHeadContractSubset head;
+  head.per_head_input_shape = {1, 2, 3, 33};
+  head.input_transport_shape = {1, 2, 3, 48};
+  head.input_transport_size_bytes = 288U;
+  head.frame_shape = {1, 2, 3, 33};
+  head.frame_type = "INT8";
+  head.slice_shape = {2, 3, 33};
+  head.align_c16 = true;
+  head.cblock = true;
+  head.output_dtype = "FP32";
+  const auto contract = pcs::build_detessdequant_tensor_descriptor_contract(head, head.frame_shape);
+  require(contract.input.storage.nbytes == 288U,
+          "authoritative DetessDequant factory must preserve CBlock physical capacity");
+  return contract.input.layout.tiled.flags;
+}
+
 simaai::neat::GraphProcessCvuPreparedBridgeAbiV2 matching_probe() {
   simaai::neat::GraphProcessCvuPreparedBridgeAbiV2 probe;
   probe.abi_version = simaai::neat::GRAPH_PROCESSCVU_PREPARED_BRIDGE_ABI_VERSION_V2;
@@ -163,9 +180,21 @@ RUN_TEST(
     "unit_processcvu_v2_mpk_encoding_test", ([] {
       require(ps::validate_graph_processcvu_prepared_bridge_v2().empty(),
               "loaded prepared-runtime bridge should expose the matching V2 probe and builder");
-      const auto cblock_flags = prepared_input_flags(write_mpk_fixture("cblock", true, true, 576U));
+
+      simaai::neat::GraphProcessCvuTiledChannelEncoding encoding;
+      std::string encoding_error;
+      require(!ps::resolve_graph_processcvu_tiled_channel_encoding("detessellate", true, true,
+                                                                   &encoding, &encoding_error) &&
+                  encoding_error.find("supported only for detessdequant") != std::string::npos,
+              "non-DetessDequant V2 CBlock must fail with an actionable error");
+      require(ps::resolve_graph_processcvu_tiled_channel_encoding("detessdequant", true, true,
+                                                                  &encoding, &encoding_error) &&
+                  encoding == simaai::neat::GraphProcessCvuTiledChannelEncoding::CBlock16,
+              "DetessDequant V2 CBlock must remain supported");
+
+      const auto cblock_flags = authoritative_detessdequant_cblock_flags();
       require(cblock_flags == SIMA_EV_TILED_FLAG_CBLOCK16,
-              "MPK cblock must produce exactly the CBlock16 descriptor flag; got " +
+              "authoritative DetessDequant factory must produce exactly CBlock16; got " +
                   std::to_string(cblock_flags));
       const auto padded_flags =
           prepared_input_flags(write_mpk_fixture("padded_hwc", true, false, 576U));
