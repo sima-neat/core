@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CORE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
+
 usage() {
   cat <<'EOF'
 Usage: resolve_hardware_test_assets.sh [options]
@@ -25,6 +29,8 @@ Inputs:
   SIMAPCIE_BOXDECODE_IMAGE_URL
                               Direct URL fallback for object-detection image
   SIMAPCIE_YOLOV8_MODEL_NAME  modelzoo name (default: yolo_v8s)
+  SIMA_MODELZOO_VERSION        Model Zoo version override (default: manifest)
+  SIMAPCIE_DEPS_MANIFEST       Dependency manifest override
 
 Outputs:
   SIMAPCIE_YOLOV8_MODEL=<path>
@@ -133,12 +139,43 @@ download_file() {
   curl -fsSL "${url}" -o "${dest}"
 }
 
+modelzoo_version() {
+  if [[ -n "${SIMA_MODELZOO_VERSION:-}" ]]; then
+    printf '%s\n' "${SIMA_MODELZOO_VERSION}"
+    return
+  fi
+
+  if [[ ! -f "${DEPS_MANIFEST}" ]]; then
+    echo "ERROR: dependency manifest not found: ${DEPS_MANIFEST}" >&2
+    return 1
+  fi
+
+  python3 - "${DEPS_MANIFEST}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+version = str(
+    manifest.get("modelzoo-version") or manifest.get("platform-version") or ""
+).strip()
+if not version:
+    raise SystemExit(
+        f"ERROR: {manifest_path} defines neither modelzoo-version nor platform-version"
+    )
+print(version)
+PY
+}
+
 resolve_from_modelzoo() {
   local model_name="$1"
   local pattern="$2"
+  local version
   [[ -n "${model_name}" ]] || return 1
+  version="$(modelzoo_version)" || return 1
   if command -v sima-cli >/dev/null 2>&1; then
-    SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo -v 2.1.2 get "${model_name}" >/dev/null
+    SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo -v "${version}" get "${model_name}" >/dev/null
   else
     return 1
   fi

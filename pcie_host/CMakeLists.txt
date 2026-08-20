@@ -192,6 +192,7 @@ endif()
 
 if (SIMAPCIE_BUILD_TESTS)
   enable_testing()
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
   add_executable(unit_pcie_host_options_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit_pcie_host_options_test.cpp
@@ -260,6 +261,11 @@ if (SIMAPCIE_BUILD_TESTS)
   add_test(NAME unit_pcie_host_runtime_test COMMAND unit_pcie_host_runtime_test)
   add_test(NAME unit_pcie_host_ssh_runner_test COMMAND unit_pcie_host_ssh_runner_test)
   add_test(NAME unit_pcie_host_async_test_runner_test COMMAND unit_pcie_host_async_test_runner_test)
+  add_test(
+    NAME unit_pcie_host_modelzoo_version_test
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_resolve_hardware_test_assets.py"
+  )
 endif()
 
 if (SIMAPCIE_BUILD_HARDWARE_TESTS)
