@@ -139,41 +139,18 @@ download_file() {
   curl -fsSL "${url}" -o "${dest}"
 }
 
-modelzoo_version() {
-  if [[ -n "${SIMA_MODELZOO_VERSION:-}" ]]; then
-    printf '%s\n' "${SIMA_MODELZOO_VERSION}"
-    return
-  fi
-
-  if [[ ! -f "${DEPS_MANIFEST}" ]]; then
-    echo "ERROR: dependency manifest not found: ${DEPS_MANIFEST}" >&2
-    return 1
-  fi
-
-  python3 - "${DEPS_MANIFEST}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-manifest_path = Path(sys.argv[1])
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-version = str(
-    manifest.get("modelzoo-version") or manifest.get("platform-version") or ""
-).strip()
-if not version:
-    raise SystemExit(
-        f"ERROR: {manifest_path} defines neither modelzoo-version nor platform-version"
-    )
-print(version)
-PY
-}
-
 resolve_from_modelzoo() {
   local model_name="$1"
   local pattern="$2"
-  local version
+  local version="${SIMA_MODELZOO_VERSION:-}"
   [[ -n "${model_name}" ]] || return 1
-  version="$(modelzoo_version)" || return 1
+  if [[ -z "${version}" ]]; then
+    version="$(
+      python3 -c \
+        'import json, sys; data=json.load(open(sys.argv[1], encoding="utf-8")); print(data.get("modelzoo-version") or data["platform-version"])' \
+        "${DEPS_MANIFEST}"
+    )" || return 1
+  fi
   if command -v sima-cli >/dev/null 2>&1; then
     SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo -v "${version}" get "${model_name}" >/dev/null
   else
