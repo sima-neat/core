@@ -2550,9 +2550,9 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     // Only families whose MPK-declared token is authoritative are honoured here.
     // For everything else the token is read and dropped, and the caller must set
     // Model::Options::decode_type by hand.
-    if (parsed_type.has_value() && (box_decode_type_is_ssd_family(*parsed_type) ||
-                                    *parsed_type == BoxDecodeType::SuperPoint ||
-                                    *parsed_type == BoxDecodeType::YoloXSegPose)) {
+    if (parsed_type.has_value() &&
+        (box_decode_type_is_ssd_family(*parsed_type) || *parsed_type == BoxDecodeType::SuperPoint ||
+         *parsed_type == BoxDecodeType::YoloXSegPose)) {
       out.decode_type = *parsed_type;
     }
   }
