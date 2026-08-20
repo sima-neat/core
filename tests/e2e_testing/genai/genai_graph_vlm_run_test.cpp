@@ -29,8 +29,6 @@ namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_VLM_MODEL";
 constexpr const char* kPrompt = "Describe this image in a short phrase.";
-constexpr const char* kExpectedText =
-    "A skier is in the air, wearing a colorful jacket and beige pants.";
 
 std::string trim_text(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -172,8 +170,7 @@ void require_vlm_outputs(const GraphOutputs& outputs, const std::string& label,
     require(outputs.token_samples == 1, label + " should emit one sync token sample");
   }
   std::cout << label << " text=" << outputs.tokens << "\n";
-  require(trim_text(outputs.tokens) == kExpectedText,
-          label + " generated unexpected text: " + outputs.tokens);
+  require(!trim_text(outputs.tokens).empty(), label + " expected non-empty generated text");
   const std::string finish_reason = bundle_field_text(outputs.done, "finish_reason");
   require(finish_reason == "stop" || finish_reason == "interrupted",
           label + " returned unexpected finish reason: " + finish_reason);

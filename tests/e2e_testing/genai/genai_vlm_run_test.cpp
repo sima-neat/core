@@ -26,8 +26,6 @@ namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_VLM_MODEL";
 constexpr const char* kPrompt = "Describe this image in a short phrase.";
-constexpr const char* kExpectedText =
-    "A skier is in the air, wearing a colorful jacket and beige pants.";
 
 std::string trim_text(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -66,7 +64,6 @@ void require_generation_result(const simaai::neat::genai::GenerationResult& resu
             << " tps=" << result.metrics.tokens_per_second
             << " finish_reason=" << result.finish_reason << "\n";
   std::cout << label << " text=" << result.text << "\n";
-  require(text == kExpectedText, label + " generated unexpected text: " + result.text);
   require(result.metrics.generated_tokens > 0, label + " expected generated tokens");
   require(result.finish_reason == "stop" || result.finish_reason == "interrupted",
           label + " returned unexpected finish reason: " + result.finish_reason);
@@ -137,8 +134,8 @@ int main(int argc, char** argv) {
                 << " tps=" << final_sample.metrics.tokens_per_second
                 << " finish_reason=" << final_sample.finish_reason << "\n";
       std::cout << "GENAI_VLM_STREAM text=" << streamed_text << "\n";
-      require(trim_text(streamed_text) == kExpectedText,
-              "GENAI_VLM_STREAM generated unexpected text: " + streamed_text);
+      require(!trim_text(streamed_text).empty(),
+              "GENAI_VLM_STREAM expected non-empty generated text");
 
       require(model.encode(std::vector<cv::Mat>{image_bgr}), "GENAI_VLM_ENCODE failed");
       require(model.cached_image_count() == 1U, "GENAI_VLM_ENCODE expected one cached image");

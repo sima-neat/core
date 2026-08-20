@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CORE_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+DEPS_MANIFEST="${SIMAPCIE_DEPS_MANIFEST:-${CORE_ROOT}/deps/manifest.json}"
+
 usage() {
   cat <<'EOF'
 Usage: resolve_hardware_test_assets.sh [options]
@@ -25,6 +29,8 @@ Inputs:
   SIMAPCIE_BOXDECODE_IMAGE_URL
                               Direct URL fallback for object-detection image
   SIMAPCIE_YOLOV8_MODEL_NAME  modelzoo name (default: yolo_v8s)
+  SIMA_MODELZOO_VERSION        Model Zoo version override (default: manifest)
+  SIMAPCIE_DEPS_MANIFEST       Dependency manifest override
 
 Outputs:
   SIMAPCIE_YOLOV8_MODEL=<path>
@@ -136,9 +142,17 @@ download_file() {
 resolve_from_modelzoo() {
   local model_name="$1"
   local pattern="$2"
+  local version="${SIMA_MODELZOO_VERSION:-}"
   [[ -n "${model_name}" ]] || return 1
+  if [[ -z "${version}" ]]; then
+    version="$(
+      python3 -c \
+        'import json, sys; data=json.load(open(sys.argv[1], encoding="utf-8")); print(data.get("modelzoo-version") or data["platform-version"])' \
+        "${DEPS_MANIFEST}"
+    )" || return 1
+  fi
   if command -v sima-cli >/dev/null 2>&1; then
-    SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo get "${model_name}" >/dev/null
+    SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo -v "${version}" get "${model_name}" >/dev/null
   else
     return 1
   fi
