@@ -19,7 +19,7 @@
 // model, including prompt, done metadata, and error output.
 // Model fixture:
 //   export LLIMA_MODELS_PATH=/media/nvme/llima/models
-//   export SIMA_TEST_LLIMA_TEXT_MODEL=Qwen2.5-0.5B-Instruct-GPTQ-a16w4
+//   export SIMA_TEST_LLIMA_TEXT_MODEL=Qwen2.5-0.5B-Instruct-Autoround-a16w4
 //   tests/tools/prepare_genai_models.sh
 namespace fs = std::filesystem;
 

@@ -23,7 +23,7 @@ namespace {
 using Json = nlohmann::json;
 
 constexpr const char* kQwenModelEnv = "SIMA_TEST_LLIMA_REASONING_QWEN_MODEL";
-constexpr const char* kQwenModel = "Qwen3-0.6B-GPTQ-a16w4";
+constexpr const char* kQwenModel = "Qwen3-0.6B-Autoround-a16w4";
 constexpr const char* kGemmaModelEnv = "SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL";
 constexpr const char* kGemmaModel = "Gemma-4-E2B-it-TextOnly-GPTQ-a16w4";
 constexpr const char* kQuery = "Solve x + 7 = 12. Think briefly, then give x.";

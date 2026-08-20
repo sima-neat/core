@@ -68,7 +68,13 @@ def component_line(stdout: str, name: str) -> str:
     return next(line for line in stdout.splitlines() if ANSI_RE.sub("", line).strip().startswith(name))
 
 
-def make_curl(bin_dir: Path, log_path: Path | None = None) -> None:
+def make_curl(
+    bin_dir: Path,
+    log_path: Path | None = None,
+    *,
+    insight_latest_tag: str = "7654321",
+    insight_version: str = "0.0.0+main.7654321",
+) -> None:
     log_line = f'echo "$url" >> "{log_path}"' if log_path else ":"
     write_exe(
         bin_dir / "curl",
@@ -81,8 +87,8 @@ def make_curl(bin_dir: Path, log_path: Path | None = None) -> None:
           https://core.test/main/latest.tag) printf 'abcdef0\\n' ;;
           https://core.test/main/abcdef0/metadata-minimal.json) printf '{{"version":"0.0.0+main-abcdef0"}}\\n' ;;
           https://core.test/develop/1234567/metadata-minimal.json) printf '{{"version":"0.0.0+develop-1234567"}}\\n' ;;
-          https://insight.test/main/latest.tag) printf '7654321\\n' ;;
-          https://insight.test/main/7654321/metadata.json) printf '{{"version":"0.0.0+main.7654321"}}\\n' ;;
+          https://insight.test/main/latest.tag) printf '{insight_latest_tag}\\n' ;;
+          https://insight.test/main/{insight_latest_tag}/metadata.json) printf '{{"version":"{insight_version}"}}\\n' ;;
           *) echo "unexpected curl url: $url" >&2; exit 22 ;;
         esac
         """,
@@ -954,6 +960,52 @@ def test_update_skips_current_core_and_insight_but_updates_playbooks(tmp_path: P
     assert "sima-cli playbooks update" in call_text
     assert "sima-cli install -m" not in call_text
     assert "insight-admin update" not in call_text
+
+
+def test_matching_insight_sha_prefix_is_current_across_status_json_and_update(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    make_curl(
+        bin_dir,
+        insight_latest_tag="5dd1a18b62a5",
+        insight_version="0.0.0+main.5dd1a18",
+    )
+    calls = tmp_path / "calls.log"
+    make_insight_admin(bin_dir, calls=calls, running=True)
+    env = base_env(tmp_path, bin_dir)
+    env["NO_COLOR"] = ""
+    insight_venv = tmp_path / "insight" / "venv"
+    (insight_venv / "bin").mkdir(parents=True)
+    make_pip(insight_venv / "bin" / "pip3", "neat-insight", "0.0.0+main.5dd1a18")
+    env["NEAT_INSIGHT_VENV_DIR"] = str(insight_venv)
+
+    status_proc = run_neat(tmp_path, ["--color=always"], env)
+
+    assert status_proc.returncode == 0, status_proc.stderr
+    insight_line = component_line(status_proc.stdout, "neat-insight")
+    assert "\x1b[0;32m0.0.0+main.5dd1a18\x1b[0m" in insight_line
+    assert "Update available:" not in status_proc.stdout
+
+    json_proc = run_neat(tmp_path, ["--json"], env)
+
+    assert json_proc.returncode == 0, json_proc.stderr
+    insight = json.loads(json_proc.stdout)["components"]["insight"]
+    assert insight["tag"] == "5dd1a18"
+    assert insight["latestTag"] == "5dd1a18b62a5"
+    assert insight["updateAvailable"] is False
+
+    update_proc = run_neat(
+        tmp_path,
+        ["update", "--insight-only", "--yes", "--color=never"],
+        env,
+    )
+
+    assert update_proc.returncode == 0, update_proc.stderr
+    assert "neat-insight  0.0.0+main.5dd1a18 (already current)" in update_proc.stdout
+    assert "All selected components are already current." in update_proc.stdout
+    assert "insight-admin update" not in calls.read_text(encoding="utf-8")
 
 
 def test_update_core_only_current_exits_without_confirmation_or_sima_cli(tmp_path: Path) -> None:

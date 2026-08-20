@@ -752,7 +752,6 @@ if (SimaLMM_FOUND)
   )
 
   if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-    set_tests_properties(genai_graph_vlm_run_test PROPERTIES DISABLED TRUE)
     set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
     set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   endif()
