@@ -834,12 +834,25 @@ resolve_updates() {
   fi
 }
 
+component_tags_match() {
+  local current_tag="$1"
+  local latest_tag="$2"
+  [[ -n "${current_tag}" && -n "${latest_tag}" ]] || return 1
+  if [[ "${current_tag}" == "${latest_tag}" ]]; then
+    return 0
+  fi
+  if [[ ! "${current_tag}" =~ ^[0-9a-f]{7,40}$ || ! "${latest_tag}" =~ ^[0-9a-f]{7,40}$ ]]; then
+    return 1
+  fi
+  [[ "${current_tag}" == "${latest_tag}"* || "${latest_tag}" == "${current_tag}"* ]]
+}
+
 component_state_from_latest() {
   local current_tag="$1"
   local latest_tag="$2"
   if [[ -z "${latest_tag}" ]]; then
     printf '%s' "warning"
-  elif [[ -n "${current_tag}" && "${current_tag}" == "${latest_tag}" ]]; then
+  elif component_tags_match "${current_tag}" "${latest_tag}"; then
     printf '%s' "current"
   else
     printf '%s' "update"
@@ -849,7 +862,7 @@ component_state_from_latest() {
 component_update_needed() {
   local current_tag="$1"
   local latest_tag="$2"
-  [[ -z "${current_tag}" || -z "${latest_tag}" || "${current_tag}" != "${latest_tag}" ]]
+  ! component_tags_match "${current_tag}" "${latest_tag}"
 }
 
 format_insight_service_state() {
@@ -1052,6 +1065,7 @@ print_status_json() {
     python3 - <<'PY'
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -1067,10 +1081,20 @@ def bool_env(name):
     return env(name) == "1"
 
 
+def tags_match(current_tag, latest_tag):
+    if not current_tag or not latest_tag:
+        return False
+    if current_tag == latest_tag:
+        return True
+    if not all(re.fullmatch(r"[0-9a-f]{7,40}", tag) for tag in (current_tag, latest_tag)):
+        return False
+    return current_tag.startswith(latest_tag) or latest_tag.startswith(current_tag)
+
+
 def update_available(current_tag, latest_tag):
     if not latest_tag:
         return None
-    return current_tag != latest_tag
+    return not tags_match(current_tag, latest_tag)
 
 
 def protocol_for(name_parts, value):
