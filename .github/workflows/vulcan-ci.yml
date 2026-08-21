@@ -98,7 +98,8 @@ jobs:
           "${test_venv}/bin/python" -m pytest -q \
             tests/test_build_pyneat_wheel.py \
             tests/test_resolve_compiler_cache.py \
-            tests/tools/test_internals_package_boundary.py
+            tests/tools/test_internals_package_boundary.py \
+            tests/tools/test_neat_model_compiler_discovery.py
 
       - name: Resolve cache namespace and access
         id: resolve

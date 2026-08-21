@@ -140,6 +140,32 @@ set_tests_properties(
   PROPERTIES LABELS "unit;installer;regression"
 )
 
+# Keep `neat status` Model Compiler discovery in the normal CTest gate: the
+# extension directory can exist as a bare venv, which used to be reported as an
+# install. Copy the test and the `neat` script below the build tests root and
+# pass the script path explicitly, as the test cannot derive it from its own
+# location once it runs from the build tree.
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_neat_model_compiler_discovery.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/test_neat_model_compiler_discovery.py"
+  COPYONLY
+)
+configure_file(
+  "${CMAKE_SOURCE_DIR}/scripts/neat"
+  "${CMAKE_CURRENT_BINARY_DIR}/tools/neat"
+  COPYONLY
+)
+add_test(
+  NAME unit_neat_model_compiler_discovery_test
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_BINARY_DIR}/tools/test_neat_model_compiler_discovery.py"
+          --neat "${CMAKE_CURRENT_BINARY_DIR}/tools/neat"
+)
+set_tests_properties(
+  unit_neat_model_compiler_discovery_test
+  PROPERTIES LABELS "unit;cli;regression"
+)
+
 # ------------------------------------------------------------------------------
 # Python test source compilation
 # ------------------------------------------------------------------------------
