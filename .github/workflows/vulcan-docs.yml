@@ -152,6 +152,7 @@ jobs:
           fi
 
           python3 tests/test_autodoc.py
+          python3 tests/test_algolia_developer_center_index.py
           ./build.sh --doc
 
           test -d website/build

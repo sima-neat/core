@@ -16,6 +16,8 @@ from pathlib import Path
 
 
 SOURCE = "software"
+DEFAULT_LOCALE = "en"
+I18N_DOCS_SUBDIR = Path("docusaurus-plugin-content-docs/current")
 DEFAULT_MAX_RECORD_BYTES = 9_500
 DEFAULT_BATCH_SIZE = 500
 EXCLUDES = {"_category_.json", "_tmp_test.txt"}
@@ -28,6 +30,11 @@ def parse_args() -> argparse.Namespace:
         description="Generate or sync software docs records in the shared Developer Center Algolia index.",
     )
     parser.add_argument("--docs-dir", default="docs", help="Docs root directory.")
+    parser.add_argument(
+        "--i18n-dir",
+        default="website/i18n",
+        help="Docusaurus i18n root containing localized docs (default: website/i18n).",
+    )
     parser.add_argument("--site-base-url", required=True, help="Public Developer Center base URL.")
     parser.add_argument("--records-json", help="Write generated records to this JSON file.")
     parser.add_argument("--input-records-json", help="Read records from this JSON file instead of generating them.")
@@ -83,7 +90,7 @@ def section_for_path(path: Path, docs_dir: Path) -> str:
     return "Overview"
 
 
-def route_for_path(path: Path, docs_dir: Path, site_base_url: str) -> str:
+def route_for_path(path: Path, docs_dir: Path, site_base_url: str, language: str = DEFAULT_LOCALE) -> str:
     rel = path.relative_to(docs_dir).as_posix()
     stem = rel.rsplit(".", 1)[0]
     if stem.endswith("/index"):
@@ -96,7 +103,8 @@ def route_for_path(path: Path, docs_dir: Path, site_base_url: str) -> str:
         major, chapter, slug = match.groups()
         stem = f"tutorials/v{major}/{chapter}-{slug.replace('_', '-')}"
 
-    route = f"/software/{stem}".rstrip("/")
+    locale_prefix = f"/{language}" if language != DEFAULT_LOCALE else ""
+    route = f"/software{locale_prefix}/{stem}".rstrip("/")
     if route == "":
         route = "/software"
     return f"{site_base_url.rstrip('/')}{route}"
@@ -136,51 +144,73 @@ def fit_record(record: dict, max_record_bytes: int) -> tuple[dict, bool]:
     return record, True
 
 
-def generate_records(docs_dir: Path, site_base_url: str, max_record_bytes: int) -> tuple[list[dict], dict]:
+def localized_doc_roots(docs_dir: Path, i18n_dir: Path | None) -> list[tuple[str, Path]]:
+    roots = [(DEFAULT_LOCALE, docs_dir.resolve())]
+    if i18n_dir is None or not i18n_dir.is_dir():
+        return roots
+    for locale_dir in sorted(i18n_dir.iterdir()):
+        localized_docs = locale_dir / I18N_DOCS_SUBDIR
+        if locale_dir.is_dir() and localized_docs.is_dir():
+            roots.append((locale_dir.name, localized_docs.resolve()))
+    return roots
+
+
+def generate_records(
+    docs_dir: Path,
+    site_base_url: str,
+    max_record_bytes: int,
+    i18n_dir: Path | None = None,
+) -> tuple[list[dict], dict]:
     docs_dir = docs_dir.resolve()
     records: list[dict] = []
     by_section: dict[str, int] = {}
+    by_language: dict[str, int] = {}
     trimmed = 0
     max_seen = 0
 
-    for path in sorted(docs_dir.rglob("*")):
-        if not path.is_file() or path.name in EXCLUDES or path.suffix.lower() not in EXTENSIONS:
-            continue
-        if any(part in SKIP_PARTS for part in path.relative_to(docs_dir).parts):
-            continue
+    for language, language_docs_dir in localized_doc_roots(docs_dir, i18n_dir):
+        for path in sorted(language_docs_dir.rglob("*")):
+            if not path.is_file() or path.name in EXCLUDES or path.suffix.lower() not in EXTENSIONS:
+                continue
+            if any(part in SKIP_PARTS for part in path.relative_to(language_docs_dir).parts):
+                continue
 
-        raw = strip_frontmatter(path.read_text(encoding="utf-8"))
-        body = clean_markdown(raw)
-        if not body:
-            continue
+            raw = strip_frontmatter(path.read_text(encoding="utf-8"))
+            body = clean_markdown(raw)
+            if not body:
+                continue
 
-        rel = path.relative_to(docs_dir).as_posix()
-        title = title_from_markdown(path, raw)
-        section = section_for_path(path, docs_dir)
-        url = route_for_path(path, docs_dir, site_base_url)
-        route = urllib.parse.urlparse(url).path or "/software"
-        record = {
-            "objectID": f"{SOURCE}:{hashlib.sha1(rel.encode('utf-8')).hexdigest()}",
-            "source": SOURCE,
-            "url": url,
-            "route": route,
-            "path": rel,
-            "section": section,
-            "category": section,
-            "title": title,
-            "content": body[:20_000],
-            "hierarchy": {"lvl0": section, "lvl1": title},
-        }
-        record, was_trimmed = fit_record(record, max_record_bytes)
-        trimmed += int(was_trimmed)
-        max_seen = max(max_seen, record_size(record))
-        records.append(record)
-        by_section[section] = by_section.get(section, 0) + 1
+            rel = path.relative_to(language_docs_dir).as_posix()
+            title = title_from_markdown(path, raw)
+            section = section_for_path(path, language_docs_dir)
+            url = route_for_path(path, language_docs_dir, site_base_url, language)
+            route = urllib.parse.urlparse(url).path or "/software"
+            record_key = f"{language}:{rel}"
+            record = {
+                "objectID": f"{SOURCE}:{hashlib.sha1(record_key.encode('utf-8')).hexdigest()}",
+                "source": SOURCE,
+                "language": language,
+                "url": url,
+                "route": route,
+                "path": rel,
+                "section": section,
+                "category": section,
+                "title": title,
+                "content": body[:20_000],
+                "hierarchy": {"lvl0": section, "lvl1": title},
+            }
+            record, was_trimmed = fit_record(record, max_record_bytes)
+            trimmed += int(was_trimmed)
+            max_seen = max(max_seen, record_size(record))
+            records.append(record)
+            by_section[section] = by_section.get(section, 0) + 1
+            by_language[language] = by_language.get(language, 0) + 1
 
     summary = {
         "source": SOURCE,
         "count": len(records),
         "by_section": by_section,
+        "by_language": by_language,
         "trimmed_records": trimmed,
         "max_record_bytes": max_seen,
     }
@@ -199,20 +229,34 @@ class AlgoliaClient:
         }
 
     def post(self, path: str, payload: dict) -> dict:
+        return self.request("POST", path, payload)
+
+    def request(self, method: str, path: str, payload: dict | None = None) -> dict:
         request = urllib.request.Request(
             self.host + path,
-            data=json.dumps(payload).encode("utf-8"),
+            data=json.dumps(payload).encode("utf-8") if payload is not None else None,
             headers=self.headers,
-            method="POST",
+            method=method,
         )
         try:
             with urllib.request.urlopen(request, timeout=45) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             body = error.read().decode("utf-8", errors="replace")
-            if error.code == 404 and path.endswith("/browse"):
+            if error.code == 404 and (
+                path.endswith("/browse") or (method == "GET" and path.endswith("/settings"))
+            ):
                 return {"hits": []}
             raise SystemExit(f"Algolia API error: HTTP {error.code} on {path}\n{body}") from error
+
+    def ensure_language_filter(self) -> None:
+        path = f"/1/indexes/{self.index}/settings"
+        settings = self.request("GET", path)
+        attributes = list(settings.get("attributesForFaceting") or [])
+        configured = any(re.fullmatch(r"(?:(?:filterOnly|searchable)\()?language\)?", item) for item in attributes)
+        if not configured:
+            self.request("PUT", path, {"attributesForFaceting": [*attributes, "filterOnly(language)"]})
+            print("[algolia-index] configured filterOnly(language)")
 
     def browse_source_object_ids(self, source: str) -> list[str]:
         object_ids: list[str] = []
@@ -239,6 +283,7 @@ def sync_records(args: argparse.Namespace, records: list[dict]) -> None:
         raise SystemExit("--app-id, --api-key, and --index-name are required for --sync")
 
     client = AlgoliaClient(args.app_id, args.api_key, args.index_name)
+    client.ensure_language_filter()
     desired_ids = {record["objectID"] for record in records}
     existing_ids = set(client.browse_source_object_ids(SOURCE))
     stale_ids = sorted(existing_ids - desired_ids)
@@ -270,7 +315,12 @@ def main() -> int:
         summary = {"source": SOURCE, "count": len(records), "from": args.input_records_json}
         print("[algolia-index] loaded records:")
     else:
-        records, summary = generate_records(Path(args.docs_dir), args.site_base_url, args.max_record_bytes)
+        records, summary = generate_records(
+            Path(args.docs_dir),
+            args.site_base_url,
+            args.max_record_bytes,
+            Path(args.i18n_dir),
+        )
         print("[algolia-index] generated records:")
     print(json.dumps(summary, indent=2))
 
