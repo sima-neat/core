@@ -909,6 +909,18 @@ def write_root_index_file(
         raise OSError(f"root_index_file '{configured}' was not found")
 
     text = source_path.read_text(encoding="utf-8")
+    omit_line_prefixes = source.get("root_index_omit_line_prefixes", []) or []
+    if not isinstance(omit_line_prefixes, list) or any(
+        not isinstance(prefix, str) or not prefix.strip()
+        for prefix in omit_line_prefixes
+    ):
+        raise ValueError("root_index_omit_line_prefixes must be a list of non-empty strings")
+    if omit_line_prefixes:
+        prefixes = tuple(prefix.strip() for prefix in omit_line_prefixes)
+        text = "".join(
+            line for line in text.splitlines(keepends=True)
+            if not line.lstrip().startswith(prefixes)
+        )
     text = inject_frontmatter(text, "index", 1, str(source.get("title", "")).strip() or None)
     text = rewrite_configured_link_targets(text, link_rewrites)
 

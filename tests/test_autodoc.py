@@ -41,6 +41,64 @@ class PromoteIndexFileTests(unittest.TestCase):
             self.assertIn("[Unrelated](../reports.md)", rewritten)
 
 
+class RootIndexFileTests(unittest.TestCase):
+    def test_omits_configured_repository_only_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            section = root / "section"
+            staging.mkdir()
+            section.mkdir()
+            source_readme = staging / "README.md"
+            source_readme.write_text(
+                "# Sentinel\n\n"
+                "**Documentation:** [English](docs/README.md) | "
+                "[한국어](docs/i18n/ko/README.md)\n\n"
+                "Sentinel overview.\n",
+                encoding="utf-8",
+            )
+
+            wrote_index = MODULE.write_root_index_file(
+                {
+                    "title": "Sentinel",
+                    "root_index_file": "README.md",
+                    "root_index_omit_line_prefixes": ["**Documentation:**"],
+                },
+                staging,
+                section,
+                [],
+            )
+
+            self.assertTrue(wrote_index)
+            generated = (section / "index.md").read_text(encoding="utf-8")
+            self.assertNotIn("docs/i18n/ko/README.md", generated)
+            self.assertIn("Sentinel overview.", generated)
+            self.assertIn("docs/i18n/ko/README.md", source_readme.read_text(encoding="utf-8"))
+
+    def test_rejects_invalid_omit_line_prefixes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            section = root / "section"
+            staging.mkdir()
+            section.mkdir()
+            (staging / "README.md").write_text("# Sentinel\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "root_index_omit_line_prefixes must be a list of non-empty strings",
+            ):
+                MODULE.write_root_index_file(
+                    {
+                        "root_index_file": "README.md",
+                        "root_index_omit_line_prefixes": "**Documentation:**",
+                    },
+                    staging,
+                    section,
+                    [],
+                )
+
+
 class LocalizedAutodocTests(unittest.TestCase):
     def write_i18n_contract(
         self, staging: Path, source: str, ja_hash: str, ko_hash: str,
