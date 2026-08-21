@@ -23,9 +23,9 @@ Palette Neat 包含多個具有版本號的元件。在大多數情況下，相�
 2. **Model Compiler** 必須與 **Neat SDK** 相容。
    或安裝它的主機環境。
 
-每個 Neat SDK 版本系列都針對特定的 DevKit 軟體版本。SDK 上的修補程式更新可能會新增工具修正，而無需新的 DevKit 映像檔。例如，Neat SDK 2.1.2.x 版本（包括 2.1.2.3）與 DevKit 軟體 2.1.2 相容。
+每個 Neat SDK 版本系列都針對特定的 DevKit 軟體版本。SDK 上的修補程式更新可能會新增工具修正，而無需新的 DevKit 映像檔。例如，Neat SDK 2.1.3.x 版本（包括 2.1.3.0）與 DevKit 軟體 2.1.3 相容。
 
-您也可以安裝較新的相容 Neat Library，而無需重新安裝 SDK，只要您使用下方表格中顯示的配對即可。例如，使用 Neat Library 0.3.0 與 Neat SDK 2.1.2.3。
+您也可以安裝較新的相容 Neat Library，而無需重新安裝 SDK，只要您使用下方表格中顯示的配對即可。例如，使用 Neat Library 0.4.0 與 Neat SDK 2.1.3.0。
 
 :::note
 本頁列出的版本為支援的版本組合。
@@ -55,6 +55,7 @@ cat /etc/buildinfo
 | :--- | :--- | :--- |
 | **2.0.0** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **2.0.0** |
 | **2.1.2.3** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **2.1.2** |
+| **2.1.3.0** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **2.1.3** |
 
 從主機安裝目前發布的 Neat SDK。
 
@@ -62,7 +63,7 @@ cat /etc/buildinfo
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
-目前的 `release-2.1` SDK 套件會解析為 Neat SDK 2.1.2.3。它仍維持在 DevKit 軟體 2.1.2 的相容性基準上。
+目前的 `release-2.1` SDK 套件會解析為 Neat SDK 2.1.3.0。它與 DevKit 軟體 2.1.3 相容。
 
 只有在您的 DevKit 軟體來自該韌體時，才使用較舊的 Neat SDK。對於 SDK 2.0.0、2.1.2.0 或 2.1.2.1，請使用 [兩步驟 SDK 安裝](/reference/two-step-sdk-installation/)。
 
@@ -74,16 +75,17 @@ sima-cli neat install sdk@release-2.1
 | :--- | :--- | :--- | :--- |
 | **0.1.0** | **2.0.0** | **2.0.0** | 針對 2.0 版韌體進行維護。 |
 | **0.2.2** | **2.1.2.2** | **2.1.2** | 最新 0.2 版本。 |
-| **0.3.0** | **2.1.2.3** | **2.1.2** | 目前最新的版本。 |
+| **0.3.0** | **2.1.2.3** | **2.1.2** | 最新 0.3 版本。 |
+| **0.4.0** | **2.1.3.0** | **2.1.3** | 目前最新的版本。 |
 
 DevKit 軟體的版本很重要，因為裝置上的執行階段、韌體和系統套件會以一組相容的元件形式安裝。如果您混合不同韌體版本的元件，即使您的應用程式建置成功，也可能會發生意想不到的行為。
 
 通常，您不會在首次設定期間執行這些指令——SDK 會為您安裝相容的 Neat Library。僅在相容的 Neat SDK 內，或直接在 DevKit 上，使用它們來指定特定的 Neat Library 版本。
 
-對於 Neat Library 0.3.0：
+對於 Neat Library 0.4.0：
 
 <ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@v0.3.0
+sima-cli neat install core@v0.4.0
 </ShellCommand>
 
 針對 Neat Library 0.1.0：
@@ -99,11 +101,12 @@ Neat 應用程式版本與 Neat Library 版本是獨立的。安裝應用程式�
 | Neat 應用程式 | 相容於 Neat Library |
 | :--- | :--- |
 | [**0.4.0**](https://github.com/sima-neat/apps/releases/tag/v0.4.0) | **0.3.0** |
+| [**0.5.0**](https://github.com/sima-neat/apps/releases/tag/v0.5.0) | **0.4.0** |
 
-從相容的 Neat SDK 或 DevKit 安裝 Apps 0.4.0：
+從相容的 Neat SDK 或 DevKit 安裝 Apps 0.5.0：
 
 <ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install apps@v0.4.0
+sima-cli neat install apps@v0.5.0
 </ShellCommand>
 
 ## Model Compiler
@@ -124,8 +127,9 @@ Model Compiler 可以透過兩種方式安裝：
 | :--- | :--- | :--- | :--- |
 | **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | 不支援 Apple Silicon 或 aarch64/Linux。 |
 | **2.1.2** | **2.1.2.3** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon 透過在 Neat SDK 內部安裝來支援。 |
+| **2.1.3** | **2.1.3.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon 透過在 Neat SDK 內部安裝來支援。 |
 
-「主機環境」欄位適用於獨立安裝的 Model Compiler。例如，在 Ubuntu 22.04 主機上的客戶，仍然可以透過在 Neat SDK 2.1.2.3 內安裝 Model Compiler 2.1.2，來使用它，因為 Neat SDK 提供了相容的基於 Ubuntu 24.04 的容器環境。
+「主機環境」欄位適用於獨立安裝的 Model Compiler。例如，在 Ubuntu 22.04 主機上的客戶，仍然可以透過在 Neat SDK 2.1.3.0 內安裝 Model Compiler 2.1.3，來使用它，因為 Neat SDK 提供了相容的 Ubuntu 24.04 容器環境。
 
 如需安裝步驟，請參閱 [安裝 Model Compiler。](/getting-started/dev-environment/install-model-compiler/)。
 
@@ -142,17 +146,17 @@ neat
 ```text
 Neat Environment
   Mode               Neat SDK
-  SDK Version        2.1.2_Palette_SDK_neat_v2.1.2.3
-  Platform Version   2.1.2
+  SDK Version        2.1.3_Palette_SDK_neat_v2.1.3.0
+  Platform Version   2.1.3
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
 
 Components
-  Neat core              0.3.0 channel=release env=prod latest=0.3.0
-  PyNeat                 0.3.0
-  neat-runtime           0.3.0
-  neat-gst-plugins       0.3.0
-  neat-llima             0.3.0
+  Neat core              0.4.0 channel=release env=prod latest=0.4.0
+  PyNeat                 0.4.0
+  neat-runtime           0.4.0
+  neat-gst-plugins       0.4.0
+  neat-llima             0.4.0
   neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
   Model Compiler         not installed
 

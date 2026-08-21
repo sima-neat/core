@@ -23,9 +23,9 @@ Palette Neat には、いくつかのバージョン管理されたコンポー�
 2. **Model Compiler** は、**Neat SDK** と互換性がある必要があります。
    または、インストールされているホスト環境。
 
-各Neat SDKリリースシリーズは、特定のDevKitソフトウェアバージョンを対象としています。SDKのパッチリビジョンでは、新しいDevKitイメージを必要とせずに、ツールに関する修正が追加される場合があります。たとえば、2.1.2.3を含むNeat SDK2.1.2.xリリースは、DevKitソフトウェア2.1.2と互換性があります。
+各Neat SDKリリースシリーズは、特定のDevKitソフトウェアバージョンを対象としています。SDKのパッチリビジョンでは、新しいDevKitイメージを必要とせずに、ツールに関する修正が追加される場合があります。たとえば、2.1.3.0を含むNeat SDK 2.1.3.xリリースは、DevKitソフトウェア2.1.3と互換性があります。
 
-SDKを再インストールせずに、より新しい互換性のあるNeat Libraryをインストールすることもできます。ただし、以下の表に示すペアリングを使用する必要があります。たとえば、Neat Library0.3.0とNeat SDK2.1.2.3を組み合わせて使用します。
+SDKを再インストールせずに、より新しい互換性のあるNeat Libraryをインストールすることもできます。ただし、以下の表に示すペアリングを使用する必要があります。たとえば、Neat Library 0.4.0とNeat SDK 2.1.3.0を組み合わせて使用します。
 
 :::note
 このページに記載されているバージョンは、サポート対象のバージョン組み合わせです。
@@ -55,6 +55,7 @@ DevKit のファームウェアの確認と更新の手順については、[フ
 | :--- | :--- | :--- |
 | **2.0.0** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.0.0** |
 | **2.1.2.3** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.1.2** |
+| **2.1.3.0** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.1.3** |
 
 ホストから、現在リリースされている Neat SDK をインストールしてください。
 
@@ -62,7 +63,7 @@ DevKit のファームウェアの確認と更新の手順については、[フ
 sima-cli neat install sdk@release-2.1
 </ShellCommand>
 
-現在、`release-2.1` SDKパッケージは、Neat SDK 2.1.2.3に解決されます。また、DevKitソフトウェア2.1.2との互換性の基準を満たしています。
+現在、`release-2.1` SDKパッケージは、Neat SDK 2.1.3.0に解決されます。DevKitソフトウェア2.1.3と互換性があります。
 
 古いバージョンのNeat SDKを使用するのは、お使いのDevKitソフトウェアがそのファームウェアを使用している場合に限ります。SDK 2.0.0、2.1.2.0、または2.1.2.1の場合は、[2段階のSDKインストール](/reference/two-step-sdk-installation/)を使用してください。
 
@@ -74,16 +75,17 @@ sima-cli neat install sdk@release-2.1
 | :--- | :--- | :--- | :--- |
 | **0.1.0** | **2.0.0** | **2.0.0** | バージョン2.0のファームウェアで維持されます。 |
 | **0.2.2** | **2.1.2.2** | **2.1.2** | 最新の 0.2 バージョンをリリースしました。 |
-| **0.3.0** | **2.1.2.3** | **2.1.2** | 最新版。 |
+| **0.3.0** | **2.1.2.3** | **2.1.2** | 最新の 0.3 バージョン。 |
+| **0.4.0** | **2.1.3.0** | **2.1.3** | 現在の最新バージョン。 |
 
 DevKitのソフトウェアバージョンは重要です。なぜなら、デバイス上のランタイム、ファームウェア、およびシステムパッケージが、互いに対応したセットとしてインストールされるからです。異なるファームウェアバージョン間でコンポーネントを混在させると、アプリケーションのビルド時に予期しない動作が発生する可能性があります。
 
 通常、これらのコマンドは初回セットアップ時に実行する必要はありません。SDKが互換性のあるNeat Libraryを自動的にインストールします。特定のNeat Libraryバージョンを、互換性のあるNeat SDK内から、またはDevKit上で直接指定する場合にのみ使用してください。
 
-Neat Library 0.3.0の場合：
+Neat Library 0.4.0の場合：
 
 <ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install core@v0.3.0
+sima-cli neat install core@v0.4.0
 </ShellCommand>
 
 Neat Library 0.1.0 の変更点：
@@ -99,11 +101,12 @@ Neat アプリのバージョンは、Neat Library のバージョンとは独�
 | Neat アプリ | 対応：Neat Library |
 | :--- | :--- |
 | [**0.4.0**](https://github.com/sima-neat/apps/releases/tag/v0.4.0) | **0.3.0** |
+| [**0.5.0**](https://github.com/sima-neat/apps/releases/tag/v0.5.0) | **0.4.0** |
 
-互換性のある Neat SDK または DevKit から、Apps 0.4.0 をインストールしてください。
+互換性のある Neat SDK または DevKit から、Apps 0.5.0 をインストールしてください。
 
 <ShellCommand prompt="sdk-or-devkit">
-sima-cli neat install apps@v0.4.0
+sima-cli neat install apps@v0.5.0
 </ShellCommand>
 
 ## Model Compiler
@@ -123,8 +126,9 @@ SDKのインストール/設定中に、設定プロセスでは、環境で利�
 | :--- | :--- | :--- | :--- |
 | **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | Apple Silicon や aarch64/Linux のサポートはありません。 |
 | **2.1.2** | **2.1.2.3** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Neat SDK をインストールすることでサポートされます。 |
+| **2.1.3** | **2.1.3.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Neat SDK をインストールすることでサポートされます。 |
 
-「ホスト環境」列は、スタンドアロンの Model Compiler のインストールに適用されます。たとえば、Ubuntu 22.04 ホストを使用しているお客様は、Neat SDK 2.1.2.3 内にインストールすることで、Model Compiler 2.1.2 を引き続き使用できます。これは、Neat SDK が互換性のある Ubuntu 24.04 ベースのコンテナ環境を提供するためです。
+「ホスト環境」列は、スタンドアロンの Model Compiler のインストールに適用されます。たとえば、Ubuntu 22.04 ホストを使用しているお客様は、Neat SDK 2.1.3.0 内にインストールすることで、Model Compiler 2.1.3 を引き続き使用できます。これは、Neat SDK が互換性のある Ubuntu 24.04 ベースのコンテナ環境を提供するためです。
 
 インストール手順については、[Model Compiler をインストールしてください。](/getting-started/dev-environment/install-model-compiler/) を参照してください。
 
@@ -141,17 +145,17 @@ neat
 ```text
 Neat Environment
   Mode               Neat SDK
-  SDK Version        2.1.2_Palette_SDK_neat_v2.1.2.3
-  Platform Version   2.1.2
+  SDK Version        2.1.3_Palette_SDK_neat_v2.1.3.0
+  Platform Version   2.1.3
   Sysroot            /opt/toolchain/aarch64/modalix
   Update check       online
 
 Components
-  Neat core              0.3.0 channel=release env=prod latest=0.3.0
-  PyNeat                 0.3.0
-  neat-runtime           0.3.0
-  neat-gst-plugins       0.3.0
-  neat-llima             0.3.0
+  Neat core              0.4.0 channel=release env=prod latest=0.4.0
+  PyNeat                 0.4.0
+  neat-runtime           0.4.0
+  neat-gst-plugins       0.4.0
+  neat-llima             0.4.0
   neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
   Model Compiler         not installed
 

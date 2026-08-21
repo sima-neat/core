@@ -9,6 +9,7 @@ SiMa.ai Neat Insight のリリースノート。
 
 | リリース | 備考 |
 |---|---|
+| 0.0.7 | [Insight 0.0.7](https://github.com/sima-neat/insight/releases/tag/v0.0.7) |
 | 0.0.6 | [Insight 0.0.6](https://github.com/sima-neat/insight/releases/tag/v0.0.6) |
 | 0.0.5 | [Insight 0.0.5](https://github.com/sima-neat/insight/releases/tag/v0.0.5) |
 | 0.0.4 | [Insight 0.0.4](https://github.com/sima-neat/insight/releases/tag/v0.0.4) |

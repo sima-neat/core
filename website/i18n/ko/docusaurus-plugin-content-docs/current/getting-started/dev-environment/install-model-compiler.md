@@ -19,13 +19,13 @@ SDK 설정 중에 Model Compiler를 건너뛰었다면, 나중에 Neat SDK 내�
 `amd64` Neat SDK 컨테이너의 경우:
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 `arm64` Neat SDK 컨테이너의 경우:
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 설치 후에는 Neat SDK 셸 내에서 컴파일러 환경을 활성화합니다.
@@ -42,18 +42,18 @@ deactivate-model-compiler
 
 ## 독립형 호스트에 설치
 
-독립 실행 방식으로 설치하는 것은 [호환성](/getting-started/compatibility/#model-compiler)에 나열된 호스트 환경에서만 지원됩니다. 지원되는 호스트 환경에서 해당 `sima-cli install` 명령을 실행합니다. 호스트 아키텍처를 확인하려면 `uname -m` 명령을 실행합니다. `x86_64`는 `amd64` 명령을 사용하고, `aarch64`는 `arm64` 명령을 사용합니다.
+독립 실행 방식으로 설치하는 것은 [호환성](/getting-started/compatibility/#model-compiler)에 나열된 호스트 환경에서만 지원됩니다. 지원되는 호스트 환경에서 해당 `sima-cli neat install` 명령을 실행합니다. 호스트 아키텍처를 확인하려면 `uname -m` 명령을 실행합니다. `x86_64`는 `amd64` 명령을 사용하고, `aarch64`는 `arm64` 명령을 사용합니다.
 
-`amd64` 호스트에서 Model Compiler 2.1.2를 사용하는 경우:
+`amd64` 호스트에서 Model Compiler 2.1.3을 사용하는 경우:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
-`arm64` 호스트에서 Model Compiler 2.1.2를 사용하는 경우:
+`arm64` 호스트에서 Model Compiler 2.1.3을 사용하는 경우:
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 `amd64` 호스트에서 Model Compiler 2.0.0을 사용하는 경우:

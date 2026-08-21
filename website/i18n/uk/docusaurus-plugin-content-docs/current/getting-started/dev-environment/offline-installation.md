@@ -17,13 +17,13 @@ sidebar_position: 6
 Для хостів `amd64`:
 
 <ShellCommand prompt="online-machine">
-sima-cli neat install sdk@v2.1.2.3 -t offline-amd64
+sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 Для хостів `arm64`:
 
 <ShellCommand prompt="online-machine">
-sima-cli neat install sdk@v2.1.2.3 -t offline-arm64
+sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 Скопіюйте завантажену теку на цільовий хост. З цієї теки запустіть:
@@ -33,27 +33,27 @@ bash ./install_offline_sdk.sh
 </ShellCommand>
 
 :::note
-Офлайн-пакети SDK підтримуються для SDK версії 2.1.2.3 або новішої.
+Офлайн-пакети SDK підтримуються для SDK версії 2.1.3.0 або новішої.
 :::
 
 ## Завантажте автономний пакет Model Compiler.
 
 Завантажте пакет Model Compiler, який відповідає цільовому середовищу та вимогам сумісності з SDK. Щоб отримати детальну інформацію про сумісність, див. [Сумісність](/getting-started/compatibility/#model-compiler).
 
-Для Model Compiler 2.1.2 на хостах `amd64`:
+Для Model Compiler 2.1.3 на хостах `amd64`:
 
 <ShellCommand prompt="online-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64 -t offline -d ./model-compiler-offline-amd64
+sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
-Для Model Compiler версії 2.1.2 на хостах `arm64`:
+Для Model Compiler версії 2.1.3 на хостах `arm64`:
 
 <ShellCommand prompt="online-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64 -t offline -d ./model-compiler-offline-arm64
+sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
 :::note
-Офлайн-пакети підтримуються для Model Compiler, версії 2.1.2 або новішої, для Model Compiler.
+Офлайн-пакети підтримуються для Model Compiler, версії 2.1.3 або новішої, для Model Compiler.
 :::
 
 Щоб встановити Model Compiler у Neat SDK, скопіюйте завантажену теку до теки робочого простору хоста, яка пов’язана з контейнером SDK, а саме до теки `/workspace`. Потім відкрийте командний рядок SDK і запустіть інсталятор із відповідного шляху `/workspace`:

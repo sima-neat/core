@@ -20,13 +20,13 @@ Model Compiler 會對 ONNX 模型進行量化和編譯，以便它們可以在 S
 針對 `amd64` Neat SDK 容器：
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
 針對 `arm64` Neat SDK 容器：
 
 <ShellCommand prompt="username@neat-sdk-latest">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 安裝完成後，請從 Neat SDK 的指令列介面啟動編譯器環境：
@@ -43,18 +43,18 @@ deactivate-model-compiler
 
 ## 在獨立的主機上安裝
 
-僅支援在 [相容性](/getting-started/compatibility/#model-compiler) 中列出的主機環境上進行獨立安裝。從支援的主機環境中執行對應的 `sima-cli install` 命令。若要檢查主機架構，請執行 `uname -m`：`x86_64` 使用 `amd64` 命令，而 `aarch64` 使用 `arm64` 命令。
+僅支援在 [相容性](/getting-started/compatibility/#model-compiler) 中列出的主機環境上進行獨立安裝。從支援的主機環境中執行對應的 `sima-cli neat install` 命令。若要檢查主機架構，請執行 `uname -m`：`x86_64` 使用 `amd64` 命令，而 `aarch64` 使用 `arm64` 命令。
 
-針對在 `amd64` 主機上執行的 Model Compiler 2.1.2：
+針對在 `amd64` 主機上執行的 Model Compiler 2.1.3：
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64
+sima-cli neat install model-compiler/amd64@v2.1.3
 </ShellCommand>
 
-針對在 `arm64` 主機上執行的 Model Compiler 2.1.2：
+針對在 `arm64` 主機上執行的 Model Compiler 2.1.3：
 
 <ShellCommand prompt="user-host-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64
+sima-cli neat install model-compiler/arm64@v2.1.3
 </ShellCommand>
 
 針對在 `amd64` 主機上執行的 Model Compiler 2.0.0：

@@ -17,13 +17,13 @@ sidebar_position: 6
 針對 `amd64` 主機：
 
 <ShellCommand prompt="online-machine">
-sima-cli neat install sdk@v2.1.2.3 -t offline-amd64
+sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 針對 `arm64` 主機：
 
 <ShellCommand prompt="online-machine">
-sima-cli neat install sdk@v2.1.2.3 -t offline-arm64
+sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 將下載的目錄複製到目標主機。從該目錄中執行：
@@ -33,27 +33,27 @@ bash ./install_offline_sdk.sh
 </ShellCommand>
 
 :::note
-SDK 2.1.2.3 或更高版本的離線套件受到支援。
+SDK 2.1.3.0 或更高版本的離線套件受到支援。
 :::
 
 ## 下載 Model Compiler 離線套件
 
 下載與目標環境和 SDK 相容性要求相符的 Model Compiler 套件。如需相容性詳細資訊，請參閱 [相容性](/getting-started/compatibility/#model-compiler)。
 
-針對在 `amd64` 主機上執行的 Model Compiler 2.1.2：
+針對在 `amd64` 主機上執行的 Model Compiler 2.1.3：
 
 <ShellCommand prompt="online-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64 -t offline -d ./model-compiler-offline-amd64
+sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
-針對在 `arm64` 主機上執行的 Model Compiler 2.1.2：
+針對在 `arm64` 主機上執行的 Model Compiler 2.1.3：
 
 <ShellCommand prompt="online-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64 -t offline -d ./model-compiler-offline-arm64
+sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
 :::note
-針對 Model Compiler 2.1.2 或更新版本，我們支援使用 Model Compiler 的離線套件。
+針對 Model Compiler 2.1.3 或更新版本，我們支援使用 Model Compiler 的離線套件。
 :::
 
 若要在 Neat SDK 內部安裝 Model Compiler，請將下載的目錄複製到主機工作區資料夾中，該資料夾對應於 SDK 容器的 `/workspace` 資料夾。然後，開啟 SDK 終端機，並從對應的 `/workspace` 路徑執行安裝程式。
