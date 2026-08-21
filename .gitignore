@@ -112,6 +112,7 @@ docs/reference/pythonapi/*
 /docs/reference/model-sdk-api/
 /docs/tools/sima-cli/
 /docs/tools/insight/
+/docs/tools/sentinel/
 
 # Docusaurus
 website/node_modules/

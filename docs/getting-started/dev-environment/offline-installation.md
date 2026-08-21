@@ -23,13 +23,13 @@ SiMa.ai package services.
 For `amd64` hosts:
 
 <ShellCommand prompt="online-machine">
-sima-cli neat install sdk@v2.1.2.3 -t offline-amd64
+sima-cli neat install sdk@v2.1.3.0 -t offline-amd64
 </ShellCommand>
 
 For `arm64` hosts:
 
 <ShellCommand prompt="online-machine">
-sima-cli neat install sdk@v2.1.2.3 -t offline-arm64
+sima-cli neat install sdk@v2.1.3.0 -t offline-arm64
 </ShellCommand>
 
 Copy the downloaded directory to the target host. From that directory, run:
@@ -39,7 +39,7 @@ bash ./install_offline_sdk.sh
 </ShellCommand>
 
 :::note
-SDK offline packages are supported for SDK 2.1.2.3 or later.
+SDK offline packages are supported for SDK 2.1.3.0 or later.
 :::
 
 ## Download the Model Compiler Offline Package
@@ -48,20 +48,20 @@ Download the Model Compiler package that matches the target environment and SDK
 compatibility requirements. For compatibility details, see
 [Compatibility](/getting-started/compatibility/#model-compiler).
 
-For Model Compiler 2.1.2 on `amd64` hosts:
+For Model Compiler 2.1.3 on `amd64` hosts:
 
 <ShellCommand prompt="online-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/amd64 -t offline -d ./model-compiler-offline-amd64
+sima-cli neat install model-compiler/amd64@v2.1.3 -t offline
 </ShellCommand>
 
-For Model Compiler 2.1.2 on `arm64` hosts:
+For Model Compiler 2.1.3 on `arm64` hosts:
 
 <ShellCommand prompt="online-machine">
-sima-cli install -v 2.1.2 tools/model-compiler/arm64 -t offline -d ./model-compiler-offline-arm64
+sima-cli neat install model-compiler/arm64@v2.1.3 -t offline
 </ShellCommand>
 
 :::note
-Model Compiler offline packages are supported for Model Compiler 2.1.2 or later.
+Model Compiler offline packages are supported for Model Compiler 2.1.3 or later.
 :::
 
 To install Model Compiler inside the Neat SDK, copy the downloaded directory into
