@@ -166,6 +166,7 @@
       "title": "Insight",
       "repo": "https://github.com/sima-neat/insight.git",
       "branch": "main",
+      "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs",
       "localization": true,
