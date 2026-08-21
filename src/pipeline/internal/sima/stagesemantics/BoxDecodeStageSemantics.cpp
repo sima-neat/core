@@ -550,6 +550,21 @@ int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int u
     }
     return 1;
   }
+  if (contract.decode_type == BoxDecodeType::YoloXSegPose) {
+    // Not inferred, and not merely defaulted: the class tensor packs objectness into
+    // channel 0, so its channel count is one greater than the class-block width and
+    // inference would resolve 30 where the answer is 29 - mis-striding the scorer with
+    // no diagnostic. Returning the caller's value directly also skips the mismatch
+    // warning below, which would otherwise fire on every run comparing 29 against the
+    // MPK's 30.
+    if (user_num_classes <= 0) {
+      throw std::invalid_argument(
+          std::string(context ? context : "BoxDecode") +
+          " yolox-seg-pose requires an explicit num_classes: its class tensor packs objectness "
+          "into channel 0, so the class-block width cannot be inferred from the channel count.");
+    }
+    return user_num_classes;
+  }
 
   const int inferred = infer_boxdecode_num_classes_from_contract(contract);
   if (user_num_classes > 0) {
@@ -833,18 +848,10 @@ void apply_yolox_seg_pose_static_contract_overrides(BoxDecodeStaticContract* con
         "'. Use BoxDecodeTypeOption::Auto, GroupedByRole or GroupedByRoleLogit.");
   }
   contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
-  // num_classes is deliberately not inferred. The class tensor packs objectness into
-  // channel 0, so its channel count is one greater than the class-block width and the
-  // generic inference has no way to know that - it would resolve 30 where the answer
-  // is 29, shifting every class id by one and mis-striding the scorer. The plugin
-  // refuses to guess for this family for the same reason; failing here keeps the two
-  // layers agreeing instead of silently disagreeing by one.
-  if (contract->num_classes <= 0) {
-    throw std::invalid_argument(
-        "yolox-seg-pose BoxDecode requires an explicit num_classes: its class tensor packs "
-        "objectness into channel 0, so the class-block width cannot be inferred from the channel "
-        "count. Set Model::Options::num_classes.");
-  }
+  // num_classes is NOT checked here. This override runs before the caller's value is
+  // folded into the contract (see finalize_boxdecode_static_contract), so it would
+  // only ever see the MPK-derived value. The requirement is enforced in
+  // resolve_boxdecode_num_classes, which is the function that receives it.
 }
 
 void apply_ssd_static_contract_overrides(BoxDecodeStaticContract* contract) {
