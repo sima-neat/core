@@ -33,12 +33,12 @@ sima-cli neat install sdk@release-2.1
 
 若選擇與 DevKit 配對，請在提示時輸入 DevKit IP 位址。設定流程會設定 SDK 工作區、啟動 SDK 容器並設定 DevKit Sync。若略過配對，系統仍會建立 SDK 工作區，之後也可以再進行配對。
 
-`release-2.1` 套件會追蹤 2.1 系列最新的 Neat SDK 修補程式版本。目前版本為 Neat SDK 2.1.2.2，與 DevKit 軟體 2.1.2 相容。
+`release-2.1` 套件會追蹤 2.1 系列最新的 Neat SDK 修補程式版本。目前版本為 Neat SDK 2.1.3.0，與 DevKit 軟體 2.1.3 相容。
 
-設定期間，`sima-cli` 也會詢問是否要在 SDK 中安裝相容的 Model Compiler（2.1.2）。若您會自行編譯或量化模型，請接受提示；不需要另外選擇版本。若只執行預先編譯的模型套件，則可略過。若要稍後安裝、固定特定修補版本或使用獨立主機，請參閱[安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)及[相容性指南](/getting-started/compatibility/)。
+設定期間，`sima-cli` 也會詢問是否要在 SDK 中安裝相容的 Model Compiler。若您會自行編譯或量化模型，請接受提示；不需要另外選擇版本。若只執行預先編譯的模型套件，則可略過。若要稍後安裝、固定特定修補版本或使用獨立主機，請參閱[安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)及[相容性指南](/getting-started/compatibility/)。
 
 :::note 舊版 SDK 使用傳統的兩階段安裝流程
-SDK 2.0.0、2.1.2.0 或 2.1.2.1 請使用傳統的映像提取與設定命令安裝。請參閱[兩階段 SDK 安裝](/reference/two-step-sdk-installation/)。
+若舊版 SDK 需要分別執行映像提取與設定命令，請參閱[兩階段 SDK 安裝](/reference/two-step-sdk-installation/)。
 :::
 
 若要在安裝後變更 SDK 設定，請參閱[設定 SDK](/getting-started/dev-environment/configure-sdk/)。受限網路環境請參閱[離線安裝](/getting-started/dev-environment/offline-installation/)。
@@ -67,13 +67,13 @@ neat
 
 ### 使用 VS Code
 
-從 SDK 2.1.2.3 開始，可以透過 SDK Code UI 從瀏覽器使用 VS Code。SDK 安裝結束時，`sima-cli` 會輸出類似下列的 `codeUI` URL：
+可以透過 SDK Code UI 從瀏覽器使用 VS Code。SDK 安裝結束時，`sima-cli` 會輸出類似下列的 `codeUI` URL：
 
 <ShellCommand prompt="user-host-machine">
 codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 </ShellCommand>
 
-在瀏覽器中開啟該 URL，即可在 SDK 工作區中作業。SDK 2.1.2.3 及更新版本會在瀏覽器 Code UI 中預先安裝 Codex 與 Claude Code 擴充功能。
+在瀏覽器中開啟該 URL，即可在 SDK 工作區中作業。SDK 會在瀏覽器 Code UI 中預先安裝 Codex 與 Claude Code 擴充功能。
 
 若偏好瀏覽器以外的方式，也可以使用原生 VS Code。使用 [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) 將 VS Code 連線至 SDK 容器。
 

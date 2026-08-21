@@ -24,7 +24,7 @@ sima-cli neat install core -t pyneat
 
 특정 Neat Library 버전에 대한 휠 파일을 다운로드하려면 해당 버전 정보를 포함하세요.
 
-Neat Library 0.2.2 버전:
+특정 버전을 설치하려면:
 
 <ShellCommand prompt="devkit">
 sima-cli neat install core@v0.4.0 -t pyneat

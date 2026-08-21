@@ -33,12 +33,12 @@ sima-cli neat install sdk@release-2.1
 
 DevKitとのペアリングを選んだ場合は、表示されたプロンプトにDevKitのIPアドレスを入力します。セットアップ処理はSDKワークスペースを構成し、SDKコンテナを起動してDevKit Syncを設定します。ペアリングを省略してもSDKワークスペースは作成され、後からペアリングできます。
 
-`release-2.1`パッケージは、2.1系の最新Neat SDKパッチリリースを追跡します。現在のリリースはNeat SDK 2.1.2.2で、DevKitソフトウェア2.1.2と互換性があります。
+`release-2.1`パッケージは、2.1系の最新Neat SDKパッチリリースを追跡します。現在のリリースはNeat SDK 2.1.3.0で、DevKitソフトウェア2.1.3と互換性があります。
 
-セットアップ中、`sima-cli`は対応するModel Compiler（2.1.2）をSDK内にインストールするか確認します。モデルを自分でコンパイルまたは量子化する場合は承認してください。別のバージョンを選択する必要はありません。コンパイル済みモデルパッケージだけを実行する場合は省略できます。後からインストールする場合、特定のパッチを固定する場合、またはスタンドアロンホストを使用する場合は、[Model Compilerのインストール](/getting-started/dev-environment/install-model-compiler/)と[互換性ガイド](/getting-started/compatibility/)を参照してください。
+セットアップ中、`sima-cli`は対応するModel CompilerをSDK内にインストールするか確認します。モデルを自分でコンパイルまたは量子化する場合は承認してください。別のバージョンを選択する必要はありません。コンパイル済みモデルパッケージだけを実行する場合は省略できます。後からインストールする場合、特定のパッチを固定する場合、またはスタンドアロンホストを使用する場合は、[Model Compilerのインストール](/getting-started/dev-environment/install-model-compiler/)と[互換性ガイド](/getting-started/compatibility/)を参照してください。
 
 :::note 以前のSDKリリースでは従来の2段階インストールを使用します
-SDK 2.0.0、2.1.2.0、2.1.2.1は、従来のイメージ取得コマンドとセットアップコマンドでインストールします。[2段階SDKインストール](/reference/two-step-sdk-installation/)を参照してください。
+イメージの取得とセットアップに個別のコマンドが必要な以前のSDKリリースについては、[2段階SDKインストール](/reference/two-step-sdk-installation/)を参照してください。
 :::
 
 インストール後にSDK設定を変更するには、[SDKの構成](/getting-started/dev-environment/configure-sdk/)を参照してください。制限されたネットワーク環境では、[オフラインインストール](/getting-started/dev-environment/offline-installation/)を参照してください。
@@ -67,13 +67,13 @@ neat
 
 ### VS Codeを使用する
 
-SDK 2.1.2.3以降では、SDK Code UIを通じてブラウザからVS Codeを利用できます。SDKのインストール完了時に、`sima-cli`が次のような`codeUI` URLを表示します。
+SDK Code UIを通じてブラウザからVS Codeを利用できます。SDKのインストール完了時に、`sima-cli`が次のような`codeUI` URLを表示します。
 
 <ShellCommand prompt="user-host-machine">
 codeUI      | https://192.168.76.4:10000/?tkn=gA5CS...&folder=/workspace
 </ShellCommand>
 
-ブラウザでURLを開き、SDKワークスペース内で作業します。SDK 2.1.2.3以降では、ブラウザ版Code UIにCodexとClaude Codeの拡張機能がプリインストールされています。
+ブラウザでURLを開き、SDKワークスペース内で作業します。SDKには、ブラウザ版Code UI用のCodexとClaude Codeの拡張機能がプリインストールされています。
 
 ブラウザ版ではなくネイティブVS Codeも利用できます。[Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)を使用して、VS CodeをSDKコンテナへ接続してください。
 
