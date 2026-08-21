@@ -32,6 +32,7 @@ def make_venv(path: Path, distribution: str | None = None, version: str = "1.2.3
 def model_compiler_status(extension_dir: Path | str) -> dict:
     """Run `neat status --json --offline` and return the Model Compiler component."""
     result = subprocess.run(
+        # Resolve NEAT at call time so --neat still applies.
         ["bash", str(NEAT), "status", "--json", "--offline"],
         check=False,
         text=True,
@@ -81,5 +82,19 @@ class ModelCompilerDiscoveryTest(unittest.TestCase):
                 self.assertEqual(component["version"], "1.2.3")
 
 
+def _take_path_option(flag: str) -> Path | None:
+    """Pop `--flag <path>` out of argv; under CTest the script is not at __file__."""
+    if flag not in sys.argv:
+        return None
+    index = sys.argv.index(flag)
+    try:
+        value = Path(sys.argv[index + 1]).resolve()
+    except IndexError as exc:
+        raise SystemExit(f"{flag} requires a path") from exc
+    del sys.argv[index : index + 2]
+    return value
+
+
 if __name__ == "__main__":
+    NEAT = _take_path_option("--neat") or NEAT
     unittest.main()
