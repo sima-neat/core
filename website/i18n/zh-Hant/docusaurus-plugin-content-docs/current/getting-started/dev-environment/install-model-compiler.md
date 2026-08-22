@@ -1,5 +1,5 @@
 ---
-title: "安裝 Model Compiler。"
+title: "安裝 Model Compiler"
 description: "在 Neat SDK 中或在支援的獨立主機上安裝 Model Compiler。"
 sidebar_position: 5
 ---

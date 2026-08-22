@@ -47,7 +47,7 @@ mdx:
     :::
 3. **下載範例圖片**，從檔案中下載，並將其儲存為 `assets/tutorial_sample_image.png`。
 
-    [開啟或下載範例圖片。](../../images/tutorial_sample_image.png)。
+    [開啟或下載範例圖片](../../images/tutorial_sample_image.png)。
 
 ## 逐步講解程式碼
 
@@ -147,7 +147,7 @@ neat::Model model("assets/yolo_v8s_mpk.tar.gz", opt);
 
 `Model` 會讀取 `.tar.gz`，並根據您提供的 `ModelOptions` 驗證其「MPK 合約」，然後建立模型片段。目前還沒有執行任何操作。
 
-### 4. 將您的影像封裝成一個 `Tensor`。
+### 4. 將您的影像封裝成一個 `Tensor`
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">

@@ -1,5 +1,5 @@
 ---
-title: "安裝 PyNeat。"
+title: "安裝 PyNeat"
 description: "在自訂的 Python 虛擬環境中安裝 PyNeat 輪包。"
 sidebar_position: 4
 ---

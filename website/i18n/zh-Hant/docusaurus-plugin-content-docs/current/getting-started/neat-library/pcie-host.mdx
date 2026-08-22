@@ -42,7 +42,7 @@ Arm64 主機上的建置尚未經過驗證。Windows 11 不受支援。
 sima-cli login
 </ShellCommand>
 
-## 安裝 PCIe 主機套件。
+## 安裝 PCIe 主機套件
 
 在 PCIe 主機上選擇一個工作目錄，然後執行適用於已安裝的 Ubuntu 版本的指令。
 
@@ -68,7 +68,7 @@ sima-cli playbooks install gh:sima-neat/core/pcie_host/skills/neat-pcie-applicat
 
 在第一次安裝期間，SSH 設定程序可以要求提供卡片的 `sima` 帳戶密碼。它會建立或重新使用 `~/.ssh/sima_neat_pcie_ed25519`，並將其公鑰安裝到卡片上。之後，正常的 PCIe 作業會使用無密碼的 SSH 來進行卡片端模型的設定。
 
-## 驗證安裝程序。
+## 驗證安裝程序
 
 確認 Python API 和 PCIe 主機外掛程式是否已安裝：
 

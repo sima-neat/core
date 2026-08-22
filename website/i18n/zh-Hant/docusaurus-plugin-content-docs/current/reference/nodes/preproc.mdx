@@ -1,0 +1,254 @@
+---
+title: "預處理節點"
+description: "設定 CVU 預處理節點，以進行調整大小、色彩轉換、正規化、鑲嵌和 ROI 列表預處理。"
+sidebar_position: 1
+---
+
+# 預處理節點
+
+`Preproc` 是一個融合的 CVU 影像預處理節點，用於在 MLA 推論之前。它可以調整影像大小、保留縱橫比並使用信箱式填補、轉換顏色、正規化、量化，以及將影像分割成模型預期的張量合約。
+
+對於大多數應用，請透過 `Model::Options::preprocess` 設定預處理，並讓模型路徑規劃器建立正確的 `Preproc` 節點。只有在您建立一個自訂圖片段，並且已經知道完整的輸入和輸出合約時，才直接建立 `nodes::Preproc(...)`。
+
+## 快速入門
+
+C++：
+
+```cpp
+#include <neat.h>
+#include <opencv2/imgcodecs.hpp>
+
+using namespace simaai::neat;
+
+Model::Options opt;
+opt.preprocess.resize.enable = AutoFlag::On;
+opt.preprocess.resize.width = 640;
+opt.preprocess.resize.height = 640;
+opt.preprocess.resize.mode = ResizeMode::Letterbox;
+opt.preprocess.resize.pad_value = 114;
+opt.preprocess.resize.scaling_type = "BILINEAR";
+opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+opt.preprocess.color_convert.output_format = PreprocessColorFormat::RGB;
+opt.preprocess.normalize.enable = AutoFlag::On;
+opt.preprocess.normalize.mean = {0.0f, 0.0f, 0.0f};
+opt.preprocess.normalize.stddev = {1.0f, 1.0f, 1.0f};
+
+Model model("/path/to/model.tar.gz", opt);
+
+cv::Mat image = cv::imread("/path/to/frame.jpg", cv::IMREAD_COLOR);
+TensorList tensors = stages::Preproc({image}, model);
+```
+
+Python：
+
+```python
+import cv2
+import pyneat
+
+opt = pyneat.ModelOptions()
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.width = 640
+opt.preprocess.resize.height = 640
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.pad_value = 114
+opt.preprocess.resize.scaling_type = "BILINEAR"
+opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
+opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
+opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+opt.preprocess.normalize.mean = [0.0, 0.0, 0.0]
+opt.preprocess.normalize.stddev = [1.0, 1.0, 1.0]
+
+model = pyneat.Model("/path/to/model.tar.gz", opt)
+
+image = cv2.imread("/path/to/frame.jpg", cv2.IMREAD_COLOR)
+tensors = pyneat.stages.preproc(
+    [image],
+    model,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+## 使用方式
+
+| 使用案例 | API | 指南 |
+| --- | --- | --- |
+|完整的模型路徑：| `Model model(path, opt); graph.add(model);` |建議用於生產管線。模型封存檔和路徑規劃器會解析出確切的預處理圖（Preproc graph）系列以及張量傳遞方式。|
+| 單獨的階段 | `stages::Preproc(images, model)` | 適用於煙霧測試、除錯預處理，或手動輸入 MLA。 |
+| ROI 列表階段 | `stages::Preproc(images, model, rois)` | 當每個輸出都應該從一個或多個來源影像的執行階段視窗產生時使用。|
+| 手動節點 | `nodes::Preproc(PreprocOptions{...})` | 僅適用於進階圖形編輯。如果可以使用模型封存檔，則建議使用模型管理的建構方式。|
+
+## API 介面
+
+C++：
+
+```cpp
+namespace simaai::neat::nodes {
+std::shared_ptr<Node> Preproc(PreprocOptions opt = {});
+}
+
+namespace simaai::neat::stages {
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model);
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model,
+                   const std::vector<PreprocessRoi>& rois);
+}
+```
+
+Python：
+
+```python
+pyneat.nodes.preproc(options: pyneat.PreprocOptions | None = None)
+
+pyneat.stages.preproc(
+    images: list,
+    model: pyneat.Model,
+    *,
+    rois: list[pyneat.PreprocessRoi] | None = None,
+    image_format: pyneat.PixelFormat | None = None,
+    copy: bool = False,
+) -> list[pyneat.Tensor]
+```
+
+`stages::Preproc` 會使用模型解析後的預處理計畫。這可確保獨立調用的行為與完整圖中執行的相同 `Preproc` 節點一致。
+
+## 輸入與輸出合約
+
+| 合約條款 | 行為 |
+| --- | --- |
+| 輸入類型 | C++ 接受 `cv::Mat` 圖片，通常是 `CV_8UC3` 適用於 RGB/BGR 或 `CV_8UC1` 用於灰階圖像。Python 接受 uint8 格式的 NumPy/Torch 陣列。`pyneat.Tensor` 圖片的格式為 HW 或 HWC。 |
+| 來源批次 | 非 ROI 超載處理會個別處理每一張影像。ROI 列表超載會接受一批大小相同、類型相同的來源影像。|
+| 輸出順序：| 非 ROI 超載會以影像順序輸出。ROI 列表超載會以 ROI 順序輸出。|
+| 輸出資料類型/佈局 | 由模型路徑決定：根據解析後的預處理圖，採用稠密 BF16/INT8/INT16 或鑲嵌式 MLA 佈局。|
+| 中繼資料 | 輸出張量會攜帶 `tensor.semantic.preprocess` 中繼資料，其中描述了調整大小、信箱處理、正規化、量化、鑲嵌和 ROI 幾何形狀。|
+
+## 模型預處理選項
+
+這些是在應用程式程式碼中，應該優先使用的使用者介面選項。
+
+### 調整大小和長寬比
+
+| 選項 | 意義 |
+| --- | --- |
+| `opt.preprocess.resize.enable` | `Auto`, `On`，或 `Off`. `Auto` 讓規劃器推斷是否需要重新調整大小。 |
+| `opt.preprocess.resize.width` / `height` | 目標模型輸入大小。`0` 表示在可行時，從模型合約中推斷。|
+| `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`，或 `ResizeMode::Crop`. |
+| `opt.preprocess.resize.pad_value` | 用於信箱式填充的填充值。`114` 是常用的 YOLO 預設值。|
+| `opt.preprocess.resize.scaling_type` | 插值參數。支援的參數包括 `BILINEAR`、`NEAREST_NEIGHBOUR`、`BICUBIC`、`INTERAREA` 和 `NO_SCALING`。`NEAREST_NEIGHBOR` 和 `INTER_AREA` 也是可接受的別名。|
+
+`ResizeMode::Letterbox` 會保留長寬比，方法是縮放影像或感興趣區域 (ROI)，使其符合目標大小，然後用空白填滿剩餘區域。`ResizeMode::Stretch` 會獨立地縮放寬度和高度。`ResizeMode::Crop` 會先進行各向同性縮放，然後從中心裁剪。
+
+### 色彩、正規化、量化和鑲嵌
+
+| 選項 | 意義 |
+| --- | --- |
+| `opt.preprocess.color_convert.input_format` | 來源格式提示：`RGB`、`BGR`、`GRAY8`、`NV12`、`I420` 或 `Auto`。|
+| `opt.preprocess.color_convert.output_format` | 模型輸入的色彩空間，通常為 `RGB`、`BGR` 或 `GRAY8`。|
+| `opt.preprocess.normalize.enable` | 啟用或停用平均值/標準差正規化。|
+| `opt.preprocess.normalize.mean` | 每個通道的平均值。與模型的訓練預處理方式相符。|
+| `opt.preprocess.normalize.stddev` | 每個通道的除數。使用與模型訓練期間相同的正規化通道統計資訊，例如 ImageNet 樣式的數值，接近 `{0.229,0.224,0.225}`。|
+| 當模型預期輸出為量化格式時，規劃器/使用者控制量化輸出的設定。| `opt.preprocess.quantize.enable` |
+| `opt.preprocess.quantize.zero_point` / `scale` | 明確的量化參數。除非要覆寫模型校準，否則請勿設定。|
+| `opt.preprocess.tessellate.enable` | 用於控制 MLA 鑲嵌佈局輸出的規劃器/使用者設定。啟用後，`Preproc` 會傳回鑲嵌後的張量。|
+| `opt.preprocess.tessellate.slice_shape` | 高階鑲嵌幾何圖形覆寫。除非模型合約要求覆寫，否則請保持空白。|
+
+## 執行階段投資報酬率清單
+
+投資報酬率 (ROI) 清單是一種在執行階段使用的輸入選擇機制，而不是一個靜態的 `PreprocOptions` 欄位。請將它們傳遞給獨立的階段超載函數：
+
+C++：
+
+```cpp
+std::vector<cv::Mat> images = {image0, image1};
+std::vector<PreprocessRoi> rois = {
+    {0, 0, 0, 320, 240},      // ROI from images[0]
+    {1, 100, 50, 256, 256},   // ROI from images[1]
+    {0, -16, 32, 128, 128},   // partially outside images[0], padded by Preproc
+};
+
+TensorList roi_tensors = stages::Preproc(images, model, rois);
+```
+
+Python：
+
+```python
+images = [image0, image1]
+rois = [
+    pyneat.PreprocessRoi(0, 0, 0, 320, 240),
+    pyneat.PreprocessRoi(1, 100, 50, 256, 256),
+    pyneat.PreprocessRoi(0, -16, 32, 128, 128),
+]
+
+roi_tensors = pyneat.stages.preproc(
+    images,
+    model,
+    rois=rois,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+對於使用 `cv2.imread` 讀取的影像，請使用 `image_format=pyneat.PixelFormat.BGR`；對於 RGB 影像，請使用 `RGB`；對於 HW 灰階影像，請使用 `GRAY8`。只有在 Python 影像緩衝區可能在階段傳回之前被修改或釋放時，才將 `copy=True` 設為 True。
+
+### `PreprocessRoi`
+
+| 欄位 | 意義 |
+| --- | --- |
+| `batch_index` | 是 `images` 向量中原始影像的索引。|
+| `x`, `y` | ROI 在原始影像中的左上角座標，以像素為單位。允許使用帶符號的值，因此 ROI 可以從畫面外開始。 |
+| `width`, `height` | ROI 的大小，單位為像素。兩者都必須為正數。 |
+
+### ROI 列表的語義
+
+| 規則 | 行為 |
+| --- | --- |
+| 輸出數量/順序 | 針對每個請求的感興趣區域 (ROI)，傳回一個張量，且順序與 ROI 向量相同。如果 ROI 向量為空，則傳回一個空的 `TensorList`。|
+| 每張影像可有多個感興趣區域 (ROI)。 | 已支援。多個項目可以使用相同的。 `batch_index`. |
+| 批次處理來源影像 | 當所有來源影像的尺寸、類型和通道數量相符時，即可支援。|
+| 處理超出影像邊界的像素：| 支援 RGB/BGR/GRAY 格式的影像；超出原始影像邊界的像素會以設定的填充值進行填充。|
+| 輸入格式 | 執行階段的 ROI 清單來源影像支援封裝的 8 位元 RGB/BGR (`CV_8UC3`) 和 GRAY/GRAY8 (`CV_8UC1`)。 NV12/I420 ROI 清單刻意不在這個階段的 API 範圍內。|
+| 調整大小行為 | ROI 使用與全畫面預處理相同的調整大小模式、縮放類型、長寬比策略、正規化、資料類型和細分設定。|
+| 中繼資料 | 每個輸出張量都會獲得一個純量 ROI 中繼資料，以及一個從模型/預處理座標到原始座標的仿射映射。|
+
+## 直接指定 `PreprocOptions` 欄位。
+
+這些僅用於手動建構節點。模型管理的建構方式會從檔案和已解析的預處理計畫中填入大部分的資訊。
+
+| 欄位群組 | 欄位 |
+| --- | --- |
+| 尺寸 | `input_shape`、`output_shape`、`slice_shape`、`scaled_width`、`scaled_height`、`batch_size` |
+| 轉換控制 |，包括 `normalize`、`aspect_ratio`、`tessellate`、`dynamic_input_dims`、`channel_mean` 和 `channel_stddev`。|
+| 格式 | `input_img_type`、`output_img_type`、`output_dtype`、`scaling_type`、`padding_type`、`pad_value` |
+| 量化 | `q_zp`、`q_scale` |
+| 執行階段設定 | `graph_name`、`node_name`、`element_name`、`cpu`、`next_cpu`、`upstream_name`、`graph_input_name` |
+| 進階緩衝區控制 | `single_output_handoff`、`num_buffers`、`num_buffers_model`、`num_buffers_locked`、`model_managed_contract` |
+
+## 元資料與 BoxDecode
+
+`Preproc` 會寫入預處理的元資料，以便後續節點能夠正確地反轉影像轉換。特別是，`SimaBoxDecode` 會使用這些元資料，將檢測框映射回原始影像或 ROI 座標空間。
+
+重要的元資料欄位包括：
+
+- `original_width` / `original_height`
+- `resized_width` / `resized_height`
+- `scaled_width` / `scaled_height`
+- `pad_left`, `pad_right`, `pad_top`, `pad_bottom`
+- `resize_mode`, `color_in`, `color_out`
+- `normalize`, `quantize`, `tessellate`
+- `affine_*` 轉換欄位
+- `roi_list_enabled`、`rois`、`roi_affines`，以及 ROI 數量/容量欄位。
+
+## 疑難排解
+
+| 症狀 | 檢查 |
+| --- | --- |
+| 框會被移動或縮放。| 請驗證 `resize.mode`、letterbox、`pad_value`，以及後續的解碼是否正確讀取 `tensor.semantic.preprocess`。|
+| ROI 輸出看起來完全相同。| 請確認 `batch_index`、`x`、`y`、`width` 和 `height` 是否如預期般不同，並且確認來源影像是否為不同的影像。|
+| ROI 列表呼叫在執行前發生錯誤。| 請確認影像批次不為空，所有影像的尺寸、類型和通道數都相同，`batch_index` 為有效值，且 ROI 的寬度和高度都為正數。|
+| 偵測到非預期的資料類型/佈局。| 請檢查 `model.resolved_preprocess_plan()` 以及輸出張量的語義；量化/鑲嵌操作應遵循模型路徑。|
+|「信箱式」調整後的結果出現了意料之外的邊框 |請檢查 `ResizeMode::Letterbox`、目標大小、感興趣區域的長寬比，以及 `pad_value`。|
+
+## 請參閱
+
+- [預處理 ROI 列表](/reference/preproc_roi)
+- [在進行推論之前，請先預處理影像。](/tutorials/preprocess-images)
+- [資料格式](/develop-apps/advanced-concepts/data_formats)
+- [節點程式設計模型](/develop-apps/development-workflow/node)
+- [BoxDecode 解碼類型](/reference/boxdecode_decode_types)

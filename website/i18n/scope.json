@@ -3,17 +3,15 @@
     "docs/compile-a-model/",
     "docs/doxygen/",
     "docs/genai-llima/",
-    "docs/reference/",
+    "docs/reference/cppapi/",
     "docs/tools/insight/",
     "docs/tools/sentinel/",
     "docs/tools/sima-cli/"
   ],
   "generatedRoutePrefixes": [
-    "/reference",
-    "/tutorials"
+    "/doxygen",
+    "/reference/cppapi"
   ],
-  "localizedRouteExceptions": [
-    "/tutorials/before-you-run"
-  ],
-  "reason": "Reference and Doxygen-derived families remain English-only. Externally sourced autodoc families stay outside Core-authored coverage because autodoc imports and validates their source-owned locale artifacts separately."
+  "localizedRouteExceptions": [],
+  "reason": "Doxygen-derived C++ API pages remain English-only. Authored reference pages are localized. Externally sourced autodoc families stay outside Core-authored coverage because autodoc imports and validates their source-owned locale artifacts separately. Generated tutorials use the source-owned localization contract in tutorials/i18n/."
 }

@@ -2,46 +2,47 @@ import React, {useEffect, useState} from "react";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import useBaseUrl from "@docusaurus/useBaseUrl";
 import {useLocation} from "@docusaurus/router";
+import tutorialLocales from "@site/src/generated/tutorial-locales.json";
 
 const I18N_PREVIEW_PARAM = "i18n";
 const I18N_PREVIEW_SESSION_KEY = "neat-docs-i18n-preview";
 const DOCS_LOCALE_COOKIE = "sima-neat-locale";
 const ENGLISH_ONLY_ROUTE_PREFIXES = [
   "/doxygen",
-  "/reference",
+  "/reference/cppapi",
 ];
 const LOCALIZED_UI = {
   en: {
     code: "Code",
     gettingStarted: "Getting Started",
     generatedNotice:
-      "Generated and reference documentation in this section is currently available in English only.",
+      "Generated API documentation in this section is currently available in English only.",
     preferredCodeLanguage: "Preferred programming language",
   },
   ko: {
     code: "코드",
     gettingStarted: "시작하기",
-    generatedNotice: "이 섹션의 생성 문서와 참조 문서는 현재 영어로만 제공됩니다.",
+    generatedNotice: "이 섹션의 생성된 API 문서는 현재 영어로만 제공됩니다.",
     preferredCodeLanguage: "선호하는 프로그래밍 언어",
   },
   ja: {
     code: "コード",
     gettingStarted: "はじめに",
     generatedNotice:
-      "このセクションの生成ドキュメントとリファレンスは、現在英語版のみ提供しています。",
+      "このセクションの生成 API ドキュメントは、現在英語版のみ提供しています。",
     preferredCodeLanguage: "優先するプログラミング言語",
   },
   "zh-Hant": {
     code: "程式碼",
     gettingStarted: "開始使用",
-    generatedNotice: "本區段自動產生的文件與參考資料目前僅提供英文版。",
+    generatedNotice: "本區段自動產生的 API 文件目前僅提供英文版。",
     preferredCodeLanguage: "偏好的程式語言",
   },
   uk: {
     code: "Код",
     gettingStarted: "Початок роботи",
     generatedNotice:
-      "Згенерована та довідкова документація в цьому розділі наразі доступна лише англійською мовою.",
+      "Згенерована документація API в цьому розділі наразі доступна лише англійською мовою.",
     preferredCodeLanguage: "Бажана мова програмування",
   },
 };
@@ -107,7 +108,9 @@ function LocalizationScopeNotice() {
     (prefix) => location.pathname.includes(`${prefix}/`) || location.pathname.endsWith(prefix),
   );
   const isTutorial = /\/tutorials(?:\/|$)/.test(location.pathname);
-  const isLocalizedTutorial = /\/tutorials\/before-you-run\/?$/.test(location.pathname);
+  const isLocalizedTutorial =
+    /\/tutorials\/before-you-run\/?$/.test(location.pathname) ||
+    tutorialLocales.locales.includes(i18n.currentLocale);
   const isEnglishOnlySection = isEnglishOnlyPrefix || (isTutorial && !isLocalizedTutorial);
   const ui = LOCALIZED_UI[i18n.currentLocale] || LOCALIZED_UI.en;
 

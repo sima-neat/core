@@ -20,7 +20,7 @@ PCIe 教程在主機上執行，而不是在 SDK 容器內或直接在卡上執�
 
 ## 2. 設定 Neat Library 教程
 
-請確保已安裝 [Neat Library 已安裝。](/getting-started/neat-library/install-or-update/)，然後從您希望放置教程套件的目錄中執行以下指令：
+請確保已安裝 [Neat Library](/getting-started/neat-library/install-or-update/)，然後從您希望放置教程套件的目錄中執行以下指令：
 
 <ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core -t extras
@@ -36,7 +36,7 @@ python3 -c "import pyneat; print('pyneat ready')"
 
 ## 3. 設定 PCIe 教學
 
-首先，請 [安裝並驗證 PCIe 主機套件。](/getting-started/neat-library/pcie-host/)。
+首先，請 [安裝並驗證 PCIe 主機套件](/getting-started/neat-library/pcie-host/)。
 然後，下載適用於在主機上執行的 Ubuntu 版本的教學套件。
 從您想要放置套件的目錄中執行指令。
 

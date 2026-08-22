@@ -1,0 +1,169 @@
+---
+title: "カメラ入力ノード"
+description: "MIPI/libcamera CameraInput ソースノードを、ソースが所有する Neat グラフ用に設定します。"
+sidebar_position: 2
+---
+
+# カメラ入力ノード
+
+`CameraInput` は、libcamera および GStreamer の `libcamerasrc` を介して公開される MIPI カメラのソースノードです。フレームを `run.push(...)` ではなく、DevKit カメラスタックから取得する必要がある場合、ソースが所有するグラフの先頭で使用します。
+
+タスクガイドについては、[MIPIカメラを使用する](/develop-apps/advanced-concepts/mipi-camera-input) を参照してください。
+
+## 前提条件
+
+`CameraInput`を使用する前に、Neatの外でカメラを起動してください。
+
+- Modalix DevKit の電源を切った状態でカメラを取り付けてください。
+- キャリアボード、カメラベンダー、センサー、ポートに適合する`.dtbo`オーバーレイを選択してください。
+- libcameraがカメラをリストに表示することを確認してください。
+- 要求する予定の正確な `format,width,height,framerate` を、`libcamerasrc` がストリーミングできることを確認してください。
+
+`camera_name` は libcamera のカメラ名です。デフォルトのカメラを使用する場合は、この変数を設定する必要はありません。ボードに複数のカメラが搭載されている場合は、`cam -l` からカメラ名を取得して設定してください。
+
+## クイックスタート
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat.h>
+
+namespace neat = simaai::neat;
+
+neat::CameraInputOptions opt;
+opt.width = 1920;
+opt.height = 1080;
+opt.framerate_num = 30;
+opt.framerate_den = 1;
+opt.format = "NV12";
+opt.buffer_name = "camera0";
+opt.allow_cpu_fallback = true;
+
+neat::Graph graph;
+graph.add(neat::nodes::CameraInput(opt));
+graph.add(neat::nodes::Output("frames"));
+
+neat::Run run = graph.build();
+std::optional<neat::Sample> frame = run.pull(/*timeout_ms=*/5000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat
+
+opt = pyneat.CameraInputOptions()
+opt.width = 1920
+opt.height = 1080
+opt.framerate_num = 30
+opt.framerate_den = 1
+opt.format = "NV12"
+opt.buffer_name = "camera0"
+opt.allow_cpu_fallback = True
+
+graph = pyneat.Graph()
+graph.add(pyneat.nodes.camera_input(opt))
+graph.add(pyneat.nodes.output("frames"))
+
+run = graph.build()
+frame = run.pull(timeout_ms=5000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`CameraInput` がソースを所有しているため、アプリケーションに別のアプリからプッシュされる入力が本当に必要でない限り、公開された `Input` ノードなしでグラフを構築してください。
+
+## APIのインターフェース
+
+```cpp
+namespace simaai::neat {
+struct CameraInputOptions;
+class CameraInput;
+}
+
+namespace simaai::neat::nodes {
+std::shared_ptr<simaai::neat::Node> CameraInput(
+    simaai::neat::CameraInputOptions opt = {});
+std::shared_ptr<simaai::neat::Node> CameraInputWithCaptureBuffers(
+    simaai::neat::CameraInputOptions opt,
+    std::uint32_t capture_buffer_count);
+}
+```
+
+Python：
+
+```python
+opt = pyneat.CameraInputOptions()
+node = pyneat.nodes.camera_input(opt, capture_buffer_count=32)
+```
+
+## オプション
+
+| フィールド | デフォルト値 | 意味 |
+| --- | --- | --- |
+| `camera_name` | を設定解除します。| これは、オプションのlibcameraカメラ名であり、通常は`cam -l`からコピーされます。設定を解除すると、libcameraがデフォルトのカメラを選択します。|
+| `width` | `1920` | ピクセル単位で指定する、要求されるフレームの幅。カメラモードとオーバーレイでサポートされている必要があります。|
+| `height` | `1080` | ピクセル単位で要求されるフレームの高さ。|
+| `framerate_num` | `30` | フレームレートの分子。|
+| `framerate_den` | `1` | フレームレートの分母。`0` は `1` に正規化されます。|
+| `format` | `"NV12"` | が要求されました。`video/x-raw` 形式です。`NV12` が推奨されるモデル前処理パスです。|
+| `buffer_name` | `"camera"` |：後続のメタデータやモデルのルート名に使用される論理的なバッファ名。|
+| `insert_queue` | `true` | アロケーターのネゴシエーションとゼロコピー検証の後に、小さなライブソースキューを挿入します。 |
+| `leaky_queue` | `true` | キューをダウンストリームで「リーキー」にし、リアルタイムのグラフが、古いバックログよりも新しいフレームを優先するようにします。|
+| `queue_depth` | `2` | 。`insert_queue` が true の場合に、キューに格納できる最大バッファー数。|
+| `allow_cpu_fallback` | `false` | `false` の場合、カメラ/デバイスのゼロコピーサポートが必要です。`true` に設定するのは、Neat の SiMaAI メモリへのプライベートなアダプティブブリッジを有効にする場合のみです。|
+
+`capture_buffer_count` は、`CameraInputOptions` のフィールドではなく、`CameraInputWithCaptureBuffers` への引数です。デフォルト値は `0` であり、これによりカメラのパイプライン自身のデフォルトが維持されます。カメラのパイプラインは、その制限を検証します。Neat のプロバイダーは、最大 `128` までをサポートします。
+
+## 入力と出力の契約
+
+| 契約項目 | 動作 |
+| --- | --- |
+| 入力ロール | ソースノード。このグラフはカメラからフレームを取得します。アプリケーションがこのノードにサンプルを送信することはありません。|
+| 出力メディアの種類は|、`video/x-raw`です。|
+| 出力形式 | は、通常 `NV12` 形式の `format` です。|
+| メモリコントラクト | デバイス/SiMaAIのゼロコピー方式を優先します。フォールバックが有効になっている場合、OS/libcameraのバッファがSiMaAIのメモリに変換され、後続のCVU/MLAステージで使用されます。|
+| 確実性を高める | 要求されたオプションに基づいて静的なヒントを提供します。ランタイムにおける上限のネゴシエーションは、カメラスタックに依存します。|
+
+## ゼロコピーとフォールバック
+
+`allow_cpu_fallback = false` はデフォルト設定であり、厳密なカメラ/デバイスのゼロコピーを要求します。インストールされている `libcamerasrc` が汎用的な `external-buffer-mode` プロパティを公開し、メモリライブラリがカメラの割り当てを DMA-BUF としてエクスポートできる場合にのみ、ビルドがエラーメッセージとともに失敗します。
+
+Neat は、常に独自のカメラブリッジを capsfilter の直後、ライブキューの直前に配置します。ブリッジは、GStreamer のダウンストリーム `GST_QUERY_ALLOCATION` を介して、標準的なプールを提案します。このプールは、検証された caps から平面サイズとストライドを導き出し、1 つのパックされた SiMaAI 割り当てからそれらを割り当て、1 つの DMA-BUF を各平面に対してエクスポートします。`libcamerasrc` は、これらの DMA-BUF を ISP キャプチャキューにインポートします。ブリッジは結果を検証し、厳密モードでコピーなしで同じパックされた割り当てをアンラップします。
+
+ダウンストリームのオーナーに基づいて、`capture_buffer_count` をカメラファクトリに渡します。一時的なエンコーダまたはディープ非同期 ML グラフには 32 個のバッファが必要になる場合があります。低遅延の CV グラフでは、より少ないバッファを使用し、古いフレームを破棄できます。この設定は、ISP 出力/アプリケーションサイクルのみを制御します。カーネルのプライベート CSI-to-ISP RAW トランジットリングを拡張するものではなく、GStreamer の `queue_depth` ドロップポリシーとは独立しています。
+
+`allow_cpu_fallback = true` を明示的に設定して、カメラスタックが提案されたアロケータを尊重できない場合に、すでに存在するブリッジがコピーできるようにします。ブリッジは、アップストリームから SiMaAI/EV74 バッファが提供された場合は、それらをそのまま通過させます。それ以外の場合は、カメラフレームをプールされた SiMaAI バッファにコピーし、ダウンストリームステージが期待するメタデータをアタッチします。このプライベートコピープールは、`queue_depth` によって制限されるのではなく、必要に応じて拡張されます。これにより、ダウンストリームのリーキーキューが古いフレームを破棄しても、ブリッジが最初に停止することはありません。
+
+fallback という名前は、ブリッジが OS/libcamera バッファを受け入れることができることを意味します。リサイズ、カラー変換、または正規化を CPU に移動する必要があるわけではありません。これらの操作は、可能な限り、モデル管理された CVU プリプロセスに含めてください。
+
+`CameraInput` に対して、`OsToSima` ノードを自分で追加しないでください。アダプテーションは、カメラソースパスに属します。
+
+## 一般的なグラフの種類
+
+カメラのフレームを直接取り出す：
+
+```text
+CameraInput -> Output
+```
+
+モデルにカメラを移動させてみる：
+
+```text
+CameraInput -> model.graph({include_input=false, include_output=true})
+```
+
+モデルのパイプラインの場合、リサイズ、カラー変換、正規化、量子化、およびテッセレーションなどの前処理を、`Model::Options::preprocess`または`pyneat.ModelOptions.preprocess`を使用して設定することで、これらの処理がモデルによって管理されるCVU（コンピュータービジョンユニット）の経路に留まるようにします。
+
+## 故障モード
+
+| エラー | 考えられる原因 |
+| --- | --- |
+| `build.plugin_missing` | ランタイムプラグインセットに、`libcamerasrc` または `neatcamerabridge` が含まれていません。|
+| `misconfig.media_caps` / `not-negotiated` | カメラは、要求されたフォーマット、解像度、またはフレームレートをサポートしていません。|
+| 厳密なゼロコピーエラーが発生しました。| `allow_cpu_fallback` は false に設定されており、カメラソースは SiMaAI ゼロコピープロパティを公開していません。|
+| プルタイムアウト | カメラからフレームが送信されなかった、グラフにバックプレッシャーがかかっている、またはカメラスタックがストリーミングを停止しました。|
+| 緑色、紫色、または色味が強いフレーム | フレーム形式またはモデルのプリプロセスにおけるカラー変換が正しくないか、すでにカメラのISP/libcamera出力に色味が適用されている可能性があります。まず、`NV12`形式でキャプチャを行い、Neatで検証してください。|

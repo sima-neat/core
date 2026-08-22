@@ -15,8 +15,8 @@ slug: /develop-apps/contribute/architecture
 
 「Neat」一詞用於描述兩個相關但獨立的概念：
 
-- **Neat Library：**本儲存庫中的 C++/Python 函式庫和執行階段。它載入模型套件、組成管線、驗證合約、在 Modalix 硬體上執行，並公開 API。
-- **Neat SDK / 環境：**圍繞框架的容器化開發工作流程，包括 DevKit Sync、共享工作區和代理工具。
+- **Neat Library：** 本儲存庫中的 C++/Python 函式庫和執行階段。它載入模型套件、組成管線、驗證合約、在 Modalix 硬體上執行，並公開 API。
+- **Neat SDK / 環境：** 圍繞框架的容器化開發工作流程，包括 DevKit Sync、共享工作區和代理工具。
 
 在修改此儲存庫時，請針對支援人和代理的框架屬性進行最佳化：明確的 API、確定性行為、結構化的診斷、嚴格的驗證和穩定的公共合約。
 
@@ -37,11 +37,11 @@ slug: /develop-apps/contribute/architecture
 選定的核心成品是 Neat、LLiMa 和一起安裝的內部 Debian 套件的權威來源。核心使用並轉發該成品，而無需選擇或重寫相依性版本。成品之外的套件仍由平台擁有；不相容的平台必須進行更新，而不是由核心或 LLiMa 進行修復。
 
 ### 常見工作流程
-- **解碼/導入：**檔案或 RTSP -> 拆分/多工/解析 -> 解碼 -> 轉換/caps -> appsink -> C++ 消費者
-- **驗證：**建置 + 解析 + 預滾動（暫停）以儘早捕獲協商問題
-- **提供 RTSP：**使用 `appsrc` 將合成幀推送到 RTSP 伺服器管線
-- **影像/影片張量適配器：**影像/影片/RTSP -> 解碼 -> 轉換/縮放 -> `add_output_tensor(...)` -> `Run::pull_tensors()`
-- **教學：**從 [教學指南](/tutorials) 開始，以獲得可執行的、有序的學習路徑
+- **解碼/導入：** 檔案或 RTSP -> 拆分/多工/解析 -> 解碼 -> 轉換/caps -> appsink -> C++ 消費者
+- **驗證：** 建置 + 解析 + 預滾動（暫停）以儘早捕獲協商問題
+- **提供 RTSP：** 使用 `appsrc` 將合成幀推送到 RTSP 伺服器管線
+- **影像/影片張量適配器：** 影像/影片/RTSP -> 解碼 -> 轉換/縮放 -> `add_output_tensor(...)` -> `Run::pull_tensors()`
+- **教學：** 從 [教學指南](/tutorials) 開始，以獲得可執行的、有序的學習路徑
 
 ### 標準生產管線（權威來源）
 此儲存庫的標準「生產路徑」為：**輸入 -> 預處理 -> MLA -> 後處理**。權威來源位於：`tests/e2e_pipelines/obj_detection/sync_yolov8_test.cpp`。

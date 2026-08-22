@@ -95,6 +95,21 @@ jobs:
           fetch-depth: 1
           submodules: "false"
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install shared i18n tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o "${RUNNER_TEMP}/sima-cli-install.py"
+          python3 "${RUNNER_TEMP}/sima-cli-install.py" main latest --noninteractive
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" neat install i18n
+          sima-i18n --version
+
       - name: Configure AWS credentials for Vulcan config
         uses: aws-actions/configure-aws-credentials@v6
         with:

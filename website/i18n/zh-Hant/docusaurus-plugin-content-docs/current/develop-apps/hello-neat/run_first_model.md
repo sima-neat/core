@@ -34,7 +34,7 @@ sidebar_position: 2
     :::
 3. **從檔案下載範例圖片**，並將其儲存為 `tutorial_sample_image.png`，儲存在 `assets` 目錄中。
 
-    [開啟或下載範例圖片。](../../images/tutorial_sample_image.png)。
+    [開啟或下載範例圖片](../../images/tutorial_sample_image.png)。
 4. **傳回您的專案目錄：**
     ```bash
     cd ..
@@ -136,7 +136,7 @@ outputs = model.run([tensor], timeout_ms=2000)
 
 ### 4. 讀取檢測數量 {#step-read}
 
-由於已設定 `decode_type`，因此第一個輸出張量包含已解碼的框。BBOX 張量以一個 `uint32` 檢測數量開始，因此我們讀取其前四個位元組。完整的序列格式（每個框的座標、分數和類別）已在 [從模型輸出的結果中讀取檢測框。](/tutorials/read-detection-boxes) 中說明。
+由於已設定 `decode_type`，因此第一個輸出張量包含已解碼的框。BBOX 張量以一個 `uint32` 檢測數量開始，因此我們讀取其前四個位元組。完整的序列格式（每個框的座標、分數和類別）已在 [從模型輸出的結果中讀取檢測框](/tutorials/read-detection-boxes) 中說明。
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -347,7 +347,7 @@ detections=3
 - 透過 Neat 執行階段階段執行推論。
 - 將原始檢測器輸出解碼為邊界框。
 
-若要更深入地了解邊界框解碼、閾值、NMS 和檢測器輸出結構，請繼續閱讀 [從模型輸出的結果中讀取檢測框。](/tutorials/read-detection-boxes)。
+若要更深入地了解邊界框解碼、閾值、NMS 和檢測器輸出結構，請繼續閱讀 [從模型輸出的結果中讀取檢測框](/tutorials/read-detection-boxes)。
 
 ## 後續步驟
 

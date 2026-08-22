@@ -19,11 +19,22 @@ values are `en`, `ko`, `ja`, `zh-Hant`, and `uk`.
 The initial review slice covered installation, the Neat Library landing page,
 and the minimal C++/Python validation application. Translation is now expanding
 to the maintained narrative documentation. `scope.json` is the authoritative
-boundary: reference and Doxygen-derived pages remain English-only during the
-preview because much of that surface is generated. The original pilot page list
-and English source hashes remain in `pilot-translations.json`.
+boundary: authored reference pages are localized, while Doxygen-derived C++ API
+pages remain English-only. The original pilot page list and English source
+hashes remain in `pilot-translations.json`.
 
 ## Translation conventions
+
+Install the shared translation CLI before running the website commands:
+
+```bash
+sima-cli neat install i18n
+```
+
+Core owns only its source scope, locale terminology, and output layout in
+`scope.json` and `sima-i18n.config.json`. Translation and Markdown/MDX
+structural validation are implemented by the `sima-neat/i18n` repository; do
+not add a second translation engine under `website/scripts/`.
 
 - Keep product names (`Palette Neat`, `Neat SDK`, `Neat Library`, `Modalix`,
   `DevKit`, `PyNeat`, `Insight`, and `LLiMa`) in English.
@@ -54,12 +65,12 @@ any tracked authored page lacks any locale. The original
 `npm run check:i18n-pilot` check remains available for source-hash validation of
 the initial review slice.
 
-## Remote Ollama drafting
+## Shared Ollama drafting
 
-`scripts/translate-docs-ollama.js` sends protected prose blocks to an Ollama
-server through SSH. Code, commands, inline identifiers, links, JSX/HTML tags,
+The shared CLI sends protected prose blocks to an Ollama server locally or
+through SSH. Code, commands, inline identifiers, links, JSX/HTML tags,
 and canonical product names are replaced with verified placeholders before the
-request. The script aborts if the model changes or drops any placeholder.
+request. The CLI aborts if the model changes or drops any placeholder.
 
 Preview one page without writing files:
 
@@ -94,8 +105,17 @@ npm run translate:i18n -- \
 
 Generated documentation is deliberately outside the authored-content
 translation workflow. `scope.json` is the authoritative boundary for Core-owned
-content. Reference, Doxygen, and generated tutorial routes remain English-only
-except for the authored `/tutorials/before-you-run` page.
+content. Authored pages under `/reference` are localized; Doxygen-derived C++
+API routes remain English-only. The authored `/tutorials/before-you-run` page is
+localized in this tree.
+
+Generated tutorials use source-owned translations under each tutorial folder:
+`<tutorial>/i18n/<locale>/README.md`. Repeated generated labels are maintained
+under `tutorials/i18n/`, along with the reviewed English source hashes. During a
+docs build, `tools/generate_tutorial_docs.py` emits a locale only when all
+tutorials have current translations; it also tells the site which tutorial
+locales are complete so the English-only notice remains accurate. See
+`tutorials/i18n/README.md` for the authoring contract.
 
 Autodoc imports source-owned translations for the Model Compiler guides, LLiMa,
 Insight, Sentinel, and sima-cli. Each participating repository declares its

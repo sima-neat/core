@@ -4,7 +4,7 @@ description: "在 Modalix 上使用 SiMa.ai，建立並執行人工智慧應用�
 sidebar_position: 1
 ---
 
-# 使用 SiMa.ai 開發應用程式，讓開發過程更 Neat。
+# 使用 SiMa.ai 開發應用程式，讓開發過程更 Neat
 
 <LanguageContent lang="cpp">
 
@@ -86,7 +86,7 @@ SiMa.ai Neat 透過內建的技能，支援即開即用的代理應用程式開�
 工作流程。
 
 建議的代理路徑可以建立一個應用程式，並在配對的
-Modalix DevKit，檢查結果和診斷資訊，並最佳化實作方式。傳統的開發方式仍然是一種平行途徑，可透過相同的 API 進行直接控制。這兩種方式都能產生標準且可檢查的 SiMa.ai Neat 應用程式，因此您可以檢閱或修改代理程式開發的程式碼，並隨著應用程式的發展，在兩種工作流程之間切換。請參閱。 [設定 Neat SDK。](/getting-started/dev-environment/) 以促進具主動性的發展。
+Modalix DevKit，檢查結果和診斷資訊，並最佳化實作方式。傳統的開發方式仍然是一種平行途徑，可透過相同的 API 進行直接控制。這兩種方式都能產生標準且可檢查的 SiMa.ai Neat 應用程式，因此您可以檢閱或修改代理程式開發的程式碼，並隨著應用程式的發展，在兩種工作流程之間切換。請參閱 [設定 Neat SDK](/getting-started/dev-environment/)，以促進具主動性的發展。
 
 <div className="overview-workflow-image agentic-visual-desktop">
 

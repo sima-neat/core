@@ -38,17 +38,17 @@ DevKit Sync 將這些位置連接到一個共享的 `/workspace`，因此，建�
 
 若要在安裝後變更 SDK 設定，例如工作區位置或 DevKit 配對設定，請參閱 [設定 SDK](/getting-started/dev-environment/configure-sdk/)。
 
-Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特定版本，或使用獨立的主機，請參閱 [安裝 Model Compiler。](/getting-started/dev-environment/install-model-compiler/)。
+Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特定版本，或使用獨立的主機，請參閱 [安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)。
 
 對於無法直接下載套件的主機，請參閱[離線安裝](/getting-started/dev-environment/offline-installation/)。
 
 ## 包含哪些內容
 
-- **跨編譯環境：**在您的主機上的 Linux 容器中，建立用於 Modalix 的 C++ Neat 應用程式。
-- **DevKit Sync：**將 SDK 與 Modalix DevKit 配對，並在兩個位置中公開相同的工作區。
-- **模型工具：**在 SDK 中安裝相應的 Model Compiler。如果需要自行編譯或量化 ONNX 或 GenAI 模型，則必須安裝；如果僅使用預編譯的模型套件，則可以選擇性安裝。
-- **Insight：**透過瀏覽器檢查工作區檔案、媒體來源、串流傳遞和執行階段行為。
-- **已準備好的代理環境：**使用包含的 Codex 和 Claude 技能，以及最新的 Neat 原始碼參考和範例。
+- **跨編譯環境：** 在您的主機上的 Linux 容器中，建立用於 Modalix 的 C++ Neat 應用程式。
+- **DevKit Sync：** 將 SDK 與 Modalix DevKit 配對，並在兩個位置中公開相同的工作區。
+- **模型工具：** 在 SDK 中安裝相應的 Model Compiler。如果需要自行編譯或量化 ONNX 或 GenAI 模型，則必須安裝；如果僅使用預編譯的模型套件，則可以選擇性安裝。
+- **Insight：** 透過瀏覽器檢查工作區檔案、媒體來源、串流傳遞和執行階段行為。
+- **已準備好的代理環境：** 使用包含的 Codex 和 Claude 技能，以及最新的 Neat 原始碼參考和範例。
 
 ## 主機需求
 
@@ -76,7 +76,7 @@ Model Compiler 會在 SDK 設定期間提供。若要稍後安裝，請指定特
 | 透過 Colima 的 macOS 15.5 或更高版本 | `arm64` | 是 | Model Compiler 2.1.2 或更高版本；請在 Neat SDK 內安裝。 |
 
 :::note 架構名稱
-`arm64` 和 `aarch64` 實際上是相同的 64 位元 Arm 架構——macOS 會將其報告為 `arm64`，而 Linux 會將其報告為 `aarch64`。同樣地，`x86_64` 和 `amd64` 也是相同的架構。在您的主機上（或在 SDK 內部）執行 `uname -m`，以查看您使用的是哪一種。Model Compiler 的安裝指令使用 `arm64` 和 `amd64`——請參閱 [安裝 Model Compiler。](/getting-started/dev-environment/install-model-compiler/)。
+`arm64` 和 `aarch64` 實際上是相同的 64 位元 Arm 架構——macOS 會將其報告為 `arm64`，而 Linux 會將其報告為 `aarch64`。同樣地，`x86_64` 和 `amd64` 也是相同的架構。在您的主機上（或在 SDK 內部）執行 `uname -m`，以查看您使用的是哪一種。Model Compiler 的安裝指令使用 `arm64` 和 `amd64`——請參閱 [安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)。
 :::
 
 :::note 安裝特定版本
