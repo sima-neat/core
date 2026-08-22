@@ -104,8 +104,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o "${RUNNER_TEMP}/sima-cli-install.py"
-          python3 "${RUNNER_TEMP}/sima-cli-install.py" main latest --noninteractive
+          curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
           "${HOME}/.sima-cli/.venv/bin/sima-cli" neat install i18n
           sima-i18n --version
