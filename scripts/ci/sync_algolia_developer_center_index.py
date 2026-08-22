@@ -57,6 +57,19 @@ def strip_frontmatter(text: str) -> str:
     return text
 
 
+def frontmatter_slug(text: str) -> str | None:
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return None
+    frontmatter = text[4:end]
+    match = re.search(r"^slug:\s*(.+?)\s*$", frontmatter, re.MULTILINE)
+    if not match:
+        return None
+    return match.group(1).strip().strip("'\"") or None
+
+
 def clean_markdown(text: str) -> str:
     text = re.sub(r"```[\s\S]*?```", " ", text)
     text = re.sub(r"`([^`]*)`", r"\1", text)
@@ -90,7 +103,13 @@ def section_for_path(path: Path, docs_dir: Path) -> str:
     return "Overview"
 
 
-def route_for_path(path: Path, docs_dir: Path, site_base_url: str, language: str = DEFAULT_LOCALE) -> str:
+def route_for_path(
+    path: Path,
+    docs_dir: Path,
+    site_base_url: str,
+    language: str = DEFAULT_LOCALE,
+    doc_slug: str | None = None,
+) -> str:
     rel = path.relative_to(docs_dir).as_posix()
     stem = rel.rsplit(".", 1)[0]
     if stem.endswith("/index"):
@@ -100,8 +119,11 @@ def route_for_path(path: Path, docs_dir: Path, site_base_url: str, language: str
 
     match = re.match(r"^tutorials/tutorial_v(\d+)_(\d+)_(.+)$", stem)
     if match:
-        major, chapter, slug = match.groups()
-        stem = f"tutorials/v{major}/{chapter}-{slug.replace('_', '-')}"
+        major, chapter, legacy_slug = match.groups()
+        stem = f"tutorials/v{major}/{chapter}-{legacy_slug.replace('_', '-')}"
+
+    if doc_slug:
+        stem = doc_slug.lstrip("/").rstrip("/")
 
     locale_prefix = f"/{language}" if language != DEFAULT_LOCALE else ""
     route = f"/software{locale_prefix}/{stem}".rstrip("/")
@@ -175,7 +197,8 @@ def generate_records(
             if any(part in SKIP_PARTS for part in path.relative_to(language_docs_dir).parts):
                 continue
 
-            raw = strip_frontmatter(path.read_text(encoding="utf-8"))
+            source_text = path.read_text(encoding="utf-8")
+            raw = strip_frontmatter(source_text)
             body = clean_markdown(raw)
             if not body:
                 continue
@@ -183,7 +206,13 @@ def generate_records(
             rel = path.relative_to(language_docs_dir).as_posix()
             title = title_from_markdown(path, raw)
             section = section_for_path(path, language_docs_dir)
-            url = route_for_path(path, language_docs_dir, site_base_url, language)
+            url = route_for_path(
+                path,
+                language_docs_dir,
+                site_base_url,
+                language,
+                frontmatter_slug(source_text),
+            )
             route = urllib.parse.urlparse(url).path or "/software"
             record_key = f"{language}:{rel}"
             record = {

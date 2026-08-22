@@ -1498,7 +1498,7 @@ def _render_tutorial_card_grid(
                 f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
                 '    <div class="tutorial-card-image-wrap">',
                 f'      <BaseUrlImage className="tutorial-card-image" src="{module.image_url}" alt="{title} {html.escape(_ui(ui, "imageSuffix"))}" loading="lazy"></BaseUrlImage>',
-                f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
+                f'      <BaseUrlLink className="tutorial-card-image-title" href="{module.doc_slug}">{title}</BaseUrlLink>',
                 f'      <span class="tutorial-card-duration">{duration}</span>',
                 "    </div>",
                 '    <div class="tutorial-card-body">',
@@ -1540,7 +1540,7 @@ def _render_tutorial_path_block(
             ui.get("categoryDescriptions", {}).get(category, description)
         )
         lines.append(
-            f'      <li><a class="overview-link-card" href="/tutorials/{slug}/"><strong>{html.escape(localized_category)}</strong><span>{html.escape(localized_description)} {html.escape(count_text)}</span></a></li>'
+            f'      <li><BaseUrlLink className="overview-link-card" href="/tutorials/{slug}/"><strong>{html.escape(localized_category)}</strong><span>{html.escape(localized_description)} {html.escape(count_text)}</span></BaseUrlLink></li>'
         )
     lines.extend(["    </ul>", "  </section>", "</div>", ""])
     return lines

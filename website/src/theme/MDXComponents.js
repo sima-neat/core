@@ -7,6 +7,7 @@ import CodeTabs, {CodeTab} from '@site/src/components/CodeTabs';
 import ShellCommand from '@site/src/components/ShellCommand';
 import OperatorTable from '@site/src/components/OperatorTable';
 import BaseUrlImage from '@site/src/components/BaseUrlImage';
+import BaseUrlLink from '@site/src/components/BaseUrlLink';
 
 export default {
   ...MDXComponents,
@@ -18,10 +19,12 @@ export default {
   ShellCommand,
   OperatorTable,
   BaseUrlImage,
+  BaseUrlLink,
   codetabs: CodeTabs,
   codetab: CodeTab,
   shellcommand: ShellCommand,
   operatortable: OperatorTable,
   baseurlimage: BaseUrlImage,
+  baseurllink: BaseUrlLink,
   a: ApiReferenceLink,
 };

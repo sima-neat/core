@@ -598,6 +598,24 @@ def validate_localized_hashes(
         "translationDir",
     )
     source_root = path_within(staging, str(config["source_dir"]), "sourceDir")
+    source_docs = source_root / config["docs_relative"]
+    translation_prefix = config["translation_dir"].split("{locale}", 1)[0].rstrip("/")
+    translation_root = path_within(staging, translation_prefix, "translationDir")
+
+    for source_path in sorted(source_docs.rglob("*")):
+        if source_path.suffix.lower() not in {".md", ".mdx"}:
+            continue
+        try:
+            source_path.relative_to(translation_root)
+            continue
+        except ValueError:
+            pass
+        relative = source_path.relative_to(source_root)
+        source_key = (config["source_dir"] / relative).as_posix()
+        translated_path = translated_root / relative
+        if not translated_path.is_file():
+            failures.append(f"{locale} translation is missing: {source_key}")
+
     for translated_path in sorted(localized_docs.rglob("*")):
         if translated_path.suffix.lower() not in {".md", ".mdx"}:
             continue

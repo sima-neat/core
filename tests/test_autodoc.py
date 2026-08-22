@@ -145,16 +145,26 @@ class LocalizedAutodocTests(unittest.TestCase):
             english = staging / "docs/index.md"
             english.parent.mkdir(parents=True)
             english.write_text("# English\n", encoding="utf-8")
-            (english.parent / "fallback.md").write_text("# English fallback\n", encoding="utf-8")
+            fallback = english.parent / "fallback.md"
+            fallback.write_text("# English fallback\n", encoding="utf-8")
             asset = english.parent / "images/example.png"
             asset.parent.mkdir()
             asset.write_bytes(b"image fixture")
             digest = hashlib.sha256(english.read_bytes()).hexdigest()
+            fallback_digest = hashlib.sha256(fallback.read_bytes()).hexdigest()
             self.write_i18n_contract(staging, "docs/index.md", digest, digest)
+            manifest_path = staging / "docs/i18n/translation-sources.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for locale in ("ja", "ko"):
+                manifest[locale]["docs/fallback.md"] = fallback_digest
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             for locale, text in (("ja", "# 日本語\n"), ("ko", "# 한국어\n")):
                 path = staging / f"docs/i18n/{locale}/index.md"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text, encoding="utf-8")
+                (path.parent / "fallback.md").write_text(
+                    f"# {locale} fallback\n", encoding="utf-8"
+                )
 
             i18n_root = repo_root / "website/i18n"
             stale_destination = (
@@ -183,14 +193,17 @@ class LocalizedAutodocTests(unittest.TestCase):
                 )
 
             self.assertTrue(ok, message)
-            self.assertIn("localized ja (1)", message)
+            self.assertIn("localized ja (2)", message)
             ja_page = (
                 i18n_root / "ja" / MODULE.DOCUSAURUS_DOCS_TRANSLATION_DIR
                 / "tools/example/index.md"
             )
             self.assertIn("# 日本語", ja_page.read_text(encoding="utf-8"))
             ja_section = ja_page.parent
-            self.assertTrue((ja_section / "fallback.md").is_file())
+            self.assertIn(
+                "# ja fallback",
+                (ja_section / "fallback.md").read_text(encoding="utf-8"),
+            )
             self.assertEqual((ja_section / "images/example.png").read_bytes(), b"image fixture")
             ko_page = stale_destination / "index.md"
             self.assertIn("# 한국어", ko_page.read_text(encoding="utf-8"))
@@ -244,6 +257,29 @@ class LocalizedAutodocTests(unittest.TestCase):
                     )
 
             self.assertFalse(stale_destination.exists())
+
+    def test_missing_translation_fails_instead_of_falling_back_to_english(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staging = Path(directory)
+            english = staging / "docs/index.md"
+            omitted = staging / "docs/omitted.md"
+            english.parent.mkdir(parents=True)
+            english.write_text("# English\n", encoding="utf-8")
+            omitted.write_text("# Must be translated\n", encoding="utf-8")
+            digest = hashlib.sha256(english.read_bytes()).hexdigest()
+            self.write_i18n_contract(staging, "docs/index.md", digest, digest)
+            localized = staging / "docs/i18n/ja/index.md"
+            localized.parent.mkdir(parents=True)
+            localized.write_text("# 日本語\n", encoding="utf-8")
+            config = MODULE.load_source_i18n(
+                {"docs_subpath": "docs", "localization": True}, staging,
+            )
+
+            failures = MODULE.validate_localized_hashes(
+                staging, config, "ja", localized.parent,
+            )
+
+            self.assertIn("ja translation is missing: docs/omitted.md", failures)
 
 
 class AutodocMainTests(unittest.TestCase):

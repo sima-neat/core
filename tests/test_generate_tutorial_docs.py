@@ -103,6 +103,28 @@ def test_generates_source_owned_localized_tutorial(tmp_path: Path, monkeypatch) 
     assert "/tutorials/run-a-model" in output
 
 
+def test_generated_tutorial_links_respect_docusaurus_base_url(tmp_path: Path) -> None:
+    module_dir = _write_module(tmp_path, "001_run_a_model")
+    module = tutorial_docs.parse_module(module_dir, tmp_path)
+
+    index = tutorial_docs.render_index([module], "")
+    category = tutorial_docs.render_category_index(
+        module.category,
+        "models-inference",
+        "Model tutorials.",
+        [module],
+    )
+
+    assert (
+        '<BaseUrlLink className="overview-link-card" '
+        'href="/tutorials/models-inference/">' in index
+    )
+    assert (
+        '<BaseUrlLink className="tutorial-card-image-title" '
+        'href="/tutorials/run-a-model">' in category
+    )
+
+
 def test_main_writes_completed_locale_manifest(tmp_path: Path, monkeypatch) -> None:
     module = _write_module(tmp_path, "001_run_a_model")
     _write_locale_support(tmp_path, [module])

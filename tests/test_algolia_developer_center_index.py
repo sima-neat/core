@@ -53,6 +53,42 @@ class LocalizedRecordTests(unittest.TestCase):
             self.assertEqual(by_language["uk"]["route"], "/software/uk/getting-started")
             self.assertNotEqual(by_language["en"]["objectID"], by_language["uk"]["objectID"])
 
+    def test_localized_record_uses_frontmatter_slug(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            docs_dir = root / "docs"
+            localized_dir = (
+                root
+                / "i18n"
+                / "ja"
+                / "docusaurus-plugin-content-docs"
+                / "current"
+                / "develop-apps/tutorials/models-inference"
+            )
+            docs_dir.mkdir()
+            localized_dir.mkdir(parents=True)
+            (localized_dir / "tutorial_001_run_your_first_model.mdx").write_text(
+                "---\nslug: /tutorials/run-your-first-model\n---\n\n# 最初のモデル\n本文。\n",
+                encoding="utf-8",
+            )
+
+            records, _ = MODULE.generate_records(
+                docs_dir,
+                "https://developer.sima.ai",
+                MODULE.DEFAULT_MAX_RECORD_BYTES,
+                root / "i18n",
+            )
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(
+                records[0]["url"],
+                "https://developer.sima.ai/software/ja/tutorials/run-your-first-model",
+            )
+            self.assertEqual(
+                records[0]["route"],
+                "/software/ja/tutorials/run-your-first-model",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
