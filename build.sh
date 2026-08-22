@@ -2038,7 +2038,7 @@ build_docs_site() {
     --repo-root "${REPO_ROOT}" \
     --build-dir "${BUILD_DIR}" \
     --out-root "${REPO_ROOT}/docs" \
-    --i18n-root "${REPO_ROOT}/website/i18n" || true
+    --i18n-root "${REPO_ROOT}/website/i18n"
   echo
   echo "Expanding code tabs..."
   local expanded_docs_dir

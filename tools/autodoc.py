@@ -10,10 +10,11 @@ configured docs subpath into <out_root>/<mount>/ with light transforms:
 - Rewrite configured imported-doc link targets to their mounted core routes.
 - Drop a generated _category_.json at the section root.
 - Import source-owned translations into Docusaurus' locale content trees.
-- Reject localized Markdown whose recorded English source hash is stale.
+- Fail the build when source-owned localization is missing, stale, or invalid.
 
-Per-source clone or copy failures are logged and skipped; the script always
-exits 0 unless the manifest itself is malformed.
+Per-source clone or English copy failures are logged and skipped. Localization
+contract failures are fatal so a successful build never silently substitutes
+English for a requested locale.
 """
 
 from __future__ import annotations
@@ -65,6 +66,14 @@ SOURCE_INDEX_ENTRY_RE = re.compile(
     r"(?:\s+-\s+(?P<summary>.+?))?\s*$"
 )
 DOCUSAURUS_DOCS_TRANSLATION_DIR = "docusaurus-plugin-content-docs/current"
+LOCALIZATION_REMEDIATION = (
+    "Run 'sima-i18n check --require-complete' in the source repository, "
+    "correct the translations and manifest hashes, then rebuild the docs."
+)
+
+
+class SourceLocalizationError(RuntimeError):
+    """A source-owned localization contract cannot be published safely."""
 
 
 def run_git(args: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
@@ -1058,12 +1067,9 @@ def process_source(
     try:
         source_i18n = load_source_i18n(source, staging)
     except OSError as exc:
-        LOG.warning(
-            "[%s] source localization unavailable: %s; staging English only",
-            key,
-            exc,
-        )
-        source_i18n = None
+        raise SourceLocalizationError(
+            f"source localization unavailable: {exc}. {LOCALIZATION_REMEDIATION}"
+        ) from exc
 
     dst_section = out_root / mount
     LOG.info("[%s] copy %s -> %s", key, src_docs, dst_section)
@@ -1099,8 +1105,10 @@ def process_source(
         requested_locales = locales or list(source_i18n["locales"])
         for locale in requested_locales:
             if locale not in source_i18n["locales"]:
-                LOG.warning("[%s:%s] locale is not declared by the source; skipping", key, locale)
-                continue
+                raise SourceLocalizationError(
+                    f"{locale} is requested but not declared by the source localization config. "
+                    f"{LOCALIZATION_REMEDIATION}"
+                )
             localized_docs = localized_docs_path(staging, source_i18n, locale)
             localized_destination = (
                 i18n_root / locale / DOCUSAURUS_DOCS_TRANSLATION_DIR / mount
@@ -1108,25 +1116,19 @@ def process_source(
             if not localized_docs.is_dir():
                 if localized_destination.exists():
                     shutil.rmtree(localized_destination)
-                LOG.warning(
-                    "[%s:%s] localized docs not found at %s; using English fallback",
-                    key, locale, localized_docs,
+                raise SourceLocalizationError(
+                    f"{locale} localized docs not found at {localized_docs}. "
+                    f"{LOCALIZATION_REMEDIATION}"
                 )
-                continue
             hash_failures = validate_localized_hashes(
                 staging, source_i18n, locale, localized_docs,
             )
             if hash_failures:
                 if localized_destination.exists():
                     shutil.rmtree(localized_destination)
-                for failure in hash_failures:
-                    LOG.warning("[%s:%s] %s", key, locale, failure)
-                LOG.warning(
-                    "[%s:%s] rejected localized docs; using English fallback",
-                    key,
-                    locale,
+                raise SourceLocalizationError(
+                    f"{'; '.join(hash_failures)}. {LOCALIZATION_REMEDIATION}"
                 )
-                continue
             LOG.info(
                 "[%s:%s] copy %s -> %s",
                 key, locale, localized_docs, localized_destination,
@@ -1154,10 +1156,9 @@ def process_source(
             except OSError as exc:
                 if localized_destination.exists():
                     shutil.rmtree(localized_destination)
-                LOG.warning(
-                    "[%s:%s] localized copy failed: %s; using English fallback",
-                    key, locale, exc,
-                )
+                raise SourceLocalizationError(
+                    f"{locale} localized copy failed: {exc}. {LOCALIZATION_REMEDIATION}"
+                ) from exc
 
     detail = f"staged {file_count} files into {dst_section.relative_to(repo_root)}"
     if localized_counts:
@@ -1199,19 +1200,32 @@ def main() -> int:
         LOG.info("manifest has no sources; nothing to do")
         return 0
 
-    failures: List[str] = []
+    skipped: List[str] = []
+    localization_failures: List[str] = []
     successes: List[str] = []
     for source in sources:
-        ok, message = process_source(source, repo_root, build_dir, out_root, i18n_root, locales)
+        try:
+            ok, message = process_source(
+                source, repo_root, build_dir, out_root, i18n_root, locales,
+            )
+        except SourceLocalizationError as exc:
+            localization_failures.append(f"{source['key']}: {exc}")
+            LOG.error("[%s] FAILED: %s", source["key"], exc)
+            continue
         if ok:
             successes.append(f"{source['key']}: {message}")
             LOG.info("[%s] OK: %s", source["key"], message)
         else:
-            failures.append(f"{source['key']}: {message}")
+            skipped.append(f"{source['key']}: {message}")
             LOG.warning("[%s] SKIPPED: %s", source["key"], message)
 
-    LOG.info("summary: %d ok, %d skipped", len(successes), len(failures))
-    return 0
+    LOG.info(
+        "summary: %d ok, %d skipped, %d localization failures",
+        len(successes),
+        len(skipped),
+        len(localization_failures),
+    )
+    return 1 if localization_failures else 0
 
 
 if __name__ == "__main__":

@@ -137,7 +137,7 @@ class LocalizedAutodocTests(unittest.TestCase):
                 staging / "docs/i18n/ja/guides",
             )
 
-    def test_imports_current_translation_and_removes_stale_locale(self):
+    def test_imports_current_translations_and_replaces_existing_locale(self):
         with tempfile.TemporaryDirectory() as directory:
             repo_root = Path(directory)
             build_dir = repo_root / "build"
@@ -150,7 +150,7 @@ class LocalizedAutodocTests(unittest.TestCase):
             asset.parent.mkdir()
             asset.write_bytes(b"image fixture")
             digest = hashlib.sha256(english.read_bytes()).hexdigest()
-            self.write_i18n_contract(staging, "docs/index.md", digest, "stale")
+            self.write_i18n_contract(staging, "docs/index.md", digest, digest)
             for locale, text in (("ja", "# 日本語\n"), ("ko", "# 한국어\n")):
                 path = staging / f"docs/i18n/{locale}/index.md"
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,8 +192,99 @@ class LocalizedAutodocTests(unittest.TestCase):
             ja_section = ja_page.parent
             self.assertTrue((ja_section / "fallback.md").is_file())
             self.assertEqual((ja_section / "images/example.png").read_bytes(), b"image fixture")
-            self.assertFalse(stale_destination.exists())
+            ko_page = stale_destination / "index.md"
+            self.assertIn("# 한국어", ko_page.read_text(encoding="utf-8"))
+            self.assertFalse((stale_destination / "old.md").exists())
             self.assertFalse((repo_root / "docs-output/tools/example/i18n").exists())
+
+    def test_stale_translation_fails_instead_of_falling_back_to_english(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            build_dir = repo_root / "build"
+            staging = build_dir / "autodoc/example"
+            english = staging / "docs/index.md"
+            english.parent.mkdir(parents=True)
+            english.write_text("# Updated English\n", encoding="utf-8")
+            digest = hashlib.sha256(english.read_bytes()).hexdigest()
+            self.write_i18n_contract(staging, "docs/index.md", digest, "stale")
+            for locale, text in (("ja", "# 日本語\n"), ("ko", "# 한국어\n")):
+                path = staging / f"docs/i18n/{locale}/index.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+
+            i18n_root = repo_root / "website/i18n"
+            stale_destination = (
+                i18n_root / "ko" / MODULE.DOCUSAURUS_DOCS_TRANSLATION_DIR
+                / "tools/example"
+            )
+            stale_destination.mkdir(parents=True)
+            (stale_destination / "old.md").write_text("old\n", encoding="utf-8")
+            source = {
+                "key": "example",
+                "title": "Example",
+                "repo": "unused",
+                "branch": "main",
+                "docs_subpath": "docs",
+                "mount": "tools/example",
+                "localization": True,
+            }
+
+            with mock.patch.object(MODULE, "acquire_source", return_value="main"):
+                with self.assertRaisesRegex(
+                    MODULE.SourceLocalizationError,
+                    "ko translation is stale.*sima-i18n check --require-complete",
+                ):
+                    MODULE.process_source(
+                        source,
+                        repo_root,
+                        build_dir,
+                        repo_root / "docs-output",
+                        i18n_root,
+                        ["ja", "ko"],
+                    )
+
+            self.assertFalse(stale_destination.exists())
+
+
+class AutodocMainTests(unittest.TestCase):
+    def run_main_with_result(self, result):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "autodoc.json"
+            manifest.write_text(
+                json.dumps({"sources": [{"key": "example"}]}),
+                encoding="utf-8",
+            )
+            argv = [
+                "autodoc.py",
+                "--conf", str(manifest),
+                "--repo-root", str(root),
+                "--build-dir", "build",
+                "--out-root", str(root / "docs"),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with mock.patch.object(MODULE, "process_source") as process_source:
+                    if isinstance(result, BaseException):
+                        process_source.side_effect = result
+                    else:
+                        process_source.return_value = result
+                    return MODULE.main()
+
+    def test_returns_nonzero_for_localization_contract_failure(self):
+        result = MODULE.SourceLocalizationError("translation is stale")
+
+        self.assertEqual(self.run_main_with_result(result), 1)
+
+    def test_preserves_best_effort_behavior_for_source_fetch_failure(self):
+        self.assertEqual(self.run_main_with_result((False, "git failed")), 0)
+
+    def test_docs_build_propagates_autodoc_exit_status(self):
+        build_script = (ROOT / "build.sh").read_text(encoding="utf-8")
+        invocation = build_script.split("python3 tools/autodoc.py", 1)[1].split(
+            '  echo "Expanding code tabs..."', 1,
+        )[0]
+
+        self.assertNotIn("|| true", invocation)
 
 
 if __name__ == "__main__":
