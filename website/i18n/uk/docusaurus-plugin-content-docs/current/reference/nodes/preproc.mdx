@@ -1,0 +1,254 @@
+---
+title: "Вузол попередньої обробки."
+description: "Налаштуйте вузол попередньої обробки CVU для зміни розміру, перетворення кольорів, нормалізації, теселяції та попередньої обробки за допомогою списку областей інтересу (ROI)."
+sidebar_position: 1
+---
+
+# Вузол попередньої обробки.
+
+`Preproc` — це об’єднаний вузол попередньої обробки зображень CVU, який використовується перед виконанням MLA. Він може змінювати розмір зображення, зберігати пропорції за допомогою заповнення рамками, конвертувати кольори, нормалізувати, квантувати та розбивати зображення на частини, щоб створити тензор, який відповідає очікуваному контракту моделі.
+
+Для більшості застосунків налаштовуйте попередню обробку за допомогою `Model::Options::preprocess` і дозвольте планувальнику моделі створити відповідний вузол `Preproc`. Створюйте `nodes::Preproc(...)` безпосередньо лише тоді, коли ви створюєте спеціальний фрагмент графа, який вже знає повний вхідний і вихідний контракт.
+
+## Швидкий старт.
+
+C++:
+
+```cpp
+#include <neat.h>
+#include <opencv2/imgcodecs.hpp>
+
+using namespace simaai::neat;
+
+Model::Options opt;
+opt.preprocess.resize.enable = AutoFlag::On;
+opt.preprocess.resize.width = 640;
+opt.preprocess.resize.height = 640;
+opt.preprocess.resize.mode = ResizeMode::Letterbox;
+opt.preprocess.resize.pad_value = 114;
+opt.preprocess.resize.scaling_type = "BILINEAR";
+opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+opt.preprocess.color_convert.output_format = PreprocessColorFormat::RGB;
+opt.preprocess.normalize.enable = AutoFlag::On;
+opt.preprocess.normalize.mean = {0.0f, 0.0f, 0.0f};
+opt.preprocess.normalize.stddev = {1.0f, 1.0f, 1.0f};
+
+Model model("/path/to/model.tar.gz", opt);
+
+cv::Mat image = cv::imread("/path/to/frame.jpg", cv::IMREAD_COLOR);
+TensorList tensors = stages::Preproc({image}, model);
+```
+
+Python:
+
+```python
+import cv2
+import pyneat
+
+opt = pyneat.ModelOptions()
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.width = 640
+opt.preprocess.resize.height = 640
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.pad_value = 114
+opt.preprocess.resize.scaling_type = "BILINEAR"
+opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
+opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
+opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+opt.preprocess.normalize.mean = [0.0, 0.0, 0.0]
+opt.preprocess.normalize.stddev = [1.0, 1.0, 1.0]
+
+model = pyneat.Model("/path/to/model.tar.gz", opt)
+
+image = cv2.imread("/path/to/frame.jpg", cv2.IMREAD_COLOR)
+tensors = pyneat.stages.preproc(
+    [image],
+    model,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+## Способи використання.
+
+| Приклад використання | API | Інструкція |
+| --- | --- | --- |
+| Повний шлях до моделі: | `Model model(path, opt); graph.add(model);` | Рекомендовано для використання в виробничих конвеєрах. Архів моделі та планувальник маршруту визначають точну сімейство графів попередньої обробки та спосіб передачі тензорів. |
+| Автономний етап | `stages::Preproc(images, model)` | Корисний для проведення швидких перевірок, налагодження попередньої обробки або ручного введення даних для MLA. |
+| Етап ROI-списку | `stages::Preproc(images, model, rois)` | Використовуйте, коли кожен результат має бути отриманий з вікна середовища виконання, що охоплює одне або кілька вихідних зображень. |
+| Ручне створення вузла | `nodes::Preproc(PreprocOptions{...})` | Лише для досвідчених користувачів, які створюють граф. Якщо є архів моделі, краще використовувати автоматизоване створення. |
+
+## Інтерфейс API.
+
+C++:
+
+```cpp
+namespace simaai::neat::nodes {
+std::shared_ptr<Node> Preproc(PreprocOptions opt = {});
+}
+
+namespace simaai::neat::stages {
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model);
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model,
+                   const std::vector<PreprocessRoi>& rois);
+}
+```
+
+Python:
+
+```python
+pyneat.nodes.preproc(options: pyneat.PreprocOptions | None = None)
+
+pyneat.stages.preproc(
+    images: list,
+    model: pyneat.Model,
+    *,
+    rois: list[pyneat.PreprocessRoi] | None = None,
+    image_format: pyneat.PixelFormat | None = None,
+    copy: bool = False,
+) -> list[pyneat.Tensor]
+```
+
+`stages::Preproc` використовує визначений моделью план попередньої обробки. Це забезпечує узгодженість окремого виклику з тим самим вузлом `Preproc`, який використовується у повному графі.
+
+## Вхідні та вихідні параметри контракту.
+
+| Пункт контракту | Поведінка |
+| --- | --- |
+| Тип вхідних даних | C++ приймає `cv::Mat` зображення, зазвичай `CV_8UC3` для RGB/BGR або `CV_8UC1` для зображень у сірих тонах. Python підтримує uint8 у бібліотеках NumPy/Torch.`pyneat.Tensor` зображення у форматі HW або HWC. |
+| Пакет джерел | Функція обробки, яка не використовує ROI, обробляє кожне зображення окремо. Функція обробки, яка використовує список ROI, приймає пакет зображень однакового розміру та однакового типу. |
+| Порядок виведення | Версія, яка не використовує ROI, повертає результати у порядку зображень. Версія, яка використовує список ROI, повертає результати у порядку ROI. |
+| Тип даних/формат вихідних даних | визначається обраним шляхом моделі: щільний формат BF16/INT8/INT16 або формат з використанням багатошарових матричних операцій (MLA), залежно від визначеної родини попередньої обробки графа. |
+| Метадані. | Тензори, що передаються на вихід, містять `tensor.semantic.preprocess` метадані, які описують зміну розміру, застосування методу letterbox, нормалізацію, квантування, теселяцію та геометрію області інтересу (ROI). |
+
+## Параметри попередньої обробки моделі.
+
+Це параметри, які мають бути доступні користувачам у коді застосунку.
+
+### Зміна розміру та пропорцій
+
+| Параметр | Значення |
+| --- | --- |
+| `opt.preprocess.resize.enable` | `Auto`, `On` або `Off`. `Auto` дозволяє планувальнику визначати, чи потрібне змінення розміру. |
+| `opt.preprocess.resize.width` / `height` | – цільовий розмір вхідних даних для моделі. `0` означає, що, якщо можливо, розмір визначається на основі специфікацій моделі. |
+| `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`, або `ResizeMode::Crop`. |
+| `opt.preprocess.resize.pad_value` | Значення для заповнення при додаванні полів навколо зображення. `114` є стандартним значенням за замовчуванням для YOLO. |
+| `opt.preprocess.resize.scaling_type` | Токен інтерполяції. Підтримувані токени включають `BILINEAR`, `NEAREST_NEIGHBOUR`, `BICUBIC`, `INTERAREA` та `NO_SCALING`. `NEAREST_NEIGHBOR` і `INTER_AREA` є допустимими альтернативними назвами. |
+
+`ResizeMode::Letterbox` зберігає пропорції, масштабуючи зображення або область інтересу, щоб воно відповідало заданим розмірам, і заповнює решту області. `ResizeMode::Stretch` масштабує ширину та висоту незалежно одна від одної. `ResizeMode::Crop` виконує центральне кадрування після ізотропного масштабування.
+
+### Колір, нормалізація, квантування та теселяція.
+
+| Параметр | Значення |
+| --- | --- |
+| `opt.preprocess.color_convert.input_format` | Підказка щодо формату вхідного зображення: `RGB`, `BGR`, `GRAY8`, `NV12`, `I420` або `Auto`. |
+| `opt.preprocess.color_convert.output_format` | Колірний простір вхідних даних моделі, зазвичай `RGB`, `BGR` або `GRAY8`. |
+| `opt.preprocess.normalize.enable` | Увімкнути або вимкнути нормалізацію середнього значення/стандартного відхилення. |
+| `opt.preprocess.normalize.mean` | Середнє значення для кожного каналу. Відповідає попередній обробці, що використовувалася під час навчання моделі. |
+| `opt.preprocess.normalize.stddev` | Дільник для кожного каналу. Використовуйте ті самі нормалізовані статистичні дані каналів, які використовувалися під час навчання моделі, наприклад, значення в стилі ImageNet, близькі до `{0.229,0.224,0.225}`. |
+| `opt.preprocess.quantize.enable` | Планувальник/інструмент керування для користувача, що дозволяє отримати квантований вихід, коли модель цього потребує. |
+| `opt.preprocess.quantize.zero_point` / `scale` | Явні параметри квантування. Залиште без змін, якщо не потрібно перевизначити параметри калібрування моделі. |
+| `opt.preprocess.tessellate.enable` | Планувальник/інструмент керування для користувача, що забезпечує вивід даних у вигляді плиток MLA. У разі активації, `Preproc` повертає тензори, що пройшли теселяцію. |
+| `opt.preprocess.tessellate.slice_shape` | Розширені параметри для зміни геометрії тайлів. Залиште поле порожнім, якщо це не передбачено контрактом моделі. |
+
+## Перелік показників рентабельності інвестицій у середовищі виконання.
+
+Списки ROI є механізмом вибору вхідних даних під час виконання, а не статичним полем `PreprocOptions`. Передавайте їх до перевантаженої версії для автономного етапу:
+
+C++:
+
+```cpp
+std::vector<cv::Mat> images = {image0, image1};
+std::vector<PreprocessRoi> rois = {
+    {0, 0, 0, 320, 240},      // ROI from images[0]
+    {1, 100, 50, 256, 256},   // ROI from images[1]
+    {0, -16, 32, 128, 128},   // partially outside images[0], padded by Preproc
+};
+
+TensorList roi_tensors = stages::Preproc(images, model, rois);
+```
+
+Python:
+
+```python
+images = [image0, image1]
+rois = [
+    pyneat.PreprocessRoi(0, 0, 0, 320, 240),
+    pyneat.PreprocessRoi(1, 100, 50, 256, 256),
+    pyneat.PreprocessRoi(0, -16, 32, 128, 128),
+]
+
+roi_tensors = pyneat.stages.preproc(
+    images,
+    model,
+    rois=rois,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+Використовуйте `image_format=pyneat.PixelFormat.BGR` для зображень, отриманих за допомогою `cv2.imread`, `RGB` для RGB-зображень і `GRAY8` для одноканальних зображень у градаціях сірого. Встановлюйте `copy=True` лише тоді, коли буфер зображення Python може бути змінений або звільнений до того, як етап завершить роботу.
+
+### `PreprocessRoi`
+
+| Поле | Значення |
+| --- | --- |
+| `batch_index` | Індекс вихідного зображення у векторі `images`. |
+| `x`, `y` | Координати верхнього лівого кута області інтересу (ROI) у пікселях вихідного зображення. Допускаються від’ємні значення, щоб область інтересу могла починатися за межами кадру. |
+| `width`, `height` | Розмір області інтересу (ROI) у пікселях. Обидва значення мають бути додатними. |
+
+### Семантика списку ROI.
+
+| Правило | Поведінка |
+| --- | --- |
+| Кількість/порядок вихідних даних: | Повертає один тензор для кожного запрошеного ROI (області інтересу) в тому ж порядку, що й вектор ROI. Якщо вектор ROI порожній, повертається порожній `TensorList`. |
+| Кілька областей інтересу на одне зображення. | Підтримується. Кілька записів можуть використовувати одне й те саме. `batch_index`. |
+| Пакетна обробка вихідних зображень | Підтримується, якщо всі вихідні зображення мають однакові розміри, тип і кількість каналів. |
+| Пікселі за межами кадру | Підтримується для RGB/BGR/GRAY зображень; пікселі, що знаходяться за межами вихідних меж, заповнюються заданим значенням. |
+| Підтримувані формати вхідних даних: | У середовищі виконання підтримуються упаковані 8-бітові RGB/BGR (`CV_8UC3`) та GRAY/GRAY8 (`CV_8UC1`) зображення для списку областей інтересу (ROI). Списки ROI у форматах NV12/I420 навмисно не включені до цього API. |
+| Поведінка під час зміни розміру: | Для областей інтересу (ROI) використовуються ті самі параметри зміни розміру, тип масштабування, політика співвідношення сторін, нормалізація, тип даних і налаштування теселяції, що й для повнокадрової попередньої обробки. |
+| Метадані | Для кожного тензора вихідних даних генеруються скалярні метадані ROI, а також афінне відображення, яке перетворює координати з простору моделі/попередньо оброблених даних назад у координати вихідного кадру. |
+
+## Безпосередньо звертайтеся до полів `PreprocOptions`.
+
+Використовуйте їх лише для ручного створення вузлів. Модель автоматично створює більшість із них на основі архіву та визначеного плану попередньої обробки.
+
+| Група полів | Поля |
+| --- | --- |
+| Розміри: | `input_shape`, `output_shape`, `slice_shape`, `scaled_width`, `scaled_height`, `batch_size` |
+| Керування трансформаціями | `normalize`, `aspect_ratio`, `tessellate`, `dynamic_input_dims`, `channel_mean`, `channel_stddev`. |
+| Формати | `input_img_type`, `output_img_type`, `output_dtype`, `scaling_type`, `padding_type`, `pad_value` |
+| Квантування | `q_zp`, `q_scale` |
+| З’єднання в середовищі виконання | для графа `graph_name`, вузла `node_name`, елемента `element_name`, ЦП `cpu`, наступного ЦП `next_cpu`, вищого рівня `upstream_name`, вхідних даних графа `graph_input_name`. |
+| Розширені налаштування буферів | `single_output_handoff`, `num_buffers`, `num_buffers_model`, `num_buffers_locked`, `model_managed_contract` |
+
+## Метадані та декодування даних у контейнері.
+
+`Preproc` записує метадані попередньої обробки, щоб наступні вузли могли правильно відновити трансформацію зображення. Зокрема, `SimaBoxDecode` використовує ці метадані для відображення меж виявлених об’єктів назад до вихідного зображення або координатної системи області інтересу (ROI).
+
+Важливі поля метаданих включають:
+
+- `original_width` / `original_height`
+- `resized_width` / `resized_height`
+- `scaled_width` / `scaled_height`
+- `pad_left`, `pad_right`, `pad_top`, `pad_bottom`
+- `resize_mode`, `color_in`, `color_out`
+- `normalize`, `quantize`, `tessellate`
+- `affine_*` трансформуйте поля.
+- `roi_list_enabled`, `rois`, `roi_affines` та поля, що відображають кількість/місткість ROI.
+
+## Усунення несправностей
+
+| Симптом | Перевірка |
+| --- | --- |
+| Області зсуваються або масштабуються. | Перевірте `resize.mode`, letterbox, `pad_value` і те, чи правильно наступний етап декодування обробляє тензор `tensor.semantic.preprocess`. |
+| Результати обробки областей інтересу (ROI) виглядають ідентично. | Перевірте, чи значення `batch_index`, `x`, `y`, `width` і `height` відрізняються, як очікувалося, і чи вихідні зображення є різними. |
+| Виклик ROI-list викликає помилку до початку виконання. | Переконайтеся, що пакет зображень не порожній, усі зображення мають однаковий розмір/тип/кількість каналів, `batch_index` є дійсним, а ширина/висота ROI є додатними значеннями. |
+| Неочікуваний тип даних/розташування. | Перевірте `model.resolved_preprocess_plan()` та семантику тензора на виході; квантування/теселяція повинні відповідати структурі моделі. |
+| Результат масштабування з використанням методу Letterbox має несподівані поля. | Перевірте `ResizeMode::Letterbox`, цільовий розмір, співвідношення сторін області інтересу та `pad_value`. |
+
+## Див. також.
+
+- [Попереднє оброблення списків ROI.](/reference/preproc_roi)
+- [Підготуйте зображення перед виконанням обчислень.](/tutorials/preprocess-images)
+- [Формати даних](/develop-apps/advanced-concepts/data_formats)
+- [Модель програмування вузлів.](/develop-apps/development-workflow/node)
+- [Декодування типів даних у форматі Box.](/reference/boxdecode_decode_types)

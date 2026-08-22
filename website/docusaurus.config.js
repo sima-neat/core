@@ -62,6 +62,10 @@ const githubOrgUrl = process.env.DOCS_GITHUB_ORG_URL || `https://github.com/${or
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
+const docsLocales = ["en", "ko", "ja", "zh-Hant", "uk"];
+const configuredPreferredLocale = docsLocales.includes(process.env.DOCS_PREFERRED_LOCALE)
+  ? process.env.DOCS_PREFERRED_LOCALE
+  : "";
 const insightOpenApiSpec = path.resolve(
   __dirname,
   process.env.INSIGHT_OPENAPI_SPEC || "../../insight/neat_insight/openapi.json",
@@ -102,6 +106,17 @@ const buildCommitUrl = buildCommit ? `${githubRepoUrl}/commit/${buildCommit}` : 
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
+  i18n: {
+    defaultLocale: "en",
+    locales: docsLocales,
+    localeConfigs: {
+      en: {label: "English", htmlLang: "en-US"},
+      ko: {label: "한국어", htmlLang: "ko-KR"},
+      ja: {label: "日本語", htmlLang: "ja-JP"},
+      "zh-Hant": {label: "繁體中文", htmlLang: "zh-Hant-TW"},
+      uk: {label: "Українська", htmlLang: "uk-UA"},
+    },
+  },
   future: {
     faster: {
       rspackBundler: true,
@@ -120,9 +135,53 @@ const config = {
     },
   },
   favicon: "img/favicon.png",
+  staticDirectories: ["static", "../docs/images", "../docs/develop-apps/images"],
   organizationName: org,
   projectName: project,
   headTags: [
+    {
+      tagName: "script",
+      attributes: {},
+      innerHTML: `(() => {
+        const supported = ${JSON.stringify(docsLocales)};
+        const localized = supported.filter((locale) => locale !== "en");
+        window.__NEAT_DOCS_PREFERRED_LOCALE__ =
+          window.__NEAT_DOCS_PREFERRED_LOCALE__ || ${JSON.stringify(configuredPreferredLocale)};
+        const params = new URLSearchParams(window.location.search);
+        const previewKey = "neat-docs-i18n-preview";
+        let previewEnabled = params.get("i18n") === "1";
+        try {
+          if (previewEnabled) {
+            window.sessionStorage.setItem(previewKey, "1");
+          } else {
+            previewEnabled = window.sessionStorage.getItem(previewKey) === "1";
+          }
+        } catch {}
+        if (previewEnabled) return;
+        const base = ${JSON.stringify(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`)};
+        const cookie = document.cookie.match(/(?:^|; )sima-neat-locale=([^;]*)/);
+        const cookieLocale = cookie ? decodeURIComponent(cookie[1]) : "";
+        const preferred = supported.includes(window.__NEAT_DOCS_PREFERRED_LOCALE__)
+          ? window.__NEAT_DOCS_PREFERRED_LOCALE__
+          : (supported.includes(cookieLocale) ? cookieLocale : "en");
+        let current = "en";
+        let suffix = window.location.pathname.startsWith(base)
+          ? window.location.pathname.slice(base.length)
+          : window.location.pathname.replace(/^[/]/, "");
+        for (const locale of localized) {
+          if (suffix === locale || suffix.startsWith(locale + "/")) {
+            current = locale;
+            suffix = suffix === locale ? "" : suffix.slice(locale.length + 1);
+            break;
+          }
+        }
+        if (current === preferred) return;
+        const localizedPath = preferred === "en"
+          ? base + suffix
+          : base + preferred + "/" + suffix;
+        window.location.replace(localizedPath + window.location.search + window.location.hash);
+      })();`,
+    },
     {
       tagName: "link",
       attributes: {
@@ -264,7 +323,7 @@ const config = {
           type: "html",
           position: "left",
           value:
-            '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" data-language-pref-select aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
+            '<div class="language-pref"><label for="language-pref-select">Code</label><select id="language-pref-select" data-language-pref-select aria-label="Preferred programming language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
         },
       ],
     },
@@ -298,6 +357,7 @@ const config = {
     require.resolve("./src/clientModules/search-highlight.js"),
     require.resolve("./src/clientModules/collapse-sidebar-on-home.js"),
     require.resolve("./src/clientModules/strip-category-ssr-href.js"),
+    require.resolve("./src/clientModules/i18n-preview.js"),
   ],
 };
 

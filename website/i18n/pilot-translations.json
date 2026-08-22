@@ -1,0 +1,8 @@
+{
+  "locales": ["ko", "ja", "zh-Hant", "uk"],
+  "sources": {
+    "docs/getting-started/dev-environment/install-the-environment.md": "00b264d843c03eff3b7c729f51364112f19580b4f04896bddbacf3784295826b",
+    "docs/getting-started/neat-library/index.md": "9e8343dfea729126a553065e57270903d54ef1d1e1fa2f9fcdf6217929c8491c",
+    "docs/develop-apps/hello-neat/minimal.md": "21b77a2813f540702fd3bc105ea2ecc630288e0256aa014196599e722297daaf"
+  }
+}

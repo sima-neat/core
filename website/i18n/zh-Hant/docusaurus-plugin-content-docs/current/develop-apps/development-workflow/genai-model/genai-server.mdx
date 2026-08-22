@@ -1,0 +1,248 @@
+---
+title: "GenAI 伺服器"
+description: "透過 Neat 的 HTTP 端點來提供 LLM、VLM 和 ASR 模型。"
+sidebar_position: 2
+slug: /develop-apps/development-workflow/genai-model/genai-server
+---
+
+# GenAI 伺服器
+
+當瀏覽器、使用者介面、服務或遠端使用者端需要透過 HTTP 呼叫一個或多個 GenAI 模型時，請使用 `GenAIServer`。該伺服器負責模型註冊、請求路由、串流回應和取消。對於與模型在同一個程序中執行的應用程式邏輯，請使用 [直接使用 GenAI API](/develop-apps/development-workflow/genai-model/direct-api)。
+
+## 建立並啟動伺服器
+
+伺服器預設會繫結到 `0.0.0.0:9998`。在啟動伺服器之前，請使用穩定的服務名稱來註冊每個已部署的 LLiMa 模型目錄：
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <neat/genai.h>
+
+int main() {
+  simaai::neat::genai::GenAIServer server;
+  server.add_model(
+      "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
+      "llm");
+  server.add_model(
+      "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+      "vlm");
+  server.serve();
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+server = neat.genai.GenAIServer()
+server.add_model(
+    "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4",
+    "llm",
+)
+server.add_model(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+    "vlm",
+)
+server.start()
+try:
+    input("Press Enter to stop the server\n")
+finally:
+    server.stop()
+```
+
+</CodeTab>
+</CodeTabs>
+
+在 C++ 中，使用 `serve()` 來建立一個同步的前端伺服器。當您的 C++ 或 Python 應用程式管理伺服器的生命週期時，請使用 `start()` 和 `stop()`。
+當預設主機或連接埠不適用時，請設定 `GenAIServerOptions`。
+呼叫 `stop()` 也能移除所有已註冊的模型；在重新啟動相同的伺服器物件之前，請再次新增這些模型。
+
+`GenAIServer` 不提供驗證或 TLS 終止功能，並且允許來自任何來源的 CORS 請求。僅將其繫結到受信任的介面，或將其置於提供所需存取控制和加密的網路層之後。
+
+## 探索已提供的模型
+
+在發送生成請求之前，列出已註冊的模型名稱：
+
+```bash
+curl http://<modalix-ip>:9998/v1/models
+```
+
+回應採用 OpenAI 模型列表格式：
+
+```json
+{
+  "object": "list",
+  "data": [
+    {"id": "llm", "object": "model", "owned_by": "simaai"},
+    {"id": "vlm", "object": "model", "owned_by": "simaai"}
+  ]
+}
+```
+
+每一代的模型和音訊請求都必須在其 `model` 欄位中使用以下其中一個已提供的模型名稱。
+
+## 端點
+
+| 方法 | 路由 | 目的 |
+|---|---|---|
+| `GET` | `/v1/models` | 列出已註冊的模型名稱。 |
+| `POST` | `/v1/chat/completions` | 與 OpenAI 相容的聊天功能，包括文字、圖片、工具和串流。 |
+| `POST` | `/v1/completions` | 與 OpenAI 相容的提示詞完成功能。 |
+| `POST` | `/v1/audio/transcriptions` | 轉錄多部分音訊輸入。 |
+| `POST` | `/v1/audio/translations` | 將多部分語音翻譯成英文。 |
+| `POST` | `/api/chat` | 與 Ollama 相容的聊天功能；預設情況下串流 NDJSON 格式。 |
+| `POST` | `/api/generate` | 與 Ollama 相容的提示詞生成功能；預設情況下串流 NDJSON 格式。 |
+| `POST` | `/stop` | 取消一個模型或所有模型的活動串流。 |
+| `POST` | `/set_lora` | 啟用或替換動態 LoRA 調整器。 |
+| `POST` | `/unset_lora` | 將動態調整的模型恢復到其基準權重。 |
+
+相容性別名 `/audio/transcriptions` 和 `/audio/translations` 也可以接受。 建議在新客戶端中使用 `/v1/audio/...` 路由。
+
+相容性是指 `GenAIServer` 實作的路由和回應格式；它並不表示支援上游 OpenAI 或 Ollama API 中的每個欄位。 支援的請求欄位如下所述。
+
+## 與 OpenAI 相容的請求
+
+將 `model` 和 `messages` 發送到聊天端點。 將 `stream` 設置為 `true` 以進行伺服器端事件；預設為 `false`。
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Explain an API gateway in one sentence."}
+    ],
+    "max_tokens": 64,
+    "stream": false
+  }'
+```
+
+`/v1/chat/completions` 接受 `max_tokens` 或 `max_completion_tokens`，以及 `tools` 和 `tool_choice`，此外還有 `model`、`messages` 和 `stream`。
+工具定義使用 OpenAI 的函數工具格式。`tool_choice` 支援 `"auto"` 和 `"none"`；如果省略它或將其設定為 `null`，則會保留預設的工具行為。
+
+`/v1/completions` 接受一個 `prompt` 字串或一個字串陣列，以及 `model`、`max_tokens` 或 `max_completion_tokens`，和 `stream`，預設值為 `false`。當 `prompt` 是一個陣列時，伺服器會將其字串元素與換行字元連接，然後執行一個完成請求。
+
+對於 VLM 請求，OpenAI 對話 `image_url` 內容部分必須包含一個 base64 資料 URI，例如 `data:image/jpeg;base64,...`。影像解碼需要一個具有 OpenCV 支援的 Neat 版本。
+
+## 與 Ollama 相容的請求
+
+使用 `/api/chat` 來處理訊息歷史記錄，或使用 `/api/generate` 來處理提示：
+
+```bash
+curl http://<modalix-ip>:9998/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "prompt": "Give me three API design tips.",
+    "options": {"num_predict": 96},
+    "stream": false
+  }'
+```
+
+Ollama 相容的端點預設會串流傳輸以換行符分隔的 JSON。將 `stream` 設定為 `false`，以取得一個完整的 JSON 回應。`/api/chat` 也接受 `tools` 和 `tool_choice`。對於 VLM 請求，請將原始的 base64 圖像字串放入每個 `/api/chat` 訊息的 `images` 陣列中，或放入頂層的 `images` 陣列中，以用於 `/api/generate`。
+
+## 推論模型
+
+類似於 Qwen3 或 Gemma 4 E2B/E4B 的推論模型可以將推論過程與最終答案分開傳回。對於與 OpenAI 相容的請求，請在頂層設定 `enable_thinking`。
+
+```bash
+curl http://<modalix-ip>:9998/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "enable_thinking": true,
+    "max_tokens": 256,
+    "stream": false
+  }'
+```
+
+非串流回應會將推理內容放在
+`choices[0].message.reasoning_content`，並將最終答案放在
+`choices[0].message.content`。當使用 `stream: true` 時，各個片段會使用
+`choices[0].delta.reasoning_content` 和 `choices[0].delta.content`。
+
+對於與 Ollama 相容的請求，請使用 `think`：
+
+```bash
+curl http://<modalix-ip>:9998/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llm",
+    "messages": [
+      {"role": "user", "content": "Which is larger: 9.11 or 9.9? Explain."}
+    ],
+    "think": true,
+    "options": {"num_predict": 256},
+    "stream": false
+  }'
+```
+
+`/api/chat` 會在 `message.thinking` 中回傳推理過程，並在 `message.content` 中回傳最終答案。`/api/generate` 接受相同的頂層 `think` 欄位，並在頂層 `thinking` 中回傳推理過程，以及在 `response` 中回傳答案。
+
+如果推理欄位為空，則會省略該欄位。這些欄位僅用於輸出：傳入的 `reasoning_content` 或 `thinking` 欄位不會作為對話歷史重現。
+
+## 語音請求
+
+語音端點接受包含已部署 ASR 模型名稱和音訊檔案的多部分表單資料。`language` 的預設值為 `auto`，而 `stream` 的預設值為 `false`。
+
+```bash
+curl http://<modalix-ip>:9998/v1/audio/transcriptions \
+  -F model=asr \
+  -F file=@speech.wav \
+  -F language=auto \
+  -F stream=false
+```
+
+使用 `/v1/audio/translations`，並使用相同的表單欄位，將語音翻譯成英文。這兩種方法都支援 `stream=true`。結果包括產生的文字、偵測到的語言，以及當模型提供時的 ASR 置信度指標。
+
+## 串流和取消
+
+與 OpenAI 相容的聊天、完成和音訊串流使用 `text/event-stream`，發出 `data:` 事件，並以 `data: [DONE]` 結束。與 Ollama 相容的串流使用 `application/x-ndjson`。串流回應包括 `ttft` 和 `tps`（如果有的話）。產生的 Token 數量在與 OpenAI 相容的串流中使用 `generated_tokens`，在與 Ollama 相容的串流中使用 `eval_count`。
+
+取消一個已服務模型中的所有活動串流：
+
+```bash
+curl http://<modalix-ip>:9998/stop \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llm"}'
+```
+
+省略 `model` 以取消所有正在進行的串流。這個 HTTP 路由會取消正在進行的串流生成；它不會取消同步請求，也不會停止伺服器程序。從擁有應用程式中呼叫 `server.stop()`，以停止使用 `server.start()` 啟動的伺服器。
+
+## LoRA 轉接器切換
+
+對於使用 LLiMa 的 `LORA_BRANCH` 模式編譯的模型，請從模型的 `npy_files/<adapter-name>` 目錄中啟用一個轉接器：
+
+```bash
+curl http://<modalix-ip>:9998/set_lora \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm","name":"customer-adapter"}'
+```
+
+傳回到基準權重：
+
+```bash
+curl http://<modalix-ip>:9998/unset_lora \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llm"}'
+```
+
+`model` 欄位僅可在註冊完全一個文字或視覺語言模型時省略。切換操作會等待該模型上的作用中請求完成，且不會影響其他已部署的模型。配接器名稱必須是單一目錄名稱；不允許使用路徑和遞迴操作。動態切換不支援 ASR、推測式解碼套件，或永久合併的 `LORA_MERGED` 權重。
+
+## 錯誤
+
+明確的端點驗證失敗會傳回 HTTP 400，包括缺少 `model`、無效的工具設定、不相容的模型功能，或缺少多部分音訊 `file`。未知的已部署模型會傳回 HTTP 404。在建立回應串流之前，在解析請求或執行模型時發生的例外狀況會傳回 HTTP 500。
+
+在開始串流之前，失敗會使用 JSON 封裝 `{"error":{"message":"...","type":"invalid_request_error"}}`。在開始串流回應後，失敗會以端點的 SSE 或 NDJSON 串流形式發出，而不是變更 HTTP 狀態。
+
+## 後續步驟
+
+- 遵循 [部署生成式 AI 模型](/tutorials/serve-genai-models)，以取得完整的 C++ 和 Python 逐步說明。
+- 使用 [直接使用 GenAI API](/develop-apps/development-workflow/genai-model/direct-api) 進行程序內呼叫。
+- 準備並基準測試模型目錄，使用 [搭配 LLiMa 的生成式 AI](/genai-llima/)。

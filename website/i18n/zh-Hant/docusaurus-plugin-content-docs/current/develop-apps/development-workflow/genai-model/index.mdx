@@ -1,0 +1,53 @@
+---
+title: "生成式 AI 模型"
+description: "選擇如何從 Neat 應用程式中執行或部署 LLM、VLM 和 ASR 模型。"
+sidebar_position: 1
+slug: /develop-apps/development-workflow/genai-model
+---
+
+# GenAI 模型
+
+Neat 使用 GenAI API，適用於使用 LLiMa 準備的 LLM、VLM 和 ASR 模型。這是 [`Model`](/develop-apps/development-workflow/model) 的生成式模型對應版本：載入已部署的模型目錄，建立請求，然後在您的應用程式中執行或透過 HTTP 提供服務。
+
+當您的應用程式要求模型生成文字、回答有關影像的問題、呼叫工具或轉錄音訊時，請使用這些 API。對於固定形狀的判別模型（例如分類、檢測、分割或嵌入模型），請使用傳統的 `Model` API。
+
+## GenAI 的應用
+
+GenAI 的流程與 Neat 的其餘部分具有相同的整體結構：
+
+1. 準備或下載用於 Modalix 的模型成品。
+2. 將模型放置在目標位置，通常位於 `/media/nvme/llima/models/` 下。
+3. 從您的 C++ 或 Python 應用程式中載入模型。
+4. 直接發送請求，或透過 `GenAIServer` 公開模型。
+5. 讀取完整的結果或使用串流輸出。
+
+LLiMa 負責 GenAI 模型的準備、命令行測試和基準測試。
+Neat 負責應用程式介面的 API 和執行階段整合，一旦模型在您的應用程式中使用。有關模型準備的詳細資訊，請參閱 [搭配 LLiMa 的生成式 AI](/genai-llima/)。
+
+## 選擇應用程式邊界
+
+<div class="overview-link-columns">
+  <section class="overview-link-panel overview-link-panel-start">
+    <h2>為應用程式和客戶提供服務。</h2>
+    <p>建議用於大多數應用程式。使用 GenAI 伺服器來公開常用的 API 端點。</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/genai-server/"><strong>GenAI 伺服器</strong><span>註冊一個或多個模型，並呼叫與 OpenAI 或 Ollama 相容的 HTTP 端點。</span></a></li>
+    </ul>
+  </section>
+
+  <section class="overview-link-panel overview-link-panel-explore">
+    <h2>在您的流程中執行</h2>
+    <p>當您的 C++ 或 Python 應用程式擁有模型調用的權限時，請使用直接的 API。</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/direct-api/"><strong>直接使用 GenAI API</strong><span>在程序中執行或串流 LLM、VLM 和 ASR 請求，並組合 GenAI 圖的片段。</span></a></li>
+    </ul>
+  </section>
+</div>
+
+針對嵌入式應用程式邏輯和測試，請使用直接呼叫，這些測試應與模型在同一個程序中執行。當客戶端不應連結到 Neat 執行階段時，或當一個程序應將請求路由到多個已部署的模型時，請使用伺服器。
+
+## 後續步驟
+
+- 請參考 [部署生成式 AI 模型](/tutorials/serve-genai-models)，以獲取完整的 HTTP 伺服器範例。
+- 請參考 [使用直接 API 執行 LLM](/tutorials/run-an-llm)，以了解如何在同一個程序中執行。
+- 使用 [搭配 LLiMa 的生成式 AI](/genai-llima/) 準備和基準測試模型。

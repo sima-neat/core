@@ -1,0 +1,167 @@
+---
+title: "相容性"
+description: "以下是支援的 Neat SDK、Neat Library、Neat 應用程式、DevKit 軟體，以及 Model Compiler 版本組合的參考資料。"
+sidebar_position: 4
+mdx:
+  format: mdx
+---
+
+# 相容性
+
+:::tip 是第一次設定嗎？
+本頁面是一個版本相容性**參考資料**，而非設定步驟。
+
+標準 SDK 安裝會預設安裝相容的設定。若要首次設定，請先找出 DevKit 軟體的版本，然後檢查 [Neat SDK](/getting-started/dev-environment/)，包括其 [主機需求](/getting-started/dev-environment/#host-requirements)（主機需求）。請僅使用下方的表格來固定版本、混合不同韌體版本中的元件，或診斷版本不相容的問題。
+:::
+
+當您需要選擇確切的版本、獨立升級某個元件、解決版本不相容問題或準備發布時，請將此頁面作為參考。如果您是第一次設定 Palette Neat，請從 Neat 開發環境（以下簡稱 Neat SDK）和 Neat Library 頁面開始。這些流程會安裝支援的預設組合。
+
+Palette Neat 包含多個具有版本號的元件。在大多數情況下，相容性歸結於以下兩個規則：
+
+1. **Neat Library** 和 **Neat SDK** 必須都相容。
+   根據他們使用的或建構的 DevKit 軟體版本。
+2. **Model Compiler** 必須與 **Neat SDK** 相容。
+   或安裝它的主機環境。
+
+每個 Neat SDK 版本系列都針對特定的 DevKit 軟體版本。SDK 上的修補程式更新可能會新增工具修正，而無需新的 DevKit 映像檔。例如，Neat SDK 2.1.3.x 版本（包括 2.1.3.0）與 DevKit 軟體 2.1.3 相容。
+
+您也可以安裝較新的相容 Neat Library，而無需重新安裝 SDK，只要您使用下方表格中顯示的配對即可。例如，使用 Neat Library 0.4.0 與 Neat SDK 2.1.3.0。
+
+:::note
+本頁列出的版本為支援的版本組合。
+:::
+
+## DevKit
+
+每個 Modalix DevKit 都配備了特定的 DevKit 軟體版本。在選擇 Neat SDK 或 Neat Library 版本之前，請檢查該版本。
+
+以下相容性表格的依據是 DevKit 軟體版本，因為裝置上的執行階段、韌體和系統套件會以配對的方式安裝。
+
+在取得對 DevKit 的 Shell 存取權後，請檢查已安裝的軟體版本。當 DevKit 可以在網路中連線時，您可以透過 SSH 開啟 Shell，或者透過序列控制台。如需序列存取指示，請參閱 [設定序列埠存取權限](https://developer.sima.ai/hardware/getting-started/setup-serial)。
+
+<ShellCommand prompt="modalix">
+cat /etc/buildinfo
+</ShellCommand>
+
+如果 DevKit 軟體版本與您嘗試安裝的 Neat Library 版本不相容，則 `sima-cli neat install` 會阻止安裝，而不是在裝置上混合不相容的執行階段元件。 在這種情況下，您可以安裝一個支援您目前 DevKit 軟體的 Neat Library 版本，或者先更新 DevKit 韌體。
+
+有關檢查和更新 DevKit 韌體的說明，請參閱 [韌體更新](https://developer.sima.ai/hardware/getting-started/firmware-update)。
+
+## Neat SDK
+
+請使用此表格來確認您的 Neat SDK 是否與您的 DevKit 軟體版本相符。
+
+| Neat SDK | 相容的主機環境 | 相容的 DevKit 軟體 |
+| :--- | :--- | :--- |
+| **2.0.0** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **2.0.0** |
+| **2.1.2.3** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **2.1.2** |
+| **2.1.3.0** | 透過 WSL 使用 Windows 11，或使用 Ubuntu 22.04 或 24.04，以及最新版本的 macOS 搭配 Apple Silicon 晶片。 | **2.1.3** |
+
+從主機安裝目前發布的 Neat SDK。
+
+<ShellCommand prompt="user-host-machine">
+sima-cli neat install sdk@release-2.1
+</ShellCommand>
+
+目前的 `release-2.1` SDK 套件會解析為 Neat SDK 2.1.3.0。它與 DevKit 軟體 2.1.3 相容。
+
+只有在您的 DevKit 軟體來自該韌體時，才使用較舊的 Neat SDK。對於 SDK 2.0.0、2.1.2.0 或 2.1.2.1，請使用 [兩步驟 SDK 安裝](/reference/two-step-sdk-installation/)。
+
+## Neat Library
+
+請使用此表格來選擇要在您的 Neat SDK 和 DevKit 中安裝或更新的 Neat Library 版本。
+
+| Neat Library | 相容於 Neat SDK | 相容的 DevKit 軟體 | 備註 |
+| :--- | :--- | :--- | :--- |
+| **0.1.0** | **2.0.0** | **2.0.0** | 針對 2.0 版韌體進行維護。 |
+| **0.2.2** | **2.1.2.2** | **2.1.2** | 最新 0.2 版本。 |
+| **0.3.0** | **2.1.2.3** | **2.1.2** | 最新 0.3 版本。 |
+| **0.4.0** | **2.1.3.0** | **2.1.3** | 目前最新的版本。 |
+
+DevKit 軟體的版本很重要，因為裝置上的執行階段、韌體和系統套件會以一組相容的元件形式安裝。如果您混合不同韌體版本的元件，即使您的應用程式建置成功，也可能會發生意想不到的行為。
+
+通常，您不會在首次設定期間執行這些指令——SDK 會為您安裝相容的 Neat Library。僅在相容的 Neat SDK 內，或直接在 DevKit 上，使用它們來指定特定的 Neat Library 版本。
+
+對於 Neat Library 0.4.0：
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install core@v0.4.0
+</ShellCommand>
+
+針對 Neat Library 0.1.0：
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install core@v0.1.0
+</ShellCommand>
+
+## Neat 應用程式
+
+Neat 應用程式版本與 Neat Library 版本是獨立的。安裝應用程式時，系統會自動安裝相容的 Neat Library 版本。
+
+| Neat 應用程式 | 相容於 Neat Library |
+| :--- | :--- |
+| [**0.4.0**](https://github.com/sima-neat/apps/releases/tag/v0.4.0) | **0.3.0** |
+| [**0.5.0**](https://github.com/sima-neat/apps/releases/tag/v0.5.0) | **0.4.0** |
+
+從相容的 Neat SDK 或 DevKit 安裝 Apps 0.5.0：
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install apps@v0.5.0
+</ShellCommand>
+
+## Model Compiler
+
+當您自行編譯或量化模型（包括 GenAI 模型）時，需要使用 Model Compiler。如果您僅使用預先編譯的模型套件，則此工具為選用。當您需要使用時，請參考下表。
+
+Model Compiler 可以透過兩種方式安裝：
+
+- 在相容的 Neat SDK 內。在此模式下，可以使用任何主機。
+  該版本的 Neat SDK 支援的作業系統。這是在 [安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/) 中記錄的路徑。
+- 直接在支援的 Ubuntu 主機機器或虛擬機器上執行。在此模式下，主機作業系統。
+  必須符合以下 Model Compiler 主機需求。請參閱
+[安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)，以取得安裝指令。
+
+在 SDK 安裝/設定期間，設定流程會提示您自動安裝與您的環境相符的 Model Compiler 版本（如果有的話）。
+
+| Model Compiler | 相容於 Neat SDK | 相容的主機環境 | 備註 |
+| :--- | :--- | :--- | :--- |
+| **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | 不支援 Apple Silicon 或 aarch64/Linux。 |
+| **2.1.2** | **2.1.2.3** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon 透過在 Neat SDK 內部安裝來支援。 |
+| **2.1.3** | **2.1.3.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon 透過在 Neat SDK 內部安裝來支援。 |
+
+「主機環境」欄位適用於獨立安裝的 Model Compiler。例如，在 Ubuntu 22.04 主機上的客戶，仍然可以透過在 Neat SDK 2.1.3.0 內安裝 Model Compiler 2.1.3，來使用它，因為 Neat SDK 提供了相容的 Ubuntu 24.04 容器環境。
+
+如需安裝步驟，請參閱 [安裝 Model Compiler](/getting-started/dev-environment/install-model-compiler/)。
+
+## 驗證版本
+
+從 Neat SDK 內部或在 DevKit 上執行：
+
+<ShellCommand prompt="sdk-or-devkit">
+neat
+</ShellCommand>
+
+以下範例輸出顯示目前使用的環境、Neat SDK 版本、已安裝的元件版本，以及是否有可用的更新：
+
+```text
+Neat Environment
+  Mode               Neat SDK
+  SDK Version        2.1.3_Palette_SDK_neat_v2.1.3.0
+  Platform Version   2.1.3
+  Sysroot            /opt/toolchain/aarch64/modalix
+  Update check       online
+
+Components
+  Neat core              0.4.0 channel=release env=prod latest=0.4.0
+  PyNeat                 0.4.0
+  neat-runtime           0.4.0
+  neat-gst-plugins       0.4.0
+  neat-llima             0.4.0
+  neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
+  Model Compiler         not installed
+
+  Update available: yellow component versions indicate available updates.
+  Run: neat update.
+```
+
+請使用此輸出結果確認您的 Neat Library、DevKit 軟體，以及選用的 Model Compiler，是否來自受支援的版本組合。

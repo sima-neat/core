@@ -1,0 +1,166 @@
+---
+title: "互換性"
+description: "対応する Neat SDK、Neat Library、Neat アプリ、DevKit ソフトウェア、および Model Compiler のバージョン組み合わせに関する参照情報。"
+sidebar_position: 4
+mdx:
+  format: mdx
+---
+
+# 互換性
+
+:::tip 初めての設定ですか？
+このページは、セットアップの手順ではなく、バージョン互換性に関する**参照**です。
+
+標準の SDK をインストールすると、互換性のあるデフォルト設定が自動的に適用されます。初めてセットアップする場合は、まず DevKit ソフトウェアのバージョンを確認し、次に [Neat SDK](/getting-started/dev-environment/)（およびその[ホストの要件](/getting-started/dev-environment/#host-requirements)）を確認してください。以下の表は、バージョンを固定する場合、異なるファームウェアバージョン間でコンポーネントを組み合わせる場合、または互換性の問題を診断する場合にのみ使用してください。
+:::
+
+正確なバージョンを選択する必要がある場合、特定のコンポーネントのみを個別にアップグレードする場合、バージョン不整合のトラブルシューティングを行う場合、またはリリースを準備する場合に、このページを参照してください。Palette Neat を初めてセットアップする場合は、Neat 開発環境（以下、Neat SDK）および Neat Library のページから開始してください。これらの手順では、サポートされているデフォルトの組み合わせがインストールされます。
+
+Palette Neat には、いくつかのバージョン管理されたコンポーネントがあります。ほとんどの場合、互換性は次の 2 つのルールに依存します。
+
+1. **Neat Library**と**Neat SDK**は、両方とも互換性がある必要があります。
+   使用している、または開発に使用している DevKit ソフトウェアのバージョンによって。
+2. **Model Compiler** は、**Neat SDK** と互換性がある必要があります。
+   または、インストールされているホスト環境。
+
+各Neat SDKリリースシリーズは、特定のDevKitソフトウェアバージョンを対象としています。SDKのパッチリビジョンでは、新しいDevKitイメージを必要とせずに、ツールに関する修正が追加される場合があります。たとえば、2.1.3.0を含むNeat SDK 2.1.3.xリリースは、DevKitソフトウェア2.1.3と互換性があります。
+
+SDKを再インストールせずに、より新しい互換性のあるNeat Libraryをインストールすることもできます。ただし、以下の表に示すペアリングを使用する必要があります。たとえば、Neat Library 0.4.0とNeat SDK 2.1.3.0を組み合わせて使用します。
+
+:::note
+このページに記載されているバージョンは、サポート対象のバージョン組み合わせです。
+:::
+
+## DevKit
+
+すべての Modalix DevKit には、特定のバージョンのソフトウェア DevKit が付属しています。Neat SDK または Neat Library のバージョンを選択する前に、そのバージョンを確認してください。
+
+以下の互換性表は、DevKit ソフトウェアのバージョンに基づいて構成されています。これは、デバイス上のランタイム、ファームウェア、およびシステムパッケージが、一連のパッケージとしてインストールされるためです。
+
+DevKit へのシェルアクセスを確立した後、インストールされているソフトウェアのバージョンを確認してください。DevKit がネットワーク経由でアクセス可能な場合、またはシリアルコンソール経由で、SSH を使用してシェルを開くことができます。シリアルアクセスに関する手順については、[シリアルアクセスを設定する](https://developer.sima.ai/hardware/getting-started/setup-serial) を参照してください。
+
+<ShellCommand prompt="modalix">
+cat /etc/buildinfo
+</ShellCommand>
+
+インストールしようとしている Neat Library のバージョンと、DevKit のソフトウェアバージョンが互換性がない場合、`sima-cli neat install` は、デバイス上で互換性のないランタイムコンポーネントを混在させるのではなく、インストールをブロックします。その場合は、現在の DevKit ソフトウェアをサポートするバージョンの Neat Library をインストールするか、最初に DevKit のファームウェアを更新してください。
+
+DevKit のファームウェアの確認と更新の手順については、[ファームウェアの更新](https://developer.sima.ai/hardware/getting-started/firmware-update) を参照してください。
+
+## Neat SDK
+
+以下の表を使用して、お使いの Neat SDK が、お使いの DevKit のソフトウェアバージョンと一致していることを確認してください。
+
+| Neat SDK | 対応するホスト環境 | 対応する DevKit ソフトウェア |
+| :--- | :--- | :--- |
+| **2.0.0** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.0.0** |
+| **2.1.2.3** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.1.2** |
+| **2.1.3.0** | WSL を介した Windows 11、Ubuntu 22.04 または 24.04、Apple Silicon 搭載の最新 macOS | **2.1.3** |
+
+ホストから、現在リリースされている Neat SDK をインストールしてください。
+
+<ShellCommand prompt="user-host-machine">
+sima-cli neat install sdk@release-2.1
+</ShellCommand>
+
+現在、`release-2.1` SDKパッケージは、Neat SDK 2.1.3.0に解決されます。DevKitソフトウェア2.1.3と互換性があります。
+
+古いバージョンのNeat SDKを使用するのは、お使いのDevKitソフトウェアがそのファームウェアを使用している場合に限ります。SDK 2.0.0、2.1.2.0、または2.1.2.1の場合は、[2段階のSDKインストール](/reference/two-step-sdk-installation/)を使用してください。
+
+## Neat Library
+
+以下の表を参照して、ご自身の Neat SDK および DevKit にインストールまたは更新する Neat Library のバージョンを選択してください。
+
+| Neat Library | 対応：Neat SDK | 対応する DevKit ソフトウェア | 備考 |
+| :--- | :--- | :--- | :--- |
+| **0.1.0** | **2.0.0** | **2.0.0** | バージョン2.0のファームウェアで維持されます。 |
+| **0.2.2** | **2.1.2.2** | **2.1.2** | 最新の 0.2 バージョンをリリースしました。 |
+| **0.3.0** | **2.1.2.3** | **2.1.2** | 最新の 0.3 バージョン。 |
+| **0.4.0** | **2.1.3.0** | **2.1.3** | 現在の最新バージョン。 |
+
+DevKitのソフトウェアバージョンは重要です。なぜなら、デバイス上のランタイム、ファームウェア、およびシステムパッケージが、互いに対応したセットとしてインストールされるからです。異なるファームウェアバージョン間でコンポーネントを混在させると、アプリケーションのビルド時に予期しない動作が発生する可能性があります。
+
+通常、これらのコマンドは初回セットアップ時に実行する必要はありません。SDKが互換性のあるNeat Libraryを自動的にインストールします。特定のNeat Libraryバージョンを、互換性のあるNeat SDK内から、またはDevKit上で直接指定する場合にのみ使用してください。
+
+Neat Library 0.4.0の場合：
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install core@v0.4.0
+</ShellCommand>
+
+Neat Library 0.1.0 の変更点：
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install core@v0.1.0
+</ShellCommand>
+
+## Neat アプリ
+
+Neat アプリのバージョンは、Neat Library のバージョンとは独立しています。アプリをインストールすると、互換性のあるNeat Libraryバージョンが自動的にインストールされます。
+
+| Neat アプリ | 対応：Neat Library |
+| :--- | :--- |
+| [**0.4.0**](https://github.com/sima-neat/apps/releases/tag/v0.4.0) | **0.3.0** |
+| [**0.5.0**](https://github.com/sima-neat/apps/releases/tag/v0.5.0) | **0.4.0** |
+
+互換性のある Neat SDK または DevKit から、Apps 0.5.0 をインストールしてください。
+
+<ShellCommand prompt="sdk-or-devkit">
+sima-cli neat install apps@v0.5.0
+</ShellCommand>
+
+## Model Compiler
+
+Model Compiler は、GenAIモデルを含むモデルを自分でコンパイルまたは量子化する場合に必要であり、事前にコンパイルされたモデルパッケージのみを使用する場合はオプションです。必要な場合は、以下の表を参照してください。
+
+Model Compiler は、次の 2 つの方法でインストールできます。
+
+- 互換性のある Neat SDK の内部で。このモードでは、任意のホストを使用してください。
+  そのバージョンの Neat SDK がサポートする OS。これは、[Model Compiler をインストールしてください。](/getting-started/dev-environment/install-model-compiler/) に記載されているパスです。
+- 対応する Ubuntu ホストマシンまたは仮想マシンに直接インストールします。このモードでは、ホスト OS が
+  以下のModel Compilerのホスト要件と一致する必要があります。インストール手順については、[Model Compiler をインストールしてください。](/getting-started/dev-environment/install-model-compiler/)を参照してください。
+
+SDKのインストール/設定中に、設定プロセスでは、環境で利用可能な場合に、対応するModel Compilerバージョンを自動的にインストールするように促されます。
+
+| Model Compiler | 対応：Neat SDK | 対応するホスト環境 | 備考 |
+| :--- | :--- | :--- | :--- |
+| **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | Apple Silicon や aarch64/Linux のサポートはありません。 |
+| **2.1.2** | **2.1.2.3** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Neat SDK をインストールすることでサポートされます。 |
+| **2.1.3** | **2.1.3.0** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon は、Neat SDK をインストールすることでサポートされます。 |
+
+「ホスト環境」列は、スタンドアロンの Model Compiler のインストールに適用されます。たとえば、Ubuntu 22.04 ホストを使用しているお客様は、Neat SDK 2.1.3.0 内にインストールすることで、Model Compiler 2.1.3 を引き続き使用できます。これは、Neat SDK が互換性のある Ubuntu 24.04 ベースのコンテナ環境を提供するためです。
+
+インストール手順については、[Model Compiler をインストールしてください。](/getting-started/dev-environment/install-model-compiler/) を参照してください。
+
+## バージョンを確認する
+
+Neat SDK の内部、または DevKit 上で、次のコマンドを実行します。
+
+<ShellCommand prompt="sdk-or-devkit">
+neat
+</ShellCommand>
+
+以下に示す出力例は、アクティブな環境、Neat SDK のバージョン、インストールされているコンポーネントのバージョン、および更新プログラムが利用可能かどうかを示しています。
+
+```text
+Neat Environment
+  Mode               Neat SDK
+  SDK Version        2.1.3_Palette_SDK_neat_v2.1.3.0
+  Platform Version   2.1.3
+  Sysroot            /opt/toolchain/aarch64/modalix
+  Update check       online
+
+Components
+  Neat core              0.4.0 channel=release env=prod latest=0.4.0
+  PyNeat                 0.4.0
+  neat-runtime           0.4.0
+  neat-gst-plugins       0.4.0
+  neat-llima             0.4.0
+  neat-insight           0.0.6 channel=release status=Running venv=/opt/neat-insight/venv
+  Model Compiler         not installed
+
+  Update available: yellow component versions indicate available updates.
+  Run: neat update.
+```
+
+この出力を確認し、お使いの Neat Library、DevKit ソフトウェア、およびオプションの Model Compiler が、サポートされているバージョン組み合わせのものであることを確認してください。

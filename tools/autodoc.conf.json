@@ -1,4 +1,5 @@
 {
+  "locales": ["ko", "ja", "zh-Hant", "uk"],
   "sources": [
     {
       "key": "llima",
@@ -9,6 +10,7 @@
       "fallback_branch": "develop",
       "githash": "",
       "docs_subpath": "docs",
+      "localization": true,
       "mount": "genai-llima",
       "sidebar_position": 4,
       "category_link": "index",
@@ -30,11 +32,12 @@
     {
       "key": "model-sdk-guides",
       "title": "Compile a Model",
-      "repo": "https://github.com/sima-neat/model-sdk.git",
+      "repo": "https://github.com/sima-neat/model-compiler.git",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/guides",
+      "localization": true,
       "mount": "compile-a-model",
       "sidebar_position": 3,
       "files_order": [
@@ -68,7 +71,7 @@
     {
       "key": "model-sdk-api",
       "title": "Model Compiler API",
-      "repo": "https://github.com/sima-neat/model-sdk.git",
+      "repo": "https://github.com/sima-neat/model-compiler.git",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",
@@ -146,6 +149,7 @@
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/sima-cli",
+      "localization": true,
       "mount": "tools/sima-cli",
       "sidebar_position": 1,
       "files_order": [
@@ -162,8 +166,10 @@
       "title": "Insight",
       "repo": "https://github.com/sima-neat/insight.git",
       "branch": "main",
+      "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs",
+      "localization": true,
       "mount": "tools/insight",
       "sidebar_position": 4,
       "category_link": "index",
@@ -185,10 +191,12 @@
       "fallback_branch": "main",
       "githash": "",
       "docs_subpath": "docs",
+      "localization": true,
       "mount": "tools/sentinel",
       "sidebar_position": 5,
       "root_index_file": "README.md",
       "root_index_link_prefix": "docs/",
+      "root_index_omit_line_prefixes": ["**Documentation:**"],
       "files_order": [
         "index",
         "README",

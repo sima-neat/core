@@ -1,0 +1,20 @@
+{
+  "title": "튜토리얼",
+  "description": "단계별 학습 경로를 제공하는 C++ 및 Python 실습 튜토리얼",
+  "heroAlt": "Neat 튜토리얼 — 첫 모델부터 프로덕션 파이프라인까지",
+  "choosePath": "튜토리얼 경로 선택",
+  "choosePathIntro": "각 섹션의 카드를 순서대로 진행하세요. 각 튜토리얼은 개념 중심 설명과 지원 언어의 소스 코드를 제공합니다.",
+  "guidedTutorialSingular": "개의 단계별 튜토리얼.", "guidedTutorialPlural": "개의 단계별 튜토리얼.",
+  "tutorialsComing": "튜토리얼을 추가하고 있습니다.", "useInOrder": "이 튜토리얼을 순서대로 진행하세요.",
+  "field": "필드", "value": "값", "category": "범주", "difficulty": "난이도",
+  "estimatedReadTime": "예상 소요 시간", "labels": "레이블", "concept": "개념",
+  "learningProcess": "학습 과정", "walkthrough": "둘러보기", "run": "실행",
+  "inPractice": "실전 활용", "code": "코드", "fullSource": "전체 소스",
+  "showCompleteSource": "전체 소스 프로그램 표시", "source": "소스",
+  "imageSuffix": "이미지", "animatedOverviewSuffix": "애니메이션 둘러보기 개요",
+  "fallbackConcept": "개념 요약이 제공되지 않았습니다.",
+  "fallbackSteps": ["결정적 입력과 런타임 기본값을 준비합니다.", "이 장의 런타임 흐름을 실행합니다.", "검사와 시그니처로 동작을 검증합니다."],
+  "categories": {"Models & Inference": "모델 및 추론", "Graphs & Pipelines": "그래프 및 파이프라인", "Cameras & Streaming": "카메라 및 스트리밍", "GenAI": "GenAI", "PCIe Co-Processing": "PCIe 코프로세싱"},
+  "categoryDescriptions": {"Models & Inference": "모델 실행, 전처리 및 후처리 구성, 텐서 교환, 추론 측정을 다룹니다.", "Graphs & Pipelines": "Neat 그래프와 파이프라인을 구성, 진단, 조정 및 배포합니다.", "Cameras & Streaming": "라이브 RTSP 및 MIPI 카메라 입력을 사용합니다.", "GenAI": "언어, 비전 언어 및 음성 모델을 제공하고 임베드합니다.", "PCIe Co-Processing": "Modalix PCIe Card에 연결된 호스트에서 추론을 실행합니다."},
+  "difficulties": {"Beginner": "초급", "Intermediate": "중급", "Advanced": "고급"}
+}

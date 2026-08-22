@@ -1,0 +1,370 @@
+---
+title: "張量與樣本"
+description: "在模型、圖和執行之間移動張量資料和中繼資料。"
+sidebar_position: 3
+---
+
+# 張量與樣本
+
+位元組本身沒有意義。中繼資料才有意義。
+
+Neat 使用兩種公開類型來處理執行階段資料：
+
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor)：具有形狀、dtype、佈局、儲存空間以及可選的語義中繼資料的數值有效載荷。
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample)：包含一個或多個張量，以及資料流、幀、時間戳、有效載荷和路由中繼資料。
+
+當您只需要模型輸入或輸出資料時，請使用 `Tensor`。當圖必須保留資料流識別、時間戳、編碼媒體標籤或多輸出結構時，請使用 `Sample`。
+
+## 選擇 TensorList 或 Sample
+
+| 任務 | C++ 輸入形狀 | Python 輸入形狀 | 傳回值 |
+|---|---|---|---|
+| 使用張量執行模型 | `model.run(TensorList{tensor})` | `model.run([tensor])` | `TensorList` / 類似 Python 列表的張量集合 |
+| 使用中繼資料執行模型 | `model.run(sample)` | `model.run([sample])` | `Sample` |
+| 將張量推送到 `Run` 中 | `run.push(TensorList{tensor})` | `run.push([tensor])` | `bool` |
+| 將樣本推送到 `Run` 中 | `run.push(sample)` | `run.push([sample])` | `bool` |
+| 提取僅包含張量的輸出 | `run.pull_tensors(...)` | `run.pull_tensors(...)` | `TensorList` / 類似 Python 列表的張量集合 |
+| 提取保留中繼資料的輸出 | `run.pull(...)` 或 `run.pull_samples(...)` | `run.pull(...)` 或 `run.pull_samples(...)` | `Sample` |
+
+在 Python 中，始終將模型或圖的輸入作為列表或元組傳遞。`[tensor]` 表示「一個輸入」。它不會建立批次維度。
+
+批次大小屬於張量形狀和編譯後的模型合約。在將輸入列表視為批次之前，請檢查 `model.input_specs()` 和 `model.compiled_batch_size()`。
+
+## 在 Python 中建立張量
+
+使用與您的來源資料匹配的建構函式。
+
+| 來源資料 | 使用 |
+|---|---|
+| NumPy 陣列 | `pyneat.Tensor.from_numpy(array, copy=True, layout=..., image_format=...)` |
+| Torch 張量 | `pyneat.Tensor.from_torch(tensor, copy=True, layout=..., image_format=...)` |
+| 與 DLPack 相容的物件 | `pyneat.Tensor.from_dlpack(obj, copy=True, layout=...)` |
+| Python 列表 | `pyneat.Tensor.from_list(data, shape=..., dtype=...)` |
+| 編碼的媒體位元組 | `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+
+當來源緩衝區可能在 Neat 完成讀取之前消失時，請使用 `copy=True`。只有在您的應用程式擁有生命週期時，才使用 `copy=False`。沒有神秘的緩衝區。
+
+<CodeTabs>
+<CodeTab label="NumPy" lang="python">
+
+```python
+import numpy as np
+import pyneat
+
+frame = np.zeros((480, 640, 3), dtype=np.uint8)
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+<CodeTab label="PyTorch" lang="python">
+
+```python
+import torch
+import pyneat
+
+torch_tensor = torch.zeros((480, 640, 3), dtype=torch.uint8)
+
+tensor = pyneat.Tensor.from_torch(
+    torch_tensor,
+    copy=True,
+    image_format=pyneat.PixelFormat.RGB,
+)
+
+outputs = model.run([tensor], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+當您的應用程式需要使用框架原生資料時，請轉換輸出：
+
+```python
+array = outputs[0].to_numpy(copy=True)
+torch_tensor = outputs[0].to_torch(copy=True)
+```
+
+大多數首次執行的程式碼不應手動選擇記憶體設定。如果需要，Python 會透過 `memory=` 參數公開 `TensorMemory.Auto`、`CPU`、`A65`、`EV74` 和 `MLA`。
+
+僅針對位元組格式的張量有效載體使用 `byte_format=`。請勿將 `byte_format=` 與 `image_format=` 結合使用。
+
+### 在 Python 中建立編碼後的樣本
+
+當圖的輸入預期編碼後的媒體（例如 H.264 或 H.265），且應用程式擁有這些位元組時，請使用 `Sample.from_encoded(...)`。
+
+```python
+sample = pyneat.Sample.from_encoded(
+    data,
+    caps_string="video/x-h264,stream-format=byte-stream,alignment=au",
+    pts_ns=pts_ns,
+    duration_ns=duration_ns,
+    port_name="video",
+)
+
+run.push("video", [sample])
+```
+
+`caps_string` 會告訴圖，這些位元組代表什麼意義。`port_name` 將樣本與圖的輸入名稱關聯起來。如果您已經解碼了像素，請不要使用此路徑；而是建立一個影像張量或影像樣本。
+
+對於已解析的 H.265 存取單元，請使用
+`video/x-h265,parsed=true,stream-format=byte-stream,alignment=au`。H.265 解碼器路徑需要 HEVC 主要設定檔、8 位元、4:2:0 輸入。
+
+## 在 C++ 中建立張量
+
+對於僅包含張量的輸入，請使用 `TensorList`。一個 `TensorList` 包含一個模型或圖的輸入。
+
+```cpp
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+對於多輸入模型，請按照 `model.input_specs()` 中指定的相同順序，為每個輸入傳遞一個張量，除非圖中明確指定了輸入名稱。
+
+### 在 C++ 中使用 OpenCV 影像
+
+OpenCV 影像通常是 BGR 格式。請在程式碼中明確指出這一點。
+
+對於直接的 `Model` 執行，明確的方法是將 `cv::Mat` 轉換為 `Tensor`，然後傳遞一個 `TensorList`。
+
+```cpp
+cv::Mat image = cv::imread("image.jpg");
+
+auto input = simaai::neat::Tensor::from_cv_mat(
+    image,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+auto outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/2000);
+```
+
+當 Neat 搭配 OpenCV 支援進行建構時，`Model`、`Graph` 和 `Run` 也會提供 `std::vector<cv::Mat>` 的便利超載。針對每個輸入，傳遞一個 `cv::Mat`：
+
+```cpp
+auto model_outputs = model.run(std::vector<cv::Mat>{image});
+auto graph_outputs = graph.run(std::vector<cv::Mat>{image});
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{image});
+```
+
+當範例必須明確說明像素格式、記憶體或生命週期時，請優先使用 `Tensor::from_cv_mat(...)`。如果圖/模型的選項已經描述了輸入合約，則使用 OpenCV 提供的便利超載。
+
+## 檢視張量合約
+
+在分配輸入或解碼輸出之前，請先檢查規格。
+
+```python
+for spec in model.input_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+
+for spec in model.output_specs():
+    print(spec.shape, spec.dtype, spec.layout)
+```
+
+張量合約可以包含：
+
+- 形狀和位元組大小；
+- `TensorDType`，例如整數、浮點數或 BF16 格式；
+- `TensorLayout`，例如 HWC 或模型特定的張量佈局；
+- 透過影像語義中繼資料來表示影像像素格式；
+- 量化、鑲嵌、檢測、文字、音訊、位元串流、編碼或預處理語義中繼資料。
+
+不要假設每個公開邊界都是 FP32。請閱讀規格。
+
+## 解碼模型輸出
+
+從原始張量開始。僅當輸出合約表明有效載荷是檢測、姿勢或分割格式時，才進行解碼。
+
+| 輸出合約 | 用途 | 結果 |
+|---|---|---|
+| 原始張量 | 直接使用傳回的張量，或使用 `to_numpy(...)` / `to_torch(...)` 進行轉換 | 模型輸出 dtype 和形狀中的張量資料 |
+| 以張量形式打包的框 | `pyneat.decode_bbox(outputs, clamp_to=(width, height), top_k=..., strict=...)` | 每個輸入一個 float32 `[N, 6]` 張量：`x1`、`y1`、`x2`、`y2`、`score`、`class_id` |
+| 以類型記錄形式打包的一個框張量 | `pyneat.detections.decode_bbox_tensor(tensor, width, height, expected_topk=..., strict=...)` | 包含 `boxes` 記錄和保留原始位元組的 `BoxDecodeResult` |
+| 打包的姿勢 | `pyneat.decode_pose(outputs, clamp_to=(width, height), top_k=..., strict=...)` | 框加上關鍵點 |
+| 打包的分割 | `pyneat.decode_segmentation(outputs, clamp_to=(width, height), top_k=..., strict=...)` | 框加上遮罩 |
+
+```python
+outputs = model.run([tensor], timeout_ms=2000)
+boxes = pyneat.decode_bbox(outputs, clamp_to=(image_width, image_height), strict=True)
+box_array = boxes[0].to_numpy(copy=True)
+```
+
+僅在輸出格式預期時使用解碼輔助工具。
+
+## 使用 Sample 來處理中繼資料
+
+當有效載荷資料需要識別或時間資訊時，請使用 `Sample`。
+
+常見的建構函式和輔助工具：
+
+| 需求 | C++ | Python |
+|---|---|---|
+| 將張量與埠名稱關聯 | `make_tensor_sample("image", tensor)` | `pyneat.make_tensor_sample("image", tensor)` |
+| 關聯 OpenCV 影像 | `make_image_sample(image, PixelFormat::BGR, TensorMemory::CPU)` | 建立一個 `Tensor`，使用 `Tensor.from_numpy(...)`，然後呼叫 `make_tensor_sample(...)` |
+| 關聯編碼的媒體位元組 | `make_encoded_sample(bytes, caps_string, pts_ns, dts_ns, duration_ns)` | `pyneat.make_encoded_sample(...)` 或 `pyneat.Sample.from_encoded(data, caps_string, port_name=...)` |
+| 關聯文字 | `Tensor::from_text(...)` 加上 `make_tensor_sample(...)` | `pyneat.make_text_sample("text", text)` |
+| 關聯多個邏輯欄位 | `make_bundle_sample({field0, field1})` | 建立 `pyneat.Sample()` 並呼叫 `append(...)` |
+
+常見欄位：
+
+| 欄位 | 用途 |
+|---|---|
+| `kind` | 指示有效載荷是 `Tensor`、`TensorSet`、`Bundle` 或 `Unknown`。 |
+| `tensor` | 當 `kind == Tensor` 時，單一張量有效載荷。 |
+| `tensors` | 當 `kind == TensorSet` 時，一個邏輯輸出中的多個張量。 |
+| `fields` | 當 `kind == Bundle` 時，巢狀樣本。 |
+| `stream_id` | 適用於多串流圖的穩定串流識別碼。 |
+| `frame_id` | 適用於組合、渲染和度量的來源框架識別碼。 |
+| `pts_ns`、`dts_ns`、`duration_ns` | 時間中繼資料。 |
+| `port_name` | 輸入或輸出埠識別碼。 |
+| `payload_type`、`media_type`、`payload_tag`、`caps_string` | 有效載荷系列和媒體/caps 中繼資料。 |
+| `logical_output_index` | 適用於具有多個輸出的模型的邏輯輸出識別碼。 |
+
+Python `Sample` 是一個可迭代的物件。非 Bundle 樣本的行為就像一個邏輯項目；Bundle 會迭代其 `fields`。
+
+### 選擇 `TensorSet` 或 `Bundle`
+
+`TensorSet` 和 `Bundle` 都攜帶多個有效載荷，但它們代表不同的意義：
+
+| 結構 | 用於 | 從中讀取 |
+|---|---|---|
+| `TensorSet` | 構成一個邏輯輸入或輸出的多個張量，例如一個輸出埠中的框和遮罩。 | `sample.tensors` |
+| `Bundle` | 一起傳輸的多個邏輯欄位，例如一個影像欄位加上一個中繼資料欄位。 | `sample.fields`、迭代或 `sample[index]` |
+
+當下游程式碼應將張量視為一個結果時，請使用 `TensorSet`。當下游程式碼應單獨路由或檢查欄位時，請使用 `Bundle`。如果將它們混淆，位元組可能仍然會移動，但意義可能會在小巷中被搶走。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto image = simaai::neat::make_tensor_sample("image", image_tensor);
+auto metadata = simaai::neat::make_tensor_sample(
+    "metadata",
+    simaai::neat::Tensor::from_text(metadata_json));
+
+auto bundle = simaai::neat::make_bundle_sample({image, metadata});
+bundle.stream_id = "camera-0";
+bundle.frame_id = frame_number;
+
+run.push("request", bundle);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+image = pyneat.make_tensor_sample("image", image_tensor)
+metadata = pyneat.make_text_sample("metadata", metadata_json)
+
+bundle = pyneat.Sample()
+bundle.append(image)
+bundle.append(metadata)
+bundle.stream_id = "camera-0"
+bundle.frame_id = frame_number
+
+run.push("request", [bundle])
+```
+
+</CodeTab>
+</CodeTabs>
+
+當您收到一個 `TensorSet` 時，請對 `sample.tensors` 進行迭代。當您收到一個 `Bundle` 時，請對樣本本身或對 `sample.fields` 進行迭代。請保持張量的形狀一致；未來的您將是下游消費者。
+
+### 推送應用程式擁有的串流元資料
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto sample = simaai::neat::make_tensor_sample("image", input_tensor);
+sample.stream_id = "camera-0";
+sample.frame_id = frame_number++;
+
+run.push("image", sample);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+sample = pyneat.make_tensor_sample("image", tensor)
+sample.stream_id = "camera-0"
+sample.frame_id = frame_number
+
+run.push("image", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+如果一個多串流圖中沒有 `stream_id`，它就無法報告每個串流的公平吞吐量。在調整每個串流之前，請先為其命名。
+
+### 讀取提取的樣本
+
+```python
+sample = run.pull("detections", timeout_ms=2000)
+
+if sample is not None:
+    print(sample.kind, sample.stream_id, sample.frame_id)
+    if sample.kind == pyneat.SampleKind.TensorSet:
+        for tensor in sample.tensors:
+            print(tensor.shape, tensor.dtype)
+```
+
+## 了解酬載類型
+
+`PayloadType` 告訴 Neat 哪種類型的資料會跨越圖的邊界。
+
+| 酬載類型 | 用途/檢查 |
+|---|---|
+| `PayloadType.Image` | 解碼後的像素。檢查圖像格式、寬度、高度和像素中繼資料。 |
+| `PayloadType.Tensor` | 模型或應用程式的張量。檢查 dtype、shape、佈局和語義中繼資料。 |
+| `PayloadType.Encoded` | 編碼的媒體，例如 H.264 或 H.265。檢查 `caps_string`、編解碼器、時間戳記和酬載標籤。 |
+| `PayloadType.Auto` | 讓 Neat 在可能的情況下，從張量/樣本的中繼資料中推斷。 |
+
+文字、音訊、位元串流和不透明位元組以張量語義或特殊規格的形式傳輸，而不是作為單獨的 `PayloadType` 列舉值。
+
+對於明確的輸入邊界，請使用 `InputOptions`，並搭配 `payload_type`、`format`、大小欄位、動態限制、fps、caps 覆寫、即時/時間戳行為和記憶體原則。在 Python 中，使用 `pyneat.Format` / `pyneat.FormatTag` 設定格式欄位，而不是原始字串。
+
+## 進階類型識別
+
+您不需要這些類型進行第一次推論，但當您驗證合約或收集診斷資訊時，它們會很有用。
+
+| 類型 | 何時使用 |
+|---|---|
+| `TensorConstraint` / `TensorSpec` | 在傳送張量之前，您需要檢查 dtype、rank、shape、裝置、圖像格式或區段限制。 |
+| `DeviceType` | 您需要檢查張量是否與 CPU、APU、CVU、MLA 或未知裝置相關聯。 |
+| `StorageKind` | 您需要了解記憶體是 CPU 擁有的、外部 CPU 記憶體、GStreamer 樣本還是裝置控制代碼。 |
+| `PlaneRole` | 您正在檢查多平面媒體，例如 Y、U、V 或 UV 平面。 |
+| `BusMessage` | 您正在讀取執行階段或建置失敗後產生的 `GraphReport.bus`。 |
+| `BoundaryFlowStats` | 您正在檢查哪個圖邊界在診斷執行期間接收了緩衝區。 |
+| `MeasureOptions` / `MeasureReport` | 您正在測量 `Run` 視窗，並且需要計數器、延遲、可選的外掛程式計時或可選的功耗。 |
+
+將這些用作證據。除非任務確實需要，否則不要將它們變成控制項。
+
+## 參閱
+
+- [模型](/develop-apps/development-workflow/model)
+- [圖](/develop-apps/development-workflow/graph)
+- [執行圖形](/develop-apps/development-workflow/pipeline)
+- [節點](/develop-apps/development-workflow/node)
+
+## 教學課程
+
+- [將 NumPy 陣列傳遞給模型](/tutorials/pass-numpy-to-model)
+- [在單一範例中傳送多個輸入](/tutorials/feed-multi-input-model)
+- [閱讀並解讀模型輸出結果](/tutorials/interpret-model-output)

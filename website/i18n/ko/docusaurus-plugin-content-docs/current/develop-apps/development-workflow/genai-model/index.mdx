@@ -1,0 +1,54 @@
+---
+title: "생성형 AI 모델"
+description: "Neat 애플리케이션에서 LLM, VLM 및 ASR 모델을 실행하거나 제공하는 방법을 선택하세요."
+sidebar_position: 1
+slug: /develop-apps/development-workflow/genai-model
+---
+
+# GenAI 모델
+
+Neat은 LLiMa로 준비된 LLM, VLM 및 ASR 모델을 위한 GenAI API를 사용합니다. 이는
+[`Model`](/develop-apps/development-workflow/model)의 생성 모델에 해당하는 것으로, 배포된 모델 디렉터리를 로드하고, 요청을 생성한 다음, 애플리케이션 내에서 실행하거나 HTTP를 통해 제공합니다.
+
+애플리케이션이 모델에 텍스트 생성, 이미지 관련 질문 답변, 도구 호출 또는 오디오 전사를 요청할 때 이러한 API를 사용합니다. 분류, 감지, 분할 또는 임베딩 모델과 같은 고정된 형태의 판별 모델의 경우 클래식 `Model` API를 사용합니다.
+
+## GenAI가 적용되는 범위
+
+GenAI 경로는 나머지 Neat과 동일한 상위 수준 구조를 갖습니다.
+
+1. Modalix에 대한 모델 아티팩트를 준비하거나 다운로드합니다.
+2. 모델을 대상에 배치합니다. 일반적으로 `/media/nvme/llima/models/` 아래에 배치합니다.
+3. C++ 또는 Python 애플리케이션에서 모델을 로드합니다.
+4. 요청을 직접 보내거나 `GenAIServer`를 통해 모델을 노출합니다.
+5. 전체 결과를 읽거나 스트리밍된 출력을 사용합니다.
+
+LLiMa는 GenAI 모델 준비, 명령줄 테스트 및 벤치마킹을 담당합니다.
+Neat은 모델이 애플리케이션 내에서 사용될 때 애플리케이션에서 사용하는 API 및 런타임 통합을 담당합니다. 모델 준비에 대한 자세한 내용은 [LLiMa를 활용한 생성형 AI](/genai-llima/)를 참조하십시오.
+
+## 애플리케이션 경계 선택
+
+<div class="overview-link-columns">
+  <section class="overview-link-panel overview-link-panel-start">
+    <h2>애플리케이션과 고객에게 서비스를 제공합니다.</h2>
+    <p>대부분의 애플리케이션에 권장됩니다. GenAI 서버를 사용하여 일반적인 API 엔드포인트를 제공하십시오.</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/genai-server/"><strong>GenAI 서버</strong><span>하나 이상의 모델을 등록하고 OpenAI 또는 Ollama와 호환되는 HTTP 엔드포인트를 호출합니다.</span></a></li>
+    </ul>
+  </section>
+
+  <section class="overview-link-panel overview-link-panel-explore">
+    <h2>프로세스 내에서 실행</h2>
+    <p>C++ 또는 Python 애플리케이션이 모델 호출을 직접 수행하는 경우, 해당 API를 사용하세요.</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/genai-model/direct-api/"><strong>GenAI API를 직접 사용</strong><span>LLM, VLM, ASR 요청을 프로세스 내에서 실행하거나 스트리밍하고, GenAI 그래프 조각을 구성합니다.</span></a></li>
+    </ul>
+  </section>
+</div>
+
+임베디드 애플리케이션 로직과 모델과 동일한 프로세스에서 실행되어야 하는 테스트에는 직접 호출을 사용합니다. 클라이언트가 Neat 런타임에 연결할 필요가 없거나 하나의 프로세스가 여러 모델에 대한 요청을 라우팅해야 하는 경우 서버를 사용합니다.
+
+## 다음 단계
+
+- 완전한 HTTP 서버 예제를 보려면 [GenAI 모델 배포](/tutorials/serve-genai-models)를 참조하세요.
+- 프로세스 내 실행 방법을 보려면 [Direct API를 사용하여 LLM을 실행합니다.](/tutorials/run-an-llm)를 참조하세요.
+- [LLiMa를 활용한 생성형 AI](/genai-llima/)를 사용하여 모델을 준비하고 성능을 테스트합니다.
