@@ -42,6 +42,7 @@ const requiredShellCatalogKeys = {
   ],
 };
 const failures = [];
+const sidebarCatalogs = new Map();
 
 const scope = JSON.parse(fs.readFileSync(path.join(websiteRoot, "i18n", "scope.json"), "utf8"));
 const toolConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "sima-i18n.config.json"), "utf8"));
@@ -73,6 +74,7 @@ for (const locale of locales) {
     continue;
   }
   const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+  sidebarCatalogs.set(locale, catalog);
   for (const englishLabel of requiredLabels) {
     if (!catalog[`${categoryPrefix}${englishLabel}`]) {
       failures.push(`${locale} sidebar is missing category: ${englishLabel}`);
@@ -84,6 +86,15 @@ for (const locale of locales) {
     if (translation.message === englishLabel && !protectedLabels.has(englishLabel)) {
       failures.push(`${locale} sidebar category remains in English: ${englishLabel}`);
     }
+  }
+}
+
+const allSidebarKeys = new Set(
+  [...sidebarCatalogs.values()].flatMap((catalog) => Object.keys(catalog)),
+);
+for (const [locale, catalog] of sidebarCatalogs) {
+  for (const key of allSidebarKeys) {
+    if (!catalog[key]) failures.push(`${locale} sidebar is missing generated key: ${key}`);
   }
 }
 
