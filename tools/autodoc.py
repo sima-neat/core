@@ -1282,8 +1282,15 @@ def process_source(
                     localized=True,
                     exclude_prefixes=localized_excluded_prefixes(source_i18n),
                     clean_destination=False,
+                    run_group_commands=False,
                     shared_asset_root=src_docs,
                 )
+                group_commands = source.get("group_commands")
+                if group_commands:
+                    # Regroup exactly once after the localized overlay so
+                    # translated command pages replace their English seeds
+                    # before paths and cross-page links are recomputed.
+                    regroup_command_pages(localized_destination, group_commands)
             except OSError as exc:
                 if localized_destination.exists():
                     shutil.rmtree(localized_destination)

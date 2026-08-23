@@ -381,6 +381,110 @@ class LocalizedAutodocTests(unittest.TestCase):
                 (destination / "generated/reference.md").read_text(encoding="utf-8"),
             )
 
+    def test_regroups_translated_command_pages_after_overlay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            build_dir = repo_root / "build"
+            staging = build_dir / "autodoc/sima-cli"
+            english_root = staging / "docs/sima-cli"
+            localized_root = staging / "docs/i18n/ja/sima-cli"
+            english_pages = {
+                "index.md": "# Command reference\n",
+                "commands/sima-cli.md": "# sima-cli\n",
+                "commands/sima-cli-model.md": (
+                    "# sima-cli model\n\n"
+                    "[List models](sima-cli-model-list.md)\n"
+                ),
+                "commands/sima-cli-model-list.md": (
+                    "# sima-cli model list\n\n"
+                    "[Parent](sima-cli-model.md)\n"
+                ),
+            }
+            localized_pages = {
+                "index.md": "# Довідник команд\n",
+                "commands/sima-cli.md": "# sima-cli українською\n",
+                "commands/sima-cli-model.md": (
+                    "# sima-cli model українською\n\n"
+                    "[Перелік моделей](sima-cli-model-list.md)\n"
+                ),
+                "commands/sima-cli-model-list.md": (
+                    "# sima-cli model list українською\n\n"
+                    "[Батьківська команда](sima-cli-model.md)\n"
+                ),
+            }
+            for relative, text in english_pages.items():
+                path = english_root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            for relative, text in localized_pages.items():
+                path = localized_root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+
+            source_hashes = {
+                f"docs/sima-cli/{relative}": hashlib.sha256(
+                    (english_root / relative).read_bytes()
+                ).hexdigest()
+                for relative in english_pages
+            }
+            self.write_i18n_contract(
+                staging,
+                "docs/sima-cli/index.md",
+                source_hashes["docs/sima-cli/index.md"],
+                source_hashes["docs/sima-cli/index.md"],
+            )
+            manifest_path = staging / "docs/i18n/translation-sources.json"
+            manifest_path.write_text(
+                json.dumps({"ja": source_hashes, "ko": source_hashes}),
+                encoding="utf-8",
+            )
+
+            source = {
+                "key": "sima-cli",
+                "title": "sima-cli",
+                "repo": "unused",
+                "branch": "main",
+                "docs_subpath": "docs/sima-cli",
+                "mount": "tools/sima-cli",
+                "localization": True,
+                "group_commands": {
+                    "prefix": "sima-cli-",
+                    "root_stem": "sima-cli",
+                    "root_page_stem": "cli",
+                },
+            }
+
+            with mock.patch.object(MODULE, "acquire_source", return_value="main"):
+                ok, message = MODULE.process_source(
+                    source,
+                    repo_root,
+                    build_dir,
+                    repo_root / "docs-output",
+                    repo_root / "website/i18n",
+                    ["ja"],
+                )
+
+            self.assertTrue(ok, message)
+            destination = (
+                repo_root / "website/i18n/ja"
+                / MODULE.DOCUSAURUS_DOCS_TRANSLATION_DIR
+                / "tools/sima-cli"
+            )
+            parent = destination / "model/index.md"
+            child = destination / "model/sima-cli-model-list.md"
+            self.assertIn("model українською", parent.read_text(encoding="utf-8"))
+            self.assertIn(
+                "](./sima-cli-model-list.md)",
+                parent.read_text(encoding="utf-8"),
+            )
+            self.assertIn("list українською", child.read_text(encoding="utf-8"))
+            self.assertIn("](./index.md)", child.read_text(encoding="utf-8"))
+            self.assertIn(
+                "sima-cli українською",
+                (destination / "cli.md").read_text(encoding="utf-8"),
+            )
+            self.assertFalse((destination / "commands").exists())
+
 
 class AutodocMainTests(unittest.TestCase):
     def run_main_with_result(self, result):
