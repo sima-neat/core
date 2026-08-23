@@ -121,10 +121,12 @@ Autodoc imports source-owned translations for the Model Compiler guides, LLiMa,
 Insight, Sentinel, and sima-cli. Each participating repository declares its
 locale layout in `sima-i18n.config.json` and records reviewed English hashes in
 `docs/i18n/translation-sources.json`. During a Software docs build,
-`tools/autodoc.py` mounts current translations under Docusaurus' locale tree. A
-missing or stale locale is removed from generated output and uses Docusaurus'
-English fallback. Do not hand-edit these mounted copies in this repository; the
-next autodoc run overwrites them.
+`tools/autodoc.py` validates every requested locale and mounts current
+translations under Docusaurus' locale tree. A missing or stale translation is a
+fatal completeness error: the docs build stops and reports the source file and
+locale that must be updated. Correct the translation and its reviewed English
+hash in the source repository, then rebuild. Do not hand-edit mounted copies in
+this repository; the next autodoc run overwrites them.
 
 If another generated documentation family is localized later, localization
 belongs with the source repository or generator that owns its schema and

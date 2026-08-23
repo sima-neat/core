@@ -24,6 +24,37 @@ const rootTheme = fs.readFileSync(
   "utf8",
 );
 
+const rootPreferenceLogic = rootTheme.match(
+  /function preferredDocsLocale\(\) \{[\s\S]*?^\}\n\nfunction localizationEnabled\(search, currentLocale\) \{[\s\S]*?^\}/m,
+);
+assert.ok(rootPreferenceLogic, "Root locale preference helpers must remain testable");
+
+const blockedStorageContext = {
+  I18N_PREVIEW_PARAM: "i18n",
+  I18N_PREVIEW_SESSION_KEY: "neat-docs-i18n-preview",
+  DOCS_LOCALE_COOKIE: "sima-neat-locale",
+  URLSearchParams,
+  decodeURIComponent,
+  document: {cookie: "sima-neat-locale=ja"},
+  window: {
+    __NEAT_DOCS_PREFERRED_LOCALE__: "",
+    sessionStorage: {
+      getItem() {
+        throw new Error("session storage blocked");
+      },
+    },
+  },
+};
+vm.runInNewContext(
+  `${rootPreferenceLogic[0]}; localeEnabled = localizationEnabled("", "ja");`,
+  blockedStorageContext,
+);
+assert.equal(
+  blockedStorageContext.localeEnabled,
+  true,
+  "A blocked session store must not suppress the configured locale cookie",
+);
+
 assert.match(
   shellHostModule,
   /export function onRouteDidUpdate\(\)[\s\S]*requestAnimationFrame[\s\S]*mountShell\(\)/,

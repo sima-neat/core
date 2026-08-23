@@ -62,14 +62,13 @@ function localizationEnabled(search, currentLocale) {
   if (new URLSearchParams(search).get(I18N_PREVIEW_PARAM) === "1") return true;
   if (typeof window === "undefined") return false;
 
+  let sessionPreviewEnabled = false;
   try {
-    return (
-      window.sessionStorage.getItem(I18N_PREVIEW_SESSION_KEY) === "1" ||
-      preferredDocsLocale() === currentLocale
-    );
-  } catch {
-    return false;
-  }
+    sessionPreviewEnabled =
+      window.sessionStorage.getItem(I18N_PREVIEW_SESSION_KEY) === "1";
+  } catch {}
+
+  return sessionPreviewEnabled || preferredDocsLocale() === currentLocale;
 }
 
 function I18nPreviewGate({children}) {
