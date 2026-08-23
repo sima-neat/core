@@ -55,7 +55,12 @@ function preferredDocsLocale() {
   const entry = document.cookie
     .split("; ")
     .find((cookie) => cookie.startsWith(`${DOCS_LOCALE_COOKIE}=`));
-  return entry ? decodeURIComponent(entry.split("=").slice(1).join("=")) : "";
+  if (!entry) return "";
+  try {
+    return decodeURIComponent(entry.split("=").slice(1).join("="));
+  } catch {
+    return "";
+  }
 }
 
 function localizationEnabled(search, currentLocale) {

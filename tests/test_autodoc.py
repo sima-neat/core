@@ -320,6 +320,67 @@ class LocalizedAutodocTests(unittest.TestCase):
 
             self.assertEqual(failures, [])
 
+    def test_excluded_translation_does_not_overlay_english_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            build_dir = repo_root / "build"
+            staging = build_dir / "autodoc/example"
+            english = staging / "docs/index.md"
+            generated = staging / "docs/generated/reference.md"
+            english.parent.mkdir(parents=True)
+            generated.parent.mkdir(parents=True)
+            english.write_text("# English\n", encoding="utf-8")
+            generated.write_text("# Current English fallback\n", encoding="utf-8")
+            digest = hashlib.sha256(english.read_bytes()).hexdigest()
+            self.write_i18n_contract(
+                staging,
+                "docs/index.md",
+                digest,
+                digest,
+                excluded_prefixes=["docs/generated/"],
+            )
+            localized = staging / "docs/i18n/ja/index.md"
+            stale_generated = staging / "docs/i18n/ja/generated/reference.md"
+            localized.parent.mkdir(parents=True)
+            stale_generated.parent.mkdir(parents=True)
+            localized.write_text("# 日本語\n", encoding="utf-8")
+            stale_generated.write_text("# Stale localized copy\n", encoding="utf-8")
+
+            i18n_root = repo_root / "website/i18n"
+            source = {
+                "key": "example",
+                "title": "Example",
+                "repo": "unused",
+                "branch": "main",
+                "docs_subpath": "docs",
+                "mount": "tools/example",
+                "localization": True,
+            }
+
+            with mock.patch.object(MODULE, "acquire_source", return_value="main"):
+                ok, message = MODULE.process_source(
+                    source,
+                    repo_root,
+                    build_dir,
+                    repo_root / "docs-output",
+                    i18n_root,
+                    ["ja"],
+                )
+
+            self.assertTrue(ok, message)
+            destination = (
+                i18n_root / "ja" / MODULE.DOCUSAURUS_DOCS_TRANSLATION_DIR
+                / "tools/example"
+            )
+            self.assertIn(
+                "# Current English fallback",
+                (destination / "generated/reference.md").read_text(encoding="utf-8"),
+            )
+            self.assertNotIn(
+                "Stale localized copy",
+                (destination / "generated/reference.md").read_text(encoding="utf-8"),
+            )
+
 
 class AutodocMainTests(unittest.TestCase):
     def run_main_with_result(self, result):

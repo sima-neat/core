@@ -664,6 +664,21 @@ def localized_docs_path(staging: Path, config: Dict, locale: str) -> Path:
     return translated_root / config["docs_relative"]
 
 
+def localized_excluded_prefixes(config: Dict) -> List[Path]:
+    """Map source-owned exclusion prefixes into the localized docs tree."""
+    source_docs = config["source_dir"] / config["docs_relative"]
+    prefixes: List[Path] = []
+    for configured_prefix in config["excluded_prefixes"]:
+        prefix = Path(configured_prefix.rstrip("/"))
+        try:
+            relative = prefix.relative_to(source_docs)
+        except ValueError:
+            continue
+        if relative not in prefixes:
+            prefixes.append(relative)
+    return prefixes
+
+
 def validate_localized_hashes(
     staging: Path,
     config: Dict,
@@ -1265,6 +1280,7 @@ def process_source(
                     localized_docs,
                     localized_destination,
                     localized=True,
+                    exclude_prefixes=localized_excluded_prefixes(source_i18n),
                     clean_destination=False,
                     shared_asset_root=src_docs,
                 )

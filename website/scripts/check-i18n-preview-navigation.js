@@ -55,6 +55,30 @@ assert.equal(
   "A blocked session store must not suppress the configured locale cookie",
 );
 
+const malformedCookieContext = {
+  I18N_PREVIEW_PARAM: "i18n",
+  I18N_PREVIEW_SESSION_KEY: "neat-docs-i18n-preview",
+  DOCS_LOCALE_COOKIE: "sima-neat-locale",
+  URLSearchParams,
+  decodeURIComponent,
+  document: {cookie: "sima-neat-locale=%"},
+  window: {
+    __NEAT_DOCS_PREFERRED_LOCALE__: "",
+    sessionStorage: {getItem: () => null},
+  },
+};
+assert.doesNotThrow(() => {
+  vm.runInNewContext(
+    `${rootPreferenceLogic[0]}; localeEnabled = localizationEnabled("", "ja");`,
+    malformedCookieContext,
+  );
+});
+assert.equal(
+  malformedCookieContext.localeEnabled,
+  false,
+  "A malformed locale cookie must be ignored",
+);
+
 assert.match(
   shellHostModule,
   /export function onRouteDidUpdate\(\)[\s\S]*requestAnimationFrame[\s\S]*mountShell\(\)/,
