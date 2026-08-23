@@ -43,6 +43,9 @@ not add a second translation engine under `website/scripts/`.
 - Keep localized documentation images as base-aware `@site/../docs/...`
   imports. Do not use `pathname:///`; it bypasses the `/software/` deployment
   base path in the Developer Center.
+- Keep Developer Center cross-pillar link targets identical to the English
+  source. The Software docs build localizes links to Hardware, Examples, and
+  Software for the current documentation locale and deployment host.
 - Translate conceptual nouns naturally, but introduce the English term when it
   improves searchability or removes ambiguity.
 - Korean uses a consistent formal instructional style.

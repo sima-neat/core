@@ -229,6 +229,12 @@ const config = {
           sidebarItemsGenerator: require("./sidebarItemsGenerator.js"),
           docItemComponent: "@theme/ApiItem",
           exclude: ["doxygen/**", "reference/env_var_rationalization.md"],
+          remarkPlugins: [
+            [
+              require("./remark-localize-developer-center-links.js"),
+              {siteUrl: siteRoot},
+            ],
+          ],
         },
         blog: false,
         theme: {
