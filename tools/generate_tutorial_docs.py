@@ -21,6 +21,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -1660,6 +1661,29 @@ def _validate_localized_readme(source_path: pathlib.Path, localized_path: pathli
             raise ValueError(f"{localized_path}: translation changed {label}")
 
 
+def _localized_tutorial_output_root(root: pathlib.Path, locale: str) -> pathlib.Path:
+    return (
+        root
+        / "website"
+        / "i18n"
+        / locale
+        / "docusaurus-plugin-content-docs"
+        / "current"
+        / "develop-apps"
+        / "tutorials"
+    )
+
+
+def _remove_generated_localized_tutorials(out_root: pathlib.Path) -> None:
+    """Remove generator-owned locale output while preserving authored pages."""
+    (out_root / "index.md").unlink(missing_ok=True)
+    if not out_root.is_dir():
+        return
+    for child in out_root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+
+
 def generate_localized_tutorials(
     root: pathlib.Path,
     module_dirs: List[pathlib.Path],
@@ -1684,12 +1708,14 @@ def generate_localized_tutorials(
     generated_locales: List[str] = []
 
     for locale in SUPPORTED_LOCALES:
+        out_root = _localized_tutorial_output_root(root, locale)
         localized_paths = {
             module_dir.name: module_dir / "i18n" / locale / "README.md"
             for module_dir in module_dirs
             if (module_dir / "i18n" / locale / "README.md").exists()
         }
         if not localized_paths:
+            _remove_generated_localized_tutorials(out_root)
             continue
         missing = sorted(set(canonical_by_folder) - set(localized_paths))
         if missing:
@@ -1731,16 +1757,6 @@ def generate_localized_tutorials(
         localized_modules = [
             module for label, _, _, _ in CATEGORY_SUBDIRS for module in groups[label]
         ]
-        out_root = (
-            root
-            / "website"
-            / "i18n"
-            / locale
-            / "docusaurus-plugin-content-docs"
-            / "current"
-            / "develop-apps"
-            / "tutorials"
-        )
         out_root.mkdir(parents=True, exist_ok=True)
         expected_paths = {
             out_root / _category_subdir(module.category) / f"{module.doc_id}.mdx"

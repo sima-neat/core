@@ -78,6 +78,8 @@ const siteRoot = url.replace(/\/+$/, "");
 const developerCenterShellBase = process.env.DOCS_DEVELOPER_CENTER_SHELL_BASE || "";
 const analyticsConfig = {
   measurementId: process.env.DOCS_GA_MEASUREMENT_ID || "",
+  baseUrl,
+  locales: docsLocales,
 };
 const footerLinks = [
   { label: "SiMa.ai Neat Framework Documentation", to: "/" },

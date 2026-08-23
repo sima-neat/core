@@ -156,6 +156,35 @@ def test_rejects_partially_translated_locale(tmp_path: Path) -> None:
         )
 
 
+def test_removes_stale_generated_locale_when_translations_are_removed(
+    tmp_path: Path,
+) -> None:
+    module = _write_module(tmp_path, "001_run_a_model", localized=False)
+    canonical = tutorial_docs.parse_module(module, tmp_path)
+    output_root = (
+        tmp_path
+        / "website/i18n/ja/docusaurus-plugin-content-docs/current"
+        / "develop-apps/tutorials"
+    )
+    generated_category = output_root / "legacy-generated-category"
+    generated_category.mkdir(parents=True)
+    (output_root / "index.md").write_text("# Stale index\n", encoding="utf-8")
+    (generated_category / "tutorial_stale.mdx").write_text(
+        "# Stale tutorial\n", encoding="utf-8"
+    )
+    authored_page = output_root / "before-you-run.md"
+    authored_page.write_text("# Authored page\n", encoding="utf-8")
+
+    locales = tutorial_docs.generate_localized_tutorials(
+        tmp_path, [module], [canonical], "main"
+    )
+
+    assert locales == []
+    assert not (output_root / "index.md").exists()
+    assert not generated_category.exists()
+    assert authored_page.read_text(encoding="utf-8") == "# Authored page\n"
+
+
 def test_rejects_stale_translation(tmp_path: Path) -> None:
     module = _write_module(tmp_path, "001_run_a_model")
     _write_locale_support(tmp_path, [module])
