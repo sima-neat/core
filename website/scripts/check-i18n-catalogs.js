@@ -20,6 +20,27 @@ const requiredLabels = new Set([
   "Model Runtime", "Models & Inference", "PCIe Co-Processing", "References",
   "Release & Maintenance", "Release Notes", "Start Here", "Tools", "Tutorials",
 ]);
+const requiredShellCatalogKeys = {
+  "code.json": [
+    "theme.ErrorPageContent.title",
+    "theme.NotFound.title",
+    "theme.NotFound.p1",
+    "theme.NotFound.p2",
+    "theme.docs.paginator.previous",
+    "theme.docs.paginator.next",
+    "theme.navbar.mobileLanguageDropdown.label",
+  ],
+  "docusaurus-theme-classic/navbar.json": [
+    "title",
+    "item.label.Getting Started",
+    "item.label.C++ API",
+    "item.label.Python API",
+  ],
+  "docusaurus-theme-classic/footer.json": [
+    "link.item.label.SiMa.ai Neat Framework Documentation",
+    "copyright",
+  ],
+};
 const failures = [];
 
 const scope = JSON.parse(fs.readFileSync(path.join(websiteRoot, "i18n", "scope.json"), "utf8"));
@@ -29,6 +50,17 @@ if (JSON.stringify(scope.excludedPrefixes) !== JSON.stringify(toolConfig.exclude
 }
 
 for (const locale of locales) {
+  for (const [relativePath, requiredKeys] of Object.entries(requiredShellCatalogKeys)) {
+    const shellCatalogPath = path.join(websiteRoot, "i18n", locale, relativePath);
+    if (!fs.existsSync(shellCatalogPath)) {
+      failures.push(`${locale} is missing its ${relativePath} UI catalog`);
+      continue;
+    }
+    const shellCatalog = JSON.parse(fs.readFileSync(shellCatalogPath, "utf8"));
+    for (const key of requiredKeys) {
+      if (!shellCatalog[key]) failures.push(`${locale} ${relativePath} is missing key: ${key}`);
+    }
+  }
   const catalogPath = path.join(
     websiteRoot,
     "i18n",
@@ -61,4 +93,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("Localized sidebar catalogs are complete.");
+console.log("Localized UI and sidebar catalogs are complete.");
