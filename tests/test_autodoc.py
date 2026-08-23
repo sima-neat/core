@@ -75,6 +75,37 @@ class RootIndexFileTests(unittest.TestCase):
             self.assertIn("Sentinel overview.", generated)
             self.assertIn("docs/i18n/ko/README.md", source_readme.read_text(encoding="utf-8"))
 
+    def test_rewrites_readme_link_after_localized_readme_was_already_moved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            section = root / "section"
+            staging.mkdir()
+            section.mkdir()
+            (staging / "README.md").write_text(
+                "# Sentinel\n\nSee [Sentinel documentation](docs/README.md).\n",
+                encoding="utf-8",
+            )
+            (section / "documentation.md").write_text(
+                "# 센티널 설명서\n",
+                encoding="utf-8",
+            )
+
+            MODULE.write_root_index_file(
+                {
+                    "title": "Sentinel",
+                    "root_index_file": "README.md",
+                    "root_index_link_prefix": "docs/",
+                },
+                staging,
+                section,
+                [],
+            )
+
+            generated = (section / "index.md").read_text(encoding="utf-8")
+            self.assertIn("[Sentinel documentation](documentation.md)", generated)
+            self.assertNotIn("](README.md)", generated)
+
     def test_rejects_invalid_omit_line_prefixes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

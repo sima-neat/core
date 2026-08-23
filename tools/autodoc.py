@@ -1080,9 +1080,9 @@ def write_root_index_file(
     # contributed one, retaining it alongside this explicit index creates a
     # duplicate route and can make its sibling links resolve nondeterministically.
     readme_path = dst_section / "README.md"
+    readme_target = str(source.get("root_index_readme_target", "documentation.md")).strip()
+    text = rewrite_configured_link_targets(text, [("README.md", readme_target)])
     if readme_path.is_file():
-        readme_target = str(source.get("root_index_readme_target", "documentation.md")).strip()
-        text = rewrite_configured_link_targets(text, [("README.md", readme_target)])
         target_path = dst_section / readme_target
         target_path.parent.mkdir(parents=True, exist_ok=True)
         readme_path.replace(target_path)
