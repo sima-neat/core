@@ -34,12 +34,23 @@ function preferredLocale() {
   const entry = String(document.cookie || "")
     .split("; ")
     .find((cookie) => cookie.startsWith("sima-neat-locale="));
-  const locale = entry ? decodeURIComponent(entry.split("=").slice(1).join("=")) : "";
+  let locale = "";
+  try {
+    locale = entry ? decodeURIComponent(entry.split("=").slice(1).join("=")) : "";
+  } catch {
+    // Treat malformed externally written cookie values as no preference.
+  }
   return LOCALIZED_LOCALES.has(locale) ? locale : "";
 }
 
 function localizationEnabled() {
   return previewEnabled() || preferredLocale() === currentLocale();
+}
+
+function isStaticFileUrl(url) {
+  const segments = url.pathname.split("/").filter(Boolean);
+  const lastSegment = segments[segments.length - 1] || "";
+  return lastSegment.includes(".");
 }
 
 function retainCurrentLocale(url) {
@@ -62,6 +73,9 @@ function retainCurrentLocale(url) {
 function previewUrl(rawHref) {
   const url = new URL(rawHref, window.location.href);
   if (url.origin !== window.location.origin) return null;
+  // Static directories are shared by every locale and are not emitted below
+  // locale-prefixed routes. Leave file/download URLs on that shared root.
+  if (isStaticFileUrl(url)) return null;
   retainCurrentLocale(url);
   if (previewEnabled()) url.searchParams.set(PREVIEW_PARAM, "1");
   return url;
@@ -73,6 +87,7 @@ function retainPreviewFlag() {
   document.querySelectorAll("a[href]").forEach((anchor) => {
     const rawHref = anchor.getAttribute("href");
     if (!rawHref || rawHref.startsWith("#")) return;
+    if (anchor.hasAttribute?.("download")) return;
 
     try {
       const url = previewUrl(rawHref);

@@ -99,6 +99,12 @@ for (const localizedAutodocRoute of [
   );
 }
 
+assert.match(
+  rootTheme,
+  /ENGLISH_ONLY_ROUTE_PREFIXES\s*=\s*\[[\s\S]*["']\/reference\/cppapi["'][\s\S]*["']\/reference\/pythonapi["'][\s\S]*\]/,
+  "Generated C++ and Python API routes must show the English-only localization banner",
+);
+
 function anchor(href, attributes = {}) {
   return {
     attributes: {href, ...attributes},
@@ -119,6 +125,7 @@ function runModule({
   pathname,
   search,
   anchors = [],
+  cookie = "",
   preferredLocale = "",
   previewSession = false,
 }) {
@@ -149,7 +156,7 @@ function runModule({
       },
     },
     document: {
-      cookie: "",
+      cookie,
       documentElement: {},
       addEventListener(type, handler) {
         if (type === "click") clickHandler = handler;
@@ -235,8 +242,11 @@ modifiedPreview.click(anchor("/develop-apps/hello-neat/minimal/"), {metaKey: tru
 assert.equal(modifiedPreview.assigned, undefined);
 
 const basePathLink = anchor("/docs/develop-apps/hello-neat/minimal/");
+const sharedImage = anchor("/docs/images/tutorial_sample_image.png");
+const relativeSharedImage = anchor("../../images/tutorial_sample_image.png");
+const explicitDownload = anchor("/docs/downloads/model", {download: ""});
 runModule({
-  anchors: [basePathLink],
+  anchors: [basePathLink, sharedImage, relativeSharedImage, explicitDownload],
   href: "http://localhost:3100/docs/ko/getting-started/?i18n=1",
   pathname: "/docs/ko/getting-started/",
   search: "?i18n=1",
@@ -245,6 +255,24 @@ assert.equal(
   basePathLink.getAttribute("href"),
   "/docs/ko/develop-apps/hello-neat/minimal/?i18n=1",
 );
+assert.equal(sharedImage.getAttribute("href"), "/docs/images/tutorial_sample_image.png");
+assert.equal(relativeSharedImage.getAttribute("href"), "../../images/tutorial_sample_image.png");
+assert.equal(explicitDownload.getAttribute("href"), "/docs/downloads/model");
+
+const staticAssetPreview = runModule({
+  href: "http://localhost:3100/docs/ko/develop-apps/hello-neat/run_an_app/?i18n=1",
+  pathname: "/docs/ko/develop-apps/hello-neat/run_an_app/",
+  search: "?i18n=1",
+});
+const staticAssetClick = staticAssetPreview.click(
+  anchor("/docs/images/tutorial_sample_image.png"),
+);
+assert.equal(staticAssetPreview.assigned, undefined);
+assert.deepEqual(staticAssetClick, {
+  defaultPrevented: false,
+  immediatePropagationStopped: false,
+  propagationStopped: false,
+});
 
 const disabled = anchor("/ja/getting-started/");
 runModule({
@@ -254,6 +282,15 @@ runModule({
   search: "",
 });
 assert.equal(disabled.getAttribute("href"), "/ja/getting-started/");
+
+assert.doesNotThrow(() =>
+  runModule({
+    cookie: "sima-neat-locale=%",
+    href: "http://localhost:3100/ja/getting-started/",
+    pathname: "/ja/getting-started/",
+    search: "",
+  }),
+);
 
 const ukrainian = anchor("/develop-apps/hello-neat/minimal/");
 runModule({

@@ -10,6 +10,7 @@ const DOCS_LOCALE_COOKIE = "sima-neat-locale";
 const ENGLISH_ONLY_ROUTE_PREFIXES = [
   "/doxygen",
   "/reference/cppapi",
+  "/reference/pythonapi",
 ];
 const LOCALIZED_UI = {
   en: {
