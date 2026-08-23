@@ -102,6 +102,7 @@ class RootIndexFileTests(unittest.TestCase):
 class LocalizedAutodocTests(unittest.TestCase):
     def write_i18n_contract(
         self, staging: Path, source: str, ja_hash: str, ko_hash: str,
+        excluded_prefixes=None,
     ):
         (staging / "sima-i18n.config.json").write_text(
             json.dumps(
@@ -109,6 +110,7 @@ class LocalizedAutodocTests(unittest.TestCase):
                     "sourceDir": "docs",
                     "translationDir": "docs/i18n/{locale}",
                     "manifest": "docs/i18n/translation-sources.json",
+                    "excludedPrefixes": excluded_prefixes or [],
                     "locales": {"ja": {"code": "ja"}, "ko": {"code": "ko"}},
                 }
             ),
@@ -280,6 +282,36 @@ class LocalizedAutodocTests(unittest.TestCase):
             )
 
             self.assertIn("ja translation is missing: docs/omitted.md", failures)
+
+    def test_excluded_source_prefix_does_not_require_translation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staging = Path(directory)
+            english = staging / "docs/index.md"
+            generated = staging / "docs/generated/reference.md"
+            english.parent.mkdir(parents=True)
+            generated.parent.mkdir(parents=True)
+            english.write_text("# English\n", encoding="utf-8")
+            generated.write_text("# Generated reference\n", encoding="utf-8")
+            digest = hashlib.sha256(english.read_bytes()).hexdigest()
+            self.write_i18n_contract(
+                staging,
+                "docs/index.md",
+                digest,
+                digest,
+                excluded_prefixes=["docs/generated/"],
+            )
+            localized = staging / "docs/i18n/ja/index.md"
+            localized.parent.mkdir(parents=True)
+            localized.write_text("# 日本語\n", encoding="utf-8")
+            config = MODULE.load_source_i18n(
+                {"docs_subpath": "docs", "localization": True}, staging,
+            )
+
+            failures = MODULE.validate_localized_hashes(
+                staging, config, "ja", localized.parent,
+            )
+
+            self.assertEqual(failures, [])
 
 
 class AutodocMainTests(unittest.TestCase):

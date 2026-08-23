@@ -527,6 +527,7 @@ def load_source_i18n(source: Dict, staging: Path) -> Optional[Dict]:
     translation_dir = str(config.get("translationDir", "")).strip()
     manifest_name = str(config.get("manifest", "")).strip()
     configured_locales = config.get("locales", {})
+    excluded_prefixes = config.get("excludedPrefixes", [])
     if not source_dir or not translation_dir or not manifest_name:
         raise OSError(
             f"localization config '{config_name}' requires sourceDir, translationDir, and manifest"
@@ -535,6 +536,12 @@ def load_source_i18n(source: Dict, staging: Path) -> Optional[Dict]:
         raise OSError(f"translationDir in '{config_name}' must contain one {{locale}} placeholder")
     if not isinstance(configured_locales, dict):
         raise OSError(f"locales in '{config_name}' must be an object")
+    if not isinstance(excluded_prefixes, list) or any(
+        not isinstance(prefix, str) for prefix in excluded_prefixes
+    ):
+        raise OSError(
+            f"excludedPrefixes in '{config_name}' must be an array of source path prefixes"
+        )
 
     path_within(staging, source_dir, "sourceDir")
     path_within(
@@ -568,6 +575,7 @@ def load_source_i18n(source: Dict, staging: Path) -> Optional[Dict]:
         "translation_dir": translation_dir,
         "locales": configured_locales,
         "hashes": hashes,
+        "excluded_prefixes": excluded_prefixes,
     }
 
 
@@ -602,6 +610,12 @@ def validate_localized_hashes(
     translation_prefix = config["translation_dir"].split("{locale}", 1)[0].rstrip("/")
     translation_root = path_within(staging, translation_prefix, "translationDir")
 
+    def is_excluded(source_key: str) -> bool:
+        return any(
+            source_key.startswith(prefix)
+            for prefix in config["excluded_prefixes"]
+        )
+
     for source_path in sorted(source_docs.rglob("*")):
         if source_path.suffix.lower() not in {".md", ".mdx"}:
             continue
@@ -612,6 +626,8 @@ def validate_localized_hashes(
             pass
         relative = source_path.relative_to(source_root)
         source_key = (config["source_dir"] / relative).as_posix()
+        if is_excluded(source_key):
+            continue
         translated_path = translated_root / relative
         if not translated_path.is_file():
             failures.append(f"{locale} translation is missing: {source_key}")
@@ -622,6 +638,8 @@ def validate_localized_hashes(
         relative = translated_path.relative_to(translated_root)
         source_path = source_root / relative
         source_key = (config["source_dir"] / relative).as_posix()
+        if is_excluded(source_key):
+            continue
         if not source_path.is_file():
             failures.append(f"{locale} translation has no English source: {source_key}")
             continue
