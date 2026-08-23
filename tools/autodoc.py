@@ -1097,6 +1097,7 @@ def stage_source_section(
     dst_section: Path,
     *,
     localized: bool = False,
+    locale: Optional[str] = None,
     exclude_prefixes: Optional[List[Path]] = None,
     clean_destination: bool = True,
     run_group_commands: bool = True,
@@ -1133,6 +1134,12 @@ def stage_source_section(
     if localized:
         localized_root = str(source.get("localized_root_index_file", "")).strip()
         if localized_root:
+            if "{locale}" in localized_root:
+                if not locale:
+                    raise ValueError(
+                        "localized_root_index_file uses {locale} but no locale was provided"
+                    )
+                localized_root = localized_root.replace("{locale}", locale)
             localized_source = dict(source, root_index_file=localized_root)
             write_root_index_file(localized_source, staging, dst_section, link_rewrites)
         elif source.get("root_index_file"):
@@ -1285,6 +1292,7 @@ def process_source(
                     localized_docs,
                     localized_destination,
                     localized=True,
+                    locale=locale,
                     exclude_prefixes=localized_excluded_prefixes(source_i18n),
                     clean_destination=False,
                     run_group_commands=False,

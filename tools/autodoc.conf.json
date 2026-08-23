@@ -195,6 +195,7 @@
       "mount": "tools/sentinel",
       "sidebar_position": 5,
       "root_index_file": "README.md",
+      "localized_root_index_file": "docs/i18n/{locale}/README.md",
       "root_index_link_prefix": "docs/",
       "root_index_omit_line_prefixes": ["**Documentation:**"],
       "files_order": [

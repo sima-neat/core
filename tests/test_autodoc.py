@@ -129,6 +129,42 @@ class RootIndexFileTests(unittest.TestCase):
                     [],
                 )
 
+    def test_localized_root_index_template_replaces_english_seed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            section = root / "section"
+            localized_docs = staging / "docs/i18n/zh-Hant"
+            localized_docs.mkdir(parents=True)
+            section.mkdir()
+            (section / "index.md").write_text(
+                "# English Sentinel\n", encoding="utf-8"
+            )
+            (localized_docs / "README.md").write_text(
+                "# Sentinel 文件\n\n[報告](reports.md)\n", encoding="utf-8"
+            )
+
+            MODULE.stage_source_section(
+                {
+                    "key": "sentinel",
+                    "title": "Sentinel",
+                    "root_index_file": "README.md",
+                    "localized_root_index_file": "docs/i18n/{locale}/README.md",
+                    "files_order": ["index", "README"],
+                },
+                staging,
+                localized_docs,
+                section,
+                localized=True,
+                locale="zh-Hant",
+                clean_destination=False,
+            )
+
+            generated = (section / "index.md").read_text(encoding="utf-8")
+            self.assertIn("# Sentinel 文件", generated)
+            self.assertNotIn("English Sentinel", generated)
+            self.assertTrue((section / "documentation.md").is_file())
+
 
 class LocalizedAutodocTests(unittest.TestCase):
     def write_i18n_contract(
