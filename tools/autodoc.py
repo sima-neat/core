@@ -30,6 +30,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 LOG = logging.getLogger("autodoc")
 
@@ -58,6 +59,7 @@ GRIFFE_INLINE_DECORATORS_RE = re.compile(r"(?<!\*\*)Decorators:")
 MD_LINK_RE = re.compile(r"(\]\()(?!https?:|/|#)([^)\s]+?)\.md(#[^)\s]+)?(\))")
 MARKDOWN_TARGET_RE = re.compile(r"(?P<prefix>\]\()(?P<target>[^)\s]+)(?P<suffix>\))")
 HTML_HREF_TARGET_RE = re.compile(r"(?P<prefix>\bhref=[\"'])(?P<target>[^\"']+)(?P<suffix>[\"'])")
+HTML_SRC_TARGET_RE = re.compile(r"(?P<prefix>\bsrc=[\"'])(?P<target>[^\"']+)(?P<suffix>[\"'])")
 # Match a per-module entry in a source flat index:
 #   - [`afe.apis.foo`](afe-apis-foo.md) (3 functions) - summary text
 SOURCE_INDEX_ENTRY_RE = re.compile(
@@ -415,6 +417,70 @@ def rewrite_configured_link_targets(text: str, link_rewrites: List[Tuple[str, st
     return HTML_HREF_TARGET_RE.sub(repl, text)
 
 
+def rewrite_shared_asset_targets(
+    text: str,
+    source_path: Path,
+    localized_source_root: Path,
+    shared_asset_root: Path,
+    destination_path: Path,
+    destination_root: Path,
+) -> str:
+    """Rebase source-relative shared assets after mounting localized docs.
+
+    A source repository may keep translations below its canonical docs tree,
+    for example ``docs/i18n/ko/page.md`` with an image target of
+    ``../../images/example.png``. Autodoc mounts that page directly under the
+    locale's section and seeds the section with canonical assets first. Rebase
+    only targets that resolve to real, non-Markdown files in the canonical docs
+    tree but outside the localized tree; locale-owned assets and document links
+    retain their authored paths.
+    """
+    localized_root = localized_source_root.resolve()
+    shared_root = shared_asset_root.resolve()
+
+    def rewrite_target(target: str) -> str:
+        if target.startswith(("/", "#")):
+            return target
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or not parsed.path:
+            return target
+
+        source_target = (source_path.parent / unquote(parsed.path)).resolve()
+        try:
+            shared_relative = source_target.relative_to(shared_root)
+        except ValueError:
+            return target
+        if source_target.is_relative_to(localized_root):
+            return target
+        if not source_target.is_file() or source_target.suffix.lower() in {".md", ".mdx"}:
+            return target
+
+        mounted_target = destination_root / shared_relative
+        relative_target = Path(
+            os.path.relpath(mounted_target, destination_path.parent)
+        ).as_posix()
+        return urlunsplit(
+            (
+                "",
+                "",
+                quote(relative_target, safe="/:@-._~"),
+                parsed.query,
+                parsed.fragment,
+            )
+        )
+
+    def repl(match: re.Match[str]) -> str:
+        return (
+            f"{match.group('prefix')}"
+            f"{rewrite_target(match.group('target'))}"
+            f"{match.group('suffix')}"
+        )
+
+    text = MARKDOWN_TARGET_RE.sub(repl, text)
+    text = HTML_HREF_TARGET_RE.sub(repl, text)
+    return HTML_SRC_TARGET_RE.sub(repl, text)
+
+
 def position_for(stem: str, files_order: List[str]) -> Optional[int]:
     if stem in files_order:
         # 1-based: explicit ordering wins.
@@ -435,6 +501,7 @@ def copy_section(
     link_rewrites: Optional[List[Tuple[str, str]]] = None,
     exclude_prefixes: Optional[List[Path]] = None,
     clean_destination: bool = True,
+    shared_asset_root: Optional[Path] = None,
 ) -> int:
     """Copy src_root into dst_root, transforming markdown.
 
@@ -494,6 +561,15 @@ def copy_section(
                 text = restructure_api_page(text)
             text = rewrite_md_links(text, current_folder, stem_to_folder)
             text = rewrite_configured_link_targets(text, link_rewrites)
+            if shared_asset_root is not None:
+                text = rewrite_shared_asset_targets(
+                    text,
+                    src_path,
+                    src_root,
+                    shared_asset_root,
+                    dst_path,
+                    dst_root,
+                )
             dst_path.write_text(text, encoding="utf-8")
         else:
             shutil.copy2(src_path, dst_path)
@@ -1009,6 +1085,7 @@ def stage_source_section(
     exclude_prefixes: Optional[List[Path]] = None,
     clean_destination: bool = True,
     run_group_commands: bool = True,
+    shared_asset_root: Optional[Path] = None,
 ) -> int:
     """Apply the same mounting transforms to English or localized source docs."""
     title = source.get("title", source["key"])
@@ -1030,6 +1107,7 @@ def stage_source_section(
         link_rewrites,
         exclude_prefixes,
         clean_destination,
+        shared_asset_root,
     )
     promote_index_file(source, dst_section)
     write_category_json(dst_section, title, sidebar_position)
@@ -1188,6 +1266,7 @@ def process_source(
                     localized_destination,
                     localized=True,
                     clean_destination=False,
+                    shared_asset_root=src_docs,
                 )
             except OSError as exc:
                 if localized_destination.exists():

@@ -160,10 +160,13 @@ class LocalizedAutodocTests(unittest.TestCase):
             for locale in ("ja", "ko"):
                 manifest[locale]["docs/fallback.md"] = fallback_digest
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-            for locale, text in (("ja", "# 日本語\n"), ("ko", "# 한국어\n")):
+            for locale, text in (("ja", "# 日本語"), ("ko", "# 한국어")):
                 path = staging / f"docs/i18n/{locale}/index.md"
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text, encoding="utf-8")
+                path.write_text(
+                    f"{text}\n\n![Localized alt](../../images/example.png)\n",
+                    encoding="utf-8",
+                )
                 (path.parent / "fallback.md").write_text(
                     f"# {locale} fallback\n", encoding="utf-8"
                 )
@@ -207,6 +210,10 @@ class LocalizedAutodocTests(unittest.TestCase):
                 (ja_section / "fallback.md").read_text(encoding="utf-8"),
             )
             self.assertEqual((ja_section / "images/example.png").read_bytes(), b"image fixture")
+            self.assertIn(
+                "](images/example.png)",
+                ja_page.read_text(encoding="utf-8"),
+            )
             ko_page = stale_destination / "index.md"
             self.assertIn("# 한국어", ko_page.read_text(encoding="utf-8"))
             self.assertFalse((stale_destination / "old.md").exists())
