@@ -267,6 +267,83 @@ class LocalizedAutodocTests(unittest.TestCase):
 
             self.assertFalse(stale_destination.exists())
 
+    def test_localized_overlay_preserves_repository_root_landing_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo_root = Path(directory)
+            build_dir = repo_root / "build"
+            staging = build_dir / "autodoc/sentinel"
+            docs = staging / "docs"
+            docs.mkdir(parents=True)
+            (staging / "README.md").write_text(
+                "# Repository landing\n", encoding="utf-8"
+            )
+            source_pages = {
+                "docs/index.md": "# English docs index\n",
+                "docs/README.md": "# English documentation\n",
+            }
+            for relative_path, text in source_pages.items():
+                (staging / relative_path).write_text(text, encoding="utf-8")
+            source_hashes = {
+                relative_path: hashlib.sha256(
+                    (staging / relative_path).read_bytes()
+                ).hexdigest()
+                for relative_path in source_pages
+            }
+            self.write_i18n_contract(
+                staging,
+                "docs/index.md",
+                source_hashes["docs/index.md"],
+                source_hashes["docs/index.md"],
+            )
+            manifest_path = staging / "docs/i18n/translation-sources.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for locale in ("ja", "ko"):
+                manifest[locale].update(source_hashes)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            localized_docs = staging / "docs/i18n/ja"
+            localized_docs.mkdir(parents=True)
+            (localized_docs / "index.md").write_text(
+                "# 日本語のドキュメント索引\n", encoding="utf-8"
+            )
+            (localized_docs / "README.md").write_text(
+                "# 日本語のドキュメント\n", encoding="utf-8"
+            )
+            source = {
+                "key": "sentinel",
+                "title": "Sentinel",
+                "repo": "unused",
+                "branch": "main",
+                "docs_subpath": "docs",
+                "mount": "tools/sentinel",
+                "localization": True,
+                "root_index_file": "README.md",
+            }
+
+            with mock.patch.object(MODULE, "acquire_source", return_value="main"):
+                ok, message = MODULE.process_source(
+                    source,
+                    repo_root,
+                    build_dir,
+                    repo_root / "docs-output",
+                    repo_root / "website/i18n",
+                    ["ja"],
+                )
+
+            self.assertTrue(ok, message)
+            destination = (
+                repo_root / "website/i18n/ja"
+                / MODULE.DOCUSAURUS_DOCS_TRANSLATION_DIR
+                / "tools/sentinel"
+            )
+            landing = (destination / "index.md").read_text(encoding="utf-8")
+            self.assertIn("# Repository landing", landing)
+            self.assertNotIn("日本語のドキュメント索引", landing)
+            self.assertIn(
+                "# 日本語のドキュメント",
+                (destination / "documentation.md").read_text(encoding="utf-8"),
+            )
+
     def test_missing_translation_fails_instead_of_falling_back_to_english(self):
         with tempfile.TemporaryDirectory() as directory:
             staging = Path(directory)

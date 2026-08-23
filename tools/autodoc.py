@@ -1144,6 +1144,11 @@ def stage_source_section(
                 target_path = dst_section / readme_target
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 readme_path.replace(target_path)
+            # The translated docs overlay can replace the English seed's
+            # repository-root landing page with its own docs/index.md. With no
+            # explicit localized root landing, restore the source root page so
+            # this locale follows Docusaurus' intended English fallback.
+            write_root_index_file(source, staging, dst_section, link_rewrites)
     else:
         write_root_index_file(source, staging, dst_section, link_rewrites)
     group_commands = source.get("group_commands")
