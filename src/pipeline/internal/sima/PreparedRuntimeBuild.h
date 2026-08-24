@@ -27,19 +27,6 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 
-/** Validate the additive ProcessCVU V2 bridge before any rich request crosses the DSO boundary. */
-std::string validate_graph_processcvu_prepared_bridge_v2();
-
-/** Pure layout validator exposed for mixed-version regression coverage. */
-std::string validate_graph_processcvu_prepared_bridge_v2_abi(
-    const simaai::neat::GraphProcessCvuPreparedBridgeAbiV2* bridge_abi,
-    bool builder_symbol_available);
-
-/** Resolve the explicit tiled encoding, rejecting CBlock for unsupported graph families. */
-bool resolve_graph_processcvu_tiled_channel_encoding(
-    const std::string& canonical_graph_name, bool c16_packed, bool cblock,
-    simaai::neat::GraphProcessCvuTiledChannelEncoding* out, std::string* error_message = nullptr);
-
 /**
  * @brief Build the prepared-runtime descriptor for a SiMa pipeline.
  *

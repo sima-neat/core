@@ -101,21 +101,6 @@ std::string package_name_from_archive(const fs::path& archive_path) {
   throw ModelArchiveError(code, message);
 }
 
-std::string physical_package_leaf(const ModelArchiveManifest& manifest,
-                                  const ModelArchiveLoaderOptions& opt) {
-  if (opt.physical_package_leaf.empty()) {
-    return manifest.package_name;
-  }
-  const std::string& leaf = opt.physical_package_leaf;
-  if (leaf == "." || leaf == ".." || std::any_of(leaf.begin(), leaf.end(), [](char c) {
-        return c == '/' || c == '\\' || c == '\0';
-      })) {
-    throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: physical package leaf must be one path component");
-  }
-  return leaf;
-}
-
 bool has_canonical_archive_extension(std::string_view path) {
   constexpr std::string_view suffix = ".tar.gz";
   return path.size() >= suffix.size() && path.substr(path.size() - suffix.size()) == suffix;
@@ -1283,7 +1268,7 @@ ModelArchiveLoader::extract(const std::string& archive_path,
                   "invalid_archive: failed to create output root: " + root.string());
   }
 
-  const fs::path package_root = root / physical_package_leaf(validated.manifest, opt);
+  const fs::path package_root = root / validated.manifest.package_name;
   fs::remove_all(package_root, ec);
   if (ec) {
     throw_archive(ModelArchiveErrorClass::InvalidArchive,

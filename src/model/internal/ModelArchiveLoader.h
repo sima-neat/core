@@ -70,10 +70,6 @@ struct ModelArchiveLoaderOptions {
   std::uint64_t min_output_free_bytes = 16ULL * 1024ULL * 1024ULL;
   // Filesystem for the inflated snapshot. Empty stages under TMPDIR.
   std::string staging_base;
-  // Optional physical package-directory leaf. Empty preserves the archive-derived package name.
-  // Runtime ModelPack uses a compact leaf inside its already unique archive-identity directory so
-  // downstream fixed-width transport paths do not redundantly include the logical archive name.
-  std::string physical_package_leaf;
 
   bool require_model_binary = true;
   bool reject_unsupported_file_types = true;

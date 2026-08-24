@@ -1027,13 +1027,8 @@ static std::string identity_dir_name(const std::string& cache_key) {
   return "pkg_" + fnv1a_hex(cache_key);
 }
 
-struct OrganizedModelPackage {
-  std::string package_root;
-  std::string logical_package_name;
-};
-
-static std::unordered_map<std::string, OrganizedModelPackage>& modelpack_extract_cache() {
-  static std::unordered_map<std::string, OrganizedModelPackage> cache;
+static std::unordered_map<std::string, std::string>& modelpack_extract_cache() {
+  static std::unordered_map<std::string, std::string> cache;
   return cache;
 }
 
@@ -1042,15 +1037,14 @@ static std::mutex& modelpack_extract_cache_mutex() {
   return mu;
 }
 
-static OrganizedModelPackage extract_and_organize(const std::string& tar_path,
-                                                  bool cleanup_extracted_model_data) {
+static std::string extract_and_organize(const std::string& tar_path,
+                                        bool cleanup_extracted_model_data) {
   {
     std::error_code ec;
     const fs::path direct_root(tar_path);
     if (fs::exists(direct_root, ec) && !ec && fs::is_directory(direct_root, ec) && !ec &&
         extracted_layout_ready(direct_root)) {
-      return {.package_root = direct_root.string(),
-              .logical_package_name = direct_root.filename().string()};
+      return direct_root.string();
     }
   }
 
@@ -1061,10 +1055,6 @@ static OrganizedModelPackage extract_and_organize(const std::string& tar_path,
   // Runtime model packs may include auxiliary build/report artifacts.
   opt.reject_unsupported_file_types = false;
   opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
-  // Archive identity is already carried by the parent pkg_<hash> directory. Repeating the logical
-  // archive name here needlessly lengthens every rewritten runtime artifact path and can exceed
-  // downstream fixed-width transport fields. The manifest retains the logical package name.
-  opt.physical_package_leaf = "p";
   try {
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
     // Applied on every path, including a cache hit, so the cleanup policy a caller asks for is
@@ -1073,7 +1063,7 @@ static OrganizedModelPackage extract_and_organize(const std::string& tar_path,
 
     auto& cache = modelpack_extract_cache();
     const auto found = cache.find(cache_key);
-    if (found != cache.end() && extracted_layout_ready(fs::path(found->second.package_root))) {
+    if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
       return found->second;
     }
 
@@ -1110,10 +1100,8 @@ static OrganizedModelPackage extract_and_organize(const std::string& tar_path,
       throw;
     }
 
-    OrganizedModelPackage organized{.package_root = target_dir.string(),
-                                    .logical_package_name = extracted.manifest.package_name};
-    cache[cache_key] = organized;
-    return organized;
+    cache[cache_key] = target_dir.string();
+    return target_dir.string();
   } catch (const simaai::neat::internal::ModelArchiveError& e) {
     // Surface archive failures as a structured NeatError (not a flat std::runtime_error) so the
     // public Model boundary carries a machine-triage error_code, per the Model.h error contract.
@@ -3926,10 +3914,7 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
     options_.max_input_depth = (options_.input_depth > 0) ? options_.input_depth : 0;
   }
 
-  const OrganizedModelPackage organized =
-      extract_and_organize(tar_gz, options_.cleanup_extracted_model_data);
-  const std::string& extracted = organized.package_root;
-  logical_package_name_ = organized.logical_package_name;
+  std::string extracted = extract_and_organize(tar_gz, options_.cleanup_extracted_model_data);
   etc_dir_ = (fs::path(extracted) / kDirConf).string();
   {
     std::string contract_error;

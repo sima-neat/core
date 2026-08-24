@@ -1123,29 +1123,6 @@ jobs:
             printf 'SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL=%s\n' "${SIMA_TEST_LLIMA_REASONING_GEMMA_MODEL}"
           } >> "${GITHUB_ENV}"
 
-      - name: Prepare LightGlue NEAT-68 regression model
-        run: |
-          set -euo pipefail
-          MODEL_ROOT="${RUNNER_TEMP:-/tmp}/sima-lightglue-neat68-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
-          MODEL_SPEC="models/runtime_lightglue_superpoint_600@runtime-lightglue-neat68-v1:00d3bdc1f3b1"
-          # The restricted regression fixture is intentionally staging-only.
-          MODEL_VULCAN_ENV=stg
-          mkdir -p "${MODEL_ROOT}"
-          sima-cli neat install \
-            --env "${MODEL_VULCAN_ENV}" \
-            --install-dir "${MODEL_ROOT}" \
-            "${MODEL_SPEC}"
-
-          mapfile -t archives < <(find "${MODEL_ROOT}" -type f -name '*_mpk.tar.gz' | sort)
-          if [[ "${#archives[@]}" -ne 1 ]]; then
-            echo "Expected exactly one LightGlue MPK from ${MODEL_SPEC}, found ${#archives[@]}." >&2
-            find "${MODEL_ROOT}" -maxdepth 4 -type f -print >&2 || true
-            exit 1
-          fi
-          echo '0ceb6304167d3a5ca4e3e0bcf3bd873ace6966d8a35e73d790c4496019bae7af  '"${archives[0]}" | sha256sum --check --strict
-          echo "SIMA_TEST_LIGHTGLUE_MODEL=${archives[0]}" >> "${GITHUB_ENV}"
-          echo "Installed immutable LightGlue regression model: ${archives[0]}"
-
       - name: Build docs C++ examples from DevKit-installed package
         run: |
           tests/docs/build_docs_examples.sh \
@@ -1465,8 +1442,6 @@ jobs:
           fi
 
           echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
-          find "${TMP_ROOT}" -maxdepth 1 -type d -name 'sima-lightglue-neat68-*' \
-            -exec rm -rf {} + 2>/dev/null || true
           rm -rf \
             "${TMP_ROOT}/sima_neat_mpk_tests" \
             "${TMP_ROOT}/sima_neat_mpk_fixtures" \

@@ -131,9 +131,6 @@ public:
   const std::string& etc_dir() const {
     return etc_dir_;
   }
-  const std::string& logical_package_name() const {
-    return logical_package_name_;
-  }
   const std::optional<simaai::neat::pipeline_internal::sima::MpkContract>& mpk_contract() const {
     return mpk_contract_;
   }
@@ -212,7 +209,6 @@ private:
       ModelStage stage_context = ModelStage::Full) const;
 
   std::string etc_dir_;
-  std::string logical_package_name_;
   Config options_;
   PipelineType pipeline_type_ = PipelineType::Preproc;
   std::optional<simaai::neat::pipeline_internal::sima::MpkContract> mpk_contract_;

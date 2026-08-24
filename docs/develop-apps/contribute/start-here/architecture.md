@@ -128,22 +128,7 @@ between implementation options.
 - **Detess logical rank and runtime geometry are separate.** Core preserves the MPK-authored
   `frame_shape` as the logical output contract and derives explicit MLA geometry when needed. A
   rank-2 shape is accepted as NC or HW only when declared byte spans identify one unique
-  interpretation; ambiguous or inconsistent contracts fail during model loading. Fused
-  DetessDequant additionally projects both kernel descriptors through one per-frame descriptor
-  contract: tile rank determines kernel rank, leading batch dimensions remain separate, and
-  semantic axes, byte spans, byte strides, and explicit tiled-storage encoding remain
-  authoritative. Route compilation must not reinterpret those descriptors after projection. The
-  prepared-runtime bridge carries the explicit encoding through an additive, version-negotiated
-  ProcessCVU V2 request whenever it must synthesize those descriptors across the DSO boundary.
-  Its fixed-width prefix and ABI probe are validated before either DSO reads the rich C++ request;
-  the legacy request and builder remain unchanged for binary compatibility rather than acquiring
-  another ambiguous tail field. The explicit V2 CBlock16 encoding is currently valid only for
-  fused DetessDequant; V2 requests using it for other ProcessCVU families fail instead of being
-  silently treated as padded HWC until those kernels implement CBlock addressing.
-- **ProcessCVU backend policy has one authority.** A stage's capability result owns backend
-  availability and the AUTO preference used by resolution and diagnostics. Explicit stage or
-  session targets either run on the requested supported backend or fail; later role-based
-  overrides must not silently contradict the advertised AUTO decision.
+  interpretation; ambiguous or inconsistent contracts fail during model loading.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
   Prefer additive changes and deprecation paths over breaking signatures.
 - **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;

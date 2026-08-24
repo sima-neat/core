@@ -18,7 +18,6 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -62,21 +61,10 @@ struct GraphProcessCvuIoData {
   std::string input_slot_name;
   std::vector<std::string> runtime_output_slot_names;
   // True when the MPK contract sets align_c16 or cblock for this stage.
-  // Propagates the C16 storage fact while cblock below preserves its encoding.
+  // Propagates to GraphProcessCvuStageRequest::c16_packed_io so the EV
+  // tile descriptor builder clears COMPACT_CHANNELS for c16-padded buffers.
   bool c16_packed = false;
-  // Distinguishes CBlock16 from align_c16's padded pixel-major HWC storage.
-  bool cblock = false;
 };
-
-constexpr std::uint32_t processcvu_tiled_encoding_flags_local(
-    const simaai::neat::GraphProcessCvuTiledChannelEncoding encoding) {
-  if (encoding == simaai::neat::GraphProcessCvuTiledChannelEncoding::CBlock16) {
-    return SIMA_EV_TILED_FLAG_CBLOCK16;
-  }
-  return encoding == simaai::neat::GraphProcessCvuTiledChannelEncoding::PaddedHwcC16
-             ? SIMA_EV_TILED_FLAG_PADDED_HWC_C16
-             : SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
-}
 
 bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b, std::uint64_t* out);
 
@@ -2610,9 +2598,8 @@ bool processcvu_build_dense_tensor_desc_local(const std::vector<std::int64_t>& s
 bool processcvu_build_tiled_tensor_desc_local(
     const std::vector<std::int64_t>& shape, const std::vector<std::int64_t>& tile_shape,
     const std::string& dtype_token, const std::string& layout_token,
-    const std::uint32_t tile_align_bytes, const std::uint64_t size_bytes,
-    const simaai::neat::GraphProcessCvuTiledChannelEncoding encoding, sima_ev_tensor_desc* out,
-    std::string* error_message) {
+    const std::uint32_t tile_align_bytes, const std::uint64_t size_bytes, const bool c16_packed,
+    sima_ev_tensor_desc* out, std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "processcvu tiled tensor desc requires output storage";
@@ -2642,8 +2629,8 @@ bool processcvu_build_tiled_tensor_desc_local(
             "processcvu tiled tensor tile shape invalid")) {
       return false;
     }
-    if (tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0) {
-      out->layout.tiled.flags = processcvu_tiled_encoding_flags_local(encoding);
+    if (tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0 && c16_packed) {
+      out->layout.tiled.flags &= ~static_cast<std::uint32_t>(SIMA_EV_TILED_FLAG_COMPACT_CHANNELS);
     }
     out->storage.nbytes = size_bytes != 0U ? size_bytes
                                            : tensorsemantics::generic_fixed_slot_tiled_size_bytes(
@@ -2671,7 +2658,8 @@ bool processcvu_build_tiled_tensor_desc_local(
   }
   out->layout.tiled.tile_align_bytes = tile_align_bytes;
   if (tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0) {
-    out->layout.tiled.flags = processcvu_tiled_encoding_flags_local(encoding);
+    out->layout.tiled.flags =
+        c16_packed ? SIMA_EV_TILED_FLAG_NONE : SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
   } else {
     out->layout.tiled.flags = SIMA_EV_TILED_FLAG_NONE;
   }
@@ -2865,32 +2853,6 @@ bool dequant_prepared_stage_complete_local(const simaai::gst::DequantPreparedSta
 
 } // namespace
 
-static bool build_graph_processcvu_prepared_stage_v2_local(
-    const simaai::neat::GraphProcessCvuStageRequestV2& request,
-    simaai::gst::ProcessCvuPreparedStage* out, std::string* error_message) {
-  const std::string abi_error = validate_graph_processcvu_prepared_bridge_v2();
-  if (!abi_error.empty()) {
-    if (error_message) {
-      *error_message = abi_error;
-    }
-    return false;
-  }
-
-  using BuilderFn = bool (*)(const simaai::neat::GraphProcessCvuStageRequestV2*,
-                             simaai::gst::ProcessCvuPreparedStage*, std::string*);
-  constexpr const char* kBuilderSymbol = "sima_neat_build_graph_processcvu_prepared_stage_v2";
-  dlerror();
-  auto builder = reinterpret_cast<BuilderFn>(dlsym(RTLD_DEFAULT, kBuilderSymbol));
-  if (!builder) {
-    if (error_message) {
-      *error_message = "prepared runtime ProcessCVU V2 builder became unavailable after ABI "
-                       "validation";
-    }
-    return false;
-  }
-  return builder(&request, out, error_message);
-}
-
 bool processcvu_build_stage_tensor_descs_local(const StageStaticSpec& stage,
                                                simaai::gst::PreparedProcessCvuTypedConfig* cfg,
                                                std::string* error_message) {
@@ -2948,11 +2910,6 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
   cfg->input_tensors.clear();
   cfg->output_tensors.clear();
   const std::string canonical = processcvu_canonical_graph_name_local(graph_name);
-  simaai::neat::GraphProcessCvuTiledChannelEncoding resolved_encoding;
-  if (!resolve_graph_processcvu_tiled_channel_encoding(canonical, io.c16_packed, io.cblock,
-                                                       &resolved_encoding, error_message)) {
-    return false;
-  }
   const bool input_is_tiled =
       canonical == "detessellate" || canonical == "detesscast" || canonical == "detessdequant";
   const bool output_is_tiled = canonical == "tessellate" || canonical == "casttess" ||
@@ -3002,9 +2959,9 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
       std::vector<std::int64_t> tile_shape;
       if (!processcvu_normalize_tile_shape_local(input_shape, pick_slice_shape(i), &tile_shape,
                                                  error_message) ||
-          !processcvu_build_tiled_tensor_desc_local(
-              input_shape, tile_shape, input_dtype, input_layout, 0U, input.size_bytes,
-              resolved_encoding, &input_desc, error_message)) {
+          !processcvu_build_tiled_tensor_desc_local(input_shape, tile_shape, input_dtype,
+                                                    input_layout, 0U, input.size_bytes,
+                                                    io.c16_packed, &input_desc, error_message)) {
         return false;
       }
     } else if (!processcvu_build_dense_tensor_desc_local(input_shape, input_dtype, input_layout,
@@ -3018,7 +2975,7 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
                                                  error_message) ||
           !processcvu_build_tiled_tensor_desc_local(
               output_shape, tile_shape, output_dtype, output_layout, output_tile_align,
-              output.size_bytes, resolved_encoding, &output_desc, error_message)) {
+              output.size_bytes, io.c16_packed, &output_desc, error_message)) {
         return false;
       }
     } else if (!processcvu_build_dense_tensor_desc_local(output_shape, output_dtype, output_layout,
@@ -3367,8 +3324,7 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
   }
 
   const auto& payload = original_stage.processcvu;
-  simaai::neat::GraphProcessCvuStageRequestV2 request_v2;
-  auto& request = request_v2.request;
+  simaai::neat::GraphProcessCvuStageRequest request;
   request.stage_key = stage_key;
   request.graph_name = processcvu_canonical_graph_name_local(
       !payload.graph_name.empty()
@@ -3428,11 +3384,6 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
   }
   request.slice_shapes = io.slice_shapes;
   request.c16_packed_io = io.c16_packed;
-  if (!resolve_graph_processcvu_tiled_channel_encoding(request.graph_name, io.c16_packed, io.cblock,
-                                                       &request_v2.tiled_channel_encoding,
-                                                       error_message)) {
-    return false;
-  }
   request.input_tensors.reserve(io.input_tensors.size());
   for (const auto& tensor : io.input_tensors) {
     request.input_tensors.push_back(bridge_graph_tensor_contract_from_mpk_local(tensor));
@@ -3442,7 +3393,7 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
     request.output_tensors.push_back(bridge_graph_tensor_contract_from_mpk_local(tensor));
   }
 
-  return build_graph_processcvu_prepared_stage_v2_local(request_v2, out, error_message);
+  return simaai::neat::build_graph_processcvu_prepared_stage(request, out, error_message);
 }
 
 std::optional<std::filesystem::path>
@@ -4583,7 +4534,6 @@ bool build_processcvu_prepared_stage_from_graph_local(const StageStaticSpec& ori
   io.canonical_output_dtype = stage->canonical_output_dtype;
   io.c16_packed =
       (stage->has_align_c16 && stage->align_c16) || (stage->has_cblock && stage->cblock);
-  io.cblock = stage->has_cblock && stage->cblock;
   if (!stage->slice_shape.empty()) {
     io.slice_shapes.push_back(
         std::vector<int>(stage->slice_shape.begin(), stage->slice_shape.end()));
@@ -5311,120 +5261,6 @@ void overlay_processmla_runtime_graph_node_local(
 }
 
 } // namespace
-
-bool resolve_graph_processcvu_tiled_channel_encoding(
-    const std::string& canonical_graph_name, const bool c16_packed, const bool cblock,
-    simaai::neat::GraphProcessCvuTiledChannelEncoding* out, std::string* error_message) {
-  if (error_message) {
-    error_message->clear();
-  }
-  if (!out) {
-    if (error_message) {
-      *error_message = "graph processcvu V2 tiled channel encoding requires output storage";
-    }
-    return false;
-  }
-  if (cblock && canonical_graph_name != "detessdequant") {
-    if (error_message) {
-      *error_message = "graph processcvu V2 CBlock16 encoding is supported only for detessdequant";
-    }
-    return false;
-  }
-  *out = cblock
-             ? simaai::neat::GraphProcessCvuTiledChannelEncoding::CBlock16
-             : (c16_packed ? simaai::neat::GraphProcessCvuTiledChannelEncoding::PaddedHwcC16
-                           : simaai::neat::GraphProcessCvuTiledChannelEncoding::CompactPixelMajor);
-  return true;
-}
-
-std::string validate_graph_processcvu_prepared_bridge_v2_abi(
-    const simaai::neat::GraphProcessCvuPreparedBridgeAbiV2* bridge_abi,
-    const bool builder_symbol_available) {
-  if (!bridge_abi) {
-    return "prepared runtime ProcessCVU V2 ABI mismatch: loaded "
-           "libneatpreparedruntimebridge.so does not expose a usable V2 ABI probe";
-  }
-  if (!builder_symbol_available) {
-    return "prepared runtime ProcessCVU V2 ABI mismatch: loaded "
-           "libneatpreparedruntimebridge.so does not expose the V2 builder";
-  }
-
-  const simaai::neat::GraphProcessCvuPreparedBridgeAbiV2 caller{
-      simaai::neat::GRAPH_PROCESSCVU_PREPARED_BRIDGE_ABI_VERSION_V2,
-      sizeof(simaai::neat::GraphProcessCvuPreparedBridgeAbiV2),
-      sizeof(simaai::neat::GraphProcessCvuTiledChannelEncoding),
-      0U,
-      sizeof(simaai::neat::GraphProcessCvuStageRequest),
-      sizeof(simaai::neat::GraphProcessCvuStageRequestV2),
-      sizeof(simaai::gst::ProcessCvuPreparedStage),
-      sizeof(simaai::gst::PreparedProcessCvuTypedConfig),
-  };
-  // Only the fixed-width prefix is safe to read until the probe's own layout
-  // is known to match this caller.
-  if (bridge_abi->abi_version != caller.abi_version ||
-      bridge_abi->struct_size != caller.struct_size) {
-    std::ostringstream oss;
-    oss << "prepared runtime ProcessCVU V2 ABI prefix mismatch between libsima_neat.so and "
-           "libneatpreparedruntimebridge.so: caller {abi_version="
-        << caller.abi_version << ", struct_size=" << caller.struct_size
-        << "}, bridge {abi_version=" << bridge_abi->abi_version
-        << ", struct_size=" << bridge_abi->struct_size
-        << "}; rebuild and stage matching clean-internals/runtime artifacts";
-    return oss.str();
-  }
-
-  if (bridge_abi->reserved == 0U &&
-      bridge_abi->tiled_channel_encoding_size == caller.tiled_channel_encoding_size &&
-      bridge_abi->graph_processcvu_stage_request_size ==
-          caller.graph_processcvu_stage_request_size &&
-      bridge_abi->graph_processcvu_stage_request_v2_size ==
-          caller.graph_processcvu_stage_request_v2_size &&
-      bridge_abi->processcvu_prepared_stage_size == caller.processcvu_prepared_stage_size &&
-      bridge_abi->prepared_processcvu_typed_config_size ==
-          caller.prepared_processcvu_typed_config_size) {
-    return {};
-  }
-
-  std::ostringstream oss;
-  oss << "prepared runtime ProcessCVU V2 ABI mismatch between libsima_neat.so and "
-         "libneatpreparedruntimebridge.so: caller"
-      << " {abi_version=" << caller.abi_version << ", struct_size=" << caller.struct_size
-      << ", TiledChannelEncoding=" << caller.tiled_channel_encoding_size
-      << ", GraphProcessCvuStageRequest=" << caller.graph_processcvu_stage_request_size
-      << ", GraphProcessCvuStageRequestV2=" << caller.graph_processcvu_stage_request_v2_size
-      << ", ProcessCvuPreparedStage=" << caller.processcvu_prepared_stage_size
-      << ", PreparedProcessCvuTypedConfig=" << caller.prepared_processcvu_typed_config_size
-      << "}, bridge" << " {abi_version=" << bridge_abi->abi_version
-      << ", struct_size=" << bridge_abi->struct_size << ", reserved=" << bridge_abi->reserved
-      << ", TiledChannelEncoding=" << bridge_abi->tiled_channel_encoding_size
-      << ", GraphProcessCvuStageRequest=" << bridge_abi->graph_processcvu_stage_request_size
-      << ", GraphProcessCvuStageRequestV2=" << bridge_abi->graph_processcvu_stage_request_v2_size
-      << ", ProcessCvuPreparedStage=" << bridge_abi->processcvu_prepared_stage_size
-      << ", PreparedProcessCvuTypedConfig=" << bridge_abi->prepared_processcvu_typed_config_size
-      << "}; rebuild and stage matching clean-internals/runtime artifacts";
-  return oss.str();
-}
-
-std::string validate_graph_processcvu_prepared_bridge_v2() {
-  using AbiProbeFn = const simaai::neat::GraphProcessCvuPreparedBridgeAbiV2* (*)();
-  constexpr const char* kAbiProbeSymbol = "sima_neat_graph_processcvu_prepared_bridge_abi_v2";
-  constexpr const char* kBuilderSymbol = "sima_neat_build_graph_processcvu_prepared_stage_v2";
-
-  dlerror();
-  void* abi_symbol = dlsym(RTLD_DEFAULT, kAbiProbeSymbol);
-  if (!abi_symbol) {
-    return "prepared runtime ProcessCVU V2 ABI mismatch: loaded "
-           "libneatpreparedruntimebridge.so does not expose " +
-           std::string(kAbiProbeSymbol) +
-           "; rebuild and stage libneatpreparedruntimebridge.so together with libsima_neat.so";
-  }
-  const auto probe = reinterpret_cast<AbiProbeFn>(abi_symbol);
-  const auto* bridge_abi = probe();
-
-  dlerror();
-  const bool builder_symbol_available = dlsym(RTLD_DEFAULT, kBuilderSymbol) != nullptr;
-  return validate_graph_processcvu_prepared_bridge_v2_abi(bridge_abi, builder_symbol_available);
-}
 
 std::optional<simaai::neat::PreparedRuntimeDescriptor>
 build_prepared_runtime_context(const GstContext* static_manifest_context,

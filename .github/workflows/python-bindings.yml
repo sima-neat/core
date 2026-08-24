@@ -28,10 +28,7 @@ jobs:
 
       - name: Run Python tests
         run: |
-          # The LightGlue DetessDequant regression is an installed-extras
-          # Modalix hardware test. Keep it strict in that lane rather than
-          # collecting it on this x86 bindings-only runner.
-          pytest -q python/tests --ignore=python/tests/test_lightglue_detessdequant_model.py
+          pytest -q python/tests
 
       - name: Build wheel and verify import
         run: |

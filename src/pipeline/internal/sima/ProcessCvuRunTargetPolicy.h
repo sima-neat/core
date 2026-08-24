@@ -65,10 +65,6 @@ const char* processcvu_resolved_exec_backend_token(ProcessCvuResolvedExecBackend
 ProcessCvuBackendCapabilities
 processcvu_backend_capabilities(const ProcessCvuStagePayload& payload);
 
-/// Inspect capabilities using the rendered identity when a graph family can have pre/post roles.
-ProcessCvuBackendCapabilities processcvu_backend_capabilities(const ProcessCvuStagePayload& payload,
-                                                              std::string_view stage_identity);
-
 /// Compute the final run-target decision for a stage given the compile input.
 /// @throws std::invalid_argument when an explicit target is unsupported by the stage.
 ProcessCvuBackendDecision

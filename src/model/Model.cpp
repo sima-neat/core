@@ -4670,9 +4670,10 @@ struct Model::Impl {
     // which filesystem the automatic selection landed on, and it is not otherwise reported.
     const std::string package_root = std::filesystem::path(pack.etc_dir()).parent_path().string();
     pipeline_internal::ux::emit_line(
-        options.verbose, "Model loaded: " + pack.logical_package_name() + " (package storage: " +
-                             internal::modelpack_storage_label(package_root) +
-                             ", runtime package path: " + package_root + ")");
+        options.verbose,
+        "Model loaded: " + std::filesystem::path(package_root).filename().string() +
+            " (package storage: " + internal::modelpack_storage_label(package_root) +
+            ", runtime package path: " + package_root + ")");
     pipeline_internal::ux::ScopedVerboseContext verbose_ctx(options.verbose);
     auto verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(options.verbose);
     const auto processcvu_pre_stage_selected = [&]() -> std::optional<bool> {
