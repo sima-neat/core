@@ -1,0 +1,349 @@
+---
+title: "Копроцесор PCIe"
+description: "Запустіть скомпільовані моделі на платі Modalix PCIe з хост-застосунку."
+sidebar_position: 2
+---
+
+# Копроцесор PCIe
+
+Neat PCIe API для хоста дозволяє застосунку на хост-машині надсилати тензори або зображення на підключену Modalix PCIe-карту та отримувати результати обчислень. Використовуйте його, коли хост-машина відповідає за ввід-вивід і оркестрування застосунку, а карта виконує скомпільовану модель і налаштовані процеси попередньої або подальшої обробки.
+
+Це окремий API від Neat Library, який працює безпосередньо на DevKit.
+Публічні типи знаходяться в просторі імен `simaai::neat::pcie` C++ і в пакеті `pyneatpcie` Python.
+
+:::note Встановіть на хост-машині.
+Встановіть `core/pciehost` на хост-машині, а не всередині контейнера Neat SDK або на PCIe-карті Modalix. Перед використанням цієї сторінки виконайте інструкції з [Встановіть хост PCIe.](/getting-started/neat-library/pcie-host/).
+:::
+
+## Як працює копроцесинг.
+
+Один `pcie::Model` представляє собою одну скомпільовану модель, яка працює на одному фізичному PCIe-пристрої:
+
+1. Конструктор зчитує локальний архів моделі та надає доступ до її вхідних даних і
+   вихідний контракт.
+2. `build()` завантажує архів на карту через віртуальну мережу PCIe.
+   запускає конвеєр обробки даних на стороні картки та чекає, поки він буде готовий.
+3. `run()` або `push()` передає вхідні дані через інтерфейс PCIe.
+4. Карта виконує попередню обробку, обчислення та налаштовану подальшу обробку.
+5. `run()` або `pull()` повертають тензори результатів на хост.
+6. `close()` зупиняє конвеєр обробки даних на стороні картки та звільняє чергу.
+
+Архів моделі передається під час `build()`. Для передачі даних, необхідних для обчислень і отримання результатів, використовується інтерфейс PCIe.
+
+## Налаштуйте з’єднання.
+
+`ConnectionOptions` визначає карту та чергу, які використовуються цією моделлю.
+
+| Поле | За замовчуванням | Мета |
+| --- | --- | --- |
+| `card_host` | порожній | Явна адреса SSH/SCP. Якщо поле пусте, картка `N` використовує `10.0.N.2`. |
+| `card_id` | `0` | Номер картки передано плагіну PCIe, який працює на хості. |
+| `user` | `sima` | Користувач для SSH і SCP на стороні картки. |
+| `queue` | `0` | Черга для спільної обробки, від `0` до `3`. |
+| `max_inflight` | `10` | Максимальна кількість вхідних даних, для яких очікується отримання результатів. |
+
+Використовуйте значення за замовчуванням для однієї картки на черзі 0, а саме `10.0.0.2`. Вкажіть `card_host` явно, коли для картки використовується інша адреса керування.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <simaai/neat/pcie/Model.h>
+
+namespace pcie = simaai::neat::pcie;
+
+pcie::ConnectionOptions connection;
+connection.card_host = "10.0.0.2";
+connection.card_id = 0;
+connection.queue = 0;
+connection.max_inflight = 10;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneatpcie as pcie
+
+connection = pcie.ConnectionOptions(
+    card_host="10.0.0.2",
+    card_id=0,
+    queue=0,
+    max_inflight=10,
+)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Перевірте та створіть модель.
+
+Конструктор є локальним і не ініціалізує карту. Перевірте `info()` перед виділенням вхідних даних, а потім один раз викличте `build()`, щоб розпочати сеанс спільної обробки.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::Model model("model.tar.gz", {}, connection);
+
+const pcie::ModelInfo info = model.info();
+for (const auto& input : info.inputs) {
+  std::cout << input.name << " requires " << input.size_bytes << " bytes\n";
+}
+
+model.build(/*readiness_timeout_ms=*/180000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pcie.Model("model.tar.gz", connection=connection)
+
+info = model.info()
+for input_spec in info.inputs:
+    print(input_spec.name, "requires", input_spec.size_bytes, "bytes")
+
+model.build(readiness_timeout_ms=180000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`input_specs()` та `output_specs()` повертають однакові списки окремо.
+`running()` стає `true` після успішного завершення процесу, а потім повертається до значення `false` після `close()`.
+
+## Запустіть синхронний процес обчислення.
+
+Використовуйте `run()` для найпростішого сценарію обміну запитами та відповідями. Спочатку створіть модель, а потім
+використовуйте обмежений час очікування, щоб уникнути нескінченного очікування у разі збою програми.
+Наступний приклад створює вхідні дані для моделі, для якої вказано тип даних FP32.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto& input_spec = info.inputs.front();
+if (input_spec.dtype != "FP32") {
+  throw std::runtime_error("this example requires an FP32 model input");
+}
+
+std::vector<float> values(input_spec.size_bytes / sizeof(float), 0.0f);
+pcie::Tensor input = pcie::Tensor::from_vector(
+    std::move(values), input_spec.shape, input_spec.name);
+
+pcie::TensorList outputs = model.run(input, /*timeout_ms=*/30000);
+
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import numpy as np
+
+input_spec = info.inputs[0]
+if input_spec.dtype != "FP32":
+    raise RuntimeError("this example requires an FP32 model input")
+
+array = np.zeros(input_spec.shape, dtype=np.float32)
+input_tensor = pcie.Tensor.from_numpy(
+    array,
+    copy=True,
+    route_name=input_spec.name,
+)
+
+outputs = model.run([input_tensor], timeout_ms=30000)
+
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Для моделі з кількома вхідними даними передавайте по одному `Tensor` для кожного логічного входу в зазначеному порядку та з використанням назв маршрутів, наданих `info().inputs`.
+
+Тайм-аут `run()` зупиняє очікування, але не скасовує вхідні дані, які вже були прийняті картою. Після виникнення тайм-ауту або використовуйте `pull()`, щоб отримати наявний результат, або викличте `close()` перед початком нової послідовності запитів.
+
+## Запити до конвеєра з використанням механізмів «push» і «pull».
+
+Використовуйте `push()` і `pull()`, коли підготовка вхідних даних має перекриватися з процесом обчислення.
+`max_inflight` обмежує обсяг прийнятих завдань, які ще не завершено. Оперативно отримуйте результати, щоб виробники могли продовжувати роботу.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+std::size_t pushed = 0;
+std::size_t pulled = 0;
+while (pulled < inputs.size()) {
+  while (pushed < inputs.size() && pushed - pulled < 10) {
+    model.push(inputs[pushed++]);
+  }
+
+  auto outputs = model.pull(/*timeout_ms=*/30000);
+  if (!outputs) {
+    throw std::runtime_error("PCIe inference timed out");
+  }
+  consume(*outputs);
+  ++pulled;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+max_inflight = 10
+pushed = 0
+pulled = 0
+while pulled < len(inputs):
+    while pushed < len(inputs) and pushed - pulled < max_inflight:
+        model.push(inputs[pushed])
+        pushed += 1
+
+    outputs = model.pull(timeout_ms=30000)
+    if outputs is None:
+        raise TimeoutError("PCIe inference timed out")
+    consume(outputs)
+    pulled += 1
+```
+
+</CodeTab>
+</CodeTabs>
+
+`push()` очікує, поки `max_inflight` не заповниться, тому не надсилайте більше даних, ніж
+вказано в налаштованому вікні, не отримавши результати. `pull()` повертає наступний доступний
+результат для цієї моделі. Отримайте всі результати, надіслані за допомогою `push()`, перш ніж викликати
+`run()`.
+
+## Надсилайте зображення та налаштовуйте попередню обробку.
+
+Встановіть значення `preprocess.kind` на `Image`, коли надсилаєте декодовані дані зображення. Конвеєр Neat на стороні пристрою може змінювати розмір, конвертувати кольори, нормалізувати та декодувати підтримувані результати виявлення об’єктів.
+
+У цьому прикладі надсилається BGR-зображення, яке обрізається до розміру вхідних даних моделі, отриманого з архіву моделі, і повертається тензор, що містить декодовані дані YOLOv8 BBOX.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <opencv2/imgcodecs.hpp>
+
+pcie::ModelOptions options;
+options.preprocess.kind = pcie::InputKind::Image;
+options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
+options.preprocess.resize.enable = pcie::AutoFlag::On;
+options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
+options.decode_type = pcie::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+
+pcie::Model detector("yolo_v8n_mpk.tar.gz", options, connection);
+detector.build();
+
+cv::Mat image = cv::imread("image.jpg", cv::IMREAD_COLOR);
+pcie::TensorList detections = detector.run(image, /*timeout_ms=*/30000);
+detector.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import cv2
+import pyneatpcie as pcie
+
+options = pcie.ModelOptions()
+options.preprocess.kind = pcie.InputKind.Image
+options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
+options.preprocess.resize.enable = pcie.AutoFlag.On
+options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
+options.decode_type = pcie.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+
+detector = pcie.Model("yolo_v8n_mpk.tar.gz", options, connection)
+detector.build()
+
+image = cv2.imread("image.jpg", cv2.IMREAD_COLOR)
+detections = detector.run_image(
+    image,
+    timeout_ms=30000,
+    format=pcie.PixelFormat.BGR,
+)
+detector.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Не встановлюйте значення `input_max_width`, `input_max_height` або `input_max_depth` для моделі, яка не потребує початкового значення, якщо застосунку не потрібне чітке обмеження вхідних даних. Neat може визначити цільовий розмір для зміни розміру моделі на основі архіву моделі.
+
+## Надійно закривайте.
+
+Викличте `close()`, коли модель більше не знадобиться і перед повторним використанням її черги.
+Можна безпечно викликати цю функцію кілька разів:
+
+```python
+model = pcie.Model("model.tar.gz", connection=connection)
+model.build()
+outputs = model.run([input_tensor], timeout_ms=30000)
+model.close()
+```
+
+Як альтернатива, використовуйте менеджер контексту, щоб автоматично закрити модель:
+
+```python
+with pcie.Model("model.tar.gz", connection=connection) as model:
+    model.build()
+    outputs = model.run([input_tensor], timeout_ms=30000)
+```
+
+Менеджер контексту викликає `close()`, коли блок завершує свою роботу, зокрема, коли виникає виняток. Не додавайте ще один явний виклик `close()` всередині блоку `with`.
+
+## Створіть хост-застосунок на C++.
+
+Пакет розробки містить пакет CMake під назвою `SimaPCIeHost`:
+
+```cmake title="CMakeLists.txt"
+cmake_minimum_required(VERSION 3.16)
+project(pcie_model LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(SimaPCIeHost REQUIRED CONFIG)
+
+add_executable(pcie_model main.cpp)
+target_link_libraries(pcie_model PRIVATE SimaPCIeHost::sima_neat_pcie_host)
+```
+
+Створіть цю програму безпосередньо на хост-машині.
+
+У прикладі з C++ також використовується OpenCV. Додайте його заголовні файли та бібліотеки до цільової програми:
+
+```cmake
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs)
+target_include_directories(pcie_model PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
+```
+
+## Поточний обсяг і межі застосування.
+
+- Одна `pcie::Model` має один чергу PCIe. Діапазон черг становить від `0` до `3`.
+- Modalix EV74 підтримує максимум чотири одночасні конвеєри для спільної обробки даних.
+- Не призначайте дві активні моделі для обробки в одній черзі.
+- Пакет хоста та Neat Library, встановлений на карті, повинні бути з
+  сумісні версії.
+- Забезпечте стабільність типу та геометрії вхідних даних після першого їх надсилання.
+  корисне навантаження. Якщо корисне навантаження, яке надходить пізніше, перевищує обсяг активної транспортної здатності, воно
+відхиляється.
+- Інтерфейс API хоста PCIe підтримує обмежений набір функцій попередньої обробки моделі Neat і
+  параметри декодування об’єкта.
+- Цей API для спільної обробки не надає доступ до `Graph`, `Node` або `Run` на стороні хоста.
+  композиція. Використовуйте стандартну Neat Library на DevKit для створення нативних графічних моделей застосунків.
+
+Для перевірки встановлення та підключення поверніться до [Встановіть хост PCIe.](/getting-started/neat-library/pcie-host/).

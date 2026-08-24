@@ -1,0 +1,345 @@
+---
+title: "PCIeによる共同処理"
+description: "コンパイルされたモデルを、ホストアプリケーションからModalix PCIeカード上で実行します。"
+sidebar_position: 2
+---
+
+# PCIeによる共同処理
+
+Neat PCIe ホスト API を使用すると、ホストマシン上のアプリケーションからテンソルまたは画像を接続された Modalix PCIe カードに送信し、推論結果を受信できます。ホストマシンがアプリケーションの I/O とオーケストレーションを担当し、カードがコンパイルされたモデルと、それに設定された前処理または後処理を実行する場合に使用します。
+
+これは、DevKit 上で直接実行される Neat Library とは別の API です。
+パブリックな型は、`simaai::neat::pcie` C++ 名前空間と `pyneatpcie` Python パッケージにあります。
+
+:::note ホストマシンにインストールします。
+ホストマシンに`core/pciehost`をインストールしてください。Neat SDKコンテナ内やModalix PCIeカード上にはインストールしないでください。このページを使用する前に、[PCIeホストをインストールします。](/getting-started/neat-library/pcie-host/)の手順に従ってください。
+:::
+
+## コプロセッシングの仕組み
+
+1つの`pcie::Model`は、1つの物理的なPCIeキューで実行される1つのコンパイル済みモデルを表します。
+
+1. コンストラクタは、ローカルのモデルアーカイブを読み込み、その入力と出力を公開します。
+   契約書を出力します。
+2. `build()` は、アーカイブを PCIe 仮想ネットワーク経由でカードにアップロードします。
+   カード側のパイプラインを開始し、準備が完了するまで待ちます。
+3. `run()` または `push()` を実行すると、入力ペイロードが PCIe 経由で送信されます。
+4. このカードは、前処理、推論、および設定された後処理を実行します。
+5. `run()` または `pull()` は、出力テンソルをホストに返します。
+6. `close()` は、カード側のパイプラインを停止し、キューを解放します。
+
+モデルアーカイブは、`build()` の過程で転送されます。推論ペイロードと結果は、PCIeデータ転送を使用します。
+
+## 接続を設定します。
+
+`ConnectionOptions` は、このモデルで使用されるカードとキューを識別します。
+
+| フィールド | デフォルト | 目的 |
+| --- | --- | --- |
+| `card_host` | 空の | 明示的な SSH/SCP アドレス。空の場合、カード `N` 使用します `10.0.N.2`. |
+| `card_id` | `0` | カード番号がホスト PCIe プラグインに渡されました。 |
+| `user` | `sima` | カード側の SSH および SCP を使用するユーザー。 |
+| `queue` | `0` | 共同処理キュー。`0` から `3` まで。 |
+| `max_inflight` | `10` | 結果を待機中の、最大許容入力数。 |
+
+1枚のカードに対しては、デフォルト設定を使用してください。 `10.0.0.2` キュー0に設定。 `card_host`
+カードが異なる管理アドレスを使用する場合、明示的に指定します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <simaai/neat/pcie/Model.h>
+
+namespace pcie = simaai::neat::pcie;
+
+pcie::ConnectionOptions connection;
+connection.card_host = "10.0.0.2";
+connection.card_id = 0;
+connection.queue = 0;
+connection.max_inflight = 10;
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneatpcie as pcie
+
+connection = pcie.ConnectionOptions(
+    card_host="10.0.0.2",
+    card_id=0,
+    queue=0,
+    max_inflight=10,
+)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## モデルを検査し、構築する。
+
+構築はローカルで行われ、カードの処理は開始されません。入力を割り当てる前に、`info()` を確認し、その後、共同処理セッションを開始するために、`build()` を一度呼び出します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+pcie::Model model("model.tar.gz", {}, connection);
+
+const pcie::ModelInfo info = model.info();
+for (const auto& input : info.inputs) {
+  std::cout << input.name << " requires " << input.size_bytes << " bytes\n";
+}
+
+model.build(/*readiness_timeout_ms=*/180000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pcie.Model("model.tar.gz", connection=connection)
+
+info = model.info()
+for input_spec in info.inputs:
+    print(input_spec.name, "requires", input_spec.size_bytes, "bytes")
+
+model.build(readiness_timeout_ms=180000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`input_specs()`と`output_specs()`は、それぞれ同じリストを返します。
+`running()`は、正常にビルドが完了すると`true`になり、`close()`後に`false`に戻ります。
+
+## 同期推論を実行します。
+
+最も単純なリクエスト/レスポンスの流れには、`run()` を使用してください。まずモデルを構築し、アプリケーションの障害時に無限に待機しないように、有限のタイムアウトを設定してください。
+以下の例は、報告された入力データ型が FP32 であるモデルの入力を作成します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const auto& input_spec = info.inputs.front();
+if (input_spec.dtype != "FP32") {
+  throw std::runtime_error("this example requires an FP32 model input");
+}
+
+std::vector<float> values(input_spec.size_bytes / sizeof(float), 0.0f);
+pcie::Tensor input = pcie::Tensor::from_vector(
+    std::move(values), input_spec.shape, input_spec.name);
+
+pcie::TensorList outputs = model.run(input, /*timeout_ms=*/30000);
+
+model.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import numpy as np
+
+input_spec = info.inputs[0]
+if input_spec.dtype != "FP32":
+    raise RuntimeError("this example requires an FP32 model input")
+
+array = np.zeros(input_spec.shape, dtype=np.float32)
+input_tensor = pcie.Tensor.from_numpy(
+    array,
+    copy=True,
+    route_name=input_spec.name,
+)
+
+outputs = model.run([input_tensor], timeout_ms=30000)
+
+model.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+複数の入力を持つモデルの場合、論理的な入力ごとに1つの`Tensor`を、`info().inputs`によって報告された順序とルート名で渡します。
+
+`run()`のタイムアウトは、待機を停止しますが、カードによってすでに受け入れられた入力の処理をキャンセルするわけではありません。タイムアウトが発生した後、残っている結果を処理するために`pull()`を使用するか、新しいリクエストシーケンスを開始する前に`close()`を呼び出します。
+
+## プッシュとプルを使用したパイプラインのリクエスト
+
+入力の準備と推論を並行して行う必要がある場合は、`push()`と`pull()`を使用してください。
+`max_inflight`は、まだ完了していない処理の最大数を制限します。結果を速やかに取得し、処理を継続できるようにします。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+std::size_t pushed = 0;
+std::size_t pulled = 0;
+while (pulled < inputs.size()) {
+  while (pushed < inputs.size() && pushed - pulled < 10) {
+    model.push(inputs[pushed++]);
+  }
+
+  auto outputs = model.pull(/*timeout_ms=*/30000);
+  if (!outputs) {
+    throw std::runtime_error("PCIe inference timed out");
+  }
+  consume(*outputs);
+  ++pulled;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+max_inflight = 10
+pushed = 0
+pulled = 0
+while pulled < len(inputs):
+    while pushed < len(inputs) and pushed - pulled < max_inflight:
+        model.push(inputs[pushed])
+        pushed += 1
+
+    outputs = model.pull(timeout_ms=30000)
+    if outputs is None:
+        raise TimeoutError("PCIe inference timed out")
+    consume(outputs)
+    pulled += 1
+```
+
+</CodeTab>
+</CodeTabs>
+
+`push()` は、`max_inflight` が上限に達するまで待機します。そのため、結果を取得する前に、設定されたウィンドウを超えるデータを送信しないでください。`pull()` は、このモデルで利用可能な次の結果を返します。`run()` を呼び出す前に、`push()` で送信されたすべての結果を処理してください。
+
+## 画像ファイルを送信し、前処理の設定を行います。
+
+デコードされた画像データを送信する際に、`preprocess.kind` を `Image` に設定します。カード側の Neat パイプラインは、サポートされているオブジェクト検出の出力に対して、サイズ変更、カラー変換、正規化、およびデコードを行うことができます。
+
+この例では、BGR画像を送信し、モデルアーカイブから推測されるモデル入力に合わせてアスペクト比を調整し、デコードされたYOLOv8 BBOXペイロードを含むテンソルを返します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include <opencv2/imgcodecs.hpp>
+
+pcie::ModelOptions options;
+options.preprocess.kind = pcie::InputKind::Image;
+options.preprocess.color_convert.input_format = pcie::ColorFormat::BGR;
+options.preprocess.resize.enable = pcie::AutoFlag::On;
+options.preprocess.resize.mode = pcie::ResizeMode::Letterbox;
+options.decode_type = pcie::BoxDecodeType::YoloV8;
+options.score_threshold = 0.25f;
+options.nms_iou_threshold = 0.45f;
+options.top_k = 100;
+
+pcie::Model detector("yolo_v8n_mpk.tar.gz", options, connection);
+detector.build();
+
+cv::Mat image = cv::imread("image.jpg", cv::IMREAD_COLOR);
+pcie::TensorList detections = detector.run(image, /*timeout_ms=*/30000);
+detector.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import cv2
+import pyneatpcie as pcie
+
+options = pcie.ModelOptions()
+options.preprocess.kind = pcie.InputKind.Image
+options.preprocess.color_convert.input_format = pcie.ColorFormat.BGR
+options.preprocess.resize.enable = pcie.AutoFlag.On
+options.preprocess.resize.mode = pcie.ResizeMode.Letterbox
+options.decode_type = pcie.BoxDecodeType.YoloV8
+options.score_threshold = 0.25
+options.nms_iou_threshold = 0.45
+options.top_k = 100
+
+detector = pcie.Model("yolo_v8n_mpk.tar.gz", options, connection)
+detector.build()
+
+image = cv2.imread("image.jpg", cv2.IMREAD_COLOR)
+detections = detector.run_image(
+    image,
+    timeout_ms=30000,
+    format=pcie.PixelFormat.BGR,
+)
+detector.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+設定しないでください。 `input_max_width`, `input_max_height`または `input_max_depth` 種なしモデルの場合、アプリケーションで明示的な入力制限が必要ない限り。 Neat モデルアーカイブから、モデル側のリサイズ対象を推測できます。
+
+## 確実に閉じる
+
+モデルが不要になった場合、およびそのキューを再利用する前に、`close()` を呼び出してください。
+複数回呼び出しても問題ありません。
+
+```python
+model = pcie.Model("model.tar.gz", connection=connection)
+model.build()
+outputs = model.run([input_tensor], timeout_ms=30000)
+model.close()
+```
+
+あるいは、コンテキストマネージャーを使用して、モデルを自動的に閉じることができます。
+
+```python
+with pcie.Model("model.tar.gz", connection=connection) as model:
+    model.build()
+    outputs = model.run([input_tensor], timeout_ms=30000)
+```
+
+コンテキストマネージャーは、ブロックの終了時（例外が発生した場合を含む）に、`close()` を呼び出します。`with` ブロック内に、別の明示的な `close()` を追加しないでください。
+
+## C++のホストアプリケーションを構築します。
+
+開発パッケージには、`SimaPCIeHost` CMakeパッケージが含まれています。
+
+```cmake title="CMakeLists.txt"
+cmake_minimum_required(VERSION 3.16)
+project(pcie_model LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(SimaPCIeHost REQUIRED CONFIG)
+
+add_executable(pcie_model main.cpp)
+target_link_libraries(pcie_model PRIVATE SimaPCIeHost::sima_neat_pcie_host)
+```
+
+このアプリケーションをホストマシン上でネイティブにビルドします。
+
+C++のイメージ例でもOpenCVを使用しています。そのアプリケーションのターゲットに、OpenCVのヘッダーファイルとライブラリを追加してください。
+
+```cmake
+find_package(OpenCV REQUIRED COMPONENTS core imgcodecs)
+target_include_directories(pcie_model PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(pcie_model PRIVATE ${OpenCV_LIBS})
+```
+
+## 現在の範囲と制限
+
+- 1つの`pcie::Model`は、1つのPCIeキューを所有します。キューの範囲は、`0`から`3`までです。
+- Modalix EV74は、最大で4つの同時実行可能なコプロセッシングパイプラインをサポートします。
+- 同じキューに2つのアクティブなモデルを割り当てないでください。
+- カードにインストールされているホストパッケージとNeat Libraryは、次のものから提供される必要があります。
+  互換性のあるバージョン。
+- 最初に送信された後、入力メディアのタイプと形状を一定に保ってください。
+  ペイロード。アクティブな転送容量よりも大きいペイロードは、後で送信された場合、拒否されます。
+- PCIeホストAPIは、Neatモデルの前処理における、特定のサブセットをサポートします。
+  オブジェクトのデコードに関するオプション。
+- この共同処理 API は、ホスト側の`Graph`、`Node`、または`Run`を公開しません。
+  構成。ネイティブアプリケーションのグラフを作成するには、DevKit 上で通常の Neat Library を使用します。
+
+インストールと接続の確認を行うには、[PCIeホストをインストールします。](/getting-started/neat-library/pcie-host/) に戻ってください。

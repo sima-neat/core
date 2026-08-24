@@ -1,0 +1,20 @@
+{
+  "title": "教學課程",
+  "description": "含引導式學習路徑的 C++ 與 Python 實作教學",
+  "heroAlt": "Neat 教學 — 從第一個模型到正式環境管線",
+  "choosePath": "選擇教學路徑",
+  "choosePathIntro": "請依序使用各區段中的卡片。每篇教學先說明概念，再提供支援語言的原始碼。",
+  "guidedTutorialSingular": "篇引導式教學。", "guidedTutorialPlural": "篇引導式教學。",
+  "tutorialsComing": "教學內容正在陸續新增。", "useInOrder": "請依序完成這些教學。",
+  "field": "欄位", "value": "值", "category": "類別", "difficulty": "難度",
+  "estimatedReadTime": "預估閱讀時間", "labels": "標籤", "concept": "概念",
+  "learningProcess": "學習流程", "walkthrough": "操作指南", "run": "執行",
+  "inPractice": "實務應用", "code": "程式碼", "fullSource": "完整原始碼",
+  "showCompleteSource": "顯示完整原始碼程式", "source": "來源",
+  "imageSuffix": "圖片", "animatedOverviewSuffix": "操作指南動畫概覽",
+  "fallbackConcept": "未提供概念摘要。",
+  "fallbackSteps": ["準備確定性的輸入與執行階段預設值。", "執行本章的執行階段流程。", "透過檢查與簽章驗證行為。"],
+  "categories": {"Models & Inference": "模型與推論", "Graphs & Pipelines": "圖形與管線", "Cameras & Streaming": "相機與串流", "GenAI": "GenAI", "PCIe Co-Processing": "PCIe 協同處理"},
+  "categoryDescriptions": {"Models & Inference": "執行模型、設定前處理與後處理、交換張量並測量推論。", "Graphs & Pipelines": "組合、診斷、調校及部署 Neat 圖形與管線。", "Cameras & Streaming": "使用即時 RTSP 與 MIPI 相機輸入。", "GenAI": "提供並嵌入語言、視覺語言與語音模型。", "PCIe Co-Processing": "從連接 Modalix PCIe Card 的主機執行推論。"},
+  "difficulties": {"Beginner": "初級", "Intermediate": "中級", "Advanced": "進階"}
+}

@@ -1,0 +1,215 @@
+---
+title: "実行 / 推論"
+description: "モデルの推論実行に関する包括的な概念モデル。model.run() からグラフまで。"
+sidebar_position: 4
+---
+
+# 実行 / 推論
+
+SiMa.ai Neat を初めて使用する場合は、予測を行うための最も簡単な方法は、モデルをロードし、実行する2つのステップです。
+
+1. コンパイルされたモデルアーカイブ（`.tar.gz`）を[`Model`](/reference/{lsa}/classes/simaai-neat-model)でロードします。
+2. `model.run(inputs, timeout_ms)` を呼び出して、推論を同期的に実行し、出力テンソルを取得します。
+
+これらが、単一のモデルに対するワークフロー全体です。1つのモデルだけでは不十分な場合は、[`Graph`](/reference/{lsa}/classes/simaai-neat-graph) を使用します。複数のステージをチェーン化したり、非同期の `push` / `pull` を使用してプロデューサーとコンシューマーを分離したり、キューイングを制御したりできます。
+
+## サンプルコードが前提とするもの
+
+このページのコードスニペットは、完全なアプリケーションとしてではなく、あくまでも例として使用してください。実行可能なアプリケーションには、以下のものも必要です。
+
+- Model Compiler からコンパイルされたモデルアーティファクトを、Neat を実行するマシンにコピーします。
+- Python: `import pyneat`;
+- C++: `#include "neat.h"`;
+- C++ ビルド: `find_package(SimaNeat REQUIRED CONFIG)` および `SimaNeat::sima_neat`;
+- モデルのコントラクトに一致する画像またはテンソルのフィクスチャ。
+
+`resnet_50_model.tar.gz` などのサンプルパスを、実際のモデルアーティファクトに置き換えてください。仕様はコントラクトです。実際の入力を割り当てる前に、仕様を確認してください。
+
+## ランタイムパスの選択
+
+必要な作業に最も適した最小限の構成を使用します。余計な手続きは不要です。
+
+| 実行する必要がある場合 | 使用する | 理由 |
+|---|---|---|
+| コンパイルされたモデルを1回実行する | `Model.run(...)` | アーティファクト、入力、および出力コントラクトの最も迅速なテスト。 |
+| アプリケーションノードでモデルを構成する | `Graph` | 境界を定義し、トポロジーを可視化します。 |
+| 1つのグラフリクエスト/レスポンスを実行する | `Graph.run(...)` | 長期間実行されるランタイムを管理せずに、1回のグラフ実行を行います。 |
+| 複数の入力に対してグラフを維持する | `graph.build(...)` → `Run` | ランタイムを再利用し、push/pull、close、drain、および測定を公開します。 |
+| 複数のストリームまたは最大スループットを調整する | `RunOptions`、`try_push(...)`、`MeasureReport` | キューポリシーとカウンターは、負荷下で実際に何が起こったかを教えてくれます。 |
+
+セットアップ、モデルアーカイブ、およびコマンドコンテキストについては、[チュートリアル](/tutorials) の事前チェックリストを参照してください。
+
+## モデルを直接実行する
+
+モデルをロードし、`run(...)` を呼び出します。これは同期的に実行されます。`Graph`、`Run`、ランタイムループはありません。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+cv::Mat frame = /* your OpenCV BGR frame */;
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/1000);
+
+// outputs[0] holds the first result; read its bytes with outputs[0].map_read().
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+outputs = model.run([tensor], timeout_ms=1000)
+
+# outputs[0] holds the first result.
+```
+
+</CodeTab>
+</CodeTabs>
+
+Pythonでは、入力のリストまたはタプルを渡します。`model.run([tensor])`は「1つのモデル入力」を意味し、「バッチ次元を追加する」という意味ではありません。
+
+完全で実行可能なバージョンについては、[最初のモデルを実行しましょう。](/tutorials/run-your-first-model)を参照してください。
+
+## より複雑な処理が必要な場合にグラフを構成する
+
+[`Graph`](/reference/{lsa}/classes/simaai-neat-graph)は、1つまたは複数のモデルステージと独自のノードをまとめて、[`Run`](/reference/{lsa}/classes/simaai-neat-run)に組み込むランタイムフローを作成します。以下のような場合に利用します。
+
+- 複数のモデルまたは前処理/後処理ステージを連鎖させる場合。
+- 非同期の`push` / `pull`を使用して、プロデューサーとコンシューマーを分離する場合。
+- [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions)を使用して、キューイング、オーバーフロー、およびメトリックを制御する場合。
+
+### グラフを1回実行する
+
+リクエスト/レスポンスの実行には、`Graph.run(...)`を使用します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+cv::Mat frame = /* your frame (RGB/BGR as configured) */;
+auto out = graph.run(std::vector<cv::Mat>{frame});
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+out = graph.run([tensor])
+```
+
+</CodeTab>
+</CodeTabs>
+
+### 再利用可能な Run を作成する
+
+プロデューサーとコンシューマーを分離したり、キューイングを制御したり、I/O と計算を並行して実行したりしたい場合は、再利用可能な `Run` を使用します。キューイングとドロップ動作を調整するには、`RunOptions` とともに `push(...)` / `pull(...)` を使用します。
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+cv::Mat frame = /* your frame */;
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{frame});
+auto out = run.pull("classes", /*timeout_ms=*/1000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+run = graph.build()
+run.push("image", [tensor])
+out = run.pull("classes", timeout_ms=1000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+ライフサイクル、バックプレッシャー、マルチストリームスループット、測定、および実行エクスポートについては、[グラフを実行する](/develop-apps/development-workflow/pipeline) を引き続き使用してください。
+
+## C++とPythonの戻り値の形状
+
+APIは一貫していますが、Pythonでは、単一の入力と複数の入力ポートを区別するために、明示的なリストまたはタプルを使用します。単一の`Tensor`または`Sample`は、意図的に拒否されます。
+
+| 操作 | C++の戻り値 | Pythonの戻り値 | 備考 |
+|---|---|---|---|
+| `Model::run(TensorList)`または`Model::run(std::vector<cv::Mat>)` | `TensorList` | `model.run([tensor])`はテンソルリストを返します | 通常のテンソル/画像入力に使用します。 |
+| `Model::run(Sample)` | `Sample` | `model.run([sample])`は`Sample`を返します | サンプルメタデータまたはバンドルが必要な場合に使用します。 |
+| `Graph::run(TensorList)`または`Graph::run(std::vector<cv::Mat>)` | `TensorList` | `graph.run([tensor])`はテンソルリストを返します | 1回のグラフリクエスト/レスポンス。 |
+| `Graph::run(Sample)` | `Sample` | `graph.run([sample])`は`Sample`を返します | サンプルに基づくグラフ入力に使用します。 |
+| `Run::run(TensorList)`または`Run::run(std::vector<cv::Mat>)` | `TensorList` | `run.run([tensor])`はテンソルリストを返します | 実行中の`Run`で再利用可能なリクエスト/レスポンス。 |
+| `Run::run(Sample)` | `Sample` | `run.run([sample])`は`Sample`を返します | バンドル、ストリームID、フレームID、またはメタデータに使用します。 |
+| `Run::pull(...)` | `std::optional<Sample>` | `Sample`または`None` | `None`は、タイムアウト前にサンプルが到着しなかったか、出力が閉じられたことを意味します。 |
+| `Run::pull_tensors(...)` | `TensorList` | テンソルリスト | テンソルペイロードのみが必要な場合に使用します。 |
+| `Run::pull_samples(...)` | `Sample` | `Sample` | 存在しないことが例外であり、厳密なサンプル出力を必要とする場合に使用します。 |
+
+## 基本概念
+
+- [モデル](/develop-apps/development-workflow/model)：モデルアーカイブのロードとモデル駆動型のグラフフラグメント。
+- [グラフ](/develop-apps/development-workflow/graph)：アセンブリ、検証、および実行/ビルドのエントリポイント。
+- [グラフを実行する](/develop-apps/development-workflow/pipeline)：ランタイムオプション、プッシュ/プルループ、マルチストリームスループット、および測定。
+- [ノード](/develop-apps/development-workflow/node)：アトミックステージ、事前構築されたグループ、およびグラフ境界ノード。
+- [テンソルとサンプル](/develop-apps/development-workflow/core_types)：ペイロードとメタデータのエンベロープ。
+
+## チュートリアル
+
+- [最初のモデルを実行しましょう。](/tutorials/run-your-first-model)
+- [非同期で推論を実行](/tutorials/run-inference-async)
+- [最初のグラフを作成しましょう。](/tutorials/build-inference-pipeline)
+- [グラフ内にモデルを埋め込む](/tutorials/embed-model-inside-graph)

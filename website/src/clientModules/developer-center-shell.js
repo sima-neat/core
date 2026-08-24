@@ -101,6 +101,17 @@ async function mountShell() {
   }
 }
 
+export function onRouteDidUpdate() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+
+  // Docusaurus can change locales through client-side navigation. Remount the
+  // shared shell after every route update so its brand, navigation labels,
+  // locale links, and selected-language state follow the new URL immediately.
+  window.requestAnimationFrame(() => {
+    mountShell();
+  });
+}
+
 if (typeof window !== "undefined" && typeof document !== "undefined") {
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", mountShell, {once: true});

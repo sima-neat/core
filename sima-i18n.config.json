@@ -1,0 +1,17 @@
+{
+  "sourceDir": "docs",
+  "translationDir": "website/i18n/{locale}/docusaurus-plugin-content-docs/current",
+  "manifest": "website/i18n/translation-sources.json",
+  "excludedPrefixes": ["docs/compile-a-model/", "docs/doxygen/", "docs/genai-llima/", "docs/reference/cppapi/", "docs/tools/insight/", "docs/tools/sentinel/", "docs/tools/sima-cli/"],
+  "canonicalTerms": ["Palette Neat Library", "Palette Neat", "Neat SDK", "Neat Library", "Neat Examples", "Model Compiler", "Model Zoo", "Modalix", "DevKit Sync", "DevKit", "PyNeat", "Insight", "Sentinel", "LLiMa", "Hugging Face", "SiMa.ai", "GStreamer", "Neat"],
+  "forbiddenNavigationLabels": ["Benchmark Your Model", "Build a Custom Data Graph", "Build Your First Graph", "Configure Model Options", "Graph", "Model", "PCIe Co-processing", "Plug a Model Into Your Pipeline", "Read Detection Boxes from Model Output", "Run / Inference", "Run a Graph", "Run Your First Model", "Tensor and Sample", "Troubleshooting", "Tune Throughput and Queue Depth"],
+  "forbidUntranslatedImageAltText": true,
+  "docusaurusAssetRoots": ["docs/images/"],
+  "locales": {
+    "ko": {"name": "Korean", "code": "ko", "terms": {"graph": "그래프", "graph fragment": "그래프 조각", "pipeline": "파이프라인", "runtime": "런타임", "model archive": "모델 아카이브", "artifact": "아티팩트", "host": "호스트", "deployment": "배포", "compilation": "컴파일", "validation": "검증", "troubleshooting": "문제 해결", "release notes": "릴리스 노트", "memory": "메모리", "thread": "스레드", "tensor": "텐서", "architecture": "아키텍처", "building block": "구성 요소", "source of truth": "단일 진실 공급원"}},
+    "ja": {"name": "Japanese", "code": "ja", "terms": {"graph": "グラフ", "graph fragment": "グラフフラグメント", "pipeline": "パイプライン", "runtime": "ランタイム", "model archive": "モデルアーカイブ", "artifact": "アーティファクト", "host": "ホスト", "deployment": "デプロイ", "compilation": "コンパイル", "validation": "検証", "troubleshooting": "トラブルシューティング", "release notes": "リリースノート", "memory": "メモリ", "thread": "スレッド", "tensor": "テンソル", "architecture": "アーキテクチャ", "building block": "構成要素", "source of truth": "信頼できる唯一の情報源"}},
+    "zh-Hant": {"name": "Traditional Chinese (Taiwan)", "code": "zh-TW", "terms": {"graph": "圖", "graph fragment": "Graph 片段", "pipeline": "管線", "runtime": "執行階段", "model archive": "模型封存檔", "artifact": "成品", "host": "主機", "deployment": "部署", "compilation": "編譯", "validation": "驗證", "troubleshooting": "疑難排解", "release notes": "版本資訊", "memory": "記憶體", "thread": "執行緒", "tensor": "張量", "architecture": "架構", "building block": "建構模組", "source of truth": "權威來源"}, "proseReplacements": [["默認值", "預設值"], ["插件", "外掛程式"], ["配置", "設定"], ["構建", "建置"], ["加載", "載入"], ["支持", "支援"], ["默認", "預設"], ["數據", "資料"], ["鏈接", "連結"], ["用戶", "使用者"], ["優化", "最佳化"], ["信息", "資訊"], ["返回", "傳回"], ["創建", "建立"], ["文件", "檔案"], ["線程", "執行緒"]]},
+    "uk": {"name": "Ukrainian", "code": "uk-UA", "terms": {"graph": "граф", "graph fragment": "фрагмент графа", "pipeline": "конвеєр", "runtime": "середовище виконання", "model archive": "архів моделі", "artifact": "артефакт", "host": "хост", "deployment": "розгортання", "compilation": "компіляція", "validation": "перевірка", "troubleshooting": "усунення несправностей", "release notes": "примітки до випуску", "memory": "пам’ять", "thread": "потік", "tensor": "тензор", "architecture": "архітектура", "application": "застосунок", "building block": "складова", "folder": "тека", "source of truth": "джерело істини"}}
+  },
+  "provider": {"type": "ollama", "model": "translategemma:27b", "endpoint": "http://127.0.0.1:11434/api/chat", "sshHost": "macstudio", "timeoutMs": 300000}
+}

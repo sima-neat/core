@@ -1,0 +1,1312 @@
+---
+title: "그래프 실행"
+description: "그래프를 실시간 런타임 환경에 구축하고, 런타임 옵션을 선택하고, 처리량을 조정합니다."
+sidebar_position: 6
+sidebar_label: "그래프 실행"
+---
+
+# 그래프 실행
+
+`Graph`는 계획입니다. [`Run`](/reference/{lsa}/classes/simaai-neat-run)은 실제 실행 핸들입니다.
+
+그래프를 작성한 후에 이 페이지를 사용하세요. 여전히 그래프에 어떤 노드 또는 조각을 포함할지 결정해야 한다면 [그래프](/develop-apps/development-workflow/graph)부터 시작하세요. 그래프가 이미 제대로 구성되어 있다면, 이 페이지에서 실제 입력에 대해 실행, 처리, 측정 및 생존하도록 설정할 수 있습니다.
+
+## 한 번 실행하거나 재사용 가능한 실행 방식을 선택하세요.
+
+작업에 필요한 가장 짧은 런타임 경로를 사용하세요.
+
+| 필요하다 | 사용하세요. | 왜 |
+| --- | --- | --- |
+| 하나의 입력을 실행하여 하나의 출력을 얻습니다. | `Graph.run(...)` | 가장 짧은 단일 경로. |
+| 시간이 지남에 따라 여러 입력을 연속적으로 처리합니다. | `Graph.build(...)` 및 `Run`. | 런타임을 재사용하고 푸시/풀 제어를 지원합니다. |
+| 이름이 지정된 입력 또는 출력을 사용하세요. | `Graph.build(...)`를 생성하고, 이름을 `run.push(...)` / `run.pull(...)`로 지정했습니다. | 다중 입력 및 다중 출력 앱을 명확하게 관리합니다. |
+| 소스 노드가 그래프를 주도하도록 합니다. | 앱 입력을 사용하지 않고 `Graph.build()` 또는 `Graph.run()`을 실행합니다. | 그래프가 카메라, 파일, RTSP 또는 기타 소스 노드를 소유하고 있을 때 사용합니다. |
+| 측정하고, 내보내고, 배출하거나, 또는 의도적으로 중단합니다. | `Run` | 제품 수명 주기 및 진단 기능을 제어할 수 있습니다. |
+
+마법은 없습니다. 그래프를 만들고, 실행하고, 결과를 검토하세요.
+
+## 입력 데이터가 그래프에 어떻게 들어갈지 선택하세요.
+
+큐를 조정하기 전에 입력 데이터의 소유자를 결정하세요.
+
+| 그래프 스타일 | 입력 방식 | 어떻게 실행하시나요? |
+| --- | --- | --- |
+| 앱에서 제공하는 그래프 | 귀하의 애플리케이션은 `Graph.run(input, ...)`, `run.run(input, ...)`, `run.push(...)` 또는 `run.try_push(...)`를 호출합니다. | 입력을 사용하여 구축하거나 실행합니다. 다중 입력 그래프에 적용하기 전에 엔드포인트 이름을 확인합니다. |
+| 소스에서 소유한 그래프 | 이 그래프에는 파일, 카메라, RTSP 또는 스트림 입력과 같은 소스 노드 또는 소스 조각이 포함되어 있습니다. | 앱 입력을 사용하지 않고 그래프를 생성하거나 실행합니다: `graph.build()` 또는 `graph.run()`. 그래프에 따라 출력을 가져오거나, 출력 노드를 사용하거나, 콜백을 사용합니다. |
+
+그래프가 소스 데이터를 가지고 있다면, 해당 그래프에 데이터를 추가하지 마세요. 대신 그래프가 어떤 데이터를 출력하는지 확인하세요.
+
+
+## 소스가 소유한 그래프를 실행합니다.
+
+그래프에 자체 소스 노드가 포함된 경우, 앱 입력을 사용하지 않고 그래프를 빌드하거나 실행합니다. 이미 소스를 포함하고 있는 그래프에 추가하지 마십시오. 그래프가 출력을 제공할 때 명명된 출력을 가져오고, 그래프가 싱크 노드로 끝날 때 싱크 노드가 출력을 처리하도록 합니다.
+
+그래프가 입력과 출력을 모두 포함하는 소스-싱크 작업에는 `graph.run()`을 사용합니다. 앱에서 결과를 가져오거나, 실행을 측정하거나, 의도적으로 실행을 중지해야 할 때는 `graph.build()`을 사용합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+while (running && run.can_pull()) {
+  auto sample = run.pull("detections", /*timeout_ms=*/1000);
+  if (!sample) {
+    continue;
+  }
+  handle(*sample);
+}
+
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+try:
+    while running and run.can_pull():
+        sample = run.pull("detections", timeout_ms=1000)
+        if sample is None:
+            continue
+        handle(sample)
+finally:
+    run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+오랫동안 실행되는 소스의 경우, 애플리케이션에서 루프를 종료할 시점을 결정하고 `close()`를 호출하도록 합니다. 타임아웃은 해당 시간 동안 출력값이 도착하지 않았음을 의미하며, 항상 소스가 완료되었음을 의미하는 것은 아닙니다.
+
+## 한 번 실행
+
+동기화된 푸시/풀 작업을 한 번만 수행하려는 경우 `Graph.run(...)`을 사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+simaai::neat::TensorList outputs = graph.run(std::vector<cv::Mat>{frame});
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+outputs = graph.run([tensor])
+```
+
+</CodeTab>
+</CodeTabs>
+
+Python에서는 리스트 또는 튜플을 전달합니다. `graph.run([tensor])`는 “배치 차원을 추가”하는 것이 아니라 “하나의 그래프 입력”을 의미합니다.
+
+## 재사용 가능한 실행 환경을 구축합니다.
+
+애플리케이션이 루프를 소유할 때 `Graph.build(...)`를 사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+run.push("image", std::vector<cv::Mat>{frame});
+simaai::neat::TensorList outputs = run.pull_tensors("classes", /*timeout_ms=*/2000);
+
+run.close_input();
+while (auto sample = run.pull(/*timeout_ms=*/100)) {
+  // Drain remaining output after end-of-input.
+}
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+run.push("image", [tensor])
+outputs = run.pull_tensors("classes", timeout_ms=2000)
+
+run.close_input()
+while True:
+    sample = run.pull(timeout_ms=100)
+    if sample is None:
+        break
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+작업을 완료하고 진행 중인 작업을 마무리하려는 경우 `close_input()`를 사용합니다. 실행을 중단하려는 경우 `close()`를 사용합니다. C++에서는 즉시 중단을 나타내는 `stop()`를 사용할 수도 있습니다.
+
+## 요청/응답에 사용할 수 있는 재사용 가능한 Run을 사용하세요.
+
+`Graph.run(...)`은 가장 짧은 단일 실행 경로입니다. 매번 그래프를 다시 구축하지 않고 동일한 요청/응답 형식을 유지하려면 재사용 가능한 `Run`을 한 번 구축하고 `run.run(...)`을 호출하십시오.
+
+다음과 같은 경우에 사용하십시오.
+
+- 그래프는 여러 요청 동안 계속 유지됩니다.
+- 각 요청은 여전히 자신의 결과가 나올 때까지 기다려야 합니다.
+- 아직 별도의 생성자 스레드와 소비자 스레드가 필요하지 않습니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+for (const auto& frame : frames) {
+  simaai::neat::TensorList outputs = run.run(
+      std::vector<cv::Mat>{frame},
+      /*timeout_ms=*/2000);
+  handle(outputs);
+}
+
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+for tensor in tensors:
+    outputs = run.run([tensor], timeout_ms=2000)
+    handle(outputs)
+
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+실행 중인 작업, 생산자/소비자 스레드, 논블로킹 푸시, 명명된 출력 폴링 또는 드레인 제어가 필요할 때 `run.run(...)`에서 명시적인 `push(...)`/ `pull(...)` 방식으로 전환하세요.
+
+## 런타임 엔드포인트를 검사합니다.
+
+다중 입력 그래프를 사용하기 전에, 해당 그래프가 어떤 이름을 허용하는지 `Run`에 문의하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build();
+
+for (const auto& name : run.input_names()) {
+  std::cout << "input: " << name << "\n";
+}
+for (const auto& name : run.output_names()) {
+  std::cout << "output: " << name << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build()
+
+print("inputs:", run.input_names())
+print("outputs:", run.output_names())
+```
+
+</CodeTab>
+</CodeTabs>
+
+그래프에 둘 이상의 공개 입력 또는 출력이 있는 경우, 이름을 사용하여 `push(...)` 및 `pull(...)`을 사용하십시오. Neat은 사용자가 어떤 연결을 의미하는지 추측할 필요가 없습니다.
+
+## 다중 입력 및 다중 출력 그래프를 실행합니다.
+
+여러 입력이 있는 그래프의 경우, 한 번에 하나의 명명된 엔드포인트를 추가하거나, 그래프에 명확하게 단 하나의 입력 경로만 있을 때만 명명되지 않은 목록을 추가합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+run.push("left", simaai::neat::TensorList{left_tensor});
+run.push("right", simaai::neat::TensorList{right_tensor});
+
+auto boxes = run.pull_tensors("detections", /*timeout_ms=*/2000);
+auto preview = run.pull("preview", /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run.push("left", [left_tensor])
+run.push("right", [right_tensor])
+
+boxes = run.pull_tensors("detections", timeout_ms=2000)
+preview = run.pull("preview", timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+스트림을 결합할 때 그래프에서 예상하는 일치하는 키를 유지해야 합니다. `CombinePolicy::ByFrame`에는 `frame_id`가 필요하고, `CombinePolicy::ByPts`에는 `pts_ns`가 필요합니다. 누락된 키가 있으면 오류가 명확하게 표시되어야 합니다. 조용히 결합하는 방식은 버그가 아키텍처 수준으로 확대되는 원인이 됩니다.
+
+## 실행 옵션을 선택하세요.
+
+[`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions)는 런타임 동작을 제어합니다. 기본 설정으로 시작하고, 소스, 출력 수명 또는 처리량 목표에 다른 정책이 필요할 때 옵션을 변경합니다.
+
+| 업무량 | 다음부터 시작하세요. | 왜 |
+| --- | --- | --- |
+| 최초로 작동하는 앱 | 기본 `RunOptions` | 튜닝하기 전에 정확성을 검증하십시오. |
+| 실시간 카메라 또는 RTSP 입력 | `RunPreset::Realtime`; `OutputOptions::Latest()`; 최신 결과가 중요한 경우 | 새 프레임이 전체 기록보다 우수합니다. 실시간 사전 설정은 사용자가 이를 변경하지 않는 한 최신 프레임 오버플로 문제를 해결합니다. |
+| 파일 또는 일괄 처리 | `RunPreset::Reliable`; `OutputOptions::EveryFrame(...)` | 모든 입력을 보존하고 역압을 적용합니다. 안정적인 기본 설정은 사용자가 이를 재정의하지 않는 한 차단 오버플로를 발생시킵니다. |
+| 일반 앱 서비스 | `RunPreset::Balanced` | 그래프가 제대로 작동하면 기본 설정으로 사용하기에 좋습니다. |
+| 불안정한 소스에는 제한된 버퍼링이 필요합니다. | `queue_depth` | 지터(jitter)를 흡수할 만큼만 늘립니다. 깊은 대기열은 오래된 프레임과 지연된 역압을 숨길 수 있습니다. |
+| 풀 요청 후 앱 스토어에 결과물을 게시합니다. | `OutputMemory::Owned` | 출력 수명을 런타임 버퍼와 독립적으로 유지합니다. |
+| 앱은 결과를 즉시 사용합니다. | `OutputMemory::Auto` | 먼저 Neat가 적절한 소유권 관리 방식을 선택하도록 하세요. |
+| 기본 대기 시간은 명확하게 지정해야 합니다. | `input_timeout_ms` | 빌드/실행 입력 모드 경로에 대한 기본 시간 제한을 설정합니다. 개별 호출에 대한 시간 제한이 우선 적용됩니다. |
+| 초기 빌드에서 첫 번째 샘플의 오류를 조기에 감지해야 합니다. | `startup_preflight = true` | 초기 빌드 결과의 무결성을 유지합니다. `pull(...)` 또는 `last_error()`를 통해 이후에 초기 샘플 실패가 발생할 수 있는 경우에만 비활성화하십시오. |
+| 소스 버퍼의 수명은 짧습니다. | `advanced.copy_input = true` | `push(...)` 이후에 사라질 수 있는 입력 메모리를 보호합니다. |
+| 입력 크기에 대한 제한을 설정해야 합니다. | `advanced.max_input_bytes` | 입력값이 너무 크면 그래프에 입력되기 전에 거부합니다. |
+| 텔레메트리 데이터를 삭제해야 합니다. | `on_input_drop` | 스트림 및 이유별로 과도한 발생 횟수와 크기 제한으로 인한 삭제 건수를 집계합니다. |
+| 빌드 시점에 증거 자료가 필요합니다. | `run_export` | 실행이 완료될 때 실행 스냅샷을 생성합니다. |
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Realtime;
+options.on_input_drop = [](const simaai::neat::InputDropInfo& drop) {
+  std::cerr << "dropped input from stream " << drop.stream_id
+            << ": " << drop.reason << "\n";
+};
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Realtime
+
+def on_drop(drop: pyneat.InputDropInfo) -> None:
+    print(f"dropped input from stream {drop.stream_id}: {drop.reason}")
+
+
+options.on_input_drop = on_drop
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+모든 조작 버튼을 함부로 돌리지 마세요. 기준값이 설정되기 전에 조작하면 가장 빨리 길을 잃을 수 있습니다.
+
+### 런타임 옵션 레시피
+
+이 레시피의 형태를 복사하되, 숫자는 복사하지 마세요. 대기열 크기와 출력 제한은 모델, 소스 전송률, 그리고 앱이 결과를 얼마나 빠르게 가져오는지에 따라 달라집니다.
+
+#### 지연 시간이 짧은 실시간 출력
+
+다음 프레임이 전체 프레임 기록보다 더 중요할 때 이 설정을 사용합니다. 출력 노드를 추가할 때 출력 대기열 정책을 설정하고, `Run`을 구축할 때 입력/삭제 정책을 설정합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.add(simaai::neat::nodes::Output(
+    "detections",
+    simaai::neat::OutputOptions::Latest()));
+
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Realtime;
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.add(pyneat.nodes.output(
+    "detections",
+    pyneat.OutputOptions.latest(),
+))
+
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Realtime
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+이 레시피는 오래된 프레임을 모아두는 대신 가장 최신의 유용한 결과를 유지합니다. 지속적으로 당기고, 스트림별로 물방울 수를 세십시오.
+
+#### 무손실 일괄 출력
+
+모든 입력에 대해 해당하는 출력이 생성되어야 하고, 데이터 손실보다는 역압 제어가 더 효과적인 경우에 이 방법을 사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+graph.add(simaai::neat::nodes::Output(
+    "result",
+    simaai::neat::OutputOptions::EveryFrame(/*max_buffers=*/64)));
+
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Reliable;
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph.add(pyneat.nodes.output(
+    "result",
+    pyneat.OutputOptions.every_frame(max_buffers=64),
+))
+
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Reliable
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+생성자가 작업을 완료하면 입력을 닫고, 그 다음 출력을 비웁니다. 입력 횟수와 출력 횟수가 일치하지 않으면 런타임에 문제가 있다고 단정하기 전에 모델 계약을 확인하십시오.
+
+#### 소유한 출력의 수명
+
+앱이 `pull(...)` 함수가 반환된 후 또는 다른 스레드로 텐서를 전달할 때 텐서를 저장하는 경우, 소유된 출력을 사용하세요. 첫 번째 실행 코드에는 `Auto`를 유지하고, 수명이 요구하는 경우에만 이 설정을 변경하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.output_memory = simaai::neat::OutputMemory::Owned;
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.output_memory = pyneat.OutputMemory.Owned
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## 모양이나 형식이 초기에 입증되어야 할 경우, 시드 빌드를 수행합니다.
+
+대부분의 재사용 가능한 실행 작업은 입력 없이도 빌드할 수 있습니다.
+
+```python
+run = graph.build()
+```
+
+앱이 스트리밍 루프에 들어가기 전에 첫 번째 실제 입력이 모양, 형식, 대소문자 또는 바이트 보호 동작을 제대로 나타내는지 확인해야 할 경우, 시드된 `build(input, ...)`를 사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build(std::vector<cv::Mat>{frame});
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build([tensor])
+```
+
+</CodeTab>
+</CodeTabs>
+
+`startup_preflight`는 기본적으로 시드 빌드에 활성화되어 있으므로, 빌드 과정에서 페이로드 수준의 오류를 감지합니다. 빌드에 실패하면 구조화된 보고서에 `build_adaptation`이 포함될 수 있습니다. 여기에는 시드 형태, 동적 제한, 바이트 가드, 그리고 Neat이 시도한 적응 조치가 포함됩니다. 이 정보를 사용하여 문제 해결에 필요한 증거를 분석하고, 추측이나 직관에 의존하지 마십시오.
+
+## 역압 처리
+
+백프레셔란 그래프가 애플리케이션에서 원하는 만큼 빠르게 데이터를 수신하거나 전송할 수 없음을 의미합니다.
+
+다음 컨트롤을 신중하게 사용하십시오.
+
+- `queue_depth`는 런타임 큐에서 대기할 수 있는 작업의 양을 제어합니다.
+- `overflow_policy = Block`은 데이터 생성자에게 역압력을 가합니다.
+- `overflow_policy = KeepLatest`는 오래된 대기 중인 입력을 삭제하여 실시간 스트림이 최신 상태를 유지하도록 합니다.
+- `overflow_policy = DropIncoming`은 큐가 가득 찼을 때 새로운 입력을 거부합니다.
+- `try_push(...)`는 차단하는 대신 `false`를 반환합니다.
+- `on_input_drop`은 삭제된 입력에 대한 정보를 `InputDropInfo` 필드를 사용하여 보고합니다. 여기에는 `stream_id`, `frame_id`, `port_name` 및 `reason`과 같은 정보가 포함됩니다.
+
+스레드를 사용할 때는 하나의 푸시 스레드와 하나의 풀 스레드를 사용하여 `Run`을 실행합니다. 앱에서 해당 호출을 직렬화하지 않는 한 여러 스레드에서 동시에 동일한 `Run`으로 푸시하지 마십시오.
+
+## 간단한 스레드 패턴을 사용하세요.
+
+실시간 또는 높은 처리량의 앱에서 생성되는 그래프의 경우, 먼저 두 개의 애플리케이션 스레드로 시작합니다.
+
+1. 생성자 스레드는 메타데이터를 추가하고 `push(...)` 또는 `try_push(...)`를 호출합니다.
+2. 소비자 스레드는 지속적으로 데이터를 가져오고, 가져온 데이터를 빠르게 처리하거나 복사합니다.
+
+자신의 큐 주변에 더 많은 스레드를 추가하되, 동일한 `Run` 주변에는 추가하지 마세요. 반복 실행되는 코드는 지루해야 합니다. 지루하면 속도가 빨라집니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build(options);
+
+std::thread producer([&] {
+  while (auto sample = next_sample()) {
+    sample->stream_id = current_stream_id();
+    sample->frame_id = next_frame_id();
+
+    if (!run.try_push("image", *sample)) {
+      count_local_drop(sample->stream_id);
+    }
+  }
+
+  run.close_input();
+});
+
+std::thread consumer([&] {
+  simaai::neat::Sample output;
+  simaai::neat::PullError error;
+
+  while (true) {
+    switch (run.pull("detections", /*timeout_ms=*/100, output, &error)) {
+    case simaai::neat::PullStatus::Ok:
+      handle_output(output);
+      break;
+    case simaai::neat::PullStatus::Timeout:
+      continue;
+    case simaai::neat::PullStatus::Closed:
+      return;
+    case simaai::neat::PullStatus::Error:
+      record_runtime_error(error);
+      return;
+    }
+  }
+});
+
+producer.join();
+consumer.join();
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import threading
+
+run = graph.build(options)
+producer_done = threading.Event()
+
+def producer() -> None:
+    try:
+        for sample in sample_stream():
+            sample.stream_id = current_stream_id()
+            sample.frame_id = next_frame_id()
+
+            if not run.try_push("image", [sample]):
+                count_local_drop(sample.stream_id)
+    finally:
+        producer_done.set()
+        run.close_input()
+
+def consumer() -> None:
+    while True:
+        timeout_ms = -1 if producer_done.is_set() else 100
+        output = run.pull("detections", timeout_ms=timeout_ms)
+        if output is None:
+            if producer_done.is_set():
+                break
+            continue
+        handle_output(output)
+
+producer_thread = threading.Thread(target=producer)
+consumer_thread = threading.Thread(target=consumer)
+producer_thread.start()
+consumer_thread.start()
+producer_thread.join()
+consumer_thread.join()
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+C++에서는 시간 초과, 스트림 종료, 오류가 발생할 때 각각 다르게 처리해야 하는 경우 상태를 인식하는 `pull(...)` 오버로드를 사용합니다. Python에서는 해당 호출에 대해 샘플이 반환되지 않으면 `pull(...)`이 `None`을 반환하므로, 자체 프로듀서/종료 상태와 함께 사용하십시오.
+
+## 닫거나, 배수하거나, 의도적으로 작동을 중단합니다.
+
+원하는 대로 종료 방법을 선택하세요. 이미 종료되고 있는 작업에 계속해서 개입하지 마세요.
+
+| 의도 | 사용하세요. | 다음으로 무엇을 해야 할까요? |
+| --- | --- | --- |
+| 마지막 입력 후 대기 중인 작업을 완료합니다. | `close_input()` | 출력이 완전히 완료될 때까지 계속 데이터를 가져옵니다. C++에서는 상태를 인식하는 방식으로 데이터를 가져오며, 스트림의 끝에 도달하면 `PullStatus::Closed`를 반환합니다. |
+| 지금 취소하세요. | `stop()` | 프로듀서를 중지하고 대기 중인 작업을 처리하여 차단을 해제합니다. 이 기능을 일반적인 일괄 처리 대신 시스템 종료 또는 오류 발생 시에 사용하십시오. |
+| 런타임 리소스를 해제합니다. | `close()` | 드레인 또는 취소 후 호출하거나, `Run` 객체가 유효 범위를 벗어나도록 합니다. |
+
+일괄 작업의 경우, 입력을 닫고, 출력을 비우고, 그런 다음 작업을 종료합니다. 실시간 작업의 경우, 먼저 프로듀서를 중지한 다음 작업을 중지하거나 종료합니다. 작동하지 않는 프로듀서나 유령 큐는 없어야 합니다.
+
+## 출력 결과의 소유자를 선택하세요.
+
+`OutputMemory`는 가져온 텐서가 런타임 버퍼와 어떻게 관련되는지를 제어합니다.
+
+- `Auto`: Neat이 선택하도록 하세요. 먼저 이것을 사용하세요.
+- `Owned`: 프레임워크가 소유한 메모리에 출력 결과를 복사합니다. 다른 스레드 또는 객체가 데이터를 가져온 후 텐서를 저장할 때 사용합니다.
+- `ZeroCopy`: 런타임 스토리지를 공유합니다. 페이지나 예제에서 수명 규칙을 설명할 때만 사용하세요.
+
+처리량이 급격히 감소하면 앱이 출력 샘플을 너무 오래 보관하고 있는지 확인하세요. 제로 복사는 빠를 수 있지만, 고정된 버퍼는 여전히 고정된 버퍼입니다.
+
+## 스트림의 고유성을 유지합니다.
+
+다중 스트림 그래프는 조정하기 전에 먼저 식별되어야 합니다. `stream_id` 및 `frame_id`를 보존하여 공정성을 입증하고, 데이터 손실을 감지하고, 손실된 데이터 수를 계산할 수 있도록 합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto sample = simaai::neat::Sample::from_image(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+sample.stream_id = camera_id;
+sample.frame_id = frame_number++;
+
+if (!run.try_push("image", sample)) {
+  // Count local backpressure here. Runtime drops also flow through on_input_drop.
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+sample = pyneat.make_tensor_sample("image", tensor)
+sample.stream_id = camera_id
+sample.frame_id = frame_number
+
+ok = run.try_push("image", [sample])
+```
+
+</CodeTab>
+</CodeTabs>
+
+소스에서 생성된 그래프의 경우, 스트림 메타데이터를 보존하거나 기록하는 소스 노드를 선택합니다. 앱에서 생성된 그래프의 경우, 해당 메타데이터는 앱에서 관리합니다.
+
+## 하나의 스트림에서 여러 스트림으로 확장
+
+하나의 스트림으로 시작합니다. 그런 다음 토폴로지와 런타임 정책을 의도적으로 확장합니다.
+
+| 패턴 | 다음과 같은 경우에 사용하세요. | 보다 |
+| --- | --- | --- |
+| 하나의 스트림 → 하나의 모델 → 하나의 결과 | 올바른 경로를 처음으로 구축합니다. | 출력 형태, 데이터 유형, 지연 시간. |
+| 여러 스트림 → 하나의 모델 경로 | 전체 입력 속도가 하나의 모델 경로에 적합합니다. | 스트림별 공정성 및 오래된 스트림. |
+| 다양한 스트림 → 다중 모델 경로 | 한 차선으로는 감당할 수 없습니다. | 스트림 분할, 경로 이름 지정, 출력 회계 처리. |
+| 하나의 스트림 → 여러 모델 | 서로 다른 결정에는 동일한 정보가 필요합니다. | 브랜치 수준의 지연 시간과 대상에 맞춰 정규화된 FPS(초당 프레임 수). |
+| 다수의 스트림 → 모델 + 메타데이터/비디오 출력 | 프로덕션 앱에서 여러 아티팩트가 생성됩니다. | 미리보기 또는 원격 측정 결과와 별개로 대상 출력의 개수를 계산합니다. |
+
+실시간 그래프 조각을 연결할 때, `GraphLinkOptions`를 사용하여 실시간 스트림별 최신 데이터 동작을 선택할 수 있습니다. 모든 프레임을 보존하는 것보다 최신성이 더 중요할 때 사용하세요.
+
+
+## 소스가 소유한 다중 스트림 그래프를 실행합니다.
+
+카메라 기능을 많이 사용하는 앱의 경우, 그래프가 주로 데이터 스트림을 관리합니다. 이 구조에서 소스 그룹은 모델 경로에 데이터를 제공하고 앱은 결과를 가져옵니다. 여전히 동일한 처리량 관리가 필요합니다.
+
+- 각 소스에 안정적인 `stream_id`를 할당합니다.
+- 최신 정보가 중요한 경우, 실시간으로 스트림별 최신 데이터를 활용하여 라이브 팬인 링크에서 해당 동작을 적용합니다.
+- 결과를 지속적으로 가져옵니다.
+- 전체 합계뿐만 아니라 각 스트림별 출력 횟수를 계산합니다.
+- 측정된 시간 동안 하나의 스트림에서 데이터가 부족하거나 프레임이 누락되는 경우, 해당 실행 결과를 내보냅니다.
+
+| 출처가 소유한 선택 항목 | 다음부터 시작하세요. | 왜 |
+| --- | --- | --- |
+| 그래프당 카메라 1대 | 하나의 소스 그룹, 하나의 모델 경로, 하나의 출력 | 카메라, 모델, 출력 계약을 가장 쉽게 확인할 수 있는 방법입니다. |
+| 여러 대의 카메라를 하나의 모델 라인으로 통합 | 실시간 팬인 연결을 위해 `GraphLinkOptions`를 사용하여 단일 모델 조각에 연결된 소스 조각 | 하나의 모델 레인을 계속 사용하면서 각 스트림의 고유성을 유지합니다. |
+| 차선 곳곳에 많은 카메라가 설치되어 있습니다. | 여러 그래프 레인에 걸쳐 소스 조각을 분할합니다. | 하나의 모델 레인이 포화 상태에 도달했을 때 사용합니다. 각 레인과 각 스트림을 측정합니다. |
+| 비디오 출력은 그래프에서 처리됩니다. | `VideoSender(...)` 또는 H.264/UDP 출력 그룹과 같은 싱크 그룹 | 앱이 모든 프레임을 직접 가져와서 전송할 필요가 없을 때 사용합니다. |
+
+그래프가 소스 노드를 소유하고 있는 경우, `graph.build()`를 사용하여 그래프를 구축하고 의도적으로 중지합니다. 이미 자체 소스 노드를 가지고 있는 그래프에 앱 입력을 추가하지 마십시오.
+
+## 하나의 모델 경로를 통해 여러 스트림을 처리합니다.
+
+여러 개의 실시간 스트림이 동일한 모델 채널을 공유할 때 하나의 공용 입력 엔드포인트를 사용합니다. 각 샘플에 `stream_id` 및 `frame_id`를 추가하고, 실시간 프리셋을 사용하며, 지속적으로 데이터를 가져옵니다. 이 방법은 다소 지루하지만 효과적입니다. 출력 대기열이 숨겨진 병목 현상을 일으키지 않도록 주의하십시오.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.preset = simaai::neat::RunPreset::Realtime;
+
+auto run = graph.build(options);
+
+while (running) {
+  for (const auto& camera : cameras) {
+    auto sample = simaai::neat::Sample::from_image(
+        camera.frame(),
+        simaai::neat::ImageSpec::PixelFormat::BGR,
+        simaai::neat::TensorMemory::CPU);
+    sample.stream_id = camera.id();
+    sample.frame_id = camera.next_frame_id();
+
+    if (!run.try_push("image", sample)) {
+      ++local_drop_count[camera.id()];
+    }
+  }
+
+  while (auto output = run.pull("detections", /*timeout_ms=*/0)) {
+    count_output_by_stream(output->stream_id);
+  }
+}
+
+run.close_input();
+while (auto output = run.pull("detections", /*timeout_ms=*/1000)) {
+  count_output_by_stream(output->stream_id);
+}
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.preset = pyneat.RunPreset.Realtime
+
+run = graph.build(options)
+
+while running:
+    for camera in cameras:
+        tensor = pyneat.Tensor.from_numpy(
+            camera.frame(),
+            copy=True,
+            image_format=pyneat.PixelFormat.BGR,
+        )
+        sample = pyneat.make_tensor_sample("image", tensor)
+        sample.stream_id = camera.id
+        sample.frame_id = camera.next_frame_id()
+
+        if not run.try_push("image", [sample]):
+            local_drop_count[camera.id] += 1
+
+    while True:
+        output = run.pull("detections", timeout_ms=0)
+        if output is None:
+            break
+        count_output_by_stream(output.stream_id)
+
+run.close_input()
+while True:
+    output = run.pull("detections", timeout_ms=1000)
+    if output is None:
+        break
+    count_output_by_stream(output.stream_id)
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+이 패턴은 모델 레인이 허용되는 입력 속도를 따라갈 수 있을 때만 유용한 처리량을 극대화합니다. 하나의 레인이 포화 상태가 되면 스트림을 더 많은 레인으로 분산시키거나 제공되는 속도를 낮춥니다. 오래된 프레임을 큐 깊이의 거대한 더미 아래에 묻어두지 마십시오.
+
+
+## 모델 레이어에 따라 스트림을 분할합니다.
+
+한 모델 레인이 포화 상태가 되면, 대기열을 늘려 과부하를 숨기는 대신 레인을 추가하세요. 일반적으로 레인은 하나의 `Graph`와 하나의 `Run`으로 구성되며, 자체 모델 경로 이름과 그래프 요소 접두사를 갖습니다. 안정적인 키를 기준으로 스트림을 분할한 다음, 각 레인과 각 스트림을 측정합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto build_lane = [&](int lane_index) {
+  const std::string lane_name = "lane" + std::to_string(lane_index);
+
+  simaai::neat::Model::Options model_options;
+  model_options.name_suffix = "_" + lane_name;
+  simaai::neat::Model lane_model(model_path, model_options);
+
+  simaai::neat::GraphOptions graph_options;
+  graph_options.element_name_prefix = lane_name + "_";
+
+  simaai::neat::Graph graph("detector_" + lane_name, graph_options);
+  graph.add(simaai::neat::nodes::Input("image"));
+  graph.add(lane_model);
+  graph.add(simaai::neat::nodes::Output(
+      "detections",
+      simaai::neat::OutputOptions::Latest()));
+
+  simaai::neat::RunOptions run_options;
+  run_options.preset = simaai::neat::RunPreset::Realtime;
+  return graph.build(run_options);
+};
+
+std::vector<simaai::neat::Run> lanes;
+lanes.emplace_back(build_lane(0));
+lanes.emplace_back(build_lane(1));
+
+while (running) {
+  for (const auto& camera : cameras) {
+    auto sample = make_sample_for_camera(camera);
+    const std::size_t lane_index = camera.id() % lanes.size();
+
+    if (!lanes[lane_index].try_push("image", sample)) {
+      ++drop_count_by_lane[lane_index];
+    }
+  }
+
+  for (std::size_t lane_index = 0; lane_index < lanes.size(); ++lane_index) {
+    while (auto output = lanes[lane_index].pull("detections", /*timeout_ms=*/0)) {
+      count_output(lane_index, output->stream_id);
+    }
+  }
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+def build_lane(lane_index: int) -> pyneat.Run:
+    lane_name = f"lane{lane_index}"
+
+    model_options = pyneat.ModelOptions()
+    model_options.name_suffix = f"_{lane_name}"
+    lane_model = pyneat.Model(model_path, model_options)
+
+    graph_options = pyneat.GraphOptions()
+    graph_options.element_name_prefix = f"{lane_name}_"
+
+    graph = pyneat.Graph(f"detector_{lane_name}", graph_options)
+    graph.add(pyneat.nodes.input("image"))
+    graph.add(lane_model)
+    graph.add(pyneat.nodes.output(
+        "detections",
+        pyneat.OutputOptions.latest(),
+    ))
+
+    run_options = pyneat.RunOptions()
+    run_options.preset = pyneat.RunPreset.Realtime
+    return graph.build(run_options)
+
+
+lanes = [build_lane(0), build_lane(1)]
+
+while running:
+    for camera in cameras:
+        sample = make_sample_for_camera(camera)
+        lane_index = camera.id % len(lanes)
+
+        if not lanes[lane_index].try_push("image", [sample]):
+            drop_count_by_lane[lane_index] += 1
+
+    for lane_index, lane in enumerate(lanes):
+        while True:
+            output = lane.pull("detections", timeout_ms=0)
+            if output is None:
+                break
+            count_output(lane_index, output.stream_id)
+```
+
+</CodeTab>
+</CodeTabs>
+
+파티션을 안정적으로 유지하여 스트림 식별 및 캐시 동작이 예측 가능하도록 합니다. 채널 0이 데이터 부족 상태인 반면 채널 1이 유휴 상태인 경우, 파티션 정책에 문제가 있는 것입니다.
+
+## 모델 경로를 의도적으로 조정하세요.
+
+그래프가 정확하지만 제시된 스트림 속도를 충족하지 못하는 경우, 먼저 병목 현상이 발생하는 지점을 확인합니다. 모든 큐의 크기를 늘리는 것으로 시작하지 마십시오. 그렇게 하면 과부하가 가려지고 오래된 프레임이 처리되지 않은 채 남게 됩니다.
+
+다음과 같은 방식으로 문제를 해결하십시오.
+
+| 증상 | 먼저 확인하세요. | 그러면 시도해 보세요. |
+| --- | --- | --- |
+| 입력 FPS는 높지만 출력 FPS는 낮습니다. | 모델 레인 또는 후처리 레인이 포화 상태입니다. | 스트림을 여러 채널로 분할하고, 제공되는 비율을 줄이거나, 모델 경로 또는 그래프 옵션에서 `advanced_execution.inference_async`를 테스트합니다. |
+| `try_push(...)`는 `false`를 자주 반환합니다. | 수신 대기열이 가득 찼습니다. | 지속적으로 풀 요청을 수행하거나, 제공되는 비율을 줄이거나, 명시적인 `OverflowPolicy`를 선택하십시오. |
+| 하나의 데이터 흐름이 집계된 지표에서 사라집니다. | 누락되거나 불균형한 `stream_id` 회계 자료 | 각 스트림별 출력 및 삭제 횟수를 계산하고, 실시간 팬인에 대해 최신 스트림별 동작을 사용합니다. |
+| 입력은 계속 진행되지만 출력은 멈춤 | 앱이 충분히 빠르게 데이터를 가져오지 못하거나, 런타임 기반의 결과를 계속 저장하고 있습니다. | 전용 루프를 사용하여 데이터를 가져온 후, 더 많은 데이터를 추가하기 전에 출력 결과를 저장하거나 복사합니다. |
+| 시간이 지남에 따라 지연 시간이 증가합니다. | 대기열이 기존 작업을 처리하고 있습니다. | 더 작은 대기열을 사용하거나, 최신 데이터가 우선적으로 처리되도록 설정하십시오(`RunPreset::Realtime` 또는 `OutputOptions::Latest()`). |
+
+모델 경로 실행 동작을 테스트해야 할 때, 고급 실행 필드 중 하나를 설정하고, 설정 전후에 동일한 작업 부하를 측정합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphOptions graph_options;
+graph_options.advanced_execution.inference_async = true;
+
+simaai::neat::Graph graph("detector", graph_options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+graph_options = pyneat.GraphOptions()
+graph_options.advanced_execution.inference_async = True
+
+graph = pyneat.Graph("detector", graph_options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+변경 사항이 측정된 경로를 개선하지 못하면 원래대로 되돌립니다. 그 가치를 입증할 수 없는 조작 버튼은 앱에 포함될 필요가 없습니다.
+
+## 처리량 설정을 선택하세요.
+
+임의의 대기열 번호가 아닌 작업량부터 시작하세요.
+
+| 업무량 | 런타임 시의 형태 | 다음부터 시작하세요. | 증명해 보세요. |
+| --- | --- | --- | --- |
+| 단일 라이브 스트리밍 | 재사용 가능한 `Run` 하나, 생산자 하나, 그리고 풀러 하나. | `RunPreset::Realtime`; 미리보기 스타일의 결과물을 위해 `OutputOptions::Latest()`를 사용합니다. | 수용된 FPS, 출력 FPS, 프레임 누락 횟수, 지연 시간. |
+| 파일 또는 일괄 처리 | 재사용 가능한 `Run` 하나; 입력을 닫고 비웁니다. | `RunPreset::Reliable`; `OutputOptions::EveryFrame(...)` | 모델 계약에 다른 내용이 명시되어 있지 않은 한, 입력 횟수와 출력 횟수는 동일합니다. |
+| 여러 라이브 스트리밍을 하나의 모델 채널로 통합 | 앱에서 푸시되는 `Sample` 입력값(`stream_id` / `frame_id` 포함) 또는 소스에서 생성된 식별 정보를 담고 있는 조각. | `RunPreset::Realtime`; `GraphLinkPolicy::RealtimeLatestByStream`을(를) 사용하여 `GraphLinkOptions`를 통해 실시간 팬인(fan-in)을 수행합니다. | 전체 FPS뿐만 아니라 스트림별 FPS와 스트림별 프레임 손실을 보여줍니다. |
+| 다양한 모델 분야에서 많은 라이브 스트리밍이 진행되고 있습니다. | 여러 모델 인스턴스 또는 그래프 경로에 걸쳐 스트림을 분할합니다. | 각 레인별 실시간 스트리밍 레시피와 동일합니다. | 차선별 사용률, 스트림별 대역폭 부족 현상, 그리고 목표 값에 맞춰 정규화된 FPS. |
+| 하나의 입력값이 여러 모델로 분기됩니다. | 한 번 분기한 후, 별도의 모델 경로를 실행합니다. | `Graph`에서 분기/팬아웃을 설정하고, 각 분기에 대한 출력 동작을 선택합니다. | 분기 지연 시간과 대상에 맞춰 정규화된 FPS(초당 프레임 수). |
+
+한 모델 레인이 포화 상태인 경우, 더 깊은 대기열 뒤에 문제를 숨기지 마십시오. 작업을 여러 레인으로 분산시키거나, 제공되는 입력 속도를 낮추거나, 명시적인 삭제 정책을 선택하십시오. 대기열의 깊이는 지터에 대한 허용 오차를 제공하지만, 가속기 용량을 늘리지는 않습니다.
+
+## 자신을 속이지 않고 처리량을 조정하세요.
+
+처리량은 단일한 마법 같은 해결책이 아니라, 반복적인 과정입니다.
+
+1. 그래프를 한 번만 생성합니다.
+2. 측정 시간 전에 외부에서 예열하십시오.
+3. 동시에 처리되는 입력의 수를 제한하십시오.
+4. 지속적으로 데이터를 가져와서 출력 대기열이 병목 현상을 일으키지 않도록 합니다.
+5. 출력 버퍼가 런타임과 공유될 수 있는 경우, 더 많은 데이터를 푸시하기 전에 출력 결과나 복사본을 먼저 내보내세요.
+6. 다음 과부하 처리 정책 중 하나를 선택하세요. 차단, 최신 항목 유지 또는 수신 항목 삭제.
+7. `stream_id`와 `frame_id`를 보존합니다.
+8. 실행을 중지하기 전에 입력 스트림을 닫고 버퍼를 비우세요.
+9. 정확한 수치를 측정하십시오.
+10. 측정된 작업 부하가 완료된 후 실행 증거를 내보냅니다.
+
+다음 항목들을 각각 따로 측정하십시오.
+
+| 측정 단위 | 의미 |
+| --- | --- |
+| 제공된 입력 FPS | 초당 시도되는 입력 횟수는 일반적으로 `streams * source_fps`입니다. |
+| 허용되는 입력 FPS | 초당 `push(...)` 또는 `try_push(...)`에서 허용되는 입력 값. |
+| 전체 출력 FPS | 모든 출력 채널에서 초당 처리되는 총 출력량. |
+| 스트림당 FPS | 각 `stream_id`에 대한 출력 속도. |
+| 목표 프레임 속도로 정규화된 FPS | 앱의 초당 목표 결과에 기여하는 출력입니다. 하나의 입력이 여러 출력으로 분기될 때 유용합니다. |
+| 드롭률 | `stream_id`에서 삭제되거나 거부된 입력, 해당 입력의 출처, 그리고 거부 사유. |
+
+전체 FPS는 훌륭하게 보일 수 있지만, 개별 스트림에서는 성능 저하가 발생할 수 있습니다. 스트림별 지표를 통해 문제를 파악할 수 있습니다.
+
+### 처리량 루프 형태
+
+앱에서 전송하는 그래프에 이 모양을 사용하세요. `next_inputs()`를 사용자의 입력 소스로 바꾸세요. 루프를 단순하게 유지하세요. 처리 중인 작업의 범위를 제한하고, 지속적으로 데이터를 가져오며, 핵심 처리 경로 내에서 보고서 내보내기를 수행하지 마세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto run = graph.build(options);
+
+for (int i = 0; i < warmup_frames; ++i) {
+  run.push(next_inputs());
+  (void)run.pull(/*timeout_ms=*/5000);
+}
+
+auto measurement = run.start_measurement();
+
+int in_flight = 0;
+while (in_flight < max_in_flight && has_input()) {
+  if (run.push(next_inputs())) {
+    ++inputs_sent;
+    ++in_flight;
+  }
+}
+
+while (has_input() || in_flight > 0) {
+  auto output = run.pull(/*timeout_ms=*/1000);
+  if (output) {
+    ++outputs_seen;
+    --in_flight;
+    output.reset();  // Do not pin runtime-backed buffers longer than needed.
+  }
+
+  while (has_input() && in_flight < max_in_flight) {
+    if (!run.try_push(next_inputs())) {
+      break;
+    }
+    ++inputs_sent;
+    ++in_flight;
+  }
+}
+
+run.close_input();
+while (auto output = run.pull(/*timeout_ms=*/1000)) {
+  ++outputs_seen;
+}
+
+simaai::neat::MeasureReport report = measurement.stop();
+simaai::neat::save_run_json(run, report, "run_after_measurement.json");
+run.close();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+run = graph.build(options)
+
+for _ in range(warmup_frames):
+    run.push(next_inputs())
+    run.pull(timeout_ms=5000)
+
+measurement = run.start_measurement()
+
+in_flight = 0
+while in_flight < max_in_flight and has_input():
+    if run.push(next_inputs()):
+        inputs_sent += 1
+        in_flight += 1
+
+while has_input() or in_flight > 0:
+    output = run.pull(timeout_ms=1000)
+    if output is not None:
+        outputs_seen += 1
+        in_flight -= 1
+        del output  # Do not pin runtime-backed buffers longer than needed.
+
+    while has_input() and in_flight < max_in_flight:
+        if not run.try_push(next_inputs()):
+            break
+        inputs_sent += 1
+        in_flight += 1
+
+run.close_input()
+while True:
+    output = run.pull(timeout_ms=1000)
+    if output is None:
+        break
+    outputs_seen += 1
+
+report = measurement.stop()
+run.save_json(report, "run_after_measurement.json")
+run.close()
+```
+
+</CodeTab>
+</CodeTabs>
+
+전체적인 동작을 명시적으로 측정하는 경우가 아니라면, 각 프레임별 로깅, 출력 검증, 파일 다운로드, 소스 설정, 보고서 내보내기와 같은 작업은 측정 대상인 핵심 루프에서 제외하십시오.
+
+## 증거를 측정하고 내보냅니다.
+
+`start_measurement(...)`를 사용하여 애플리케이션에서 소유한 푸시/풀 윈도우를 관찰합니다.
+
+증거로 사용하기 위해 run export를 사용합니다.
+
+- `RunOptions.run_export`는 빌드 시점의 스냅샷을 생성합니다.
+- C++의 `run_to_json(...)` 및 `save_run_json(...)`은 실행이 완료된 후 실행 결과를 내보냅니다.
+- Python의 `run.json(...)`과 `run.save_json(...)`은 동일한 유형의 증거를 내보냅니다.
+
+실행을 생성하는 `RunOptions`에서 전력 측정 기능을 활성화합니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.enable_board_power(/*sample_interval_ms=*/100);
+
+auto run = graph.build(options);
+
+simaai::neat::MeasureOptions measure_options;
+measure_options.include_power = true;
+auto scope = run.start_measurement(measure_options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.enable_board_power(sample_interval_ms=100)
+
+run = graph.build(options)
+
+measure_options = pyneat.MeasureOptions()
+measure_options.include_power = True
+scope = run.start_measurement(measure_options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+전력 데이터는 보드 레일 지원 및 모니터 구성에 따라 달라집니다. 측정 설정을 숫자와 함께 문서화하고, 레일이 연결되지 않은 경우 전력 관련 숫자가 휴대용으로 보이지 않도록 합니다.
+
+빌드 시점 내보내기는 “Neat이 무엇을 빌드했는가?”에 대한 답을 제공합니다. 실행 후 내보내기는 “실행하는 동안 어떤 일이 일어났는가?”에 대한 답을 제공합니다.
+
+### 빌드 시와 실행 후에 내보냅니다.
+
+CI에 사용되는 아티팩트와 시작 시 디버깅을 위해 빌드 시점에 내보내기를 사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::RunOptions options;
+options.run_export.path = "run-build.json";
+options.run_export.label = "classifier-startup";
+
+auto run = graph.build(options);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+options = pyneat.RunOptions()
+options.run_export.path = "run-build.json"
+options.run_export.label = "classifier-startup"
+
+run = graph.build(options)
+```
+
+</CodeTab>
+</CodeTabs>
+
+샘플이 그래프를 따라 이동한 후, 실행 후 내보내기 기능을 사용하세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto scope = run.start_measurement();
+// Push and pull the workload.
+simaai::neat::MeasureReport report = scope.stop();
+
+simaai::neat::save_run_json(run, report, "run-after.json");
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+scope = run.start_measurement()
+# Push and pull the workload.
+report = scope.stop()
+
+run.save_json(report, "run-after.json")
+```
+
+</CodeTab>
+</CodeTabs>
+
+측정된 핫 루프 내에서 벤치마크가 명시적으로 전체 프로세스를 포함하는 방식으로 수행되지 않는 한, 데이터를 외부로 내보내지 마십시오.
+
+### 실행 내보내기 내용을 읽습니다.
+
+런타임 내보내기는 토폴로지, 런타임 옵션, 측정값을 하나의 아티팩트에 묶어 유용합니다. JSON 파일을 열 때는 고객에게 보여줄 증거부터 확인하세요.
+
+| 섹션 또는 필드 | 어떤 질문에 대한 답변인가요? |
+| --- | --- |
+| `graph.named_inputs` / `graph.named_outputs` | 이 실행 과정에서 어떤 공개 엔드포인트가 노출되었습니까? |
+| `graph.public_view` | 런타임 최적화 전에 앱의 그래프는 어떤 모습이었나요? |
+| `run.output_materialization` | 출력 결과는 소유권이 있거나, 제로 복사 방식으로 처리되었거나, 자동으로 선택되었습니까? |
+| `run.stats` | 수명 주기 동안의 입력, 출력, 손실, 지연 시간 관련 고급 카운터. |
+| `run.graph_metrics.counters` | 내보낸 실행 또는 측정된 창에 대한 입력, 출력 및 삭제 항목입니다. |
+| `run.graph_metrics.window` | 내보내기에 `MeasureReport`가 포함될 때 측정되는 시간 범위를 의미합니다. |
+| `run.node_metrics` / `run.plugin_metrics_unattributed` | 자세한 타이밍 측정이 활성화되었을 때 런타임에서 어떤 단계가 가장 많은 시간을 소요했습니까? |
+| `run.path_timing` | 경로 타이밍 데이터가 수집된 시점의 엣지/경로 타이밍. |
+| `run.graph_metrics.power` | 전원이 수집되었는지, 건너뛰었는지, 비활성화되었는지, 또는 사용할 수 없는 상태였는지 여부. |
+
+도움이 필요할 때 실행 결과 파일과 모델 계약서, 그리고 가장 간단한 재현 코드를 함께 첨부해 주세요. 이는 미스터리를 제외한 블랙박스 기록 장치와 같습니다.
+
+## 그래프 실행을 디버깅합니다.
+
+그래프에 문제가 발생하면 옵션을 변경하기 전에 먼저 구축한 내용을 검토하세요.
+
+1. 그래프를 검증합니다.
+2. 빌드하기 전에 공개 그래프 엔드포인트를 검사하십시오.
+3. 빌드 후 런타임 엔드포인트를 검사합니다.
+4. 타임아웃, 닫힘, 오류가 발생했을 때 각각 다른 의미를 갖도록 상태를 고려하여 데이터를 가져오세요.
+5. 작업 부하가 실행된 후 실행 결과를 내보냅니다.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::GraphReport report = graph.validate();
+std::cout << report.to_json() << "\n";
+
+auto run = graph.build();
+
+simaai::neat::Sample sample;
+simaai::neat::PullError error;
+
+switch (run.pull("classes", /*timeout_ms=*/1000, sample, &error)) {
+case simaai::neat::PullStatus::Ok:
+  // Use sample.
+  break;
+case simaai::neat::PullStatus::Timeout:
+  // No output arrived before the timeout.
+  break;
+case simaai::neat::PullStatus::Closed:
+  // End of stream. Stop draining.
+  break;
+case simaai::neat::PullStatus::Error:
+  std::cerr << error.code << ": " << error.message << "\n";
+  if (error.report) {
+    std::cerr << error.report->repro_note << "\n";
+  }
+  break;
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+report = graph.validate()
+print(report.to_json())
+
+run = graph.build()
+print("inputs:", run.input_names())
+print("outputs:", run.output_names())
+
+sample = run.pull("classes", timeout_ms=1000)
+if sample is None:
+    print("no output before timeout or end of stream")
+```
+
+</CodeTab>
+</CodeTabs>
+
+## 주장을 뒷받침할 증거를 수집하세요.
+
+애플리케이션에서 그래프가 제대로 작동하지 않을 때, 해당 그래프의 동작을 설명하는 가장 작은 증거 패킷을 캡처합니다. 옵션을 변경하기 전에 이 작업을 수행하십시오. 증거는 경험적 지식보다 중요합니다.
+
+다음 내용을 포함하십시오:
+
+- 모델 아티팩트의 이름과 제작 방법
+- Neat 버전/빌드 정보;
+- 입력 형태, 데이터 유형, 레이아웃, 픽셀 형식, 그리고 페이로드 패밀리
+- 빌드 또는 검증에 실패할 때 `graph.validate().to_json()`을 실행합니다.
+- 엔드포인트 오류에 대한 `run.input_names()` 및 `run.output_names()`;
+- 런타임 동작이 문제일 때, 최소 하나의 샘플이 이동한 후 JSON 파일을 내보내는 실행 내보내기;
+- 처리량, 지연 시간 또는 전력 문제가 발생했을 때의 `MeasureReport` JSON 또는 텍스트 파일;
+- 해당 동작을 재현하는 가장 작은 실행 가능한 코드 조각입니다.
+
+Python은 버전 정보와 실행 증거를 직접 캡처할 수 있습니다.
+
+```python
+print(pyneat.build_info())
+
+report = graph.validate()
+with open("graph-report.json", "w", encoding="utf-8") as f:
+    f.write(report.to_json())
+
+# After samples have moved through the run:
+run.save_json("run-after.json")
+```
+
+C++는 `GraphReport::to_json()` 및 `save_run_json(...)`을 사용하여 동일한 데이터를 그래프 형태로 내보낼 수 있습니다.
+
+```cpp
+std::cout << "neat_version=" << sima_neat_version() << "\n";
+std::cout << graph.validate().to_json() << "\n";
+
+// After samples have moved through the run:
+simaai::neat::save_run_json(run, "run-after.json");
+```
+
+오류가 부하 상태에서만 발생하는 경우, 빌드 시점 스냅샷 대신 측정된 실행 결과를 첨부하세요. 빌드 시점 결과는 Neat이 무엇을 빌드했는지 보여주고, 실행 후 결과는 그래프가 실제 입력과 상호 작용할 때 어떤 일이 일어났는지 보여줍니다.
+
+예외가 발생한 경우, `NeatError`를 처리하고 구조화된 보고서를 읽으세요.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+try {
+  auto run = graph.build();
+} catch (const simaai::neat::NeatError& error) {
+  const auto& report = error.report();
+  std::cerr << report.error_code << "\n";
+  std::cerr << report.repro_note << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+try:
+    run = graph.build()
+except pyneat.NeatError as error:
+    print(error.error_code)
+    print(error.repro_note)
+    print(error.report_json)
+```
+
+</CodeTab>
+</CodeTabs>
+
+
+## 출력 속도가 느리거나 출력이 누락되는 문제를 해결합니다.
+
+처리량이 낮거나 결과물이 나오지 않으면 먼저 다음 사항을 확인하세요.
+
+1. 측정 루프 내에서 그래프를 생성하고 있습니까?
+2. 하나의 입력을 처리하고, 전체 그래프가 유휴 상태가 될 때까지 기다린 다음, 다음 입력을 처리하는 방식으로 진행하시겠습니까?
+3. 앱이 계속해서 데이터를 가져오고 있나요?
+4. 특정 출력 분기가 전체 그래프를 차단하고 있습니까?
+5. 제로 복사 방식 또는 런타임 기반 출력을 너무 오래 보관하고 있습니까?
+6. 대기열의 깊이가 지터(jitter)를 처리하기에는 너무 얕거나, 반대로 백프레셔(backpressure)를 발생시키는 데에는 너무 깊은 것인가?
+7. 과부하 정책이 명확하게 명시되어 있습니까?
+8. `on_input_drop` 또는 로컬 `try_push(...)` 실패를 통해 드롭 수가 계산됩니까?
+9. 예상되는 모든 `stream_id`가 측정된 시간 범위 내에 결과를 생성합니까?
+10. 로그 기록, 디코딩 검사, 파일 입출력 또는 보고서 내보내기가 반복 실행되는 코드 내에 포함되어 있습니까?
+
+우선 정확성을 확보하세요. 그런 다음 속도를 높이세요. 마지막으로 어떤 값을 측정했는지 증명하세요.
+
+## 참조:
+
+- [그래프](/develop-apps/development-workflow/graph)
+- [모델](/develop-apps/development-workflow/model)
+- [텐서 및 샘플](/develop-apps/development-workflow/core_types)
+- [문제 해결](/reference/troubleshooting)

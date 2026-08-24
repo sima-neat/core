@@ -1,0 +1,216 @@
+---
+title: "Запуск / здійснення обчислень"
+description: "Комплексна концептуальна модель для виконання обчислень, починаючи від model.run() і закінчуючи графами."
+sidebar_position: 4
+---
+
+# Запуск / здійснення обчислень
+
+Якщо ви вперше використовуєте SiMa.ai Neat, найшвидший спосіб отримати прогноз – це два кроки: завантажте модель, а потім запустіть її.
+
+1. Завантажте скомпільований архів моделі (`.tar.gz`) за допомогою [`Model`](/reference/{lsa}/classes/simaai-neat-model).
+2. Викличте `model.run(inputs, timeout_ms)`, щоб виконати обчислення синхронно та отримати тензори результатів.
+
+Ось повний процес для однієї моделі. Використовуйте [`Graph`](/reference/{lsa}/classes/simaai-neat-graph), коли однієї моделі недостатньо: об’єднуйте етапи, відокремлюйте виробників і споживачів за допомогою асинхронних операцій `push` / `pull` або керуйте чергами.
+
+## Які припущення лежать в основі наведених прикладів?
+
+Використовуйте фрагменти коду на цій сторінці як окремі елементи, а не як цілісний застосунок. Для запуску застосунку також потрібно:
+
+- скомпільований артефакт моделі, створений за допомогою Model Compiler, скопійований на пристрій, на якому працює Neat;
+- Python: `import pyneat`;
+- C++: `#include "neat.h"`;
+- Збірки C++: `find_package(SimaNeat REQUIRED CONFIG)` та `SimaNeat::sima_neat`;
+- зображення або тензор, який відповідає специфікаціям моделі.
+
+Замініть приклади шляхів, наприклад `resnet_50_model.tar.gz`, на шлях до вашого артефакту моделі. Технічні характеристики є своєрідним контрактом; перевірте їх, перш ніж використовувати реальні вхідні дані.
+
+## Оберіть шлях до середовища виконання.
+
+Використовуйте найменшу площу, яка підходить для виконання роботи. Не встановлюйте жодних платних пунктів пропуску.
+
+| Якщо вам потрібно... | Використовуйте | Чому? |
+| --- | --- | --- |
+| Запустіть один скомпільований зразок моделі один раз. | `Model.run(...)` | Найшвидше тестування за допомогою диму для перевірки артефакту, вхідних і вихідних даних. |
+| Створіть модель із вузлами застосунків. | `Graph` | Вказує межу та робить топологію видимою. |
+| Виконайте один запит/отримайте одну відповідь для графа. | `Graph.run(...)` | Одноразове виконання графа без керування тривалим процесом. |
+| Підтримуйте актуальність графа для великої кількості вхідних даних. | `graph.build(...)` → `Run` | Повторно використовує середовище виконання та надає доступ до функцій надсилання/отримання, закриття, очищення та вимірювання. |
+| Налаштуйте декілька потоків або оптимізуйте максимальну пропускну здатність. | `RunOptions`, `try_push(...)`, `MeasureReport` | Політика черги та лічильники показують, що саме відбувалося під час навантаження. |
+
+Інструкції щодо налаштування, архіви моделей і контекст команд можна знайти в [Навчальні матеріали](/tutorials) – переліку попередніх перевірок.
+
+## Запустіть модель безпосередньо.
+
+Завантажте модель і викличте `run(...)`. Вона виконується синхронно. Відсутній `Graph`, відсутній `Run`, відсутній цикл середовища виконання.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+cv::Mat frame = /* your OpenCV BGR frame */;
+simaai::neat::Tensor input = simaai::neat::Tensor::from_cv_mat(
+    frame,
+    simaai::neat::ImageSpec::PixelFormat::BGR,
+    simaai::neat::TensorMemory::CPU);
+
+simaai::neat::TensorList outputs = model.run(
+    simaai::neat::TensorList{input},
+    /*timeout_ms=*/1000);
+
+// outputs[0] holds the first result; read its bytes with outputs[0].map_read().
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+outputs = model.run([tensor], timeout_ms=1000)
+
+# outputs[0] holds the first result.
+```
+
+</CodeTab>
+</CodeTabs>
+
+У Python передайте список або кортеж вхідних даних. `model.run([tensor])` означає «один вхідний тензор для моделі», а не «додати розмірність пакета».
+
+Щоб переглянути повну, робочу версію, див. [Запустіть свою першу модель.](/tutorials/run-your-first-model).
+
+## Створіть граф, коли вам потрібно більше.
+
+[`Graph`](/reference/{lsa}/classes/simaai-neat-graph) об’єднує один або кілька етапів моделі разом із вашими власними вузлами в потік, який виконується в [`Run`](/reference/{lsa}/classes/simaai-neat-run). Використовуйте його, коли вам потрібно:
+
+- об’єднуйте кілька моделей або етапи попередньої/пост-обробки;
+- розділіть виробників і споживачів за допомогою асинхронного механізму `push` / `pull`; або
+- керуйте чергами, обробляйте переповнення та збирайте статистичні дані за допомогою [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions).
+
+### Виконайте алгоритм для графа один раз.
+
+Для виконання запитів/отримання відповідей використовуйте `Graph.run(...)`.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+cv::Mat frame = /* your frame (RGB/BGR as configured) */;
+auto out = graph.run(std::vector<cv::Mat>{frame});
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+out = graph.run([tensor])
+```
+
+</CodeTab>
+</CodeTabs>
+
+### Створіть багаторазовий сценарій виконання.
+
+Використовуйте повторно використовуваний `Run`, коли потрібно відокремити виробників і споживачів, контролювати чергу або виконувати операції вводу-виводу та обчислення паралельно. Використовуйте `push(...)` / `pull(...)` разом із `RunOptions`, щоб налаштувати чергу та поведінку при відхиленні.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+simaai::neat::Graph graph("classifier");
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+cv::Mat frame = /* your frame */;
+
+auto run = graph.build();
+run.push("image", std::vector<cv::Mat>{frame});
+auto out = run.pull("classes", /*timeout_ms=*/1000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("resnet_50_model.tar.gz")
+
+graph = pyneat.Graph("classifier")
+graph.add(pyneat.nodes.input("image"))
+graph.add(model)
+graph.add(pyneat.nodes.output("classes"))
+
+tensor = pyneat.Tensor.from_numpy(
+    frame,
+    copy=True,
+    image_format=pyneat.PixelFormat.BGR,
+)
+
+run = graph.build()
+run.push("image", [tensor])
+out = run.pull("classes", timeout_ms=1000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+Для керування життєвим циклом, реалізації механізму зворотного зв’язку, забезпечення багатопотокової пропускної здатності, здійснення вимірювань та запуску експорту, продовжуйте використовувати [Запустіть граф.](/develop-apps/development-workflow/pipeline).
+
+## C++ і Python повертають фігури.
+
+Інтерфейси API узгоджені, але Python використовує явні списки або кортежі, щоб розрізняти
+один вхідний порт від кількох вхідних портів. Одиночний `Tensor` або `Sample` навмисно відхиляється.
+
+| Операція | Повернення в C++ | Повернення в Python | Примітки |
+| --- | --- | --- | --- |
+| `Model::run(TensorList)` або `Model::run(std::vector<cv::Mat>)`. | `TensorList` | `model.run([tensor])` повертає список тензорів. | Використовуйте для звичайного введення тензорів/зображень. |
+| `Model::run(Sample)` | `Sample` | `model.run([sample])` повертає `Sample`. | Використовуйте, коли вам потрібні зразки метаданих або набори даних. |
+| `Graph::run(TensorList)` або `Graph::run(std::vector<cv::Mat>)` | `TensorList` | `graph.run([tensor])` повертає список тензорів. | Одноразовий запит/відповідь для графа. |
+| `Graph::run(Sample)` | `Sample` | `graph.run([sample])` повертає `Sample`. | Використовуйте для введення даних графа, що базуються на зразках. |
+| `Run::run(TensorList)` або `Run::run(std::vector<cv::Mat>)`. | `TensorList` | `run.run([tensor])` повертає список тензорів. | Можливість повторного використання запитів/відповідей під час активної сесії `Run`. |
+| `Run::run(Sample)` | `Sample` | `run.run([sample])` повертає `Sample`. | Використовуйте для пакетів, ідентифікаторів потоків, ідентифікаторів кадрів або метаданих. |
+| `Run::pull(...)` | `std::optional<Sample>` | `Sample` або `None` | `None` означає, що жоден зразок не було отримано до закінчення встановленого часу або вихідний потік закрито. |
+| `Run::pull_tensors(...)` | `TensorList` | Список тензорів. | Використовуйте, коли вам потрібні лише дані у форматі тензора. |
+| `Run::pull_samples(...)` | `Sample` | `Sample` | Використовуйте, коли відсутність даних є винятком, і вам потрібен чіткий, стандартизований вивід. |
+
+## Ознайомтеся з основними поняттями.
+
+- [Модель](/develop-apps/development-workflow/model): завантаження архіву моделі та фрагментів графа, керованих моделлю.
+- [Граф](/develop-apps/development-workflow/graph): збірка, перевірка та точка входу для запуску/створення.
+- [Запустіть граф.](/develop-apps/development-workflow/pipeline): параметри середовища виконання, цикли типу «push/pull», багатопотокова пропускна здатність і вимірювання.
+- [Вузол](/develop-apps/development-workflow/node): атомарні етапи, попередньо створені групи та граничні вузли графа.
+- [Тензор і зразок.](/develop-apps/development-workflow/core_types): корисне навантаження проти метаданих.
+
+## Навчальні матеріали
+
+- [Запуск першої моделі](/tutorials/run-your-first-model)
+- [Run Inference Asynchronously](/tutorials/run-inference-async)
+- [Створення першого графа](/tutorials/build-inference-pipeline)
+- [Embed a Model Inside a Graph](/tutorials/embed-model-inside-graph)
